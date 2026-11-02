@@ -1,5 +1,10 @@
 # Changelog — research-graph
 
+## 0.1.1 — 2026-11-02
+
+- Python 3.10: commit dates from git (`%cI`, UTC written `Z`) are read on every supported Python; 0.1.0 failed on
+  3.10 in the git-backed views (`items --since`, `item`, `closed`, `events`, `asof`). Caught by the CI's 3.10 job.
+
 ## 0.1.0 — 2026-11-02
 
 The graph engine, extracted from the private research repo it was born in, as its own package: the same modules,

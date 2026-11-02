@@ -37,6 +37,11 @@ class GitError(RuntimeError):
     pass
 
 
+def _when(text: str) -> datetime:
+    """A commit date from git's ``%cI``. Python 3.10's fromisoformat does not read the ``Z`` that git writes for UTC."""
+    return datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+
+
 def _git(cwd: str | Path, *args: str, stdin: bytes | None = None) -> bytes:
     try:
         res = subprocess.run(["git", "-C", str(cwd), *args], input=stdin, capture_output=True)
@@ -144,7 +149,7 @@ def _log(top: Path, path: str, rev: str) -> list[tuple[Commit, dict[str, str | N
     for line in out.splitlines():
         if line.startswith("@@"):
             sha, when, subject = (line[2:].split("\t", 2) + ["", ""])[:3]
-            commits.append((Commit(sha, datetime.fromisoformat(when), subject), {}))
+            commits.append((Commit(sha, _when(when), subject), {}))
         elif line.startswith(":") and "\t" in line and commits:
             meta, fpath = line.split("\t", 1)
             parts = meta.split()
@@ -253,7 +258,7 @@ def commit_on(store: str | Path, day: date, *, rev: str = "HEAD") -> Commit | No
     if not out:
         return None
     sha, when, subject = (out.split("\t", 2) + ["", ""])[:3]
-    return Commit(sha, datetime.fromisoformat(when), subject)
+    return Commit(sha, _when(when), subject)
 
 
 def load_store_at(store: str | Path, commit: str) -> nx.DiGraph:

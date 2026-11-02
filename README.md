@@ -15,7 +15,7 @@ and generated markdown views (a kanban board and a roadmap). The `brain` command
 Python 3.10 or later; it depends on networkx and PyYAML.
 
 ```bash
-pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.1.0"
+pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.1.1"
 ```
 
 ## Start your own graphs

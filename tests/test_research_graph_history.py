@@ -87,3 +87,11 @@ def test_not_a_repository(tmp_path):
         history.timeline(tmp_path / "plain")
     with pytest.raises(history.GitError, match="no store"):
         history.repo_location(tmp_path / "missing")
+
+
+def test_commit_dates_read_on_every_supported_python():
+    """git writes UTC as ``Z``, which Python 3.10's fromisoformat refuses; the engine supports 3.10."""
+    from datetime import datetime, timezone
+
+    assert history._when("2026-10-07T12:00:00Z") == datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+    assert history._when("2026-10-07T14:00:00+02:00") == datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
