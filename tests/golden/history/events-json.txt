@@ -1,0 +1,101 @@
+$ research_graph events --all-types --json --since 2026-10-03
+exit: 0
+--- stdout
+[
+ {
+  "id": "wi-a",
+  "type": "WorkItem",
+  "kind": "status",
+  "old": "todo",
+  "new": "doing",
+  "commit": {
+   "sha": "<commit-3>",
+   "date": "2026-10-04T12:00:00+00:00",
+   "ref": "#7",
+   "subject": "Merge pull request #7 from RoJLD/feat"
+  }
+ },
+ {
+  "id": "wi-a",
+  "type": "WorkItem",
+  "kind": "props",
+  "old": {
+   "pr": null
+  },
+  "new": {
+   "pr": "research-lab #7"
+  },
+  "commit": {
+   "sha": "<commit-3>",
+   "date": "2026-10-04T12:00:00+00:00",
+   "ref": "#7",
+   "subject": "Merge pull request #7 from RoJLD/feat"
+  }
+ },
+ {
+  "id": "wi-b",
+  "type": "WorkItem",
+  "kind": "status",
+  "old": "todo",
+  "new": "done",
+  "commit": {
+   "sha": "<commit-4>",
+   "date": "2026-10-05T12:00:00+00:00",
+   "ref": "<commit-4>",
+   "subject": "D: close b, move c, drop gone, add d"
+  }
+ },
+ {
+  "id": "wi-b",
+  "type": "WorkItem",
+  "kind": "title",
+  "old": "wi-b",
+  "new": "b, renamed",
+  "commit": {
+   "sha": "<commit-4>",
+   "date": "2026-10-05T12:00:00+00:00",
+   "ref": "<commit-4>",
+   "subject": "D: close b, move c, drop gone, add d"
+  }
+ },
+ {
+  "id": "wi-d",
+  "type": "WorkItem",
+  "kind": "created",
+  "old": null,
+  "new": "todo",
+  "commit": {
+   "sha": "<commit-4>",
+   "date": "2026-10-05T12:00:00+00:00",
+   "ref": "<commit-4>",
+   "subject": "D: close b, move c, drop gone, add d"
+  }
+ },
+ {
+  "id": "wi-gone",
+  "type": "WorkItem",
+  "kind": "removed",
+  "old": "todo",
+  "new": null,
+  "commit": {
+   "sha": "<commit-4>",
+   "date": "2026-10-05T12:00:00+00:00",
+   "ref": "<commit-4>",
+   "subject": "D: close b, move c, drop gone, add d"
+  }
+ },
+ {
+  "id": "wi-d",
+  "type": "WorkItem",
+  "kind": "status",
+  "old": "todo",
+  "new": "doing",
+  "commit": {
+   "sha": "<commit-6>",
+   "date": "2026-10-07T12:00:00+00:00",
+   "ref": "<commit-6>",
+   "subject": "F: fix yaml, start d"
+  }
+ }
+]
+--- stderr

@@ -1,0 +1,162 @@
+"""Generated kanban view of the work layer (`research_graph kanban`): frontier first, milestones with trigger,
+progress and critical path, items by status with blockers and external blockers, never overwriting a
+hand-written board, and a staleness advisory in `check`."""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+import pytest
+
+from research_graph.cli import main
+from research_graph.kanban import (
+    DEFAULT_OUT,
+    MARKER,
+    kanban_stale,
+    render_kanban,
+    write_kanban,
+)
+from research_graph.loader import load_store
+
+STORE = Path(__file__).parent / "fixtures" / "layered_graph"
+
+
+def _copy_store(tmp_path: Path) -> Path:
+    dst = tmp_path / "store"
+    shutil.copytree(STORE, dst)
+    return dst
+
+
+def _section(text: str, heading: str) -> list[str]:
+    """Lines of a ``## heading`` section, up to the next ``## ``."""
+    lines = text.splitlines()
+    start = lines.index(heading) + 1
+    end = next((i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return [ln for ln in lines[start:end] if ln]
+
+
+def test_frontier_comes_first_and_names_milestones():
+    text = render_kanban(load_store(STORE))
+    assert text.startswith(MARKER) and text.splitlines()[0].endswith("then regenerate. -->")
+    assert "7 work items: todo 5, blocked 1, done 1. Startable now: 1. Cannot proceed: 5." in text
+    headings = [ln for ln in text.splitlines() if ln.startswith("## ")]
+    assert headings == [
+        "## Startable now",
+        "## ms-1 — m1 [pending]",
+        "## ms-sub — sub [pending]",
+        "## No milestone",
+    ]
+    assert _section(text, "## Startable now") == [
+        "- [ ] wi-a — a: needs done + validated spec (ms-sub)"
+    ]
+
+
+def test_milestone_sections_show_trigger_progress_critical_path_and_blockers():
+    text = render_kanban(load_store(STORE))
+    assert _section(text, "## ms-1 — m1 [pending]") == [
+        "Trigger: t",
+        "Items: 4 (done 1, todo 3). Critical path: wi-a → wi-b → wi-c.",
+        "Sub-milestones: ms-sub [pending].",
+        "- [ ] wi-c — c: needs b  ← blocked by wi-b [todo]",
+        "- [x] wi-done — done",
+    ]
+    assert _section(text, "## ms-sub — sub [pending]") == [
+        "Items: 2 (todo 2). Critical path: wi-a → wi-b.",
+        "Part of: ms-1.",
+        "- [ ] wi-a — a: needs done + validated spec  ← startable",
+        "- [ ] wi-b — b: needs a  ← blocked by wi-a [todo]",
+    ]
+    assert _section(text, "## No milestone") == [
+        "- [ ] wi-d — d: needs draft spec  ← blocked by spec-draft [proposed]",
+        "- [ ] wi-gated — gated by an open verdict  ← blocked by v-open [open]",
+        "- [ ] wi-ext — external blocker  ← external blocker",
+    ]
+
+
+def test_status_order_external_reason_doing_and_dropped(tmp_path):
+    store = _copy_store(tmp_path)
+    (store / "nodes" / "more.yaml").write_text(
+        "- {id: wi-doing, type: WorkItem, status: doing, title: in progress}\n"
+        "- {id: wi-drop, type: WorkItem, status: dropped, title: abandoned}\n"
+        "- {id: wi-wait, type: WorkItem, status: blocked, title: waits,"
+        " props: {external_blocker: 'keys are Ada''s step'}}\n",
+        encoding="utf-8",
+    )
+    (store / "edges" / "more.yaml").write_text(
+        "- {from: wi-wait, to: wi-b, type: depends_on}\n", encoding="utf-8"
+    )
+    loose = _section(render_kanban(load_store(store)), "## No milestone")
+    assert loose[0] == "- [ ] wi-doing — in progress  ← doing"
+    assert loose[-1] == "- [ ] ~~wi-drop — abandoned~~"
+    assert (
+        "- [ ] wi-wait — waits  ← blocked by wi-b [todo]; external: keys are Ada's step" in loose
+    )
+    statuses = [ln.split(" — ")[0].split()[-1] for ln in loose]
+    assert statuses.index("wi-doing") < statuses.index("wi-d") < statuses.index("wi-wait")
+
+
+def test_render_is_deterministic():
+    g = load_store(STORE)
+    assert render_kanban(g) == render_kanban(load_store(STORE))
+
+
+def test_write_refuses_to_overwrite_a_hand_written_board(tmp_path):
+    g = load_store(STORE)
+    hand = tmp_path / "kanban_dev.md"
+    hand.write_text("# Kanban — Dev / Tools\n- [ ] hand-written\n", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="not a generated view"):
+        write_kanban(g, hand)
+    assert hand.read_text(encoding="utf-8").startswith("# Kanban — Dev / Tools")
+    out = tmp_path / "view.md"
+    out.write_text(MARKER + " old -->\n", encoding="utf-8")
+    write_kanban(g, out)  # a generated view is regenerated in place
+    assert out.read_text(encoding="utf-8") == render_kanban(g)
+    assert b"\r\n" not in out.read_bytes()
+
+
+def test_a_view_written_under_another_module_path_is_still_generated(tmp_path):
+    """Views written before the engine was its own package name it ``python -m <pkg>.research_graph``."""
+    g = load_store(STORE)
+    old = tmp_path / "kanban_graph.md"
+    old.write_text("<!-- GENERATED by `python -m some_lab.research_graph kanban --write` from ... -->\n",
+                   encoding="utf-8")
+    write_kanban(g, old)
+    assert old.read_text(encoding="utf-8") == render_kanban(g)
+    other = tmp_path / "other.md"
+    other.write_text("<!-- GENERATED by `another_tool kanban --write` -->\n", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        write_kanban(g, other)
+
+
+def test_cli_kanban_prints_writes_and_refuses(tmp_path, capsys):
+    store = str(STORE)
+    assert main(["--store", store, "kanban"]) == 0
+    assert capsys.readouterr().out == render_kanban(load_store(STORE))
+    assert main(["--store", store, "--repo-root", str(tmp_path), "kanban", "--write"]) == 0
+    assert (tmp_path / DEFAULT_OUT).read_text(encoding="utf-8").startswith(MARKER)
+    hand = tmp_path / "notes" / "kanban_dev.md"
+    hand.write_text("hand-written\n", encoding="utf-8")
+    capsys.readouterr()
+    assert main(["--store", store, "kanban", "--write", "--out", str(hand)]) == 1
+    assert "refusing to overwrite" in capsys.readouterr().err
+    assert hand.read_text(encoding="utf-8") == "hand-written\n"
+
+
+def test_stale_view_is_an_advisory_in_check(tmp_path, capsys):
+    store = _copy_store(tmp_path)
+    repo = tmp_path / "repo"
+    assert kanban_stale(load_store(store), repo) == []  # no view yet: nothing to say
+    write_kanban(load_store(store), repo / DEFAULT_OUT)
+    assert kanban_stale(load_store(store), repo) == []
+    (store / "nodes" / "more.yaml").write_text(
+        "- {id: wi-new, type: WorkItem, status: todo, title: new}\n", encoding="utf-8"
+    )
+    stale = kanban_stale(load_store(store), repo)
+    assert stale == [
+        f"{DEFAULT_OUT} is stale: run `research_graph kanban --write`"
+    ]
+    main(
+        ["--store", str(store), "--repo-root", str(repo), "check"]
+    )  # the fixture fails wiring rules
+    assert f"advisory: {stale[0]}" in capsys.readouterr().out

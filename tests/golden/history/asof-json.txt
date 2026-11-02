@@ -1,0 +1,71 @@
+$ research_graph asof 2026-10-02 --json
+exit: 0
+--- stdout
+{
+ "day": "2026-10-02",
+ "commit": {
+  "sha": "<commit-0>",
+  "date": "2026-10-01T12:00:00+00:00",
+  "ref": "<commit-0>",
+  "subject": "A: seed"
+ },
+ "items": [
+  {
+   "id": "wi-a",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "wi-a",
+   "priority": null,
+   "priority_proposed": null,
+   "repos": [
+    "repo"
+   ],
+   "milestones": [],
+   "blockers": [],
+   "external_blocker": null
+  },
+  {
+   "id": "wi-b",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "wi-b",
+   "priority": null,
+   "priority_proposed": null,
+   "repos": [
+    "repo"
+   ],
+   "milestones": [],
+   "blockers": [],
+   "external_blocker": null
+  },
+  {
+   "id": "wi-c",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "wi-c",
+   "priority": null,
+   "priority_proposed": null,
+   "repos": [
+    "repo"
+   ],
+   "milestones": [],
+   "blockers": [],
+   "external_blocker": null
+  },
+  {
+   "id": "wi-gone",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "wi-gone",
+   "priority": null,
+   "priority_proposed": null,
+   "repos": [
+    "repo"
+   ],
+   "milestones": [],
+   "blockers": [],
+   "external_blocker": null
+  }
+ ]
+}
+--- stderr

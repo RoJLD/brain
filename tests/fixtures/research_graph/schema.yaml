@@ -1,0 +1,25 @@
+node_types:
+  - Hypothesis
+  - Experiment
+  - SDR
+  - ADR
+  - Verdict
+  - Paper
+edge_types:
+  - tests
+  - gated_by
+  - produces
+  - validates
+  - refines
+  - supersedes
+  - cites
+  - decided_by
+statuses:
+  - open
+  - active
+  - validated
+  - rejected
+  - inconclusive
+  - superseded
+  - planned
+  - deferred

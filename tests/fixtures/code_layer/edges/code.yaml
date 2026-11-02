@@ -1,0 +1,13 @@
+- {from: ad-x, to: "code:fake-repo:fake_pkg/venue.py::FakeVenue", type: implemented_by}
+- {from: ad-x, to: "code:fake-repo:fake_pkg/venue.py::FakeVenue.funding", type: implemented_by}
+- {from: ad-x, to: "code:fake-repo:fake_pkg/venue.py::fast_path", type: implemented_by}
+- {from: tf-x, to: "code:fake-repo:fake_pkg/venue.py::normalize", type: implemented_by}
+- {from: tf-x, to: "code:fake-repo:fake_pkg/venue.py::RATE_CAP", type: implemented_by}
+- {from: ds-x, to: "code:fake-repo:fake_pkg/store.py", type: implemented_by}
+- {from: ds-x, to: "code:fake-repo:scripts/run.ps1", type: implemented_by}
+- {from: ds-x, to: "code:fake-repo:fake_pkg/gone.py::Thing", type: implemented_by}
+- {from: tf-x, to: "code:fake-repo:fake_pkg/venue.py::renamed", type: implemented_by}
+- {from: tf-x, to: "code:fake-repo:fake_pkg/broken.py::oops", type: implemented_by}
+- {from: ad-x, to: "code:absent-repo:absent_pkg/mod.py::f", type: implemented_by}
+- {from: ad-x, to: "code:fake-repo:fake_pkg/old.py::Old", type: implemented_by}
+- {from: edge-x, to: "code:fake-repo:fake_pkg/venue.py::normalize", type: implemented_by}

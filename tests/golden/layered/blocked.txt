@@ -1,0 +1,9 @@
+$ research_graph blocked
+exit: 0
+--- stdout
+wi-b  <- wi-a
+wi-c  <- wi-b
+wi-d  <- spec-draft
+wi-ext  <- external
+wi-gated  <- v-open
+--- stderr

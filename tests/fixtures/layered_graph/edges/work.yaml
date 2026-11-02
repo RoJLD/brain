@@ -1,0 +1,11 @@
+- {from: wi-a, to: wi-done, type: depends_on}
+- {from: wi-a, to: spec-ok, type: depends_on}
+- {from: wi-b, to: wi-a, type: depends_on}
+- {from: wi-c, to: wi-b, type: depends_on}
+- {from: wi-d, to: spec-draft, type: depends_on}
+- {from: wi-gated, to: v-open, type: gated_by}
+- {from: wi-a, to: ms-sub, type: part_of}
+- {from: wi-b, to: ms-sub, type: part_of}
+- {from: wi-c, to: ms-1, type: part_of}
+- {from: wi-done, to: ms-1, type: part_of}
+- {from: ms-sub, to: ms-1, type: part_of}

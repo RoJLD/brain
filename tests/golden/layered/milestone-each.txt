@@ -1,0 +1,15 @@
+$ research_graph milestone {each:Milestone}
+=== ms-1
+exit: 0
+--- stdout
+ms-1 [pending] trigger: t
+items: 4  done=1  todo=3
+critical path: wi-a -> wi-b -> wi-c
+--- stderr
+=== ms-sub
+exit: 0
+--- stdout
+ms-sub [pending] trigger: -
+items: 2  todo=2
+critical path: wi-a -> wi-b
+--- stderr

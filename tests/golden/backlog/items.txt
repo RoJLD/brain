@@ -1,0 +1,11 @@
+$ research_graph items
+exit: 0
+--- stdout
+wi-doing   doing    P1   Doing item  ← needs wi-prereq
+wi-todo    todo     P2?  Todo after doing  ← needs wi-doing
+wi-free    todo     -    Free item about funding
+wi-prereq  todo     -    Prerequisite outside the milestone
+wi-ext     blocked  -    Waits on Ada  ← external: Ada decides
+wi-ext2    blocked  -    Waits on the cluster  ← external: the cluster is not there
+6 item(s): doing 1, todo 3, blocked 2
+--- stderr

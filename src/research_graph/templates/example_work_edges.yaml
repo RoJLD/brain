@@ -1,0 +1,8 @@
+# Work edges: part_of (an item or sub-milestone moves a milestone), depends_on (an item waits on another),
+# specified_by (an item follows a spec), decided_by (a node follows an ADR), supersedes (an ADR replaces another).
+- {from: wi-first-step, to: ms-first, type: part_of}
+- {from: wi-second-step, to: ms-first, type: part_of}
+- {from: wi-needs-a-decision, to: ms-first, type: part_of}
+- {from: wi-second-step, to: wi-first-step, type: depends_on}
+- {from: wi-first-step, to: spec-example, type: specified_by}
+- {from: wi-first-step, to: adr-2026-01-01-keep-the-work-state-in-this-graph, type: decided_by}

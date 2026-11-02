@@ -1,0 +1,5 @@
+$ research_graph roadmap --write --out {handwritten}
+exit: 1
+--- stdout
+--- stderr
+<ROOT>/handwritten.md exists and is not a generated view (no GENERATED marker): refusing to overwrite it

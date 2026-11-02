@@ -1,0 +1,68 @@
+$ research_graph item wi-b --json
+exit: 0
+--- stdout
+{
+ "id": "wi-b",
+ "type": "WorkItem",
+ "status": "done",
+ "title": "b, renamed",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "repo"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {},
+ "out": [],
+ "in": [],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": [
+  {
+   "id": "wi-b",
+   "type": "WorkItem",
+   "kind": "created",
+   "old": null,
+   "new": "todo",
+   "commit": {
+    "sha": "<commit-0>",
+    "date": "2026-10-01T12:00:00+00:00",
+    "ref": "<commit-0>",
+    "subject": "A: seed"
+   }
+  },
+  {
+   "id": "wi-b",
+   "type": "WorkItem",
+   "kind": "status",
+   "old": "todo",
+   "new": "done",
+   "commit": {
+    "sha": "<commit-4>",
+    "date": "2026-10-05T12:00:00+00:00",
+    "ref": "<commit-4>",
+    "subject": "D: close b, move c, drop gone, add d"
+   }
+  },
+  {
+   "id": "wi-b",
+   "type": "WorkItem",
+   "kind": "title",
+   "old": "wi-b",
+   "new": "b, renamed",
+   "commit": {
+    "sha": "<commit-4>",
+    "date": "2026-10-05T12:00:00+00:00",
+    "ref": "<commit-4>",
+    "subject": "D: close b, move c, drop gone, add d"
+   }
+  }
+ ],
+ "history_error": null
+}
+--- stderr

@@ -1,0 +1,10 @@
+$ research_graph check
+exit: 1
+--- stdout
+--- stderr
+notes/decisions.md: 2026-10-01 has 1 heading(s) but 0 SDR/ADR node(s)
+notes/decisions.md: 2026-10-02 has 2 heading(s) but 0 SDR/ADR node(s)
+notes/decisions.md: 2026-10-03 has 1 heading(s) but 0 SDR/ADR node(s)
+notes/decisions.md: 2026-10-04 has 1 heading(s) but 0 SDR/ADR node(s)
+spec-live: anchor file missing: docs/specs/2026-09-01-live.md
+exp-1: tests no Hypothesis

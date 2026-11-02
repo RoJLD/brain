@@ -1,0 +1,13 @@
+- {id: H1, type: Hypothesis, title: "Univariate sync", status: validated,
+   anchor: "notes/scientific_decisions.md#2026-05-15-exp001"}
+- {id: H2, type: Hypothesis, title: "Basket aggregation", status: open}
+- {id: exp001, type: Experiment, title: "TradFi link", status: active,
+   anchor: "notes/scientific_decisions.md#2026-05-15-exp001"}
+- {id: exp002, type: Experiment, title: "Multivariate", status: planned}
+- {id: exp003, type: Experiment, title: "Lifecycle V2", status: planned}
+- {id: sdr-a, type: SDR, title: "exp001 scope", status: active}
+- {id: sdr-b, type: SDR, title: "H1 narrowing", status: active}
+- {id: sdr-c, type: SDR, title: "tool narrowing", status: active}
+- {id: v1, type: Verdict, title: "H1 validated", status: validated}
+- {id: v2, type: Verdict, title: "exp003 verdict", status: open}
+- {id: paper-x, type: Paper, title: "Schreiber 2000", status: validated}

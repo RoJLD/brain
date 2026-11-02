@@ -1,0 +1,160 @@
+$ research_graph code {each:*}
+=== ad-x
+exit: 0
+--- stdout
+code behind ad-x
+direct: 5
+  code:absent-repo:absent_pkg/mod.py::f
+  code:fake-repo:fake_pkg/old.py::Old
+  code:fake-repo:fake_pkg/venue.py::FakeVenue
+  code:fake-repo:fake_pkg/venue.py::FakeVenue.funding
+  code:fake-repo:fake_pkg/venue.py::fast_path
+inherited: 0
+--- stderr
+=== code:absent-repo:absent_pkg/mod.py::f
+exit: 0
+--- stdout
+code behind code:absent-repo:absent_pkg/mod.py::f
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:fake_pkg/broken.py::oops
+exit: 0
+--- stdout
+code behind code:fake-repo:fake_pkg/broken.py::oops
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:fake_pkg/gone.py::Thing
+exit: 0
+--- stdout
+code behind code:fake-repo:fake_pkg/gone.py::Thing
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:fake_pkg/old.py::Old
+exit: 0
+--- stdout
+code behind code:fake-repo:fake_pkg/old.py::Old
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:fake_pkg/store.py
+exit: 0
+--- stdout
+code behind code:fake-repo:fake_pkg/store.py
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:fake_pkg/venue.py::FakeVenue
+exit: 0
+--- stdout
+code behind code:fake-repo:fake_pkg/venue.py::FakeVenue
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:fake_pkg/venue.py::FakeVenue.funding
+exit: 0
+--- stdout
+code behind code:fake-repo:fake_pkg/venue.py::FakeVenue.funding
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:fake_pkg/venue.py::RATE_CAP
+exit: 0
+--- stdout
+code behind code:fake-repo:fake_pkg/venue.py::RATE_CAP
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:fake_pkg/venue.py::fast_path
+exit: 0
+--- stdout
+code behind code:fake-repo:fake_pkg/venue.py::fast_path
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:fake_pkg/venue.py::normalize
+exit: 0
+--- stdout
+code behind code:fake-repo:fake_pkg/venue.py::normalize
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:fake_pkg/venue.py::renamed
+exit: 0
+--- stdout
+code behind code:fake-repo:fake_pkg/venue.py::renamed
+direct: 0
+inherited: 0
+--- stderr
+=== code:fake-repo:scripts/run.ps1
+exit: 0
+--- stdout
+code behind code:fake-repo:scripts/run.ps1
+direct: 0
+inherited: 0
+--- stderr
+=== ds-x
+exit: 0
+--- stdout
+code behind ds-x
+direct: 3
+  code:fake-repo:fake_pkg/gone.py::Thing
+  code:fake-repo:fake_pkg/store.py
+  code:fake-repo:scripts/run.ps1
+inherited: 9
+  code:absent-repo:absent_pkg/mod.py::f  (via ad-x)
+  code:fake-repo:fake_pkg/old.py::Old  (via ad-x)
+  code:fake-repo:fake_pkg/venue.py::FakeVenue  (via ad-x)
+  code:fake-repo:fake_pkg/venue.py::FakeVenue.funding  (via ad-x)
+  code:fake-repo:fake_pkg/venue.py::fast_path  (via ad-x)
+  code:fake-repo:fake_pkg/broken.py::oops  (via tf-x)
+  code:fake-repo:fake_pkg/venue.py::RATE_CAP  (via tf-x)
+  code:fake-repo:fake_pkg/venue.py::normalize  (via tf-x)
+  code:fake-repo:fake_pkg/venue.py::renamed  (via tf-x)
+--- stderr
+=== edge-x
+exit: 0
+--- stdout
+code behind edge-x
+direct: 1
+  code:fake-repo:fake_pkg/venue.py::normalize
+inherited: 11
+  code:absent-repo:absent_pkg/mod.py::f  (via ad-x)
+  code:fake-repo:fake_pkg/old.py::Old  (via ad-x)
+  code:fake-repo:fake_pkg/venue.py::FakeVenue  (via ad-x)
+  code:fake-repo:fake_pkg/venue.py::FakeVenue.funding  (via ad-x)
+  code:fake-repo:fake_pkg/venue.py::fast_path  (via ad-x)
+  code:fake-repo:fake_pkg/gone.py::Thing  (via ds-x)
+  code:fake-repo:fake_pkg/store.py  (via ds-x)
+  code:fake-repo:scripts/run.ps1  (via ds-x)
+  code:fake-repo:fake_pkg/broken.py::oops  (via tf-x)
+  code:fake-repo:fake_pkg/venue.py::RATE_CAP  (via tf-x)
+  code:fake-repo:fake_pkg/venue.py::renamed  (via tf-x)
+--- stderr
+=== repo-absent-repo
+exit: 0
+--- stdout
+code behind repo-absent-repo
+direct: 0
+inherited: 0
+--- stderr
+=== repo-fake-repo
+exit: 0
+--- stdout
+code behind repo-fake-repo
+direct: 0
+inherited: 0
+--- stderr
+=== tf-x
+exit: 0
+--- stdout
+code behind tf-x
+direct: 4
+  code:fake-repo:fake_pkg/broken.py::oops
+  code:fake-repo:fake_pkg/venue.py::RATE_CAP
+  code:fake-repo:fake_pkg/venue.py::normalize
+  code:fake-repo:fake_pkg/venue.py::renamed
+inherited: 0
+--- stderr

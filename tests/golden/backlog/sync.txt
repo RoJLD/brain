@@ -1,0 +1,9 @@
+$ research_graph sync
+exit: 0
+--- stdout
+- {id: adr-2026-10-01-store-format-yaml-flow-nodes, type: ADR, title: "Store format: YAML flow nodes", status: active, anchor: "notes/decisions.md#2026-10-01-store-format-yaml-flow-nodes"}
+- {id: adr-2026-10-02-accents-symbols-parentheses, type: ADR, title: "Accents é, symbols & (parentheses)", status: active, anchor: "notes/decisions.md#2026-10-02-accents-symbols-parentheses"}
+- {id: adr-2026-10-02-accents-symbols-parentheses-1, type: ADR, title: "Accents é, symbols & (parentheses)", status: active, anchor: "notes/decisions.md#2026-10-02-accents-symbols-parentheses"}
+- {id: adr-2026-10-03-reversal-store-format-yaml-flow-nodes, type: ADR, title: "REVERSAL: Store format: YAML flow nodes", status: active, anchor: "notes/decisions.md#2026-10-03-reversal-store-format-yaml-flow-nodes"}
+- {id: adr-2026-10-04-entry, type: ADR, title: "ADR 2026-10-04", status: active, anchor: "notes/decisions.md#2026-10-04-entry"}
+--- stderr

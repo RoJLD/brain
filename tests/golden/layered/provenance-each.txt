@@ -1,0 +1,426 @@
+$ research_graph provenance {each:*}
+=== ad-x
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== adr-new
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== adr-old
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== ds-x
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== edge-x
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== exp-x
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== ms-1
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== ms-sub
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== repo-x
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== sa-x
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== sdr-x
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== spec-draft
+exit: 0
+--- stdout
+spec-draft
+wi-d
+--- stderr
+=== spec-ok
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== tf-x
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== v-open
+exit: 0
+--- stdout
+v-open
+wi-gated
+--- stderr
+=== venue-x
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== wi-a
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== wi-b
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== wi-c
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== wi-d
+exit: 0
+--- stdout
+spec-draft
+wi-d
+--- stderr
+=== wi-done
+exit: 0
+--- stdout
+ad-x
+adr-new
+adr-old
+ds-x
+edge-x
+exp-x
+ms-1
+ms-sub
+repo-x
+sa-x
+sdr-x
+spec-ok
+tf-x
+venue-x
+wi-a
+wi-b
+wi-c
+wi-done
+--- stderr
+=== wi-ext
+exit: 0
+--- stdout
+wi-ext
+--- stderr
+=== wi-gated
+exit: 0
+--- stdout
+v-open
+wi-gated
+--- stderr

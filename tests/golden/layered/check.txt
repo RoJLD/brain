@@ -1,0 +1,5 @@
+$ research_graph check
+exit: 1
+--- stdout
+--- stderr
+exp-x: tests no Hypothesis

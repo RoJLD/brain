@@ -1,0 +1,14 @@
+node_types: [ADR, SDR, Experiment, Verdict, Edge, Dataset, WorkItem, Milestone, Spec, Venue, Adapter, Transform, SettlementAsset, Repo]
+edge_types: [decided_by, supersedes, uses, gated_by, depends_on, part_of, specified_by, delivers, provided_by, derived_from, hosted_in, settles_in, exposes]
+statuses: [superseded, planned, active, validated, open, proposed, live, todo, doing, blocked, done, dropped, pending, reached]
+layers:
+  decisions: [ADR, SDR]
+  research: [Experiment, Verdict, Edge]
+  work: [WorkItem, Milestone, Spec]
+  data: [Venue, Adapter, Transform, Dataset]
+  risk: [SettlementAsset]
+  platform: [Repo]
+status_by_type:
+  WorkItem: [todo, doing, blocked, done, dropped]
+  Milestone: [pending, reached, dropped]
+  Spec: [proposed, active]

@@ -1,0 +1,13 @@
+$ research_graph item wi-a
+exit: 0
+--- stdout
+wi-a  [WorkItem doing]  priority -
+  wi-a
+  repo: research-lab
+props:
+  pr: research-lab #7
+history (git, first-parent): 3 change(s)
+  2026-10-01  <commit-0>  created [todo]
+  2026-10-04  #7       status todo -> doing
+  2026-10-04  #7       props +pr
+--- stderr

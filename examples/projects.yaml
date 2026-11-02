@@ -1,0 +1,22 @@
+# Example registry for the `brain` command: the projects it knows (brain --project NAME, brain refresh --all,
+# brain decision pending --all). Copy it to the root of your own brain repo as projects.yaml and adapt it.
+#
+# root: the project's checkout, relative to the brain repo. Its graph store (notes/graph), journal (notes/journal.md)
+#       and ADR log (notes/decisions.md) are found under the root; `stores:` lists other stores when it has several.
+# production: the checkouts a service or a scheduled task runs from, relative to the root; the brain's guards refuse
+#       edits and git changes there (work in a worktree, merge by PR, then pull).
+# stacks: what brain up / down / health start, stop and check (depends_on, cwd, start, stop, health {urls, cmd},
+#       logs, timeout, detach, watch); omit it when the project runs no service.
+#
+# Each store is started with `research_graph --store <root>/notes/graph --repo-root <root> init --owner <you>`.
+
+my-brain:            # this brain: your rules, decisions and personal backlog
+  root: .
+
+my-project:          # a project next to it, with its own graph store
+  root: ../my-project
+  production: [.]
+
+team-project:        # a project with a second store (an operations graph, say)
+  root: ../team-project
+  stores: [notes/graph, ops/graph]

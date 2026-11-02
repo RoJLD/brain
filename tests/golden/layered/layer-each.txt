@@ -1,0 +1,48 @@
+$ research_graph layer {each:layer}
+=== data
+exit: 0
+--- stdout
+ad-x  [active]  adapter
+ds-x  [active]  dataset
+tf-x  [active]  normalization
+venue-x  [active]  venue
+--- stderr
+=== decisions
+exit: 0
+--- stdout
+adr-new  [active]  new adapter decision
+adr-old  [superseded]  old adapter decision
+sdr-x  [active]  edge scope
+--- stderr
+=== platform
+exit: 0
+--- stdout
+repo-x  [active]  repo
+--- stderr
+=== research
+exit: 0
+--- stdout
+edge-x  [live]  edge
+exp-x  [active]  experiment
+v-open  [open]  open verdict
+--- stderr
+=== risk
+exit: 0
+--- stdout
+sa-x  [active]  stablecoin
+--- stderr
+=== work
+exit: 0
+--- stdout
+ms-1  [pending]  m1
+ms-sub  [pending]  sub
+spec-draft  [proposed]  draft spec
+spec-ok  [active]  validated spec
+wi-a  [todo]  a: needs done + validated spec
+wi-b  [todo]  b: needs a
+wi-c  [todo]  c: needs b
+wi-d  [todo]  d: needs draft spec
+wi-done  [done]  done
+wi-ext  [blocked]  external blocker
+wi-gated  [todo]  gated by an open verdict
+--- stderr

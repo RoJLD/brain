@@ -1,0 +1,13 @@
+# The fake repo is written by the tests (tests/test_research_graph_code_layer.py::_platform).
+- {id: "code:fake-repo:fake_pkg/venue.py::FakeVenue", type: CodeRef, status: active, title: class}
+- {id: "code:fake-repo:fake_pkg/venue.py::FakeVenue.funding", type: CodeRef, status: active, title: method}
+- {id: "code:fake-repo:fake_pkg/venue.py::normalize", type: CodeRef, status: active, title: function}
+- {id: "code:fake-repo:fake_pkg/venue.py::RATE_CAP", type: CodeRef, status: active, title: annotated assignment}
+- {id: "code:fake-repo:fake_pkg/venue.py::fast_path", type: CodeRef, status: active, title: defined in an except block}
+- {id: "code:fake-repo:fake_pkg/store.py", type: CodeRef, status: active, title: whole module}
+- {id: "code:fake-repo:scripts/run.ps1", type: CodeRef, status: active, title: non-Python file at the repo root}
+- {id: "code:fake-repo:fake_pkg/gone.py::Thing", type: CodeRef, status: active, title: file deleted}
+- {id: "code:fake-repo:fake_pkg/venue.py::renamed", type: CodeRef, status: active, title: symbol renamed}
+- {id: "code:fake-repo:fake_pkg/broken.py::oops", type: CodeRef, status: active, title: syntax error}
+- {id: "code:absent-repo:absent_pkg/mod.py::f", type: CodeRef, status: active, title: repo not checked out}
+- {id: "code:fake-repo:fake_pkg/old.py::Old", type: CodeRef, status: retired, title: kept for history, not checked}

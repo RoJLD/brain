@@ -1,0 +1,5 @@
+$ research_graph gated
+exit: 0
+--- stdout
+exp003
+--- stderr

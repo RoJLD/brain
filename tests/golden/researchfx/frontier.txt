@@ -1,0 +1,5 @@
+$ research_graph frontier
+exit: 0
+--- stdout
+exp002
+--- stderr

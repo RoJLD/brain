@@ -1,0 +1,13 @@
+$ research_graph priorities proposal --json
+exit: 0
+--- stdout
+[
+ {
+  "id": "wi-todo",
+  "status": "todo",
+  "title": "Todo after doing",
+  "priority_proposed": "P2",
+  "reason": "after wi-doing"
+ }
+]
+--- stderr

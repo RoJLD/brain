@@ -1,0 +1,20 @@
+- {id: spec-ok, type: Spec, status: active, title: "validated spec"}
+- {id: spec-draft, type: Spec, status: proposed, title: "draft spec"}
+- {id: ms-1, type: Milestone, status: pending, title: "m1", props: {trigger: "t"}}
+- {id: ms-sub, type: Milestone, status: pending, title: "sub"}
+- {id: wi-done, type: WorkItem, status: done, title: "done"}
+- {id: wi-a, type: WorkItem, status: todo, title: "a: needs done + validated spec"}
+- {id: wi-b, type: WorkItem, status: todo, title: "b: needs a"}
+- {id: wi-c, type: WorkItem, status: todo, title: "c: needs b"}
+- {id: wi-d, type: WorkItem, status: todo, title: "d: needs draft spec"}
+- {id: wi-ext, type: WorkItem, status: blocked, title: "external blocker"}
+- {id: v-open, type: Verdict, status: open, title: "open verdict"}
+- {id: wi-gated, type: WorkItem, status: todo, title: "gated by an open verdict"}
+- {id: venue-x, type: Venue, status: active, title: "venue"}
+- {id: ad-x, type: Adapter, status: active, title: "adapter"}
+- {id: tf-x, type: Transform, status: active, title: "normalization"}
+- {id: ds-x, type: Dataset, status: active, title: "dataset"}
+- {id: exp-x, type: Experiment, status: active, title: "experiment"}
+- {id: edge-x, type: Edge, status: live, title: "edge"}
+- {id: sa-x, type: SettlementAsset, status: active, title: "stablecoin"}
+- {id: repo-x, type: Repo, status: active, title: "repo"}

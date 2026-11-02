@@ -1,0 +1,35 @@
+$ research_graph priorities apply --set wi-free=P3 --write
+exit: 0
+--- stdout
+wi-free: -? -> P3 (the owner's value)
+wi-todo: P2? -> P2
+2 priority(ies) written; now: research_graph kanban --write, then check
+--- stderr
+--- file research-lab/notes/graph/nodes/work.yaml
+# work layer of the fixture
+- {id: spec-draft, type: Spec, status: proposed, title: "Draft spec", anchor: "docs/specs/2026-10-01-draft.md#top"}
+- {id: spec-live, type: Spec, status: active, title: "Validated spec", anchor: "docs/specs/2026-09-01-live.md#top",
+   props: {validated: "2026-09-02 by Ada"}}
+- {id: spec-gov, type: Spec, status: active, title: "Governance", anchor: "docs/specs/2026-10-20-gov.md#top",
+   props: {validated: "2026-10-21", open: "Q3 (command shape)"}}
+- {id: ms-top, type: Milestone, status: pending, title: "Top", props: {trigger: "all done"}}
+- {id: ms-sub, type: Milestone, status: pending, title: "Sub"}
+- {id: ms-old, type: Milestone, status: reached, title: "Old", props: {trigger: "t", reached: "2026-09-15: evidence"}}
+- {id: ms-older, type: Milestone, status: reached, title: "Older", props: {reached: "2026-08-01: earlier"}}
+- {id: wi-doing, type: WorkItem, status: doing, title: "Doing item", props: {priority: P1, repo: ops-repo}}
+- {id: wi-todo, type: WorkItem, status: todo, title: "Todo after doing",
+   props: {priority: P2, priority_reason: "after wi-doing", spec: spec-draft}}
+- {id: wi-free, type: WorkItem, status: todo, title: "Free item about funding",
+   props: {pr: "quant-marketdata #16", after: "wi-doing stage 1",
+           priority: P3}}
+- {id: wi-ext, type: WorkItem, status: blocked, title: "Waits on Ada",
+   props: {external_blocker: "Ada decides", open: "which venue"}}
+- {id: wi-ext2, type: WorkItem, status: blocked, title: "Waits on the cluster",
+   props: {external_blocker: "the cluster is not there", note: "moves ms-top"}}
+- {id: wi-prereq, type: WorkItem, status: todo, title: "Prerequisite outside the milestone", props: {note: "see ms-top"}}
+- {id: wi-done-dated, type: WorkItem, status: done, title: "Closed with a date",
+   props: {pr: "research-lab #5", done: "2026-10-20: shipped it"}}
+- {id: wi-done-undated, type: WorkItem, status: done, title: "Closed without a date"}
+- {id: wi-dropped, type: WorkItem, status: dropped, title: "Dropped", props: {done: "2026-10-10 replaced by wi-free"}}
+- {id: adr-1, type: ADR, status: active, title: "A decision"}
+- {id: exp-1, type: Experiment, status: open, title: "Funding experiment"}

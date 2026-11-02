@@ -1,0 +1,24 @@
+$ research_graph items --all --repo ops-repo --json
+exit: 0
+--- stdout
+[
+ {
+  "id": "wi-doing",
+  "type": "WorkItem",
+  "status": "doing",
+  "title": "Doing item",
+  "priority": "P1",
+  "priority_proposed": null,
+  "repos": [
+   "ops-repo"
+  ],
+  "milestones": [
+   "ms-sub"
+  ],
+  "blockers": [
+   "wi-prereq"
+  ],
+  "external_blocker": null
+ }
+]
+--- stderr

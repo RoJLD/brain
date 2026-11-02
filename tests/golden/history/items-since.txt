@@ -1,0 +1,48 @@
+$ research_graph items --all --since 2026-10-03 --json
+exit: 0
+--- stdout
+[
+ {
+  "id": "wi-a",
+  "type": "WorkItem",
+  "status": "doing",
+  "title": "wi-a",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "research-lab"
+  ],
+  "milestones": [],
+  "blockers": [],
+  "external_blocker": null
+ },
+ {
+  "id": "wi-d",
+  "type": "WorkItem",
+  "status": "doing",
+  "title": "wi-d",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "repo"
+  ],
+  "milestones": [],
+  "blockers": [],
+  "external_blocker": null
+ },
+ {
+  "id": "wi-b",
+  "type": "WorkItem",
+  "status": "done",
+  "title": "b, renamed",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "repo"
+  ],
+  "milestones": [],
+  "blockers": [],
+  "external_blocker": null
+ }
+]
+--- stderr

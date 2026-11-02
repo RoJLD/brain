@@ -1,0 +1,5 @@
+$ research_graph build
+exit: 0
+--- stdout
+loaded 11 nodes, 11 edges
+--- stderr

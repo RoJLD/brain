@@ -1,0 +1,3 @@
+# Work edges: part_of (an item or sub-milestone moves a milestone), depends_on (an item waits on another),
+# specified_by (an item follows a spec), decided_by (a node follows an ADR), supersedes (an ADR replaces another).
+[]

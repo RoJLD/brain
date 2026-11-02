@@ -1,0 +1,3 @@
+- {from: adr-new, to: adr-old, type: supersedes}
+- {from: ad-x, to: adr-old, type: decided_by}
+- {from: edge-x, to: sdr-x, type: decided_by}

@@ -1,0 +1,3 @@
+- {from: ds-x, to: ad-x, type: provided_by}
+- {from: ds-x, to: tf-x, type: derived_from}
+- {from: edge-x, to: ds-x, type: depends_on}

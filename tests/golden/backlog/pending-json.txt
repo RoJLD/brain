@@ -1,0 +1,93 @@
+$ research_graph pending --json
+exit: 0
+--- stdout
+{
+ "open_questions": [
+  {
+   "id": "spec-gov",
+   "type": "Spec",
+   "status": "active",
+   "title": "Governance",
+   "open": "Q3 (command shape)"
+  },
+  {
+   "id": "wi-ext",
+   "type": "WorkItem",
+   "status": "blocked",
+   "title": "Waits on Ada",
+   "open": "which venue"
+  }
+ ],
+ "spec_questions": [
+  {
+   "id": "spec-draft",
+   "type": "Spec",
+   "status": "proposed",
+   "title": "Draft spec",
+   "date": "2026-10-01",
+   "anchor": "docs/specs/2026-10-01-draft.md#top",
+   "questions": [
+    {
+     "label": "1",
+     "question": "Cadence: daily or hourly? A second line of the same question.",
+     "section": "5. Open questions",
+     "answered": false,
+     "decision": null
+    },
+    {
+     "label": "3",
+     "question": "Mirror the store?",
+     "section": "5. Open questions",
+     "answered": false,
+     "decision": null
+    }
+   ]
+  },
+  {
+   "id": "spec-gov",
+   "type": "Spec",
+   "status": "active",
+   "title": "Governance",
+   "date": "2026-10-20",
+   "anchor": "docs/specs/2026-10-20-gov.md#top",
+   "questions": [
+    {
+     "label": "Q3",
+     "question": "reformulée : one command or one per project? (one choice)",
+     "section": "8. Décisions de Ada (2026-10-21)",
+     "answered": false,
+     "decision": "Ouverte, reformulée ci-dessous"
+    },
+    {
+     "label": "-1",
+     "question": "which database?",
+     "section": "8. Décisions de Ada (2026-10-21)",
+     "answered": false,
+     "decision": null
+    }
+   ]
+  }
+ ],
+ "blocked_on_owner": [
+  {
+   "id": "wi-ext",
+   "type": "WorkItem",
+   "status": "blocked",
+   "title": "Waits on Ada",
+   "external_blocker": "Ada decides"
+  }
+ ],
+ "proposed_specs": [
+  {
+   "id": "spec-draft",
+   "type": "Spec",
+   "status": "proposed",
+   "title": "Draft spec",
+   "date": "2026-10-01",
+   "age_days": 32,
+   "anchor": "docs/specs/2026-10-01-draft.md#top"
+  }
+ ],
+ "owner": "Ada"
+}
+--- stderr

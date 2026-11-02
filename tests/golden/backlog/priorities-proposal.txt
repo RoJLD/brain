@@ -1,0 +1,9 @@
+$ research_graph priorities proposal
+exit: 0
+--- stdout
+## P2 (1)
+
+| Item | Status | Title | Why |
+|---|---|---|---|
+| `wi-todo` | todo | Todo after doing | after wi-doing |
+--- stderr

@@ -1,0 +1,39 @@
+$ research_graph sync
+exit: 0
+--- stdout
+- {id: exp002_child, type: Experiment, title: "Child of the base", status: active}
+- {id: exp003_verdict, type: Experiment, title: "exp003", status: active}
+- {id: sdr-2026-09-01-funding-horizon-fixed-at-8-h, type: SDR, title: "Funding horizon fixed at 8 h", status: active, anchor: "notes/scientific_decisions.md#2026-09-01-funding-horizon-fixed-at-8-h"}
+- {id: adr-2026-10-01-store-format-yaml-flow-nodes, type: ADR, title: "Store format: YAML flow nodes", status: active, anchor: "notes/decisions.md#2026-10-01-store-format-yaml-flow-nodes"}
+- {id: adr-2026-10-02-accents-symbols-parentheses, type: ADR, title: "Accents é, symbols & (parentheses)", status: active, anchor: "notes/decisions.md#2026-10-02-accents-symbols-parentheses"}
+- {id: adr-2026-10-02-accents-symbols-parentheses-1, type: ADR, title: "Accents é, symbols & (parentheses)", status: active, anchor: "notes/decisions.md#2026-10-02-accents-symbols-parentheses"}
+- {id: adr-2026-10-03-reversal-store-format-yaml-flow-nodes, type: ADR, title: "REVERSAL: Store format: YAML flow nodes", status: active, anchor: "notes/decisions.md#2026-10-03-reversal-store-format-yaml-flow-nodes"}
+- {id: adr-2026-10-04-entry, type: ADR, title: "ADR 2026-10-04", status: active, anchor: "notes/decisions.md#2026-10-04-entry"}
+- {id: M-y, type: Hypothesis, title: "M-y — STUB (declared by exp003_verdict; needs curated prose)", status: planned, level: L1}
+- {id: h2-exp002_child, type: Hypothesis, title: "beta > 0", status: proposed, level: L2}
+- {id: h2-exp003_verdict, type: Hypothesis, title: "p", status: proposed, level: L2}
+- {id: v-exp003_verdict, type: Verdict, title: "exp003_verdict stats.p=0.01 -> validates (auto from diagnostics)", status: validated}
+- {id: h2-sweep-fam-classifiers=iorb, type: Hypothesis, title: "fam cell classifiers=iorb: p", status: proposed, level: L2}
+- {id: v-sweep-fam-classifiers=iorb, type: Verdict, title: "fam/classifiers=iorb family-FDR -> validates (1 surv)", status: validated}
+- {id: h2-sweep-fam-classifiers=cp_ois, type: Hypothesis, title: "fam cell classifiers=cp_ois: p", status: proposed, level: L2}
+- {id: v-sweep-fam-classifiers=cp_ois, type: Verdict, title: "fam/classifiers=cp_ois family-FDR -> refutes (0 surv)", status: rejected}
+- {id: h2-explore-camp-classifiers=-vix-__n_regimes=2, type: Hypothesis, title: "fam cell classifiers=['vix']__n_regimes=2 (campaign camp)", status: proposed, level: L2}
+- {id: v-explore-camp-classifiers=-vix-__n_regimes=2, type: Verdict, title: "camp/classifiers=['vix']__n_regimes=2 discovery -> refutes (held_out 2024-01-01)", status: rejected}
+- {id: h2-explore-camp-classifiers=iorb, type: Hypothesis, title: "fam cell classifiers=iorb (campaign camp)", status: proposed, level: L2}
+- {id: v-explore-camp-classifiers=iorb, type: Verdict, title: "camp/classifiers=iorb discovery -> validates (held_out 2024-01-01)", status: validated}
+- {from: exp002_child, to: exp001_base, type: refines}
+- {from: h2-exp002_child, to: M-x, type: instantiates}
+- {from: exp002_child, to: h2-exp002_child, type: tests}
+- {from: h2-exp003_verdict, to: M-y, type: instantiates}
+- {from: exp003_verdict, to: h2-exp003_verdict, type: tests}
+- {from: exp003_verdict, to: v-exp003_verdict, type: produces}
+- {from: v-exp003_verdict, to: M-y, type: validates}
+- {from: h2-sweep-fam-classifiers=iorb, to: M-x, type: instantiates}
+- {from: v-sweep-fam-classifiers=iorb, to: M-x, type: validates}
+- {from: h2-sweep-fam-classifiers=cp_ois, to: M-x, type: instantiates}
+- {from: v-sweep-fam-classifiers=cp_ois, to: M-x, type: refutes}
+- {from: h2-explore-camp-classifiers=-vix-__n_regimes=2, to: M-x, type: instantiates}
+- {from: v-explore-camp-classifiers=-vix-__n_regimes=2, to: M-x, type: refutes}
+- {from: h2-explore-camp-classifiers=iorb, to: M-x, type: instantiates}
+- {from: v-explore-camp-classifiers=iorb, to: M-x, type: validates}
+--- stderr

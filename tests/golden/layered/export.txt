@@ -1,0 +1,478 @@
+$ research_graph export-gitnexus --out {out}
+exit: 0
+--- stdout
+wrote <ROOT>/out/payload.json: 23 nodes, 22 edges, 12 DDL statements
+--- stderr
+--- file out/payload.json
+{
+ "ddl": [
+  "CREATE NODE TABLE Node(id STRING, type STRING, title STRING, status STRING, layer STRING, anchor STRING, level STRING, PRIMARY KEY(id))",
+  "CREATE REL TABLE decided_by(FROM Node TO Node, id STRING)",
+  "CREATE REL TABLE delivers(FROM Node TO Node, id STRING)",
+  "CREATE REL TABLE depends_on(FROM Node TO Node, id STRING)",
+  "CREATE REL TABLE derived_from(FROM Node TO Node, id STRING)",
+  "CREATE REL TABLE gated_by(FROM Node TO Node, id STRING)",
+  "CREATE REL TABLE hosted_in(FROM Node TO Node, id STRING)",
+  "CREATE REL TABLE part_of(FROM Node TO Node, id STRING)",
+  "CREATE REL TABLE provided_by(FROM Node TO Node, id STRING)",
+  "CREATE REL TABLE settles_in(FROM Node TO Node, id STRING)",
+  "CREATE REL TABLE supersedes(FROM Node TO Node, id STRING)",
+  "CREATE REL TABLE uses(FROM Node TO Node, id STRING)"
+ ],
+ "nodes": [
+  {
+   "table": "Node",
+   "props": {
+    "id": "ad-x",
+    "type": "Adapter",
+    "title": "adapter",
+    "status": "active",
+    "layer": "data",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "adr-new",
+    "type": "ADR",
+    "title": "new adapter decision",
+    "status": "active",
+    "layer": "decisions",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "adr-old",
+    "type": "ADR",
+    "title": "old adapter decision",
+    "status": "superseded",
+    "layer": "decisions",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "ds-x",
+    "type": "Dataset",
+    "title": "dataset",
+    "status": "active",
+    "layer": "data",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "edge-x",
+    "type": "Edge",
+    "title": "edge",
+    "status": "live",
+    "layer": "research",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "exp-x",
+    "type": "Experiment",
+    "title": "experiment",
+    "status": "active",
+    "layer": "research",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "ms-1",
+    "type": "Milestone",
+    "title": "m1",
+    "status": "pending",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "ms-sub",
+    "type": "Milestone",
+    "title": "sub",
+    "status": "pending",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "repo-x",
+    "type": "Repo",
+    "title": "repo",
+    "status": "active",
+    "layer": "platform",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "sa-x",
+    "type": "SettlementAsset",
+    "title": "stablecoin",
+    "status": "active",
+    "layer": "risk",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "sdr-x",
+    "type": "SDR",
+    "title": "edge scope",
+    "status": "active",
+    "layer": "decisions",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "spec-draft",
+    "type": "Spec",
+    "title": "draft spec",
+    "status": "proposed",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "spec-ok",
+    "type": "Spec",
+    "title": "validated spec",
+    "status": "active",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "tf-x",
+    "type": "Transform",
+    "title": "normalization",
+    "status": "active",
+    "layer": "data",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "v-open",
+    "type": "Verdict",
+    "title": "open verdict",
+    "status": "open",
+    "layer": "research",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "venue-x",
+    "type": "Venue",
+    "title": "venue",
+    "status": "active",
+    "layer": "data",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "wi-a",
+    "type": "WorkItem",
+    "title": "a: needs done + validated spec",
+    "status": "todo",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "wi-b",
+    "type": "WorkItem",
+    "title": "b: needs a",
+    "status": "todo",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "wi-c",
+    "type": "WorkItem",
+    "title": "c: needs b",
+    "status": "todo",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "wi-d",
+    "type": "WorkItem",
+    "title": "d: needs draft spec",
+    "status": "todo",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "wi-done",
+    "type": "WorkItem",
+    "title": "done",
+    "status": "done",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "wi-ext",
+    "type": "WorkItem",
+    "title": "external blocker",
+    "status": "blocked",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Node",
+   "props": {
+    "id": "wi-gated",
+    "type": "WorkItem",
+    "title": "gated by an open verdict",
+    "status": "todo",
+    "layer": "work",
+    "anchor": "",
+    "level": ""
+   }
+  }
+ ],
+ "edges": [
+  {
+   "table": "part_of",
+   "from": "ms-sub",
+   "to": "ms-1",
+   "props": {
+    "id": "ms-sub->part_of->ms-1"
+   }
+  },
+  {
+   "table": "delivers",
+   "from": "wi-done",
+   "to": "ad-x",
+   "props": {
+    "id": "wi-done->delivers->ad-x"
+   }
+  },
+  {
+   "table": "part_of",
+   "from": "wi-done",
+   "to": "ms-1",
+   "props": {
+    "id": "wi-done->part_of->ms-1"
+   }
+  },
+  {
+   "table": "depends_on",
+   "from": "wi-a",
+   "to": "wi-done",
+   "props": {
+    "id": "wi-a->depends_on->wi-done"
+   }
+  },
+  {
+   "table": "depends_on",
+   "from": "wi-a",
+   "to": "spec-ok",
+   "props": {
+    "id": "wi-a->depends_on->spec-ok"
+   }
+  },
+  {
+   "table": "part_of",
+   "from": "wi-a",
+   "to": "ms-sub",
+   "props": {
+    "id": "wi-a->part_of->ms-sub"
+   }
+  },
+  {
+   "table": "depends_on",
+   "from": "wi-b",
+   "to": "wi-a",
+   "props": {
+    "id": "wi-b->depends_on->wi-a"
+   }
+  },
+  {
+   "table": "part_of",
+   "from": "wi-b",
+   "to": "ms-sub",
+   "props": {
+    "id": "wi-b->part_of->ms-sub"
+   }
+  },
+  {
+   "table": "depends_on",
+   "from": "wi-c",
+   "to": "wi-b",
+   "props": {
+    "id": "wi-c->depends_on->wi-b"
+   }
+  },
+  {
+   "table": "part_of",
+   "from": "wi-c",
+   "to": "ms-1",
+   "props": {
+    "id": "wi-c->part_of->ms-1"
+   }
+  },
+  {
+   "table": "depends_on",
+   "from": "wi-d",
+   "to": "spec-draft",
+   "props": {
+    "id": "wi-d->depends_on->spec-draft"
+   }
+  },
+  {
+   "table": "gated_by",
+   "from": "wi-gated",
+   "to": "v-open",
+   "props": {
+    "id": "wi-gated->gated_by->v-open"
+   }
+  },
+  {
+   "table": "settles_in",
+   "from": "venue-x",
+   "to": "sa-x",
+   "props": {
+    "id": "venue-x->settles_in->sa-x"
+   }
+  },
+  {
+   "table": "depends_on",
+   "from": "ad-x",
+   "to": "venue-x",
+   "props": {
+    "id": "ad-x->depends_on->venue-x"
+   }
+  },
+  {
+   "table": "hosted_in",
+   "from": "ad-x",
+   "to": "repo-x",
+   "props": {
+    "id": "ad-x->hosted_in->repo-x"
+   }
+  },
+  {
+   "table": "decided_by",
+   "from": "ad-x",
+   "to": "adr-old",
+   "props": {
+    "id": "ad-x->decided_by->adr-old"
+   }
+  },
+  {
+   "table": "provided_by",
+   "from": "ds-x",
+   "to": "ad-x",
+   "props": {
+    "id": "ds-x->provided_by->ad-x"
+   }
+  },
+  {
+   "table": "derived_from",
+   "from": "ds-x",
+   "to": "tf-x",
+   "props": {
+    "id": "ds-x->derived_from->tf-x"
+   }
+  },
+  {
+   "table": "uses",
+   "from": "exp-x",
+   "to": "ds-x",
+   "props": {
+    "id": "exp-x->uses->ds-x"
+   }
+  },
+  {
+   "table": "depends_on",
+   "from": "edge-x",
+   "to": "ds-x",
+   "props": {
+    "id": "edge-x->depends_on->ds-x"
+   }
+  },
+  {
+   "table": "decided_by",
+   "from": "edge-x",
+   "to": "sdr-x",
+   "props": {
+    "id": "edge-x->decided_by->sdr-x"
+   }
+  },
+  {
+   "table": "supersedes",
+   "from": "adr-new",
+   "to": "adr-old",
+   "props": {
+    "id": "adr-new->supersedes->adr-old"
+   }
+  }
+ ]
+}

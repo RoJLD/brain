@@ -1,0 +1,6 @@
+$ research_graph gated
+exit: 1
+--- stdout
+--- stderr
+1 store validation error(s):
+edge exp009_gone->exp001_base: unknown source 'exp009_gone'

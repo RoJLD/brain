@@ -1,0 +1,6 @@
+$ research_graph work-frontier
+exit: 0
+--- stdout
+wi-free  Free item about funding
+wi-prereq  Prerequisite outside the milestone
+--- stderr

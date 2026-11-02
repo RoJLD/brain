@@ -1,0 +1,10 @@
+$ research_graph asof 2026-10-04 --all
+exit: 0
+--- stdout
+backlog as of 2026-10-04: the store at <commit-3> (2026-10-04, #7)
+wi-a     doing    -    wi-a
+wi-b     todo     -    wi-b
+wi-c     todo     -    wi-c
+wi-gone  todo     -    wi-gone
+4 item(s): doing 1, todo 3
+--- stderr

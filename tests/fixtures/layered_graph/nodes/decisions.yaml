@@ -1,0 +1,3 @@
+- {id: adr-old, type: ADR, status: superseded, title: "old adapter decision"}
+- {id: adr-new, type: ADR, status: active, title: "new adapter decision"}
+- {id: sdr-x, type: SDR, status: active, title: "edge scope"}

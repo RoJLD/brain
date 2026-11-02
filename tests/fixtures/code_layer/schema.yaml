@@ -1,0 +1,10 @@
+node_types: [Adapter, Transform, Dataset, Edge, Repo, CodeRef]
+edge_types: [provided_by, derived_from, depends_on, hosted_in, implemented_by]
+statuses: [active, planned, retired, proposed]
+layers:
+  data: [Adapter, Transform, Dataset]
+  research: [Edge]
+  platform: [Repo]
+  code: [CodeRef]
+status_by_type:
+  CodeRef: [active, planned, retired]

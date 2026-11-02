@@ -1,0 +1,144 @@
+$ research_graph items --all --json
+exit: 0
+--- stdout
+[
+ {
+  "id": "wi-doing",
+  "type": "WorkItem",
+  "status": "doing",
+  "title": "Doing item",
+  "priority": "P1",
+  "priority_proposed": null,
+  "repos": [
+   "ops-repo"
+  ],
+  "milestones": [
+   "ms-sub"
+  ],
+  "blockers": [
+   "wi-prereq"
+  ],
+  "external_blocker": null
+ },
+ {
+  "id": "wi-todo",
+  "type": "WorkItem",
+  "status": "todo",
+  "title": "Todo after doing",
+  "priority": null,
+  "priority_proposed": "P2",
+  "repos": [
+   "research-lab"
+  ],
+  "milestones": [
+   "ms-sub"
+  ],
+  "blockers": [
+   "wi-doing"
+  ],
+  "external_blocker": null
+ },
+ {
+  "id": "wi-free",
+  "type": "WorkItem",
+  "status": "todo",
+  "title": "Free item about funding",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "quant-marketdata"
+  ],
+  "milestones": [],
+  "blockers": [],
+  "external_blocker": null
+ },
+ {
+  "id": "wi-prereq",
+  "type": "WorkItem",
+  "status": "todo",
+  "title": "Prerequisite outside the milestone",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "research-lab"
+  ],
+  "milestones": [],
+  "blockers": [],
+  "external_blocker": null
+ },
+ {
+  "id": "wi-ext",
+  "type": "WorkItem",
+  "status": "blocked",
+  "title": "Waits on Ada",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "research-lab"
+  ],
+  "milestones": [],
+  "blockers": [],
+  "external_blocker": "Ada decides"
+ },
+ {
+  "id": "wi-ext2",
+  "type": "WorkItem",
+  "status": "blocked",
+  "title": "Waits on the cluster",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "research-lab"
+  ],
+  "milestones": [],
+  "blockers": [],
+  "external_blocker": "the cluster is not there"
+ },
+ {
+  "id": "wi-done-dated",
+  "type": "WorkItem",
+  "status": "done",
+  "title": "Closed with a date",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "research-lab"
+  ],
+  "milestones": [
+   "ms-top"
+  ],
+  "blockers": [],
+  "external_blocker": null
+ },
+ {
+  "id": "wi-done-undated",
+  "type": "WorkItem",
+  "status": "done",
+  "title": "Closed without a date",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "research-lab"
+  ],
+  "milestones": [
+   "ms-old"
+  ],
+  "blockers": [],
+  "external_blocker": null
+ },
+ {
+  "id": "wi-dropped",
+  "type": "WorkItem",
+  "status": "dropped",
+  "title": "Dropped",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "research-lab"
+  ],
+  "milestones": [],
+  "blockers": [],
+  "external_blocker": null
+ }
+]
+--- stderr

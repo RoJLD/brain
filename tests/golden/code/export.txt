@@ -1,0 +1,418 @@
+$ research_graph export-gitnexus --out {out} --mode typed
+exit: 0
+--- stdout
+wrote <ROOT>/out/payload.json: 18 nodes, 16 edges, 10 DDL statements
+--- stderr
+--- file out/payload.json
+{
+ "ddl": [
+  "CREATE NODE TABLE Adapter(id STRING, title STRING, status STRING, layer STRING, anchor STRING, level STRING, PRIMARY KEY(id))",
+  "CREATE NODE TABLE CodeRef(id STRING, title STRING, status STRING, layer STRING, anchor STRING, level STRING, repo STRING, path STRING, symbol STRING, PRIMARY KEY(id))",
+  "CREATE NODE TABLE Dataset(id STRING, title STRING, status STRING, layer STRING, anchor STRING, level STRING, PRIMARY KEY(id))",
+  "CREATE NODE TABLE Edge(id STRING, title STRING, status STRING, layer STRING, anchor STRING, level STRING, PRIMARY KEY(id))",
+  "CREATE NODE TABLE Repo(id STRING, title STRING, status STRING, layer STRING, anchor STRING, level STRING, PRIMARY KEY(id))",
+  "CREATE NODE TABLE Transform(id STRING, title STRING, status STRING, layer STRING, anchor STRING, level STRING, PRIMARY KEY(id))",
+  "CREATE REL TABLE depends_on(FROM Edge TO Dataset, id STRING)",
+  "CREATE REL TABLE derived_from(FROM Dataset TO Transform, id STRING)",
+  "CREATE REL TABLE implemented_by(FROM Adapter TO CodeRef, FROM Dataset TO CodeRef, FROM Edge TO CodeRef, FROM Transform TO CodeRef, id STRING)",
+  "CREATE REL TABLE provided_by(FROM Dataset TO Adapter, id STRING)"
+ ],
+ "nodes": [
+  {
+   "table": "Adapter",
+   "props": {
+    "id": "ad-x",
+    "title": "adapter",
+    "status": "active",
+    "layer": "data",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:absent-repo:absent_pkg/mod.py::f",
+    "title": "repo not checked out",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "absent-repo",
+    "path": "absent_pkg/mod.py",
+    "symbol": "f"
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:fake_pkg/broken.py::oops",
+    "title": "syntax error",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "fake_pkg/broken.py",
+    "symbol": "oops"
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:fake_pkg/gone.py::Thing",
+    "title": "file deleted",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "fake_pkg/gone.py",
+    "symbol": "Thing"
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:fake_pkg/old.py::Old",
+    "title": "kept for history",
+    "status": "retired",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "fake_pkg/old.py",
+    "symbol": "Old"
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:fake_pkg/store.py",
+    "title": "whole module",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "fake_pkg/store.py",
+    "symbol": ""
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:fake_pkg/venue.py::FakeVenue",
+    "title": "class",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "fake_pkg/venue.py",
+    "symbol": "FakeVenue"
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:fake_pkg/venue.py::FakeVenue.funding",
+    "title": "method",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "fake_pkg/venue.py",
+    "symbol": "FakeVenue.funding"
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:fake_pkg/venue.py::RATE_CAP",
+    "title": "annotated assignment",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "fake_pkg/venue.py",
+    "symbol": "RATE_CAP"
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:fake_pkg/venue.py::fast_path",
+    "title": "defined in an except block",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "fake_pkg/venue.py",
+    "symbol": "fast_path"
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:fake_pkg/venue.py::normalize",
+    "title": "function",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "fake_pkg/venue.py",
+    "symbol": "normalize"
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:fake_pkg/venue.py::renamed",
+    "title": "symbol renamed",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "fake_pkg/venue.py",
+    "symbol": "renamed"
+   }
+  },
+  {
+   "table": "CodeRef",
+   "props": {
+    "id": "code:fake-repo:scripts/run.ps1",
+    "title": "non-Python file at the repo root",
+    "status": "active",
+    "layer": "code",
+    "anchor": "",
+    "level": "",
+    "repo": "fake-repo",
+    "path": "scripts/run.ps1",
+    "symbol": ""
+   }
+  },
+  {
+   "table": "Dataset",
+   "props": {
+    "id": "ds-x",
+    "title": "dataset",
+    "status": "active",
+    "layer": "data",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Edge",
+   "props": {
+    "id": "edge-x",
+    "title": "trading edge",
+    "status": "proposed",
+    "layer": "research",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Repo",
+   "props": {
+    "id": "repo-absent-repo",
+    "title": "a repo that is not checked out",
+    "status": "active",
+    "layer": "platform",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Repo",
+   "props": {
+    "id": "repo-fake-repo",
+    "title": "fake sibling repo (src layout + scripts/)",
+    "status": "active",
+    "layer": "platform",
+    "anchor": "",
+    "level": ""
+   }
+  },
+  {
+   "table": "Transform",
+   "props": {
+    "id": "tf-x",
+    "title": "normalisation",
+    "status": "active",
+    "layer": "data",
+    "anchor": "",
+    "level": ""
+   }
+  }
+ ],
+ "edges": [
+  {
+   "table": "implemented_by",
+   "from": "ad-x",
+   "to": "code:fake-repo:fake_pkg/venue.py::FakeVenue",
+   "props": {
+    "id": "ad-x->implemented_by->code:fake-repo:fake_pkg/venue.py::FakeVenue"
+   },
+   "from_table": "Adapter",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "implemented_by",
+   "from": "ad-x",
+   "to": "code:fake-repo:fake_pkg/venue.py::FakeVenue.funding",
+   "props": {
+    "id": "ad-x->implemented_by->code:fake-repo:fake_pkg/venue.py::FakeVenue.funding"
+   },
+   "from_table": "Adapter",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "implemented_by",
+   "from": "ad-x",
+   "to": "code:fake-repo:fake_pkg/venue.py::fast_path",
+   "props": {
+    "id": "ad-x->implemented_by->code:fake-repo:fake_pkg/venue.py::fast_path"
+   },
+   "from_table": "Adapter",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "implemented_by",
+   "from": "ad-x",
+   "to": "code:absent-repo:absent_pkg/mod.py::f",
+   "props": {
+    "id": "ad-x->implemented_by->code:absent-repo:absent_pkg/mod.py::f"
+   },
+   "from_table": "Adapter",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "implemented_by",
+   "from": "ad-x",
+   "to": "code:fake-repo:fake_pkg/old.py::Old",
+   "props": {
+    "id": "ad-x->implemented_by->code:fake-repo:fake_pkg/old.py::Old"
+   },
+   "from_table": "Adapter",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "implemented_by",
+   "from": "tf-x",
+   "to": "code:fake-repo:fake_pkg/venue.py::normalize",
+   "props": {
+    "id": "tf-x->implemented_by->code:fake-repo:fake_pkg/venue.py::normalize"
+   },
+   "from_table": "Transform",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "implemented_by",
+   "from": "tf-x",
+   "to": "code:fake-repo:fake_pkg/venue.py::RATE_CAP",
+   "props": {
+    "id": "tf-x->implemented_by->code:fake-repo:fake_pkg/venue.py::RATE_CAP"
+   },
+   "from_table": "Transform",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "implemented_by",
+   "from": "tf-x",
+   "to": "code:fake-repo:fake_pkg/venue.py::renamed",
+   "props": {
+    "id": "tf-x->implemented_by->code:fake-repo:fake_pkg/venue.py::renamed"
+   },
+   "from_table": "Transform",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "implemented_by",
+   "from": "tf-x",
+   "to": "code:fake-repo:fake_pkg/broken.py::oops",
+   "props": {
+    "id": "tf-x->implemented_by->code:fake-repo:fake_pkg/broken.py::oops"
+   },
+   "from_table": "Transform",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "provided_by",
+   "from": "ds-x",
+   "to": "ad-x",
+   "props": {
+    "id": "ds-x->provided_by->ad-x"
+   },
+   "from_table": "Dataset",
+   "to_table": "Adapter"
+  },
+  {
+   "table": "derived_from",
+   "from": "ds-x",
+   "to": "tf-x",
+   "props": {
+    "id": "ds-x->derived_from->tf-x"
+   },
+   "from_table": "Dataset",
+   "to_table": "Transform"
+  },
+  {
+   "table": "implemented_by",
+   "from": "ds-x",
+   "to": "code:fake-repo:fake_pkg/store.py",
+   "props": {
+    "id": "ds-x->implemented_by->code:fake-repo:fake_pkg/store.py"
+   },
+   "from_table": "Dataset",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "implemented_by",
+   "from": "ds-x",
+   "to": "code:fake-repo:scripts/run.ps1",
+   "props": {
+    "id": "ds-x->implemented_by->code:fake-repo:scripts/run.ps1"
+   },
+   "from_table": "Dataset",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "implemented_by",
+   "from": "ds-x",
+   "to": "code:fake-repo:fake_pkg/gone.py::Thing",
+   "props": {
+    "id": "ds-x->implemented_by->code:fake-repo:fake_pkg/gone.py::Thing"
+   },
+   "from_table": "Dataset",
+   "to_table": "CodeRef"
+  },
+  {
+   "table": "depends_on",
+   "from": "edge-x",
+   "to": "ds-x",
+   "props": {
+    "id": "edge-x->depends_on->ds-x"
+   },
+   "from_table": "Edge",
+   "to_table": "Dataset"
+  },
+  {
+   "table": "implemented_by",
+   "from": "edge-x",
+   "to": "code:fake-repo:fake_pkg/venue.py::normalize",
+   "props": {
+    "id": "edge-x->implemented_by->code:fake-repo:fake_pkg/venue.py::normalize"
+   },
+   "from_table": "Edge",
+   "to_table": "CodeRef"
+  }
+ ]
+}

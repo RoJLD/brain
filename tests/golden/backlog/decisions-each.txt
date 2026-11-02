@@ -1,0 +1,149 @@
+$ research_graph decisions {each:*}
+=== adr-1
+exit: 0
+--- stdout
+decisions behind adr-1
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== exp-1
+exit: 0
+--- stdout
+decisions behind exp-1
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== ms-old
+exit: 0
+--- stdout
+decisions behind ms-old
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== ms-older
+exit: 0
+--- stdout
+decisions behind ms-older
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== ms-sub
+exit: 0
+--- stdout
+decisions behind ms-sub
+direct: 0
+inherited: 0
+specs (pre-registrations): 1
+  spec-draft [proposed] docs/specs/2026-10-01-draft.md#top
+--- stderr
+=== ms-top
+exit: 0
+--- stdout
+decisions behind ms-top
+direct: 0
+inherited: 0
+specs (pre-registrations): 1
+  spec-draft [proposed] docs/specs/2026-10-01-draft.md#top
+--- stderr
+=== spec-draft
+exit: 0
+--- stdout
+decisions behind spec-draft
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== spec-gov
+exit: 0
+--- stdout
+decisions behind spec-gov
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== spec-live
+exit: 0
+--- stdout
+decisions behind spec-live
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-doing
+exit: 0
+--- stdout
+decisions behind wi-doing
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-done-dated
+exit: 0
+--- stdout
+decisions behind wi-done-dated
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-done-undated
+exit: 0
+--- stdout
+decisions behind wi-done-undated
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-dropped
+exit: 0
+--- stdout
+decisions behind wi-dropped
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-ext
+exit: 0
+--- stdout
+decisions behind wi-ext
+direct: 1
+  adr-1 [ADR active] A decision
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-ext2
+exit: 0
+--- stdout
+decisions behind wi-ext2
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-free
+exit: 0
+--- stdout
+decisions behind wi-free
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-prereq
+exit: 0
+--- stdout
+decisions behind wi-prereq
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-todo
+exit: 0
+--- stdout
+decisions behind wi-todo
+direct: 0
+inherited: 0
+specs (pre-registrations): 1
+  spec-draft [proposed] docs/specs/2026-10-01-draft.md#top
+--- stderr

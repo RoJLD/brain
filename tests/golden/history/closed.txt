@@ -1,0 +1,6 @@
+$ research_graph closed
+exit: 0
+--- stdout
+2026-10-05  done     wi-b (git <commit-4>)  b, renamed
+1 closed item(s)
+--- stderr

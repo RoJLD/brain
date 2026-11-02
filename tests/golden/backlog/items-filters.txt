@@ -1,0 +1,6 @@
+$ research_graph items --priority P1 --priority none --text funding
+exit: 0
+--- stdout
+wi-free  todo     -    Free item about funding
+1 item(s): todo 1
+--- stderr

@@ -1,0 +1,10 @@
+$ research_graph closed --no-git
+exit: 0
+--- stdout
+2026-10-20  done     wi-done-dated  Closed with a date
+            pr research-lab #5  shipped it
+2026-10-10  dropped  wi-dropped  Dropped
+            replaced by wi-free
+????-??-??  done     wi-done-undated (no date)  Closed without a date
+3 closed item(s)
+--- stderr

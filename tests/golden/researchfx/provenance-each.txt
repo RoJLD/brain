@@ -1,0 +1,118 @@
+$ research_graph provenance {each:*}
+=== H1
+exit: 0
+--- stdout
+H1
+exp001
+exp002
+paper-x
+sdr-a
+sdr-b
+sdr-c
+v1
+--- stderr
+=== H2
+exit: 0
+--- stdout
+H2
+exp003
+v2
+--- stderr
+=== exp001
+exit: 0
+--- stdout
+H1
+exp001
+exp002
+paper-x
+sdr-a
+sdr-b
+sdr-c
+v1
+--- stderr
+=== exp002
+exit: 0
+--- stdout
+H1
+exp001
+exp002
+paper-x
+sdr-a
+sdr-b
+sdr-c
+v1
+--- stderr
+=== exp003
+exit: 0
+--- stdout
+H2
+exp003
+v2
+--- stderr
+=== paper-x
+exit: 0
+--- stdout
+H1
+exp001
+exp002
+paper-x
+sdr-a
+sdr-b
+sdr-c
+v1
+--- stderr
+=== sdr-a
+exit: 0
+--- stdout
+H1
+exp001
+exp002
+paper-x
+sdr-a
+sdr-b
+sdr-c
+v1
+--- stderr
+=== sdr-b
+exit: 0
+--- stdout
+H1
+exp001
+exp002
+paper-x
+sdr-a
+sdr-b
+sdr-c
+v1
+--- stderr
+=== sdr-c
+exit: 0
+--- stdout
+H1
+exp001
+exp002
+paper-x
+sdr-a
+sdr-b
+sdr-c
+v1
+--- stderr
+=== v1
+exit: 0
+--- stdout
+H1
+exp001
+exp002
+paper-x
+sdr-a
+sdr-b
+sdr-c
+v1
+--- stderr
+=== v2
+exit: 0
+--- stdout
+H2
+exp003
+v2
+--- stderr

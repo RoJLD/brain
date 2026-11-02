@@ -1,0 +1,756 @@
+$ research_graph item {each:*} --no-git --json
+=== adr-1
+exit: 0
+--- stdout
+{
+ "id": "adr-1",
+ "type": "ADR",
+ "status": "active",
+ "title": "A decision",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {},
+ "out": [],
+ "in": [
+  {
+   "id": "wi-ext",
+   "type": "WorkItem",
+   "status": "blocked",
+   "title": "Waits on Ada",
+   "edge": "decided_by"
+  }
+ ],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== exp-1
+exit: 0
+--- stdout
+{
+ "id": "exp-1",
+ "type": "Experiment",
+ "status": "open",
+ "title": "Funding experiment",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {},
+ "out": [],
+ "in": [],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== ms-old
+exit: 0
+--- stdout
+{
+ "id": "ms-old",
+ "type": "Milestone",
+ "status": "reached",
+ "title": "Old",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {
+  "trigger": "t",
+  "reached": "2026-09-15: evidence"
+ },
+ "out": [],
+ "in": [
+  {
+   "id": "wi-done-undated",
+   "type": "WorkItem",
+   "status": "done",
+   "title": "Closed without a date",
+   "edge": "part_of"
+  }
+ ],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== ms-older
+exit: 0
+--- stdout
+{
+ "id": "ms-older",
+ "type": "Milestone",
+ "status": "reached",
+ "title": "Older",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {
+  "reached": "2026-08-01: earlier"
+ },
+ "out": [],
+ "in": [],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== ms-sub
+exit: 0
+--- stdout
+{
+ "id": "ms-sub",
+ "type": "Milestone",
+ "status": "pending",
+ "title": "Sub",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [
+  "ms-top"
+ ],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {},
+ "out": [
+  {
+   "id": "ms-top",
+   "type": "Milestone",
+   "status": "pending",
+   "title": "Top",
+   "edge": "part_of"
+  }
+ ],
+ "in": [
+  {
+   "id": "wi-doing",
+   "type": "WorkItem",
+   "status": "doing",
+   "title": "Doing item",
+   "edge": "part_of"
+  },
+  {
+   "id": "wi-todo",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "Todo after doing",
+   "edge": "part_of"
+  }
+ ],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== ms-top
+exit: 0
+--- stdout
+{
+ "id": "ms-top",
+ "type": "Milestone",
+ "status": "pending",
+ "title": "Top",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {
+  "trigger": "all done"
+ },
+ "out": [],
+ "in": [
+  {
+   "id": "ms-sub",
+   "type": "Milestone",
+   "status": "pending",
+   "title": "Sub",
+   "edge": "part_of"
+  },
+  {
+   "id": "wi-done-dated",
+   "type": "WorkItem",
+   "status": "done",
+   "title": "Closed with a date",
+   "edge": "part_of"
+  }
+ ],
+ "mentions": [],
+ "mentioned_by": [
+  {
+   "id": "wi-ext2",
+   "type": "WorkItem",
+   "status": "blocked",
+   "title": "Waits on the cluster"
+  },
+  {
+   "id": "wi-prereq",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "Prerequisite outside the milestone"
+  }
+ ],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== spec-draft
+exit: 0
+--- stdout
+{
+ "id": "spec-draft",
+ "type": "Spec",
+ "status": "proposed",
+ "title": "Draft spec",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": "docs/specs/2026-10-01-draft.md#top",
+ "props": {},
+ "out": [],
+ "in": [
+  {
+   "id": "wi-todo",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "Todo after doing",
+   "edge": "specified_by"
+  }
+ ],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== spec-gov
+exit: 0
+--- stdout
+{
+ "id": "spec-gov",
+ "type": "Spec",
+ "status": "active",
+ "title": "Governance",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": "docs/specs/2026-10-20-gov.md#top",
+ "props": {
+  "validated": "2026-10-21",
+  "open": "Q3 (command shape)"
+ },
+ "out": [],
+ "in": [],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== spec-live
+exit: 0
+--- stdout
+{
+ "id": "spec-live",
+ "type": "Spec",
+ "status": "active",
+ "title": "Validated spec",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": "docs/specs/2026-09-01-live.md#top",
+ "props": {
+  "validated": "2026-09-02 by Ada"
+ },
+ "out": [],
+ "in": [],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== wi-doing
+exit: 0
+--- stdout
+{
+ "id": "wi-doing",
+ "type": "WorkItem",
+ "status": "doing",
+ "title": "Doing item",
+ "priority": "P1",
+ "priority_proposed": null,
+ "repos": [
+  "ops-repo"
+ ],
+ "milestones": [
+  "ms-sub"
+ ],
+ "blockers": [
+  "wi-prereq"
+ ],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {
+  "priority": "P1",
+  "repo": "ops-repo"
+ },
+ "out": [
+  {
+   "id": "wi-prereq",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "Prerequisite outside the milestone",
+   "edge": "depends_on"
+  },
+  {
+   "id": "ms-sub",
+   "type": "Milestone",
+   "status": "pending",
+   "title": "Sub",
+   "edge": "part_of"
+  }
+ ],
+ "in": [
+  {
+   "id": "wi-todo",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "Todo after doing",
+   "edge": "depends_on"
+  }
+ ],
+ "mentions": [],
+ "mentioned_by": [
+  {
+   "id": "wi-free",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "Free item about funding"
+  }
+ ],
+ "prerequisites": [
+  "wi-prereq"
+ ],
+ "waiting_on_it": [
+  "wi-todo"
+ ],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== wi-done-dated
+exit: 0
+--- stdout
+{
+ "id": "wi-done-dated",
+ "type": "WorkItem",
+ "status": "done",
+ "title": "Closed with a date",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [
+  "ms-top"
+ ],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {
+  "pr": "research-lab #5",
+  "done": "2026-10-20: shipped it"
+ },
+ "out": [
+  {
+   "id": "ms-top",
+   "type": "Milestone",
+   "status": "pending",
+   "title": "Top",
+   "edge": "part_of"
+  }
+ ],
+ "in": [],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== wi-done-undated
+exit: 0
+--- stdout
+{
+ "id": "wi-done-undated",
+ "type": "WorkItem",
+ "status": "done",
+ "title": "Closed without a date",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [
+  "ms-old"
+ ],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {},
+ "out": [
+  {
+   "id": "ms-old",
+   "type": "Milestone",
+   "status": "reached",
+   "title": "Old",
+   "edge": "part_of"
+  }
+ ],
+ "in": [],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== wi-dropped
+exit: 0
+--- stdout
+{
+ "id": "wi-dropped",
+ "type": "WorkItem",
+ "status": "dropped",
+ "title": "Dropped",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {
+  "done": "2026-10-10 replaced by wi-free"
+ },
+ "out": [],
+ "in": [],
+ "mentions": [
+  {
+   "id": "wi-free",
+   "type": "WorkItem",
+   "status": "todo",
+   "title": "Free item about funding"
+  }
+ ],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== wi-ext
+exit: 0
+--- stdout
+{
+ "id": "wi-ext",
+ "type": "WorkItem",
+ "status": "blocked",
+ "title": "Waits on Ada",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": "Ada decides",
+ "anchor": null,
+ "props": {
+  "external_blocker": "Ada decides",
+  "open": "which venue"
+ },
+ "out": [
+  {
+   "id": "adr-1",
+   "type": "ADR",
+   "status": "active",
+   "title": "A decision",
+   "edge": "decided_by"
+  }
+ ],
+ "in": [],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== wi-ext2
+exit: 0
+--- stdout
+{
+ "id": "wi-ext2",
+ "type": "WorkItem",
+ "status": "blocked",
+ "title": "Waits on the cluster",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": "the cluster is not there",
+ "anchor": null,
+ "props": {
+  "external_blocker": "the cluster is not there",
+  "note": "moves ms-top"
+ },
+ "out": [],
+ "in": [],
+ "mentions": [
+  {
+   "id": "ms-top",
+   "type": "Milestone",
+   "status": "pending",
+   "title": "Top"
+  }
+ ],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== wi-free
+exit: 0
+--- stdout
+{
+ "id": "wi-free",
+ "type": "WorkItem",
+ "status": "todo",
+ "title": "Free item about funding",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "quant-marketdata"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {
+  "pr": "quant-marketdata #16",
+  "after": "wi-doing stage 1"
+ },
+ "out": [],
+ "in": [],
+ "mentions": [
+  {
+   "id": "wi-doing",
+   "type": "WorkItem",
+   "status": "doing",
+   "title": "Doing item"
+  }
+ ],
+ "mentioned_by": [
+  {
+   "id": "wi-dropped",
+   "type": "WorkItem",
+   "status": "dropped",
+   "title": "Dropped"
+  }
+ ],
+ "prerequisites": [],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== wi-prereq
+exit: 0
+--- stdout
+{
+ "id": "wi-prereq",
+ "type": "WorkItem",
+ "status": "todo",
+ "title": "Prerequisite outside the milestone",
+ "priority": null,
+ "priority_proposed": null,
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [],
+ "blockers": [],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {
+  "note": "see ms-top"
+ },
+ "out": [],
+ "in": [
+  {
+   "id": "wi-doing",
+   "type": "WorkItem",
+   "status": "doing",
+   "title": "Doing item",
+   "edge": "depends_on"
+  }
+ ],
+ "mentions": [
+  {
+   "id": "ms-top",
+   "type": "Milestone",
+   "status": "pending",
+   "title": "Top"
+  }
+ ],
+ "mentioned_by": [],
+ "prerequisites": [],
+ "waiting_on_it": [
+  "wi-doing"
+ ],
+ "history": null,
+ "history_error": null
+}
+--- stderr
+=== wi-todo
+exit: 0
+--- stdout
+{
+ "id": "wi-todo",
+ "type": "WorkItem",
+ "status": "todo",
+ "title": "Todo after doing",
+ "priority": null,
+ "priority_proposed": "P2",
+ "repos": [
+  "research-lab"
+ ],
+ "milestones": [
+  "ms-sub"
+ ],
+ "blockers": [
+  "wi-doing"
+ ],
+ "external_blocker": null,
+ "anchor": null,
+ "props": {
+  "priority_proposed": "P2",
+  "priority_reason": "after wi-doing",
+  "spec": "spec-draft"
+ },
+ "out": [
+  {
+   "id": "wi-doing",
+   "type": "WorkItem",
+   "status": "doing",
+   "title": "Doing item",
+   "edge": "depends_on"
+  },
+  {
+   "id": "ms-sub",
+   "type": "Milestone",
+   "status": "pending",
+   "title": "Sub",
+   "edge": "part_of"
+  },
+  {
+   "id": "spec-draft",
+   "type": "Spec",
+   "status": "proposed",
+   "title": "Draft spec",
+   "edge": "specified_by"
+  }
+ ],
+ "in": [],
+ "mentions": [],
+ "mentioned_by": [],
+ "prerequisites": [
+  "wi-doing"
+ ],
+ "waiting_on_it": [],
+ "history": null,
+ "history_error": null
+}
+--- stderr

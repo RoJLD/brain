@@ -1,0 +1,27 @@
+$ research_graph closed --no-git --json --since 2026-10-15
+exit: 0
+--- stdout
+[
+ {
+  "id": "wi-done-dated",
+  "type": "WorkItem",
+  "status": "done",
+  "title": "Closed with a date",
+  "priority": null,
+  "priority_proposed": null,
+  "repos": [
+   "research-lab"
+  ],
+  "milestones": [
+   "ms-top"
+  ],
+  "blockers": [],
+  "external_blocker": null,
+  "date": "2026-10-20",
+  "date_source": "props.done",
+  "commit": null,
+  "pr": "research-lab #5",
+  "outcome": "shipped it"
+ }
+]
+--- stderr

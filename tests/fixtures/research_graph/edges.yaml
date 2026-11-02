@@ -1,0 +1,11 @@
+- {from: exp001, to: H1, type: tests}
+- {from: exp002, to: H1, type: tests}
+- {from: exp003, to: H2, type: tests}
+- {from: exp001, to: sdr-a, type: decided_by}
+- {from: sdr-b, to: sdr-a, type: refines}
+- {from: sdr-c, to: sdr-a, type: supersedes}
+- {from: exp001, to: v1, type: produces}
+- {from: v1, to: H1, type: validates}
+- {from: exp002, to: v1, type: gated_by}
+- {from: exp003, to: v2, type: gated_by}
+- {from: sdr-a, to: paper-x, type: cites}

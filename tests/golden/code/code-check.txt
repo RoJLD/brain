@@ -1,0 +1,119 @@
+$ research_graph code-check --platform-root {root} --json {out}
+exit: 1
+--- stdout
+code-check @ <ROOT>
+  absent-repo: not checked out
+  fake-repo: not a git checkout
+
+  SKIPPED        code:absent-repo:absent_pkg/mod.py::f  <- absent-repo not checked out under <ROOT>
+  UNPARSABLE     code:fake-repo:fake_pkg/broken.py::oops  <- SyntaxError: <message> (broken.py, line 1)
+  MISSING_FILE   code:fake-repo:fake_pkg/gone.py::Thing  <- neither src/fake_pkg/gone.py nor fake_pkg/gone.py in fake-repo
+  OK             code:fake-repo:fake_pkg/store.py  [module] src/fake_pkg/store.py
+  OK             code:fake-repo:fake_pkg/venue.py::FakeVenue  [class] src/fake_pkg/venue.py:7
+  OK             code:fake-repo:fake_pkg/venue.py::FakeVenue.funding  [method] src/fake_pkg/venue.py:10
+  OK             code:fake-repo:fake_pkg/venue.py::RATE_CAP  [assign] src/fake_pkg/venue.py:4
+  MISSING_SYMBOL code:fake-repo:fake_pkg/venue.py::fast_path  <- fast_path is not defined in src/fake_pkg/venue.py
+  OK             code:fake-repo:fake_pkg/venue.py::normalize  [function] src/fake_pkg/venue.py:14
+  MISSING_SYMBOL code:fake-repo:fake_pkg/venue.py::renamed  <- renamed is not defined in src/fake_pkg/venue.py
+  OK             code:fake-repo:scripts/run.ps1  [file] scripts/run.ps1
+
+MISSING_FILE 1, MISSING_SYMBOL 2, OK 6, SKIPPED 1, UNPARSABLE 1
+--- stderr
+--- file out/payload.json
+{
+ "platform_root": "<ROOT>",
+ "heads": {
+  "absent-repo": "not checked out",
+  "fake-repo": "not a git checkout"
+ },
+ "findings": [
+  {
+   "id": "code:absent-repo:absent_pkg/mod.py::f",
+   "verdict": "SKIPPED",
+   "file": null,
+   "kind": null,
+   "line": null,
+   "detail": "absent-repo not checked out under <ROOT>"
+  },
+  {
+   "id": "code:fake-repo:fake_pkg/broken.py::oops",
+   "verdict": "UNPARSABLE",
+   "file": "src/fake_pkg/broken.py",
+   "kind": null,
+   "line": null,
+   "detail": "SyntaxError: <message> (broken.py, line 1)"
+  },
+  {
+   "id": "code:fake-repo:fake_pkg/gone.py::Thing",
+   "verdict": "MISSING_FILE",
+   "file": null,
+   "kind": null,
+   "line": null,
+   "detail": "neither src/fake_pkg/gone.py nor fake_pkg/gone.py in fake-repo"
+  },
+  {
+   "id": "code:fake-repo:fake_pkg/store.py",
+   "verdict": "OK",
+   "file": "src/fake_pkg/store.py",
+   "kind": "module",
+   "line": null,
+   "detail": ""
+  },
+  {
+   "id": "code:fake-repo:fake_pkg/venue.py::FakeVenue",
+   "verdict": "OK",
+   "file": "src/fake_pkg/venue.py",
+   "kind": "class",
+   "line": 7,
+   "detail": ""
+  },
+  {
+   "id": "code:fake-repo:fake_pkg/venue.py::FakeVenue.funding",
+   "verdict": "OK",
+   "file": "src/fake_pkg/venue.py",
+   "kind": "method",
+   "line": 10,
+   "detail": ""
+  },
+  {
+   "id": "code:fake-repo:fake_pkg/venue.py::RATE_CAP",
+   "verdict": "OK",
+   "file": "src/fake_pkg/venue.py",
+   "kind": "assign",
+   "line": 4,
+   "detail": ""
+  },
+  {
+   "id": "code:fake-repo:fake_pkg/venue.py::fast_path",
+   "verdict": "MISSING_SYMBOL",
+   "file": "src/fake_pkg/venue.py",
+   "kind": null,
+   "line": null,
+   "detail": "fast_path is not defined in src/fake_pkg/venue.py"
+  },
+  {
+   "id": "code:fake-repo:fake_pkg/venue.py::normalize",
+   "verdict": "OK",
+   "file": "src/fake_pkg/venue.py",
+   "kind": "function",
+   "line": 14,
+   "detail": ""
+  },
+  {
+   "id": "code:fake-repo:fake_pkg/venue.py::renamed",
+   "verdict": "MISSING_SYMBOL",
+   "file": "src/fake_pkg/venue.py",
+   "kind": null,
+   "line": null,
+   "detail": "renamed is not defined in src/fake_pkg/venue.py"
+  },
+  {
+   "id": "code:fake-repo:scripts/run.ps1",
+   "verdict": "OK",
+   "file": "scripts/run.ps1",
+   "kind": "file",
+   "line": null,
+   "detail": ""
+  }
+ ]
+}

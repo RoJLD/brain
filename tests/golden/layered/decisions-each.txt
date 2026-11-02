@@ -1,0 +1,198 @@
+$ research_graph decisions {each:*}
+=== ad-x
+exit: 0
+--- stdout
+decisions behind ad-x
+direct: 1
+  adr-old [ADR superseded] old adapter decision  -> superseded by adr-new
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== adr-new
+exit: 0
+--- stdout
+decisions behind adr-new
+direct: 1
+  adr-old [ADR superseded] old adapter decision  -> superseded by adr-new
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== adr-old
+exit: 0
+--- stdout
+decisions behind adr-old
+direct: 1
+  adr-new [ADR active] new adapter decision
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== ds-x
+exit: 0
+--- stdout
+decisions behind ds-x
+direct: 0
+inherited: 1
+  adr-old [ADR superseded] old adapter decision  -> superseded by adr-new  (via ad-x)
+specs (pre-registrations): 0
+--- stderr
+=== edge-x
+exit: 0
+--- stdout
+decisions behind edge-x
+direct: 1
+  sdr-x [SDR active] edge scope
+inherited: 1
+  adr-old [ADR superseded] old adapter decision  -> superseded by adr-new  (via ad-x)
+specs (pre-registrations): 0
+--- stderr
+=== exp-x
+exit: 0
+--- stdout
+decisions behind exp-x
+direct: 0
+inherited: 1
+  adr-old [ADR superseded] old adapter decision  -> superseded by adr-new  (via ad-x)
+specs (pre-registrations): 0
+--- stderr
+=== ms-1
+exit: 0
+--- stdout
+decisions behind ms-1
+direct: 0
+inherited: 0
+specs (pre-registrations): 1
+  spec-ok [active] 
+--- stderr
+=== ms-sub
+exit: 0
+--- stdout
+decisions behind ms-sub
+direct: 0
+inherited: 0
+specs (pre-registrations): 1
+  spec-ok [active] 
+--- stderr
+=== repo-x
+exit: 0
+--- stdout
+decisions behind repo-x
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== sa-x
+exit: 0
+--- stdout
+decisions behind sa-x
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== sdr-x
+exit: 0
+--- stdout
+decisions behind sdr-x
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== spec-draft
+exit: 0
+--- stdout
+decisions behind spec-draft
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== spec-ok
+exit: 0
+--- stdout
+decisions behind spec-ok
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== tf-x
+exit: 0
+--- stdout
+decisions behind tf-x
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== v-open
+exit: 0
+--- stdout
+decisions behind v-open
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== venue-x
+exit: 0
+--- stdout
+decisions behind venue-x
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-a
+exit: 0
+--- stdout
+decisions behind wi-a
+direct: 0
+inherited: 0
+specs (pre-registrations): 1
+  spec-ok [active] 
+--- stderr
+=== wi-b
+exit: 0
+--- stdout
+decisions behind wi-b
+direct: 0
+inherited: 0
+specs (pre-registrations): 1
+  spec-ok [active] 
+--- stderr
+=== wi-c
+exit: 0
+--- stdout
+decisions behind wi-c
+direct: 0
+inherited: 0
+specs (pre-registrations): 1
+  spec-ok [active] 
+--- stderr
+=== wi-d
+exit: 0
+--- stdout
+decisions behind wi-d
+direct: 0
+inherited: 0
+specs (pre-registrations): 1
+  spec-draft [proposed] 
+--- stderr
+=== wi-done
+exit: 0
+--- stdout
+decisions behind wi-done
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-ext
+exit: 0
+--- stdout
+decisions behind wi-ext
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr
+=== wi-gated
+exit: 0
+--- stdout
+decisions behind wi-gated
+direct: 0
+inherited: 0
+specs (pre-registrations): 0
+--- stderr

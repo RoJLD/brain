@@ -1,0 +1,5 @@
+$ research_graph work-frontier
+exit: 0
+--- stdout
+wi-a  a: needs done + validated spec
+--- stderr

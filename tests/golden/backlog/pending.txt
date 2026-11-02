@@ -1,0 +1,21 @@
+$ research_graph pending
+exit: 0
+--- stdout
+Open questions recorded on items and specs (props.open): 2
+  spec-gov [active]  Governance
+      open: Q3 (command shape)
+  wi-ext [blocked]  Waits on Ada
+      open: which venue
+Spec questions without a recorded answer: 4 in 2 spec(s)
+  spec-draft [proposed, 2026-10-01]  docs/specs/2026-10-01-draft.md
+      1. Cadence: daily or hourly? A second line of the same question.
+      3. Mirror the store?
+  spec-gov [active, 2026-10-20]  docs/specs/2026-10-20-gov.md  (active spec: record the answers its implementation settled)
+      Q3 reformulée : one command or one per project? (one choice)  [decision table: Ouverte, reformulée ci-dessous]
+      - which database?
+Blocked on Ada (external_blocker): 1
+  wi-ext [blocked]  Waits on Ada
+      external: Ada decides
+Proposed specs without a decision: 1
+  spec-draft   32 d  Draft spec
+--- stderr

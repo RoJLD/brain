@@ -1,0 +1,14 @@
+# The vocabulary of this graph store: node and edge types, statuses, layers. `research_graph check` validates every
+# node and edge against it; add the types your projects need (a research layer, a data layer...).
+# owner: who decides for this store, a person or a team; `research_graph pending` lists the items blocked on them.
+{owner_line}node_types: [WorkItem, Milestone, Spec, ADR]
+edge_types: [depends_on, part_of, specified_by, decided_by, supersedes]
+statuses: [todo, doing, blocked, done, dropped, pending, reached, proposed, active, superseded]
+layers:
+  work: [WorkItem, Milestone, Spec]
+  decisions: [ADR]
+status_by_type:
+  WorkItem: [todo, doing, blocked, done, dropped]
+  Milestone: [pending, reached, dropped]
+  Spec: [proposed, active, superseded]
+  ADR: [active, superseded]

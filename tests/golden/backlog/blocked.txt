@@ -1,0 +1,8 @@
+$ research_graph blocked
+exit: 0
+--- stdout
+wi-doing  <- wi-prereq
+wi-ext  <- external
+wi-ext2  <- external
+wi-todo  <- wi-doing
+--- stderr

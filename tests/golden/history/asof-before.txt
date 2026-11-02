@@ -1,0 +1,5 @@
+$ research_graph asof 2026-09-01
+exit: 1
+--- stdout
+--- stderr
+no commit on or before 2026-09-01

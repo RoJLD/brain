@@ -1,0 +1,17 @@
+$ research_graph events
+exit: 0
+--- stdout
+2026-10-01  <commit-0>  ms-1  created [pending]
+2026-10-01  <commit-0>  wi-a  created [todo]
+2026-10-01  <commit-0>  wi-b  created [todo]
+2026-10-01  <commit-0>  wi-c  created [todo]
+2026-10-01  <commit-0>  wi-gone  created [todo]
+2026-10-04  #7       wi-a  status todo -> doing
+2026-10-04  #7       wi-a  props +pr
+2026-10-05  <commit-4>  wi-b  status todo -> done
+2026-10-05  <commit-4>  wi-b  title changed
+2026-10-05  <commit-4>  wi-d  created [todo]
+2026-10-05  <commit-4>  wi-gone  removed (was todo)
+2026-10-07  <commit-6>  wi-d  status todo -> doing
+12 change(s)
+--- stderr

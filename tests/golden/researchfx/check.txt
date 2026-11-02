@@ -1,0 +1,6 @@
+$ research_graph check
+exit: 1
+--- stdout
+--- stderr
+H1: anchor file missing: notes/scientific_decisions.md
+exp001: anchor file missing: notes/scientific_decisions.md

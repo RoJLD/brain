@@ -1,0 +1,5 @@
+$ research_graph items --since 2026-13-01
+exit: 2
+--- stdout
+--- stderr
+not a day (YYYY-MM-DD): '2026-13-01'

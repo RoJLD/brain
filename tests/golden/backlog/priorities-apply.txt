@@ -1,0 +1,6 @@
+$ research_graph priorities apply
+exit: 0
+--- stdout
+wi-todo: P2? -> P2
+1 priority(ies) to write (dry run: add --write to apply them)
+--- stderr

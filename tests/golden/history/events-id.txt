@@ -1,0 +1,10 @@
+$ research_graph events --id wi-a --id wi-d
+exit: 0
+--- stdout
+2026-10-01  <commit-0>  wi-a  created [todo]
+2026-10-04  #7       wi-a  status todo -> doing
+2026-10-04  #7       wi-a  props +pr
+2026-10-05  <commit-4>  wi-d  created [todo]
+2026-10-07  <commit-6>  wi-d  status todo -> doing
+5 change(s)
+--- stderr

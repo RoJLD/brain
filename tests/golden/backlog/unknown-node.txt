@@ -1,0 +1,5 @@
+$ research_graph item nope --no-git
+exit: 1
+--- stdout
+--- stderr
+unknown node: nope

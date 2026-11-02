@@ -1,0 +1,7 @@
+- {from: ad-x, to: venue-x, type: depends_on}
+- {from: ds-x, to: ad-x, type: provided_by}
+- {from: ds-x, to: tf-x, type: derived_from}
+- {from: edge-x, to: ds-x, type: depends_on}
+- {from: wi-done, to: ad-x, type: delivers}
+- {from: venue-x, to: sa-x, type: settles_in}
+- {from: ad-x, to: repo-x, type: hosted_in}

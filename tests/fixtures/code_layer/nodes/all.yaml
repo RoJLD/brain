@@ -1,0 +1,6 @@
+- {id: repo-fake-repo, type: Repo, status: active, title: "fake sibling repo (src layout + scripts/)"}
+- {id: repo-absent-repo, type: Repo, status: active, title: "a repo that is not checked out"}
+- {id: ad-x, type: Adapter, status: active, title: adapter}
+- {id: tf-x, type: Transform, status: active, title: normalisation}
+- {id: ds-x, type: Dataset, status: active, title: dataset}
+- {id: edge-x, type: Edge, status: proposed, title: trading edge}

@@ -1,0 +1,5 @@
+$ research_graph items --all --prop pr --prop external_blocker=Ada --json
+exit: 0
+--- stdout
+[]
+--- stderr

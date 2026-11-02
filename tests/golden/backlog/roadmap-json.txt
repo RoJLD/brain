@@ -1,0 +1,249 @@
+$ research_graph roadmap --json
+exit: 0
+--- stdout
+[
+ {
+  "id": "ms-sub",
+  "title": "Sub",
+  "status": "pending",
+  "trigger": null,
+  "reached": null,
+  "reached_date": null,
+  "note": null,
+  "parents": [
+   "ms-top"
+  ],
+  "sub_milestones": [],
+  "items": 2,
+  "by_status": {
+   "doing": 1,
+   "todo": 1
+  },
+  "critical_path": [
+   "wi-doing",
+   "wi-todo"
+  ],
+  "cycle": false,
+  "part_of": [
+   {
+    "id": "wi-doing",
+    "type": "WorkItem",
+    "status": "doing",
+    "title": "Doing item",
+    "priority": "P1",
+    "priority_proposed": null,
+    "repos": [
+     "ops-repo"
+    ],
+    "milestones": [
+     "ms-sub"
+    ],
+    "blockers": [
+     "wi-prereq"
+    ],
+    "external_blocker": null
+   },
+   {
+    "id": "wi-todo",
+    "type": "WorkItem",
+    "status": "todo",
+    "title": "Todo after doing",
+    "priority": null,
+    "priority_proposed": "P2",
+    "repos": [
+     "research-lab"
+    ],
+    "milestones": [
+     "ms-sub"
+    ],
+    "blockers": [
+     "wi-doing"
+    ],
+    "external_blocker": null
+   }
+  ],
+  "depends_on": [
+   {
+    "id": "wi-prereq",
+    "type": "WorkItem",
+    "status": "todo",
+    "title": "Prerequisite outside the milestone",
+    "priority": null,
+    "priority_proposed": null,
+    "repos": [
+     "research-lab"
+    ],
+    "milestones": [],
+    "blockers": [],
+    "external_blocker": null
+   }
+  ],
+  "mentions": []
+ },
+ {
+  "id": "ms-top",
+  "title": "Top",
+  "status": "pending",
+  "trigger": "all done",
+  "reached": null,
+  "reached_date": null,
+  "note": null,
+  "parents": [],
+  "sub_milestones": [
+   "ms-sub"
+  ],
+  "items": 3,
+  "by_status": {
+   "doing": 1,
+   "done": 1,
+   "todo": 1
+  },
+  "critical_path": [
+   "wi-doing",
+   "wi-todo"
+  ],
+  "cycle": false,
+  "part_of": [
+   {
+    "id": "wi-doing",
+    "type": "WorkItem",
+    "status": "doing",
+    "title": "Doing item",
+    "priority": "P1",
+    "priority_proposed": null,
+    "repos": [
+     "ops-repo"
+    ],
+    "milestones": [
+     "ms-sub"
+    ],
+    "blockers": [
+     "wi-prereq"
+    ],
+    "external_blocker": null
+   },
+   {
+    "id": "wi-todo",
+    "type": "WorkItem",
+    "status": "todo",
+    "title": "Todo after doing",
+    "priority": null,
+    "priority_proposed": "P2",
+    "repos": [
+     "research-lab"
+    ],
+    "milestones": [
+     "ms-sub"
+    ],
+    "blockers": [
+     "wi-doing"
+    ],
+    "external_blocker": null
+   },
+   {
+    "id": "wi-done-dated",
+    "type": "WorkItem",
+    "status": "done",
+    "title": "Closed with a date",
+    "priority": null,
+    "priority_proposed": null,
+    "repos": [
+     "research-lab"
+    ],
+    "milestones": [
+     "ms-top"
+    ],
+    "blockers": [],
+    "external_blocker": null
+   }
+  ],
+  "depends_on": [
+   {
+    "id": "wi-prereq",
+    "type": "WorkItem",
+    "status": "todo",
+    "title": "Prerequisite outside the milestone",
+    "priority": null,
+    "priority_proposed": null,
+    "repos": [
+     "research-lab"
+    ],
+    "milestones": [],
+    "blockers": [],
+    "external_blocker": null
+   }
+  ],
+  "mentions": [
+   {
+    "id": "wi-ext2",
+    "type": "WorkItem",
+    "status": "blocked",
+    "title": "Waits on the cluster",
+    "priority": null,
+    "priority_proposed": null,
+    "repos": [
+     "research-lab"
+    ],
+    "milestones": [],
+    "blockers": [],
+    "external_blocker": "the cluster is not there"
+   }
+  ]
+ },
+ {
+  "id": "ms-old",
+  "title": "Old",
+  "status": "reached",
+  "trigger": "t",
+  "reached": "2026-09-15: evidence",
+  "reached_date": "2026-09-15",
+  "note": null,
+  "parents": [],
+  "sub_milestones": [],
+  "items": 1,
+  "by_status": {
+   "done": 1
+  },
+  "critical_path": [],
+  "cycle": false,
+  "part_of": [
+   {
+    "id": "wi-done-undated",
+    "type": "WorkItem",
+    "status": "done",
+    "title": "Closed without a date",
+    "priority": null,
+    "priority_proposed": null,
+    "repos": [
+     "research-lab"
+    ],
+    "milestones": [
+     "ms-old"
+    ],
+    "blockers": [],
+    "external_blocker": null
+   }
+  ],
+  "depends_on": [],
+  "mentions": []
+ },
+ {
+  "id": "ms-older",
+  "title": "Older",
+  "status": "reached",
+  "trigger": null,
+  "reached": "2026-08-01: earlier",
+  "reached_date": "2026-08-01",
+  "note": null,
+  "parents": [],
+  "sub_milestones": [],
+  "items": 0,
+  "by_status": {},
+  "critical_path": [],
+  "cycle": false,
+  "part_of": [],
+  "depends_on": [],
+  "mentions": []
+ }
+]
+--- stderr
