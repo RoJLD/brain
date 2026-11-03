@@ -4,6 +4,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **`install.ps1 -Apply` replaces a running launcher.** Sessions' hooks run `brain.exe` many times a minute, and
+  Windows refuses to overwrite a running image, so the last step of `-Apply` (the copy to `<BRAIN_HOME>\bin`) failed
+  twice. `Set-Launcher` leaves an identical launcher alone, copies a new one beside it and swaps it in with a short
+  retry, and renames a still-locked one aside (`brain.exe.old-<time>`, removed on the next run); it prints `same`,
+  `copied` or `swapped`. Tested on a running image (`tests/test_installer_launcher.py`).
 - **The queue in three bands, ranked by what each entry holds up** (wi-brain-queue-priority). `brain queue` scores
   each entry at zero token: the highest priority and the count of the open items and milestones it holds up, the
   critical path's slip per day of waiting and the nearest milestone (the last `brain forecast`, through
