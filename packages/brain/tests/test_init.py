@@ -376,3 +376,19 @@ def test_a_fresh_brain_passes_check_all_with_a_private_remote(fresh, capsys):
     assert cli.main(["--root", str(fresh), "classes", "--check"]) == 0
     assert "classes: 9 store(s), OK" in capsys.readouterr().out
     assert cli.main(["--root", str(fresh), "check", "--all"]) == 0, capsys.readouterr().out
+
+
+def test_refresh_in_a_brain_checks_its_own_data(fresh, capsys):
+    """brain refresh in a brain's own root runs the registry check too (config.json, the classes, the permissions, the
+    stacks and bundles, the ids), as check --all does: what a brain's own tests used to check (wi-brain-test-split)."""
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    committed(fresh)
+    capsys.readouterr()
+    assert cli.main(["--root", str(fresh), "refresh"]) == 0
+    out = capsys.readouterr().out
+    assert "== registry" in out and "registry: 1 project(s)" in out
+    cfg = json.loads((fresh / "config.json").read_text(encoding="utf-8"))
+    cfg["identity"]["owner"] = "Bob"   # no longer its stores' owner
+    (fresh / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    assert cli.main(["--root", str(fresh), "refresh"]) == 1
+    assert "identity.owner 'Bob'" in capsys.readouterr().out

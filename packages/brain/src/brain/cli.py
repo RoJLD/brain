@@ -1446,9 +1446,12 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
     for what, load, error in (("stacks", stacks.load, stacks.StackError),
                               ("code_index", codeindex.load, codeindex.CodeIndexError)):
         try:
-            load(root)
+            loaded = load(root)
         except error as exc:
             errors.append(f"{what}: {exc}")
+            continue
+        if what == "stacks":   # each shipped bundle the registry declares components of renders without a problem
+            errors += [f"bundle {b}: {e}" for b in bundles.names() for e in _bundle_problems(loaded, b)]
     ids = projects.collisions([p for p in projs if p.root.is_dir()])
     for c in ids["collisions"]:
         line = f"id {c['id']} is in {', '.join(c['where'])}"
@@ -1465,6 +1468,15 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
     print(f"registry: {len(projs)} project(s), {ids['stores']} store(s), "
           + (f"{len(errors)} error(s)" if errors else "ids unique"))
     return 1 if errors else 0
+
+
+def _bundle_problems(reg: dict, bundle: str) -> list[str]:
+    """What blocks ``brain bundle apply`` of ``bundle`` with this registry's components (none declared: nothing)."""
+    comps = bundles.components(reg, bundle)
+    if not comps:
+        return []
+    doc, _ = bundles.render(bundle, comps)
+    return bundles.problems(bundle, doc, comps)[1]
 
 
 def _on_main(root: Path) -> str:
@@ -1510,7 +1522,9 @@ def _each_store(args, root: Path, *, sync: bool, check: bool) -> int:
             rc = rc or (_check_store(args, p.root, store) if check else 0)
             if rc:
                 failed.append(p.name)
-    if check and getattr(args, "all", False):
+    # --all, or a brain's own root (its config.json, its registry): the registry, config.json, the classes, the
+    # permissions, the stacks and bundles, the ids (brain refresh in a brain checks its own data, wi-brain-test-split)
+    if check and (getattr(args, "all", False) or (root is not None and neutral.applies(root))):
         print("== registry")
         if check_registry(root, scope):
             failed.append("registry")
@@ -2933,7 +2947,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--without", action="append", metavar="ID", help="turn a capability or stack off (repeatable)")
         if name == "set":
             sp.add_argument("--apply", action="store_true", help="write the choice (a second apply changes nothing)")
-    rf = sub.add_parser("refresh", help="sync then check for the project's stores, or every registered project's")
+    rf = sub.add_parser("refresh", help="sync then check for the project's stores, or every registered project's; "
+                                        "with --all, or in a brain's own root, the registry check of check --all too")
     rf.add_argument("--offline", action="store_true", help="no gh call (the features' statuses are not read)")
     rf.add_argument("--all", action="store_true", help="every project of the registry")
     rf.add_argument("--force", action="store_true", help="write even when the running engine is not config.json "

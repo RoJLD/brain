@@ -2,6 +2,15 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+- **A brain's own data is checked by the brain, not by its tests** (wi-brain-test-split). `brain refresh` in a
+  brain's own root (its neutral source, `source/packs.yaml`) ends with the registry check `brain check --all` runs:
+  the registry's keys, `config.json`'s contract, the data classes, the permission hierarchy, the stacks, the ids. That
+  check now also renders each bundle the engine ships with the components the registry declares and refuses a service
+  without a component or a component without a service (`brain bundle apply` would). A brain's repository no longer
+  needs a pytest suite over its own graph, records and rendered files: the engine's tests run on fixtures only.
+
 ## 0.2.4 — 2026-11-03
 
 - **A session never installs or runs a third-party kit** (wi-brain-guard-third-party, EXT-6). The new `third-party`
