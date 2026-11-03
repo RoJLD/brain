@@ -146,14 +146,15 @@ Then steps 4 and 5 above, with `~/my-brain` for the folder.
 - **Upgrade with `brain update`** (a version that has it: `brain update --help` answers): it prints the plan (the
   new version, what its CHANGELOG says, the install into `~/.brain\venv`, the launcher swap) and installs it when you
   answer `y`; `brain update --check` only prints it. The cockpit's title bar shows the installed version and, when a
-  newer one is out, « brain X · Y available »; `u` opens the same plan. Then, in your brain, `brain sync` (the
-  plugin's hooks), and move `engine.pin` in `config.json` to the new tag in a commit of your own (the plan reminds
-  you; otherwise the installer's next `-Apply` puts the pinned tag back).
+  newer one is out, « brain X · Y available »; `u` opens the same plan. Then, in your brain, move `engine.pin` in
+  `config.json` to the new tag and commit it (the plan reminds you; otherwise the installer's next `-Apply` puts the
+  pinned tag back), then `brain sync` (the plugin's hooks). Until the pin moves, `brain sync` refuses to write with an
+  engine other than the pinned one and says which line to change.
 - **Upgrade by hand** (0.2.2, and any version where `brain update --help` fails): the same `pip install` with the new
   tag, in the venv, for instance
   `& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain[tui] @ git+https://github.com/RoJLD/brain.git@v0.2.3#subdirectory=packages/brain"`
   (or `install.ps1 -Apply` from a clone of that tag, which also swaps the launcher), then `brain --version`,
-  `brain sync` in your brain and `engine.pin` moved as above.
+  `engine.pin` moved and committed as above, then `brain sync` in your brain.
 - **Uninstall**: `claude plugin uninstall brain-core@brain` and `claude plugin marketplace remove brain`, delete
   `~/.brain` (the venv, the ledgers, the pointer) and remove `~/.brain\bin` from your user PATH. Your brain repo is
   yours to keep.

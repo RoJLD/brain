@@ -63,7 +63,9 @@ A pinned brain runs its pinned engine. `brain check` warns when the running brai
 `config.json` `engine.pin`: a newer or an older version, or the pin's version from other code (another git revision,
 an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh` and
 `brain render --write` then refuse to write, since they would render the plugin's hooks and generate the links with
-another engine: run the pinned engine, move the pin by a reviewed PR, or pass `--force`. A brain with no pin, or a
+another engine. After `brain update`, set `engine.pin` to the new tag in `config.json` and commit it (by a
+reviewed PR where the brain's main is protected); the refusal names the file and the tag. Otherwise run the pinned
+engine, or pass `--force`. A brain with no pin, or a
 pin that is not a release tag, is not compared.
 
 ### The scout

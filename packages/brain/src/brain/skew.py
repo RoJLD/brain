@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import paths, update
+from . import config, paths, update
 
 DISTS = (("brain", "brain"), ("research-graph", "research_graph"))   # (distribution, module)
 
@@ -121,30 +121,42 @@ def problems(pin: str | None, engines: list[Engine], tag_check=at_tag) -> list[s
     return out
 
 
-def of(root: Path | None) -> tuple[str | None, list[str]]:
-    """(the pin, what differs) for the brain acted on from ``root``."""
+def of(root: Path | None) -> tuple[str | None, list[str], list[Engine]]:
+    """(the pin, what differs, the running engines) for the brain acted on from ``root``."""
     pin = update.engine(root)[1]
-    return pin, problems(pin, running()) if pin else []
+    engines = running() if pin else []
+    return pin, problems(pin, engines) if pin else [], engines
+
+
+def how(root: Path | None, pin: str, engines: list[Engine]) -> str:
+    """The way out, in one line: an engine at another release (after brain update, say) moves the pin, a dev engine
+    gives way to the pinned one."""
+    brain = next((e for e in engines if e.name == "brain"), None)
+    v = update.version_of(brain.version) if brain else None
+    cfg = config.load(root).file or config.FILE
+    if v and v != update.version_of(pin) and not brain.folder:
+        return (f"to keep this engine, set engine.pin to v{brain.version} in {cfg} and commit it (by a reviewed PR "
+                f"where the brain's main is protected); to keep {pin}, run that engine (its venv); or --force")
+    return f"run the {pin} engine (brain update, or its venv), or --force"
 
 
 def check_lines(root: Path | None) -> list[str]:
     """brain check's warning ([] when the engine is the pinned one)."""
-    pin, diff = of(root)
+    pin, diff, engines = of(root)
     return [f"warning: the running engine is not config.json engine.pin {pin}: {'; '.join(diff)} (brain sync and "
-            "brain render refuse to write until it is: run the pinned engine, or move the pin by a reviewed PR)"
-            ] if diff else []
+            f"brain render refuse to write until it is: {how(root, pin, engines)})"] if diff else []
 
 
 def refuse(root: Path | None, what: str, force: bool) -> int:
-    """1 (after saying why) when ``what`` (sync, refresh, render) would write with an engine other than the pin;
-    0 when it is the pin, or with ``force`` (said too)."""
-    pin, diff = of(root)
+    """1 (after saying why and the way out) when ``what`` (sync, refresh, render) would write with an engine other
+    than the pin; 0 when it is the pin, or with ``force`` (said too)."""
+    pin, diff, engines = of(root)
     if not diff:
         return 0
     head = f"brain {what}: the running engine is not config.json engine.pin {pin}: {'; '.join(diff)}"
     if force:
         print(f"warning: {head} (--force: written anyway)", file=sys.stderr)
         return 0
-    print(f"{head}. It would rewrite the rendered hooks and the generated links with another engine: run the "
-          "pinned engine (brain update, or its venv), move the pin by a reviewed PR, or --force", file=sys.stderr)
+    print(f"{head}. It would rewrite the rendered hooks and the generated links with another engine.\n"
+          f"brain {what}: {how(root, pin, engines)}", file=sys.stderr)
     return 1
