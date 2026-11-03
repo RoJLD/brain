@@ -102,6 +102,26 @@
                         branch or a dirty worktree; a production checkout: those two only); --remote --apply deletes
                         the remote ones (git push origin --delete) only outside a Claude Code session, where it prints
                         the brain queue add that puts the exact command to {owner}; --json: the plan
+  brain merge-driver run BASE OURS THEIRS PATH [SIZE]   git's entry (merge.brain.driver ... %O %A %B %P %L) for the
+                        paths .gitattributes gives merge=brain: a generated view keeps one side (the default branch's
+                        when one side is its version) and is marked for brain refresh; journal.md and decisions.md
+                        are unioned, new entries in date order; edges/*.yaml and a CHANGELOG's Unreleased section are
+                        unioned; other graph YAML is merged by id; anything else, and any failure, as git merge-file
+  brain merge-driver install [--repo R] [--launcher PATH] [--apply] [--json]   defines the driver in the repo's git
+                        config (shared by its worktrees; the installer runs it), checks .gitattributes names it
+  brain merge-driver status [--json] | replay [MERGE | OURS..THEIRS]... [--since DATE] [--repo R] [--json]
+                        the views waiting for brain refresh here; past merges merged again by git merge-tree, as
+                        text then with the driver (nothing checked out): what conflicted before and after
+  brain collisions [--all] [--json]   at zero token: the files each open branch and worktree of the project's repos
+                        touches (against the default branch, uncommitted changes included), crossed with each
+                        startable item's predicted surface (its features' CodeRefs, its module, the files it names):
+                        the items that can start now, and those that wait on a branch (and its session)
+  brain brief ITEM [--class trivial|standard|strategic] [--budget 400k] [--coordinator ID] [--notes DIR] [--write F]
+                        a sub-session's brief from the graph: the item, its decided props and open questions, its
+                        subgraph, its specs and ADRs, its files and collisions, the class's model and effort
+                        (config.json brief.classes), the budget, the cost estimate, the coordinator's id (--coordinator,
+                        else $CLAUDE_CODE_HOST_SESSION_ID), the shared notes folder, and the definition of done and
+                        the never-list read from {owner}'s rules
   brain status [--all] [--quick] [--json]   each project's indicators at zero token: items by status and priority,
                  the frontier, decisions waiting on {owner}, milestones, audit debt, stacks, code index, its open
                  alerts (brain alerts), journals, records and ledgers; --all adds the totals and the ids shared across
@@ -1275,9 +1295,19 @@ def cmd_sync(args, root: Path) -> int:
 
 
 def cmd_check(args, root: Path) -> int:
+    _merge_marks(root, "brain refresh regenerates them")
     if args.all:
         return _each_store(args, root, sync=False, check=True)
     return _check_store(args, root, _store(args, root))
+
+
+def _merge_marks(root: Path, then: str, clear: bool = False) -> None:
+    """The views the merge driver kept from one side in this worktree (brain.mergedriver): said, or cleared once
+    brain refresh regenerated them."""
+    from . import mergedriver
+    views = mergedriver.clear(root) if clear else mergedriver.marked(root)
+    if views:
+        print(f"merge driver: {len(views)} view(s) kept from one side at the last merge ({', '.join(views)}); {then}")
 
 
 def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
@@ -1325,8 +1355,12 @@ def _on_main(root: Path) -> str:
 def cmd_refresh(args, root: Path) -> int:
     """sync --write, the records and queue views, kanban --write, then check, for each store of each project in
     scope. A main checkout on main or master is only checked (its generated files are refreshed from a worktree),
-    unless --on-main. --all ends with the registry and the ids (check_registry)."""
-    return _each_store(args, root, sync=True, check=True)
+    unless --on-main. --all ends with the registry and the ids (check_registry). Once it passes, the views the merge
+    driver kept from one side here are regenerated: their marks are cleared."""
+    rc = _each_store(args, root, sync=True, check=True)
+    if not rc:
+        _merge_marks(root, "regenerated", clear=True)
+    return rc
 
 
 def _each_store(args, root: Path, *, sync: bool, check: bool) -> int:
@@ -2046,6 +2080,45 @@ def cmd_digest(args, root: Path) -> int:
     else:
         print("\n".join(texts), end="")
     return rc
+
+
+# --- the wave's cost: the merge driver, the collisions, the brief (imported when they run) ---
+
+def cmd_merge_driver(args) -> int:
+    """brain merge-driver run|install|status|replay (brain.mergedriver)."""
+    from . import mergedriver
+    if args.merge_cmd == "run":
+        return mergedriver.run(args.base, args.ours, args.theirs, args.path,
+                               int(args.size) if str(args.size).isdigit() else 7)
+    repo = Path(getattr(args, "repo", None) or ".").resolve()
+    if args.merge_cmd == "install":
+        return mergedriver.install(repo, args.apply, args.launcher, args.json)
+    if args.merge_cmd == "status":
+        return mergedriver.status(repo, args.json)
+    return mergedriver.main_replay(repo, args.since, args.merges, args.json)
+
+
+def cmd_collisions(args, root: Path) -> int:
+    """brain collisions (brain.collisions): the project here or --project's, or --all."""
+    from . import collisions
+    rep = collisions.report(_scope(args, root), frontier=args.frontier)
+    print(json.dumps(rep.as_dict(), indent=2) if args.json else "\n".join(collisions.render(rep)))
+    return 0
+
+
+def cmd_brief(args, root: Path) -> int:
+    """brain brief ITEM (brain.brief): the brief printed, and written with --write."""
+    from . import brief
+    try:
+        b = brief.build(_project(args, root), args.item, task_class=args.task_class, budget=args.budget,
+                        coordinator=args.coordinator, notes=args.notes)
+    except brief.BriefError as exc:
+        raise SystemExit(f"brain brief: {exc}") from None
+    text = json.dumps(b.as_dict(), indent=2, ensure_ascii=False) if args.json else brief.render(b)
+    if args.write:
+        Path(args.write).write_text(text + "\n", encoding="utf-8")
+    print(text)
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2876,6 +2949,47 @@ def build_parser() -> argparse.ArgumentParser:
     for sp in (ns, nt, nu):
         sp.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
     nt.add_argument("--all", action="store_true", help="every project of the registry")
+    # --- the wave's cost (wi-brain-generated-merge, wi-brain-collisions, wi-brain-brief-generate) ---
+    mg = sub.add_parser("merge-driver", help="the git merge driver of the generated views, the logs and the graph's "
+                                             "YAML: git runs it, install defines it in a repo's git config").\
+        add_subparsers(dest="merge_cmd", required=True)
+    mgr = mg.add_parser("run", help="git's entry: merge.brain.driver = brain merge-driver run %%O %%A %%B %%P %%L")
+    for name in ("base", "ours", "theirs", "path"):
+        mgr.add_argument(name)
+    mgr.add_argument("size", nargs="?", default="7", help="the conflict marker size (%%L)")
+    mgi = mg.add_parser("install", help="define the driver in the repo's git config (its worktrees share it): the "
+                                        "plan, or --apply; checks .gitattributes names it")
+    mgi.add_argument("--repo", help="the repo (default: the one here)")
+    mgi.add_argument("--launcher", help="the brain command git runs (default: brain on PATH, else this Python)")
+    mgi.add_argument("--apply", action="store_true", help="write the git config (idempotent)")
+    mgi.add_argument("--json", action="store_true")
+    mgs = mg.add_parser("status", help="the views the driver kept from one side here, waiting for brain refresh")
+    mgs.add_argument("--repo", help="the worktree (default: the one here)")
+    mgs.add_argument("--json", action="store_true")
+    mgp = mg.add_parser("replay", help="past merges merged again by git merge-tree, as text then with the driver "
+                                       "(nothing checked out): the conflicted files before and after")
+    mgp.add_argument("merges", nargs="*", metavar="MERGE", help="a merge commit, or OURS..THEIRS (two heads); none: "
+                                                                "every merge reachable from HEAD (--since)")
+    mgp.add_argument("--since", default="", help="the merges since this date (git log --since)")
+    mgp.add_argument("--repo", help="the repo (default: the one here)")
+    mgp.add_argument("--json", action="store_true")
+    co_ = sub.add_parser("collisions", help="the files each open branch and worktree touches, crossed with the "
+                                            "startable items' predicted surface: who can start now, who waits on whom")
+    co_.add_argument("--all", action="store_true", help="every project of the registry")
+    co_.add_argument("--frontier", action="store_true", help="every startable item, not only the P0/P1 ones")
+    co_.add_argument("--json", action="store_true")
+    br = sub.add_parser("brief", help="a sub-session's brief written from the graph (the coordinator edits only "
+                                      "what needs judgement)")
+    br.add_argument("item")
+    br.add_argument("--class", dest="task_class", default="standard", help="trivial, standard (default) or strategic: "
+                                                                            "the model and effort (brief.classes)")
+    br.add_argument("--budget", default="", help="the context budget (400k, 600k, 800k, 1M; default: the class's)")
+    br.add_argument("--coordinator", default="", help="the coordinator's app session id (default: "
+                                                      "$CLAUDE_CODE_HOST_SESSION_ID)")
+    br.add_argument("--notes", default="", help="the shared notes folder (default: the desktop app's for the "
+                                                "coordinator, when it exists)")
+    br.add_argument("--write", default="", help="also write the brief to this file")
+    br.add_argument("--json", action="store_true")
     cap = sub.add_parser("capture", help="hook entry: the hook JSON on stdin (prints nothing)")
     cap.add_argument("event", choices=["session-start", "post-tool-use", "stop", "session-end"])
     cap.add_argument("family", nargs="?", default="", choices=["", "git", "gh"])
@@ -2934,6 +3048,8 @@ def main(argv: list[str] | None = None) -> int:
                          as_json=args.json)
     if args.cmd == "init":  # a new brain has no graph store yet
         return init.main(args)
+    if args.cmd == "merge-driver":  # git's entry and a repo's git config: no graph store
+        return cmd_merge_driver(args)
     root = Path(args.root).resolve() if args.root else None
     if args.cmd == "audit":  # its repos may have no graph store: before find_root
         return audit.main(args, root)
@@ -2968,7 +3084,8 @@ def main(argv: list[str] | None = None) -> int:
             "config": cmd_config, "boundary": cmd_boundary, "render": cmd_render, "classes": cmd_classes,
             "vault": cmd_vault, "permissions": cmd_permissions,
             "profile": cmd_profile,
-            "tui": cmd_tui, "usage": cmd_usage, "cost": cmd_cost, "forecast": cmd_forecast}[args.cmd](args, root)
+            "tui": cmd_tui, "usage": cmd_usage, "cost": cmd_cost, "forecast": cmd_forecast,
+            "collisions": cmd_collisions, "brief": cmd_brief}[args.cmd](args, root)
 
 
 if __name__ == "__main__":

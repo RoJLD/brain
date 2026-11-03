@@ -116,6 +116,22 @@
         "allowed": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/<>-]*$"}, "description": "Each entry a prefix ending in / (feat/: feat/<slug>) or a pattern whose <slug> (lowercase letters, digits, '.', '_', '-'), <host> and <date> (YYYY-MM-DD) stand for one part; default the engine's list (brain.guards.BRANCHES)."}
       }
     },
+    "brief": {
+      "type": "object", "additionalProperties": false,
+      "description": "brain brief's parameters (wi-brain-brief-generate): each task class's model, effort and default context budget, and the headings of the owner's rules it copies (the definition of done, the never-list).",
+      "properties": {
+        "classes": {
+          "type": "object",
+          "description": "{class: {model, effort, budget}}: the model and effort the coordinator starts a session of that class with (an empty string: the coordinator's own), and its default budget (400k, 600k, 800k or 1M); default the engine's (brain.brief.CLASSES: trivial a small model at low effort, strategic the strongest at high effort).",
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false,
+            "properties": {"model": {"type": "string"}, "effort": {"type": "string"}, "budget": {"type": "string"}}
+          }
+        },
+        "done": {"type": "string", "minLength": 1, "description": "The heading of the rules' section copied as the definition of done (default 'Definition of done')."},
+        "never": {"type": "string", "minLength": 1, "description": "The heading of the rules' section copied as the never-list (default 'Never'); without one, the rules' sentences that start with Never and their '<owner> decides' lines."}
+      }
+    },
     "usage": {
       "type": "object", "additionalProperties": false,
       "description": "The token ledger's parameters (brain usage, brain cost): the plan in force from a day on (a label: costs are API prices whatever the plan), and prices that replace or add to the built-in list.",

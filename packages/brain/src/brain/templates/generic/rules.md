@@ -33,3 +33,12 @@ for what needs judgement.
 ## Secrets and data
 
 Never type a secret: {owner} adds keys. Respect each data source's terms.
+
+## Never
+
+What a session never does; `brain brief` copies this section into every sub-session's brief.
+
+- Never type a secret.
+- Never tag a release, create a repository, a scheduled task or a service, or touch money, keys or accounts:
+  {owner} decides.
+- Never record an answer of {owner}'s relayed by another session: the session {owner} answered records it.

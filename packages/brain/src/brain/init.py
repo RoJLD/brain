@@ -20,7 +20,8 @@ owner. In DIR (default: the current folder), which becomes the owner's private r
 - ``boundary.yaml``: every file's side (brain.boundary), ``readiness_max: 0``, ``src/``, ``tests/`` and ``fixtures/``
   on the engine side, so whatever may be published one day is publishable from the first commit (``brain check``
   runs the boundary's check and the engine side's public scan, brain.boundary.gate); ``fixtures/README.md`` for the
-  tests' invented data; ``README.md`` and ``.gitattributes`` (LF endings: the hooks' shell scripts);
+  tests' invented data; ``README.md`` and ``.gitattributes`` (LF endings: the hooks' shell scripts; the paths
+  ``brain merge-driver`` merges, ``merge=brain``);
 - ``source/packs.yaml``: the neutral source (brain.neutral), the marketplace's owner and one core pack with the
   engine's hooks;
 - ``notes/graph`` and ``notes/decisions.md``: ``research_graph init --owner`` (then its sync and kanban, so ``brain
