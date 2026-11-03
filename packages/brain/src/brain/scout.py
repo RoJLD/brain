@@ -15,8 +15,11 @@ the files a CodeRef names); a test's edit touches no module. A light touch (Pyth
 are dropped, whitespace only elsewhere, a pure rename) never makes a LEFT finding block. Blocking: every NEW finding,
 and the LEFT findings of at most --limit units (the repo's scout_limit, default 3; a doc counts once for all its dead
 references), the most severe first, then entry, then prod, then path; the other LEFT findings are DEFERred to the
-repo's debt item. PENDING, N/A, info and light never block. Exit code 1 when something is to fix in this PR, 2 for a
-usage or git error (no base found).
+repo's debt item. PENDING, N/A, info and light never block. The structure signals (brain.structure: a file past
+max_lines, a function past the complexity threshold, a dependency no decision log names, an incomplete shortcut:
+marker, a symptom fix with no Root cause: line) join them: NEW, DEFER to the debt item for a file or function already
+past its threshold that grows, or justified (a Justified: or Root cause: line in --pr-body or a commit message: shown,
+never blocking). Exit code 1 when something is to fix in this PR, 2 for a usage or git error (no base found).
 """
 
 from __future__ import annotations
@@ -27,10 +30,15 @@ import json
 import sys
 from pathlib import Path
 
-from . import audit, graph, inventory, paths, projects
+from . import audit, graph, inventory, paths, projects, structure
 from .inventory import AuditError, git
 
 ORDER = {"entry": 0, "prod": 1, "other": 2, "": 3}
+TAGS = ["NEW", "LEFT", "DEFER", "justified", "light", "info"]
+
+
+def _rank(f: dict) -> tuple:
+    return TAGS.index(f["tag"]), f["severity"], ORDER[f["class"]], f["unit"], f["check"]
 
 
 def resolve(args, root: Path | None) -> tuple[projects.Project, list[projects.Repo], projects.Repo, Path, bool]:
@@ -193,9 +201,46 @@ def classify(touched: dict[str, bool], deleted: set[str], added: set[str], targe
     for f in out:
         if f["tag"] == "LEFT" and _group(f) not in keep:
             f["tag"] = "DEFER"
-    out.sort(key=lambda f: (["NEW", "LEFT", "DEFER", "light", "info"].index(f["tag"]), f["severity"],
-                            ORDER[f["class"]], f["unit"], f["check"]))
+    out.sort(key=_rank)
     return out
+
+
+def _pr_body(spec: str) -> str:
+    """The text of --pr-body: a file, or '-' for stdin ('' when not given)."""
+    if not spec:
+        return ""
+    if spec == "-":
+        return sys.stdin.read()
+    try:
+        return Path(spec).read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise AuditError(f"--pr-body {spec}: {exc}") from exc
+
+
+def _decision_texts(p: projects.Project) -> list[str]:
+    out = []
+    for f in p.decision_logs:
+        try:
+            out.append(Path(f).read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return out
+
+
+def _structure(args, p: projects.Project, c: projects.Repo, top: Path, rows: list, base_tree: inventory.Tree,
+               new_tree: inventory.Tree, base_rev: str, new_rev: str) -> list[dict]:
+    """The structure signals of the change (brain.structure), with the project's thresholds and decision logs."""
+    body = structure.body_of(top, base_rev, new_rev, _pr_body(getattr(args, "pr_body", None) or ""))
+    return structure.signals(c.name, rows, base_tree, new_tree, structure.thresholds(p.audit), body,
+                             _decision_texts(p))
+
+
+def _tagged(out: list[dict], tag: str) -> int:
+    return sum(1 for f in out if f["tag"] == tag)
+
+
+def _justified(n: int) -> str:
+    return f", {n} justified" if n else ""
 
 
 def base_of(top: Path, spec: str) -> tuple[str, str]:
@@ -262,14 +307,17 @@ def main(args, root: Path | None) -> int:
                    if u.kind == "script" and inventory.script_evidence(u, ev)[0]}
     limit = args.limit if args.limit is not None else c.scout_limit
     out = classify(touched, deleted, added, c.name, new, base, renamed, limit, script_exts)
+    out = sorted(out + _structure(args, p, c, top, rows, base_tree, new_tree, base_rev, new_rev), key=_rank)
     n_new = sum(1 for f in out if f["tag"] == "NEW")
     n_left = sum(1 for f in out if f["tag"] == "LEFT")
     n_defer = sum(1 for f in out if f["tag"] == "DEFER")
+    n_just = _tagged(out, "justified")
     item = audit.item_id(c)
     if args.json:
         print(json.dumps({"scout": 1, "ruleset": audit.RULESET, "project": p.name, "repo": c.name,
                           "base": base_rev, "base_ref": base_ref, "new": new_rev or "worktree", "findings": out,
-                          "new_findings": n_new, "left": n_left, "deferred": n_defer, "item": item},
+                          "new_findings": n_new, "left": n_left, "deferred": n_defer, "justified": n_just,
+                          "item": item, "structure": structure.thresholds(p.audit)},
                          ensure_ascii=False, indent=1, sort_keys=True))
         return 1 if n_new + n_left else 0
     print(f"== scout {p.name}/{c.name}: {base_ref}@{base_rev[:7]}..{new_rev[:7] or 'worktree'}  (rules "
@@ -293,6 +341,6 @@ def main(args, root: Path | None) -> int:
         print("N/A    coderef.dangling, coderef.module (an unregistered repo has no code store)")
     for name, why in errors.items():
         print(f"N/A    {name}: {why}")
-    print(f"scout: {n_new + n_left} to fix in this PR ({n_new} NEW, {n_left} LEFT), {n_defer} deferred; then brain "
-          "audit --diff again")
+    print(f"scout: {n_new + n_left} to fix in this PR ({n_new} NEW, {n_left} LEFT), {n_defer} deferred"
+          f"{_justified(n_just)}; then brain audit --diff again")
     return 1 if n_new + n_left else 0
