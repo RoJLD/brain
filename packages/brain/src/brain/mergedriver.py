@@ -383,11 +383,26 @@ def _line_union(seg: Conflict) -> list[str] | None:
     new lines; None when both sides replaced the same line (an entry changed both ways)."""
     def key(x: str) -> str:
         return x.rstrip("\r\n")
-    b, o, t = ({key(x) for x in part} for part in (seg.base, seg.ours, seg.theirs))
+    b, o, t = ({key(x) for x in part if _entry(x)} for part in (seg.base, seg.ours, seg.theirs))
     if (b - o) & (b - t) and (o - b) and (t - b):
         return None
-    out = [x for x in seg.ours if key(x) not in (b - t) or not key(x).strip()]
-    return _join([out, [x for x in seg.theirs if key(x) not in b and key(x) not in o]])
+    out = [x for x in seg.ours if not (_entry(x) and key(x) in b - t)]   # blank and comment lines stay
+    old = {key(x) for x in seg.base if not _entry(x) and x.strip()}
+    groups: list[list[str]] = [[]]   # theirs, by runs of lines a blank line opens
+    for x in seg.theirs:
+        if not x.strip() and groups[-1] and groups[-1][-1].strip():
+            groups.append([])
+        groups[-1].append(x)
+    add: list[str] = []
+    for g in groups:
+        entries = [x for x in g if _entry(x)]
+        new = [x for x in entries if key(x) not in b and key(x) not in o]
+        if entries and not new:   # every edge of the run is ours already: its comment goes with them
+            continue
+        add += [x for x in g if (x in new if _entry(x) else not x.strip() or key(x) not in old)]
+    nl = "\r\n" if any(x.endswith("\r\n") for x in seg.ours + seg.theirs) else "\n"
+    gap = [nl] if out and out[-1].strip() and add and add[0].strip() else []
+    return _join([out, gap, add])
 
 
 def _yaml_ok(text: str) -> bool:

@@ -379,3 +379,14 @@ def test_a_dated_changelog_written_newest_first_is_a_log():
     assert (kind, res.conflicts) == ("log", 0), text
     assert text == ("# Changelog\n\nIntro.\n\n## 2026-10-03 — ours\n\n- o\n\n## 2026-10-02 — theirs\n\n- t\n\n"
                     "## 2026-10-01 — one\n\n- a\n")
+
+
+def test_edges_union_keeps_both_sides_blank_lines_and_comments():
+    base = "# edges\n\n# 1: a\n- {from: a, to: b, type: t}\n"
+    ours = base + "\n# 2: c\n- {from: c, to: d, type: t}\n"
+    theirs = base + "\n# 3: e\n- {from: e, to: f, type: t}\n\n# 4: g\n- {from: g, to: h, type: t}\n" \
+                    "\n# 2: c, again\n- {from: c, to: d, type: t}\n"
+    text, res, _ = merge("notes/graph/edges/work.yaml", base, ours, theirs)
+    assert res.conflicts == 0
+    assert text == base + "\n# 2: c\n- {from: c, to: d, type: t}\n\n# 3: e\n- {from: e, to: f, type: t}\n" \
+                          "\n# 4: g\n- {from: g, to: h, type: t}\n"
