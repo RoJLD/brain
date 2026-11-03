@@ -1,5 +1,6 @@
 # Example registry for the `brain` command: the projects it knows (brain --project NAME, brain refresh --all,
-# brain decision pending --all). Copy it to the root of your own brain repo as projects.yaml and adapt it.
+# brain decision pending --all). `brain init` writes a first one with the brain itself (packages/brain); add the
+# others like these.
 #
 # root: the project's checkout, relative to the brain repo. Its graph store (notes/graph), journal (notes/journal.md)
 #       and ADR log (notes/decisions.md) are found under the root; `stores:` lists other stores when it has several.
