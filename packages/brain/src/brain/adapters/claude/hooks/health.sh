@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SessionStart: the watched stacks that are down (hooks/health.py, brain.stacks.hook_main), as hook context; prints
+# SessionStart: the watched stacks that are down and a silent alerts pass (hooks/health.py, brain.stacks.hook_main,
+# brain.schedule's dead-man), as hook context; prints
 # nothing when all is well, nothing for an on-demand stack that is simply stopped, never fails (errors go to
 # <BRAIN_HOME>/ledger/errors.log). Bounded to ~1.5 s of checks. Uses the brain command's venv (PyYAML), else
 # $BRAIN_PYTHON, python3 or python, skipping the Windows Store stubs; without a Python 3 it does nothing.

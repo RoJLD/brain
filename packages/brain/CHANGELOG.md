@@ -4,6 +4,25 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The schedules** (wi-brain-alerts-pass). The registry's new `schedules:` key, `{name: {command, every, at,
+  at_logon, machines, timeout, enabled}}`, declares the brain commands a machine's scheduler runs, the alerts pass
+  every 15 minutes and at logon first. New `brain schedule install [--apply] [--json]` (`brain.schedule`): the plan,
+  then the Task Scheduler (`\Brain\<name>`, the user's interactive token, the venv's `pythonw.exe`, IgnoreNew,
+  StartWhenAvailable), a systemd user timer or the user's crontab, through `bash -lc`; what this machine installed
+  and no longer declares is removed (`<BRAIN_HOME>/schedules/installed.json`), a task registered by hand never.
+  `brain schedule list`. The installer's new schedule step runs it (a plan line, applied by `-Apply`); `brain check
+  --all` checks the entries.
+- **The alerts pass's dead-man** (wi-brain-alerts-pass). Each `brain alerts --notify` pass records itself (`_pass`
+  in the state: when, where, the unset variables); once the pass is installed here, `brain schedule list`, `brain
+  status`'s alerts row and the SessionStart health hook say SILENT when its last run is older than two cadences.
+  Without its channel's variable (an unset `BRAIN_NTFY_TOPIC`) a pass sends nothing, writes no notify audit line and
+  says so in one line; those alerts go at the first pass that finds it. Off Windows the alerts' Task Scheduler
+  folders are skipped instead of raising a `scheduler` warning.
+- **Linux** (wi-brain-install-linux). The installer ran under `pwsh` 7.6 on Ubuntu 24.04 (a container): the venv, the
+  `~/.local/bin` link, `brain init`, the personal brain's setup (pointer, merge driver, Lite profile, permissions), the
+  Claude Code plugin, the hooks under bash and the guards on Linux paths; `docs/install.md` gains its Linux section
+  from that run.
+
 - **The session tree** (wi-brain-session-tree; ST-1, ST-2, scale study gap 19). The SessionStart event records both
   ids, the transcript's (`CLAUDE_CODE_SESSION_ID`) and the desktop app's `local_` id (`CLAUDE_CODE_HOST_SESSION_ID`),
   and the parent, task and short name of the session's own app metadata file (`spawnedFrom`, a closed list of keys;

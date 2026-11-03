@@ -31,6 +31,14 @@
                    its .gitattributes gives merge=brain (brain init writes them: the generated views, the journal and
                    the decision log, the graph's YAML, CHANGELOG.md) merge without a hand in each worktree; a brain
                    command older than the subcommand only says so
+      schedule     with a personal brain: brain schedule install, the brain commands its registry's schedules:
+                   declare for this machine (projects.yaml: name, command, every / at / at_logon, machines; the
+                   alerts pass every 15 minutes and at logon, say): the plan, then with -Apply the Task Scheduler
+                   (\Brain\<name>, as you, in your session, through the venv's pythonw.exe: no console window), on
+                   Linux a systemd user timer (else your crontab), run through bash -lc so that your profile's
+                   variables reach it; one this machine installed and no longer declares is removed, a task you
+                   registered by hand never is. Creating a scheduled task is your decision: the plan shows it, -Apply
+                   does it. A brain command older than the subcommand only says so
     With a personal brain whose config.json has adapters.claude and rules:
       marketplace  adapters.claude.marketplace, cloned by Claude Code from GitHub adapters.claude.source (branch -Ref
                    when given), with background auto-update on (extraKnownMarketplaces.<marketplace>.autoUpdate in
@@ -520,8 +528,33 @@ function Set-MergeDriver {
 }
 # --- end of the merge driver step ---
 
+# --- the schedule step (tests/test_schedule.py runs it alone) ---
+function Set-Schedules {
+    # brain schedule install for the personal brain's registry: its schedules: for this machine, as a plan, created,
+    # updated or removed with -Apply; a command older than brain schedule (argparse's exit 2) only says so.
+    if (-not (Test-Path $venv_python)) {
+        "schedule the registry's schedules: for this machine (brain schedule install), once the command is installed (-Apply)"
+        return
+    }
+    $schedule_args = @('-I', '-m', 'brain', '--root', $repo, 'schedule', 'install')
+    if ($Apply) { $schedule_args += '--apply' }
+    $ErrorActionPreference = 'Continue'
+    $out = @(& $venv_python @schedule_args 2>&1 |
+        ForEach-Object { if ($_ -is [Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" } })
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($code -eq 2 -and -not (($out -join ' ') -match 'brain schedule:')) {
+        'schedule the installed brain command has no schedule subcommand yet (an older engine)'
+        return
+    }
+    $out
+    if ($code -ne 0 -and $Apply) { throw "brain schedule install failed (exit $code)" }
+}
+# --- end of the schedule step ---
+
 $allow_file = Join-Path $engine_root 'src\brain\adapters\claude\allow-rules.txt'
 if ($repo) { Set-MergeDriver }
+if ($repo) { Set-Schedules }
 if ($claude_steps) { Update-Permissions }
 if (-not $repo -and -not $Apply) { 'next     brain init <folder> --owner <you> --apply (after -Apply installs the command), then .\install.ps1 -Personal <folder>' }
 if (-not $Apply) { '(plan only: run with -Apply to install)' }
