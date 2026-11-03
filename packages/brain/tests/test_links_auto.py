@@ -22,6 +22,7 @@ NODES = """\
 - {id: feat-core, type: Feature, status: have, title: "The core", props: {repo: demo, domain: jobs}}
 - {id: feat-lonely, type: Feature, status: partial, title: "Untested", props: {repo: demo, domain: jobs}}
 - {id: feat-later, type: Feature, status: planned, title: "Not yet", props: {repo: demo, domain: jobs}}
+- {id: feat-hub, type: Feature, status: have, title: "Owned by the hub", props: {repo: hub, domain: jobs}}
 - {id: "code:demo:p/cli.py::cmd_run_job", type: CodeRef, status: active, title: "run job"}
 - {id: "code:demo:p/guards.py::check_secret", type: CodeRef, status: active, title: "secret"}
 - {id: "code:demo:p/core.py", type: CodeRef, status: active, title: "core"}
@@ -32,6 +33,7 @@ EDGES = """\
 - {from: feat-check, to: "code:demo:p/guards.py::check_secret", type: implemented_by}
 - {from: feat-core, to: "code:demo:p/core.py", type: implemented_by}
 - {from: feat-lonely, to: "code:demo:p/lonely.py", type: implemented_by}
+- {from: feat-hub, to: "code:demo:p/lonely.py::alone", type: implemented_by}
 """
 CLI = """\
 from p import core
@@ -204,7 +206,8 @@ def test_audit_measures_test_coverage_and_feature_tests():
     owners = {x["check"]: x["owner"] for x in r["not_measured"]}
     assert owners["test.coverage"] == "no coverage summary in notes/graph (brain coverage --run --write)"
     found = {(f["check"], f["unit"]) for f in r["findings"] if f["check"] in ("feature.tests", "test.coverage")}
-    assert found == {("feature.tests", "feat-lonely")}   # planned features and tested ones are not findings
+    # planned features and tested ones are not findings; a feature another repo owns, with its code here, is one
+    assert found == {("feature.tests", "feat-lonely"), ("feature.tests", "feat-hub")}
     r = measure(_files(**{"notes/graph/coverage/demo.json": _summary({})}))
     cov = [f for f in r["findings"] if f["check"] == "test.coverage"]
     assert [(f["unit"], f["severity"]) for f in cov] == [("src/p/lonely.py", "P2")]
@@ -216,9 +219,9 @@ def test_audit_measures_test_coverage_and_feature_tests():
 def test_features_md_shows_the_coverage_of_a_features_files():
     t = mem(_files(**{"notes/graph/coverage/demo.json": _summary({})}), "demo")
     m = features.load_tree(t, "notes/graph", "demo")
-    assert features.coverage_of(m, "feat-core", "demo") == 100.0
-    assert features.coverage_of(m, "feat-lonely", "demo") == 0.0
-    assert features.coverage_of(m, "feat-run", "demo") is None   # a symbol: its file's figure would mislead
+    assert features.coverage_of(m, "feat-core") == 100.0
+    assert features.coverage_of(m, "feat-lonely") == 0.0
+    assert features.coverage_of(m, "feat-run") is None   # a symbol: its file's figure would mislead
     text = features.render(m, "demo")
     assert "| Tests |" in text and "100 % covered" in text and "0 % covered" in text
 

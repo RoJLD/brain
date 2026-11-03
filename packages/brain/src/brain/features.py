@@ -200,24 +200,24 @@ def _code_cell(m: Model, fid: str, repo: str) -> str:
     return ", ".join(out)
 
 
-def coverage_of(m: Model, fid: str, repo: str) -> float | None:
-    """The percent of the statements of the feature's files (its whole-file CodeRefs of ``repo``) that the tests run,
-    by the store's coverage summary; None when none of them is measured."""
-    files = (m.coverage.get(repo) or {}).get("files") or {}
+def coverage_of(m: Model, fid: str) -> float | None:
+    """The percent of the statements of the feature's files (its whole-file CodeRefs, in whichever repo) that the
+    tests run, by the store's coverage summary of each repo; None when none of them is measured."""
     s = c = 0
     for cid in m.code(fid):
         try:
             r, path, sym = parse_code_ref(cid)
         except ValueError:
             continue
+        files = (m.coverage.get(r.lower()) or {}).get("files") or {}
         f = files.get(path) or files.get(f"src/{path}")
-        if f and r.lower() == repo and not sym:
+        if f and not sym:
             s, c = s + int(f.get("statements") or 0), c + int(f.get("covered") or 0)
     return round(100.0 * c / s, 1) if s else None
 
 
 def _tests_cell(m: Model, fid: str, repo: str) -> str:
-    pct = coverage_of(m, fid, repo)
+    pct = coverage_of(m, fid)
     tests = ", ".join(f"`{x}`" for x in sorted(m.links(fid, "tested_by")))
     return "; ".join(x for x in (f"{pct:g} % covered" if pct is not None else "", tests) if x)
 
@@ -273,7 +273,7 @@ def render(m: Model, repo: str, store_label: str = "notes/graph") -> str:
         out.append(f"| [{d}](#{_slug(d)}) | " + " | ".join(str(sum(1 for f in by_domain[d] if status[f] == s))
                                                          for s in STATUSES) + " |")
     with_module = any((m.features[f].get("props") or {}).get("module") for f in feats)
-    with_tests = any(m.links(f, "tested_by") or coverage_of(m, f, repo) is not None for f in feats)
+    with_tests = any(m.links(f, "tested_by") or coverage_of(m, f) is not None for f in feats)
     with_docs = any(m.links(f, "documented_in") for f in feats)
     head = ["Feature", "Status", "Value"] + (["Module"] if with_module else []) + ["Code"] \
         + (["Tests"] if with_tests else []) + (["Docs"] if with_docs else []) + ["Links"]

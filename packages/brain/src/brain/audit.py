@@ -182,8 +182,9 @@ def test_coverage(ctx: dict) -> list[dict] | str:
 
 
 def feature_tests(ctx: dict) -> list[dict] | str:
-    """feature.tests: a have or partial feature of the repo with code that no test module is tested_by (the links
-    derived now: its CodeRefs' tests by brain audit's evidence, imports and coverage, brain.links)."""
+    """feature.tests: a have or partial feature with code in the repo (whichever repo owns the feature) that no test
+    module of the repo is tested_by (the links derived now: its CodeRefs' tests by brain audit's evidence, imports and
+    coverage, brain.links)."""
     fm = ctx.get("features")
     if fm is None:
         return NO_FEATURES
@@ -194,7 +195,7 @@ def feature_tests(ctx: dict) -> list[dict] | str:
     tested = {e["from"] for e in lk.edges if e["type"] == "tested_by"}
     for fid in sorted(fm.features):
         status = fm.features[fid].get("status")
-        if fm.repo.get(fid) != name or status not in ("have", "partial") or fid in tested:
+        if status not in ("have", "partial") or fid in tested:
             continue
         code = [c for c in fm.code(fid) if c.lower().startswith(f"code:{name}:")]
         if code:
