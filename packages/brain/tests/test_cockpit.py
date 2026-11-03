@@ -210,7 +210,7 @@ def test_tables_and_headings(tmp_path, monkeypatch, store):
            "effort": "", "context": 1_250_000, "budget": 600_000, "output_tokens": None, "age_s": 5, "title": "",
            "branch": "b"}
     assert cockpit.table("sessions", {"rows": [row]}) == [
-        ("running", "abcdef12", "demo", "-", "x", "-", "1.2M/600k", "-", "now", "b")]
+        ("running", "abcdef12", "solo", "-", "-", "demo", "-", "x", "-", "-", "1.2M/600k", "-", "now", "b")]
     assert cockpit.heading("sessions", None) == "Sessions (0 in the last 24 h)"
     assert cockpit.heading("audit", None) == "Audit debt: not probed yet"
     assert cockpit.heading("alerts", None) == "Alerts: not probed yet" and cockpit.table("alerts", None) == []

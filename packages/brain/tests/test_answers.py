@@ -249,7 +249,8 @@ def test_captured_records_the_batch_in_one_pr(origin, monkeypatch, capsys, brain
                          text=True, check=True).stdout
     assert "Ada's answers: Lone, PLAT-5 (question tool, captured)" in log  # the order of the tool call
     ddr = yaml.safe_load(_main(bare, "records/ddr/ddr-2026-11-01-plat-5-what-is-public.yaml"))
-    assert ddr["answer"] == {"at": ddr["answer"]["at"], "by": "Ada", "choices": [LONG], "via": "ask-tool"}
+    assert ddr["answer"] == {"at": ddr["answer"]["at"], "by": "Ada", "session": "s-1", "choices": [LONG],
+                             "via": "ask-tool"}  # and the session that recorded it (scale study gap 19)
     lone = yaml.safe_load(_main(bare, "records/ddr/ddr-2026-11-01-lone-question.yaml"))
     assert lone["answer"]["choices"] == ["No"] and lone["answer"]["notes"] == "not yet"
     assert "Answered, to integrate (2)" in _main(bare, "notes/decision_queue.md")

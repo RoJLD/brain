@@ -57,6 +57,7 @@ TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines,
          "digest": lambda panel: cockpit.digest_lines(panel, width=1000, lines_max=0)}  # it scrolls: all of it
 STYLES = {"sessions": {"asking": "bold magenta", "running": "green", "stale": "yellow", "idle": "cyan", "ended": "dim"},
           "alerts": {"critical": "bold red", "error": "red", "warn": "yellow", "info": "dim"}}  # the first column
+MASTER_STYLES = {70: "yellow", 80: "bold dark_orange", 90: "bold red"}  # a master's row at each step (ST-4)
 PANEL_ACTIONS = ("go", "toggle_max", "pick_scope", "search", "next_sort", "reverse", "filters", "panel_help",
                  "toggle_tz", "update")  # the panels' keys, off while a dialog or a detail is on top of them
 
@@ -597,6 +598,8 @@ class CockpitApp(App):
             cells = cockpit.cells(name, r, self.multi is not False, self.settings["tz"])
             if name in STYLES:
                 cells = (Text(cells[0], style=STYLES[name].get(cells[0], "")), *cells[1:])
+            if name == "sessions" and r.get("ctx_step"):  # a master past 70, 80, 90 % of its budget
+                cells = (cells[0], *(Text(str(c), style=MASTER_STYLES[r["ctx_step"]]) for c in cells[1:]))
             key = base = cockpit.row_key(name, r)
             while key in seen:
                 key = f"{base}#{len(seen)}"

@@ -414,9 +414,14 @@ def _now(project: projects.Project, now: datetime, health: bool) -> Section:
     s.lines.append(f"Generated {now.strftime('%Y-%m-%d %H:%M')} UTC"
                    + (f" at {head} on {branch}" if head else " (not a git checkout)") + ".")
     s.lines.append(_stacks_line(project, health))
-    session = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID")
-    if session:
-        s.lines.append(f"Session: {session}.")
+    from . import sessions
+
+    me = sessions.here()
+    if me["session"] or me["host_id"]:  # both ids, which serve different tools (wi-brain-session-tree)
+        s.lines.append("Session: " + "; ".join(
+            ([f"app {me['host_id']} (SendMessage, the app's session tools)"] if me["host_id"] else [])
+            + ([f"transcript {me['session']} (the ledger, the records, brain sessions)"] if me["session"] else []))
+            + ".")
     return s
 
 
