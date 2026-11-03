@@ -9,9 +9,9 @@ concerned.
 ## The registry
 
 ```yaml
-- {id: D7, name: agent-harness, brick: D, phase: MVP, status: tree}
-- {id: D12, name: agent-evals, brick: D, phase: V1.5, status: proposed, lab: now, since: 2026-11-02,
-   note: "Measure and judge, split from D7."}
+- {id: P2, name: kettle-core, brick: P, phase: MVP, status: tree}
+- {id: P12, name: kettle-meter, brick: P, phase: V1.5, status: proposed, lab: now, since: 2026-08-01,
+   note: "Weigh and time, split from P2."}
 ```
 
 - `phase`: the product's phase the platform's tree gives the module (MVP, V1.5, V2...).
@@ -24,7 +24,7 @@ concerned.
 ## An item's module
 
 ```bash
-brain item set wi-x props.module=D7 "props.modules_secondary=D12, B9"
+brain item set wi-x props.module=P2 "props.modules_secondary=P12, M4"
 brain item set wi-y props.module=none "props.module_reason=the brain's own process, outside the tree"
 ```
 
@@ -49,3 +49,7 @@ brain item set wi-y props.module=none "props.module_reason=the brain's own proce
 - the items outside the tree, with their reason.
 
 The view holds no date of its own, so it changes only when the registry or the items change.
+
+The view is a generated file, like the kanban: `.gitattributes` sends it to the brain's merge driver
+(`notes/modules_graph.md merge=brain`, a line `brain init` writes), which keeps one side of a merge and marks it
+for `brain refresh`.

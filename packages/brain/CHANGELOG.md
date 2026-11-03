@@ -9,7 +9,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   view `notes/modules_graph.md` (per brick and module: phase, status, items done and open, the secondary ones,
   the gaps, the items outside the tree), written by `brain sync`; `brain check` warns about an open item with no
   module, `none` without a reason, or a module the registry does not know. A store without a registry is not
-  concerned. Docs: `docs/modules.md`.
+  concerned. The view goes to the merge driver (`notes/modules_graph.md merge=brain`, in `brain init`'s
+  `.gitattributes`). Docs: `docs/modules.md`.
 
 - **The session tree** (wi-brain-session-tree; ST-1, ST-2, scale study gap 19). The SessionStart event records both
   ids, the transcript's (`CLAUDE_CODE_SESSION_ID`) and the desktop app's `local_` id (`CLAUDE_CODE_HOST_SESSION_ID`),

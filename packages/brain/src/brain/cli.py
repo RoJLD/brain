@@ -808,15 +808,17 @@ def cmd_modules(args, root: Path) -> int:
     store = _store(args, root)
     if not modules.applies(store):
         raise SystemExit(f"brain modules: no {modules.REGISTRY} in {store} (the registry of modules)")
+    if args.write:   # first, so --write --check writes the view and then checks the map
+        print(f"view: {modules.VIEW} " + ("written" if modules.write(root, store, _store_label(root, store))
+                                          else "unchanged"))
     if args.check:
         found = modules.problems(store)
         print(json.dumps(found, indent=1) if args.json else "\n".join(found) or "module map: every open item placed")
         return 1 if found else 0
-    if args.write:
-        print(f"view: {modules.VIEW} " + ("written" if modules.write(root, store, _store_label(root, store))
-                                          else "unchanged"))
-        return 0
-    print(modules.render(store, _store_label(root, store)), end="")
+    if args.json:
+        print(json.dumps(modules.data(store), indent=1, ensure_ascii=False))
+    elif not args.write:
+        print(modules.render(store, _store_label(root, store)), end="")
     return 0
 
 
@@ -2465,7 +2467,8 @@ def build_parser() -> argparse.ArgumentParser:
                                         "the generated view notes/modules_graph.md")
     mo.add_argument("--write", action="store_true", help="write notes/modules_graph.md (brain sync does)")
     mo.add_argument("--check", action="store_true", help="the open items with no module or an unknown one (exit 1)")
-    mo.add_argument("--json", action="store_true")
+    mo.add_argument("--json", action="store_true", help="the map as JSON (each module's counts, the problems); with "
+                                                        "--check, the problems")
     fe = sub.add_parser("features", help="the feature matrix: Feature nodes, FEATURES.md and a SQLite index with "
                                          "full-text search (brain.features)").add_subparsers(dest="features_cmd",
                                                                                             required=True)

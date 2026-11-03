@@ -4,11 +4,11 @@ the generated view ``notes/modules_graph.md`` (brain sync) and brain check's war
 a registry is not concerned.
 
 The registry is a YAML list, one entry per module:
-``{id: D7, name: agent-harness, brick: D, phase: MVP, status: tree, lab: now, since: 2026-11-02, note: ...}``:
+``{id: P2, name: kettle-core, brick: P, phase: MVP, status: tree, lab: now, since: 2026-08-01, note: ...}``:
 ``phase`` the product's phase the platform's tree gives it (MVP, V1.5, V2, V3, P5...), ``status`` ``tree`` (in the
 platform's tree) or ``proposed`` (proposed by the brain, waiting on the owner), ``lab`` the brain's own phase,
 ``since`` the day a proposed module was proposed. An open item's ``props.module`` is an id of the registry, or
-``none`` with ``props.module_reason`` (outside the tree: the brain's own process, a legal act).
+``none`` with ``props.module_reason`` (outside the tree: the brain's own process).
 
 The view gives, per brick then per module: its phase and status, its state in the brain (items done and open with it
 as primary, open items with it as secondary), its open items, and the gaps: a module with no item done or open, a
@@ -47,10 +47,11 @@ def applies(store: Path) -> bool:
 
 
 def items(store: Path) -> list[dict]:
-    """The store's WorkItem nodes."""
+    """The store's WorkItem nodes that have an id (one without is research_graph check's to report)."""
     out = []
     for f in sorted((store / "nodes").glob("*.yaml")):
-        out += [n for n in graph.load_yaml_list(f) if isinstance(n, dict) and n.get("type") == "WorkItem"]
+        out += [n for n in graph.load_yaml_list(f) if isinstance(n, dict) and n.get("type") == "WorkItem"
+                and n.get("id")]
     return out
 
 
@@ -62,7 +63,7 @@ def _secondary(n: dict) -> list[str]:
     """props.modules_secondary: a list, or a string of ids separated by commas (as brain item set writes it)."""
     s = _props(n).get("modules_secondary") or []
     s = re.split(r"[,\s]+", s.strip("[] ")) if isinstance(s, str) else s if isinstance(s, list) else []
-    return [str(x) for x in s if str(x)]
+    return list(dict.fromkeys(str(x) for x in s if str(x)))   # an id given twice counts once
 
 
 def problems(store: Path) -> list[str]:
@@ -121,7 +122,7 @@ def _index(nodes: list[dict]) -> tuple[dict[str, list], dict[str, list]]:
 
 
 def _order(reg: list[dict]) -> list[tuple[str, dict]]:
-    """(brick, module) sorted by brick, then by id (D2 before D12)."""
+    """(brick, module) sorted by brick, then by id (P2 before P12)."""
     return sorted(((str(m.get("brick") or "?"), m) for m in reg),
                   key=lambda bm: (bm[0], len(str(bm[1]["id"])), str(bm[1]["id"])))
 
@@ -159,6 +160,23 @@ def _section(b: str, m: dict, counts, primary: dict[str, list], secondary: dict[
     if secondary.get(mid):
         out += ["", "Secondary: " + ", ".join(f"`{n['id']}`" for n in sorted(secondary[mid], key=lambda n: n["id"]))]
     return out
+
+
+def data(store: Path) -> dict:
+    """The map as data (brain modules --json): each module with its counts, the open items placed, the problems."""
+    reg, nodes = registry(store) or [], items(store)
+    primary, secondary = _index(nodes)
+    opened = [n for n in nodes if n.get("status") in OPEN]
+    mods = []
+    for b, m in _order(reg):
+        got = primary.get(str(m["id"]), [])
+        mods.append({**{k: m[k] for k in ("id", "name", "phase", "status", "lab", "since") if k in m}, "brick": b,
+                     "done": sum(1 for n in got if n.get("status") == "done"),
+                     "open": sum(1 for n in got if n.get("status") in OPEN),
+                     "secondary": len(secondary.get(str(m["id"]), []))})
+    return {"modules": mods, "open_items": len(opened),
+            "placed": sum(1 for n in opened if _props(n).get("module")),
+            "outside": sum(1 for n in opened if _props(n).get("module") == NONE), "problems": problems(store)}
 
 
 def render(store: Path, store_label: str = "notes/graph") -> str:
