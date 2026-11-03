@@ -25,11 +25,10 @@ from typing import Any, Iterable
 import networkx as nx
 import yaml
 
+from . import yamlio
 from .loader import load_store
 
 WORK_TYPES = frozenset({"WorkItem", "Milestone", "Spec"})
-# libyaml when present: the history parses every version of every node file.
-_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 _PR = re.compile(r"^Merge pull request #(\d+)")
 
 
@@ -180,7 +179,7 @@ def _blobs(top: Path, shas: Iterable[str]) -> dict[str, bytes]:
 def _nodes(blob: bytes) -> dict[str, dict] | None:
     """id -> node of one version of a node file; None when that version does not parse."""
     try:
-        data = yaml.load(blob.decode("utf-8", "replace"), Loader=_LOADER)
+        data = yamlio.loads(blob.decode("utf-8", "replace"))
     except yaml.YAMLError:
         return None
     if data is None:

@@ -109,9 +109,7 @@ def milestones(st: resume.Store) -> dict:
 
 
 def _ddrs(root: Path) -> list[dict]:
-    yaml = graph._yaml()  # the DDRs only: records.load also parses every SR and AR
-    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
-    found = [yaml.load(f.read_text(encoding="utf-8"), Loader=loader)
+    found = [graph.load_yaml_file(f)  # the DDRs only: records.load also parses every SR and AR
              for f in sorted((root / records.RECORDS_DIR / "ddr").glob("*.yaml"))]
     return [d for d in found if isinstance(d, dict) and d.get("id")]
 

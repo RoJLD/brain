@@ -232,7 +232,7 @@ def load(root: Path | None = None) -> dict[str, Stack]:
             f = p.root / decl
             if not f.is_file():
                 raise StackError(f"project {p.name}: stacks file {f} not found")
-            decl = graph._yaml().safe_load(f.read_text(encoding="utf-8")) or {}
+            decl = graph.load_yaml_file(f) or {}
         if not isinstance(decl or {}, dict):
             raise StackError(f"project {p.name}: stacks is a mapping or a file name")
         for name, d in (decl or {}).items():

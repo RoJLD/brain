@@ -159,7 +159,7 @@ def _entry(eid: str, d: dict, kind: str, **extra) -> Entry:
 
 def capabilities(path: Path = FILE) -> tuple[dict[str, Entry], list[str]]:
     """The engine's capabilities and what is wrong in their file."""
-    data = graph._yaml().safe_load(path.read_text(encoding="utf-8")) or {}
+    data = graph.load_yaml_file(path) or {}
     caps = data.get("capabilities") if isinstance(data, dict) else None
     if not isinstance(caps, dict):
         return {}, [f"{path.name}: no capabilities mapping"]
