@@ -19,6 +19,15 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   earlier `git add`'s, add `<<<<<<< `, `||||||| `, `>>>>>>> ` or a bare `=======`, with the file and line; `brain
   check` fails first on a store, journal, decision log or record file that holds one (brain.markers). A setext
   heading in Markdown and a file under a `fixtures` folder pass.
+- **The recovery key is typed hidden, and Enter is enough.** `brain vault drill` and `brain vault open --identity -`
+  asked age to read the key from the terminal: after Enter, age kept waiting for the end of input (Ctrl+Z alone on a
+  line on Windows, Ctrl+D elsewhere), which a terminal may swallow, and timed out after 300 s; the key showed on the
+  screen and stayed in the scrollback. The brain now asks for it like a password (`vault.ask_key`: no echo, Enter
+  ends it), checks that it is an age identity line and hands it to age on its stdin; it is never written, and a wrong
+  line, nothing or Ctrl+C opens nothing. A stdin that is not a terminal gives its first line. gpg still reads its key
+  block itself, and its prompt now says how the console ends the input. age missing from a terminal opened before
+  its install says to open a new one, and a failure of age names its error, not the « report unexpected or unhelpful
+  errors » line it prints last.
 - **The cockpit knows its version and offers updates** (wi-brain-tui-update-check, ADR UPD-1 to UPD-3). The title
   bar of `brain tui` always shows the installed version (the text view's header too). Once the screen is drawn, a
   worker reads the release tags of the engine's public repo (`config.json` `engine.repo`, else RoJLD/brain) with

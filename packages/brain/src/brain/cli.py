@@ -177,7 +177,7 @@
   brain vault device init [--name N] [--adapter age|gpg]   this machine's device key, created straight into the OS
                  keystore; prints its public half only (the owner's terminal only)
   brain vault open FILE [--out DIR] [--identity FILE|-]   open a sealed file with the device key, a key file or a
-                 key pasted into the tool (-) (the owner's terminal only: refused in an agent session)
+                 key typed hidden (-) (the owner's terminal only: refused in an agent session)
   brain vault drill RECIPIENT [--identity FILE|-]   open that recipient's canary with its key and record the proof:
                  the recovery key's yearly drill (the owner's terminal only)
   brain permissions [--project P | --all] [--machine H] [--session S] [--explain RULE|perm-ID] [--json]   the
@@ -2760,11 +2760,11 @@ def build_parser() -> argparse.ArgumentParser:
     vo = va.add_parser("open", help="open a sealed file (the owner's terminal only)")
     vo.add_argument("file")
     vo.add_argument("--out", help="the folder to open into (default: <name>.opened beside the file)")
-    vo.add_argument("--identity", help="a key file, or - to paste the key into the tool (default: the device key)")
+    vo.add_argument("--identity", help="a key file, or - to type or paste it, hidden (default: the device key)")
     vi = va.add_parser("drill", help="open a recipient's canary with its key and record the proof (the owner's "
                                      "terminal only)")
     vi.add_argument("recipient")
-    vi.add_argument("--identity", help="a key file, or - to paste the key into the tool (default -)")
+    vi.add_argument("--identity", help="a key file, or - to type or paste it, hidden (default -)")
     pe = sub.add_parser("permissions", help="the permission hierarchy: a project's effective allow / ask / deny list on "
                                             "this machine and where each rule comes from (brain.permissions)")
     pe.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
