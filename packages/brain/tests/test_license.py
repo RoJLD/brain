@@ -48,7 +48,8 @@ def test_notice_gives_the_credit():
 
 
 def test_research_graph_stays_mit():
-    assert project(REPO)["project"]["license"] == {"text": "MIT"}
+    data = project(REPO)["project"]   # an SPDX expression and its file (PEP 639), as wi-brain-rg-license-spdx wrote it
+    assert data["license"] == "MIT" and data["license-files"] == ["LICENSE"]
     assert (REPO / "LICENSE").read_text(encoding="utf-8").startswith("MIT License\n")
 
 
