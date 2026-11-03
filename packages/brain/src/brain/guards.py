@@ -102,9 +102,10 @@ REDIRECT = "\0"  # starts the word segments() puts before a redirection's target
 SUBSHELL = ("\x01(", "\x01)")  # the one-word segments that open and close a bash subshell, ( ... ) and $( ... )
 BASH_REDIR = re.compile(r"(?P<op>&>>?|<>|>>?\|?|<)(?:(?P<dup>&(?:\d+-?|-))|(?P<proc>\()|&)?")
 PS_REDIR = re.compile(r"(?P<op>>>?)(?P<dup>&\d)?")
-# PowerShell reads \ as a path separator on every system: where os.path does not (Linux, macOS), a PowerShell word's
-# backslashes are read as slashes, so that C:\x\y and $HOME\x resolve as PowerShell resolves them.
-PS_BACKSLASH = os.sep == "/"
+# PowerShell reads \ as a path separator on every system: where os.path does not (Linux, macOS), _path reads a
+# backslash left in a path as a slash (bash has dropped its own escapes by then), so that {lab}\x resolves as PowerShell
+# resolves it; the words themselves are kept as typed (the owner's queue shows the exact command).
+BACKSLASH_SEP = os.sep == "/"
 # A cmd.exe option: slashes, then a name without a separator (/c, //J, /XD, /exclude:list.txt); /tmp/x is a path.
 CMD_OPTION = re.compile(r"/+[^/\\]*")
 PATH_SUBST = re.compile(r"\$\(\s*(mktemp|cygpath|realpath)((?:\s+-[-\w=]*)*)\s*([^()`;&|<>\n]*?)\s*\)")
@@ -325,12 +326,13 @@ def _expand(text: str, env: dict[str, str | None]) -> str | None:
 
 
 def _path(arg: str, cwd: str) -> str:
-    """``arg`` as an absolute path from ``cwd``: ~ and variables expanded, Git Bash's /e/... read as E:/... on Windows;
-    ``cwd`` itself when a variable or a command substitution in ``arg`` cannot be resolved."""
+    """``arg`` as an absolute path from ``cwd``: ~ and variables expanded, Git Bash's /e/... read as E:/... on Windows,
+    a backslash read as a separator elsewhere (BACKSLASH_SEP); ``cwd`` itself when a variable or a command substitution
+    in ``arg`` cannot be resolved."""
     expanded = _expand(arg, {})
     if expanded is None:
         return os.path.abspath(cwd)
-    arg = os.path.expandvars(os.path.expanduser(expanded))
+    arg = os.path.expandvars(os.path.expanduser(expanded.replace("\\", "/") if BACKSLASH_SEP else expanded))
     if os.name == "nt":
         m = re.match(r"^/([a-zA-Z])(?=/|$)", arg)
         if m:
@@ -354,8 +356,6 @@ def calls(command: str, cwd: str, powershell: bool = False) -> list[tuple[list[s
     subshells: list[str] = []
     env: dict[str, str | None] = {}
     for words in segments(command, powershell):
-        if powershell and PS_BACKSLASH:
-            words = [w.replace("\\", "/") for w in words]
         if words[0] in SUBSHELL:
             if words[0] == SUBSHELL[0]:
                 subshells.append(cwd)

@@ -5,7 +5,7 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 ## Unreleased
 
 - **The suite is green on Linux.** Three places misread Windows shapes off Windows: a PowerShell word's backslash is
-  now a path separator wherever `os.path` reads only slashes (`guards.PS_BACKSLASH`), as PowerShell reads it, so
+  now a path separator wherever `os.path` reads only slashes (`guards.BACKSLASH_SEP`), as PowerShell reads it, so
   `Set-Content {lab}\x` is seen in the production checkout; a `cmd /c` option is slashes and a name without a
   separator (`guards.CMD_OPTION`: `/c`, `//J`, `/XD`), so a Unix absolute path is a target, not an option; and
   `detail.preview` finds `.\install.ps1` by its last part on either separator. The 26 advisory `brain-linux` failures
