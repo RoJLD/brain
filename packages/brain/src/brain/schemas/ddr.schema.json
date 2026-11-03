@@ -44,6 +44,7 @@
     "other_allowed": {"type": "boolean", "description": "'Other' with free text is always possible; false only when a question forbids it."},
     "blocking": {"type": "boolean"},
     "due": {"type": "string", "format": "date"},
+    "minutes": {"type": "integer", "minimum": 1, "description": "The owner's effort in minutes (brain queue ranks the quick ones a little higher); default: a decision's reading time, 5 for an action, 1 for a permission."},
     "command": {"type": "string", "minLength": 1, "description": "An action's exact command, the one the owner's Apply runs after showing it (brain queue apply, the cockpit's A): brain ... or install.ps1 ...; run in cwd, else the project's root."},
     "cwd": {"type": "string", "minLength": 1, "description": "The folder the command runs in, when it is not the project's root."},
     "status": {"enum": ["pending", "answered", "integrated", "archived"], "description": "pending -> answered (the owner chose or wrote) -> integrated (the model in charge read and applied it) -> archived."},

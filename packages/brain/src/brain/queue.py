@@ -33,7 +33,21 @@ when the same session later ran the same call without an error (the permission w
 Each entry says what it unblocks: the open items it is attached to (a DDR's ``links``, the items whose props name it,
 the items of its specs when it names none; the item a denial's worktree is named after) and every open item or
 pending milestone
-downstream of them (``depends_on``, ``part_of``). The queue is sorted by that count, then blocking first, then oldest.
+downstream of them (``depends_on``, ``part_of``).
+
+The queue is ranked by what each entry holds up (wi-brain-queue-priority, QUEUE-1 and QUEUE-2), at zero token: a score
+of terms (``terms``, shown by ``brain queue --explain``): the highest priority among the items and milestones it holds
+up (P0 above P1...), their count (capped: many P3s never outweigh a P1 by number), the critical path's slip per day of
+waiting and the nearest milestone (from the project's last ``brain forecast --json``, its saved latest.json:
+brain.forecast.waiting), a stated deadline (the DDR's ``due``, or a ``due``/``deadline`` prop of what it holds up:
+it weighs above the count), the owner's effort in minutes (a quick one a little higher), its age and the blocking
+flag. Then three bands: now (blocking, the critical path, a P0 or a deadline within 2 days), this week (a P1, a slip,
+a deadline within the week, a milestone within 14 days), when you can. The owner's own order and band (``brain queue
+order``, stamped in the ledger) win: first in their band, then the score. A denial (perm-, guard-) expires once
+every session it was refused in is archived or gone in the desktop app's eyes (``session_states``).
+
+The view names the owner by their display name (config.json ``identity.display_name``, else ``identity.owner``:
+brain.config.name_of), while ``--by`` and the records keep the owner's id.
 
 ``build`` is the data function the TUI's panel calls (wi-brain-tui-cockpit); ``collect`` builds several projects with
 one transcript scan and returns the denials outside any registered project too.
@@ -43,6 +57,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -51,7 +66,7 @@ from pathlib import Path
 
 from functools import lru_cache
 
-from . import actions, config, decisions, graph, guards, paths, permissions, records, resume, secretscan
+from . import actions, config, decisions, forecast, graph, guards, paths, permissions, records, resume, secretscan
 
 KINDS = decisions.KINDS
 DAYS = 7
@@ -223,7 +238,7 @@ def load_graph(store: Path | None) -> Graph:
             g.down.setdefault(src, set()).add(dst)
         elif kind == "specified_by":
             g.by_spec.setdefault(dst, set()).add(src)
-    g.text = {nid: json.dumps(n.get("props") or {}, ensure_ascii=False) for nid, n in g.nodes.items()
+    g.text = {nid: json.dumps(n.get("props") or {}, ensure_ascii=False, default=str) for nid, n in g.nodes.items()
               if g.is_open(nid)}
     return g
 
@@ -254,12 +269,18 @@ def _ddr_entries(project, g: Graph, kinds, today: date) -> list[dict]:
         rec = (d.get("recommendation") or {}).get("option")
         how = (f"brain decision answer {d['id']} <option>" if kind == "decision" else
                f"brain queue apply {d['id']} (or the cockpit's A): shows {d['command']}, runs it once "
-               f"{config.owner_of()} confirms, then marks it done" if kind == "action" and d.get("command") else
+               f"{config.name_of()} confirms, then marks it done" if kind == "action" and d.get("command") else
                f"do it, then brain queue done {d['id']}" if kind == "action" else
                f"grant a narrow allow rule or do it once, then brain queue done {d['id']}")
+        words = len(" ".join(str(x) for x in (d.get("title"), d.get("question"), d.get("context"),
+                                              *(json.dumps(o, ensure_ascii=False) for o in d.get("options") or ())))
+                    .split())
+        minutes = d.get("minutes") or (max(1, math.ceil((words * 60 / READ_WPM + CHOOSE_S) / 60))
+                                       if kind == "decision" else None)
         e = _entry(kind, "ddr", d["id"], d.get("title", ""), since=str((d.get("asked") or {}).get("at", "")),
                    today=today, g=g, attached=attached, detail=" ".join(str(d.get("question", "")).split()),
-                   recommended=rec, how=how, due=d.get("due"), command=d.get("command"), guard=d.get("guard"))
+                   recommended=rec, how=how, due=str(d["due"]) if d.get("due") else None, command=d.get("command"),
+                   guard=d.get("guard"), minutes=minutes)
         e["blocking"] = bool(d.get("blocking"))
         out.append(e)
     return out
@@ -459,19 +480,27 @@ def scan(days: int = DAYS, today: date | None = None, projects_dir: Path | None 
         g = groups.setdefault(gid, {"id": gid, "tool": o["tool"], "call": o["key"], "occurrences": []})
         g["occurrences"].append(o)
     denials = []
+    expired = []
+    ledger = _ledger_guards(since)
+    state = session_states(base) if groups or ledger else None
     for g in groups.values():
         live = [o for o in g["occurrences"] if not o["resolved"] and o["at"] > stamps.get(g["id"], "")]
         if not live:
             continue
         last = live[-1]
         call, _ = secretscan.clean_text(g["call"])
+        sessions = sorted({o["session"] for o in live if o["session"]})
+        why = stale({"sessions": sessions}, state)
+        if why:
+            expired.append({"id": g["id"], "why": why, "cwds": sorted({o["cwd"] for o in live if o["cwd"]})})
+            continue
         denials.append({"id": g["id"], "tool": g["tool"], "call": call, "via": last["via"], "reason": last["reason"],
                         "first": live[0]["at"], "last": last["at"], "count": len(live),
                         "sessions": sorted({o["session"] for o in live if o["session"]}),
                         "cwds": sorted({o["cwd"] for o in live if o["cwd"]}),
                         "branches": sorted({o["branch"] for o in live if o["branch"]})})
     guards, requests = [], {}
-    for r in _ledger_guards(since):
+    for r in ledger:
         req = r.get("request") if r.get("guard") in GUARD_REQUESTS else None
         if isinstance(req, dict) and req.get("ref"):
             requests.setdefault(req["ref"], []).append(r)
@@ -482,13 +511,17 @@ def scan(days: int = DAYS, today: date | None = None, projects_dir: Path | None 
         if not live:
             continue
         req = live[-1]["request"]
+        why = stale({"sessions": sorted({r["session_id"] for r in live if r.get("session_id")})}, state)
+        if why:
+            expired.append({"id": ref, "why": why, "cwds": sorted({str(r["cwd"]) for r in live if r.get("cwd")})})
+            continue
         denials.append({"id": ref, "tool": live[-1].get("tool"), "call": req.get("command") or req.get("what", ""),
                         "via": f"guard {live[-1]['guard']}", "reason": live[-1].get("reason", ""),
                         "first": live[0]["at"], "last": live[-1]["at"], "count": len(live),
                         "sessions": sorted({r["session_id"] for r in live if r.get("session_id")}),
                         "cwds": sorted({str(r["cwd"]) for r in live if r.get("cwd")}), "branches": [],
                         "guard": live[-1]["guard"], "category": req.get("category", ""), "request": req})
-    return {"since": since, "denials": denials, "guards": guards}
+    return {"since": since, "denials": denials, "guards": guards, "expired": expired}
 
 
 def guard_request(ref: str) -> tuple[dict, dict]:
@@ -549,6 +582,7 @@ def _worktree_items(g: Graph, folders) -> set[str]:
 
 
 def _denial_entry(d: dict, g: Graph, today: date, owner: str) -> dict:
+    """A denial's entry; ``owner``: the name its how text shows (config.name_of)."""
     attached = _worktree_items(g, d["cwds"] + d["branches"])
     category = d.get("category") or owner_only(f"{d['call']} {d['reason']}")
     kind = "action" if category or d.get("guard") else "permission"
@@ -576,14 +610,188 @@ def _carried(projects_list) -> set[str]:
     return out
 
 
+# --- the rank: what each entry holds up (wi-brain-queue-priority, QUEUE-1, QUEUE-2) ---
+
+BANDS = ("now", "week", "later")
+BAND_NAMES = {"now": "now", "week": "this week", "later": "when you can"}
+BAND_WHY = {"now": "blocking, the critical path, a P0 or a deadline within 2 days",
+            "week": "a P1, a slip on a milestone, a deadline or a milestone within the window",
+            "later": "the rest"}
+PRIORITY_VALUE = {"P0": 8.0, "P1": 4.0, "P2": 2.0, "P3": 1.0}
+# The weights of the score's terms: a written setting, zero token. A deadline weighs above any count (COUNT_MAX).
+WEIGHTS = {"count": 0.25, "slip": 6.0, "milestone": 3.0, "effort": 1.0, "age": 0.1, "blocking": 4.0}
+COUNT_MAX = 3.0        # the count term's cap: twelve P3s never outweigh one P1 by their number alone
+AGE_MAX = 2.0          # the age term's cap (20 days)
+DEADLINE = ((0, 12.0), (2, 10.0), (7, 6.0))   # (days left at most, weight): overdue, two days, the week
+WINDOW_DAYS = 7        # the slip is a milestone's delay per day of waiting, over this window
+SOON_DAYS = 14         # a held-up milestone whose p50 is this close puts the entry in this week's band
+HORIZON_DAYS = 42      # the milestone term fades to zero at the forecast's horizon
+EFFORT = {"action": 5, "permission": 1}   # the owner's minutes when an entry says none (a decision: its reading)
+EFFORT_MAX = 30        # beyond 30 minutes, no quick-win bonus
+READ_WPM, CHOOSE_S = 200, 10               # a decision's reading time, as brain.batch counts it
+
+
+def order_stamps() -> dict[str, dict]:
+    """id -> {order, band} of the owner's last ``brain queue order`` (``<BRAIN_HOME>/ledger/queue-<month>.jsonl``);
+    a cleared one is left out."""
+    out: dict[str, dict] = {}
+    for f in sorted(paths.ledger_dir().glob("queue-*.jsonl")):
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if r.get("event") == "queue-order" and r.get("id"):
+                out[r["id"]] = {"order": r.get("order"), "band": r.get("band")}
+    return {k: v for k, v in out.items() if v["order"] is not None or v["band"] in BANDS}
+
+
+def order(ref: str, *, at: str, position: int | None = None, band: str = "", clear: bool = False,
+          by: str = "") -> str:
+    """The owner's own order for an entry: its position in its band (1 first) and, optionally, its band. It wins over
+    the score; ``clear`` gives the entry back to the score."""
+    if band and band not in BANDS:
+        raise QueueError(f"--band takes one of {', '.join(BANDS)}")
+    if not clear and position is None and not band:
+        raise QueueError("brain queue order ID N [--band B], or --clear")
+    if position is not None and position < 1:
+        raise QueueError("the position starts at 1")
+    d = paths.ledger_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    row = {"at": at, "event": "queue-order", "id": ref, "order": None if clear else position,
+           "band": None if clear else (band or None), "by": by or config.owner_of()}
+    with open(d / f"queue-{at[:7]}.jsonl", "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    if clear:
+        return f"{ref}: back to the score's order"
+    return (f"{ref}: {config.name_of()}'s order" + (f" {position}" if position is not None else "")
+            + (f" in the band {band}" if band else "") + f", stamped in {d.as_posix()}/queue-{at[:7]}.jsonl")
+
+
+def _deadline(text) -> date | None:
+    try:
+        return date.fromisoformat(str(text)[:10]) if text else None
+    except ValueError:
+        return None
+
+
+def _minutes(e: dict) -> int:
+    if isinstance(e.get("minutes"), int) and e["minutes"] > 0:
+        return e["minutes"]
+    if e["kind"] == "decision":
+        words = len(f"{e.get('title', '')} {e.get('detail', '')}".split())
+        return max(1, math.ceil((words * 60 / READ_WPM + CHOOSE_S) / 60))
+    return EFFORT.get(e["kind"], 5)
+
+
+def terms(e: dict, g: Graph, fc: dict, today: date, owner_order: dict | None = None) -> dict:
+    """An entry's score, each of its terms and the facts behind them, and its band: from what it holds up (the items
+    and milestones it unblocks, their priority, a deadline among them), the critical path's slip per day of waiting
+    and the nearest milestone (``fc``, the project's last ``brain forecast --json``), the owner's minutes and its age.
+    The owner's order and band (``brain queue order``) win."""
+    held = []
+    top = ""
+    for nid in e["unblocked"]:
+        n = g.nodes.get(nid) or {}
+        p, proposed = forecast._priority(n.get("props") or {})
+        held.append({"id": nid, "type": n.get("type"), "priority": p + ("?" if p and proposed else "")})
+        if p and (not top or forecast.PRIORITY_RANK[p] < forecast.PRIORITY_RANK[top]):
+            top = p
+    wait = forecast.waiting(fc, e["unblocked"], WINDOW_DAYS, today) if fc else {}
+    for h in held:
+        h.update(wait.get("items", {}).get(h["id"], {}))
+    dues = [(d, src) for d, src in [(_deadline(e.get("due")), e["id"])]
+            + [(_deadline(((g.nodes.get(n) or {}).get("props") or {}).get("due")
+                          or ((g.nodes.get(n) or {}).get("props") or {}).get("deadline")), n) for n in e["unblocked"]]
+            if d]
+    due, due_src = min(dues) if dues else (None, "")
+    left = (due - today).days if due else None
+    minutes = _minutes(e)
+    t = {"priority": PRIORITY_VALUE.get(top, 0.0),
+         "count": min(COUNT_MAX, WEIGHTS["count"] * len(e["unblocked"])),
+         "slip": WEIGHTS["slip"] * wait.get("slip", 0.0),
+         "milestone": (WEIGHTS["milestone"] * max(0.0, 1 - wait["nearest_days"] / HORIZON_DAYS)
+                       if wait.get("nearest_days") is not None else 0.0),
+         "deadline": next((w for days, w in DEADLINE if left is not None and left <= days), 0.0),
+         "effort": WEIGHTS["effort"] * max(0.0, 1 - minutes / EFFORT_MAX),
+         "age": min(AGE_MAX, WEIGHTS["age"] * max(0, e.get("age_days") or 0)),
+         "blocking": WEIGHTS["blocking"] if e.get("blocking") else 0.0}
+    t = {k: round(v, 2) for k, v in t.items()}
+    slip = wait.get("slip", 0.0)
+    if e.get("blocking") or top == "P0" or slip >= 0.5 or (left is not None and left <= 2):
+        band, why = "now", ("blocking" if e.get("blocking") else "a P0" if top == "P0"
+                            else f"the critical path of {wait.get('slip_milestone')}" if slip >= 0.5
+                            else f"the deadline {due.isoformat()}")
+    elif (top == "P1" or slip > 0 or (left is not None and left <= WINDOW_DAYS)
+          or (wait.get("nearest_days") is not None and wait["nearest_days"] <= SOON_DAYS)):
+        band, why = "week", ("a P1" if top == "P1" else f"a slip on {wait.get('slip_milestone')}" if slip > 0
+                             else f"the deadline {due.isoformat()}" if left is not None and left <= WINDOW_DAYS
+                             else f"{wait.get('nearest')} within {SOON_DAYS} d")
+    else:
+        band, why = "later", "nothing urgent held up"
+    mine = (owner_order or {}).get(e["id"]) or {}
+    if mine.get("band") in BANDS:
+        band, why = mine["band"], f"{config.name_of()}'s band"
+    return {"score": round(sum(t.values()), 2), "terms": t, "band": band, "band_why": why,
+            "order": mine.get("order"), "held": held, "top": top, "slip": slip,
+            "slip_milestone": wait.get("slip_milestone", ""), "nearest": wait.get("nearest", ""),
+            "nearest_p50": wait.get("nearest_p50", ""), "minutes": minutes,
+            "due": due.isoformat() if due else "", "due_from": due_src if due else "", "forecast": bool(fc)}
+
+
+def rank(entries: list[dict], g: Graph, fc: dict, today: date, owner_order: dict | None = None) -> list[dict]:
+    """Each entry with its score, terms and band (:func:`terms`), sorted: the band, the owner's order first, then the
+    score, then the oldest."""
+    for e in entries:
+        e.update(terms(e, g, fc, today, owner_order))
+    return _sort(entries)
+
+
 def _sort(entries: list[dict]) -> list[dict]:
-    return sorted(entries, key=lambda e: (-e["unblocks"], not e["blocking"], e["since"] or "9999", e["id"]))
+    return sorted(entries, key=lambda e: (BANDS.index(e.get("band") or "later"), e.get("order") is None,
+                                          e.get("order") or 0, -e.get("score", 0), -e["unblocks"],
+                                          e["since"] or "9999", e["id"]))
+
+
+def bands(entries: list[dict]) -> dict[str, int]:
+    return {b: sum(1 for e in entries if (e.get("band") or "later") == b) for b in BANDS}
+
+
+# --- the stale denials: their session archived or gone ---
+
+def session_states(projects_dir: Path | None = None):
+    """A function: Claude Code session id -> live, archived or gone, as the desktop app knows its sessions
+    (brain.tidy's app state, read only): archived when its session file says so; gone when the app keeps no file for
+    it and no transcript ``<id>.jsonl`` is left. None when the app is not on this machine: a denial never expires."""
+    from . import tidy  # tidy reaches the queue through brain.detail
+    st = tidy.app_state()
+    if not st.seen:
+        return None
+    base = projects_dir or paths.projects_dir()
+    names = {f.stem for f in base.rglob("*.jsonl")} if base.is_dir() else set()
+    known = {cli: ("archived" if st.sessions.get(app, {}).get("archived") else "live") for cli, app in st.cli.items()}
+    return lambda sid: known.get(sid) or ("live" if sid in names else "gone")
+
+
+def stale(d: dict, state) -> str:
+    """Why a denial expired ('' when it did not): every session it was refused in is archived or gone (``state``:
+    :func:`session_states`)."""
+    if state is None or not d.get("sessions"):
+        return ""
+    seen = {state(s) for s in d["sessions"]}
+    if "live" in seen:
+        return ""
+    return ("its session is archived" if seen == {"archived"} else "its session is gone" if seen == {"gone"}
+            else "its sessions are archived or gone")
 
 
 def build(project, *, kinds=KINDS, days: int = DAYS, today: date | None = None, with_graph: bool = True,
-          transcripts: bool = True, scanned: dict | None = None, placer=None, owner: str | None = None) -> dict:
-    """The owner's queue for one project: its entries sorted by what each unblocks, their counts by kind, the guard
-    refusals not queued, the rules' terms no category detects. The TUI's data function."""
+          transcripts: bool = True, scanned: dict | None = None, placer=None, owner: str | None = None,
+          fc: dict | None = None, owner_order: dict | None = None) -> dict:
+    """The owner's queue for one project: its entries ranked (:func:`rank`: in bands, the owner's order first, then
+    the score of what each holds up), their counts by kind and band, the guard refusals not queued, the rules' terms
+    no category detects. ``fc``: the project's forecast (default its last saved one, brain forecast's latest.json).
+    The TUI's data function."""
     today = today or date.today()
     kinds = tuple(kinds)
     owner = owner or config.owner_of()
@@ -596,21 +804,28 @@ def build(project, *, kinds=KINDS, days: int = DAYS, today: date | None = None, 
         entries += specs
         if note:
             notes.append(note)
-    guards = 0
+    guards = expired = 0
     if transcripts and ("permission" in kinds or "action" in kinds):
         scanned = scanned if scanned is not None else scan(days, today)
         place = placer or Placer([project])
         carried = _carried([project])
         for d in scanned["denials"]:
             if d["id"] not in carried and place(d["cwds"][0] if d["cwds"] else "") == project.name:
-                e = _denial_entry(d, g, today, owner)
+                e = _denial_entry(d, g, today, config.name_of())
                 if e["kind"] in kinds:
                     entries.append(e)
         guards = sum(1 for r in scanned["guards"] if place(str(r.get("cwd") or "")) == project.name)
-    entries = _sort(entries)
+        expired = sum(1 for x in scanned.get("expired") or []
+                      if place(x["cwds"][0] if x["cwds"] else "") == project.name)
+    fc = forecast.load_latest(project.name) if fc is None else fc
+    entries = rank(entries, g, fc, today, order_stamps() if owner_order is None else owner_order)
+    if not fc:
+        notes.append("no forecast saved: the slip and milestone terms are 0 (brain forecast)")
     return {"project": project.name, "root": str(project.root), "today": today.isoformat(), "days": days,
-            "owner": owner, "entries": entries, "counts": {k: sum(1 for e in entries if e["kind"] == k) for k in KINDS},
-            "guard_refusals": guards, "rules": rules(project, owner), "notes": notes}
+            "owner": owner, "name": config.name_of(), "entries": entries,
+            "counts": {k: sum(1 for e in entries if e["kind"] == k) for k in KINDS}, "bands": bands(entries),
+            "guard_refusals": guards, "expired": expired,
+            "rules": rules(project, owner), "notes": notes}
 
 
 def collect(projects_list, *, only=None, kinds=KINDS, days: int = DAYS, today: date | None = None,
@@ -627,53 +842,88 @@ def collect(projects_list, *, only=None, kinds=KINDS, days: int = DAYS, today: d
     out = [build(p, kinds=kinds, days=days, today=today, with_graph=with_graph, transcripts=transcripts,
                  scanned=scanned, placer=place, owner=owner) for p in targets]
     carried = _carried(list(projects_list) + ([only] if only is not None else []))
-    rest = [_denial_entry(d, Graph(), today, owner) for d in scanned["denials"]
+    rest = [_denial_entry(d, Graph(), today, config.name_of()) for d in scanned["denials"]
             if d["id"] not in carried and not place(d["cwds"][0] if d["cwds"] else "")]
-    rest = _sort([e for e in rest if e["kind"] in kinds])
+    rest = rank([e for e in rest if e["kind"] in kinds], Graph(), {}, today, order_stamps())
     if rest:
         out.append({"project": OUTSIDE, "root": None, "today": today.isoformat(), "days": days, "owner": owner,
-                    "entries": rest,
-                    "counts": {k: sum(1 for e in rest if e["kind"] == k) for k in KINDS},
+                    "name": config.name_of(), "entries": rest,
+                    "counts": {k: sum(1 for e in rest if e["kind"] == k) for k in KINDS}, "bands": bands(rest),
                     "guard_refusals": sum(1 for r in scanned["guards"] if not place(str(r.get("cwd") or ""))),
                     "rules": {}, "notes": []})
     return out
 
 
 LEGEND = ["  a decision: brain decision answer ID <option>; an action done or a permission granted: "
-          "brain queue done ID",
-          "  brain queue --json: each entry's how, detail and the items it unblocks"]
+          "brain queue done ID; your own order: brain queue order ID N [--band now|week|later]",
+          "  brain queue --explain: each entry's score terms; --json: its how, detail, terms and what it holds up"]
+TERMS = ("priority", "count", "slip", "milestone", "deadline", "effort", "age", "blocking")
 
 
-def render(data: dict, width: int = 118, outside: int = 0, legend: bool = True) -> list[str]:
+def explain(e: dict) -> str:
+    """An entry's score, term by term, with the fact behind each one that counts."""
+    t = e.get("terms") or {}
+    facts = {"priority": e.get("top") and f"holds up a {e['top']}",
+             "count": f"{e['unblocks']} held up",
+             "slip": e.get("slip") and f"{e['slip']:g} d per day of waiting on {e['slip_milestone']}",
+             "milestone": e.get("nearest") and f"{e['nearest']} p50 {e.get('nearest_p50') or '?'}",
+             "deadline": e.get("due") and f"due {e['due']}" + (f" ({e['due_from']})" if e.get("due_from") != e["id"]
+                                                                else ""),
+             "effort": f"{e.get('minutes')} min", "age": f"{e.get('age_days')} d" if e.get("age_days") is not None
+             else "", "blocking": "blocking"}
+    parts = [f"{k} {t[k]:g}" + (f" ({facts[k]})" if facts.get(k) else "") for k in TERMS if t.get(k)]
+    head = f"score {e.get('score', 0):g} = " + (" + ".join(parts) or "0")
+    tail = f"; band {e.get('band')}: {e.get('band_why')}"
+    if e.get("order") is not None:
+        tail += f"; {config.name_of()}'s order {e['order']}"
+    if not e.get("forecast"):
+        tail += "; no forecast"
+    return head + tail
+
+
+def render(data: dict, width: int = 118, outside: int = 0, legend: bool = True, why: bool = False) -> list[str]:
+    """The text of brain queue: a header, then each band (now, this week, when you can) and its entries in rank
+    order; ``why`` (``--explain``): each entry's score terms under it."""
     c = data["counts"]
     total = sum(c.values())
     where = f" ({data['root']})" if data.get("root") else ""
-    owner = data.get("owner") or config.NO_OWNER
-    lines = [f"{data['project']}{where}: {total} waiting on {owner}: {c['decision']} decision(s), {c['action']} "
-             f"action(s), {c['permission']} permission(s)"]
+    name = data.get("name") or data.get("owner") or config.NO_OWNER
+    b = data.get("bands") or bands(data["entries"])
+    lines = [f"{data['project']}{where}: {total} waiting on {name}: {c['decision']} decision(s), {c['action']} "
+             f"action(s), {c['permission']} permission(s)"
+             + (" | " + ", ".join(f"{BAND_NAMES[k]} {b[k]}" for k in BANDS) if total else "")]
     if total:
-        lines.append("  unblocks  kind  id  age: what (sorted by the open items and milestones each unblocks)")
+        lines.append("  score unblocks  kind  id  age: what (in bands; the owner's order first, then the score)")
+    band = None
     for e in data["entries"]:
+        if e.get("band") != band:
+            band = e.get("band")
+            lines.append(f" {BAND_NAMES.get(band, band)} ({b.get(band, 0)}): {BAND_WHY.get(band, '')}")
         tag = e["kind"] + (f":{e['category']}" if e.get("category") else "")
-        flags = (" [blocking]" if e["blocking"] else "") + (f" x{e['count']}" if e.get("count", 1) > 1 else "")
+        flags = ((" [blocking]" if e["blocking"] else "") + (f" x{e['count']}" if e.get("count", 1) > 1 else "")
+                 + (f" #{e['order']}" if e.get("order") is not None else ""))
         age = f"{e['age_days']} d" if e.get("age_days") is not None else "-"
         text = e["title"] + (f" -> recommended: {e['recommended']}" if e.get("recommended") else "")
         if e["source"] == "denial":
             text = f"{e['title']} ({e['detail']})"
-        lines.append(_cut(f"  {e['unblocks']:>3}  {tag:<17} {e['id']}{flags} {age}: {' '.join(text.split())}",
-                          width))
+        lines.append(_cut(f"  {e.get('score', 0):>5g} {e['unblocks']:>3}  {tag:<17} {e['id']}{flags} {age}: "
+                          f"{' '.join(text.split())}", width))
+        if why:
+            lines.append(_cut(f"          {explain(e)}", max(width, 400)))
     if legend and total:
         lines += LEGEND
     rest = []
     if data.get("guard_refusals"):
         rest.append(f"{data['guard_refusals']} guard refusal(s) in the last {data['days']} d (the agent corrects "
                     "them)")
+    if data.get("expired"):
+        rest.append(f"{data['expired']} denial(s) expired: their session archived or gone")
     if outside:
         rest.append(f"{outside} denial(s) outside any registered project (brain queue --all)")
     if rest:
         lines.append("  not queued: " + "; ".join(rest))
     for t in (data.get("rules") or {}).get("uncovered", []):
-        lines.append(f"  warning: the rules name {t!r} as {owner}'s, and no category of brain.permissions (NEVER, "
+        lines.append(f"  warning: the rules name {t!r} as {name}'s, and no category of brain.permissions (NEVER, "
                      "never:) finds it")
     lines += [f"  note: {n}" for n in data.get("notes", [])]
     return lines
@@ -684,7 +934,7 @@ def render(data: dict, width: int = 118, outside: int = 0, legend: bool = True) 
 def add(root: Path, *, kind: str, title: str, what: str, at: str, context: str = "", blocks: str = "",
         items: list[str] | None = None, specs: list[str] | None = None, blocking: bool = False, due: str = "",
         project: str = "", session: str = "", slug: str = "", command: str = "", cwd: str = "",
-        dry_run: bool = False, guard: str = "") -> tuple[dict, Path | None, str]:
+        dry_run: bool = False, guard: str = "", minutes: int | None = None) -> tuple[dict, Path | None, str]:
     """An action or a permission put to the owner, as a DDR of that kind (no options). A permission whose text falls
     in an ``OWNER_ONLY`` category is written as an action (never granted by an allow rule): the third value says so.
     ``command`` (and ``cwd``): the exact command the owner's Apply runs (brain queue apply, the cockpit's A).
@@ -709,7 +959,7 @@ def add(root: Path, *, kind: str, title: str, what: str, at: str, context: str =
     category = owner_only(f"{title} {what} {context}")
     note = ""
     if kind == "permission" and category:
-        kind, note = "action", (f"written as an action: {category} is {config.owner_of()}'s alone, never granted by "
+        kind, note = "action", (f"written as an action: {category} is {config.name_of()}'s alone, never granted by "
                                 "an allow rule")
     ddr = {"v": 1, "id": f"ddr-{at[:10]}-{actions.slug(slug or title, 48)}", "kind": kind, "title": title,
            "question": what}
@@ -719,6 +969,8 @@ def add(root: Path, *, kind: str, title: str, what: str, at: str, context: str =
     ddr["blocking"] = blocking
     if due:
         ddr["due"] = due
+    if minutes:
+        ddr["minutes"] = int(minutes)
     for k, v in (("command", " ".join(command.split())), ("cwd", cwd)):
         if v:
             ddr[k] = v

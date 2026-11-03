@@ -183,7 +183,7 @@ def _milestones(st: Store) -> Section:
     if ms and orphans:
         proposed = sum(1 for o in orphans if (st.nodes[o].get("props") or {}).get(milestones.PROPOSED))
         s.lines.append(f"Outside every milestone: {len(orphans)} open item(s), {proposed} with a proposal waiting on "
-                       f"{config.owner_of()} (`brain milestone suggest`).")
+                       f"{config.name_of()} (`brain milestone suggest`).")
     if not ms:
         s.lines.append("No milestone in the store.")
     return s
@@ -227,7 +227,7 @@ def _decisions(project: projects.Project, st: Store) -> Section:
     opens = [n for n in st.of_type("WorkItem") if n.get("status") in WORK_OPEN and (n.get("props") or {}).get("open")]
     s = Section("Decisions (the full list with the spec questions: `brain decision pending`)")
     if pend:
-        s.lines.append(f"Waiting on {config.owner_of()} ({len(pend)}):")
+        s.lines.append(f"Waiting on {config.name_of()} ({len(pend)}):")
     for d in pend:
         rec = (d.get("recommendation") or {}).get("option") or "?"
         head = f"- {d['id']}{' [blocking]' if d.get('blocking') else ''} asked {decisions._day(d.get('asked'))}"

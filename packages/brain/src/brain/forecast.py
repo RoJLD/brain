@@ -911,7 +911,8 @@ def render(res: dict, show_items: bool = False) -> list[str]:
                  f"{s['keep']['rate']:.2f} ({s['keep']['kept']} proposals kept, {s['keep']['dropped']} dropped)")
     g = res["gates"]
     if g["ddr"]:
-        lines.append(f"  gates (s)      {len(g['ddr'])} blocking DDR(s) hold {len(g['ddr_items'])} item(s); {config.owner_of()}'s "
+        lines.append(f"  gates (s)      {len(g['ddr'])} blocking DDR(s) hold {len(g['ddr_items'])} item(s); "
+                     f"{config.name_of()}'s "
                      f"answer p10–p90 {g['delays_h']['p10']:.1f}–{g['delays_h']['p90']:.1f} h" if g["delays_h"] else
                      f"  gates          {len(g['ddr'])} blocking DDR(s), no answered DDR to time them")
     if g["undated"]:
@@ -940,6 +941,45 @@ def render(res: dict, show_items: bool = False) -> list[str]:
         for u in res["gates"]["undated"]:
             lines.append(f"  {u['id']:<42} not dated: {u['why']}")
     return lines
+
+
+# --- brain queue: what a day of waiting costs (wi-brain-queue-priority) ---
+
+def waiting(res: dict, ids, window: int = 7, today: date | None = None) -> dict:
+    """What a day of the owner's waiting costs the milestones that ``ids`` (open items and milestones) move, from a
+    forecast (``brain forecast --json``, its saved latest.json): for each dated item, its milestone's p50 minus its own
+    p50 is its slack; waiting ``window`` days delays the milestone by what exceeds the slack, so its slip per day of
+    waiting is ``max(0, window - slack) / window`` (1: on the critical path, 0: the slack absorbs the week). Returns
+    the largest slip and its milestone, each item's slip, and the nearest held-up milestone with its p50 (days from
+    ``today``). {} without a forecast."""
+    if not res:
+        return {}
+    ms = {m["id"]: m for m in res.get("milestones") or [] if (m.get("days") or {}).get("p50") is not None}
+    items = {i["id"]: i for i in res.get("items") or [] if (i.get("days") or {}).get("p50") is not None}
+    late = 0
+    if today is not None and res.get("as_of"):
+        late = max(0, (today - date.fromisoformat(str(res["as_of"])[:10])).days)
+    out: dict = {"slip": 0.0, "slip_milestone": "", "items": {}}
+    moved = set()
+    for nid in ids:
+        if nid in ms:
+            moved.add(nid)
+        it = items.get(nid)
+        m = ms.get(it.get("milestone")) if it else None
+        if not m:
+            continue
+        moved.add(m["id"])
+        slack = max(0.0, m["days"]["p50"] - it["days"]["p50"])
+        slip = round(max(0.0, window - slack) / window, 3)
+        out["items"][nid] = {"milestone": m["id"], "slack_days": round(slack, 1), "slip": slip,
+                             "p50": (m.get("dates") or {}).get("p50", "")}
+        if slip > out["slip"]:
+            out["slip"], out["slip_milestone"] = slip, m["id"]
+    if moved:
+        near = min(moved, key=lambda mid: (ms[mid]["days"]["p50"], mid))
+        out.update(nearest=near, nearest_days=round(max(0.0, ms[near]["days"]["p50"] - late), 1),
+                   nearest_p50=(ms[near].get("dates") or {}).get("p50", ""))
+    return out
 
 
 # --- brain status ---
