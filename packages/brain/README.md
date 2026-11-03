@@ -63,7 +63,9 @@ A pinned brain runs its pinned engine. `brain check` warns when the running brai
 `config.json` `engine.pin`: a newer or an older version, or the pin's version from other code (another git revision,
 an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh` and
 `brain render --write` then refuse to write, since they would render the plugin's hooks and generate the links with
-another engine: run the pinned engine, move the pin by a reviewed PR, or pass `--force`. A brain with no pin, or a
+another engine. After `brain update`, set `engine.pin` to the new tag in `config.json` and commit it (by a
+reviewed PR where the brain's main is protected); the refusal names the file and the tag. Otherwise run the pinned
+engine, or pass `--force`. A brain with no pin, or a
 pin that is not a release tag, is not compared.
 
 ### The scout
@@ -195,6 +197,23 @@ only keeps the decision with the owner). `brain decision defaulted` is the owner
 review, the provisional ones, the reversed ones; `--seen` marks them read, from the owner's terminal only), with a
 line in the morning batch (`brain decision batch --zen`) and in the cockpit's queue panel (`brain tui`); any default is reversed with `brain decision answer ID
 <option> --again`.
+
+## Parallel sessions
+
+Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](docs/merge-driver.md)):
+
+- **`brain merge-driver`**: a local git merge driver for the paths `.gitattributes` gives `merge=brain` (`brain init`
+  writes them): a generated view keeps one side and is marked for `brain refresh`, the journal and the decision log
+  are unioned in date order, the graph's edges and a CHANGELOG's Unreleased section are unioned, the other graph YAML
+  is merged by id, anything else as git would. The installer defines it in the personal brain's git config
+  (`brain merge-driver install --apply`); `brain merge-driver replay` merges a repo's past merges again with and
+  without it.
+- **`brain collisions [--all] [--frontier] [--json]`**: the files each open branch and worktree changes, crossed with
+  each startable item's predicted surface (its features' CodeRefs, its module, the files it names): the items that
+  can start now, and those that wait on a branch and its session.
+- **`brain brief ITEM [--class C] [--budget B] [--coordinator ID]`**: a sub-session's brief from the graph: the item
+  and its subgraph, its collisions, the class's model and effort (config.json `brief.classes`), the budget, the cost
+  estimate, the coordinator's id, and the definition of done and the never-list read from the owner's rules.
 
 ## Where the brain is found
 

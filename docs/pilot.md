@@ -52,7 +52,8 @@ Fixes come as new tags (0.2.3, then later ones), announced by the person who inv
 command: move to the next tag by hand (install.md, *Upgrade by hand*) until your version has one
 (`brain update --help` answers). From then on, `brain update` shows what changes and installs it on your `y`, and the
 cockpit's title bar (`brain tui`) says when a newer version is out (`u` opens the same plan). Nothing is ever
-installed without your yes. After an update, `brain sync` in your brain and restart Claude Code's sessions.
+installed without your yes. After an update, set `engine.pin` in your brain's `config.json` to the new tag and
+commit it, then `brain sync` (it refuses until the pin is the engine you run) and restart Claude Code's sessions.
 
 ## How to report an issue
 

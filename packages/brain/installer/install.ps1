@@ -26,6 +26,11 @@
                    -Without ID change it: brain profile set prints the plan, and with -Apply writes
                    <BRAIN_HOME>\profile.json (recommended: the set this machine allows, frozen there). An extra the
                    profile no longer wants is left installed; the stacks it turns on start on demand (brain up).
+      merge        with a personal brain: brain merge-driver install --repo <it> --launcher <the launcher above>,
+                   which sets merge.brain.driver in that repo's git config (its worktrees share it), so that the paths
+                   its .gitattributes gives merge=brain (brain init writes them: the generated views, the journal and
+                   the decision log, the graph's YAML, CHANGELOG.md) merge without a hand in each worktree; a brain
+                   command older than the subcommand only says so
     With a personal brain whose config.json has adapters.claude and rules:
       marketplace  adapters.claude.marketplace, cloned by Claude Code from GitHub adapters.claude.source (branch -Ref
                    when given), with background auto-update on (extraKnownMarketplaces.<marketplace>.autoUpdate in
@@ -493,7 +498,30 @@ function Update-Permissions {
 }
 # --- end of the permissions step ---
 
+# --- the merge driver step (tests/test_mergedriver.py runs it alone) ---
+function Set-MergeDriver {
+    # brain merge-driver install in the personal brain's repo (its worktrees share its git config): the launcher on
+    # PATH is the command git runs; a command older than brain merge-driver (argparse's exit 2) only says so.
+    $git_launcher = if ($windows) { Join-Path $bin 'brain.exe' } else { Join-Path $bin 'brain' }
+    if (-not (Test-Path $venv_python)) {
+        "merge    merge.brain.driver in $repo's git config ($git_launcher merge-driver run ...), once the command is installed (-Apply)"
+        return
+    }
+    $merge_args = @('-I', '-m', 'brain', 'merge-driver', 'install', '--repo', $repo, '--launcher', $git_launcher)
+    if ($Apply) { $merge_args += '--apply' }
+    $ErrorActionPreference = 'Continue'
+    $out = & $venv_python @merge_args 2>&1 |
+        ForEach-Object { if ($_ -is [Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" } }
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($code -eq 2) { 'merge    the installed brain command has no merge-driver subcommand yet (an older engine)'; return }
+    $out
+    if ($code -ne 0 -and $Apply) { throw "brain merge-driver install failed (exit $code)" }
+}
+# --- end of the merge driver step ---
+
 $allow_file = Join-Path $engine_root 'src\brain\adapters\claude\allow-rules.txt'
+if ($repo) { Set-MergeDriver }
 if ($claude_steps) { Update-Permissions }
 if (-not $repo -and -not $Apply) { 'next     brain init <folder> --owner <you> --apply (after -Apply installs the command), then .\install.ps1 -Personal <folder>' }
 if (-not $Apply) { '(plan only: run with -Apply to install)' }
