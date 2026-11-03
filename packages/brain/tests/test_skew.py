@@ -30,6 +30,7 @@ def test_the_pins_version_from_other_code_is_a_dev_engine():
     assert skew.problems(PIN, [skew.Engine("brain", "0.2.3")]) == []   # a wheel: its version alone
     assert skew.problems(PIN, [skew.Engine("brain", "0.3.0.dev1")]) == [
         "brain 0.3.0.dev1 is not a release version (the pin is v0.2.3)"]
+    assert skew.how(None, PIN, folder) == "run the v0.2.3 engine (brain update, or its venv), or --force"
 
 
 def test_no_pin_or_a_pin_that_is_not_a_tag_is_not_compared():
@@ -86,6 +87,11 @@ def test_sync_refuses_another_engine_unless_forced(pinned, monkeypatch, capsys, 
     assert rc == 1 and not kanban.exists()
     assert "brain sync: the running engine is not config.json engine.pin v0.2.3: brain 0.2" in err
     assert "--force" in err
+    if engines is AHEAD:   # after brain update: the pin to move, in one line
+        assert (f"brain sync: to keep this engine, set engine.pin to v0.2.4 in {pinned.parent / 'pinned-config.json'} "
+                "and commit it") in err
+    else:
+        assert "to keep this engine, set engine.pin to v0.2.1" in err
     assert cli.main(["--root", str(pinned), "refresh", "--offline"]) == 1
     assert cli.main(["--root", str(pinned), "sync", "--offline", "--force"]) == 0 and kanban.is_file()
     assert "(--force: written anyway)" in capsys.readouterr().err
