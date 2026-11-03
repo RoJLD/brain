@@ -2,7 +2,7 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
-## Unreleased
+## 0.2.2 — 2026-11-03
 
 - **The hooks read their JSON as UTF-8, whatever the console's codepage** (wi-brain-hook-stdin-utf8). On Windows,
   `python -I` decodes a pipe with the ANSI codepage (cp1252), so a hook got non-ASCII text as mojibake: an emoji
