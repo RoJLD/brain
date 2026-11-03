@@ -46,6 +46,23 @@ def test_apply_writes_a_brain_that_checks_and_points_to_it(fresh, monkeypatch, c
     assert "graph-check OK" in capsys.readouterr().out
 
 
+def test_the_first_items_go_into_the_empty_layers(fresh, capsys):
+    """research_graph init writes an empty layer as a flow list (``[]``): the first item and its first edge go after
+    its comments, and the store still checks."""
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    assert cli.main(["--root", str(fresh), "item", "add", "wi-first", "--title", "First: the pilot", "--priority",
+                     "P1", "--reason", "the pilot"]) == 0
+    assert cli.main(["--root", str(fresh), "item", "add", "wi-second", "--title", "Second", "--after",
+                     "wi-first"]) == 0
+    work = (fresh / "notes" / "graph" / "nodes" / "work.yaml").read_text(encoding="utf-8")
+    assert "[]" not in work and work.startswith("# Work layer") and "- {id: wi-first," in work
+    assert "{from: wi-second, to: wi-first, type: depends_on}" in \
+        (fresh / "notes" / "graph" / "edges" / "work.yaml").read_text(encoding="utf-8")
+    capsys.readouterr()
+    assert cli.main(["--root", str(fresh), "sync"]) == 0 and cli.main(["--root", str(fresh), "check"]) == 0
+    assert "graph-check OK" in capsys.readouterr().out
+
+
 def test_a_second_apply_changes_nothing_and_a_file_is_never_overwritten(fresh, capsys):
     (fresh / "rules").mkdir()
     (fresh / "rules" / "global.md").write_text("my own rules\n", encoding="utf-8")

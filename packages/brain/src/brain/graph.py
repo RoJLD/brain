@@ -27,6 +27,7 @@ NODE_KEYS = ("id", "type", "status", "title", "level", "anchor", "props")
 _PLAIN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-/]*$")
 _RESERVED = {"true", "false", "yes", "no", "on", "off", "null", "y", "n"}
 _NODE_START_RE = re.compile(r"^- \{id:\s*([^,\s}]+)")
+_EMPTY_FLOW_RE = re.compile(r"(?m)^\[\][ \t]*\n?")
 
 
 class GraphError(Exception):
@@ -126,6 +127,16 @@ def _read(path: Path) -> tuple[str, str]:
     return notes.read(path) if path.exists() else ("", "\n")
 
 
+def _open_list(text: str) -> str:
+    """A list file's text, ready for one more block entry: an empty flow list (``[]`` on its own line, as research_graph
+    init writes an empty layer) is taken out, the comments kept."""
+    if _EMPTY_FLOW_RE.search(text) and (_yaml().safe_load(text) or []) == []:
+        text = _EMPTY_FLOW_RE.sub("", text, count=1)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text
+
+
 def _write_checked(path: Path, text: str, expect: list, nl: str = "\n") -> None:
     got = _yaml().safe_load(text)
     if got != expect:
@@ -152,8 +163,7 @@ def append_edges(store: Path, edges: list[dict], file: str = "edges/work.yaml", 
     f = store / file
     text, nl = _read(f)
     before = load_yaml_list(f)
-    if text and not text.endswith("\n"):
-        text += "\n"
+    text = _open_list(text)
     block = (f"\n# {note}\n" if note else "\n") + "".join(render_edge(e) for e in edges)
     _write_checked(f, text + block, before + edges, nl)
 
@@ -185,8 +195,7 @@ def add_item(store: Path, nid: str, title: str, *, node_type: str = "WorkItem", 
     f = store / file
     text, nl = _read(f)
     before = load_yaml_list(f)
-    if text and not text.endswith("\n"):
-        text += "\n"
+    text = _open_list(text)
     _write_checked(f, text + render_node(node), before + [node], nl)
     append_edges(store, edges, edges_file, f"{today or date.today().isoformat()}: {nid} (brain item add)")
     return node
