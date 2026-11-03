@@ -34,7 +34,9 @@ same way.
 Then the scout (rule R8): run `brain [--project P] audit --diff` in the PR's worktree (`--diff A..B` once merged).
 Exit 1: fix each NEW and LEFT line in this PR, a catch-up test checking the behaviour the spec or ADR expects. DEFER
 lines go to the debt item named (the line prints its `brain item add` when the item is missing). PENDING is not
-asked. Exit 2: report why. Run it again until it exits 0.
+asked. Exit 2: report why. Run it again until it exits 0. Its structure lines (`size.*`, `complexity.*`, `dep.adr`,
+`shortcut.marker`, `symptom.cause`) are fixed the same way, or answered in the PR body, passed with `--pr-body FILE`:
+a `Root cause:` line for a symptom fix, a `Justified: <unit>: <reason>` line for the others.
 
 ## 2. Merged and applied
 

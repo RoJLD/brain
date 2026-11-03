@@ -358,6 +358,7 @@ from . import (__version__, actions, alerts, audit, backfill, batch, boundary, b
                milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
                records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, update, usage)
 from . import answers, classes, defaults, governor, keystore, markers, selftime, vault
+from . import skew
 from .inventory import AuditError
 
 
@@ -1359,6 +1360,8 @@ def _check_store(args, root: Path, store: Path) -> int:
             print(f"warning: the links graph could not be checked: {exc}")
     for line in milestones.orphan_lines(store, root):
         print(line)
+    for line in skew.check_lines(root):   # the running engine against config.json engine.pin
+        print(line)
     for r in specs.readiness(root, store):
         if r.ready:
             print(f"warning: spec {r.id} is ready to turn active (closed by {r.closed_by()}): brain refresh, or "
@@ -1382,6 +1385,8 @@ def _check_store(args, root: Path, store: Path) -> int:
 
 
 def cmd_sync(args, root: Path) -> int:
+    if skew.refuse(root, "sync", args.force):   # another engine than config.json engine.pin: nothing written
+        return 1
     if args.all:
         return _each_store(args, root, sync=True, check=False)
     return _sync_store(args, root, _store(args, root))
@@ -1439,6 +1444,8 @@ def cmd_refresh(args, root: Path) -> int:
     """sync --write, the records and queue views, kanban --write, then check, for each store of each project in
     scope. A main checkout on main or master is only checked (its generated files are refreshed from a worktree),
     unless --on-main. --all ends with the registry and the ids (check_registry)."""
+    if skew.refuse(root, "refresh", args.force):   # another engine than config.json engine.pin: nothing written
+        return 1
     return _each_store(args, root, sync=True, check=True)
 
 
@@ -1824,6 +1831,8 @@ def cmd_render(args, root: Path) -> int:
                   file=sys.stderr)
             return 2
     project_root = Path(args.repo).resolve() if args.repo else (obj.root if obj else None)
+    if args.write and not args.out and skew.refuse(base, "render", args.force):   # another engine than the pin
+        return 1
     return render.main(base, args.target, project=obj.name if obj else None, project_root=project_root,
                        out=Path(args.out).resolve() if args.out else None, do_write=args.write, check=args.check,
                        force=args.force, as_json=args.json)
@@ -2557,6 +2566,8 @@ def build_parser() -> argparse.ArgumentParser:
     sy.add_argument("--offline", action="store_true", help="no gh call (the features' statuses are not read)")
     sy.add_argument("--all", action="store_true", help="every project of the registry (a main checkout on main or "
                                                        "master is not written)")
+    sy.add_argument("--force", action="store_true", help="write even when the running engine is not config.json "
+                                                         "engine.pin (brain check says how they differ)")
     ck = sub.add_parser("check", help="records check, no conflict marker in the store, journals, decision logs and "
                                       "records, then research_graph check (--all: every project's, then the "
                                       "registry and the ids across every store)")
@@ -2719,7 +2730,9 @@ def build_parser() -> argparse.ArgumentParser:
     rdm = rd.add_mutually_exclusive_group()
     rdm.add_argument("--write", action="store_true", help="write what is not current, remove stray files")
     rdm.add_argument("--check", action="store_true", help="exit 1 when an output is not current")
-    rd.add_argument("--force", action="store_true", help="with --write: replace a file brain render did not write")
+    rd.add_argument("--force", action="store_true", help="with --write: replace a file brain render did not write, "
+                                                         "and write even when the running engine is not config.json "
+                                                         "engine.pin")
     rd.add_argument("--json", action="store_true", help="stable keys")
     cl = sub.add_parser("classes", help="every store's data class (config.json classes.stores) and where it may go "
                                         "(brain.classes)")
@@ -2846,6 +2859,8 @@ def build_parser() -> argparse.ArgumentParser:
     rf = sub.add_parser("refresh", help="sync then check for the project's stores, or every registered project's")
     rf.add_argument("--offline", action="store_true", help="no gh call (the features' statuses are not read)")
     rf.add_argument("--all", action="store_true", help="every project of the registry")
+    rf.add_argument("--force", action="store_true", help="write even when the running engine is not config.json "
+                                                         "engine.pin")
     rf.add_argument("--on-main", action="store_true",
                     help="also write in a main checkout on main or master (by default it is only checked)")
     td = sub.add_parser("tidy", help="the project's stale worktrees and merged branches (and origin's with --remote), "
@@ -2936,6 +2951,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="--diff: a code store in a worktree (a cross-repo change)")
     au.add_argument("--limit", type=_whole, metavar="N",
                     help="--diff: LEFT units to fix in this PR (default: scout_limit, 3)")
+    au.add_argument("--pr-body", metavar="FILE", help="--diff: the PR body ('-' for stdin), where the structure "
+                                                      "signals read Root cause: and Justified: lines (the range's "
+                                                      "commit messages are read too)")
     ix = sub.add_parser("index", help="have GitNexus (re)index the repos declared under code_index: (no name and no "
                                       "flag: each repo's state)")
     ix.add_argument("repos", nargs="*", metavar="REPO", help="a repo's folder name (GitNexus's name for it)")
