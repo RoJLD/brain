@@ -22,14 +22,15 @@ estimate of reading time; blocking ones always), the options cut to one line, th
 and what else waits on the owner (``brain queue``). Zero token: the records and the graph, read by script.
 
 ``answer_batch`` takes the session's answers back in one call: a JSON object ``{key: value}`` (or
-``{"answers": {...}}``, or a list of ``{"id": ..., "choices"|"choice": ..., "other": ..., "notes": ...}``). A key is a
-DDR id (or a part only one DDR has) or the question's text as the tool keys its answers (the ``[BLOQUANT]`` flag
-ignored). A value is the tool's answer: an option's label (``(Recommandé)`` ignored, any case), several labels joined
-by ", " for a multi_select DDR, anything else the owner's own text (``other``); a number is an option's (1-based); a
-list holds labels or numbers (anything else in it is the owner's text); an object gives ``choices``, ``other`` and
-``notes``
-explicitly; an empty value leaves the DDR pending. Every key is resolved before any DDR is written: one bad key writes
-nothing.
+``{"answers": {...}}``, or a list of ``{"id": ..., "choices"|"choice": ..., "other": ..., "notes": ...}``), a UTF-8 BOM
+ignored. A key is a DDR id (or a part only one DDR has) or the question's text as the tool keys its answers (the
+``[BLOQUANT]`` flag ignored). A value is the tool's answer, strictly (wi-brain-answers-lane): an option's exact label
+(``(Recommandé)`` ignored, any case), several exact labels joined by ", " for a multi_select DDR; a number is an
+option's (1-based); a list holds labels or numbers; an object gives ``choices``, ``other`` and ``notes`` explicitly.
+Anything else, a shortened label among them, is refused: the owner's own text is marked as such, ``{"other": "..."}``.
+An empty value leaves the DDR pending. Every key is resolved before any DDR is written: one bad key writes nothing.
+The question tool's own answers need none of this: its capture records them (``brain decision answer --captured``,
+brain.answers).
 """
 
 from __future__ import annotations
@@ -37,10 +38,10 @@ from __future__ import annotations
 import json
 import math
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
-from . import config, decisions, queue
+from . import config, decisions, defaults, queue
 
 SIZE = 4  # the question tool's maximum per call
 HEADER = 12  # the question tool's chip
@@ -237,8 +238,11 @@ def build(project, *, size: int = SIZE, today: date | None = None, named: bool =
     owner = data.get("owner") or config.owner_of()
     batches = [_batch(project.name, i + 1, len(raw), rows, by_id, named, owner) for i, rows in enumerate(raw)]
     rest = [e for e in data["entries"] if e["id"] not in by_id or e["kind"] != "decision"]
+    review = {"defaulted": [], "provisional": []}
+    if (project.root / "records" / "ddr").is_dir():   # the defaults to review: a line of the morning batch
+        review = defaults.review(project.root, defaults._iso(datetime.now(timezone.utc)))
     return {"project": project.name, "root": str(project.root), "today": today.isoformat(), "size": size,
-            "owner": owner,
+            "owner": owner, "defaulted": defaults.line(review),
             "decisions": len(ddrs), "blocking": sum(1 for d in ddrs if d.get("blocking")), "batches": batches,
             "rest": {"decision": sum(1 for e in rest if e["kind"] == "decision"),
                      "action": sum(1 for e in rest if e["kind"] == "action"),
@@ -322,11 +326,12 @@ def render(data: dict, width: int = WIDTH) -> list[str]:
 
 def _footer(data: dict) -> list[str]:
     r = data["rest"]
+    review = [f"  {data['defaulted']}"] if data.get("defaulted") else []   # the defaults to review (brain.defaults)
     if not sum(r.values()):
-        return []
-    return [f"  also waiting on {data.get('owner') or config.NO_OWNER}: {r['decision']} item question(s) without "
-            f"options, {r['action']} action(s), {r['permission']} permission(s); with the spec questions and the "
-            "denied tool calls: brain queue"]
+        return review
+    return review + [f"  also waiting on {data.get('owner') or config.NO_OWNER}: {r['decision']} item question(s) "
+                     f"without options, {r['action']} action(s), {r['permission']} permission(s); with the spec "
+                     "questions and the denied tool calls: brain queue"]
 
 
 def _question_lines(i: int, e: dict, q: dict, width: int = WIDTH) -> list[str]:
@@ -379,7 +384,7 @@ def zen(data: dict, minutes: int = MINUTES, width: int = WIDTH) -> list[str]:
 def parse(text: str) -> list[tuple[str, object]]:
     """(key, value) pairs from the answers' JSON: an object, {"answers": object}, or a list of objects with an id."""
     try:
-        data = json.loads(text)
+        data = json.loads(text.lstrip("\ufeff"))  # a file Windows PowerShell wrote starts with a BOM
     except ValueError as exc:
         raise BatchError(f"the answers are not JSON: {exc}") from exc
     if isinstance(data, dict) and isinstance(data.get("answers"), (dict, list)):
@@ -391,6 +396,17 @@ def parse(text: str) -> list[tuple[str, object]]:
                 for x in data]
     raise BatchError('the answers: {"<DDR id or question>": "<label>", ...}, {"answers": {...}}, or a list of '
                      '{"id": ..., "choices": [...], "other": ..., "notes": ...}')
+
+
+def decode(data: bytes) -> str:
+    """The answers' file as text: UTF-8 with or without a BOM, or UTF-16 with its BOM (Windows PowerShell 5.1's
+    ``>``)."""
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return data.decode("utf-16")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise BatchError(f"the answers are not UTF-8: {exc}") from exc
 
 
 def _norm(text) -> str:
@@ -441,8 +457,19 @@ def _split(ddr: dict, text: str) -> tuple[list[str], str]:
     return picked, ", ".join(other).strip()
 
 
+def _inexact(ddr: dict, text) -> BatchError:
+    """The refusal of a text that is no option's exact label, naming the label it shortens when it does."""
+    labels = [o["label"] for o in ddr.get("options") or []]
+    t = _MARK_RE.sub("", str(text)).strip().casefold()
+    near = [lab for lab in labels if t and (lab.casefold().startswith(t) or t.startswith(lab.casefold()))]
+    hint = f" (it shortens or extends {near[0]!r})" if len(near) == 1 else ""
+    return BatchError(f"{ddr['id']}: {_cut(str(text), 60)!r} is not an option's exact label{hint}: "
+                      f"{'; '.join(labels)}; the owner's own text goes in {{\"other\": \"...\"}}")
+
+
 def _value(ddr: dict, value) -> tuple[list[str], str, str] | None:
-    """(choices, other, notes) from one answer, None when it is empty (the DDR stays pending)."""
+    """(choices, other, notes) from one answer, None when it is empty (the DDR stays pending). A text that is no
+    option's exact label is refused unless it is marked free text (``other``)."""
     if value is None or value == "" or value == []:
         return None
     notes = ""
@@ -462,11 +489,14 @@ def _value(ddr: dict, value) -> tuple[list[str], str, str] | None:
             return None
         return picked, other, notes
     if isinstance(value, list):
-        picked, other = [], []
+        picked = []
         for v in value:
             lab = _label(ddr, v)
-            (picked if lab else other).append(lab or str(v))
-        return picked, ", ".join(other), notes
+            if lab is None and str(v).strip():
+                raise _inexact(ddr, v)
+            if lab:
+                picked.append(lab)
+        return picked, "", notes
     lab = _label(ddr, value)
     if lab:
         return [lab], "", notes
@@ -474,15 +504,17 @@ def _value(ddr: dict, value) -> tuple[list[str], str, str] | None:
         raise BatchError(f"{ddr['id']}: option {value} does not exist ({len(ddr.get('options') or [])} options)")
     if ddr.get("multi_select"):
         picked, other = _split(ddr, str(value))
-        return picked, other, notes
-    return [], str(value).strip(), notes
+        if not other:
+            return picked, "", notes
+        value = other
+    raise _inexact(ddr, value)
 
 
 def answer_batch(root: Path, text: str, *, by: str = "", via: str = "ask-tool", at: str,
-                 again: bool = False) -> dict:
-    """Record a session's answers (``by``: config.json's owner by default): every key resolved and checked first,
-    then each DDR answered (``decisions.answer``). Returns the DDRs answered and the ids left pending (an empty
-    answer)."""
+                 again: bool = False, check=None) -> dict:
+    """Record a session's answers (``by``: config.json's owner by default): every key resolved and checked first
+    (``check(ddr_id, choices, other)``: a refusal, '' when it may be recorded), then each DDR answered
+    (``decisions.answer``). Returns the DDRs answered and the ids left pending (an empty answer)."""
     by = by or config.owner_of()
     pairs = parse(text)
     if not pairs:
@@ -506,6 +538,9 @@ def answer_batch(root: Path, text: str, *, by: str = "", via: str = "ask-tool", 
                 continue
             if len(got[0]) > 1 and not ddr.get("multi_select"):
                 raise BatchError(f"{ddr['id']} takes one choice (it is not multi_select): {got[0]}")
+            refused = check(ddr["id"], got[0], got[1]) if check else ""
+            if refused:
+                raise BatchError(refused)
             plan.append((ddr["id"], *got))
         except BatchError as exc:
             errors.append(str(exc))

@@ -173,11 +173,11 @@ def test_answer_batch_takes_the_ask_tools_answers(store):
     root = _queue(store)
     answers = {
         "Quel lieu ?": "Venue A (Recommandé)",  # the question's text, as the tool keys it
-        "ddr-2026-11-01-q2-which-host": "Alpha (Recommandé), Beta, gamma, my own idea",  # multi_select, and Other
+        "ddr-2026-11-01-q2-which-host": {"choices": ["Alpha (Recommandé)", "Beta, gamma"], "other": "my own idea"},
         "q3-which-name": 2,  # a part of the id, an option's number
         "ddr-2026-11-01-rules-lint-one": {"choices": ["guard it"], "notes": "only on main"},
         "ddr-2026-11-01-rules-lint-two": "",  # no answer: stays pending
-        "[BLOQUANT] Urgent question?": "Not now, ask me Friday",  # the owner's own text
+        "[BLOQUANT] Urgent question?": {"other": "Not now, ask me Friday"},  # the owner's own text, marked so
         "Autre ?": ["Yes"],
     }
     done = batch.answer_batch(root, json.dumps({"answers": answers}), at=AT)
@@ -209,7 +209,12 @@ def test_answer_batch_checks_every_key_before_writing(store):
              ({"lone-question": 9}, "option 9 does not exist"),
              ({"lone-question": {"choices": ["Maybe"]}}, "not one of the options"),
              ({"enter-the-key": "done"}, "is of kind action: brain queue done"),
-             ({"rules-lint": "Guard it"}, "several DDRs match")]
+             ({"rules-lint": "Guard it"}, "several DDRs match"),
+             # strict (wi-brain-answers-lane): an unmarked text that is no option's exact label writes nothing
+             ({"lone-question": "Ye"}, r"not an option's exact label \(it shortens or extends 'Yes'\)"),
+             ({"lone-question": "Not now"}, "the owner's own text goes in"),
+             ({"lone-question": ["Yes", "and more"]}, "not an option's exact label"),
+             ({"q2-which-host": "Alpha (Recommandé), Beta, gamma, my own idea"}, "'my own idea' is not an option")]
     for answers, message in cases:
         with pytest.raises(batch.BatchError, match=message) as exc:
             batch.answer_batch(root, json.dumps(answers), at=AT)
