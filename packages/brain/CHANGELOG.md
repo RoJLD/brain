@@ -2,6 +2,24 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+- **The cockpit knows its version and offers updates** (wi-brain-tui-update-check, ADR UPD-1 to UPD-3). The title
+  bar of `brain tui` always shows the installed version (the text view's header too). Once the screen is drawn, a
+  worker reads the release tags of the engine's public repo (`config.json` `engine.repo`, else RoJLD/brain) with
+  `git ls-remote`, no token, no credential helper, no prompt; the answer is kept 24 h in `<BRAIN_HOME>/update.json`,
+  and offline it says nothing. When a newer tag is out the title reads « brain 0.2.3 · 0.2.4 available » and `u`
+  opens `brain update`'s plan in the cockpit's confirmation, run on `y` only.
+- **`brain update`**: the plan to the latest tag (the version, its CHANGELOG sections read from the tag, the tag
+  installed into `<BRAIN_HOME>/venv` with pip and the `tui` extra kept, the launcher swapped into `<BRAIN_HOME>/bin`
+  even while a brain runs, install.ps1's Set-Launcher in Python, and for a pinned brain the `engine.pin` to move by a
+  reviewed PR, shown, never done), installed on the owner's yes only (`y` at the prompt, or `--yes`), refused in a
+  Claude Code session's shell. `--check` prints the plan and installs nothing; `--json` its data. An editable install
+  is left to `git pull`. The tests never read the network (conftest fakes the tags offline).
+- **The pilot's settings in the docs**: `docs/install.md` says, before the first session, `BRAIN_MEMORY_SYNC=0`, the
+  venv at `%USERPROFILE%\.brain\venv` or `BRAIN_PYTHON`, Git Bash's `HOME` (else `BRAIN_HOME`), telemetry off by
+  default, and how to upgrade by hand from a version without `brain update`; `docs/pilot.md` how updates come during the pilot.
+
 ## 0.2.3 — 2026-11-03
 
 - **`brain check` passes on a store that holds another repo's links.** Since 0.2.2, `brain sync` derives the Doc, Test

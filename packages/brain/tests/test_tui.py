@@ -436,3 +436,43 @@ def test_the_actions_are_refused_in_a_session_shell(tmp_path, monkeypatch):
         await pilot.pause(0.1)
         assert app.screen is detail_screen  # refused: no answer dialog
     _run(check)
+
+
+def test_the_title_shows_the_version_and_the_check_never_delays_the_first_paint(monkeypatch):
+    """wi-brain-tui-update-check (UPD-1, UPD-2): the installed version at once, the newer one once the background
+    check answers, u opens brain update's plan and nothing runs without the owner's y."""
+    import threading
+    gate, ran = threading.Event(), []
+    mine = tui.update.__version__
+    newer = {"installed": mine, "latest": "9.0.0", "newer": True, "repo": "RoJLD/brain", "pin": None,
+             "checked": "2026-11-03T10:00:00Z", "source": "remote"}
+    monkeypatch.setattr(tui.update, "check", lambda root=None, **kw: gate.wait(10) and newer)
+    monkeypatch.setattr(tui.detail, "refused", lambda env=None: "")
+    monkeypatch.setattr(tui.detail, "run", lambda a, steps: ran.append((a.kind, steps)) or [
+        {"command": " ".join(steps[0]), "exit": 0, "seconds": 0.1, "output": "the plan"}])
+
+    async def main():
+        app = tui.CockpitApp(FakeCockpit(), refresh=2.0, probe=300)
+        async with app.run_test(size=(160, 48)) as pilot:
+            await pilot.pause(0.2)
+            assert app.title == f"brain {mine}" and app.update_info is None  # drawn while the check still waits
+            assert app.check_action("update", ()) is False  # u hidden: nothing newer known
+            gate.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause(0.1)
+            assert app.title == f"brain {mine} · 9.0.0 available" and app.check_action("update", ()) is True
+            await pilot.press("u")
+            await pilot.pause(0.3)
+            confirm = app.screen
+            assert isinstance(confirm, tui.ConfirmScreen) and confirm.steps == [["brain", "update", "--yes"]]
+            assert ran == [("plan", [["brain", "update", "--check"]])]  # the plan shown, nothing installed
+            await pilot.press("n")
+            await pilot.pause(0.2)
+            assert app.screen is app.screen_stack[0] and len(ran) == 1  # cancelled: never run on its own
+            await pilot.press("u")
+            await pilot.pause(0.3)
+            await pilot.press("y")
+            await app.workers.wait_for_complete()
+            await pilot.pause(0.2)
+            assert ran[-1] == ("apply", [["brain", "update", "--yes"]])  # the owner's y
+    asyncio.run(main())

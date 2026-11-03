@@ -53,6 +53,10 @@ py -3 -m venv "$HOME\.brain\venv"
 
 Add `"brain[tui] @ ..."` for the cockpit's full-screen app (Textual); without it, `brain tui` draws a text view.
 
+The Claude Code hooks look for the engine's Python in `%USERPROFILE%\.brain\venv`. If you install it anywhere else,
+set the user variable `BRAIN_PYTHON` to that venv's `python.exe`: otherwise the hooks pick a Python that has no
+brain, and the guards let every call through.
+
 ### 3. Your brain
 
 Pick a folder outside any other repo, and your name as it should appear (in your queue, your rules, your plugin):
@@ -91,6 +95,21 @@ in your queue instead (`brain queue`). After an engine upgrade, `brain sync` ren
 Optional: `install.ps1 -Personal "$HOME\my-brain"` (a plan; `-Apply` to do it) adds the engine's narrow allow rules
 for its own commands to your Claude Code settings and copies the brain's memory notes. Read its plan first.
 
+**Before the first session**, check three things. They are your user environment variables (System settings, or
+`[Environment]::SetEnvironmentVariable('NAME', 'value', 'User')` in PowerShell), set once; open a new window after.
+
+- **Memory sync off for the pilot: `BRAIN_MEMORY_SYNC=0`.** At the end of each session the core plugin's memory hook
+  copies Claude Code's memory notes of every project into your brain and pushes them to your brain's remote by a PR.
+  Turn it off until you have decided you want that: `[Environment]::SetEnvironmentVariable('BRAIN_MEMORY_SYNC', '0', 'User')`.
+- **The engine's Python**: the venv at `%USERPROFILE%\.brain\venv` (the installer's), or `BRAIN_PYTHON` naming it
+  (step 2). In a session, `brain --version` must answer.
+- **Git Bash's HOME is your user folder.** The hooks run in Git's bash and find `~/.brain` from its `HOME`; Python
+  finds it from `%USERPROFILE%`. In Git Bash, `echo $HOME` should print `/c/Users/<you>`. If it prints anything else
+  (a `HOME` variable set for another tool), set `BRAIN_HOME` to `%USERPROFILE%\.brain` so that both read the same
+  folder.
+
+Telemetry is off by default: the engine sends nothing anywhere, and nothing changes that unless you turn it on.
+
 ### 5. First steps
 
 ```powershell
@@ -124,8 +143,17 @@ Then steps 4 and 5 above, with `~/my-brain` for the folder.
 
 ## Upgrade, uninstall
 
-- **Upgrade** to a new tag: the same `pip install` (or `install.ps1 -Apply` from a clone of that tag), then, in your
-  brain, `brain sync` (the plugin's hooks) and move `engine.pin` in `config.json` to the new tag.
+- **Upgrade with `brain update`** (a version that has it: `brain update --help` answers): it prints the plan (the
+  new version, what its CHANGELOG says, the install into `~/.brain\venv`, the launcher swap) and installs it when you
+  answer `y`; `brain update --check` only prints it. The cockpit's title bar shows the installed version and, when a
+  newer one is out, « brain X · Y available »; `u` opens the same plan. Then, in your brain, `brain sync` (the
+  plugin's hooks), and move `engine.pin` in `config.json` to the new tag in a commit of your own (the plan reminds
+  you; otherwise the installer's next `-Apply` puts the pinned tag back).
+- **Upgrade by hand** (0.2.2, and any version where `brain update --help` fails): the same `pip install` with the new
+  tag, in the venv, for instance
+  `& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain[tui] @ git+https://github.com/RoJLD/brain.git@v0.2.3#subdirectory=packages/brain"`
+  (or `install.ps1 -Apply` from a clone of that tag, which also swaps the launcher), then `brain --version`,
+  `brain sync` in your brain and `engine.pin` moved as above.
 - **Uninstall**: `claude plugin uninstall brain-core@brain` and `claude plugin marketplace remove brain`, delete
   `~/.brain` (the venv, the ledgers, the pointer) and remove `~/.brain\bin` from your user PATH. Your brain repo is
   yours to keep.

@@ -13,6 +13,7 @@ Keys (the footer shows those of the focused panel, ? lists them all):
   m        the focused panel's full view, its breadcrumb in its title; Escape (or m) comes back
   space    pause the automatic refresh, and resume it (r still reads now)
   r        read everything again now, the probes too; + and - check the files more or less often (500 ms to 10 s)
+  u        when a newer engine is out (the title bar says so): brain update's plan, run on the owner's yes
   t        the times in this machine's timezone or in UTC
   Enter    the row's detail (brain.detail; a second click on a row too): a DDR's options, an item's spec, ADRs and
            PR, a session's plan...; in it, o opens a link (the file at its line in the editor, the PR in the
@@ -24,6 +25,9 @@ The reads run in one worker thread at a time, so the screen never waits on them,
 notification, never a crash; an action's commands run in another, and the panels are read again after them. A refresh keeps the view still: a table's cells are updated in place when its rows are
 the same, else it is rebuilt with its scroll where it was and its cursor on its record. The scope, the views and the
 settings (the theme picked in the command palette, the timezone) are saved to <BRAIN_HOME>/tui.json at each change.
+The title bar shows the installed version; once the screen is drawn, a worker reads whether a newer one is out
+(brain.update.check: the engine's tags, cached 24 h, silent offline) and adds it there (« brain 0.2.2 · 0.2.3
+available »), so the first paint never waits on it.
 """
 
 from __future__ import annotations
@@ -41,7 +45,7 @@ from textual.screen import ModalScreen
 from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input, Label, OptionList, RadioButton,
                              RadioSet, Select, Static)
 
-from . import cockpit, config, detail
+from . import cockpit, config, detail, paths, update
 
 INTERVALS = (0.5, 1.0, 2.0, 5.0, 10.0)
 TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines,
@@ -49,7 +53,7 @@ TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines,
 STYLES = {"sessions": {"asking": "bold magenta", "running": "green", "stale": "yellow", "idle": "cyan", "ended": "dim"},
           "alerts": {"critical": "bold red", "error": "red", "warn": "yellow", "info": "dim"}}  # the first column
 PANEL_ACTIONS = ("go", "toggle_max", "pick_scope", "search", "next_sort", "reverse", "filters", "panel_help",
-                 "toggle_tz")  # the panels' keys, off while a dialog or a detail is on top of them
+                 "toggle_tz", "update")  # the panels' keys, off while a dialog or a detail is on top of them
 
 
 def _seconds(s: float) -> str:
@@ -382,7 +386,7 @@ class ResultScreen(ModalScreen):
 
 
 class CockpitApp(App):
-    TITLE = "brain cockpit"
+    TITLE = update.title(None)  # the installed version; the newer one once the background check answers
     CSS = """
     #bar { height: 1; }
     #bar Label { width: auto; padding: 0 1; color: $text-muted; }
@@ -406,6 +410,7 @@ class CockpitApp(App):
         Binding("plus", "faster", "Faster", key_display="+", show=False),
         Binding("minus", "slower", "Slower", key_display="-", show=False),
         Binding("t", "toggle_tz", "Timezone", show=False),
+        Binding("u", "update", "Update"),  # shown once a newer engine is out
         *(Binding(str(i), f"go({i})", f"Panel {i}", show=False) for i in range(1, len(cockpit.PANELS) + 1)),
     ]
 
@@ -425,6 +430,7 @@ class CockpitApp(App):
         self.next_probe = 0.0
         self.timer = None
         self.records: dict[str, dict[str, dict]] = {}  # each table's rows by key: the detail of the one selected
+        self.update_info: dict | None = None  # brain.update.check's answer, once the background check has one
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -463,6 +469,27 @@ class CockpitApp(App):
         self.watch(self.screen, "maximized", self._maximized, init=False)  # however the full view opens or closes
         self.tick(probe=False)
         self._q(f"#{self.last_panel}").focus()
+        self.call_after_refresh(self._check_update)  # after the first paint, never before it (UPD-1)
+
+    # --- the engine's version: a background check, then u ---
+
+    def _check_update(self) -> None:
+        self.run_worker(self._update_thread, thread=True, group="update", exit_on_error=False)
+
+    def _update_thread(self) -> None:
+        try:
+            info = update.check(getattr(self.cockpit, "root", None))
+        except Exception:  # silent: the title keeps the installed version
+            return
+        self.call_from_thread(self._updated, info)
+
+    def _updated(self, info: dict) -> None:
+        self.update_info = info
+        self.title = update.title(info)
+        self.refresh_bindings()
+        if info.get("newer"):
+            self.notify(f"brain {info['latest']} is out (this is {info['installed']}): u shows the update's plan",
+                        title="update", timeout=8)
 
     # --- reading, in a worker thread ---
 
@@ -771,6 +798,8 @@ class CockpitApp(App):
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action == "back":  # shown in the footer in a full view only
             return self.screen.maximized is not None
+        if action == "update" and not (self.update_info or {}).get("newer"):  # hidden until a newer one is out
+            return False
         if action in PANEL_ACTIONS and len(self.screen_stack) > 1:  # a dialog or a detail is open: its keys only
             return False
         return True
@@ -788,6 +817,18 @@ class CockpitApp(App):
                      None)
         if panel is not None and event.screen_y == panel.region.y:
             self.action_panel_help(panel.id)
+
+    def action_update(self) -> None:
+        """brain update's plan (brain update --check) in the confirmation, then brain update --yes on Run: the
+        owner's gesture, never the cockpit's own."""
+        info = self.update_info or {}
+        if not info.get("newer"):
+            return
+        self.start_action(detail.Action(
+            kind="apply", label="Update", project="brain", ref=f"v{info['latest']}", cwd=paths.brain_home(),
+            steps=[["brain", "update", "--yes"]], preview=["brain", "update", "--check"],
+            plan=[f"Installs brain v{info['latest']} into the brain's venv and swaps its launcher; a pinned brain's "
+                  "config.json engine.pin stays to move by a reviewed PR. Restart the cockpit afterwards."]))
 
     def action_pause(self) -> None:
         self.paused = not self.paused

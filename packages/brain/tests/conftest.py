@@ -29,6 +29,12 @@ def brain_home(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_CONFIG", str(BRAIN))
     monkeypatch.delenv("CLAUDE_BRAIN_DIR", raising=False)
     monkeypatch.delenv("BRAIN_PERSONAL", raising=False)  # and no machine's personal brain: the pointer is in home
+    from brain import update  # no test reads the engine's tags or its CHANGELOG on GitHub: offline unless it fakes them
+
+    def offline(*args, **kwargs):
+        raise OSError("no network in the tests")
+    monkeypatch.setattr(update, "remote_tags", offline)
+    monkeypatch.setattr(update, "changelog", lambda *args, **kwargs: None)
     return home
 
 
