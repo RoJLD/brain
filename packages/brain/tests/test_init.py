@@ -7,12 +7,15 @@ import pytest
 
 from brain import __version__, cli, config, init, neutral, paths, projects, render
 
+from conftest import run_git
+
 
 @pytest.fixture
 def fresh(tmp_path, monkeypatch, brain_home):
     """An empty folder to become Ada's brain; the tests' own config and registry overrides off."""
     monkeypatch.delenv("BRAIN_CONFIG", raising=False)
     monkeypatch.delenv("BRAIN_PROJECTS", raising=False)
+    monkeypatch.setattr(init, "machine_terms", lambda: {"users": ["ada-l"], "hosts": ["host-a"]})
     root = tmp_path / "ada-brain"
     root.mkdir()
     return root
@@ -37,8 +40,10 @@ def test_apply_writes_a_brain_that_checks_and_points_to_it(fresh, monkeypatch, c
     data = json.loads((fresh / "config.json").read_text(encoding="utf-8"))
     assert data == {"v": 1, "identity": {"owner": "Ada", "kind": "person"}, "registry": "projects.yaml",
                     "rules": ["rules/global.md"], "memory": "memory", "records": "records",
+                    "template": {"name": "generic", "version": 1},
                     "engine": {"repo": init.ENGINE_REPO, "pin": f"v{__version__}"}, "tier": {"base": "lite"},
-                    "adapters": {"claude": {"marketplace": "brain", "plugin": "brain-core"}}}
+                    "adapters": {"claude": {"marketplace": "brain", "plugin": "brain-core"}},
+                    "public": {"repos": [], "deny": {"people": ["Ada"], "users": ["ada-l"], "hosts": ["host-a"]}}}
     assert config.check(fresh) == [] and config.owner_of(fresh) == "Ada"
     assert "owner: \"Ada\"" in (fresh / "notes" / "graph" / "schema.yaml").read_text(encoding="utf-8")
     assert (fresh / "notes" / "decisions.md").is_file() and (fresh / "notes" / "kanban_graph.md").is_file()
@@ -156,7 +161,136 @@ def test_bad_arguments_plan_nothing(fresh, capsys, args, why):
 
 def test_the_templates_name_no_one():
     """The starter files carry the owner's name only where brain init puts it: placeholders, no name."""
-    for name in ("rules.md", "journal.md", "projects.yaml", "packs.yaml", "CLAUDE.md", "gitignore"):
+    tpl = init.load_template()
+    for name in filter(None, set(tpl.files.values())):
         text = init.template(name)
-        assert set(re.findall(r"\{(\w+)\}", text)) <= {"owner", "name", "title"} and "Ada" not in text, name
-    assert "{owner}" in init.template("packs.yaml")
+        assert set(re.findall(r"\{(\w+)\}", text)) <= {"owner", "owner_q", "name", "title_q"}, name
+        assert "Ada" not in text, name
+    assert "{owner_q}" in init.template("packs.yaml")
+
+
+# --- the template, the owner, publishable by construction (wi-brain-domain-templates, wi-brain-setup-wizard,
+# wi-brain-public-ready-init) ---
+
+def committed(root):
+    """git init and a first commit of the new brain, as its owner would."""
+    run_git(root, "init", "-q", "-b", "main")
+    run_git(root, "config", "commit.gpgsign", "false")
+    run_git(root, "add", "-A")
+    run_git(root, "commit", "-q", "-m", "my brain")
+    return root
+
+
+def test_the_generic_template_writes_a_publishable_brain(fresh, capsys):
+    """The default template: README, boundary.yaml at readiness_max 0, the fixtures folder, LF endings; brain check
+    runs the boundary and the engine side's public scan from the first commit, and passes."""
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    assert "template generic v1" in capsys.readouterr().out
+    for rel in ("README.md", "boundary.yaml", "fixtures/README.md", ".gitattributes"):
+        assert (fresh / rel).is_file(), rel
+    assert (fresh / "README.md").read_text(encoding="utf-8").startswith("# Ada's brain")
+    assert "readiness_max: 0" in (fresh / "boundary.yaml").read_text(encoding="utf-8")
+    assert "eol=lf" in (fresh / ".gitattributes").read_text(encoding="utf-8")
+    assert cli.main(["--root", str(fresh), "check"]) == 0          # before git init: a note, never a failure
+    assert "boundary: not a git checkout yet" in capsys.readouterr().out
+    committed(fresh)
+    assert cli.main(["--root", str(fresh), "check"]) == 0
+    out = capsys.readouterr().out
+    assert re.search(r"boundary: \d+ tracked file\(s\) classified; engine side 1 file\(s\), readiness 0 \(max 0\), "
+                     r"public scan green", out), out
+    assert cli.main(["--root", str(fresh), "boundary", "--check"]) == 0
+
+
+@pytest.mark.parametrize("rel, text, why", [
+    ("src/tool.py", "AUTHOR = 'Ada'\n", "denied: people term 'Ada'"),
+    ("tests/test_tool.py", "HOST = 'host-a'\n", "denied: hosts term 'host-a'"),
+    ("fixtures/people.yaml", "- mail: ada" + "@" + "realmail.org\n", "pattern: an e-mail address"),   # built here:
+    # the address itself would fail this repo's own public check
+    ("misc.txt", "anything\n", "misc.txt: no rule of boundary.yaml classifies it"),
+])
+def test_brain_check_refuses_a_private_term_where_publishable(fresh, capsys, rel, text, why):
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    committed(fresh)
+    (fresh / rel).parent.mkdir(parents=True, exist_ok=True)
+    (fresh / rel).write_text(text, encoding="utf-8")
+    run_git(fresh, "add", "-A")
+    capsys.readouterr()
+    assert cli.main(["--root", str(fresh), "check"]) == 1
+    out = capsys.readouterr().out
+    assert why in out and "error: boundary:" in out, out
+
+
+def test_a_fresh_brain_carries_no_audit_debt_of_the_engine(fresh, capsys):
+    """The README is there and the rendered plugin is waived: brain audit finds no P0 on a fresh brain, and none of
+    the engine's hook scripts."""
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    committed(fresh)
+    capsys.readouterr()
+    assert cli.main(["--root", str(fresh), "audit", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    found = [f for p in data["projects"] for r in p["repos"] for f in r["findings"]]
+    assert not [f for f in found if f["severity"] in ("P0", "P1")], [(f["unit"], f["why"]) for f in found]
+    assert not [f for f in found if f["unit"].startswith("plugins/")], found
+
+
+def test_the_owner_comes_from_the_folders_config(fresh, capsys):
+    assert cli.main(["init", str(fresh), "--owner", "Ada Lovelace", "--apply"]) == 0
+    capsys.readouterr()
+    assert cli.main(["init", str(fresh), "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "for Ada Lovelace (person, lite)" in out and "create" not in out
+
+
+def test_a_template_of_ones_own(fresh, tmp_path, capsys):
+    """A folder holding a template.yaml: its files rendered with the variables, config.json naming it."""
+    tpl = tmp_path / "lab"
+    tpl.mkdir()
+    (tpl / "template.yaml").write_text(
+        'name: lab\nversion: 3\nengine: ">=0.2.1, <1"\ntitle: "A lab"\n'
+        'files: {projects.yaml: projects.yaml, source/packs.yaml: packs.yaml, rules/global.md: rules.md, '
+        'NOTES.md: notes.md, memory/.gitkeep: "", records/.gitkeep: ""}\n', encoding="utf-8")
+    for name in ("projects.yaml", "packs.yaml", "rules.md"):
+        (tpl / name).write_text(init.template(name), encoding="utf-8")
+    (tpl / "notes.md").write_text("# {owner}'s lab notes ({name})\n", encoding="utf-8")
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl), "--name", "lab", "--apply"]) == 0
+    assert "template lab v3" in capsys.readouterr().out
+    assert (fresh / "NOTES.md").read_text(encoding="utf-8") == "# Ada's lab notes (lab)\n"
+    assert not (fresh / "boundary.yaml").exists()
+    assert json.loads((fresh / "config.json").read_text(encoding="utf-8"))["template"] == {"name": "lab", "version": 3}
+    assert config.check(fresh) == []
+
+
+@pytest.mark.parametrize("manifest, why", [
+    ("name: lab\nversion: 1\nengine: \">=99\"\nfiles: {}\n", "it needs brain >=99"),
+    ("name: lab\nversion: 1\nfiles: {config.json: x}\n", "a path inside the brain, not config.json"),
+    ("name: lab\nversion: 1\nfiles: {../out.md: x}\n", "a path inside the brain"),
+    ("name: lab\nversion: 1\nfiles: {a.md: missing.md}\n", "no file 'missing.md' in the template"),
+    ("name: Lab\nversion: 1\nfiles: {}\n", "name is lower case"),
+    ("name: lab\nversion: 0\nfiles: {}\n", "version is a whole number"),
+    ("name: lab\nversion: 1\nfiles: {}\nhooks: x\n", "unknown key(s) hooks"),
+    ("name: lab\nversion: 1\nfiles: {NOTES.md: \"\"}\n", "files misses what config.json names: projects.yaml"),
+])
+def test_a_bad_template_plans_nothing(fresh, tmp_path, capsys, manifest, why):
+    tpl = tmp_path / "lab"
+    tpl.mkdir()
+    (tpl / "template.yaml").write_text(manifest, encoding="utf-8")
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl)]) == 2
+    assert why in capsys.readouterr().out and list(fresh.iterdir()) == []
+
+
+def test_an_unknown_template_names_the_engines(fresh, capsys):
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", "quant"]) == 2
+    assert "not one of the engine's (generic)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("spec, version, fits", [(">=0.2.1", "0.2.1", True), (">=0.2.1", "0.2.0", False),
+                                                 (">=0.2, <0.3", "0.2.9", True), ("<0.3", "0.3.0", False),
+                                                 ("==0.2.1", "0.2.1", True), ("", "0.0.1", True)])
+def test_engine_fits(spec, version, fits):
+    assert init.engine_fits(spec, version) is fits
+
+
+def test_machine_terms_leave_out_common_names(monkeypatch):
+    monkeypatch.setattr(init.getpass, "getuser", lambda: "Admin")
+    monkeypatch.setattr(init.socket, "gethostname", lambda: "host-a.example.invalid")
+    assert init.machine_terms() == {"hosts": ["host-a"]}

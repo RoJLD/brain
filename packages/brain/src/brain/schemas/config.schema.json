@@ -24,6 +24,16 @@
     "source": {"type": "string", "minLength": 1, "description": "The neutral source's folder (rules with scope and id, procedures, MCP servers, packs) that brain render turns into each agent's files; default source."},
     "memory": {"type": "string", "minLength": 1, "description": "The memory notes' folder (brain memory); default memory."},
     "records": {"type": "string", "minLength": 1, "description": "The records' folder, DDR, SR and AR (brain record); default records."},
+    "template": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "description": "The template brain init wrote this brain from (brain init --template): a later version of it is shown and applied by a plan, never over what the owner changed.",
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$", "description": "The template's name (its template.yaml)."},
+        "version": {"type": "integer", "minimum": 1, "description": "The template's version brain init rendered."}
+      }
+    },
     "engine": {
       "type": "object",
       "required": ["repo", "pin"],

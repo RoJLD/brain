@@ -102,10 +102,13 @@
                  stores; --quick reads the files only (no audit, stack, code index or scheduler probe)
   brain projects [--keys] [--json]   the registry resolved: each project's stores, journals, decision logs, ledgers,
                  repos, stacks, code index and plugin; --keys: every key an entry may hold
-  brain init [DIR] --owner NAME [--kind person|team] [--tenant ID] [--tier lite|default] [--name NAME] [--apply]
-                 a new personal brain from the templates, in DIR (default: here): config.json, projects.yaml, the
-                 graph store, journal, ADR log, starter rules, CLAUDE.md, memory and records, and this machine's
-                 pointer <BRAIN_HOME>/personal.json when it has none; a plan, --apply writes it; never overwrites
+  brain init [DIR] [--owner NAME] [--template NAME|DIR] [--kind person|team] [--tenant ID] [--tier lite|default]
+                 [--name NAME] [--apply]   a new personal brain from a template (generic by default), in DIR
+                 (default: here): config.json (its public.deny: the owner, this machine's user and host), projects.yaml,
+                 boundary.yaml (readiness_max 0: brain check refuses anything private in src/, tests/, fixtures/), the
+                 graph store, journal, ADR log, starter rules, CLAUDE.md, README.md, the local Claude marketplace,
+                 memory and records, and this machine's pointer <BRAIN_HOME>/personal.json when it has none; --owner
+                 defaults to DIR's config.json identity.owner; a plan, --apply writes it; never overwrites
   brain config [--json] [--keys] [--check]   the personal brain's config.json resolved (owner, registry, rules,
                  memory, records, engine pin, public repos and how many denied terms, secrets by name, the machine's
                  pointer); --keys: every key it may hold (from schemas/config.schema.json); --check: exit 1 when it
@@ -1233,6 +1236,10 @@ def _check_store(args, root: Path, store: Path) -> int:
         print("\n".join(lint.render_hard(hard)))
     if neutral.applies(root):   # the marketplace is the source's render: a hand edit fails here
         rc = render.main(root, "claude", check=True) or rc
+    gate_rc, lines = public.gate(root)   # boundary.yaml: every file has a side, the engine side holds nothing private
+    for line in lines:
+        print(line)
+    rc = gate_rc or rc
     for line in render.keep_current(root, _project(args, root).name, fix=False):   # a stale AGENTS.md: brain sync
         print(f"warning: {line}")
     line = tidy.hygiene(_project(args, root))   # stale worktrees and merged branches: brain tidy
@@ -2477,7 +2484,10 @@ def build_parser() -> argparse.ArgumentParser:
     ini = sub.add_parser("init", help="a new personal brain from the templates: config.json, projects.yaml, the graph "
                                       "store, journal, ADR log, starter rules (a plan; --apply writes it)")
     ini.add_argument("dir", nargs="?", help="the folder that becomes the brain's private repo (default: here)")
-    ini.add_argument("--owner", help="the person or team who decides for it (config.json identity.owner)")
+    ini.add_argument("--owner", help="the person or team who decides for it (config.json identity.owner; default: "
+                                     "the owner of DIR's config.json, when it has one)")
+    ini.add_argument("--template", default=init.DEFAULT_TEMPLATE,
+                     help="the engine's template by name (default generic) or a folder holding a template.yaml")
     ini.add_argument("--kind", choices=init.KINDS, default="person", help="a person (default) or a team")
     ini.add_argument("--tenant", help="the tenant id, for a brain hosted for a team")
     ini.add_argument("--tier", choices=init.TIERS, default="lite",

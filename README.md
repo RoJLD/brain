@@ -24,6 +24,10 @@ pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.2.1"
 pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.1#subdirectory=packages/brain"   # the brain command
 ```
 
+From an empty machine to a brain of your own (Windows first, Linux and macOS): [`docs/install.md`](docs/install.md).
+Trying it in the pilot: [`docs/pilot.md`](docs/pilot.md). `packages/brain/installer/stranger_test.py` installs a tag
+into a fresh venv, isolated from its caller, and runs that first hour's scenario (the stranger test).
+
 ## Start your own graphs
 
 ```bash

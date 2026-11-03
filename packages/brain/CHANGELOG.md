@@ -4,6 +4,25 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## 0.2.1 — 2026-11-03
 
+- **`brain init` for a stranger, from a template.** `--template NAME|DIR` (default `generic`, the only one the engine
+  ships): a template is data and a manifest (`template.yaml`: name, version, the engine versions it fits, title, the
+  files it renders with `{owner}`, `{owner_q}`, `{name}`, `{title_q}`), never code; a bad manifest, an engine outside
+  its range or a template missing what config.json names plans nothing. config.json records it (`template`, a new key
+  of the schema). `--owner` defaults to the owner of the folder's config.json. The generic template's files moved to
+  `templates/generic/`.
+- **Publishable by construction.** The generic template writes `boundary.yaml` (every file's side, `readiness_max: 0`,
+  `src/`, `tests/` and `fixtures/` on the engine side), `fixtures/README.md`, a `README.md` and `.gitattributes` (LF:
+  the hooks' shell scripts), and config.json `public` (no repo; `deny`: the owner, this machine's user and host,
+  leaving out names too common to deny). `brain check` runs the boundary's check and the engine side's public scan
+  wherever a boundary.yaml is (`brain.public.gate`): a file no rule classifies, or a denied term, a secret, an e-mail
+  address or a home folder in what may be published, fails it from the first commit. `projects.yaml` waives the
+  rendered plugin in `brain audit`, so a fresh brain carries no debt of the engine's.
+- **The stranger test.** `installer/stranger_test.py` installs a tag (or, `--pre-tag`, a branch with research-graph
+  from the same ref) into a fresh venv, isolated from its caller (its own home, BRAIN_HOME, Claude and git config, a
+  PATH with no docker, Git's bash for the hooks on Windows), runs the Lite scenario as an invented owner and scans
+  every output and file for the terms given with `--deny`; its verdict is a pilot's go. `docs/install.md` (Windows
+  from zero, Linux and macOS) and `docs/pilot.md` (what to try, how to report an issue) are the tester's.
+
 - **A new brain gets its own Claude Code plugin.** `brain init` renders a local marketplace in the new brain: it
   writes `source/packs.yaml` (the marketplace's owner, one core pack with the engine's hooks) and config.json
   `adapters.claude` (the marketplace `brain`, the plugin `brain-core`, no `source`), then, after the store,
