@@ -10,8 +10,9 @@ Eight panels, each read through the function its command already uses:
               plan calls of the transcript), state, model, effort, context used and its budget, output tokens and
               the cost at API prices (the SR snapshot the Stop hook writes, <BRAIN_HOME>/sessions/<id>.json, priced
               by brain.usage; the costliest first: ``--sort sessions:cost``), last write;
-  queue       the owner's queue (brain.queue.collect, as brain queue calls it): decisions, actions, permissions, sorted
-              by what each unblocks, with the recommended option and how to answer;
+  queue       the owner's queue (brain.queue.collect, as brain queue calls it): decisions, actions, permissions, in
+              three bands (now, this week, when you can), ranked by what each holds up (its score; brain queue
+              --explain), with the recommended option and how to answer; titled with the owner's display name;
   alerts      each project's open alerts by level (brain.status.alerts_of, as brain status and brain alerts: the
               scheduler, the exec ledger, the stacks, the code index, the audit, the alert events and files);
   milestones  each pending milestone's items done out of its live items, and how many are reached (brain.status);
@@ -47,13 +48,15 @@ Three speeds keep a refresh cheap:
 The view (ADR "Le cockpit : sélecteur de projet, filtres et tri", spec 2026-11-02 cockpit-ux): the sessions, the
 queue and the frontier each have filters and sorts (``FILTERS``, ``SORTS``), and every table a search (each word of
 it in the row, case ignored). ``shown`` applies a view to a panel's records, ``table`` and the text view draw what it
-keeps. The defaults: the sessions not ended, by state; the queue by what each entry unblocks; the frontier by
-priority. ``HELP`` says what each panel shows, where it comes from and which command gives the detail (the TUI's i);
+keeps. The defaults: the sessions not ended, by state; the queue by band, the owner's order, then the score; the
+frontier by priority. ``HELP`` says what each panel shows, where it comes from and which command gives the detail
+(the TUI's i);
 ``when`` shows a time in the cockpit's timezone (``TZS``: this machine's, by default, or UTC).
 
 Read-only: nothing here writes a record or a ledger, and nothing calls a model. The one file written is the screen's
 own state, ``<BRAIN_HOME>/tui.json`` (the scope, each panel's view and the settings: theme, timezone; ``save_state``),
-by the interactive views.
+by the interactive views. Its settings also hold, set by hand: ``lang`` (en, fr: the queue's title, « File d'Ada »;
+$BRAIN_LANG wins) and ``titles`` (a free title per panel, ``{"queue": "Ma file"}``), read by every view (``title``).
 """
 
 from __future__ import annotations
@@ -586,14 +589,14 @@ class Cockpit:
 # --- the view: filters, sort and search over the table panels ---
 
 SORTS = {"sessions": ("state", "age", "project", "context", "cost"),
-         "queue": ("unblocks", "age", "kind", "project"),
+         "queue": ("band", "unblocks", "age", "kind", "project"),
          "frontier": ("priority", "unblocks", "milestone", "age", "project")}
 FILTERS = {"sessions": {"state": ("open", ALL, *STATES)},  # open: not ended
-           "queue": {"kind": (ALL, *queue.KINDS)},
+           "queue": {"kind": (ALL, *queue.KINDS), "band": (ALL, *queue.BANDS)},
            "frontier": {"priority": (ALL, "P0-P1", "P0-P2", "none"), "milestone": (ALL, "none")}}
 OPEN_VALUES = {("frontier", "milestone")}  # any milestone id too: the panel's own (choices)
 SORT_COLUMNS = {"sessions": {"State": "state", "Last": "age", "Project": "project", "Context": "context"},
-                "queue": {"Unblocks": "unblocks", "Age": "age", "Kind": "kind", "Project": "project"},
+                "queue": {"Band": "band", "Unblocks": "unblocks", "Age": "age", "Kind": "kind", "Project": "project"},
                 "frontier": {"P": "priority", "Unblocks": "unblocks", "Milestone": "milestone", "Age": "age",
                              "Project": "project"}}
 
@@ -607,7 +610,9 @@ SORT_KEYS = {
                  "project": lambda r: (r["project"], STATES.index(r["state"]), r["age_s"]),
                  "context": lambda r: -(r.get("context") or 0),
                  "cost": lambda r: (r.get("cost_usd") is None, -(r.get("cost_usd") or 0), r["age_s"])},
-    "queue": {"unblocks": lambda e: (-e.get("unblocks", 0), not e.get("blocking"), e.get("since") or "9999"),
+    "queue": {"band": lambda e: (queue.BANDS.index(e.get("band") or "later"), e.get("order") is None,
+                                 e.get("order") or 0, -e.get("score", 0), -e.get("unblocks", 0)),
+              "unblocks": lambda e: (-e.get("unblocks", 0), not e.get("blocking"), e.get("since") or "9999"),
               "age": lambda e: (_age_first(e.get("age_days")), -e.get("unblocks", 0)),
               "kind": lambda e: (e.get("kind") or "", e.get("category") or "", -e.get("unblocks", 0)),
               "project": lambda e: (e["project"], -e.get("unblocks", 0))},
@@ -647,7 +652,7 @@ def _keep(name: str, r: dict, v: dict) -> bool:
     if name == "sessions":
         return v["state"] == ALL or (r["state"] != "ended" if v["state"] == "open" else r["state"] == v["state"])
     if name == "queue":
-        return v["kind"] in (ALL, r.get("kind"))
+        return v["kind"] in (ALL, r.get("kind")) and v["band"] in (ALL, r.get("band") or "later")
     p, m = r.get("priority", "").rstrip("?"), r.get("milestone", "").rstrip("?")
     by_p = (v["priority"] == ALL or (v["priority"] == "none" and not p)
             or (v["priority"].startswith("P0-") and p in PRIORITIES[:int(v["priority"][-1]) + 1]))
@@ -657,7 +662,7 @@ def _keep(name: str, r: dict, v: dict) -> bool:
 def haystack(name: str, r: dict) -> str:
     """What the search looks in: the row's ids, project, title and the words shown with them."""
     keys = {"sessions": ("session_id", "project", "state", "step", "title", "branch", "model"),
-            "queue": ("id", "kind", "category", "project", "title", "recommended", "detail"),
+            "queue": ("id", "kind", "category", "band", "project", "title", "recommended", "detail"),
             "frontier": ("id", "priority", "project", "milestone", "title"),
             "milestones": ("id", "project", "title"), "alerts": ("level", "project", "key", "message")}[name]
     return " ".join(str(r.get(k) or "") for k in keys).lower()
@@ -760,8 +765,12 @@ HELP = {
                  "read": "every --refresh (2 s), a transcript only when it changed",
                  "detail": "brain status; the session's own transcript"},
     "queue": {"what": "What waits on {owner}: decisions (DDRs, open questions on items), actions (keys, money, accounts, "
-                      "scheduled tasks...) and permissions (denied calls), sorted by the open items and milestones each "
-                      "unblocks, with the recommended option.",
+                      "scheduled tasks...) and permissions (denied calls), in three bands (now, this week, when you "
+                      "can) ranked by what each holds up: the priority and count of the open items and milestones it "
+                      "unblocks, the critical path's slip per day of waiting, the nearest milestone, a deadline, the "
+                      "minutes it takes, its age ({owner}'s own order first: brain queue order); brain queue --explain "
+                      "shows each term. The title is {owner}'s display name (config.json identity.display_name), or "
+                      "a free one in tui.json settings.titles.queue.",
               "from": "brain.queue.collect, as brain queue: records/ddr, the items' open props, the transcripts' "
                       "denied calls, the queue's done stamps",
               "read": "when the graph, a DDR, a journal or a done stamp changes; the denied calls at each probe",
@@ -802,7 +811,7 @@ HELP = {
 def help_lines(name: str) -> list[str]:
     """A panel's help: what it shows, where it comes from, how often it is read, the commands for the detail, and
     its keys. ``{owner}`` in a text is config.json's owner."""
-    h = {k: v.replace("{owner}", config.owner_of()) for k, v in HELP[name].items()}
+    h = {k: v.replace("{owner}", config.name_of()) for k, v in HELP[name].items()}
     keys = ("s next sort, o reverse, f filters and sort, a column title sorts; " if name in SORTS else "")
     return [h["what"], "", f"From: {h['from']}.", f"Read: {h['read']}.", f"Detail: {h['detail']}.", "",
             f"Keys: {keys}/ search, m full view (Escape back), {PANELS.index(name) + 1} to come back here."]
@@ -830,9 +839,60 @@ def load_state(path: Path | None = None) -> dict:
         out["panels"] = {n: view_of(n, v) for n, v in data["panels"].items() if n in SORTS and isinstance(v, dict)}
     if isinstance(data.get("settings"), dict):
         got = data["settings"]
-        out["settings"] = {k: got[k] for k in ("theme", "tz") if isinstance(got.get(k), str) and got[k]
-                           and (k != "tz" or got[k] in TZS)}
+        out["settings"] = {k: got[k] for k in ("theme", "tz", "lang") if isinstance(got.get(k), str) and got[k]
+                           and (k != "tz" or got[k] in TZS) and (k != "lang" or got[k] in LANGS)}
+        if isinstance(got.get("titles"), dict):
+            titles = {k: v.strip() for k, v in got["titles"].items()
+                      if k in PANELS and isinstance(v, str) and v.strip()}
+            if titles:
+                out["settings"]["titles"] = titles
     return out
+
+
+# --- the panels' titles: the owner's display name, the language, a free title per panel (wi-brain-owner-label) ---
+
+LANGS = ("en", "fr")
+TITLES = {"sessions": "Sessions", "alerts": "Alerts", "milestones": "Milestones", "frontier": "Frontier",
+          "audit": "Audit debt", "health": "Stacks and index", "digest": "Digest"}
+QUEUE_TITLES = {"en": ("{name}'s queue", "My queue"), "fr": ("File de {name}", "Ma file")}  # (named, unnamed)
+_VOWELS = "aeiouyàâäéèêëîïôöûùü"
+_settings_cache: dict = {}
+
+
+def settings() -> dict:
+    """tui.json's settings (theme, tz, lang, titles), read again only when the file changed."""
+    path = state_path()
+    try:
+        key = (str(path), path.stat().st_mtime_ns)
+    except OSError:
+        return {}
+    if _settings_cache.get("key") != key:
+        _settings_cache.update(key=key, value=load_state(path).get("settings") or {})
+    return _settings_cache["value"]
+
+
+def lang() -> str:
+    """The cockpit's language: $BRAIN_LANG, else tui.json's settings.lang, else en."""
+    got = os.environ.get("BRAIN_LANG") or settings().get("lang") or "en"
+    return got if got in LANGS else "en"
+
+
+def queue_title(name: str | None = None, language: str | None = None) -> str:
+    """The queue's title (UX-16): « {name}'s queue » / « File de {name} » (« File d'{name} » before a vowel)
+    from the owner's display name (config.name_of), « My queue » / « Ma file » when no one is named."""
+    name = config.name_of() if name is None else name
+    named, mine = QUEUE_TITLES[language if language in LANGS else lang()]
+    if not name or name == config.NO_OWNER:
+        return mine
+    if named.startswith("File de ") and name[:1].lower() in _VOWELS:
+        return f"File d'{name}"
+    return named.format(name=name)
+
+
+def title(name: str) -> str:
+    """A panel's title: the person's free title (tui.json settings.titles.<panel>), else the queue's
+    :func:`queue_title` or the panel's name."""
+    return (settings().get("titles") or {}).get(name) or (queue_title() if name == "queue" else TITLES[name])
 
 
 def save_state(state: dict, path: Path | None = None) -> bool:
@@ -894,7 +954,7 @@ def model_text(r: dict) -> str:
 def session_lines(panel: dict, width: int = WIDTH, view: dict | None = None, search: str = "") -> list[str]:
     rows = panel.get("rows") or []
     counts = {s: sum(1 for r in rows if r["state"] == s) for s in STATES}
-    lines = [_noted(f"Sessions ({len(rows)} in the last {panel.get('hours', HOURS):g} h"
+    lines = [_noted(f"{title('sessions')} ({len(rows)} in the last {panel.get('hours', HOURS):g} h"
                     + "".join(f", {n} {s}" for s, n in counts.items() if n) + ")", "sessions", panel, view, search)]
     rows = shown("sessions", panel, view, search)
     if rows:
@@ -910,8 +970,11 @@ def session_lines(panel: dict, width: int = WIDTH, view: dict | None = None, sea
 def queue_lines(panel: dict, width: int = WIDTH, view: dict | None = None, search: str = "") -> list[str]:
     groups = panel.get("projects") or []
     total = {k: sum((g.get("counts") or {}).get(k, 0) for g in groups) for k in queue.KINDS}
-    lines = [_noted(f"{config.owner_of()}'s queue ({sum(total.values())}: "
-                    + ", ".join(f"{n} {k}" for k, n in total.items()) + ")"
+    b = {k: sum(1 for e in entries("queue", panel) if e.get("band") == k) for k in queue.BANDS}
+    lines = [_noted(f"{title('queue')} ({sum(total.values())}: "
+                    + ", ".join(f"{n} {k}" for k, n in total.items())
+                    + (" | " + ", ".join(f"{queue.BAND_NAMES[k]} {n}" for k, n in b.items()) if any(b.values())
+                       else "") + ")"
                     + ("" if panel.get("denials_read") else "; denied calls read at the first probe")
                     + (f"; {panel['outside']} denial(s) outside every project (--all)" if panel.get("outside")
                        else ""), "queue", panel, view, search)]
@@ -919,20 +982,22 @@ def queue_lines(panel: dict, width: int = WIDTH, view: dict | None = None, searc
         tag = e["kind"] + (f":{e['category']}" if e.get("category") else "")
         age = f"{e['age_days']} d" if e.get("age_days") is not None else "-"
         text = e["title"] + (f" -> {e['recommended']}" if e.get("recommended") else "")
-        head = f"  {e['unblocks']:>3} {tag:<16} {e['project'][:10]:<10} {age:>5}  "
+        band = queue.BAND_NAMES.get(e.get("band"), "-")
+        score = f"{e['score']:g}" if e.get("score") is not None else "-"
+        head = f"  {band:<12} {score:>5} {e['unblocks']:>3} {tag:<16} {e['project'][:10]:<10} {age:>5}  "
         lines.append(_line(head, f"{e['id']}{' [blocking]' if e.get('blocking') else ''}: {text}", width))
     return lines
 
 
 def alert_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
     if not panel:
-        return ["Alerts: not probed yet"]
+        return [f"{title('alerts')}: not probed yet"]
     groups = panel.get("projects") or []
     counts: dict[str, int] = {}
     for g in groups:
         for lvl, n in (g.get("counts") or {}).items():
             counts[lvl] = counts.get(lvl, 0) + n
-    lines = [f"Alerts ({sum(counts.values())} open" + "".join(f", {n} {k}" for k, n in counts.items()) + ")"]
+    lines = [f"{title('alerts')} ({sum(counts.values())} open" + "".join(f", {n} {k}" for k, n in counts.items()) + ")"]
     for g in groups:
         if "error" in g:
             lines.append(_line("  ", f"{g['project']}: error: {g['error']}", width))
@@ -944,7 +1009,7 @@ def alert_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
 
 def milestone_lines(panel: dict, width: int = WIDTH) -> list[str]:
     groups = panel.get("projects") or []
-    lines = [f"Milestones ({sum(g['reached'] for g in groups)} reached, "
+    lines = [f"{title('milestones')} ({sum(g['reached'] for g in groups)} reached, "
              f"{sum(len(g['pending']) for g in groups)} pending)"]
     for g in groups:
         for m in g["pending"]:
@@ -961,7 +1026,7 @@ def short_milestone(mid: str, project: str) -> str:
 def frontier_lines(panel: dict, width: int = WIDTH, top: int = 15, view: dict | None = None,
                    search: str = "") -> list[str]:
     everything = entries("frontier", panel)
-    lines = [_noted(f"Frontier ({len(everything)} startable, "
+    lines = [_noted(f"{title('frontier')} ({len(everything)} startable, "
                     f"{sum(1 for i in everything if i['priority'] in ('P0', 'P1'))} of them P0/P1)", "frontier", panel,
                     view, search)]
     rows = shown("frontier", panel, view, search)
@@ -979,8 +1044,8 @@ def _counts(c: dict) -> str:
 
 def audit_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
     if not panel:
-        return ["Audit debt: not probed yet"]
-    lines = ["Audit debt"]
+        return [f"{title('audit')}: not probed yet"]
+    lines = [title("audit")]
     for g in panel.get("projects") or []:
         if "counts" not in g:
             lines.append(f"  {g['project']}: error: {g.get('error')}")
@@ -1004,8 +1069,8 @@ def _states(rows, what: str) -> str:
 
 def health_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
     if not panel:
-        return ["Stacks and index: not probed yet"]
-    lines = ["Stacks and index"]
+        return [f"{title('health')}: not probed yet"]
+    lines = [title("health")]
     for g in panel.get("projects") or []:
         lines.append(_line("  ", f"{g['project']}: stacks {_states(g['stacks'], 'stack')}; code index "
                                  f"{_states(g['code_index'], 'repo')}", width))
@@ -1021,7 +1086,7 @@ def health_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
 def digest_lines(panel: dict | None, width: int = WIDTH, lines_max: int = 12) -> list[str]:
     """The digest panel's text: its first ``lines_max`` lines per project (0: all of them)."""
     if not panel:
-        return ["Digest: not probed yet"]
+        return [f"{title('digest')}: not probed yet"]
     lines = []
     for g in panel.get("projects") or []:
         rec = g["records"]
@@ -1040,7 +1105,7 @@ def digest_lines(panel: dict | None, width: int = WIDTH, lines_max: int = 12) ->
 
 COLUMNS = {
     "sessions": ("State", "Session", "Project", "Step", "Model", "Effort", "Context", "Out", "Last", "Title"),
-    "queue": ("Unblocks", "Kind", "Project", "Age", "What", "Id"),
+    "queue": ("Band", "Score", "Unblocks", "Kind", "Project", "Age", "What", "Id"),
     "alerts": ("Level", "Project", "Key", "Since", "Message"),
     "milestones": ("Project", "Done", "Progress", "Milestone", "Title"),
     "frontier": ("P", "Project", "Unblocks", "Milestone", "Age", "Id", "Title"),
@@ -1067,7 +1132,9 @@ def _cells(name: str, r: dict, tz: str | None = None) -> tuple[str, ...]:
                 str(r.get("effort") or "-"), context_text(r), tokens(r["output_tokens"]), ago(r["age_s"]),
                 r["title"] or r["branch"])
     if name == "queue":
-        return (str(r["unblocks"]), r["kind"] + (f":{r['category']}" if r.get("category") else ""), r["project"],
+        return (queue.BAND_NAMES.get(r.get("band"), "-") + (f" #{r['order']}" if r.get("order") is not None else ""),
+                f"{r['score']:g}" if r.get("score") is not None else "-", str(r["unblocks"]),
+                r["kind"] + (f":{r['category']}" if r.get("category") else ""), r["project"],
                 _days_text(r.get("age_days")), r["title"] + (f" -> {r['recommended']}" if r.get("recommended") else ""),
                 r["id"] + (" [blocking]" if r.get("blocking") else ""))
     if name == "alerts":
@@ -1106,7 +1173,7 @@ def heading(name: str, panel: dict | None) -> str:
     lines = {"sessions": session_lines, "queue": queue_lines, "alerts": alert_lines, "milestones": milestone_lines,
              "frontier": frontier_lines, "audit": audit_lines, "health": health_lines}
     if name == "digest":
-        return "Digest" if panel else "Digest: not probed yet"
+        return title("digest") if panel else f"{title('digest')}: not probed yet"
     return lines[name](panel if name in PROBE_PANELS else panel or {})[0]
 
 

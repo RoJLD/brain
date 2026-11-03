@@ -139,10 +139,11 @@ def queue_rows(projs: list[projects.Project], every: bool, root: Path | None = N
 
 
 def queues(projs: list[projects.Project], quick: bool, every: bool, root: Path | None = None) -> dict[str, dict]:
-    """The owner's queue counted by kind for each project, through brain.queue's data function when it is there: one
-    transcript scan (none with --quick); {} without it."""
+    """The owner's queue counted by kind for each project, and by band (``bands``: now, week, later), through
+    brain.queue's data function when it is there: one transcript scan (none with --quick); {} without it."""
     rows = queue_rows(projs, every, root, with_graph=False, transcripts=not quick)
-    return {r["project"]: dict(r.get("counts") or {}) for r in rows if r.get("project")}
+    return {r["project"]: {**(r.get("counts") or {}), **({"bands": r["bands"]} if r.get("bands") else {})}
+            for r in rows if r.get("project")}
 
 
 def audit_of(p: projects.Project, detail: int = 0) -> dict:
@@ -341,6 +342,12 @@ def run(projs: list[projects.Project], *, every: bool = False, quick: bool = Fal
 
 # --- text ---
 
+def queue_band(band: str) -> str:
+    """A band's words (brain.queue.BAND_NAMES): now, this week, when you can."""
+    q = _optional("queue")
+    return getattr(q, "BAND_NAMES", {}).get(band, band) if q is not None else band
+
+
 def _counts(d: dict) -> str:
     return ", ".join(f"{n} {k}" for k, n in d.items()) or "none"
 
@@ -366,10 +373,13 @@ def _audit(a: dict) -> str:
 
 
 def _decisions(d: dict) -> str:
-    line = (f"{d['pending']} waiting on {config.owner_of()}" + (f" ({d['blocking']} blocking)" if d["blocking"] else "")
+    line = (f"{d['pending']} waiting on {config.name_of()}" + (f" ({d['blocking']} blocking)" if d["blocking"] else "")
             + f", {d['answered']} answered to integrate, {d['open_questions']} open question(s) on items")
     if d.get("queue"):
-        line += "; queue: " + _counts(d["queue"])
+        q = dict(d["queue"])
+        b = q.pop("bands", None) or {}
+        line += "; queue: " + _counts(q) + (" (" + ", ".join(f"{queue_band(k)} {n}" for k, n in b.items()) + ")"
+                                            if any(b.values()) else "")
     return line
 
 
@@ -436,7 +446,7 @@ def render(data: dict) -> list[str]:
         lines.append(f"all ({t['found']} of {t['projects']} project(s) found)")
         rows = [("items", f"{t['items']['total']}: {_counts(t['items']['by_status'])}; open by priority: "
                           f"{_counts(t['items']['open_by_priority'])}; frontier {t['items']['frontier']}"),
-                ("decisions", f"{t['decisions']['pending']} waiting on {config.owner_of()} "
+                ("decisions", f"{t['decisions']['pending']} waiting on {config.name_of()} "
                               f"({t['decisions']['blocking']} blocking), "
                               f"{t['decisions']['answered']} answered to integrate, {t['decisions']['open_questions']} "
                               "open question(s) on items"),

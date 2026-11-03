@@ -2,6 +2,22 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+- **The queue in three bands, ranked by what each entry holds up** (wi-brain-queue-priority). `brain queue` scores
+  each entry at zero token: the highest priority and the count of the open items and milestones it holds up, the
+  critical path's slip per day of waiting and the nearest milestone (the last `brain forecast`, through
+  `forecast.waiting`), a stated deadline above the count, the owner's minutes, its age and the blocking flag. Bands:
+  now, this week, when you can. `--explain` shows each term; `brain queue order ID N [--band B] [--clear]` sets the
+  owner's own order, which wins; `brain queue add --minutes`, and DDRs gain an optional `minutes`. `brain status`, the
+  cockpit's queue panel (Band and Score columns, the band sort first and a band filter) and the zen batches show the
+  bands. A denial (perm-, guard-) expires once its session is archived or gone in the desktop app.
+- **The owner's display name** (wi-brain-owner-label, UX-16). `config.json` `identity.display_name`
+  (`config.name_of`) names the owner in the cockpit's titles, help, confirmations and the text views; `identity.owner`
+  stays the id `--by` writes. The queue's title is « {name}'s queue » or « File de {name} » (`tui.json` settings
+  `lang`, or `$BRAIN_LANG`), « My queue » when no one is named, and `settings.titles` gives any panel a free title.
+- Fixed: a date-typed prop (`due: 2026-11-08`) no longer breaks `brain queue`.
+
 ## 0.2.0 — 2026-11-03
 
 The brain command, published as this repo's second distribution, from the personal brain it was written in (a fresh
