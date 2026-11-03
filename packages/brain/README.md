@@ -198,6 +198,23 @@ review, the provisional ones, the reversed ones; `--seen` marks them read, from 
 line in the morning batch (`brain decision batch --zen`) and in the cockpit's queue panel (`brain tui`); any default is reversed with `brain decision answer ID
 <option> --again`.
 
+## Parallel sessions
+
+Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](docs/merge-driver.md)):
+
+- **`brain merge-driver`**: a local git merge driver for the paths `.gitattributes` gives `merge=brain` (`brain init`
+  writes them): a generated view keeps one side and is marked for `brain refresh`, the journal and the decision log
+  are unioned in date order, the graph's edges and a CHANGELOG's Unreleased section are unioned, the other graph YAML
+  is merged by id, anything else as git would. The installer defines it in the personal brain's git config
+  (`brain merge-driver install --apply`); `brain merge-driver replay` merges a repo's past merges again with and
+  without it.
+- **`brain collisions [--all] [--frontier] [--json]`**: the files each open branch and worktree changes, crossed with
+  each startable item's predicted surface (its features' CodeRefs, its module, the files it names): the items that
+  can start now, and those that wait on a branch and its session.
+- **`brain brief ITEM [--class C] [--budget B] [--coordinator ID]`**: a sub-session's brief from the graph: the item
+  and its subgraph, its collisions, the class's model and effort (config.json `brief.classes`), the budget, the cost
+  estimate, the coordinator's id, and the definition of done and the never-list read from the owner's rules.
+
 ## Where the brain is found
 
 `config.json` and `projects.yaml` are found at `$BRAIN_CONFIG` / `$BRAIN_PROJECTS`, else in the first of:
