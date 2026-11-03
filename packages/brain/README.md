@@ -21,7 +21,7 @@ What it does, every command reading files and git, never a model:
   started on demand (`brain up|down|health`), permissions rendered for Claude Code (`brain permissions`);
 - **Claude Code**: the hooks and guards under `src/brain/adapters/claude/hooks/` (rules injection, capture, the
   PreToolUse guards: production checkouts, the owner's own actions, a session's Remote Control and permission mode,
-  power, attribution, secrets, public pushes, branch names; the usage governor before a new session, a subagent or a
+  power, third-party kits, attribution, secrets, conflict markers, public pushes, branch names; the usage governor before a new session, a subagent or a
   workflow; a command a session types into the owner's Terminal panel, `run_in_terminal`, meets the same shell
   guards), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
@@ -156,9 +156,22 @@ brain whose `source/packs.yaml` gives its core pack `hooks:` gets them copied in
 
 A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
 Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that
-may write, names `gh`, a program of the owner and power guards, or git other than to read (`git [-C DIR] status`,
-`log`, `diff`, `show`, `rev-parse`... without `--output`: `brain.guards.GIT_READS`, checked against the guards'
-tables). In Python a guard reads the registry through libyaml and does not import `urllib.request`.
+may write, names `gh`, a program of the owner and power guards, `claude plugin` or `skills add`, or git other than to
+read (`git [-C DIR] status`, `log`, `diff`, `show`, `rev-parse`... without `--output`: `brain.guards.GIT_READS`,
+checked against the guards' tables). In Python a guard reads the registry through libyaml and does not import `urllib.request`.
+
+Two guards keep what a session brings in and what it records clean (the runbook: [`docs/guards.md`](docs/guards.md)):
+
+- **Third-party kits** (`guard.sh shell`, check `third-party`): a session never installs or runs a third-party kit. A
+  download fed to a shell or an interpreter (`curl ... | sh`, `bash <(curl ...)`, `sh -c "$(curl ...)"`, `iwr ... |
+  iex`, `iex (irm ...)`), `claude plugin install` and `claude plugin marketplace add` from a source outside the owner's
+  list (config.json `adapters.claude.sources`; the brain's own marketplace always passes) and `npx skills add` are
+  refused, each an action for the owner's queue with its exact command (`brain queue add --kind action --guard
+  <ref>`). A download to a file (`curl -o`) passes; what the owner types in their own terminal is never seen.
+- **Conflict markers** (check `markers`): a git commit, or a merge, rebase or cherry-pick `--continue`, whose staged
+  lines add `<<<<<<< `, `||||||| `, `>>>>>>> ` or a bare `=======` is refused with the file and line; `brain check`
+  fails on a store, journal, decision log or record file that holds one. A Markdown setext heading (`=======` under a
+  line of text) and a file under a `fixtures` folder pass.
 
 Two of the PreToolUse hooks keep the owner's say over how sessions run (the runbook: [`docs/guards.md`](docs/guards.md)):
 

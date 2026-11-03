@@ -1,4 +1,4 @@
-# Runbook: the session-settings guard and the usage governor
+# Runbook: the session-settings, third-party and conflict-marker guards, and the usage governor
 
 Two PreToolUse hooks of the engine's Claude Code plugin keep the owner's say over how sessions run. Both are scripts,
 not rules: they decide before the call, at zero token, and never break a session (an error lets the call through and
@@ -17,7 +17,7 @@ Both are declared in `src/brain/adapters/claude/hooks/hooks.json`. A personal br
 
 A command a session types into the owner's Terminal panel (`mcp__*terminal__run_in_terminal`) runs in the owner's own
 shell, outside any sandbox. `guard.sh shell` judges it like a Bash or PowerShell call, with every shell guard
-(production, owner, power, attribution, secrets, public, branches, the usage override): as PowerShell on Windows, as
+(production, owner, power, third-party, attribution, secrets, markers, public, branches, the usage override): as PowerShell on Windows, as
 bash elsewhere (an SSH host's login shell), in the new tab's `cwd`, else the session's folder. A reused tab's folder
 is wherever its earlier commands left it: the guard reads it as the session's.
 
@@ -34,6 +34,47 @@ The owner then switches it in the app (the toolbar's Remote Control switch, the 
 Settings for the default). The category is `security-settings`, never grantable: `brain permissions check` refuses an
 allow rule that names those tools, Remote Control or a permission mode, at every level. `BRAIN_GUARD_ALLOW` does not
 lift it, not even `all`. Refusals are in `<BRAIN_HOME>/ledger/guards-<month>.jsonl` (`"check": "security-settings"`).
+
+## The third-party guard
+
+A session never installs or runs a third-party kit (the owner reads it first: wi-brain-guard-third-party). `guard.sh
+shell` refuses, in a Bash, PowerShell or Terminal panel call, through wrappers, launchers, nested shells and ssh:
+
+| Check | Shapes |
+|---|---|
+| `download` | a download piped, through any filter, to a shell or an interpreter reading stdin (`curl ... \| sh`, `wget -qO- ... \| bash`, `curl ... \| python3 -`, `curl ... \| ssh host`, `iwr ... \| iex`, `irm ... \| iex`); a download in a process substitution a shell or `source` runs (`bash <(curl ...)`, `. <(wget -qO- ...)`); a PowerShell statement where `iex` meets a download (`iex (iwr ...)`, a WebClient's `DownloadString`); `sh -c`, `eval` or a here-string whose text is a download's output (`sh -c "$(curl ...)"`) |
+| `plugin` | `claude plugin install NAME@MARKETPLACE` whose marketplace is not in the owner's list, or with no marketplace named; `claude plugin marketplace add SOURCE` whose source is not |
+| `skills` | `skills add`, through `npx`, `bunx`, `pnpm dlx` or `yarn dlx` |
+
+The owner's list is config.json `adapters.claude.sources`: a marketplace name (no slash) for `plugin install`, a
+source (`owner/repo`, a git URL, a folder from the brain's root) for `marketplace add`. The brain's own marketplace,
+source repo and folder always pass:
+
+```json
+{"adapters": {"claude": {"marketplace": "my-brain", "plugin": "my-core", "source": "me/my-brain",
+                         "sources": ["team-kit", "acme/team-kit"]}}}
+```
+
+What passes: a download to a file (`curl -o f`, `iwr -OutFile`), a download read as data (`curl ... | jq`, `| python
+-m json.tool`), a download then a script that reads its own stdin (`curl -o f ...; python - <<EOF`), `pip install -e
+.`, the commands' `--help`, and text that names the shapes (a commit message, a grep). A refusal is an action for the
+owner with the call's exact command (`brain queue add --kind action --guard <ref>`, the title « Third-party script »,
+« Third-party plugin » or « Third-party skill »); the owner reads the kit, then runs it in their own terminal, which
+no hook sees. Override, the owner's: `BRAIN_GUARD_ALLOW=third-party` or `third-party:<check>`.
+
+## Conflict markers
+
+A merge that leaves `<<<<<<< `, `||||||| `, `>>>>>>> ` or a bare `=======` in a file breaks every brain command that
+loads it, and a stale merge's generated views still pass the graph check. Two places refuse them (brain.markers):
+
+- the commit guard (check `markers`): a `git commit`, or `git merge|rebase|cherry-pick|revert|am --continue`, whose
+  added lines hold one, in the staged diff, in commit `-a`'s changes or in the files an earlier `git add` of the same
+  command stages. The reason names the file and line.
+- `brain check` (and `brain refresh`): it fails first, before reading anything else, on a store file (its nodes,
+  edges and generated views), a journal, a decision log or a record holding one.
+
+A Markdown or reStructuredText setext heading (`=======` under a line of text, in a file with no other marker) and a
+file under a `fixtures`, `fixture` or `testdata` folder pass. Override, the owner's: `BRAIN_GUARD_ALLOW=markers`.
 
 ## The usage governor
 

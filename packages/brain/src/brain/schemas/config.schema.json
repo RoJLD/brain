@@ -57,7 +57,8 @@
           "properties": {
             "marketplace": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The plugin marketplace's name (plugin@marketplace)."},
             "plugin": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The core plugin: its hooks inject the rules, its guards sign their refusals with its name."},
-            "source": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "owner/name of the GitHub repo Claude Code clones the marketplace from."}
+            "source": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "owner/name of the GitHub repo Claude Code clones the marketplace from."},
+            "sources": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The third-party plugin sources the owner allows a session to install from (the third-party guard, wi-brain-guard-third-party): a marketplace name, which claude plugin install NAME@MARKETPLACE may name, or, with a slash or a backslash, a source claude plugin marketplace add may name (owner/repo, a git URL, a folder from the brain's root). The brain's own marketplace, source and folder always pass."}
           }
         }
       }
