@@ -36,7 +36,10 @@ owner. In DIR (default: the current folder), which becomes the owner's private r
 
 The templates name no person, repo or host: the owner is the name given. A template is data and its manifest
 (``name``, ``version``, ``engine``: the brain versions that can render it, ``title``, ``files``: {the brain's path:
-the template's file, or "" for an empty one}), never code (wi-brain-domain-templates).
+the template's file, or "" for an empty one}, ``graphs``: the graph stores it starts, a list of {name, store, schema}
+whose first is the brain's main store; ``schema: default``, research_graph init's own, is the only one for now),
+never code (wi-brain-domain-templates). The plan is a list of steps, local only: a later step (the owner's repos and
+data store, created on their keystroke: wi-brain-init-stores) joins it without changing the others.
 """
 
 from __future__ import annotations
@@ -55,7 +58,9 @@ ENGINE_REPO = "RoJLD/brain"   # where this package is published: config.json eng
 TEMPLATES = files(__package__) / "templates"
 DEFAULT_TEMPLATE = "generic"
 MANIFEST = "template.yaml"
-TEMPLATE_KEYS = {"name", "version", "engine", "title", "files"}
+TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs"}
+GRAPH_KEYS = {"name", "store", "schema"}
+SCHEMAS = ("default",)   # research_graph init's own; a catalogue of graph types comes later
 # what config.json names, so every template writes it (a folder through its .gitkeep)
 REQUIRED = ("projects.yaml", "rules/global.md", "source/packs.yaml", "memory/.gitkeep", "records/.gitkeep")
 TIERS = ("lite", "default")
@@ -89,6 +94,7 @@ class Template:
     folder: object                  # a Traversable (the package's) or a Path (a folder of the owner's)
     engine: str = ""
     files: dict[str, str] = field(default_factory=dict)
+    graphs: list[dict] = field(default_factory=lambda: [{"name": "work", "store": STORE, "schema": "default"}])
 
     def read(self, source: str) -> str:
         return (self.folder / source).read_text(encoding="utf-8") if source else ""
@@ -153,7 +159,35 @@ def load_template(spec: str = DEFAULT_TEMPLATE) -> Template:
     missing = [r for r in REQUIRED if r not in fs]
     if missing:
         raise InitError(f"--template {spec}: {MANIFEST}: files misses what config.json names: {', '.join(missing)}")
-    return Template(name, version, str(data.get("title") or ""), folder, engine, dict(fs))
+    return Template(name, version, str(data.get("title") or ""), folder, engine, dict(fs),
+                    graphs_of(spec, data.get("graphs")))
+
+
+def graphs_of(spec: str, declared) -> list[dict]:
+    """The manifest's ``graphs``, checked: a list of {name, store, schema}, names and stores unique, a store inside the
+    brain; none declared: one, ``work`` at notes/graph."""
+    if declared is None:
+        return Template("", 1, "", None).graphs
+    where = f"--template {spec}: {MANIFEST}: graphs"
+    if not isinstance(declared, list) or not declared:
+        raise InitError(f"{where} is a list of {{name, store, schema}}, one at least")
+    out, names, stores = [], set(), set()
+    for i, g in enumerate(declared):
+        if not isinstance(g, dict) or set(g) - GRAPH_KEYS:
+            raise InitError(f"{where}[{i}]: a mapping of {', '.join(sorted(GRAPH_KEYS))}")
+        name, store, schema = g.get("name"), g.get("store"), g.get("schema", "default")
+        if not (isinstance(name, str) and NAME_RE.fullmatch(name)) or name in names:
+            raise InitError(f"{where}[{i}]: name is lower case letters, digits, '.', '_' and '-', each once")
+        if not isinstance(store, str) or not store or store.startswith("/") or \
+                ".." in store.replace("\\", "/").split("/") or store in stores:
+            raise InitError(f"{where}[{i}] ({name}): store is a folder inside the brain, each once")
+        if schema not in SCHEMAS:
+            raise InitError(f"{where}[{i}] ({name}): schema {schema!r}: only {', '.join(SCHEMAS)} for now "
+                            "(research_graph init's own)")
+        names.add(name)
+        stores.add(store)
+        out.append({"name": name, "store": store, "schema": schema})
+    return out
 
 
 def template(name: str, tpl: str = DEFAULT_TEMPLATE) -> str:
@@ -220,11 +254,11 @@ def claude_names(root: Path) -> dict[str, str]:
     return config.claude(config.Config(f, Path(root), data if isinstance(data, dict) else {}))
 
 
-def _render_step(root: Path, created: set[str], plugin: str) -> Step:
-    """The Claude files: ``keep`` when the brain's source, config.json and store exist and the render is current, else
-    ``render`` (done by apply, after the store)."""
+def _render_step(root: Path, created: set[str], plugin: str, store: str = STORE) -> Step:
+    """The Claude files: ``keep`` when the brain's source, config.json and main store exist and the render is current,
+    else ``render`` (done by apply, after the stores)."""
     dest = root / MARKETPLACE
-    if not created & {"config.json", "projects.yaml", PACKS} and (root / STORE / "schema.yaml").is_file():
+    if not created & {"config.json", "projects.yaml", PACKS} and (root / store / "schema.yaml").is_file():
         try:
             r = render.render(root, "claude")
             if not render.stale(render.plan(r, render.bases_for(root, None, None)), bases=("brain",)):
@@ -275,10 +309,11 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
         else:
             steps.append(Step("create", p, text))
             created.add(rel)
-    schema = root / STORE / "schema.yaml"
-    steps.append(Step("keep", schema.parent, why="a graph store already") if schema.exists() else
-                 Step("store", schema.parent, why=f"research_graph init --owner {owner}"))
-    steps.append(_render_step(root, created, claude_names(root)["plugin"]))
+    for g in tpl.graphs:
+        schema = root / g["store"] / "schema.yaml"
+        steps.append(Step("keep", schema.parent, why="a graph store already") if schema.exists() else
+                     Step("store", schema.parent, why=f"research_graph init --owner {owner}"))
+    steps.append(_render_step(root, created, claude_names(root)["plugin"], tpl.graphs[0]["store"]))
     pointer, there = paths.personal_file(), paths.pointer_root()
     if there is None:
         steps.append(Step("point", pointer, json.dumps({"root": root.as_posix()}) + "\n", why=f"-> {root}"))

@@ -2,12 +2,14 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
-## 0.2.1 — 2026-11-03
+## 0.2.2 — 2026-11-03
 
 - **`brain init` for a stranger, from a template.** `--template NAME|DIR` (default `generic`, the only one the engine
   ships): a template is data and a manifest (`template.yaml`: name, version, the engine versions it fits, title, the
-  files it renders with `{owner}`, `{owner_q}`, `{name}`, `{title_q}`), never code; a bad manifest, an engine outside
-  its range or a template missing what config.json names plans nothing. config.json records it (`template`, a new key
+  graph stores it starts, a list of `{name, store, schema}` with the main store first and only research_graph's
+  default schema for now, and the files it renders with `{owner}`, `{owner_q}`, `{name}`, `{title_q}`), never code;
+  the plan stays local, a list of steps a later one (the owner's repos and data store) can join; a bad manifest, an
+  engine outside its range or a template missing what config.json names plans nothing. config.json records it (`template`, a new key
   of the schema). `--owner` defaults to the owner of the folder's config.json. The generic template's files moved to
   `templates/generic/`.
 - **Publishable by construction.** The generic template writes `boundary.yaml` (every file's side, `readiness_max: 0`,
@@ -22,6 +24,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   PATH with no docker, Git's bash for the hooks on Windows), runs the Lite scenario as an invented owner and scans
   every output and file for the terms given with `--deny`; its verdict is a pilot's go. `docs/install.md` (Windows
   from zero, Linux and macOS) and `docs/pilot.md` (what to try, how to report an issue) are the tester's.
+
+## 0.2.1 — 2026-11-03
 
 - **A new brain gets its own Claude Code plugin.** `brain init` renders a local marketplace in the new brain: it
   writes `source/packs.yaml` (the marketplace's owner, one core pack with the engine's hooks) and config.json

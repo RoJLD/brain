@@ -294,3 +294,44 @@ def test_machine_terms_leave_out_common_names(monkeypatch):
     monkeypatch.setattr(init.getpass, "getuser", lambda: "Admin")
     monkeypatch.setattr(init.socket, "gethostname", lambda: "host-a.example.invalid")
     assert init.machine_terms() == {"hosts": ["host-a"]}
+
+
+def test_a_template_starts_each_graph_it_declares(fresh, tmp_path, capsys):
+    """The manifest's graphs: one store each, by research_graph init with the owner; the first is the brain's main."""
+    tpl = tmp_path / "lab"
+    tpl.mkdir()
+    for name in ("projects.yaml", "packs.yaml", "rules.md"):
+        (tpl / name).write_text(init.template(name), encoding="utf-8")
+    (tpl / "template.yaml").write_text(
+        'name: lab\nversion: 1\ngraphs: [{name: work, store: notes/graph}, {name: research, store: research/graph}]\n'
+        'files: {projects.yaml: projects.yaml, source/packs.yaml: packs.yaml, rules/global.md: rules.md, '
+        'memory/.gitkeep: "", records/.gitkeep: ""}\n', encoding="utf-8")
+    assert init.load_template(str(tpl)).graphs == [{"name": "work", "store": "notes/graph", "schema": "default"},
+                                                   {"name": "research", "store": "research/graph",
+                                                    "schema": "default"}]
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl), "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "create   notes/graph (research_graph init --owner Ada)" in out
+    assert "create   research/graph (research_graph init --owner Ada)" in out
+    for store in ("notes/graph", "research/graph"):
+        assert 'owner: "Ada"' in (fresh / store / "schema.yaml").read_text(encoding="utf-8"), store
+
+
+@pytest.mark.parametrize("graphs, why", [
+    ("[]", "graphs is a list of {name, store, schema}, one at least"),
+    ("[{name: work, store: notes/graph, layers: [work]}]", "graphs[0]: a mapping of name, schema, store"),
+    ("[{name: a, store: g}, {name: a, store: h}]", "graphs[1]: name is lower case"),
+    ("[{name: a, store: ../g}]", "graphs[0] (a): store is a folder inside the brain"),
+    ("[{name: a, store: g, schema: quant}]", "schema 'quant': only default for now"),
+])
+def test_a_bad_graph_plans_nothing(fresh, tmp_path, capsys, graphs, why):
+    tpl = tmp_path / "lab"
+    tpl.mkdir()
+    for name in ("projects.yaml", "packs.yaml", "rules.md"):
+        (tpl / name).write_text(init.template(name), encoding="utf-8")
+    (tpl / "template.yaml").write_text(
+        f'name: lab\nversion: 1\ngraphs: {graphs}\n'
+        'files: {projects.yaml: projects.yaml, source/packs.yaml: packs.yaml, rules/global.md: rules.md, '
+        'memory/.gitkeep: "", records/.gitkeep: ""}\n', encoding="utf-8")
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl)]) == 2
+    assert why in capsys.readouterr().out and list(fresh.iterdir()) == []

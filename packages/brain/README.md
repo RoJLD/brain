@@ -28,7 +28,7 @@ What it does, every command reading files and git, never a model:
 Python 3.10 or later. The command depends on PyYAML and on `research-graph` at the same tag.
 
 ```bash
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.1#subdirectory=packages/brain"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.2#subdirectory=packages/brain"
 ```
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
@@ -72,11 +72,13 @@ claude plugin install brain-core@brain
 | `CLAUDE.md`, `README.md`, `.gitignore`, `.gitattributes`, `memory/`, `records/` | the repo's own rules and what it is, LF endings (the hooks' shell scripts), the memory notes and the records |
 
 A template is data and a manifest, never code: `template.yaml` gives its `name`, `version`, the `engine` versions that
-can render it (`">=0.2.1"`), a `title` and its `files` (`{the brain's path: the template's file}`, `""` for an empty
-one), rendered with `{owner}`, `{owner_q}` (quoted for YAML or JSON), `{name}` and `{title_q}`. It must write what
-config.json names (`projects.yaml`, `rules/global.md`, `source/packs.yaml`, `memory/`, `records/`); the engine writes
-config.json, the graph store and the Claude marketplace itself. `--template DIR` takes a folder of your own holding
-one.
+can render it (`">=0.2.2"`), a `title`, its `graphs` (a list of `{name, store, schema}`, the brain's main store
+first, each started by `research_graph init`; `schema: default` only for now) and its `files` (`{the brain's path:
+the template's file}`, `""` for an empty one), rendered with `{owner}`, `{owner_q}` (quoted for YAML or JSON),
+`{name}` and `{title_q}`. It must write what config.json names (`projects.yaml`, `rules/global.md`,
+`source/packs.yaml`, `memory/`, `records/`); the engine writes config.json, the graph stores and the Claude
+marketplace itself. `--template DIR` takes a folder of your own holding one. A template is public data; the owner's
+records live in their own brain.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
