@@ -510,7 +510,24 @@ def load_state() -> dict:
         data = {}
     for k in ("canary", "drill", "seals"):
         data.setdefault(k, {})
+    legacy = {n: d for n, d in data["drill"].items() if isinstance(d, str)}
+    if legacy:  # a drill recorded by name only: tied once, for good, to the key its canary held then
+        for n, at in legacy.items():
+            data["drill"][n] = {"at": at, "fingerprint": (data["canary"].get(n) or {}).get("fingerprint", "")}
+        save_state(data)
     return data
+
+
+def drilled_at(st: dict, name: str, fingerprint: str) -> str:
+    """When this key (not merely this name) was last drilled: '' for a key replaced since."""
+    d = st["drill"].get(name)
+    return d.get("at", "") if isinstance(d, dict) and d.get("fingerprint") == fingerprint else ""
+
+
+def proven_canary(st: dict, name: str, fingerprint: str) -> dict:
+    """The canary of this key: {} when the one on record was sealed to a key replaced since."""
+    c = st["canary"].get(name) or {}
+    return c if c.get("fingerprint") == fingerprint else {}
 
 
 def save_state(st: dict) -> None:
@@ -726,24 +743,53 @@ def device_init(cfg: config.Config, name: str | None = None, adapter: str | None
     ``forget_previous``, once config.json declares the new key and ``reseal`` has run."""
     ks, current = _device_slot(cfg, rotate)
     old = device() if rotate else {}
+    if rotate and name and old.get("name") and name != old["name"]:
+        raise VaultError(f"a rotation keeps the name {old['name']}: the old name would stay declared, a key nobody "
+                         "holds")
     name = name or old.get("name") or host_name()
     if not NAME.match(name):
         raise VaultError(f"{name!r}: a kebab-case name")
     ad = _first_found(found if found is not None else adapters(), adapter)
     value, public = ad.keygen(f"device {name}")
-    if rotate:
-        _keep(ks, previous_key(cfg), current, "the previous key: nothing was replaced")
-    _keep(ks, keystore_key(cfg), value, "the device key")
-    del value, current
     t = _iso(_now(now))
     facts = {"name": name, "adapter": ad.name, "keystore": ks.name, "created": t,
-             **_public_facts(ad, name, public, old if rotate else None)}
+             **_public_facts(ad, name, public, old if rotate else None)}     # before the keystore is touched
     if rotate:
         facts["previous"] = {k: old[k] for k in ("adapter", "public", "created", "key_file") if old.get(k)}
         facts["rotated"] = t
-    device_file().parent.mkdir(parents=True, exist_ok=True)
-    device_file().write_text(json.dumps(facts, indent=2) + "\n", encoding="utf-8")
+    try:
+        if rotate:
+            _keep(ks, previous_key(cfg), current, "the previous key")
+        _keep(ks, keystore_key(cfg), value, "the device key")
+        _write_atomic(device_file(), json.dumps(facts, indent=2) + "\n")
+    except (OSError, VaultError, keystore.KeystoreError) as exc:
+        _undo(ks, cfg, current)
+        raise VaultError(f"device init stopped ({exc}): the keystore is as it was") from None
+    except BaseException:
+        _undo(ks, cfg, current)
+        raise
+    finally:
+        value = current = None
     return facts
+
+
+def _undo(ks: keystore.Backend, cfg: config.Config, current: str | None) -> None:
+    """A device init cut short: the keystore as it was (the old key back, no previous one; no key for a first one)."""
+    try:
+        if current:
+            ks.set(keystore_key(cfg), current)
+            ks.delete(previous_key(cfg))
+        else:
+            ks.delete(keystore_key(cfg))
+    except keystore.KeystoreError:
+        pass
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _first_found(found: dict[str, Adapter], adapter: str | None) -> Adapter:
@@ -797,8 +843,10 @@ def _public_facts(ad: Adapter, name: str, public: str, old: dict | None) -> dict
 
 def recipient_add(cfg: config.Config, name: str, kind: str, age: str = "", gpg: str = "", host: str = "",
                   write: bool = False, replace: bool = False) -> tuple[dict, bool]:
-    """Declare a public recipient in config.json (a plan, or --write); refuses any private key. A declared name
-    takes a new key only with ``replace`` (a rotation: the sealed files then wait on ``reseal``)."""
+    """Declare a public recipient in config.json (a plan, or --write); refuses any private key, and a key another
+    name already holds (one key counted twice would pass the two-recipient floor alone). A declared name takes a new
+    key only with ``replace`` (a rotation): its kind stays, its classes, why and host are kept, and the sealed files
+    then wait on ``reseal``; the old key's canary and drill no longer count (``proven_canary``, ``drilled_at``)."""
     if not cfg.file:
         raise VaultError("no config.json to declare a recipient in")
     if private_material(age) or (gpg and Path(gpg).is_file() and private_material(
@@ -807,10 +855,9 @@ def recipient_add(cfg: config.Config, name: str, kind: str, age: str = "", gpg: 
                          "was copied anywhere)")
     if not NAME.match(name):
         raise VaultError(f"{name!r}: a kebab-case name")
-    if name in (_block(cfg).get("recipients") or {}) and not replace:
-        raise VaultError(f"{name} is declared already: --replace gives it this key (a rotation), then brain vault "
-                         "reseal")
-    entry: dict = {"kind": kind}
+    old = (_block(cfg).get("recipients") or {}).get(name)
+    _replace_rules(name, kind, old, replace)
+    entry: dict = {"kind": kind, **{k: v for k, v in (old or {}).items() if k in ("host", "classes", "why")}}
     if age:
         entry["age"] = age.strip()
     if gpg:
@@ -831,15 +878,40 @@ def recipient_add(cfg: config.Config, name: str, kind: str, age: str = "", gpg: 
             errs.append(f"gpg: {gpg} is not an armored public key")
     if errs:
         raise VaultError(f"recipient {name}: " + "; ".join(errs))
+    _distinct_key(cfg, name, entry.get("age", ""), Path(gpg).expanduser() if gpg else None)
     if not write:
         return entry, False
-    if gpg and not (cfg.root / entry["gpg"]).is_file():
-        (cfg.root / entry["gpg"]).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(Path(gpg).expanduser(), cfg.root / entry["gpg"])
+    if gpg:  # a rotation lands on the same path: the file is copied whenever it differs, never kept as it was
+        src, dst = Path(gpg).expanduser(), cfg.root / entry["gpg"]
+        if not dst.is_file() or (src.resolve() != dst.resolve() and src.read_bytes() != dst.read_bytes()):
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
     data = json.loads(cfg.file.read_text(encoding="utf-8"))
     data.setdefault("vault", {}).setdefault("recipients", {})[name] = entry
     cfg.file.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return entry, True
+
+
+def _replace_rules(name: str, kind: str, old: dict | None, replace: bool) -> None:
+    if old is not None and not replace:
+        raise VaultError(f"{name} is declared already: --replace gives it this key (a rotation), then brain vault "
+                         "reseal")
+    if replace and old is None:
+        raise VaultError(f"{name} is not declared: nothing to replace (declare it without --replace)")
+    if replace and old.get("kind") != kind:
+        raise VaultError(f"{name} is a {old.get('kind')} key: a rotation keeps its kind (recipient remove, then add "
+                         "it under the new one)")
+
+
+def _distinct_key(cfg: config.Config, name: str, age: str, gpg: Path | None) -> None:
+    h = hashlib.sha256(age.encode())
+    if gpg is not None and gpg.is_file():
+        h.update(gpg.read_bytes())
+    fp = h.hexdigest()[:16]
+    recs, _ = recipients(cfg)
+    same = [n for n, r in recs.items() if n != name and r.fingerprint(cfg.root) == fp]
+    if same:
+        raise VaultError(f"{', '.join(same)} already holds this key: each recipient is a key of its own")
 
 
 # --- the canary and the drill ---
@@ -913,7 +985,7 @@ def drill(cfg: config.Config, name: str, identity: str = "-", now: datetime | No
     if got != entry["digest"]:
         raise VaultError(f"the canary of {name} opened, but does not match its digest")
     t = _iso(_now(now))
-    st["drill"][name] = t
+    st["drill"][name] = {"at": t, "fingerprint": entry.get("fingerprint", "")}   # the key this canary was sealed to
     save_state(st)
     return {"recipient": name, "drilled_at": t}
 
@@ -937,7 +1009,8 @@ def status(cfg: config.Config, found: dict[str, Adapter] | None = None) -> dict:
             "min_recipients": min_recipients(cfg),
             "recipients": [{"name": r.name, "kind": r.kind, "keys": [a for a in ADAPTERS if r.key(a, cfg.root)],
                             "host": r.host, "fingerprint": r.fingerprint(cfg.root),
-                            "canary": st["canary"].get(r.name) or {}, "drilled_at": st["drill"].get(r.name, "")}
+                            "canary": proven_canary(st, r.name, r.fingerprint(cfg.root)),
+                            "drilled_at": drilled_at(st, r.name, r.fingerprint(cfg.root))}
                            for r in recs.values()],
             "seals": st["seals"], "stale": rotation.stale_seals(cfg) if not errors else [], "errors": errors}
 
@@ -995,6 +1068,10 @@ def health(cfg: config.Config, now: datetime | None = None, out=None,
         fails.append(f"{len(recs)} recipient(s): a sealed store needs {s['min_recipients']} at least")
     if not any(r["kind"] == "recovery" for r in recs):
         warns.append("no recovery recipient")
+    elif not s["errors"]:
+        from . import rotation  # each store on its own: a key elsewhere does not stand for it
+        for problem, fatal in rotation.floors(cfg):
+            (fails if fatal else warns).append(problem)
     if not any(s["adapters"].values()):
         say(f"{CHECK} OFF on this machine (neither age nor gpg found: available, off)"
             + (f"; {len(fails)} problem(s): " + "; ".join(fails) if fails else ""))

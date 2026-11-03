@@ -66,3 +66,26 @@ def test_wincred_round_trip():
     finally:
         assert ks.delete(key)
     assert ks.get(key) is None and not ks.delete(key)
+
+
+def test_a_test_never_reaches_the_real_keystore_or_brain_home(monkeypatch):
+    """2026-11-03: a test's monkeypatch.undo() dropped the conftest's BRAIN_HOME and the memory keystore, and the rest
+    of it rotated the owner's real device key. Under pytest, both are refused unless a test asks for them."""
+    from brain import paths
+    with monkeypatch.context() as m:
+        m.delenv("BRAIN_HOME", raising=False)
+        with pytest.raises(RuntimeError, match="a test reached the real ~/.brain"):
+            paths.brain_home()
+    with monkeypatch.context() as m:
+        m.delenv("BRAIN_KEYSTORE", raising=False)
+        m.delenv("BRAIN_VAULT_IDENTITY_FILE", raising=False)
+        m.delenv("BRAIN_TEST_KEYSTORE", raising=False)
+        real = [b for b in (keystore.WinCred(), keystore.Keychain(), keystore.SecretService(), keystore.Keyring())
+                if b.available()]
+        if real:
+            with pytest.raises(keystore.KeystoreError, match="a test reached this machine's keystore"):
+                keystore.backend()
+        else:
+            assert keystore.backend() is None
+    monkeypatch.setenv("BRAIN_KEYSTORE", "memory")
+    assert keystore.backend().name == "memory"

@@ -198,15 +198,23 @@ brain vault reseal --apply    # open each with this machine's device key, seal i
 still opens one. It only warns when a new recipient cannot open one yet. A copy already sent elsewhere (a remote, a
 NAS, a backup) stays readable by the keys it was sealed to: seal it again where it lives, or delete it there.
 
+Each store keeps its floors on its own: two distinct keys at least, and a recovery key for the owner's stores (a
+tenant's or a scope's key does not count for them). `recipient remove` refuses what would break them, and `reseal`
+leaves a file as it is rather than seal it under them. A key keeps its proofs, not its name: once a recipient gets a
+new key (`--replace`), its canary and drill start again, and `reseal` keeps the old recovery key on a file until a
+recovery key of its store has been drilled.
+
 **Rotating this machine's key** (a suspect key, a yearly habit), in your own terminal:
 
 1. `brain vault device init --rotate`: a new key goes into the keystore. The previous one is kept beside it
    (`brain-vault/device-previous`) and still opens what was sealed to it. The command prints the new public key and
    its line: `brain vault recipient add <name> --kind device --age age1... --host <name> --replace --write`.
-2. Declare it in a PR: `--replace` gives the name its new key. Pull it on this machine.
+2. Declare it in a PR: `--replace` gives the name its new key (its kind, classes and why stay). Pull it on this
+   machine. The name stays through a rotation: a new name would leave the old one declared, a key nobody holds.
 3. `brain vault reseal --apply` (the previous key opens, the new set seals), then `brain vault canary`.
-4. `brain vault device forget-previous`: it deletes the previous key. It refuses while config.json still names the old
-   key or a sealed file waits on a re-seal.
+4. `brain vault device forget-previous`: it deletes the previous key. It refuses while config.json still declares the
+   old key (under any name) or a sealed file waits on a re-seal. A rotation that fails midway puts the keystore back
+   as it was.
 
 ## A lost or exposed key
 
@@ -216,9 +224,10 @@ NAS, a backup) stays readable by the keys it was sealed to: seal it again where 
   its key: the lost machine's disk encryption is what protects it.
 - **An exposed device key**: rotate it (above). On a machine that is gone, remove its recipient and delete its keystore
   entry (Windows: `cmdkey /delete:brain-vault/device`).
-- **The recovery key exposed or lost**: create a new one (step 3), declare it, take the old one out (`recipient
-  remove` refuses to leave the vault without a recovery key, so declare the new one first), then `brain vault reseal
-  --apply`; drill the new one.
+- **The recovery key exposed or lost**: create a new one (step 3) and declare it (`recipient add recovery --kind
+  recovery --age age1... --replace --write`, a PR), then `brain vault canary` and drill it (`brain vault drill
+  recovery`, with the new paper). Only then does `brain vault reseal --apply` move the copies off the old key: it
+  refuses while the new one is not drilled, so a mistyped paper key never becomes the only way back.
 - **A revoked heir, a member leaving a tenant**: `brain vault recipient remove <name>` (it refuses while
   `vault.tenants` or a scope still names them: take them out there first), then `brain vault reseal --apply`.
 - **A private key pasted into `config.json`** by mistake: `brain check --all` refuses it; remove it and treat the key

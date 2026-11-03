@@ -30,21 +30,34 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   refusing the call (ST-4); `brain alerts` raises a master past 80 % with live children (source `session`); the
   cockpit colours the master's row at each step.
 - **The vault's recipients change safely** (wi-brain-vault-rotation, its first part).
-  - `brain vault recipient remove NAME`: a plan, then `--write`. It refuses to leave fewer than two recipients, to
-    remove the only recovery key, or to remove a recipient that `vault.tenants` or a scope still names. The plan lists
-    the sealed files the removed key still opens.
-  - `brain vault recipient add` refuses a declared name unless `--replace` is given, which is a rotation.
+  - `brain vault recipient remove NAME`: a plan, then `--write`. It refuses to leave a store with fewer than two
+    distinct keys or with no recovery key, each store on its own (a tenant's or a scope's key does not stand for the
+    owner's stores), to remove the only recovery key, and to remove a recipient that `vault.tenants` or a scope still
+    names. The plan lists the sealed files the removed key still opens.
+  - `brain vault recipient add` refuses a declared name unless `--replace` is given (a rotation), and a key another
+    name already holds. `--replace` keeps the recipient's kind (a change of kind is refused), its `classes`, `why`
+    and host, and copies a new gpg key file even where the old one lies.
+  - The canary and the drill prove a key, not a name: a key replaced under the same name is « never sealed » and
+    « never drilled » until they run again (state.json keeps each proof's fingerprint; an older drill is tied once to
+    the key its canary held).
   - `brain vault reseal [STORE...]`: the plan, then `--apply`. It seals again, to their store's current recipients,
     the sealed files whose recipients changed: it opens each with this machine's device key (its previous one during a
     rotation) or with the key the owner gives, seals it again with the same adapter, replaces the old copy, and records
-    `resealed` in the manifest.
+    `resealed` in the manifest (written atomically). It leaves a file as it is when its store would fall under its
+    floors, or would leave a recovery key for one never drilled; an unreadable manifest is that file's error.
   - `brain vault device init --rotate` replaces this machine's key and keeps the previous one in the keystore
-    (`device-previous`), which still opens what was sealed to it. `brain vault device forget-previous` deletes it once
-    config.json declares the new key and nothing waits on a re-seal.
+    (`device-previous`), which still opens what was sealed to it; the name stays, and a failure puts the keystore back
+    as it was. `brain vault device forget-previous` deletes the previous key once config.json declares the new key, no
+    longer declares the old one, and nothing waits on a re-seal.
   - `brain vault status` lists the files to re-seal and an unfinished rotation. `brain health vault` fails while a
-    removed or replaced key still opens a sealed file, and warns when a new recipient cannot open one yet.
+    removed or replaced key still opens a sealed file or a store has fewer than two distinct keys, and warns when a
+    new recipient cannot open one yet or a store is sealed to no recovery key.
   - The runbook gains « Changing the recipients ».
   - YubiKey recipients, each machine's canary seen from the others and post-quantum recipients stay for later.
+- **A test never reaches the real keystore or ~/.brain.** Under pytest, `keystore.backend()` refuses this machine's
+  keystore unless `BRAIN_TEST_KEYSTORE` asks for it, and `paths.brain_home()` refuses the default ~/.brain: on
+  2026-11-03 a test's `monkeypatch.undo()` dropped the conftest's settings and the rest of it rotated the owner's real
+  device key (restored the same day; nothing was lost).
 
 ## 0.2.4 — 2026-11-03
 
