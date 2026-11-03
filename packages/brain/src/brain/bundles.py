@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import socket
 import sys
 import tempfile
@@ -186,14 +187,19 @@ def _compose_config(files: dict[str, bytes]) -> tuple[str, str]:
     argv = stacks._resolve(["docker", "compose"])
     if not argv:
         return "", ""
-    # a docker compose that ran out of time may still hold the folder on Windows: left to the temp cleaner, not raised
-    with tempfile.TemporaryDirectory(prefix="brain-bundle-", ignore_cleanup_errors=True) as tmp:
+    # docker compose runs from elsewhere (the file given with -f), and the folder goes by shutil.rmtree, errors
+    # ignored: a docker compose killed at its timeout may leave a child holding it on Windows, and 3.10's
+    # TemporaryDirectory then recursed until RecursionError, ignore_cleanup_errors or not (left to the temp cleaner)
+    tmp = Path(tempfile.mkdtemp(prefix="brain-bundle-"))
+    try:
         for rel, data in files.items():
-            f = Path(tmp) / rel
+            f = tmp / rel
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_bytes(data)
-        code, out = stacks._run([*argv, "-f", str(Path(tmp) / stacks.BUNDLE_FILE), "config", "--quiet"], Path(tmp),
+        code, out = stacks._run([*argv, "-f", str(tmp / stacks.BUNDLE_FILE), "config", "--quiet"], None,
                                 stacks.CMD_TIMEOUT)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     if code == 0:
         return "docker compose config OK", ""
     why = "no answer" if code is None else f"exited {code}: {stacks.useful_line(out)}"

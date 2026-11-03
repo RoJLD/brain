@@ -1,6 +1,9 @@
 import io
 import json
 import shutil
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -208,20 +211,25 @@ def test_cli_bundle_plan_as_json_and_an_unknown_bundle(tmp_path, monkeypatch, ca
 
 
 def test_a_compose_config_out_of_time_that_still_holds_its_folder_is_a_problem_not_a_crash(monkeypatch):
-    """docker compose killed at its timeout may leave a child holding the scratch folder (Windows refuses to remove
-    it): the problem is said, the folder left to the temp cleaner."""
-    held = []
+    """docker compose killed at its timeout may leave a child holding the scratch folder (on Windows the folder cannot
+    be removed, and 3.10's TemporaryDirectory recursed until RecursionError, run 41701973517): docker compose runs from
+    outside the folder, the problem is said, the folder left to the temp cleaner."""
+    held, cwds = [], []
 
     def slow(argv, cwd, timeout):
-        held.append(open(cwd / "held", "w"))   # an open file: Windows cannot remove the folder
+        cwds.append(cwd)
+        folder = Path(argv[argv.index("-f") + 1]).parent   # a child that outlived its parent, its cwd in the folder
+        held.append(subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=folder))
         return None, ""
     monkeypatch.setattr(stacks, "_resolve", lambda argv: argv)
     monkeypatch.setattr(stacks, "_run", slow)
     try:
-        assert bundles._compose_config({"compose.yaml": b"services: {}\n"}) == ("", "docker compose config no answer")
+        assert bundles._compose_config({"compose.yaml": b"services: {}\n"}) == ("","docker compose config no answer")
+        assert cwds == [None]   # docker compose itself never runs from the scratch folder
     finally:
-        for f in held:
-            f.close()
+        for child in held:
+            child.kill()
+            child.wait()
 
 
 @pytest.mark.docker

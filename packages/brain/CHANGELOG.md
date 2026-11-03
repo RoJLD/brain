@@ -37,8 +37,10 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   The test that calls the real docker client is marked `docker` and runs apart, on one process (`-m docker`).
   Measured: on a 16-core Windows machine, 885 s on one process to 165-183 s with `-n auto`; on the CI's Windows
   runners (4 workers), 386-391 s to 173-191 s; on its Linux runner, 42 s to 34 s.
-- `brain bundle`'s `docker compose config` no longer crashes when docker compose, killed at its timeout, still holds
-  its scratch folder on Windows: the problem is said (« no answer »), the folder left to the temp cleaner.
+- `brain bundle`'s `docker compose config` no longer crashes when docker compose, killed at its timeout, leaves a
+  child holding its scratch folder on Windows (Python 3.10's `TemporaryDirectory` recursed until `RecursionError`):
+  docker compose runs from outside the folder (the file given with `-f`), the folder goes by `shutil.rmtree` with its
+  errors ignored, and the problem is said (« no answer »).
 
 ## 0.2.4 — 2026-11-03
 
