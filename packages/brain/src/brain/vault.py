@@ -66,6 +66,7 @@ VAULT_KEYS = {"adapter", "min_recipients", "canary_hours", "recipients", "tenant
 RECIPIENT_KEYS = {"kind", "age", "gpg", "host", "classes", "why"}
 AGENT_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION")
 PASTE = "paste the key, then end the input (Ctrl-D; Ctrl-Z then Enter on Windows)"
+RUNBOOK = "https://github.com/RoJLD/brain/blob/main/packages/brain/docs/vault.md"   # the owner's steps, generic
 
 
 class VaultError(RuntimeError):
@@ -846,7 +847,8 @@ def next_steps(s: dict) -> list[str]:
                      "Clear-Host (clear) and close the terminal; declare it: brain vault recipient add recovery "
                      "--kind recovery --age age1... --write")
     if s["recipients"] and not any(r["canary"].get("sealed_at") for r in s["recipients"]):
-        steps.append("run the canary once, then schedule it daily (your decision): brain vault canary")
+        steps.append("run the canary once, then schedule it daily (your decision; the runbook gives the task for "
+                     "Windows, macOS and Linux): brain vault canary")
     if any(r["kind"] == "recovery" and not r["drilled_at"] for r in s["recipients"]):
         steps.append("drill the recovery key once a year, in your own terminal: brain vault drill recovery")
     return steps
@@ -940,4 +942,5 @@ def render_status(s: dict) -> list[str]:
     if steps:
         lines.append("next (yours):")
         lines += [f"  {i}. {x}" for i, x in enumerate(steps, 1)]
+        lines.append(f"the runbook: {RUNBOOK}")
     return lines
