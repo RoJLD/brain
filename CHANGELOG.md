@@ -3,7 +3,7 @@
 The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `research-graph` X.Y.Z and `brain` X.Y.Z
 (`packages/brain/CHANGELOG.md` for the brain command).
 
-## Unreleased
+## 0.2.2 — 2026-11-03
 
 - No change to the graph engine: the version follows the brain command's (one tag series).
 - `docs/install.md` (from an empty machine to a brain of one's own, Windows first) and `docs/pilot.md` (the pilot:
