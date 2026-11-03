@@ -4,6 +4,15 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **A brain fresh from `brain init` passes `brain check --all`.** It failed at once with « config.json declares no
+  data classes ». A template's `template.yaml` gains `classes`, its own stores, checked when the template loads. The
+  generic template classes `memory/` and `records/ddr/` confidential, opted in to `cloud-model`, with a waiver on
+  `git-private` until encrypted git is adopted. `init` writes config.json's `classes` block: the template's stores,
+  then the engine's machine stores (sealed), then a private catch-all. Its next steps name `brain classes`,
+  `brain vault status` and the vault's runbook.
+- **The vault's runbook ships with the engine** (`docs/vault.md`): the classes, the owner's steps once per machine,
+  the daily canary as a scheduled task for Windows, macOS and Linux, the drill, a lost key. `brain vault status` links
+  it. An empty `.gitkeep` holds no data for the classes check.
 - **The Business Source License 1.1 from this version** (wi-brain-engine-license). The brain package leaves the MIT
   License: `LICENSE` (BSL 1.1 and its parameters) and `NOTICE` (the credit to keep) sit in `packages/brain`, and
   `pyproject.toml` declares `license = "BUSL-1.1"` and `license-files` (PEP 639: building the package needs setuptools
