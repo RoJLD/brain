@@ -10,7 +10,7 @@ for py in "$home/venv/Scripts/python.exe" "$home/venv/bin/python" "${BRAIN_PYTHO
   [ -n "$py" ] || continue
   path=$(command -v "$py" 2>/dev/null) || continue
   case "$path" in *WindowsApps*) continue ;; esac
-  "$path" -I "$root/hooks/health.py" "${1:-SessionStart}" 2>/dev/null
+  "$path" -X utf8 -I "$root/hooks/health.py" "${1:-SessionStart}" 2>/dev/null
   exit 0
 done
 exit 0

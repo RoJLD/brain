@@ -52,7 +52,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import paths
+from . import midsession, paths
 
 GUARD = "usage"
 DEFAULTS = {"enabled": True, "warn": 80.0, "critical": 95.0, "sessions": 8, "brainstorms": 2, "memory": 90.0,
@@ -598,9 +598,8 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
 def main(stdin=None, stdout=None) -> int:
     started = time.perf_counter()
     try:
-        raw = (stdin or sys.stdin).read()
-        payload = json.loads(raw) if raw.strip() else {}
-        out = decide(payload) if isinstance(payload, dict) else None
+        payload = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
+        out = decide(payload)
         if out:
             (stdout or sys.stdout).write(json.dumps(out) + "\n")
     except Exception as exc:   # never break the session

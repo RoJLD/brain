@@ -35,13 +35,12 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import actions, config, decisions, graph, milestones, paths, projects, records
+from . import actions, config, decisions, graph, midsession, milestones, paths, projects, records
 
 BUDGET = 3000  # tokens; 0: no limit
 CHARS_PER_TOKEN = 4
@@ -523,8 +522,7 @@ def hook_main(argv: list[str], stdin=None) -> int:
     """SessionStart hook: the line as additionalContext. Never fails: an error goes to <BRAIN_HOME>/ledger/errors.log
     and the session goes on."""
     try:
-        raw = (stdin or sys.stdin).read()
-        data = json.loads(raw) if raw.strip() else {}
+        data = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
         text = announce(data.get("cwd") or ".")
         if text:
             event = argv[0] if argv else "SessionStart"

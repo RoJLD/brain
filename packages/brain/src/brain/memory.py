@@ -768,7 +768,8 @@ def hook_main(argv: list[str], stdin=None) -> int:
         if event == "run":
             job_main()
         else:
-            (stdin or sys.stdin).read()  # the hook's JSON: nothing in it is needed
+            # the hook's JSON, as bytes (a codepage decode can fail): nothing in it is needed
+            stdin.read() if stdin is not None else getattr(sys.stdin, "buffer", sys.stdin).read()
             session_end()
     except BaseException as exc:  # noqa: BLE001 - a hook never breaks a session's end, SystemExit included
         _log_error(f"memory-{event}", exc)

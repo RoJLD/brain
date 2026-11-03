@@ -530,7 +530,8 @@ def hook_main(argv: list[str], stdin=None) -> int:
     """SessionStart hook: the down watched stacks as additionalContext; nothing when all is well. Never fails: an
     error goes to <BRAIN_HOME>/ledger/errors.log."""
     try:
-        (stdin or sys.stdin).read()
+        # the hook's JSON, as bytes (a codepage decode can fail): nothing in it is needed
+        stdin.read() if stdin is not None else getattr(sys.stdin, "buffer", sys.stdin).read()
         rows = watched_down(load())
         if rows:
             names = " ".join(r[2:].split(" ", 1)[0] for r in rows)

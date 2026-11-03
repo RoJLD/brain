@@ -197,7 +197,9 @@ def render(queue: Path, answered: list[dict], asked: list[dict]) -> str:
 def read_payload(stdin=None) -> dict:
     """The hook JSON on stdin, read as UTF-8 bytes with a BOM dropped (Python decodes its stdin with the Windows
     codepage, and a PowerShell pipe adds a BOM); {} when it is not a JSON object."""
-    raw = stdin.read() if stdin is not None else sys.stdin.buffer.read().decode("utf-8-sig", "replace")
+    raw = stdin.read() if stdin is not None else getattr(sys.stdin, "buffer", sys.stdin).read()
+    if isinstance(raw, bytes):   # the real stdin: UTF-8 bytes; a text stream in its place has no buffer
+        raw = raw.decode("utf-8-sig", "replace")
     raw = raw.lstrip("﻿")
     data = json.loads(raw) if raw.strip() else {}
     return data if isinstance(data, dict) else {}
