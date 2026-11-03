@@ -145,6 +145,23 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart.
 
+## Data classes and the vault
+
+Every store of a brain declares a data class in `config.json` (`classes.stores`: public, private, confidential,
+sealed, resident, secret, `tenant:<id>`), and the class says where it may go and how; `brain check --all` refuses a
+store without a class and a destination its class forbids, and `brain init` writes a starting block. What leaves a
+machine is sealed client-side to public keys (`brain vault`: age, gpg as the fallback), to a device key per machine,
+kept in the OS keystore, and an offline recovery key: two recipients at least, proven daily by a canary per recipient
+(`brain health vault`). Opening, drilling and creating a key are the owner's acts, refused in an agent session. The
+owner's steps, the canary's scheduled task per system and what to do with a lost key: the runbook
+[`docs/vault.md`](docs/vault.md).
+
+```
+brain classes [--check] [--suggest] [--matrix] [PATH...]
+brain vault status | seal STORE | canary | recipient add NAME | device init | open FILE | drill RECIPIENT
+brain health vault
+```
+
 ## Tests
 
 From a checkout of this repo, with research-graph from the same checkout:

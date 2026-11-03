@@ -284,6 +284,8 @@ def test_health_off_and_next_steps(brain, capsys):
     assert any("brain vault canary" in s for s in steps) and any("drill" in s for s in steps)
     one = brain({"box1": {"kind": "device", "age": a_pub}})
     assert any("age-keygen" in s and "on paper" in s for s in vault.next_steps(vault.status(one, found)))
+    assert vault.render_status(vault.status(one, found))[-1] == f"the runbook: {vault.RUNBOOK}"
+    assert (Path(vault.__file__).parents[2] / "docs" / "vault.md").is_file()  # the page RUNBOOK names, in this repo
 
 
 def test_gpg_home_is_msys_shaped_for_git_for_windows():
