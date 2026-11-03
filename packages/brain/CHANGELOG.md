@@ -4,6 +4,14 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The Business Source License 1.1 from this version** (wi-brain-engine-license). The brain package leaves the MIT
+  License: `LICENSE` (BSL 1.1 and its parameters) and `NOTICE` (the credit to keep) sit in `packages/brain`, and
+  `pyproject.toml` declares `license = "BUSL-1.1"` and `license-files` (PEP 639: building the package needs setuptools
+  77 or later). The Additional Use Grant allows any use, modification and running for your own work and reuse in your
+  own products, with a visible credit to Brain and its author and the NOTICE kept; offering it to third parties as a
+  hosted or managed service needs a commercial licence. Each version changes to the Apache License 2.0 four years after
+  its release. 0.2.0 and 0.2.1 stay under the MIT License, and so does research-graph. Tested
+  (`tests/test_license.py`).
 - **`install.ps1 -Apply` replaces a running launcher.** Sessions' hooks run `brain.exe` many times a minute, and
   Windows refuses to overwrite a running image, so the last step of `-Apply` (the copy to `<BRAIN_HOME>\bin`) failed
   twice. `Set-Launcher` leaves an identical launcher alone, copies a new one beside it and swaps it in with a short

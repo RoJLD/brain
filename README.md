@@ -119,4 +119,11 @@ Consumers move by their pin.
 
 ## License
 
-MIT
+Each package has its own licence:
+
+- `research-graph` (`src/`, and everything outside `packages/brain`): the MIT License (`LICENSE`).
+- `brain` (`packages/brain`): the Business Source License 1.1 from 0.2.2 (`packages/brain/LICENSE`, and `NOTICE`, the
+  credit to keep). Its Additional Use Grant allows any use for your own work and reuse in your own products, with a
+  visible credit to Brain and its author and the NOTICE kept; offering it to third parties as a hosted or managed
+  service needs a commercial licence. Each version changes to the Apache License 2.0 four years after its release.
+  `brain` 0.2.0 and 0.2.1 were released under the MIT License and stay under it.

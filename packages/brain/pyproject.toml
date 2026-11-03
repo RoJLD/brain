@@ -1,12 +1,14 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]   # PEP 639: license as an SPDX expression, license-files
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "brain"
 description = "A person's or a team's work state in git, at zero token: records (DDR, SR, AR), backlog, decisions, journal, generated views, Claude Code hooks and guards"
 readme = "README.md"
-license = { text = "MIT" }
+# The Business Source License 1.1 from 0.2.2 (0.2.0 and 0.2.1 were released under MIT); research-graph stays MIT.
+license = "BUSL-1.1"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.10"
 # The graph engine of this repo, at this distribution's own tag: the two distributions share one tag series and one
 # version (a release moves both __version__, the CI checks they agree).
