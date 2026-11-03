@@ -4,4 +4,4 @@ The capture path (``brain.capture``, run by the brain's hooks) uses the standard
 read or write YAML (``brain record``, ``brain item``) import PyYAML when they run.
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"

@@ -2,6 +2,17 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## 0.2.3 — 2026-11-03
+
+- **`brain check` passes on a store that holds another repo's links.** Since 0.2.2, `brain sync` derives the Doc, Test
+  and Workflow nodes of a project's other repos (those its CodeRefs name) into the store; their anchors are paths of
+  that repo (`docs/install.md#...`), which research_graph 0.2.2 read under the store's repo, so `brain check` and
+  `brain refresh` failed on every one. Such a node now says `repo: <name>` (written before its anchor), and `brain
+  check` gives research_graph check each other repo's checkout (`--repo-path`, research-graph 0.2.3), found as `brain
+  audit` finds it: from the project's root, else from its main checkout when the root is a worktree. A repo whose
+  checkout is not on the machine is not checked (an advisory). Tested from a main checkout and from a worktree
+  (`tests/test_links.py`); research-graph pinned at v0.2.3.
+
 ## 0.2.2 — 2026-11-03
 
 - **The hooks read their JSON as UTF-8, whatever the console's codepage** (wi-brain-hook-stdin-utf8). On Windows,

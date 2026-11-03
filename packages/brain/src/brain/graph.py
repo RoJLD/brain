@@ -23,7 +23,7 @@ from pathlib import Path
 from . import notes, paths
 
 GENERATED_PREFIX = "_generated_"
-NODE_KEYS = ("id", "type", "status", "title", "level", "anchor", "props")
+NODE_KEYS = ("id", "type", "status", "title", "level", "repo", "anchor", "props")
 _PLAIN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-/]*$")
 _RESERVED = {"true", "false", "yes", "no", "on", "off", "null", "y", "n"}
 _NODE_START_RE = re.compile(r"^- \{id:\s*([^,\s}]+)")
@@ -61,7 +61,8 @@ def fmt(value) -> str:
 
 
 def render_node(node: dict, width: int = 118) -> str:
-    """The node as the stores write it: id, type and status first, then title, anchor and props on their lines."""
+    """The node as the stores write it: id, type and status first, then title, repo, anchor and props on their
+    lines."""
     head = [f"{k}: {fmt(node[k])}" for k in ("id", "type", "status") if k in node]
     rest = [k for k in NODE_KEYS[3:] if k in node] + [k for k in node if k not in NODE_KEYS]
     if not rest:

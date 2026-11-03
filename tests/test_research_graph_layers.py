@@ -234,6 +234,15 @@ def test_overlay_adds_an_operations_layer_and_crosses_impact(tmp_path):
     assert g.nodes["st-1"]["anchor"] == "fund/cfg.yaml#top"  # rewritten relative to the repo root
 
 
+def test_overlay_keeps_the_anchor_of_another_repos_node(tmp_path):
+    from research_graph.loader import apply_overlay
+
+    nodes = GOOD_NODES + "- {id: st-2, type: Stage, status: active, title: s2, repo: eng, anchor: 'ci.yml#test'}\n"
+    g = apply_overlay(load_store(STORE), _overlay(tmp_path, nodes, GOOD_EDGES, GOOD_EXT), tmp_path)
+    assert (g.nodes["st-2"]["anchor"], g.nodes["st-2"]["repo"]) == ("ci.yml#test", "eng")  # relative to eng's root
+    assert g.nodes["st-1"]["repo"] is None
+
+
 def test_overlay_rejects_missing_externals_clashes_and_bad_status(tmp_path):
     from research_graph.loader import apply_overlay
 
