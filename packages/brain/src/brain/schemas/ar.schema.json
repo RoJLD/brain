@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/ar.schema.json",
+  "title": "AR, action record",
+  "description": "One action that leaves a trace (commit, push, pull request, tag, ADR, DDR) with the session and the model that produced it. Append-only: one JSON object per line, in the local ledger (~/.brain/ledger/ar-<yyyy-mm>.jsonl) and, once reviewed, in records/ar/<yyyy-mm>.jsonl. Never in the commit text.",
+  "type": "object",
+  "required": ["v", "id", "kind", "at", "session", "source"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1, "description": "Format version."},
+    "id": {
+      "type": "string",
+      "pattern": "^ar-\\d{4}-\\d{2}-\\d{2}-(commit|push|pr|tag|adr|ddr)-[a-z0-9][a-z0-9.-]*$",
+      "description": "ar-<date>-<kind>-<key>: the key is the short SHA, the repo and PR number, or the tool call; one action, one id."
+    },
+    "kind": {"enum": ["commit", "push", "pr", "tag", "adr", "ddr"]},
+    "at": {"type": "string", "format": "date-time", "description": "When the action ran (UTC)."},
+    "repo": {"type": "string", "minLength": 1, "description": "owner/name from the origin remote (credentials stripped), or the folder name without a remote."},
+    "branch": {"type": "string"},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+    "refs": {"type": "array", "items": {"type": "string"}, "description": "Pushed refs, 'src -> dst'."},
+    "tag": {"type": "string"},
+    "subject": {"type": "string", "description": "Commit subject, after the secret scan."},
+    "pr": {
+      "type": "object",
+      "required": ["number"],
+      "additionalProperties": false,
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "url": {"type": "string"},
+        "action": {"enum": ["created", "merged", "linked", "closed"]}
+      }
+    },
+    "adr": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^(adr|sdr)-\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+$"},
+        "title": {"type": "string"},
+        "file": {"type": "string"}
+      }
+    },
+    "ddr": {"type": "string", "pattern": "^ddr-\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+$"},
+    "items": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^(wi|ms|spec)-[a-z0-9-]+$"},
+      "description": "Backlog nodes the action touched (ids added or changed in a graph's nodes/*.yaml)."
+    },
+    "session": {"$ref": "#/$defs/session"},
+    "source": {"enum": ["hook", "transcript", "cli"], "description": "hook: captured live; transcript: recovered from a transcript; cli: written by hand with brain record ar."},
+    "tool_use_id": {"type": "string"}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "commit"}}}, "then": {"required": ["sha", "repo"]}},
+    {"if": {"properties": {"kind": {"const": "push"}}}, "then": {"required": ["repo"]}},
+    {"if": {"properties": {"kind": {"const": "pr"}}}, "then": {"required": ["pr", "repo"]}},
+    {"if": {"properties": {"kind": {"const": "tag"}}}, "then": {"required": ["tag", "repo"]}},
+    {"if": {"properties": {"kind": {"const": "adr"}}}, "then": {"required": ["adr"]}},
+    {"if": {"properties": {"kind": {"const": "ddr"}}}, "then": {"required": ["ddr"]}}
+  ],
+  "$defs": {
+    "session": {
+      "type": "object",
+      "required": ["id", "tool"],
+      "additionalProperties": false,
+      "description": "The session that acted, and its model metadata at that moment.",
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "tool": {"type": "string", "pattern": "^[a-z0-9-]+$", "description": "claude-code, cursor, gemini..."},
+        "model": {"type": "string"},
+        "version": {"type": "string", "description": "Version of the tool (Claude Code)."},
+        "effort": {"type": "string"},
+        "permission_mode": {"type": "string"},
+        "surface": {"type": "string", "description": "Entry point: claude-desktop, cli, sdk..."},
+        "agent": {"type": "string", "description": "Subagent type, when a subagent acted."}
+      }
+    }
+  }
+}

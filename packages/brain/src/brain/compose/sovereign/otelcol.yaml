@@ -1,0 +1,50 @@
+# The OpenTelemetry collector of the sovereign stack. OTLP in on 4317 (gRPC) and 4318 (HTTP), published on
+# 127.0.0.1 only; metrics out to Prometheus (it scrapes :8889 on the stack's network) and to JSONL files, logs and
+# events out to Loki and to JSONL files. The files, under BRAIN_HOME (placement data home), are what DuckDB reads
+# (wi-brain-otel-telemetry). No prompt text is kept: the prompt attribute is dropped on the way in.
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  attributes/no-prompts:  # metrics and events without prompt text (the owner, 2026-11-01)
+    actions:
+      - key: prompt
+        action: delete
+  batch: {}
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+  file/metrics:
+    path: /var/lib/otelcol/metrics.jsonl
+    rotation: {max_megabytes: 50, max_days: 31, max_backups: 10}
+  file/logs:
+    path: /var/lib/otelcol/logs.jsonl
+    rotation: {max_megabytes: 50, max_days: 31, max_backups: 10}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/no-prompts, batch]
+      exporters: [prometheus, file/metrics]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/no-prompts, batch]
+      exporters: [otlphttp/loki, file/logs]

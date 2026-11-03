@@ -1,0 +1,201 @@
+"""wi-brain-token-ledger: the token ledger (brain.usage): prices, commands, phases, the transcript scan, the ledger."""
+
+import json
+from datetime import datetime, timezone
+
+import pytest
+
+from brain import usage
+
+OPUS = "claude-opus-5-5"
+
+
+@pytest.fixture
+def projects_dir(tmp_path, monkeypatch):
+    d = tmp_path / "claude" / "projects"
+    d.mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    return d
+
+
+def _usage(out=100, read=0, write=0, inp=10):
+    return {"input_tokens": inp, "output_tokens": out, "cache_read_input_tokens": read,
+            "cache_creation_input_tokens": write, "cache_creation": {"ephemeral_1h_input_tokens": write}}
+
+
+def _asst(ts, mid, blocks, **u):
+    return {"type": "assistant", "timestamp": ts, "sessionId": "s", "cwd": "/work/brain", "gitBranch": "feat",
+            "message": {"id": mid, "model": OPUS, "content": blocks, "usage": _usage(**u)}}
+
+
+def _tool(tid, name, **inp):
+    return {"type": "tool_use", "id": tid, "name": name, "input": inp}
+
+
+def _result(ts, tid, text="ok", error=False):
+    return {"type": "user", "timestamp": ts, "sessionId": "s", "cwd": "/work/brain",
+            "message": {"content": [{"type": "tool_result", "tool_use_id": tid, "content": text, "is_error": error}]}}
+
+
+def _prompt(ts, text):
+    return {"type": "user", "timestamp": ts, "sessionId": "s", "cwd": "/work/brain", "message": {"content": text}}
+
+
+def _write(path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = [{**r, "sessionId": path.stem} if "sessionId" in r else r for r in records]
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    return path
+
+
+BRIEF = ("Background (from the session that started this one):\nThe repo is the Brain.\n\nTask:\nBuild wi-a, the "
+         "ledger, from the transcripts.\n**Task class:** standard. **Context budget:** 400k.\n")
+
+
+def _child(projects_dir):
+    t = "2026-11-02T10:00:"
+    return _write(projects_dir / "proj" / "child.jsonl", [
+        _prompt(f"{t}00Z", BRIEF),
+        {"type": "custom-title", "customTitle": "Ledger (wi-a)", "sessionId": "s"},
+        # one API message written as two records (a text block, then a tool call): counted once
+        _asst(f"{t}05Z", "m1", [{"type": "text", "text": "reading"}], out=100, read=1000, write=0),
+        _asst(f"{t}05Z", "m1", [_tool("t1", "Read", file_path="a.py")], out=100, read=1000, write=0),
+        _result(f"{t}06Z", "t1", "x" * 50),
+        _asst(f"{t}10Z", "m2", [_tool("t2", "Edit", file_path="a.py")], out=200, read=1100, write=100),
+        _result(f"{t}11Z", "t2"),
+        _asst(f"{t}20Z", "m3", [_tool("t3", "Bash", command="python -m pytest -q")], out=50, read=1200),
+        _result(f"{t}21Z", "t3", "1 failed", error=True),
+        _asst(f"{t}25Z", "m4", [_tool("t4", "Bash", command="python -m pytest -q")], out=50, read=1200),
+        _result(f"{t}26Z", "t4", "1 failed", error=True),
+        _asst(f"{t}30Z", "m5", [_tool("t5", "Bash", command="python -m pytest -q")], out=50, read=1200),
+        _result(f"{t}31Z", "t5", "1 failed", error=True),
+        _asst(f"{t}35Z", "m6", [_tool("t6", "Bash", command="git fetch origin && git merge origin/main")], out=50),
+        _result(f"{t}36Z", "t6", "CONFLICT (content): Merge conflict in a.py"),
+        # back after a long wait: the context is written again (a reload)
+        _prompt("2026-11-02T12:00:00Z", "go on"),
+        _asst("2026-11-02T12:00:05Z", "m7", [_tool("t7", "Bash", command="git add -A")], out=10, read=0,
+              write=30_000),
+        _result("2026-11-02T12:00:06Z", "t7"),
+        _asst("2026-11-02T12:00:10Z", "m8", [_tool("t8", "Bash", command="git commit -m 'x | y'")], out=10,
+              read=30_000),
+        _result("2026-11-02T12:00:11Z", "t8"),
+        _asst("2026-11-02T12:00:15Z", "m9", [_tool("t9", "Bash", command="git push origin feat && brain item close "
+                                                                          "wi-a --pr \"r #7\"")], out=10, read=30_000),
+        _result("2026-11-02T12:00:16Z", "t9"),
+        _asst("2026-11-02T12:00:20Z", "m10", [_tool("t10", "mcp__ccd_turn__update_plan",
+                                                     items=[{"content": "a"}, {"content": "b"}])], out=5, read=30_000),
+        _result("2026-11-02T12:00:21Z", "t10"),
+        {"type": "pr-link", "prRepository": "acme/engine", "prNumber": 7, "prUrl": "u", "sessionId": "s"},
+    ])
+
+
+def test_prices_reproduce_claude_codes_cost():
+    # a session's cost-state of 2026-11-02 (claude-opus-5-5): totalCostUSD 14.0637984
+    part = {"input": 134, "output": 133748, "cache_read": 25209792, "cache_write": 793293,
+            "cache_write_1h": 793293, "cache_write_5m": 0}
+    assert usage.message_cost(part, OPUS) == pytest.approx(14.0637984)
+    assert usage.message_cost(part, OPUS, "fast") == pytest.approx(2 * 14.0637984)
+    assert usage.message_cost({"output": 1_000_000}, "claude-opus-9-9") == pytest.approx(20.0)  # the family's
+    assert usage.message_cost({"output": 1}, "gpt-x") is None
+    assert usage.message_cost({"input": 200_000}, "claude-haiku-5-5") == pytest.approx(0.1)  # above 100k: 0.50
+    assert usage.message_cost({"cache_write": 1_000_000}, OPUS) == pytest.approx(5.0)  # no TTL split: 5 min
+    assert usage.tokens_cost({OPUS: {"output": 1_000_000}, "x": {"output": 5}}) == pytest.approx(20.0)
+
+
+def test_plans():
+    assert usage.plan_of("2026-11-02") == "Ultra" and usage.plan_of("2026-11-01") == "Pro"
+    plans = usage.plans_from({"plans": [{"since": "", "plan": "Pro"}, {"since": "2026-12-01", "plan": "Max"}]})
+    assert usage.plan_of("2026-12-05", plans) == "Max" and usage.plan_of("2026-11-05", plans) == "Pro"
+
+
+@pytest.mark.parametrize("cmd, keys", [
+    ('grep -n "^###\\|x" f | head -3', ["grep", "head"]),
+    ("cd E:/x && git -C E:/y status && git push origin b", ["git status", "git push"]),
+    ("python -m pytest -q 2>&1 | tail -3", ["python -m pytest", "tail"]),
+    ('gh pr create --title "a | b" --body x', ["gh pr create"]),
+    ('brain item close wi-x --pr "r #1"; brain refresh', ["brain item close", "brain refresh"]),
+    ("cat > f.py <<EOF\nimport x | y\nEOF", ["cat"]),
+    ('"C:/v/Scripts/python.exe" -m pytest', ["python -m pytest"]),
+    ("FOO=1 npm run build", ["npm run"]),
+    ("for f in a b; do wc -l $f; done", ["wc"]),
+])
+def test_commands_keep_program_and_subcommand_only(cmd, keys):
+    assert usage.commands(cmd) == keys
+
+
+def test_phases_strongest_first():
+    bash = lambda c: {"name": "Bash", "input": {"command": c}}  # noqa: E731
+    assert usage.phase_of([bash("git status"), bash("git rebase origin/main")]) == "merge"
+    assert usage.phase_of([bash("gh pr diff 3"), {"name": "Edit"}]) == "review"
+    assert usage.phase_of([bash("python -m pytest"), {"name": "Edit"}]) == "test"
+    assert usage.phase_of([{"name": "Write"}, bash("git commit -m x")]) == "build"
+    assert usage.phase_of([bash("git push"), {"name": "Read"}]) == "ship"
+    assert usage.phase_of([{"name": "Skill", "input": {"skill": "code-review"}}]) == "review"
+    assert usage.phase_of([{"name": "Agent", "input": {"subagent_type": "Explore", "description": "find"}}]) == \
+        "explore"
+    assert usage.phase_of([{"name": "AskUserQuestion"}]) == "wait"
+    assert usage.phase_of([]) == ""
+
+
+def test_scan_a_sub_session(projects_dir):
+    row = usage.scan(_child(projects_dir))
+    assert row["title"] == "Ledger (wi-a)" and row["title_items"] == ["wi-a"] and row["closed"] == ["wi-a"]
+    assert row["brief"]["side"] and row["brief"]["class"] == "standard" and row["brief"]["budget"] == 400_000
+    assert row["brief"]["items"] == ["wi-a"] and row["kind"] == "build"
+    assert row["prs"] == ["acme/engine#7"]
+    assert row["tokens"]["messages"] == 10 and row["tokens"]["output"] == 535  # m1 once
+    assert row["cost"] == pytest.approx(sum(row["by_model"][OPUS][k] for k in ["cost"]))
+    assert row["days"] == {"2026-11-02": pytest.approx(row["days"]["2026-11-02"])}
+    ph = row["phases"]
+    assert ph["explore"]["messages"] == 1 and ph["build"]["messages"] == 1 and ph["test"]["messages"] == 3
+    assert ph["merge"]["messages"] == 1 and ph["ship"]["messages"] == 4
+    assert ph["reload"]["cost"] == pytest.approx(30_000 * 8 / 1e6)  # m7's cache written again
+    assert sum(p.get("cost", 0) for p in ph.values()) == pytest.approx(row["cost"], abs=1e-3)
+    sig = row["signals"]
+    assert sig["thrash"] == 1 and sig["max_fail_streak"] == 3 and sig["conflicts"] == 1 and sig["merges"] == 1
+    assert sig["reloads"] == 1 and sig["files_edited"] == 1 and sig["prompts"] == 2 and sig["wait_s"] >= 7000
+    assert sig["plan_first"] == sig["plan_last"] == 2
+    assert row["commands"]["python -m pytest"]["calls"] == 3 and row["commands"]["python -m pytest"]["fails"] == 3
+    assert row["tools"]["Read"]["result_chars"] == 50
+    assert row["ngrams"]["git add > git commit > git push"][0] == 1
+    assert row["start_cost"]["messages"] == 10
+    assert "x | y" not in json.dumps(row)  # never a command's arguments
+
+
+def test_families_link_a_sub_session_to_its_parent(projects_dir):
+    child = _child(projects_dir)
+    task = BRIEF.split("Task:\n", 1)[1]
+    parent = _write(projects_dir / "proj" / "parent.jsonl", [
+        _prompt("2026-11-02T09:00:00Z", "plan the day"),
+        _asst("2026-11-02T09:00:05Z", "p1", [_tool("s1", "mcp__ccd_session__start_session", title="Ledger",
+                                                     prompt=task)])])
+    rows = [usage.scan(child), usage.scan(parent)]
+    assert usage.link_families(rows) == {"child": "parent"}
+    assert rows[1]["spawned"] == [rows[0]["brief"]["key"]]
+
+
+def test_ledger_scans_what_changed_and_keeps_what_is_gone(projects_dir):
+    child = _child(projects_dir)
+    rows, n = usage.update()
+    assert n == 1 and list(rows) == ["proj/child.jsonl"]
+    assert usage.update()[1] == 0  # unchanged: nothing scanned
+    with open(child, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(_asst("2026-11-03T08:00:00Z", "m11", [], out=1000)) + "\n")
+    rows, n = usage.update()
+    assert n == 1 and "2026-11-03" in rows["proj/child.jsonl"]["days"]
+    child.unlink()
+    rows, n = usage.update()
+    assert n == 0 and "proj/child.jsonl" in usage.load()  # the ledger is the history
+
+
+def test_windows_and_distributions():
+    now = datetime(2026, 11, 2, 15, tzinfo=timezone.utc)
+    assert usage.parse_when("7d", now) == "2026-10-26" and usage.parse_when("1w", now) == "2026-10-26"
+    assert usage.parse_when("yesterday", now) == "2026-11-01" and usage.parse_when("2026-10-01", now) == "2026-10-01"
+    with pytest.raises(ValueError):
+        usage.parse_when("soon", now)
+    assert usage.in_window({"days": {"2026-11-01": {}}}, "2026-11-01", "2026-11-02")
+    assert not usage.in_window({"days": {"2026-11-02": {}}}, "2026-11-01", "2026-11-02")
+    q = usage.quantiles([1, 2, 3, 4, 10])
+    assert q["n"] == 5 and q["median"] == 3 and q["p25"] == 2 and q["p75"] == 4 and q["total"] == 20
+    assert usage.quantiles([])["n"] == 0

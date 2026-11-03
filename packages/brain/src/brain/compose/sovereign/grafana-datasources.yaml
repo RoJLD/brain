@@ -1,0 +1,15 @@
+# Grafana's data sources, provisioned: the stack's Prometheus and Loki, reached on its network.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: brain-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+  - name: Loki
+    uid: brain-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100

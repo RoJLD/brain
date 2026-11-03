@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/ddr.schema.json",
+  "title": "DDR, decision discussion record",
+  "description": "A question put to the owner: its context, 2 to 4 options with their consequences, a recommendation first with its reason, single or multiple choice, 'other' always possible, their answer, then the read and applied stamps of the model in charge. The ADR keeps the decision that comes out of it when the answer changes a rule, a process or the architecture (Q4). One YAML file per DDR: records/ddr/<id>.yaml.",
+  "type": "object",
+  "required": ["v", "id", "title", "question", "status", "asked"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1},
+    "id": {"type": "string", "pattern": "^ddr-\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+$", "description": "ddr-<date asked>-<slug>."},
+    "kind": {"enum": ["decision", "action", "permission"], "description": "The entry's kind in the owner's queue (default decision). decision: a choice among 2 to 4 options. action (only the owner may do it: keys, money, arming, visibility, legal reading) and permission (the agent lacks a permission: grant a narrow allow rule, or the owner does it once) share the record and its lifecycle; they come with wi-brain-human-queue."},
+    "title": {"type": "string", "minLength": 1, "maxLength": 100, "description": "Short header (the question tool's chip)."},
+    "question": {"type": "string", "minLength": 1},
+    "context": {"type": "string", "description": "Two lines of context."},
+    "blocks": {"type": "string", "description": "What waits on the answer."},
+    "guard": {"type": "string", "pattern": "^guard-[0-9a-f]{10}$", "description": "The refusal of the owner or power guard this action queues (brain queue add --guard): its exact command is the question (and the command when the owner's Apply runs it), and its ledger entry leaves the queue."},
+    "options": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4,
+      "description": "The recommended option comes first.",
+      "items": {
+        "type": "object",
+        "required": ["label"],
+        "additionalProperties": false,
+        "properties": {
+          "label": {"type": "string", "minLength": 1},
+          "consequences": {"type": "string"},
+          "risks": {"type": "string"}
+        }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "required": ["option", "why"],
+      "additionalProperties": false,
+      "properties": {
+        "option": {"type": ["string", "null"], "description": "Label of the recommended option, the first one; null only for a question captured without one."},
+        "why": {"type": "string"}
+      }
+    },
+    "multi_select": {"type": "boolean"},
+    "other_allowed": {"type": "boolean", "description": "'Other' with free text is always possible; false only when a question forbids it."},
+    "blocking": {"type": "boolean"},
+    "due": {"type": "string", "format": "date"},
+    "command": {"type": "string", "minLength": 1, "description": "An action's exact command, the one the owner's Apply runs after showing it (brain queue apply, the cockpit's A): brain ... or install.ps1 ...; run in cwd, else the project's root."},
+    "cwd": {"type": "string", "minLength": 1, "description": "The folder the command runs in, when it is not the project's root."},
+    "status": {"enum": ["pending", "answered", "integrated", "archived"], "description": "pending -> answered (the owner chose or wrote) -> integrated (the model in charge read and applied it) -> archived."},
+    "asked": {
+      "type": "object",
+      "required": ["at"],
+      "additionalProperties": false,
+      "properties": {
+        "at": {"type": "string", "format": "date-time"},
+        "by": {"type": "string", "description": "Session id of the asker."},
+        "model": {"type": "string"},
+        "via": {"enum": ["ask-tool", "cli", "spec", "chat"], "description": "ask-tool: captured from Claude Code's question tool; spec: a question section of a spec."}
+      }
+    },
+    "answer": {
+      "type": "object",
+      "required": ["at"],
+      "additionalProperties": false,
+      "properties": {
+        "at": {"type": "string", "format": "date-time"},
+        "by": {"type": "string"},
+        "choices": {"type": "array", "items": {"type": "string"}, "description": "Labels of the options chosen."},
+        "other": {"type": "string", "description": "Free text, when the owner wrote their own answer."},
+        "notes": {"type": "string"},
+        "via": {"enum": ["ask-tool", "cli", "spec", "chat", "tui"]}
+      }
+    },
+    "read": {"$ref": "#/$defs/stamp", "description": "The model in charge read the answer."},
+    "applied": {
+      "type": "object",
+      "required": ["at"],
+      "additionalProperties": false,
+      "description": "The model in charge applied the answer (ADR, item props, spec).",
+      "properties": {
+        "at": {"type": "string", "format": "date-time"},
+        "session": {"type": "string"},
+        "in": {"type": "array", "items": {"type": "string"}, "description": "Where: ADR ids, item ids, spec sections."}
+      }
+    },
+    "archived": {"$ref": "#/$defs/stamp"},
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adrs": {"type": "array", "items": {"type": "string", "pattern": "^(adr|sdr)-"}},
+        "items": {"type": "array", "items": {"type": "string", "pattern": "^(wi|ms)-"}},
+        "specs": {"type": "array", "items": {"type": "string"}},
+        "session": {"type": "string", "pattern": "^sr-", "description": "The SR of the session that asked."},
+        "project": {"type": "string"}
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "decision"}}}, "then": {"required": ["options", "recommendation", "multi_select"]}},
+    {"if": {"properties": {"status": {"enum": ["answered", "integrated", "archived"]}}}, "then": {"required": ["answer"]}},
+    {"if": {"properties": {"status": {"enum": ["integrated", "archived"]}}}, "then": {"required": ["read", "applied"]}},
+    {"if": {"properties": {"status": {"const": "archived"}}}, "then": {"required": ["archived"]}}
+  ],
+  "$defs": {
+    "stamp": {
+      "type": "object",
+      "required": ["at"],
+      "additionalProperties": false,
+      "properties": {"at": {"type": "string", "format": "date-time"}, "session": {"type": "string"}}
+    }
+  }
+}

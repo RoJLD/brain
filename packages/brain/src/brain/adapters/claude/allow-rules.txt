@@ -1,0 +1,25 @@
+# Narrow permission rules that install.ps1 -Apply adds to ~/.claude/settings.json (permissions.allow); reviewed by PR.
+# One rule per line, '#' starts a comment. install.ps1 adds the missing ones and never removes a rule: one taken out
+# here stays installed until it is removed through Claude Code's permission settings.
+
+# brain up / down / health: start, stop and check the stacks declared in projects.yaml (brain.stacks) without a
+# prompt (the owner, 2026-11-01: on demand, a narrow allow rule reviewed by PR).
+Bash(brain up)
+Bash(brain up *)
+Bash(brain down)
+Bash(brain down *)
+Bash(brain health)
+Bash(brain health *)
+PowerShell(brain up)
+PowerShell(brain up *)
+PowerShell(brain down)
+PowerShell(brain down *)
+PowerShell(brain health)
+PowerShell(brain health *)
+
+# brain resume: read a project's resume pack without a prompt, in a session or a sub-session brief; --write writes only
+# <BRAIN_HOME>/resume/<project>.md, --health only checks stacks (the owner, 2026-11-02, ddr-2026-11-02-allow-brain-resume).
+Bash(brain resume)
+Bash(brain resume *)
+PowerShell(brain resume)
+PowerShell(brain resume *)

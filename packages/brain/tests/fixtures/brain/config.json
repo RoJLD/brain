@@ -1,0 +1,9 @@
+{"v": 1, "identity": {"owner": "Ada", "kind": "person"}, "rules": ["rules.md"],
+ "classes": {"stores": {
+   "ledger": {"class": "sealed", "paths": ["$BRAIN_HOME/ledger"]},
+   "sessions": {"class": "sealed", "paths": ["$BRAIN_HOME/sessions"]},
+   "resume": {"class": "sealed", "paths": ["$BRAIN_HOME/resume"]},
+   "digest": {"class": "sealed", "paths": ["$BRAIN_HOME/digest"]},
+   "vault": {"class": "sealed", "paths": ["$BRAIN_HOME/vault"]},
+   "transcripts": {"class": "sealed", "paths": ["~/.claude/projects"]},
+   "repo": {"class": "private", "paths": ["**"]}}}}

@@ -1,0 +1,298 @@
+"""``brain audit --diff``: the scout. What the units a change touches miss, with the full audit's checks (brain.audit)
+run on the change's tree and again on its base.
+
+The repo is the git checkout of --repo-dir or the current folder (a worktree resolves to its registered repo through
+its main checkout; an unregistered repo is audited with the defaults, its graph checks N/A). The range: from the
+newer of merge-base(HEAD, the default branch) and merge-base(HEAD, origin's default branch) to the working tree
+(untracked files included); ``--diff BASE`` from merge-base(BASE, HEAD); ``--diff A..B`` commits only (replay,
+calibration).
+
+NEW: a finding the base did not have, in any repo of the project: only the change can have made it (a deleted or
+renamed module a doc runs or a CodeRef names, a deleted test, a dangling CodeRef added, a console script declared,
+an emptied folder a doc still names). LEFT: a finding the base had, on a unit the change touches (the changed modules
+and scripts and their commands, the changed docs for doc.dead-ref, the README or pyproject.toml for readme.exists,
+the files a CodeRef names); a test's edit touches no module. A light touch (Python equal once imports and docstrings
+are dropped, whitespace only elsewhere, a pure rename) never makes a LEFT finding block. Blocking: every NEW finding,
+and the LEFT findings of at most --limit units (the repo's scout_limit, default 3; a doc counts once for all its dead
+references), the most severe first, then entry, then prod, then path; the other LEFT findings are DEFERred to the
+repo's debt item. PENDING, N/A, info and light never block. Exit code 1 when something is to fix in this PR, 2 for a
+usage or git error (no base found).
+"""
+
+from __future__ import annotations
+
+import ast
+import dataclasses
+import json
+import sys
+from pathlib import Path
+
+from . import audit, graph, inventory, paths, projects
+from .inventory import AuditError, git
+
+ORDER = {"entry": 0, "prod": 1, "other": 2, "": 3}
+
+
+def resolve(args, root: Path | None) -> tuple[projects.Project, list[projects.Repo], projects.Repo, Path, bool]:
+    """(project, its repos, the repo changed, its checkout, registered) for --repo-dir or the current folder."""
+    d = Path(args.repo_dir).resolve() if args.repo_dir else (root or Path.cwd())
+    top = Path(git(d, "rev-parse", "--show-toplevel").strip()).resolve()
+    main = (paths.main_checkout(top) or top).resolve()
+    reg = projects.load(root)
+    if args.project:
+        if args.project not in reg:
+            raise AuditError(f"unknown project {args.project!r} (known: {', '.join(reg) or 'none'})")
+        reg = {args.project: reg[args.project]}
+    for p in reg.values():
+        cfgs = projects.repos_of(p)
+        for c in cfgs:
+            if c.path.resolve() in (main, top):
+                if c.path.resolve() == p.root.resolve() and top != main:
+                    p = projects.get(p.name, top)   # the project's own repo in a worktree: its stores there
+                    cfgs = projects.repos_of(p)
+                    c = next(x for x in cfgs if x.path.resolve() == top)
+                return p, cfgs, dataclasses.replace(c, path=top), top, True
+    print(f"warning: {top} is in no registered project: audited with the defaults, graph checks N/A",
+          file=sys.stderr)
+    p = projects.for_root(top)
+    c = projects.Repo(main.name.lower(), top)
+    return p, [c], c, top, False
+
+
+def changed(top: Path, base: str, new: str = "") -> list[tuple[str, str, str]]:
+    """(status, old path, new path) of each change from ``base`` to ``new`` (the working tree when ''), renames
+    found (-M), untracked files as added."""
+    out = git(top, "diff", "--name-status", "-M", "-z", base, *([new] if new else []), "--").split("\0")
+    rows, i = [], 0
+    while i < len(out) and out[i]:
+        st = out[i]
+        if st[0] in "RC":
+            rows.append((st, out[i + 1], out[i + 2]))
+            i += 3
+        else:
+            rows.append((st[0], out[i + 1] if st[0] == "D" else "", out[i + 1] if st[0] != "D" else ""))
+            i += 2
+    if not new:
+        for p in git(top, "ls-files", "-z", "--others", "--exclude-standard").split("\0"):
+            if p:
+                rows.append(("A", "", p))
+    return rows
+
+
+class _Strip(ast.NodeTransformer):
+    def visit_Import(self, node):
+        return None
+
+    visit_ImportFrom = visit_Import
+
+    def _body(self, node):
+        b = node.body
+        if b and isinstance(b[0], ast.Expr) and isinstance(b[0].value, ast.Constant) and isinstance(b[0].value.value,
+                                                                                                     str):
+            node.body = b[1:]
+        self.generic_visit(node)
+        return node
+
+    visit_Module = visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = _body
+
+
+def _shape(text: str) -> str | None:
+    try:
+        return ast.dump(_Strip().visit(ast.parse(text)), include_attributes=False)
+    except (SyntaxError, ValueError):
+        return None
+
+
+def light_touch(top: Path, row: tuple[str, str, str], base: inventory.Tree, new: inventory.Tree,
+                new_rev: str) -> bool:
+    """A change that cannot have changed behaviour: a pure rename, Python equal once imports and docstrings are
+    dropped, whitespace and blank lines only elsewhere."""
+    st, old, path = row
+    if st == "R100":
+        return True
+    if st[0] not in "MR":
+        return False
+    before = base.text(old or path)
+    if path.endswith(".py"):
+        a, b = _shape(before or ""), _shape(new.text(path) or "")
+        return a is not None and a == b
+    return not git(top, "diff", "-w", "--ignore-blank-lines", base.rev, *([new_rev] if new_rev else []), "--",
+                   old or path, path, allow=(0, 1)).strip()
+
+
+def _code_ref_file(unit: str) -> tuple[str, list[str]]:
+    try:
+        repo, path, _ = inventory.parse_code_ref(unit)
+    except ValueError:
+        return "", []
+    return repo.lower(), [f"src/{path}", path]
+
+
+def _group(f: dict) -> str:
+    """The unit a LEFT finding counts against the limit: a doc for its dead references, else the unit."""
+    return f["unit"].split("#", 1)[0] if f["check"] == "doc.dead-ref" else f["unit"]
+
+
+def _old_unit(check: str, unit: str, renamed: dict[str, str]) -> str:
+    if check == "doc.dead-ref" and "#" in unit:
+        doc, ref = unit.split("#", 1)
+        return f"{renamed.get(doc, doc)}#{ref}"
+    return renamed.get(unit, unit)
+
+
+def classify(touched: dict[str, bool], deleted: set[str], added: set[str], target: str, new: dict, base: dict,
+             renamed: dict[str, str], limit: int, script_exts: set[str]) -> list[dict]:
+    """Tag each relevant finding NEW, LEFT, DEFER, light or info (advisory); ``touched`` maps a unit to whether its
+    touch is light. A finding the base did not have, in any repo, can only come from this change: NEW (a module or
+    doc the change deletes or renames, a test it deletes, a CodeRef it adds, a console script it declares...). One
+    the base had is LEFT when the change touches its unit (in the changed repo; another repo's CodeRef to a touched
+    file); the LEFT units past the limit, most severe and production first, are DEFERred."""
+    base_keys = {f["key"] for r in base["repos"] for f in r.get("findings", []) if f["severity"] != "info"}
+    out = []
+    for r in new["repos"]:
+        for f in r.get("findings", []):
+            check, unit = f["check"], f["unit"]
+            mode = audit.CHECKS[check].scout
+            if mode == "never":
+                continue
+            fresh = f["key"] not in base_keys and f"{r['name']}:{check}:{_old_unit(check, unit, renamed)}" \
+                not in base_keys
+            if mode == "new" and (not fresh or unit not in added):   # coderef.module: an added module only
+                continue
+            light = False
+            if r["name"] != target:   # another repo: its CodeRefs to what this change touches
+                repo, files = _code_ref_file(unit) if check == "coderef.dangling" else ("", [])
+                hit = repo == target and bool(set(files) & (deleted | set(touched)))
+            elif check == "doc.dead-ref":
+                doc = unit.split("#", 1)[0]
+                hit, light = doc in touched, touched.get(doc, False)
+            elif check == "coderef.dangling":
+                hit = bool(set(_code_ref_file(unit)[1]) & (deleted | set(touched)))
+            elif check == "readme.exists":
+                hit = bool({"README.md", "pyproject.toml"} & (set(touched) | deleted))
+            else:
+                hit, light = unit in touched, touched.get(unit, False)
+            if f["severity"] == "info":
+                if hit and r["name"] == target:
+                    out.append({**f, "tag": "info"})
+                continue
+            if fresh:
+                out.append({**f, "tag": "NEW"})
+            elif hit:
+                tag = "light" if light else "LEFT"
+                if check == "test.script" and Path(unit).suffix not in script_exts:
+                    tag = "info"
+                    f = {**f, "why": f"{f['why']} (advisory: no test runs a {Path(unit).suffix} script here yet)"}
+                out.append({**f, "tag": tag})
+    rank: dict[str, tuple] = {}
+    for f in out:
+        if f["tag"] == "LEFT":
+            g = _group(f)
+            rank[g] = min(rank.get(g, ("P9", 9, g)), (f["severity"], ORDER[f["class"]], g))
+    keep = set(sorted(rank, key=rank.get)[:limit])
+    for f in out:
+        if f["tag"] == "LEFT" and _group(f) not in keep:
+            f["tag"] = "DEFER"
+    out.sort(key=lambda f: (["NEW", "LEFT", "DEFER", "light", "info"].index(f["tag"]), f["severity"],
+                            ORDER[f["class"]], f["unit"], f["check"]))
+    return out
+
+
+def base_of(top: Path, spec: str) -> tuple[str, str]:
+    """(ref, commit) the change is measured from: merge-base(spec, HEAD); with no spec, the newer merge base of HEAD
+    with the local default branch and with origin's (a local main that lags origin would count the PRs merged since
+    as this change)."""
+    if spec:
+        refs = [spec]
+    else:
+        b = inventory.default_branch(top)
+        remote = f"refs/remotes/origin/{b}"
+        refs = [b] + ([remote] if git(top, "rev-parse", "--verify", "-q", remote, allow=(0, 1)).strip() else [])
+    got = [(ref, git(top, "merge-base", ref, "HEAD", allow=(0, 1)).strip()) for ref in refs]
+    got = [(ref, mb) for ref, mb in got if mb]
+    if not got:
+        raise AuditError(f"no merge base between {refs[0]} and HEAD in {top}")
+    best = got[0]
+    for ref, mb in got[1:]:
+        if mb != best[1] and inventory._run_git(top, ["merge-base", "--is-ancestor", best[1], mb])[0] == 0:
+            best = (ref, mb)
+    return best[0].replace("refs/remotes/", ""), best[1]
+
+
+def main(args, root: Path | None) -> int:
+    p, cfgs, c, top, registered = resolve(args, root)
+    spec = args.diff or ""
+    if ".." in spec:
+        a, b = spec.split("..", 1)
+        base_ref = a
+        base_rev = git(top, "rev-parse", "--verify", f"{a}^{{commit}}").strip()
+        new_rev = git(top, "rev-parse", "--verify", f"{b or 'HEAD'}^{{commit}}").strip()
+    else:
+        base_ref, base_rev = base_of(top, spec)
+        new_rev = ""
+    base_tree = inventory.git_tree(top, base_rev)
+    new_tree = inventory.git_tree(top, new_rev) if new_rev else inventory.work_tree(top)
+    others = [x for x in cfgs if x.name != c.name]
+    trees, _, errors = audit.trees_now(others)
+    store_dir = getattr(args, "audit_store", None)
+    if store_dir:
+        s_top = Path(git(Path(store_dir), "rev-parse", "--show-toplevel").strip()).resolve()
+        s_main = (paths.main_checkout(s_top) or s_top).resolve()
+        for x in others:
+            if x.path.resolve() in (s_main, s_top):
+                trees[x.name] = inventory.work_tree(s_top)
+    if not registered:
+        p.stores = []
+    base_dirs = {x.split("/")[0] for x in base_tree.files if "/" in x}   # a folder the change empties still counts
+    new = audit.measure(p, cfgs, {**trees, c.name: new_tree}, extra_dirs={c.name: base_dirs})
+    base = audit.measure(p, cfgs, {**trees, c.name: base_tree})
+    rows = changed(top, base_rev, new_rev)
+    deleted = {old for st, old, _ in rows if st[0] in "DR"}
+    added = {path for st, _, path in rows if st[0] in "AC"}
+    renamed = {path: old for st, old, path in rows if st[0] == "R"}
+    touched: dict[str, bool] = {}
+    for row in rows:
+        if row[2]:
+            touched[row[2]] = light_touch(top, row, base_tree, new_tree, new_rev)
+    for u in new["facts"][c.name].units:   # a changed module's commands (a test's edit touches no unit)
+        if u.kind == "command" and u.path in touched:
+            touched.setdefault(u.name, touched[u.path])
+    ev = base["facts"][c.name].evidence
+    script_exts = {Path(u.path).suffix for u in base["facts"][c.name].units
+                   if u.kind == "script" and inventory.script_evidence(u, ev)[0]}
+    limit = args.limit if args.limit is not None else c.scout_limit
+    out = classify(touched, deleted, added, c.name, new, base, renamed, limit, script_exts)
+    n_new = sum(1 for f in out if f["tag"] == "NEW")
+    n_left = sum(1 for f in out if f["tag"] == "LEFT")
+    n_defer = sum(1 for f in out if f["tag"] == "DEFER")
+    item = audit.item_id(c)
+    if args.json:
+        print(json.dumps({"scout": 1, "ruleset": audit.RULESET, "project": p.name, "repo": c.name,
+                          "base": base_rev, "base_ref": base_ref, "new": new_rev or "worktree", "findings": out,
+                          "new_findings": n_new, "left": n_left, "deferred": n_defer, "item": item},
+                         ensure_ascii=False, indent=1, sort_keys=True))
+        return 1 if n_new + n_left else 0
+    print(f"== scout {p.name}/{c.name}: {base_ref}@{base_rev[:7]}..{new_rev[:7] or 'worktree'}  (rules "
+          f"{audit.RULESET}, {len(rows)} file(s) changed)")
+    for f in out:
+        cls = f" {f['class']}" if f["class"] else ""
+        sev = "" if f["severity"] == "info" else f" {f['severity']}"
+        print(f"{f['tag']:<6}{sev} {f['check']:<16} {f['unit']}{cls}: {f['why']}"
+              + (f" -> {f['fix']}" if f["fix"] and f["tag"] in ("NEW", "LEFT") else "")
+              + (f" -> {item}" if f["tag"] == "DEFER" else ""))
+    if n_defer:
+        store = p.stores[0] if p.stores else None
+        if store is None or not (store / "schema.yaml").is_file() or item not in graph.node_index(store):
+            print(f"DEFER  {item} does not exist: brain --project {p.name} item add {item} --title \"{c.name} up to "
+                  f"the standard (brain audit debt): by batches, production first\" --prop priority_proposed=P2")
+    r = next((x for x in new["repos"] if x["name"] == c.name), {})
+    pend = [x["check"] for x in r.get("not_measured", [])]
+    if pend:
+        print(f"PENDING {', '.join(pend)} (not asked: a generator measures them)")
+    if not registered:
+        print("N/A    coderef.dangling, coderef.module (an unregistered repo has no code store)")
+    for name, why in errors.items():
+        print(f"N/A    {name}: {why}")
+    print(f"scout: {n_new + n_left} to fix in this PR ({n_new} NEW, {n_left} LEFT), {n_defer} deferred; then brain "
+          "audit --diff again")
+    return 1 if n_new + n_left else 0

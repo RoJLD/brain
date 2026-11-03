@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# SessionStart: the watched stacks that are down (hooks/health.py, brain.stacks.hook_main), as hook context; prints
+# nothing when all is well, nothing for an on-demand stack that is simply stopped, never fails (errors go to
+# <BRAIN_HOME>/ledger/errors.log). Bounded to ~1.5 s of checks. Uses the brain command's venv (PyYAML), else
+# $BRAIN_PYTHON, python3 or python, skipping the Windows Store stubs; without a Python 3 it does nothing.
+root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+home="${BRAIN_HOME:-$HOME/.brain}"
+
+for py in "$home/venv/Scripts/python.exe" "$home/venv/bin/python" "${BRAIN_PYTHON:-}" python3 python; do
+  [ -n "$py" ] || continue
+  path=$(command -v "$py" 2>/dev/null) || continue
+  case "$path" in *WindowsApps*) continue ;; esac
+  "$path" -I "$root/hooks/health.py" "${1:-SessionStart}" 2>/dev/null
+  exit 0
+done
+exit 0

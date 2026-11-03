@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/config.schema.json",
+  "title": "config.json, a personal brain's configuration",
+  "description": "The contract between the brain engine and a personal brain, the private repo of a person or a team: who decides for it, where its registry, rules, memory and records are, the engine it pins, what must never reach a public repo and the secrets it names. Read by brain config, checked by brain config --check and brain check --all. Paths are relative to the file's folder. No secret value ever: a secret is named by its environment variable only. docs/specs/2026-11-02-personal-brain-boundary-design.md section 4.",
+  "type": "object",
+  "required": ["v", "identity"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1, "description": "The contract's version: the engine refuses a version it does not know (brain config --check)."},
+    "identity": {
+      "type": "object",
+      "required": ["owner"],
+      "additionalProperties": false,
+      "description": "Who the brain belongs to.",
+      "properties": {
+        "owner": {"type": "string", "minLength": 1, "description": "The person or team who decides for this brain, as the views name them; the same name as owner in its graph stores' schema.yaml."},
+        "kind": {"enum": ["person", "team"], "description": "A person's brain or a team's; default person."},
+        "tenant": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The tenant id when the brain is hosted for a team (HMaaS): its ledgers and keys are kept apart under that id. None for a person's own brain."}
+      }
+    },
+    "registry": {"type": "string", "minLength": 1, "description": "The projects registry (brain projects, brain --project NAME); default projects.yaml."},
+    "rules": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "The owner's rules for every project, in order, as the Claude rendering injects them at the start of each session and subagent (files brain render --target claude writes from the neutral source). Default: none."},
+    "source": {"type": "string", "minLength": 1, "description": "The neutral source's folder (rules with scope and id, procedures, MCP servers, packs) that brain render turns into each agent's files; default source."},
+    "memory": {"type": "string", "minLength": 1, "description": "The memory notes' folder (brain memory); default memory."},
+    "records": {"type": "string", "minLength": 1, "description": "The records' folder, DDR, SR and AR (brain record); default records."},
+    "engine": {
+      "type": "object",
+      "required": ["repo", "pin"],
+      "additionalProperties": false,
+      "description": "The engine this brain runs, once the brain command is installed from the engine's repo: its repo and the tag pinned. Absent while the command is installed from this repo (its pyproject.toml pins research-graph).",
+      "properties": {
+        "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "owner/name of the engine's repo on GitHub."},
+        "pin": {"type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$", "description": "The tag installed, vX.Y.Z; moved by a reviewed PR."}
+      }
+    },
+    "adapters": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The renderings of the brain for each agent tool. Only claude so far; wi-brain-neutral-source adds the rendering's choice.",
+      "properties": {
+        "claude": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The names of the Claude Code rendering, read by install.ps1, the rules' linter and the guards' messages; the engine's defaults when absent (marketplace brain, plugin brain-core).",
+          "properties": {
+            "marketplace": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The plugin marketplace's name (plugin@marketplace)."},
+            "plugin": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The core plugin: its hooks inject the rules, its guards sign their refusals with its name."},
+            "source": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "owner/name of the GitHub repo Claude Code clones the marketplace from."}
+          }
+        }
+      }
+    },
+    "public": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What must never reach a public repo: read by brain boundary (readiness of the engine side) and brain check --public. It stays in the private brain: copying it to a public repo would publish it.",
+      "properties": {
+        "repos": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}, "description": "The public repos this brain pushes to, owner/name."},
+        "deny": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Terms matched as whole words, case-insensitive, / and \\ alike.",
+          "properties": {
+            "people": {"$ref": "#/$defs/terms", "description": "Names of people."},
+            "users": {"$ref": "#/$defs/terms", "description": "User names of machines and accounts."},
+            "hosts": {"$ref": "#/$defs/terms", "description": "Machine and host names."},
+            "repos": {"$ref": "#/$defs/terms", "description": "Names of private repos."},
+            "paths": {"$ref": "#/$defs/terms", "description": "Local paths."}
+          }
+        },
+        "allow": {"type": "object", "additionalProperties": {"type": "string", "minLength": 15}, "description": "{glob: reason of 15 characters or more}: files where a denied term is expected, a licence's author say; brain check --public excepts them from every check but secrets."},
+        "patterns": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}, "description": "{name: regular expression}: what no line of a public repo may match, a domain's own (a data venue's derived columns); brain check --public, from the domain's template."},
+        "refuse": {"type": "object", "additionalProperties": {"type": "string", "minLength": 15}, "description": "{glob: reason of 15 characters or more}: files a public repo must not hold, a domain's own (the research-IP paths of a split); brain check --public."}
+      }
+    },
+    "secrets": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}, "description": "{ENVIRONMENT_VARIABLE: what it is for}: the secrets this brain's projects use, by name only; their values stay in each host's keystore, set by the owner."},
+    "tier": {
+      "type": "object", "additionalProperties": false,
+      "description": "The profile of a machine that has no $BRAIN_HOME/profile.json of its own (brain profile set writes one): the base and the overrides every machine of this brain starts from (brain.tiers, brain doctor). Recommended is computed per machine, so it is never a default here.",
+      "properties": {
+        "base": {"enum": ["lite", "default"], "description": "lite (the core, no dependency) or default (Lite plus the extras without any service); default when absent."},
+        "components": {"type": "object", "additionalProperties": {"type": "boolean"}, "description": "{capability or stack: true|false}: the overrides (Personnalisable) over the base; brain check --all refuses an unknown name."}
+      }
+    },
+    "inventory": {
+      "type": "object", "additionalProperties": false,
+      "description": "The machine inventory brain doctor (brain profile) reports.",
+      "properties": {
+        "schema": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*/v[0-9]+$", "description": "The inventory contract's id the report carries (schema), the owner's machines brick's format; default brain.status/v1."}
+      }
+    },
+    "power": {
+      "type": "object", "additionalProperties": false,
+      "description": "The owner's platform as the power guard knows it by name (brain.guards): what acts on a node beyond the engine's own list (shutdown, reboot, Wake-on-LAN, k3s, kubectl writes).",
+      "properties": {
+        "node_clis": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"}, "description": "The node lifecycle CLIs: every verb but their reads acts on a node; one named kubectl-<name> is a kubectl plugin, kubectl <name> too. guard.sh's pre-filter reads them from <BRAIN_HOME>/cache/node-clis.txt, which the guard keeps current."},
+        "node_services": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"}, "description": "The node agents' services: stopping one acts on a node."}
+      }
+    },
+    "branches": {
+      "type": "object", "additionalProperties": false,
+      "description": "The branch names the branches guard lets a session create in the registry's repos (brain.guards): git checkout -b, git switch -c, git worktree add -b, git branch NAME, gh pr create's head; main and master always pass.",
+      "properties": {
+        "allowed": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/<>-]*$"}, "description": "Each entry a prefix ending in / (feat/: feat/<slug>) or a pattern whose <slug> (lowercase letters, digits, '.', '_', '-'), <host> and <date> (YYYY-MM-DD) stand for one part; default the engine's list (brain.guards.BRANCHES)."}
+      }
+    },
+    "usage": {
+      "type": "object", "additionalProperties": false,
+      "description": "The token ledger's parameters (brain usage, brain cost): the plan in force from a day on (a label: costs are API prices whatever the plan), and prices that replace or add to the built-in list.",
+      "properties": {
+        "plans": {"type": "array", "description": "The plan in force from each since day (YYYY-MM-DD; an empty string for the start).", "items": {"type": "object", "required": ["since", "plan"], "additionalProperties": false, "properties": {"since": {"type": "string"}, "plan": {"type": "string", "minLength": 1}, "monthly": {"type": ["number", "null"], "description": "its monthly price, once the owner gives it"}, "currency": {"type": "string"}}}},
+        "prices": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "number"}}, "description": "{model id: [input, output, cache read, cache write 5 min, cache write 1 h]} in USD per million tokens."}
+      }
+    },
+    "scopes": {"type": "string", "minLength": 1, "description": "The scope tree's file (spec-brain-scope-tree 3.13), relative to this file; default scopes.yaml beside it when there is one ($BRAIN_SCOPES names another). brain classes reads its class floors, brain vault the recipients its nodes add."},
+    "classes": {
+      "type": "object", "required": ["stores"], "additionalProperties": false,
+      "description": "The data class of every store and where it may go (brain classes, brain check --all refuse a store without a class and a destination its class forbids). docs/data-classes.md; the matrix: brain classes --matrix.",
+      "properties": {
+        "stores": {
+          "type": "object",
+          "description": "{store: {class, paths, to, waive, project, why}}, in order: the first store whose glob matches a tracked file classes it (specific stores first, a catch-all ** last). The engine's machine stores ($BRAIN_HOME/ledger, sessions, resume, digest, vault, ~/.claude/projects) must be declared too.",
+          "additionalProperties": {
+            "type": "object", "required": ["class", "paths"], "additionalProperties": false,
+            "properties": {
+              "class": {"type": "string", "pattern": "^(public|private|confidential|sealed|resident|secret|tenant:[a-z0-9][a-z0-9-]*)$", "description": "public, private, confidential, sealed, resident, secret, or tenant:<id> for a hosted team's store."},
+              "paths": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "Globs over the repo's tracked files (** any folders, * within a name), or machine paths: $BRAIN_HOME/... or ~/..."},
+              "to": {"type": "array", "items": {"enum": ["git-public", "git-private", "offsite", "backup", "devices", "third-party", "cloud-model", "local-model"]}, "description": "The exits the store takes; one its class says never for is refused, an opt-in one needs naming here."},
+              "waive": {"type": "object", "additionalProperties": {"type": "string", "minLength": 15}, "description": "{exit: reason of 15 characters or more}: a refusal of its class kept as a known, printed gap (the confidential stores in clear in the private remote until the encrypted-git trial decides)."},
+              "project": {"type": "string", "minLength": 1, "description": "The registry's project the store belongs to, for its scope floor and its recipients along the scope chain; default the brain's own project."},
+              "why": {"type": "string", "description": "Why this class."}
+            }
+          }
+        }
+      }
+    },
+    "vault": {
+      "type": "object", "additionalProperties": false,
+      "description": "brain vault: the public keys stores are sealed to, never a private key (brain vault recipient add and brain check --all refuse one). docs/runbooks/vault.md.",
+      "properties": {
+        "adapter": {"enum": ["age", "gpg"], "description": "The adapter preferred; default age when found and every recipient has an age key, else gpg."},
+        "min_recipients": {"type": "integer", "minimum": 2, "description": "The recipients every sealed store needs, two at least (a device key and the recovery key); default 2."},
+        "canary_hours": {"type": "integer", "minimum": 1, "description": "How old a canary may be before brain health vault fails; default 26 (a daily run and some slack)."},
+        "recipients": {
+          "type": "object",
+          "description": "{name: {kind, age, gpg, host, classes, why}}: the public recipients. A recipient named by a scope node (scopes.yaml vault.recipients) or a tenant is added only for those stores; the others are the root's, for every store.",
+          "additionalProperties": {
+            "type": "object", "required": ["kind"], "additionalProperties": false,
+            "properties": {
+              "kind": {"enum": ["device", "recovery", "hardware", "person"], "description": "device (one per machine, in its OS keystore), recovery (offline, on paper), hardware (a YubiKey), person (a member's key)."},
+              "age": {"type": "string", "pattern": "^(age1[0-9a-z]{20,}|ssh-(ed25519|rsa) \\S+.*)$", "description": "An age recipient (age1..., or an ssh-ed25519 / ssh-rsa public key)."},
+              "gpg": {"type": "string", "minLength": 1, "description": "An armored gpg public key file, relative to this file (vault/keys/<name>.asc)."},
+              "host": {"type": "string", "description": "The machine a device key belongs to."},
+              "classes": {"type": "array", "items": {"type": "string"}, "description": "The classes this recipient may read (an instance on a placement that allows only some); default every class."},
+              "why": {"type": "string"}
+            }
+          }
+        },
+        "tenants": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}, "description": "{tenant id: [recipient names]}: a tenant:<id> store is sealed to its tenant's recipients only (the tenant keeps its keys)."}
+      }
+    }
+  },
+  "$defs": {
+    "terms": {"type": "array", "items": {"type": "string", "minLength": 2}}
+  }
+}

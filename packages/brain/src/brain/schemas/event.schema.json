@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/event.schema.json",
+  "title": "Event, one execution, one error or one alert of a command, a script, a step or a project",
+  "description": "One schema for the execution-time ledger (kind exec: brain timed, brain.timing.timed; read by brain perf), the ops error events (kind error: wi-ops-error-catalog) and the project alerts (kind alert: brain alerts raise | resolve, brain.alerts.emit; read by brain alerts and brain status), so they make one stream. Append-only: one JSON object per line, in $BRAIN_HOME/ledger/<kind>-<yyyy-mm>.jsonl by the month of 'at', or in a project's own events store (projects.yaml alerts: events:).",
+  "type": "object",
+  "required": ["v", "kind", "at", "host", "task"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1, "description": "Format version."},
+    "kind": {"enum": ["exec", "error", "alert"], "description": "exec: a run with its duration; error: a finding of a detector or a watchdog; alert: an alert opened or resolved, folded by its key (the last event of a key says whether it is open)."},
+    "at": {"type": "string", "format": "date-time", "description": "When it happened (UTC); an exec event's end."},
+    "host": {"type": "string", "minLength": 1, "description": "The machine ($BRAIN_HOST, else the host name)."},
+    "project": {"type": "string", "minLength": 1, "description": "A project of the Brain's registry (brain, quant...), else the repo's folder name."},
+    "task": {"type": "string", "minLength": 1, "maxLength": 200, "description": "The step: a name the caller gives (cycle L4), else the command line or module.function; alert: what it is about (a task, a stack, a data source)."},
+    "version": {"type": "string", "minLength": 1, "description": "What ran: the caller's version, else the short SHA of HEAD of the repo it ran in."},
+    "details": {"type": ["object", "string"], "description": "Free details of the project (counts, inputs, a message)."},
+    "log": {"type": "string", "description": "Where the raw log is."},
+    "start": {"type": "string", "format": "date-time", "description": "exec: when it started (UTC, milliseconds)."},
+    "end": {"type": "string", "format": "date-time", "description": "exec: when it ended (UTC, milliseconds)."},
+    "duration_s": {"type": "number", "minimum": 0, "description": "exec: seconds, from a monotonic clock (not end - start)."},
+    "exit": {"type": ["integer", "null"], "description": "exec: the exit code (0: success; a Python exception: 1, KeyboardInterrupt: 130; a POSIX signal: its negative number); null when unknown."},
+    "error": {"type": "string", "maxLength": 200, "description": "exec: why it did not finish normally (the exception's type, not found, interrupted)."},
+    "command": {"type": "string", "maxLength": 500, "description": "exec: the command line (lines matching a secret pattern dropped)."},
+    "pid": {"type": "integer", "minimum": 0, "description": "The process that wrote the event."},
+    "code": {"type": ["integer", "string"], "description": "error: the catalogued code (an exit code, a scheduler result, a name)."},
+    "severity": {"enum": ["info", "warn", "error", "critical"], "description": "error and alert: how grave it is; an alert is sent through brain notify at this level."},
+    "key": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^\\S+$", "description": "alert: its stable id within the project (freshness:returns_matic, task:quant-snapshot:missed); every event of one alert has the same key."},
+    "state": {"enum": ["open", "resolved"], "description": "alert: opened (or still open, at a new level or message) or resolved."},
+    "source": {"type": "string", "minLength": 1, "maxLength": 100, "description": "alert: who raised it (a watchdog, a CLI, a monitor; the Brain's own: scheduler, ledger, stack, code-index, audit, file, events)."},
+    "message": {"type": "string", "maxLength": 500, "description": "alert: what is wrong, in one line (lines matching a secret pattern dropped)."},
+    "link": {"type": "string", "maxLength": 500, "description": "alert: a URL or a path to look at."}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "exec"}}}, "then": {"required": ["start", "end", "duration_s", "exit"]}},
+    {"if": {"properties": {"kind": {"const": "error"}}}, "then": {"required": ["code", "severity"]}},
+    {"if": {"properties": {"kind": {"const": "alert"}}}, "then": {"required": ["key", "severity", "state"]}}
+  ]
+}

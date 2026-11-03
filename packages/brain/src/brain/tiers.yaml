@@ -1,0 +1,183 @@
+# The tier registry of the brain engine's capabilities (brain.tiers): what each one is, the class of what it costs to
+# have, the profile that brings it in, its requirements, its cost, its fallback and its rule for Recommended. The
+# stacks declare the same keys in projects.yaml (brain.stacks); brain check --all refuses an entry without them.
+#
+#   class           core: Python, git, bash and files, no dependency; extra: a pip extra or an external tool, no
+#                   service; service: a resident process, local (a container) or remote (a hosted service)
+#   profile         the profile that brings it in: lite (every profile), default (Lite plus the extras without any
+#                   service), recommended (when its requirements and recommend_when hold on the machine), custom (only
+#                   when turned on in the overrides). Recommended is computed per machine, proposed as a plan, frozen
+#                   into the machine's overrides at apply (brain profile set recommended)
+#   provides        what it gives, in a few words
+#   requires        facts of brain doctor that must hold for it to run: a tool on the PATH (git, bash, gh, docker,
+#                   podman, kubectl, wsl, ollama, gitleaks, node), a Python module (textual), gpu, container_runtime,
+#                   kube_context, env:NAME (an environment variable set)
+#   resources       its cost, estimated: ram_mb, disk_mb, disk_gb, vram_gb ({} when nothing worth counting)
+#   fallback        what replaces it when it is missing or off (extra and service only: no adapter without one)
+#   recommend_when  for profile recommended only: clauses that must all hold, each a fact (docker), not a fact
+#                   (not wsl) or a comparison (memory_gb >= 7); [] always. Memory and VRAM in GiB as the OS reports
+#                   them: an 8 GB machine reports about 7.8, a 16 GB one about 15.8
+#   auto            true: the code uses it whenever it is found, whatever the profile (its fallback otherwise); a
+#                   profile cannot turn it off
+#   install         what install.ps1 installs for it: {pip: EXTRA}, an extra of pyproject.toml
+#   status          built (default) or planned, with the item that builds it
+capabilities:
+  rules:
+    title: the owner's rules injected into every session and subagent, and the answered decisions announced
+    class: core
+    profile: lite
+    provides: [rule injection, decision announce]
+    requires: [bash]
+    resources: {}
+  guards:
+    title: the guards that refuse writes to production checkouts, AI attribution and secrets before a tool runs
+    class: core
+    profile: lite
+    provides: [guards]
+    requires: [bash]
+    resources: {}
+  records:
+    title: DDR, SR and AR records, their schemas, ids and secret scan (brain record)
+    class: core
+    profile: lite
+    provides: [records]
+    requires: []
+    resources: {}
+  decisions:
+    title: the decision queue and the owner's queue of decisions, actions and permissions (brain decision, queue)
+    class: core
+    profile: lite
+    provides: [decision queue]
+    requires: []
+    resources: {}
+  backlog:
+    title: the graph of items, milestones, journal and ADRs, sync / check / refresh and the kanban and roadmap
+    class: core
+    profile: lite
+    provides: [backlog, journal, ADRs, generated views]
+    requires: [git]
+    resources: {disk_mb: 30}
+  capture:
+    title: the hooks' zero-token capture of sessions, actions and plans into BRAIN_HOME
+    class: core
+    profile: lite
+    provides: [capture]
+    requires: [bash]
+    resources: {}
+  views:
+    title: the zero-token views (status, resume, digest, audit, features, usage, cost, forecast, alerts, the cockpit's
+      text view)
+    class: core
+    profile: lite
+    provides: [views]
+    requires: []
+    resources: {}
+  stacks:
+    title: the stack registry and brain up / down / health; each stack is an entry of its own (projects.yaml)
+    class: core
+    profile: lite
+    provides: [stack control]
+    requires: []
+    resources: {}
+  memory:
+    title: memory notes shared across machines by a reviewed branch (brain memory); its PR through gh when found
+    class: core
+    profile: lite
+    provides: [memory sync]
+    requires: [git]
+    resources: {}
+  doctor:
+    title: this machine's facts, its profile, each capability's state and the Recommended profile (brain doctor)
+    class: core
+    profile: lite
+    provides: [machine facts, profiles]
+    requires: []
+    resources: {}
+  tui:
+    title: the cockpit's Textual app (brain tui)
+    class: extra
+    profile: default
+    provides: [cockpit]
+    requires: [textual]
+    resources: {disk_mb: 15}
+    fallback: brain tui's text view (brain tui --plain)
+    install: {pip: tui}
+  gitleaks:
+    title: gitleaks for the secret scans of the guards and the records
+    class: extra
+    profile: lite
+    auto: true
+    provides: [secret scan]
+    requires: [gitleaks]
+    resources: {}
+    fallback: the engine's own secret patterns (brain.secretscan)
+  vault:
+    title: brain vault, sealing what leaves a machine to public keys, proven by a daily canary per recipient
+    class: extra
+    profile: lite
+    auto: true
+    provides: [sealing, canary]
+    requires: [age]
+    resources: {}
+    fallback: gpg when it is found (Git for Windows ships it), else available, off (brain health vault says OFF)
+  gh:
+    title: the GitHub CLI for the memory PRs, the merged PRs of digest and resume, and the features' statuses
+    class: extra
+    profile: lite
+    auto: true
+    provides: [pull requests]
+    requires: [gh]
+    resources: {}
+    fallback: git alone; the views run with --offline and a PR is opened by hand
+  notify:
+    title: notifications through ntfy, Telegram or e-mail (brain notify), once the owner sets a channel's secret
+    class: service
+    profile: custom
+    auto: true
+    provides: [notifications]
+    requires: []
+    resources: {}
+    fallback: the decision queue and its view, read at the next session
+  html-views:
+    title: static HTML views of the kanban, roadmap, decision queue and journal, opened from disk
+    class: extra
+    profile: recommended
+    status: planned
+    item: wi-brain-html-views
+    provides: [human interface]
+    requires: []
+    resources: {disk_mb: 5}
+    fallback: the markdown views and the cockpit
+    recommend_when: []
+  mcp-server:
+    title: the brain's MCP server over stdio, launched by the agent
+    class: extra
+    profile: recommended
+    status: planned
+    item: wi-brain-mcp-server
+    provides: [agent tools]
+    requires: []
+    resources: {}
+    fallback: the brain command
+    recommend_when: []
+  local-model:
+    title: a local model on the GPU for the governor and the classifiers
+    class: service
+    profile: recommended
+    status: planned
+    item: wi-brain-governor-local
+    provides: [local inference]
+    requires: [gpu]
+    resources: {vram_gb: 9}
+    fallback: Claude alone, with the rule-based governor
+    recommend_when: [gpu_vram_gb >= 12]
+  plane:
+    title: Plane as a projected view of the backlog, when it is chosen
+    class: service
+    profile: custom
+    status: planned
+    item: wi-brain-plane-view
+    provides: [human interface]
+    requires: [container_runtime]
+    resources: {ram_mb: 4096, disk_gb: 10}
+    fallback: the markdown views and the cockpit

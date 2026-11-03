@@ -1,0 +1,100 @@
+# The Brain's sovereign stack (wi-brain-sovereign-stack; ADR "La pile souveraine du Brain"): an OpenTelemetry
+# collector, Prometheus, Loki, Grafana and Qdrant, local first. This is the template: brain bundle apply renders it into
+# <BRAIN_HOME>/stacks/sovereign/ (each component's data where its placement says, the Grafana password file the
+# owner fills), and brain up <component> runs it. Edit this file, then brain bundle plan / apply; never the rendered copy.
+#
+# brain bundle plan refuses a port published beyond 127.0.0.1 and an image not pinned by tag and digest. Each service
+# is a stack of projects.yaml (project brain, bundle: sovereign) of the same name. No service phones home: the
+# analytics, update checks and telemetry of each one are off.
+name: brain-sovereign
+
+x-logging: &logging  # Docker's own container logs, bounded
+  driver: json-file
+  options: {max-size: 10m, max-file: "3"}
+
+services:
+  otel-collector:  # OTLP in (Claude Code's export, wi-brain-otel-telemetry); Prometheus scrapes it, Loki and files out
+    image: otel/opentelemetry-collector-contrib:0.163.2@sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849
+    command: [--config=/etc/otelcol/config.yaml]
+    volumes:
+      - ./otelcol.yaml:/etc/otelcol/config.yaml:ro
+      - otel-collector:/var/lib/otelcol  # the JSONL files DuckDB reads (placement data home: under BRAIN_HOME)
+    ports:
+      - 127.0.0.1:4317:4317    # OTLP gRPC
+      - 127.0.0.1:4318:4318    # OTLP HTTP
+      - 127.0.0.1:13133:13133  # health_check
+    restart: unless-stopped
+    logging: *logging
+
+  prometheus:
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus:/prometheus
+    ports:
+      - 127.0.0.1:9090:9090
+    restart: unless-stopped
+    logging: *logging
+
+  loki:
+    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    command: [-config.file=/etc/loki/config.yaml]
+    volumes:
+      - ./loki.yaml:/etc/loki/config.yaml:ro
+      - loki:/loki
+    ports:
+      - 127.0.0.1:3100:3100
+    restart: unless-stopped
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password  # read at the first start only
+      GF_SERVER_ROOT_URL: http://127.0.0.1:3000
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_ANALYTICS_FEEDBACK_LINKS_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"  # no plugin fetched from grafana.com at start
+    secrets: [grafana_admin_password]
+    volumes:
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/brain.yaml:ro
+      - grafana:/var/lib/grafana
+    ports:
+      - 127.0.0.1:3000:3000
+    restart: unless-stopped
+    logging: *logging
+
+  qdrant:  # the vectors of the semantic search of the documents (spec 2026-11-01 §10)
+    image: qdrant/qdrant:v1.19.2@sha256:b7b0444c4c351c970b98e90a6f89c2ee4287c65b44e52b4cb503fa5b2aa927ad
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+    volumes:
+      - qdrant:/qdrant/storage  # a named volume: Qdrant loses data on a Windows folder mounted through WSL
+    ports:
+      - 127.0.0.1:6333:6333  # HTTP
+      - 127.0.0.1:6334:6334  # gRPC
+    restart: unless-stopped
+    logging: *logging
+
+# One named volume per component, named after it: brain bundle apply turns it into ./data/<component> (a folder under
+# BRAIN_HOME) for a component whose placement data is home.
+volumes:
+  otel-collector: {}
+  prometheus: {}
+  loki: {}
+  grafana: {}
+  qdrant: {}
+
+secrets:
+  grafana_admin_password:
+    file: ./secrets/grafana-admin-password  # brain bundle apply writes the path of the file the owner fills
