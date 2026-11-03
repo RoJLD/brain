@@ -1,5 +1,6 @@
-"""Hook entry point, run by health.sh as ``python -I health.py <event>``.
+"""Hook entry point, run by health.sh as ``python -X utf8 -I health.py <event>``.
 
+``-X utf8``: its stdout is UTF-8 whatever the console's codepage (its stdin is read as bytes).
 ``-I`` keeps the user's site-packages and PYTHONPATH out; the plugin root goes first on the
 path, for a plugin folder that still holds the brain package; else the interpreter's own brain (the installed engine).
 The registry needs PyYAML (the brain command's venv has it); without it the hook logs the error and prints nothing.

@@ -38,7 +38,7 @@ for py in "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/py
   [ -n "$py" ] || continue
   path=$(command -v "$py" 2>/dev/null) || continue
   case "$path" in *WindowsApps*) continue ;; esac
-  "$path" -I "$root/hooks/midsession.py" UserPromptSubmit <<<"$payload" 2>/dev/null
+  "$path" -X utf8 -I "$root/hooks/midsession.py" UserPromptSubmit <<<"$payload" 2>/dev/null
   exit 0
 done
 exit 0

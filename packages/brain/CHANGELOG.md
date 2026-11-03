@@ -4,6 +4,15 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The hooks read their JSON as UTF-8, whatever the console's codepage** (wi-brain-hook-stdin-utf8). On Windows,
+  `python -I` decodes a pipe with the ANSI codepage (cp1252), so a hook got non-ASCII text as mojibake: an emoji
+  before « Generated with » came out as letters, and the attribution guard let that line through; every guard read
+  accents and « » wrong. The guards, the capture, the governor and the resume hook now read `sys.stdin.buffer` as
+  UTF-8 with the BOM a PowerShell pipe adds dropped (`midsession.read_payload`, as the budget and midsession hooks
+  already did; wi-brain-hook-stdin-bom), the memory and health hooks drain bytes, every launcher runs
+  `python -X utf8 -I` (stdout in UTF-8), and the attribution pattern takes any prefix but letters. Tested from a
+  cp1252 stdin and through `guard.sh` with raw UTF-8 (`tests/test_hook_stdin.py`).
+
 - **The suite is green on Linux.** Three places misread Windows shapes off Windows: a PowerShell word's backslash is
   now a path separator wherever `os.path` reads only slashes (`guards.BACKSLASH_SEP`), as PowerShell reads it, so
   `Set-Content {lab}\x` is seen in the production checkout; a `cmd /c` option is slashes and a name without a

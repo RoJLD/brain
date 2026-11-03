@@ -28,7 +28,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import actions, paths, plan, schema, secretscan, transcript
+from . import actions, midsession, paths, plan, schema, secretscan, transcript
 
 
 def _now() -> str:
@@ -258,8 +258,7 @@ def main(argv: list[str] | None = None, stdin=None) -> int:
     event = argv[0]
     started = time.monotonic()
     try:
-        raw = (stdin or sys.stdin).read()
-        payload = json.loads(raw) if raw.strip() else {}
+        payload = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
         if event == "post-tool-use":
             post_tool_use(payload, argv[1] if len(argv) > 1 else "")
         elif event in HANDLERS:

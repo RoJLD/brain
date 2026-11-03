@@ -46,7 +46,9 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Seven gua
   (guard-<sha1>): the reason names ``brain queue add --kind action --guard <ref>``, which writes it into their queue
   (the cockpit's Apply), and brain queue lists the ones not queued yet.
 - ``attribution``: no ``Co-Authored-By: Claude`` or ``Generated with Claude Code`` line in a git commit message or a
-  gh pr create|edit title or body (arguments, heredocs, here-strings, -F and --body-file files).
+  gh pr create|edit title or body (arguments, heredocs, here-strings, -F and --body-file files), whatever precedes it
+  on its line but letters (an emoji, a bullet). The hook's JSON is read as UTF-8 bytes (midsession.read_payload), so a
+  Windows console codepage turns no non-ASCII text into letters.
 - ``secrets``: no key in what a git commit records: the staged diff, plus what commit -a or a git add earlier in the
   same command stages. gitleaks scans the index when it is on the PATH, else the patterns of brain.secretscan (an
   assignment counts when its value is quoted or ends the line). A line marked ``gitleaks:allow`` passes.
@@ -83,7 +85,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
-from . import config, paths, projects, public, secretscan
+from . import config, midsession, paths, projects, public, secretscan
 
 GUARDS = ("production", "attribution", "secrets", "owner", "power", "public", "branches")
 ALLOW_ENV = "BRAIN_GUARD_ALLOW"
@@ -110,7 +112,7 @@ BACKSLASH_SEP = os.sep == "/"
 CMD_OPTION = re.compile(r"/+[^/\\]*")
 PATH_SUBST = re.compile(r"\$\(\s*(mktemp|cygpath|realpath)((?:\s+-[-\w=]*)*)\s*([^()`;&|<>\n]*?)\s*\)")
 ATTRIBUTION = [re.compile(r"(?im)^\s*co-authored-by:.*(?:\bclaude\b|anthropic)"),
-               re.compile(r"(?im)^\W*generated (?:with|by) \[?claude\b")]
+               re.compile(r"(?im)^[^a-z\n]*generated (?:with|by) \[?claude\b")]   # any prefix but letters
 ASSIGNMENT = secretscan.ASSIGNMENT
 MAX_FILE = 1_000_000
 
@@ -2601,8 +2603,7 @@ def request_title(request: dict) -> str:
 
 def main(stdin=None, stdout=None) -> int:
     try:
-        raw = (stdin or sys.stdin).read()
-        payload = json.loads(raw) if raw.strip() else {}
+        payload = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
         ok = allowed()
         for guard, check, reason, request in refusals(payload):
             if (guard in ok or f"{guard}:{check}" in ok) and check not in UNLIFTED:
