@@ -4,6 +4,15 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **A brain fresh from `brain init` passes `brain check --all`.** It failed at once with « config.json declares no
+  data classes ». A template's `template.yaml` gains `classes`, its own stores, checked when the template loads. The
+  generic template classes `memory/` and `records/ddr/` confidential, opted in to `cloud-model`, with a waiver on
+  `git-private` until encrypted git is adopted. `init` writes config.json's `classes` block: the template's stores,
+  then the engine's machine stores (sealed), then a private catch-all. Its next steps name `brain classes`,
+  `brain vault status` and the vault's runbook.
+- **The vault's runbook ships with the engine** (`docs/vault.md`): the classes, the owner's steps once per machine,
+  the daily canary as a scheduled task for Windows, macOS and Linux, the drill, a lost key. `brain vault status` links
+  it. An empty `.gitkeep` holds no data for the classes check.
 - **`install.ps1 -Apply` replaces a running launcher.** Sessions' hooks run `brain.exe` many times a minute, and
   Windows refuses to overwrite a running image, so the last step of `-Apply` (the copy to `<BRAIN_HOME>\bin`) failed
   twice. `Set-Launcher` leaves an identical launcher alone, copies a new one beside it and swaps it in with a short
