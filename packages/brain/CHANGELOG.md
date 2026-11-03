@@ -2,8 +2,41 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
-## 0.2.2 — 2026-11-03
+## Unreleased
 
+- **The queue in three bands, ranked by what each entry holds up** (wi-brain-queue-priority). `brain queue` scores
+  each entry at zero token: the highest priority and the count of the open items and milestones it holds up, the
+  critical path's slip per day of waiting and the nearest milestone (the last `brain forecast`, through
+  `forecast.waiting`), a stated deadline above the count, the owner's minutes, its age and the blocking flag. Bands:
+  now, this week, when you can. `--explain` shows each term; `brain queue order ID N [--band B] [--clear]` sets the
+  owner's own order, which wins; `brain queue add --minutes`, and DDRs gain an optional `minutes`. `brain status`, the
+  cockpit's queue panel (Band and Score columns, the band sort first and a band filter) and the zen batches show the
+  bands. A denial (perm-, guard-) expires once its session is archived or gone in the desktop app.
+- **The owner's display name** (wi-brain-owner-label, UX-16). `config.json` `identity.display_name`
+  (`config.name_of`) names the owner in the cockpit's titles, help, confirmations and the text views; `identity.owner`
+  stays the id `--by` writes. The queue's title is « {name}'s queue » or « File de {name} » (`tui.json` settings
+  `lang`, or `$BRAIN_LANG`), « My queue » when no one is named, and `settings.titles` gives any panel a free title.
+- Fixed: a date-typed prop (`due: 2026-11-08`) no longer breaks `brain queue`.
+- **A session's Remote Control and permission mode are the owner's** (wi-brain-guard-session-settings). The guards
+  refuse `set_remote_control` and `set_session_permission_mode` under any MCP prefix, and the app's `set_setting` for
+  a Remote Control or permission key, whatever the value; the refusal names the `brain queue add --guard` command
+  that queues the exact action for the owner, and goes to the guards ledger. `brain.permissions` gains the
+  never-grantable category `security-settings` (an allow rule naming those tools, Remote Control or a permission
+  mode is refused at every level), and `BRAIN_GUARD_ALLOW` cannot lift it, not even with `all`.
+- **The usage governor** (wi-brain-usage-enforce, `brain.governor`, `hooks/governor.sh`): a PreToolUse hook on
+  `start_session`, `Agent` and `Workflow` that asks the owner at the quota's WARN and refuses at CRITICAL (both quota
+  windows read, the 5-hour one when a reading of it is noted), refuses a new session past the parallel sessions cap
+  (config, lowered to what the week's room pays for: room / (wave hours x $ per session-hour) minus the master), a
+  new brainstorm past the machine's brainstorms cap (2 by default; a project may lower it for itself, never raise
+  it; a brainstorm is known by its brief's `Task class: brainstorm` or `#brainstorm`, or its title), a new session
+  or workflow from 90 % of committed memory or while the newest reading is stale (on a machine that notes readings).
+  config.json `usage.guard` holds the thresholds and caps; projects.yaml entries gain `usage:`. It reads cached
+  state only: its decision takes under 50 ms. `brain usage guard [--json]` shows what each tool would get now;
+  `brain usage allow [--hours H] [--reason TEXT]` is the owner's override, which the guards refuse to a session
+  (the command and any write of its file). `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` stays the owner's to set
+  through their installer.
+- **The session record knows ultracode and the task class.** The SR gains `ultracode` (on at any time: the app's
+  `ultra_effort_enter` attachment) and `task_class` (the brief's, brainstorm included).
 - **`brain init` for a stranger, from a template.** `--template NAME|DIR` (default `generic`, the only one the engine
   ships): a template is data and a manifest (`template.yaml`: name, version, the engine versions it fits, title, the
   graph stores it starts, a list of `{name, store, schema}` with the main store first and only research_graph's
@@ -35,7 +68,6 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   once (`claude plugin marketplace add <the brain's folder>`, then `claude plugin install brain-core@brain`): a local
   marketplace's plugin is loaded in place, so its hooks are those of the installed engine, and `brain sync` renders
   them again after an upgrade. Nothing of the owner's leaves the machine, nothing is published.
-
 ## 0.2.0 — 2026-11-03
 
 The brain command, published as this repo's second distribution, from the personal brain it was written in (a fresh

@@ -32,6 +32,11 @@ TOKEN_KEYS = ("messages", "input", "output", "thinking", "cache_read", "cache_wr
 GAP_S = 300  # a pause longer than this is not active time
 # « Context budget: 600k », and in a Markdown brief « **Context budget:** 600k » (brain.usage reads it the same way)
 _BUDGET_RE = re.compile(r"context budget\W{0,8}(\d+(?:[.,]\d+)?)\s*([km])\b", re.IGNORECASE)
+# « Task class: strategic » (the owner's sub-session rule), or brainstorm (brain.governor counts the open ones)
+_CLASS_RE = re.compile(r"task class\W{0,8}(trivial|standard|strategic|brainstorm)\b", re.IGNORECASE)
+# The app's attachment records when ultracode turns on (seen: ultra_effort_enter) and, by the same naming, off
+ULTRA_ON = {"ultra_effort_enter"}
+ULTRA_OFF = {"ultra_effort_exit", "ultra_effort_leave"}
 _ITEM_CMD_RE = re.compile(r"\bbrain\s+item\s+(?:add|set|close)\s+((?:wi|ms|spec)-[a-z0-9-]+)")
 
 
@@ -124,6 +129,9 @@ class SessionStats:
         self.prs: dict[str, dict] = {}
         self.items: list[str] = []
         self.api_errors = 0
+        self.task_class = ""
+        self.ultracode = False         # on at any time in the session
+        self.ultracode_now = False     # on at its last record
 
     # --- state ---
     def to_state(self) -> dict:
@@ -197,6 +205,12 @@ class SessionStats:
             self.cost_usd = float(rec["totalCostUSD"])
         elif t == "system" and rec.get("subtype") == "compact_boundary":
             self.compactions += 1
+        elif t == "attachment" and isinstance(rec.get("attachment"), dict):
+            kind = rec["attachment"].get("type")
+            if kind in ULTRA_ON:
+                self.ultracode = self.ultracode_now = True
+            elif kind in ULTRA_OFF:
+                self.ultracode_now = False
 
     def _assistant(self, rec: dict) -> None:
         msg = rec.get("message") or {}
@@ -239,14 +253,17 @@ class SessionStats:
                 m = re.search(r"github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)", pr["url"])
                 if m:
                     self._pr(m.group(1), int(m.group(2)), pr["url"], pr.get("action", ""))
-        if self.budget is None and self.user_texts_seen < 5 and not rec.get("isMeta") and "toolUseResult" not in rec:
+        if (self.budget is None or not self.task_class) and self.user_texts_seen < 5 and not rec.get("isMeta")                 and "toolUseResult" not in rec:
             text = _text_of((rec.get("message") or {}).get("content"))
             if text:
                 self.user_texts_seen += 1
                 m = _BUDGET_RE.search(text)
-                if m:
+                if m and self.budget is None:
                     n = float(m.group(1).replace(",", "."))
                     self.budget = int(n * (1_000 if m.group(2).lower() == "k" else 1_000_000))
+                c = _CLASS_RE.search(text)
+                if c and not self.task_class:
+                    self.task_class = c.group(1).lower()
 
     # --- output ---
     def record(self, transcript: str | Path | None = None, status: str = "open", summary: str = "",
@@ -298,6 +315,9 @@ class SessionStats:
             rec["tokens_by_model"] = {m: {k: t.get(k, 0) for k in TOKEN_KEYS} for m, t in self.tokens_by_model.items()}
         rec["context"] = {"budget": self.budget, "peak": self.ctx_peak, "last": self.ctx_last,
                           "compactions": self.compactions}
+        if self.task_class:
+            rec["task_class"] = self.task_class
+        rec["ultracode"] = bool(self.ultracode)
         if self.cost_usd is not None:
             rec["cost_usd"] = round(self.cost_usd, 4)
         if self.tools:

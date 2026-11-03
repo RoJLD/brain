@@ -15,6 +15,7 @@
       "description": "Who the brain belongs to.",
       "properties": {
         "owner": {"type": "string", "minLength": 1, "description": "The person or team who decides for this brain, as the views name them; the same name as owner in its graph stores' schema.yaml."},
+        "display_name": {"type": "string", "minLength": 1, "description": "The name the views show for the owner (the queue's title, the help texts, the confirmations), e.g. Ada or Ada L.; default owner. owner stays the id --by writes and the stores declare: a record never changes for display."},
         "kind": {"enum": ["person", "team"], "description": "A person's brain or a team's; default person."},
         "tenant": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The tenant id when the brain is hosted for a team (HMaaS): its ledgers and keys are kept apart under that id. None for a person's own brain."}
       }
@@ -120,7 +121,23 @@
       "description": "The token ledger's parameters (brain usage, brain cost): the plan in force from a day on (a label: costs are API prices whatever the plan), and prices that replace or add to the built-in list.",
       "properties": {
         "plans": {"type": "array", "description": "The plan in force from each since day (YYYY-MM-DD; an empty string for the start).", "items": {"type": "object", "required": ["since", "plan"], "additionalProperties": false, "properties": {"since": {"type": "string"}, "plan": {"type": "string", "minLength": 1}, "monthly": {"type": ["number", "null"], "description": "its monthly price, once the owner gives it"}, "currency": {"type": "string"}}}},
-        "prices": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "number"}}, "description": "{model id: [input, output, cache read, cache write 5 min, cache write 1 h]} in USD per million tokens."}
+        "prices": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "number"}}, "description": "{model id: [input, output, cache read, cache write 5 min, cache write 1 h]} in USD per million tokens."},
+        "guard": {"type": "object", "additionalProperties": false, "description": "The usage governor's thresholds and caps (brain.governor, the PreToolUse hook on start_session, Agent and Workflow; brain usage guard shows them): ask the owner at warn, refuse at critical, past a cap or while the newest quota reading is stale. A project of the registry may lower sessions and brainstorms for itself (usage: in projects.yaml), never raise them.",
+          "properties": {
+            "enabled": {"type": "boolean", "description": "false turns the governor off (default true)"},
+            "warn": {"type": "number", "minimum": 0, "maximum": 100, "description": "% of a quota window used from which a new session, subagent or workflow asks the owner (default 80)"},
+            "critical": {"type": "number", "minimum": 0, "maximum": 100, "description": "% of a quota window used from which they are refused (default 95)"},
+            "sessions": {"type": "integer", "minimum": 0, "description": "the sessions running in parallel on this machine, at most (default 8); lowered to what the week's room pays for"},
+            "brainstorms": {"type": "integer", "minimum": 0, "description": "the brainstorms open at once on this machine, every project counted (default 2)"},
+            "memory": {"type": "number", "minimum": 0, "maximum": 100, "description": "% of committed memory from which a new session or workflow is refused (default 90)"},
+            "wave_hours": {"type": "number", "minimum": 0, "description": "the hours a wave is planned for, in the quota cap (default 4)"},
+            "session_hour_usd": {"type": "number", "minimum": 0, "description": "the API-price cost of one session-hour, in the quota cap (default 14)"},
+            "fresh_minutes": {"type": "number", "minimum": 0, "description": "a new session or workflow is refused while the newest quota reading is older (default 60; 0: never)"},
+            "live_minutes": {"type": "number", "minimum": 0, "description": "a session counts as running when active this recently (default 30)"},
+            "brainstorm_hours": {"type": "number", "minimum": 0, "description": "a brainstorm counts as open when active this recently and not archived (default 12)"},
+            "brainstorm_title": {"type": "string", "description": "the regular expression a brainstorm's title matches, besides its brief's Task class: brainstorm or #brainstorm (default ^\\W*brainstorm\\b, case ignored)"}
+          }
+        }
       }
     },
     "scopes": {"type": "string", "minLength": 1, "description": "The scope tree's file (spec-brain-scope-tree 3.13), relative to this file; default scopes.yaml beside it when there is one ($BRAIN_SCOPES names another). brain classes reads its class floors, brain vault the recipients its nodes add."},

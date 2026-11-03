@@ -48,7 +48,6 @@ TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines,
          "digest": lambda panel: cockpit.digest_lines(panel, width=1000, lines_max=0)}  # it scrolls: all of it
 STYLES = {"sessions": {"asking": "bold magenta", "running": "green", "stale": "yellow", "idle": "cyan", "ended": "dim"},
           "alerts": {"critical": "bold red", "error": "red", "warn": "yellow", "info": "dim"}}  # the first column
-NAMES = {"sessions": "Sessions", "queue": "{owner}'s queue", "frontier": "Frontier"}  # {owner}: config.json's
 PANEL_ACTIONS = ("go", "toggle_max", "pick_scope", "search", "next_sort", "reverse", "filters", "panel_help",
                  "toggle_tz")  # the panels' keys, off while a dialog or a detail is on top of them
 
@@ -84,7 +83,7 @@ class ViewScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label(f"{NAMES[self.panel_name].replace('{owner}', config.owner_of())}: filters and sort")
+            yield Label(f"{cockpit.title(self.panel_name)}: filters and sort")
             for field in cockpit.FILTERS[self.panel_name]:
                 values = cockpit.choices(self.panel_name, field, self.panel)
                 if self.view[field] not in values:
@@ -193,7 +192,7 @@ def _foot(d: dict) -> str:
     keys = {"answer": "a", "done": "d", "apply": "A"}
     acts = "; ".join(f"{keys[a.kind]} {a.label}: " + ("; then ".join(detail.shown(s) for s in a.steps) if a.steps
                                                        else "brain decision answer ... --via tui --by "
-                                                       + config.owner_of())
+                                                       + config.owner_of())  # the id --by writes
                      for a in d["actions"])
     parts = [f"o opens: {', '.join(x['label'] for x in d['links'][:4])}"
              + (f" (+{len(d['links']) - 4})" if len(d["links"]) > 4 else "")] if d["links"] else []
@@ -252,7 +251,7 @@ class AnswerScreen(ModalScreen):
                     yield Checkbox(label, id=f"opt-{i}")
             else:
                 yield RadioSet(*(RadioButton(label) for label in labels), id="options")
-            yield Input(placeholder=f"Other: {config.owner_of()}'s own answer, free text", id="other")
+            yield Input(placeholder=f"Other: {config.name_of()}'s own answer, free text", id="other")
             yield Input(placeholder="Notes (optional)", id="notes")
             with Horizontal(id="answer-buttons"):
                 yield Button("Answer", variant="primary", id="ok")
@@ -299,7 +298,7 @@ class ConfirmScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="confirm"):
-            yield Label(Text(f"{self.a.label} {self.a.ref}: run as {config.owner_of()}, logged as their action?",
+            yield Label(Text(f"{self.a.label} {self.a.ref}: run as {config.name_of()}, logged as their action?",
                              style="bold"))
             yield Label(Text(f"in {self.a.cwd}"), classes="field")
             yield Static(Text("\n".join(f"$ {detail.shown(s)}" for s in self.steps)), id="commands")

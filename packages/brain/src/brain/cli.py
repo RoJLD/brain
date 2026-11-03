@@ -57,11 +57,17 @@
   brain decision archive [ID]... | view [--all] [--write] | announce
                  a --blocking ask is also sent through the notification channels (brain notify; --no-notify: not)
   brain queue [--project P | --all] [--kind decision|action|permission]... [--days N] [--no-graph] [--no-transcripts]
-              [--json]   {owner}'s queue: decisions (DDRs, items' props.open, spec questions), actions only they may do
-                         (keys, money, arming, visibility, accounts, scheduled tasks, legal reading) and permissions an
-                         agent lacked (denied tool calls in the last N days of transcripts, default 7); sorted by the
-                         open items each unblocks (downstream in the graph)
-  brain queue add --kind action|permission --title T --what W [--item ID]... [--blocking]   a DDR of that kind
+              [--explain] [--json]   {owner}'s queue: decisions (DDRs, items' props.open, spec questions), actions
+                         only they may do (keys, money, arming, visibility, accounts, scheduled tasks, legal reading)
+                         and permissions an agent lacked (denied tool calls in the last N days of transcripts, default
+                         7; expired once their session is archived or gone); ranked in three bands (now, this week,
+                         when you can) by a zero-token score of what each holds up: the priority and count of the open
+                         items and milestones downstream, the critical path's slip per day of waiting and the nearest
+                         milestone (the last brain forecast), a stated deadline, the minutes it takes, its age;
+                         --explain shows each term
+  brain queue order ID [N] [--band now|week|later] [--clear]   {owner}'s own order: first in its band, at position N
+  brain queue add --kind action|permission --title T --what W [--item ID]... [--blocking] [--due D] [--minutes N]
+                 a DDR of that kind (--due: a stated deadline, it weighs above the count; --minutes: the effort)
   brain queue add --guard guard-ID [--item ID]...   a refusal of the owner or power guard as an action: its title,
                  exact command (the question; and the command when Apply runs it) and reason from the guards ledger
   brain queue done ID [--note TEXT]   {owner} did the action or granted the permission (a denial or a guard refusal:
@@ -264,6 +270,13 @@
                  into a share of the window, the percent now, at the reset at the last 24 h's pace, what the live
                  sessions have left, how many startable P0/P1 items fit, and the advice (open waves, only P0/P1,
                  none); written to $BRAIN_HOME/usage/quota.json for the cockpit
+  brain usage guard [--json]   the usage governor (brain.governor, the PreToolUse hook on start_session, Agent and
+                 Workflow): the quota windows it reads, the sessions running and the brainstorms open on this
+                 machine, the committed memory, the caps (config.json usage.guard, lowered by the project's usage:)
+                 and what a new session, a brainstorm, a subagent and a workflow would get now (ask at WARN, refuse at
+                 CRITICAL, past a cap or while the newest reading is stale)
+  brain usage allow [--hours H] [--reason TEXT]   {owner}'s override of the usage governor for H hours (default 2;
+                 0 ends it), run in their own terminal: the guards refuse it to a session
   brain cost estimate ITEM|TEXT|@FILE|- [--class trivial|standard|strategic] [--record] [--json]   cost, output,
                  context peak, active time and sessions (median, p25-p75) from the finished items most alike, times
                  the class's calibration; --record writes props.cost_estimate on the item
@@ -333,7 +346,7 @@ from . import (__version__, actions, alerts, audit, backfill, batch, boundary, b
                config, cost, decisions, detail, digest, features, forecast, graph, init, links, lint, memory,
                milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
                records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, usage)
-from . import classes, keystore, vault
+from . import classes, governor, keystore, vault
 from .inventory import AuditError
 
 
@@ -610,7 +623,7 @@ def cmd_milestone(args, root: Path) -> int:
             for c in changes:
                 print(c.line())
             done = " written; then brain sync and brain check" if args.write else \
-                f" (not written: --write once {config.owner_of()} has validated)"
+                f" (not written: --write once {config.name_of()} has validated)"
             print(f"apply: {len(changes)} change(s)" + (done if changes else ""))
             left = milestones.waiting(store)
             if left:
@@ -630,7 +643,7 @@ def _milestone_suggest(args, root: Path, store: Path) -> int:
             notes_[r.proposed] = milestones.ddr_note(root, r.proposed)
         print(r.line(notes_.get(r.proposed, "")))
     new = sum(1 for r in rows if not r.proposed and r.suggestion)
-    tail = (f" written; then brain sync and brain check, and {config.owner_of()} validates (brain milestone apply)"
+    tail = (f" written; then brain sync and brain check, and {config.name_of()} validates (brain milestone apply)"
             if args.write else " (not written: --write)") if new else ""
     print(f"suggest: {len(rows)} open item(s) attached to no milestone, {sum(1 for r in rows if r.proposed)} "
           f"proposed already, {new} new suggestion(s){tail}")
@@ -646,13 +659,13 @@ def _milestone_add(args, root: Path, store: Path) -> int:
             raise graph.GraphError(f"{mid}: already in the graph ({known[mid][1].get('type')}); attach items with "
                                    f"brain milestone apply --set ID={mid}")
         if not args.why:
-            raise graph.GraphError(f"a new milestone is put to {config.owner_of()} first: give --why (the reason to "
+            raise graph.GraphError(f"a new milestone is put to {config.name_of()} first: give --why (the reason to "
                                    "create it)")
         ddr, kept = milestones.ask(root, store, mid, title=args.title, trigger=_text(args.trigger), items=items,
                                    why=_text(args.why), at=args.at or _now(), parent=args.parent or "",
                                    options=args.option, context=_text(args.context),
                                    project=_project(args, root).name, session=args.session or "")
-        print(f"asked {ddr['id']}; {config.owner_of()} answers: brain decision answer {ddr['id']} <option>; once the "
+        print(f"asked {ddr['id']}; {config.name_of()} answers: brain decision answer {ddr['id']} <option>; once the "
               f"creation is chosen, run this command again")
         if kept:
             print(f"brain: warning: other proposals kept: {', '.join(kept)}")
@@ -891,7 +904,7 @@ def cmd_decision(args, root: Path) -> int:
                 if args.blocking and not args.no_notify:
                     print("\n".join(notify.decision(_notify_project(args, root), ddr, dry_run=True)))
                 return 0
-            print(f"asked {ddr['id']} ({out.relative_to(root).as_posix()}); {config.owner_of()} answers: "
+            print(f"asked {ddr['id']} ({out.relative_to(root).as_posix()}); {config.name_of()} answers: "
                   f"brain decision answer {ddr['id']} <option>")
             if args.blocking and not args.no_notify:
                 print("\n".join(notify.decision(_notify_project(args, root), ddr)))
@@ -978,7 +991,7 @@ def cmd_pending(args, root: Path) -> int:
     for d in data:
         print("\n".join(decisions.render_pending(d)))
     if len(data) > 1:
-        print(f"all: {sum(d['waiting_on_owner'] for d in data)} waiting on {config.owner_of()} in "
+        print(f"all: {sum(d['waiting_on_owner'] for d in data)} waiting on {config.name_of()} in "
               f"{sum(1 for d in data if d['waiting_on_owner'])} of {len(data)} project(s), "
               f"{sum(len(d['answered']) for d in data)} answer(s) to integrate")
     return 0
@@ -995,7 +1008,7 @@ def cmd_queue(args, root: Path) -> int:
             ddr, out, note = queue.add(
                 root, kind=args.add_kind, title=args.title or "", what=_text(args.what), at=args.at or _now(),
                 context=_text(args.context), blocks=args.blocks or "", items=args.item, specs=args.spec,
-                blocking=args.blocking, due=args.due or "", project=_project(args, root).name,
+                blocking=args.blocking, due=args.due or "", minutes=args.minutes, project=_project(args, root).name,
                 session=args.session or "", slug=args.slug or "", command=args.command or "", cwd=args.cwd or "",
                 dry_run=args.dry_run, guard=args.guard or "")
             if note:
@@ -1009,6 +1022,10 @@ def cmd_queue(args, root: Path) -> int:
             return 0
         if sub == "apply":
             return _queue_apply(args, root)
+        if sub == "order":
+            print(queue.order(args.id, at=args.at or _now(), position=args.position, band=args.band or "",
+                              clear=args.clear, by=args.by))
+            return 0
         if sub == "done":
             print(queue.done(root, args.id, at=args.at or _now(), note=_text(args.note), by=args.by))
             if not args.id.startswith(("perm-", "guard-")):
@@ -1030,11 +1047,11 @@ def cmd_queue(args, root: Path) -> int:
         return 0
     outside = 0 if args.all else sum(len(d["entries"]) for d in data if d["project"] == queue.OUTSIDE)
     for d in shown:
-        print("\n".join(queue.render(d, outside=outside, legend=not args.all)))
+        print("\n".join(queue.render(d, outside=outside, legend=not args.all, why=args.explain)))
     if args.all:
         print("\n".join(queue.LEGEND))
         total = {k: sum(d["counts"][k] for d in shown) for k in queue.KINDS}
-        print(f"all: {sum(total.values())} waiting on {config.owner_of()} in "
+        print(f"all: {sum(total.values())} waiting on {config.name_of()} in "
               f"{sum(1 for d in shown if d['entries'])} of {len(shown)} group(s): {total['decision']} decision(s), "
               f"{total['action']} action(s), "
               f"{total['permission']} permission(s)")
@@ -1069,7 +1086,7 @@ def _queue_apply(args, root: Path) -> int:
         (plan,) = detail.run(detail.Action("plan", "Plan", a.project, a.ref, a.cwd), [a.preview])
         print(f"\nThe plan ({plan['command']}, exit {plan['exit']}):\n{plan['output'] or '(no output)'}\n")
     try:
-        yes = input(f"Run as {config.owner_of()}, logged as your action? [y/N] ").strip().lower() in ("y", "yes")
+        yes = input(f"Run as {config.name_of()}, logged as your action? [y/N] ").strip().lower() in ("y", "yes")
     except EOFError:  # no terminal to answer: nothing runs
         yes = False
     if not yes:
@@ -1434,6 +1451,8 @@ def cmd_usage(args, root: Path) -> int:
         usage.update(rescan=True)
     if args.what == "quota":
         return _quota(args, root, projs)
+    if args.what in ("guard", "allow"):
+        return _governor(args, root)
     led = cost.scoped(cost.load(projs, root, refresh=not (args.no_scan or args.rescan)), projs, args.all)
     by = {"daily": "day", "weekly": "week"}.get(args.report or "", args.by)
     rep = cost.report(led, _when(args.since, "7d"), _when(args.until), by,
@@ -1459,6 +1478,20 @@ def _quota(args, root: Path, projs: list[projects.Project]) -> int:
     except quota.QuotaError as exc:
         raise SystemExit(f"brain: {exc}") from None
     print(cost.as_json(fc) if args.json else "\n".join(quota.render(fc)))
+    return 0
+
+
+def _governor(args, root: Path) -> int:
+    """brain usage guard | allow (brain.governor): what the usage hook would decide now; the owner's override."""
+    if args.what == "allow":
+        if args.hours is not None and args.hours < 0:
+            raise SystemExit("brain: --hours is 0 or more")
+        rec = governor.allow(args.hours if args.hours is not None else governor.ALLOW_HOURS, args.reason or "")
+        print(cost.as_json(rec) if args.json else f"usage guard lifted until {rec['until']} ({governor.allow_file()})"
+              if rec else "usage guard override ended")
+        return 0
+    rep = governor.report(str(Path.cwd()))
+    print(cost.as_json(rep) if args.json else "\n".join(governor.render(rep)))
     return 0
 
 
@@ -2013,7 +2046,8 @@ def cmd_digest(args, root: Path) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    who = config.owner_of()  # the help names the owner, and --by defaults to them
+    who = config.name_of()  # the help names the owner by their display name (identity.display_name)
+    by_ = config.owner_of()  # and --by defaults to their id (identity.owner): a record never changes for display
     usage_ = __doc__.replace("{owner}", who).split("\n")
     p = argparse.ArgumentParser(prog="brain", description=usage_[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog="\n".join(usage_[2:-2]))
@@ -2067,7 +2101,7 @@ def build_parser() -> argparse.ArgumentParser:
     dd.add_argument("--spec", action="append", help="spec node id or section (repeatable)")
     dd.add_argument("--answer", action="append", help="chosen option label (repeatable)")
     dd.add_argument("--other", help="free-text answer")
-    dd.add_argument("--by", default=who)
+    dd.add_argument("--by", default=by_)
     dd.add_argument("--via", default="chat", choices=["ask-tool", "cli", "spec", "chat", "tui"])
     dd.add_argument("--read", action="store_true", help="stamp: the model in charge read the answer")
     dd.add_argument("--applied", action="append", help="stamp: applied in this ADR, item or spec (repeatable)")
@@ -2279,7 +2313,7 @@ def build_parser() -> argparse.ArgumentParser:
                                               "multi_select")
     dw.add_argument("--other", help=f"{who}'s own answer, free text")
     dw.add_argument("--notes")
-    dw.add_argument("--by", default=who)
+    dw.add_argument("--by", default=by_)
     dw.add_argument("--via", default="cli", choices=["ask-tool", "cli", "spec", "chat", "tui"])
     dw.add_argument("--again", action="store_true", help="replace an earlier answer")
     dw.add_argument("--batch", metavar="@FILE|-|JSON",
@@ -2315,7 +2349,7 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("event", nargs="?", default="SessionStart")
 
     qu = sub.add_parser("queue", help=f"{who}'s queue: decisions, actions only they may do, permissions an agent "
-                                      "lacked; sorted by the open items each unblocks")
+                                      "lacked; in three bands, ranked by what each holds up (--explain)")
     qu.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
     qu.add_argument("--all", action="store_true", help="every registered project, then the denials outside them")
     qu.add_argument("--kind", action="append", choices=list(queue.KINDS))
@@ -2323,8 +2357,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"how far back the denied tool calls are read (default {queue.DAYS})")
     qu.add_argument("--no-graph", action="store_true", help="no research_graph pending: no spec questions")
     qu.add_argument("--no-transcripts", action="store_true", help="no transcript scan: no denied tool calls")
-    qu.add_argument("--json", action="store_true", help="the data the TUI's panel reads, each entry with its how and "
-                                                        "the items it unblocks")
+    qu.add_argument("--json", action="store_true", help="the data the TUI's panel reads, each entry with its how, "
+                                                        "band, score terms and the items it unblocks")
+    qu.add_argument("--explain", action="store_true", help="each entry's score, term by term, and why its band")
     qs = qu.add_subparsers(dest="queue_cmd")
     qa = qs.add_parser("add", help=f"put an action or a permission to {who}: a DDR of that kind (a permission in a "
                                    f"category only {who} may do is written as an action)")
@@ -2340,7 +2375,9 @@ def build_parser() -> argparse.ArgumentParser:
     qa.add_argument("--item", action="append", help="WorkItem or Milestone it unblocks (repeatable)")
     qa.add_argument("--spec", action="append", help="spec node (repeatable)")
     qa.add_argument("--blocking", action="store_true")
-    qa.add_argument("--due", help="YYYY-MM-DD")
+    qa.add_argument("--due", help="YYYY-MM-DD: a stated deadline (it weighs above the count of what it unblocks)")
+    qa.add_argument("--minutes", type=int, help=f"{who}'s effort in minutes (default 5 for an action, 1 for a "
+                                                "permission)")
     qa.add_argument("--slug", help="id slug (default: from the title)")
     qa.add_argument("--session", help="the asking session's id")
     qa.add_argument("--command", help=f"an action's exact command, brain ... or install.ps1 ...: what {who}'s Apply "
@@ -2353,12 +2390,20 @@ def build_parser() -> argparse.ArgumentParser:
                                      "answers y, logged as their action, then the action marked done; never from a "
                                      "Claude Code session's shell")
     qp.add_argument("id", help="a pending action DDR's id (or a part only it has)")
+    qo = qs.add_parser("order", help=f"{who}'s own order: the entry first in its band, at position N (and --band to "
+                                     "move it); it wins over the score; --clear gives it back to the score")
+    qo.add_argument("id", help="an entry's id, as brain queue shows it")
+    qo.add_argument("position", nargs="?", type=int, help="1 first")
+    qo.add_argument("--band", choices=list(queue.BANDS))
+    qo.add_argument("--clear", action="store_true")
+    qo.add_argument("--by", default=by_)
+    qo.add_argument("--at")
     qd = qs.add_parser("done", help=f"{who} did the action or granted the permission: a DDR is answered (the model "
                                     "then checks and acks it), a denial stamped in the ledger until denied again")
     qd.add_argument("id", help="a DDR id (or a part only one has), a denial's perm-... id or a guard refusal's "
                                "guard-... id")
     qd.add_argument("--note", help="what was done: granted by an allow rule, done once, ...")
-    qd.add_argument("--by", default=who)
+    qd.add_argument("--by", default=by_)
     qd.add_argument("--at")
 
     sy = sub.add_parser("sync", help="research_graph sync --write, records graph, queue view, the features' "
@@ -2423,14 +2468,17 @@ def build_parser() -> argparse.ArgumentParser:
     us = sub.add_parser("usage", help="the token ledger: what the sessions cost, by project, item, class, phase, "
                                       "tool, command, day...; distributions and script candidates; quota: the plan's "
                                       "quota readings and forecast (zero token)")
-    us.add_argument("what", nargs="?", choices=("quota",),
-                    help="quota: note a get_usage reading (--observe) and forecast the plan's quota window")
+    us.add_argument("what", nargs="?", choices=("quota", "guard", "allow"),
+                    help="quota: note a get_usage reading (--observe) and forecast the plan's quota window; guard: what "
+                         "the usage governor would decide now; allow: the owner's override of it (their own terminal)")
     us.add_argument("--observe", type=float, metavar="PCT",
                     help="quota: the percent used get_usage reads for --window, noted with its time")
     us.add_argument("--window", choices=tuple(quota.WINDOWS), default="week", help="quota: the window (default week)")
     us.add_argument("--resets", metavar="TIME", help="quota: when the window resets (get_usage's resetsAt, ISO; "
                                                      "default the last reading's, moved by whole weeks)")
     us.add_argument("--at", metavar="TIME", help="quota: when the reading was taken (ISO; default now)")
+    us.add_argument("--hours", type=float, help="allow: how long the override holds (default 2; 0 ends it)")
+    us.add_argument("--reason", help="allow: why, kept with the override")
     us.add_argument("--all", action="store_true", help="every session on this machine, whatever its project")
     us.add_argument("--since", help="Nd, Nw, today, yesterday, last-week, last-month or YYYY-MM-DD (default 7d)")
     us.add_argument("--until", help="the same, excluded (default: now)")

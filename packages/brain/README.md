@@ -18,8 +18,9 @@ What it does, every command reading files and git, never a model:
 - **the machine**: its profile (`brain profile`, alias `brain doctor`: Lite, Default, Recommended, Custom), stacks
   started on demand (`brain up|down|health`), permissions rendered for Claude Code (`brain permissions`);
 - **Claude Code**: the hooks and guards under `src/brain/adapters/claude/hooks/` (rules injection, capture, the
-  PreToolUse guards: production checkouts, the owner's own actions, power, attribution, secrets, public pushes,
-  branch names), which `brain render --target claude` copies into the owner's own plugin;
+  PreToolUse guards: production checkouts, the owner's own actions, a session's Remote Control and permission mode,
+  power, attribution, secrets, public pushes, branch names; the usage governor before a new session, a subagent or a
+  workflow), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
   shapes, data files) before a push to a public repo, and its guard holds the push until the check is green.
 
@@ -61,7 +62,7 @@ claude plugin install brain-core@brain
 
 | File | What it holds |
 |---|---|
-| `config.json` | the contract, v1: `identity` (the owner, a person or a team, a tenant), `registry`, `rules`, `memory`, `records`, `template` (its name and version), `engine` (this repo and the tag installed), `tier` (Lite by default), `adapters.claude` (the marketplace `brain` and its core plugin `brain-core`), `public` (no public repo yet; `deny`: the owner's name, this machine's user and host names); `brain config --keys` lists every key |
+| `config.json` | the contract, v1: `identity` (the owner's id, the name the views show, `display_name`, a person or a team, a tenant), `registry`, `rules`, `memory`, `records`, `template` (its name and version), `engine` (this repo and the tag installed), `tier` (Lite by default), `adapters.claude` (the marketplace `brain` and its core plugin `brain-core`), `public` (no public repo yet; `deny`: the owner's name, this machine's user and host names); `brain config --keys` lists every key |
 | `projects.yaml` | the registry: one project, the brain itself (`brain projects --keys`), its repo audited with the rendered plugin waived |
 | `boundary.yaml`, `fixtures/README.md` | every file's side (`brain boundary`) at `readiness_max: 0`: `src/`, `tests/` and `fixtures/` may be published one day, so from the first commit `brain check` refuses a denied term, a secret, an e-mail address or a home folder in them, and a file no rule classifies |
 | `source/packs.yaml` | the neutral source the agent files are rendered from: the marketplace's owner and one core pack with the engine's hooks |
@@ -92,6 +93,33 @@ that already exists and differs is kept by `brain init` and named (`brain render
 it). config.json names no `adapters.claude.source`, so the installer's marketplace steps (a GitHub marketplace) stay
 off.
 
+## The owner's queue
+
+`brain queue` lists what waits on the owner: decisions, actions only they may do, permissions an agent lacked. It is
+ranked at zero token by what each entry holds up, in three bands: **now** (blocking, the critical path, a P0 or a
+deadline within 2 days), **this week** (a P1, a slip on a milestone, a deadline within the week, a milestone within 14
+days) and **when you can**. Within a band, the owner's own order first (`brain queue order ID N [--band B]`,
+`--clear`), then a score whose terms `brain queue --explain` shows:
+
+| Term | From |
+|---|---|
+| priority | the highest priority among the open items and milestones it holds up (P0 8, P1 4, P2 2, P3 1) |
+| count | how many it holds up, 0.25 each, at most 3: many P3s never outweigh a P1 by number |
+| slip | the critical path's slip per day of waiting, from the last `brain forecast` (its saved `latest.json`) |
+| milestone | how near the nearest held-up milestone's p50 is |
+| deadline | a stated deadline (the DDR's `due`, `brain queue add --due`; or a `due`/`deadline` prop of what it holds up): 12 overdue, 10 within 2 days, 6 within the week, above any count |
+| effort | the owner's minutes (`--minutes`; a decision's reading time), a quick one a little higher |
+| age, blocking | the days it has waited (at most 2), and 4 for a blocking one |
+
+The same bands show in `brain status`, the cockpit's queue panel (a Band and a Score column, sorted and filtered by
+band) and the morning batches (`brain decision batch --zen`: the band now always in the session). A denied tool call
+expires once every session it was refused in is archived or gone in the Claude desktop app.
+
+The views name the owner by `identity.display_name` (else `identity.owner`): the queue's title is « Ada's queue », or
+« File d'Ada » with `"lang": "fr"` in `<BRAIN_HOME>/tui.json`'s settings (or `$BRAIN_LANG`), and « My queue » when no
+one is named; `settings.titles` there gives any panel a free title. `identity.owner` stays the id `--by` writes and the
+stores declare.
+
 ## Where the brain is found
 
 `config.json` and `projects.yaml` are found at `$BRAIN_CONFIG` / `$BRAIN_PROJECTS`, else in the first of:
@@ -108,6 +136,27 @@ entry with `$BRAIN_PYTHON`, else the brain command's venv (`<BRAIN_HOME>/venv`),
 brain whose `source/packs.yaml` gives its core pack `hooks:` gets them copied into its own plugin by
 `brain render --target claude --write`, at the version it pins; `inject-rules.sh` injects the files of config.json
 `rules`. The guards never block a session on an error: without Python, the call goes through.
+
+Two of the PreToolUse hooks keep the owner's say over how sessions run (the runbook: [`docs/guards.md`](docs/guards.md)):
+
+- **Session settings** (`guard.sh tool`, `brain.guards`): a session that changes Remote Control or a permission mode
+  (`set_remote_control`, `set_session_permission_mode` under any MCP prefix, the app's `set_setting` for a Remote
+  Control key) is refused, whatever the value, and the exact action goes to the owner's queue (`brain queue add
+  --kind action --guard <ref>`). Its category, `security-settings`, is never grantable (`brain permissions`), and
+  `BRAIN_GUARD_ALLOW` does not lift it, not even `all`: the owner switches it in the app.
+- **The usage governor** (`governor.sh`, `brain.governor`), before `start_session`, `Agent` and `Workflow`: it reads
+  the cached quota readings (`brain usage quota --observe`), the sessions running and the brainstorms open on the
+  machine (the desktop app's session files, else the session records), and the committed memory. It asks the owner
+  from `warn` % of a quota window, refuses from `critical` %, refuses a new session past the parallel sessions cap
+  (the smaller of `sessions` and what the week's room pays for), a new brainstorm past `brainstorms` (every project
+  counted; a project's `usage: {brainstorms: N}` in `projects.yaml` lowers it for itself, never raises it), a new
+  session or workflow from `memory` % of committed memory or while the newest quota reading is older than
+  `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
+  now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
+  (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
+
+The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
+brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart.
 
 ## Tests
 

@@ -217,7 +217,7 @@ def orphan_lines(store: Path, root: Path | None = None) -> list[str]:
         for ms, ids in sorted(by_ms.items()):
             note = "" if ms in ix.milestones else ddr_note(root, ms) or "brain milestone add"
             groups.append(f"{ms}?" + (f" (not a milestone yet: {note})" if note else "") + f" {', '.join(ids)}")
-        lines.append(f"  proposed, waiting on {config.owner_of()} (then brain milestone apply --write): "
+        lines.append(f"  proposed, waiting on {config.name_of()} (then brain milestone apply --write): "
                      f"{'; '.join(groups)}")
     if bare:
         more = f" and {len(bare) - LIST_MAX} more" if len(bare) > LIST_MAX else ""
@@ -236,7 +236,7 @@ class Change:
 
     def line(self) -> str:
         how = (f"{self.proposed}? -> {self.milestone}" if self.proposed == self.milestone
-               else f"{self.proposed or '-'}? -> {self.milestone} ({config.owner_of()}'s value)")
+               else f"{self.proposed or '-'}? -> {self.milestone} ({config.name_of()}'s value)")
         return f"{self.id}: {how}" + (" (already linked: proposal cleared)" if self.linked else "")
 
 

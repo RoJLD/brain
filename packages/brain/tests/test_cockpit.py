@@ -128,8 +128,8 @@ def _cockpit(tmp_path, monkeypatch, store):
     monkeypatch.setattr(status, "queue_rows", lambda projs, every, root=None, **kw: [
         {"project": "demo", "counts": {"decision": 1, "action": 0, "permission": 0}, "guard_refusals": 0,
          "entries": [{"id": "ddr-a", "kind": "decision", "source": "ddr", "title": "Pick one", "since": "2026-11-01",
-                      "age_days": 1, "blocking": True, "unblocks": 2, "unblocked": ["wi-one"],
-                      "recommended": "A", "how": "brain decision answer ddr-a <option>"}]},
+                      "age_days": 1, "blocking": True, "unblocks": 2, "unblocked": ["wi-one"], "band": "now",
+                      "score": 5.92, "recommended": "A", "how": "brain decision answer ddr-a <option>"}]},
         {"project": cockpit.OUTSIDE, "counts": {"permission": 1}, "entries": [{"id": "perm-1"}]}])
     return cockpit.Cockpit([projects.load()["demo"]])
 
@@ -178,8 +178,9 @@ def test_probe_fills_audit_health_and_digest(tmp_path, monkeypatch, store, brain
                                                                                  "2026-11-02")
     assert snap["panels"]["health"]["exec"]["runs"] == 0
     text = "\n".join(cockpit.render(snap))
-    for line in ("Ada's queue (1: 1 decision, 0 action, 0 permission); 1 denial(s) outside every project (--all)",
-                 "    2 decision         demo         1 d  ddr-a [blocking]: Pick one -> A",
+    for line in ("Ada's queue (1: 1 decision, 0 action, 0 permission | now 1, this week 0, when you can 0); 1 "
+                 "denial(s) outside every project (--all)",
+                 "  now           5.92   2 decision         demo         1 d  ddr-a [blocking]: Pick one -> A",
                  "Alerts (1 open, 1 error)", "  ERROR    demo       task:cycle:missed: 2 passes missed",
                  "Milestones (1 reached, 1 pending)", "  demo         1/2   #####.....  ms-x: Milestone X",
                  "Frontier (2 startable, 2 of them P0/P1)", "  demo: P0 1, P1 2, P2 0, info 3 (1 repo(s))",
@@ -197,7 +198,7 @@ def test_tables_and_headings(tmp_path, monkeypatch, store):
     cp = _cockpit(tmp_path, monkeypatch, store)
     cp.refresh()
     p = cp.snapshot()["panels"]
-    assert cockpit.table("queue", p["queue"]) == [("2", "decision", "demo", "1 d", "Pick one -> A",
+    assert cockpit.table("queue", p["queue"]) == [("now", "5.92", "2", "decision", "demo", "1 d", "Pick one -> A",
                                                     "ddr-a [blocking]")]
     assert cockpit.table("milestones", p["milestones"]) == [("demo", "1/2", "#####.....", "ms-x", "Milestone X")]
     row = cockpit.table("frontier", p["frontier"])[0]  # its age: from the idea's date (Ada, 2026-10-30) to today
@@ -318,7 +319,8 @@ def test_views_filter_sort_and_search_the_tables():
     assert _ids("sessions", {"state": "all", "sort": "age"}) == ["s-run", "s-ask", "s-end", "s-idle"]
     assert _ids("sessions", {"state": "ended"}) == ["s-end"]
     assert _ids("sessions", {"sort": "context"})[0] == "s-run" and _ids("sessions", {"sort": "project"})[-1] == "s-run"
-    assert _ids("queue", {}) == ["wi-x:needs", "ddr-q", "ddr-a"]  # by what each unblocks, across the projects
+    assert _ids("queue", {}) == ["wi-x:needs", "ddr-q", "ddr-a"]  # by band and score; without them, the count
+    assert _ids("queue", {"sort": "unblocks"}) == ["wi-x:needs", "ddr-q", "ddr-a"]  # what each unblocks
     assert _ids("queue", {"kind": "decision"}) == ["ddr-q", "ddr-a"]
     assert _ids("queue", {"sort": "age"}) == ["ddr-q", "ddr-a", "wi-x:needs"]  # the oldest first
     assert _ids("queue", {"sort": "age", "reverse": True}) == ["wi-x:needs", "ddr-a", "ddr-q"]
@@ -339,11 +341,11 @@ def test_views_filter_sort_and_search_the_tables():
     assert cockpit.note("sessions", PANELS["sessions"], {}) == "3 of 4 shown; state open"
     assert cockpit.note("frontier", PANELS["frontier"], {"priority": "P0-P1", "sort": "age"}, "first") == (
         "1 of 4 shown; priority P0-P1; search 'first'; sort age")
-    assert cockpit.note("queue", PANELS["queue"], {}, sort=True) == "sort unblocks"
+    assert cockpit.note("queue", PANELS["queue"], {}, sort=True) == "sort band"
     assert cockpit.note("queue", PANELS["queue"], None) == "" and cockpit.note("alerts", None, None, "x") == (
         "search 'x'")
     assert cockpit.table("queue", PANELS["queue"], {"kind": "action"}, project=False) == [
-        ("5", "action:scheduled", "0 d", "Ada's go-ahead", "wi-x:needs")]
+        ("-", "-", "5", "action:scheduled", "0 d", "Ada's go-ahead", "wi-x:needs")]
     assert cockpit.row_key("queue", cockpit.entries("queue", PANELS["queue"])[2]) == "other/ddr-q"
     lines = cockpit.render({"scope": "all", "panels": PANELS}, views={"frontier": {"priority": "P0-P1"}})
     assert "Frontier (4 startable, 1 of them P0/P1) [2 of 4 shown; priority P0-P1]" in lines
@@ -364,8 +366,8 @@ def test_parse_view_and_the_remembered_state(brain_home):
     assert cockpit.load_state() == {}
     assert cockpit.save_state({"scope": "other", "panels": {"queue": {"kind": "decision"}}})
     state = cockpit.load_state()
-    assert state["scope"] == "other" and state["panels"]["queue"] == {"sort": "unblocks", "reverse": False,
-                                                                      "kind": "decision"}
+    assert state["scope"] == "other" and state["panels"]["queue"] == {"sort": "band", "reverse": False,
+                                                                      "kind": "decision", "band": "all"}
     assert json.loads(cockpit.state_path().read_text(encoding="utf-8"))["cockpit"] == 1
     cockpit.state_path().write_text('{"scope": 3, "panels": {"queue": {"kind": "idea"}, "audit": {}, "frontier": 1}}',
                                     encoding="utf-8")
@@ -426,8 +428,9 @@ def test_brain_tui_starts_from_the_remembered_scope_and_views(tmp_path, monkeypa
     assert cli.main(["--root", str(root), "tui", "--once", "--quick", "--filter", "queue:kind=permission"]) == 0
     out = capsys.readouterr().out
     assert out.startswith("brain cockpit: demo;")  # --once: the flags only, never the remembered state
-    assert ("Ada's queue (1: 1 decision, 0 action, 0 permission); denied calls read at the first probe; 1 denial(s) "
-            "outside every project (--all) [0 of 1 shown; kind permission]\n") in out
+    assert ("Ada's queue (1: 1 decision, 0 action, 0 permission | now 1, this week 0, when you can 0); denied calls "
+            "read at the first probe; 1 denial(s) outside every project (--all) [0 of 1 shown; kind permission]"
+            "\n") in out
     assert "Sessions (0 in the last 24 h)\n" in out  # a default filter is named only when it hides a row
     with pytest.raises(SystemExit):
         cli.main(["tui", "--project", "demo", "--once", "--sort", "queue:priority"])
