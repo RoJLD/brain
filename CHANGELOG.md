@@ -3,7 +3,7 @@
 The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `research-graph` X.Y.Z and `brain` X.Y.Z
 (`packages/brain/CHANGELOG.md` for the brain command).
 
-## Unreleased
+## 0.2.4 — 2026-11-03
 
 - **Fast YAML** (wi-brain-yaml-fast-load): `research_graph.yamlio`, the one helper of every load: `loads` parses
   through libyaml (`CSafeLoader`) when PyYAML has it; `load` reads a file through a per-process memo keyed by (path,
