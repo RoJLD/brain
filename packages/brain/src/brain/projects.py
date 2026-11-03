@@ -188,7 +188,7 @@ def raw(root: Path | None = None) -> dict:
     f = registry_file(root)
     if not f or not f.is_file():
         return {}
-    data = graph._yaml().safe_load(f.read_text(encoding="utf-8")) or {}
+    data = graph.load_yaml(f.read_text(encoding="utf-8")) or {}   # libyaml: a guard reads it on every call
     return data if isinstance(data, dict) else {}
 
 

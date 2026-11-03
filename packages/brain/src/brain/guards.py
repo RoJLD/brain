@@ -93,6 +93,12 @@ EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path
 SHELL_TOOLS = ("Bash", "PowerShell")
 CHANGING = {"commit", "checkout", "switch", "restore", "reset", "merge", "rebase", "stash", "push", "pull",
             "cherry-pick", "revert", "am", "apply", "rm", "mv", "clean"}
+# git subcommands that only read, which guard.sh's pre-filter lets through without starting Python (git [-C DIR |
+# --no-pager | -P] SUB, without --output or a pager option; wi-brain-hook-latency): none is in CHANGING, gives a branch
+# its name, records a commit or pushes (tests/test_guards.py checks it against those tables and guard.sh's list).
+GIT_READS = frozenset(("status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "blame", "describe",
+                       "shortlog", "rev-list", "merge-base", "cat-file", "name-rev", "grep", "check-ignore",
+                       "count-objects", "var", "version", "whatchanged", "show-ref", "for-each-ref"))
 GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"}
 CD = {"cd", "chdir", "pushd", "set-location", "sl", "push-location"}
 POP = {"popd", "pop-location"}

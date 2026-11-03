@@ -452,8 +452,36 @@ def test_prefilter_names_cover_the_tables():
 def test_prefilter_skips_reads_without_git():
     assert _needs_python(["ls -la 2>&1 | head", "cat x > /dev/null", "grep -n x y 2>/dev/null >&2",
                           "sed -n 1,5p f", "Get-Content x > $null", "cd GitNexus && ls"]) == [False] * 6
-    assert _needs_python(["git status", "gh pr view 1", "echo x > f", "cat a >> b"]) == [True] * 4
+    assert _needs_python(["git commit -m x", "gh pr view 1", "echo x > f", "cat a >> b"]) == [True] * 4
     assert _needs_python(["ls"], kind="edit") == [True]
+
+
+def test_prefilter_leaves_git_that_only_reads_to_bash(plat):
+    """wi-brain-hook-latency: git that only reads starts no Python, even in a production checkout; any other git, a
+    global option the list does not know, an output file or a pager option still does."""
+    lab = "D:/work/demo-lab"  # not the test's folder: its name holds git and bash, which keep Python on
+    reads = [f"git {sub}" for sub in sorted(guards.GIT_READS)] + [
+        f"git -C {lab} status --short", f"cd {lab} && git log --oneline -3 && git diff HEAD~1",
+        "git --no-pager log -1", "echo $(git rev-parse --short HEAD)", "ls\ngit status", "git.exe status"]
+    assert _needs_python(reads) == [False] * len(reads)
+    others = [f"git -C {lab} checkout -b x", "git status; git commit -m x", "git -c core.pager=less log",
+              "git --git-dir=x log", "git log --output=x", "git grep -O vi x", "git st", "git stash list",
+              "git branch", "git worktree list", "git log > x", "git diff | tee x", "gitleaks detect"]
+    assert _needs_python(others) == [True] * len(others)
+
+
+def test_the_git_reads_neither_change_nor_name_nor_record(plat):
+    """GIT_READS against the guards' tables, and against guard.sh's own list; then what the guards say of each one
+    in a production checkout: nothing, so leaving it to bash loses no refusal."""
+    sh = (PLUGIN / "hooks" / "guard.sh").read_text(encoding="utf-8")
+    listed = re.search(r"\((status\|[a-z|-]+)\)", sh).group(1)
+    assert set(listed.split("|")) == guards.GIT_READS
+    assert not guards.GIT_READS & (guards.CHANGING | {"add", "commit", "push", "checkout", "switch", "branch",
+                                                      "worktree", "config", "remote", "tag", "fetch", "reflog"})
+    lab = plat / "demo-lab"
+    for sub in sorted(guards.GIT_READS):
+        assert bash(plat, f"git -C {lab.as_posix()} {sub}") is None, sub
+    assert bash(plat, f"git -C {lab.as_posix()} checkout -b x")
 
 
 # --- AI attribution ----------------------------------------------------------------------------------------------
