@@ -23,6 +23,7 @@ def brain_home(tmp_path, monkeypatch):
     # no test reads the owner's permissions.yaml unless it says so: the never-grantable categories are the engine's
     monkeypatch.setenv("BRAIN_PERMISSIONS", str(tmp_path / "no-permissions.yaml"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))  # no test reads the owner's transcripts
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))  # nor the desktop app's sessions (brain.tidy)
     # no test reads this checkout's config.json unless it says so: the tests' brain is Ada's (fixtures/brain), so a
     # view that still names someone else fails
     monkeypatch.setenv("BRAIN_CONFIG", str(BRAIN))

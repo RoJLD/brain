@@ -165,6 +165,7 @@ class AppState:
     seen: bool = False
     leases: dict[str, str] = field(default_factory=dict)      # worktree folder -> the session leasing it
     sessions: dict[str, dict] = field(default_factory=dict)   # session id -> {cwd, archived}
+    cli: dict[str, str] = field(default_factory=dict)        # Claude Code session id (a transcript's) -> session id
 
 
 def app_state() -> AppState:
@@ -192,6 +193,8 @@ def app_state() -> AppState:
         if isinstance(data, dict) and data.get("sessionId"):
             st.sessions[str(data["sessionId"])] = {"cwd": _norm(data.get("cwd") or ""),
                                                    "archived": bool(data.get("isArchived"))}
+            if data.get("cliSessionId"):
+                st.cli[str(data["cliSessionId"])] = str(data["sessionId"])
     return st
 
 

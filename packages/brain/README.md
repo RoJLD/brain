@@ -59,7 +59,7 @@ claude plugin install brain-core@brain
 
 | File | What it holds |
 |---|---|
-| `config.json` | the contract, v1: `identity` (the owner, a person or a team, a tenant), `registry`, `rules`, `memory`, `records`, `engine` (this repo and the tag installed), `tier` (Lite by default), `adapters.claude` (the marketplace `brain` and its core plugin `brain-core`); `brain config --keys` lists every key |
+| `config.json` | the contract, v1: `identity` (the owner's id, the name the views show, `display_name`, a person or a team, a tenant), `registry`, `rules`, `memory`, `records`, `engine` (this repo and the tag installed), `tier` (Lite by default), `adapters.claude` (the marketplace `brain` and its core plugin `brain-core`); `brain config --keys` lists every key |
 | `projects.yaml` | the registry: one project, the brain itself (`brain projects --keys`) |
 | `source/packs.yaml` | the neutral source the agent files are rendered from: the marketplace's owner and one core pack with the engine's hooks |
 | `notes/graph/` | the backlog's graph store, its `owner` the same as config.json's |
@@ -78,6 +78,33 @@ hand (`brain check` refuses them); after an engine upgrade, `brain sync` renders
 that already exists and differs is kept by `brain init` and named (`brain render --target claude --write` replaces
 it). config.json names no `adapters.claude.source`, so the installer's marketplace steps (a GitHub marketplace) stay
 off.
+
+## The owner's queue
+
+`brain queue` lists what waits on the owner: decisions, actions only they may do, permissions an agent lacked. It is
+ranked at zero token by what each entry holds up, in three bands: **now** (blocking, the critical path, a P0 or a
+deadline within 2 days), **this week** (a P1, a slip on a milestone, a deadline within the week, a milestone within 14
+days) and **when you can**. Within a band, the owner's own order first (`brain queue order ID N [--band B]`,
+`--clear`), then a score whose terms `brain queue --explain` shows:
+
+| Term | From |
+|---|---|
+| priority | the highest priority among the open items and milestones it holds up (P0 8, P1 4, P2 2, P3 1) |
+| count | how many it holds up, 0.25 each, at most 3: many P3s never outweigh a P1 by number |
+| slip | the critical path's slip per day of waiting, from the last `brain forecast` (its saved `latest.json`) |
+| milestone | how near the nearest held-up milestone's p50 is |
+| deadline | a stated deadline (the DDR's `due`, `brain queue add --due`; or a `due`/`deadline` prop of what it holds up): 12 overdue, 10 within 2 days, 6 within the week, above any count |
+| effort | the owner's minutes (`--minutes`; a decision's reading time), a quick one a little higher |
+| age, blocking | the days it has waited (at most 2), and 4 for a blocking one |
+
+The same bands show in `brain status`, the cockpit's queue panel (a Band and a Score column, sorted and filtered by
+band) and the morning batches (`brain decision batch --zen`: the band now always in the session). A denied tool call
+expires once every session it was refused in is archived or gone in the Claude desktop app.
+
+The views name the owner by `identity.display_name` (else `identity.owner`): the queue's title is « Ada's queue », or
+« File d'Ada » with `"lang": "fr"` in `<BRAIN_HOME>/tui.json`'s settings (or `$BRAIN_LANG`), and « My queue » when no
+one is named; `settings.titles` there gives any panel a free title. `identity.owner` stays the id `--by` writes and the
+stores declare.
 
 ## Where the brain is found
 

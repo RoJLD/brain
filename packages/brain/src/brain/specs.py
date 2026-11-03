@@ -139,7 +139,7 @@ def readiness(root: Path, store: Path, full: bool = False) -> list[Readiness]:
         asked = sorted(d["id"] for d in ddrs if d.get("status") == "pending")
         unapplied = sorted(d["id"] for d in ddrs if d.get("status") not in APPLIED + ("pending",))
         if asked:
-            r.waits.append(f"{len(asked)} DDR(s) waiting on {config.owner_of()} ({', '.join(asked)})")
+            r.waits.append(f"{len(asked)} DDR(s) waiting on {config.name_of()} ({', '.join(asked)})")
         if unapplied:
             r.waits.append(f"{len(unapplied)} DDR(s) answered, not applied: brain decision ack ({', '.join(unapplied)})")
         if props.get("open"):
