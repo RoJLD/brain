@@ -102,6 +102,11 @@ NEVER = (
      r"\bnew service\b|\bt[âa]ches? planifi[ée]e"),
     ("legal", r"\blegal\b|\bterms\b|\blicen[cs]es?\b",
      r"\blegal\b|\blawyer\b|\bnotary\b|\bnotaire\b|\bterms of (?:service|use)\b|\btos\b|\bcgu\b|\bjuridique\b"),
+    # A session's Remote Control and permission mode (wi-brain-guard-session-settings): the guards refuse the desktop
+    # app's tools that change them, and BRAIN_GUARD_ALLOW cannot lift that refusal (brain.guards.UNLIFTED).
+    ("security-settings", r"\bsecurity[ -]settings?\b|(?<![a-z])remote[ _-]?control\b|\bpermission[ _-]?modes?\b",
+     r"\bsecurity[ -]settings?\b|(?<![a-z])remote[ _-]?control(?![a-z])|(?<![a-z])permission[ _-]?modes?(?![a-z])|"
+     r"set_session_permission_mode|\bbypass ?permissions\b|\bt[ée]l[ée]commande\b|\bmode de permission"),
 )
 
 # Commands of the never-grantable categories: an allow rule whose pattern matches one is refused like one whose text
@@ -114,8 +119,7 @@ PROBES = {
                    "gh repo edit OWNER/NAME --visibility public", "gh repo edit --visibility public OWNER/NAME",
                    "gh repo edit --visibility public", "gh api -X PATCH repos/OWNER/NAME -f private=false",
                    "gh gist create --public FILE"),
-    "accounts": ("gh auth login", "gh auth logout", "gh auth refresh -s SCOPE"),
-    "scheduled": ("schtasks /create /tn NAME /tr CMD", "Register-ScheduledTask -TaskName NAME", "crontab -e",
+    "accounts": ("gh auth login", "gh auth logout", "gh auth refresh -s SCOPE"),    "scheduled": ("schtasks /create /tn NAME /tr CMD", "Register-ScheduledTask -TaskName NAME", "crontab -e",
                   "New-Service -Name NAME", "sc.exe create NAME", "systemctl enable NAME"),
 }
 

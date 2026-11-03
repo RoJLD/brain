@@ -18,8 +18,9 @@ What it does, every command reading files and git, never a model:
 - **the machine**: its profile (`brain profile`, alias `brain doctor`: Lite, Default, Recommended, Custom), stacks
   started on demand (`brain up|down|health`), permissions rendered for Claude Code (`brain permissions`);
 - **Claude Code**: the hooks and guards under `src/brain/adapters/claude/hooks/` (rules injection, capture, the
-  PreToolUse guards: production checkouts, the owner's own actions, power, attribution, secrets, public pushes,
-  branch names), which `brain render --target claude` copies into the owner's own plugin;
+  PreToolUse guards: production checkouts, the owner's own actions, a session's Remote Control and permission mode,
+  power, attribution, secrets, public pushes, branch names; the usage governor before a new session, a subagent or a
+  workflow), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
   shapes, data files) before a push to a public repo, and its guard holds the push until the check is green.
 
@@ -122,6 +123,27 @@ entry with `$BRAIN_PYTHON`, else the brain command's venv (`<BRAIN_HOME>/venv`),
 brain whose `source/packs.yaml` gives its core pack `hooks:` gets them copied into its own plugin by
 `brain render --target claude --write`, at the version it pins; `inject-rules.sh` injects the files of config.json
 `rules`. The guards never block a session on an error: without Python, the call goes through.
+
+Two of the PreToolUse hooks keep the owner's say over how sessions run (the runbook: [`docs/guards.md`](docs/guards.md)):
+
+- **Session settings** (`guard.sh tool`, `brain.guards`): a session that changes Remote Control or a permission mode
+  (`set_remote_control`, `set_session_permission_mode` under any MCP prefix, the app's `set_setting` for a Remote
+  Control key) is refused, whatever the value, and the exact action goes to the owner's queue (`brain queue add
+  --kind action --guard <ref>`). Its category, `security-settings`, is never grantable (`brain permissions`), and
+  `BRAIN_GUARD_ALLOW` does not lift it, not even `all`: the owner switches it in the app.
+- **The usage governor** (`governor.sh`, `brain.governor`), before `start_session`, `Agent` and `Workflow`: it reads
+  the cached quota readings (`brain usage quota --observe`), the sessions running and the brainstorms open on the
+  machine (the desktop app's session files, else the session records), and the committed memory. It asks the owner
+  from `warn` % of a quota window, refuses from `critical` %, refuses a new session past the parallel sessions cap
+  (the smaller of `sessions` and what the week's room pays for), a new brainstorm past `brainstorms` (every project
+  counted; a project's `usage: {brainstorms: N}` in `projects.yaml` lowers it for itself, never raises it), a new
+  session or workflow from `memory` % of committed memory or while the newest quota reading is older than
+  `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
+  now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
+  (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
+
+The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
+brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart.
 
 ## Tests
 

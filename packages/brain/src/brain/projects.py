@@ -75,6 +75,8 @@ KEYS = {
               "event folders, levels; a mapping, or a YAML file relative to the root (brain.alerts)",
     "shared_ids": "ids its stores may share with another store, {id: reason of 15 characters or more}; any other id "
                   "found in two stores fails brain check --all",
+    "usage": "the usage governor's caps for this project, {sessions: N, brainstorms: N}: lower than config.json "
+             "usage.guard's, never higher (brain.governor)",
     "plugin": "reserved (wi-brain-command-plugins): the CLI plugin that brings its subcommands; no command reads it "
               "yet",
     "tenant": "makes the entry a tenant mount: another brain, opaque, that no command reads into; {export: where the "
@@ -385,6 +387,8 @@ def check(root: Path | None = None) -> list[str]:
             errors.append(f"{where}: code_index is a list of paths or {{path, branch}}")
         errors += [f"{where}: {k} is a mapping or a file name" for k in ("stacks", "notify", "alerts")
                    if not isinstance(entry.get(k) or {}, (dict, str))]
+        from .governor import project_limits
+        errors += [f"{where}: {e}" for e in project_limits(entry)[1]]
     for p in load(root).values():
         try:
             repos_of(p)

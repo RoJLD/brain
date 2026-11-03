@@ -42,6 +42,8 @@
         "compactions": {"type": "integer", "minimum": 0}
       }
     },
+    "task_class": {"type": "string", "enum": ["trivial", "standard", "strategic", "brainstorm"], "description": "The task class the brief announced ('Task class: strategic'); brainstorm marks a brainstorm, which brain.governor caps."},
+    "ultracode": {"type": "boolean", "description": "Whether ultracode was on at any time in the session (the app's ultra_effort_enter attachment), so the ledgers tell its spend apart."},
     "cost_usd": {"type": "number", "minimum": 0, "description": "The cost Claude Code reports (cost-state), notional on a subscription."},
     "tools": {"$ref": "#/$defs/counts", "description": "Tool calls per tool."},
     "prs": {

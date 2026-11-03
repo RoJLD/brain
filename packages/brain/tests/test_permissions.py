@@ -90,7 +90,7 @@ def test_the_categories_are_the_engines_and_a_file_only_adds(tmp_path):
         "keys": {"find": ""}, "bad": {"why": "no find"}}})
     by = {c.name: c for c in cats}
     assert errors == ["permissions.yaml: never.bad: a new category needs its find pattern"]
-    assert [c[0] for c in permissions.NEVER] == list(by)[:7]
+    assert [c[0] for c in permissions.NEVER] == list(by)[:len(permissions.NEVER)]
     assert permissions.never_category("gh repo create x --public", cats) == "visibility"   # the engine's
     assert permissions.never_category("gh repo rename y", cats) == "visibility"             # added
     assert permissions.never_category("powershell -File install.ps1 -Apply", cats) == "installer"
