@@ -4,6 +4,12 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The suite is green on Linux.** Three places misread Windows shapes off Windows: a PowerShell word's backslash is
+  now a path separator wherever `os.path` reads only slashes (`guards.PS_BACKSLASH`), as PowerShell reads it, so
+  `Set-Content {lab}\x` is seen in the production checkout; a `cmd /c` option is slashes and a name without a
+  separator (`guards.CMD_OPTION`: `/c`, `//J`, `/XD`), so a Unix absolute path is a target, not an option; and
+  `detail.preview` finds `.\install.ps1` by its last part on either separator. The 26 advisory `brain-linux` failures
+  of main go away.
 - **The Terminal panel meets the shell guards** (wi-brain-guard-terminal-tool). A command that the desktop app's
   `run_in_terminal` types into the owner's Terminal panel ran outside every guard: production checkouts, the owner's
   own actions (`brain usage allow` included), power, attribution, secrets, public pushes and branch names. A

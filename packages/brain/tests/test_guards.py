@@ -319,6 +319,23 @@ def test_powershell_shell_writes_refused_in_production(plat, command):
     assert reason and "refused: it writes" in reason and "in the production checkout" in reason, command
 
 
+@pytest.mark.parametrize("command", PS_WRITES_REFUSED[:6])
+def test_powershell_backslashes_are_separators_where_os_path_reads_slashes(plat, command, monkeypatch):
+    """On Linux and macOS a PowerShell word's backslash is read as /, as PowerShell reads it: the refusals hold."""
+    monkeypatch.setattr(guards, "PS_BACKSLASH", True)
+    lab, wt = plat / "demo-lab", plat.parent / "scratchpad" / "ql-x"
+    reason = pwsh(plat, command.format(lab=lab, wt=wt, labm=msys(lab)))
+    assert reason and "in the production checkout" in reason, command
+    words = guards.calls(r"Set-Content -Path C:\a\b.txt -Value 'x\y'", str(plat), powershell=True)[0][0]
+    assert words == ["Set-Content", "-Path", "C:/a/b.txt", "-Value", "x/y"]
+    assert guards.calls(r"grep a\b x", str(plat))[0][0] == ["grep", "ab", "x"]   # bash keeps its own escapes
+
+
+def test_a_cmd_option_is_a_slash_and_a_name():
+    assert all(guards.CMD_OPTION.fullmatch(o) for o in ("/c", "//J", "/XD", "/exclude:list.txt", "/?"))
+    assert not any(guards.CMD_OPTION.fullmatch(a) for a in ("/tmp/x/node_modules", "//server/share/x", "x", "C:/x"))
+
+
 SHELL_WRITES_ALLOWED = [
     # reads
     ("lab", "cat notes/x.md | grep -n x | head -5 > /dev/null 2>&1"), ("lab", "ls -la 2>/dev/null; wc -l < x.txt"),

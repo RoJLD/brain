@@ -102,6 +102,11 @@ REDIRECT = "\0"  # starts the word segments() puts before a redirection's target
 SUBSHELL = ("\x01(", "\x01)")  # the one-word segments that open and close a bash subshell, ( ... ) and $( ... )
 BASH_REDIR = re.compile(r"(?P<op>&>>?|<>|>>?\|?|<)(?:(?P<dup>&(?:\d+-?|-))|(?P<proc>\()|&)?")
 PS_REDIR = re.compile(r"(?P<op>>>?)(?P<dup>&\d)?")
+# PowerShell reads \ as a path separator on every system: where os.path does not (Linux, macOS), a PowerShell word's
+# backslashes are read as slashes, so that C:\x\y and $HOME\x resolve as PowerShell resolves them.
+PS_BACKSLASH = os.sep == "/"
+# A cmd.exe option: slashes, then a name without a separator (/c, //J, /XD, /exclude:list.txt); /tmp/x is a path.
+CMD_OPTION = re.compile(r"/+[^/\\]*")
 PATH_SUBST = re.compile(r"\$\(\s*(mktemp|cygpath|realpath)((?:\s+-[-\w=]*)*)\s*([^()`;&|<>\n]*?)\s*\)")
 ATTRIBUTION = [re.compile(r"(?im)^\s*co-authored-by:.*(?:\bclaude\b|anthropic)"),
                re.compile(r"(?im)^\W*generated (?:with|by) \[?claude\b")]
@@ -349,6 +354,8 @@ def calls(command: str, cwd: str, powershell: bool = False) -> list[tuple[list[s
     subshells: list[str] = []
     env: dict[str, str | None] = {}
     for words in segments(command, powershell):
+        if powershell and PS_BACKSLASH:
+            words = [w.replace("\\", "/") for w in words]
         if words[0] in SUBSHELL:
             if words[0] == SUBSHELL[0]:
                 subshells.append(cwd)
@@ -836,7 +843,7 @@ def writes(words: list[str], cwd: str, shell: str = "bash"):
     if shell == "ps" and PS_ALIASES.get(prog, prog) in PS_WRITERS:
         yield from ((name, p) for p in _ps_targets(PS_ALIASES.get(prog, prog), args, cwd))
     elif shell == "cmd" and prog in CMD_WRITERS:
-        pos, kind = [a for a in args if not a.startswith("/")], CMD_WRITERS[prog]
+        pos, kind = [a for a in args if not CMD_OPTION.fullmatch(a)], CMD_WRITERS[prog]
         names = {"all": pos, "first": pos[:1], "second": pos[1:2], "last": pos[-1:] if len(pos) > 1 else ["."]}[kind]
         yield from ((name, p) for p in _targets(names, cwd))
     elif prog in WRITERS:
