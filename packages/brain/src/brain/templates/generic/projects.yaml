@@ -8,4 +8,8 @@
 
 {name}:
   root: .
-  title: {title}
+  title: {title_q}
+  repos:                 # brain audit reads this repo; the Claude rendering is the engine's code, tested there
+    - path: .
+      name: {name}
+      waive: {"plugins/**": "rendered by brain render --target claude: the engine's hooks, tested in the engine"}
