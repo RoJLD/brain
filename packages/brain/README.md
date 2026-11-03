@@ -34,7 +34,7 @@ pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.2#subdirectory=
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
 launcher on the user PATH, and, for a personal brain, sets up its Claude configuration (marketplace, plugin,
-permissions, memory) and the machine's pointer `<BRAIN_HOME>/personal.json`. It prints a plan; `-Apply` does it.
+permissions, memory) and the machine's pointer `<BRAIN_HOME>/personal.json`. It prints a plan; `-Apply` does it. The launcher is replaced even while a brain runs (a session's hooks call it): a new one is swapped in beside it, the old one renamed aside and removed on the next run.
 
 ```powershell
 .\packages\brain\installer\install.ps1                       # the plan

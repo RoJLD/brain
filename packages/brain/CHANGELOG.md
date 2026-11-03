@@ -4,6 +4,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **`install.ps1 -Apply` replaces a running launcher.** Sessions' hooks run `brain.exe` many times a minute, and
+  Windows refuses to overwrite a running image, so the last step of `-Apply` (the copy to `<BRAIN_HOME>\bin`) failed
+  twice. `Set-Launcher` leaves an identical launcher alone, copies a new one beside it and swaps it in with a short
+  retry, and renames a still-locked one aside (`brain.exe.old-<time>`, removed on the next run); it prints `same`,
+  `copied` or `swapped`. Tested on a running image (`tests/test_installer_launcher.py`).
 - **The queue in three bands, ranked by what each entry holds up** (wi-brain-queue-priority). `brain queue` scores
   each entry at zero token: the highest priority and the count of the open items and milestones it holds up, the
   critical path's slip per day of waiting and the nearest milestone (the last `brain forecast`, through
@@ -17,6 +22,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   stays the id `--by` writes. The queue's title is « {name}'s queue » or « File de {name} » (`tui.json` settings
   `lang`, or `$BRAIN_LANG`), « My queue » when no one is named, and `settings.titles` gives any panel a free title.
 - Fixed: a date-typed prop (`due: 2026-11-08`) no longer breaks `brain queue`.
+- Fixed: the cockpit reads `tui.json`'s settings again after two writes that share one modification time (Windows'
+  coarse clock): its cache keys on the time and the size, and `save_state` clears it.
 - **A session's Remote Control and permission mode are the owner's** (wi-brain-guard-session-settings). The guards
   refuse `set_remote_control` and `set_session_permission_mode` under any MCP prefix, and the app's `set_setting` for
   a Remote Control or permission key, whatever the value; the refusal names the `brain queue add --guard` command

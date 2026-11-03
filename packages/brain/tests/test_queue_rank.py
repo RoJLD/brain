@@ -2,6 +2,7 @@
 (wi-brain-owner-label), on fixtures owned by Ada."""
 
 import json
+import os
 from datetime import date
 
 import pytest
@@ -243,3 +244,18 @@ def test_no_one_named_is_my_queue(tmp_path, monkeypatch, brain_home):
     f.write_text(json.dumps({"v": 1}), encoding="utf-8")
     monkeypatch.setenv("BRAIN_CONFIG", str(f))
     assert config.name_of() == config.NO_OWNER and cockpit.title("queue") == "My queue"
+
+
+def test_the_settings_are_read_again_when_two_writes_share_a_time(brain_home):
+    """Windows stamps file times from a coarse clock: two writes in a row can leave one mtime."""
+    path = cockpit.state_path()
+    assert cockpit.save_state({"settings": {"titles": {"queue": "Ma file à moi"}}})
+    assert cockpit.title("queue") == "Ma file à moi"
+    stamp = path.stat().st_mtime_ns
+    assert cockpit.save_state({"settings": {"lang": "fr"}})   # the same process: its cache is cleared
+    os.utime(path, ns=(stamp, stamp))
+    assert cockpit.title("queue") == "File d'Ada"
+    path.write_text(json.dumps({"cockpit": 1, "settings": {"titles": {"queue": "Another writer's title"}}}),
+                    encoding="utf-8")   # another process (the TUI): the same time, another size
+    os.utime(path, ns=(stamp, stamp))
+    assert cockpit.title("queue") == "Another writer's title"

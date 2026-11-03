@@ -860,10 +860,13 @@ _settings_cache: dict = {}
 
 
 def settings() -> dict:
-    """tui.json's settings (theme, tz, lang, titles), read again only when the file changed."""
+    """tui.json's settings (theme, tz, lang, titles), read again only when the file changed: its modification time
+    and its size (Windows stamps times from a coarse clock, so two writes in a row can share one), and after each
+    :func:`save_state` of this process."""
     path = state_path()
     try:
-        key = (str(path), path.stat().st_mtime_ns)
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size)
     except OSError:
         return {}
     if _settings_cache.get("key") != key:
@@ -904,6 +907,7 @@ def save_state(state: dict, path: Path | None = None) -> bool:
         tmp.write_text(json.dumps({"cockpit": 1, **state}, ensure_ascii=False, indent=1, sort_keys=True) + "\n",
                        encoding="utf-8")
         os.replace(tmp, path)
+        _settings_cache.clear()  # settings() reads the new file, whatever its time says
         return True
     except OSError:
         return False
