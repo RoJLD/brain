@@ -33,6 +33,10 @@ stamp).
 A green check with ``--history`` writes the stamp ``<BRAIN_HOME>/public-check/<owner>/<repo>/<sha>`` (HEAD's sha, the
 repo's GitHub owner and name): the ``public`` guard (brain.guards) refuses a ``git push`` to a repo of
 ``public.repos`` until every commit it pushes has one.
+
+:func:`gate` is what ``brain check`` runs in a brain or repo with a boundary.yaml (``brain init`` writes one): brain
+boundary's check and the ``--engine`` scan, so that what may be published one day holds nothing private from the
+first commit (wi-brain-public-ready-init).
 """
 
 from __future__ import annotations
@@ -414,6 +418,38 @@ def render(data: dict, stamped_at: Path | None = None) -> list[str]:
         lines.append("green" + ("" if data["history"] else ": the tree only; --history checks the commits to push "
                                 "and stamps HEAD for the public guard"))
     return lines
+
+
+def gate(root: Path, cfg: config.Config | None = None) -> tuple[int, list[str]]:
+    """What ``brain check`` adds for a brain or a repo with a boundary.yaml (wi-brain-public-ready-init): brain boundary
+    --check (every tracked file classified, the engine side at or under readiness_max) and this module's scan of the
+    engine side (``--engine``: no denied term, secret, e-mail address, home folder or data file in what may be
+    published one day). (exit code, lines); nothing without a boundary.yaml, a note before the first ``git init``."""
+    root = Path(root)
+    if not (root / boundary.FILE).is_file():
+        return 0, []
+    if not _out(root, "rev-parse", "--show-toplevel"):
+        return 0, [f"boundary: not a git checkout yet, nothing tracked to check ({boundary.FILE})"]
+    cfg = cfg or config.load(root)
+    try:
+        data = boundary.report(root, cfg)
+        scan = check(root, cfg, engine=True)
+    except (boundary.BoundaryError, PublicError) as exc:
+        return 1, [f"error: boundary: {exc}"]
+    errors = [f"error: boundary: {p}: no rule of {boundary.FILE} classifies it (add one: engine, personal, claude or "
+              "generated)" for p in data["unclassified"]]
+    errors += [f"error: boundary: {e}" for e in data["errors"]]
+    if boundary.over(data):
+        errors.append(f"error: boundary: the engine side holds {data['readiness']['total']} denied term(s), over "
+                      f"readiness_max {data['readiness_max']}: brain boundary --readiness names them")
+    errors += [f"error: boundary: public: {Finding(**f).text()}" for f in scan["findings"]]
+    if errors:
+        return 1, errors + [f"boundary: {len(errors)} error(s); what may be published one day holds nothing private "
+                            "(brain boundary, brain check --public --engine)"]
+    cap = data["readiness_max"]
+    return 0, [f"boundary: {data['files']} tracked file(s) classified; engine side {data['counts']['engine']} file(s), "
+               f"readiness {data['readiness']['total']}" + (f" (max {cap})" if cap is not None else "")
+               + ", public scan green"]
 
 
 def main(repo: Path, *, history: bool = False, remote: str = "", engine: bool = False, as_json: bool = False) -> int:

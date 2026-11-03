@@ -55,6 +55,30 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   through their installer.
 - **The session record knows ultracode and the task class.** The SR gains `ultracode` (on at any time: the app's
   `ultra_effort_enter` attachment) and `task_class` (the brief's, brainstorm included).
+- **`brain init` for a stranger, from a template.** `--template NAME|DIR` (default `generic`, the only one the engine
+  ships): a template is data and a manifest (`template.yaml`: name, version, the engine versions it fits, title, the
+  graph stores it starts, a list of `{name, store, schema}` with the main store first and only research_graph's
+  default schema for now, and the files it renders with `{owner}`, `{owner_q}`, `{name}`, `{title_q}`), never code;
+  the plan stays local, a list of steps a later one (the owner's repos and data store) can join; a bad manifest, an
+  engine outside its range or a template missing what config.json names plans nothing. config.json records it (`template`, a new key
+  of the schema). `--owner` defaults to the owner of the folder's config.json. The generic template's files moved to
+  `templates/generic/`.
+- **The generic store holds the records** (GT-2, wi-brain-init-records-layer). A template's `schema: default` is
+  the brain's base (`templates/schemas/default.yaml`): the work, decisions and records layers, so that `brain sync`
+  turns a new brain's DDRs, sessions and actions into nodes from the first sync; `research_graph init` builds the
+  store, then `brain init` writes this schema in its place (a new store only).
+- **Publishable by construction.** The generic template writes `boundary.yaml` (every file's side, `readiness_max: 0`,
+  `src/`, `tests/` and `fixtures/` on the engine side), `fixtures/README.md`, a `README.md` and `.gitattributes` (LF:
+  the hooks' shell scripts), and config.json `public` (no repo; `deny`: the owner, this machine's user and host,
+  leaving out names too common to deny). `brain check` runs the boundary's check and the engine side's public scan
+  wherever a boundary.yaml is (`brain.public.gate`): a file no rule classifies, or a denied term, a secret, an e-mail
+  address or a home folder in what may be published, fails it from the first commit. `projects.yaml` waives the
+  rendered plugin in `brain audit`, so a fresh brain carries no debt of the engine's.
+- **The stranger test.** `installer/stranger_test.py` installs a tag (or, `--pre-tag`, a branch with research-graph
+  from the same ref) into a fresh venv, isolated from its caller (its own home, BRAIN_HOME, Claude and git config, a
+  PATH with no docker, Git's bash for the hooks on Windows), runs the Lite scenario as an invented owner and scans
+  every output and file for the terms given with `--deny`; its verdict is a pilot's go. `docs/install.md` (Windows
+  from zero, Linux and macOS) and `docs/pilot.md` (what to try, how to report an issue) are the tester's.
 
 ## 0.2.1 — 2026-11-03
 

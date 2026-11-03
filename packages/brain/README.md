@@ -30,7 +30,7 @@ What it does, every command reading files and git, never a model:
 Python 3.10 or later. The command depends on PyYAML and on `research-graph` at the same tag.
 
 ```bash
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.1#subdirectory=packages/brain"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.2#subdirectory=packages/brain"
 ```
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
@@ -49,7 +49,7 @@ permissions, memory) and the machine's pointer `<BRAIN_HOME>/personal.json`. It 
 brain init ~/my-brain --owner "Your name"            # the plan
 brain init ~/my-brain --owner "Your name" --apply    # writes it; a second apply changes nothing
 cd ~/my-brain && git init && git add -A && git commit -m "my brain"
-brain check                                          # graph-check OK
+brain check                                          # graph-check OK, and the boundary's public scan green
 brain profile                                        # this machine's profile: Lite unless you choose another
 brain item add wi-first --title "My first item"
 # Claude Code, once: the brain's own folder is a local marketplace
@@ -57,22 +57,35 @@ claude plugin marketplace add ~/my-brain
 claude plugin install brain-core@brain
 ```
 
-`brain init` writes, from `src/brain/templates/` and `research_graph init`, never over an existing file:
+`brain init` writes, from a template (`--template`, default `generic`: `src/brain/templates/generic/`) and
+`research_graph init`, never over an existing file. `--owner` may be left out in a folder that already has a
+`config.json` (its `identity.owner`). The generic template:
 
 | File | What it holds |
 |---|---|
-| `config.json` | the contract, v1: `identity` (the owner's id, the name the views show, `display_name`, a person or a team, a tenant), `registry`, `rules`, `memory`, `records`, `engine` (this repo and the tag installed), `tier` (Lite by default), `adapters.claude` (the marketplace `brain` and its core plugin `brain-core`); `brain config --keys` lists every key |
-| `projects.yaml` | the registry: one project, the brain itself (`brain projects --keys`) |
+| `config.json` | the contract, v1: `identity` (the owner's id, the name the views show, `display_name`, a person or a team, a tenant), `registry`, `rules`, `memory`, `records`, `template` (its name and version), `engine` (this repo and the tag installed), `tier` (Lite by default), `adapters.claude` (the marketplace `brain` and its core plugin `brain-core`), `public` (no public repo yet; `deny`: the owner's name, this machine's user and host names); `brain config --keys` lists every key |
+| `projects.yaml` | the registry: one project, the brain itself (`brain projects --keys`), its repo audited with the rendered plugin waived |
+| `boundary.yaml`, `fixtures/README.md` | every file's side (`brain boundary`) at `readiness_max: 0`: `src/`, `tests/` and `fixtures/` may be published one day, so from the first commit `brain check` refuses a denied term, a secret, an e-mail address or a home folder in them, and a file no rule classifies |
 | `source/packs.yaml` | the neutral source the agent files are rendered from: the marketplace's owner and one core pack with the engine's hooks |
-| `notes/graph/` | the backlog's graph store, its `owner` the same as config.json's |
+| `notes/graph/` | the brain's graph store, its `owner` the same as config.json's, in three layers: the work (items, milestones, specs), the decisions (ADRs) and the records (DDR, Session, Action), which `brain sync` generates from `records/` |
 | `.claude-plugin/marketplace.json`, `plugins/brain-core/` | the Claude Code marketplace and its core plugin (its manifest and the engine's hooks: the rules injection, the guards, the capture), rendered after the store by `brain render --target claude --write`'s code, so `brain check` passes at once |
 | `notes/decisions.md`, `notes/journal.md` | the decision log and the journal, append-only |
 | `rules/global.md` | neutral starter rules for every project (definition of done, decisions, scripts before rules): edit them |
-| `CLAUDE.md`, `.gitignore`, `memory/`, `records/` | the repo's own rules, the memory notes and the records |
+| `CLAUDE.md`, `README.md`, `.gitignore`, `.gitattributes`, `memory/`, `records/` | the repo's own rules and what it is, LF endings (the hooks' shell scripts), the memory notes and the records |
+
+A template is data and a manifest, never code: `template.yaml` gives its `name`, `version`, the `engine` versions that
+can render it (`">=0.2.2"`), a `title`, its `graphs` (a list of `{name, store, schema}`, the brain's main store
+first, each started by `research_graph init`; `schema: default` only for now) and its `files` (`{the brain's path:
+the template's file}`, `""` for an empty one), rendered with `{owner}`, `{owner_q}` (quoted for YAML or JSON),
+`{name}` and `{title_q}`. It must write what config.json names (`projects.yaml`, `rules/global.md`,
+`source/packs.yaml`, `memory/`, `records/`); the engine writes config.json, the graph stores and the Claude
+marketplace itself. `--template DIR` takes a folder of your own holding one. A template is public data; the owner's
+records live in their own brain.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
-A team uses `--kind team` (and `--tenant ID` for a hosted brain).
+A team uses `--kind team` (and `--tenant ID` for a hosted brain). The step-by-step guide from an empty machine is
+[`docs/install.md`](../../docs/install.md); the pilot's is [`docs/pilot.md`](../../docs/pilot.md).
 
 Claude Code gets the hooks, the guards and the injected rules from the brain's own folder: `claude plugin marketplace
 add <the brain's folder>` once, then `claude plugin install brain-core@brain`. The rendered files are never edited by
@@ -145,6 +158,23 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
 
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart.
+
+## Data classes and the vault
+
+Every store of a brain declares a data class in `config.json` (`classes.stores`: public, private, confidential,
+sealed, resident, secret, `tenant:<id>`), and the class says where it may go and how; `brain check --all` refuses a
+store without a class and a destination its class forbids, and `brain init` writes a starting block. What leaves a
+machine is sealed client-side to public keys (`brain vault`: age, gpg as the fallback), to a device key per machine,
+kept in the OS keystore, and an offline recovery key: two recipients at least, proven daily by a canary per recipient
+(`brain health vault`). Opening, drilling and creating a key are the owner's acts, refused in an agent session. The
+owner's steps, the canary's scheduled task per system and what to do with a lost key: the runbook
+[`docs/vault.md`](docs/vault.md).
+
+```
+brain classes [--check] [--suggest] [--matrix] [PATH...]
+brain vault status | seal STORE | canary | recipient add NAME | device init | open FILE | drill RECIPIENT
+brain health vault
+```
 
 ## Tests
 

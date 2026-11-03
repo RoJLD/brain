@@ -8,7 +8,7 @@
 
 marketplace:
   owner:
-    name: {owner}
+    name: {owner_q}
 
 packs:
   core:              # the plugin every session gets: the engine's hooks inject config.json rules, guard and capture
