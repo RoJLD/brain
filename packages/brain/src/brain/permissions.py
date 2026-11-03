@@ -236,7 +236,7 @@ def default_categories() -> list[Category]:
         cats = None
         if key[1] is not None:
             try:
-                data = graph._yaml().safe_load(f.read_text(encoding="utf-8")) or {}
+                data = graph.load_yaml(f.read_text(encoding="utf-8")) or {}   # libyaml: read by the guards
                 cats = categories(data if isinstance(data, dict) else {})[0]
             except Exception:
                 cats = None

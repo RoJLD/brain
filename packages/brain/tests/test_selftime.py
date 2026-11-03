@@ -203,7 +203,7 @@ def test_a_bash_fast_path_appends_its_event(on, tmp_path):
 
 
 def test_a_python_hook_counts_its_bash_start(on, tmp_path):
-    out = _hook("guard.sh", {"tool_name": "Bash", "tool_input": {"command": "git status"}, "cwd": str(tmp_path)},
+    out = _hook("guard.sh", {"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}, "cwd": str(tmp_path)},
                 "shell", BRAIN_PYTHON=sys.executable)
     assert out.returncode == 0
     (ev,) = _lines(on, "exec-2*.jsonl")

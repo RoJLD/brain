@@ -42,6 +42,13 @@ def _yaml():
     return yaml
 
 
+def load_yaml(text: str):
+    """PyYAML's safe load through libyaml (CSafeLoader) when PyYAML has it, else its pure-Python SafeLoader: the same
+    data, about 9 times faster (wi-brain-hook-latency: the guards' registry read)."""
+    y = _yaml()
+    return y.load(text, Loader=getattr(y, "CSafeLoader", y.SafeLoader))
+
+
 def fmt(value) -> str:
     """A YAML flow scalar, list or mapping: plain when unambiguous, else double-quoted (JSON escapes)."""
     if isinstance(value, bool):

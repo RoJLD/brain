@@ -39,6 +39,15 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   the project of the item its brief names, wherever it ran; before, they landed in « other folders », so `brain
   usage`, the quota pacing and the forecast missed them (`queue.Placer`, also used by the cockpit and `brain queue`).
   A project's own root wins over another project's repo at the same place.
+- **Faster hooks** (wi-brain-hook-latency, PERF-1: Python first). The launchers read their JSON with `read` instead
+  of `$(cat)`, find Python with `[ -x ]` and `hash` instead of `$(command -v)` (`brain_python`, `hooks/common.sh`),
+  pass the JSON as a here-string instead of a pipe, and take the plugin root from their own path: no fork before
+  Python. `guard.sh` leaves git that only reads to bash (`git [-C DIR | --no-pager | -P] SUB`, SUB in
+  `guards.GIT_READS`: status, log, diff, show, rev-parse, ls-files, blame...; not with `--output` or a pager option;
+  any other git, `-c` or `--git-dir` still starts Python), about 30 % of the shell commands that started it.
+  `paths.installed_checkout` reads its `file:` URL with `urllib.parse` (`paths.file_url_path`) and once per process:
+  a guard no longer imports `urllib.request` (~50 ms). The registry and `permissions.yaml` are read through libyaml
+  (`graph.load_yaml`). The exec form of the hooks (`args`, no shell) waits until it is checked on Windows.
 - **Releasing:** `hooks/common.sh`'s `brain_version` moves with `__version__` (a test checks it).
 
 ## 0.2.3 — 2026-11-03
