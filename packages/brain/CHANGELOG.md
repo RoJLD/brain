@@ -2,16 +2,8 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
-## 0.2.1 — 2026-11-03
+## Unreleased
 
-- **A new brain gets its own Claude Code plugin.** `brain init` renders a local marketplace in the new brain: it
-  writes `source/packs.yaml` (the marketplace's owner, one core pack with the engine's hooks) and config.json
-  `adapters.claude` (the marketplace `brain`, the plugin `brain-core`, no `source`), then, after the store,
-  `.claude-plugin/marketplace.json` and `plugins/brain-core/` by the code of `brain render --target claude --write`,
-  so `brain check` passes at once; a rendered file that exists and differs is kept. The owner adds the marketplace
-  once (`claude plugin marketplace add <the brain's folder>`, then `claude plugin install brain-core@brain`): a local
-  marketplace's plugin is loaded in place, so its hooks are those of the installed engine, and `brain sync` renders
-  them again after an upgrade. Nothing of the owner's leaves the machine, nothing is published.
 - **A session's Remote Control and permission mode are the owner's** (wi-brain-guard-session-settings). The guards
   refuse `set_remote_control` and `set_session_permission_mode` under any MCP prefix, and the app's `set_setting` for
   a Remote Control or permission key, whatever the value; the refusal names the `brain queue add --guard` command
@@ -33,6 +25,16 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 - **The session record knows ultracode and the task class.** The SR gains `ultracode` (on at any time: the app's
   `ultra_effort_enter` attachment) and `task_class` (the brief's, brainstorm included).
 
+## 0.2.1 — 2026-11-03
+
+- **A new brain gets its own Claude Code plugin.** `brain init` renders a local marketplace in the new brain: it
+  writes `source/packs.yaml` (the marketplace's owner, one core pack with the engine's hooks) and config.json
+  `adapters.claude` (the marketplace `brain`, the plugin `brain-core`, no `source`), then, after the store,
+  `.claude-plugin/marketplace.json` and `plugins/brain-core/` by the code of `brain render --target claude --write`,
+  so `brain check` passes at once; a rendered file that exists and differs is kept. The owner adds the marketplace
+  once (`claude plugin marketplace add <the brain's folder>`, then `claude plugin install brain-core@brain`): a local
+  marketplace's plugin is loaded in place, so its hooks are those of the installed engine, and `brain sync` renders
+  them again after an upgrade. Nothing of the owner's leaves the machine, nothing is published.
 ## 0.2.0 — 2026-11-03
 
 The brain command, published as this repo's second distribution, from the personal brain it was written in (a fresh
