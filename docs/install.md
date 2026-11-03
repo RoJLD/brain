@@ -29,10 +29,10 @@ git --version
 
 The installer makes a venv of its own in `~/.brain\venv` (where the hooks look for it), copies the `brain` launcher
 into `~/.brain\bin` and adds that folder alone to your user PATH. It prints a plan first; `-Apply` does it. Take it
-from the tag you were given (here v0.2.2):
+from the tag you were given (here v0.2.3):
 
 ```powershell
-git clone --depth 1 --branch v0.2.2 https://github.com/RoJLD/brain.git "$HOME\brain-engine"
+git clone --depth 1 --branch v0.2.3 https://github.com/RoJLD/brain.git "$HOME\brain-engine"
 powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages\brain\installer\install.ps1"
 powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages\brain\installer\install.ps1" -Apply
 ```
@@ -40,14 +40,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages
 `-ExecutionPolicy Bypass` applies to that one run only; it changes no setting. Open a new PowerShell window, then:
 
 ```powershell
-brain --version        # brain 0.2.2
+brain --version        # brain 0.2.3
 ```
 
 Without the installer, the same by hand (the venv must be `~/.brain\venv` for the hooks to find it):
 
 ```powershell
 py -3 -m venv "$HOME\.brain\venv"
-& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.2#subdirectory=packages/brain"
+& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.3#subdirectory=packages/brain"
 & "$HOME\.brain\venv\Scripts\brain.exe" --version
 ```
 
@@ -132,7 +132,7 @@ Python 3.10+, `python3-venv` (Debian, Ubuntu) and git; bash is there already.
 
 ```bash
 python3 -m venv ~/.brain/venv
-~/.brain/venv/bin/pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.2#subdirectory=packages/brain"
+~/.brain/venv/bin/pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.3#subdirectory=packages/brain"
 mkdir -p ~/.local/bin && ln -sf ~/.brain/venv/bin/brain ~/.local/bin/brain    # ~/.local/bin on your PATH
 brain --version
 brain init ~/my-brain --owner "Your Name" --apply
@@ -143,14 +143,14 @@ Then steps 4 and 5 above, with `~/my-brain` for the folder.
 
 ## Upgrade, uninstall
 
-- **Upgrade, from 0.2.3**: `brain update` prints the plan (the new version, what its CHANGELOG says, the install
-  into `~/.brain\venv`, the launcher swap) and installs it when you answer `y`; `brain update --check` only prints
-  it. The cockpit's title bar shows the installed version and, when a newer one is out, « brain 0.2.3 · 0.2.4
-  available »; `u` opens the same plan. Then, in your brain, `brain sync` (the plugin's hooks), and move
-  `engine.pin` in `config.json` to the new tag in a commit of your own (the plan reminds you; otherwise the
-  installer's next `-Apply` puts the pinned tag back).
-- **Upgrade by hand, from 0.2.2 or earlier** (they have no `brain update`): the same `pip install` with the new tag,
-  in the venv, for instance
+- **Upgrade with `brain update`** (a version that has it: `brain update --help` answers): it prints the plan (the
+  new version, what its CHANGELOG says, the install into `~/.brain\venv`, the launcher swap) and installs it when you
+  answer `y`; `brain update --check` only prints it. The cockpit's title bar shows the installed version and, when a
+  newer one is out, « brain X · Y available »; `u` opens the same plan. Then, in your brain, `brain sync` (the
+  plugin's hooks), and move `engine.pin` in `config.json` to the new tag in a commit of your own (the plan reminds
+  you; otherwise the installer's next `-Apply` puts the pinned tag back).
+- **Upgrade by hand** (0.2.2, and any version where `brain update --help` fails): the same `pip install` with the new
+  tag, in the venv, for instance
   `& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain[tui] @ git+https://github.com/RoJLD/brain.git@v0.2.3#subdirectory=packages/brain"`
   (or `install.ps1 -Apply` from a clone of that tag, which also swaps the launcher), then `brain --version`,
   `brain sync` in your brain and `engine.pin` moved as above.

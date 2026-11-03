@@ -17,7 +17,7 @@ from .model import LayeredGraph
 from .roadmap import DEFAULT_OUT as ROADMAP_OUT
 from .roadmap import render_roadmap, roadmap_stale, write_roadmap
 from .sync import derive, regenerate_edges_file_text, render_edges, render_stubs
-from .validate import check_consistency, check_coverage, check_wiring
+from .validate import check_consistency, check_coverage, check_wiring, unchecked_anchors
 
 DEFAULT_STORE = "notes/graph"
 OPEN = ["doing", "todo", "blocked"]
@@ -33,6 +33,13 @@ def _add_filters(sp: argparse.ArgumentParser) -> None:
                                                                             "contains TEXT); repeatable.")
     sp.add_argument("--text", help="Every word in the id, title, anchor or props.")
     sp.add_argument("--json", action="store_true")
+
+
+def _name_path(value: str) -> tuple[str, Path]:
+    name, sep, path = value.partition("=")
+    if not sep or not name or not path:
+        raise argparse.ArgumentTypeError(f"{value!r}: NAME=PATH")
+    return name, Path(path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,7 +62,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("build")
     sub.add_parser("frontier")
     sub.add_parser("gated")
-    sub.add_parser("check")
+    ck = sub.add_parser("check")
+    ck.add_argument("--repo-path", action="append", default=[], metavar="NAME=PATH", type=_name_path,
+                    help="The checkout of a repo a node's repo names, whose files its anchor is in (repeatable; "
+                         "without one, those anchors are not checked: an advisory).")
     syncp = sub.add_parser("sync")
     syncp.add_argument("--write", action="store_true")
     prov = sub.add_parser("provenance")
@@ -293,10 +303,11 @@ def main(argv: list[str] | None = None) -> int:
             print(push(payload, args.push, args.name or _repo_name(args).lower()))
         return 0
     if args.cmd == "check":
-        problems = check_coverage(graph, args.repo_root)
+        repos = dict(args.repo_path)
+        problems = check_coverage(graph, args.repo_root, repos)
         problems += check_wiring(graph, args.repo_root)
         problems += structure_errors(graph)
-        advisories = check_consistency(graph) + orphan_code_refs(graph)
+        advisories = check_consistency(graph) + orphan_code_refs(graph) + unchecked_anchors(graph, repos)
         for adv in advisories + kanban_stale(graph, args.repo_root) + roadmap_stale(graph, args.repo_root):
             print(f"advisory: {adv}")
         for adv in graph.graph.get("collapsed_edges", []):

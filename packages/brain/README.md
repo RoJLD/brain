@@ -32,7 +32,7 @@ What it does, every command reading files and git, never a model:
 Python 3.10 or later. The command depends on PyYAML and on `research-graph` at the same tag.
 
 ```bash
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.2#subdirectory=packages/brain"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.3#subdirectory=packages/brain"
 ```
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
@@ -47,7 +47,7 @@ permissions, memory) and the machine's pointer `<BRAIN_HOME>/personal.json`. It 
 
 ### Updates
 
-`brain update` (from 0.2.3) reads the latest release tag of the engine's public repo (`config.json` `engine.repo`,
+`brain update` (after 0.2.3) reads the latest release tag of the engine's public repo (`config.json` `engine.repo`,
 else RoJLD/brain) with `git ls-remote`, no token, and prints the plan: the version and its CHANGELOG sections, the
 tag installed into the brain's venv (pip, the `tui` extra kept), the launcher swapped in on Windows (as the installer
 does, even while a brain runs), and, for a brain that pins its engine (`config.json` `engine.pin`), the pin to move by
@@ -56,7 +56,7 @@ Claude Code session's shell. `brain update --check` prints the plan and installs
 checkout installed editable is not updated by pip (`git pull` there).
 
 The cockpit's title bar always shows the installed version. Once the screen is drawn, it checks the tags in the
-background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.2 · 0.2.3 available »
+background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.3 · 0.2.4 available »
 when a newer one is out; `u` then opens `brain update`'s plan in a confirmation, run on `y`.
 
 ## Start your own brain

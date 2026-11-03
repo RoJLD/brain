@@ -9,7 +9,7 @@ what went wrong. The install itself is in [install.md](install.md).
   Nobody hosts anything for you, and nothing is billed.
 - **Your data stays yours.** Your brain is a folder and a git repo of your own, pushed (if at all) to a private repo
   in your own account or organisation. The engine sends nothing anywhere: telemetry is off by default, and there is
-  no account and no upload. From 0.2.3 the cockpit reads the public repo's release tags once a day (a `git
+  no account and no upload. Once your version has `brain update`, the cockpit reads the public repo's release tags once a day (a `git
   ls-remote`, no token) to tell you an update is out; it sends nothing about you. Its machine-local state stays in
   `~/.brain`.
 - **Your keys are yours.** Claude Code runs on your own subscription or API key; the brain never reads, stores or asks
@@ -49,10 +49,10 @@ Anything else you want to try is welcome; what you expected and did not get is t
 ## Updates during the pilot
 
 Fixes come as new tags (0.2.3, then later ones), announced by the person who invited you. 0.2.2 has no update
-command: move to the next tag by hand once (install.md, *Upgrade by hand*). From 0.2.3 on, `brain update` shows what
-changes and installs it on your `y`, and the cockpit's title bar (`brain tui`) says when a newer version is out
-(`u` opens the same plan). Nothing is ever installed without your yes. After an update, `brain sync` in your brain
-and restart Claude Code's sessions.
+command: move to the next tag by hand (install.md, *Upgrade by hand*) until your version has one
+(`brain update --help` answers). From then on, `brain update` shows what changes and installs it on your `y`, and the
+cockpit's title bar (`brain tui`) says when a newer version is out (`u` opens the same plan). Nothing is ever
+installed without your yes. After an update, `brain sync` in your brain and restart Claude Code's sessions.
 
 ## How to report an issue
 

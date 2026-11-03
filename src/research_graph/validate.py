@@ -65,7 +65,17 @@ def missing_decision_nodes(graph: nx.DiGraph, repo_root: Path) -> list[str]:
     return problems
 
 
-def anchor_errors(graph: nx.DiGraph, repo_root: Path) -> list[str]:
+def _checkout(repos: dict[str, Path] | None, repo: str) -> Path | None:
+    """The checkout given for ``repo`` (case-insensitive), None when none is given or it is not on this machine."""
+    root = {k.lower(): Path(v) for k, v in (repos or {}).items()}.get(repo.lower())
+    return root if root is not None and root.is_dir() else None
+
+
+def anchor_errors(graph: nx.DiGraph, repo_root: Path, repos: dict[str, Path] | None = None) -> list[str]:
+    """Anchors that do not resolve. An anchor is ``<path>#<fragment>``, the path relative to ``repo_root``; a node
+    whose ``repo`` names another repo (a Doc, Test or Workflow node derived from that repo's tree) has its path
+    relative to that repo's checkout, given in ``repos`` (name -> checkout), and names a Repo node as a CodeRef does.
+    Such an anchor is not checked when its repo has no checkout here (:func:`unchecked_anchors`)."""
     problems: list[str] = []
     for nid, a in graph.nodes(data=True):
         anchor = a.get("anchor")
@@ -74,15 +84,35 @@ def anchor_errors(graph: nx.DiGraph, repo_root: Path) -> list[str]:
         if "#" not in anchor:
             problems.append(f"{nid}: malformed anchor {anchor!r}")
             continue
+        root, repo = repo_root, str(a.get("repo") or "")
+        if repo:
+            rnode = f"repo-{repo.lower()}"
+            if rnode not in graph or graph.nodes[rnode].get("type") != "Repo":
+                problems.append(f"{nid}: anchor of repo {repo!r}: no Repo node {rnode!r}")
+                continue
+            root = _checkout(repos, repo)
+            if root is None:
+                continue
         path, frag = anchor.split("#", 1)
-        f = repo_root / path
+        f = root / path
         if not f.exists():
-            problems.append(f"{nid}: anchor file missing: {path}")
+            problems.append(f"{nid}: anchor file missing: {path}" + (f" (repo {repo})" if repo else ""))
             continue
         m = _DATE_RE.match(frag)
         if m and m.group(1) not in _heading_dates(f):
             problems.append(f"{nid}: no heading dated {m.group(1)} in {path}")
     return problems
+
+
+def unchecked_anchors(graph: nx.DiGraph, repos: dict[str, Path] | None = None) -> list[str]:
+    """Advisory: per repo, the anchors of its nodes left unchecked because it has no checkout here."""
+    counts: dict[str, int] = {}
+    for _, a in graph.nodes(data=True):
+        repo = str(a.get("repo") or "")
+        if repo and a.get("anchor") and "#" in a["anchor"] and _checkout(repos, repo) is None:
+            counts[repo] = counts.get(repo, 0) + 1
+    return [f"{n} anchor(s) of repo {r!r} not checked: no checkout of it here (check --repo-path {r}=PATH)"
+            for r, n in sorted(counts.items())]
 
 
 def experiments_missing_from_kanban(repo_root: str | Path) -> list[str]:
@@ -120,12 +150,12 @@ def empty_decision_bodies(repo_root: str | Path) -> list[str]:
     return problems
 
 
-def check_coverage(graph: nx.DiGraph, repo_root: str | Path) -> list[str]:
+def check_coverage(graph: nx.DiGraph, repo_root: str | Path, repos: dict[str, Path] | None = None) -> list[str]:
     repo = Path(repo_root)
     return (
         missing_experiment_nodes(graph, repo)
         + missing_decision_nodes(graph, repo)
-        + anchor_errors(graph, repo)
+        + anchor_errors(graph, repo, repos)
     )
 
 

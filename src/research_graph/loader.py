@@ -89,6 +89,7 @@ def load_store(store_dir: str | Path, schema: Schema | None = None) -> nx.DiGrap
             level=level,
             layer=schema.layer_of(rn.get("type")),
             anchor=rn.get("anchor"),
+            repo=rn.get("repo"),   # the repo the anchor's path is in, when it is not the store's (validate)
             props=rn.get("props", {}),
         )
 
@@ -126,7 +127,8 @@ def apply_overlay(g: nx.DiGraph, overlay_dir: str | Path, repo_root: str | Path 
     The overlay has its own ``schema.yaml`` (its nodes are validated against it, not against this repo's
     schema), ``nodes/*.yaml``, ``edges/*.yaml`` and ``external.yaml`` listing the ids of ``g`` it points to;
     each must exist in ``g``. Overlay ids must not clash with ``g``. Anchors are rewritten relative to
-    ``repo_root`` so the overlay's files stay resolvable. Nothing is ever written to the overlay.
+    ``repo_root`` so the overlay's files stay resolvable (a node's with a ``repo`` stays relative to that repo).
+    Nothing is ever written to the overlay.
     """
     overlay = Path(overlay_dir)
     repo_root = Path(repo_root)
@@ -146,7 +148,7 @@ def apply_overlay(g: nx.DiGraph, overlay_dir: str | Path, repo_root: str | Path 
             if status not in schema.allowed_statuses(ntype):
                 errors.append(f"overlay node {nid}: status {status!r} not allowed for type {ntype!r}")
             anchor = rn.get("anchor")
-            if anchor:
+            if anchor and not rn.get("repo"):   # another repo's anchor stays relative to that repo
                 path, _, frag = anchor.partition("#")
                 try:
                     rel = Path(os.path.relpath(overlay_repo / path, repo_root.resolve())).as_posix()
@@ -154,7 +156,7 @@ def apply_overlay(g: nx.DiGraph, overlay_dir: str | Path, repo_root: str | Path 
                     rel = (overlay_repo / path).as_posix()
                 anchor = f"{rel}#{frag}" if frag else rel
             g.add_node(nid, type=ntype, title=rn.get("title", ""), status=status, level=None,
-                       layer=schema.layer_of(ntype), anchor=anchor, props=rn.get("props", {}),
+                       layer=schema.layer_of(ntype), anchor=anchor, repo=rn.get("repo"), props=rn.get("props", {}),
                        overlay=str(overlay))
             added.append(nid)
     for ext in _load_yaml_list(overlay / "external.yaml"):

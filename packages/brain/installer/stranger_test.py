@@ -1,7 +1,7 @@
 """The stranger test (wi-brain-stranger-install-test): install the brain from the public repo into a fresh venv, as
 someone who has never seen its author's machine would, then run the Lite scenario; its verdict is a pilot's go.
 
-    python stranger_test.py [--ref v0.2.2 | --source DIR] [--pre-tag] [--deny people:NAME ...] [--work DIR] [--keep]
+    python stranger_test.py [--ref v0.2.3 | --source DIR] [--pre-tag] [--deny people:NAME ...] [--work DIR] [--keep]
                             [--json]
 
 Standard library only, on Windows, Linux or macOS (a container: ``docker run --rm -v <this folder>:/t:ro python:3.12
@@ -203,7 +203,7 @@ def parse_deny(values: list[str]) -> list[tuple[str, str]]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--ref", default="v0.2.2", help="the tag (or, with --pre-tag, the branch) to install")
+    ap.add_argument("--ref", default="v0.2.3", help="the tag (or, with --pre-tag, the branch) to install")
     ap.add_argument("--source", help="install this local checkout of the repo instead (a dry run of the harness)")
     ap.add_argument("--pre-tag", action="store_true", help="research-graph from --ref, then brain with --no-deps")
     ap.add_argument("--deny", action="append", default=[], help="category:term that must appear nowhere")
