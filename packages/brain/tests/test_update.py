@@ -251,3 +251,59 @@ def test_set_launcher_swaps_a_running_image(tmp_path):
         running.kill()
         running.wait()
     assert update.set_launcher(src, dst) == "same" and not list(tmp_path.glob("brain.exe.old-*"))
+
+
+# --- wi-brain-tui-apply-reload (INST-1): the installed engine against the brain's pin, and its declared installer ---
+
+@pytest.fixture
+def installer_brain(pinned):
+    """Ada's pinned brain (v0.2.2) declaring its own installer, config.json engine.installer."""
+    cfg = json.loads((pinned / "config.json").read_text(encoding="utf-8"))
+    cfg["engine"]["installer"] = "install.ps1"
+    (pinned / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (pinned / "install.ps1").write_text("'the plan'\n", encoding="utf-8")
+    return pinned
+
+
+def test_lag_behind_equal_and_ahead_of_the_pin():
+    assert update.lag("0.2.1", "v0.2.3") == "behind"  # a pin PR merged, -Apply not run yet
+    assert update.lag("0.2.3", "v0.2.3") == "equal"
+    assert update.lag("0.2.4", "v0.2.3") == "ahead"  # brain update past the pin, or a branch's engine
+    assert update.lag("0.2.10", "v0.2.9") == "ahead"  # compared as versions, not as text
+    assert update.lag("0.2.3", None) is None and update.lag("0.2.3+dev", "v0.2.3") is None
+
+
+def test_pinned_reads_the_installer_the_brain_declares(installer_brain):
+    info = update.pinned(installed="0.2.1")
+    assert info == {"pin": "v0.2.2", "lag": "behind", "installer": "install.ps1", "root": str(installer_brain)}
+    assert update.installer() == installer_brain / "install.ps1"
+    (installer_brain / "install.ps1").unlink()  # declared but missing: none (brain config --check says so)
+    assert update.pinned(installed="0.2.1")["installer"] is None
+
+
+def test_the_title_says_the_pin_to_apply(installer_brain):
+    behind = update.check(fetch=_fetch(TAGS[:-1]), now=NOW, installed="0.2.1")  # latest v0.2.2, the pin
+    assert update.applies(behind) and behind["installer"] == "install.ps1"
+    assert update.title(behind, "0.2.1") == "brain 0.2.1 · pin v0.2.2: -Apply"  # the pin's tag is not « available »
+    past = update.check(fetch=_fetch(), now=NOW, installed="0.2.1", refresh=True)  # v0.2.3 is out, past the pin
+    assert update.title(past, "0.2.1") == "brain 0.2.1 · pin v0.2.2: -Apply · 0.2.3 available"
+    equal = update.check(fetch=_fetch(), now=NOW, installed="0.2.2")
+    assert not update.applies(equal) and update.title(equal, "0.2.2") == "brain 0.2.2 · 0.2.3 available"
+    ahead = update.check(fetch=_fetch(), now=NOW, installed="0.2.3")
+    assert ahead["lag"] == "ahead" and update.title(ahead, "0.2.3") == "brain 0.2.3"
+    offline = update.check(fetch=_offline, now=NOW + 2 * update.TTL_S, installed="0.2.1")
+    assert update.title(offline, "0.2.1").startswith("brain 0.2.1 · pin v0.2.2: -Apply")  # no network needed
+
+
+def test_a_brain_without_an_installer_keeps_brain_update(pinned):
+    """The tester's brain (from brain init): pinned, no installer of its own, so brain update stays the path."""
+    info = update.check(fetch=_fetch(), now=NOW, installed="0.2.1")
+    assert info["lag"] == "behind" and info["installer"] is None and not update.applies(info)
+    assert update.title(info, "0.2.1") == "brain 0.2.1 · 0.2.3 available"
+
+
+def test_config_check_reports_a_missing_installer(installer_brain):
+    from brain import config
+    assert config.check() == []
+    (installer_brain / "install.ps1").unlink()
+    assert config.check() == ["config.json: engine.installer 'install.ps1' does not exist"]

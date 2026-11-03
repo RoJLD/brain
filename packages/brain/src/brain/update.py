@@ -6,6 +6,13 @@ prompt. The answer is kept 24 h in ``<BRAIN_HOME>/update.json``; offline, or whe
 (the last answer kept, else none). The cockpit runs it in a worker after its first paint, so the screen never waits
 on it, and shows the answer in its title bar: ``brain 0.2.2 · 0.2.3 available``.
 
+:func:`pinned` reads, with no network, how the installed engine stands to the brain's ``config.json`` ``engine.pin``
+(behind once a pin PR merged and before the installer's ``-Apply``, equal, ahead) and the installer the brain declares
+(``engine.installer``; the engine names none, and a brain from ``brain init`` has none, so ``brain update`` stays its
+path). When the installed engine lags the pin and the brain declares its installer (:func:`applies`, ADR INST-1), the
+title bar says so, ``brain 0.2.1 · pin v0.2.3: -Apply``, and the cockpit's ``u`` opens that installer's plan, then
+``-Apply`` on the owner's yes, through a window that installs once the cockpit has exited (brain.handover, INST-2).
+
 :func:`plan` is what ``brain update`` does: the version and the CHANGELOG sections since the installed one (read
 from the tag), installing the tag into the brain's venv (``<BRAIN_HOME>/venv``, pip, the extras installed kept), the
 launcher swapped in (``<BRAIN_HOME>/bin/brain.exe``, even while a brain runs: install.ps1's Set-Launcher), and for a
@@ -51,6 +58,41 @@ def engine(root: Path | None = None) -> tuple[str, str | None]:
     repo = data.get("repo") if isinstance(data.get("repo"), str) and data.get("repo") else ENGINE_REPO
     pin = data.get("pin") if isinstance(data.get("pin"), str) and data.get("pin") else None
     return repo, pin
+
+
+def installer(root: Path | None = None) -> Path | None:
+    """The brain's own installer, config.json ``engine.installer`` (a path from the brain's root): None when the brain
+    declares none (a brain from brain init: brain update is its path) or the file is missing (brain config --check
+    says so). The engine never names one itself (INST-1)."""
+    cfg = config.load(root)
+    data = cfg.data.get("engine")
+    name = data.get("installer") if isinstance(data, dict) else None
+    if not isinstance(name, str) or not name:
+        return None
+    f = cfg.root / name
+    return f if f.is_file() else None
+
+
+def lag(installed: str, pin: str | None) -> str | None:
+    """How the installed engine stands to the brain's pin: behind (a pin PR merged, the installer's -Apply not run
+    yet), equal or ahead (a branch's engine, or brain update past the pin); None without a pin or a version."""
+    mine, want = version_of(installed), version_of(pin or "")
+    if not mine or not want:
+        return None
+    return "behind" if mine < want else "equal" if mine == want else "ahead"
+
+
+def pinned(root: Path | None = None, installed: str = __version__) -> dict:
+    """{pin, lag, installer, root}: the brain's pin, how the installed engine stands to it, its installer as
+    config.json declares it (from the brain's root, None when it declares none or the file is missing) and that
+    root. Local files only, no network; never raises."""
+    try:
+        _, pin = engine(root)
+        inst, home = installer(root), config.load(root).root
+    except Exception:  # a config that cannot be read never stops the cockpit
+        pin, inst, home = None, None, None
+    return {"pin": pin, "lag": lag(installed, pin), "installer": inst.relative_to(home).as_posix() if inst else None,
+            "root": str(home) if home else None}
 
 
 def remote_tags(repo: str, runner=subprocess.run) -> list[str]:
@@ -105,7 +147,8 @@ def _epoch(iso: str | None) -> float | None:
 
 def check(root: Path | None = None, *, refresh: bool = False, now: float | None = None, fetch=None,
           installed: str = __version__) -> dict:
-    """Whether a newer engine is out: {installed, latest, newer, repo, pin, checked, source}. ``source`` says where
+    """Whether a newer engine is out: {installed, latest, newer, repo, pin, lag, installer, checked, source} (``lag``
+    and ``installer``: :func:`pinned`). ``source`` says where
     ``latest`` comes from: cache (read less than 24 h ago), remote (read now), offline (the tags could not be read:
     the last answer kept, or none). Never raises: a failure is silent (UPD-1). ``refresh`` reads the tags even when
     the cache is fresh; ``fetch`` (tests) stands for :func:`remote_tags`."""
@@ -130,14 +173,25 @@ def check(root: Path | None = None, *, refresh: bool = False, now: float | None 
     latest = versions[-1][1:] if versions else None
     mine = version_of(installed)
     newer = bool(latest and mine and version_of(latest) > mine)
-    return {"installed": installed, "latest": latest, "newer": newer, "repo": repo, "pin": pin, "checked": checked,
-            "source": source}
+    return {"installed": installed, "latest": latest, "newer": newer, "repo": repo, "checked": checked,
+            "source": source, **pinned(root, installed), "pin": pin}
+
+
+def applies(info: dict | None) -> bool:
+    """Whether the brain's installer is the way to the engine it wants: the installed one lags the pin and the brain
+    declares an installer (INST-1). Else brain update is, when a newer tag is out."""
+    return bool(info and info.get("lag") == "behind" and info.get("installer"))
 
 
 def title(info: dict | None, installed: str = __version__) -> str:
-    """The cockpit's title: the installed version, and the newer one when there is one."""
-    head = f"brain {installed}"
-    return f"{head} · {info['latest']} available" if info and info.get("newer") else head
+    """The cockpit's title: the installed version; the pin when the installed engine lags it and the brain's
+    installer applies it (« brain 0.2.1 · pin v0.2.3: -Apply »); the newer tag when there is one past the pin."""
+    parts = [f"brain {(info or {}).get('installed') or installed}"]
+    if applies(info):
+        parts.append(f"pin {info['pin']}: -Apply")
+    if info and info.get("newer") and not (applies(info) and version_of(info["latest"]) <= version_of(info["pin"])):
+        parts.append(f"{info['latest']} available")
+    return " · ".join(parts)
 
 
 # --- the plan ---

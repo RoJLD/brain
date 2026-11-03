@@ -156,6 +156,10 @@ def check(root: Path | None = None) -> list[str]:
     for rule in rules if isinstance(rules, list) else []:
         if isinstance(rule, str) and not (cfg.root / rule).is_file():
             errors.append(f"{FILE}: rules {rule!r} does not exist")
+    engine = cfg.data.get("engine")
+    installer = engine.get("installer") if isinstance(engine, dict) else None
+    if isinstance(installer, str) and installer and not (cfg.root / installer).is_file():
+        errors.append(f"{FILE}: engine.installer {installer!r} does not exist")
     ident = cfg.data.get("identity")
     if isinstance(ident, dict) and isinstance(ident.get("owner"), str):
         for store, who in store_owners(cfg).items():
