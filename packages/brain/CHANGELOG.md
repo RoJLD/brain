@@ -39,9 +39,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   current one of a superseded chain) and specs to re-read, tests to run (the modules covering the touched code, the
   `tested_by` of the relying nodes, the changed test files; one `pytest` line and the CI jobs that run them; the
   features' wider tests counted apart), open items that deliver those features, DDRs pending on them, and the
-  touched symbols no CodeRef names. Without GitNexus (down, the repo not indexed, its indexed commit not here) it
-  works at the file level and says so: a Python symbol's CodeRef looked up by the AST of both sides, no caller.
-  Docs: `docs/impact.md`.
+  touched symbols no CodeRef names. GitNexus's lines, counted from 0, are shifted to git's; a CodeRef whose file the
+  change deletes or moves away is touched; a deleted or moved test module never reaches the `pytest` line; a
+  malformed CodeRef is left out and named. Without GitNexus (down, the repo not indexed, its indexed commit not here,
+  its code map failing) it works at the file level and says so: a Python symbol's CodeRef looked up by the AST of
+  both sides, no caller. Docs: `docs/impact.md`.
 - **`brain code-map [--json]`** (wi-brain-code-map, the code layer's design §3.7): each active CodeRef of the
   project's stores resolved to its GitNexus node (filePath, name, label: Class, Function, Method, File, or Variable
   for an assignment; a method through its class's HAS_METHOD edge) into `<BRAIN_HOME>/code-map/<project>.json`, with

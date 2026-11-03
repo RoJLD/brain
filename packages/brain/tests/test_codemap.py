@@ -63,7 +63,15 @@ def md_answer(rows: list[dict]) -> str:
 
 def index_nodes(repo, sha) -> tuple[list[dict], list[tuple[str, str]]]:
     """What GitNexus holds of ``repo`` at ``sha``, from its Python files by AST: File, Function, Class, Method (and
-    HAS_METHOD), Variable; nested functions are Functions too."""
+    HAS_METHOD), Variable; nested functions are Functions too. Lines counted from 0, as GitNexus keeps tree-sitter's
+    rows (a def on line 40 is startLine 39)."""
+    nodes, members = _nodes_of(repo, sha)
+    for n in nodes:
+        n["startLine"], n["endLine"] = (None, None) if n["label"] == "File" else (n["startLine"] - 1, n["endLine"] - 1)
+    return nodes, members
+
+
+def _nodes_of(repo, sha) -> tuple[list[dict], list[tuple[str, str]]]:
     nodes, members = [], []
     files = run_git(repo, "ls-tree", "-r", "--name-only", sha).split()
     for f in files:
@@ -100,8 +108,9 @@ class Nexus:
     the queries those modules send from an index built by AST at each repo's indexed commit. ``calls``: (caller,
     callee, confidence) edges."""
 
-    def __init__(self, monkeypatch, repos: dict, calls=(), up=True):
+    def __init__(self, monkeypatch, repos: dict, calls=(), up=True, fail=""):
         self.repos, self.calls, self.up, self.queries, self.built = repos, list(calls), up, [], {}
+        self.fail = fail   # a query holding this text gets no answer (a timeout)
         monkeypatch.setattr(codeindex, "_http", self.http)
         monkeypatch.setattr(codeindex, "_mcp_tool", self.mcp)
 
@@ -116,6 +125,8 @@ class Nexus:
         assert name == "cypher"
         q, repo = arguments["query"], arguments["repo"]
         self.queries.append(q)
+        if self.fail and self.fail in q:
+            return "", "timed out"
         if repo not in self.built:
             self.built[repo] = index_nodes(*self.repos[repo])
         answer = next(h for key, h in ((" (f:File) ", self.files), ("count(*)", self.count),

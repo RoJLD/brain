@@ -94,6 +94,7 @@ class Report:
     items: list = field(default_factory=list)
     ddrs: list = field(default_factory=list)
     stores: list = field(default_factory=list)           # problems loading a store
+    malformed: list = field(default_factory=list)        # active CodeRef ids the grammar refuses: left out
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -136,20 +137,28 @@ def _hunk(c: Change, line: str) -> None:
         c.new_lines += [n] if n else []
 
 
-def hunks(top: Path, a: str, b: str = "", files: list[str] | None = None) -> dict[str, Change]:
+def hunks(top: Path, a: str, b: str = "", files=None) -> dict[str, Change]:
     """{path: its Change} of ``git diff -U0`` from ``a`` to ``b`` (the working tree when ''), renames found; keyed by
-    the new path, the old one for a deletion. ``files``: only these paths."""
-    if files == []:
-        return {}
-    out = git(top, "-c", "core.quotepath=off", "diff", "-U0", "--no-color", "--no-ext-diff", "-M", a,
-              *([b] if b else []), "--", *(files or []))
+    the new path, the old one for a deletion. ``files``: only the changes with one of these paths (filtered here,
+    never given to git: a large change would pass the Windows command line's limit). The a/ and b/ prefixes are
+    asked for, whatever the user's diff.noprefix or diff.mnemonicPrefix; a file's header lines are read before its
+    first hunk only, since a deleted line '-- x' reads '--- x' in the body."""
+    out = git(top, "-c", "core.quotepath=off", "diff", "-U0", "--no-color", "--no-ext-diff", "-M", "--src-prefix=a/",
+              "--dst-prefix=b/", a, *([b] if b else []), "--")
     changes: list[Change] = []
+    body = False
     for line in out.splitlines():
         if line.startswith("diff --git "):
             changes.append(Change("M"))
-        elif changes and not _head(changes[-1], line) and line.startswith("@@"):
+            body = False
+        elif changes and line.startswith("@@"):
+            body = True
             _hunk(changes[-1], line)
-    return {c.new or c.old: _status(c) for c in changes if c.new or c.old}
+        elif changes and not body:
+            _head(changes[-1], line)
+    keep = None if files is None else set(files)
+    return {c.new or c.old: _status(c) for c in changes
+            if (c.new or c.old) and (keep is None or {c.old, c.new} & keep)}
 
 
 def _status(c: Change) -> Change:
@@ -265,11 +274,8 @@ def _ast_span(text: str | None, symbol: str):
         return "unparsable"
 
 
-def ast_touch(top: Path, base: str, new: str, c: Change, symbol: str, path: str = "") -> str:
-    """How a change touches ``symbol`` of its Python file ``path`` by the AST of both sides: '' when it does not. A
-    file deleted or moved away leaves its CodeRef dangling."""
-    if path and path == c.old and c.status in "DR":
-        return "removed with its file" if c.status == "D" else f"its file moved to {c.new}"
+def ast_touch(top: Path, base: str, new: str, c: Change, symbol: str) -> str:
+    """How a change touches ``symbol`` of its Python file by the AST of both sides: '' when it does not."""
     old = _ast_span(_show(top, base, c.old), symbol) if c.old else None
     now = _ast_span(_show(top, new, c.new), symbol) if c.new else None
     if "unparsable" in (old, now):
@@ -287,21 +293,35 @@ def ref_file(path: str, present) -> str:
 
 def _touch(r: codemap.Ref, by_path: dict[str, Change], syms: set[str], calls: dict[str, dict], top: Path,
            base: str, new: str, indexed: bool) -> Touched | None:
-    """How the change touches CodeRef ``r``, None when it does not."""
+    """How the change touches CodeRef ``r``, None when it does not. A CodeRef whose file the change deletes or moves
+    away is touched whatever the index holds: it now names a path that is gone."""
     _, path, symbol = inventory.parse_code_ref(r.id)
     f = r.path or ref_file(path, by_path)
-    placed = indexed and r.node and not r.why      # the index holds its symbol or file
-    if placed and r.node in syms:
-        return Touched(r.id, "symbol", path=f)
-    if placed and r.node in calls:
-        return Touched(r.id, "caller", f"{calls[r.node]['callee']} (depth {calls[r.node]['level']})", f)
-    c = by_path.get(f)
-    if c is None or (placed and symbol):
-        return None
+    c, level = by_path.get(f), "file" if indexed else "file (no index)"
+    placed = bool(indexed and r.node and not r.why)      # the index holds its symbol or file
+    hit = _gone(r, f, c, level) or (_indexed(r, f, syms, calls) if placed else None)
+    if hit or c is None or (placed and symbol):
+        return hit
     if symbol and f.endswith(".py"):
-        how = ast_touch(top, base, new, c, symbol, f)
+        how = ast_touch(top, base, new, c, symbol)
         return Touched(r.id, "ast", how, f) if how else None
-    return Touched(r.id, "file" if indexed else "file (no index)", path=f)
+    return Touched(r.id, level, path=f)
+
+
+def _gone(r: codemap.Ref, f: str, c: Change | None, level: str) -> Touched | None:
+    """``r`` touched because the change deletes or moves away its file ``f``."""
+    if c is None or f != c.old or c.status not in ("D", "R"):
+        return None
+    return Touched(r.id, level, "removed with its file" if c.status == "D" else f"its file moved to {c.new}", f)
+
+
+def _indexed(r: codemap.Ref, f: str, syms: set[str], calls: dict[str, dict]) -> Touched | None:
+    """``r`` touched as the index says: its symbol touched, or a caller of one."""
+    if r.node in syms:
+        return Touched(r.id, "symbol", path=f)
+    if r.node in calls:
+        return Touched(r.id, "caller", f"{calls[r.node]['callee']} (depth {calls[r.node]['level']})", f)
+    return None
 
 
 def touched_refs(refs: list[codemap.Ref], changes: list[Change], symbols: list[dict], calls: list[dict], top: Path,
@@ -416,12 +436,15 @@ class Walk:
                     ("names " if kind == "Doc" else "covers ") + ", ".join(hit)
         return out
 
-    def docs_tests(self, rep: Report, changed: set[str], files: set[str], repo_match) -> None:
+    def docs_tests(self, rep: Report, changed: set[str], files: set[str], repo_match, gone: set[str]) -> None:
         """The docs and tests of the relying nodes, then those of the changed repo that name a changed file or
-        cover the touched code."""
+        cover the touched code. A doc whose file the change deletes or moves away says so; such a test is left out
+        (the pytest line must run)."""
         docs, tests, wider = self.linked(files)
         docs = _first_why(self.named("Doc", "paths", changed, changed, repo_match), docs)
+        docs = {d: "removed by this change" if self.anchor(d) in gone else why for d, why in docs.items()}
         tests = _first_why(self.named("Test", "covers", files, changed, repo_match), tests)
+        tests = {t: why for t, why in tests.items() if self.anchor(t) not in gone}
         for d, why in sorted(docs.items()):
             rep.add("docs", {"id": d, "path": self.anchor(d), "title": self.title(d), "why": why,
                              "repo": self.g.nodes[d].get("repo") or ""})
@@ -450,18 +473,19 @@ def _first_why(named: dict, linked: dict) -> dict:
     return {**named, **linked, **{n: why for n, why in named.items() if why == "changed here"}}
 
 
-def walk(rep: Report, g, touched: set[str], changed: set[str], files: set[str], repo_match) -> None:
+def walk(rep: Report, g, touched: set[str], changed: set[str], files: set[str], repo_match,
+         gone: set[str] = frozenset()) -> None:
     """Add to ``rep`` what in graph ``g`` relies on the ``touched`` CodeRefs, and the docs and tests of the
     ``changed`` files of the changed repo (``repo_match``: whether a Doc or Test node's repo is it). A test is to run
     when the modules it covers meet ``files`` (the changed files and the touched CodeRefs', a caller's included), or
     when it tests a node relying on the touched code and says nothing of what it covers; the other tests of those
-    nodes are their wider tests."""
+    nodes are their wider tests. ``gone``: the paths the change deletes or moves away."""
     w = Walk(g, touched)
     for n in sorted(w.deps):
         rep.nodes.setdefault(str(w.type(n)), []).append(n)
     w.features(rep)
     w.decisions(rep, w.deps | w.items(rep))
-    w.docs_tests(rep, changed, files, repo_match)
+    w.docs_tests(rep, changed, files, repo_match, gone)
     w.workflows(rep)
 
 
@@ -481,16 +505,23 @@ def _range(top: Path, spec: str) -> tuple[str, str, str]:
             git(top, "rev-parse", "--verify", f"{b or 'HEAD'}^{{commit}}").strip())
 
 
+def _at_index(rep: Report, top: Path, changes: list[Change]) -> dict[str, Change]:
+    """The changes as seen from the indexed commit: their old side holds the index's lines."""
+    if rep.index == rep.base:
+        return {ch.new or ch.old: ch for ch in changes}
+    return hunks(top, rep.index, "" if rep.new == "worktree" else rep.new,
+                 {x for ch in changes for x in (ch.old, ch.new) if x})
+
+
 def _by_index(rep: Report, p: projects.Project, folder: str, top: Path, changes: list[Change], depth: int,
               ix: codeindex.Indexer, entries: list) -> tuple[list[codemap.Ref], str]:
     """The changed repo's CodeRefs resolved by the code map, and the touched symbols and their callers into ``rep``;
     '' when GitNexus answered, else why not."""
     cm = codemap.build(p, ix, entries, only={folder.lower()})
     refs = [r for r in cm.refs.values() if r.repo.lower() == folder.lower()]
-    changed = sorted({x for ch in changes for x in (ch.old, ch.new) if x})
-    at_index = hunks(top, rep.index, "" if rep.new == "worktree" else rep.new, changed) \
-        if rep.index != rep.base else {ch.new or ch.old: ch for ch in changes}
-    rep.symbols, why = touched_symbols(ix, folder, at_index)
+    if cm.repos.get(folder) is not None and cm.repos[folder].why:   # the map failed: nothing placed, say so
+        return refs, f"the code map of {folder}: {cm.repos[folder].why}"
+    rep.symbols, why = touched_symbols(ix, folder, _at_index(rep, top, changes))
     if not why and rep.symbols:
         rep.callers, why = callers(ix, folder, [s["id"] for s in rep.symbols], depth)
     if why:
@@ -502,10 +533,17 @@ def _by_index(rep: Report, p: projects.Project, folder: str, top: Path, changes:
     return refs, ""
 
 
+def _repo_of(cid: str) -> str:
+    """The repo of a CodeRef id, '' when the id is malformed."""
+    try:
+        return inventory.parse_code_ref(cid)[0]
+    except ValueError:
+        return ""
+
+
 def _bare_refs(p: projects.Project, folder: str) -> list[codemap.Ref]:
-    """The changed repo's active CodeRefs, unresolved (the file level)."""
-    return [codemap.Ref(cid, folder) for cid, _ in codemap.active_refs(p)
-            if inventory.parse_code_ref(cid)[0].lower() == folder.lower()]
+    """The changed repo's well-formed active CodeRefs, unresolved (the file level)."""
+    return [codemap.Ref(cid, folder) for cid, _ in codemap.active_refs(p) if _repo_of(cid).lower() == folder.lower()]
 
 
 def _coderefs(rep: Report, root: Path | None, p: projects.Project, registered: bool, folder: str, top: Path,
@@ -514,6 +552,7 @@ def _coderefs(rep: Report, root: Path | None, p: projects.Project, registered: b
     CodeRefs the change touches."""
     ix, entries, rep.index, why = index_state(top, folder, root)
     why = why if registered else "the repo is in no registered project: no CodeRef, no graph"
+    rep.malformed = sorted(cid for cid, _ in codemap.active_refs(p) if not _repo_of(cid)) if registered else []
     refs: list[codemap.Ref] = []
     if not why:
         refs, why = _by_index(rep, p, folder, top, changes, depth, ix, entries)
@@ -523,22 +562,35 @@ def _coderefs(rep: Report, root: Path | None, p: projects.Project, registered: b
     new = "" if rep.new == "worktree" else rep.new
     hit = touched_refs(refs, changes, rep.symbols, rep.callers, top, rep.base, new, rep.mode == "gitnexus")
     rep.coderefs = [asdict(t) for t in hit]
-    named = {r.node for r in refs if r.node and not r.why}
-    rep.unmapped = [s for s in rep.symbols if s["id"] not in named and s["label"] in codemap.SYMBOLS]
+    rep.unmapped = _unmapped(refs, rep.symbols)
     return hit
 
 
-def _graph(rep: Report, p: projects.Project, repo_match, hit: list[Touched], changed: set[str]) -> None:
-    """Step 4 in each store of the project, then the test files the change edits that no store names yet."""
+def _unmapped(refs: list[codemap.Ref], symbols: list[dict]) -> list[dict]:
+    """The touched symbols (Class, Function, Method) no resolved CodeRef names."""
+    named = {r.node for r in refs if r.node and not r.why}
+    return [s for s in symbols if s["id"] not in named and s["label"] in codemap.SYMBOLS]
+
+
+def _graph(rep: Report, p: projects.Project, repo_match, hit: list[Touched], changes: list[Change]) -> None:
+    """Step 4 in each store of the project, then the test files the change adds or edits that no store names yet
+    (never a path it deletes or moves away: the pytest line must run)."""
+    now = {ch.new for ch in changes if ch.new}
+    changed = now | {ch.old for ch in changes if ch.old}
     for store in (s for s in p.stores if (s / "schema.yaml").is_file()):
         g, problem = _load(store)
         if g is None:
             rep.stores.append(problem)
             continue
-        walk(rep, g, {t.ref for t in hit}, changed, changed | {t.path for t in hit}, repo_match)
+        walk(rep, g, {t.ref for t in hit}, changed, changed | {t.path for t in hit}, repo_match, changed - now)
+    _new_tests(rep, now)
+
+
+def _new_tests(rep: Report, now: set[str]) -> None:
+    """The test modules the change adds or edits that no store names yet."""
     known = {t["path"] for t in rep.tests}
     rep.tests += [{"id": "", "path": f, "framework": "pytest" if f.endswith(".py") else "", "why": "changed here",
-                   "repo": ""} for f in sorted(changed) if inventory.is_test(f) and f not in known]
+                   "repo": ""} for f in sorted(now) if inventory.is_test(f) and f not in known]
 
 
 def run(args, root: Path | None) -> Report:
@@ -559,7 +611,7 @@ def run(args, root: Path | None) -> Report:
         return not repo if own else str(repo or "").lower() in (c.name.lower(), folder.lower())
 
     if registered:
-        _graph(rep, p, repo_match, hit, {x for ch in changes for x in (ch.old, ch.new) if x})
+        _graph(rep, p, repo_match, hit, changes)
     return rep
 
 
@@ -628,6 +680,7 @@ def render(rep: Report) -> list[str]:
         shown = ", ".join(f"{s['path']}::{s['name']}" for s in rep.unmapped[:SHOWN])
         out.append(f"touched symbols no CodeRef names ({len(rep.unmapped)}; the graph does not see them): {shown}"
                    + (", ..." if len(rep.unmapped) > SHOWN else ""))
+    out += [f"malformed CodeRef(s) left out ({len(rep.malformed)}): {', '.join(rep.malformed)}"] if rep.malformed else []
     return out + [f"store: {s}" for s in rep.stores]
 
 

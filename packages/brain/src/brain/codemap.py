@@ -134,10 +134,16 @@ def in_list(values) -> str:
 
 
 def nodes_of(ix: codeindex.Indexer, repo: str, files) -> tuple[list[dict], str]:
-    """Every named node of ``files`` with its label and lines (BasicBlock rows of a --pdg index left out)."""
-    return cypher(ix, repo, f"MATCH (n) WHERE n.filePath IN {in_list(files)} AND n.name IS NOT NULL "
-                            "AND NOT n.id STARTS WITH 'BasicBlock:' RETURN n.id AS id, n.name AS name, "
-                            "label(n) AS label, n.filePath AS path, n.startLine AS startLine, n.endLine AS endLine")
+    """Every named node of ``files`` with its label and lines (BasicBlock rows of a --pdg index left out). GitNexus
+    keeps tree-sitter's rows, counted from 0: the lines come back counted from 1, as git and editors count them."""
+    rows, why = cypher(ix, repo, f"MATCH (n) WHERE n.filePath IN {in_list(files)} AND n.name IS NOT NULL "
+                                 "AND NOT n.id STARTS WITH 'BasicBlock:' RETURN n.id AS id, n.name AS name, "
+                                 "label(n) AS label, n.filePath AS path, n.startLine AS startLine, "
+                                 "n.endLine AS endLine")
+    for r in rows:
+        for k in ("startLine", "endLine"):
+            r[k] = r[k] + 1 if isinstance(r.get(k), int) else r.get(k)
+    return rows, why
 
 
 def members_of(ix: codeindex.Indexer, repo: str, files) -> tuple[dict[str, set[str]], str]:
