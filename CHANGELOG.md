@@ -3,6 +3,10 @@
 The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `research-graph` X.Y.Z and `brain` X.Y.Z
 (`packages/brain/CHANGELOG.md` for the brain command).
 
+## 0.2.1 — 2026-11-03
+
+- No change to the graph engine: the version follows the brain command's 0.2.1 (one tag series).
+
 ## 0.2.0 — 2026-11-03
 
 - No change to the graph engine: its version follows the repo's single tag series, now that the `brain` command is
