@@ -33,6 +33,12 @@ def brain_home(tmp_path, monkeypatch):
     for var in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION", "CLAUDE_CODE_SESSION_ID",
                 "CLAUDE_SESSION_ID"):
         monkeypatch.delenv(var, raising=False)
+    from brain import update  # no test reads the engine's tags or its CHANGELOG on GitHub: offline unless it fakes them
+
+    def offline(*args, **kwargs):
+        raise OSError("no network in the tests")
+    monkeypatch.setattr(update, "remote_tags", offline)
+    monkeypatch.setattr(update, "changelog", lambda *args, **kwargs: None)
     return home
 
 
