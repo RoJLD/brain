@@ -2,6 +2,14 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+- **`install.ps1 -Apply` replaces a running launcher.** Sessions' hooks run `brain.exe` many times a minute, and
+  Windows refuses to overwrite a running image, so the last step of `-Apply` (the copy to `<BRAIN_HOME>\bin`) failed
+  twice. `Set-Launcher` leaves an identical launcher alone, copies a new one beside it and swaps it in with a short
+  retry, and renames a still-locked one aside (`brain.exe.old-<time>`, removed on the next run); it prints `same`,
+  `copied` or `swapped`. Tested on a running image (`tests/test_installer_launcher.py`).
+
 ## 0.2.1 — 2026-11-03
 
 - **A new brain gets its own Claude Code plugin.** `brain init` renders a local marketplace in the new brain: it

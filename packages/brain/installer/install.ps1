@@ -302,6 +302,24 @@ function Install-Brain([string]$spec) {
     if ($code -ne 0) { throw "pip install $spec failed with exit code $code" }
 }
 
+function Set-Launcher([string]$from, [string]$to) {
+    # Sessions' hooks run brain.exe many times a minute, and Windows refuses to overwrite a running image: an identical
+    # launcher is left alone, a new one is copied beside it and swapped in with a short retry, and one still locked is
+    # renamed aside (a running image can be renamed) and removed on the next run. Returns same, copied or swapped.
+    $leaf = Split-Path $to -Leaf
+    Get-ChildItem (Split-Path $to) -Filter "$leaf.old-*" -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+    if ((Test-Path $to) -and (Get-FileHash $to).Hash -eq (Get-FileHash $from).Hash) { return 'same' }
+    $new = "$to.new"
+    Copy-Item $from $new -Force
+    foreach ($wait in 200, 400, 800, 1600) {
+        try { Move-Item $new $to -Force -ErrorAction Stop; return 'copied' } catch { Start-Sleep -Milliseconds $wait }
+    }
+    Rename-Item $to "$leaf.old-$(Get-Date -Format yyyyMMddHHmmss)" -ErrorAction Stop
+    Move-Item $new $to -ErrorAction Stop
+    'swapped'
+}
+
 function Invoke-Brain {
     # The installed brain command: its output as lines (an error's message as is), its exit code in $script:brain_code.
     $ErrorActionPreference = 'Continue'
@@ -384,7 +402,8 @@ if (-not $SkipCommand) {
     if ($Apply) {
         New-Item -ItemType Directory -Force $bin | Out-Null
         if ($windows) {
-            Copy-Item $launcher (Join-Path $bin 'brain.exe') -Force
+            $done = Set-Launcher $launcher (Join-Path $bin 'brain.exe')
+            "$($done.PadRight(8)) $(Join-Path $bin 'brain.exe')"
         } else {
             $link = Join-Path $bin 'brain'
             if (Test-Path $link) { Remove-Item $link -Force }
