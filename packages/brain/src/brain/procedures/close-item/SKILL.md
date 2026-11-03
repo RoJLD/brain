@@ -41,7 +41,8 @@ a `Root cause:` line for a symptom fix, a `Justified: <unit>: <reason>` line for
 ## 2. Merged and applied
 
 - The PR is merged with `gh` after local verification (tests, linters), in dependency order for stacked branches,
-  with no AI attribution in its commits or body. Check: `gh pr view <n> --json state,mergedAt,mergeCommit`.
+  with no AI attribution in its commits or body. After merging the base into the branch, `brain merge-check` (where
+  the `brain` command serves the project) says whether the resolution lost a line or a node of a fresh base. Check: `gh pr view <n> --json state,mergedAt,mergeCommit`.
 - Applied: where the change runs somewhere (a production checkout, a scheduled task, an installed copy), that place
   is updated the project's way (for example `git pull --ff-only` in the production checkout, then the project's setup
   command) and checked on its next real run when there is one.

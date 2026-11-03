@@ -63,7 +63,28 @@ regenerates it`). The conflict style follows `merge.conflictStyle` (`diff3` and 
 
 The views the driver kept from one side are listed in the worktree's git folder (`brain-refresh`):
 `brain merge-driver status` shows them, `brain check` names them, and `brain refresh` clears the list once it passes.
-So the routine after `git merge origin/main` is `brain refresh`, then commit.
+So the routine after `git merge origin/main` is `brain refresh`, then commit, then `brain merge-check`.
+
+### Nothing of main lost: `brain merge-check`
+
+A resolution made against a stale local main can drop a PR that merged meanwhile (the lesson
+les-brain-merge-stale-main: a personal brain's #185 against #194, where `brain refresh` fetched after the merge). `brain
+merge-check` fetches the base again (origin's default branch, or `--base`; `--no-fetch` keeps it as last fetched),
+then:
+
+- **behind**: the base is not in the branch's history: merge it again first;
+- **lost**: a line the base has and the branch does not, in the journals, the decision logs, the graph's curated edge
+  files and every tracked `CHANGELOG*.md`, or a curated node file's lines removed in a hunk that adds nothing back,
+  unless one of the branch's own commits (merges left out) removed it: an unlink or an edit is on purpose;
+- **lost ids**: a node id of the base's curated node files the branch no longer has.
+
+An in-place change (a closed item's last line) counts as changed, never lost. `--worktree` reads a resolution not
+committed yet; `--path` watches one more file; exit 1 when behind or lost, 2 on a git error.
+
+```bash
+git merge origin/main && brain refresh && git commit
+brain merge-check            # then push
+```
 
 ### Checking it on a repo's history
 

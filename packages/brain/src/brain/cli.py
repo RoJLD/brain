@@ -123,6 +123,10 @@
   brain merge-driver status [--json] | replay [MERGE | OURS..THEIRS]... [--since DATE] [--repo R] [--json]
                         the views waiting for brain refresh here; past merges merged again by git merge-tree, as
                         text then with the driver (nothing checked out): what conflicted before and after
+  brain merge-check [--base REF] [--no-fetch] [--worktree] [--path P]... [--repo DIR] [--json]   after a merge of
+                        main into a branch: fetched again, nothing of the base lost (the journals, decision logs, edge
+                        files and CHANGELOGs keep every line, the curated node files every id; an in-place change
+                        passes); exit 1 when the branch is behind the base or lost something
   brain collisions [--all] [--json]   at zero token: the files each open branch and worktree of the project's repos
                         touches (against the default branch, uncommitted changes included), crossed with each
                         startable item's predicted surface (its features' CodeRefs, its module, the files it names):
@@ -2254,6 +2258,29 @@ def cmd_merge_driver(args) -> int:
     return mergedriver.main_replay(repo, args.since, args.merges, args.json)
 
 
+def cmd_merge_check(args) -> int:
+    """brain merge-check (brain.mergecheck): the repo here or --repo's, the registered project's files."""
+    from . import mergecheck
+    try:
+        top = Path(git_top(Path(args.repo or ".").resolve()))
+        try:
+            project = resume.project_for(top)
+        except (OSError, ValueError):
+            project = None
+        r = mergecheck.check(top, project if project and project.registered else None, args.base or "",
+                             fetch=not args.no_fetch, worktree=args.worktree, extra=args.path)
+    except AuditError as exc:
+        print(f"brain merge-check: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(r, ensure_ascii=False, indent=1) if args.json else "\n".join(mergecheck.render(r)))
+    return 1 if mergecheck.failed(r) else 0
+
+
+def git_top(d: Path) -> str:
+    from .inventory import git
+    return git(d, "rev-parse", "--show-toplevel").strip()
+
+
 def cmd_collisions(args, root: Path) -> int:
     """brain collisions (brain.collisions): the project here or --project's, or --all."""
     from . import collisions
@@ -3186,6 +3213,14 @@ def build_parser() -> argparse.ArgumentParser:
     mgp.add_argument("--since", default="", help="the merges since this date (git log --since)")
     mgp.add_argument("--repo", help="the repo (default: the one here)")
     mgp.add_argument("--json", action="store_true")
+    mc = sub.add_parser("merge-check", help="after a merge of main into a branch: nothing of a fresh main lost (logs, "
+                                            "edge files, CHANGELOGs, node ids); exit 1 when lost or behind")
+    mc.add_argument("--base", help="the base (default: origin's default branch)")
+    mc.add_argument("--no-fetch", action="store_true", help="the base as last fetched")
+    mc.add_argument("--worktree", action="store_true", help="the working tree, not HEAD (a resolution not committed)")
+    mc.add_argument("--path", action="append", help="one more file whose lines must all stay (repeatable)")
+    mc.add_argument("--repo", help="the repo (default: the one here)")
+    mc.add_argument("--json", action="store_true")
     co_ = sub.add_parser("collisions", help="the files each open branch and worktree touches, crossed with the "
                                             "startable items' predicted surface: who can start now, who waits on whom")
     co_.add_argument("--all", action="store_true", help="every project of the registry")
@@ -3284,6 +3319,8 @@ def _dispatch(args) -> int:
         return init.main(args)
     if args.cmd == "merge-driver":  # git's entry and a repo's git config: no graph store
         return cmd_merge_driver(args)
+    if args.cmd == "merge-check":  # any git repo; the registered project's files when it is one
+        return cmd_merge_check(args)
     if args.cmd == "sessions":  # the machine's sessions: no graph store
         return cmd_sessions(args)
     root = Path(args.root).resolve() if args.root else None

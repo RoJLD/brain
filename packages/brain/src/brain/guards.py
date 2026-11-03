@@ -68,7 +68,15 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
 - ``public``: no ``git push`` to a repo of config.json's ``public.repos`` (the remote named or given as a URL, else
   the branch's upstream, else origin) until every commit it sends has the stamp of a green ``brain check --public
   --history`` (brain.public): the refspecs' sources, every branch with --all or --mirror, the tags with --tags or
-  --follow-tags, else HEAD. A push to any other repo passes untouched.
+  --follow-tags, else HEAD. A push to any other repo passes untouched. A call that runs ``brain check --public`` before
+  the push is told to split them: the guard judges the whole call before its first part runs. Its ``commit`` check
+  runs brain.public's line checks (the denied terms outside public.allow, e-mail addresses and home folders,
+  public.patterns) on what a git commit records in a checkout whose remote is a public repo, so the owner's name in a
+  test's data is refused at the commit, not at the push (the lesson les-brain-owner-name-in-fixtures).
+- A warning, never a refusal: a Bash heredoc that holds a doubled backslash and writes a file or feeds an
+  interpreter, on Windows, gets a note in the session's context (additionalContext): through the Bash tool the
+  doubled backslash has arrived single; Write or Edit, or a byte check after (the lesson
+  les-brain-heredoc-backslashes). The ledger records it as ``heredoc:backslash``, decision warned.
 - ``branches`` (wi-brain-tidy): no branch named outside the allowed list, config.json's ``branches.allowed`` (else
   the engine's BRANCHES; a prefix ending in /, or a pattern with <slug>, <host>, <date>), main and master always
   passing, in a repo of the registry (its checkouts and their worktrees, or gh's --repo naming one's origin): the name
@@ -82,7 +90,7 @@ guard:check pair (owner:installer, power:cluster) or ``all``, in Claude Code's o
 cannot set; the call passes and the ledger records it. Refusals and overrides go to
 ``<BRAIN_HOME>/ledger/guards-<month>.jsonl`` when the ledger exists (a request for the owner creates it), with the
 check that refused (edit, git, shell-write, an owner category, machine, node, wake, cluster, bot, download, plugin,
-skills, attribution, secrets, markers, public, name). An internal error lets the call through and goes to ``ledger/errors.log``: a guard never breaks
+skills, attribution, secrets, markers, public, commit, name; backslash for the heredoc warning). An internal error lets the call through and goes to ``ledger/errors.log``: a guard never breaks
 a session.
 """
 
@@ -98,6 +106,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import config, markers, midsession, paths, projects, public, secretscan
 
@@ -2589,8 +2598,105 @@ def check_public(cmds: list[tuple[list[str], str]]) -> str | None:
             more = f" and {len(missing) - 1} more" if len(missing) > 1 else ""
             return (f"git push refused: {slug} is a public repo (config.json public.repos) and {ref} ({sha[:8]}){more} "
                     f"has no green brain check --public; run brain check --public --history in {d}, take out what it "
-                    "finds, then push again")
+                    "finds, then push again" + (CHAIN_HINT if _checks_first(cmds, words) else ""))
     return None
+
+
+CHAIN_HINT = (" (this call runs brain check --public before the push, but the guard judges the whole call before "
+              "anything in it runs: run the check in one call and git push in the next)")
+
+
+def _checks_first(cmds: list[tuple[list[str], str]], push: list[str]) -> bool:
+    """A ``brain ... check ... --public`` among the calls before the push ``push``."""
+    for words, _ in cmds:
+        if words is push:
+            return False
+        prog = _prog(words[0])
+        brain = prog == "brain" or (prog in ("python", "python3", "py") and "brain" in words[1:3])
+        if brain and "check" in words and "--public" in words:
+            return True
+    return False
+
+
+# --- what a commit to a public repo records (the lesson les-brain-owner-name-in-fixtures) ------------------------
+
+def added_lines(diff: str) -> dict[str, list[tuple[int, str]]]:
+    """path -> (line number, text) of each added line of a unified diff."""
+    out: dict[str, list[tuple[int, str]]] = {}
+    path, line = "", 0
+    for raw in diff.splitlines():
+        if raw.startswith("+++ "):
+            path = raw[4:].strip('"')
+            path = path[2:] if path.startswith("b/") else path
+        elif raw.startswith("@@"):
+            m = re.search(r"\+(\d+)", raw)
+            line = int(m.group(1)) if m else 0
+        elif raw.startswith("+") and path != "/dev/null":
+            out.setdefault(path, []).append((line, raw[1:]))
+            line += 1
+        elif raw.startswith(" "):
+            line += 1
+    return out
+
+
+def commit_public(repo: str, specs: list[str], every_tracked: bool) -> tuple[str, list[str]]:
+    """(the public repo, the findings) of what a commit in ``repo`` would record when its remote is a public repo:
+    brain.public's line checks (denied terms, e-mail addresses, home folders, public.patterns) and file checks on the
+    added lines of the index, plus ``specs`` or commit -a's changes, and the untracked files a git add stages."""
+    cfg = config.load()
+    if not public.public_repos(cfg):
+        return "", []
+    _, slug = public.remote_of(Path(repo), cfg)
+    if not public.is_public(slug, cfg):
+        return "", []
+    r = public.rules(cfg)
+    diff = ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames"]
+    texts = [_git_out(repo, diff[0], "--cached", *diff[1:])]
+    if specs or every_tracked:
+        texts.append(_git_out(repo, *diff, "HEAD", "--", *specs))
+    found: list[public.Finding] = []
+    for text in texts:
+        for path, lines in added_lines(text).items():
+            found += [f for f in [public.file_finding(path, r)] if f] + public.scan_lines(path, lines, r)
+    for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *specs).split("\0") \
+            if specs else []:
+        if name:
+            found += public.scan_lines(name, enumerate(_read_file(name, repo).splitlines(), 1), r)
+    return slug, list(dict.fromkeys(f.text() for f in found if f.check != "secret"))   # secrets: check_secrets
+
+
+def check_public_commit(cmds: list[tuple[list[str], str]]) -> str | None:
+    for d, what, added, every in _commits(cmds):
+        slug, hits = commit_public(d, added, every)
+        if hits:
+            more = f" and {len(hits) - 1} more" if len(hits) > 1 else ""
+            return (f"{what} refused: {hits[0]}{more}; {slug} is a public repo (config.json public.repos): take it "
+                    "out (a test names invented people and repos), or except the file in config.json public.allow")
+    return None
+
+
+# --- heredocs with a doubled backslash (a warning; the lesson les-brain-heredoc-backslashes) ----------------------
+
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+_FEEDS = re.compile(r"(?:^|[|;&\s])(?:python[0-9.]*|py|node|perl|ruby|bash|sh|pwsh)(?:\s+-\S*)*\s*(?:-|<<)|"
+                    r"(?:^|\s)(?:cat|tee)\b|\s>>?\s*\S")
+HEREDOC_NOTE = ("brain guard, a warning (nothing refused): this heredoc holds a doubled backslash, and through the "
+                "Bash tool on Windows a doubled backslash has arrived single (a regex that never matched, a \\n that "
+                "became a newline, a replace that matched nothing). Write the file with Write or Edit instead, or "
+                "check its bytes after (od -c, or run what it wrote).")
+
+
+def heredoc_note(payload: dict, windows: bool | None = None) -> str | None:
+    """The warning for a Bash call whose heredoc body holds a doubled backslash and whose first line writes a file or
+    feeds an interpreter (python -, node -, cat > f, tee f), on Windows (``windows``: os.name == 'nt')."""
+    if not (os.name == "nt" if windows is None else windows) or payload.get("tool_name") != "Bash":
+        return None
+    command = str((payload.get("tool_input") or {}).get("command") or "")
+    first, _, body = command.partition("\n")
+    m = _HEREDOC.search(first)
+    if not m or "\\\\" not in body.split(f"\n{m.group(2)}", 1)[0]:
+        return None
+    return HEREDOC_NOTE if _FEEDS.search(first[:m.start()] + " " + first[m.end():]) else None
 
 
 # --- branch names ------------------------------------------------------------------------------------------------
@@ -2800,6 +2906,7 @@ def refusals(payload: dict):
                               ("secrets", "secrets", lambda: check_secrets(cmds)),
                               ("markers", "markers", lambda: check_markers(cmds)),
                               ("public", "public", lambda: check_public(cmds)),
+                              ("public", "commit", lambda: check_public_commit(cmds)),
                               ("branches", "name", lambda: check_branches(cmds))):
         try:
             out = run()
@@ -2897,6 +3004,11 @@ def main(stdin=None, stdout=None) -> int:
             (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
             return 0
+        note = heredoc_note(payload)
+        if note:
+            _record(payload, "heredoc", "backslash", "warned", note)
+            (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "additionalContext": note}}) + "\n")
     except Exception as exc:  # never break the session
         try:
             from .capture import _log_error
