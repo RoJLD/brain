@@ -29,6 +29,10 @@ def brain_home(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_CONFIG", str(BRAIN))
     monkeypatch.delenv("CLAUDE_BRAIN_DIR", raising=False)
     monkeypatch.delenv("BRAIN_PERSONAL", raising=False)  # and no machine's personal brain: the pointer is in home
+    # the tests run as the owner's own terminal unless they say otherwise, even from an agent's shell (brain.answers)
+    for var in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION", "CLAUDE_CODE_SESSION_ID",
+                "CLAUDE_SESSION_ID"):
+        monkeypatch.delenv(var, raising=False)
     return home
 
 

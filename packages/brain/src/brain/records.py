@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import graph, paths, schema, secretscan
+from . import defaults, graph, paths, schema, secretscan
 
 RECORDS_DIR = "records"
 HEADERS = {
@@ -117,6 +117,8 @@ def check(root: Path) -> tuple[list[str], list[str]]:
         for f, rec in items:
             rel = f.relative_to(root).as_posix() if f.is_relative_to(root) else str(f)
             e, w = schema.check(kind, rec)
+            if kind == "ddr" and isinstance(rec, dict):
+                e = e + defaults.check(rec)   # the low-stakes mark where a default never decides
             errors += [f"{rel}: {x}" for x in e]
             warnings += [f"{rel}: {x}" for x in w]
             rid = (rec or {}).get("id") if isinstance(rec, dict) else None

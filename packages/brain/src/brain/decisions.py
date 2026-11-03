@@ -26,7 +26,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import actions, config, graph, midsession, records
+from . import actions, config, defaults, graph, midsession, records
 
 KINDS = ("decision", "action", "permission")
 VIEW = "notes/decision_queue.md"
@@ -66,9 +66,11 @@ def parse_option(text: str) -> dict:
 def ask(root: Path, *, title: str, question: str, options: list[str], why: str, at: str, context: str = "",
         blocks: str = "", multi: bool = False, blocking: bool = False, due: str = "", recommend: str = "",
         items: list[str] | None = None, specs: list[str] | None = None, adrs: list[str] | None = None,
-        project: str = "", session: str = "", slug: str = "", dry_run: bool = False) -> tuple[dict, Path | None]:
+        project: str = "", session: str = "", slug: str = "", dry_run: bool = False,
+        low_stakes: bool = False) -> tuple[dict, Path | None]:
     """Write a pending decision. Refused without 2 to 4 options, without the reason of the recommendation, or when
-    the recommended option is not the first."""
+    the recommended option is not the first. ``low_stakes``: decided by default 24 h later without an answer
+    (brain.defaults), refused on the topics a default never decides."""
     opts = [parse_option(o) for o in options or []]
     if not 2 <= len(opts) <= 4:
         raise QueueError(f"a decision needs 2 to 4 --option, the recommended one first (got {len(opts)})")
@@ -92,6 +94,11 @@ def ask(root: Path, *, title: str, question: str, options: list[str], why: str, 
         links["project"] = project
     if links:
         ddr["links"] = links
+    if low_stakes:
+        try:
+            defaults.mark(ddr)
+        except ValueError as exc:
+            raise QueueError(f"--low-stakes refused: {exc}") from exc
     if dry_run:
         return records.validate("ddr", ddr), None
     return ddr, records.write(root, "ddr", ddr)
@@ -130,8 +137,9 @@ def _choice(ddr: dict, text: str) -> str:
 
 
 def answer(root: Path, ref: str, choices: list[str], *, other: str = "", notes: str = "", by: str = "",
-           via: str = "cli", at: str, again: bool = False) -> dict:
-    """Record an answer to the DDR ``ref``, by ``by`` (config.json's owner by default)."""
+           via: str = "cli", at: str, again: bool = False, check=None) -> dict:
+    """Record an answer to the DDR ``ref``, by ``by`` (config.json's owner by default); ``check(ddr_id, choices,
+    other)`` returns a refusal ('' when it may be recorded: brain.answers.refusal)."""
     by = by or config.owner_of()
     _, ddr = find(root, ref)
     if ddr.get("status") != "pending" and not again:
@@ -141,6 +149,9 @@ def answer(root: Path, ref: str, choices: list[str], *, other: str = "", notes: 
         raise QueueError("an answer needs an option (label, number or start of its label) or --other TEXT")
     if len(picked) > 1 and not ddr.get("multi_select"):
         raise QueueError(f"{ddr['id']} takes one choice (it is not multi_select)")
+    refused = check(ddr["id"], picked, other) if check else ""
+    if refused:
+        raise QueueError(refused)
     ans = {"at": at, "by": by}
     if picked:
         ans["choices"] = picked
@@ -392,8 +403,8 @@ def _top(text: str) -> dict:
                 out["choices"].append(_scalar(s[2:]))
             elif ":" in s:
                 sub, _, v = s.partition(":")
-                if sub == "other" and v.strip():
-                    out["other"] = _scalar(v)
+                if sub in ("other", "via") and v.strip():
+                    out[sub] = _scalar(v)
     return out
 
 
@@ -412,7 +423,8 @@ def announce(cwd: str | Path) -> str:
             continue
         if top.get("status") == "answered":
             choice = "; ".join(top["choices"]) or (f"other: {top['other']}" if top.get("other") else "answered")
-            rows.append(f"- {top.get('id', f.stem)}: {_short(choice, 80)} ({_short(top.get('title', ''), 80)})")
+            tag = " (by default: brain decision defaulted)" if top.get("via") == "default" else ""
+            rows.append(f"- {top.get('id', f.stem)}: {_short(choice, 80)}{tag} ({_short(top.get('title', ''), 80)})")
     if not rows:
         return ""
     return (f"{config.name_of()} answered {len(rows)} decision(s) that {root.name} has not integrated yet. Apply "

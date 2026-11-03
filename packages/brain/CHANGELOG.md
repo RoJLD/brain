@@ -2,6 +2,27 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+- **The owner's answers, one writer per batch** (wi-brain-answers-lane). Two batches of answers went wrong in two days:
+  a shortened label stored as free text, and a BOM that made `--batch` write nothing. Now `brain decision batch`
+  writes the questions it prints to the ledger (`asked-<month>.jsonl`), the capture hook ties each answer of the
+  question tool to the DDR its question came from (by the id it carries, else its text and header, else its header
+  and labels) and writes it to `answer-<month>.jsonl` with the labels as the tool returned them and the owner's notes,
+  and `brain decision answer --captured` records the session's captured answers in a worktree on `claude/answers-…`,
+  refreshes, opens one PR and merges it, merging main and retrying when it moved (`--retries`, `--no-merge`). `--batch`
+  is strict: an inexact label is refused, naming the label it shortens, unless it is marked free text
+  (`{"other": ...}`); a BOM is read, UTF-8 or UTF-16. In an agent's session, `answer` and `--batch` record only what
+  that session's question tool captured: an answer relayed by a message is never recorded, it is applied and acked.
+  The capture also drops the French `(Recommandé)` mark from an ad-hoc question's labels.
+- **Decisions by default, then reviewed** (wi-brain-decision-default). `brain decision ask --low-stakes` gives the DDR
+  a `default` (its recommendation, final 24 h later): the asking session applies it at once, provisionally; without
+  an answer, `brain refresh` or `brain decision defaulted --apply` records it `by: default`, `via: default` at the
+  deadline and the hooks announce it « by default ». The mark is refused, at the ask and by `brain check`, on money,
+  keys, visibility, publication, accounts, arming, rules and scheduled tasks. `brain decision defaulted` is the
+  owner's review list (`--seen` from their terminal), with a line in the morning batch; `answer ID <option> --again`
+  reverses a default. The DDR schema gains `default` and the answer's `via: default`.
+
 ## 0.2.3 — 2026-11-03
 
 - **`brain check` passes on a store that holds another repo's links.** Since 0.2.2, `brain sync` derives the Doc, Test
