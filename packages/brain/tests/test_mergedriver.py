@@ -122,6 +122,16 @@ def test_changelog_unions_unreleased_and_merges_a_subsection_both_opened():
     assert "- ours fixed\n" in unreleased and "- theirs fixed\n" in unreleased
 
 
+def test_changelog_both_sides_open_an_unreleased_section():
+    base = CHANGELOG.replace("## [Unreleased]\n\n### Added\n- one\n\n", "")   # a release just cut
+    ours = base.replace("## [0.1.0]", "## [Unreleased]\n\n- ours\n  wrapped\n\n## [0.1.0]")
+    theirs = base.replace("## [0.1.0]", "## [Unreleased]\n\n- theirs\n\n## [0.1.0]")
+    text, res, _ = merge("CHANGELOG.md", base, ours, theirs)
+    assert res.conflicts == 0, text
+    assert text.count("## [Unreleased]") == 1
+    assert "## [Unreleased]\n\n- ours\n  wrapped\n\n- theirs\n\n## [0.1.0]" in text
+
+
 def test_changelog_a_conflict_in_a_released_section_stays():
     ours = CHANGELOG.replace("- the start", "- the start, ours")
     theirs = CHANGELOG.replace("- the start", "- the start, theirs")

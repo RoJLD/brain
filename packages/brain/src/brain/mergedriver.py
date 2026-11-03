@@ -396,8 +396,17 @@ def union(base: str, ours: str, theirs: str, size: int = 7, style: str = "merge"
                 heading = seg
             out.append(seg)
             continue
-        if section is not None and (seg.base or not section.match(heading)):
-            out.append(seg)
+        if section is not None:
+            opened = _opens(seg.ours, section) and _opens(seg.theirs, section)   # both opened it right here
+            if seg.base or not (opened or section.match(heading)):
+                out.append(seg)
+                continue
+            rest = seg.theirs[1:] if opened else seg.theirs   # its heading once
+            while rest and not rest[0].strip():
+                rest = rest[1:]
+            gap = [nl] if opened and seg.ours and seg.ours[-1].strip() else []
+            out.extend(_join([seg.ours, gap, rest]))
+            heading = seg.ours[0] if opened else heading
             continue
         lines = _line_union(seg)
         out.extend(lines if lines is not None else [seg])
@@ -411,6 +420,11 @@ def union(base: str, ours: str, theirs: str, size: int = 7, style: str = "merge"
         res = text_merge(base, ours, theirs, size, style)
         res.note = "the union is not valid YAML: left as a conflict"
     return res
+
+
+def _opens(lines: list[str], section: re.Pattern) -> bool:
+    """Whether a hunk starts with the section's heading (both sides opened an Unreleased section at one place)."""
+    return bool(lines) and bool(section.match(lines[0]))
 
 
 def _coalesce(lines: list[str], section: re.Pattern) -> list[str]:
