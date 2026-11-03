@@ -59,6 +59,15 @@ The cockpit's title bar always shows the installed version. Once the screen is d
 background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.3 · 0.2.4 available »
 when a newer one is out; `u` then opens `brain update`'s plan in a confirmation, run on `y`.
 
+A brain that declares its own installer in `config.json` (`"engine": {"repo": ..., "pin": "v0.2.3", "installer":
+"install.ps1"}`, a path from the brain's root: its plan without arguments, `-Apply` to install the pinned engine)
+gets one more signal: when the installed engine lags the pin, after a pin PR and before `-Apply`, the title bar reads
+« brain 0.2.1 · pin v0.2.3: -Apply » and `u` opens that installer's plan, then `-Apply` on `y`. A brain without one,
+such as one from `brain init`, keeps `brain update`. Either install runs outside the cockpit, which holds files pip
+must replace on Windows: on `y` the cockpit exits, a new window waits for it, runs the install with its output in
+view (a failure says so and waits for Enter), then relaunches `brain tui` with the same arguments. A queue
+action's `install.ps1 -Apply`, applied with `A` in its detail, goes the same way.
+
 A pinned brain runs its pinned engine. `brain check` warns when the running brain or research-graph is not
 `config.json` `engine.pin`: a newer or an older version, or the pin's version from other code (another git revision,
 an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh` and

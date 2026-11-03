@@ -150,6 +150,10 @@ Then steps 4 and 5 above, with `~/my-brain` for the folder.
   `config.json` to the new tag and commit it (the plan reminds you; otherwise the installer's next `-Apply` puts the
   pinned tag back), then `brain sync` (the plugin's hooks). Until the pin moves, `brain sync` refuses to write with an
   engine other than the pinned one and says which line to change.
+- **Upgrade through your brain's installer**, when your brain has one and declares it (`config.json` `engine`
+  `installer`, say `"install.ps1"`): after the PR that moves `engine.pin`, the cockpit's title bar reads « brain X ·
+  pin vY: -Apply » and `u` shows that installer's plan, then runs `-Apply` on `y` in a new window, once the cockpit
+  has closed, and opens the cockpit again.
 - **Upgrade by hand** (0.2.2, and any version where `brain update --help` fails): the same `pip install` with the new
   tag, in the venv, for instance
   `& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain[tui] @ git+https://github.com/RoJLD/brain.git@v0.2.4#subdirectory=packages/brain"`

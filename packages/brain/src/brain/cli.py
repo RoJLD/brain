@@ -341,7 +341,11 @@
                  Enter: the row's detail (a DDR's options, an item's spec, ADRs and PR, a session's plan); in it, o
                  opens a link in the editor or the browser, a answers a decision, d marks an action or a permission
                  done, A applies an action's command, each run as {owner}'s after a confirmation of the exact brain
-                 command and logged in $BRAIN_HOME/ledger/cockpit-<month>.jsonl (refused in a Claude Code session)
+                 command and logged in $BRAIN_HOME/ledger/cockpit-<month>.jsonl (refused in a Claude Code session).
+                 The title bar: the installed version, « pin v0.2.3: -Apply » when it lags config.json engine.pin and
+                 the brain declares its installer (engine.installer), « 0.2.4 available » for a newer tag; u then
+                 shows that installer's plan (else brain update's) and, on y, the cockpit exits and a new window
+                 installs (-Apply, or brain update --yes) and relaunches brain tui with the same arguments
   brain tui --detail ID [--quick] [--json]   one row's detail printed: a DDR, an item, a milestone, a session (the
                  start of its id), an alert's key; its links and its actions with their exact commands
 

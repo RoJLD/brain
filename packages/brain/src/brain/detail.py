@@ -25,7 +25,9 @@ exactly (UX-9: "Lancer après confirmation"):
   apply   an action whose text holds the exact command the owner alone runs (in backquotes, or the whole text: ``brain
           ...`` or ``install.ps1 ...``; or install.ps1 named with its parameters, an apply first): that command,
           then ``brain queue done ID`` for a DDR. ``install.ps1 -Apply`` first runs its plan (install.ps1 without
-          -Apply, its own dry run), whose output the confirmation shows before Run.
+          -Apply, its own dry run), whose output the confirmation shows before Run. The brain's own installer
+          (config.json ``engine.installer``, whatever its name) runs the same way from the brain's root, and an
+          engine install (``handover``) is run by a window once the cockpit has exited (brain.handover).
 
 ``run`` executes them in the project's root, as the owner would type them there, and logs each one as their action in
 ``<BRAIN_HOME>/ledger/cockpit-<month>.jsonl`` (its command, folder, exit code, duration and the end of its output,
@@ -49,7 +51,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import cockpit, config, decisions, paths, plan, queue, resume, secretscan, status, transcript
+from . import cockpit, config, decisions, paths, plan, queue, resume, secretscan, status, transcript, update
 
 LOG = "cockpit"  # <BRAIN_HOME>/ledger/cockpit-<month>.jsonl
 OUTPUT_MAX = 4000  # the end of a command's output kept in the log
@@ -87,6 +89,7 @@ class Action:
     multi: bool = False
     note: bool = False  # done: an optional note says what was done
     preview: list[str] | None = None  # apply: the plan run first, its output shown in the confirmation
+    handover: bool = False  # an engine install: run by a window once the cockpit exits, then it relaunches (brain.handover)
 
 
 # --- what a row is ---
@@ -333,10 +336,15 @@ def queue_actions(e: dict, p, ddr: dict | None = None, via: str = "brain tui") -
             steps = [words]
             if ddr is not None:
                 steps.append(_brain(root, "queue", "done", e["id"], "--note", f"applied in {via}: {shown(words)}"))
-            out.append(Action("apply", "Apply", e["project"], e["id"], where, steps=steps, preview=preview(words),
+            plan_of = preview(words)  # an install.ps1 -Apply: its plan first, then run by a window (INST-2)
+            out.append(Action("apply", "Apply", e["project"], e["id"], where, steps=steps, preview=plan_of,
+                              handover=plan_of is not None,
                               plan=[f"runs {shown(words)} in {where}, as {config.name_of()}",
                                     "then marks the entry done" if ddr is not None else
-                                    "then the model clears the item's prop by a PR"]))
+                                    "then the model clears the item's prop by a PR",
+                                    *(["in a new window once the cockpit has closed (an install cannot replace the "
+                                       "files the cockpit holds), which then relaunches brain tui"]
+                                      if plan_of is not None else [])]))
     return out
 
 
@@ -667,20 +675,31 @@ def refused(env: dict | None = None) -> str:
             if env.get("CLAUDECODE") else "")
 
 
+def script_argv(script: Path, args: list[str]) -> list[str]:
+    """The process that runs a script: PowerShell for a .ps1, sh for a .sh, else the file itself."""
+    if script.suffix.lower() == ".ps1":
+        shell = "powershell" if os.name == "nt" else "pwsh"
+        return [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), *args]
+    return ["sh", str(script), *args] if script.suffix.lower() == ".sh" else [str(script), *args]
+
+
 def argv(words: list[str], cwd: Path | None) -> list[str]:
-    """The process a command's words start: brain with this interpreter (the TUI's own brain), install.ps1 with
-    PowerShell from the project's root (else this repo's)."""
+    """The process a command's words start: brain with this interpreter (the TUI's own brain), the brain's declared
+    installer (config.json engine.installer, from the brain's root ``cwd``), install.ps1 with PowerShell from the
+    project's root (else this repo's)."""
     head = words[0]
     if head == "brain":
         return [sys.executable, "-m", "brain", *words[1:]]
+    declared = update.installer(cwd) if cwd else None
+    if declared and (cwd / head).resolve() == declared.resolve():
+        return script_argv(declared, words[1:])
     if _RUNNABLE_RE.match(head):
         script = next((f for f in ((cwd / "install.ps1") if cwd else None, HERE / "install.ps1")
                        if f is not None and f.is_file()), None)
         if script is None:
             raise ValueError("install.ps1 not found in the project's root nor in the personal brain")
-        shell = "powershell" if os.name == "nt" else "pwsh"
-        return [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), *words[1:]]
-    raise ValueError(f"{head}: the cockpit runs brain and install.ps1 commands only")
+        return script_argv(script, words[1:])
+    raise ValueError(f"{head}: the cockpit runs brain, install.ps1 and the brain's declared installer only")
 
 
 def log(row: dict) -> Path:

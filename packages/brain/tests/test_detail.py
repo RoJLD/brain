@@ -84,6 +84,7 @@ def test_an_action_offers_done_and_apply_with_its_exact_command(demo):
     assert apply.steps == [[r".\install.ps1", "-Apply", "-Extras", "tui"],
                            ["brain", "--root", root, "queue", "done", ddr["id"], "--note",
                             r"applied in brain tui: .\install.ps1 -Apply -Extras tui"]]
+    assert apply.handover and not done.handover  # an install: run by a window once the cockpit closes (INST-2)
     assert "What" in dict(d["sections"])
     answered = detail.ddr(ddr["id"], p)  # once answered, no action is offered
     decisions.answer(p.root, ddr["id"], [], other="done", at=AT)
@@ -222,6 +223,23 @@ def test_run_logs_each_step_as_robins_and_stops_at_a_failure(tmp_path, brain_hom
         detail.argv(["git", "push"], tmp_path)
     (tmp_path / "install.ps1").write_text("", encoding="utf-8")
     assert detail.argv([r".\install.ps1", "-Apply"], tmp_path)[-2:] == [str(tmp_path / "install.ps1"), "-Apply"]
+
+
+def test_argv_runs_the_installer_the_brain_declares(tmp_path, monkeypatch):
+    """wi-brain-tui-apply-reload (INST-1): the brain's config.json engine.installer, whatever its name, runs from the
+    brain's root; another script of that folder does not."""
+    cfg = {"v": 1, "identity": {"owner": "Ada", "kind": "person"},
+           "engine": {"repo": "ada/engine", "pin": "v0.2.3", "installer": "setup/bootstrap.ps1"}}
+    (tmp_path / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (tmp_path / "setup").mkdir()
+    (tmp_path / "setup" / "bootstrap.ps1").write_text("", encoding="utf-8")
+    (tmp_path / "setup" / "other.ps1").write_text("", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(tmp_path / "config.json"))
+    words = detail.argv(["setup/bootstrap.ps1", "-Apply"], tmp_path)
+    assert words[1:] == ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(tmp_path / "setup" / "bootstrap.ps1"),
+                         "-Apply"]
+    with pytest.raises(ValueError):
+        detail.argv(["setup/other.ps1"], tmp_path)
 
 
 def test_run_answers_a_decision_for_real(demo, monkeypatch):

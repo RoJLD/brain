@@ -42,7 +42,8 @@
       "description": "The engine this brain runs: its repo and the tag pinned. The installer installs the brain command at that tag (pip, from the repo's packages/brain), research-graph at the same one; moved by a reviewed PR, then the installer on each machine.",
       "properties": {
         "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "owner/name of the engine's repo on GitHub."},
-        "pin": {"type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$", "description": "The tag installed, vX.Y.Z; moved by a reviewed PR."}
+        "pin": {"type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$", "description": "The tag installed, vX.Y.Z; moved by a reviewed PR."},
+        "installer": {"type": "string", "minLength": 1, "description": "This brain's own installer, relative to its root (install.ps1, say): run without arguments it prints its plan, with -Apply it installs the engine at the pin. When the installed engine lags the pin, the cockpit's u opens its plan and runs -Apply on the owner's yes; a brain without one is updated by brain update."}
       }
     },
     "adapters": {

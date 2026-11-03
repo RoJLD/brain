@@ -386,6 +386,8 @@ def test_apply_shows_the_plan_then_runs_the_command_and_marks_it_done(tmp_path, 
     monkeypatch.delenv("CLAUDECODE", raising=False)
     monkeypatch.setattr(tui.detail, "run", lambda a, steps: ran.append((a.kind, steps)) or [
         {"command": tui.detail.shown(s), "exit": 0, "seconds": 0.1, "output": f"{a.kind} output"} for s in steps])
+    handed = []
+    monkeypatch.setattr(tui.handover, "prepare", lambda a, steps: handed.append((a.kind, steps)) or {"script": "h"})
 
     async def check(app, pilot, fake):
         fake.choices["demo"] = projects.Project("demo", root)
@@ -404,15 +406,12 @@ def test_apply_shows_the_plan_then_runs_the_command_and_marks_it_done(tmp_path, 
         assert "plan output" in str(confirm.query_one("#plan", tui.Static).render())
         assert not confirm.query_one("#run", tui.Button).disabled
         await pilot.press("y")
-        await app.workers.wait_for_complete()
         await pilot.pause(0.2)
-        assert ran[1] == ("apply", [[r".\install.ps1", "-Apply"],
-                                    ["brain", "--root", str(root), "queue", "done", ddr["id"], "--note",
-                                     r"applied in brain tui: .\install.ps1 -Apply"]])
-        assert isinstance(app.screen, tui.ResultScreen)  # an apply's output is shown
-        await pilot.press("escape")
-        await pilot.pause(0.1)
-        assert app.screen is app.screen_stack[0]
+        # an install.ps1 -Apply runs in the window once the cockpit has closed (INST-2), then the entry marked done
+        assert len(ran) == 1 and handed == [("apply", [[r".\install.ps1", "-Apply"],
+                                                       ["brain", "--root", str(root), "queue", "done", ddr["id"],
+                                                        "--note", r"applied in brain tui: .\install.ps1 -Apply"]])]
+        assert app.handover == {"script": "h"}
     _run(check)
 
 
@@ -450,6 +449,8 @@ def test_the_title_shows_the_version_and_the_check_never_delays_the_first_paint(
     monkeypatch.setattr(tui.detail, "refused", lambda env=None: "")
     monkeypatch.setattr(tui.detail, "run", lambda a, steps: ran.append((a.kind, steps)) or [
         {"command": " ".join(steps[0]), "exit": 0, "seconds": 0.1, "output": "the plan"}])
+    handed = []
+    monkeypatch.setattr(tui.handover, "prepare", lambda a, steps: handed.append((a.label, steps)) or {"script": "h"})
 
     async def main():
         app = tui.CockpitApp(FakeCockpit(), refresh=2.0, probe=300)
@@ -472,10 +473,93 @@ def test_the_title_shows_the_version_and_the_check_never_delays_the_first_paint(
             await pilot.press("u")
             await pilot.pause(0.3)
             await pilot.press("y")
-            await app.workers.wait_for_complete()
             await pilot.pause(0.2)
-            assert ran[-1] == ("apply", [["brain", "update", "--yes"]])  # the owner's y
+            # the owner's y: handed over to the window (INST-2), never run inside the cockpit, which exits
+            assert handed == [("Update", [["brain", "update", "--yes"]])] and len(ran) == 2
+            assert app.handover == {"script": "h"}
     asyncio.run(main())
+
+
+def _lagging(monkeypatch, installer="install.ps1"):
+    """brain 0.2.1 installed, config.json engine.pin v0.2.3 (a pin PR merged, -Apply not run yet)."""
+    info = {"installed": "0.2.1", "latest": "0.2.3", "newer": True, "repo": "RoJLD/brain", "pin": "v0.2.3",
+            "lag": "behind", "installer": installer, "root": "/ada/brain", "checked": None, "source": "offline"}
+    monkeypatch.setattr(tui.update, "check", lambda root=None, **kw: info)
+    return info
+
+
+def test_a_lagging_engine_opens_the_installers_plan_and_applies_on_yes_only(monkeypatch):
+    """wi-brain-tui-apply-reload (INST-1, INST-2): the title bar says the pin to apply, u shows the brain's installer
+    plan (without -Apply), n changes nothing, y hands -Apply over to the window that relaunches the cockpit."""
+    _lagging(monkeypatch)
+    ran, handed = [], []
+    monkeypatch.setattr(tui.detail, "refused", lambda env=None: "")
+    monkeypatch.setattr(tui.detail, "run", lambda a, steps: ran.append((a.kind, steps)) or [
+        {"command": " ".join(steps[0]), "exit": 0, "seconds": 0.1, "output": "engine   ada/engine@v0.2.3"}])
+    monkeypatch.setattr(tui.handover, "prepare", lambda a, steps: handed.append((a, steps)) or {"script": "h"})
+
+    async def check(app, pilot, fake):
+        assert app.title == "brain 0.2.1 · pin v0.2.3: -Apply" and app.check_action("update", ()) is True
+        await pilot.press("u")
+        await pilot.pause(0.3)
+        confirm = app.screen
+        assert isinstance(confirm, tui.ConfirmScreen) and confirm.steps == [["install.ps1", "-Apply"]]
+        assert str(confirm.a.cwd) == str(tui.Path("/ada/brain")) and confirm.a.handover
+        assert ran == [("plan", [["install.ps1"]])]  # the plan shown first, nothing applied
+        assert "engine   ada/engine@v0.2.3" in str(confirm.query_one("#plan").render())
+        await pilot.press("n")
+        await pilot.pause(0.2)
+        assert handed == [] and app.screen is app.screen_stack[0]  # no run without the owner's gesture
+        await pilot.press("u")
+        await pilot.pause(0.3)
+        await pilot.press("y")
+        await pilot.pause(0.2)
+        assert [(a.label, a.ref, steps) for a, steps in handed] == [("Install", "pin v0.2.3", [["install.ps1", "-Apply"]])]
+        assert ran == [("plan", [["install.ps1"]])] * 2  # -Apply never ran inside the cockpit
+        assert app.handover == {"script": "h"}
+    _run(check)
+
+
+def test_the_install_is_refused_in_a_claude_code_session(monkeypatch):
+    _lagging(monkeypatch)
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setattr(tui.detail, "run", lambda a, steps: pytest.fail("nothing runs, not even the plan"))
+    monkeypatch.setattr(tui.handover, "prepare", lambda a, steps: pytest.fail("no handover"))
+
+    async def check(app, pilot, fake):
+        await pilot.press("u")
+        await pilot.pause(0.2)
+        assert app.screen is app.screen_stack[0] and app.handover is None  # refused: no confirmation at all
+    _run(check)
+
+
+def test_a_brain_without_an_installer_keeps_brain_update(monkeypatch):
+    """The tester's brain: no installer of its own, so u is brain update's plan, through the same handover."""
+    _lagging(monkeypatch, installer=None)
+    monkeypatch.setattr(tui.detail, "refused", lambda env=None: "")
+    monkeypatch.setattr(tui.detail, "run", lambda a, steps: [{"command": "x", "exit": 0, "seconds": 0, "output": ""}])
+
+    async def check(app, pilot, fake):
+        assert app.title == "brain 0.2.1 · 0.2.3 available"
+        await pilot.press("u")
+        await pilot.pause(0.3)
+        assert app.screen.steps == [["brain", "update", "--yes"]] and app.screen.a.handover
+    _run(check)
+
+
+def test_run_starts_the_handover_once_the_app_is_gone(monkeypatch):
+    started = []
+
+    class App:
+        def __init__(self, *a):
+            self.handover = {"script": "h"}
+
+        def run(self):
+            started.append("app")
+
+    monkeypatch.setattr(tui, "CockpitApp", App)
+    monkeypatch.setattr(tui.handover, "start", lambda h: started.append(h) or 0)
+    assert tui.run(FakeCockpit()) == 0 and started == ["app", {"script": "h"}]
 
 
 def test_the_queue_panel_names_the_decisions_taken_by_default(monkeypatch):

@@ -62,6 +62,18 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `git ls-remote`, no token, no credential helper, no prompt; the answer is kept 24 h in `<BRAIN_HOME>/update.json`,
   and offline it says nothing. When a newer tag is out the title reads « brain 0.2.3 · 0.2.4 available » and `u`
   opens `brain update`'s plan in the cockpit's confirmation, run on `y` only.
+- **The cockpit applies the brain's installer and relaunches itself** (wi-brain-tui-apply-reload, ADR INST-1 to
+  INST-3). A brain declares its own installer in `config.json` `engine.installer` (a path from its root, run without
+  arguments for its plan and with `-Apply` to install the engine at the pin; `brain config --check` reports a missing
+  file); the engine names none. When the installed engine lags `engine.pin` (a pin PR merged, `-Apply` not run yet)
+  and the brain declares one, the title bar reads « brain 0.2.1 · pin v0.2.3: -Apply » (no network needed) and `u`
+  opens that installer's plan in the confirmation, then `-Apply` on `y` only; a brain without one (from `brain init`)
+  keeps `brain update`. The install never runs inside the cockpit, which on Windows holds files pip must replace
+  (PyYAML's `_yaml.pyd`): on `y` it writes `<BRAIN_HOME>/handover/cockpit-<pid>.ps1`, logs it as the owner's action
+  and exits; a new console window waits for it to exit, runs the step there (its output stays, a failure says so and
+  waits for Enter), then relaunches `brain tui` with the same arguments (elsewhere, an sh script in the cockpit's
+  place). `brain update` from the cockpit goes the same way, and so does a queue action's `install.ps1 -Apply`
+  (`A`, its `brain queue done` after it in the window). Refused in a Claude Code session's shell.
 - **`brain update`**: the plan to the latest tag (the version, its CHANGELOG sections read from the tag, the tag
   installed into `<BRAIN_HOME>/venv` with pip and the `tui` extra kept, the launcher swapped into `<BRAIN_HOME>/bin`
   even while a brain runs, install.ps1's Set-Launcher in Python, and for a pinned brain the `engine.pin` to move by a

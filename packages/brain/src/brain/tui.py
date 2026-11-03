@@ -13,7 +13,10 @@ Keys (the footer shows those of the focused panel, ? lists them all):
   m        the focused panel's full view, its breadcrumb in its title; Escape (or m) comes back
   space    pause the automatic refresh, and resume it (r still reads now)
   r        read everything again now, the probes too; + and - check the files more or less often (500 ms to 10 s)
-  u        when a newer engine is out (the title bar says so): brain update's plan, run on the owner's yes
+  u        when the installed engine lags the brain's pin and the brain declares its installer (the title bar says
+           « brain 0.2.1 · pin v0.2.3: -Apply »): the installer's plan, then -Apply on the owner's yes; else, when a
+           newer engine is out (« 0.2.4 available »): brain update's plan, run on the owner's yes. Either way the
+           cockpit closes and a window installs, then relaunches it (brain.handover)
   t        the times in this machine's timezone or in UTC
   Enter    the row's detail (brain.detail; a second click on a row too): a DDR's options, an item's spec, ADRs and
            PR, a session's plan...; in it, o opens a link (the file at its line in the editor, the PR in the
@@ -26,14 +29,16 @@ notification, never a crash; an action's commands run in another, and the panels
 the same, else it is rebuilt with its scroll where it was and its cursor on its record. The scope, the views and the
 settings (the theme picked in the command palette, the timezone) are saved to <BRAIN_HOME>/tui.json at each change.
 The title bar shows the installed version; once the screen is drawn, a worker reads whether a newer one is out
-(brain.update.check: the engine's tags, cached 24 h, silent offline) and adds it there (« brain 0.2.2 · 0.2.3
-available »), so the first paint never waits on it.
+(brain.update.check: the engine's tags, cached 24 h, silent offline; the pin of config.json and the installer it
+declares) and adds it there (« brain 0.2.2 · 0.2.3 available », « brain 0.2.1 · pin v0.2.3: -Apply »), so the first
+paint never waits on it.
 """
 
 from __future__ import annotations
 
 import time
 from dataclasses import replace
+from pathlib import Path
 
 from rich.text import Text
 from textual import events
@@ -45,7 +50,7 @@ from textual.screen import ModalScreen
 from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input, Label, OptionList, RadioButton,
                              RadioSet, Select, Static)
 
-from . import cockpit, config, detail, paths, update
+from . import cockpit, config, detail, handover, paths, update
 
 INTERVALS = (0.5, 1.0, 2.0, 5.0, 10.0)
 TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines,
@@ -431,6 +436,7 @@ class CockpitApp(App):
         self.timer = None
         self.records: dict[str, dict[str, dict]] = {}  # each table's rows by key: the detail of the one selected
         self.update_info: dict | None = None  # brain.update.check's answer, once the background check has one
+        self.handover: dict | None = None  # an install handed over (brain.handover.prepare): brain.tui.run starts it
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -487,7 +493,10 @@ class CockpitApp(App):
         self.update_info = info
         self.title = update.title(info)
         self.refresh_bindings()
-        if info.get("newer"):
+        if update.applies(info):
+            self.notify(f"brain {info['installed']} lags the pin {info['pin']}: u shows the installer's plan "
+                        f"({info['installer']} -Apply)", title="update", timeout=8)
+        elif info.get("newer"):
             self.notify(f"brain {info['latest']} is out (this is {info['installed']}): u shows the update's plan",
                         title="update", timeout=8)
 
@@ -728,6 +737,9 @@ class CockpitApp(App):
         self.push_screen(ConfirmScreen(a, steps), lambda run: self._run_action(a, run) if run else None)
 
     def _run_action(self, a, steps: list[list[str]]) -> None:
+        if a.handover:
+            self._hand_over(a, steps)
+            return
         self.notify(f"running: {detail.shown(steps[0])}", title=a.label)
         self.run_worker(lambda: self._action_thread(a, steps), thread=True, group="action", exit_on_error=False)
 
@@ -748,6 +760,17 @@ class CockpitApp(App):
         if results and (a.kind == "apply" or not ok):
             self.push_screen(ResultScreen(f"{a.label} {a.ref}", results))
         self.tick(force=True)  # the panels read again: the DDR answered, the stamp written
+
+    def _hand_over(self, a, steps: list[list[str]]) -> None:
+        """An engine install (INST-2): the cockpit holds the engine's files open (PyYAML's _yaml.pyd on Windows), so
+        the steps run in a window once it has exited; it writes the handover, logged as the owner's action, and
+        exits, and brain.tui.run starts the window, which relaunches brain tui with the same arguments."""
+        try:
+            self.handover = handover.prepare(a, steps)
+        except Exception as exc:  # refused, or the script could not be written: shown, the cockpit stays
+            self.notify(f"{type(exc).__name__}: {exc}", title=f"{a.label} {a.ref}", severity="error", timeout=12)
+            return
+        self.exit()
 
     def _set_view(self, name: str, view: dict | None) -> None:
         if view is None:
@@ -801,8 +824,8 @@ class CockpitApp(App):
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action == "back":  # shown in the footer in a full view only
             return self.screen.maximized is not None
-        if action == "update" and not (self.update_info or {}).get("newer"):  # hidden until a newer one is out
-            return False
+        if action == "update" and not ((self.update_info or {}).get("newer") or update.applies(self.update_info)):
+            return False  # hidden until a newer one is out, or the installed one lags the pin
         if action in PANEL_ACTIONS and len(self.screen_stack) > 1:  # a dialog or a detail is open: its keys only
             return False
         return True
@@ -822,16 +845,28 @@ class CockpitApp(App):
             self.action_panel_help(panel.id)
 
     def action_update(self) -> None:
-        """brain update's plan (brain update --check) in the confirmation, then brain update --yes on Run: the
-        owner's gesture, never the cockpit's own."""
+        """The engine the brain wants, on the owner's gesture, never the cockpit's own. When the installed engine
+        lags the pin and the brain declares its installer (INST-1), the installer's plan (run without -Apply) in the
+        confirmation, then -Apply on Run; else, when a newer tag is out (UPD-2), brain update's plan (brain update
+        --check), then brain update --yes. Run hands over to a window that installs, then relaunches the cockpit."""
         info = self.update_info or {}
-        if not info.get("newer"):
-            return
-        self.start_action(detail.Action(
-            kind="apply", label="Update", project="brain", ref=f"v{info['latest']}", cwd=paths.brain_home(),
-            steps=[["brain", "update", "--yes"]], preview=["brain", "update", "--check"],
-            plan=[f"Installs brain v{info['latest']} into the brain's venv and swaps its launcher; a pinned brain's "
-                  "config.json engine.pin stays to move by a reviewed PR. Restart the cockpit afterwards."]))
+        then = ("Run closes the cockpit: a new window waits for it to exit, runs {cmd} there (its output stays in the "
+                "window, a failure says so before anything else), then relaunches brain tui with the same arguments.")
+        if update.applies(info):
+            inst = info["installer"]
+            self.start_action(detail.Action(
+                kind="apply", label="Install", project="brain", ref=f"pin {info['pin']}", cwd=Path(info["root"]),
+                steps=[[inst, "-Apply"]], preview=[inst], handover=True,
+                plan=[f"brain {info['installed']} is installed and config.json engine.pin is {info['pin']}: the "
+                      f"brain's installer ({inst}, config.json engine.installer) installs the pinned engine.",
+                      then.format(cmd=f"{inst} -Apply")]))
+        elif info.get("newer"):
+            self.start_action(detail.Action(
+                kind="apply", label="Update", project="brain", ref=f"v{info['latest']}", cwd=paths.brain_home(),
+                steps=[["brain", "update", "--yes"]], preview=["brain", "update", "--check"], handover=True,
+                plan=[f"Installs brain v{info['latest']} into the brain's venv and swaps its launcher; a pinned "
+                      "brain's config.json engine.pin stays to move by a reviewed PR.",
+                      then.format(cmd="brain update --yes")]))
 
     def action_pause(self) -> None:
         self.paused = not self.paused
@@ -876,5 +911,8 @@ class CockpitApp(App):
 
 def run(cp, refresh: float = cockpit.REFRESH_S, probe: float = cockpit.PROBE_S, views: dict[str, dict] | None = None,
         search: str = "", settings: dict | None = None) -> int:
-    CockpitApp(cp, refresh, probe, views, search, settings).run()
+    app = CockpitApp(cp, refresh, probe, views, search, settings)
+    app.run()
+    if app.handover:  # an install handed over: the window starts once the app is gone (brain.handover)
+        return handover.start(app.handover)
     return 0
