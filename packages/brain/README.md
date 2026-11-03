@@ -143,7 +143,11 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
 
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
-brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart.
+brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture
+hooks run `brain.capture` (`capture.sh <event>` runs `hooks/capture.py`, which calls it with the brain command's
+venv): it reads the hook's JSON on stdin and appends the session events, the session-record snapshots and the action
+records to `<BRAIN_HOME>/ledger` at zero token; it prints nothing and never fails the session (its errors go to
+`ledger/errors.log`; `BRAIN_CAPTURE=0` turns it off).
 
 ## Tests
 

@@ -1175,15 +1175,17 @@ def _records_view(root: Path, store: Path) -> bool:
     return (root / records.RECORDS_DIR).is_dir() and "DDR" in (graph.load_schema(store).get("node_types") or [])
 
 
-def _links_repo(args, root: Path) -> tuple[str, projects.Repo | None]:
-    """(name, registry entry) of the repo at ``root``, whose store takes the Doc, Test and Workflow links."""
+def _links_repo(args, root: Path) -> tuple[str, projects.Repo | None, list[projects.Repo]]:
+    """(name, registry entry) of the repo at ``root``, whose store takes the Doc, Test and Workflow links, and the
+    project's repos (the others a CodeRef of the store names are derived into it too)."""
     try:
-        for c in projects.repos_of(_project(args, root)):
-            if c.path.resolve() == root.resolve():
-                return c.name, c
+        cfgs = projects.repos_of(_project(args, root))
     except projects.RepoError:
-        pass
-    return projects._repo_folder(root).lower(), None
+        cfgs = []
+    for c in cfgs:
+        if c.path.resolve() == root.resolve():
+            return c.name, c, cfgs
+    return projects._repo_folder(root).lower(), None, cfgs
 
 
 def _activate_specs(args, root: Path, store: Path) -> int:
@@ -1213,8 +1215,9 @@ def _sync_store(args, root: Path, store: Path) -> int:
                                                              if left else ""))
     if links.applies(store):
         try:
-            n, e = links.write(root, store, *_links_repo(args, root))
-            print(f"links graph: {n} node(s), {e} edge(s)")
+            n, e, missing = links.write(root, store, *_links_repo(args, root))
+            print(f"links graph: {n} node(s), {e} edge(s)" + (f"; not on this machine, left out: {', '.join(missing)}"
+                                                             if missing else ""))
         except AuditError as exc:
             print(f"brain: links graph not written: {exc}", file=sys.stderr)
             return 1
