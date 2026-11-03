@@ -245,17 +245,9 @@ def code_ref_file(tree: inventory.Tree, repo: str, cid: str) -> str:
     return code_ref_target(tree, repo, cid)[0]
 
 
-def node_code(tree: inventory.Tree, repo: str, node: dict, refs: set[str] = frozenset(),
-              home: inventory.Tree | None = None) -> Code:
-    """What a node stands for in the repo: a Hook's scripts, a Skill's or a Plugin's files and folder, and the files of
-    the CodeRefs it is implemented_by (``refs``). A CodeRef stands for nothing itself: research_graph refuses any edge
-    from it, and any edge into it but implemented_by. ``home``: the tree of the repo that holds the store, when
-    ``tree`` is another repo's; an anchor names a file of ``home``, so a Hook's scripts are found in ``tree`` by their
-    hooks/<name> (the store's repo renders them from that repo's sources), and a Skill or a Plugin stands for nothing
-    there."""
-    t, af = node.get("type"), _anchor_file(node)
-    out = Code()
-    whole: set[str] = set()
+def refs_code(tree: inventory.Tree, repo: str, refs: set[str]) -> Code:
+    """The files of a node's CodeRefs of this repo; ``symbols``: a file only symbol CodeRefs name -> those symbols."""
+    out, whole = Code(), set()
     for f, sym in (code_ref_target(tree, repo, r) for r in refs):
         if not f:
             continue
@@ -265,6 +257,19 @@ def node_code(tree: inventory.Tree, repo: str, node: dict, refs: set[str] = froz
         else:
             whole.add(f)
     out.symbols = {f: s for f, s in out.symbols.items() if f not in whole}
+    return out
+
+
+def node_code(tree: inventory.Tree, repo: str, node: dict, refs: set[str] = frozenset(),
+              home: inventory.Tree | None = None) -> Code:
+    """What a node stands for in the repo: a Hook's scripts, a Skill's or a Plugin's files and folder, and the files of
+    the CodeRefs it is implemented_by (``refs``). A CodeRef stands for nothing itself: research_graph refuses any edge
+    from it, and any edge into it but implemented_by. ``home``: the tree of the repo that holds the store, when
+    ``tree`` is another repo's; an anchor names a file of ``home``, so a Hook's scripts are found in ``tree`` by their
+    hooks/<name> (the store's repo renders them from that repo's sources), and a Skill or a Plugin stands for nothing
+    there."""
+    t, af = node.get("type"), _anchor_file(node)
+    out = refs_code(tree, repo, refs)
     if home is not None:
         if t == "Hook":
             out.files |= {f for s in hook_scripts(home, node) for f in resolve(tree, "hooks/" + s.rsplit("/", 1)[-1])}
@@ -348,6 +353,24 @@ def names_symbol(rf: inventory.RepoFacts, test: str, symbols: set[str], exact: b
         if last in words or not exact and all(w in words for w in parts[parts[:1] == ["cmd"]:]):
             return True
     return False
+
+
+def code_tests(rf: inventory.RepoFacts, c: Code, tests_of: dict, imported: dict, cov: dict | None) -> set[str]:
+    """The test modules of a node's code: per file, brain audit's evidence and the tests that import it; a file only
+    symbol CodeRefs name keeps those that name a symbol, or, when the coverage summary measured the file, those its
+    contexts saw run one and those that name one outright."""
+    got: set[str] = set()
+    measured = (cov or {}).get("files") or {}
+    for p in c.files:
+        ts = tests_of.get(p, set()) | imported.get(p, set())
+        if p not in c.symbols:
+            got |= ts
+        elif p in measured:
+            ran = {t for sym in c.symbols[p] for t in testcov.ran(cov, p, sym)}
+            got |= {t for t in ts if t in ran or names_symbol(rf, t, c.symbols[p], exact=True)}
+        else:
+            got |= {t for t in ts if names_symbol(rf, t, c.symbols[p])}
+    return got
 
 
 def script_tests(u: inventory.Unit, rf: inventory.RepoFacts, idx: inventory.Index, mod_ev: dict) -> set[str]:
@@ -530,19 +553,8 @@ def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inve
             edge(f"test:{repo}:{f}", f"test:{repo}:{up}", "part_of")
     tested: set[str] = set()
     cov = testcov.load(home if home is not None else tree, store, repo)
-    measured = set((cov or {}).get("files") or ())
     for nid, c in code.items():
-        got: set[str] = set()
-        for p in c.files:
-            ts = tests_of.get(p, set()) | imported.get(p, set())
-            if p not in c.symbols:
-                got |= ts
-            elif p in measured:   # of the file's tests, those the coverage contexts saw run the symbol
-                ran = {t for sym in c.symbols[p] for t in testcov.ran(cov, p, sym)}
-                got |= {t for t in ts if t in ran or names_symbol(rf, t, c.symbols[p], exact=True)}
-            else:
-                got |= {t for t in ts if names_symbol(rf, t, c.symbols[p])}
-        for t in sorted(got):
+        for t in sorted(code_tests(rf, c, tests_of, imported, cov)):
             if t in tests:
                 edge(nid, tests[t], "tested_by")
                 tested.add(tests[t])

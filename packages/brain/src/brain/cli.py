@@ -2288,24 +2288,15 @@ def cmd_brief(args, root: Path) -> int:
 
 def cmd_coverage(args, root: Path) -> int:
     """brain coverage (brain.testcov): a repo of the project measured; the summary printed, kept with --write."""
-    from . import inventory, testcov
+    from . import testcov
     cfgs = _repos(args, root)
     want = (args.repo or _root_repo(args, root) or "").lower()
     c = next((c for c in cfgs if c.name.lower() == want), None)
     if c is None:
         raise SystemExit(f"brain coverage: no repo {want or '?'} in the project (repos: "
                          f"{', '.join(x.name for x in cfgs) or 'none'})")
-    rc = 0
     try:
-        if args.from_data:
-            summary = testcov.from_data(Path(args.from_data), Path(args.cwd or c.path).resolve(), c.path, c.name,
-                                        args.python)
-        else:
-            if not args.run:
-                raise SystemExit("brain coverage: --run (run the repo's tests) or --from DATA (a .coverage file)")
-            rf = inventory.collect(inventory.work_tree(c.path), c.name, c.lang, c.roots, c.waive)
-            summary, rc = testcov.run(c.path, c.name, rf.tests, sorted(set(rf.root_of.values())) or (c.roots or []),
-                                      args.python, args.workers)
+        summary, rc = testcov.measure(c, args.run, args.from_data, args.cwd, args.python, args.workers)
     except (testcov.CoverageError, AuditError) as exc:
         raise SystemExit(f"brain coverage: {exc}") from None
     print(testcov.render(summary) if args.json else "\n".join(testcov.lines(summary)), end="" if args.json else "\n")

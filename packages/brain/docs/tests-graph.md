@@ -45,9 +45,10 @@ brain coverage --repo brain --run --json          # the summary on stdout, nothi
 
 `--run` groups the repo's Python test modules by the folder of their nearest pytest configuration (a `pyproject.toml`
 with `[tool.pytest.ini_options]`, a `pytest.ini`, a `tox.ini` or `setup.cfg` with a pytest section; the repo's root
-when none) and runs `python -m pytest <folders> --cov=<package roots> --cov-context=test` there. The Python
-(`--python`, default the brain's own) must have pytest-cov (and pytest-xdist for `-n`) and import the repo's code
-from that checkout (an editable install). A test that fails still counts for what it ran; brain coverage says so.
+when none) and runs `python -m pytest <folders> --cov=<package roots> --cov-context=test` there, the package roots
+first on `PYTHONPATH`, so the code that runs is the checkout's, whatever the Python has installed. That Python
+(`--python`, default the brain's own) needs pytest-cov (and pytest-xdist for `-n`) and the repo's test dependencies.
+A test that fails still counts for what it ran; brain coverage says so.
 `--from` reads a coverage data file (`.coverage`, made with `--cov-context=test`) of this checkout, `--cwd` being the
 folder pytest ran in.
 

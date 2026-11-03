@@ -167,12 +167,18 @@ def load_tree(tree, rel: str, default_repo: str) -> Model | None:
     tree.prefetch(node_files + edge_files)
     m = build([_yaml_load(tree.text(f) or "") for f in node_files],
               [_yaml_load(tree.text(f) or "") for f in edge_files], default_repo)
-    pre = f"{rel}/{testcov.FOLDER}/"
+    m.coverage = _tree_coverage(tree, rel)
+    return m
+
+
+def _tree_coverage(tree, rel: str) -> dict[str, dict]:
+    """Repo -> the coverage summary the store ``rel`` keeps for it (brain.testcov), read from a git tree."""
+    pre, out = f"{rel}/{testcov.FOLDER}/", {}
     for f in sorted(p for p in tree.files if p.startswith(pre) and p.endswith(".json") and "/" not in p[len(pre):]):
         got = testcov.load(tree, rel, f[len(pre):-5])
         if got is not None:
-            m.coverage[f[len(pre):-5].lower()] = got
-    return m
+            out[f[len(pre):-5].lower()] = got
+    return out
 
 
 # --- FEATURES.md ---

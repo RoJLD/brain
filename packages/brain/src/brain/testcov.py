@@ -138,10 +138,8 @@ def contexts(data: Path, root: Path, cwd: Path) -> tuple[dict[str, dict[int, set
     return out, str(meta.get("version") or "")
 
 
-def summarize(reports: list[tuple[dict, dict, Path]], root: Path, repo: str, commit: str = "", dirty: bool = False,
-              day: str = "", tool: str = "") -> dict:
-    """The summary of runs, each (its ``coverage json`` report: the statements and executed lines of each file, its
-    contexts: file -> line -> test modules, the folder pytest ran in); the files' executed lines unioned."""
+def _merge(reports: list[tuple[dict, dict, Path]], root: Path) -> dict[str, dict]:
+    """Source file -> its statements, executed lines and contexts (line -> test modules), over every run."""
     files: dict[str, dict] = {}
     for rep, ctxs, cwd in reports:
         for name, f in (rep.get("files") or {}).items():
@@ -152,27 +150,33 @@ def summarize(reports: list[tuple[dict, dict, Path]], root: Path, repo: str, com
             cur["statements"] = max(cur["statements"], int((f.get("summary") or {}).get("num_statements") or 0))
             cur["executed"] |= set(f.get("executed_lines") or [])
         for rel, lines in ctxs.items():
-            if rel in files:
-                for n, ts in lines.items():
-                    files[rel]["contexts"].setdefault(n, set()).update(ts)
-    out_files: dict[str, dict] = {}
-    total_s = total_c = 0
-    for rel, cur in sorted(files.items()):
-        src = root / rel
-        fn = functions(src.read_text(encoding="utf-8", errors="replace")) if src.is_file() else {}
-        tests: dict[str, set] = {}
-        for line, ts in cur["contexts"].items():
-            q = fn.get(line)
-            if q:
-                for t in ts:
-                    tests.setdefault(t, set()).add(q)
-        s, c = cur["statements"], min(len(cur["executed"]), cur["statements"])
-        total_s, total_c = total_s + s, total_c + c
-        out_files[rel] = {"statements": s, "covered": c, "percent": _pct(c, s),
-                          **({"tests": {t: sorted(q) for t, q in sorted(tests.items())}} if tests else {})}
+            for n, ts in (lines.items() if rel in files else ()):
+                files[rel]["contexts"].setdefault(n, set()).update(ts)
+    return files
+
+
+def _entry(root: Path, rel: str, cur: dict) -> dict:
+    """One file of the summary: its numbers, and each test module -> the functions of the file it ran."""
+    src = root / rel
+    fn = functions(src.read_text(encoding="utf-8", errors="replace")) if src.is_file() else {}
+    tests: dict[str, set] = {}
+    for line, ts in cur["contexts"].items():
+        for t in ts if fn.get(line) else ():
+            tests.setdefault(t, set()).add(fn[line])
+    s, c = cur["statements"], min(len(cur["executed"]), cur["statements"])
+    return {"statements": s, "covered": c, "percent": _pct(c, s),
+            **({"tests": {t: sorted(q) for t, q in sorted(tests.items())}} if tests else {})}
+
+
+def summarize(reports: list[tuple[dict, dict, Path]], root: Path, repo: str, commit: str = "", dirty: bool = False,
+              day: str = "", tool: str = "") -> dict:
+    """The summary of runs, each (its ``coverage json`` report: the statements and executed lines of each file, its
+    contexts: file -> line -> test modules, the folder pytest ran in); the files' executed lines unioned."""
+    files = {rel: _entry(root, rel, cur) for rel, cur in sorted(_merge(reports, root).items())}
+    total_s, total_c = sum(f["statements"] for f in files.values()), sum(f["covered"] for f in files.values())
     return {"version": VERSION, "repo": repo.lower(), "commit": commit, "dirty": dirty, "measured": day,
             "tool": f"coverage {tool}".strip(), "statements": total_s, "covered": total_c,
-            "percent": _pct(total_c, total_s), "files": out_files}
+            "percent": _pct(total_c, total_s), "files": files}
 
 
 def _pct(c: int, s: int) -> float:
@@ -242,7 +246,9 @@ def run(root: Path, repo: str, tests: list[str], sources: list[str], python: str
         for i, (cwd, folders) in enumerate(suites(root, tests)):
             where = root / cwd if cwd else root
             data = Path(tmp) / f".coverage.{i}"
-            env = dict(os.environ, COVERAGE_FILE=str(data))
+            # the checkout's own code first, before what the Python has installed (an editable install elsewhere)
+            env = dict(os.environ, COVERAGE_FILE=str(data), PYTHONPATH=os.pathsep.join(
+                [str((root / s).resolve()) for s in sources] + [os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep))
             cmd = [python, "-m", "pytest", *folders, *covs, "--cov-context=test", "--cov-report=",
                    *(["-n", workers] if workers else []), *(extra or [])]
             echo(f"brain coverage: {cwd or '.'}: {' '.join(cmd[1:])}")
@@ -269,11 +275,25 @@ def from_data(data: Path, cwd: Path, root: Path, repo: str, python: str = "") ->
     return summarize([(rep, ctxs, cwd)], root, repo, head, False, date.today().isoformat(), tool)
 
 
+def measure(repo, run_tests: bool, data: str = "", cwd: str = "", python: str = "",
+            workers: str = "") -> tuple[dict, int]:
+    """brain coverage's measure of a registered repo (``repo``: its projects.Repo): its suites run (``run_tests``), or
+    a data file read (``data``, pytest having run in ``cwd``, default the repo's root); (the summary, pytest's exit)."""
+    if data:
+        return from_data(Path(data), Path(cwd or repo.path).resolve(), repo.path, repo.name, python), 0
+    if not run_tests:
+        raise CoverageError("--run (run the repo's tests) or --from DATA (a .coverage file)")
+    rf = inventory.collect(inventory.work_tree(repo.path), repo.name, repo.lang, repo.roots, repo.waive)
+    return run(repo.path, repo.name, rf.tests, sorted(set(rf.root_of.values())) or (repo.roots or []), python,
+               workers)
+
+
 def lines(summary: dict, top: int = 10) -> list[str]:
     """The summary in text: the totals, then the least covered files."""
     files = summary.get("files") or {}
+    at = str(summary.get("commit") or "?")[:7] + (" (dirty)" if summary.get("dirty") else "")
     out = [f"{summary.get('repo')}: {summary.get('percent')} % of {summary.get('statements')} statements "
-           f"({len(files)} files) at {str(summary.get('commit') or '?')[:7]}{' (dirty)' if summary.get('dirty') else ''}"]
+           f"({len(files)} files) at {at}"]
     for p, f in sorted(files.items(), key=lambda kv: (kv[1]["percent"], kv[0]))[:top]:
         out.append(f"  {f['percent']:5.1f} %  {f['covered']}/{f['statements']}  {p}")
     return out

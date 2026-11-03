@@ -82,8 +82,8 @@ CHECKS = {c.id: c for c in (
           "anchors"),
     Check("test.links", "P2", "never", "a test module no graph node is tested_by (no Hook, and no node implemented_by "
           "a CodeRef, stands for its code)"),
-    Check("test.coverage", "P2", "never", f"a Python module the tests run under {COVERAGE_FLOOR:g} % of, by the store's "
-          "coverage summary (brain coverage)"),
+    Check("test.coverage", "P2", "never", f"a Python module the tests run under {COVERAGE_FLOOR:g} % of, by the "
+          "store's coverage summary (brain coverage)"),
     Check("feature.tests", "P2", "never", "a have or partial feature with code that no test module is tested_by "
           "(no test imports, names or runs its code)"),
     Check("features.md", "P0", "new+left", "FEATURES.md is not the render of the graph (P0), or is missing (P1 on a "
