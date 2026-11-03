@@ -14,6 +14,10 @@ what went wrong. The install itself is in [install.md](install.md).
   for a key, and its guard refuses to commit one.
 - **Nothing is pooled.** What you write is never collected, compared with other testers' or used to train anything.
   When you send us a report, you choose what is in it.
+- **The licence.** From 0.2.2 the brain command is under the Business Source License 1.1
+  ([packages/brain/LICENSE](../packages/brain/LICENSE)): you may use, modify and run it for your own work and reuse
+  it in your own products, with a visible credit to Brain and its author and its `NOTICE` file kept; offering it to
+  others as a hosted or managed service needs a commercial licence. `research-graph` stays under the MIT License.
 - **No guarantee of service.** It is a pilot: things will break, and the engine changes between tags. The pilot
   agreement you signed says the rest.
 

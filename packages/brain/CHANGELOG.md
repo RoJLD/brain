@@ -24,6 +24,14 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 - **The vault's runbook ships with the engine** (`docs/vault.md`): the classes, the owner's steps once per machine,
   the daily canary as a scheduled task for Windows, macOS and Linux, the drill, a lost key. `brain vault status` links
   it. An empty `.gitkeep` holds no data for the classes check.
+- **The Business Source License 1.1 from this version** (wi-brain-engine-license). The brain package leaves the MIT
+  License: `LICENSE` (BSL 1.1 and its parameters) and `NOTICE` (the credit to keep) sit in `packages/brain`, and
+  `pyproject.toml` declares `license = "BUSL-1.1"` and `license-files` (PEP 639: building the package needs setuptools
+  77 or later). The Additional Use Grant allows any use, modification and running for your own work and reuse in your
+  own products, with a visible credit to Brain and its author and the NOTICE kept; offering it to third parties as a
+  hosted or managed service needs a commercial licence. Each version changes to the Apache License 2.0 four years after
+  its release. 0.2.0 and 0.2.1 stay under the MIT License, and so does research-graph. The READMEs and
+  `docs/pilot.md` say it. Tested (`tests/test_license.py`).
 - **The links of a project's other repos** (`brain.links`). A store's CodeRefs may name another registered repo of
   its project (an engine whose code a personal brain describes, say). `brain sync` now also derives that repo's Doc,
   Test and Workflow nodes into the store's `_generated_links.yaml`, from its committed state (the commit `brain audit`
