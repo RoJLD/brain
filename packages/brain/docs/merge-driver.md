@@ -2,7 +2,8 @@
 
 Many sessions working on one brain at once meet in three places: the files every branch rewrites (the generated
 views, the logs, the graph), the code two branches change, and the briefs a coordinator writes for each session.
-Three zero-token commands take the mechanical part of each.
+Three zero-token commands take the mechanical part of each: `brain merge-driver` (the module brain.mergedriver),
+`brain collisions` (brain.collisions) and `brain brief` (brain.brief).
 
 ## `brain merge-driver`: the shared files merge by themselves
 
