@@ -261,6 +261,13 @@
                  into a share of the window, the percent now, at the reset at the last 24 h's pace, what the live
                  sessions have left, how many startable P0/P1 items fit, and the advice (open waves, only P0/P1,
                  none); written to $BRAIN_HOME/usage/quota.json for the cockpit
+  brain usage guard [--json]   the usage governor (brain.governor, the PreToolUse hook on start_session, Agent and
+                 Workflow): the quota windows it reads, the sessions running and the brainstorms open on this
+                 machine, the committed memory, the caps (config.json usage.guard, lowered by the project's usage:)
+                 and what a new session, a brainstorm, a subagent and a workflow would get now (ask at WARN, refuse at
+                 CRITICAL, past a cap or while the newest reading is stale)
+  brain usage allow [--hours H] [--reason TEXT]   {owner}'s override of the usage governor for H hours (default 2;
+                 0 ends it), run in their own terminal: the guards refuse it to a session
   brain cost estimate ITEM|TEXT|@FILE|- [--class trivial|standard|strategic] [--record] [--json]   cost, output,
                  context peak, active time and sessions (median, p25-p75) from the finished items most alike, times
                  the class's calibration; --record writes props.cost_estimate on the item
@@ -330,7 +337,7 @@ from . import (__version__, actions, alerts, audit, backfill, batch, boundary, b
                config, cost, decisions, detail, digest, features, forecast, graph, init, links, lint, memory,
                milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
                records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, usage)
-from . import classes, keystore, vault
+from . import classes, governor, keystore, vault
 from .inventory import AuditError
 
 
@@ -1427,6 +1434,8 @@ def cmd_usage(args, root: Path) -> int:
         usage.update(rescan=True)
     if args.what == "quota":
         return _quota(args, root, projs)
+    if args.what in ("guard", "allow"):
+        return _governor(args, root)
     led = cost.scoped(cost.load(projs, root, refresh=not (args.no_scan or args.rescan)), projs, args.all)
     by = {"daily": "day", "weekly": "week"}.get(args.report or "", args.by)
     rep = cost.report(led, _when(args.since, "7d"), _when(args.until), by,
@@ -1452,6 +1461,20 @@ def _quota(args, root: Path, projs: list[projects.Project]) -> int:
     except quota.QuotaError as exc:
         raise SystemExit(f"brain: {exc}") from None
     print(cost.as_json(fc) if args.json else "\n".join(quota.render(fc)))
+    return 0
+
+
+def _governor(args, root: Path) -> int:
+    """brain usage guard | allow (brain.governor): what the usage hook would decide now; the owner's override."""
+    if args.what == "allow":
+        if args.hours is not None and args.hours < 0:
+            raise SystemExit("brain: --hours is 0 or more")
+        rec = governor.allow(args.hours if args.hours is not None else governor.ALLOW_HOURS, args.reason or "")
+        print(cost.as_json(rec) if args.json else f"usage guard lifted until {rec['until']} ({governor.allow_file()})"
+              if rec else "usage guard override ended")
+        return 0
+    rep = governor.report(str(Path.cwd()))
+    print(cost.as_json(rep) if args.json else "\n".join(governor.render(rep)))
     return 0
 
 
@@ -2416,14 +2439,17 @@ def build_parser() -> argparse.ArgumentParser:
     us = sub.add_parser("usage", help="the token ledger: what the sessions cost, by project, item, class, phase, "
                                       "tool, command, day...; distributions and script candidates; quota: the plan's "
                                       "quota readings and forecast (zero token)")
-    us.add_argument("what", nargs="?", choices=("quota",),
-                    help="quota: note a get_usage reading (--observe) and forecast the plan's quota window")
+    us.add_argument("what", nargs="?", choices=("quota", "guard", "allow"),
+                    help="quota: note a get_usage reading (--observe) and forecast the plan's quota window; guard: what "
+                         "the usage governor would decide now; allow: the owner's override of it (their own terminal)")
     us.add_argument("--observe", type=float, metavar="PCT",
                     help="quota: the percent used get_usage reads for --window, noted with its time")
     us.add_argument("--window", choices=tuple(quota.WINDOWS), default="week", help="quota: the window (default week)")
     us.add_argument("--resets", metavar="TIME", help="quota: when the window resets (get_usage's resetsAt, ISO; "
                                                      "default the last reading's, moved by whole weeks)")
     us.add_argument("--at", metavar="TIME", help="quota: when the reading was taken (ISO; default now)")
+    us.add_argument("--hours", type=float, help="allow: how long the override holds (default 2; 0 ends it)")
+    us.add_argument("--reason", help="allow: why, kept with the override")
     us.add_argument("--all", action="store_true", help="every session on this machine, whatever its project")
     us.add_argument("--since", help="Nd, Nw, today, yesterday, last-week, last-month or YYYY-MM-DD (default 7d)")
     us.add_argument("--until", help="the same, excluded (default: now)")

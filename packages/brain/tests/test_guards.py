@@ -585,8 +585,15 @@ def test_hooks_json_declares_the_guards():
     pre = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
     assert [(m["matcher"], m["hooks"][0]["command"].split()[-1]) for m in pre] == [
         ("Bash|PowerShell", "shell"), ("Edit|Write|MultiEdit|NotebookEdit", "edit"),
-        ("mcp__.*scheduled[-_]?tasks?__(create|update)_scheduled_task", "tool")]
+        ("mcp__.*scheduled[-_]?tasks?__(create|update)_scheduled_task", "tool"),
+        ("mcp__.*__set_(remote_control|session_permission_mode|setting)", "tool"),
+        ("^(Agent|Task|Workflow)$|^mcp__.+__start_session$", '"${CLAUDE_PLUGIN_ROOT}/hooks/governor.sh"')]
     assert not any(h.get("async") for m in pre for h in m["hooks"])
+    settings, governed = re.compile(pre[3]["matcher"]), re.compile(pre[4]["matcher"])
+    assert settings.search("mcp__ccd_session_mgmt__set_remote_control") and settings.search(
+        "mcp__x__set_session_permission_mode") and not settings.search("mcp__ccd_session_mgmt__set_session_model")
+    assert all(governed.search(t) for t in ("Agent", "Task", "Workflow", "mcp__ccd_session__start_session"))
+    assert not any(governed.search(t) for t in ("TaskCreate", "AgentX", "mcp__x__start_session_now"))
     tools = re.compile(pre[2]["matcher"])
     assert tools.fullmatch("mcp__scheduled-tasks__create_scheduled_task") and guards.SCHEDULED_TOOL.match(
         "mcp__scheduled-tasks__create_scheduled_task")

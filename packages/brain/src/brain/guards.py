@@ -1273,6 +1273,12 @@ OVERRIDE_HINT = re.compile(r"(?i)settings(?:\.local)?\.json|\.(?:bashrc|bash_pro
                            r"profile\.ps1")   # what inline code names when it writes one of OVERRIDE_FILES
 INSTALL_APPLY = re.compile(r"(?i)^[-–—]a(?:p(?:p(?:l(?:y)?)?)?)?(?::\$?(?:true|1))?$")   # PowerShell takes – and —
 SCHEDULED_TOOL = re.compile(r"^mcp__.*scheduled[-_]?tasks?__(?:create|update)_scheduled_task$")
+# The desktop app's tools that change a session's Remote Control or permission mode, under any MCP prefix, and its
+# settings tool for a key of either (connect_new_sessions_to_remote_control): security-settings, the owner's alone.
+SESSION_SETTINGS_TOOL = re.compile(r"^mcp__.+__(?:set_remote_control|set_session_permission_mode)$")
+SETTINGS_TOOL = re.compile(r"^mcp__.+__set_setting$")
+SECURITY_KEY = re.compile(r"remote[_-]?control|permission", re.I)
+UNLIFTED = {"security-settings"}   # the owner guard's checks BRAIN_GUARD_ALLOW cannot lift, not even with all
 
 
 def _autostart(path) -> bool:
@@ -1526,6 +1532,47 @@ def _override(command: str, cmds, shell: str) -> str | None:
     return None
 
 
+def session_setting(tool: str, inp: dict) -> bool:
+    """Whether a tool call changes a session's Remote Control or permission mode (SESSION_SETTINGS_TOOL), or sets one
+    of the app's settings that does (SETTINGS_TOOL with a SECURITY_KEY key)."""
+    return bool(SESSION_SETTINGS_TOOL.match(tool) or (SETTINGS_TOOL.match(tool) and isinstance(inp, dict)
+                                                     and SECURITY_KEY.search(str(inp.get("key") or ""))))
+
+
+def check_session_settings(tool: str, inp: dict, cwd: str):
+    """(category, reason, request) for a call that changes a session's security settings (wi-brain-guard-session-
+    settings): refused to every session, whatever the value (on or off, a higher or a lower mode), and put to the owner
+    as an action; the category is security-settings, which the override does not lift (UNLIFTED)."""
+    args = {k: v for k, v in (inp or {}).items() if not str(k).startswith("_")}   # _consent is the app's
+    what = f"{tool.rsplit('__', 1)[-1]} " + " ".join(f"{k}={json.dumps(v, ensure_ascii=False)}"
+                                                       for k, v in sorted(args.items()))
+    req = {"ref": _ref(f"{tool}\0{json.dumps(args, sort_keys=True)}"), "category": "security-settings",
+           "what": what.strip()[:300], "command": None, "cwd": cwd, "shell": None}
+    why = (owner_categories().get("security-settings") or {}).get("why") or         "a session's Remote Control and permission mode are switched in the app, by its owner"
+    return "security-settings", (f"{tool} refused: security-settings is {config.owner_of()}'s alone "
+                                 f"({why.rstrip('.')}); they switch it in the app"), req
+
+
+def _is_usage_allow(target) -> bool:
+    """Whether ``target`` is the usage governor's override file (brain.governor.allow_file)."""
+    from . import governor
+    return os.path.normcase(os.path.abspath(str(target))) ==         os.path.normcase(os.path.abspath(str(governor.allow_file())))
+
+
+def _usage_override(cmds, shell: str) -> str | None:
+    """What lifts the usage governor for a session: brain usage allow (python -m brain too), or a shell write into its
+    file."""
+    for words, _, _, _ in actions(cmds, shell):
+        low = [w.lower() for w in words]
+        if (_prog(words[0]) == "brain" or "brain" in low[1:3]) and any(
+                a == "usage" and b == "allow" for a, b in zip(low, low[1:])):
+            return "brain usage allow"
+    for what, target in shell_writes(cmds, shell):
+        if not isinstance(target, Unresolved) and _is_usage_allow(target):
+            return f"{what} into {target}"
+    return None
+
+
 def _request(category: str, what: str, top, shell: str, cwd: str = "") -> dict:
     """The action put to the owner: its category, what it is, and the exact command with its folder: the outermost
     command that holds it (``top``: words and folder), quoted for the session's shell, or the call's whole text."""
@@ -1563,6 +1610,9 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
         if target and OVERRIDE_FILES.search(target) and re.search(ALLOW_ENV, text, re.I):
             return ("override", f"{tool} refused: it writes {ALLOW_ENV} into {target}; the override is "
                                 f"{config.owner_of()}'s", None)
+        if target and _is_usage_allow(target):
+            return ("override", f"{tool} refused: {target} lifts the usage guard; brain usage allow is "
+                                f"{config.owner_of()}'s, in their own terminal", None)
         if target and _autostart(target) and "scheduled" in owner_categories():
             req = {"ref": _ref(f"{tool}\0{target}"), "category": "scheduled", "what": f"{tool} {target}",
                    "command": None, "cwd": cwd, "shell": None}
@@ -1574,6 +1624,8 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
         what = f"{tool} {json.dumps(inp, ensure_ascii=False)[:300]}"
         req = {"ref": _ref(what), "category": "scheduled", "what": what, "command": None, "cwd": cwd, "shell": None}
         return "scheduled", f"{tool} refused: a new scheduled task is {config.owner_of()}'s alone", req
+    if session_setting(tool, inp):
+        return check_session_settings(tool, inp, cwd)
     if not cmds:
         return None
     sub = "ps" if powershell else "bash"
@@ -1581,6 +1633,10 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     if what:
         return ("override", f"{what} refused: the guards' override is {config.owner_of()}'s, set in Claude Code's "
                             "environment", None)
+    what = _usage_override(cmds, sub)
+    if what:
+        return ("override", f"{what} refused: it lifts the usage guard (brain.governor), which is "
+                            f"{config.owner_of()}'s to do in their own terminal", None)
     cats = owner_categories()
 
     def refusal(cat, what, top, remote=""):
@@ -2435,7 +2491,7 @@ def refusals(payload: dict):
         if hit:
             yield "owner", *hit
         return
-    if SCHEDULED_TOOL.match(tool):
+    if SCHEDULED_TOOL.match(tool) or session_setting(tool, inp):
         hit = check_owner(tool, inp, [], cwd)
         if hit:
             yield "owner", *hit
@@ -2529,15 +2585,17 @@ def main(stdin=None, stdout=None) -> int:
         payload = json.loads(raw) if raw.strip() else {}
         ok = allowed()
         for guard, check, reason, request in refusals(payload):
-            if guard in ok or f"{guard}:{check}" in ok:
+            if (guard in ok or f"{guard}:{check}" in ok) and check not in UNLIFTED:
                 _record(payload, guard, check, "overridden", reason, request)
                 continue
             recorded = _record(payload, guard, check, "denied", reason, request)
             if request is not None:
                 reason += queue_hint(request, recorded, payload.get("tool_name") or "")
             cfg = config.load()
-            reason = (f"{config.claude(cfg)['plugin']} guard: {reason}. Override ({config.owner(cfg)} only): "
-                      f"{ALLOW_ENV}={guard} (or {guard}:{check}) in Claude Code's environment.")
+            reason = f"{config.claude(cfg)['plugin']} guard: {reason}. " + (
+                f"No override: {check} is {config.owner(cfg)}'s alone, in the app." if check in UNLIFTED else
+                f"Override ({config.owner(cfg)} only): {ALLOW_ENV}={guard} (or {guard}:{check}) in Claude Code's "
+                "environment.")
             (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
             return 0
