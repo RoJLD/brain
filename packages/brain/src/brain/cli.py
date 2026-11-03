@@ -1516,8 +1516,6 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
         except error as exc:
             errors.append(f"{what}: {exc}")
     errors += _bundles_check(root)
-    for name in stacks.uncloned(root):
-        print(f"warning: stacks of project {name}: its root is not on this machine, not checked here")
     ids = projects.collisions([p for p in projs if p.root.is_dir()])
     for c in ids["collisions"]:
         line = f"id {c['id']} is in {', '.join(c['where'])}"
@@ -1527,13 +1525,18 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
             errors.append(f"{line} (rename one, or waive it under shared_ids: with its reason)")
     for s in ids["stale"]:
         print(f"warning: shared_ids of {s}: no longer in two stores (remove it)")
-    for line in render.registry_warnings(neutral.brain_root(root), projs):
+    for line in render.registry_warnings(neutral.brain_root(root), projs) + _uncloned(root):
         print(f"warning: {line}")
     for e in errors:
         print(f"error: {e}")
     print(f"registry: {len(projs)} project(s), {ids['stores']} store(s), "
           + (f"{len(errors)} error(s)" if errors else "ids unique"))
     return 1 if errors else 0
+
+
+def _uncloned(root: Path | None) -> list[str]:
+    """The registered projects whose stacks this machine cannot read (their root is elsewhere): said, not failed."""
+    return [f"stacks of project {n}: its root is not on this machine, not checked here" for n in stacks.uncloned(root)]
 
 
 def _bundles_check(root: Path | None) -> list[str]:
@@ -1587,8 +1590,8 @@ def _registry_too(args, root: Path | None) -> bool:
 
 
 def _registry_scope(root: Path | None) -> list[projects.Project]:
-    """The projects whose stores the registry check reads the ids of: every registered one, as check --all (a
-    shared_ids waiver names an id another project holds), those not on this machine skipped by the check."""
+    """The projects whose stores the registry check reads the ids of: every registered one, with --all or without
+    (a shared_ids waiver names an id another project holds), those not on this machine skipped by the check."""
     return list(projects.load(root).values())
 
 
@@ -1617,7 +1620,7 @@ def _each_store(args, root: Path, *, sync: bool, check: bool) -> int:
                 failed.append(p.name)
     if check and _registry_too(args, root):
         print("== registry")
-        if check_registry(root, scope if getattr(args, "all", False) else _registry_scope(root)):
+        if check_registry(root, _registry_scope(root)):
             failed.append("registry")
     print(f"{args.cmd}: {len(failed)} project(s) failed" + (f": {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0
