@@ -3,6 +3,14 @@
 The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `research-graph` X.Y.Z and `brain` X.Y.Z
 (`packages/brain/CHANGELOG.md` for the brain command).
 
+## Unreleased
+
+- **Required props per node type.** A schema may say `required_props: {<type>: [prop, ...]}`: `check` (the loader,
+  overlays too) refuses a node of that type without each prop or with it empty (`node les-x: Lesson needs props
+  check`); `Schema.missing_props` says which. The store template (`research_graph init`) gains the `Lesson` type (layer
+  `lessons`, statuses open, enforced, resolved, regressed, archived; edges `learned_from`, `enforced_by`, `led_to`;
+  `trigger`, `anti_pattern` and `check` required), the brain command's lessons registry.
+
 ## 0.2.4 — 2026-11-03
 
 - **Fast YAML** (wi-brain-yaml-fast-load): `research_graph.yamlio`, the one helper of every load: `loads` parses

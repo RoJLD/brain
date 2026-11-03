@@ -219,6 +219,26 @@
                  (script candidates), rules a hook could check (guard candidates), the hard-rule ratio (enforced_by);
                  --propose files one DDR per candidate rule or pair, at most N (8) rules-lint DDRs pending at once;
                  exit 1 when the injected rules pass the hook cap
+  brain lint lessons [--json] [--propose]   the open lessons nothing enforces: a guard candidate when their check
+                 is a command (scripts before rules; --propose files its item), else a prose lesson to justify
+                 (props.why_not_script)
+  brain lesson [--follow] [--status S] [--signal S] [--json]   (also: brain lessons) the lessons of the graph
+                 (nodes/lessons.yaml): status, seen, severity, signal, fix; --follow: each one's lineage (learned
+                 from, led to, its PR, enforced by, recurred since its fix) and the friction per item by week
+  brain lesson add les-ID --title T --trigger T --anti-pattern A --check C [--severity high|medium|low]
+                 [--signal merges|guards|tests|waits|tokens|owner|rework|other] [--from NODE]... [--pr "repo #N"]
+                 [--rule Σ-NAME] [--led-to ITEM] [--enforced-by NODE]... [--why-not-script W] [--new]
+                 refused when it is close to a known lesson (brain lesson seen instead); a severe one nothing fixes
+                 files its item proposal (priority_proposed)
+  brain lesson seen ID (--from NODE | --pr "repo #N")   one more occurrence; seen twice (once if severe) with no
+                 fix, or recurring after its fix (regressed), it files an item proposal led_to it
+  brain lesson rules [--all] [--repo NAME] [--top N] [--json]   the iron rules (Σ-NAME, Sigma-NAME) cited in each
+                 registered repo's tracked Markdown, read only, with the lessons that restate them
+  brain retro ITEM [--record] [--note LINE]... [--no-scan] [--json] | --wave W
+                 the close-item retro: the friction signals of the item's sessions (merges and conflicts, guard
+                 refusals, failed tests, waits, tokens against the estimate, the owner's minutes, rework pushes on its
+                 PRs), the known lessons of those signals, the five questions; --record writes props.retro (and the
+                 --note lines in props.retro_notes); --wave: the deep retro of a wave's items (props.wave)
   brain digest [--project P | --all] [--since WHEN] [--until WHEN] [--budget N] [--write] [--offline] [--json]
                  the digest: what happened in a window, newest first, from the graph (milestones reached, items
                  closed), the ADRs, the DDRs, the SRs, gh (merged PRs; --offline skips them) and the journal; WHEN is
@@ -383,6 +403,7 @@ from . import (__version__, actions, alerts, audit, backfill, batch, boundary, b
                records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, update, usage)
 from . import answers, classes, defaults, governor, keystore, markers, selftime, vault
 from . import skew
+from . import lessons
 from .inventory import AuditError
 
 
@@ -2156,7 +2177,10 @@ def cmd_resume(args, root: Path) -> int:
 
 def cmd_lint(args, root: Path) -> int:
     """``brain lint rules``: the report for the project of the current folder (a worktree keeps its project's name),
-    a registered one, or every one; --propose files the next batch of DDRs in this repo's queue."""
+    a registered one, or every one; --propose files the next batch of DDRs in this repo's queue. ``brain lint
+    lessons``: brain.lessons' linter on the project's store."""
+    if args.lint_cmd == "lessons":
+        return _lint_lessons(args, root)
     scope = _scope(args, root) if args.all else [getattr(args, "project_obj", None) or resume.project_for(root)]
     report = lint.lint([p for p in scope if p.root.is_dir()])
     lint.mark_asked(report, root)
@@ -2182,6 +2206,116 @@ def cmd_lint(args, root: Path) -> int:
     if filed and filed["filed"] and not args.dry_run:
         _queue_changed(root, args)
     return 1 if lint.over_cap(report) else 0
+
+
+def _lint_lessons(args, root: Path) -> int:
+    store = _store(args, root)
+    if not (store / lessons.FILE).is_file():
+        print(f"lessons: none in {store} yet (brain lesson add)")
+        return 0
+    found = lessons.lint_lessons(store)
+    filed = lessons.propose_guards(store, found) if args.propose else []
+    if args.json:
+        print(json.dumps({"findings": found, "filed": filed}, ensure_ascii=False, indent=1))
+        return 0
+    print("\n".join(lessons.render_lint(found)))
+    for nid in filed:
+        print(f"  filed {nid} (priority_proposed); then brain sync and brain check")
+    return 0
+
+
+# --- lesson, retro ---
+
+def cmd_lesson(args, root: Path) -> int:
+    """brain lesson [add|seen|list|rules] (brain.lessons); bare, or brain lessons: the list, --follow the lineage."""
+    sub_cmd = getattr(args, "lesson_cmd", None) or "list"
+    if sub_cmd == "rules":
+        return _lesson_rules(args, root)
+    store = _store(args, root)
+    if sub_cmd == "list":
+        return _lesson_list(args, store)
+    try:
+        if sub_cmd == "add":
+            out = lessons.add(store, args.id, args.title, trigger=args.trigger, anti_pattern=args.anti_pattern,
+                              check=args.check, severity=args.severity, signal=args.signal, frm=args.frm,
+                              prs=args.pr or "", rule=args.rule or "", led_to=args.led_to or "",
+                              enforced_by=args.enforced_by, why_not_script=args.why_not_script or "",
+                              source=args.source or "", status=args.status or "", new=args.new)
+        else:
+            out = lessons.seen(store, args.id, frm=args.frm, pr=args.pr or "")
+    except (lessons.LessonError, graph.GraphError) as exc:
+        print(f"brain: {exc}", file=sys.stderr)
+        return 1
+    node = out["node"]
+    print(f"{sub_cmd}: {node['id']} [{node['status']}] seen {lessons.seen_of(node)}"
+          + (", regressed after its fix" if out.get("regressed") else "") + "; then brain sync and brain check")
+    if out.get("filed"):
+        print(f"filed {out['filed']} (priority_proposed, led_to from {node['id']}): the fix to choose, a script "
+              "first; wi-brain-ideation-board turns these into ideas once it exists")
+    return 0
+
+
+def _lesson_list(args, store: Path) -> int:
+    rs = lessons.select(lessons.rows(store), args.status or "", args.signal or "") \
+        if (store / lessons.FILE).is_file() else []
+    if args.json:
+        print(json.dumps({"lessons": rs, "friction": lessons.friction(store)}, ensure_ascii=False, indent=1))
+    else:
+        print("\n".join(lessons.render_follow(rs, lessons.friction(store)) if args.follow
+                        else lessons.render_list(rs)))
+    return 0
+
+
+def _lesson_rules(args, root: Path) -> int:
+    repos = [r for p in _scope(args, root) for r in projects.repos_of(p)]
+    if args.repo:
+        repos = [r for r in repos if r.name in args.repo]
+        if not repos:
+            raise SystemExit(f"brain lesson rules: no registered repo named {', '.join(args.repo)}")
+    try:
+        store = lessons.store_of(_project(args, root))
+    except lessons.LessonError:
+        store = None
+    index = lessons.iron_rules(repos, lessons.rule_links(store))
+    print(json.dumps(index, ensure_ascii=False, indent=1) if args.json
+          else "\n".join(lessons.render_rules(index, args.top)))
+    return 0
+
+
+def cmd_retro(args, root: Path) -> int:
+    """brain retro ITEM | --wave W (brain.lessons): the friction signals from brain.cost's ledger, the guards ledger
+    and the action records."""
+    if bool(args.item) == bool(args.wave):
+        raise SystemExit("brain retro: an item id, or --wave W")
+    projs = _scope(args, root)
+    led = cost.load(projs, root, refresh=not args.no_scan)
+    try:
+        store = lessons.store_of(projs[0])
+    except lessons.LessonError:
+        store = None
+    if args.wave:
+        w = lessons.wave_retro(led, args.wave, store)
+        print(cost.as_json(w) if args.json else "\n".join(lessons.render_wave(w)))
+        return 0
+    if args.item not in led.items:
+        raise SystemExit(f"brain retro: {args.item}: no such item in {', '.join(p.name for p in projs)}")
+    if not led.items[args.item].sessions:
+        print(f"retro {args.item}: no session served it in the ledger yet (brain usage; a session serves the items "
+              "it closes, the items naming its PRs, its title's or its brief's)")
+    r = lessons.retro(led, args.item, store)
+    if args.record:
+        today = usage.now_utc().date().isoformat()
+        sets = [f"retro={lessons.retro_text(r, today)}"]
+        if args.note:
+            sets.append("retro_notes=" + " | ".join(" ".join(n.split()) for n in args.note))
+        graph.set_item(led.items[args.item].store, args.item, sets)
+    if args.json:
+        print(cost.as_json(r))
+        return 0
+    print("\n".join(lessons.render_retro(r)))
+    if args.record:
+        print(f"recorded on {args.item} (props.retro{', props.retro_notes' if args.note else ''}); then brain refresh")
+    return 0
 
 
 # --- digest ---
@@ -3051,6 +3185,58 @@ def build_parser() -> argparse.ArgumentParser:
     lr.add_argument("--dry-run", action="store_true", help="with --propose: say what would be filed")
     lr.add_argument("--session", help="the asking session's id")
     lr.add_argument("--at", help="time asked (default: now)")
+    ll = li.add_parser("lessons", help="the open lessons nothing enforces: guard candidates (their check is a "
+                                       "command) and prose lessons to justify (why_not_script)")
+    ll.add_argument("--json", action="store_true")
+    ll.add_argument("--propose", action="store_true", help="file the item proposal of each guard candidate no open "
+                                                           "item fixes yet")
+    le = sub.add_parser("lesson", aliases=["lessons"],
+                        help="the lessons of the graph: list (bare), --follow their lineage, add, seen, rules")
+    le.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
+    le.add_argument("--follow", action="store_true", help="each lesson's lineage and the friction per item by week")
+    le.add_argument("--status", choices=lessons.STATUSES)
+    le.add_argument("--signal", choices=lessons.SIGNALS)
+    le.add_argument("--json", action="store_true")
+    les = le.add_subparsers(dest="lesson_cmd")
+    les.add_parser("list", help="the lessons (the same as bare brain lesson)")
+    la = les.add_parser("add", help="a new Lesson node; refused when close to a known one (brain lesson seen)")
+    la.add_argument("id", help="les-<project>-<slug>")
+    la.add_argument("--title", required=True)
+    la.add_argument("--trigger", required=True, help="the situation it happens in")
+    la.add_argument("--anti-pattern", required=True, help="what went wrong")
+    la.add_argument("--check", required=True, help="how to tell it happened again: a command in backticks, a test, "
+                                                   "a guard's refusal")
+    la.add_argument("--severity", default="medium", choices=lessons.SEVERITIES)
+    la.add_argument("--signal", default="other", choices=lessons.SIGNALS, help="the friction signal it shows in")
+    la.add_argument("--from", dest="frm", action="append", help="learned_from: the item, ADR, DDR or session "
+                                                                 "(repeatable)")
+    la.add_argument("--pr", help='the PR(s) it was seen in, e.g. "my-brain #185, #194"')
+    la.add_argument("--rule", help="the iron rule it restates (Σ-NAME)")
+    la.add_argument("--led-to", help="the item that fixes it")
+    la.add_argument("--enforced-by", action="append", help="the hook, test or workflow node that checks it "
+                                                           "(repeatable; the lesson is then enforced)")
+    la.add_argument("--why-not-script", help="why no script can check it")
+    la.add_argument("--source", help="where it was written down first (a memory note, a hand-over note)")
+    la.add_argument("--status", choices=lessons.STATUSES, help="default: enforced with --enforced-by, else open")
+    la.add_argument("--new", action="store_true", help="add it even when close to a known lesson")
+    lse = les.add_parser("seen", help="one more occurrence of a known lesson")
+    lse.add_argument("id")
+    lse.add_argument("--from", dest="frm", action="append", help="the item, ADR, DDR or session it recurred in")
+    lse.add_argument("--pr", help="the PR it recurred in")
+    lru = les.add_parser("rules", help="the iron rules cited in each registered repo's tracked Markdown (read only)")
+    lru.add_argument("--all", action="store_true", help="every registered project's repos")
+    lru.add_argument("--repo", action="append", help="one repo of the registry (repeatable)")
+    lru.add_argument("--top", type=_whole, default=0, help="rules shown per repo (default: all)")
+    lru.add_argument("--json", action="store_true")
+    rt = sub.add_parser("retro", help="the close-item retro of an item (its friction signals and five questions), or "
+                                      "a wave's deep retro (--wave)")
+    rt.add_argument("item", nargs="?")
+    rt.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
+    rt.add_argument("--wave", help="the wave's name (props.wave), e.g. F")
+    rt.add_argument("--record", action="store_true", help="write props.retro (and props.retro_notes) on the item")
+    rt.add_argument("--note", action="append", help="one of the session's five lines (repeatable)")
+    rt.add_argument("--no-scan", action="store_true", help="the token ledger as it is, transcripts not rescanned")
+    rt.add_argument("--json", action="store_true")
     me = sub.add_parser("memory", help="memory shared across machines by a reviewed PR: status, sync").add_subparsers(
         dest="memory_cmd", required=True)
     ms = me.add_parser("status", help="what a sync would do, note by note; writes nothing")
@@ -3268,7 +3454,8 @@ def _dispatch(args) -> int:
             "vault": cmd_vault, "permissions": cmd_permissions,
             "profile": cmd_profile,
             "tui": cmd_tui, "usage": cmd_usage, "cost": cmd_cost, "forecast": cmd_forecast,
-            "collisions": cmd_collisions, "brief": cmd_brief}[args.cmd](args, root)
+            "collisions": cmd_collisions, "brief": cmd_brief,
+            "lesson": cmd_lesson, "lessons": cmd_lesson, "retro": cmd_retro}[args.cmd](args, root)
 
 
 if __name__ == "__main__":

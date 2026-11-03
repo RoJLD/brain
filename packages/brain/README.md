@@ -224,6 +224,25 @@ Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md
   and its subgraph, its collisions, the class's model and effort (config.json `brief.classes`), the budget, the cost
   estimate, the coordinator's id, and the definition of done and the never-list read from the owner's rules.
 
+## Lessons
+
+What each finished item teaches is a node of the graph, so it can be found, counted and fixed, at zero token
+([`docs/lessons.md`](docs/lessons.md)):
+
+- **`brain retro ITEM`**, a step of the close-item procedure: the friction signals of the sessions that served the
+  item (merges and conflicts, guard refusals, failed tests, waits, tokens against the estimate, the owner's minutes,
+  pushes to its PRs after they were opened), the known lessons of the signals that fired and five questions; the
+  session answers in a few lines (`--record --note ...` writes them on the item). `brain retro --wave W`: a wave's
+  deep retro.
+- **`brain lesson add|seen`**: a Lesson node (`nodes/lessons.yaml`) with its trigger, anti-pattern and check, learned
+  from an item or a PR; a lesson close to a known one is refused, to be marked `seen` instead. A lesson seen twice
+  (once if severe) with nothing fixing it, or recurring after its fix, files an item proposal, its fix a script
+  first, a rule last.
+- **`brain lessons --follow`**: each lesson and what it led to (the item, its PR, whether it recurred since), and the
+  friction per item by week. **`brain lesson rules`**: the iron rules (`Σ-NAME`) cited in each registered repo's
+  Markdown, read only. **`brain lint lessons`**: the lessons a script could check (guard candidates) and those that
+  should say why not.
+
 ## Where the brain is found
 
 `config.json` and `projects.yaml` are found at `$BRAIN_CONFIG` / `$BRAIN_PROJECTS`, else in the first of:
