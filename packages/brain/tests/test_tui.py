@@ -92,7 +92,8 @@ def test_the_app_draws_the_panels_and_answers_its_keys():
         assert app.query_one("#queue").row_count == 2 and app.query_one("#milestones").row_count == 1
         assert app.query_one("#audit").border_title == escape("6 Audit debt [i]")
         assert "demo | files every 2 s, checked " in app.sub_title and app.sub_title.endswith("| local")
-        assert [str(c.label) for c in sessions.ordered_columns][:3] == ["State", "Session", "Step"]  # one project
+        assert [str(c.label) for c in sessions.ordered_columns][:6] == ["State", "Session", "Role", "Parent", "Kids",
+                                                                     "Step"]  # one project: no Project column
         await pilot.press("r")
         await app.workers.wait_for_complete()
         assert fake.calls[-1] is True

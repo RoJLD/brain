@@ -5,7 +5,9 @@ stdout (a SessionStart hook's stdout would enter Claude's context). It always ex
 ``ledger/errors.log`` and the session goes on. ``BRAIN_CAPTURE=0`` turns it off.
 
 Events (hook payload fields checked against the Claude Code hooks reference, 2026-10-30):
-- ``session-start`` (SessionStart: session_id, transcript_path, cwd, source, model when present): one event line;
+- ``session-start`` (SessionStart: session_id, transcript_path, cwd, source, model when present): one event line,
+  with the app's ``local_`` id (CLAUDE_CODE_HOST_SESSION_ID) and the parent, task and short name of the session's own
+  app metadata file (brain.sessions: a closed list of keys);
 - ``post-tool-use git|gh`` (PostToolUse on Bash or PowerShell: tool_input.command, tool_response.stdout / stderr /
   gitOperation, tool_use_id, cwd, permission_mode, effort.level): ARs for commits, pushes, tags, PRs and the ADRs
   a commit added; the model and version come from the transcript's last assistant record;
@@ -13,7 +15,10 @@ Events (hook payload fields checked against the Claude Code hooks reference, 202
   and read by the asking session, plus its AR;
 - ``post-tool-use`` on a plan tool (``brain.plan.PLAN_TOOLS``: the desktop app's update_plan and wrap_up, TodoWrite;
   tool_input): the session's plan, ``sessions/<session_id>.plan.json``, its steps n/m for the cockpit;
-- ``stop`` (Stop): the session's SR snapshot, ``sessions/<session_id>.json``, updated incrementally;
+- ``stop`` (Stop): the session's SR snapshot, ``sessions/<session_id>.json``, updated incrementally, with its place
+  in the session tree (host_id, name, parent, children, role); and its end-of-turn report,
+  ``sessions/<session_id>.report.json`` (brain.sessions.build_report: PRs, head, items, DDRs, what it waits on, what
+  comes next, the recap), which brain sessions tree reads;
 - ``session-end`` (SessionEnd: reason; 1.5 s budget): one event line.
 """
 
@@ -110,7 +115,14 @@ def _write_ars(ars: list[dict]) -> int:
 
 
 def session_start(payload: dict) -> None:
+    """Its event, with both ids (ST-1): the app's ``local_`` id from the environment, and the parent, task and short
+    name its own app metadata file holds (brain.sessions: a closed list of keys, that file only)."""
+    from . import sessions
+
+    host = sessions.here()["host_id"]
+    app = sessions.app_meta(host) if host else {}
     event = {"at": _now(), "event": "session_start", "session_id": payload.get("session_id"),
+             "host_id": host, "parent": app.get("parent"), "task": app.get("task"), "name": app.get("name"),
              "source": payload.get("source"), "model": payload.get("model"), "cwd": payload.get("cwd"),
              "permission_mode": payload.get("permission_mode"), "agent": payload.get("agent_type"),
              "transcript": paths.relative_transcript(payload["transcript_path"]) if payload.get("transcript_path") else None}
@@ -154,6 +166,14 @@ def _ask_question(payload: dict) -> None:
         _write_ars([actions.make_ar("ddr", ddr["id"][15:], now, meta, "hook", tuid, ddr=ddr["id"])])
 
 
+def _ids(meta: dict) -> dict:
+    """The app's id of the session the hook runs in (and its machine), when it is the payload's session."""
+    from . import sessions
+
+    me = sessions.here()
+    return sessions.stamp() if me["host_id"] and me["session"] in ("", meta.get("session_id")) else {}
+
+
 def ddr_from_question(q: dict, answer: str | None, at: str, meta: dict, tool_use_id: str = "", index: int = 0,
                       notes: str | None = None) -> dict:
     """A DDR from one question of Claude Code's question tool, and its answer when there is one."""
@@ -184,7 +204,7 @@ def ddr_from_question(q: dict, answer: str | None, at: str, meta: dict, tool_use
         "multi_select": bool(q.get("multiSelect")),
         "other_allowed": True,
         "status": "pending",
-        "asked": {"at": at, "by": meta.get("session_id") or "unknown", "via": "ask-tool"},
+        "asked": {"at": at, "by": meta.get("session_id") or "unknown", **_ids(meta), "via": "ask-tool"},
     }
     if meta.get("model"):
         ddr["asked"]["model"] = meta["model"]
@@ -201,7 +221,7 @@ def ddr_from_question(q: dict, answer: str | None, at: str, meta: dict, tool_use
             ans["notes"] = notes
         ddr["answer"] = ans
         ddr["status"] = "answered"
-        ddr["read"] = {"at": at, "session": meta.get("session_id") or "unknown"}
+        ddr["read"] = {"at": at, "session": meta.get("session_id") or "unknown", **_ids(meta)}
     return secretscan.clean(ddr)[0]
 
 
@@ -239,10 +259,60 @@ def stop(payload: dict) -> None:
     stats.feed_file(path)
     ar_ids, ddr_ids = _session_ids("ar", sid), _session_ids("ddr", sid)
     sr = stats.record(path, status="open", actions=ar_ids, ddrs=ddr_ids)
+    tree = _tree_fields(sid)
+    sr.update(tree)
     tmp = d / f"{sid}.json.tmp"
     tmp.write_text(json.dumps(sr, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(d / f"{sid}.json")
     state_f.write_text(json.dumps(stats.to_state(), ensure_ascii=False), encoding="utf-8")
+    _child_report(sid, Path(path), sr, tree)
+
+
+def _tree_fields(sid: str) -> dict:
+    """The SR's place in the session tree (wi-brain-session-tree): host_id, name, parent, children (the app's ids of
+    the sessions it started, from the app's files and the ledger) and role; {} without the app's id."""
+    from . import sessions
+
+    host = sessions.here()["host_id"]
+    if not host:
+        return {}
+    tree = sessions.Tree(sessions.app_index(), sessions.ledger_events()[0])
+    key = tree.key_of(host) or tree.key_of(sid)
+    node = tree.nodes.get(key) or {}
+    out = {"host_id": host, "role": tree.role(key) if key else "solo"}
+    for k in ("name", "parent"):
+        if node.get(k):
+            out[k] = node[k]
+    kids = [tree.nodes[k].get("host_id") or tree.nodes[k].get("session") for k in tree.children.get(key, [])]
+    if kids:
+        out["children"] = kids
+    return out
+
+
+def _child_report(sid: str, path: Path, sr: dict, tree: dict) -> None:
+    """The child's end-of-turn report (wi-brain-child-report): written for every session, read by brain sessions
+    tree; never fails the snapshot."""
+    from . import cockpit, sessions
+
+    try:
+        records = cockpit.tail(path)
+        hook = plan.read(sid)
+        steps = (hook or {}).get("steps") or []
+        head = actions.git(sr["folder"], "rev-parse", "--short", "HEAD") if sr.get("folder") else ""
+        rep = sessions.build_report(sid, records, sr, tree, steps, _pending_ddrs(sid), head, _now(),
+                                    brief_items=sessions.watch_state(sid).get("items"))
+        sessions.write_report(sid, rep)
+    except (OSError, ValueError) as exc:
+        _log_error("child-report", exc)
+
+
+def _pending_ddrs(sid: str) -> list[str]:
+    """The ledger's DDRs this session asked that are still pending (the last record of each id wins)."""
+    last = {}
+    for rec in answers_lane.read("ddr"):
+        if (rec.get("asked") or {}).get("by") == sid and rec.get("id"):
+            last[rec["id"]] = rec.get("status")
+    return [i for i, s in last.items() if s == "pending"]
 
 
 def _session_ids(name: str, sid: str) -> list[str]:
