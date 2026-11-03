@@ -4,6 +4,15 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **A brain fresh from `brain init` passes `brain check --all`.** It failed at once with « config.json declares no
+  data classes ». A template's `template.yaml` gains `classes`, its own stores, checked when the template loads. The
+  generic template classes `memory/` and `records/ddr/` confidential, opted in to `cloud-model`, with a waiver on
+  `git-private` until encrypted git is adopted. `init` writes config.json's `classes` block: the template's stores,
+  then the engine's machine stores (sealed), then a private catch-all. Its next steps name `brain classes`,
+  `brain vault status` and the vault's runbook.
+- **The vault's runbook ships with the engine** (`docs/vault.md`): the classes, the owner's steps once per machine,
+  the daily canary as a scheduled task for Windows, macOS and Linux, the drill, a lost key. `brain vault status` links
+  it. An empty `.gitkeep` holds no data for the classes check.
 - **`install.ps1 -Apply` replaces a running launcher.** Sessions' hooks run `brain.exe` many times a minute, and
   Windows refuses to overwrite a running image, so the last step of `-Apply` (the copy to `<BRAIN_HOME>\bin`) failed
   twice. `Set-Launcher` leaves an identical launcher alone, copies a new one beside it and swaps it in with a short
@@ -52,6 +61,10 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   engine outside its range or a template missing what config.json names plans nothing. config.json records it (`template`, a new key
   of the schema). `--owner` defaults to the owner of the folder's config.json. The generic template's files moved to
   `templates/generic/`.
+- **The generic store holds the records** (GT-2, wi-brain-init-records-layer). A template's `schema: default` is
+  the brain's base (`templates/schemas/default.yaml`): the work, decisions and records layers, so that `brain sync`
+  turns a new brain's DDRs, sessions and actions into nodes from the first sync; `research_graph init` builds the
+  store, then `brain init` writes this schema in its place (a new store only).
 - **Publishable by construction.** The generic template writes `boundary.yaml` (every file's side, `readiness_max: 0`,
   `src/`, `tests/` and `fixtures/` on the engine side), `fixtures/README.md`, a `README.md` and `.gitattributes` (LF:
   the hooks' shell scripts), and config.json `public` (no repo; `deny`: the owner, this machine's user and host,
