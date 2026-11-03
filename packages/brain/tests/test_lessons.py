@@ -143,7 +143,8 @@ def test_lint_proposes_a_guard_for_a_command_check_and_flags_prose(lstore):
     assert found["les-demo-merge-stale-main"]["kind"] == "guard"
     assert found["les-demo-merge-stale-main"]["command"].startswith("git diff origin/main")
     assert found["les-demo-prose"]["kind"] == "prose"
-    assert lessons.propose_guards(lstore, list(found.values()), today="2026-11-03") == ["wi-demo-merge-stale-main"]
+    assert lessons.propose_guards(lstore, list(found.values()), today="2026-11-03") == {
+        "filed": ["wi-demo-merge-stale-main"], "linked": []}
     assert lessons.lint_lessons(lstore)[0]["fix"] == ["wi-demo-merge-stale-main"]
     props = graph.node_index(lstore)["wi-demo-merge-stale-main"][1]["props"]
     assert "is a guard candidate of brain lint lessons" in props["priority_reason"]
@@ -292,13 +293,88 @@ def test_cli_lesson_add_seen_list_follow_and_lint(lstore, capsys):
     assert "les-demo-bom: its check is a command" in capsys.readouterr().out
 
 
-def test_the_close_item_procedure_has_the_retro_step():
+def _procedure() -> str:
     from pathlib import Path
-    text = (Path(lessons.__file__).parent / "procedures" / "close-item" / "SKILL.md").read_text(encoding="utf-8")
-    step = text.split("## 3b. Retro", 1)[1].split("## 4.", 1)[0]
+    return (Path(lessons.__file__).parent / "procedures" / "close-item" / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_the_close_item_procedure_has_the_retro_step():
+    text = _procedure()
+    step = text.split("## 2b. Retro", 1)[1].split("## 3.", 1)[0]
     assert "brain [--project P] retro <id>" in step and "--record --note" in step
-    assert "brain lesson add les-<slug>" in step and "brain lesson seen <les-id>" in step
+    assert "brain lesson add les-<project>-<slug>" in step and "brain lesson seen <les-id>" in step
+    assert "--signal <signal>" in step   # a lesson without its signal never shows in a later retro
     assert "brain retro --wave <W>" in step and "Retro: friction N" in text
+
+
+def test_the_retro_never_stops_the_close_and_runs_before_the_tick():
+    """The review of #33's blocking finding: a store with no Lesson type made step 3b fail, and the skill's stop rule
+    then left the item half closed."""
+    text = _procedure()
+    assert text.index("## 2b. Retro") < text.index("## 3. Ticked")
+    head = " ".join(text.split("## 0.", 1)[0].split())
+    assert "the retro (step 2b) never stops the close" in head
+    step = " ".join(text.split("## 2b. Retro", 1)[1].split("## 3.", 1)[0].split())
+    assert "The retro never stops the close" in step and "`Retro: skipped (<why>)`" in step
+    assert "Retro: skipped (<why>)" in text.split("## Report", 1)[1]
+
+
+def test_a_store_without_the_lesson_type_says_how_to_add_it(store, capsys):
+    with pytest.raises(lessons.LessonError, match="docs/lessons.md shows.*a retro goes on without it"):
+        _lesson(store)
+    assert cli.main(["--root", str(store.parents[1]), "lesson"]) == 0   # listing an old store: nothing, no error
+
+
+def test_a_severe_lesson_whose_fix_is_done_files_nothing(lstore):
+    graph.close_item(lstore, "wi-two", "acme #5", today="2026-10-20")
+    out = _lesson(lstore, severity="high", led_to="wi-two")
+    assert out["filed"] is None and out["linked"] is None
+    assert [n for n in graph.node_index(lstore) if n.startswith("wi-demo")] == []
+
+
+def test_seen_in_its_own_fix_item_is_no_regression(lstore):
+    out = _lesson(lstore, severity="high")                  # files wi-demo-merge-stale-main
+    fix = out["filed"]
+    graph.close_item(lstore, fix, "acme #6", today="2026-11-04")
+    again = lessons.seen(lstore, "les-demo-merge-stale-main", frm=[fix], today="2026-11-04")
+    assert not again["regressed"] and again["filed"] is None and again["node"]["status"] == "open"
+    later = lessons.seen(lstore, "les-demo-merge-stale-main", frm=["wi-two"], today="2026-11-10")
+    assert later["regressed"] and later["filed"] == f"{fix}-2"   # seen elsewhere after the fix: a regression
+
+
+def test_lint_propose_reports_a_linked_item_apart(lstore):
+    graph.add_item(lstore, "wi-demo-stale-guard", "Warn on a merge resolution made against a stale main that drops "
+                   "a merged PR's lines", props={"priority_proposed": "P2"})
+    _lesson(lstore, propose=False)
+    got = lessons.propose_guards(lstore, lessons.lint_lessons(lstore), today="2026-11-03")
+    assert got == {"filed": [], "linked": ["wi-demo-stale-guard"]}
+
+
+def test_the_retro_hint_names_the_signal_and_the_project_prefix(demo):
+    p, store = demo
+    led = cost.Ledger([_row("s1", "wi-one", folder=str(p.root))], [p])
+    hint = lessons.render_retro(lessons.retro(led, "wi-one", store), owner="Ada")[-1]
+    assert "brain lesson add les-<project>-<slug>" in hint and "--signal guards|merges|owner|rework|tests|waits" in hint
+
+
+def test_lows_of_the_review(lstore, capsys):
+    # the shell's test builtin and Test-Path are not test runs
+    assert lessons.failed_tests([{"commands": {"test": {"fails": 1}, "test-path": {"fails": 2},
+                                               "python -m pytest": {"fails": 1}, "npm test": {"fails": 1}}}]) == 2
+    # a lesson recorded after its fix closed has not recurred
+    graph.close_item(lstore, "wi-two", "acme #5", today="2026-10-20")
+    _lesson(lstore, led_to="wi-two")
+    assert lessons.rows(lstore)[0]["recurred_since_fix"] is False
+    # like_item never links a node the lesson already learned from
+    graph.add_item(lstore, "wi-src", "Merge resolution against a stale main", status="doing")
+    lessons.add(lstore, "les-demo-src", "Merge resolution against a stale main", trigger="t1 x y", anti_pattern="a1 x y",
+                check="c", frm=["wi-src"], new=True, propose=False)
+    reg = lessons.Registry.load(lstore)
+    assert lessons.like_item(reg, reg.nodes["les-demo-src"]) != "wi-src"
+    # the list's flags after the list subcommand
+    assert cli.main(["--root", str(lstore.parents[1]), "lesson", "list", "--json", "--status", "open"]) == 0
+    assert {r["id"] for r in json.loads(capsys.readouterr().out)["lessons"]} == {"les-demo-merge-stale-main",
+                                                                                 "les-demo-src"}
 
 
 def test_one_edge_per_pair_the_fix_wins(lstore):

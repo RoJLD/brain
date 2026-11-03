@@ -45,8 +45,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   signals of the item's sessions (merges and conflicts, guard refusals from the guards ledger, failed test runs,
   waits, tokens against the estimate, the owner's minutes, pushes to its PRs after opening from the action
   records), the known lessons of the signals that fired and five questions; `--record` writes `props.retro` and
-  `props.retro_notes`. `brain retro --wave W`: a wave's deep retro. The close-item procedure gains the step (3b,
-  Retro) and a `Retro:` line in its report.
+  `props.retro_notes`. `brain retro --wave W`: a wave's deep retro. The close-item procedure gains the step (2b,
+  Retro), before the item is ticked and never stopping the close (`Retro: skipped (<why>)` when the store has no
+  Lesson type yet or the ledger does not know the item), and a `Retro:` line in its report.
 
 ## 0.2.4 — 2026-11-03
 

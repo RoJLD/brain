@@ -7,7 +7,9 @@ and the action records under `$BRAIN_HOME/ledger`.
 ## The Lesson node
 
 A Lesson lives in `nodes/lessons.yaml` of the project's graph store, its edges in `edges/lessons.yaml`. The schema
-(`brain init`'s default, or a store's own `schema.yaml`) declares the type, its statuses and the props it requires:
+(`brain init`'s default, or a store's own `schema.yaml`) declares the type, its statuses and the props it requires. A
+store made before 0.2.5 has none: add the lines below to its `schema.yaml` in a PR of its own; until then
+`brain lesson add` says so, and the close-item retro is skipped with one line, never stopping the close:
 
 ```yaml
 node_types: [..., Lesson]
@@ -59,7 +61,10 @@ brain retro --wave F
 - **Dedup.** `add` compares the new lesson's words (title, trigger, anti-pattern) with every known lesson's (the
   rules linter's measure: the Jaccard index of their content words, or the share of the shorter found in the other).
   Past 0.5 it refuses and names the close one: mark it `seen`, or pass `--new` for a lesson that only sounds alike.
-- **Recurrence.** `seen` adds one occurrence, the PR, and a `learned_from` edge to a new node. A lesson seen twice
+- **Recurrence.** `seen` adds one occurrence, the PR, and a `learned_from` edge to a new node (one edge per node
+  pair: a node the lesson already links keeps its edge). Seen in the work of the very item it led to, a lesson is not
+  a regression of that fix. A lesson whose fix is already done (enforced, resolved, or an item it led to done) files
+  nothing until it is seen again elsewhere. A lesson seen twice
   (once if severe) with no open item fixing it, or one that recurs after its fix (it was enforced or resolved, or an
   item it led to is done; it turns regressed), files an item proposal: `wi-<slug>` for `les-<slug>`,
   `priority_proposed` P1, P2 or P3 by its severity, `led_to` from the lesson, the fix to choose in the order a script,
@@ -84,7 +89,7 @@ it (the sessions that closed it, named its PRs, its id in their title or brief).
 |---|---|
 | merges | merge, rebase and pull commands, merge conflicts (the token ledger) |
 | guards | the guards ledger's refusals in those sessions, by guard and check |
-| tests | failed test runs (pytest, Pester, a `test` command that failed), failing-command streaks |
+| tests | failed test runs (pytest, Pester, unittest, vitest, jest, tox, nox, `npm test` and its kin; never the shell's `test` or Test-Path), failing-command streaks |
 | waits | time waiting for a message, compactions |
 | tokens | the cost against the recorded estimate (else the backtest's), the context peak against the brief's budget |
 | the owner | questions to the owner and the time until the answers |

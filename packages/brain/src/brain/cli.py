@@ -2237,13 +2237,15 @@ def _lint_lessons(args, root: Path) -> int:
         print(f"lessons: none in {store} yet (brain lesson add)")
         return 0
     found = lessons.lint_lessons(store)
-    filed = lessons.propose_guards(store, found) if args.propose else []
+    got = lessons.propose_guards(store, found) if args.propose else {"filed": [], "linked": []}
     if args.json:
-        print(json.dumps({"findings": found, "filed": filed}, ensure_ascii=False, indent=1))
+        print(json.dumps({"findings": found, **got}, ensure_ascii=False, indent=1))
         return 0
     print("\n".join(lessons.render_lint(found)))
-    for nid in filed:
+    for nid in got["filed"]:
         print(f"  filed {nid} (priority_proposed); then brain sync and brain check")
+    for nid in got["linked"]:
+        print(f"  linked to {nid}, an open item close to the lesson (led_to); then brain sync and brain check")
     return 0
 
 
@@ -3242,7 +3244,11 @@ def build_parser() -> argparse.ArgumentParser:
     le.add_argument("--signal", choices=lessons.SIGNALS)
     le.add_argument("--json", action="store_true")
     les = le.add_subparsers(dest="lesson_cmd")
-    les.add_parser("list", help="the lessons (the same as bare brain lesson)")
+    lsl = les.add_parser("list", help="the lessons (the same as bare brain lesson)")
+    lsl.add_argument("--follow", action="store_true", default=argparse.SUPPRESS)
+    lsl.add_argument("--status", choices=lessons.STATUSES, default=argparse.SUPPRESS)
+    lsl.add_argument("--signal", choices=lessons.SIGNALS, default=argparse.SUPPRESS)
+    lsl.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     la = les.add_parser("add", help="a new Lesson node; refused when close to a known one (brain lesson seen)")
     la.add_argument("id", help="les-<project>-<slug>")
     la.add_argument("--title", required=True)

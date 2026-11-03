@@ -69,7 +69,9 @@ LEARNED, ENFORCED, LED = "learned_from", "enforced_by", "led_to"
 RULE_RE = re.compile(r"(?<![\w-])(?:Σ|Sigma)-[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?")
 RULE_FILES = ("*.md", "*.mdc")
 QUOTE = 160
-TEST_CMD = re.compile(r"pytest|pester|\btest\b|\bunittest\b|\bvitest\b|\bjest\b", re.I)
+# a failed run of these commands is a failed test run; the shell's test builtin and Test-Path are not
+TEST_CMD = re.compile(r"pytest|pester|\bunittest\b|\bvitest\b|\bjest\b|\btox\b|\bnox\b|"
+                      r"^(?:npm|pnpm|yarn|bun|cargo|go|dotnet|make|uv run) test\b", re.I)
 WAIT_FLAG = 600  # seconds waiting for a message before the retro flags the waits
 FIVE = ("what cost the most", "what a script, a hook or a template would have prevented",
         "what to keep", "a lesson for the registry (brain lesson add), or a known one seen again (brain lesson seen)",
@@ -142,7 +144,8 @@ def _check_store(store: Path) -> None:
     schema = graph.load_schema(store)
     if LESSON not in (schema.get("node_types") or []):
         raise LessonError(f"{store / 'schema.yaml'} has no {LESSON} node type: add it (node_types, its statuses "
-                          f"{', '.join(STATUSES)}, the edges {LEARNED}, {ENFORCED}, {LED}) first")
+                          f"{', '.join(STATUSES)}, the edges {LEARNED}, {ENFORCED}, {LED}, as the engine's "
+                          "docs/lessons.md shows) in a PR of its own; a retro goes on without it")
     missing = [e for e in (LEARNED, LED) if e not in (schema.get("edge_types") or [])]
     if missing:
         raise LessonError(f"{store / 'schema.yaml'}: edge type(s) {', '.join(missing)} missing")
@@ -219,7 +222,8 @@ def _fixed(reg: Registry, node: dict) -> bool:
 def seen(store: Path, lid: str, frm: list[str] | None = None, pr: str = "", today: str | None = None,
          propose: bool = True) -> dict:
     """One more occurrence of a lesson: seen + 1, the PR added, a learned_from edge to each new node; a fixed one
-    (enforced, resolved, or an item it led_to done) turns regressed. Files the proposal once the lesson recurs.
+    (enforced, resolved, or an item it led_to done) turns regressed, unless it was seen in that fix item's own work
+    (--from the item it led_to). Files the proposal once the lesson recurs.
     Returns {"node", "filed", "linked", "regressed"}."""
     today = today or date.today().isoformat()
     reg = Registry.load(store)
@@ -229,7 +233,7 @@ def seen(store: Path, lid: str, frm: list[str] | None = None, pr: str = "", toda
     if not frm and not pr:
         raise LessonError(f"{lid}: say where it was seen again (--from <node> or --pr <pr>)")
     _known(reg, frm or [])
-    regressed = _fixed(reg, node)
+    regressed = _fixed(reg, node) and not set(frm or []) & set(reg.out(lid, LED))  # its fix's own work: no regression
     sets = [f"seen={seen_of(node) + 1}", f"last_seen={today}"]
     sets += [f"prs={_pr_list(_props(node).get('prs', ''), pr)}"] if pr else []
     sets += ["status=regressed", f"regressed={today}"] if regressed else []
@@ -256,9 +260,11 @@ def _proposal(store: Path, lid: str, today: str, propose: bool, force: bool = Fa
 
 
 def like_item(reg: Registry, node: dict) -> str | None:
-    """The open WorkItem whose title is closest to the lesson's title, past NEAR: it already carries the fix."""
+    """The open WorkItem whose title is closest to the lesson's title, past NEAR: it already carries the fix. A node
+    the lesson already links (learned_from) is never it: one edge per node pair."""
+    linked = {e["to"] for e in reg.edges if e.get("from") == node["id"]}
     best = max(((similarity(str(node.get("title", "")), str(n.get("title", ""))), n["id"])
-                for n in reg.nodes.values() if n.get("type") == "WorkItem"
+                for n in reg.nodes.values() if n.get("type") == "WorkItem" and n["id"] not in linked
                 and n.get("status") in ("todo", "doing", "blocked")), default=(0.0, ""))
     return best[1] if best[0] >= NEAR else None
 
@@ -279,8 +285,8 @@ def _maybe_propose(store: Path, lid: str, today: str, force: bool = False,
     led = [t for t in reg.out(lid, LED) if (reg.nodes.get(t) or {}).get("status") not in ("done", "dropped")]
     if led:
         return None
-    if not force and (seen_of(node) < threshold(node) or node.get("status") in FIXED):
-        return None
+    if not force and (seen_of(node) < threshold(node) or _fixed(reg, node)):
+        return None  # not recurring yet, or fixed: enforced, resolved or its led_to item done
     same = like_item(reg, node)
     if same:
         graph.append_edges(store, [{"from": lid, "to": same, "type": LED}], EDGES,
@@ -314,6 +320,7 @@ def rows(store: Path) -> list[dict]:
                 "done": str(_props(reg.nodes.get(t) or {}).get("done", ""))[:10]} for t in reg.out(n["id"], LED)]
         fixed_on = max((x["done"] for x in led if x["done"]), default="")
         last = str(p.get("last_seen") or p.get("learned") or "")
+        again = str(p.get("last_seen") or "")  # a sighting after the first one (brain lesson seen)
         out.append({"id": n["id"], "status": n.get("status", ""), "title": " ".join(str(n.get("title", "")).split()),
                     "seen": seen_of(n), "severity": p.get("severity", ""), "signal": p.get("signal", ""),
                     "check": p.get("check", ""), "trigger": p.get("trigger", ""),
@@ -321,7 +328,7 @@ def rows(store: Path) -> list[dict]:
                     "prs": p.get("prs", ""), "learned": str(p.get("learned", "")), "last_seen": last,
                     "learned_from": reg.out(n["id"], LEARNED), "enforced_by": reg.out(n["id"], ENFORCED),
                     "led_to": led, "fixed_on": fixed_on,
-                    "recurred_since_fix": bool(fixed_on and last > fixed_on) or n.get("status") == "regressed",
+                    "recurred_since_fix": bool(fixed_on and again > fixed_on) or n.get("status") == "regressed",
                     "why_not_script": p.get("why_not_script", ""), "source": p.get("source", "")})
     return out
 
@@ -548,8 +555,9 @@ def render_retro(r: dict, owner: str = "") -> list[str]:
         lines += [f"  {k['id']} [{k['status']}] seen {k['seen']}: {k['title']}" for k in r["known"][:8]]
     lines.append("answer in five lines (brain retro <item> --record --note LINE ...):")
     lines += [f"  {i}. {q}" for i, q in enumerate(FIVE, 1)]
-    lines.append("a lesson: brain lesson add les-<slug> --title ... --trigger ... --anti-pattern ... --check ... "
-                 f"--from {r['item']}; a known one seen again: brain lesson seen <id> --from {r['item']}")
+    lines.append("a lesson: brain lesson add les-<project>-<slug> --title ... --trigger ... --anti-pattern ... "
+                 f"--check ... --signal {'|'.join(r['fired'] or SIGNALS[:-1])} --from {r['item']}; a known one seen "
+                 f"again: brain lesson seen <id> --from {r['item']}")
     return lines
 
 
@@ -704,17 +712,18 @@ def lint_lessons(store: Path) -> list[dict]:
     return out
 
 
-def propose_guards(store: Path, findings: list[dict], today: str | None = None) -> list[str]:
-    """File the item proposal of each guard candidate that no open item fixes yet."""
+def propose_guards(store: Path, findings: list[dict], today: str | None = None) -> dict[str, list[str]]:
+    """File the item proposal of each guard candidate that no open item fixes yet: {"filed": the new items,
+    "linked": the open items close to a lesson, linked led_to instead}."""
     today = today or date.today().isoformat()
-    filed = []
+    out: dict[str, list[str]] = {"filed": [], "linked": []}
     for f in findings:
         if f["kind"] == "guard" and not f["fix"]:
             got = _maybe_propose(store, f["lesson"], today, force=True,
                                  why="is a guard candidate of brain lint lessons (its check is a command)")
             if got:
-                filed.append(got[0])
-    return filed
+                out["filed" if got[1] else "linked"].append(got[0])
+    return out
 
 
 def render_lint(findings: list[dict]) -> list[str]:
