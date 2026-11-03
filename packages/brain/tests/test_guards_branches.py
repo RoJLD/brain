@@ -3,6 +3,7 @@
 import io
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 from conftest import GIT_ENV, git_init, run_git
@@ -10,27 +11,30 @@ from conftest import GIT_ENV, git_init, run_git
 from brain import guards
 
 
-@pytest.fixture
-def reg(tmp_path, monkeypatch):
-    """A registered repo (origin github.com/ada/demo) on branch claude/start, and an unregistered one."""
+@pytest.fixture(scope="module")
+def repos(tmp_path_factory):
+    """The two repos, made once per module and copied by each test (git's calls were most of this module's time)."""
     if not shutil.which("git"):
         pytest.skip("git not available")
-    for k, v in GIT_ENV.items():
-        monkeypatch.setenv(k, v)
-    monkeypatch.delenv(guards.ALLOW_ENV, raising=False)
-    monkeypatch.setattr(guards, "gitleaks", lambda repo: None)
-    out = {}
+    where = tmp_path_factory.mktemp("branches")
     for name in ("demo", "other"):
-        r = tmp_path / name
-        r.mkdir()
-        git_init(r)
-        run_git(r, "config", "commit.gpgsign", "false")
+        r = git_init(where / name)
         (r / "a.txt").write_text("a\n", encoding="utf-8")
         run_git(r, "add", "-A")
         run_git(r, "commit", "-q", "-m", "init")
         run_git(r, "remote", "add", "origin", f"https://github.com/ada/{name}.git")
-        out[name] = r
-    run_git(out["demo"], "checkout", "-q", "-b", "claude/start")
+    run_git(where / "demo", "checkout", "-q", "-b", "claude/start")
+    return where
+
+
+@pytest.fixture
+def reg(repos, tmp_path, monkeypatch):
+    """A registered repo (origin github.com/ada/demo) on branch claude/start, and an unregistered one."""
+    for k, v in GIT_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv(guards.ALLOW_ENV, raising=False)
+    monkeypatch.setattr(guards, "gitleaks", lambda repo: None)
+    out = {name: Path(shutil.copytree(repos / name, tmp_path / name)) for name in ("demo", "other")}
     (tmp_path / "projects.yaml").write_text(f"demo: {{root: {out['demo'].as_posix()}}}\n", encoding="utf-8")
     monkeypatch.setenv("BRAIN_PROJECTS", str(tmp_path / "projects.yaml"))
     return out
