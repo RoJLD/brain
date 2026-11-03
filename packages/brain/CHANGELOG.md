@@ -2,7 +2,7 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
-## Unreleased
+## 0.2.4 — 2026-11-03
 
 - **The shared files merge by themselves** (wi-brain-generated-merge). `brain merge-driver run %O %A %B %P %L` is a
   local git merge driver for the paths `.gitattributes` gives `merge=brain`, which `brain init` now writes: a
