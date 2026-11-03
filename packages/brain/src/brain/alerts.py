@@ -16,7 +16,11 @@ through the notification channels (brain.notify) per level. Every source is read
              ``error``), open until a later successful run of their task or for ERROR_HOURS;
   file       the project's own Markdown alert files (a project's ``notes/alerts.md`` until its writers move to
              events: ``## <date> — <writer>`` then ``WARN|FAIL  source:key  message`` lines; each writer's latest
-             block is open, for FILE_DAYS).
+             block is open, for FILE_DAYS);
+  engine     the engine's own errors (brain.selftime, ``ledger/engine/error-<yyyy-mm>.jsonl``): a hook or a command
+             that caught the same exception ENGINE_FAILS (3) times in the last 24 hours, at level error for a hook
+             (a guard that fails lets the call through) and warn for a command; carried by the brain's own project
+             (the one named brain, or whose root is the personal brain).
 
 A task alerts after MISSED (2) missed passes (the owner, 2026-10-30: a 15-minute task after 30 minutes), its own
 ``missed:`` otherwise: a pass is missed when no run started within the cadence plus a grace (a tenth of it, 1 to 15
@@ -65,9 +69,10 @@ MISSED = 2            # the owner, 2026-10-30: a 15-minute task alerts after 2 m
 GRACE_PART, GRACE_MIN, GRACE_MAX = 0.1, 60.0, 900.0  # a tenth of the cadence, 1 to 15 minutes
 FILE_DAYS = 7         # a writer's latest block of a Markdown alert file stays open this long
 ERROR_HOURS = 24      # an error event without a later successful run of its task
+ENGINE_FAILS = 3      # the engine's errors of one task and class in ERROR_HOURS that raise an alert
 MONTHS = 2            # the event files read: this month's and the one before
 SHOWN = 3             # alerts named in brain status's row
-SOURCES = ("scheduler", "ledger", "stack", "code-index", "audit", "events", "file")
+SOURCES = ("scheduler", "ledger", "stack", "code-index", "audit", "events", "file", "engine")
 KEYS = {"scheduler", "exits", "tasks", "stacks", "files", "events", "levels"}
 TASK_KEYS = {"every", "missed", "level", "ledger", "running"}
 EXIT_LEVELS = ("ok", *LEVELS)
@@ -623,6 +628,53 @@ def event_alerts(cfg: Config, events: list[dict], now: datetime) -> list[Alert]:
     return out
 
 
+def engine_alerts(cfg: Config, now: datetime) -> list[Alert]:
+    """The engine's tasks (a hook, a command) that caught the same exception ENGINE_FAILS times or more in the last
+    ERROR_HOURS (brain.selftime's error events): key ``engine:<task>:<class>``."""
+    since = now - timedelta(hours=ERROR_HOURS)
+    seen: dict[tuple[str, str], list] = {}
+    y, m = now.year, now.month
+    for _ in range(MONTHS):
+        f = paths.ledger_dir() / "engine" / f"error-{y:04d}-{m:02d}.jsonl"
+        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            at = _ts(ev.get("at")) if isinstance(ev, dict) and ev.get("kind") == "error" else None
+            if at and since <= at <= now:
+                details = ev.get("details") if isinstance(ev.get("details"), dict) else {}
+                row = seen.setdefault((str(ev.get("task") or "brain"), str(ev.get("code") or "error")), [0, at, ""])
+                row[0] += 1
+                row[1], row[2] = min(row[1], at), details.get("where") or row[2]
+    out = []
+    for (task, code), (n, first, where) in sorted(seen.items()):
+        if n >= ENGINE_FAILS:
+            level = cfg.levels.get("engine") or ("error" if task.startswith("hook ") else "warn")
+            out.append(Alert(cfg.project, f"engine:{task.replace(' ', '-')}:{code}", level, "engine", task,
+                             f"{task}: {code} {n} times in {ERROR_HOURS} h" + (f" (at {where})" if where else "")
+                             + "; brain perf --engine, ledger/errors.log", _iso(first), code))
+    return out
+
+
+def carries_engine(p: projects.Project) -> bool:
+    """Whether ``p`` shows the engine's own alerts: it is named brain, or its root is the personal brain's."""
+    from .selftime import ENGINE
+
+    if p.name == ENGINE:
+        return True
+    root = paths.personal_root()
+    try:
+        return bool(root) and p.root.resolve() == root.resolve()
+    except OSError:
+        return False
+
+
 def parse_file(text: str) -> list[dict]:
     """A Markdown alert file's blocks: [{date, time, writer, lines: [(level, key, message)]}], in file order."""
     blocks, cur = [], None
@@ -684,6 +736,8 @@ def of_project(p: projects.Project, *, stacks_rows=None, index_rows=None, audit=
     out += audit_alerts(cfg, audit, audit_baseline(p.root) if audit else None)
     out += event_alerts(cfg, events, now)
     out += file_alerts(cfg, p.root, now)
+    if carries_engine(p):
+        out += engine_alerts(cfg, now)
     seen, unique = set(), []
     for a in _sorted(out):
         if a.key not in seen:

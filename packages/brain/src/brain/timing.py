@@ -39,9 +39,6 @@ import functools
 import json
 import os
 import random
-import shlex
-import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -49,7 +46,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import paths, schema, secretscan
+# schema, secretscan, shlex, shutil and socket are imported where used: a hook imports this module (brain.selftime)
+from . import paths
 
 LOCK_NAME = "exec.lock"
 LOCK_TIMEOUT = 5.0
@@ -136,6 +134,8 @@ def fmt_duration(s: float) -> str:
 
 def _clean(text: str, limit: int) -> str:
     """One line, lines that match a secret pattern dropped, cut at ``limit``."""
+    from . import secretscan
+
     text = " ".join(secretscan.clean_text(str(text))[0].split())
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
@@ -148,7 +148,14 @@ def _log_error(what: str, exc: BaseException) -> None:
 # The defaults: host, project, version.
 
 def host() -> str:
-    return os.environ.get("BRAIN_HOST") or socket.gethostname() or "unknown"
+    return os.environ.get("BRAIN_HOST") or _hostname()
+
+
+@functools.lru_cache(maxsize=1)
+def _hostname() -> str:
+    import socket
+
+    return socket.gethostname() or "unknown"
 
 
 def _repo_top(d: Path) -> Path | None:
@@ -218,12 +225,23 @@ def make_event(task: str, start: datetime, end: datetime, duration_s: float, exi
 def write_event(event: dict, ledger: str | Path | None = None) -> Path:
     """Append ``event`` to ``<ledger>/<kind>-<yyyy-mm>.jsonl`` (ledger: $BRAIN_HOME/ledger) under the lock; the
     file. Raises ValueError when the event does not follow the schema."""
+    from . import schema
+
     errors, _ = schema.check("event", event)
     if errors:
         raise ValueError(f"invalid event: {'; '.join(errors[:3])}")
     d = Path(ledger) if ledger else paths.ledger_dir()
-    d.mkdir(parents=True, exist_ok=True)
     f = d / f"{event['kind']}-{event['at'][:7]}.jsonl"
+    append(f, event)
+    return f
+
+
+def append(f: Path, event: dict) -> bool:
+    """Append ``event`` as one JSON line to ``f`` under its folder's lock (the folder made when missing), without
+    checking it against the schema (write_event does); whether the lock was had. A writer that could not get the lock
+    within LOCK_TIMEOUT writes anyway and says so in ledger/errors.log."""
+    d = f.parent
+    d.mkdir(parents=True, exist_ok=True)
     data = (json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     fd = os.open(f, os.O_RDWR | os.O_APPEND | os.O_CREAT | _BINARY, 0o644)
     try:
@@ -240,7 +258,7 @@ def write_event(event: dict, ledger: str | Path | None = None) -> Path:
         os.close(fd)
     if not got:
         _log_error("timed", TimeoutError(f"{d / LOCK_NAME} not had in {LOCK_TIMEOUT:g} s; event written without it"))
-    return f
+    return got
 
 
 def record(task: str, start: datetime, end: datetime, duration_s: float, exit: int | None, *,
@@ -318,6 +336,8 @@ def _execute(command: list[str], shell: bool) -> tuple[int | None, str | None]:
     if shell:
         argv: str | list[str] = " ".join(command)
     else:
+        import shutil
+
         exe = shutil.which(command[0])
         if not exe:
             return 127, "not found"
@@ -347,6 +367,8 @@ def run(command: list[str], task: str | None = None, project: str | None = None,
     if not command:
         print("brain timed: no command (brain timed [--task T] -- COMMAND...)", file=out)
         return 2
+    import shlex
+
     line = " ".join(command) if shell else subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command)
     task = task or _task_from(command, shell)
     start, t0 = datetime.now(timezone.utc), time.perf_counter()
