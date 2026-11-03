@@ -345,7 +345,7 @@ from pathlib import Path
 from . import (__version__, actions, alerts, audit, backfill, batch, boundary, bundles, capture, cockpit, codeindex,
                config, cost, decisions, detail, digest, features, forecast, graph, init, links, lint, memory,
                milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
-               records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, usage)
+               records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, update, usage)
 from . import classes, governor, keystore, vault
 from .inventory import AuditError
 
@@ -1440,6 +1440,13 @@ def cmd_tui(args, root: Path) -> int:
     return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"])
 
 
+def cmd_update(args, root: Path | None) -> int:
+    """brain update (brain.update): the latest tag of the engine's repo read now (the cache refreshed), its CHANGELOG
+    and the plan; --check stops there; else installed on the owner's yes (y in a terminal, or --yes), refused in a
+    Claude Code session's shell (CLAUDECODE), like the cockpit's actions."""
+    return update.main(root, check_only=args.check, yes=args.yes, as_json=args.json, refused=detail.refused())
+
+
 def _when(text: str | None, default: str = "") -> str:
     try:
         return usage.parse_when(text or default, usage.now_utc())
@@ -2468,6 +2475,13 @@ def build_parser() -> argparse.ArgumentParser:
     tu.add_argument("--once", action="store_true", help="print the text view once and exit")
     tu.add_argument("--quick", action="store_true", help="with --once or --json: the files only, no probe")
     tu.add_argument("--json", action="store_true", help="the panels' data, once")
+    up = sub.add_parser("update", help=f"a newer engine: the latest tag of config.json engine.repo, its CHANGELOG and "
+                                       f"the plan (install it into the brain's venv, swap the launcher, the pin to "
+                                       f"move by PR); installed on {who}'s yes only (y, or --yes), never from a "
+                                       "Claude Code session")
+    up.add_argument("--check", action="store_true", help="print the plan and exit: install nothing")
+    up.add_argument("--yes", action="store_true", help="install without asking (the owner's own terminal)")
+    up.add_argument("--json", action="store_true", help="the plan's data (stable keys)")
     us = sub.add_parser("usage", help="the token ledger: what the sessions cost, by project, item, class, phase, "
                                       "tool, command, day...; distributions and script candidates; quota: the plan's "
                                       "quota readings and forecast (zero token)")
@@ -2935,6 +2949,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "init":  # a new brain has no graph store yet
         return init.main(args)
     root = Path(args.root).resolve() if args.root else None
+    if args.cmd == "update":  # the engine of this machine: a brain without a graph store updates too
+        return cmd_update(args, root)
     if args.cmd == "audit":  # its repos may have no graph store: before find_root
         return audit.main(args, root)
     if args.cmd == "check" and args.public:  # a public repo has no graph store: before find_root
