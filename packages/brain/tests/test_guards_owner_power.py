@@ -677,3 +677,16 @@ def test_prefilter_names_the_deny_rules_programs():
     assert commands
     missed = [c for c, started in zip(commands, _needs_python(commands)) if not started]
     assert not missed
+
+
+def test_off_windows_the_exact_command_and_the_registry_keep_their_backslashes(owner, monkeypatch, brain_home):
+    """Where a backslash is read as a separator (guards.BACKSLASH_SEP, Linux and macOS), only paths change: the
+    registry key of the user's environment is still that, and the queued command is the one typed."""
+    monkeypatch.setattr(guards, "BACKSLASH_SEP", True)
+    reason = decide(payload("PowerShell", owner, command=r"Set-ItemProperty HKCU:\Environment -Name BRAIN_GUARD_ALLOW "
+                                                         "-Value all", description="x"))
+    assert refused(reason, "owner", "override"), reason
+    ref = pwsh(owner, r".\install.ps1 -Apply").split("--guard ")[1].split()[0]
+    rows = [json.loads(x) for f in (brain_home / "ledger").glob("guards-*.jsonl") for x in f.read_text().splitlines()]
+    assert next(r["request"] for r in rows if (r.get("request") or {}).get("ref") == ref)["command"] == \
+        r".\install.ps1 -Apply"

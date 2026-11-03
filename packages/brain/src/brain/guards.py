@@ -4,7 +4,9 @@ and PyYAML for the registry). They refuse at zero token what a rule used to forb
 Hook payload fields (Claude Code hooks reference, 2026-11-01): tool_name, tool_input.command (Bash, PowerShell),
 tool_input.file_path (Edit, Write, MultiEdit) or notebook_path (NotebookEdit), cwd, session_id, tool_use_id. A refusal
 is one JSON line on stdout, ``permissionDecision: deny`` with a one-line reason the model reads, signed with the core
-plugin's name (config.json adapters.claude); a call that passes prints nothing. Seven guards, in this order:
+plugin's name (config.json adapters.claude); a call that passes prints nothing. A command the desktop app's
+``run_in_terminal`` types into the owner's Terminal panel (tool_input.command, cwd) is judged as a shell call, PowerShell
+on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Seven guards, in this order:
 
 - ``production``: no tool edit under a production checkout (``production:`` in the Brain's projects.yaml), and no git
   command that changes one: commit, checkout, switch, restore, reset, merge, rebase, stash (but list, show), push,
@@ -100,6 +102,12 @@ REDIRECT = "\0"  # starts the word segments() puts before a redirection's target
 SUBSHELL = ("\x01(", "\x01)")  # the one-word segments that open and close a bash subshell, ( ... ) and $( ... )
 BASH_REDIR = re.compile(r"(?P<op>&>>?|<>|>>?\|?|<)(?:(?P<dup>&(?:\d+-?|-))|(?P<proc>\()|&)?")
 PS_REDIR = re.compile(r"(?P<op>>>?)(?P<dup>&\d)?")
+# PowerShell reads \ as a path separator on every system: where os.path does not (Linux, macOS), _path reads a
+# backslash left in a path as a slash (bash has dropped its own escapes by then), so that {lab}\x resolves as PowerShell
+# resolves it; the words themselves are kept as typed (the owner's queue shows the exact command).
+BACKSLASH_SEP = os.sep == "/"
+# A cmd.exe option: slashes, then a name without a separator (/c, //J, /XD, /exclude:list.txt); /tmp/x is a path.
+CMD_OPTION = re.compile(r"/+[^/\\]*")
 PATH_SUBST = re.compile(r"\$\(\s*(mktemp|cygpath|realpath)((?:\s+-[-\w=]*)*)\s*([^()`;&|<>\n]*?)\s*\)")
 ATTRIBUTION = [re.compile(r"(?im)^\s*co-authored-by:.*(?:\bclaude\b|anthropic)"),
                re.compile(r"(?im)^\W*generated (?:with|by) \[?claude\b")]
@@ -318,12 +326,13 @@ def _expand(text: str, env: dict[str, str | None]) -> str | None:
 
 
 def _path(arg: str, cwd: str) -> str:
-    """``arg`` as an absolute path from ``cwd``: ~ and variables expanded, Git Bash's /e/... read as E:/... on Windows;
-    ``cwd`` itself when a variable or a command substitution in ``arg`` cannot be resolved."""
+    """``arg`` as an absolute path from ``cwd``: ~ and variables expanded, Git Bash's /e/... read as E:/... on Windows,
+    a backslash read as a separator elsewhere (BACKSLASH_SEP); ``cwd`` itself when a variable or a command substitution
+    in ``arg`` cannot be resolved."""
     expanded = _expand(arg, {})
     if expanded is None:
         return os.path.abspath(cwd)
-    arg = os.path.expandvars(os.path.expanduser(expanded))
+    arg = os.path.expandvars(os.path.expanduser(expanded.replace("\\", "/") if BACKSLASH_SEP else expanded))
     if os.name == "nt":
         m = re.match(r"^/([a-zA-Z])(?=/|$)", arg)
         if m:
@@ -834,7 +843,7 @@ def writes(words: list[str], cwd: str, shell: str = "bash"):
     if shell == "ps" and PS_ALIASES.get(prog, prog) in PS_WRITERS:
         yield from ((name, p) for p in _ps_targets(PS_ALIASES.get(prog, prog), args, cwd))
     elif shell == "cmd" and prog in CMD_WRITERS:
-        pos, kind = [a for a in args if not a.startswith("/")], CMD_WRITERS[prog]
+        pos, kind = [a for a in args if not CMD_OPTION.fullmatch(a)], CMD_WRITERS[prog]
         names = {"all": pos, "first": pos[:1], "second": pos[1:2], "last": pos[-1:] if len(pos) > 1 else ["."]}[kind]
         yield from ((name, p) for p in _targets(names, cwd))
     elif prog in WRITERS:
@@ -1278,6 +1287,9 @@ SCHEDULED_TOOL = re.compile(r"^mcp__.*scheduled[-_]?tasks?__(?:create|update)_sc
 SESSION_SETTINGS_TOOL = re.compile(r"^mcp__.+__(?:set_remote_control|set_session_permission_mode)$")
 SETTINGS_TOOL = re.compile(r"^mcp__.+__set_setting$")
 SECURITY_KEY = re.compile(r"remote[_-]?control|permission", re.I)
+# The desktop app's tool that types a command into the owner's Terminal panel: judged as a shell call, PowerShell on
+# Windows (the panel's shell there), else bash (an SSH host's login shell), in its cwd or the session's.
+TERMINAL_TOOL = re.compile(r"^mcp__.*terminal__run_in_terminal$")
 UNLIFTED = {"security-settings"}   # the owner guard's checks BRAIN_GUARD_ALLOW cannot lift, not even with all
 
 
@@ -2483,6 +2495,9 @@ def refusals(payload: dict):
     tool = payload.get("tool_name") or ""
     inp = payload.get("tool_input") or {}
     cwd = payload.get("cwd") or os.getcwd()
+    if TERMINAL_TOOL.match(tool):
+        tool = terminal_shell()
+        cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
     if tool in EDIT_TOOLS:
         reason = check_production(tool, inp, [], cwd)
         if reason:
@@ -2518,6 +2533,11 @@ def refusals(payload: dict):
             yield guard, check, out, None
         elif out:
             yield guard, *out
+
+
+def terminal_shell() -> str:
+    """The shell tool a Terminal panel command is judged as: PowerShell on Windows, else Bash."""
+    return "PowerShell" if os.name == "nt" else "Bash"
 
 
 def _log(guard: str, exc: Exception) -> None:
@@ -2590,7 +2610,8 @@ def main(stdin=None, stdout=None) -> int:
                 continue
             recorded = _record(payload, guard, check, "denied", reason, request)
             if request is not None:
-                reason += queue_hint(request, recorded, payload.get("tool_name") or "")
+                tool = payload.get("tool_name") or ""
+                reason += queue_hint(request, recorded, terminal_shell() if TERMINAL_TOOL.match(tool) else tool)
             cfg = config.load()
             reason = f"{config.claude(cfg)['plugin']} guard: {reason}. " + (
                 f"No override: {check} is {config.owner(cfg)}'s alone, in the app." if check in UNLIFTED else
