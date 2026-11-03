@@ -16,8 +16,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `<store>/coverage/<repo>.json` (statements, covered lines, and which test modules ran each function, read from the
   data file's SQLite tables; this engine: 90.0 % of 31,568 statements, a 300 KB summary). `brain audit`
   measures `test.coverage` (a module its tests run under 50 %, P2) and the new `feature.tests` (a have or partial
-  feature whose module or script no test covers, P2), both outside the scout (ruleset 4); FEATURES.md's Tests cell gives each
-  feature's coverage. Docs: `docs/tests-graph.md`.
+  feature whose module or script no test covers, P2), both outside the scout (ruleset 4); FEATURES.md's Tests cell
+  gives each feature's coverage. Docs: `docs/tests-graph.md`.
 
 - **The session tree** (wi-brain-session-tree; ST-1, ST-2, scale study gap 19). The SessionStart event records both
   ids, the transcript's (`CLAUDE_CODE_SESSION_ID`) and the desktop app's `local_` id (`CLAUDE_CODE_HOST_SESSION_ID`),
