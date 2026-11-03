@@ -13,6 +13,22 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   block itself, and its prompt now says how the console ends the input. age missing from a terminal opened before
   its install says to open a new one, and a failure of age names its error, not the « report unexpected or unhelpful
   errors » line it prints last.
+- **Structure signals in the scout** (wi-brain-audit-structure; EXT-4, EXT-5). `brain audit --diff` measures the
+  shape a change gives the code, from the two trees it already reads, at zero token (`brain.structure`):
+  `size.cross` (a code file taken past `max_lines`, NEW), `size.grow` (one already past it grown again, DEFER to the
+  debt item), `complexity.cross` and `complexity.grow` (the same for a Python function's cyclomatic complexity,
+  computed with `ast`), `dep.adr` (a dependency added to `pyproject.toml`, `requirements*.txt` or `package.json` that
+  no decision log of the project names), `shortcut.marker` (a `shortcut:` comment without its ceiling, trigger and
+  debt item) and `symptom.cause` (an added `type: ignore` or `noqa` comment, a skipped test, an `except` that
+  swallows everything, a sleep, a retry or a longer timeout, with no `Root cause:` line). `--pr-body FILE` gives the
+  PR body; it and the range's commit messages are read for `Root cause:` and `Justified: <unit>: <reason>` lines,
+  which turn a NEW structure line into `justified` (shown, never blocking). The thresholds are `projects.yaml`
+  `audit: {max_lines, complexity}` (default 1000 and 15); the JSON gains `justified` and `structure`.
+- **The engine against its pin** (wi-brain-engine-version-skew). `brain check` warns when the running brain or
+  research-graph is not `config.json` `engine.pin` (ahead, behind, or the pin's version from another git revision or
+  a folder not at the tag: a dev engine, read from the distribution's `direct_url.json`); `brain sync`, `brain
+  refresh` and `brain render --write` refuse to write then, unless `--force` (new on sync and refresh; render's also
+  replaces foreign files). A brain with no pin, or a pin that is not a release tag, is not compared (`brain.skew`).
 - **The cockpit knows its version and offers updates** (wi-brain-tui-update-check, ADR UPD-1 to UPD-3). The title
   bar of `brain tui` always shows the installed version (the text view's header too). Once the screen is drawn, a
   worker reads the release tags of the engine's public repo (`config.json` `engine.repo`, else RoJLD/brain) with
