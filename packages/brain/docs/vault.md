@@ -168,9 +168,10 @@ brain vault open FILE [--out DIR] [--identity FILE|-]
 - A store is sealed to the root's recipients (those no scope node and no tenant names, filtered by their optional
   `classes`) plus those the nodes of its scope chain add (`vault: {recipients: [...]}` in `scopes.yaml`); a
   `tenant:<id>` store to its tenant's only (`vault.tenants`).
-- `open` (yours only) opens with this machine's device key by default; `--identity -` reads the recovery key from what
-  you paste (age and gpg read it themselves, the brain never holds it); `--identity FILE` a key file. An archive is
-  extracted into `--out`, refusing any path that would land outside.
+- `open` (yours only) opens with this machine's device key by default; `--identity -` asks for the recovery key,
+  hidden as you paste it (age: checked for its shape, handed to age on its stdin, never written; gpg reads its key
+  block itself); `--identity FILE` a key file. An archive is extracted into `--out`, refusing any path that would land
+  outside.
 
 ## Once a year: the drill
 
@@ -178,7 +179,9 @@ brain vault open FILE [--out DIR] [--identity FILE|-]
 brain vault drill recovery
 ```
 
-Paste the `AGE-SECRET-KEY-1...` line from paper, then end the input (Ctrl-Z then Enter on Windows, Ctrl-D elsewhere).
+Type or paste the secret `AGE-SECRET-KEY-1...` line from paper at the prompt (not the public `age1...` key), then
+Enter. Nothing shows as you paste: the key is hidden, like a password, so it stays out of the screen and the
+terminal's scrollback.
 The recovery canary must open and match its digest; `state.json` records the date and the health warning goes away.
 
 ## A lost or exposed key
