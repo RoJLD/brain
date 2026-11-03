@@ -24,3 +24,12 @@ files:                     # the brain's path: the template's file
   fixtures/README.md: fixtures-README.md
   memory/.gitkeep: ""
   records/.gitkeep: ""
+classes:                   # the data class of the template's own stores (brain classes); the engine adds its machine
+                           # stores (sealed) and a private catch-all. Confidential stays out of git in clear: the
+                           # waiver keeps that known gap printed until encrypted git is adopted
+  memory: {class: confidential, paths: ["memory/**"], to: [cloud-model],
+           waive: {git-private: "in clear in the private remote until encrypted git (sops) is adopted"},
+           why: "notes about people, machines and choices, read by every session"}
+  ddr: {class: confidential, paths: ["records/ddr/**"], to: [cloud-model],
+        waive: {git-private: "in clear in the private remote until encrypted git (sops) is adopted"},
+        why: "decisions whose context may touch money, people or the law, announced to every session"}

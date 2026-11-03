@@ -38,6 +38,11 @@ def test_apply_writes_a_brain_that_checks_and_points_to_it(fresh, monkeypatch, c
     assert f"claude plugin marketplace add {fresh.resolve()}, then claude plugin install brain-core@brain" in out
     assert "brain sync renders the plugin again after an engine upgrade" in out
     data = json.loads((fresh / "config.json").read_text(encoding="utf-8"))
+    stores = data.pop("classes")["stores"]
+    assert list(stores) == ["memory", "ddr", "ledger", "sessions", "resume", "digest", "vault", "transcripts", "repo"]
+    assert stores["memory"]["class"] == "confidential" and stores["repo"] == {
+        "class": "private", "paths": ["**"], "why": "rules, graph, ADRs, journal, records"}
+    assert "the runbook: https://github.com/RoJLD/brain/blob/main/packages/brain/docs/vault.md" in out
     assert data == {"v": 1, "identity": {"owner": "Ada", "kind": "person"}, "registry": "projects.yaml",
                     "rules": ["rules/global.md"], "memory": "memory", "records": "records",
                     "template": {"name": "generic", "version": 1},
@@ -335,3 +340,15 @@ def test_a_bad_graph_plans_nothing(fresh, tmp_path, capsys, graphs, why):
         'memory/.gitkeep: "", records/.gitkeep: ""}\n', encoding="utf-8")
     assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl)]) == 2
     assert why in capsys.readouterr().out and list(fresh.iterdir()) == []
+
+
+def test_a_fresh_brain_passes_check_all_with_a_private_remote(fresh, capsys):
+    """brain init writes a classes block: a brain fresh from it, committed and pushed to a private remote, passes
+    brain check --all (its empty memory/ and records/ hold no data; the waivers print, they do not fail)."""
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    committed(fresh)
+    run_git(fresh, "remote", "add", "origin", "git@example.invalid:ada/ada-brain.git")
+    capsys.readouterr()
+    assert cli.main(["--root", str(fresh), "classes", "--check"]) == 0
+    assert "classes: 9 store(s), OK" in capsys.readouterr().out
+    assert cli.main(["--root", str(fresh), "check", "--all"]) == 0, capsys.readouterr().out

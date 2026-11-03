@@ -52,13 +52,13 @@ from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
 
-from . import __version__, config, graph, neutral, paths, render
+from . import __version__, classes, config, graph, neutral, paths, render, vault
 
 ENGINE_REPO = "RoJLD/brain"   # where this package is published: config.json engine.repo
 TEMPLATES = files(__package__) / "templates"
 DEFAULT_TEMPLATE = "generic"
 MANIFEST = "template.yaml"
-TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs"}
+TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs", "classes"}
 GRAPH_KEYS = {"name", "store", "schema"}
 SCHEMAS = ("default",)   # research_graph init's own; a catalogue of graph types comes later
 # what config.json names, so every template writes it (a folder through its .gitkeep)
@@ -95,6 +95,7 @@ class Template:
     engine: str = ""
     files: dict[str, str] = field(default_factory=dict)
     graphs: list[dict] = field(default_factory=lambda: [{"name": "work", "store": STORE, "schema": "default"}])
+    classes: dict = field(default_factory=dict)     # {store: {class, paths, ...}}: the template's own stores
 
     def read(self, source: str) -> str:
         return (self.folder / source).read_text(encoding="utf-8") if source else ""
@@ -159,8 +160,24 @@ def load_template(spec: str = DEFAULT_TEMPLATE) -> Template:
     missing = [r for r in REQUIRED if r not in fs]
     if missing:
         raise InitError(f"--template {spec}: {MANIFEST}: files misses what config.json names: {', '.join(missing)}")
+    declared = data.get("classes") or {}
+    _, errors = classes.stores(config.Config(None, Path("."), {"classes": {"stores": declared}}))
+    if not isinstance(declared, dict) or errors:
+        raise InitError(f"--template {spec}: {MANIFEST}: classes: " + ("; ".join(errors) or "{store: {class, paths}}"))
     return Template(name, version, str(data.get("title") or ""), folder, engine, dict(fs),
-                    graphs_of(spec, data.get("graphs")))
+                    graphs_of(spec, data.get("graphs")), dict(declared))
+
+
+def classes_block(tpl: Template) -> dict:
+    """config.json's starting ``classes``: the template's stores, then the engine's own machine stores (sealed), then
+    a private catch-all for the rest of the repo, so a fresh brain passes brain check --all."""
+    stores = dict(tpl.classes)
+    for name, (path, cls) in classes.KNOWN.items():
+        if name not in stores:
+            stores[name] = {"class": cls, "paths": [path]}
+    if not any("**" in s.get("paths", []) for s in stores.values()):
+        stores["repo"] = {"class": "private", "paths": ["**"], "why": "rules, graph, ADRs, journal, records"}
+    return {"stores": stores}
 
 
 def graphs_of(spec: str, declared) -> list[dict]:
@@ -216,7 +233,8 @@ def config_text(owner: str, kind: str = "person", tenant: str | None = None, tie
     data = {"v": 1, "identity": ident, "registry": "projects.yaml", "rules": ["rules/global.md"], "memory": "memory",
             "records": "records", "template": {"name": tpl.name, "version": tpl.version},
             "engine": {"repo": ENGINE_REPO, "pin": f"v{__version__}"}, "tier": {"base": tier},
-            "adapters": {"claude": claude}, "public": {"repos": [], "deny": {"people": [owner], **machine_terms()}}}
+            "adapters": {"claude": claude}, "public": {"repos": [], "deny": {"people": [owner], **machine_terms()}},
+            "classes": classes_block(tpl)}
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -380,4 +398,6 @@ def main(args) -> int:
     folder = f'"{root}"' if " " in str(root) else str(root)
     print(f"      Claude Code, once: claude plugin marketplace add {folder}, then claude plugin install "
           f"{names['plugin']}@{names['marketplace']} (brain sync renders the plugin again after an engine upgrade)")
+    print(f"      the vault, before anything leaves this machine: brain classes (each store's class), brain vault "
+          f"status (your device key, your recovery key, the daily canary); the runbook: {vault.RUNBOOK}")
     return 0
