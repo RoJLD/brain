@@ -224,7 +224,8 @@ def test_status_quick_counts_items_decisions_milestones_and_records(tmp_path, mo
                           "open_by_priority": {"P0": 1, "P1": 1, "P2": 1, "none": 1},
                           "frontier": 2, "frontier_p0_p1": 2}  # wi-five waits on wi-two (doing)
     assert d["decisions"] == {"pending": 2, "blocking": 1, "answered": 1, "open_questions": 1,
-                              "queue": {"decision": 3, "action": 0, "permission": 0}}  # brain queue's counts
+                              "queue": {"decision": 3, "action": 0, "permission": 0,
+                                        "bands": {"now": 1, "week": 1, "later": 1}}}  # brain queue's counts, bands
     assert d["milestones"] == {"reached": 1, "pending": [{"id": "ms-x", "title": "Milestone X", "items": 2,
                                                           "done": 1}]}
     assert d["journals"] == [{"path": "notes/journal.md", "exists": True, "last": "2026-11-02"}]
