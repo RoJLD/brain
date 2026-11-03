@@ -348,3 +348,33 @@ def test_installer_step(repo, tmp_path, python, apply):
     else:
         assert "(set)" in res.stdout
         assert driver.stdout.strip() == f'"{(bin_ / "brain.exe").as_posix()}" merge-driver run %O %A %B %P %L'
+
+
+def test_yaml_by_id_both_add_props_to_one_entry():
+    ours = NODES.replace("props: {priority: P1}}", 'props: {priority: P1, pr: "demo #4",\n           done: "2026-10-02"}}')
+    ours = ours.replace("id: wi-a, type: WorkItem, status: todo", "id: wi-a, type: WorkItem, status: done")
+    theirs = NODES.replace("props: {priority: P1}}", 'props: {priority: P1, extended: "more"}}')
+    text, res, _ = merge("notes/graph/nodes/work.yaml", NODES, ours, theirs)
+    assert res.conflicts == 0, text
+    import yaml
+    a = yaml.safe_load(text)[0]
+    assert a["status"] == "done" and a["props"] == {"priority": "P1", "pr": "demo #4", "done": "2026-10-02",
+                                                    "extended": "more"}
+    assert text.startswith("# Work layer\n# --- items ---\n- {id: wi-a")   # the comments above it kept
+
+
+def test_yaml_by_id_a_prop_changed_both_ways_stays_a_conflict():
+    ours = NODES.replace("props: {priority: P1}}", "props: {priority: P0}}")
+    theirs = NODES.replace("props: {priority: P1}}", "props: {priority: P2}}")
+    _, res, _ = merge("notes/graph/nodes/work.yaml", NODES, ours, theirs)
+    assert res.conflicts == 1
+
+
+def test_a_dated_changelog_written_newest_first_is_a_log():
+    base = "# Changelog\n\nIntro.\n\n## 2026-10-01 — one\n\n- a\n"
+    ours = base.replace("## 2026-10-01", "## 2026-10-03 — ours\n\n- o\n\n## 2026-10-01")
+    theirs = base.replace("## 2026-10-01", "## 2026-10-02 — theirs\n\n- t\n\n## 2026-10-01")
+    text, res, kind = merge("plugins/x/CHANGELOG.md", base, ours, theirs)
+    assert (kind, res.conflicts) == ("log", 0), text
+    assert text == ("# Changelog\n\nIntro.\n\n## 2026-10-03 — ours\n\n- o\n\n## 2026-10-02 — theirs\n\n- t\n\n"
+                    "## 2026-10-01 — one\n\n- a\n")

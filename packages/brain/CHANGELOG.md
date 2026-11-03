@@ -11,7 +11,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   and `brain merge-driver status` name the marked views); `journal.md` and `decisions.md` are unioned, the new dated
   entries in date order, a new entry dated before an old one left as a conflict; `edges/*.yaml` and a CHANGELOG's
   Unreleased section are unioned (a subsection both sides opened becomes one); the other graph YAML is merged entry
-  by entry by id; anything else, and any failure, falls back to `git merge-file`, so a file never loses its markers.
+  by entry by id (an entry both sides changed, key by key, as `brain item set` writes it); a dated CHANGELOG
+  without an Unreleased section is a log, newest first when written so; anything else, and any failure, falls back to `git merge-file`, so a file never loses its markers.
   `brain merge-driver install [--apply]` defines it in a repo's git config, and the installer's new `merge` step runs
   it for the personal brain with the launcher on PATH. `brain merge-driver replay` merges a repo's past merges again
   with `git merge-tree`, as text then with the driver. Docs: `docs/merge-driver.md`.

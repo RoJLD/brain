@@ -19,7 +19,9 @@ The kind of a path, from its name and its first lines:
   same in its Unreleased section only, where a ``### Added`` both sides opened becomes one;
 - **yaml**: any other ``.yaml`` or ``.yml`` that is a list of ``id:`` entries: merged entry by entry (an entry changed
   on one side takes that side, the new entries of both sides are kept where they were added, an entry changed on both
-  sides is merged line by line or left as a conflict); a file that is not such a list is merged as text;
+  sides is merged line by line, else key by key with its props one level down and written as brain item set writes
+  a node, else left as a conflict); a file that is not such a list is merged as text; a dated CHANGELOG without an
+  Unreleased section is a log, newest first when written so;
 - **text**: anything else: git's three-way merge (``git merge-file``).
 
 Whatever goes wrong falls back to ``git merge-file``, so the driver never leaves a file without its conflict markers.
@@ -315,28 +317,44 @@ def _ordered(dates: list[str]) -> bool:
 
 
 def log(base: str, ours: str, theirs: str, size: int = 7, style: str = "merge") -> Result:
-    """The union of an append-only dated log (module docstring)."""
+    """The union of an append-only dated log (module docstring); a log written newest first (its dates never
+    increase, a dated CHANGELOG) gets its new entries newest first."""
     nl = _nl(ours)
+    newest_first = _newest_first(ours) and _newest_first(theirs)
     out: list = []
     last = ""        # the date of the last entry before the hunk
-    early = False    # a new entry dated before it
+    early = False    # a new entry dated before it (oldest first only)
+    united = False   # the last segment was a union
     for seg in merge3(base, ours, theirs):
         if isinstance(seg, str) or seg.base:
             m = DATED.match(seg) if isinstance(seg, str) else None
             last = m.group(1) if m else last
-            out.append(seg)
+            if m and united:   # an old entry right after the union (a newest-first log): its blank line
+                _spaced(out, [[seg]], nl)
+            else:
+                out.append(seg)
+            united = False
             continue
+        united = True
         (lo, so), (lt, st) = _sections(seg.ours), _sections(seg.theirs)
-        secs = sorted(so + st, key=lambda s: DATED.match(s[0]).group(1))  # stable: ours first on a tie
-        early = early or any(DATED.match(s[0]).group(1) < last for s in secs)
-        last = DATED.match(secs[-1][0]).group(1) if secs else last
+        # stable both ways: ours first on a tie
+        secs = sorted(so + st, key=lambda s: DATED.match(s[0]).group(1), reverse=newest_first)
+        if not newest_first:
+            early = early or any(DATED.match(s[0]).group(1) < last for s in secs)
+            last = DATED.match(secs[-1][0]).group(1) if secs else last
         _spaced(out, [_trimmed(lo, lead=True), _trimmed(lt, lead=True), *[_trimmed(x) for x in secs]], nl)
     res = render(out, size, style, nl)
-    if not res.conflicts and (early or (not _ordered(_dates(res.text)) and _ordered(_dates(ours))
-                                        and _ordered(_dates(theirs)))):
+    sides = (_dates(ours), _dates(theirs))
+    order = (lambda d: _ordered(d[::-1])) if newest_first else _ordered
+    if not res.conflicts and (early or (not order(_dates(res.text)) and all(order(d) for d in sides))):
         res = text_merge(base, ours, theirs, size, style)
         res.note = "a new entry is dated before an older one: left as a conflict"
     return res
+
+
+def _newest_first(text: str) -> bool:
+    dates = _dates(text)
+    return len(dates) > 1 and dates[0] > dates[-1] and _ordered(dates[::-1])
 
 
 def _entry(line: str) -> bool:
@@ -508,6 +526,57 @@ def entries(text: str) -> Entries | None:
     return out if len(ids) == len(set(ids)) else None
 
 
+def _load_entry(text: str) -> dict | None:
+    try:
+        import yaml
+        data = yaml.safe_load(text)
+    except Exception:  # noqa: BLE001 - not loadable: no semantic merge
+        return None
+    return data[0] if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict) else None
+
+
+def _merge_keys(b: dict, o: dict, t: dict, nested: tuple = ("props",)) -> dict | None:
+    """A three-way merge key by key (``props`` one level down): ours' order, theirs' new keys after; None when a key
+    changed both ways."""
+    out: dict = {}
+    for key in [*o, *(k for k in t if k not in o)]:
+        bv, ov, tv = b.get(key), o.get(key), t.get(key)
+        if key in nested and isinstance(ov, dict) and isinstance(tv, dict) and isinstance(bv or {}, dict) \
+                and ov != tv and ov != bv and tv != bv:
+            sub = _merge_keys(bv or {}, ov, tv, ())
+            if sub is None:
+                return None
+            out[key] = sub
+            continue
+        if ov == tv or tv == bv:
+            if key in o:
+                out[key] = ov
+        elif ov == bv:
+            if key in t:
+                out[key] = tv
+        else:
+            return None
+    return out   # a key one side deleted and the other left as it was is gone: neither branch above keeps it
+
+
+def merge_node(bt: str, ot: str, tt: str) -> str | None:
+    """An entry both sides changed, merged key by key (both added props, say: a close on one side, an extension on
+    the other) and written as brain item set writes a node (brain.graph.render_node), ours' comments above it kept;
+    None when a key changed both ways or the entry is not a column-0 node."""
+    bn, on, tn = (_load_entry(x) for x in (bt, ot, tt))
+    if on is None or tn is None or not ENTRY_ID.match(next((x for x in _lines(ot) if ENTRY.match(x)), "")):
+        return None
+    lines = _lines(ot)
+    start = next(i for i, x in enumerate(lines) if ENTRY.match(x))
+    if ENTRY.match(lines[start]).group("ind"):
+        return None
+    node = _merge_keys(bn or {}, on, tn)
+    if node is None:
+        return None
+    from .graph import render_node
+    return "".join(lines[:start]) + render_node(node).replace("\n", _nl(ot))
+
+
 def yaml_by_id(base: str, ours: str, theirs: str, size: int = 7, style: str = "merge") -> Result:
     """Entry by entry (module docstring); a file that is not a list of id entries, or a result that does not load,
     merged as text."""
@@ -523,7 +592,12 @@ def yaml_by_id(base: str, ours: str, theirs: str, size: int = 7, style: str = "m
             return [tt]
         if tt == bt:
             return [ot]
-        return merge3(bt, ot, tt)
+        segs = merge3(bt, ot, tt)
+        if any(isinstance(s, Conflict) for s in segs):
+            node = merge_node(bt, ot, tt)
+            if node is not None:
+                return [node]
+        return segs
 
     for nid, ot in eo.items:
         if nid in b:
@@ -585,6 +659,8 @@ def resolve(path: str, base: bytes, ours: bytes, theirs: bytes, size: int = 7, c
             res = log(o, a, b, size, style)
         elif kind == "union":
             res = union(o, a, b, size, style)
+        elif kind == "changelog" and not any(map(UNRELEASED.match, _lines(a) + _lines(b))) and _dates(a):
+            kind, res = "log", log(o, a, b, size, style)   # a dated changelog, no Unreleased section: a log
         elif kind == "changelog":
             res = union(o, a, b, size, style, yaml_check=False, section=UNRELEASED)
         elif kind == "yaml":
