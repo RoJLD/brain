@@ -68,6 +68,54 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   for an assignment; a method through its class's HAS_METHOD edge) into `<BRAIN_HOME>/code-map/<project>.json`, with
   the coverage per repo (symbols with a CodeRef over all symbols, files with a CodeRef over the indexed files) and
   each CodeRef that does not resolve, with why. Exit 1 when GitNexus does not answer.
+- **The vault's recipients change safely** (wi-brain-vault-rotation, its first part).
+  - `brain vault recipient remove NAME`: a plan, then `--write`. It refuses to leave a store with fewer than two
+    distinct keys or with no recovery key, each store on its own (a tenant's or a scope's key does not stand for the
+    owner's stores), to remove the only recovery key, and to remove a recipient that `vault.tenants` or a scope still
+    names. The plan lists the sealed files the removed key still opens.
+  - `brain vault recipient add` refuses a declared name unless `--replace` is given (a rotation), and a key another
+    name already holds. `--replace` keeps the recipient's kind (a change of kind is refused), its `classes`, `why`
+    and host, and copies a new gpg key file even where the old one lies.
+  - The canary and the drill prove a key, not a name: a key replaced under the same name is « never sealed » and
+    « never drilled » until they run again (state.json keeps each proof's fingerprint; an older drill is tied once to
+    the key its canary held).
+  - `brain vault reseal [STORE...]`: the plan, then `--apply`. It seals again, to their store's current recipients,
+    the sealed files whose recipients changed: it opens each with this machine's device key (its previous one during a
+    rotation) or with the key the owner gives, seals it again with the same adapter, replaces the old copy, and records
+    `resealed` in the manifest (written atomically). It leaves a file as it is when its store would fall under its
+    floors, or would leave a recovery key for one never drilled; an unreadable manifest is that file's error.
+  - `brain vault device init --rotate` replaces this machine's key and keeps the previous one in the keystore
+    (`device-previous`), which still opens what was sealed to it; the name stays, and a failure puts the keystore back
+    as it was. `brain vault device forget-previous` deletes the previous key once config.json declares the new key, no
+    longer declares the old one, and nothing waits on a re-seal.
+  - `brain vault status` lists the files to re-seal and an unfinished rotation. `brain health vault` fails while a
+    removed or replaced key still opens a sealed file or a store has fewer than two distinct keys, and warns when a
+    new recipient cannot open one yet or a store is sealed to no recovery key.
+  - The runbook gains « Changing the recipients ».
+  - YubiKey recipients, each machine's canary seen from the others and post-quantum recipients stay for later.
+- **A test never reaches the real keystore or ~/.brain.** Under pytest, `keystore.backend()` refuses this machine's
+  keystore unless `BRAIN_TEST_KEYSTORE` asks for it, and `paths.brain_home()` refuses the default ~/.brain: on
+  2026-11-03 a test's `monkeypatch.undo()` dropped the conftest's settings and the rest of it rotated the owner's real
+  device key (restored the same day; nothing was lost).
+
+- **Lessons in the graph** (wi-brain-lessons-registry). A `Lesson` node type in `brain init`'s default schema (layer
+  `lessons`, statuses open, enforced, resolved, regressed, archived; edges `learned_from`, `enforced_by`, `led_to`;
+  its `trigger`, `anti_pattern` and `check` required). `brain lesson add|seen|list|rules` (also `brain lessons`):
+  `add` writes the node in `nodes/lessons.yaml` and refuses one close to a known lesson (mark it `seen`, or
+  `--new`); a lesson seen twice (once if severe) with no open fix, or recurring after its fix (regressed), files an
+  item proposal (`priority_proposed`) linked `led_to`, or links the open item whose title is close to it;
+  `brain lessons --follow` prints each lesson's lineage (learned from, led to, its PR, enforced by, recurred since
+  its fix) and the friction per item by week;
+  `brain lesson rules` indexes the iron rules (`Σ-NAME`, `Sigma-NAME`) of each registered repo's tracked Markdown,
+  read only. `brain lint lessons [--propose]`: the open lessons a script could check (guard candidates) and those
+  that say no `why_not_script`. `docs/lessons.md`.
+- **The retro at each close** (wi-brain-lessons-loop). `brain retro ITEM [--record --note ...]`: the friction
+  signals of the item's sessions (merges and conflicts, guard refusals from the guards ledger, failed test runs,
+  waits, tokens against the estimate, the owner's minutes, pushes to its PRs after opening from the action
+  records), the known lessons of the signals that fired and five questions; `--record` writes `props.retro` and
+  `props.retro_notes`. `brain retro --wave W`: a wave's deep retro. The close-item procedure gains the step (2b,
+  Retro), before the item is ticked and never stopping the close (`Retro: skipped (<why>)` when the store has no
+  Lesson type yet or the ledger does not know the item), and a `Retro:` line in its report.
 
 ## 0.2.4 — 2026-11-03
 

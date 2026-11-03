@@ -1,14 +1,23 @@
 # The vocabulary of this graph store: node and edge types, statuses, layers. `research_graph check` validates every
 # node and edge against it; add the types your projects need (a research layer, a data layer...).
 # owner: who decides for this store, a person or a team; `research_graph pending` lists the items blocked on them.
-{owner_line}node_types: [WorkItem, Milestone, Spec, ADR]
-edge_types: [depends_on, part_of, specified_by, decided_by, supersedes]
-statuses: [todo, doing, blocked, done, dropped, pending, reached, proposed, active, superseded]
+# Lesson: what a finished item, PR or incident taught (nodes/lessons.yaml, the brain command's `brain lesson`): its
+# trigger, the anti-pattern, the check that tells it happened again; learned_from the item, ADR or record it came
+# from, enforced_by what checks it at zero token, led_to the item that fixes it. required_props: what every node of a
+# type must carry, non-empty.
+{owner_line}node_types: [WorkItem, Milestone, Spec, ADR, Lesson]
+edge_types: [depends_on, part_of, specified_by, decided_by, supersedes, learned_from, enforced_by, led_to]
+statuses: [todo, doing, blocked, done, dropped, pending, reached, proposed, active, superseded, open, enforced,
+           resolved, regressed, archived]
 layers:
   work: [WorkItem, Milestone, Spec]
   decisions: [ADR]
+  lessons: [Lesson]
 status_by_type:
   WorkItem: [todo, doing, blocked, done, dropped]
   Milestone: [pending, reached, dropped]
   Spec: [proposed, active, superseded]
   ADR: [active, superseded]
+  Lesson: [open, enforced, resolved, regressed, archived]
+required_props:
+  Lesson: [trigger, anti_pattern, check]
