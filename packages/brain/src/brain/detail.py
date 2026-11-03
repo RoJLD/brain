@@ -282,7 +282,7 @@ def commands(*texts) -> list[list[str]]:
 def preview(words: list[str]) -> list[str] | None:
     """The plan of an apply, run before its confirmation: install.ps1 without -Apply (its own dry run); None for
     any other command (the confirmation shows the command itself)."""
-    if Path(words[0]).name.lower() == "install.ps1" and any(w.lower() == "-apply" for w in words):
+    if re.split(r"[\\/]", words[0])[-1].lower() == "install.ps1" and any(w.lower() == "-apply" for w in words):
         return [w for w in words if w.lower() != "-apply"]
     return None
 

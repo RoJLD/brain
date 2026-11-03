@@ -142,7 +142,7 @@ def test_audit_measures_doc_and_test_links_where_the_store_takes_them():
     assert got == {("doc.links", "docs/guide.md"): "P2", ("doc.links", "docs/specs/t.md"): "P2",
                    ("test.links", "tests/unit/x.Tests.ps1"): "P2"}
     assert {x["check"] for x in r["not_measured"]} & {"doc.links", "test.links"} == set()
-    assert res["linked"] == {"demo": ("notes/graph", ["Doc", "Test", "Workflow"])}
+    assert res["linked"] == {"demo": ("notes/graph", ["Doc", "Test", "Workflow"], "demo")}
     # a store without the types, and a repo with no store: still listed as not measured, with the reason
     bare = _measure({"README.md": "# x\n" + "line\n" * 12, "notes/graph/schema.yaml": "node_types: [WorkItem]\n",
                      "src/q.py": "def f():\n    pass\n"})
@@ -150,7 +150,7 @@ def test_audit_measures_doc_and_test_links_where_the_store_takes_them():
     assert owners["doc.links"] == "notes/graph has no Doc type" and owners["test.links"] == "notes/graph has no Test type"
     none = _measure({"README.md": "# x\n" + "line\n" * 12})
     assert {x["check"]: x["owner"] for x in none["repos"][0]["not_measured"]}["doc.links"] == \
-        "no store of its own to hold the links"
+        "no store of its own to hold the links, and no CodeRef of the project's store names it"
     assert audit.CHECKS["test.links"].scout == "never" and audit.RULESET >= 2   # 2 brought doc.links and test.links
 
 
@@ -177,3 +177,88 @@ def test_sync_writes_the_links_and_check_warns_when_stale(tmp_path, monkeypatch,
     out = capsys.readouterr().out
     assert "warning: nodes/_generated_links.yaml is stale: brain sync" in out
     assert "warning: edges/_generated_links.yaml is stale: brain sync" in out
+
+
+ENGINE = {   # another repo of the project, with no store: its code is described by the store of the repo "demo"
+    "README.md": "# engine\n\nThe core lives in src/eng/core.py.\n\n## Hooks\n\nNothing named.\n",
+    "pyproject.toml": '[tool.setuptools.packages.find]\nwhere = ["src"]\n',
+    "src/eng/__init__.py": "", "src/eng/core.py": "def run():\n    pass\n", "src/eng/other.py": "X = 1\n",
+    "src/eng/hooks/start.sh": "echo hi\n",   # the source the store's repo renders into plugins/core/hooks/
+    "docs/specs/s.md": "# Not the store's spec\n",
+    "tests/test_core.py": "from eng.core import run\n\n\ndef test_run():\n    run()\n",
+    "tests/test_start.py": 'import subprocess\n\n\ndef test_start():\n    subprocess.run(["bash", "start.sh"])\n',
+    "tests/test_none.py": "def test_x():\n    pass\n",
+}
+CODED = NODES + """\
+- {id: "code:engine:src/eng/core.py", type: CodeRef, status: active, title: "core"}
+- {id: feat-run, type: WorkItem, status: todo, title: "Run"}
+"""
+CODED_EDGES = '- {from: feat-run, to: "code:engine:src/eng/core.py", type: implemented_by}\n'
+
+
+def test_another_repo_of_the_project_is_derived_against_the_store():
+    home = _tree()
+    hand, edges = graph._yaml().safe_load(CODED), graph._yaml().safe_load(CODED_EDGES)
+    lk = links.derive(mem(ENGINE, "engine"), "engine", "notes/graph", hand=hand, hand_edges=edges, home=home)
+    by = {n["id"]: n for n in lk.nodes}
+    got = {(e["from"], e["to"]): e["type"] for e in lk.edges}
+    t = "test:engine:tests/"
+    assert got[("feat-run", t + "test_core.py")] == "tested_by"   # through its CodeRef of this repo
+    assert got[("hook-start", t + "test_start.py")] == "tested_by"   # its rendered script, found by hooks/start.sh
+    assert got[("feat-run", "doc:engine:README.md::engine")] == "documented_in"
+    assert not [s for s, d in got if s in ("plugin-core", "skill-close", "spec-s")]   # anchors are the home repo's
+    assert lk.specs == {} and "docs/specs/s.md" in lk.docs   # a spec here is a doc: spec-s anchors the home's
+    assert by[t + "test_none.py"] and t + "test_none.py" not in lk.tested
+    assert links.coded_repos(hand) == {"demo", "engine"}
+
+
+def test_audit_measures_a_repo_without_a_store_against_the_one_whose_coderefs_name_it():
+    t = _tree()
+    demo = mem({**{p: t.text(p) for p in t.files}, "notes/graph/nodes/work.yaml": CODED,
+                "notes/graph/edges/work.yaml": CODED_EDGES}, "demo")
+    root = Path("/m")
+    p = projects.Project("demo", root / "demo", [root / "demo" / "notes" / "graph"])
+    res = audit.measure(p, [projects.Repo("demo", root / "demo"), projects.Repo("engine", root / "engine")],
+                        {"demo": demo, "engine": mem(ENGINE, "engine")})
+    assert res["linked"]["engine"] == ("notes/graph", ["Doc", "Test", "Workflow"], "demo")
+    eng = next(r for r in res["repos"] if r["name"] == "engine")
+    got = {(f["check"], f["unit"]) for f in eng["findings"] if f["check"] in ("doc.links", "test.links")}
+    assert got == {("test.links", "tests/test_none.py"), ("doc.links", "docs/specs/s.md")}   # README names core.py
+    assert not {x["check"] for x in eng["not_measured"]} & {"doc.links", "test.links"}
+    # a repo no CodeRef names stays unmeasured, with the reason
+    res = audit.measure(projects.Project("demo", root / "demo", [root / "demo" / "notes" / "graph"]),
+                        [projects.Repo("demo", root / "demo"), projects.Repo("engine", root / "engine")],
+                        {"demo": _tree(), "engine": mem(ENGINE, "engine")})
+    eng = next(r for r in res["repos"] if r["name"] == "engine")
+    assert "no CodeRef of the project's store names it" in {x["check"]: x["owner"]
+                                                            for x in eng["not_measured"]}["doc.links"]
+
+
+def test_sync_derives_the_other_repos_a_coderef_names_at_their_committed_state(tmp_path, monkeypatch, make_repo,
+                                                                                capsys):
+    nodes = NODES.replace("code:demo:p/a.py", "code:engine:src/eng/core.py")
+    demo = make_repo("demo", {"notes/graph/schema.yaml": SCHEMA, "notes/graph/nodes/work.yaml": nodes,
+                              "notes/graph/edges.yaml": '- {from: wi-a, to: "code:engine:src/eng/core.py", '
+                                                        'type: implemented_by}\n',
+                              "README.md": "# demo\n\nAbout wi-b.\n"})
+    engine = make_repo("engine", ENGINE)
+    (engine / "tests" / "test_late.py").write_text("def test_late():\n    pass\n", encoding="utf-8")   # not committed
+    reg = tmp_path / "brain" / "projects.yaml"
+    reg.parent.mkdir()
+    reg.write_text(f"demo: {{root: {demo.as_posix()}, repos: [., ../engine, ../gone]}}\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    monkeypatch.setattr(graph, "research_graph", lambda root, store, *a: 0)
+    assert cli.main(["--project", "demo", "sync"]) == 0
+    assert "links graph:" in capsys.readouterr().out
+    ids = [n["id"] for n in graph.load_yaml_list(demo / "notes" / "graph" / "nodes" / links.GENERATED)]
+    assert "test:engine:tests/test_core.py" in ids and "doc:engine:README.md::engine" in ids
+    assert "test:engine:tests/test_late.py" not in ids   # its committed state, as brain audit reads it
+    edges = graph.load_yaml_list(demo / "notes" / "graph" / "edges" / links.GENERATED)
+    assert {"from": "wi-a", "to": "test:engine:tests/test_core.py", "type": "tested_by"} in edges
+    assert cli.main(["--project", "demo", "check"]) == 0
+    assert "stale" not in capsys.readouterr().out
+    # a CodeRef of a registered repo whose checkout is not here: left out, and said
+    (demo / "notes" / "graph" / "nodes" / "more.yaml").write_text(
+        '- {id: "code:gone:x.py", type: CodeRef, status: active, title: x}\n', encoding="utf-8")
+    assert cli.main(["--project", "demo", "sync"]) == 0
+    assert "not on this machine, left out: gone" in capsys.readouterr().out

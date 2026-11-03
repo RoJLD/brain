@@ -291,8 +291,6 @@ def sources(project: projects.Project, brain: projects.Project | None) -> list[S
     brain_root = brain.root if brain else (paths.personal_root() or cfg.root)
     rel = global_rules(cfg)
     rules = brain_root / rel
-    if not rules.is_file():
-        rules = Path(__file__).resolve().parents[1] / "rules" / "global.md"  # the plugin's own copy
     if rules.is_file():  # inject-rules.sh drops CR and turns tabs to spaces
         out.append(Source("hook", brain.name if brain else "brain", rel, rules, _read(rules).replace("\t", " ")))
     user = claude_dir()

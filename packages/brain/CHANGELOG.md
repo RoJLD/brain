@@ -4,6 +4,17 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The suite is green on Linux.** Three places misread Windows shapes off Windows: a PowerShell word's backslash is
+  now a path separator wherever `os.path` reads only slashes (`guards.BACKSLASH_SEP`), as PowerShell reads it, so
+  `Set-Content {lab}\x` is seen in the production checkout; a `cmd /c` option is slashes and a name without a
+  separator (`guards.CMD_OPTION`: `/c`, `//J`, `/XD`), so a Unix absolute path is a target, not an option; and
+  `detail.preview` finds `.\install.ps1` by its last part on either separator. The 26 advisory `brain-linux` failures
+  of main go away.
+- **The Terminal panel meets the shell guards** (wi-brain-guard-terminal-tool). A command that the desktop app's
+  `run_in_terminal` types into the owner's Terminal panel ran outside every guard: production checkouts, the owner's
+  own actions (`brain usage allow` included), power, attribution, secrets, public pushes and branch names. A
+  PreToolUse matcher on `mcp__*terminal__run_in_terminal` now judges it as a shell call (`guard.sh shell`):
+  PowerShell on Windows, the panel's shell there, else bash, in the tab's `cwd`, else the session's folder.
 - **A brain fresh from `brain init` passes `brain check --all`.** It failed at once with « config.json declares no
   data classes ». A template's `template.yaml` gains `classes`, its own stores, checked when the template loads. The
   generic template classes `memory/` and `records/ddr/` confidential, opted in to `cloud-model`, with a waiver on
@@ -21,6 +32,19 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   hosted or managed service needs a commercial licence. Each version changes to the Apache License 2.0 four years after
   its release. 0.2.0 and 0.2.1 stay under the MIT License, and so does research-graph. The READMEs and
   `docs/pilot.md` say it. Tested (`tests/test_license.py`).
+- **The links of a project's other repos** (`brain.links`). A store's CodeRefs may name another registered repo of
+  its project (an engine whose code a personal brain describes, say). `brain sync` now also derives that repo's Doc,
+  Test and Workflow nodes into the store's `_generated_links.yaml`, from its committed state (the commit `brain audit`
+  reads), with the `tested_by` and `documented_in` edges from the nodes that stand for its code: the files of their
+  CodeRefs, and a Hook's scripts found there by their `hooks/<name>` (the store's repo renders them from that repo). A
+  Skill, a Plugin and the Spec anchors stay the store's repo's. A repo whose checkout is not on the machine is left out,
+  and `brain sync` says so. `brain audit` measures `doc.links` and `test.links` of such a repo against that store
+  (until now: "no store of its own to hold the links"). A repo no CodeRef names is not derived, so a project's
+  production checkouts add nothing.
+- Fixed: `code_index:` entries resolve like `repos:` (`projects._resolve_root`): from a project rooted in a worktree, a
+  sibling of the main checkout (`../brain`) is found there, not looked for beside the worktree.
+- `brain.capture` is documented in the README (the capture hooks' module); `hooks/health.sh` has its end-to-end test;
+  `brain lint rules` lost its fallback to a plugin's own `rules/global.md` (the package left the plugin folder).
 - **`install.ps1 -Apply` replaces a running launcher.** Sessions' hooks run `brain.exe` many times a minute, and
   Windows refuses to overwrite a running image, so the last step of `-Apply` (the copy to `<BRAIN_HOME>\bin`) failed
   twice. `Set-Launcher` leaves an identical launcher alone, copies a new one beside it and swaps it in with a short

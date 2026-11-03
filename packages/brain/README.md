@@ -20,7 +20,8 @@ What it does, every command reading files and git, never a model:
 - **Claude Code**: the hooks and guards under `src/brain/adapters/claude/hooks/` (rules injection, capture, the
   PreToolUse guards: production checkouts, the owner's own actions, a session's Remote Control and permission mode,
   power, attribution, secrets, public pushes, branch names; the usage governor before a new session, a subagent or a
-  workflow), which `brain render --target claude` copies into the owner's own plugin;
+  workflow; a command a session types into the owner's Terminal panel, `run_in_terminal`, meets the same shell
+  guards), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
   shapes, data files) before a push to a public repo, and its guard holds the push until the check is green.
 
@@ -156,7 +157,11 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
 
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
-brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart.
+brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture
+hooks run `brain.capture` (`capture.sh <event>` runs `hooks/capture.py`, which calls it with the brain command's
+venv): it reads the hook's JSON on stdin and appends the session events, the session-record snapshots and the action
+records to `<BRAIN_HOME>/ledger` at zero token; it prints nothing and never fails the session (its errors go to
+`ledger/errors.log`; `BRAIN_CAPTURE=0` turns it off).
 
 ## Data classes and the vault
 

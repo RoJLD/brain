@@ -28,6 +28,14 @@ any edge from a CodeRef, so the code of a CodeRef counts for the nodes implement
   documents it; never from a Spec to its own sections.
 - tested_by: from a node with code (a Hook's scripts, the files of its CodeRefs) to each Test module that covers that
   code, with brain audit's evidence (so a hook's .sh that no test runs has none, as test.script says).
+
+The project's other repos: a store's CodeRefs may name another registered repo of its project (code:<repo>:...), an
+engine whose code the store describes, say. ``brain sync`` also derives that repo's Doc, Test and Workflow nodes,
+from its committed state (the commit brain audit reads), into the same generated files; there a node stands for the
+files of its CodeRefs of that repo and for a Hook's scripts found by their hooks/<name> (the store's repo renders them
+from that repo); a Skill, a Plugin and the Spec anchors are the store's repo's alone. A repo whose checkout is not on
+the machine is left out (brain sync says so; brain check then warns that the files are stale). brain audit measures
+doc.links and test.links of such a repo from the same derivation against the store.
 """
 
 from __future__ import annotations
@@ -219,12 +227,20 @@ def code_ref_file(tree: inventory.Tree, repo: str, cid: str) -> str:
     return (f"src/{path}" if tree.has(f"src/{path}") else path) if r.lower() == repo.lower() else ""
 
 
-def node_code(tree: inventory.Tree, repo: str, node: dict, refs: set[str] = frozenset()) -> Code:
+def node_code(tree: inventory.Tree, repo: str, node: dict, refs: set[str] = frozenset(),
+              home: inventory.Tree | None = None) -> Code:
     """What a node stands for in the repo: a Hook's scripts, a Skill's or a Plugin's files and folder, and the files of
     the CodeRefs it is implemented_by (``refs``). A CodeRef stands for nothing itself: research_graph refuses any edge
-    from it, and any edge into it but implemented_by."""
+    from it, and any edge into it but implemented_by. ``home``: the tree of the repo that holds the store, when
+    ``tree`` is another repo's; an anchor names a file of ``home``, so a Hook's scripts are found in ``tree`` by their
+    hooks/<name> (the store's repo renders them from that repo's sources), and a Skill or a Plugin stands for nothing
+    there."""
     t, af = node.get("type"), _anchor_file(node)
     out = Code({f for f in (code_ref_file(tree, repo, r) for r in refs) if f})
+    if home is not None:
+        if t == "Hook":
+            out.files |= {f for s in hook_scripts(home, node) for f in resolve(tree, "hooks/" + s.rsplit("/", 1)[-1])}
+        return out
     if t == "Hook":
         out.files |= hook_scripts(tree, node)
     elif t == "Skill" and af and tree.has(af):
@@ -309,6 +325,7 @@ class Links:
     covers: dict[str, list[str]]     # test module path -> the units it covers
     documented: set[str]             # the Doc ids some node is documented_in
     tested: set[str]                 # the Test ids some node is tested_by
+    missing: list[str] = field(default_factory=list)   # the project's repos a CodeRef names, not on this machine
 
 
 def store_nodes(tree: inventory.Tree, store: str) -> list[dict]:
@@ -345,11 +362,14 @@ def _title(text: str, n: int = 100) -> str:
 
 def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inventory.RepoFacts | None = None,
            idx: inventory.Index | None = None, mod_ev: dict | None = None, cfg=None,
-           hand: list[dict] | None = None, hand_edges: list[dict] | None = None) -> Links:
+           hand: list[dict] | None = None, hand_edges: list[dict] | None = None,
+           home: inventory.Tree | None = None) -> Links:
     """The Doc, Test and Workflow nodes of a repo and their edges. ``rf``, ``idx`` and ``mod_ev`` (module path ->
     (via, tests)) are brain audit's when it calls; else they are collected for this repo alone (``cfg``: its
     projects.Repo, for its package roots and waivers). ``hand`` and ``hand_edges``: the store's other nodes and
-    edges (default: read from the tree)."""
+    edges (default: read from the tree). ``home``: the tree of another repo of the project that holds the store
+    (``hand`` and ``hand_edges`` read from it): the nodes stand for this repo's code through their CodeRefs and a
+    Hook's rendered scripts (node_code), and no Spec node anchors this repo's specs."""
     if rf is None:
         rf = inventory.collect(tree, repo, getattr(cfg, "lang", "py"), getattr(cfg, "roots", None),
                                getattr(cfg, "waive", None))
@@ -369,12 +389,13 @@ def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inve
         edges.append({"from": src, "to": dst, "type": etype})
 
     # docs and specs
-    spec_of = {_anchor_file(n): str(n["id"]) for n in hand if n.get("type") == "Spec" and _anchor_file(n)}
+    spec_of = {_anchor_file(n): str(n["id"]) for n in hand
+               if home is None and n.get("type") == "Spec" and _anchor_file(n)}
     doc_paths = sorted(p for p in tree.files if inventory.is_doc(p) or is_spec(p))
     tree.prefetch(doc_paths)
     docs: dict[str, list[str]] = {}
-    specs = {p: spec_of.get(p, "") for p in doc_paths if is_spec(p)}
-    code = {str(n["id"]): node_code(tree, repo, n, refs.get(str(n["id"]), set())) for n in hand
+    specs = {p: spec_of.get(p, "") for p in doc_paths if is_spec(p) and home is None}   # elsewhere: a doc
+    code = {str(n["id"]): node_code(tree, repo, n, refs.get(str(n["id"]), set()), home) for n in hand
             if n.get("type") != "CodeRef"}
     ids = {str(n["id"]) for n in hand if "-" in str(n["id"]) or ":" in str(n["id"])}
     documented: set[str] = set()
@@ -542,31 +563,90 @@ def _where(root: Path, store: Path) -> tuple[Path, str]:
     return top, rel
 
 
-def for_store(root: Path, store: Path, repo: str, cfg=None) -> Links:
+def coded_repos(hand: list[dict]) -> set[str]:
+    """The repos the store's active CodeRefs name (lowercase)."""
+    out = set()
+    for n in hand:
+        if n.get("type") == "CodeRef" and n.get("status", "active") == "active":
+            try:
+                out.add(inventory.parse_code_ref(str(n["id"]))[0].lower())
+            except ValueError:
+                continue
+    return out
+
+
+def other_trees(cfgs: list, own: str, named: set[str]) -> tuple[list[tuple[str, inventory.Tree, object]], list[str]]:
+    """The project's other repos (``cfgs``: projects.Repo) that a CodeRef of the store names, each at the commit
+    brain audit reads (its default branch's tip, HEAD in a linked worktree), and the names of those whose checkout
+    is not on this machine (left out of the derivation)."""
+    got, missing = [], []
+    for c in cfgs:
+        if c.name == own or c.name not in named:
+            continue
+        if not (c.path / ".git").exists():
+            missing.append(c.name)
+            continue
+        ref, branch = inventory.reading_ref(c.path)
+        got.append((c.name, inventory.git_tree(c.path, ref, branch), c))
+    return got, missing
+
+
+def merge(parts: list[Links]) -> Links:
+    """The links of several repos as one (node ids carry their repo, so they never collide)."""
+    seen, edges = set(), []
+    for e in sorted((e for lk in parts for e in lk.edges), key=lambda e: (e["from"], e["to"], e["type"])):
+        if (e["from"], e["to"]) not in seen:
+            seen.add((e["from"], e["to"]))
+            edges.append(e)
+    out = Links(sorted((n for lk in parts for n in lk.nodes), key=lambda n: n["id"]), edges, {}, {}, {}, {}, set(),
+                set())
+    for lk in parts:
+        out.docs.update(lk.docs)
+        out.specs.update(lk.specs)
+        out.tests.update(lk.tests)
+        out.covers.update(lk.covers)
+        out.documented |= lk.documented
+        out.tested |= lk.tested
+    return out
+
+
+def for_store(root: Path, store: Path, repo: str, cfg=None, cfgs: list | None = None) -> Links:
     """The derivation from the working tree (tracked and untracked files, not ignored) of the checkout that holds
-    ``store``."""
+    ``store``; with ``cfgs`` (the project's repos), also of each other repo a CodeRef of the store names, at its
+    committed state (their Doc, Test and Workflow nodes, the tested_by and documented_in edges from the nodes that
+    stand for their code). A repo whose checkout is missing here is left out (``missing``)."""
     top, rel = _where(root, store)
-    return derive(inventory.work_tree(top), repo, rel, cfg=cfg)
+    tree = inventory.work_tree(top)
+    lk = derive(tree, repo, rel, cfg=cfg)
+    if not cfgs:
+        return lk
+    hand, hand_edges = store_nodes(tree, rel), store_edges(tree, rel)
+    others, missing = other_trees(cfgs, repo, coded_repos(hand))
+    out = merge([lk] + [derive(t, name, rel, cfg=c, hand=hand, hand_edges=hand_edges, home=tree)
+                        for name, t, c in others])
+    out.missing = missing
+    return out
 
 
 def files(store: Path) -> tuple[Path, Path]:
     return store / "nodes" / GENERATED, store / "edges" / GENERATED
 
 
-def write(root: Path, store: Path, repo: str, cfg=None) -> tuple[int, int]:
-    lk = for_store(root, store, repo, cfg)
+def write(root: Path, store: Path, repo: str, cfg=None, cfgs: list | None = None) -> tuple[int, int, list[str]]:
+    """Write the generated files: (nodes, edges, the repos left out because their checkout is not here)."""
+    lk = for_store(root, store, repo, cfg, cfgs)
     nf, ef = files(store)
     nodes, edges = render(lk)
     ef.parent.mkdir(exist_ok=True)
     for f, text in ((nf, nodes), (ef, edges)):
         if not f.is_file() or f.read_text(encoding="utf-8") != text:
             f.write_text(text, encoding="utf-8", newline="\n")
-    return len(lk.nodes), len(lk.edges)
+    return len(lk.nodes), len(lk.edges), lk.missing
 
 
-def stale(root: Path, store: Path, repo: str, cfg=None) -> list[str]:
+def stale(root: Path, store: Path, repo: str, cfg=None, cfgs: list | None = None) -> list[str]:
     """The generated files that differ from a derivation now (brain check warns: brain sync)."""
-    nodes, edges = render(for_store(root, store, repo, cfg))
+    nodes, edges = render(for_store(root, store, repo, cfg, cfgs))
     out = []
     for f, text in zip(files(store), (nodes, edges)):
         if not f.is_file() or f.read_text(encoding="utf-8").replace("\r\n", "\n") != text:

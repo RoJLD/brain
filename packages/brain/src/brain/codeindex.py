@@ -231,7 +231,7 @@ def load(root: Path | None = None) -> tuple[Indexer | None, dict[str, Repo]]:
                 rel, branch = str(entry["path"]), str(entry.get("branch") or "")
             else:
                 raise CodeIndexError(f"project {p.name}: a code_index entry is a path or {{path, branch}}")
-            path = _repo_path(Path(os.path.normpath(p.root / rel)))
+            path = _repo_path(projects._resolve_root(rel, p.root))   # from the root, else its main checkout
             if not NAME.match(path.name):
                 raise CodeIndexError(f"project {p.name}: {path.name!r}: GitNexus names a repo after its folder, "
                                      "letters, digits, '.', '_' and '-'")
