@@ -36,6 +36,26 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   wake. The governor expires the watch's mark at each `start_session` call and reminds a master past 80 % without
   refusing the call (ST-4); `brain alerts` raises a master past 80 % with live children (source `session`); the
   cockpit colours the master's row at each step.
+- **`brain impact [--diff BASE|A..B] [--repo-dir D] [--depth N] [--json]`** (wi-brain-impact-diff): before merge,
+  what a change's code carries in the graph. The symbols it touches, from the GitNexus code index (the hunks of the
+  diff from the indexed commit matched to the indexed symbols' lines, the query of GitNexus's `detect_changes` sent
+  through its MCP `cypher` tool, since `detect_changes` diffs GitNexus's own clone, never this checkout), and their
+  callers along the CALLS edges GitNexus resolved (confidence 0.8 and up: the guesses by name left out), `--depth`
+  levels (2); the CodeRefs that name them; the nodes relying on those (research_graph's reliance); then a checklist:
+  features whose status may change, docs to update (`documented_in`, sections naming a changed file), ADRs (the
+  current one of a superseded chain) and specs to re-read, tests to run (the modules covering the touched code, the
+  `tested_by` of the relying nodes, the changed test files; one `pytest` line and the CI jobs that run them; the
+  features' wider tests counted apart), open items that deliver those features, DDRs pending on them, and the
+  touched symbols no CodeRef names. GitNexus's lines, counted from 0, are shifted to git's; a CodeRef whose file the
+  change deletes or moves away is touched; a deleted or moved test module never reaches the `pytest` line; a
+  malformed CodeRef is left out and named. Without GitNexus (down, the repo not indexed, its indexed commit not here,
+  its code map failing) it works at the file level and says so: a Python symbol's CodeRef looked up by the AST of
+  both sides, no caller. Docs: `docs/impact.md`.
+- **`brain code-map [--json]`** (wi-brain-code-map, the code layer's design §3.7): each active CodeRef of the
+  project's stores resolved to its GitNexus node (filePath, name, label: Class, Function, Method, File, or Variable
+  for an assignment; a method through its class's HAS_METHOD edge) into `<BRAIN_HOME>/code-map/<project>.json`, with
+  the coverage per repo (symbols with a CodeRef over all symbols, files with a CodeRef over the indexed files) and
+  each CodeRef that does not resolve, with why. Exit 1 when GitNexus does not answer.
 
 ## 0.2.4 — 2026-11-03
 

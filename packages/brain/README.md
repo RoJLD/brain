@@ -91,6 +91,16 @@ retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root
 messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
 `audit: {max_lines: 1000, complexity: 15}`.
 
+### The impact of a change
+
+`brain impact [--diff BASE|A..B]` says, before merge, what a change's code carries in the graph
+([`docs/impact.md`](docs/impact.md)): the symbols it touches in the GitNexus code index (`brain index`) and their
+callers, the CodeRefs that name them, the nodes relying on those, then a checklist: the features whose status may
+change, the docs to update, the ADRs and specs to re-read, the tests to run (one `pytest` line) and the CI jobs that
+run them, the open items that deliver those features and the decisions pending on them. Without GitNexus it works at
+the file level, a Python symbol looked up by the AST, and says so on its second line. `brain code-map` resolves
+each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
+
 ### The module map
 
 A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place. See [docs/modules.md](docs/modules.md).
