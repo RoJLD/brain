@@ -8,6 +8,10 @@ The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `resea
 - No change to the graph engine: the version follows the brain command's (one tag series).
 - `docs/install.md` (from an empty machine to a brain of one's own, Windows first) and `docs/pilot.md` (the pilot:
   what to try, how to report an issue).
+- The licence's metadata in PEP 639 form, the licence unchanged (MIT): `license = "MIT"` (an SPDX expression) and
+  `license-files = ["LICENSE"]` replace the `license = { text = "MIT" }` table, which setuptools deprecates and stops
+  building from 2027-02-18; the build needs setuptools 77 or later. The wheel's metadata says
+  `License-Expression: MIT` and ships `LICENSE`.
 
 ## 0.2.1 — 2026-11-03
 

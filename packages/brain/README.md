@@ -198,4 +198,12 @@ With research-graph, under the repo's single tag series: see the root README. `C
 
 ## License
 
-MIT
+The Business Source License 1.1, from version 0.2.2: `LICENSE` (its parameters at the top) and `NOTICE` (the credit to
+keep). Its Additional Use Grant allows you to use, modify and run the brain command for your own work, as a person or
+an organisation, and to reuse it in your own products, provided each product gives a visible credit to Brain and its
+author in its documentation or its about screen (`NOTICE` gives a credit line) and the `NOTICE` file is kept with every
+copy you distribute. Offering it to third parties as a hosted or managed service needs a commercial licence from the
+licensor. Each version changes to the Apache License 2.0 four years after its release.
+
+Versions 0.2.0 and 0.2.1 were released under the MIT License and stay under it. `research-graph`, the graph engine
+this package depends on, stays under the MIT License (the repo's root `LICENSE`).

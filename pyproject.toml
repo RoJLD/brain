@@ -1,12 +1,13 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "research-graph"
 description = "A typed, layered knowledge graph kept as YAML in a git repo: loader, validation, sync, queries, generated kanban and roadmap views"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["networkx>=3.2", "pyyaml>=6"]
 dynamic = ["version"]
