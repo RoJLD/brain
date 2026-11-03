@@ -90,7 +90,8 @@ _DENIALS = (
     ("safety check", re.compile(r"^Permission for this command was denied by a built-in Claude Code safety check")),
     ("permission rule", re.compile(r"^Permission to use (.{1,300}?) has been denied", re.S)),
 )
-GUARD_REQUESTS = ("owner", "power")   # the guards whose refusals are the owner's actions, with the exact command
+# The guards whose refusals are the owner's actions, with their exact command.
+GUARD_REQUESTS = ("owner", "power", "third-party")
 _MARKERS = (b"Permission for this", b"Permission to use")
 
 
@@ -526,12 +527,13 @@ def scan(days: int = DAYS, today: date | None = None, projects_dir: Path | None 
 
 
 def guard_request(ref: str) -> tuple[dict, dict]:
-    """(the ledger row, its request) of the last refusal of the owner or power guard whose ref is ``ref``."""
+    """(the ledger row, its request) of the last refusal of the owner, power or third-party guard whose ref is ``ref``."""
     for r in reversed(_ledger_guards()):
         req = r.get("request")
         if r.get("guard") in GUARD_REQUESTS and isinstance(req, dict) and req.get("ref") == ref:
             return r, req
-    raise QueueError(f"no refusal {ref} of the owner or power guard in {paths.ledger_dir().as_posix()}/guards-*.jsonl")
+    raise QueueError(f"no refusal {ref} of the owner, power or third-party guard in "
+                     f"{paths.ledger_dir().as_posix()}/guards-*.jsonl")
 
 
 # --- denials -> projects and items ---
@@ -955,9 +957,9 @@ def add(root: Path, *, kind: str, title: str, what: str, at: str, context: str =
     """An action or a permission put to the owner, as a DDR of that kind (no options). A permission whose text falls
     in an ``OWNER_ONLY`` category is written as an action (never granted by an allow rule): the third value says so.
     ``command`` (and ``cwd``): the exact command the owner's Apply runs (brain queue apply, the cockpit's A).
-    ``guard``, the ref of a refusal of the owner or power guard, fills the title, the question (its exact command) and the context
-    from the guards ledger, as an action; and the command and its folder when Apply runs it (a brain or install.ps1
-    command)."""
+    ``guard``, the ref of a refusal of the owner, power or third-party guard, fills the title, the question (its exact
+    command) and the context from the guards ledger, as an action; and the command and its folder when Apply runs it
+    (a brain or install.ps1 command)."""
     if kind not in ("action", "permission"):
         raise QueueError("brain queue add takes --kind action or permission (a decision: brain decision ask)")
     if guard:

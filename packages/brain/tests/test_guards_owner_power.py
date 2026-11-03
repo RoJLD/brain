@@ -620,7 +620,7 @@ def test_a_refusal_goes_to_the_owners_queue_with_its_exact_command(owner, tmp_pa
     other = bash(root, "gh secret set KEY --body x").split("--guard ")[1].split()[0]
     print(queue.done(root, other, at="2099-01-01T00:00:00Z", note="Ada set it"))
     assert other not in {e["id"] for e in queue.collect([proj], with_graph=False)[0]["entries"]}
-    with pytest.raises(queue.QueueError, match="no refusal guard-0000000000 of the owner or power guard"):
+    with pytest.raises(queue.QueueError, match="no refusal guard-0000000000 of the owner, power or third-party guard"):
         queue.add(root, kind="action", title="", what="", at=AT, guard="guard-0000000000")
 
 

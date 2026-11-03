@@ -6,7 +6,7 @@ tool_input.file_path (Edit, Write, MultiEdit) or notebook_path (NotebookEdit), c
 is one JSON line on stdout, ``permissionDecision: deny`` with a one-line reason the model reads, signed with the core
 plugin's name (config.json adapters.claude); a call that passes prints nothing. A command the desktop app's
 ``run_in_terminal`` types into the owner's Terminal panel (tool_input.command, cwd) is judged as a shell call, PowerShell
-on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Seven guards, in this order:
+on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guards, in this order:
 
 - ``production``: no tool edit under a production checkout (``production:`` in the Brain's projects.yaml), and no git
   command that changes one: commit, checkout, switch, restore, reset, merge, rebase, stash (but list, show), push,
@@ -45,6 +45,15 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Seven gua
   its exact command (the outermost simple command, quoted for the session's shell), its folder and a ref
   (guard-<sha1>): the reason names ``brain queue add --kind action --guard <ref>``, which writes it into their queue
   (the cockpit's Apply), and brain queue lists the ones not queued yet.
+- ``third-party`` (wi-brain-guard-third-party, EXT-6): a session never installs or runs a third-party kit. Refused: a
+  download fed to a shell or an interpreter (``download``: curl | sh, wget -qO- | bash, curl | python3 -, bash <(curl
+  ...), source <(curl ...), sh -c "$(curl ...)", eval "$(curl ...)", iwr | iex, irm | iex, iex (iwr ...), a
+  WebClient's DownloadString to iex), ``claude plugin install NAME@MARKETPLACE`` and ``claude plugin marketplace add
+  SOURCE`` outside the owner's list (``plugin``: config.json's adapters.claude.sources, marketplace names and sources,
+  plus the brain's own marketplace, source repo and folder), and ``skills add`` (``skills``: npx, bunx, pnpm dlx).
+  It sees what the power guard sees (wrappers, launchers, nested shells, ssh, what a command feeds a shell); a
+  download to a file (curl -o) passes. A refusal is an action for the owner with the call's exact command, as the
+  owner guard's. The owner's own terminal is never seen: a hook judges a session's tool calls only.
 - ``attribution``: no ``Co-Authored-By: Claude`` or ``Generated with Claude Code`` line in a git commit message or a
   gh pr create|edit title or body (arguments, heredocs, here-strings, -F and --body-file files), whatever precedes it
   on its line but letters (an emoji, a bullet). The hook's JSON is read as UTF-8 bytes (midsession.read_payload), so a
@@ -52,6 +61,10 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Seven gua
 - ``secrets``: no key in what a git commit records: the staged diff, plus what commit -a or a git add earlier in the
   same command stages. gitleaks scans the index when it is on the PATH, else the patterns of brain.secretscan (an
   assignment counts when its value is quoted or ends the line). A line marked ``gitleaks:allow`` passes.
+- ``markers`` (wi-brain-guard-conflict-markers): no conflict marker in what a git commit (or git merge, rebase,
+  cherry-pick, revert or am --continue) records: an added line of the staged diff, of commit -a's or of an earlier
+  git add's files, starting with <<<<<<< , ||||||| or >>>>>>> , or a bare ======= (brain.markers). A Markdown
+  setext heading (======= under a line of text) and a file under a fixtures folder pass.
 - ``public``: no ``git push`` to a repo of config.json's ``public.repos`` (the remote named or given as a URL, else
   the branch's upstream, else origin) until every commit it sends has the stamp of a green ``brain check --public
   --history`` (brain.public): the refspecs' sources, every branch with --all or --mirror, the tags with --tags or
@@ -63,12 +76,13 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Seven gua
   without -b), git branch NAME or -m|-c [OLD] NEW gives, and gh pr create's head branch (--head, else the folder's
   current branch). A name the command does not resolve ($b) passes. The refusal names the allowed list.
 
-Override, the owner's only: ``BRAIN_GUARD_ALLOW=production,owner,power,attribution,secrets,public,branches``, a
+Override, the owner's only: ``BRAIN_GUARD_ALLOW=production,owner,power,third-party,attribution,secrets,markers,
+public,branches``, a
 guard:check pair (owner:installer, power:cluster) or ``all``, in Claude Code's own environment, which a command
 cannot set; the call passes and the ledger records it. Refusals and overrides go to
 ``<BRAIN_HOME>/ledger/guards-<month>.jsonl`` when the ledger exists (a request for the owner creates it), with the
-check that refused (edit, git, shell-write, an owner category, machine, node, wake, cluster, bot, attribution,
-secrets, public, name). An internal error lets the call through and goes to ``ledger/errors.log``: a guard never breaks
+check that refused (edit, git, shell-write, an owner category, machine, node, wake, cluster, bot, download, plugin,
+skills, attribution, secrets, markers, public, name). An internal error lets the call through and goes to ``ledger/errors.log``: a guard never breaks
 a session.
 """
 
@@ -85,9 +99,9 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
-from . import config, midsession, paths, projects, public, secretscan
+from . import config, markers, midsession, paths, projects, public, secretscan
 
-GUARDS = ("production", "attribution", "secrets", "owner", "power", "public", "branches")
+GUARDS = ("production", "attribution", "secrets", "markers", "owner", "power", "third-party", "public", "branches")
 ALLOW_ENV = "BRAIN_GUARD_ALLOW"
 EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 SHELL_TOOLS = ("Bash", "PowerShell")
@@ -162,7 +176,7 @@ def _subst_end(command: str, i: int) -> int:
     return -1
 
 
-def segments(command: str, powershell: bool = False) -> list[list[str]]:
+def segments(command: str, powershell: bool = False, links: dict[int, str] | None = None) -> list[list[str]]:
     """The simple commands in ``command``, each as its words: split on unquoted newlines, ;, &, |, (, ), { and },
     with the shell's quoting (bash: '...', "..." and backslash; PowerShell: '...', "...", backtick, here-strings).
     Comments are dropped, and so are bash heredoc bodies (message text, which the attribution guard reads whole).
@@ -170,7 +184,9 @@ def segments(command: str, powershell: bool = False) -> list[list[str]]:
     descriptor copy (2>&1, >&-) is dropped, and so is ``>`` in bash's ((...)) and [[ ... ]], where it compares. A bash
     ( or ) is a segment of its own, SUBSHELL[0] or SUBSHELL[1]; the commands of a $( ... ) inside double quotes come
     before the command, between the two, and its word keeps the text. A path substitution ($(mktemp), $(cygpath -w
-    X), $(realpath X)) stays in its word, for _expand."""
+    X), $(realpath X)) stays in its word, for _expand. Given ``links``, it maps a segment's index to what joins it to
+    the one before: "|" for a pipe, ";" for ;, &, &&, || or a newline, "<(" for the ( of a bash process substitution;
+    an index it lacks is joined otherwise (a bracket)."""
     esc = "`" if powershell else "\\"
     segs: list[list[str]] = []
     seg: list[str] = []
@@ -178,6 +194,7 @@ def segments(command: str, powershell: bool = False) -> list[list[str]]:
     started = False
     heredocs: list[str] = []
     arith = 0
+    proc = ""   # the <( or >( just read: the ( that follows opens a process substitution
     i, n = 0, len(command)
 
     def end_word():
@@ -195,17 +212,18 @@ def segments(command: str, powershell: bool = False) -> list[list[str]]:
 
     def redirect(i: int) -> int:
         """Read the redirection at ``i`` (its descriptor, if any, is the word before), return where it ends."""
-        nonlocal word, started
+        nonlocal word, started, proc
         fd = "".join(word) if started else ""
         if fd.isdigit() or (powershell and fd == "*"):
             word, started = [], False
         else:
             end_word()
             fd = ""
-        m = (PS_REDIR if powershell else BASH_REDIR).match(command, i)
+        m =(PS_REDIR if powershell else BASH_REDIR).match(command, i)
         if m["dup"]:
             return m.end()
         if m.groupdict().get("proc"):
+            proc = m["op"] + "("
             return i + 1
         seg.append(REDIRECT + fd + m["op"])
         return m.end()
@@ -287,6 +305,8 @@ def segments(command: str, powershell: bool = False) -> list[list[str]]:
             started, i = True, m.end()
         elif c == "\n":
             end_seg()
+            if links is not None:
+                links[len(segs)] = ";"
             i += 1
             for tag in heredocs:
                 m = re.compile(r"^[ \t]*" + re.escape(tag) + r"[ \t]*\r?$", re.M).search(command, i)
@@ -294,8 +314,13 @@ def segments(command: str, powershell: bool = False) -> list[list[str]]:
             heredocs = []
         elif c in ";&|(){}":
             end_seg()
+            if links is not None and c in ";&|" and command[i - 1:i + 1] != "|&":   # |& pipes stderr too
+                links[len(segs)] = "|" if c == "|" and "|" not in (command[i + 1:i + 2], command[i - 1:i]) else ";"
             if not powershell and c in "()":
+                if links is not None and c == "(" and proc:
+                    links[len(segs)] = proc
                 segs.append([SUBSHELL[c == ")"]])
+            proc = ""
             i += 1
         elif c in " \t\r":
             end_word()
@@ -2106,6 +2131,210 @@ def check_power(cmds, powershell: bool = False, command: str = ""):
     return None
 
 
+# --- third-party kits (wi-brain-guard-third-party, EXT-6) ----------------------------------------------------------
+
+DOWNLOADERS = {"curl", "wget", "iwr", "irm", "invoke-webrequest", "invoke-restmethod", "http", "https", "xh"}
+WEBCLIENT = re.compile(r"(?i)^\.?Download(?:String|Data)$|^\(?(?:system\.)?net\.webclient\)?$")
+SCRIPT_READERS = re.compile(r"^(?:python[\d.]*|py|node|perl|ruby)$")   # run the script stdin holds when none is named
+# A text a shell runs (sh -c, eval, a here-string) that is a download's output: "$(curl ...)", `wget -qO- ...`.
+EVALUATED = re.compile(r"(?i)^\s*(?:\$\(|`)\s*(?:[\w.~:-]*[\\/])?(?:curl|wget|https?|xh)(?:\.exe)?(?=[\s)`]|$)")
+EVALUATORS = re.compile(r"(?i)^(?:iex|invoke-expression|\[scriptblock\]::create)$")   # PowerShell runs its text
+PLUGIN_VALUES = ("-s", "--scope")
+
+
+def _downloads(prog: str, words: list[str]) -> bool:
+    """Whether the simple command ``words`` fetches from the network what it prints (curl, wget, iwr, a WebClient)."""
+    return prog in DOWNLOADERS or any(WEBCLIENT.match(w) for w in words)
+
+
+def _reads_script(prog: str, args: list[str], shell: str) -> bool:
+    """Whether ``prog`` runs as a script what stdin holds: a shell reading stdin (_reads_stdin), iex with no command
+    of its own, or python, node, perl and ruby with no script named (or -) and no -c, -m or -e."""
+    if _reads_stdin(prog, args, shell):
+        return True
+    if not SCRIPT_READERS.match(prog):
+        return False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "-":
+            return True
+        if a in ("-W", "-X", "-r", "--require", "--import", "-I"):
+            i += 2
+            continue
+        if not a.startswith("-") or a in ("--eval", "--print") or \
+                (not a.startswith("--") and set(a[1:]) & set("cmeEp")):
+            return False
+        i += 1
+    return True
+
+
+def plugin_sources() -> tuple[set[str], set[str]]:
+    """(the marketplace names, the sources) the owner allows a session to install or add from: config.json's
+    ``adapters.claude.sources`` (an entry with a / or \\ is a source: owner/repo, a git URL, a folder; else a
+    marketplace name), plus the brain's own marketplace, its source repo and its folder."""
+    cfg = config.load()
+    own = config.claude(cfg)
+    adapters = cfg.data.get("adapters") if isinstance(cfg.data.get("adapters"), dict) else {}
+    given = (adapters.get("claude") or {}).get("sources") if isinstance(adapters.get("claude"), dict) else None
+    entries = [e for e in given if isinstance(e, str) and e] if isinstance(given, list) else []
+    names = {own["marketplace"].lower()} | {e.lower() for e in entries if not re.search(r"[\\/]", e)}
+    sources = {_source(e, str(cfg.root)) for e in entries if re.search(r"[\\/]", e)}
+    sources |= {_source(own["source"], str(cfg.root))} if own["source"] else set()
+    sources.add(_source(str(cfg.root), str(cfg.root)))
+    return names, sources
+
+
+def _source(text: str, cwd: str) -> str:
+    """A plugin source as one comparable string: owner/repo for GitHub (its URL, git@github.com:, or owner/repo; a
+    #ref or @ref dropped), the URL for another git host, else the folder it names, from ``cwd``."""
+    t = text.strip().rstrip("/")
+    m = re.match(r"(?i)^(?:https?://(?:www\.)?github\.com/|git@github\.com:|ssh://git@github\.com/)?"
+                 r"([\w-][\w.-]*)/([\w.-]+?)(?:\.git)?(?:[#@][\w./-]*)?$", t)
+    if m and (re.match(r"(?i)^(?:https?|git@|ssh:)", t) or not os.path.isdir(_path(t, cwd))):
+        return f"{m[1]}/{m[2]}".lower()
+    if re.match(r"(?i)^(?:https?|ssh|git)://|^[\w.-]+@[\w.-]+:", t):
+        return t.lower()
+    return os.path.normcase(os.path.normpath(_path(t, cwd)))
+
+
+def _kit_command(prog: str, args: list[str], d: str) -> tuple[str, str] | None:
+    """(check, what) when the simple command adds a plugin, a marketplace or a skill from outside the owner's list:
+    claude plugin install NAME@MARKETPLACE, claude plugin marketplace add SOURCE, skills add (npx, bunx, pnpm dlx)."""
+    if re.sub(r"(?<=.)@[^/]*$", "", prog) == "skills" and _first(args)[:1] == ["add"]:
+        return "skills", f"skills add {' '.join(_first(args)[1:2])}".rstrip()
+    if prog != "claude":
+        return None
+    pos = _first(args, PLUGIN_VALUES)
+    if pos[:1] not in (["plugin"], ["plugins"]):
+        return None
+    if pos[1:2] in (["install"], ["i"]) and len(pos) > 2:
+        spec = pos[2]
+        market = spec.rpartition("@")[2].lower() if "@" in spec else ""
+        if market not in plugin_sources()[0]:
+            return "plugin", f"claude plugin install {spec} (" + (f"marketplace {market}" if market else
+                                                                   "no marketplace named") + ")"
+    elif pos[1:3] == ["marketplace", "add"] and len(pos) > 3:
+        if _source(pos[3], d) not in plugin_sources()[1]:
+            return "plugin", f"claude plugin marketplace add {pos[3]}"
+    return None
+
+
+def check_third_party(cmds, cwd: str, powershell: bool = False, command: str = ""):
+    """(check, reason, request) when the call installs or runs a third-party kit: a downloaded script fed to a shell
+    or an interpreter (curl | sh, sh -c "$(curl ...)", bash <(curl ...), iwr | iex, iex (iwr ...)), a plugin or a
+    marketplace from outside the owner's list (plugin_sources), or skills add; seen through what actions() sees
+    (wrappers, launchers, nested shells, ssh, what a command feeds a shell). The request of a download is the call's
+    whole text, of the others the outermost command that holds it."""
+    sub = "ps" if powershell else "bash"
+    shell = "powershell" if powershell else "bash"
+    owner = config.owner_of()
+
+    def refusal(check, what, top):
+        why = {"download": "a downloaded script would run unread",
+               "plugin": f"its source is not in {owner}'s list, config.json adapters.claude.sources",
+               "skills": "a third-party skill would install unread"}[check]
+        return (check, f"{what} refused: a session never installs or runs a third-party kit ({why}); {owner} reads "
+                       "it first and runs it themself", _request(check, what, top, shell, cwd))
+    for words, d, _, top in actions(cmds, sub, command=command):
+        hit = None if "--help" in words[1:] else _kit_command(_prog(words[0]), words[1:], d)
+        if hit:
+            return refusal(*hit, top)
+    what = _fed_download(command, sub)
+    return refusal("download", what, command) if what else None
+
+
+def _plain(raw: list[str], shell: str) -> tuple[list[str], bool]:
+    """(the words of the program a segment runs, whether it reads stdin from a file): its redirections and leading
+    assignments dropped, past wrappers (sudo, env) and launchers (uv run, npx, Start-Process)."""
+    marks = {i for i, w in enumerate(raw) if w.startswith(REDIRECT)}
+    own = any(raw[i].endswith("<") for i in marks)
+    words = [w for i, w in enumerate(raw) if i not in marks and i - 1 not in marks]
+    while words and ASSIGN.match(words[0]):
+        words = words[1:]
+    words = _unwrap(words)
+    for _ in range(3):
+        run = words and (_launched(_prog(words[0]), words[1:], shell) or _launcher(_prog(words[0]), words[1:]))
+        if not run:
+            break
+        words = _unwrap(run)
+    return words, own
+
+
+def _fed_download(text: str, shell: str = "bash", depth: int = 0) -> str | None:
+    """What runs a download as a script in the command ``text`` read by ``shell`` (bash, ps, or ssh: a remote bash),
+    else None: a download piped, through any filter, to a shell or an interpreter reading stdin (curl | sh, wget -qO- |
+    python3 -, iwr | iex); a download in a process substitution a shell or source runs (bash <(curl ...)); a
+    PowerShell statement where iex meets a download (iex (iwr ...)); the text of sh -c, eval or a here-string that is a
+    download's output (sh -c "$(curl ...)"); and the same in what the call runs in turn (nested shells, launchers,
+    ssh's remote command, a heredoc fed to a shell). A download to a file, then a script run (curl -o f; python - <<EOF)
+    is no pipe: it passes."""
+    if depth > 4 or not text:
+        return None
+    links: dict[int, str] = {}
+    segs = segments(text, shell == "ps", links)
+    piped = stated = ""   # the download whose output flows down this pipe, the one of this PowerShell statement
+    evaluator = readers = False
+    for k, raw in enumerate(segs):
+        if links.get(k) == ";":
+            piped = stated = ""
+            evaluator = False
+        if raw[0] in SUBSHELL:
+            if links.get(k) == "<(" and k and segs[k - 1][0] not in SUBSHELL:
+                runner = _plain(segs[k - 1], shell)[0]
+                prog = _prog(runner[0]) if runner else ""
+                if SHELLS.get(prog) == "bash" or prog in ("source", ".") or SCRIPT_READERS.match(prog):
+                    depth_in, j = 1, k + 1
+                    while j < len(segs) and depth_in:
+                        depth_in += {SUBSHELL[0]: 1, SUBSHELL[1]: -1}.get(segs[j][0], 0)
+                        inner = _plain(segs[j], shell)[0]
+                        if depth_in and inner and _downloads(_prog(inner[0]), inner):
+                            return f"{_prog(inner[0])} run by {prog} through <( )"
+                        j += 1
+            continue
+        words, own = _plain(raw, shell)
+        if not words:
+            continue
+        prog, args = _prog(words[0]), words[1:]
+        if _downloads(prog, words):
+            piped = piped or (prog if prog in DOWNLOADERS else "a WebClient download")
+            stated = stated or piped
+        if shell == "ps" and EVALUATORS.match(words[0]):
+            evaluator = True
+        if evaluator and stated:
+            return f"{stated} fed to iex"
+        if "<<<" in args[:-1]:   # bash <<< "$(curl ...)": the here-string is stdin
+            here = args[args.index("<<<") + 1]
+            args = [a for i, a in enumerate(args) if a != "<<<" and args[i - 1:i] != ["<<<"]]
+            if EVALUATED.search(here) and _reads_script(prog, args, shell):
+                return f"{prog} running a download's output"
+            own = True
+        if piped and not own and _reads_script(prog, args, shell):
+            return f"{piped} piped to {prog}"
+        nested = _nested(prog, args, ".", "bash" if shell == "ssh" else shell)
+        if nested and nested[0]:
+            if nested[1] == "bash" and EVALUATED.search(nested[0]):
+                return f"{prog} running a download's output"
+            found = _fed_download(nested[0], "bash" if nested[1] == "bash" else "ps", depth + 1)
+        elif text_run := _launched_text(prog, args):
+            if text_run[1] != "ps" and EVALUATED.search(text_run[0]):
+                return f"{prog} running a download's output"
+            found = _fed_download(text_run[0], text_run[1], depth + 1)
+        elif prog in ("ssh", "plink") and (remote := _ssh_remote(args)):
+            found = _fed_download(" ".join(remote), "ssh", depth + 1)
+        else:
+            found = None
+        if found:
+            return found
+        readers = readers or bool(_reads_stdin(prog, args, shell))
+    if readers:
+        for body in _heredocs(text):
+            found = _fed_download(body, shell, depth + 1)
+            if found:
+                return found
+    return None
+
+
 # --- AI attribution ----------------------------------------------------------------------------------------------
 
 def _read_file(name: str, cwd: str) -> str:
@@ -2226,7 +2455,12 @@ def commit_secrets(repo: str, specs: list[str], every_tracked: bool) -> list[str
     return list(dict.fromkeys(hits))
 
 
-def check_secrets(cmds: list[tuple[list[str], str]]) -> str | None:
+CONTINUES = {"merge", "rebase", "cherry-pick", "revert", "am"}   # git SUB --continue commits what the index holds
+
+
+def _commits(cmds: list[tuple[list[str], str]], continues: bool = False):
+    """(repo, what, the paths a git add earlier in the call stages, commit -a) for each git commit of ``cmds``, and,
+    with ``continues``, each git merge|rebase|cherry-pick|revert|am --continue."""
     added: list[str] = []
     for words, d in cmds:
         if _prog(words[0]) != "git":
@@ -2240,12 +2474,45 @@ def check_secrets(cmds: list[tuple[list[str], str]]) -> str | None:
             added += [_path(s, d) for s in specs] or [d]
         elif sub == "commit" and "--help" not in args:
             every = any(re.match(r"^-[A-Za-z]*a[A-Za-z]*$", a) or a == "--all" for a in args)
-            hits = commit_secrets(d, added, every)
-            if hits:
-                more = f" and {len(hits) - 1} more" if len(hits) > 1 else ""
-                return (f"git commit refused: {hits[0]}{more} looks like a secret; take it out of the commit "
-                        f"({config.owner_of()} adds keys themself), or end a false positive's line with a "
-                        "gitleaks:allow comment")
+            yield d, "git commit", added, every
+        elif continues and sub in CONTINUES and "--continue" in args:
+            yield d, f"git {sub} --continue", added, False
+
+
+def check_secrets(cmds: list[tuple[list[str], str]]) -> str | None:
+    for d, _, added, every in _commits(cmds):
+        hits = commit_secrets(d, added, every)
+        if hits:
+            more = f" and {len(hits) - 1} more" if len(hits) > 1 else ""
+            return (f"git commit refused: {hits[0]}{more} looks like a secret; take it out of the commit "
+                    f"({config.owner_of()} adds keys themself), or end a false positive's line with a "
+                    "gitleaks:allow comment")
+    return None
+
+
+# --- conflict markers in what a commit records (wi-brain-guard-conflict-markers) ------------------------------------
+
+def commit_markers(repo: str, specs: list[str], every_tracked: bool) -> list[str]:
+    """The conflict markers (brain.markers) a commit in ``repo`` would record: the added lines of the index, plus
+    ``specs`` (paths a git add before it stages) or every tracked change (commit -a), and the untracked files added."""
+    diff = ["diff", "-U1", "--no-color", "--no-ext-diff", "--no-renames"]
+    hits = markers.scan_diff(_git_out(repo, *diff[:1], "--cached", *diff[1:]))
+    if specs or every_tracked:
+        hits += markers.scan_diff(_git_out(repo, *diff, "HEAD", "--", *specs))
+    if specs:
+        for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *specs).split("\0"):
+            if name:
+                hits += markers.scan_text(name, _read_file(name, repo))
+    return list(dict.fromkeys(hits))
+
+
+def check_markers(cmds: list[tuple[list[str], str]]) -> str | None:
+    for d, what, added, every in _commits(cmds, continues=True):
+        hits = commit_markers(d, added, every)
+        if hits:
+            more = f" and {len(hits) - 1} more" if len(hits) > 1 else ""
+            return (f"{what} refused: {hits[0]}{more} adds a conflict marker (<<<<<<<, ======= or >>>>>>>); finish "
+                    "the merge in that file, git add it, then commit (a test's data goes under a fixtures folder)")
     return None
 
 
@@ -2528,8 +2795,10 @@ def refusals(payload: dict):
                               ("production", "shell-write", lambda: check_shell_writes(cmds, powershell)),
                               ("owner", None, lambda: check_owner(tool, inp, cmds, cwd, powershell, command)),
                               ("power", None, lambda: check_power(cmds, powershell, command)),
+                              ("third-party", None, lambda: check_third_party(cmds, cwd, powershell, command)),
                               ("attribution", "attribution", lambda: check_attribution(command, cmds)),
                               ("secrets", "secrets", lambda: check_secrets(cmds)),
+                              ("markers", "markers", lambda: check_markers(cmds)),
                               ("public", "public", lambda: check_public(cmds)),
                               ("branches", "name", lambda: check_branches(cmds))):
         try:
@@ -2601,7 +2870,8 @@ def queue_hint(request: dict, recorded: bool, tool: str) -> str:
 def request_title(request: dict) -> str:
     """The title of the action a refusal puts in the queue: the power guard's check, else the owner's category."""
     label = {"machine": "Power", "node": "Cluster node", "wake": "Wake-on-LAN", "cluster": "Cluster",
-             "bot": "The /power bot"}.get(request["category"]) or \
+             "bot": "The /power bot", "download": "Third-party script",
+             "plugin": "Third-party plugin", "skills": "Third-party skill"}.get(request["category"]) or \
         f"{config.owner_of()}'s alone ({request['category']})"
     title = f"{label}: {request['what']}"
     return title if len(title) <= 100 else title[:99] + "…"

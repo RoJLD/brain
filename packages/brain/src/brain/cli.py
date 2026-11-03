@@ -76,8 +76,9 @@
   brain queue order ID [N] [--band now|week|later] [--clear]   {owner}'s own order: first in its band, at position N
   brain queue add --kind action|permission --title T --what W [--item ID]... [--blocking] [--due D] [--minutes N]
                  a DDR of that kind (--due: a stated deadline, it weighs above the count; --minutes: the effort)
-  brain queue add --guard guard-ID [--item ID]...   a refusal of the owner or power guard as an action: its title,
-                 exact command (the question; and the command when Apply runs it) and reason from the guards ledger
+  brain queue add --guard guard-ID [--item ID]...   a refusal of the owner, power or third-party guard as an action:
+                 its title, exact command (the question; and the command when Apply runs it) and reason from the
+                 guards ledger
   brain queue done ID [--note TEXT]   {owner} did the action or granted the permission (a denial or a guard refusal:
                  until refused again)
   brain queue apply ID   {owner}'s Apply: the action's exact command (queue add --command CMD [--cwd DIR], else the one
@@ -380,7 +381,7 @@ from . import (__version__, actions, alerts, audit, backfill, batch, boundary, b
                config, cost, decisions, detail, digest, features, forecast, graph, init, links, lint, memory,
                milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
                records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, update, usage)
-from . import answers, classes, defaults, governor, keystore, selftime, vault
+from . import answers, classes, defaults, governor, keystore, markers, selftime, vault
 from . import skew
 from .inventory import AuditError
 
@@ -1354,7 +1355,21 @@ def _sync_store(args, root: Path, store: Path) -> int:
     return graph.research_graph(root, store, "kanban", "--write")
 
 
+def _check_markers(project: projects.Project, root: Path, store: Path) -> int:
+    """1 when the store, a journal, a decision log or a record holds a conflict marker (brain.markers;
+    wi-brain-guard-conflict-markers): every brain command loads them, and a stale merge's generated views pass the
+    graph check."""
+    files = [store, *(project.journals or [project.journal]), *(project.decision_logs or [project.decisions]),
+             root / records.RECORDS_DIR]
+    hits = markers.scan_files([f for f in files if f])
+    for hit in hits:
+        print(f"error: {hit} holds a conflict marker: finish the merge in that file, then brain refresh")
+    return 1 if hits else 0
+
+
 def _check_store(args, root: Path, store: Path) -> int:
+    if _check_markers(_project(args, root), root, store):   # every later step would read a half-merged file
+        return 1
     rc = cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0
     if decisions.view_stale(root, _project(args, root).name):
         print(f"warning: {decisions.VIEW} is stale: brain sync (or brain decision view --write)")
@@ -2584,8 +2599,8 @@ def build_parser() -> argparse.ArgumentParser:
     qa.add_argument("--title", help="short header (100 characters at most; required without --guard)")
     qa.add_argument("--what", help=f"what {who} does or grants: the exact command when there is one (required "
                                    "without --guard)")
-    qa.add_argument("--guard", help="a refusal of the owner or power guard (guard-...): its title, exact command "
-                                    "(the question; and --command when Apply runs it) and reason come from the "
+    qa.add_argument("--guard", help="a refusal of the owner, power or third-party guard (guard-...): its title, "
+                                    "exact command (the question; and --command when Apply runs it) and reason come from the "
                                     "guards ledger, as an action")
     qa.add_argument("--context", help="two lines of context")
     qa.add_argument("--blocks", help="what waits on it")
@@ -2630,7 +2645,8 @@ def build_parser() -> argparse.ArgumentParser:
                                                        "master is not written)")
     sy.add_argument("--force", action="store_true", help="write even when the running engine is not config.json "
                                                          "engine.pin (brain check says how they differ)")
-    ck = sub.add_parser("check", help="records check, then research_graph check (--all: every project's, then the "
+    ck = sub.add_parser("check", help="records check, no conflict marker in the store, journals, decision logs and "
+                                      "records, then research_graph check (--all: every project's, then the "
                                       "registry and the ids across every store)")
     ck.add_argument("--all", action="store_true", help="every project of the registry, then the registry's keys, "
                                                        "repos, stacks and code_index, and the ids across every store")

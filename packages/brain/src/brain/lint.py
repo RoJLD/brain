@@ -65,7 +65,10 @@ GUARDED = {"production": re.compile(r"\bproduction checkouts?\b", re.I),
            "power": re.compile(r"\bshutdown\b|\breboot\b|\bwake-on-lan\b|\bpower actions?\b|\bkubectl\b|"
                                r"\bthe machines' power\b", re.I),
            "branches": re.compile(r"\bbranch names?\b|\bbranch(?:es)? (?:are |is )?named\b|\bnaming convention\b",
-                                  re.I)}
+                                  re.I),
+           "third-party": re.compile(r"\bthird-party (?:kits?|plugins?|skills?)\b|\bcurl\b[^.]*\|\s*(?:ba)?sh\b|"
+                                     r"\bplugin install\b|/add-plugin\b", re.I),
+           "markers": re.compile(r"\bconflict markers?\b", re.I)}
 
 
 def global_rules(cfg: config.Config | None = None) -> str:
