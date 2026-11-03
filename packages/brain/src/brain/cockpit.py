@@ -70,8 +70,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import (__version__, alerts, audit, config, decisions, digest, paths, perf, plan, projects, queue, resume,
-               status, transcript, usage)
+from . import (__version__, alerts, audit, config, decisions, defaults, digest, paths, perf, plan, projects, queue,
+               resume, status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
 FILE_PANELS = {"graph": ("queue", "milestones", "frontier")}
@@ -504,7 +504,9 @@ class Cockpit:
         rows = status.queue_rows(self.found or self.projs, self.every, self.root, with_graph=False,
                                  transcripts=self.scanned is not None, scanned=self.scanned)
         shown = rows if self.every else [r for r in rows if r["project"] != OUTSIDE]  # as brain queue shows them
-        return {"days": queue.DAYS, "denials_read": self.scanned is not None,
+        found = self.found or self.projs   # the decisions taken by default, to review (brain decision defaulted)
+        late = defaults.total_line([p.root for p in found], defaults._iso(datetime.now(timezone.utc)))
+        return {"days": queue.DAYS, "denials_read": self.scanned is not None, "defaulted": late,
                 "outside": sum(len(r["entries"]) for r in rows if r not in shown),
                 "projects": [{k: r.get(k) for k in ("project", "counts", "entries", "guard_refusals")} for r in shown]}
 
@@ -982,6 +984,8 @@ def queue_lines(panel: dict, width: int = WIDTH, view: dict | None = None, searc
                     + ("" if panel.get("denials_read") else "; denied calls read at the first probe")
                     + (f"; {panel['outside']} denial(s) outside every project (--all)" if panel.get("outside")
                        else ""), "queue", panel, view, search)]
+    if panel.get("defaulted"):
+        lines.append(f"  {panel['defaulted']}")
     for e in shown("queue", panel, view, search):
         tag = e["kind"] + (f":{e['category']}" if e.get("category") else "")
         age = f"{e['age_days']} d" if e.get("age_days") is not None else "-"
