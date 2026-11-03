@@ -784,14 +784,24 @@ def status(cwd=None, as_json: bool = False) -> int:
 # --- replay ----------------------------------------------------------------------------------------------------
 
 def _merge_tree(repo: Path, ours: str, theirs: str, driver: str, attrs: Path, env: dict) -> tuple[str, list[str]]:
-    """(the merged tree, the conflicted paths) of ``git merge-tree`` with that driver for merge=brain."""
+    """(the merged tree, the conflicted paths) of ``git merge-tree`` with that driver for merge=brain. Git runs from
+    the scratch folder ``attrs`` sits in, the repo named by GIT_DIR: the driver's temporary files land there, never in
+    a checkout (a production one included), and only ``attrs`` gives the attributes."""
     r = subprocess.run(["git", "-c", f"core.attributesFile={attrs.as_posix()}", "-c", f"merge.{NAME}.driver={driver}",
                         "merge-tree", "--write-tree", "--name-only", "--no-messages", ours, theirs],
-                       cwd=repo, capture_output=True, timeout=600, env=env, stdin=subprocess.DEVNULL)
+                       cwd=attrs.parent, capture_output=True, timeout=600, env={**env, "GIT_DIR": _git_dir(repo)},
+                       stdin=subprocess.DEVNULL)
     if r.returncode not in (0, 1):
         raise DriverError(f"git merge-tree {ours} {theirs}: {_decode(r.stderr).strip() or r.returncode}")
     lines = [x for x in _decode(r.stdout).splitlines() if x]
     return (lines[0] if lines else ""), lines[1:]
+
+
+def _git_dir(repo: Path) -> str:
+    r = _git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)
+    if r.returncode:
+        raise DriverError(f"{repo}: not a git repository")
+    return _decode(r.stdout).strip()
 
 
 def _rev(repo: Path, spec: str) -> str:

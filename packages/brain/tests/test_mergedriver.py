@@ -275,6 +275,7 @@ def test_replay_counts_before_and_after(repo, capsys):
                                          "notes/graph/edges/work.yaml"}
     assert results[0]["after"] == []
     assert md.marked(repo) == []          # a replay marks nothing
+    assert not list(repo.glob(".merge_file_*"))   # and writes nothing in the checkout: git ran from a scratch folder
     assert cli.main(["merge-driver", "replay", "--repo", str(repo), "feature..main"]) == 0
     out = capsys.readouterr().out
     assert "1 merge(s) replayed: 1 conflicted as text, 0 with the driver" in out
