@@ -328,13 +328,33 @@ def testpaths(tree: inventory.Tree) -> list[str]:
     return []
 
 
-def imports_of(rf: inventory.RepoFacts) -> dict[str, set]:
-    """Module path -> the Python tests that import it, or run it as -m (the reach brain audit computed: a test's own
-    import statements, not their closure; ``rf.reach`` None: none)."""
+RUN_M = re.compile(r"""(?:(?<![\w-])-m[ \t]+|["']-m["'][ \t]*,[ \t]*["']|run_module\([ \t]*["'])"""
+                   r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
+
+
+def _module(dotted: str, idx: inventory.Index) -> str:
+    """The longest prefix of a dotted name that is a module of the index ('' when none)."""
+    parts = dotted.split(".")
+    return next((".".join(parts[:k]) for k in range(len(parts), 0, -1) if ".".join(parts[:k]) in idx.modules), "")
+
+
+def imports_of(rf: inventory.RepoFacts, idx: inventory.Index | None) -> dict[str, set]:
+    """Module path -> the Python tests that import it (their own import statements, fixtures left out: ``import
+    p.m``, ``from p import m``, ``from p.m import x``) or run it (``-m p.m``, ``"-m", "p.m"``, ``run_module("p.m")``);
+    not their closure, and not a dotted name a string or a comment holds."""
     out: dict[str, set] = {}
-    for t, mods in (rf.reach.named.items() if rf.reach is not None else ()):
-        for p in mods:
-            out.setdefault(p, set()).add(t)
+    if rf.evidence is None or idx is None:
+        return out
+    for t, (imps, _, _) in rf.evidence.per_test.items():
+        mods = set()
+        for mod, names in imps:
+            explicit = [f"{mod}.{n}" for n in names if f"{mod}.{n}" in idx.modules]
+            mods.update(explicit or [_module(mod, idx)])
+        mods.update(_module(m, idx) for m in RUN_M.findall(inventory.without_fixtures(rf.tree.text(t) or "")))
+        for d in mods - {""}:
+            repo, path = idx.modules[d]
+            if repo == rf.name:
+                out.setdefault(path, set()).add(t)
     return out
 
 
@@ -356,20 +376,24 @@ def names_symbol(rf: inventory.RepoFacts, test: str, symbols: set[str], exact: b
 
 
 def code_tests(rf: inventory.RepoFacts, c: Code, tests_of: dict, imported: dict, cov: dict | None) -> set[str]:
-    """The test modules of a node's code: per file, brain audit's evidence and the tests that import it; a file only
-    symbol CodeRefs name keeps those that name a symbol, or, when the coverage summary measured the file, those its
-    contexts saw run one and those that name one outright."""
+    """The test modules of a node's code: per file, brain audit's evidence and the tests that import it. A symbol
+    CodeRef keeps those that name it; when the coverage summary knows the symbol (it measured it, with test contexts),
+    those of its tests the contexts saw run it, those that name it outright, and those the summary never saw (added
+    since), by the names rule. A symbol the summary does not know (added or renamed since) keeps the names rule."""
     got: set[str] = set()
-    measured = (cov or {}).get("files") or {}
+    seen = set((cov or {}).get("test_modules") or ())
     for p in c.files:
         ts = tests_of.get(p, set()) | imported.get(p, set())
         if p not in c.symbols:
             got |= ts
-        elif p in measured:
-            ran = {t for sym in c.symbols[p] for t in testcov.ran(cov, p, sym)}
-            got |= {t for t in ts if t in ran or names_symbol(rf, t, c.symbols[p], exact=True)}
-        else:
-            got |= {t for t in ts if names_symbol(rf, t, c.symbols[p])}
+            continue
+        for sym in c.symbols[p]:
+            if not testcov.known(cov, p, sym):
+                got |= {t for t in ts if names_symbol(rf, t, {sym})}
+                continue
+            ran = testcov.ran(cov, p, sym)
+            got |= {t for t in ts if t in ran or names_symbol(rf, t, {sym}, exact=True)
+                    or (t not in seen and names_symbol(rf, t, {sym}))}
     return got
 
 
@@ -503,7 +527,7 @@ def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inve
     # tests
     covers: dict[str, set] = {t: set() for t in rf.tests}
     tests_of: dict[str, set] = {}
-    imported = imports_of(rf)
+    imported = imports_of(rf, idx)
     for u in rf.units:
         if u.kind == "module":
             via, ts = mod_ev.get(u.path, ("", []))

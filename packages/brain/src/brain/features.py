@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from . import graph, paths, testcov
+from . import graph, inventory, paths, testcov
 from .inventory import parse_code_ref
 
 TYPE = "Feature"
@@ -143,14 +143,18 @@ def load_store(store: Path, default_repo: str = "") -> Model:
     nodes = [graph.load_yaml_list(f) for f in sorted((store / "nodes").glob("*.yaml"))]
     edges = [graph.load_yaml_list(f) for f in [store / "edges.yaml", *sorted((store / "edges").glob("*.yaml"))]]
     m = build(nodes, edges, default_repo)
-    for f in sorted((store / testcov.FOLDER).glob("*.json")):
-        try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if isinstance(data, dict) and isinstance(data.get("files"), dict):
-            m.coverage[f.stem.lower()] = data
+    m.coverage = _store_coverage(store)
     return m
+
+
+def _store_coverage(store: Path) -> dict[str, dict]:
+    """The coverage summaries of a store on disk, read as brain sync's links and brain audit read them: through its
+    checkout's work tree (tracked and untracked files, not ignored ones) and testcov.load; none outside a checkout."""
+    try:
+        top = Path(inventory.git(store, "rev-parse", "--show-toplevel").strip()).resolve()
+        return _tree_coverage(inventory.work_tree(top), store.resolve().relative_to(top).as_posix())
+    except (inventory.AuditError, OSError, ValueError):
+        return {}
 
 
 def load_tree(tree, rel: str, default_repo: str) -> Model | None:

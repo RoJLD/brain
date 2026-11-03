@@ -13,10 +13,13 @@ this engine's suite is gigabytes); which test ran which line, from the data file
 never imported by the brain: pytest runs it in its own process.
 
 The summary (sorted keys, so a run that changes nothing writes the same file): the repo, the commit measured (and
-whether the tree was dirty), the day, the totals, and per source file its statements, covered lines and percent, and
-``tests``: each test module that ran a line of one of its functions -> those functions' qualified names (a method
-``Class.method``; a nested function counts for the function that holds it; module and class bodies run at import and
-count for no test).
+whether the tree was dirty), the day, the totals, ``test_modules`` (every test module a context names), and per
+source file its statements, covered lines and percent, ``functions`` (every function of the file then) and ``tests``:
+each test module that ran a line of one of its functions' bodies -> those functions' qualified names (a method
+``Class.method``; a nested function counts for the function that holds it; a function under a module-level if, try or
+with counts; the def and decorator lines and the module and class bodies run at import and count for no test). A
+data file with no test context (made without --cov-context=test, or from another machine without coverage's
+relative_files) is refused: its summary would say no test ran anything.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from pathlib import Path
 from . import inventory
 
 FOLDER = "coverage"
-VERSION = 1
+VERSION = 2   # 2: functions and test_modules, so a reader tells "no test ran it" from "the summary never saw it"
 CONFIGS = ("pyproject.toml", "pytest.ini", "tox.ini", "setup.cfg")
 
 
@@ -57,7 +60,17 @@ def load(tree: inventory.Tree, store_rel: str, repo: str) -> dict | None:
         data = json.loads(tree.text(p) or "")
     except ValueError:
         return None
-    return data if isinstance(data, dict) and isinstance(data.get("files"), dict) else None
+    ok = isinstance(data, dict) and data.get("version") == VERSION and isinstance(data.get("files"), dict)
+    return data if ok else None
+
+
+def known(summary: dict | None, path: str, symbol: str) -> bool:
+    """Whether the summary measured ``symbol`` of ``path`` (a function, or a class of it): a symbol added or renamed
+    since, a file it did not measure, a summary with no test context, are not known."""
+    if not (summary or {}).get("test_modules"):
+        return False
+    fns = (((summary.get("files") or {}).get(path)) or {}).get("functions") or []
+    return any(f == symbol or f.startswith(symbol + ".") for f in fns)
 
 
 def ran(summary: dict | None, path: str, symbol: str) -> set[str]:
@@ -72,8 +85,9 @@ def ran(summary: dict | None, path: str, symbol: str) -> set[str]:
 # --- symbols ---
 
 def functions(text: str) -> dict[int, str]:
-    """Line -> the qualified name of the outermost function (or method) that holds it: ``f``, ``Class.method``;
-    the lines of a module or class body are left out."""
+    """Line -> the qualified name of the outermost function (or method) whose body holds it: ``f``, ``Class.method``;
+    the def and decorator lines, and the lines of a module or class body, are left out (they run at import). A
+    function under a module- or class-level if, try, with, for or while counts."""
     try:
         mod = ast.parse(text)
     except (SyntaxError, ValueError):
@@ -85,9 +99,13 @@ def functions(text: str) -> dict[int, str]:
             if isinstance(s, ast.ClassDef):
                 walk(s.body, f"{prefix}{s.name}.")
             elif isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                first = min([s.lineno] + [d.lineno for d in s.decorator_list])
-                for n in range(first, (s.end_lineno or s.lineno) + 1):
+                for n in range(s.body[0].lineno, (s.end_lineno or s.lineno) + 1):
                     out[n] = f"{prefix}{s.name}"
+            else:   # if, try, with, for, while: their bodies are still the module's or the class's
+                for sub in ("body", "orelse", "finalbody"):
+                    walk(getattr(s, sub, None) or [], prefix)
+                for h in getattr(s, "handlers", None) or []:
+                    walk(h.body, prefix)
     walk(mod.body, "")
     return out
 
@@ -114,7 +132,7 @@ def contexts(data: Path, root: Path, cwd: Path) -> tuple[dict[str, dict[int, set
     SQLite tables, read without the coverage package): a context ``<test file>::<case>|run`` stands for that test
     module; the empty context (imports, collection) for none."""
     try:
-        db = sqlite3.connect(f"file:{data.resolve().as_posix()}?mode=ro", uri=True)
+        db = sqlite3.connect(data.resolve().as_uri() + "?mode=ro", uri=True)
     except sqlite3.Error as exc:
         raise CoverageError(f"{data}: {exc}") from exc
     try:
@@ -125,12 +143,18 @@ def contexts(data: Path, root: Path, cwd: Path) -> tuple[dict[str, dict[int, set
             name = str(ctx or "").split("|", 1)[0].split("::", 1)[0]
             tests[i] = _rel(name, root, cwd) if name else None
         out: dict[str, dict[int, set]] = {}
-        for fid, cid, bits in db.execute("select file_id, context_id, numbits from line_bits"):
+
+        def add(fid, cid, nums) -> None:
             f, t = files.get(fid), tests.get(cid)
             if f and t:
                 lines = out.setdefault(f, {})
-                for n in _nums(bits):
+                for n in nums:
                     lines.setdefault(n, set()).add(t)
+        for fid, cid, bits in db.execute("select file_id, context_id, numbits from line_bits"):
+            add(fid, cid, _nums(bits))
+        # branch coverage (branch = true) records arcs instead of lines: a line is either end of an arc
+        for fid, cid, a, b in db.execute("select file_id, context_id, fromno, tono from arc"):
+            add(fid, cid, [n for n in (a, b) if n > 0])
     except sqlite3.Error as exc:
         raise CoverageError(f"{data}: not a coverage data file ({exc})") from exc
     finally:
@@ -164,7 +188,7 @@ def _entry(root: Path, rel: str, cur: dict) -> dict:
         for t in ts if fn.get(line) else ():
             tests.setdefault(t, set()).add(fn[line])
     s, c = cur["statements"], min(len(cur["executed"]), cur["statements"])
-    return {"statements": s, "covered": c, "percent": _pct(c, s),
+    return {"statements": s, "covered": c, "percent": _pct(c, s), "functions": sorted(set(fn.values())),
             **({"tests": {t: sorted(q) for t, q in sorted(tests.items())}} if tests else {})}
 
 
@@ -172,11 +196,16 @@ def summarize(reports: list[tuple[dict, dict, Path]], root: Path, repo: str, com
               day: str = "", tool: str = "") -> dict:
     """The summary of runs, each (its ``coverage json`` report: the statements and executed lines of each file, its
     contexts: file -> line -> test modules, the folder pytest ran in); the files' executed lines unioned."""
-    files = {rel: _entry(root, rel, cur) for rel, cur in sorted(_merge(reports, root).items())}
+    merged = _merge(reports, root)
+    seen = sorted({t for cur in merged.values() for ts in cur["contexts"].values() for t in ts})
+    if not seen:
+        raise CoverageError("no test context in the coverage data: run pytest with --cov-context=test (and, for a data "
+                            "file from another machine, coverage's relative_files = true)")
+    files = {rel: _entry(root, rel, cur) for rel, cur in sorted(merged.items())}
     total_s, total_c = sum(f["statements"] for f in files.values()), sum(f["covered"] for f in files.values())
     return {"version": VERSION, "repo": repo.lower(), "commit": commit, "dirty": dirty, "measured": day,
             "tool": f"coverage {tool}".strip(), "statements": total_s, "covered": total_c,
-            "percent": _pct(total_c, total_s), "files": files}
+            "percent": _pct(total_c, total_s), "test_modules": seen, "files": files}
 
 
 def _pct(c: int, s: int) -> float:
@@ -226,8 +255,8 @@ def _git(root: Path, *args: str) -> str:
 
 def _report(python: str, data: Path, where: Path, out: Path) -> dict:
     """``coverage json`` of a data file, without its contexts: the statements and executed lines of each file."""
-    js = subprocess.run([python, "-m", "coverage", "json", f"--data-file={data}", "-o", str(out)], cwd=where,
-                        capture_output=True, text=True)
+    js = subprocess.run([python, "-m", "coverage", "json", f"--data-file={data}", "-o", str(out), "--fail-under=0"],
+                        cwd=where, capture_output=True, text=True)   # the repo's fail_under is not this report's
     if js.returncode != 0 or not out.is_file():
         raise CoverageError(f"coverage json failed in {where} (coverage installed in {python}?): "
                             f"{(js.stderr or js.stdout).strip()[:300]}")
@@ -249,7 +278,7 @@ def run(root: Path, repo: str, tests: list[str], sources: list[str], python: str
             # the checkout's own code first, before what the Python has installed (an editable install elsewhere)
             env = dict(os.environ, COVERAGE_FILE=str(data), PYTHONPATH=os.pathsep.join(
                 [str((root / s).resolve()) for s in sources] + [os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep))
-            cmd = [python, "-m", "pytest", *folders, *covs, "--cov-context=test", "--cov-report=",
+            cmd = [python, "-m", "pytest", *folders, *covs, "--cov-context=test", "--cov-report=", "--cov-fail-under=0",
                    *(["-n", workers] if workers else []), *(extra or [])]
             echo(f"brain coverage: {cwd or '.'}: {' '.join(cmd[1:])}")
             rc = subprocess.run(cmd, cwd=where, env=env).returncode
@@ -264,8 +293,10 @@ def run(root: Path, repo: str, tests: list[str], sources: list[str], python: str
 
 
 def from_data(data: Path, cwd: Path, root: Path, repo: str, python: str = "") -> dict:
-    """The summary of a coverage data file made elsewhere (the CI's ``.coverage``, run with --cov-context=test),
-    pytest having run in ``cwd`` of this checkout (``coverage json`` reads its sources for the statements)."""
+    """The summary of a coverage data file made elsewhere (the CI's ``.coverage``, run with --cov-context=test and
+    coverage's relative_files = true), pytest having run in ``cwd`` of this checkout: ``coverage json`` reads its
+    sources for the statements, the functions come from them, and its HEAD is the commit recorded, so read it in a
+    checkout at the commit the data file measured."""
     if not data.is_file():
         raise CoverageError(f"{data}: no such file")
     ctxs, tool = contexts(data, root, cwd)

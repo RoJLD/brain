@@ -104,19 +104,27 @@ def test_imports_add_tests_and_a_symbol_keeps_the_tests_that_name_it():
     assert links.names_symbol.__doc__ and "cmd_" in links.names_symbol.__doc__
 
 
-def _summary(tests_of_cli: dict, tests_of_guards: dict | None = None) -> str:
-    files = {"src/p/cli.py": {"statements": 9, "covered": 9, "percent": 100.0, "tests": tests_of_cli},
-             "src/p/core.py": {"statements": 2, "covered": 2, "percent": 100.0},
-             "src/p/lonely.py": {"statements": 2, "covered": 0, "percent": 0.0},
-             "src/p/guards.py": {"statements": 4, "covered": 3, "percent": 75.0, "tests": tests_of_guards or {}}}
-    return testcov.render({"version": 1, "repo": "demo", "commit": "abc1234", "dirty": False,
+SEEN = ["tests/test_core.py", "tests/test_far.py", "tests/test_flow.py", "tests/test_guards.py",
+        "tests/test_guards_more.py", "tests/test_other.py", "tests/test_run.py"]
+
+
+def _summary(tests_of_cli: dict, tests_of_guards: dict | None = None, seen: list | None = None) -> str:
+    """A version 2 summary of the fixture: every function measured, the test modules its contexts named."""
+    files = {"src/p/cli.py": {"statements": 9, "covered": 9, "percent": 100.0, "tests": tests_of_cli,
+                              "functions": ["cmd_other", "cmd_run_job", "main"]},
+             "src/p/core.py": {"statements": 2, "covered": 2, "percent": 100.0, "functions": ["go"]},
+             "src/p/lonely.py": {"statements": 2, "covered": 0, "percent": 0.0, "functions": ["alone"]},
+             "src/p/guards.py": {"statements": 4, "covered": 3, "percent": 75.0, "tests": tests_of_guards or {},
+                                 "functions": ["check_other", "check_secret"]}}
+    return testcov.render({"version": 2, "repo": "demo", "commit": "abc1234", "dirty": False,
                            "measured": "2026-11-03", "tool": "coverage 7", "statements": 17, "covered": 14,
-                           "percent": 82.4, "files": files})
+                           "percent": 82.4, "test_modules": SEEN if seen is None else seen, "files": files})
 
 
 def test_coverage_contexts_decide_a_symbol_when_the_store_has_them():
     # the contexts saw test_other.py run cmd_run_job (say other calls it) and test_run.py not: they win over the
-    # words; a test that names the symbol itself still counts; a test that does not import the file never does
+    # words; a test that names the symbol itself still counts, and so does one the summary never saw (by the names
+    # rule: test_named.py); a test that does not import the file never does
     cov = _summary({"tests/test_other.py": ["cmd_other", "cmd_run_job"], "tests/test_run.py": ["main"],
                     "tests/test_far.py": ["cmd_run_job"]},
                    {"tests/test_guards_more.py": ["check_other", "check_secret"]})
@@ -137,8 +145,9 @@ def test_functions_map_lines_to_the_outermost_function_or_method():
            "class C:\n    x = 1\n\n    def m(self):\n        return 2\n")
     fn = testcov.functions(src)
     assert 1 not in fn   # a module body is no function
-    assert [fn.get(n) for n in (3, 4, 6, 7)] == ["f", "f", "f", "f"]   # the decorator, a nested function
-    assert 11 not in fn and fn[13] == "C.m" and fn[14] == "C.m"   # a class body is no function
+    assert 3 not in fn and 4 not in fn   # the decorator and the def line run at import
+    assert [fn.get(n) for n in (5, 6, 7)] == ["f", "f", "f"]   # a nested function counts for the outer one
+    assert 11 not in fn and 13 not in fn and fn[14] == "C.m"   # a class body is no function
     assert testcov.functions("def (:\n") == {}
 
 
@@ -149,7 +158,9 @@ def _data_file(path: Path, root: Path) -> None:
                      "create table file (id integer primary key, path text, unique (path));"
                      "create table context (id integer primary key, context text, unique (context));"
                      "create table line_bits (file_id integer, context_id integer, numbits blob,"
-                     " unique (file_id, context_id));")
+                     " unique (file_id, context_id));"
+                     "create table arc (file_id integer, context_id integer, fromno integer, tono integer,"
+                     " unique (file_id, context_id, fromno, tono));")
     db.execute("insert into meta values ('version', '7.17.1')")
     db.execute("insert into file values (1, ?)", (str(root / "src" / "p" / "cli.py"),))
     db.execute("insert into file values (2, ?)", (str(root.parent / "elsewhere.py"),))

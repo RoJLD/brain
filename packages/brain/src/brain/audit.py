@@ -163,12 +163,12 @@ def test_links(ctx: dict) -> list[dict] | str:
 def test_coverage(ctx: dict) -> list[dict] | str:
     """test.coverage: a Python module of the repo that its tests run under COVERAGE_FLOOR % of, by the coverage summary
     the store keeps (brain coverage --write, brain.testcov); a module the summary does not know (added since) is not
-    counted. Not measured without a summary."""
+    counted. Not measured without a summary. The trend reads today's summary (``ctx["coverage"]``, from measure), so
+    the week a summary is first committed is no rise of the debt."""
     if not ctx["store"]:
         return "no store to keep its coverage summary"
-    rel, _, holder = ctx["store"]
-    rf = ctx["rf"]
-    cov = testcov.load(ctx["trees"][holder], rel, rf.name)
+    rel, rf = ctx["store"][0], ctx["rf"]
+    cov = ctx["coverage"]
     if cov is None:
         return f"no coverage summary in {rel} (brain coverage --run --write)"
     files, at, out = cov.get("files") or {}, str(cov.get("commit") or "?")[:7], []
@@ -398,12 +398,13 @@ def _test_dir(rf: inventory.RepoFacts) -> str:
 def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inventory.Tree],
             only: set[str] | None = None, layered: set[str] | None = None,
             extra_dirs: dict[str, set] | None = None, linked: dict | None = None,
-            featured: bool | None = None) -> dict:
+            featured: bool | None = None, coverage: dict | None = None) -> dict:
     """Every check on every repo of ``p`` that has a tree (its findings only for the repos in ``only`` when given):
     the project's result, as the JSON output carries it. ``layered``: the repos whose store has a code layer, given
     by the trend from today's measure (a layer added since then is a rule of today, not a rise of the debt);
     ``linked``, likewise, the repos whose own store takes the Doc and Test links (doc.links, test.links), and
-    ``featured``, whether the project's store has the Feature type (then a week before it has no feature).
+    ``featured``, whether the project's store has the Feature type (then a week before it has no feature), and
+    ``coverage``, each repo's coverage summary (test.coverage: a summary committed since is a rule of today).
     ``extra_dirs``: more top-level folders whose paths a doc names are checked (the scout passes the base tree's, so
     a folder a change empties still has its dead references)."""
     cfgs = [c for c in cfgs if c.name in trees]
@@ -472,19 +473,23 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
         layered = {name for st in stores if st.code_layer for name in facts if f"repo-{name}" in st.repo_nodes}
     if linked is None:
         linked = _linked_stores(p, cfgs, trees)
+    if coverage is None:
+        coverage = {c.name: testcov.load(trees[linked[c.name][2]], linked[c.name][0], c.name)
+                    for c in cfgs if c.name in linked and linked[c.name][2] in trees}
     out_repos = []
     for c in cfgs:
         rf = facts[c.name]
         if only is not None and c.name not in only:
             continue
         ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm, "trees": trees,
-               "flabel": flabel,
+               "flabel": flabel, "coverage": coverage.get(c.name),
                "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
         out_repos.append(_repo_result(c, rf, idx, tops, mod_evidence, facts, dangling.get(c.name, []),
                                       sorted(set(unregistered.get(c.name, []))), covered, layered,
                                       missing.get(c.name, []), (extra_dirs or {}).get(c.name, set()), ctx))
     return {"name": p.name, "root": str(p.root), "repos": out_repos, "counts": _sum(out_repos), "facts": facts,
-            "mod_evidence": mod_evidence, "layered": layered, "linked": linked, "featured": featured}
+            "mod_evidence": mod_evidence, "layered": layered, "linked": linked, "featured": featured,
+            "coverage": coverage}
 
 
 def _feature_model(p: projects.Project, cfgs: list[projects.Repo],
@@ -725,10 +730,10 @@ def falling(debts: list[int]) -> int:
 
 def trend(p: projects.Project, cfgs: list[projects.Repo], refs: dict[str, str], n: int, today: date,
           only: set[str] | None = None, layered: set[str] | None = None, linked: dict | None = None,
-          featured: bool | None = None) -> dict:
+          featured: bool | None = None, coverage: dict | None = None) -> dict:
     """Each of the last ``n`` completed weeks re-measured at its end commit with today's rules and registry (and
     today's code layers, ``layered``, the stores that take today's Doc and Test links, ``linked``, and today's
-    Feature type, ``featured``); a repo with no commit at some week end leaves the whole window (like-for-like)."""
+    Feature type, ``featured``, and today's coverage summaries, ``coverage``); a repo with no commit at some week end leaves the whole window (like-for-like)."""
     weeks = week_ends(n, today)
     live = [c for c in cfgs if c.name in refs]
     commits = dict(zip([c.name for c in live], _parallel(
@@ -738,7 +743,7 @@ def trend(p: projects.Project, cfgs: list[projects.Repo], refs: dict[str, str], 
     for i, (label, end) in enumerate(weeks if scope else []):
         trees = dict(zip([c.name for c in scope], _parallel(
             lambda c, i=i: inventory.git_tree(c.path, commits[c.name][i]), scope)))
-        res = measure(p, scope, trees, only, layered, linked=linked, featured=featured)
+        res = measure(p, scope, trees, only, layered, linked=linked, featured=featured, coverage=coverage)
         out.append({"week": label, "end": end[:10], "debt": {s: res["counts"][s] for s in SEVERITIES}})
     return {"weeks": out, "repos": [c.name for c in scope],
             "left": sorted(c.name for c in cfgs if c not in scope)}
@@ -853,7 +858,7 @@ def render_text(data: dict, verbose: bool = False) -> list[str]:
 
 def _public(p: dict) -> dict:
     return {k: v for k, v in p.items() if k not in ("facts", "cfgs", "project", "mod_evidence", "layered",
-                                                    "linked", "featured")}
+                                                    "linked", "featured", "coverage")}
 
 
 def render_json(data: dict) -> str:
@@ -1048,7 +1053,8 @@ def run(args, root: Path | None, today: date | None = None) -> dict:
                          for k, v in errors.items() if only is None or k in only]
         res["cfgs"], res["project"] = cfgs, p
         if n:
-            res["trend"] = trend(p, cfgs, refs, n, today, only, res["layered"], res["linked"], res["featured"])
+            res["trend"] = trend(p, cfgs, refs, n, today, only, res["layered"], res["linked"], res["featured"],
+                                 res["coverage"])
             res["trend"]["falling"] = falling([_total(w) for w in res["trend"]["weeks"]])
             trends[p.name] = res["trend"]
         data["projects"].append(res)
