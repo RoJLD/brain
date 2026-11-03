@@ -13,6 +13,14 @@ Both are declared in `src/brain/adapters/claude/hooks/hooks.json`. A personal br
 `brain render --target claude --write` (or `brain sync`) into its own plugin, then its installer applies the plugin
 (on Windows `install.ps1 -Apply`, the owner's).
 
+## The Terminal panel
+
+A command a session types into the owner's Terminal panel (`mcp__*terminal__run_in_terminal`) runs in the owner's own
+shell, outside any sandbox. `guard.sh shell` judges it like a Bash or PowerShell call, with every shell guard
+(production, owner, power, attribution, secrets, public, branches, the usage override): as PowerShell on Windows, as
+bash elsewhere (an SSH host's login shell), in the new tab's `cwd`, else the session's folder. A reused tab's folder
+is wherever its earlier commands left it: the guard reads it as the session's.
+
 ## The session-settings guard
 
 A session that turns Remote Control on or off, or changes a session's permission mode (higher or lower, its own or

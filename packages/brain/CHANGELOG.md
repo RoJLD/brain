@@ -4,6 +4,17 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The suite is green on Linux.** Three places misread Windows shapes off Windows: a PowerShell word's backslash is
+  now a path separator wherever `os.path` reads only slashes (`guards.BACKSLASH_SEP`), as PowerShell reads it, so
+  `Set-Content {lab}\x` is seen in the production checkout; a `cmd /c` option is slashes and a name without a
+  separator (`guards.CMD_OPTION`: `/c`, `//J`, `/XD`), so a Unix absolute path is a target, not an option; and
+  `detail.preview` finds `.\install.ps1` by its last part on either separator. The 26 advisory `brain-linux` failures
+  of main go away.
+- **The Terminal panel meets the shell guards** (wi-brain-guard-terminal-tool). A command that the desktop app's
+  `run_in_terminal` types into the owner's Terminal panel ran outside every guard: production checkouts, the owner's
+  own actions (`brain usage allow` included), power, attribution, secrets, public pushes and branch names. A
+  PreToolUse matcher on `mcp__*terminal__run_in_terminal` now judges it as a shell call (`guard.sh shell`):
+  PowerShell on Windows, the panel's shell there, else bash, in the tab's `cwd`, else the session's folder.
 - **A brain fresh from `brain init` passes `brain check --all`.** It failed at once with « config.json declares no
   data classes ». A template's `template.yaml` gains `classes`, its own stores, checked when the template loads. The
   generic template classes `memory/` and `records/ddr/` confidential, opted in to `cloud-model`, with a waiver on
