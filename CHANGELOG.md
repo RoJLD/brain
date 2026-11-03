@@ -5,6 +5,9 @@ The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `resea
 
 ## Unreleased
 
+- `code_layer.symbol_span(tree, symbol)`: the kind, first and last line of a symbol as `find_symbol` finds it,
+  decorators and body included (what a change to it touches; `brain impact` without GitNexus).
+
 - **Required props per node type.** A schema may say `required_props: {<type>: [prop, ...]}`: `check` (the loader,
   overlays too) refuses a node of that type without each prop or with it empty (`node les-x: Lesson needs props
   check`); `Schema.missing_props` says which. The store template (`research_graph init`) gains the `Lesson` type (layer

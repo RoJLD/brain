@@ -20,6 +20,7 @@ from research_graph.code_layer import (
     orphan_code_refs,
     parse_code_ref,
     structure_errors,
+    symbol_span,
 )
 from research_graph.loader import apply_overlay, load_store
 from research_graph.model import LayeredGraph
@@ -152,6 +153,17 @@ def test_find_symbol_finds_definitions(symbol, expected):
 def test_find_symbol_ignores_imports_subscripts_and_function_bodies(symbol):
     # `registry` itself is defined; `registry.x` would need registry to be a class.
     assert find_symbol(ast.parse(VENUE_PY), symbol) is None
+
+
+def test_symbol_span_covers_decorators_and_the_body():
+    """The lines a change to the symbol touches (brain impact without GitNexus); find_symbol keeps the def line."""
+    text = VENUE_PY + "\n\n@staticmethod\n@cache\ndef cached(x):\n    return x\n"
+    tree = ast.parse(text)
+    assert symbol_span(tree, "FakeVenue") == ("class", 20, 29)
+    assert symbol_span(tree, "FakeVenue.funding") == ("method", 26, 29)
+    assert symbol_span(tree, "ALIASES") == ("assign", 5, 5)
+    assert symbol_span(tree, "cached") == ("function", 36, 39) and find_symbol(tree, "cached") == ("function", 38)
+    assert symbol_span(tree, "FakeVenue.missing") is None
 
 
 # -- graph check (CI-safe) -------------------------------------------------------------------------
