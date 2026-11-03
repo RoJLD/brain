@@ -69,7 +69,8 @@ RECIPIENT_KEYS = {"kind", "age", "gpg", "host", "classes", "why"}
 AGENT_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION")
 AGE_SECRET = re.compile(r"^AGE-(SECRET-KEY|PLUGIN-[A-Z0-9-]+)-1[0-9A-Z]+$")   # an identity line, never stored
 KEY_PROMPT = "the key, AGE-SECRET-KEY-1... (hidden as you paste or type it), then Enter: "
-NOT_ON_PATH ="not found on this terminal's PATH (a terminal opened before the install misses it: open a new one)"
+BOILERPLATE = re.compile(r"report unexpected or unhelpful errors")   # age's last line after any error: not the error
+NOT_ON_PATH = "not found on this terminal's PATH (a terminal opened before the install misses it: open a new one)"
 RUNBOOK = "https://github.com/RoJLD/brain/blob/main/packages/brain/docs/vault.md"   # the owner's steps, generic
 
 
@@ -154,7 +155,7 @@ def _run(argv: list[str], *, stdin: bytes | str | None = None, inherit: bool = F
 def _fail(r: subprocess.CompletedProcess, what: str) -> None:
     if r.returncode:
         err = r.stderr.decode("utf-8", "replace").strip().splitlines() if r.stderr else []
-        tail = next((ln for ln in reversed(err) if ln.strip()), "")
+        tail = next((ln for ln in reversed(err) if ln.strip() and not BOILERPLATE.search(ln)), "")
         raise VaultError(f"{what} failed (exit {r.returncode})" + (f": {tail}" if tail and not PRIVATE.search(tail)
                                                                     else ""))
 

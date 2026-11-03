@@ -314,6 +314,14 @@ def test_drill_asks_the_key_hidden_and_hands_it_to_age(brain, monkeypatch, capsy
         vault.drill(cfg, "recovery", "-", found=found)
 
 
+def test_a_failure_names_ages_error_not_its_report_line():
+    err = (b"age: error: no identity matched any of the recipients\n"
+           b"age: report unexpected or unhelpful errors at https://filippo.io/age/report\n")
+    with pytest.raises(vault.VaultError) as exc:
+        vault._fail(vault.subprocess.CompletedProcess([], 1, b"", err), "age: open")
+    assert str(exc.value) == "age: open failed (exit 1): age: error: no identity matched any of the recipients"
+
+
 def test_the_owner_prompts_name_what_to_do(brain, monkeypatch):
     """gpg reads its key block itself: the prompt says how the console ends the input; age missing from a terminal
     opened before the install says to open a new one."""

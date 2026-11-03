@@ -11,7 +11,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   ends it), checks that it is an age identity line and hands it to age on its stdin; it is never written, and a wrong
   line, nothing or Ctrl+C opens nothing. A stdin that is not a terminal gives its first line. gpg still reads its key
   block itself, and its prompt now says how the console ends the input. age missing from a terminal opened before
-  its install says to open a new one.
+  its install says to open a new one, and a failure of age names its error, not the « report unexpected or unhelpful
+  errors » line it prints last.
 - **The cockpit knows its version and offers updates** (wi-brain-tui-update-check, ADR UPD-1 to UPD-3). The title
   bar of `brain tui` always shows the installed version (the text view's header too). Once the screen is drawn, a
   worker reads the release tags of the engine's public repo (`config.json` `engine.repo`, else RoJLD/brain) with
