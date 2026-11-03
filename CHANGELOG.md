@@ -3,6 +3,11 @@
 The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `research-graph` X.Y.Z and `brain` X.Y.Z
 (`packages/brain/CHANGELOG.md` for the brain command).
 
+## Unreleased
+
+- `code_layer.symbol_span(tree, symbol)`: the kind, first and last line of a symbol as `find_symbol` finds it,
+  decorators and body included (what a change to it touches; `brain impact` without GitNexus).
+
 ## 0.2.4 — 2026-11-03
 
 - **Fast YAML** (wi-brain-yaml-fast-load): `research_graph.yamlio`, the one helper of every load: `loads` parses

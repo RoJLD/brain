@@ -290,6 +290,15 @@
                                   recording the indexed commit in $BRAIN_HOME/code-index.json; --stale: only those
                                   not indexed at their branch head; no name and no flag: each repo's state;
                                   --project P: only P's repos
+  brain code-map [--json]   each active CodeRef of the project's stores resolved to its GitNexus node (filePath,
+                                  name, label) into $BRAIN_HOME/code-map/<project>.json, the coverage per repo
+                                  (symbols and files with a CodeRef) and the CodeRefs that do not resolve, with why;
+                                  exit 1 when GitNexus does not answer (brain.codemap)
+  brain impact [--diff [BASE|A..B]] [--repo-dir D] [--depth N] [--json]   before merge, what a change relies on:
+                                  the symbols it touches (GitNexus's index) and their callers, their CodeRefs, the
+                                  graph nodes relying on them, then a checklist: features whose status may change,
+                                  docs to update, ADRs and specs to re-read, tests to run, open items; without
+                                  GitNexus, file level and said so (brain.impact)
   brain timed [--task T] [--project P] [--version V] [--shell] [--quiet] -- COMMAND...
                  run COMMAND (input and output untouched, exit code passed through) and append its event (start, end,
                  duration, exit, host, project, task, version) to $BRAIN_HOME/ledger/exec-<yyyy-mm>.jsonl, one line
@@ -2262,6 +2271,12 @@ def cmd_collisions(args, root: Path) -> int:
     return 0
 
 
+def cmd_code_map(args, root: Path) -> int:
+    """brain code-map (brain.codemap): the project here or --project's."""
+    from . import codemap
+    return codemap.main(_project(args, root), root, as_json=args.json)
+
+
 def cmd_brief(args, root: Path) -> int:
     """brain brief ITEM (brain.brief): the brief printed, and written with --write."""
     from . import brief
@@ -3074,6 +3089,17 @@ def build_parser() -> argparse.ArgumentParser:
     ix.add_argument("--all", action="store_true", help="every declared repo, even one indexed at its branch head")
     ix.add_argument("--stale", action="store_true", help="only the repos not indexed at their branch head (of the "
                                                          "named ones, else of every one)")
+    cmp_ = sub.add_parser("code-map", help="each active CodeRef of the project's stores resolved to its GitNexus node, "
+                                           "written to <BRAIN_HOME>/code-map/<project>.json, with the coverage and "
+                                           "the CodeRefs that do not resolve (brain.codemap)")
+    cmp_.add_argument("--json", action="store_true", help="print the map")
+    im = sub.add_parser("impact", help="before merge, what a change relies on in the graph: touched symbols and "
+                                       "callers (GitNexus), CodeRefs, nodes, then the checklist (brain.impact)")
+    im.add_argument("--diff", nargs="?", const="", default="", metavar="BASE|A..B",
+                    help="from merge-base(HEAD, the default branch, or BASE) to the working tree, or the commits A..B")
+    im.add_argument("--repo-dir", metavar="D", help="the repo changed (default: the current folder)")
+    im.add_argument("--depth", type=_whole, metavar="N", help="caller levels followed in GitNexus (default 2)")
+    im.add_argument("--json", action="store_true", help="the chain and the checklist as JSON")
     li = sub.add_parser("lint", help=f"lint {who}'s rules at zero token").add_subparsers(dest="lint_cmd",
                                                                                          required=True)
     lr = li.add_parser("rules", help="tokens injected per session, duplicates, script and guard candidates, hard "
@@ -3291,6 +3317,9 @@ def _dispatch(args) -> int:
         return cmd_update(args, root)
     if args.cmd == "audit":  # its repos may have no graph store: before find_root
         return audit.main(args, root)
+    if args.cmd == "impact":  # like audit --diff: the changed repo may hold no graph store
+        from . import impact
+        return impact.main(args, root)
     if args.cmd == "check" and args.public:  # a public repo has no graph store: before find_root
         return public.main(Path(args.repo).resolve() if args.repo else root or Path.cwd(), history=args.history,
                            remote=args.remote or "", engine=args.engine, as_json=args.json)
@@ -3323,7 +3352,7 @@ def _dispatch(args) -> int:
             "vault": cmd_vault, "permissions": cmd_permissions,
             "profile": cmd_profile,
             "tui": cmd_tui, "usage": cmd_usage, "cost": cmd_cost, "forecast": cmd_forecast,
-            "collisions": cmd_collisions, "brief": cmd_brief}[args.cmd](args, root)
+            "collisions": cmd_collisions, "brief": cmd_brief, "code-map": cmd_code_map}[args.cmd](args, root)
 
 
 if __name__ == "__main__":
