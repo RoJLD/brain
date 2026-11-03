@@ -43,10 +43,29 @@ def _yaml():
 
 
 def load_yaml(text: str):
-    """PyYAML's safe load through libyaml (CSafeLoader) when PyYAML has it, else its pure-Python SafeLoader: the same
-    data, about 9 times faster (wi-brain-hook-latency: the guards' registry read)."""
+    """The data of a YAML text, through libyaml when PyYAML has it (research_graph.yamlio: the one helper of every
+    load, wi-brain-yaml-fast-load)."""
+    _yaml()
+    from research_graph import yamlio
+
+    return yamlio.loads(text)
+
+
+def load_yaml_file(path: Path):
+    """The data of the YAML file ``path``, through libyaml and the per-process memo keyed by (path, size, mtime_ns):
+    a fresh copy on each read, so the caller may change it (research_graph.yamlio)."""
+    _yaml()
+    from research_graph import yamlio
+
+    return yamlio.load(path)
+
+
+def load_yaml_all(text: str) -> list:
+    """The documents of a multi-document YAML text, through libyaml."""
     y = _yaml()
-    return y.load(text, Loader=getattr(y, "CSafeLoader", y.SafeLoader))
+    from research_graph import yamlio
+
+    return list(y.load_all(text, Loader=yamlio.LOADER))
 
 
 def fmt(value) -> str:
@@ -100,12 +119,12 @@ def render_edge(edge: dict) -> str:
 
 
 def load_yaml_list(path: Path) -> list:
-    data = _yaml().safe_load(path.read_text(encoding="utf-8")) if path.exists() else None
+    data = load_yaml_file(path) if path.exists() else None
     return data if isinstance(data, list) else []
 
 
 def load_schema(store: Path) -> dict:
-    return _yaml().safe_load((store / "schema.yaml").read_text(encoding="utf-8")) or {}
+    return load_yaml_file(store / "schema.yaml") or {}
 
 
 def node_index(store: Path, generated: bool = True) -> dict[str, tuple[Path, dict]]:
@@ -138,7 +157,7 @@ def _read(path: Path) -> tuple[str, str]:
 def _open_list(text: str) -> str:
     """A list file's text, ready for one more block entry: an empty flow list (``[]`` on its own line, as research_graph
     init writes an empty layer) is taken out, the comments kept."""
-    if _EMPTY_FLOW_RE.search(text) and (_yaml().safe_load(text) or []) == []:
+    if _EMPTY_FLOW_RE.search(text) and (load_yaml(text) or []) == []:
         text = _EMPTY_FLOW_RE.sub("", text, count=1)
     if text and not text.endswith("\n"):
         text += "\n"
@@ -146,7 +165,7 @@ def _open_list(text: str) -> str:
 
 
 def _write_checked(path: Path, text: str, expect: list, nl: str = "\n") -> None:
-    got = _yaml().safe_load(text)
+    got = load_yaml(text)
     if got != expect:
         raise GraphError(f"{path}: the edit would change more than the target node; nothing written")
     notes.write(path, text, nl)
@@ -263,7 +282,7 @@ def unlink(store: Path, src: str, dst: str) -> tuple[dict, Path]:
         text, nl = _read(f)
         lines = text.split("\n")
         hit = next(i for i, line in enumerate(lines) if line.lstrip().startswith("- {")
-                   and (_yaml().safe_load(line) or [{}])[0] in found)
+                   and (load_yaml(line) or [{}])[0] in found)
         start, end = hit, hit + 1
         if hit and lines[hit - 1].startswith("# ") and (end >= len(lines) or not lines[end].lstrip().startswith("- ")):
             start = hit - 1  # its note, left alone

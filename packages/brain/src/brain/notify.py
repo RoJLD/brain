@@ -187,7 +187,7 @@ def _entry(p: projects.Project) -> dict:
         f = p.root / raw
         if not f.is_file():
             raise NotifyError(f"{p.name}: notify file {raw} not found under {p.root}")
-        raw = graph._yaml().safe_load(f.read_text(encoding="utf-8")) or {}
+        raw = graph.load_yaml_file(f) or {}
     if not isinstance(raw, dict):
         raise NotifyError(f"{p.name}: notify: must be a mapping or a YAML file")
     unknown = set(raw) - TOP_KEYS

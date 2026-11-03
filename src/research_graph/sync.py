@@ -18,6 +18,7 @@ from pathlib import Path
 import networkx as nx
 import yaml
 
+from . import yamlio
 from .validate import _node_decision_date_counts
 
 _HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\s*[—:\-]*\s*(.*?)\s*$")
@@ -113,7 +114,7 @@ def hypothesis_nodes_edges(repo_root: str | Path) -> tuple[list[dict], list[dict
         if not cfg.exists():
             continue
         try:
-            data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+            data = yamlio.load(cfg) or {}
         except yaml.YAMLError:
             continue
         h = data.get("hypothesis")
@@ -147,7 +148,7 @@ def hypothesis_l1_stubs(hand_graph: nx.DiGraph, repo_root: str | Path) -> list[d
             if not cfg.exists():
                 continue
             try:
-                data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+                data = yamlio.load(cfg) or {}
             except yaml.YAMLError:
                 continue
             h = data.get("hypothesis")
@@ -210,7 +211,7 @@ def hypothesis_verdict_nodes_edges(repo_root: str | Path) -> tuple[list[dict], l
         if not cfg.exists():
             continue
         try:
-            data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+            data = yamlio.load(cfg) or {}
         except yaml.YAMLError:
             continue
         h = data.get("hypothesis")
@@ -403,7 +404,7 @@ def lineage_edges(graph: nx.DiGraph, repo_root: Path) -> list[dict]:
         if not cfg.exists():
             continue
         try:
-            data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+            data = yamlio.load(cfg) or {}
         except yaml.YAMLError:
             continue
         # lineage lives under `experiment:` in these configs, but tolerate a top-level key too
@@ -466,7 +467,7 @@ def _hand_graph(store: Path) -> nx.DiGraph:
     for nf in sorted((store / "nodes").glob("*.yaml")):
         if nf.name.startswith(_GENERATED_PREFIX):
             continue
-        data = yaml.safe_load(nf.read_text(encoding="utf-8")) or []
+        data = yamlio.load(nf) or []
         for n in data:
             if isinstance(n, dict) and n.get("id"):
                 g.add_node(
@@ -483,7 +484,7 @@ def _all_nodes_graph(store: Path) -> nx.DiGraph:
     """
     g = nx.DiGraph()
     for nf in sorted((store / "nodes").glob("*.yaml")):
-        data = yaml.safe_load(nf.read_text(encoding="utf-8")) or []
+        data = yamlio.load(nf) or []
         if not isinstance(data, list):
             continue
         for n in data:
@@ -507,7 +508,7 @@ def _hand_edges_text(store: Path) -> str:
 
 def _hand_edges_set(store: Path) -> set[tuple]:
     """(from, to, type) of the hand-curated edges only (excludes any auto-derived block)."""
-    data = yaml.safe_load(_hand_edges_text(store)) or []
+    data = yamlio.loads(_hand_edges_text(store)) or []
     if not isinstance(data, list):
         return set()
     return {(e.get("from"), e.get("to"), e.get("type")) for e in data if isinstance(e, dict)}
@@ -531,7 +532,7 @@ def _prev_generated(store: Path) -> tuple[list[dict], list[dict]]:
     nodes: list[dict] = []
     f = store / "nodes" / f"{_GENERATED_PREFIX}hypotheses.yaml"
     if f.exists():
-        data = yaml.safe_load(f.read_text(encoding="utf-8")) or []
+        data = yamlio.load(f) or []
         if isinstance(data, list):
             nodes = [n for n in data if isinstance(n, dict) and n.get("id")]
     edges: list[dict] = []
@@ -540,7 +541,7 @@ def _prev_generated(store: Path) -> tuple[list[dict], list[dict]]:
         text = ef.read_text(encoding="utf-8")
         idx = text.find(_EDGES_MARKER)
         if idx != -1:
-            data = yaml.safe_load(text[idx:]) or []
+            data = yamlio.loads(text[idx:]) or []
             if isinstance(data, list):
                 edges = [
                     {"from": e["from"], "to": e["to"], "type": e["type"]}
@@ -566,7 +567,7 @@ def _local_only_source_absent(node_id: str, root: Path) -> bool:
         if not cfg.exists() or (d / "results" / "diagnostics.json").exists():
             return False
         try:
-            data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+            data = yamlio.load(cfg) or {}
         except yaml.YAMLError:
             return False
         h = data.get("hypothesis")

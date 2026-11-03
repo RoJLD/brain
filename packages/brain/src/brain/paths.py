@@ -136,14 +136,25 @@ def file_url_path(url: str) -> Path:
     return Path(path)
 
 
+_MAIN: dict[str, Path] = {}   # folder -> its main checkout, for this process (wi-brain-yaml-fast-load)
+
+
 def main_checkout(d: str | Path) -> Path | None:
-    """The main checkout of the git repo ``d`` is in (itself when it is not a worktree), or None."""
+    """The main checkout of the git repo ``d`` is in (itself when it is not a worktree), or None. An answer is kept
+    for the process (a command asked git 25 to 56 times for the same few folders); None is not, so a repo made later
+    is seen."""
+    key = os.path.normcase(os.path.abspath(str(d)))
+    if key in _MAIN:
+        return _MAIN[key]
     try:
         common = subprocess.run(["git", "-C", str(d), "rev-parse", "--path-format=absolute", "--git-common-dir"],
                                 capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return None
-    return Path(common).parent if common else None
+    if not common:
+        return None
+    _MAIN[key] = Path(common).parent
+    return _MAIN[key]
 
 
 def find_root(start: str | Path | None = None) -> Path:

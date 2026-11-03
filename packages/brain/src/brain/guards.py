@@ -1854,7 +1854,7 @@ def _manifests(names: list[str], cwd: str, shell: str, recursive: bool,
                 if os.path.getsize(f) > MAX_FILE:
                     return [], name
                 with open(f, encoding="utf-8", errors="replace") as fh:
-                    docs = list(projects.graph._yaml().safe_load_all(fh))
+                    docs = projects.graph.load_yaml_all(fh.read())
                 out += [o for d in docs for o in _objects(d)]
         except Exception:
             return [], name

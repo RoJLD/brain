@@ -75,7 +75,7 @@ def store_owners(cfg: Config) -> dict[str, str]:
     for store in projects.for_root(cfg.root).stores:
         f = store / "schema.yaml"
         if f.is_file():
-            data = graph._yaml().safe_load(f.read_text(encoding="utf-8")) or {}
+            data = graph.load_yaml_file(f) or {}
             if isinstance(data, dict) and data.get("owner"):
                 out[store.relative_to(cfg.root).as_posix() if store.is_relative_to(cfg.root) else str(store)] = \
                     str(data["owner"])

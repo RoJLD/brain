@@ -1183,7 +1183,7 @@ def _load_yaml(tree: Tree, path: str):
     if key not in _YAML:
         y = graph._yaml()
         try:
-            _YAML[key] = y.load(tree.text(path) or "", Loader=getattr(y, "CSafeLoader", y.SafeLoader))
+            _YAML[key] = graph.load_yaml(tree.text(path) or "")
         except y.YAMLError:
             _YAML[key] = None
     return _YAML[key]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
+from . import yamlio
 
 
 @dataclass
@@ -27,7 +27,7 @@ class Schema:
 
 
 def load_schema(path: str | Path) -> Schema:
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    data = yamlio.load(path) or {}
     for key in ("node_types", "edge_types", "statuses"):
         if key not in data:
             raise ValueError(f"schema missing required key: {key}")

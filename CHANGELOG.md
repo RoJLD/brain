@@ -3,6 +3,14 @@
 The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `research-graph` X.Y.Z and `brain` X.Y.Z
 (`packages/brain/CHANGELOG.md` for the brain command).
 
+## Unreleased
+
+- **Fast YAML** (wi-brain-yaml-fast-load): `research_graph.yamlio`, the one helper of every load: `loads` parses
+  through libyaml (`CSafeLoader`) when PyYAML has it; `load` reads a file through a per-process memo keyed by (path,
+  size, mtime_ns), keeps the data pickled and returns a fresh copy on each read, and checks a file written within 2 s
+  of its read against its text's digest. The store loader, the schema, priorities, sync, validate and the history read
+  through it. `RESEARCH_GRAPH_YAML_MEMO=0` turns the memo off.
+
 ## 0.2.3 — 2026-11-03
 
 - **An anchor of another repo's file resolves in that repo's checkout.** A node may say `repo: <name>`: its anchor's
