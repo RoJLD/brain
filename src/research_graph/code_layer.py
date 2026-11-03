@@ -174,6 +174,22 @@ def _definitions(body: list[ast.stmt]):
 def find_symbol(tree: ast.Module, symbol: str) -> tuple[str, int] | None:
     """(kind, line) of ``symbol`` (``name`` or ``Class.attr``) in a parsed module, or None. Imports and names
     defined inside functions do not count: a CodeRef names where the code is defined."""
+    found = _lookup(tree, symbol)
+    return (found[0], found[1].lineno) if found else None
+
+
+def symbol_span(tree: ast.Module, symbol: str) -> tuple[str, int, int] | None:
+    """(kind, first line, last line) of ``symbol`` in a parsed module, as :func:`find_symbol` finds it; the lines
+    span its decorators and its body: what a change to the symbol touches (``brain impact`` without GitNexus)."""
+    found = _lookup(tree, symbol)
+    if found is None:
+        return None
+    kind, node = found
+    first = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
+    return kind, first, node.end_lineno or node.lineno
+
+
+def _lookup(tree: ast.Module, symbol: str) -> tuple[str, ast.stmt] | None:
     body: list[ast.stmt] = tree.body
     node: ast.stmt | None = None
     parts = symbol.split(".")
@@ -191,7 +207,7 @@ def find_symbol(tree: ast.Module, symbol: str) -> tuple[str, int] | None:
         kind = "method" if len(parts) > 1 else "function"
     else:
         kind = "assign"
-    return kind, node.lineno
+    return kind, node
 
 
 def _exact_file(base: Path, parts: list[str]) -> Path | None:

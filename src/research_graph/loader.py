@@ -79,6 +79,9 @@ def load_store(store_dir: str | Path, schema: Schema | None = None) -> nx.DiGrap
             errors.append(
                 f"node {nid}: status {rn.get('status')!r} not allowed for type {rn.get('type')!r}"
             )
+        missing = schema.missing_props(rn.get("type"), rn.get("props"))
+        if missing:
+            errors.append(f"node {nid}: {rn.get('type')} needs props {', '.join(missing)}")
         level = rn.get("level")
         if level is not None and schema.levels and level not in schema.levels:
             errors.append(f"node {nid}: unknown level {level!r}")
@@ -148,6 +151,9 @@ def apply_overlay(g: nx.DiGraph, overlay_dir: str | Path, repo_root: str | Path 
                 errors.append(f"overlay node {nid}: unknown type {ntype!r}")
             if status not in schema.allowed_statuses(ntype):
                 errors.append(f"overlay node {nid}: status {status!r} not allowed for type {ntype!r}")
+            missing = schema.missing_props(ntype, rn.get("props"))
+            if missing:
+                errors.append(f"overlay node {nid}: {ntype} needs props {', '.join(missing)}")
             anchor = rn.get("anchor")
             if anchor and not rn.get("repo"):   # another repo's anchor stays relative to that repo
                 path, _, frag = anchor.partition("#")

@@ -93,6 +93,16 @@ retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root
 messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
 `audit: {max_lines: 1000, complexity: 15}`.
 
+### The impact of a change
+
+`brain impact [--diff BASE|A..B]` says, before merge, what a change's code carries in the graph
+([`docs/impact.md`](docs/impact.md)): the symbols it touches in the GitNexus code index (`brain index`) and their
+callers, the CodeRefs that name them, the nodes relying on those, then a checklist: the features whose status may
+change, the docs to update, the ADRs and specs to re-read, the tests to run (one `pytest` line) and the CI jobs that
+run them, the open items that deliver those features and the decisions pending on them. Without GitNexus it works at
+the file level, a Python symbol looked up by the AST, and says so on its second line. `brain code-map` resolves
+each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
+
 ## Start your own brain
 
 ```bash
@@ -262,6 +272,25 @@ child is alive. Each step gives the cost of one wake after the prompt cache expi
 turns yellow, orange and red at each step; `brain alerts` raises a master past 80 % with live children; the governor
 reminds a master past 80 % that calls `start_session`, and lets the call through: nothing blocks a new session.
 
+## Lessons
+
+What each finished item teaches is a node of the graph, so it can be found, counted and fixed, at zero token
+([`docs/lessons.md`](docs/lessons.md)):
+
+- **`brain retro ITEM`**, a step of the close-item procedure: the friction signals of the sessions that served the
+  item (merges and conflicts, guard refusals, failed tests, waits, tokens against the estimate, the owner's minutes,
+  pushes to its PRs after they were opened), the known lessons of the signals that fired and five questions; the
+  session answers in a few lines (`--record --note ...` writes them on the item). `brain retro --wave W`: a wave's
+  deep retro.
+- **`brain lesson add|seen`**: a Lesson node (`nodes/lessons.yaml`) with its trigger, anti-pattern and check, learned
+  from an item or a PR; a lesson close to a known one is refused, to be marked `seen` instead. A lesson seen twice
+  (once if severe) with nothing fixing it, or recurring after its fix, files an item proposal, its fix a script
+  first, a rule last.
+- **`brain lessons --follow`**: each lesson and what it led to (the item, its PR, whether it recurred since), and the
+  friction per item by week. **`brain lesson rules`**: the iron rules (`Σ-NAME`) cited in each registered repo's
+  Markdown, read only. **`brain lint lessons`**: the lessons a script could check (guard candidates) and those that
+  should say why not.
+
 ## Where the brain is found
 
 `config.json` and `projects.yaml` are found at `$BRAIN_CONFIG` / `$BRAIN_PROJECTS`, else in the first of:
@@ -344,13 +373,15 @@ sealed, resident, secret, `tenant:<id>`), and the class says where it may go and
 store without a class and a destination its class forbids, and `brain init` writes a starting block. What leaves a
 machine is sealed client-side to public keys (`brain vault`: age, gpg as the fallback), to a device key per machine,
 kept in the OS keystore, and an offline recovery key: two recipients at least, proven daily by a canary per recipient
-(`brain health vault`). Opening, drilling and creating a key are the owner's acts, refused in an agent session. The
-owner's steps, the canary's scheduled task per system and what to do with a lost key: the runbook
-[`docs/vault.md`](docs/vault.md).
+(`brain health vault`). When the recipients change (a lost machine, a revoked heir, a rotated key), `brain vault
+reseal` seals the kept copies again to the current set. Opening, drilling, and creating or rotating a key are the
+owner's acts, refused in an agent session. The owner's steps, the canary's scheduled task per system, the rotation
+and what to do with a lost key are in the runbook, [`docs/vault.md`](docs/vault.md).
 
 ```
 brain classes [--check] [--suggest] [--matrix] [PATH...]
-brain vault status | seal STORE | canary | recipient add NAME | device init | open FILE | drill RECIPIENT
+brain vault status | seal STORE | canary | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
+brain vault device init [--rotate] | device forget-previous | open FILE | drill RECIPIENT
 brain health vault
 ```
 
