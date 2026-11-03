@@ -309,7 +309,10 @@ function Set-Launcher([string]$from, [string]$to) {
     $leaf = Split-Path $to -Leaf
     Get-ChildItem (Split-Path $to) -Filter "$leaf.old-*" -ErrorAction SilentlyContinue |
         ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
-    if ((Test-Path $to) -and (Get-FileHash $to).Hash -eq (Get-FileHash $from).Hash) { return 'same' }
+    # SHA-256 through .NET: Get-FileHash is a script function a spawned Windows PowerShell does not always load
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $hash = { param($p) [BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($p))) }
+    if ((Test-Path $to) -and (& $hash $to) -eq (& $hash $from)) { return 'same' }
     $new = "$to.new"
     Copy-Item $from $new -Force
     foreach ($wait in 200, 400, 800, 1600) {
