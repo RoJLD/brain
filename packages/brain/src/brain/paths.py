@@ -11,8 +11,12 @@ from pathlib import Path
 
 
 def brain_home() -> Path:
-    """Machine-local brain data: $BRAIN_HOME, default ~/.brain (kept when a plugin is uninstalled)."""
+    """Machine-local brain data: $BRAIN_HOME, default ~/.brain (kept when a plugin is uninstalled). A test that lost
+    its temporary BRAIN_HOME (``monkeypatch.undo()`` drops the conftest's) is stopped before it writes the real one."""
     env = os.environ.get("BRAIN_HOME")
+    if not env and os.environ.get("PYTEST_CURRENT_TEST"):
+        raise RuntimeError("a test reached the real ~/.brain (BRAIN_HOME is unset): tests keep the conftest's "
+                           "temporary one (monkeypatch.context(), never monkeypatch.undo())")
     return Path(env).expanduser() if env else Path.home() / ".brain"
 
 
