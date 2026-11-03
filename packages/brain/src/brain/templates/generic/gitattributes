@@ -1,0 +1,2 @@
+# LF everywhere, on every machine: the hooks' shell scripts (plugins/) break with CRLF
+* text=auto eol=lf

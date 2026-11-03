@@ -7,7 +7,11 @@ config.json `engine.pin` names; its Claude Code hooks reach sessions through thi
 (`.claude-plugin/`, `plugins/`), rendered from `source/packs.yaml` by `brain sync`.
 
 - Backlog edits go through `brain item add|set|close|link`, journal entries through `brain journal add`, ADRs through
-  `brain adr new`, questions to {owner} through `brain decision ask|answer|ack`; `brain refresh` regenerates the views
-  and checks. The generated files (`notes/kanban_graph.md`, `notes/roadmap_graph.md`, `notes/decision_queue.md`,
+  `brain adr new`, questions to {owner} through `brain decision ask|answer|ack`; `brain sync` regenerates the views
+  and `brain check` checks (`brain refresh` does both from a worktree, `brain refresh --on-main` in the main
+  checkout). The generated files (`notes/kanban_graph.md`, `notes/roadmap_graph.md`, `notes/decision_queue.md`,
   `_generated_*.yaml`, `.claude-plugin/`, `plugins/`) are never edited by hand.
+- Every tracked file has a side in `boundary.yaml`. Code, tests and their fixtures (`src/`, `tests/`, `fixtures/`)
+  may be published one day: they name no one (an invented owner in the tests), and `brain check` refuses a
+  private term, a secret, an e-mail address or a home folder in them.
 - No secret, no session transcript in this repo.
