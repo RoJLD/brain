@@ -91,6 +91,15 @@ retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root
 messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
 `audit: {max_lines: 1000, complexity: 15}`.
 
+### Tests linked and coverage
+
+`brain sync` links each feature, item or hook to the test modules of its code (`tested_by`): the tests brain audit's
+evidence names, the tests that import the module themselves, and for a CodeRef of a symbol the tests that name it, or
+that ran it by the store's coverage summary. `brain coverage --repo R --run --write` runs a repo's suites under
+pytest-cov with test contexts and keeps that summary in the store (`coverage/<repo>.json`); `brain audit` then
+measures `test.coverage`, `feature.tests` reports a feature no test covers, and `FEATURES.md` shows each feature's
+coverage. The rules: [docs/tests-graph.md](docs/tests-graph.md).
+
 ## Start your own brain
 
 ```bash

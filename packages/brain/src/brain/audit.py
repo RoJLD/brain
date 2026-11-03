@@ -33,11 +33,12 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, features, graph, inventory, links, paths, projects
+from . import config, features, graph, inventory, links, paths, projects, testcov
 from .inventory import AuditError
 
-RULESET = 3   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
-#               (wi-brain-feature-matrix)
+RULESET = 4   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+#               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
+#               (wi-brain-test-links-auto)
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "
@@ -47,6 +48,7 @@ MILESTONE = "ms-brain-conformance"
 VIEW = "notes/audit.md"
 STREAK = 4
 README_LINES = 10
+COVERAGE_FLOOR = 50.0   # a module the tests run less of (percent of its statements) is a test.coverage finding
 SECTIONS = {"install": ("install", "setup", "getting started"),
             "usage": ("usage", "quick start", "quickstart", "example", "commands"),
             "tests": ("test", "development", "contributing")}
@@ -80,6 +82,10 @@ CHECKS = {c.id: c for c in (
           "anchors"),
     Check("test.links", "P2", "never", "a test module no graph node is tested_by (no Hook, and no node implemented_by "
           "a CodeRef, stands for its code)"),
+    Check("test.coverage", "P2", "never", f"a Python module the tests run under {COVERAGE_FLOOR:g} % of, by the store's "
+          "coverage summary (brain coverage)"),
+    Check("feature.tests", "P2", "never", "a have or partial feature with code that no test module is tested_by "
+          "(no test imports, names or runs its code)"),
     Check("features.md", "P0", "new+left", "FEATURES.md is not the render of the graph (P0), or is missing (P1 on a "
                                            "production repo, P2 elsewhere)"),
     Check("feature.links", "class", "new+left", "a module or script no feature is implemented by, or a have or "
@@ -154,6 +160,51 @@ def test_links(ctx: dict) -> list[dict] | str:
     return out
 
 
+def test_coverage(ctx: dict) -> list[dict] | str:
+    """test.coverage: a Python module of the repo that its tests run under COVERAGE_FLOOR % of, by the coverage summary
+    the store keeps (brain coverage --write, brain.testcov); a module the summary does not know (added since) is not
+    counted. Not measured without a summary."""
+    if not ctx["store"]:
+        return "no store to keep its coverage summary"
+    rel, _, holder = ctx["store"]
+    rf = ctx["rf"]
+    cov = testcov.load(ctx["trees"][holder], rel, rf.name)
+    if cov is None:
+        return f"no coverage summary in {rel} (brain coverage --run --write)"
+    files, at, out = cov.get("files") or {}, str(cov.get("commit") or "?")[:7], []
+    for u in rf.units:
+        f = files.get(u.path) if u.kind == "module" else None
+        if f and f.get("statements") and float(f.get("percent", 100)) < COVERAGE_FLOOR:
+            out.append(finding(rf.name, "test.coverage", u.path, f"the tests run {f['percent']:g} % of its "
+                               f"{f['statements']} statements (coverage at {at})",
+                               "test its paths no test runs, then brain coverage --run --write", u))
+    return out
+
+
+def feature_tests(ctx: dict) -> list[dict] | str:
+    """feature.tests: a have or partial feature of the repo with code that no test module is tested_by (the links
+    derived now: its CodeRefs' tests by brain audit's evidence, imports and coverage, brain.links)."""
+    fm = ctx.get("features")
+    if fm is None:
+        return NO_FEATURES
+    why = _no_store(ctx, "Test")
+    if why:
+        return why
+    lk, name, out = _derived(ctx), ctx["rf"].name, []
+    tested = {e["from"] for e in lk.edges if e["type"] == "tested_by"}
+    for fid in sorted(fm.features):
+        status = fm.features[fid].get("status")
+        if fm.repo.get(fid) != name or status not in ("have", "partial") or fid in tested:
+            continue
+        code = [c for c in fm.code(fid) if c.lower().startswith(f"code:{name}:")]
+        if code:
+            out.append(finding(name, "feature.tests", fid, f"a {status} feature no test module is tested_by: no test "
+                               f"imports, names or runs {', '.join(c.split(':', 2)[2] for c in code[:2])}"
+                               f"{' and more' if len(code) > 2 else ''}",
+                               "a test of its code (importing its module, naming its symbol), then brain sync"))
+    return out
+
+
 # --- features.md and feature.links (brain.features, wi-brain-feature-matrix) ---
 
 NO_FEATURES = "no Feature type in the project's store"
@@ -210,7 +261,8 @@ PENDING = {
     "feature.links": Pending("wi-brain-feature-matrix", True, "code", feature_links),
     "doc.links": Pending("wi-brain-doc-test-links", False, "every", doc_links),
     "test.links": Pending("wi-brain-doc-test-links", False, "code", test_links),
-    "test.coverage": Pending("no repo measures coverage", False, "python"),
+    "test.coverage": Pending("wi-brain-test-coverage", False, "python", test_coverage),
+    "feature.tests": Pending("wi-brain-test-links-auto", False, "code", feature_tests),
     "module.ts": Pending("wi-brain-audit-ts", False, "ts"),
     "cmd.leaves": Pending("wi-brain-audit-commands", False, "commands"),
     "code.layer": Pending("wi-brain-brain-coderefs", False, "no-code-layer"),
