@@ -107,7 +107,7 @@ def test_every_hook_tries_the_brain_commands_venv(hook):
     """A plugin folder without the package runs the installed engine: each launcher tries the brain command's venv
     (<BRAIN_HOME>/venv) before the PATH's python3 and python."""
     text = (render.claude_hooks() / hook).read_text(encoding="utf-8")
-    loop = next(line for line in text.splitlines() if line.startswith("for py in "))
+    loop = next(line for line in text.splitlines() if line.startswith("brain_python "))  # hooks/common.sh
     assert '"$home/venv/Scripts/python.exe" "$home/venv/bin/python"' in loop and '"${BRAIN_PYTHON:-}"' in loop
     assert loop.index("venv") < loop.index("python3")
     assert 'home="${BRAIN_HOME:-$HOME/.brain}"' in text
