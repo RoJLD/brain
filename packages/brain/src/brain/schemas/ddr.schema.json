@@ -69,7 +69,18 @@
         "choices": {"type": "array", "items": {"type": "string"}, "description": "Labels of the options chosen."},
         "other": {"type": "string", "description": "Free text, when the owner wrote their own answer."},
         "notes": {"type": "string"},
-        "via": {"enum": ["ask-tool", "cli", "spec", "chat", "tui"]}
+        "via": {"enum": ["ask-tool", "cli", "spec", "chat", "tui", "default"], "description": "default: no answer 24 h after a low-stakes decision was asked, its recommendation taken (by: default)."}
+      }
+    },
+    "default": {
+      "type": "object",
+      "required": ["option", "after"],
+      "additionalProperties": false,
+      "description": "Marked low-stakes when asked (brain decision ask --low-stakes, wi-brain-decision-default): the recommendation is applied at once, provisionally, and recorded as the answer by default once 'after' passes without one; brain check refuses the mark on money, keys, visibility, publication, accounts, arming, rules and scheduled tasks.",
+      "properties": {
+        "option": {"type": "string", "description": "The recommendation the default takes."},
+        "after": {"type": "string", "format": "date-time", "description": "When it becomes final: 24 h after it was asked."},
+        "reviewed": {"$ref": "#/$defs/stamp", "description": "The owner took note of the default (brain decision defaulted --seen)."}
       }
     },
     "read": {"$ref": "#/$defs/stamp", "description": "The model in charge read the answer."},

@@ -134,7 +134,7 @@ def load_template(spec: str = DEFAULT_TEMPLATE) -> Template:
             raise InitError(f"--template {spec!r}: not one of the engine's ({', '.join(known)}) nor a folder with a "
                             f"{MANIFEST}")
     try:
-        data = graph._yaml().safe_load((folder / MANIFEST).read_text(encoding="utf-8")) or {}
+        data = graph.load_yaml_file((folder / MANIFEST)) or {}
     except Exception as exc:   # a YAML error: the manifest may be the owner's or a domain's
         raise InitError(f"--template {spec}: {MANIFEST} is not readable YAML ({exc})") from exc
     if not isinstance(data, dict):
@@ -218,7 +218,7 @@ def schema_text(name: str, owner: str) -> str:
 
 
 def schema_layers(name: str) -> list[str]:
-    data = graph._yaml().safe_load(schema_text(name, "x")) or {}
+    data = graph.load_yaml(schema_text(name, "x")) or {}
     return list((data.get("layers") or {}).keys())
 
 

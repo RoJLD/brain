@@ -88,7 +88,7 @@ def template(bundle: str) -> dict:
     f = ROOT / bundle / stacks.BUNDLE_FILE
     if bundle not in names():
         raise BundleError(f"unknown bundle {bundle!r} (shipped: {', '.join(names()) or 'none'})")
-    doc = graph._yaml().safe_load(f.read_text(encoding="utf-8"))
+    doc = graph.load_yaml_file(f)
     if not isinstance(doc, dict) or not isinstance(doc.get("services"), dict):
         raise BundleError(f"{f}: no services")
     return doc

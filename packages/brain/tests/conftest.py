@@ -19,6 +19,8 @@ def brain_home(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_HOME", str(home))
     monkeypatch.delenv("BRAIN_ROOT", raising=False)
     monkeypatch.delenv("BRAIN_CAPTURE", raising=False)
+    monkeypatch.setenv("BRAIN_SELFTIME", "0")  # the engine's own events: only test_selftime turns them on
+    monkeypatch.delenv("BRAIN_HOOK_T0", raising=False)
     monkeypatch.setenv("BRAIN_NOTIFY", "off")  # no test sends a real notification (test_notify fakes the transports)
     # no test reads the owner's permissions.yaml unless it says so: the never-grantable categories are the engine's
     monkeypatch.setenv("BRAIN_PERMISSIONS", str(tmp_path / "no-permissions.yaml"))
@@ -29,6 +31,10 @@ def brain_home(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_CONFIG", str(BRAIN))
     monkeypatch.delenv("CLAUDE_BRAIN_DIR", raising=False)
     monkeypatch.delenv("BRAIN_PERSONAL", raising=False)  # and no machine's personal brain: the pointer is in home
+    # the tests run as the owner's own terminal unless they say otherwise, even from an agent's shell (brain.answers)
+    for var in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION", "CLAUDE_CODE_SESSION_ID",
+                "CLAUDE_SESSION_ID"):
+        monkeypatch.delenv(var, raising=False)
     from brain import update  # no test reads the engine's tags or its CHANGELOG on GitHub: offline unless it fakes them
 
     def offline(*args, **kwargs):

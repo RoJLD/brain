@@ -82,7 +82,7 @@ def load(root: Path) -> list[Rule]:
     f = root / FILE
     if not f.is_file():
         raise BoundaryError(f"no {FILE} at {root}")
-    data = graph._yaml().safe_load(f.read_text(encoding="utf-8")) or {}
+    data = graph.load_yaml_file(f) or {}
     rules = data.get("rules") if isinstance(data, dict) else None
     if not isinstance(rules, list) or not rules:
         raise BoundaryError(f"{FILE}: rules is a list of {{glob, side, target, why}}")
@@ -107,7 +107,7 @@ def load(root: Path) -> list[Rule]:
 
 def readiness_max(root: Path) -> int | None:
     """boundary.yaml's ``readiness_max``: the most denied terms the engine side may hold (None: no ratchet)."""
-    data = graph._yaml().safe_load((root / FILE).read_text(encoding="utf-8")) or {}
+    data = graph.load_yaml_file((root / FILE)) or {}
     value = data.get("readiness_max") if isinstance(data, dict) else None
     if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
         raise BoundaryError(f"{FILE}: readiness_max is a count, 0 or more")

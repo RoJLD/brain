@@ -41,12 +41,20 @@
   brain adr new TITLE --context C --decision D --why W --revisit R [--why-not-script S] [--decides ID]...
   brain adr new --reverses ADR --trigger T --decision D --why W --migration M ...   REVERSAL: <title>, supersedes
   brain decision ask --title T --question Q --option "A: consequences"... --why W [--multi] [--blocking] ...
+                 [--low-stakes]: applied at once, provisionally, final by default 24 h later without an answer;
+                 refused on money, keys, visibility, publication, accounts, arming, rules and scheduled tasks
   brain decision pending [--all] [--json]     what waits on {owner}: the queue, items' props.open, spec questions
   brain decision answer ID CHOICE... [--other TEXT]   {owner}'s choice (label, number or start of the label)
   brain decision answer --batch @FILE|-|JSON [--via ask-tool --by {owner}]   a morning session's answers in one call:
-                 {"<DDR id or question>": "<label>" | ["<label>"...] | {"choices", "other", "notes"}}; the question
-                 tool's answers as they come ("(Recommandé)" ignored, a multi_select's labels joined by ", ", any other
-                 text is {owner}'s own answer); every key is checked before any DDR is written
+                 {"<DDR id or question>": "<label>" | ["<label>"...] | {"choices", "other", "notes"}}; exact labels
+                 ("(Recommandé)" ignored, a multi_select's labels joined by ", "), {owner}'s own text only as
+                 {"other": "..."}; a BOM is fine; every key is checked before any DDR is written
+  brain decision answer --captured [--session ID] [--no-merge] [--retries 3] [--dry-run]   the answers this
+                 session's question tool captured (each tied to the DDR brain decision batch printed), recorded in a
+                 worktree, one PR, merged with its retries; in an agent's session an answer relayed by a message is
+                 never recorded (apply it, then ack)
+  brain decision defaulted [--all] [--apply] [--seen [ID...]] [--json]   the review list: the decisions taken by
+                 default, the provisional ones, the reversed ones (reverse one: answer ID <option> --again)
   brain decision batch [--project P | --all] [--size 4] [--zen [--minutes 5]] [--json]   the zen mode: the pending
                  decisions in batches for the question tool (AskUserQuestion: up to 4 questions, a header of 12
                  characters, 2 to 4 options, the recommended one first and marked "(Recommandé)"), the blocking ones
@@ -368,7 +376,7 @@ from . import (__version__, actions, alerts, audit, backfill, batch, boundary, b
                config, cost, decisions, detail, digest, features, forecast, graph, init, links, lint, memory,
                milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
                records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, update, usage)
-from . import classes, governor, keystore, vault
+from . import answers, classes, defaults, governor, keystore, selftime, vault
 from .inventory import AuditError
 
 
@@ -920,7 +928,7 @@ def cmd_decision(args, root: Path) -> int:
                 at=now, context=_text(args.context), blocks=args.blocks or "", multi=args.multi,
                 blocking=args.blocking, due=args.due or "", recommend=args.recommend or "", items=args.item,
                 specs=args.spec, adrs=args.adr, project=_project(args, root).name, session=args.session or "",
-                slug=args.slug or "", dry_run=args.dry_run)
+                slug=args.slug or "", dry_run=args.dry_run, low_stakes=args.low_stakes)
             if out is None:
                 print(records._dump_yaml(ddr), end="")
                 if args.blocking and not args.no_notify:
@@ -928,14 +936,21 @@ def cmd_decision(args, root: Path) -> int:
                 return 0
             print(f"asked {ddr['id']} ({out.relative_to(root).as_posix()}); {config.name_of()} answers: "
                   f"brain decision answer {ddr['id']} <option>")
+            if ddr.get("default"):
+                print(f"low-stakes: apply {ddr['default']['option']!r} now, provisionally; it is final by default at "
+                      f"{ddr['default']['after']} unless {config.name_of()} answers (brain decision defaulted)")
             if args.blocking and not args.no_notify:
                 print("\n".join(notify.decision(_notify_project(args, root), ddr)))
+        elif sub == "answer" and args.captured:
+            return cmd_answer_captured(args, root)
+        elif sub == "defaulted":
+            return cmd_defaulted(args, root)
         elif sub == "answer" and args.batch:
             if args.id or args.choice or args.other or args.notes:
                 raise decisions.QueueError("--batch takes the answers from its JSON: no ID, CHOICE, --other or "
                                            "--notes")
             done = batch.answer_batch(root, _answers(args.batch), by=args.by, via=args.via, at=now,
-                                      again=args.again)
+                                      again=args.again, check=answers.refusal)
             print(f"answered {len(done['answered'])} decision(s) via {args.via} by {args.by}:")
             print("\n".join(f"  {d['id']}: {decisions._answer_text(d)}" for d in done["answered"]))
             if done["skipped"]:
@@ -945,7 +960,7 @@ def cmd_decision(args, root: Path) -> int:
             if not args.id:
                 raise decisions.QueueError("answer takes a DDR id and a choice, or --batch with the answers")
             ddr = decisions.answer(root, args.id, args.choice, other=_text(args.other), notes=_text(args.notes),
-                                   by=args.by, via=args.via, at=now, again=args.again)
+                                   by=args.by, via=args.via, at=now, again=args.again, check=answers.refusal)
             print(f"answered {ddr['id']}: {decisions._answer_text(ddr)}; the model in charge applies it, then "
                   f"brain decision ack {ddr['id']} --applied <where>")
         elif sub == "ack":
@@ -965,20 +980,95 @@ def cmd_decision(args, root: Path) -> int:
 
 
 def _answers(value: str) -> str:
-    """--batch: @FILE or a file path, '-' (stdin), else the JSON itself."""
+    """--batch: @FILE or a file path (UTF-8 with or without a BOM, or UTF-16), '-' (stdin), else the JSON itself."""
     if value.startswith("@"):
         if not Path(value[1:]).is_file():
             raise batch.BatchError(f"{value[1:]}: no such file")
-        return Path(value[1:]).read_text(encoding="utf-8")
-    if value != "-" and not value.lstrip().startswith(("{", "[")) and Path(value).is_file():
-        return Path(value).read_text(encoding="utf-8")
-    return _text(value)
+        return batch.decode(Path(value[1:]).read_bytes())
+    if value != "-" and not value.lstrip("\ufeff").lstrip().startswith(("{", "[")) and Path(value).is_file():
+        return batch.decode(Path(value).read_bytes())
+    if value == "-":
+        return batch.decode(sys.stdin.buffer.read()) if hasattr(sys.stdin, "buffer") else sys.stdin.read()
+    return value
+
+
+# --- the answers' lane (brain.answers) and the defaults (brain.defaults) ---
+
+def cmd_answer_captured(args, root: Path) -> int:
+    """``brain decision answer --captured``: this session's captured answers, recorded in one PR (brain.answers)."""
+    if args.id or args.choice or args.other or args.notes or args.batch:
+        raise decisions.QueueError("--captured takes the answers from the capture: no ID, CHOICE, --other, --notes "
+                                   "or --batch")
+    session = args.session or answers.session_id()
+    if answers.agent_session() and not session:
+        raise decisions.QueueError("--captured in an agent's session needs its id (CLAUDE_CODE_SESSION_ID)")
+    if answers.agent_session() and args.session and args.session != answers.session_id():
+        raise decisions.QueueError("an agent's session records only its own captured answers (one writer per batch)")
+    project = _project(args, root)
+    caps = answers.unrecorded(session, project.name)
+    if not caps:
+        print(f"no captured answer to record for {project.name}" + (f" (session {session})" if session else ""))
+        return 0
+    for c in caps:
+        print(f"  {c['ddr']} ({c.get('header')}): {c['answer']}" + (f" — notes: {c['notes']}" if c.get("notes")
+                                                                     else ""))
+    if args.dry_run:
+        print(f"dry run: {len(caps)} answer(s) to record in one PR")
+        return 0
+    try:
+        out = answers.record_captured(project, caps, owner=args.by, session=session, merge=not args.no_merge,
+                                      retries=args.retries, again=args.again)
+    except answers.AnswersError as exc:
+        print(f"brain: {exc}", file=sys.stderr)
+        return 1
+    print(f"recorded {len(out['recorded'])} answer(s) on {out['branch']}: {out['pr']}")
+    if out["skipped"]:
+        print(f"not pending, left: {', '.join(out['skipped'])} (--again replaces an answer)")
+    for line in out["log"]:
+        print(f"  {line}")
+    if not out["merged"]:
+        print(f"not merged yet: {out['pr']} (worktree {out['worktree']})")
+    else:   # the hooks read the main checkout's queue: the other sessions see the answers once it is pulled
+        print(f"merged: once {project.root} is pulled, the hooks announce the answers to every session of the project")
+    print("the sessions that own each decision apply it, then brain decision ack ID --applied <where>")
+    return 0
+
+
+def cmd_defaulted(args, root: Path) -> int:
+    """``brain decision defaulted``: the review list of the decisions taken by default (brain.defaults)."""
+    now = args.at or _now()
+    scope = [p for p in _scope(args, root) if (p.root / records.RECORDS_DIR / "ddr").is_dir()]
+    if args.seen is not None and answers.agent_session():
+        raise decisions.QueueError(f"--seen is {config.name_of()}'s own note that they read the defaults: from their "
+                                   "terminal or the cockpit, not an agent's session")
+    out = []
+    for p in scope:
+        if args.apply:
+            for ddr_id in defaults.finalize(p.root, now):
+                print(f"{p.name}: {ddr_id} taken by default")
+        if args.seen is not None:
+            done = defaults.seen(p.root, args.seen, at=now, session=args.session or "")
+            print(f"{p.name}: reviewed {len(done)}: {', '.join(done) or 'none'}")
+        if args.apply or args.seen is not None:
+            decisions.write_view(p.root, p.name)
+        out.append({"project": p.name, **defaults.review(p.root, now)})
+    if args.json:
+        print(json.dumps(out if args.all else (out[0] if out else {}), ensure_ascii=False, indent=1))
+        return 0
+    for d in out:
+        print("\n".join(defaults.render(d["project"], d)))
+    return 0
 
 
 def cmd_batch(args, root: Path) -> int:
     """``brain decision batch``: the zen mode, for this project or every registered one."""
     scope = [p for p in _scope(args, root) if p.root.is_dir()]
     data = [batch.build(p, size=args.size, named=args.all) for p in scope]
+    for p, d in zip(scope, data):   # the capture hook ties each answer to its DDR by these (brain.answers)
+        try:
+            answers.remember(p.name, p.root, d["batches"])
+        except OSError as exc:
+            print(f"brain: warning: the asked questions were not written to the ledger: {exc}", file=sys.stderr)
     if args.json:
         print(json.dumps(data if args.all else data[0], ensure_ascii=False, indent=1))
         return 0
@@ -1249,6 +1339,8 @@ def _sync_store(args, root: Path, store: Path) -> int:
     if featured and _features_view(args, root, store, write=True):   # after the links: FEATURES.md shows them
         return 1
     if (root / records.RECORDS_DIR / "ddr").is_dir():
+        for ddr_id in defaults.finalize(root, _now()):   # 24 h without an answer: the low-stakes default is final
+            print(f"{ddr_id}: taken by default (brain decision defaulted)")
         _queue_changed(root, args)
     if neutral.applies(root) and render.main(root, "claude", do_write=True):   # the marketplace from the source
         return 1
@@ -2390,6 +2482,10 @@ def build_parser() -> argparse.ArgumentParser:
     da.add_argument("--dry-run", action="store_true")
     da.add_argument("--no-notify", action="store_true", help="a --blocking question is not sent through the "
                                                              "notification channels (brain notify)")
+    da.add_argument("--low-stakes", action="store_true",
+                    help="applied at once, provisionally; final by default 24 h later without an answer (brain "
+                         "decision defaulted); refused on money, keys, visibility, publication, accounts, arming, "
+                         "rules and scheduled tasks")
     dp = de.add_parser("pending", help=f"what waits on {who}: the queue's DDRs, items' props.open, unanswered spec "
                                        f"questions, items blocked on {who}, specs still proposed")
     dp.add_argument("--all", action="store_true", help="every registered project, then the total")
@@ -2407,8 +2503,27 @@ def build_parser() -> argparse.ArgumentParser:
     dw.add_argument("--again", action="store_true", help="replace an earlier answer")
     dw.add_argument("--batch", metavar="@FILE|-|JSON",
                     help="a session's answers, {id or question: label, labels or {choices, other, notes}}: @FILE, a "
-                         "file path, - (stdin) or the JSON itself (brain decision batch prints the questions)")
+                         "file path, - (stdin) or the JSON itself (brain decision batch prints the questions); "
+                         "exact labels, free text only as {\"other\": ...}; a BOM is fine")
     dw.add_argument("--at")
+    # the answers' lane (wi-brain-answers-lane): the capture of the question tool, recorded in one PR
+    dw.add_argument("--captured", action="store_true",
+                    help="record the answers this session's question tool captured, in a worktree and one PR, "
+                         "merged with its retries")
+    dw.add_argument("--session", help="--captured: the asking session (default: this one, CLAUDE_CODE_SESSION_ID; "
+                                      "in the owner's terminal, every session's)")
+    dw.add_argument("--no-merge", action="store_true", help="--captured: open the PR, do not merge it")
+    dw.add_argument("--retries", type=_whole, default=answers.RETRIES,
+                    help=f"--captured: merge attempts after the first (default {answers.RETRIES})")
+    dw.add_argument("--dry-run", action="store_true", help="--captured: list what would be recorded")
+    # decisions by default (wi-brain-decision-default): the review list
+    dd = de.add_parser("defaulted", help=f"the review list: the decisions taken by default, for {who} to take note")
+    dd.add_argument("--all", action="store_true", help="every registered project")
+    dd.add_argument("--apply", action="store_true", help="record the defaults due now (brain refresh does it too)")
+    dd.add_argument("--seen", nargs="*", metavar="ID", help=f"{who} reviewed them (every one listed when no id)")
+    dd.add_argument("--session")
+    dd.add_argument("--at")
+    dd.add_argument("--json", action="store_true")
     db = de.add_parser("batch", help="zen mode: the pending decisions in batches for the question tool, the blocking "
                                      "ones first, then by what they unblock, grouped by brainstorm, item or spec")
     db.add_argument("--all", action="store_true", help="every registered project")
@@ -2922,6 +3037,9 @@ def build_parser() -> argparse.ArgumentParser:
                                                               f"{perf.TOP}; 0: all)")
     pf.add_argument("--from", dest="sources", action="append", metavar="PATH",
                     help="a JSONL file or a folder of them to read instead of the ledger (repeatable)")
+    pf.add_argument("--engine", action="store_true", help="the engine's own runs instead (every brain command and "
+                                                          "hook, brain.selftime): its slow steps, regressions, hook time "
+                                                          "per week and the errors it caught")
     pf.add_argument("--json", action="store_true")
     al = sub.add_parser("alerts", help="each project's open alerts (scheduler, ledger, stacks, code index, audit, its "
                                        "events and files); --notify sends the changes through brain notify")
@@ -3050,6 +3168,11 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure") and not stream.isatty():
             stream.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args(argv)
+    with selftime.run(selftime.command_task(args)):  # the engine's exec event, and an error event if it raises
+        return _dispatch(args)
+
+
+def _dispatch(args) -> int:
     if args.cmd == "capture":
         return capture.main([args.event] + ([args.family] if args.family else []))
     if args.cmd == "decision" and args.decision_cmd == "announce":  # a hook: standard library only, never fails
@@ -3065,7 +3188,7 @@ def main(argv: list[str] | None = None) -> int:
                           shell=args.shell, quiet=args.quiet)
     if args.cmd == "perf":
         return perf.main(project=args.project, since=args.since, task=args.task, top=args.top, sources=args.sources,
-                         as_json=args.json)
+                         as_json=args.json, engine=args.engine)
     if args.cmd == "init":  # a new brain has no graph store yet
         return init.main(args)
     if args.cmd == "merge-driver":  # git's entry and a repo's git config: no graph store

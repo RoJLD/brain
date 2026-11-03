@@ -43,6 +43,60 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 - **The pilot's settings in the docs**: `docs/install.md` says, before the first session, `BRAIN_MEMORY_SYNC=0`, the
   venv at `%USERPROFILE%\.brain\venv` or `BRAIN_PYTHON`, Git Bash's `HOME` (else `BRAIN_HOME`), telemetry off by
   default, and how to upgrade by hand from a version without `brain update`; `docs/pilot.md` how updates come during the pilot.
+- **The engine times itself** (wi-brain-self-timing, the first stage of the opt-in telemetry). Every `brain`
+  command and every hook writes one exec event to `<BRAIN_HOME>/ledger/engine/` (project `brain`, task
+  `brain <command> [<subcommand>]` or `hook <name>`, `[bash]` for a run that never started Python, the engine's
+  version, the duration from the engine's import or from the hook's first bash line, so the interpreter's start
+  counts); every error a hook or a command catches through the shared sink (`capture._log_error`) or lets escape
+  becomes an error event: its exception class and the engine's `module:function`, never its message. The bash fast
+  paths append their own line (`hooks/common.sh`, builtins only) to their own file, apart from the locked Python
+  writers. `brain perf --engine` lists the slowest commands and hooks, regressions between engine versions, the
+  hooks' blocking time per week against the 1 h trigger of the PERF ADR, and the errors caught; `brain alerts`
+  raises a task that caught the same exception 3 times in 24 h (`engine` source; error for a hook, warn for a
+  command) on the brain's own project. The engine's events stay out of the projects' ledger files, which `brain
+  alerts` and `brain status` read, and the last three months are kept. `BRAIN_SELFTIME=0` turns it off;
+  `BRAIN_CAPTURE_TIMING`, which wrote decision times into `errors.log` as errors, is gone. `brain.timing` imports
+  `schema`, `secretscan` and `socket` only where they are used, so a hook does not pay for them.
+- **The token ledger counts the engine's sessions** (wi-brain-ledger-engine-sessions). A session that ran in a repo
+  a project declares under `repos:` (the engine's checkout for a personal brain, its `.claude/worktrees/*`, a
+  checkout beside it named `<repo>-wt-<name>` even once removed) is credited to that project, and a sub-session to
+  the project of the item its brief names, wherever it ran; before, they landed in « other folders », so `brain
+  usage`, the quota pacing and the forecast missed them (`queue.Placer`, also used by the cockpit and `brain queue`).
+  A project's own root wins over another project's repo at the same place.
+- **Faster hooks** (wi-brain-hook-latency, PERF-1: Python first). The launchers read their JSON with `read` instead
+  of `$(cat)`, find Python with `[ -x ]` and `hash` instead of `$(command -v)` (`brain_python`, `hooks/common.sh`),
+  pass the JSON as a here-string instead of a pipe, and take the plugin root from their own path: no fork before
+  Python. `guard.sh` leaves git that only reads to bash (`git [-C DIR | --no-pager | -P] SUB`, SUB in
+  `guards.GIT_READS`: status, log, diff, show, rev-parse, ls-files, blame...; not with `--output` or a pager option;
+  any other git, `-c` or `--git-dir` still starts Python), about 30 % of the shell commands that started it.
+  `paths.installed_checkout` reads its `file:` URL with `urllib.parse` (`paths.file_url_path`) and once per process:
+  a guard no longer imports `urllib.request` (~50 ms). The registry and `permissions.yaml` are read through libyaml
+  (`graph.load_yaml`). The exec form of the hooks (`args`, no shell) waits until it is checked on Windows.
+- **Fast YAML** (wi-brain-yaml-fast-load). Every YAML read of the engine goes through one helper,
+  `research_graph.yamlio` (`graph.load_yaml`, `load_yaml_file`, `load_yaml_all`): libyaml (`CSafeLoader`) when PyYAML
+  has it, and a per-process memo keyed by (path, size, mtime_ns) that keeps the data pickled and hands each caller a
+  fresh copy; a file written within 2 s of its read is checked against its text's digest. `graph.load_yaml_list`,
+  `records.load`, the registry and every module's `safe_load` used the pure-Python parser. `paths.main_checkout`
+  keeps its answers for the process (not a None). Numbers from `brain perf --engine` in the PR.
+- **Releasing:** `hooks/common.sh`'s `brain_version` moves with `__version__` (a test checks it).
+- **The owner's answers, one writer per batch** (wi-brain-answers-lane). Two batches of answers went wrong in two days:
+  a shortened label stored as free text, and a BOM that made `--batch` write nothing. Now `brain decision batch`
+  writes the questions it prints to the ledger (`asked-<month>.jsonl`), the capture hook ties each answer of the
+  question tool to the DDR its question came from (by the id it carries, else its text and header, else its header
+  and labels) and writes it to `answer-<month>.jsonl` with the labels as the tool returned them and the owner's notes,
+  and `brain decision answer --captured` records the session's captured answers in a worktree on `claude/answers-…`,
+  refreshes, opens one PR and merges it, merging main and retrying when it moved (`--retries`, `--no-merge`). `--batch`
+  is strict: an inexact label is refused, naming the label it shortens, unless it is marked free text
+  (`{"other": ...}`); a BOM is read, UTF-8 or UTF-16. In an agent's session, `answer` and `--batch` record only what
+  that session's question tool captured: an answer relayed by a message is never recorded, it is applied and acked.
+  The capture also drops the French `(Recommandé)` mark from an ad-hoc question's labels.
+- **Decisions by default, then reviewed** (wi-brain-decision-default). `brain decision ask --low-stakes` gives the DDR
+  a `default` (its recommendation, final 24 h later): the asking session applies it at once, provisionally; without
+  an answer, `brain refresh` or `brain decision defaulted --apply` records it `by: default`, `via: default` at the
+  deadline and the hooks announce it « by default ». The mark is refused, at the ask and by `brain check`, on money,
+  keys, visibility, publication, accounts, arming, rules and scheduled tasks. `brain decision defaulted` is the
+  owner's review list (`--seen` from their terminal), with a line in the morning batch and the cockpit's queue panel; `answer ID <option> --again`
+  reverses a default. The DDR schema gains `default` and the answer's `via: default`.
 
 ## 0.2.3 — 2026-11-03
 

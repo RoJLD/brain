@@ -48,7 +48,6 @@ import math
 import os
 import re
 import sys
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -596,7 +595,6 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
 
 
 def main(stdin=None, stdout=None) -> int:
-    started = time.perf_counter()
     try:
         payload = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
         out = decide(payload)
@@ -606,12 +604,6 @@ def main(stdin=None, stdout=None) -> int:
         try:
             from .capture import _log_error
             _log_error("governor", exc)
-        except Exception:
-            pass
-    if os.environ.get("BRAIN_CAPTURE_TIMING"):
-        try:
-            from .capture import _log_error
-            _log_error("governor", RuntimeError(f"took {time.perf_counter() - started:.3f}s"))
         except Exception:
             pass
     return 0

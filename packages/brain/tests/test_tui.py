@@ -476,3 +476,12 @@ def test_the_title_shows_the_version_and_the_check_never_delays_the_first_paint(
             await pilot.pause(0.2)
             assert ran[-1] == ("apply", [["brain", "update", "--yes"]])  # the owner's y
     asyncio.run(main())
+
+
+def test_the_queue_panel_names_the_decisions_taken_by_default(monkeypatch):
+    line = "Taken by default, to review: 2 (1 provisional) — brain decision defaulted"
+    monkeypatch.setitem(PANELS, "queue", {**PANELS["queue"], "defaulted": line})
+
+    async def check(app, pilot, fake):
+        assert app.query_one("#queue").border_subtitle.startswith(escape(line))
+    _run(check)

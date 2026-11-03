@@ -137,6 +137,44 @@ The views name the owner by `identity.display_name` (else `identity.owner`): the
 one is named; `settings.titles` there gives any panel a free title. `identity.owner` stays the id `--by` writes and the
 stores declare.
 
+### The owner's answers: one writer per batch
+
+The session that asks the owner records the answers, in one PR per batch (wi-brain-answers-lane):
+
+1. `brain decision batch --json` prints the questions for Claude Code's question tool, and writes each one (its text,
+   header and labels, the DDR's id) to `<BRAIN_HOME>/ledger/asked-<month>.jsonl`.
+2. When the tool returns, the capture hook ties each answer to the DDR its question came from (the id a repeated
+   question carries, else its text and header, else its header and labels) and writes it to
+   `ledger/answer-<month>.jsonl`: the answer exactly as the tool returned it, the labels it names (the DDR's own,
+   `(Recommandé)` dropped; a multiple choice is the labels joined by `, `, the rest of it the owner's text) and the
+   owner's notes. A question the session wrote by hand stays an ad-hoc DDR of the capture.
+3. `brain decision answer --captured` records this session's captured answers: a worktree of the project's main
+   checkout on `claude/answers-<stamp>` from origin's default branch, the answers written, `brain refresh --offline`,
+   one commit, one PR (`gh`), then merged; when the merge is refused because main moved, it merges main, takes main's
+   side of the generated files, refreshes again, pushes and retries (`--retries`, default 3; `--no-merge` stops at
+   the PR). A record that conflicts stops it. A decision answered meanwhile is left (`--again` replaces it).
+
+`--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
+label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file
+may start with a BOM (UTF-8, or UTF-16 from Windows PowerShell's `>`). In an agent's session (`CLAUDECODE`),
+`brain decision answer` and `--batch` record only an answer this session's own question tool captured: an answer
+relayed by a message is never recorded; the session that gets it applies it and acknowledges it (`brain decision
+ack`) once the asking session has recorded it and the mid-session announce names it. The owner's own terminal records
+anything.
+
+### Decisions by default, then reviewed
+
+`brain decision ask --low-stakes` marks a decision whose recommendation the asking session may apply at once,
+provisionally (wi-brain-decision-default): the DDR gets `default: {option, after}`, `after` 24 h from the ask. The
+owner may answer it as any other; without an answer, `brain refresh` (or `brain decision defaulted --apply`) records
+the recommendation as its answer, `by: default`, `via: default`, at the deadline, and the hooks announce it with « by
+default ». The mark is refused, at the ask and by `brain check`, on a decision whose text names money, keys,
+visibility, publication, accounts, arming, rules or scheduled tasks (`brain.defaults.REFUSED`, by words: a false alarm
+only keeps the decision with the owner). `brain decision defaulted` is the owner's review list (the defaults to
+review, the provisional ones, the reversed ones; `--seen` marks them read, from the owner's terminal only), with a
+line in the morning batch (`brain decision batch --zen`) and in the cockpit's queue panel (`brain tui`); any default is reversed with `brain decision answer ID
+<option> --again`.
+
 ## Parallel sessions
 
 Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](docs/merge-driver.md)):
@@ -171,6 +209,12 @@ brain whose `source/packs.yaml` gives its core pack `hooks:` gets them copied in
 `brain render --target claude --write`, at the version it pins; `inject-rules.sh` injects the files of config.json
 `rules`. The guards never block a session on an error: without Python, the call goes through.
 
+A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
+Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that
+may write, names `gh`, a program of the owner and power guards, or git other than to read (`git [-C DIR] status`,
+`log`, `diff`, `show`, `rev-parse`... without `--output`: `brain.guards.GIT_READS`, checked against the guards'
+tables). In Python a guard reads the registry through libyaml and does not import `urllib.request`.
+
 Two of the PreToolUse hooks keep the owner's say over how sessions run (the runbook: [`docs/guards.md`](docs/guards.md)):
 
 - **Session settings** (`guard.sh tool`, `brain.guards`): a session that changes Remote Control or a permission mode
@@ -195,6 +239,20 @@ hooks run `brain.capture` (`capture.sh <event>` runs `hooks/capture.py`, which c
 venv): it reads the hook's JSON on stdin and appends the session events, the session-record snapshots and the action
 records to `<BRAIN_HOME>/ledger` at zero token; it prints nothing and never fails the session (its errors go to
 `ledger/errors.log`; `BRAIN_CAPTURE=0` turns it off).
+
+**The engine times itself** (`brain.selftime`, local only, zero token). Every `brain` command and every hook writes
+one exec event (task `brain <command> [<subcommand>]` or `hook <name>`, a bash-only run marked `[bash]`, the engine's
+version, its duration from the engine's import or the hook's first line, its exit) to
+`<BRAIN_HOME>/ledger/engine/exec-<yyyy-mm>.jsonl` (`exec-bash-...` for the bash fast paths); every error a hook or a
+command catches becomes an error event there (its exception class and the engine's `module:function`, never its
+message, whose text stays in `ledger/errors.log`). The last three months are kept. `brain perf --engine` lists the
+slowest commands and hooks, the regressions from one engine version to the next, the hooks' blocking time per week
+and the errors caught; `brain alerts` raises a hook or a command that caught the same exception 3 times in 24 hours,
+on the brain's own project. `BRAIN_SELFTIME=0` turns it off.
+
+```
+brain perf --engine [--since 7d] [--task guard] [--json]
+```
 
 ## Data classes and the vault
 
@@ -228,6 +286,8 @@ through `BRAIN_CONFIG`), with a temporary `BRAIN_HOME`; they need git, and bash 
 ## Releasing
 
 With research-graph, under the repo's single tag series: see the root README. `CHANGELOG.md` here is the command's.
+A release moves `brain_version` in `src/brain/adapters/claude/hooks/common.sh` with `__version__` (the hooks' bash
+fast paths stamp it on their events; `tests/test_selftime.py` checks the two agree).
 
 ## License
 

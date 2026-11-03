@@ -6,6 +6,7 @@
 # cached copy of the plugin on a machine with no pointer) it injects the plugin's own rules/global.md.
 # JSON is read and built with bash, tr, sed and awk only, so the hook needs nothing beyond bash (Git Bash on Windows).
 set -euo pipefail
+{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python
 
 event="${1:-SessionStart}"
 root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -52,3 +53,4 @@ text() {
 context=$(text | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{printf "%s\\n", $0}')
 
 printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$event" "$context"
+selftime_bash "hook inject-rules $event [bash]"

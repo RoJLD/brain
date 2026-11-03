@@ -66,11 +66,11 @@ def test_capture_keeps_the_accents_of_its_payload(monkeypatch, brain_home):
 
 
 def test_every_launcher_runs_python_in_utf8_mode():
-    launchers = [p for p in sorted((PLUGIN / "hooks").glob("*.sh")) if '"$path"' in p.read_text(encoding="utf-8")]
+    launchers = [p for p in sorted((PLUGIN / "hooks").glob("*.sh")) if '"$brain_py"' in p.read_text(encoding="utf-8")]
     assert len(launchers) >= 9
     for sh in launchers:
         text = sh.read_text(encoding="utf-8")
-        assert '"$path" -X utf8 -I ' in text and '"$path" -I ' not in text, sh.name
+        assert '"$brain_py" -X utf8 -I ' in text and '"$brain_py" -I ' not in text, sh.name
 
 
 def test_guard_sh_refuses_raw_utf8_with_an_emoji(tmp_path):

@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import graph, paths, schema, secretscan
+from . import defaults, graph, paths, schema, secretscan
 
 RECORDS_DIR = "records"
 HEADERS = {
@@ -95,13 +95,12 @@ def write(root: Path, kind: str, rec: dict, replace: bool = False) -> Path | Non
 
 
 def load(root: Path) -> dict[str, list[tuple[Path, dict]]]:
-    yaml = graph._yaml()
     out: dict[str, list[tuple[Path, dict]]] = {"ddr": [], "sr": [], "ar": []}
     base = root / RECORDS_DIR
     for f in sorted((base / "ddr").glob("*.yaml")):
-        out["ddr"].append((f, yaml.safe_load(f.read_text(encoding="utf-8"))))
+        out["ddr"].append((f, graph.load_yaml_file(f)))
     for f in sorted((base / "sr").glob("*/*.yaml")):
-        out["sr"].append((f, yaml.safe_load(f.read_text(encoding="utf-8"))))
+        out["sr"].append((f, graph.load_yaml_file(f)))
     for f in sorted((base / "ar").glob("*.jsonl")):
         for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
             if line.strip():
@@ -117,6 +116,8 @@ def check(root: Path) -> tuple[list[str], list[str]]:
         for f, rec in items:
             rel = f.relative_to(root).as_posix() if f.is_relative_to(root) else str(f)
             e, w = schema.check(kind, rec)
+            if kind == "ddr" and isinstance(rec, dict):
+                e = e + defaults.check(rec)   # the low-stakes mark where a default never decides
             errors += [f"{rel}: {x}" for x in e]
             warnings += [f"{rel}: {x}" for x in w]
             rid = (rec or {}).get("id") if isinstance(rec, dict) else None

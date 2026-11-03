@@ -83,8 +83,7 @@ def _load_list(path: Path) -> list:
     """A YAML list, read with libyaml's loader when PyYAML has it (a large store: 2.5 s in pure Python)."""
     if not path.is_file():
         return []
-    yaml = graph._yaml()
-    data = yaml.load(path.read_text(encoding="utf-8"), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+    data = graph.load_yaml_file(path)
     return data if isinstance(data, list) else []
 
 
@@ -211,10 +210,8 @@ def _work(st: Store) -> Section:
 
 def record_files(root: Path, kind: str) -> list[dict]:
     """The DDRs (kind ddr) or SRs (kind sr) of a repo, by file name; records.load would also parse every AR."""
-    yaml = graph._yaml()
-    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     files = sorted((root / records.RECORDS_DIR / kind).glob("*.yaml" if kind == "ddr" else "*/*.yaml"))
-    recs = [yaml.load(f.read_text(encoding="utf-8"), Loader=loader) for f in files]
+    recs = [graph.load_yaml_file(f) for f in files]
     return [r for r in recs if isinstance(r, dict) and r.get("id")]
 
 

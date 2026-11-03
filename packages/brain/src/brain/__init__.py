@@ -5,3 +5,7 @@ read or write YAML (``brain record``, ``brain item``) import PyYAML when they ru
 """
 
 __version__ = "0.2.3"
+
+import time as _time
+
+_started = (_time.time(), _time.perf_counter())  # brain.selftime: a command is timed from the engine's import

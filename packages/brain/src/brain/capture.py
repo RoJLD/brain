@@ -23,12 +23,12 @@ import json
 import os
 import re
 import sys
-import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import actions, midsession, paths, plan, schema, secretscan, transcript
+from . import answers as answers_lane
 
 
 def _now() -> str:
@@ -61,6 +61,11 @@ def _recent_ids(name: str, n: int = 400) -> set[str]:
 
 
 def _log_error(event: str, exc: BaseException) -> None:
+    """The engine's error sink: a text line in ledger/errors.log (secrets dropped), and the error event of the
+    engine's self-timing (its class and module:function, never its message: brain.selftime)."""
+    from . import selftime
+
+    selftime.error(exc)
     try:
         d = paths.ledger_dir()
         d.mkdir(parents=True, exist_ok=True)
@@ -127,12 +132,19 @@ def _ask_question(payload: dict) -> None:
     now = _now()
     tuid = payload.get("tool_use_id") or ""
     seen = _recent_ids("ddr")
+    asked = answers_lane.read(answers_lane.ASKED)
     for i, q in enumerate(questions):
         if not isinstance(q, dict) or not q.get("question"):
             continue
-        ddr = ddr_from_question(q, answers.get(q["question"]), now, meta, tuid, i,
-                                notes=(annotations.get(q["question"]) or {}).get("notes")
-                                if isinstance(annotations.get(q["question"]), dict) else None)
+        notes = (annotations.get(q["question"]) or {}).get("notes") \
+            if isinstance(annotations.get(q["question"]), dict) else None
+        tied = answers_lane.capture(q, answers.get(q["question"]), notes, at=now, tool_use_id=tuid, index=i,
+                                    session=meta.get("session_id") or "", asked=asked)
+        if tied is not None:  # a question brain decision batch printed: its answer goes to its own DDR
+            if tied:
+                _write_ars([actions.make_ar("ddr", tied["id"], now, meta, "hook", tuid, ddr=tied["ddr"])])
+            continue
+        ddr = ddr_from_question(q, answers.get(q["question"]), now, meta, tuid, i, notes=notes)
         if ddr["id"] in seen:
             continue
         errors, _ = schema.check("ddr", ddr)
@@ -151,8 +163,8 @@ def ddr_from_question(q: dict, answer: str | None, at: str, meta: dict, tool_use
         if not isinstance(o, dict) or not o.get("label"):
             continue
         label = o["label"]
-        if re.search(r"\(recommended\)\s*$", label, re.I):
-            label = re.sub(r"\s*\(recommended\)\s*$", "", label, flags=re.I)
+        if answers_lane.MARK_RE.search(label):  # (Recommended), (Recommandé)
+            label = answers_lane.MARK_RE.sub("", label)
             recommended = recommended or label
         opt = {"label": label}
         if o.get("description"):
@@ -178,7 +190,7 @@ def ddr_from_question(q: dict, answer: str | None, at: str, meta: dict, tool_use
         ddr["asked"]["model"] = meta["model"]
     if answer:
         # the tool joins the labels of a multiple choice with ", "
-        norm = re.sub(r"\s*\(recommended\)", "", answer, flags=re.I)
+        norm = re.sub(r"\s*\((?:recommandée?|recommended)\)", "", answer, flags=re.I)
         choices = [o["label"] for o in ddr["options"] if norm == o["label"] or f", {o['label']}, " in f", {norm}, "]
         ans: dict = {"at": at, "by": "user", "via": "ask-tool"}
         if choices:
@@ -256,7 +268,6 @@ def main(argv: list[str] | None = None, stdin=None) -> int:
     if os.environ.get("BRAIN_CAPTURE", "1") == "0" or not argv:
         return 0
     event = argv[0]
-    started = time.monotonic()
     try:
         payload = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
         if event == "post-tool-use":
@@ -265,8 +276,6 @@ def main(argv: list[str] | None = None, stdin=None) -> int:
             HANDLERS[event](payload)
     except Exception as exc:  # never break the session
         _log_error(event, exc)
-    if os.environ.get("BRAIN_CAPTURE_TIMING"):
-        _log_error(event, RuntimeError(f"took {time.monotonic() - started:.3f}s"))
     return 0
 
 

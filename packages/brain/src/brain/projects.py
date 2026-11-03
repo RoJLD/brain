@@ -188,7 +188,7 @@ def raw(root: Path | None = None) -> dict:
     f = registry_file(root)
     if not f or not f.is_file():
         return {}
-    data = graph._yaml().safe_load(f.read_text(encoding="utf-8")) or {}
+    data = graph.load_yaml(f.read_text(encoding="utf-8")) or {}   # libyaml: a guard reads it on every call
     return data if isinstance(data, dict) else {}
 
 
@@ -399,11 +399,9 @@ def check(root: Path | None = None) -> list[str]:
 
 def node_ids(store: Path) -> dict[str, str]:
     """The ids of a store's nodes, generated ones included, each with the name of the file that holds it."""
-    yaml = graph._yaml()
-    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)  # libyaml when PyYAML has it: a store can be large
     out: dict[str, str] = {}
     for f in sorted((store / "nodes").glob("*.yaml")):
-        data = yaml.load(f.read_text(encoding="utf-8"), Loader=loader)
+        data = graph.load_yaml_file(f)
         for n in data if isinstance(data, list) else []:
             if isinstance(n, dict) and n.get("id"):
                 out.setdefault(str(n["id"]), f.name)

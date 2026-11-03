@@ -6,6 +6,7 @@ from pathlib import Path
 import networkx as nx
 import yaml
 
+from . import yamlio
 from .schema import Schema, load_schema
 
 
@@ -17,7 +18,7 @@ class ValidationError(Exception):
 
 def _load_yaml_list(path: Path) -> list:
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = yamlio.load(path)
     except yaml.YAMLError as exc:
         raise ValidationError([f"malformed YAML in {path}: {exc}"]) from exc
     if data is None:
