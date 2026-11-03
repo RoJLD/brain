@@ -179,8 +179,9 @@ brain vault open FILE [--out DIR] [--identity FILE|-]
 brain vault drill recovery
 ```
 
-Type or paste the `AGE-SECRET-KEY-1...` line from paper at the prompt, then Enter. Nothing shows as you paste: the
-key is hidden, like a password, so it stays out of the screen and the terminal's scrollback.
+Type or paste the secret `AGE-SECRET-KEY-1...` line from paper at the prompt (not the public `age1...` key), then
+Enter. Nothing shows as you paste: the key is hidden, like a password, so it stays out of the screen and the
+terminal's scrollback.
 The recovery canary must open and match its digest; `state.json` records the date and the health warning goes away.
 
 ## A lost or exposed key

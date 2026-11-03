@@ -68,7 +68,8 @@ VAULT_KEYS = {"adapter", "min_recipients", "canary_hours", "recipients", "tenant
 RECIPIENT_KEYS = {"kind", "age", "gpg", "host", "classes", "why"}
 AGENT_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION")
 AGE_SECRET = re.compile(r"^AGE-(SECRET-KEY|PLUGIN-[A-Z0-9-]+)-1[0-9A-Z]+$")   # an identity line, never stored
-KEY_PROMPT = "the key, AGE-SECRET-KEY-1... (hidden as you paste or type it), then Enter: "
+KEY_PROMPT = ("the SECRET key, the AGE-SECRET-KEY-1... line (not the public age1... key), hidden as you paste or "
+              "type it, then Enter: ")
 BOILERPLATE = re.compile(r"report unexpected or unhelpful errors")   # age's last line after any error: not the error
 NOT_ON_PATH = "not found on this terminal's PATH (a terminal opened before the install misses it: open a new one)"
 RUNBOOK = "https://github.com/RoJLD/brain/blob/main/packages/brain/docs/vault.md"   # the owner's steps, generic
@@ -100,6 +101,8 @@ def ask_key(read=None) -> str:
         key = read(KEY_PROMPT).strip()
     except (EOFError, KeyboardInterrupt):
         raise VaultError("no key given: nothing opened") from None
+    if key.startswith("age1"):
+        raise VaultError("that is the public key (age1...): give the secret line, AGE-SECRET-KEY-1...; nothing opened")
     if not AGE_SECRET.match(key):
         raise VaultError("that is not an age secret key (a line that starts with AGE-SECRET-KEY-1): nothing opened")
     return key

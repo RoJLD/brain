@@ -292,9 +292,11 @@ def test_drill_asks_the_key_hidden_and_hands_it_to_age(brain, monkeypatch, capsy
     monkeypatch.setattr(vault.getpass, "getpass", lambda prompt: asked.append(prompt) or f"  {rec}  ")
     assert vault.drill(cfg, "recovery", "-", now=NOW, found=found)["drilled_at"] == "2026-11-02T12:00:00Z"
     assert asked == [vault.KEY_PROMPT] and rec not in capsys.readouterr().out
-    for given in (rec_pub, "# created: 2026-11-03", ""):
+    assert "SECRET key" in vault.KEY_PROMPT and "not the public age1" in vault.KEY_PROMPT
+    for given, why in ((rec_pub, "that is the public key"), ("# created: 2026-11-03", "not an age secret key"),
+                       ("", "not an age secret key")):
         monkeypatch.setattr(vault.getpass, "getpass", lambda prompt, g=given: g)
-        with pytest.raises(vault.VaultError, match="not an age secret key") as exc:
+        with pytest.raises(vault.VaultError, match=why) as exc:
             vault.drill(cfg, "recovery", "-", found=found)
         assert not given or given not in str(exc.value)
 
