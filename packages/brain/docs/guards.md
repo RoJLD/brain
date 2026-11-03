@@ -108,6 +108,14 @@ A brainstorm is a session whose brief says `Task class: brainstorm` or carries `
 archived and active in the last `brainstorm_hours`, in any project. A brainstorm start the governor lets through is
 noted in `<BRAIN_HOME>/usage/starts.jsonl` and counted for 10 minutes, until the app shows its session.
 
+### A master's start_session (the master's watch)
+
+When none of the checks above holds, a `start_session` call goes through, and two things happen (ST-3, ST-4): the
+budget watch's mark of the calling session is expired, so its next tool call checks it at once (it may have just
+become a master); and if the watch last saw it past 80 % of its budget (`<BRAIN_HOME>/budget/<session>.json`, its
+`master`), the call carries a reminder as hook context: past 80 % a master starts no new child, it hands over to a
+fresh master and drains its own. It is never a refusal: no guard blocks start_session.
+
 ### Configuration (config.json `usage.guard`)
 
 ```json
