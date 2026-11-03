@@ -225,6 +225,42 @@ Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md
   and its subgraph, its collisions, the class's model and effort (config.json `brief.classes`), the budget, the cost
   estimate, the coordinator's id, and the definition of done and the never-list read from the owner's rules.
 
+### The session tree
+
+A session has two ids: its transcript's (`CLAUDE_CODE_SESSION_ID`: the ledger, the session records, the budget watch,
+the cockpit) and the desktop app's `local_` id (`CLAUDE_CODE_HOST_SESSION_ID`: `SendMessage` and the app's session
+tools). The SessionStart hook records both, and the parent, task and short name the session's own app metadata file
+holds (`spawnedFrom`, read through a closed list of keys: never the files' reports, reminders, prompts or MCP
+configuration); the briefs' hash in the token ledger gives the parent of a session the app never knew. The Stop hook
+adds `host_id`, `name`, `parent`, `children` and `role` to the session record, and writes the child's end-of-turn
+report, `<BRAIN_HOME>/sessions/<id>.report.json`: its PRs and its branch's head, the items and DDRs it names, what it
+waits on (a wrap-up marked blocked, a question), what comes next (the wrap-up's question, else the plan's next step)
+and its recap.
+
+- **`brain sessions [--hours H] [--all] [--json]`**: the sessions active in the last 24 h with both ids, role
+  (`master`, `sub`, `relay`, `solo`), parent, children live/started, state and context against its budget (the
+  brief's; a master's without one: config.json `usage.master_budget`, else the model's window, 1M).
+- **`brain sessions tree [ID]`**: the families with a live member, or ID's, each child with its report: a master
+  learns what its children did without paging their transcripts (archived branches counted, `--all` draws them).
+- **`brain sessions show ID [--report]`**: one session by either id (a prefix of 8 or more) or its short name, its
+  family, and what a message would meet: live and working (it waits in the queue), idle (it starts a turn), archived
+  (lost). `--report` prints its last final message in full, read from its transcript, never stored.
+
+`brain decision ask`, `answer`, `ack` and `archive` (and the question-tool capture) stamp the session's transcript id
+and its app id with the machine (`host_id`, `machine`); `brain check` refuses a DDR stamped on this machine whose
+`local_` id matches no session the app or the ledger knows, and warns for one stamped elsewhere or before the stamps.
+The resume pack prints both ids. The cockpit's sessions panel shows the short name (else the app id) in Session, then
+Role, Parent, Kids (live/started) and Ctx (% of the budget), and the ids in a session's detail.
+
+**The master's watch** (the budget watch, `budget.sh`): a session that called `start_session` is a master, its
+children read from the app's files and the SessionStart events. At 70 % of its budget it says how many more children
+fit before 80 % (the context a child costs, measured on the family, else 22k); at 80 %: start no new child, hand over
+to a fresh master and drain yours (ask the owner nothing new, touch no other master's children), with a draft
+hand-over note listing the live children with both ids, items and state; at 90 %: drain only, compact only once no
+child is alive. Each step gives the cost of one wake after the prompt cache expired. The master's row in the cockpit
+turns yellow, orange and red at each step; `brain alerts` raises a master past 80 % with live children; the governor
+reminds a master past 80 % that calls `start_session`, and lets the call through: nothing blocks a new session.
+
 ## Where the brain is found
 
 `config.json` and `projects.yaml` are found at `$BRAIN_CONFIG` / `$BRAIN_PROJECTS`, else in the first of:

@@ -26,7 +26,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import actions, config, defaults, graph, midsession, records, selftime
+from . import actions, config, defaults, graph, midsession, records, selftime, sessions
 
 KINDS = ("decision", "action", "permission")
 VIEW = "notes/decision_queue.md"
@@ -51,6 +51,27 @@ def kind_of(ddr: dict) -> str:
 
 
 # --- ask, answer, ack, archive ---
+
+def who(session: str = "", env=None) -> dict:
+    """The ids a stamp carries (scale study gap 19): ``session`` (a transcript id, or an app ``local_`` id) else this
+    session's own, read from its environment, both when known, with the machine an app id belongs to; {} outside a
+    session and without ``session``."""
+    me = sessions.here(env)
+    if session.startswith("local_"):
+        sid, host = (me["session"] if session == me["host_id"] else ""), session
+    else:
+        sid = session or me["session"]
+        host = me["host_id"] if not session or session == me["session"] else ""
+    out = {"session": sid} if sid else {}
+    if host:
+        out.update({"host_id": host, "machine": sessions.stamp({sessions.HOST_ENV: host}).get("machine", "")})
+    return out
+
+
+def _stamp(at: str, session: str) -> dict:
+    w = who(session)
+    return {"at": at, "session": w.pop("session", "") or "unknown", **w}
+
 
 def parse_option(text: str) -> dict:
     """'label: consequences' or 'label:: consequences' (when the label has ': ' in it)."""
@@ -88,7 +109,8 @@ def ask(root: Path, *, title: str, question: str, options: list[str], why: str, 
     if due:
         ddr["due"] = due
     ddr["status"] = "pending"
-    ddr["asked"] = {"at": at, "by": session or "unknown", "via": "cli"}
+    w = who(session)
+    ddr["asked"] = {"at": at, "by": w.pop("session", "") or "unknown", **w, "via": "cli"}
     links = {k: v for k, v in {"adrs": adrs, "items": items, "specs": specs}.items() if v}
     if project:
         links["project"] = project
@@ -152,7 +174,7 @@ def answer(root: Path, ref: str, choices: list[str], *, other: str = "", notes: 
     refused = check(ddr["id"], picked, other) if check else ""
     if refused:
         raise QueueError(refused)
-    ans = {"at": at, "by": by}
+    ans = {"at": at, "by": by, **who()}   # the session that recorded it, when there is one
     if picked:
         ans["choices"] = picked
     if other:
@@ -177,9 +199,9 @@ def ack(root: Path, ref: str, applied: list[str], *, session: str = "", at: str,
         raise QueueError(f"{ddr['id']} is {ddr.get('status')}: only an answered decision is acknowledged")
     if not applied:
         raise QueueError("ack needs --applied WHERE (an ADR id, an item id or a spec section), once per place")
-    stamp = {"at": at, "session": session or "unknown"}
+    stamp = _stamp(at, session)
     ddr["read"] = ddr.get("read") or stamp
-    ddr["applied"] = {"at": at, "session": session or "unknown", "in": list(applied)}
+    ddr["applied"] = {**stamp, "in": list(applied)}
     links = ddr.setdefault("links", {})
     for where in applied:
         key = {"adr": "adrs", "sdr": "adrs", "wi": "items", "ms": "items", "spec": "specs"}.get(where.split("-")[0])
@@ -203,7 +225,7 @@ def archive(root: Path, refs: list[str], *, session: str = "", at: str) -> list[
     for ddr in targets:
         if ddr.get("status") != "integrated":
             raise QueueError(f"{ddr['id']} is {ddr.get('status')}: only an integrated decision is archived")
-        ddr["archived"] = {"at": at, "session": session or "unknown"}
+        ddr["archived"] = _stamp(at, session)
         ddr["status"] = "archived"
         records.write(root, "ddr", ddr, replace=True)
         done.append(ddr["id"])

@@ -4,6 +4,31 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The session tree** (wi-brain-session-tree; ST-1, ST-2, scale study gap 19). The SessionStart event records both
+  ids, the transcript's (`CLAUDE_CODE_SESSION_ID`) and the desktop app's `local_` id (`CLAUDE_CODE_HOST_SESSION_ID`),
+  and the parent, task and short name of the session's own app metadata file (`spawnedFrom`, a closed list of keys;
+  nothing else is read and the app's files are never written); the token ledger's brief hash fills the parent in
+  without the app. The session record gains `host_id`, `name`, `parent`, `children` and `role` (schema). New `brain
+  sessions [tree [ID] | show ID [--report]] [--json]`: both ids, role (master, sub, relay, solo), parent, children
+  live/started, state and context against the budget, resolving either id (a prefix of 8 or more) or the short name;
+  `show` says what a message would meet (live, idle, archived). The resume pack prints both ids. The cockpit's
+  sessions panel shows the short name in Session and gains the Role, Parent, Kids and Ctx (% of the budget) columns,
+  the ids in the detail. `brain decision ask`, `answer`, `ack`, `archive` and the question-tool capture stamp
+  `host_id` and `machine` (DDR schema); `brain check` refuses a DDR stamped on this machine with a `local_` id that
+  matches no session, and warns for one stamped elsewhere or before the stamps (the 9 DDRs with a false `asked.by`).
+- **The child's report** (wi-brain-child-report). The Stop hook writes `<BRAIN_HOME>/sessions/<id>.report.json`: the
+  session's PRs and its branch's head, the items and DDRs it names, what it waits on, what comes next and its recap,
+  read from the last wrap-up, the session record, the plan and the pending DDRs at zero token. `brain sessions tree`
+  prints it under each child; `brain sessions show ID --report` prints the child's last final message in full from
+  its transcript (the app cuts its end-of-turn note at 400 characters).
+- **The master's watch** (wi-brain-master-watch; ST-3, ST-4, ST-10, scale study gap 17). The budget watch treats a
+  session that called `start_session` as a master: its budget is its brief's, else config.json `usage.master_budget`
+  (new), else the model's window (1M); its steps are 70, 80, 90 and 100 %: the room left in children (measured on the
+  family, else 22k a child), then « start no new child, hand over and drain » with a draft hand-over note of the live
+  children (both ids, items, state), then « drain only, compact only with no child alive », each with the cost of one
+  wake. The governor expires the watch's mark at each `start_session` call and reminds a master past 80 % without
+  refusing the call (ST-4); `brain alerts` raises a master past 80 % with live children (source `session`); the
+  cockpit colours the master's row at each step.
 - **A brain's own data is checked by the brain, not by its tests** (wi-brain-test-split). `brain refresh` in a
   brain's own root (its neutral source, `source/packs.yaml`) ends with the registry check `brain check --all` runs:
   the registry's keys, `config.json`'s contract, the data classes, the permission hierarchy, the stacks, the ids. That

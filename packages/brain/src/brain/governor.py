@@ -161,7 +161,7 @@ def _sources(cwd: str) -> list:
 
 
 def settings(cwd: str) -> dict:
-    """{limits, errors, projects: {name: {roots, limits}}, owner, plugin}: built from config.json and the registry
+    """{limits, errors, projects: {name: {roots, limits}}, owner, plugin, master_budget}: built from config.json and the registry
     (brain.config, brain.projects, PyYAML: ~100 ms), kept in <BRAIN_HOME>/cache/governor.json under the key of their
     files' mtimes and sizes (~1 ms)."""
     key = _sources(cwd)
@@ -184,8 +184,10 @@ def settings(cwd: str) -> dict:
             projs[name] = {"roots": [os.path.normcase(os.path.abspath(r)) for r in roots], "limits": own}
     except (Exception, SystemExit) as exc:   # a registry that does not load leaves the global caps
         errors.append(f"registry: {exc}")
+    mb = usage.get("master_budget")   # a master's budget without a brief (brain.sessions, brain.budget)
     out = {"limits": lim, "errors": errors, "projects": projs, "owner": config.owner(cfg),
-           "plugin": config.claude(cfg)["plugin"]}
+           "plugin": config.claude(cfg)["plugin"],
+           "master_budget": mb if isinstance(mb, int) and not isinstance(mb, bool) and mb > 0 else None}
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps({"key": key, "settings": out}, ensure_ascii=False), encoding="utf-8")
@@ -572,6 +574,18 @@ def _note_start(payload: dict, s: dict) -> None:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
+def master_note(session: str) -> str:
+    """The master's watch at a start_session call (wi-brain-master-watch, ST-3, ST-4): past 80 % of its budget, the
+    reminder that a master starts no new child; '' below it. It never refuses: no guard blocks start_session."""
+    from . import budget
+    m = budget.master_of(session)
+    if not m or m.get("pct", 0) < 80:
+        return ""
+    return (f"Master's watch (ST-3): this master is at {m['pct']:.0f} % of its budget with {m.get('live', 0)} live "
+            f"child(ren): past 80 % a master starts no new child; it hands over to a fresh master and drains its own. "
+            "You decide; the call goes on (ST-4).")
+
+
 def decide(payload: dict, now: datetime | None = None) -> dict | None:
     """The hook's output for ``payload`` (hookSpecificOutput with deny or ask), else None; records what it decided."""
     if not kind(payload.get("tool_name") or ""):
@@ -581,9 +595,15 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
     if v and (s["override"] or _env_allowed()):
         _record(payload, v[1], "overridden", v[2])
         v = None
+    if s["kind"] == "session":
+        from . import budget
+        budget.expire(str(payload.get("session_id") or ""))   # the budget watch checks at the next call: a master
     if v is None:
         if s["kind"] == "session":
             _note_start(payload, s)
+            note = master_note(str(payload.get("session_id") or ""))
+            if note:   # ST-4: a reminder with the call, never a refusal
+                return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": note}}
         return None
     decision, check, reason = v
     _record(payload, check, "denied" if decision == "deny" else "asked", reason)

@@ -140,6 +140,7 @@
       "properties": {
         "plans": {"type": "array", "description": "The plan in force from each since day (YYYY-MM-DD; an empty string for the start).", "items": {"type": "object", "required": ["since", "plan"], "additionalProperties": false, "properties": {"since": {"type": "string"}, "plan": {"type": "string", "minLength": 1}, "monthly": {"type": ["number", "null"], "description": "its monthly price, once the owner gives it"}, "currency": {"type": "string"}}}},
         "prices": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "number"}}, "description": "{model id: [input, output, cache read, cache write 5 min, cache write 1 h]} in USD per million tokens."},
+        "master_budget": {"type": "integer", "minimum": 1, "description": "A master session's context budget in tokens when its brief gives none (brain sessions, the cockpit's Ctx %, the master's watch in brain.budget): default the model's window, 1000000."},
         "guard": {"type": "object", "additionalProperties": false, "description": "The usage governor's thresholds and caps (brain.governor, the PreToolUse hook on start_session, Agent and Workflow; brain usage guard shows them): ask the owner at warn, refuse at critical, past a cap or while the newest quota reading is stale. A project of the registry may lower sessions and brainstorms for itself (usage: in projects.yaml), never raise them.",
           "properties": {
             "enabled": {"type": "boolean", "description": "false turns the governor off (default true)"},
