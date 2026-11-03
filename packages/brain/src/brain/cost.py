@@ -134,6 +134,11 @@ class Ledger:
                                            str(n.get("status") or ""), str(props.get("theme") or ""),
                                            part_of.get(n["id"], ""),
                                            usage.kind_of(str(n.get("title") or "").split(":")[0]), props, store)
+        for r in self.rows:  # a sub-session is credited to the project of the item its brief names, wherever it ran
+            b = r.get("brief") or {}
+            named = [i for i in b.get("items") or [] if i in self.items] if b.get("side") else []
+            if named:
+                r["project"] = self.items[named[0]].project
         by_pr: dict[str, list[str]] = {}
         for it in self.items.values():
             for pr in item_prs(it.props.get("pr", "")):

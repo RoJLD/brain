@@ -14,6 +14,8 @@
 # config.json's power.node_clis come from <BRAIN_HOME>/cache/node-clis.txt, which brain/guards.py (node_tools) keeps
 # as an alternation, since this hook cannot find config.json (the plugin runs from a cached copy): none until the
 # first Python run writes it.
+{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || selftime_bash() { :; }; } 2>/dev/null  # brain_t0, selftime_bash
+
 needs_python() {
   [ "$1" = "shell" ] || return 0
   case "$2" in *git*|*'gh '*) return 0 ;; esac
@@ -40,14 +42,14 @@ needs_python() {
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0
 root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 input=$(cat)
-needs_python "${1:-}" "$input" || exit 0
+needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }
 
 home="${BRAIN_HOME:-$HOME/.brain}"
 for py in "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python; do
   [ -n "$py" ] || continue
   path=$(command -v "$py" 2>/dev/null) || continue
   case "$path" in *WindowsApps*) continue ;; esac
-  printf '%s' "$input" | "$path" -X utf8 -I "$root/hooks/guard.py" 2>/dev/null
+  printf '%s' "$input" | BRAIN_HOOK_T0=$brain_t0 "$path" -X utf8 -I "$root/hooks/guard.py" "${1:-}" 2>/dev/null
   exit 0
 done
 exit 0

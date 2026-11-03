@@ -66,7 +66,8 @@ from pathlib import Path
 
 from functools import lru_cache
 
-from . import actions, config, decisions, forecast, graph, guards, paths, permissions, records, resume, secretscan
+from . import (actions, config, decisions, forecast, graph, guards, paths, permissions, projects, records, resume,
+               secretscan)
 
 KINDS = decisions.KINDS
 DAYS = 7
@@ -539,17 +540,27 @@ def _norm(p) -> str:
     return os.path.normcase(os.path.normpath(str(p)))
 
 
+_SIBLING_RE = re.compile(r"^(.+)-wt-[^\\/]+$")  # a checkout beside its repo: <repo>-wt-<name> (E:/x/brain-wt-023)
+
+
 class Placer:
-    """The registered project a folder belongs to: under its root (worktrees under .claude/worktrees included), else
-    the project whose root is the folder's main checkout (a worktree elsewhere)."""
+    """The registered project a folder belongs to: under its root or one of its declared repos (``repos:``, e.g. the
+    engine's checkout of a personal brain; worktrees under .claude/worktrees included), else the project whose root or
+    repo is the folder's main checkout (a worktree elsewhere), else, for a folder gone, the repo it is named beside
+    (``<repo>-wt-<name>``). A project's own root wins over another project's repo at the same place."""
 
     def __init__(self, projects_list):
-        roots = {(_norm(p.root), p.name) for p in projects_list}
+        roots = {(_norm(p.root), p.name, 0) for p in projects_list}
         for p in projects_list:  # a registry read in a worktree resolves "root: ." to the worktree
             main = paths.main_checkout(p.root) if p.root.is_dir() else None
             if main:
-                roots.add((_norm(main), p.name))
-        self.roots = sorted(roots, key=lambda r: -len(r[0]))
+                roots.add((_norm(main), p.name, 0))
+            try:
+                repos = projects.repos_of(p)
+            except (projects.RepoError, OSError):
+                repos = []
+            roots |= {(_norm(r.path), p.name, 1) for r in repos}
+        self.roots = [(root, name) for root, name, _ in sorted(roots, key=lambda r: (-len(r[0]), r[2], r[1]))]
         self.cache: dict[str, str] = {}
 
     def __call__(self, cwd: str) -> str:
@@ -559,6 +570,9 @@ class Placer:
         if not name and Path(cwd).is_dir():
             main = paths.main_checkout(cwd)
             name = self._under(_norm(main)) if main else ""
+        if not name:
+            m = _SIBLING_RE.match(_norm(cwd).rstrip(os.sep))
+            name = self._exact(m.group(1)) if m else ""
         self.cache[cwd] = name
         return name
 
@@ -567,6 +581,9 @@ class Placer:
             if c == root or c.startswith(root.rstrip(os.sep) + os.sep):
                 return name
         return ""
+
+    def _exact(self, c: str) -> str:
+        return next((name for root, name in self.roots if c == root), "")
 
 
 def _worktree_items(g: Graph, folders) -> set[str]:
