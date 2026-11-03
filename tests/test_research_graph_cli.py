@@ -3,6 +3,8 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from research_graph.cli import main
 
 STORE = str(Path(__file__).parent / "fixtures" / "research_graph")
@@ -47,6 +49,30 @@ def test_cli_check_reports_missing(capsys, tmp_path):
     assert rc == 1
     err = capsys.readouterr().err
     assert "anchor file missing" in err
+
+
+def test_cli_check_reads_another_repos_anchors_in_the_checkout_given(capsys, tmp_path):
+    store, eng = tmp_path / "graph", tmp_path / "eng"
+    (store / "nodes").mkdir(parents=True)
+    (store / "schema.yaml").write_text("node_types: [Repo, Doc]\nedge_types: [part_of]\nstatuses: [active]\n",
+                                       encoding="utf-8")
+    (store / "nodes" / "n.yaml").write_text(
+        "- {id: repo-eng, type: Repo, status: active}\n"
+        "- {id: doc-a, type: Doc, status: active, repo: eng, anchor: 'docs/a.md#a'}\n", encoding="utf-8")
+    (store / "edges.yaml").write_text("[]", encoding="utf-8")
+    (eng / "docs").mkdir(parents=True)
+    (eng / "docs" / "a.md").write_text("# a\n", encoding="utf-8")
+    base = ["--store", str(store), "--repo-root", str(tmp_path)]
+    assert main([*base, "check", "--repo-path", f"eng={eng}"]) == 0
+    assert "not checked" not in capsys.readouterr().out
+    assert main([*base, "check"]) == 0   # no checkout given: not checked, said
+    assert "1 anchor(s) of repo 'eng' not checked" in capsys.readouterr().out
+    (eng / "docs" / "a.md").unlink()
+    assert main([*base, "check", "--repo-path", f"eng={eng}"]) == 1
+    assert "doc-a: anchor file missing: docs/a.md (repo eng)" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as exc:
+        main([*base, "check", "--repo-path", "eng"])
+    assert exc.value.code == 2 and "NAME=PATH" in capsys.readouterr().err
 
 
 def test_cli_provenance_unknown_node(capsys):

@@ -81,7 +81,9 @@
                         the features' statuses from merged PRs (gh; not with --offline) and FEATURES.md, kanban --write
   brain check [--all]   the records (schema, ids, secret scan), the open items attached to no milestone (a warning),
                         the proposed specs ready to turn active (a warning), the hard-rule ratio (Rule nodes with an enforced_by edge; a soft rule is a warning), a stale
-                        links graph (a warning), then research_graph check; --all: every project's, then the registry
+                        links graph (a warning), then research_graph check (given the project's other repos'
+                        checkouts, where the anchors of their Doc, Test and Workflow nodes are read); --all: every
+                        project's, then the registry
                         (its keys, repos, stacks, code_index), the tier registry (every capability and stack declares
                         its class, profile, requirements, cost and fallback) and the ids, unique across every store of
                         every project (an id shared on purpose is waived under shared_ids:)
@@ -365,7 +367,7 @@ from pathlib import Path
 from . import (__version__, actions, alerts, audit, backfill, batch, boundary, bundles, capture, cockpit, codeindex,
                config, cost, decisions, detail, digest, features, forecast, graph, init, links, lint, memory,
                milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
-               records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, usage)
+               records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, update, usage)
 from . import classes, governor, keystore, vault
 from .inventory import AuditError
 
@@ -1259,9 +1261,12 @@ def _check_store(args, root: Path, store: Path) -> int:
     rc = cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0
     if decisions.view_stale(root, _project(args, root).name):
         print(f"warning: {decisions.VIEW} is stale: brain sync (or brain decision view --write)")
+    roots: dict[str, Path] = {}   # the other repos' checkouts, where research_graph reads their nodes' anchors
     if links.applies(store):
+        name, cfg, cfgs = _links_repo(args, root)
+        roots = links.anchor_roots(cfgs, name)
         try:
-            for f in links.stale(root, store, *_links_repo(args, root)):
+            for f in links.stale(root, store, name, cfg, cfgs):
                 print(f"warning: {f} is stale: brain sync")
         except AuditError as exc:
             print(f"warning: the links graph could not be checked: {exc}")
@@ -1285,7 +1290,8 @@ def _check_store(args, root: Path, store: Path) -> int:
     line = tidy.hygiene(_project(args, root))   # stale worktrees and merged branches: brain tidy
     if line:
         print(line)
-    return graph.research_graph(root, store, "check") or rc
+    given = [a for n, p in sorted(roots.items()) for a in ("--repo-path", f"{n}={p}")]
+    return graph.research_graph(root, store, "check", *given) or rc
 
 
 def cmd_sync(args, root: Path) -> int:
@@ -1472,6 +1478,13 @@ def cmd_tui(args, root: Path) -> int:
             return tui.run(cp, refresh=args.refresh, probe=args.probe, views=views, search=args.search,
                            settings=settings)
     return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"])
+
+
+def cmd_update(args, root: Path | None) -> int:
+    """brain update (brain.update): the latest tag of the engine's repo read now (the cache refreshed), its CHANGELOG
+    and the plan; --check stops there; else installed on the owner's yes (y in a terminal, or --yes), refused in a
+    Claude Code session's shell (CLAUDECODE), like the cockpit's actions."""
+    return update.main(root, check_only=args.check, yes=args.yes, as_json=args.json, refused=detail.refused())
 
 
 def _when(text: str | None, default: str = "") -> str:
@@ -2541,6 +2554,13 @@ def build_parser() -> argparse.ArgumentParser:
     tu.add_argument("--once", action="store_true", help="print the text view once and exit")
     tu.add_argument("--quick", action="store_true", help="with --once or --json: the files only, no probe")
     tu.add_argument("--json", action="store_true", help="the panels' data, once")
+    up = sub.add_parser("update", help=f"a newer engine: the latest tag of config.json engine.repo, its CHANGELOG and "
+                                       f"the plan (install it into the brain's venv, swap the launcher, the pin to "
+                                       f"move by PR); installed on {who}'s yes only (y, or --yes), never from a "
+                                       "Claude Code session")
+    up.add_argument("--check", action="store_true", help="print the plan and exit: install nothing")
+    up.add_argument("--yes", action="store_true", help="install without asking (the owner's own terminal)")
+    up.add_argument("--json", action="store_true", help="the plan's data (stable keys)")
     us = sub.add_parser("usage", help="the token ledger: what the sessions cost, by project, item, class, phase, "
                                       "tool, command, day...; distributions and script candidates; quota: the plan's "
                                       "quota readings and forecast (zero token)")
@@ -3051,6 +3071,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "merge-driver":  # git's entry and a repo's git config: no graph store
         return cmd_merge_driver(args)
     root = Path(args.root).resolve() if args.root else None
+    if args.cmd == "update":  # the engine of this machine: a brain without a graph store updates too
+        return cmd_update(args, root)
     if args.cmd == "audit":  # its repos may have no graph store: before find_root
         return audit.main(args, root)
     if args.cmd == "check" and args.public:  # a public repo has no graph store: before find_root

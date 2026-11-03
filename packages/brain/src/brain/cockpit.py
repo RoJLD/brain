@@ -70,8 +70,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import (alerts, audit, config, decisions, digest, paths, perf, plan, projects, queue, resume, status, transcript,
-               usage)
+from . import (__version__, alerts, audit, config, decisions, digest, paths, perf, plan, projects, queue, resume,
+               status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
 FILE_PANELS = {"graph": ("queue", "milestones", "frontier")}
@@ -1185,12 +1185,12 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
            tz: str | None = None) -> list[str]:
     """The text view: every panel, one after the other; ``views`` (each table panel's view, {} its defaults) and
     ``search`` narrow the sessions, the queue and the frontier (None: everything, in the panels' order); ``tz``
-    shows the header's times in that timezone (None: as recorded, UTC)."""
+    shows the header's times in that timezone (None: as recorded, UTC). The header names the installed version."""
     p = snap["panels"]
 
     def stamp(iso):
         return (f"{when(iso, tz, '%Y-%m-%d %H:%M:%S')} ({tz})" if iso else None) if tz else iso
-    head = (f"brain cockpit: {snap['scope']}; files read {stamp(snap.get('read_at')) or '-'}, probes "
+    head = (f"brain {__version__} cockpit: {snap['scope']}; files read {stamp(snap.get('read_at')) or '-'}, probes "
             f"{stamp(snap.get('probed_at')) or 'not run'}")
     out = [head]
 

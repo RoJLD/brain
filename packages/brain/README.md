@@ -13,8 +13,10 @@ What it does, every command reading files and git, never a model:
   `brain milestone`, `brain spec`), with the views regenerated and checked (`brain sync`, `brain check`,
   `brain refresh`);
 - **history**: the journal (`brain journal add`) and the decision log (`brain adr new`), append-only;
-- **views**: the owner's queue (`brain queue`), the status of every project (`brain status`), a cockpit (`brain tui`),
-  a resume pack for agents (`brain resume`), digests, usage and cost ledgers, forecasts;
+- **views**: the owner's queue (`brain queue`), the status of every project (`brain status`), a cockpit (`brain tui`,
+  its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
+  usage and cost ledgers, forecasts;
+- **updates**: `brain update` shows the plan to the latest engine tag and installs it on the owner's yes;
 - **the machine**: its profile (`brain profile`, alias `brain doctor`: Lite, Default, Recommended, Custom), stacks
   started on demand (`brain up|down|health`), permissions rendered for Claude Code (`brain permissions`);
 - **Claude Code**: the hooks and guards under `src/brain/adapters/claude/hooks/` (rules injection, capture, the
@@ -30,7 +32,7 @@ What it does, every command reading files and git, never a model:
 Python 3.10 or later. The command depends on PyYAML and on `research-graph` at the same tag.
 
 ```bash
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.2#subdirectory=packages/brain"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.3#subdirectory=packages/brain"
 ```
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
@@ -42,6 +44,20 @@ permissions, memory) and the machine's pointer `<BRAIN_HOME>/personal.json`. It 
 .\packages\brain\installer\install.ps1 -Apply                # the command
 .\packages\brain\installer\install.ps1 -Apply -Personal D:\me\brain   # and this personal brain's setup
 ```
+
+### Updates
+
+`brain update` (after 0.2.3) reads the latest release tag of the engine's public repo (`config.json` `engine.repo`,
+else RoJLD/brain) with `git ls-remote`, no token, and prints the plan: the version and its CHANGELOG sections, the
+tag installed into the brain's venv (pip, the `tui` extra kept), the launcher swapped in on Windows (as the installer
+does, even while a brain runs), and, for a brain that pins its engine (`config.json` `engine.pin`), the pin to move by
+a reviewed PR, shown and never done. It installs only on the owner's yes: `y` at its prompt, or `--yes`; never from a
+Claude Code session's shell. `brain update --check` prints the plan and installs nothing; `--json` gives its data. A
+checkout installed editable is not updated by pip (`git pull` there).
+
+The cockpit's title bar always shows the installed version. Once the screen is drawn, it checks the tags in the
+background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.3 · 0.2.4 available »
+when a newer one is out; `u` then opens `brain update`'s plan in a confirmation, run on `y`.
 
 ## Start your own brain
 

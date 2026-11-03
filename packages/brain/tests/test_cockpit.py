@@ -224,14 +224,14 @@ def test_watch_draws_the_text_view(tmp_path, monkeypatch, store):
     monkeypatch.setattr(cp, "probe", lambda: None)
     out = io.StringIO()
     assert cockpit.watch(cp, refresh_s=0.01, ticks=2, out=out) == 0
-    assert out.getvalue().count("brain cockpit: demo") == 1  # drawn once: nothing changed at the second tick
+    assert out.getvalue().count(f"brain {brain.__version__} cockpit: demo") == 1  # drawn once: nothing changed at the second tick
 
 
 def test_brain_tui_once_and_json(tmp_path, monkeypatch, store, capsys):
     _cockpit(tmp_path, monkeypatch, store)
     assert cli.main(["tui", "--project", "demo", "--once", "--quick"]) == 0
     out = capsys.readouterr().out
-    assert out.startswith("brain cockpit: demo; files read ") and "probes not run" in out
+    assert out.startswith(f"brain {brain.__version__} cockpit: demo; files read ") and "probes not run" in out
     assert "Audit debt: not probed yet" in out
     assert cli.main(["tui", "--project", "demo", "--json", "--quick"]) == 0
     data = json.loads(capsys.readouterr().out)
@@ -427,7 +427,7 @@ def test_brain_tui_starts_from_the_remembered_scope_and_views(tmp_path, monkeypa
     cockpit.save_state({"scope": "all", "panels": {"queue": {"kind": "action"}}})
     assert cli.main(["--root", str(root), "tui", "--once", "--quick", "--filter", "queue:kind=permission"]) == 0
     out = capsys.readouterr().out
-    assert out.startswith("brain cockpit: demo;")  # --once: the flags only, never the remembered state
+    assert out.startswith(f"brain {brain.__version__} cockpit: demo;")  # --once: the flags only, never the remembered state
     assert ("Ada's queue (1: 1 decision, 0 action, 0 permission | now 1, this week 0, when you can 0); denied calls "
             "read at the first probe; 1 denial(s) outside every project (--all) [0 of 1 shown; kind permission]"
             "\n") in out
@@ -450,7 +450,7 @@ def test_times_follow_the_timezone_and_every_panel_has_its_help(monkeypatch):
     assert cockpit.table("alerts", alert, tz="local")[0][3] == datetime(
         2026, 10, 31, tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
     head = cockpit.render({"scope": "x", "read_at": "2026-11-02T18:29:04Z", "panels": {}}, tz="utc")[0]
-    assert head == "brain cockpit: x; files read 2026-11-02 18:29:04 (utc), probes not run"
+    assert head == f"brain {brain.__version__} cockpit: x; files read 2026-11-02 18:29:04 (utc), probes not run"
     assert set(cockpit.HELP) == set(cockpit.PANELS)
     for name in cockpit.PANELS:
         lines = cockpit.help_lines(name)

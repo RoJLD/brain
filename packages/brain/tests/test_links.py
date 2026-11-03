@@ -1,8 +1,11 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from brain import audit, cli, graph, links, projects
 
+from conftest import run_git
 from test_inventory import mem
 
 SCHEMA = ("node_types: [WorkItem, Spec, Plugin, Skill, Hook, CodeRef, Doc, Test, Workflow]\n"
@@ -210,6 +213,11 @@ def test_another_repo_of_the_project_is_derived_against_the_store():
     assert lk.specs == {} and "docs/specs/s.md" in lk.docs   # a spec here is a doc: spec-s anchors the home's
     assert by[t + "test_none.py"] and t + "test_none.py" not in lk.tested
     assert links.coded_repos(hand) == {"demo", "engine"}
+    # each node says its anchor is a path of that repo, written before the anchor; the home's nodes say nothing
+    assert {n.get("repo") for n in lk.nodes} == {"engine"}
+    assert graph.render_node(by[t + "test_core.py"]).splitlines()[1:3] == [
+        "   title: tests/test_core.py,", "   repo: engine,"]
+    assert not [n for n in links.derive(home, "demo").nodes if "repo" in n]
 
 
 def test_audit_measures_a_repo_without_a_store_against_the_one_whose_coderefs_name_it():
@@ -262,3 +270,47 @@ def test_sync_derives_the_other_repos_a_coderef_names_at_their_committed_state(t
         '- {id: "code:gone:x.py", type: CodeRef, status: active, title: x}\n', encoding="utf-8")
     assert cli.main(["--project", "demo", "sync"]) == 0
     assert "not on this machine, left out: gone" in capsys.readouterr().out
+
+
+LINKED = """\
+- {id: repo-demo, type: Repo, status: active, title: demo}
+- {id: repo-engine, type: Repo, status: active, title: engine}
+- {id: wi-a, type: WorkItem, status: todo, title: "A"}
+- {id: "code:engine:eng/core.py", type: CodeRef, status: active, title: core}
+"""
+
+
+@pytest.mark.parametrize("where", ["main", "worktree"])
+def test_check_reads_the_other_repos_anchors_in_their_checkout(where, tmp_path, monkeypatch, make_repo, capsys):
+    """research_graph check resolves the Doc, Test and Workflow anchors of another repo in its checkout, found as
+    brain audit finds it: from the root, else from its main checkout (from a worktree, ../engine is not a sibling)."""
+    demo = make_repo("demo", {"notes/graph/schema.yaml": SCHEMA.replace("[WorkItem,", "[WorkItem, Repo,")
+                              .replace("[specified_by,", "[implemented_by, specified_by,"),
+                              "notes/graph/nodes/work.yaml": LINKED,
+                              "notes/graph/edges.yaml": '- {from: wi-a, to: "code:engine:eng/core.py", '
+                                                        'type: implemented_by}\n',
+                              "README.md": "# demo\n\nAbout wi-a.\n"})
+    engine = make_repo("engine", {**ENGINE, ".github/workflows/ci.yml": "jobs:\n  test:\n    steps:\n"
+                                                                        "      - run: pytest tests\n"})
+    root = demo
+    if where == "worktree":
+        root = tmp_path / "wts" / "demo-wt"
+        run_git(demo, "worktree", "add", "-q", "-b", "side", str(root))
+    reg = tmp_path / "brain" / "projects.yaml"
+    reg.parent.mkdir()
+    reg.write_text(f"demo: {{root: {root.as_posix()}, repos: [., ../engine]}}\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    assert cli.main(["--project", "demo", "sync", "--offline"]) == 0
+    nodes = graph.load_yaml_list(root / "notes" / "graph" / "nodes" / links.GENERATED)
+    of = {n["id"]: n.get("repo") for n in nodes}
+    assert of["doc:engine:docs/specs/s.md::not-the-store-s-spec"] == "engine" and of["doc:demo:README.md::demo"] is None
+    assert of["workflow:engine:.github/workflows/ci.yml::test"] == "engine"
+    capsys.readouterr()
+    assert cli.main(["--project", "demo", "check"]) == 0   # docs/specs/s.md, tests/, ci.yml: engine's files alone
+    out = capsys.readouterr()
+    assert f"--repo-path engine={engine.resolve()}" in out.out and "graph-check OK" in out.out
+    assert "not checked" not in out.out and "anchor file missing" not in out.err
+    # a file gone from engine's checkout: its anchor fails, named with its repo
+    (engine / "docs" / "specs" / "s.md").unlink()
+    assert cli.main(["--project", "demo", "check"]) == 1
+    assert "anchor file missing: docs/specs/s.md (repo engine)" in capsys.readouterr().err
