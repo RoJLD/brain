@@ -35,6 +35,7 @@ warns when the recovery key was never drilled or not for a year. Everything live
 from __future__ import annotations
 
 import base64
+import getpass
 import hashlib
 import json
 import os
@@ -42,6 +43,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tarfile
 import tempfile
 from contextlib import contextmanager
@@ -65,7 +67,9 @@ PGP_PUBLIC = "BEGIN PGP PUBLIC KEY BLOCK"
 VAULT_KEYS = {"adapter", "min_recipients", "canary_hours", "recipients", "tenants"}
 RECIPIENT_KEYS = {"kind", "age", "gpg", "host", "classes", "why"}
 AGENT_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION")
-PASTE = "paste the key, then end the input (Ctrl-D; Ctrl-Z then Enter on Windows)"
+AGE_SECRET = re.compile(r"^AGE-(SECRET-KEY|PLUGIN-[A-Z0-9-]+)-1[0-9A-Z]+$")   # an identity line, never stored
+KEY_PROMPT = "the key, AGE-SECRET-KEY-1... (hidden as you paste or type it), then Enter: "
+NOT_ON_PATH ="not found on this terminal's PATH (a terminal opened before the install misses it: open a new one)"
 RUNBOOK = "https://github.com/RoJLD/brain/blob/main/packages/brain/docs/vault.md"   # the owner's steps, generic
 
 
@@ -83,6 +87,36 @@ def human_only(what: str) -> None:
     var = agent_session()
     if var:
         raise VaultError(f"{what} is a human act: run it in your own terminal, not in an agent session ({var} is set)")
+
+
+def ask_key(read=None) -> str:
+    """The owner's age key, typed or pasted in their terminal and hidden (no echo, nothing in the scrollback, Enter
+    ends it, the same in every terminal); checked for its shape, then handed to age on its stdin and never written. A
+    stdin that is not a terminal (a pipe, a terminal Python cannot hide input in) gives its first line."""
+    if read is None:
+        read = getpass.getpass if sys.stdin is not None and sys.stdin.isatty() else _read_line
+    try:
+        key = read(KEY_PROMPT).strip()
+    except (EOFError, KeyboardInterrupt):
+        raise VaultError("no key given: nothing opened") from None
+    if not AGE_SECRET.match(key):
+        raise VaultError("that is not an age secret key (a line that starts with AGE-SECRET-KEY-1): nothing opened")
+    return key
+
+
+def _read_line(prompt: str) -> str:
+    print(prompt, end="", flush=True)
+    line = sys.stdin.readline() if sys.stdin is not None else ""
+    if not line:
+        raise EOFError
+    return line
+
+
+def paste_prompt(windows: bool | None = None) -> str:
+    """How to end a key block pasted for gpg, which reads it from the terminal itself: the console's end of input."""
+    if os.name == "nt" if windows is None else windows:
+        return "paste the key block and press Enter, then Ctrl+Z alone on the new line and Enter: it ends the input"
+    return "paste the key block and press Enter, then Ctrl+D: it ends the input"
 
 
 def vault_dir() -> Path:
@@ -159,8 +193,8 @@ class Adapter:
         raise NotImplementedError
 
     def open(self, src: Path, dst: Path, ident: str | None = None, ident_file: Path | None = None) -> None:
-        """Open with the keystore's value (``ident``), a key file the owner points at, or neither: the key is read
-        from the terminal by the tool itself."""
+        """Open with the keystore's value (``ident``), a key file the owner points at, or neither: the owner gives
+        the key in the terminal (age: ``ask_key``, hidden; gpg reads its key block itself, ``paste_prompt``)."""
         raise NotImplementedError
 
     def keygen(self, label: str) -> tuple[str, str]:
@@ -192,11 +226,9 @@ class Age(Adapter):
     def open(self, src, dst, ident=None, ident_file=None):
         if ident_file is not None:
             r = _run([*self.cmd, "-d", "-i", str(ident_file), "-o", str(dst), str(src)])
-        elif ident is not None:
-            r = _run([*self.cmd, "-d", "-i", "-", "-o", str(dst), str(src)], stdin=ident + "\n")
         else:
-            print(PASTE)
-            r = _run([*self.cmd, "-d", "-i", "-", "-o", str(dst), str(src)], inherit=True)
+            key = ident if ident is not None else ask_key()
+            r = _run([*self.cmd, "-d", "-i", "-", "-o", str(dst), str(src)], stdin=key + "\n")
         _fail(r, "age: open")
 
     def keygen(self, label):
@@ -276,7 +308,7 @@ class Gpg(Adapter):
                 if ident_file is not None:
                     _fail(self._gpg(h, "--import", str(ident_file)), "gpg: import the key")
                 else:
-                    print(PASTE)
+                    print(paste_prompt())
                     _fail(self._gpg(h, "--import", inherit=True), "gpg: import the key")
                 r = _run([*self.cmd, "--no-tty", "--homedir", self.home(h), "--yes", "--output", str(dst),
                           "--decrypt", str(src)], inherit=True)
@@ -597,7 +629,7 @@ def adapter_of(path: Path, found: dict[str, Adapter] | None = None) -> Adapter:
     for ad in found.values():
         if path.name.endswith(ad.suffix):
             if not ad.found():
-                raise VaultError(f"{ad.name} not found: it opens {path.name}")
+                raise VaultError(f"{ad.name} {NOT_ON_PATH}; it opens {path.name}")
             return ad
     raise VaultError(f"{path.name}: neither .age nor .gpg")
 
@@ -630,7 +662,7 @@ def _safe_extract(archive: Path, dst: Path) -> int:
 def open_sealed(cfg: config.Config, sealed: Path, out: Path, identity: str = "device",
                 found: dict[str, Adapter] | None = None) -> dict:
     """Open a sealed file into ``out`` (a folder for an archive): with the device key, a key file, or ``-`` (the key
-    typed or pasted into the tool itself). The CLI refuses it in an agent session."""
+    typed or pasted, hidden: ``ask_key``). The CLI refuses it in an agent session."""
     ad = adapter_of(sealed, found)
     out.mkdir(parents=True, exist_ok=True)
     with _private_dir("o") as tmp:
@@ -793,7 +825,7 @@ def drill(cfg: config.Config, name: str, identity: str = "-", now: datetime | No
         raise VaultError(f"no canary for {name}: brain vault canary first")
     ad = (found if found is not None else adapters()).get(entry["adapter"])
     if ad is None or not ad.found():
-        raise VaultError(f"{entry['adapter']} not found")
+        raise VaultError(f"{entry['adapter']} {NOT_ON_PATH}")
     target = vault_dir() / "canary" / f"{name}{ad.suffix}"
     with _private_dir("d") as tmp:
         if identity == "-":

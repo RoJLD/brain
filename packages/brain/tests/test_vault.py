@@ -107,7 +107,7 @@ def test_age_wiring_seal_then_open_with_each_of_two_recipients(brain, brain_home
     assert (tmp_path / "from-file" / "ledger" / "sub" / "x.txt").read_text() == "nested"
 
 
-def test_age_real_round_trip(brain, brain_home, tmp_path):
+def test_age_real_round_trip(brain, brain_home, tmp_path, monkeypatch):
     ad = vault.Age()
     if not ad.found() or not ad.keygen_cmd:
         pytest.skip("age not installed")
@@ -120,6 +120,10 @@ def test_age_real_round_trip(brain, brain_home, tmp_path):
         out = tmp_path / ident[-6:]
         vault.open_sealed(cfg, sealed, out)
         assert tree(out / "ledger") == tree(brain_home / "ledger")
+    vault.canary(cfg, now=NOW)  # the drill with the real age: the key typed hidden, then Enter, and nothing else
+    monkeypatch.setattr(vault.sys, "stdin", Tty())
+    monkeypatch.setattr(vault.getpass, "getpass", lambda prompt: b)
+    assert vault.drill(cfg, "recovery", "-", now=NOW)["recipient"] == "recovery"
 
 
 # --- refusals ---
@@ -268,6 +272,60 @@ def test_device_init_canary_health_and_drill(brain, brain_home, tmp_path, capsys
     vault.canary(cfg, now=NOW, found=found)
     assert vault.health(cfg, now=NOW, found=found) == 1
     assert "missing from the keystore" in capsys.readouterr().out
+
+
+class Tty(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def test_drill_asks_the_key_hidden_and_hands_it_to_age(brain, monkeypatch, capsys):
+    """The recovery key is typed hidden (getpass: no echo, Enter ends it, no end-of-input key to find), checked for its
+    shape and handed to age on its stdin; a wrong line, nothing or Ctrl+C opens nothing and never echoes the line."""
+    found = fake_age()
+    (dev, dev_pub), (rec, rec_pub) = keygen(2, found["age"])
+    keystore.Memory.data["device"] = dev
+    cfg = brain({"box1": {"kind": "device", "age": dev_pub}, "recovery": {"kind": "recovery", "age": rec_pub}})
+    vault.canary(cfg, now=NOW, found=found)
+    asked = []
+    monkeypatch.setattr(vault.sys, "stdin", Tty())
+    monkeypatch.setattr(vault.getpass, "getpass", lambda prompt: asked.append(prompt) or f"  {rec}  ")
+    assert vault.drill(cfg, "recovery", "-", now=NOW, found=found)["drilled_at"] == "2026-11-02T12:00:00Z"
+    assert asked == [vault.KEY_PROMPT] and rec not in capsys.readouterr().out
+    for given in (rec_pub, "# created: 2026-11-03", ""):
+        monkeypatch.setattr(vault.getpass, "getpass", lambda prompt, g=given: g)
+        with pytest.raises(vault.VaultError, match="not an age secret key") as exc:
+            vault.drill(cfg, "recovery", "-", found=found)
+        assert not given or given not in str(exc.value)
+
+    def interrupted(prompt):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(vault.getpass, "getpass", interrupted)
+    with pytest.raises(vault.VaultError, match="no key given"):
+        vault.drill(cfg, "recovery", "-", found=found)
+    with pytest.raises(vault.VaultError):
+        monkeypatch.setattr(vault.getpass, "getpass", lambda prompt: dev)
+        vault.drill(cfg, "recovery", "-", found=found)  # the device key is not the recovery key
+
+    monkeypatch.setattr(vault.sys, "stdin", io.StringIO(rec + "\n"))  # not a terminal: its first line
+    assert vault.drill(cfg, "recovery", "-", now=NOW, found=found)["recipient"] == "recovery"
+    monkeypatch.setattr(vault.sys, "stdin", io.StringIO(""))
+    with pytest.raises(vault.VaultError, match="no key given"):
+        vault.drill(cfg, "recovery", "-", found=found)
+
+
+def test_the_owner_prompts_name_what_to_do(brain, monkeypatch):
+    """gpg reads its key block itself: the prompt says how the console ends the input; age missing from a terminal
+    opened before the install says to open a new one."""
+    assert "Ctrl+Z alone on the new line" in vault.paste_prompt(windows=True)
+    assert "Ctrl+D" in vault.paste_prompt(windows=False) and "Ctrl+Z" not in vault.paste_prompt(windows=False)
+    found = fake_age()
+    (dev, dev_pub), (rec, rec_pub) = keygen(2, found["age"])
+    keystore.Memory.data["device"] = dev
+    cfg = brain({"box1": {"kind": "device", "age": dev_pub}, "recovery": {"kind": "recovery", "age": rec_pub}})
+    vault.canary(cfg, now=NOW, found=found)
+    with pytest.raises(vault.VaultError, match="age not found on this terminal's PATH .*open a new one"):
+        vault.drill(cfg, "recovery", "-", found={"age": vault.Age([], []), "gpg": vault.Gpg([])})
 
 
 def test_health_off_and_next_steps(brain, capsys):
