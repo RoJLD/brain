@@ -4,6 +4,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The Terminal panel meets the shell guards** (wi-brain-guard-terminal-tool). A command that the desktop app's
+  `run_in_terminal` types into the owner's Terminal panel ran outside every guard: production checkouts, the owner's
+  own actions (`brain usage allow` included), power, attribution, secrets, public pushes and branch names. A
+  PreToolUse matcher on `mcp__*terminal__run_in_terminal` now judges it as a shell call (`guard.sh shell`):
+  PowerShell on Windows, the panel's shell there, else bash, in the tab's `cwd`, else the session's folder.
 - **The queue in three bands, ranked by what each entry holds up** (wi-brain-queue-priority). `brain queue` scores
   each entry at zero token: the highest priority and the count of the open items and milestones it holds up, the
   critical path's slip per day of waiting and the nearest milestone (the last `brain forecast`, through

@@ -4,7 +4,9 @@ and PyYAML for the registry). They refuse at zero token what a rule used to forb
 Hook payload fields (Claude Code hooks reference, 2026-11-01): tool_name, tool_input.command (Bash, PowerShell),
 tool_input.file_path (Edit, Write, MultiEdit) or notebook_path (NotebookEdit), cwd, session_id, tool_use_id. A refusal
 is one JSON line on stdout, ``permissionDecision: deny`` with a one-line reason the model reads, signed with the core
-plugin's name (config.json adapters.claude); a call that passes prints nothing. Seven guards, in this order:
+plugin's name (config.json adapters.claude); a call that passes prints nothing. A command the desktop app's
+``run_in_terminal`` types into the owner's Terminal panel (tool_input.command, cwd) is judged as a shell call, PowerShell
+on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Seven guards, in this order:
 
 - ``production``: no tool edit under a production checkout (``production:`` in the Brain's projects.yaml), and no git
   command that changes one: commit, checkout, switch, restore, reset, merge, rebase, stash (but list, show), push,
@@ -1278,6 +1280,9 @@ SCHEDULED_TOOL = re.compile(r"^mcp__.*scheduled[-_]?tasks?__(?:create|update)_sc
 SESSION_SETTINGS_TOOL = re.compile(r"^mcp__.+__(?:set_remote_control|set_session_permission_mode)$")
 SETTINGS_TOOL = re.compile(r"^mcp__.+__set_setting$")
 SECURITY_KEY = re.compile(r"remote[_-]?control|permission", re.I)
+# The desktop app's tool that types a command into the owner's Terminal panel: judged as a shell call, PowerShell on
+# Windows (the panel's shell there), else bash (an SSH host's login shell), in its cwd or the session's.
+TERMINAL_TOOL = re.compile(r"^mcp__.*terminal__run_in_terminal$")
 UNLIFTED = {"security-settings"}   # the owner guard's checks BRAIN_GUARD_ALLOW cannot lift, not even with all
 
 
@@ -2483,6 +2488,9 @@ def refusals(payload: dict):
     tool = payload.get("tool_name") or ""
     inp = payload.get("tool_input") or {}
     cwd = payload.get("cwd") or os.getcwd()
+    if TERMINAL_TOOL.match(tool):
+        tool = terminal_shell()
+        cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
     if tool in EDIT_TOOLS:
         reason = check_production(tool, inp, [], cwd)
         if reason:
@@ -2518,6 +2526,11 @@ def refusals(payload: dict):
             yield guard, check, out, None
         elif out:
             yield guard, *out
+
+
+def terminal_shell() -> str:
+    """The shell tool a Terminal panel command is judged as: PowerShell on Windows, else Bash."""
+    return "PowerShell" if os.name == "nt" else "Bash"
 
 
 def _log(guard: str, exc: Exception) -> None:
@@ -2590,7 +2603,8 @@ def main(stdin=None, stdout=None) -> int:
                 continue
             recorded = _record(payload, guard, check, "denied", reason, request)
             if request is not None:
-                reason += queue_hint(request, recorded, payload.get("tool_name") or "")
+                tool = payload.get("tool_name") or ""
+                reason += queue_hint(request, recorded, terminal_shell() if TERMINAL_TOOL.match(tool) else tool)
             cfg = config.load()
             reason = f"{config.claude(cfg)['plugin']} guard: {reason}. " + (
                 f"No override: {check} is {config.owner(cfg)}'s alone, in the app." if check in UNLIFTED else

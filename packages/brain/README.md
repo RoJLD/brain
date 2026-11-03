@@ -20,7 +20,8 @@ What it does, every command reading files and git, never a model:
 - **Claude Code**: the hooks and guards under `src/brain/adapters/claude/hooks/` (rules injection, capture, the
   PreToolUse guards: production checkouts, the owner's own actions, a session's Remote Control and permission mode,
   power, attribution, secrets, public pushes, branch names; the usage governor before a new session, a subagent or a
-  workflow), which `brain render --target claude` copies into the owner's own plugin;
+  workflow; a command a session types into the owner's Terminal panel, `run_in_terminal`, meets the same shell
+  guards), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
   shapes, data files) before a push to a public repo, and its guard holds the push until the check is green.
 
