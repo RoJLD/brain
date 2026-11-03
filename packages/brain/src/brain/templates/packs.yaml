@@ -1,0 +1,16 @@
+# The neutral source of this brain's agent files: the marketplace and the packs that carry rules, procedures and MCP
+# servers (brain render --target claude|agents|cursor|gemini|antigravity|grok|hermes). brain sync renders the Claude
+# marketplace from it (.claude-plugin/marketplace.json and plugins/<plugin>/, named by config.json adapters.claude);
+# the rendered files are never edited by hand: brain check refuses them.
+#
+# A pack may also list rules (files of source/rules/), procedures (source/procedures/<name>/ or the engine's) and
+# MCP servers (source/mcp.yaml); projects: [a, b] gives it to those projects only.
+
+marketplace:
+  owner:
+    name: {owner}
+
+packs:
+  core:              # the plugin every session gets: the engine's hooks inject config.json rules, guard and capture
+    core: true
+    hooks: true

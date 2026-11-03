@@ -28,7 +28,7 @@ What it does, every command reading files and git, never a model:
 Python 3.10 or later. The command depends on PyYAML and on `research-graph` at the same tag.
 
 ```bash
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.0#subdirectory=packages/brain"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.1#subdirectory=packages/brain"
 ```
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
@@ -50,15 +50,20 @@ cd ~/my-brain && git init && git add -A && git commit -m "my brain"
 brain check                                          # graph-check OK
 brain profile                                        # this machine's profile: Lite unless you choose another
 brain item add wi-first --title "My first item"
+# Claude Code, once: the brain's own folder is a local marketplace
+claude plugin marketplace add ~/my-brain
+claude plugin install brain-core@brain
 ```
 
 `brain init` writes, from `src/brain/templates/` and `research_graph init`, never over an existing file:
 
 | File | What it holds |
 |---|---|
-| `config.json` | the contract, v1: `identity` (the owner's id, the name the views show, `display_name`, a person or a team, a tenant), `registry`, `rules`, `memory`, `records`, `engine` (this repo and the tag installed), `tier` (Lite by default); `brain config --keys` lists every key |
+| `config.json` | the contract, v1: `identity` (the owner's id, the name the views show, `display_name`, a person or a team, a tenant), `registry`, `rules`, `memory`, `records`, `engine` (this repo and the tag installed), `tier` (Lite by default), `adapters.claude` (the marketplace `brain` and its core plugin `brain-core`); `brain config --keys` lists every key |
 | `projects.yaml` | the registry: one project, the brain itself (`brain projects --keys`) |
+| `source/packs.yaml` | the neutral source the agent files are rendered from: the marketplace's owner and one core pack with the engine's hooks |
 | `notes/graph/` | the backlog's graph store, its `owner` the same as config.json's |
+| `.claude-plugin/marketplace.json`, `plugins/brain-core/` | the Claude Code marketplace and its core plugin (its manifest and the engine's hooks: the rules injection, the guards, the capture), rendered after the store by `brain render --target claude --write`'s code, so `brain check` passes at once |
 | `notes/decisions.md`, `notes/journal.md` | the decision log and the journal, append-only |
 | `rules/global.md` | neutral starter rules for every project (definition of done, decisions, scripts before rules): edit them |
 | `CLAUDE.md`, `.gitignore`, `memory/`, `records/` | the repo's own rules, the memory notes and the records |
@@ -66,6 +71,13 @@ brain item add wi-first --title "My first item"
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
 A team uses `--kind team` (and `--tenant ID` for a hosted brain).
+
+Claude Code gets the hooks, the guards and the injected rules from the brain's own folder: `claude plugin marketplace
+add <the brain's folder>` once, then `claude plugin install brain-core@brain`. The rendered files are never edited by
+hand (`brain check` refuses them); after an engine upgrade, `brain sync` renders the plugin again. A rendered file
+that already exists and differs is kept by `brain init` and named (`brain render --target claude --write` replaces
+it). config.json names no `adapters.claude.source`, so the installer's marketplace steps (a GitHub marketplace) stay
+off.
 
 ## The owner's queue
 

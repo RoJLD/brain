@@ -18,6 +18,17 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `lang`, or `$BRAIN_LANG`), « My queue » when no one is named, and `settings.titles` gives any panel a free title.
 - Fixed: a date-typed prop (`due: 2026-11-08`) no longer breaks `brain queue`.
 
+## 0.2.1 — 2026-11-03
+
+- **A new brain gets its own Claude Code plugin.** `brain init` renders a local marketplace in the new brain: it
+  writes `source/packs.yaml` (the marketplace's owner, one core pack with the engine's hooks) and config.json
+  `adapters.claude` (the marketplace `brain`, the plugin `brain-core`, no `source`), then, after the store,
+  `.claude-plugin/marketplace.json` and `plugins/brain-core/` by the code of `brain render --target claude --write`,
+  so `brain check` passes at once; a rendered file that exists and differs is kept. The owner adds the marketplace
+  once (`claude plugin marketplace add <the brain's folder>`, then `claude plugin install brain-core@brain`): a local
+  marketplace's plugin is loaded in place, so its hooks are those of the installed engine, and `brain sync` renders
+  them again after an upgrade. Nothing of the owner's leaves the machine, nothing is published.
+
 ## 0.2.0 — 2026-11-03
 
 The brain command, published as this repo's second distribution, from the personal brain it was written in (a fresh
