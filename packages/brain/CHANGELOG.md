@@ -24,6 +24,19 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 - **The vault's runbook ships with the engine** (`docs/vault.md`): the classes, the owner's steps once per machine,
   the daily canary as a scheduled task for Windows, macOS and Linux, the drill, a lost key. `brain vault status` links
   it. An empty `.gitkeep` holds no data for the classes check.
+- **The links of a project's other repos** (`brain.links`). A store's CodeRefs may name another registered repo of
+  its project (an engine whose code a personal brain describes, say). `brain sync` now also derives that repo's Doc,
+  Test and Workflow nodes into the store's `_generated_links.yaml`, from its committed state (the commit `brain audit`
+  reads), with the `tested_by` and `documented_in` edges from the nodes that stand for its code: the files of their
+  CodeRefs, and a Hook's scripts found there by their `hooks/<name>` (the store's repo renders them from that repo). A
+  Skill, a Plugin and the Spec anchors stay the store's repo's. A repo whose checkout is not on the machine is left out,
+  and `brain sync` says so. `brain audit` measures `doc.links` and `test.links` of such a repo against that store
+  (until now: "no store of its own to hold the links"). A repo no CodeRef names is not derived, so a project's
+  production checkouts add nothing.
+- Fixed: `code_index:` entries resolve like `repos:` (`projects._resolve_root`): from a project rooted in a worktree, a
+  sibling of the main checkout (`../brain`) is found there, not looked for beside the worktree.
+- `brain.capture` is documented in the README (the capture hooks' module); `hooks/health.sh` has its end-to-end test;
+  `brain lint rules` lost its fallback to a plugin's own `rules/global.md` (the package left the plugin folder).
 - **`install.ps1 -Apply` replaces a running launcher.** Sessions' hooks run `brain.exe` many times a minute, and
   Windows refuses to overwrite a running image, so the last step of `-Apply` (the copy to `<BRAIN_HOME>\bin`) failed
   twice. `Set-Launcher` leaves an identical launcher alone, copies a new one beside it and swaps it in with a short

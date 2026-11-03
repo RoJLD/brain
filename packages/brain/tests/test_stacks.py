@@ -393,3 +393,31 @@ def test_probe_url_against_a_local_server():
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     assert stacks._probe_url(f"http://127.0.0.1:{port}/", 1)  # nothing listens: a reason, not ''
+
+
+def test_health_sh_end_to_end_reports_a_watched_stack_down_and_is_silent_once_up(tmp_path, brain_home):
+    """The SessionStart script itself (the bash wrapper Claude Code runs), with the interpreter of BRAIN_PYTHON."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from test_capture import PLUGIN, _bash
+    bash = _bash()
+    if not bash:
+        pytest.skip("no bash")
+    py = Path(sys.executable).as_posix()
+    reg = tmp_path / "projects.yaml"
+
+    def run(code: int) -> subprocess.CompletedProcess:
+        reg.write_text(f"app:\n  root: {tmp_path.as_posix()}\n  stacks:\n    web:\n      start: [a]\n"
+                       f"      health: {{cmd: ['{py}', -c, 'raise SystemExit({code})']}}\n      watch: true\n",
+                       encoding="utf-8")
+        env = dict(os.environ, BRAIN_HOME=str(brain_home), BRAIN_PYTHON=sys.executable, BRAIN_PROJECTS=str(reg))
+        return subprocess.run([bash, str(PLUGIN / "hooks" / "health.sh")], input='{"cwd": "."}', capture_output=True,
+                              text=True, env=env, timeout=60)
+    down = run(3)
+    assert down.returncode == 0
+    assert "1 watched stack(s) down" in json.loads(down.stdout)["hookSpecificOutput"]["additionalContext"]
+    up = run(0)
+    assert up.returncode == 0 and up.stdout == ""

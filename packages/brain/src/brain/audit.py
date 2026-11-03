@@ -99,18 +99,22 @@ class Pending:
 # --- doc.links and test.links (brain.links, wi-brain-doc-test-links) ---
 
 def _derived(ctx: dict) -> links.Links:
-    """The repo's Doc and Test links at the tree measured, from the audit's own facts and test evidence."""
+    """The repo's Doc and Test links at the tree measured, from the audit's own facts and test evidence; against the
+    store of another repo of the project (its holder's tree) when the repo has none of its own."""
     if "links" not in ctx["cache"]:
-        rf = ctx["rf"]
-        ctx["cache"]["links"] = links.derive(rf.tree, rf.name, ctx["store"][0], rf, ctx["idx"], ctx["mod_ev"])
+        rf, (rel, _, holder) = ctx["rf"], ctx["store"]
+        home = ctx["trees"][holder] if holder != rf.name else None
+        hand = (links.store_nodes(home, rel), links.store_edges(home, rel)) if home is not None else (None, None)
+        ctx["cache"]["links"] = links.derive(rf.tree, rf.name, rel, rf, ctx["idx"], ctx["mod_ev"], hand=hand[0],
+                                             hand_edges=hand[1], home=home)
     return ctx["cache"]["links"]
 
 
 def _no_store(ctx: dict, node_type: str) -> str:
     """Why the repo's links cannot be measured ('' when its store takes ``node_type``)."""
     if not ctx["store"]:
-        return "no store of its own to hold the links"
-    rel, types = ctx["store"]
+        return "no store of its own to hold the links, and no CodeRef of the project's store names it"
+    rel, types, _ = ctx["store"]
     return "" if node_type in types else f"{rel} has no {node_type} type"
 
 
@@ -418,7 +422,7 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
         rf = facts[c.name]
         if only is not None and c.name not in only:
             continue
-        ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm,
+        ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm, "trees": trees,
                "flabel": flabel,
                "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
         out_repos.append(_repo_result(c, rf, idx, tops, mod_evidence, facts, dangling.get(c.name, []),
@@ -446,9 +450,17 @@ def _feature_model(p: projects.Project, cfgs: list[projects.Repo],
     return (features.merge(models) if models else None), label or "notes/graph"
 
 
+def _store_types(t: inventory.Tree, rel: str) -> list[str]:
+    schema = inventory._load_yaml(t, f"{rel}/schema.yaml")
+    types = set(schema.get("node_types") or []) if isinstance(schema, dict) else set()
+    return sorted(types & set(links.TYPES))
+
+
 def _linked_stores(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inventory.Tree]) -> dict:
-    """Repo -> (the folder of its own store, the Doc, Test and Workflow types its schema has): a declared store of
-    the project inside the repo, else its notes/graph."""
+    """Repo -> (the folder of the store that takes its links, the Doc, Test and Workflow types its schema has, the
+    repo that holds it): its own store (a declared store of the project inside the repo, else its notes/graph), else
+    the first store of the project, held by another repo, that takes the links and whose CodeRefs name it (brain sync
+    derives its links there, brain.links)."""
     refs = _store_refs(p, cfgs)
     out = {}
     for c in cfgs:
@@ -456,9 +468,18 @@ def _linked_stores(p: projects.Project, cfgs: list[projects.Repo], trees: dict[s
         cands = [r for n, r in refs if n == c.name] + ["notes/graph"]
         rel = next((x for x in cands if t.has(f"{x}/schema.yaml")), "")
         if rel:
-            schema = inventory._load_yaml(t, f"{rel}/schema.yaml")
-            types = set(schema.get("node_types") or []) if isinstance(schema, dict) else set()
-            out[c.name] = (rel, sorted(types & set(links.TYPES)))
+            out[c.name] = (rel, _store_types(t, rel), c.name)
+    for c in cfgs:
+        if c.name in out:
+            continue
+        for holder, rel in refs:
+            h = trees.get(holder)
+            if holder == c.name or h is None or not h.has(f"{rel}/schema.yaml"):
+                continue
+            types = _store_types(h, rel)
+            if {"Doc", "Test"} & set(types) and c.name in links.coded_repos(links.store_nodes(h, rel)):
+                out[c.name] = (rel, types, holder)
+                break
     return out
 
 

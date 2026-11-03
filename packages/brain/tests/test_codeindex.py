@@ -155,6 +155,17 @@ def test_a_worktree_is_named_after_its_main_checkout(tmp_path, monkeypatch, repo
     assert "alpha" in declared and declared["alpha"].path == repos["alpha"].resolve()
 
 
+def test_a_project_rooted_in_a_worktree_reads_its_siblings_from_the_main_checkout(tmp_path, monkeypatch, repos):
+    """As repos: does (projects._resolve_root): a sibling of the main checkout is not one of the worktree's."""
+    wt = tmp_path / "wts" / "alpha-wt"
+    run_git(repos["alpha"], "worktree", "add", "-q", "-b", "feature", str(wt))
+    _registry(tmp_path, monkeypatch, text=f"infra:\n  root: {wt.as_posix()}\n  code_index: [., ../beta]\n"
+                                          "  stacks:\n    g:\n      start: [a]\n      health: {cmd: [b]}\n"
+                                          "      index: {api: 'http://127.0.0.1:4747', container: gitnexus}\n")
+    _, declared = codeindex.load()
+    assert declared["alpha"].path == repos["alpha"].resolve() and declared["beta"].path == repos["beta"].resolve()
+
+
 @pytest.mark.parametrize("extra, message", [
     ("other: {root: x, code_index: [../alpha]}", "alpha is declared by infra and other"),
     ("other: {root: x, code_index: [{branch: main}]}", "a code_index entry is a path"),
