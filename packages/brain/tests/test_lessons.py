@@ -145,6 +145,15 @@ def test_lint_proposes_a_guard_for_a_command_check_and_flags_prose(lstore):
     assert found["les-demo-prose"]["kind"] == "prose"
     assert lessons.propose_guards(lstore, list(found.values()), today="2026-11-03") == ["wi-demo-merge-stale-main"]
     assert lessons.lint_lessons(lstore)[0]["fix"] == ["wi-demo-merge-stale-main"]
+    props = graph.node_index(lstore)["wi-demo-merge-stale-main"][1]["props"]
+    assert "is a guard candidate of brain lint lessons" in props["priority_reason"]
+    assert "regressed" not in props["idea"] and props["priority_proposed"] == "P2"   # a medium lesson
+
+
+def test_a_low_lesson_proposes_p3(lstore):
+    _lesson(lstore, severity="low")
+    assert lessons.seen(lstore, "les-demo-merge-stale-main", pr="acme #2")["filed"] == "wi-demo-merge-stale-main"
+    assert graph.node_index(lstore)["wi-demo-merge-stale-main"][1]["props"]["priority_proposed"] == "P3"
     assert "guard candidate" in lessons.render_lint(lessons.lint_lessons(lstore))[0]
 
 

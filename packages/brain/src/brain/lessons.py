@@ -263,10 +263,15 @@ def like_item(reg: Registry, node: dict) -> str | None:
     return best[1] if best[0] >= NEAR else None
 
 
-def _maybe_propose(store: Path, lid: str, today: str, force: bool = False) -> tuple[str, bool] | None:
+PRIORITY = {"high": "P1", "medium": "P2", "low": "P3"}  # a proposal's priority_proposed, by the lesson's severity
+
+
+def _maybe_propose(store: Path, lid: str, today: str, force: bool = False,
+                   why: str = "regressed after its fix") -> tuple[str, bool] | None:
     """File the item proposal of a lesson that recurred (seen >= its threshold) or regressed, unless an open item it
     led_to already carries the fix; an open item whose title is close to the lesson's (like_item) is linked led_to
-    instead of a new one. (the item's id, new); the new item's id: the lesson's with wi- for les-."""
+    instead of a new one. (the item's id, new); the new item's id: the lesson's with wi- for les-. ``why``: what filed
+    a forced proposal (a regression, the linter's guard candidate)."""
     reg = Registry.load(store)
     node = reg.nodes[lid]
     if node.get("status") == "archived":
@@ -283,8 +288,8 @@ def _maybe_propose(store: Path, lid: str, today: str, force: bool = False) -> tu
         return same, False
     p = _props(node)
     nid = proposal_id(reg, lid)
-    why = "regressed after its fix" if force else f"seen {seen_of(node)} time(s)"
-    props = {"priority_proposed": "P1" if p.get("severity") == "high" else "P2",
+    why = why if force else f"seen {seen_of(node)} time(s)"
+    props = {"priority_proposed": PRIORITY.get(p.get("severity", ""), "P2"),
              "priority_reason": f"lesson {lid} {why}: {p.get('anti_pattern', '')}".strip(),
              "lesson": lid, "idea": f"brain lesson, {today}: {lid} {why}",
              "fix_ladder": "a script first, then a hook, then a template, a rule last (scripts before rules)",
@@ -705,7 +710,8 @@ def propose_guards(store: Path, findings: list[dict], today: str | None = None) 
     filed = []
     for f in findings:
         if f["kind"] == "guard" and not f["fix"]:
-            got = _maybe_propose(store, f["lesson"], today, force=True)
+            got = _maybe_propose(store, f["lesson"], today, force=True,
+                                 why="is a guard candidate of brain lint lessons (its check is a command)")
             if got:
                 filed.append(got[0])
     return filed
