@@ -24,7 +24,7 @@ def fresh(tmp_path, monkeypatch, brain_home):
 def test_the_plan_writes_nothing(fresh, brain_home, capsys):
     assert cli.main(["init", str(fresh), "--owner", "Ada"]) == 0
     out = capsys.readouterr().out
-    assert "create   config.json" in out and "create   notes/graph (research_graph init --owner Ada)" in out
+    assert "create   config.json" in out and "create   notes/graph (research_graph init --owner Ada, layers work, decisions, records)" in out
     assert "create   source/packs.yaml" in out
     assert "render   .claude-plugin/marketplace.json (and plugins/brain-core/ with the engine's hooks" in out
     assert f"point    {paths.personal_file()}" in out and "(plan only: brain init --apply writes it)" in out
@@ -311,8 +311,8 @@ def test_a_template_starts_each_graph_it_declares(fresh, tmp_path, capsys):
                                                     "schema": "default"}]
     assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl), "--apply"]) == 0
     out = capsys.readouterr().out
-    assert "create   notes/graph (research_graph init --owner Ada)" in out
-    assert "create   research/graph (research_graph init --owner Ada)" in out
+    assert "create   notes/graph (research_graph init --owner Ada, layers work, decisions, records)" in out
+    assert "create   research/graph (research_graph init --owner Ada, layers work, decisions, records)" in out
     for store in ("notes/graph", "research/graph"):
         assert 'owner: "Ada"' in (fresh / store / "schema.yaml").read_text(encoding="utf-8"), store
 
@@ -335,3 +335,24 @@ def test_a_bad_graph_plans_nothing(fresh, tmp_path, capsys, graphs, why):
         'memory/.gitkeep: "", records/.gitkeep: ""}\n', encoding="utf-8")
     assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl)]) == 2
     assert why in capsys.readouterr().out and list(fresh.iterdir()) == []
+
+
+def test_the_generic_store_holds_the_records_after_sync(fresh, fixture_transcript, capsys):
+    """GT-2 (the owner's answer, 2026-11-03): the generic template's store is the brain's base, work, decisions and records; a
+    question asked and a session recorded are DDR and Session nodes after brain sync, and the store still checks."""
+    from brain import records, transcript
+
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    schema = (fresh / "notes" / "graph" / "schema.yaml").read_text(encoding="utf-8")
+    assert schema.startswith("# The vocabulary of this graph store, the brain's base") and 'owner: "Ada"' in schema
+    assert "records: [DDR, Session, Action]" in schema
+    assert cli.main(["--root", str(fresh), "decision", "ask", "--title", "Pick a name", "--question", "Which?",
+                     "--option", "Orion: short", "--option", "Atlas: taken", "--why", "short", "--no-notify"]) == 0
+    stats, _, _ = transcript.session_stats(fixture_transcript)
+    records.write(fresh, "sr", stats.record(fixture_transcript))
+    capsys.readouterr()
+    assert cli.main(["--root", str(fresh), "sync"]) == 0
+    generated = (fresh / "notes" / "graph" / "nodes" / "_generated_records.yaml").read_text(encoding="utf-8")
+    assert "type: DDR" in generated and "type: Session" in generated
+    assert cli.main(["--root", str(fresh), "check"]) == 0
+    assert "graph-check OK" in capsys.readouterr().out

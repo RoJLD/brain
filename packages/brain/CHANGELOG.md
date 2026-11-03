@@ -52,6 +52,10 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   engine outside its range or a template missing what config.json names plans nothing. config.json records it (`template`, a new key
   of the schema). `--owner` defaults to the owner of the folder's config.json. The generic template's files moved to
   `templates/generic/`.
+- **The generic store holds the records** (GT-2, wi-brain-init-records-layer). A template's `schema: default` is
+  the brain's base (`templates/schemas/default.yaml`): the work, decisions and records layers, so that `brain sync`
+  turns a new brain's DDRs, sessions and actions into nodes from the first sync; `research_graph init` builds the
+  store, then `brain init` writes this schema in its place (a new store only).
 - **Publishable by construction.** The generic template writes `boundary.yaml` (every file's side, `readiness_max: 0`,
   `src/`, `tests/` and `fixtures/` on the engine side), `fixtures/README.md`, a `README.md` and `.gitattributes` (LF:
   the hooks' shell scripts), and config.json `public` (no repo; `deny`: the owner, this machine's user and host,

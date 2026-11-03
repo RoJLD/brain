@@ -37,9 +37,10 @@ owner. In DIR (default: the current folder), which becomes the owner's private r
 The templates name no person, repo or host: the owner is the name given. A template is data and its manifest
 (``name``, ``version``, ``engine``: the brain versions that can render it, ``title``, ``files``: {the brain's path:
 the template's file, or "" for an empty one}, ``graphs``: the graph stores it starts, a list of {name, store, schema}
-whose first is the brain's main store; ``schema: default``, research_graph init's own, is the only one for now),
-never code (wi-brain-domain-templates). The plan is a list of steps, local only: a later step (the owner's repos and
-data store, created on their keystroke: wi-brain-init-stores) joins it without changing the others.
+whose first is the brain's main store; ``schema: default``, the brain's base of work, decisions and records
+(``templates/schemas/default.yaml``), is the only one for now), never code (wi-brain-domain-templates). The plan is
+a list of steps, local only: a later step (the owner's repos and data store, created on their keystroke:
+wi-brain-init-stores) joins it without changing the others.
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ DEFAULT_TEMPLATE = "generic"
 MANIFEST = "template.yaml"
 TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs"}
 GRAPH_KEYS = {"name", "store", "schema"}
-SCHEMAS = ("default",)   # research_graph init's own; a catalogue of graph types comes later
+SCHEMAS = ("default",)   # templates/schemas/<name>.yaml; a catalogue of graph types comes later
 # what config.json names, so every template writes it (a folder through its .gitkeep)
 REQUIRED = ("projects.yaml", "rules/global.md", "source/packs.yaml", "memory/.gitkeep", "records/.gitkeep")
 TIERS = ("lite", "default")
@@ -183,11 +184,24 @@ def graphs_of(spec: str, declared) -> list[dict]:
             raise InitError(f"{where}[{i}] ({name}): store is a folder inside the brain, each once")
         if schema not in SCHEMAS:
             raise InitError(f"{where}[{i}] ({name}): schema {schema!r}: only {', '.join(SCHEMAS)} for now "
-                            "(research_graph init's own)")
+                            "(the brain's base: work, decisions, records)")
         names.add(name)
         stores.add(store)
         out.append({"name": name, "store": store, "schema": schema})
     return out
+
+
+def schema_text(name: str, owner: str) -> str:
+    """A store's schema.yaml from the engine's ``templates/schemas/<name>.yaml``, with its owner. ``default``, the
+    brain's base: the work, the decisions and the records layers (DDR, Session, Action: what brain sync generates
+    from records/), so that a new brain's decisions and sessions are nodes of its graph from the first sync."""
+    text = (TEMPLATES / "schemas" / f"{name}.yaml").read_text(encoding="utf-8")
+    return text.replace("{owner_line}", f"owner: {json.dumps(owner, ensure_ascii=False)}\n")
+
+
+def schema_layers(name: str) -> list[str]:
+    data = graph._yaml().safe_load(schema_text(name, "x")) or {}
+    return list((data.get("layers") or {}).keys())
 
 
 def template(name: str, tpl: str = DEFAULT_TEMPLATE) -> str:
@@ -312,7 +326,8 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
     for g in tpl.graphs:
         schema = root / g["store"] / "schema.yaml"
         steps.append(Step("keep", schema.parent, why="a graph store already") if schema.exists() else
-                     Step("store", schema.parent, why=f"research_graph init --owner {owner}"))
+                     Step("store", schema.parent, schema_text(g["schema"], owner),
+                          why=f"research_graph init --owner {owner}, layers {', '.join(schema_layers(g['schema']))}"))
     steps.append(_render_step(root, created, claude_names(root)["plugin"], tpl.graphs[0]["store"]))
     pointer, there = paths.personal_file(), paths.pointer_root()
     if there is None:
@@ -332,7 +347,10 @@ def apply(root: Path, steps: list[Step], owner: str) -> int:
             s.path.parent.mkdir(parents=True, exist_ok=True)
             s.path.write_text(s.text or "", encoding="utf-8", newline="\n")
         elif s.action == "store":
-            code = graph.research_graph(root, s.path, "init", "--owner", " ".join(owner.split())) or code
+            rc = graph.research_graph(root, s.path, "init", "--owner", " ".join(owner.split()))
+            if not rc and s.text:   # the brain's schema over the one research_graph init just wrote: a new store only
+                (s.path / "schema.yaml").write_text(s.text, encoding="utf-8", newline="\n")
+            code = code or rc
         elif s.action == "render":
             rc, lines = render_claude(root)
             for line in lines:

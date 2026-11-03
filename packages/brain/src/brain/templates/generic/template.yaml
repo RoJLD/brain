@@ -9,7 +9,8 @@ name: generic
 version: 1
 engine: ">=0.2.2"          # the brain versions that can render it
 title: "A generic brain: a backlog graph, decisions, a journal, guards and the cockpit"
-graphs:                    # the graph stores it starts, the brain's main one first (research_graph init --owner)
+graphs:                    # the graph stores it starts, the brain's main one first (research_graph init --owner);
+  # schema default: the brain's base, the work, decisions and records layers (DDR, Session, Action by brain sync)
   - {name: work, store: notes/graph, schema: default}
 files:                     # the brain's path: the template's file
   projects.yaml: projects.yaml
