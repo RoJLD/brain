@@ -560,3 +560,12 @@ def test_run_starts_the_handover_once_the_app_is_gone(monkeypatch):
     monkeypatch.setattr(tui, "CockpitApp", App)
     monkeypatch.setattr(tui.handover, "start", lambda h: started.append(h) or 0)
     assert tui.run(FakeCockpit()) == 0 and started == ["app", {"script": "h"}]
+
+
+def test_the_queue_panel_names_the_decisions_taken_by_default(monkeypatch):
+    line = "Taken by default, to review: 2 (1 provisional) — brain decision defaulted"
+    monkeypatch.setitem(PANELS, "queue", {**PANELS["queue"], "defaulted": line})
+
+    async def check(app, pilot, fake):
+        assert app.query_one("#queue").border_subtitle.startswith(escape(line))
+    _run(check)

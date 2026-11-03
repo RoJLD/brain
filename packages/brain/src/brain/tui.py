@@ -626,7 +626,10 @@ class CockpitApp(App):
                                   scroll=False)
             table.scroll_to(x, y, animate=False, immediate=True)
             self.call_after_refresh(table.scroll_to, x, y, animate=False)  # once the new rows have their size
-        table.border_subtitle = escape(cockpit.note(name, panel, view, self.search, sort=view is not None))
+        sub = cockpit.note(name, panel, view, self.search, sort=view is not None)
+        if name == "queue" and (panel or {}).get("defaulted"):   # the defaults to review (brain decision defaulted)
+            sub = f"{panel['defaulted']}; {sub}" if sub else panel["defaulted"]
+        table.border_subtitle = escape(sub)
 
     def _draw_tables(self) -> None:
         self.draw(set(cockpit.COLUMNS))
