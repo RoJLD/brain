@@ -8,13 +8,15 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   TEST-1). `brain sync`'s `tested_by` edges now also go to every Python test that imports a node's module itself,
   besides brain audit's strongest evidence; a CodeRef of a symbol (`path::name`) keeps only its file's tests that
   name it (or each of its words, a `cmd_` prefix left out), or, once the store keeps a coverage summary, those whose
-  test contexts ran it. Measured on this engine's brain: 1,470 edges become 576 (−990 that gave each `cli.py`
-  subcommand's feature every CLI test, +96 from imports); a test module no node is tested_by goes from 6 to 4. New
+  test contexts ran it. Measured on this engine's brain (main 8309875): 1,470 edges become 576 by the static rules
+  (−990 that gave each `cli.py` subcommand's feature every CLI test, +96 from imports), 476 with the coverage
+  summary (+147, of which 140 ran the code by the contexts); a test module no node is tested_by goes from 6 to 4. New
   `brain coverage [--repo R] --run [-n N] | --from DATA [--write] [--json]` (brain.testcov): the repo's pytest
-  suites run under pytest-cov with `--cov-context=test`, reduced to `<store>/coverage/<repo>.json` (statements,
-  covered lines, and which test modules ran each function, read from the data file's SQLite tables). `brain audit`
+  suites run under pytest-cov with `--cov-context=test`, the checkout's code first on PYTHONPATH, reduced to
+  `<store>/coverage/<repo>.json` (statements, covered lines, and which test modules ran each function, read from the
+  data file's SQLite tables; this engine: 90.0 % of 31,568 statements, a 300 KB summary). `brain audit`
   measures `test.coverage` (a module its tests run under 50 %, P2) and the new `feature.tests` (a have or partial
-  feature with code that no test covers, P2), both outside the scout (ruleset 4); FEATURES.md's Tests cell gives each
+  feature whose module or script no test covers, P2), both outside the scout (ruleset 4); FEATURES.md's Tests cell gives each
   feature's coverage. Docs: `docs/tests-graph.md`.
 
 - **The session tree** (wi-brain-session-tree; ST-1, ST-2, scale study gap 19). The SessionStart event records both

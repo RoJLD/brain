@@ -23,6 +23,7 @@ NODES = """\
 - {id: feat-lonely, type: Feature, status: partial, title: "Untested", props: {repo: demo, domain: jobs}}
 - {id: feat-later, type: Feature, status: planned, title: "Not yet", props: {repo: demo, domain: jobs}}
 - {id: feat-hub, type: Feature, status: have, title: "Owned by the hub", props: {repo: hub, domain: jobs}}
+- {id: feat-data, type: Feature, status: have, title: "A data file", props: {repo: demo, domain: jobs}}
 - {id: "code:demo:p/cli.py::cmd_run_job", type: CodeRef, status: active, title: "run job"}
 - {id: "code:demo:p/guards.py::check_secret", type: CodeRef, status: active, title: "secret"}
 - {id: "code:demo:p/core.py", type: CodeRef, status: active, title: "core"}
@@ -34,6 +35,7 @@ EDGES = """\
 - {from: feat-core, to: "code:demo:p/core.py", type: implemented_by}
 - {from: feat-lonely, to: "code:demo:p/lonely.py", type: implemented_by}
 - {from: feat-hub, to: "code:demo:p/lonely.py::alone", type: implemented_by}
+- {from: feat-data, to: "code:demo:pyproject.toml", type: implemented_by}
 """
 CLI = """\
 from p import core
@@ -206,7 +208,8 @@ def test_audit_measures_test_coverage_and_feature_tests():
     owners = {x["check"]: x["owner"] for x in r["not_measured"]}
     assert owners["test.coverage"] == "no coverage summary in notes/graph (brain coverage --run --write)"
     found = {(f["check"], f["unit"]) for f in r["findings"] if f["check"] in ("feature.tests", "test.coverage")}
-    # planned features and tested ones are not findings; a feature another repo owns, with its code here, is one
+    # planned features, tested ones and one whose code is a data file are not findings; a feature another repo
+    # owns, with its code here, is one
     assert found == {("feature.tests", "feat-lonely"), ("feature.tests", "feat-hub")}
     r = measure(_files(**{"notes/graph/coverage/demo.json": _summary({})}))
     cov = [f for f in r["findings"] if f["check"] == "test.coverage"]

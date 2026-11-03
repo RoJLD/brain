@@ -182,22 +182,24 @@ def test_coverage(ctx: dict) -> list[dict] | str:
 
 
 def feature_tests(ctx: dict) -> list[dict] | str:
-    """feature.tests: a have or partial feature with code in the repo (whichever repo owns the feature) that no test
-    module of the repo is tested_by (the links derived now: its CodeRefs' tests by brain audit's evidence, imports and
-    coverage, brain.links)."""
+    """feature.tests: a have or partial feature with code in the repo (a module or a script its CodeRefs name, whichever
+    repo owns the feature; a data file is no code a test imports) that no test module of the repo is tested_by (the
+    links derived now: its CodeRefs' tests by brain audit's evidence, imports and coverage, brain.links)."""
     fm = ctx.get("features")
     if fm is None:
         return NO_FEATURES
     why = _no_store(ctx, "Test")
     if why:
         return why
-    lk, name, out = _derived(ctx), ctx["rf"].name, []
+    rf = ctx["rf"]
+    lk, name, out = _derived(ctx), rf.name, []
     tested = {e["from"] for e in lk.edges if e["type"] == "tested_by"}
+    units = {u.path for u in rf.units if u.kind in ("module", "script")}
     for fid in sorted(fm.features):
         status = fm.features[fid].get("status")
         if status not in ("have", "partial") or fid in tested:
             continue
-        code = [c for c in fm.code(fid) if c.lower().startswith(f"code:{name}:")]
+        code = [c for c in fm.code(fid) if links.code_ref_file(rf.tree, name, c) in units]
         if code:
             out.append(finding(name, "feature.tests", fid, f"a {status} feature no test module is tested_by: no test "
                                f"imports, names or runs {', '.join(c.split(':', 2)[2] for c in code[:2])}"

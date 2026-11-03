@@ -64,8 +64,9 @@ there, the same on every machine.
 ## What the audit measures
 
 - `test.links` (P2, never in the scout): a test module no graph node is `tested_by`.
-- `feature.tests` (P2, never in the scout): a `have` or `partial` feature with code in the repo (whichever repo owns
-  the feature) that no test module of the repo is `tested_by`, by the links derived now.
+- `feature.tests` (P2, never in the scout): a `have` or `partial` feature with code in the repo (a module or a
+  script its CodeRefs name, whichever repo owns the feature; a data file is no code a test imports) that no test
+  module of the repo is `tested_by`, by the links derived now.
 - `test.coverage` (P2, never in the scout): a Python module of the repo its tests run under 50 % of
   (`audit.COVERAGE_FLOOR`), by the store's summary; a module the summary does not know (added since) is not counted,
   and without a summary the check is listed as not measured.
