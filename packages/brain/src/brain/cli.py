@@ -816,7 +816,7 @@ def cmd_modules(args, root: Path) -> int:
         print(json.dumps(found, indent=1) if args.json else "\n".join(found) or "module map: every open item placed")
         return 1 if found else 0
     if args.json:
-        print(json.dumps(modules.data(store), indent=1, ensure_ascii=False))
+        print(json.dumps(modules.data(store), indent=1, ensure_ascii=False, default=str))   # a YAML date
     elif not args.write:
         print(modules.render(store, _store_label(root, store)), end="")
     return 0
