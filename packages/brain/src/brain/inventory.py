@@ -27,10 +27,13 @@ from pathlib import Path
 
 from . import graph
 
-try:  # Python 3.11+ (the brain venv); below it a repo with a pyproject.toml is reported as not measured
+try:  # Python 3.11+; on 3.10 the tomli backport (a dependency there); without both, a pyproject.toml is not measured
     import tomllib
 except ImportError:  # pragma: no cover - depends on the interpreter
-    tomllib = None
+    try:
+        import tomli as tomllib
+    except ImportError:
+        tomllib = None
 
 GIT_ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "LC_ALL": "C"}
 SKIP_DIRS = {"upstream", "patches", "node_modules", "experiments", "__pycache__", ".venv", "venv", "site-packages"}

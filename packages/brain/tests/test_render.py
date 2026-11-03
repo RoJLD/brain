@@ -452,7 +452,7 @@ def test_antigravity_uses_serverurl_and_drops_sse(ada):
 def test_grok_writes_toml_tables_and_its_own_skills_folder(ada):
     r = render.render(ada, "grok", "demo", ada)
     toml = next(o.text for o in r.outputs if o.rel == ".grok/config.toml")
-    import tomllib
+    from brain.inventory import tomllib
     data = tomllib.loads(toml)["mcp_servers"]
     assert data["graph"] == {"url": "${GRAPH_API:-http://localhost:4747}/api/mcp"}
     assert data["sidecar"]["args"] == ["${SIDECAR_ROOT:-D:/work/sidecar}/server.mjs", "--quiet"]
