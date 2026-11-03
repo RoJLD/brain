@@ -5,9 +5,12 @@ extra: the same text redrawn in place) both draw it.
 
 Eight panels, each read through the function its command already uses:
 
-  sessions    the sessions whose transcript was written in the last ``--hours`` (24): project (the folder placed as
+  sessions    the sessions whose transcript was written in the last ``--hours`` (24): its short name (else the app's
+              id), role, parent and children live/started (brain.sessions: the app's files, the SessionStart events),
+              project (the folder placed as
               brain queue places it), title, branch, step n/m of its plan (brain.plan: the hook's file, else the
-              plan calls of the transcript), state, model, effort, context used and its budget, output tokens and
+              plan calls of the transcript), state, model, effort, context used, its budget and Ctx, the context as a
+              share of the budget (a master's without a brief: brain.sessions.master_budget), output tokens and
               the cost at API prices (the SR snapshot the Stop hook writes, <BRAIN_HOME>/sessions/<id>.json, priced
               by brain.usage; the costliest first: ``--sort sessions:cost``), last write;
   queue       the owner's queue (brain.queue.collect, as brain queue calls it): decisions, actions, permissions, in
@@ -71,7 +74,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (__version__, alerts, audit, config, decisions, defaults, digest, paths, perf, plan, projects, queue,
-               resume, status, transcript, usage)
+               resume, sessions, status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
 FILE_PANELS = {"graph": ("queue", "milestones", "frontier")}
@@ -86,6 +89,7 @@ AUDIT_TOP = 12
 PERF_DAYS = 7
 PRIORITIES = ("P0", "P1", "P2", "P3")
 STATES = ("asking", "running", "stale", "idle", "ended")
+MASTER_STEPS = (70, 80, 90)  # a master's context steps (ST-3; brain.budget's master watch): its row coloured
 ASK_TOOLS = ("AskUserQuestion",)
 WRAP_UP = "mcp__ccd_turn__wrap_up"
 OUTSIDE = queue.OUTSIDE
@@ -272,6 +276,7 @@ class Sessions:
         self.placer, self.hours = placer, hours
         self.replay = plan.Replay()
         self.seen: dict[str, tuple] = {}  # path -> (size, mtime_ns, turn, meta)
+        self.master_budget: int | None = None  # read once (config.json usage.master_budget, else the model's window)
 
     def _read(self, f: Path) -> tuple[str, dict]:
         try:
@@ -295,6 +300,7 @@ class Sessions:
         self.seen = {k: v for k, v in self.seen.items() if k in keep}
         self.replay.state = {k: v for k, v in self.replay.state.items() if k in keep}
         out = []
+        tree = sessions.Tree(sessions.app_index(), sessions.ledger_events(now)[0])  # the app's files: once per change
         for mtime, f in recent:
             sid = f.stem
             turn_, m = self._read(f)
@@ -314,10 +320,40 @@ class Sessions:
                         "plan": {**plan.progress(steps), "source": "hook" if hook else "transcript" if steps else ""},
                         "model": m.get("model") or sr.get("model") or "",
                         "effort": m.get("effort") or sr.get("effort") or "",
-                        "context": m.get("context") or ctx.get("last"), "budget": ctx.get("budget"),
+                        "context": m.get("context") or ctx.get("last"),
+                        "budget": ctx.get("budget") or sessions.watch_state(sid).get("budget"),
                         "output_tokens": tokens.get("output"), "cost_usd": cost_of(sr), "last_write": _iso(mtime),
-                        "age_s": int(age)})
+                        "age_s": int(age), **self._family(tree, sid)})
+        states = {r["session_id"]: r["state"] for r in out}
+        for r in out:  # a child is live while the app has not archived it and its end is not recorded
+            kids = [tree.nodes[k] for k in tree.children.get(r["key"], [])] if r["key"] else []
+            r["kids_live"] = sum(1 for k in kids if not k.get("archived") and states.get(k.get("session")) != "ended")
+            r["ctx_pct"], r["ctx_step"] = self._ctx(r)
         return sorted(out, key=lambda r: (STATES.index(r["state"]), r["age_s"]))
+
+    def _family(self, tree: "sessions.Tree", sid: str) -> dict:
+        """The session's place in the tree (wi-brain-session-tree): app id, short name, role, parent, children."""
+        key = tree.key_of(sid)
+        if not key:
+            return {"host_id": "", "name": "", "role": "solo", "parent_name": "", "kids": 0, "key": ""}
+        node = tree.nodes[key]
+        return {"host_id": node.get("host_id") or "", "name": node.get("name") or "", "role": tree.role(key),
+                "parent_name": tree.parent_name(key) if node.get("parent") else "",
+                "kids": len(tree.children.get(key, [])), "key": key}
+
+    def _ctx(self, r: dict) -> tuple[float | None, int]:
+        """(context as a % of the budget, the master's step reached: 0, 70, 80 or 90): the brief's budget, else a
+        master's (usage.master_budget, else the model's window)."""
+        budget = r.get("budget")
+        if not budget and r.get("role") in ("master", "relay"):
+            if self.master_budget is None:
+                self.master_budget = sessions.master_budget()
+            budget = self.master_budget
+        if not budget or not r.get("context"):
+            return None, 0
+        pct = 100.0 * r["context"] / budget
+        step = max((s for s in MASTER_STEPS if pct >= s), default=0) if r.get("role") in ("master", "relay") else 0
+        return round(pct, 1), step
 
 
 # --- the graph's panels ---
@@ -590,14 +626,15 @@ class Cockpit:
 
 # --- the view: filters, sort and search over the table panels ---
 
-SORTS = {"sessions": ("state", "age", "project", "context", "cost"),
+SORTS = {"sessions": ("state", "age", "project", "context", "cost", "ctx", "role"),
          "queue": ("band", "unblocks", "age", "kind", "project"),
          "frontier": ("priority", "unblocks", "milestone", "age", "project")}
 FILTERS = {"sessions": {"state": ("open", ALL, *STATES)},  # open: not ended
            "queue": {"kind": (ALL, *queue.KINDS), "band": (ALL, *queue.BANDS)},
            "frontier": {"priority": (ALL, "P0-P1", "P0-P2", "none"), "milestone": (ALL, "none")}}
 OPEN_VALUES = {("frontier", "milestone")}  # any milestone id too: the panel's own (choices)
-SORT_COLUMNS = {"sessions": {"State": "state", "Last": "age", "Project": "project", "Context": "context"},
+SORT_COLUMNS = {"sessions": {"State": "state", "Last": "age", "Project": "project", "Context": "context", "Ctx": "ctx",
+                             "Role": "role"},
                 "queue": {"Band": "band", "Unblocks": "unblocks", "Age": "age", "Kind": "kind", "Project": "project"},
                 "frontier": {"P": "priority", "Unblocks": "unblocks", "Milestone": "milestone", "Age": "age",
                              "Project": "project"}}
@@ -611,6 +648,8 @@ SORT_KEYS = {
     "sessions": {"state": lambda r: (STATES.index(r["state"]), r["age_s"]), "age": lambda r: r["age_s"],
                  "project": lambda r: (r["project"], STATES.index(r["state"]), r["age_s"]),
                  "context": lambda r: -(r.get("context") or 0),
+                 "ctx": lambda r: (r.get("ctx_pct") is None, -(r.get("ctx_pct") or 0), r["age_s"]),
+                 "role": lambda r: (("master", "relay", "sub", "solo").index(r.get("role") or "solo"), r["age_s"]),
                  "cost": lambda r: (r.get("cost_usd") is None, -(r.get("cost_usd") or 0), r["age_s"])},
     "queue": {"band": lambda e: (queue.BANDS.index(e.get("band") or "later"), e.get("order") is None,
                                  e.get("order") or 0, -e.get("score", 0), -e.get("unblocks", 0)),
@@ -663,7 +702,8 @@ def _keep(name: str, r: dict, v: dict) -> bool:
 
 def haystack(name: str, r: dict) -> str:
     """What the search looks in: the row's ids, project, title and the words shown with them."""
-    keys = {"sessions": ("session_id", "project", "state", "step", "title", "branch", "model"),
+    keys = {"sessions": ("session_id", "host_id", "name", "role", "parent_name", "project", "state", "step", "title",
+                         "branch", "model"),
             "queue": ("id", "kind", "category", "band", "project", "title", "recommended", "detail"),
             "frontier": ("id", "priority", "project", "milestone", "title"),
             "milestones": ("id", "project", "title"), "alerts": ("level", "project", "key", "message")}[name]
@@ -757,15 +797,19 @@ def when(iso: str | None, tz: str | None = "local", fmt: str = "%H:%M:%S") -> st
 # --- what each panel shows: the TUI's i ---
 
 HELP = {
-    "sessions": {"what": "The sessions whose transcript was written in the last --hours (24): state, session, project, "
-                         "step n/m of its plan, model, effort, context used and its budget, output tokens, last write, "
-                         "title or branch. asking: a question to {owner} or a blocked wrap-up; running; stale: nothing "
+    "sessions": {"what": "The sessions whose transcript was written in the last --hours (24): state, session (its short "
+                         "name, else the app's id; both ids in the detail), role (master, sub, relay, solo), parent, "
+                         "kids live/started, project, step n/m of its plan, model, effort, Ctx (% of its budget; a "
+                         "master's row yellow, orange, red at 70, 80, 90 %), context used and its budget, output "
+                         "tokens, last write, title or branch. asking: a question to {owner} or a blocked wrap-up; running; stale: nothing "
                          "written for 15 min; idle: its turn ended; ended: the SessionEnd hook recorded its end.",
                  "from": "the transcripts' tails, the SR snapshots of the Stop hook (~/.brain/sessions/<id>.json), "
+                         "the desktop app's session files (a closed list of keys) and the SessionStart events, "
                          "the plans (the PostToolUse hook's <id>.plan.json, else the transcript's plan calls), the "
                          "ledger's SessionEnd events",
                  "read": "every --refresh (2 s), a transcript only when it changed",
-                 "detail": "brain status; the session's own transcript"},
+                 "detail": "brain sessions show ID (its family, report and what a message would meet); the "
+                           "session's own transcript"},
     "queue": {"what": "What waits on {owner}: decisions (DDRs, open questions on items), actions (keys, money, accounts, "
                       "scheduled tasks...) and permissions (denied calls), in three bands (now, this week, when you "
                       "can) ranked by what each holds up: the priority and count of the open items and milestones it "
@@ -953,6 +997,19 @@ def context_text(r: dict) -> str:
     return tokens(r.get("context")) + (f"/{tokens(r['budget'])}" if r.get("budget") else "")
 
 
+def session_text(r: dict) -> str:
+    """The Session column (ST-2): the short name, else the app's id, else the transcript's; the ids in the detail."""
+    return r.get("name") or sessions.short(r.get("host_id") or "") or r["session_id"][:8]
+
+
+def kids_text(r: dict) -> str:
+    return f"{r.get('kids_live', 0)}/{r['kids']}" if r.get("kids") else "-"
+
+
+def ctx_text(r: dict) -> str:
+    return f"{r['ctx_pct']:.0f} %" if r.get("ctx_pct") is not None else "-"
+
+
 def model_text(r: dict) -> str:
     return str(r.get("model") or "-").removeprefix("claude-")
 
@@ -964,11 +1021,13 @@ def session_lines(panel: dict, width: int = WIDTH, view: dict | None = None, sea
                     + "".join(f", {n} {s}" for s, n in counts.items() if n) + ")", "sessions", panel, view, search)]
     rows = shown("sessions", panel, view, search)
     if rows:
-        lines.append("  state    session  project    model    effort context   out      last  step | title")
+        lines.append("  state    session        role   parent         kids  project    model    effort ctx   "
+                     "context   out      last  step | title")
     for r in rows:
-        head = (f"  {r['state']:<8} {r['session_id'][:8]} {r['project'][:10]:<10} {model_text(r)[:8]:<8} "
-                f"{str(r.get('effort') or '-')[:6]:<6} {context_text(r):<9} {tokens(r['output_tokens']):<5} "
-                f"{ago(r['age_s']):>7}  ")
+        head = (f"  {r['state']:<8} {session_text(r)[:14]:<14} {str(r.get('role') or 'solo'):<6} "
+                f"{str(r.get('parent_name') or '-')[:14]:<14} {kids_text(r):<5} {r['project'][:10]:<10} "
+                f"{model_text(r)[:8]:<8} {str(r.get('effort') or '-')[:6]:<6} {ctx_text(r):<5} {context_text(r):<9} "
+                f"{tokens(r['output_tokens']):<5} {ago(r['age_s']):>7}  ")
         lines.append(_line(head, f"{r['step'] or '(no plan)'} | {r['title'] or r['branch']}", width))
     return lines
 
@@ -1112,7 +1171,8 @@ def digest_lines(panel: dict | None, width: int = WIDTH, lines_max: int = 12) ->
 # --- the TUI's tables: plain strings, one tuple per row ---
 
 COLUMNS = {
-    "sessions": ("State", "Session", "Project", "Step", "Model", "Effort", "Context", "Out", "Last", "Title"),
+    "sessions": ("State", "Session", "Role", "Parent", "Kids", "Project", "Step", "Model", "Effort", "Ctx", "Context",
+                 "Out", "Last", "Title"),
     "queue": ("Band", "Score", "Unblocks", "Kind", "Project", "Age", "What", "Id"),
     "alerts": ("Level", "Project", "Key", "Since", "Message"),
     "milestones": ("Project", "Done", "Progress", "Milestone", "Title"),
@@ -1136,9 +1196,9 @@ def cells(name: str, r: dict, project: bool = True, tz: str | None = None) -> tu
 
 def _cells(name: str, r: dict, tz: str | None = None) -> tuple[str, ...]:
     if name == "sessions":
-        return (r["state"], r["session_id"][:8], r["project"], r["step"] or "-", model_text(r),
-                str(r.get("effort") or "-"), context_text(r), tokens(r["output_tokens"]), ago(r["age_s"]),
-                r["title"] or r["branch"])
+        return (r["state"], session_text(r), r.get("role") or "solo", r.get("parent_name") or "-", kids_text(r),
+                r["project"], r["step"] or "-", model_text(r), str(r.get("effort") or "-"), ctx_text(r),
+                context_text(r), tokens(r["output_tokens"]), ago(r["age_s"]), r["title"] or r["branch"])
     if name == "queue":
         return (queue.BAND_NAMES.get(r.get("band"), "-") + (f" #{r['order']}" if r.get("order") is not None else ""),
                 f"{r['score']:g}" if r.get("score") is not None else "-", str(r["unblocks"]),

@@ -544,9 +544,16 @@ def session(r: dict) -> dict:
     _section(d, r["session_id"], [f"{r['state']}, {r['project']}, last write {cockpit.ago(r.get('age_s', 0))} ago"
                                   f" ({r.get('last_write') or '-'})"])
     cost = f", ${r['cost_usd']:.2f} at API prices" if isinstance(r.get("cost_usd"), (int, float)) else ""
+    _section(d, "Ids", [f"app: {r.get('host_id') or '-'} (SendMessage, the app's session tools)",
+                        f"transcript: {r['session_id']} (the ledger, the records, brain sessions)",
+                        f"name: {r.get('name') or '-'}; role {r.get('role') or 'solo'}"
+                        + (f", parent {r['parent_name']}" if r.get("parent_name") else "")
+                        + (f", children {cockpit.kids_text(r)} live" if r.get("kids") else ""),
+                        f"brain sessions show {r.get('host_id') or r['session_id']}: its family and report"])
     _section(d, "Where", [f"folder: {r.get('folder') or '-'}", f"branch: {r.get('branch') or '-'}"])
     _section(d, "Model", [f"{cockpit.model_text(r)}, effort {r.get('effort') or '-'}; context "
-                          f"{cockpit.context_text(r)}, output {cockpit.tokens(r.get('output_tokens'))}{cost}"])
+                          f"{cockpit.context_text(r)} ({cockpit.ctx_text(r)} of its budget), output "
+                          f"{cockpit.tokens(r.get('output_tokens'))}{cost}"])
     hook = plan.read(r["session_id"])
     f = _transcript(r["session_id"])
     steps = hook["steps"] if hook else (plan.Replay().steps(f) if f else [])

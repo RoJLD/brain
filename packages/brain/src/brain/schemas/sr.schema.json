@@ -43,6 +43,11 @@
       }
     },
     "task_class": {"type": "string", "enum": ["trivial", "standard", "strategic", "brainstorm"], "description": "The task class the brief announced ('Task class: strategic'); brainstorm marks a brainstorm, which brain.governor caps."},
+    "host_id": {"type": "string", "pattern": "^local_[0-9a-f-]{36}$", "description": "The desktop app's id of the session (CLAUDE_CODE_HOST_SESSION_ID), the one SendMessage and the app's session tools take; session_id is the transcript's (wi-brain-session-tree)."},
+    "name": {"type": "string", "description": "The short name the app gave a session another one started (its metadata's spawnedFrom.name)."},
+    "parent": {"type": "string", "description": "The app's id of the session that started this one (spawnedFrom.sessionId), else its transcript id from the brief hash."},
+    "children": {"type": "array", "items": {"type": "string"}, "description": "The ids of the sessions this one started, the app's when known."},
+    "role": {"enum": ["master", "sub", "relay", "solo"], "description": "Computed when the snapshot is written: master (it started sessions), sub (a session started it), relay (both), solo."},
     "ultracode": {"type": "boolean", "description": "Whether ultracode was on at any time in the session (the app's ultra_effort_enter attachment), so the ledgers tell its spend apart."},
     "cost_usd": {"type": "number", "minimum": 0, "description": "The cost Claude Code reports (cost-state), notional on a subscription."},
     "tools": {"$ref": "#/$defs/counts", "description": "Tool calls per tool."},

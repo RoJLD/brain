@@ -21,6 +21,8 @@ through the notification channels (brain.notify) per level. Every source is read
              that caught the same exception ENGINE_FAILS (3) times in the last 24 hours, at level error for a hook
              (a guard that fails lets the call through) and warn for a command; carried by the brain's own project
              (the one named brain, or whose root is the personal brain).
+  session    a master past 80 % of its budget that still has live children (the budget watch's master state,
+             brain.budget; ST-4): warn, error from 90 %; carried as engine is.
 
 A task alerts after MISSED (2) missed passes (the owner, 2026-10-30: a 15-minute task after 30 minutes), its own
 ``missed:`` otherwise: a pass is missed when no run started within the cadence plus a grace (a tenth of it, 1 to 15
@@ -72,7 +74,8 @@ ERROR_HOURS = 24      # an error event without a later successful run of its tas
 ENGINE_FAILS = 3      # the engine's errors of one task and class in ERROR_HOURS that raise an alert
 MONTHS = 2            # the event files read: this month's and the one before
 SHOWN = 3             # alerts named in brain status's row
-SOURCES = ("scheduler", "ledger", "stack", "code-index", "audit", "events", "file", "engine")
+SOURCES = ("scheduler", "ledger", "stack", "code-index", "audit", "events", "file", "engine", "session")
+MASTER_HOURS = 6      # a master's watch state written this recently is a live master's
 KEYS = {"scheduler", "exits", "tasks", "stacks", "files", "events", "levels"}
 TASK_KEYS = {"every", "missed", "level", "ledger", "running"}
 EXIT_LEVELS = ("ok", *LEVELS)
@@ -662,6 +665,31 @@ def engine_alerts(cfg: Config, now: datetime) -> list[Alert]:
     return out
 
 
+def master_alerts(cfg: Config, now: datetime) -> list[Alert]:
+    """A master past 80 % of its budget that still has live children (wi-brain-master-watch, ST-4): the budget
+    watch's state of each session (``<BRAIN_HOME>/budget/<session>.json``, its ``master``), written in the last
+    MASTER_HOURS; key ``session:master:<id>``, warn from 80 %, error from 90 %."""
+    from . import budget
+
+    out = []
+    floor = now.timestamp() - MASTER_HOURS * 3600
+    try:
+        files = [f for f in budget.state_dir().glob("*.json") if f.stat().st_mtime >= floor]
+    except OSError:
+        return out
+    for f in sorted(files):
+        m = budget.master_of(f.stem)
+        if not m or m.get("pct", 0) < 80 or not m.get("live"):
+            continue
+        who = m.get("host_id") or f.stem
+        level = cfg.levels.get("session") or ("error" if m["pct"] >= 90 else "warn")
+        out.append(Alert(cfg.project, f"session:master:{who}", level, "session", who,
+                         f"master {who} at {m['pct']:.0f} % of its budget with {m['live']} live child(ren): it starts "
+                         "no new child, hands over to a fresh master and drains (ST-3); brain sessions show " + who,
+                         _iso(datetime.fromtimestamp(m.get("at") or f.stat().st_mtime, timezone.utc))))
+    return out
+
+
 def carries_engine(p: projects.Project) -> bool:
     """Whether ``p`` shows the engine's own alerts: it is named brain, or its root is the personal brain's."""
     from .selftime import ENGINE
@@ -738,6 +766,7 @@ def of_project(p: projects.Project, *, stacks_rows=None, index_rows=None, audit=
     out += file_alerts(cfg, p.root, now)
     if carries_engine(p):
         out += engine_alerts(cfg, now)
+        out += master_alerts(cfg, now)
     seen, unique = set(), []
     for a in _sorted(out):
         if a.key not in seen:
