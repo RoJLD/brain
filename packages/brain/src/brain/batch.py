@@ -5,12 +5,13 @@ and ``brain decision answer --batch FILE|-|JSON`` (wi-brain-batch-decisions; gov
 The pending DDRs of kind decision are gathered into batches ready for Claude Code's question tool (AskUserQuestion: 1
 to 4 questions per call, each with a header of 12 characters at most and 2 to 4 options, "Other" added by the tool):
 
-- **sorted by what they unblock**: each DDR's count of open items and milestones downstream (``brain.queue``), the
-  blocking DDRs first, in their own group and flagged (``[BLOQUANT]`` in the question: they were notified when asked,
-  ``brain decision ask --blocking``);
+- **ranked as the queue ranks them**: by band (now, this week, when you can), then the score of what each holds up
+  (``brain.queue``: priority, count, slip, milestone, deadline, effort, age; the owner's order first), the blocking
+  DDRs first in their band, in their own group and flagged (``[BLOQUANT]`` in the question: they were notified when
+  asked, ``brain decision ask --blocking``);
 - **grouped**: the questions of one brainstorm together (a numbered series of one spec: ``Q1``..``Q8``, ``BRIQUE-1``..,
   ``PB-1``.., in their numbered order, since a later question may lean on an earlier one), else the DDRs of one
-  item, else of one spec; a group is placed by its most unblocking DDR, cut in batches of ``size``, and its last batch
+  item, else of one spec; a group is placed by its best-ranked DDR, cut in batches of ``size``, and its last batch
   takes the next groups that fit whole;
 - **ready for the ask tool**: each batch's ``questions`` is the tool's ``questions`` input as is, its ``ids`` the DDRs
   in the same order; the recommended option first, its label marked ``(Recommandé)`` and its description carrying the
@@ -196,8 +197,8 @@ def _seconds(lines: list[str]) -> int:
 # --- batches ---
 
 def build(project, *, size: int = SIZE, today: date | None = None, named: bool = False) -> dict:
-    """The project's pending decisions in batches for the question tool, the most unblocking first, the blocking ones
-    before all; and the counts of what else waits on the owner (``brain queue``: actions, permissions, items' open
+    """The project's pending decisions in batches for the question tool, in rank order (band, then score), the
+    blocking ones before all; and the counts of what else waits on the owner (``brain queue``: actions, permissions, items' open
     questions). The data function of the zen view and of the TUI's Decisions panel. ``named``: each batch's answer
     command names the project (``--all``)."""
     if not 1 <= size <= SIZE:
@@ -212,18 +213,23 @@ def build(project, *, size: int = SIZE, today: date | None = None, named: bool =
         key, label = ("blocking", "blocking") if d.get("blocking") else group_of(d)
         g = groups.setdefault(key, {"key": key, "label": label, "ddrs": []})
         g["ddrs"].append(d)
+    def band(d):
+        return queue.BANDS.index(by_id[d["id"]].get("band") or "later")
     for g in groups.values():
         series = g["key"].startswith("series:")
-        g["ddrs"].sort(key=lambda d: (_series(d)[1] if series else 0, -by_id[d["id"]]["unblocks"], _day(d), d["id"]))
-        g["max"] = max(by_id[d["id"]]["unblocks"] for d in g["ddrs"])
+        g["ddrs"].sort(key=lambda d: (_series(d)[1] if series else 0, band(d), -by_id[d["id"]].get("score", 0),
+                                      -by_id[d["id"]]["unblocks"], _day(d), d["id"]))
+        g["band"] = min(band(d) for d in g["ddrs"])
+        g["max"] = max(by_id[d["id"]].get("score", 0) for d in g["ddrs"])
         g["asked"] = min(_day(d) for d in g["ddrs"])
-    ordered = sorted(groups.values(), key=lambda g: (g["key"] != "blocking", -g["max"], g["asked"], g["key"]))
+    ordered = sorted(groups.values(), key=lambda g: (g["band"], g["key"] != "blocking", -g["max"], g["asked"],
+                                                     g["key"]))
     raw: list[list[tuple[dict, str]]] = []
     for g in ordered:
         chunks = [g["ddrs"][i:i + size] for i in range(0, len(g["ddrs"]), size)]
         for i, chunk in enumerate(chunks):
             fits = raw and i == 0 and len(raw[-1]) + len(chunk) <= size and g["key"] != "blocking" and \
-                not raw[-1][0][0].get("blocking")
+                not raw[-1][0][0].get("blocking") and band(raw[-1][0][0]) == g["band"]
             if fits:
                 raw[-1] += [(d, g["label"]) for d in chunk]
             else:
@@ -256,13 +262,16 @@ def _batch(project: str, n: int, of: int, rows: list[tuple[dict, str]], by_id: d
         entries.append({k: v for k, v in {
             "id": d["id"], "header": q["header"], "title": d.get("title", ""), "group": label,
             "blocking": bool(d.get("blocking")), "unblocks": e["unblocks"], "unblocked": e["unblocked"],
-            "asked": _day(d), "age_days": e["age_days"], "due": d.get("due"),
+            "asked": _day(d), "age_days": e["age_days"], "due": d.get("due"), "band": e.get("band"),
+            "score": e.get("score"),
             "recommended": (d.get("recommendation") or {}).get("option"),
             "why": (d.get("recommendation") or {}).get("why"), "context": d.get("context"),
             "blocks": d.get("blocks"), "options": d.get("options"), "multi_select": bool(d.get("multi_select"))
         }.items() if v not in (None, "")})
         entries[-1]["seconds"] = _seconds(_question_lines(0, entries[-1], q))
+    bands = [e.get("band") or "later" for e in entries]
     return {"project": project, "n": n, "of": of, "title": " + ".join(labels),
+            "band": min(bands, key=queue.BANDS.index) if bands else "later",
             "blocking": any(e["blocking"] for e in entries), "unblocks": len(unblocked), "unblocked": unblocked,
             "seconds": sum(e["seconds"] for e in entries), "ids": [d["id"] for d, _ in rows], "questions": questions,
             "entries": entries,
@@ -271,14 +280,14 @@ def _batch(project: str, n: int, of: int, rows: list[tuple[dict, str]], by_id: d
 
 
 def session(data: dict, minutes: int = MINUTES) -> int:
-    """How many batches one morning session holds: the blocking ones, then the next while the reading time stays
-    within ``minutes`` (always one; 0: every batch)."""
+    """How many batches one morning session holds: the blocking ones and those of the band now (they reach the owner
+    live), then the next while the reading time stays within ``minutes`` (always one; 0: every batch)."""
     batches = data["batches"]
     if not minutes:
         return len(batches)
     n, spent = 0, 0
     for b in batches:
-        if n and not b["blocking"] and spent + b["seconds"] > minutes * 60:
+        if n and not b["blocking"] and b.get("band") != "now" and spent + b["seconds"] > minutes * 60:
             break
         n, spent = n + 1, spent + b["seconds"]
     return n
@@ -340,7 +349,7 @@ def zen(data: dict, minutes: int = MINUTES, width: int = WIDTH) -> list[str]:
     line each."""
     b = data["batches"]
     if not b:
-        return [f"{data['project']}: no decision waiting on {data.get('owner') or config.NO_OWNER}."] + _footer(data)
+        return [f"{data['project']}: no decision waiting on {config.name_of()}."] + _footer(data)
     n = session(data, minutes)
     now = b[:n]
     lines = [f"Morning decisions — {data['project']}, {data['today']}: {data['decisions']} decision(s) in {len(b)} "
@@ -348,7 +357,8 @@ def zen(data: dict, minutes: int = MINUTES, width: int = WIDTH) -> list[str]:
              f"This session: {n} batch(es), {sum(len(x['ids']) for x in now)} question(s), about "
              f"{_mins(sum(x['seconds'] for x in now))} min. The full text: notes/decision_queue.md.", ""]
     for x in now:
-        lines.append(_cut(f"Batch {x['n']}/{x['of']}{' [BLOQUANT]' if x['blocking'] else ''} · {x['title']} · "
+        lines.append(_cut(f"Batch {x['n']}/{x['of']}{' [BLOQUANT]' if x['blocking'] else ''} · "
+                          f"{queue.BAND_NAMES.get(x.get('band'), x.get('band'))} · {x['title']} · "
                           f"unblocks {x['unblocks']} · ~{_mins(x['seconds'])} min", width))
         for i, (e, q) in enumerate(zip(x["entries"], x["questions"]), 1):
             lines += _question_lines(i, e, q, width)
@@ -357,7 +367,8 @@ def zen(data: dict, minutes: int = MINUTES, width: int = WIDTH) -> list[str]:
         lines.append(f"Later ({len(b) - n} batch(es), {sum(len(x['ids']) for x in b[n:])} question(s); "
                      "brain decision batch --zen --minutes 0 shows them all):")
         for x in b[n:]:
-            lines.append(_cut(f"  {x['n']}/{x['of']} · {x['title']} · unblocks {x['unblocks']}: "
+            lines.append(_cut(f"  {x['n']}/{x['of']} · {queue.BAND_NAMES.get(x.get('band'), x.get('band'))} · "
+                              f"{x['title']} · unblocks {x['unblocks']}: "
                               + ", ".join(e["header"] for e in x["entries"]), width))
     lines += _footer(data)
     return lines

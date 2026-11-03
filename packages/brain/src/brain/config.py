@@ -96,6 +96,21 @@ def owner_of(root: Path | None = None) -> str:
     return owner(load(root))
 
 
+def display_name(cfg: Config) -> str:
+    """The name the views show for the owner (wi-brain-owner-label, UX-16): identity.display_name, else
+    :func:`owner`. ``owner`` stays the id ``--by`` writes and the stores declare: a record never changes for display."""
+    ident = cfg.data.get("identity")
+    if isinstance(ident, dict) and isinstance(ident.get("display_name"), str) and ident["display_name"].strip():
+        return ident["display_name"].strip()
+    return owner(cfg)
+
+
+def name_of(root: Path | None = None) -> str:
+    """:func:`display_name` of the brain the command runs from: the name in titles, help texts and confirmations
+    (:data:`NO_OWNER` when neither identity nor a store names anyone)."""
+    return display_name(load(root))
+
+
 def rules_files(cfg: Config) -> list[Path]:
     """The owner's rules for every project (config.json ``rules``), as paths."""
     rules = cfg.get("rules")
@@ -155,7 +170,8 @@ def describe(cfg: Config) -> dict:
     terms = deny_terms(cfg)
     pub = cfg.data.get("public") if isinstance(cfg.data.get("public"), dict) else {}
     return {"file": str(cfg.file) if cfg.file else None, "root": str(cfg.root), "v": cfg.data.get("v"),
-            "owner": owner(cfg), "kind": ident.get("kind", "person"), "tenant": ident.get("tenant"),
+            "owner": owner(cfg), "display_name": display_name(cfg), "kind": ident.get("kind", "person"),
+            "tenant": ident.get("tenant"),
             "registry": cfg.get("registry"), "rules": list(cfg.get("rules") or []), "memory": cfg.get("memory"),
             "records": cfg.get("records"), "source": cfg.get("source"), "engine": cfg.data.get("engine"),
             "claude": claude(cfg), "public_repos": list(pub.get("repos") or []),

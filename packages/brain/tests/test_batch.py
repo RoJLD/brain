@@ -142,13 +142,16 @@ def test_repeated_question_texts_carry_their_id(store):
 def test_zen_shows_one_session_then_the_rest(store):
     root = _queue(store)
     data = batch.build(projects.for_root(root), today=TODAY)
-    assert batch.session(data, 0) == 3 and batch.session(data, 1) == 1  # the blocking batch, always
+    # the blocking batch and the band now (Q3's spec holds up a P0), always; the rest when they fit
+    assert batch.session(data, 0) == 3 and batch.session(data, 1) == 2
+    assert [b["band"] for b in data["batches"]] == ["now", "now", "later"]
     text = "\n".join(batch.zen(data, minutes=1))
     assert text.startswith("Morning decisions — ") and "8 decision(s) in 3 batch(es) of up to 4, 1 blocking" in text
-    assert "Batch 1/3 [BLOQUANT] · blocking · unblocks 3" in text
+    assert "Batch 1/3 [BLOQUANT] · now · blocking · unblocks 3" in text
+    assert "Batch 2/3 · now · Q* (spec-x) · unblocks 6" in text
     assert "  1. [Urgent] [BLOQUANT] Urgent question?" in text and "     a) Yes (Recommandé): go" in text
-    assert "     Pourquoi : simplest" in text and "Later (2 batch(es), 7 question(s)" in text
-    assert "  2/3 · Q* (spec-x) · unblocks 6: Q1 venue, Q2 host, Q3 name" in text
+    assert "     Pourquoi : simplest" in text and "Later (1 batch(es), 4 question(s)" in text
+    assert "  3/3 · when you can · wi-c + ddr-2026-11-01-lone-question + Q* (spec-y) · unblocks 2: " in text
     assert "1 action(s)" in text
     full = "\n".join(batch.zen(data, minutes=0))
     assert "Later" not in full and "several choices" in full and "  then: brain decision answer --batch" in full
@@ -238,7 +241,7 @@ def test_cli_batch_and_answer(tmp_path, monkeypatch, store, capsys):
     assert all(batch.check_questions(b["questions"]) == [] for b in data["batches"])
     assert cli.main(base + ["batch", "--zen", "--minutes", "1"]) == 0
     out = capsys.readouterr().out
-    assert "Morning decisions — demo" in out and "Later (2 batch(es)" in out
+    assert "Morning decisions — demo" in out and "Later (1 batch(es)" in out
     assert cli.main(base + ["batch"]) == 0 and "demo: 8 decision(s) in 3 batch(es)" in capsys.readouterr().out
     assert cli.main(base + ["batch", "--size", "5"]) == 1
     assert "1 to 4" in capsys.readouterr().err

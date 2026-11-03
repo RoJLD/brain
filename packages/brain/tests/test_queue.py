@@ -92,13 +92,14 @@ def test_build_sorts_by_what_each_entry_unblocks(store):
     data = queue.build(projects.for_root(root), today=TODAY, with_graph=False, transcripts=False)
     got = [(e["id"], e["kind"], e["unblocks"]) for e in data["entries"]]
     assert got == [
-        ("ddr-2026-11-01-unblocks-a", "decision", 4),
-        ("ddr-2026-11-01-blocking-one", "decision", 3),  # wi-c, ms-x and wi-wait, whose props name it
+        ("ddr-2026-11-01-blocking-one", "decision", 3),  # wi-c, ms-x and wi-wait, whose props name it; band now
+        ("ddr-2026-11-01-unblocks-a", "decision", 4),    # then the score: the count, the effort, the age
         ("wi-b:open", "action", 3),
         ("ddr-2026-11-01-enter-the-exchange-key", "action", 1),
-        ("wi-own:owner", "action", 1),
         ("wi-perm:needs", "permission", 1),
-        ("wi-q:open", "decision", 1)]
+        ("wi-q:open", "decision", 1),
+        ("wi-own:owner", "action", 1)]
+    assert data["bands"] == {"now": 1, "week": 0, "later": 6}
     by = {e["id"]: e for e in data["entries"]}
     assert by["ddr-2026-11-01-unblocks-a"]["unblocked"] == ["ms-x", "wi-a", "wi-b", "wi-c"]
     assert by["ddr-2026-11-01-unblocks-a"]["recommended"] == "Yes" and by["ddr-2026-11-01-blocking-one"]["blocking"]
@@ -111,7 +112,8 @@ def test_build_sorts_by_what_each_entry_unblocks(store):
                        transcripts=False)
     assert [e["id"] for e in only["entries"]] == ["wi-perm:needs"]
     text = "\n".join(queue.render(data))
-    assert "    4  decision          ddr-2026-11-01-unblocks-a 2 d: Unblocks A -> recommended: Yes" in text
+    assert "   2.17   4  decision          ddr-2026-11-01-unblocks-a 2 d: Unblocks A -> recommended: Yes" in text
+    assert " now (1): blocking" in text and " when you can (6)" in text
     assert "ddr-2026-11-01-blocking-one [blocking]" in text and "action:keys" in text
 
 

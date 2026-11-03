@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import cockpit, config, decisions, paths, plan, resume, secretscan, status, transcript
+from . import cockpit, config, decisions, paths, plan, queue, resume, secretscan, status, transcript
 
 LOG = "cockpit"  # <BRAIN_HOME>/ledger/cockpit-<month>.jsonl
 OUTPUT_MAX = 4000  # the end of a command's output kept in the log
@@ -228,6 +228,13 @@ def _queue(e: dict, p, st) -> dict:
                                      f"folders: {', '.join(e.get('folders') or []) or '-'}"])
         else:
             _section(d, "Question", [e.get("title"), e.get("detail")])
+    if e.get("band"):
+        held = [f"{h['id']} {h.get('priority') or '-'}" + (f" · {h['milestone']} p50 {h.get('p50') or '?'} · "
+                                                            f"+{h['slip']:g} d per day of waiting" if h.get("milestone")
+                                                            else "") for h in e.get("held") or [] if h.get("priority")
+                or h.get("milestone")]
+        _section(d, f"Band: {queue.BAND_NAMES.get(e['band'], e['band'])} ({e.get('band_why')})",
+                 [queue.explain(e), *held])
     _section(d, f"Unblocks ({e.get('unblocks', 0)})", _titled(st, e.get("unblocked")))
     d["links"] += [{"label": f"the item {nid}", "kind": "item", "id": nid, "project": e["project"]}
                    for nid in (e.get("unblocked") or [])[:12]]
@@ -309,7 +316,7 @@ def queue_actions(e: dict, p, ddr: dict | None = None, via: str = "brain tui") -
     if ddr is not None and decisions.kind_of(ddr) == "decision":
         out.append(Action("answer", "Answer", e["project"], e["id"], root, options=list(ddr.get("options") or []),
                           multi=bool(ddr.get("multi_select")),
-                          plan=[f"records {config.owner_of()}'s answer in "
+                          plan=[f"records {config.name_of()}'s answer in "
                                 f"{root / 'records' / 'ddr' / (e['id'] + '.yaml')}",
                                 "the model in charge applies it, then brain decision ack"]))
         return out
@@ -327,7 +334,7 @@ def queue_actions(e: dict, p, ddr: dict | None = None, via: str = "brain tui") -
             if ddr is not None:
                 steps.append(_brain(root, "queue", "done", e["id"], "--note", f"applied in {via}: {shown(words)}"))
             out.append(Action("apply", "Apply", e["project"], e["id"], where, steps=steps, preview=preview(words),
-                              plan=[f"runs {shown(words)} in {where}, as {config.owner_of()}",
+                              plan=[f"runs {shown(words)} in {where}, as {config.name_of()}",
                                     "then marks the entry done" if ddr is not None else
                                     "then the model clears the item's prop by a PR"]))
     return out
@@ -656,7 +663,7 @@ def open_link(x: dict) -> str:
 def refused(env: dict | None = None) -> str:
     """Why the actions do not run here ('' when they do): a Claude Code session's shell sets CLAUDECODE."""
     env = os.environ if env is None else env
-    return (f"the actions are {config.owner_of()}'s: not from a Claude Code session's shell (CLAUDECODE is set)"
+    return (f"the actions are {config.name_of()}'s: not from a Claude Code session's shell (CLAUDECODE is set)"
             if env.get("CLAUDECODE") else "")
 
 
