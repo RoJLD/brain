@@ -69,20 +69,26 @@ So the routine after `git merge origin/main` is `brain refresh`, then commit, th
 
 A resolution made against a stale local main can drop a PR that merged meanwhile (the lesson
 les-brain-merge-stale-main: a personal brain's #185 against #194, where `brain refresh` fetched after the merge). `brain
-merge-check` fetches the base again (origin's default branch, or `--base`; `--no-fetch` keeps it as last fetched),
-then:
+merge-check` fetches a remote base again (origin's default branch, or `--base origin/<b>`; `--no-fetch` keeps it as
+last fetched; a local branch is used as it is), then compares three sides: main, the branch before the merge (the
+first parent of the merge that brought main in, or HEAD while the merge is not committed yet) and their merge base,
+against the result. What main brought since the merge base must be in the result:
 
-- **behind**: the base is not in the branch's history: merge it again first;
-- **lost**: a line the base has and the branch does not, in the journals, the decision logs, the graph's curated edge
-  files and every tracked `CHANGELOG*.md`, or a curated node file's lines removed in a hunk that adds nothing back,
-  unless one of the branch's own commits (merges left out) removed it: an unlink or an edit is on purpose;
-- **lost ids**: a node id of the base's curated node files the branch no longer has.
+- **behind**: the base is not in the result's history (nor in MERGE_HEAD during an uncommitted merge): merge it
+  again first;
+- **lost**: in the journals, the decision logs, the graph's curated edge files and every `CHANGELOG*.md`, a line main
+  added that the result lacks, compared as content (a reordered edge or a CHANGELOG section the merge driver moved
+  is not lost); in a curated node file, a field or prop main changed on a node that the result does not keep;
+- **lost ids**: a node main has that the result lacks, unless the branch removed it on purpose (it was in the merge
+  base and is not in the branch).
 
-An in-place change (a closed item's last line) counts as changed, never lost. `--worktree` reads a resolution not
-committed yet; `--path` watches one more file; exit 1 when behind or lost, 2 on a git error.
+A file main has and the resolution dropped is read too. `--worktree` reads a resolution not committed yet (main in
+MERGE_HEAD); `--path` watches one more file; exit 1 when behind or lost, 2 on a git error.
 
 ```bash
-git merge origin/main && brain refresh && git commit
+git merge origin/main        # resolve what the driver leaves
+brain refresh                # the views the driver kept from one side
+git add -A && git commit     # the merge, with the refreshed views
 brain merge-check            # then push
 ```
 

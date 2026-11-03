@@ -124,9 +124,10 @@
                         the views waiting for brain refresh here; past merges merged again by git merge-tree, as
                         text then with the driver (nothing checked out): what conflicted before and after
   brain merge-check [--base REF] [--no-fetch] [--worktree] [--path P]... [--repo DIR] [--json]   after a merge of
-                        main into a branch: fetched again, nothing of the base lost (the journals, decision logs, edge
-                        files and CHANGELOGs keep every line, the curated node files every id; an in-place change
-                        passes); exit 1 when the branch is behind the base or lost something
+                        main into a branch: a remote base fetched again, nothing main brought since the merge base
+                        lost (its lines in the journals, decision logs, edge files and CHANGELOGs, as content; the
+                        fields it changed on the graph's nodes; its nodes, unless the branch removed them); exit 1
+                        when the branch is behind the base or lost something
   brain collisions [--all] [--json]   at zero token: the files each open branch and worktree of the project's repos
                         touches (against the default branch, uncommitted changes included), crossed with each
                         startable item's predicted surface (its features' CodeRefs, its module, the files it names):

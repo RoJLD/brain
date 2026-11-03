@@ -2625,12 +2625,16 @@ def added_lines(diff: str) -> dict[str, list[tuple[int, str]]]:
     out: dict[str, list[tuple[int, str]]] = {}
     path, line = "", 0
     for raw in diff.splitlines():
-        if raw.startswith("+++ "):
-            path = raw[4:].strip('"')
+        if raw.startswith("+++ ") and line == -1:
+            path = raw[4:].rstrip("\t").strip('"')   # git ends a name holding a space with a tab
             path = path[2:] if path.startswith("b/") else path
+        elif raw.startswith("diff --git "):
+            line = -1   # the file's header until its first hunk: a content line '+++ x' is not a header
         elif raw.startswith("@@"):
             m = re.search(r"\+(\d+)", raw)
             line = int(m.group(1)) if m else 0
+        elif line == -1:
+            continue
         elif raw.startswith("+") and path != "/dev/null":
             out.setdefault(path, []).append((line, raw[1:]))
             line += 1
@@ -2639,16 +2643,38 @@ def added_lines(diff: str) -> dict[str, list[tuple[int, str]]]:
     return out
 
 
-def commit_public(repo: str, specs: list[str], every_tracked: bool) -> tuple[str, list[str]]:
-    """(the public repo, the findings) of what a commit in ``repo`` would record when its remote is a public repo:
-    brain.public's line checks (denied terms, e-mail addresses, home folders, public.patterns) and file checks on the
-    added lines of the index, plus ``specs`` or commit -a's changes, and the untracked files a git add stages."""
+def push_slug(repo: str) -> str:
+    """owner/name of the remote a checkout's branch pushes to: its pushRemote, else its remote, else origin (not any
+    remote: a private fork's public upstream is not where it pushes)."""
+    branch = _git_out(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    remote = _git_out(repo, "config", f"branch.{branch}.pushRemote").strip() or \
+        _git_out(repo, "config", f"branch.{branch}.remote").strip() or "origin"
+    return public.repo_slug(_git_out(repo, "remote", "get-url", "--push", remote).strip())
+
+
+def _untracked_specs(cmds: list[tuple[list[str], str]]) -> list[str]:
+    """The paths whose untracked files a git add of the call stages: not git add -u or --update (tracked only)."""
+    out: list[str] = []
+    for words, d in cmds:
+        parts = git_parts(words, d) if _prog(words[0]) == "git" else None
+        if parts and parts[1] == "add" and not {"-u", "--update"} & set(parts[2]):
+            out += [_path(s, parts[0]) for s in parts[2] if not s.startswith("-")] or [parts[0]]
+    return out
+
+
+def commit_public(repo: str, specs: list[str], every_tracked: bool,
+                  untracked: list[str] | None = None) -> tuple[str, list[str]]:
+    """(the public repo, the findings) of what a commit in ``repo`` would record when the remote its branch pushes to
+    is a public repo: brain.public's line checks (denied terms, e-mail addresses, home folders, public.patterns) and
+    file checks on the added lines of the index, plus ``specs`` or commit -a's changes, and the untracked files a git
+    add stages (``untracked``: its paths; default ``specs``)."""
     cfg = config.load()
     if not public.public_repos(cfg):
         return "", []
-    _, slug = public.remote_of(Path(repo), cfg)
+    slug = push_slug(repo)
     if not public.is_public(slug, cfg):
         return "", []
+    untracked = specs if untracked is None else untracked
     r = public.rules(cfg)
     diff = ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames"]
     texts = [_git_out(repo, diff[0], "--cached", *diff[1:])]
@@ -2658,16 +2684,27 @@ def commit_public(repo: str, specs: list[str], every_tracked: bool) -> tuple[str
     for text in texts:
         for path, lines in added_lines(text).items():
             found += [f for f in [public.file_finding(path, r)] if f] + public.scan_lines(path, lines, r)
-    for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *specs).split("\0") \
-            if specs else []:
-        if name:
-            found += public.scan_lines(name, enumerate(_read_file(name, repo).splitlines(), 1), r)
+    found += _untracked_findings(repo, untracked, r) if untracked else []
     return slug, list(dict.fromkeys(f.text() for f in found if f.check != "secret"))   # secrets: check_secrets
 
 
+def _untracked_findings(repo: str, specs: list[str], r) -> list:
+    """brain.public's file and line checks on the untracked files of ``specs``, each by its path in the repo (so
+    public.allow matches from a subfolder too)."""
+    top = _git_out(repo, "rev-parse", "--show-toplevel").strip() or repo
+    found = []
+    for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "--full-name", "-z", "--",
+                         *specs).split("\0"):
+        if name:
+            found += [f for f in [public.file_finding(name, r)] if f]
+            found += public.scan_lines(name, enumerate(_read_file(name, top).splitlines(), 1), r)
+    return found
+
+
 def check_public_commit(cmds: list[tuple[list[str], str]]) -> str | None:
+    untracked = _untracked_specs(cmds)
     for d, what, added, every in _commits(cmds):
-        slug, hits = commit_public(d, added, every)
+        slug, hits = commit_public(d, added, every, untracked)
         if hits:
             more = f" and {len(hits) - 1} more" if len(hits) > 1 else ""
             return (f"{what} refused: {hits[0]}{more}; {slug} is a public repo (config.json public.repos): take it "
@@ -2696,7 +2733,7 @@ def heredoc_note(payload: dict, windows: bool | None = None) -> str | None:
     m = _HEREDOC.search(first)
     if not m or "\\\\" not in body.split(f"\n{m.group(2)}", 1)[0]:
         return None
-    return HEREDOC_NOTE if _FEEDS.search(first[:m.start()] + " " + first[m.end():]) else None
+    return HEREDOC_NOTE if _FEEDS.search(first) else None   # python3 <<'EOF' and python - <<'EOF' alike
 
 
 # --- branch names ------------------------------------------------------------------------------------------------

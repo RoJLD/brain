@@ -2,20 +2,24 @@
 nothing, at zero token (wi-brain-merge-stale-main; the lesson les-brain-merge-stale-main: a resolution made against
 a stale local main dropped a just-merged PR's item and journal line, #185 against #194).
 
-It fetches the base's remote (``--no-fetch``: as last fetched), then:
+It fetches a remote base again (``origin/main``; ``--no-fetch``: as last fetched; a local branch is used as it is),
+then compares three sides: the base (main), the branch before the merge (ours: the newest merge's first parent, or
+HEAD while a merge is not committed yet) and their merge base, against the result (HEAD, or the working tree with
+``--worktree``). What main brought since the merge base must be in the result:
 
-- **behind**: the base is not in the branch's history (main moved since the merge): merge it again first;
-- **lost**: each line the base has and the branch does not, in the files that are written by hand and only grow (the
-  journals, the decision logs, the graph's curated edge files, a CHANGELOG), and each line removed from a curated
-  node file in a hunk that adds nothing back (a node's block taken out whole);
-- **lost ids**: each node id of the base's curated node files missing from the branch's.
+- **behind**: the base is not in the result's history (not in HEAD, nor in MERGE_HEAD while a merge is uncommitted):
+  merge it again first;
+- **lost**: in the files that only grow (the journals, the decision logs, the graph's curated edge files, the
+  CHANGELOGs), each line main added that the result lacks, compared as content (a multiset of lines), so a line the
+  merge driver moved (a reordered edge, a CHANGELOG section) is not lost; in a curated node file, each field or prop
+  main changed on a node whose value the result does not keep (the branch's own change to the same field shows here
+  too: check it by eye);
+- **lost ids**: a node main has that the result lacks, unless the branch removed it on purpose (it was in the merge
+  base and is not in ours).
 
-A line the branch changes in place (a closed item's last line, a prop added) is removed in a hunk that also adds
-lines: counted as changed, never lost. A line one of the branch's own commits removes (base..HEAD, merges left out:
-brain item unlink, an edit) is removed on purpose; only what the merge's resolution dropped is lost. The files are the registered project's stores (``nodes/*.yaml`` and
-``edges/*.yaml``, the generated ones left out), journals and decision logs, and every tracked ``CHANGELOG*.md``;
-``--path`` adds others. The branch is HEAD, or the working tree with ``--worktree`` (a resolution not committed yet).
-Exit 1 when the branch is behind or lost something, 2 on a git error.
+The files are the registered project's stores (``nodes/*.yaml`` and ``edges/*.yaml``, the generated ones left out),
+its journals and decision logs and every ``CHANGELOG*.md``, in the base or in the result (a whole file the resolution
+dropped counts); ``--path`` adds others. Exit 1 when the branch is behind or lost something, 2 on a git error.
 """
 
 from __future__ import annotations
@@ -42,10 +46,18 @@ def default_base(repo: Path) -> str:
     return ref.removeprefix("refs/remotes/") or "origin/main"
 
 
-def watched(repo: Path, project: projects.Project | None, extra: list[str] | None = None) -> dict[str, str]:
-    """Tracked path (repo-relative, posix) -> kind: append (journals, decision logs, edge files, CHANGELOGs) or nodes
-    (a store's curated node files)."""
+def _files(repo: Path, rev: str) -> set[str]:
+    return set(git(repo, "ls-tree", "-r", "-z", "--name-only", rev).split("\0")) - {""} if rev else set()
+
+
+def watched(repo: Path, project: projects.Project | None, extra: list[str] | None = None,
+            revs: tuple[str, ...] = ()) -> dict[str, str]:
+    """Path (repo-relative, posix) -> kind: append (journals, decision logs, edge files, CHANGELOGs) or nodes (a
+    store's curated node files), among the index's files and those of ``revs`` (the base: a file the resolution
+    dropped)."""
     tracked = set(git(repo, "ls-files", "-z").split("\0")) - {""}
+    for rev in revs:
+        tracked |= _files(repo, rev)
     out: dict[str, str] = {}
     for store in (project.stores if project else []):
         s = _rel(repo, store)
@@ -78,89 +90,111 @@ def _store_files(tracked: set[str], s: str) -> dict[str, str]:
     return out
 
 
-def hunks(diff: str) -> list[dict]:
-    """The hunks of a unified diff (-U0): path, the old start line, removed and added lines."""
-    out, path = [], ""
-    for raw in diff.splitlines():
-        if raw.startswith("--- "):
-            continue
-        if raw.startswith("+++ "):
-            path = raw[4:].strip('"')
-            path = path[2:] if path.startswith("b/") else path
-        elif raw.startswith("@@"):
-            m = re.search(r"-(\d+)", raw)
-            out.append({"path": path, "line": int(m.group(1)) if m else 0, "removed": [], "added": []})
-        elif out and raw[:1] == "-":
-            out[-1]["removed"].append(raw[1:])
-        elif out and raw[:1] == "+":
-            out[-1]["added"].append(raw[1:])
-    return out
-
-
-def _ids(text: str) -> list[str]:
-    try:
-        data = graph.load_yaml(text)
-    except yaml.YAMLError:
-        return [m.group(1) for m in (_ID.match(ln) for ln in text.splitlines()) if m]
-    return [str(n["id"]) for n in data if isinstance(n, dict) and n.get("id")] if isinstance(data, list) else []
-
-
-def _own_removals(repo: Path, base: str, files: list[str]) -> Counter:
-    """(path, line) -> how many times the branch's own commits (base..HEAD, merges left out) remove it: a removal on
-    purpose (brain item unlink, an edit), not one the merge's resolution made."""
-    log = git(repo, "log", "--no-merges", "--format=", "-p", "-U0", "--no-color", "--no-ext-diff", "--no-renames",
-              f"{base}..HEAD", "--", *files)
-    return Counter((h["path"], t) for h in hunks(log) for t in h["removed"])
-
-
 def _show(repo: Path, rev: str, path: str) -> str:
     try:
-        return git(repo, "show", f"{rev}:{path}")
+        return git(repo, "show", f"{rev}:{path}") if rev else ""
     except AuditError:
         return ""
 
 
-def check(repo: Path, project: projects.Project | None = None, base: str = "", fetch: bool = True,
-          worktree: bool = False, extra: list[str] | None = None) -> dict:
-    base = base or default_base(repo)
-    if fetch and "/" in base:
-        git(repo, "fetch", "--quiet", base.split("/", 1)[0])
-    base_sha = git(repo, "rev-parse", "--verify", f"{base}^{{commit}}").strip()
-    behind = git(repo, "merge-base", base_sha, "HEAD", allow=(0, 1)).strip() != base_sha
-    files = watched(repo, project, extra)
-    out = {"base": base, "base_sha": base_sha, "behind": behind, "files": len(files), "changed": 0, "lost": [],
-           "lost_ids": []}
-    if not files:
-        return out
-    diff = git(repo, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", base_sha,
-               *([] if worktree else ["HEAD"]), "--", *sorted(files))
-    out["removed"] = 0
-    _classify(hunks(diff), files, _own_removals(repo, base_sha, sorted(files)), out)
-    for path in sorted(p for p, kind in files.items() if kind == "nodes"):
-        gone = set(_ids(_show(repo, base_sha, path))) - set(_ids(_mine(repo, path, worktree)))
-        out["lost_ids"] += [{"path": path, "id": i} for i in sorted(gone)]
-    return out
+def _rev(repo: Path, ref: str) -> str:
+    return git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", allow=(0, 1)).strip()
 
 
-def _classify(hs: list[dict], files: dict[str, str], own: Counter, out: dict) -> None:
-    """Each removed line of ``hs``: changed in place (a node file's hunk that adds lines back), removed by the
-    branch's own commits, else lost."""
-    for h in hs:
-        if files.get(h["path"], "append") == "nodes" and h["added"]:
-            out["changed"] += len(h["removed"])
-            continue
-        for i, t in enumerate(h["removed"]):
-            if own[(h["path"], t)] > 0:
-                own[(h["path"], t)] -= 1
-                out["removed"] += 1
-            else:
-                out["lost"].append({"path": h["path"], "line": h["line"] + i, "text": t})
+def _contains(repo: Path, ancestor: str, rev: str) -> bool:
+    return bool(rev) and git(repo, "merge-base", ancestor, rev, allow=(0, 1)).strip() == ancestor
+
+
+def sides(repo: Path, base_sha: str, worktree: bool) -> dict[str, str]:
+    """{"ours": the branch before the merge, "mb": its merge base with the base, "merge": MERGE_HEAD or ''}: while a
+    merge is uncommitted, ours is HEAD; else the newest merge commit since the base's history (its first parent), else
+    HEAD (no merge: nothing of main to lose)."""
+    merge = _rev(repo, "MERGE_HEAD") if worktree else ""
+    ours = "HEAD"
+    if not merge:
+        merges = git(repo, "rev-list", "--first-parent", "--merges", "-n", "50", "HEAD", f"^{base_sha}").split()
+        brought = [m for m in merges if not _contains(repo, base_sha, _rev(repo, f"{m}^1"))]
+        ours = f"{brought[0]}^1" if brought else "HEAD"   # the merge that brought the base in
+    ours_sha = _rev(repo, ours)
+    mb = git(repo, "merge-base", ours_sha, base_sha, allow=(0, 1)).strip()
+    return {"ours": ours_sha, "mb": mb, "merge": merge}
 
 
 def _mine(repo: Path, path: str, worktree: bool) -> str:
     if worktree:
         return (repo / path).read_text(encoding="utf-8") if (repo / path).is_file() else ""
     return _show(repo, "HEAD", path)
+
+
+def _nodes(text: str) -> dict[str, dict]:
+    """id -> the node's fields flattened (status, title, props.<k>...), from a node file's text."""
+    try:
+        data = graph.load_yaml(text) if text else []
+    except yaml.YAMLError:
+        return {m.group(1): {} for m in (_ID.match(ln) for ln in text.splitlines()) if m}
+    out = {}
+    for n in data if isinstance(data, list) else []:
+        if isinstance(n, dict) and n.get("id"):
+            flat = {k: v for k, v in n.items() if k not in ("id", "props")}
+            flat.update({f"props.{k}": v for k, v in (n.get("props") or {}).items()})
+            out[str(n["id"])] = flat
+    return out
+
+
+def lost_lines(base: str, mb: str, result: str) -> list[tuple[int, str]]:
+    """(base line number, text) of each line main added since the merge base (base's lines less the merge base's,
+    as a multiset) that the result lacks."""
+    want = Counter(base.splitlines()) - Counter(mb.splitlines())
+    missing = want - Counter(result.splitlines())
+    out = []
+    for n, line in enumerate(base.splitlines(), 1):
+        if missing[line] > 0:
+            missing[line] -= 1
+            out.append((n, line))
+    return out
+
+
+def lost_nodes(base: str, mb: str, ours: str, result: str) -> tuple[list[tuple[str, str, object]], list[str]]:
+    """(id, field, main's value) of each field main changed on a node that the result does not keep, and the ids of
+    the nodes main has that the result lacks, unless the branch removed them (in the merge base, not in ours)."""
+    b, m, o, r = _nodes(base), _nodes(mb), _nodes(ours), _nodes(result)
+    changed, gone = [], []
+    for nid, fields in b.items():
+        if nid not in r:
+            if nid not in m or nid in o:
+                gone.append(nid)
+            continue
+        old = m.get(nid, {})
+        changed += [(nid, k, v) for k, v in fields.items() if old.get(k) != v and r[nid].get(k) != v]
+    return changed, sorted(gone)
+
+
+def check(repo: Path, project: projects.Project | None = None, base: str = "", fetch: bool = True,
+          worktree: bool = False, extra: list[str] | None = None) -> dict:
+    base = base or default_base(repo)
+    remotes = set(git(repo, "remote").split())
+    if fetch and base.split("/", 1)[0] in remotes and "/" in base:
+        git(repo, "fetch", "--quiet", base.split("/", 1)[0])
+    base_sha = git(repo, "rev-parse", "--verify", f"{base}^{{commit}}").strip()
+    s = sides(repo, base_sha, worktree)
+    behind = not (_contains(repo, base_sha, "HEAD") or _contains(repo, base_sha, s["merge"]))
+    files = watched(repo, project, extra, revs=(base_sha,))
+    out = {"base": base, "base_sha": base_sha, "behind": behind, "files": len(files), "lost": [], "lost_ids": [],
+           "merge_base": s["mb"]}
+    if behind or not files or not s["mb"]:
+        return out
+    for path, kind in sorted(files.items()):
+        texts = [_show(repo, base_sha, path), _show(repo, s["mb"], path)]
+        if texts[0] == texts[1]:
+            continue  # main did not change it since the merge base
+        result = _mine(repo, path, worktree)
+        if kind == "append":
+            out["lost"] += [{"path": path, "line": n, "text": t} for n, t in lost_lines(*texts, result)]
+            continue
+        changed, gone = lost_nodes(*texts, _show(repo, s["ours"], path), result)
+        out["lost"] += [{"path": path, "line": 0, "text": f"{nid} {k}: {v}"} for nid, k, v in changed]
+        out["lost_ids"] += [{"path": path, "id": nid} for nid in gone]
+    return out
 
 
 def failed(r: dict) -> bool:
@@ -172,15 +206,16 @@ def render(r: dict) -> list[str]:
     if r["behind"]:
         return [head, f"behind: {r['base']} is not merged into this branch; git merge {r['base']}, resolve, then run "
                       "brain merge-check again"]
-    lines = [head + f": {r['changed']} line(s) changed in place, {r.get('removed', 0)} removed by the branch's own "
-                    f"commits, {len(r['lost'])} lost, {len(r['lost_ids'])} node id(s) lost"]
+    lines = [head + f": {len(r['lost'])} of main's line(s) or node change(s) lost, {len(r['lost_ids'])} node id(s) "
+                    "lost"]
     lines += [f"  lost id  {x['path']}: {x['id']}" for x in r["lost_ids"]]
-    lines += [f"  lost     {x['path']}:{x['line']}: {x['text'][:100]}" for x in r["lost"][:40]]
+    lines += [f"  lost     {x['path']}" + (f":{x['line']}" if x["line"] else "") + f": {str(x['text'])[:100]}"
+              for x in r["lost"][:40]]
     if len(r["lost"]) > 40:
         lines.append(f"  ... {len(r['lost']) - 40} more")
     if failed(r):
-        lines.append(f"put each lost line back from {r['base']} (git show {r['base']}:<path>), unless the branch "
-                     "removes it on purpose; then run it again")
+        lines.append(f"put each lost line or value back from {r['base']} (git show {r['base']}:<path>), unless the "
+                     "branch changes it on purpose; then run it again")
     else:
-        lines.append("ok: nothing of the base is lost")
+        lines.append("ok: nothing main brought since the merge base is lost")
     return lines

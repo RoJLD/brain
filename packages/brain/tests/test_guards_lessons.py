@@ -67,6 +67,35 @@ def test_added_lines_number_each_file():
     diff = ("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,0 +2,2 @@\n+one\n+two\n"
             "diff --git a/y b/y\n--- /dev/null\n+++ b/y\n@@ -0,0 +1 @@\n+new\n")
     assert guards.added_lines(diff) == {"x": [(2, "one"), (3, "two")], "y": [(1, "new")]}
+    tab = "diff --git a/a b b/a b\n--- a/a b\t\n+++ b/a b\t\n@@ -0,0 +1,2 @@\n+++ not a header\n+x\n"
+    assert guards.added_lines(tab) == {"a b": [(1, "++ not a header"), (2, "x")]}
+
+
+# --- the review of #37 ---
+
+def test_git_add_u_stages_no_untracked_file(pub):
+    (pub / "notes.md").write_text("Written by Ada.\n", encoding="utf-8")   # untracked: git add -u leaves it out
+    (pub / "README.md").write_text("# engine\n\nmore\n", encoding="utf-8")
+    assert not _refused(pub, 'git add -u && git commit -m "readme"')
+    assert _refused(pub, 'git add . && git commit -m "all"')
+
+
+def test_an_untracked_file_is_judged_by_its_repo_path_and_file_checks(pub):
+    (pub / "docs").mkdir()
+    (pub / "LICENSE").unlink()
+    run_git(pub, "rm", "-q", "--cached", "LICENSE")
+    (pub / "LICENSE").write_text("Copyright (c) 2026 Ada\n", encoding="utf-8")   # untracked, allowed by its path
+    assert not _refused(pub / "docs", "git add ../LICENSE && git commit -m licence")
+    (pub / ".env").write_text("X=1\n", encoding="utf-8")
+    (reason,) = _refused(pub, "git add .env && git commit -m env")
+    assert ".env: file:" in reason
+
+
+def test_a_private_fork_with_a_public_upstream_commits_freely(pub):
+    run_git(pub, "remote", "rename", "origin", "upstream")
+    run_git(pub, "remote", "add", "origin", "https://github.com/acme/private.git")
+    (pub / "notes.md").write_text("Written by Ada.\n", encoding="utf-8")
+    assert not _refused(pub, 'git add notes.md && git commit -m "notes"')
 
 
 # --- the chained check and push ---
@@ -94,6 +123,8 @@ def test_a_heredoc_with_a_doubled_backslash_feeding_python_is_warned():
     assert _hook(script) == guards.HEREDOC_NOTE
     assert _hook("cat > f.sh <<'EOF'\ngrep '" + BS2 + "d'\nEOF")
     assert _hook("tee f.txt <<EOF\nx" + BS2 + "y\nEOF")
+    assert _hook("python3 <<'EOF'\nprint('a" + BS2 + "nb')\nEOF")      # an interpreter fed by the heredoc itself
+    assert _hook("node <<EOF\nconsole.log('" + BS2 + "')\nEOF")
 
 
 def test_no_warning_without_the_risk():

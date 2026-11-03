@@ -80,18 +80,20 @@ file under a `fixtures`, `fixture` or `testdata` folder pass. Override, the owne
 
 Three guards the lessons registry asked for (`brain lessons --follow`):
 
-- **The public check at the commit** (`public:commit`): in a checkout whose remote is a repo of config.json's
-  `public.repos`, a `git commit` whose added lines hold a denied term outside `public.allow` (the owner's name, a
+- **The public check at the commit** (`public:commit`): in a checkout whose branch pushes to a repo of config.json's
+  `public.repos` (its pushRemote, else its remote, else origin: a private fork's public upstream is not checked), a `git commit` whose added lines hold a denied term outside `public.allow` (the owner's name, a
   private repo's), an e-mail address, a home folder or a `public.patterns` match is refused with the file and the
   line, at the commit rather than at the push (les-brain-owner-name-in-fixtures). It reads what the commit records:
-  the staged diff, commit `-a`'s changes, the files an earlier `git add` of the same call stages. Override, the
+  the staged diff, commit `-a`'s changes, the files an earlier `git add` of the same call stages (untracked ones too,
+  but not after `git add -u`), each by its path in the repo, so `public.allow` matches from a subfolder. Override, the
   owner's: `BRAIN_GUARD_ALLOW=public:commit`.
 - **A chained check and push**: the push guard judges the whole call before any part of it runs, so `brain check
   --public ... && git push` is refused although the check would pass; the refusal now says to run them in two calls
   (les-brain-guard-judges-chain-early). A `git add ... && git commit` in one call is fine: the commit guards read
   what the add stages.
 - **A heredoc with a doubled backslash** (a warning, never a refusal): on Windows, a Bash call whose heredoc body
-  holds a doubled backslash and whose first line writes a file or feeds an interpreter (`python -`, `cat > f`, `tee`)
+  holds a doubled backslash and whose first line writes a file or feeds an interpreter (`python -`, `python3 <<EOF`,
+  `cat > f`, `tee`)
   gets a note in the session's context: through the Bash tool the doubled backslash has arrived single; write the
   file with Write or Edit, or check its bytes after (les-brain-heredoc-backslashes). The guards ledger records it as
   `heredoc:backslash`, decision `warned`.

@@ -217,9 +217,10 @@ Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md
   is merged by id, anything else as git would. The installer defines it in the personal brain's git config
   (`brain merge-driver install --apply`); `brain merge-driver replay` merges a repo's past merges again with and
   without it.
-- **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing of it lost: the journals,
-  decision logs, edge files and CHANGELOGs keep every line, the curated node files every id; an in-place change or a
-  removal by the branch's own commits passes; exit 1 when the branch is behind or lost something.
+- **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
+  merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
+  order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
+  when the branch is behind or lost something.
 - **`brain collisions [--all] [--frontier] [--json]`**: the files each open branch and worktree changes, crossed with
   each startable item's predicted surface (its features' CodeRefs, its module, the files it names): the items that
   can start now, and those that wait on a branch and its session.

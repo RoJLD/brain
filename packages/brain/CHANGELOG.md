@@ -32,10 +32,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 - **What the lessons asked for** (wi-brain-merge-stale-main, wi-brain-guard-public-commit,
   wi-brain-guard-public-chain, wi-brain-guard-heredoc-backslash). `brain merge-check [--base REF] [--no-fetch]
-  [--worktree] [--path P] [--json]`: after a merge of main into a branch, the base fetched again and nothing of it
-  lost (the journals, decision logs, edge files and CHANGELOGs keep every line, the curated node files every id; an
-  in-place change, or a removal by the branch's own commits, passes); exit 1 when behind or lost. The public guard
-  gains its `commit` check: in a checkout whose remote is a public repo, a commit whose added lines hold a denied
+  [--worktree] [--path P] [--json]`: after a merge of main into a branch, a remote base fetched again and, against
+  the merge base of main and the branch before the merge, nothing main brought lost (its lines in the journals,
+  decision logs, edge files and CHANGELOGs, compared as content; the fields it changed on the graph's nodes; its
+  nodes, unless the branch removed them); exit 1 when behind or lost. The public guard gains its `commit` check: in
+  a checkout whose branch pushes to a public repo, a commit whose added lines hold a denied
   term, an e-mail address, a home folder or a public.patterns match is refused at the commit, not at the push. Its
   push refusal says to split a `brain check --public ... && git push` call. On Windows, a Bash heredoc holding a
   doubled backslash that writes a file or feeds an interpreter gets a warning in the session's context (never a
