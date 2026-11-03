@@ -133,6 +133,15 @@
                         (config.json brief.classes), the budget, the cost estimate, the coordinator's id (--coordinator,
                         else $CLAUDE_CODE_HOST_SESSION_ID), the shared notes folder, and the definition of done and
                         the never-list read from {owner}'s rules
+  brain sessions [tree [ID] | show ID [--report]] [--hours H] [--all] [--json]   the session tree at zero token, from
+                        the desktop app's session files (a closed list of keys, read only), the SessionStart events
+                        and the briefs' hash: both ids of each session (the app's local_ id, the transcript's), its
+                        short name, role (master, sub, relay, solo), parent, children live/started, state and context
+                        against its budget (the brief's; a master's: usage.master_budget, else the model's window);
+                        tree: the families with a live member, each child's end-of-turn report (its PRs, head, items,
+                        DDRs, what it waits on, what comes next); show: one session, by either id (a prefix of 8 or
+                        more) or its short name, and what a message would meet (live, idle, archived); --report: its
+                        last final message in full, read from its transcript
   brain status [--all] [--quick] [--json]   each project's indicators at zero token: items by status and priority,
                  the frontier, decisions waiting on {owner}, milestones, audit debt, stacks, code index, its open
                  alerts (brain alerts), journals, records and ledgers; --all adds the totals and the ids shared across
@@ -1407,6 +1416,7 @@ def _check_store(args, root: Path, store: Path) -> int:
         print(line)
     for line in skew.check_lines(root):   # the running engine against config.json engine.pin
         print(line)
+    rc = _check_session_ids(root) or rc   # a DDR's local_ id that matches no session (scale study gap 19)
     for r in specs.readiness(root, store):
         if r.ready:
             print(f"warning: spec {r.id} is ready to turn active (closed by {r.closed_by()}): brain refresh, or "
@@ -1427,6 +1437,19 @@ def _check_store(args, root: Path, store: Path) -> int:
         print(line)
     given = [a for n, p in sorted(roots.items()) for a in ("--repo-path", f"{n}={p}")]
     return graph.research_graph(root, store, "check", *given) or rc
+
+
+def _check_session_ids(root: Path) -> int:
+    """1 when a DDR stamped on this machine names an app id (local_) that matches no session (brain.sessions)."""
+    if not (root / records.RECORDS_DIR / "ddr").is_dir():
+        return 0
+    from . import sessions
+    refused, warned = sessions.unknown_ids(decisions.load(root))
+    for line in refused:
+        print(f"error: {line}")
+    for line in warned:
+        print(f"warning: {line}")
+    return 1 if refused else 0
 
 
 def cmd_sync(args, root: Path) -> int:
@@ -2395,6 +2418,20 @@ def cmd_brief(args, root: Path) -> int:
     return 0
 
 
+# --- the session tree (imported when it runs) ---
+
+def cmd_sessions(args) -> int:
+    """brain sessions [tree [ID] | show ID] (brain.sessions): machine-wide, no graph store."""
+    from . import sessions
+    try:
+        print(sessions.main(args.sessions_cmd or "list", getattr(args, "ref", "") or "", hours=args.hours,
+                            every=args.all, briefs=not args.no_briefs, as_json=args.json,
+                            report=getattr(args, "report", False)))
+    except sessions.SessionsError as exc:
+        raise SystemExit(f"brain sessions: {exc}") from None
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     who = config.name_of()  # the help names the owner by their display name (identity.display_name)
     by_ = config.owner_of()  # and --by defaults to their id (identity.owner): a record never changes for display
@@ -3359,6 +3396,22 @@ def build_parser() -> argparse.ArgumentParser:
                                                 "coordinator, when it exists)")
     br.add_argument("--write", default="", help="also write the brief to this file")
     br.add_argument("--json", action="store_true")
+    ses = sub.add_parser("sessions", help="the session tree: both ids, role, parent, children, state, context and "
+                                          "each child's report (zero token)")
+    ses_sub = ses.add_subparsers(dest="sessions_cmd")
+    for name, help_ in (("tree", "the families with a live member, or ID's family, with the children's reports"),
+                        ("show", "one session by either id or its short name: what a message would meet")):
+        sp_ = ses_sub.add_parser(name, help=help_)
+        sp_.add_argument("ref", nargs="?" if name == "tree" else None, default="",
+                         help="an app id (local_..., a prefix of 8 or more), a transcript id or a short name")
+        if name == "show":
+            sp_.add_argument("--report", action="store_true", help="its last final message in full, from its "
+                                                                   "transcript (never stored)")
+    for sp_ in (ses, *ses_sub.choices.values()):
+        sp_.add_argument("--hours", type=float, default=24.0, help="active in the last H hours (default 24)")
+        sp_.add_argument("--all", action="store_true", help="every session, archived ones included")
+        sp_.add_argument("--no-briefs", action="store_true", help="skip the token ledger's brief hash")
+        sp_.add_argument("--json", action="store_true")
     cap = sub.add_parser("capture", help="hook entry: the hook JSON on stdin (prints nothing)")
     cap.add_argument("event", choices=["session-start", "post-tool-use", "stop", "session-end"])
     cap.add_argument("family", nargs="?", default="", choices=["", "git", "gh"])
@@ -3366,7 +3419,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-NO_PROJECT = {"capture", "announce", "memory"}  # the hooks', and memory (machine-wide)
+NO_PROJECT = {"capture", "announce", "memory", "sessions"}  # the hooks', memory and sessions (machine-wide)
 
 
 def _project_after(parser: argparse.ArgumentParser) -> None:
@@ -3424,6 +3477,8 @@ def _dispatch(args) -> int:
         return init.main(args)
     if args.cmd == "merge-driver":  # git's entry and a repo's git config: no graph store
         return cmd_merge_driver(args)
+    if args.cmd == "sessions":  # the machine's sessions: no graph store
+        return cmd_sessions(args)
     root = Path(args.root).resolve() if args.root else None
     if args.cmd == "update":  # the engine of this machine: a brain without a graph store updates too
         return cmd_update(args, root)
