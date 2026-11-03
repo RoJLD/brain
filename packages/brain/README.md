@@ -68,6 +68,27 @@ must replace on Windows: on `y` the cockpit exits, a new window waits for it, ru
 view (a failure says so and waits for Enter), then relaunches `brain tui` with the same arguments. A queue
 action's `install.ps1 -Apply`, applied with `A` in its detail, goes the same way.
 
+A pinned brain runs its pinned engine. `brain check` warns when the running brain or research-graph is not
+`config.json` `engine.pin`: a newer or an older version, or the pin's version from other code (another git revision,
+an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh` and
+`brain render --write` then refuse to write, since they would render the plugin's hooks and generate the links with
+another engine: run the pinned engine, move the pin by a reviewed PR, or pass `--force`. A brain with no pin, or a
+pin that is not a release tag, is not compared.
+
+### The scout
+
+`brain audit --diff` (the scout, run by the close-item procedure) lists what the units a change touches miss: a
+test, the docs, the graph links. It also measures the shape the change gives the code, at zero token: a code file
+it takes past 1,000 lines and a Python function whose cyclomatic complexity it takes past 15 are NEW (fixed in the
+PR, or justified); a file or a function already past its threshold that grows again is deferred to the repo's debt
+item. A dependency added to a manifest (`pyproject.toml`, `requirements*.txt`, `package.json`) that no decision log
+of the project names, a `shortcut:` comment without its `ceiling:`, its `trigger:` and its debt item (`wi-...`), and
+a symptom fix (an added `type: ignore` or `noqa`, a skipped test, an `except` that swallows everything, a sleep, a
+retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root cause: ...` and
+`Justified: <unit>: <reason>` are read from the PR body (`--pr-body FILE`, `-` for stdin) and the range's commit
+messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
+`audit: {max_lines: 1000, complexity: 15}`.
+
 ## Start your own brain
 
 ```bash
