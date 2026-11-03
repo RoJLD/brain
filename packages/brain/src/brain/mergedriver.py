@@ -407,8 +407,8 @@ def _line_union(seg: Conflict) -> list[str] | None:
 
 def _yaml_ok(text: str) -> bool:
     try:
-        import yaml
-        yaml.safe_load(text)
+        from .graph import load_yaml   # the engine's one YAML helper (libyaml when PyYAML has it)
+        load_yaml(text)
     except ImportError:
         return True
     except Exception:  # noqa: BLE001 - any parse error means the union is not valid YAML
@@ -543,8 +543,8 @@ def entries(text: str) -> Entries | None:
 
 def _load_entry(text: str) -> dict | None:
     try:
-        import yaml
-        data = yaml.safe_load(text)
+        from .graph import load_yaml
+        data = load_yaml(text)
     except Exception:  # noqa: BLE001 - not loadable: no semantic merge
         return None
     return data[0] if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict) else None
