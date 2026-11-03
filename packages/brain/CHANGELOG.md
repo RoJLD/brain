@@ -28,7 +28,10 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   research-graph is not `config.json` `engine.pin` (ahead, behind, or the pin's version from another git revision or
   a folder not at the tag: a dev engine, read from the distribution's `direct_url.json`); `brain sync`, `brain
   refresh` and `brain render --write` refuse to write then, unless `--force` (new on sync and refresh; render's also
-  replaces foreign files). A brain with no pin, or a pin that is not a release tag, is not compared (`brain.skew`).
+  replaces foreign files). The refusal ends with the way out in one line: after `brain update`, the tag to set as
+  `engine.pin` in the brain's `config.json` and commit; for a dev engine, run the pinned one. A brain with no pin, or a
+  pin that is not a release tag, is not compared (`brain.skew`). The upgrade steps of `docs/install.md` and
+  `docs/pilot.md` now move the pin before `brain sync`.
 - **The cockpit knows its version and offers updates** (wi-brain-tui-update-check, ADR UPD-1 to UPD-3). The title
   bar of `brain tui` always shows the installed version (the text view's header too). Once the screen is drawn, a
   worker reads the release tags of the engine's public repo (`config.json` `engine.repo`, else RoJLD/brain) with
