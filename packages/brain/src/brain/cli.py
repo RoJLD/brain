@@ -356,7 +356,7 @@ from . import (__version__, actions, alerts, audit, backfill, batch, boundary, b
                config, cost, decisions, detail, digest, features, forecast, graph, init, links, lint, memory,
                milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
                records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, update, usage)
-from . import answers, classes, defaults, governor, keystore, vault
+from . import answers, classes, defaults, governor, keystore, selftime, vault
 from .inventory import AuditError
 
 
@@ -2964,6 +2964,9 @@ def build_parser() -> argparse.ArgumentParser:
                                                               f"{perf.TOP}; 0: all)")
     pf.add_argument("--from", dest="sources", action="append", metavar="PATH",
                     help="a JSONL file or a folder of them to read instead of the ledger (repeatable)")
+    pf.add_argument("--engine", action="store_true", help="the engine's own runs instead (every brain command and "
+                                                          "hook, brain.selftime): its slow steps, regressions, hook time "
+                                                          "per week and the errors it caught")
     pf.add_argument("--json", action="store_true")
     al = sub.add_parser("alerts", help="each project's open alerts (scheduler, ledger, stacks, code index, audit, its "
                                        "events and files); --notify sends the changes through brain notify")
@@ -3051,6 +3054,11 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure") and not stream.isatty():
             stream.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args(argv)
+    with selftime.run(selftime.command_task(args)):  # the engine's exec event, and an error event if it raises
+        return _dispatch(args)
+
+
+def _dispatch(args) -> int:
     if args.cmd == "capture":
         return capture.main([args.event] + ([args.family] if args.family else []))
     if args.cmd == "decision" and args.decision_cmd == "announce":  # a hook: standard library only, never fails
@@ -3066,7 +3074,7 @@ def main(argv: list[str] | None = None) -> int:
                           shell=args.shell, quiet=args.quiet)
     if args.cmd == "perf":
         return perf.main(project=args.project, since=args.since, task=args.task, top=args.top, sources=args.sources,
-                         as_json=args.json)
+                         as_json=args.json, engine=args.engine)
     if args.cmd == "init":  # a new brain has no graph store yet
         return init.main(args)
     root = Path(args.root).resolve() if args.root else None

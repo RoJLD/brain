@@ -23,7 +23,6 @@ import json
 import os
 import re
 import sys
-import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +61,11 @@ def _recent_ids(name: str, n: int = 400) -> set[str]:
 
 
 def _log_error(event: str, exc: BaseException) -> None:
+    """The engine's error sink: a text line in ledger/errors.log (secrets dropped), and the error event of the
+    engine's self-timing (its class and module:function, never its message: brain.selftime)."""
+    from . import selftime
+
+    selftime.error(exc)
     try:
         d = paths.ledger_dir()
         d.mkdir(parents=True, exist_ok=True)
@@ -264,7 +268,6 @@ def main(argv: list[str] | None = None, stdin=None) -> int:
     if os.environ.get("BRAIN_CAPTURE", "1") == "0" or not argv:
         return 0
     event = argv[0]
-    started = time.monotonic()
     try:
         payload = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
         if event == "post-tool-use":
@@ -273,8 +276,6 @@ def main(argv: list[str] | None = None, stdin=None) -> int:
             HANDLERS[event](payload)
     except Exception as exc:  # never break the session
         _log_error(event, exc)
-    if os.environ.get("BRAIN_CAPTURE_TIMING"):
-        _log_error(event, RuntimeError(f"took {time.monotonic() - started:.3f}s"))
     return 0
 
 

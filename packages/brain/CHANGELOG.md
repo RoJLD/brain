@@ -19,6 +19,27 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 - **The pilot's settings in the docs**: `docs/install.md` says, before the first session, `BRAIN_MEMORY_SYNC=0`, the
   venv at `%USERPROFILE%\.brain\venv` or `BRAIN_PYTHON`, Git Bash's `HOME` (else `BRAIN_HOME`), telemetry off by
   default, and how to upgrade by hand from a version without `brain update`; `docs/pilot.md` how updates come during the pilot.
+- **The engine times itself** (wi-brain-self-timing, the first stage of the opt-in telemetry). Every `brain`
+  command and every hook writes one exec event to `<BRAIN_HOME>/ledger/engine/` (project `brain`, task
+  `brain <command> [<subcommand>]` or `hook <name>`, `[bash]` for a run that never started Python, the engine's
+  version, the duration from the engine's import or from the hook's first bash line, so the interpreter's start
+  counts); every error a hook or a command catches through the shared sink (`capture._log_error`) or lets escape
+  becomes an error event: its exception class and the engine's `module:function`, never its message. The bash fast
+  paths append their own line (`hooks/common.sh`, builtins only) to their own file, apart from the locked Python
+  writers. `brain perf --engine` lists the slowest commands and hooks, regressions between engine versions, the
+  hooks' blocking time per week against the 1 h trigger of the PERF ADR, and the errors caught; `brain alerts`
+  raises a task that caught the same exception 3 times in 24 h (`engine` source; error for a hook, warn for a
+  command) on the brain's own project. The engine's events stay out of the projects' ledger files, which `brain
+  alerts` and `brain status` read, and the last three months are kept. `BRAIN_SELFTIME=0` turns it off;
+  `BRAIN_CAPTURE_TIMING`, which wrote decision times into `errors.log` as errors, is gone. `brain.timing` imports
+  `schema`, `secretscan` and `socket` only where they are used, so a hook does not pay for them.
+- **The token ledger counts the engine's sessions** (wi-brain-ledger-engine-sessions). A session that ran in a repo
+  a project declares under `repos:` (the engine's checkout for a personal brain, its `.claude/worktrees/*`, a
+  checkout beside it named `<repo>-wt-<name>` even once removed) is credited to that project, and a sub-session to
+  the project of the item its brief names, wherever it ran; before, they landed in « other folders », so `brain
+  usage`, the quota pacing and the forecast missed them (`queue.Placer`, also used by the cockpit and `brain queue`).
+  A project's own root wins over another project's repo at the same place.
+- **Releasing:** `hooks/common.sh`'s `brain_version` moves with `__version__` (a test checks it).
 - **The owner's answers, one writer per batch** (wi-brain-answers-lane). Two batches of answers went wrong in two days:
   a shortened label stored as free text, and a BOM that made `--batch` write nothing. Now `brain decision batch`
   writes the questions it prints to the ledger (`asked-<month>.jsonl`), the capture hook ties each answer of the

@@ -112,6 +112,6 @@ scale study's) is Claude Code's own setting: the owner sets it through their ins
 
 - **Every start is refused as stale**: a session reads get_usage, then notes each window it shows
   (`brain usage quota --observe 41 --resets 2026-11-09T12:00Z`). A machine that never notes a reading is not checked.
-- **The hook seems silent**: `BRAIN_CAPTURE_TIMING=1` logs each decision's time to `ledger/errors.log`; a missing
-  Python lets every call through.
+- **The hook seems silent**: `brain perf --engine --task "hook governor"` shows each run's time and the errors it
+  caught (`ledger/errors.log` has their text); a missing Python lets every call through.
 - **A cap looks wrong**: `brain usage guard` shows the count and where it comes from (`app` or `records`).

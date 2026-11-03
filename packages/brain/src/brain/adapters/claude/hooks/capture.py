@@ -12,4 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from brain.capture import main  # noqa: E402
 
-sys.exit(main(sys.argv[1:]))
+try:
+    from brain.selftime import hook  # its exec event, and an error event for what it catches
+except ImportError:  # an engine older than its hooks: untimed
+    sys.exit(main(sys.argv[1:]))
+sys.exit(hook(" ".join(["hook capture", *sys.argv[1:3]]), main, sys.argv[1:]))

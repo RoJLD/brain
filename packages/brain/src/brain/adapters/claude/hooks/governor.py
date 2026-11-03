@@ -12,4 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from brain.governor import main  # noqa: E402
 
-sys.exit(main())
+try:
+    from brain.selftime import hook  # its exec event, and an error event for what it catches
+except ImportError:  # an engine older than its hooks: untimed
+    sys.exit(main())
+sys.exit(hook("hook governor", main))

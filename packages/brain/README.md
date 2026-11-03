@@ -217,6 +217,20 @@ venv): it reads the hook's JSON on stdin and appends the session events, the ses
 records to `<BRAIN_HOME>/ledger` at zero token; it prints nothing and never fails the session (its errors go to
 `ledger/errors.log`; `BRAIN_CAPTURE=0` turns it off).
 
+**The engine times itself** (`brain.selftime`, local only, zero token). Every `brain` command and every hook writes
+one exec event (task `brain <command> [<subcommand>]` or `hook <name>`, a bash-only run marked `[bash]`, the engine's
+version, its duration from the engine's import or the hook's first line, its exit) to
+`<BRAIN_HOME>/ledger/engine/exec-<yyyy-mm>.jsonl` (`exec-bash-...` for the bash fast paths); every error a hook or a
+command catches becomes an error event there (its exception class and the engine's `module:function`, never its
+message, whose text stays in `ledger/errors.log`). The last three months are kept. `brain perf --engine` lists the
+slowest commands and hooks, the regressions from one engine version to the next, the hooks' blocking time per week
+and the errors caught; `brain alerts` raises a hook or a command that caught the same exception 3 times in 24 hours,
+on the brain's own project. `BRAIN_SELFTIME=0` turns it off.
+
+```
+brain perf --engine [--since 7d] [--task guard] [--json]
+```
+
 ## Data classes and the vault
 
 Every store of a brain declares a data class in `config.json` (`classes.stores`: public, private, confidential,
@@ -249,6 +263,8 @@ through `BRAIN_CONFIG`), with a temporary `BRAIN_HOME`; they need git, and bash 
 ## Releasing
 
 With research-graph, under the repo's single tag series: see the root README. `CHANGELOG.md` here is the command's.
+A release moves `brain_version` in `src/brain/adapters/claude/hooks/common.sh` with `__version__` (the hooks' bash
+fast paths stamp it on their events; `tests/test_selftime.py` checks the two agree).
 
 ## License
 

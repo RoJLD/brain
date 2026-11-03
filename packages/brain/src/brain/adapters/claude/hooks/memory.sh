@@ -9,11 +9,12 @@
 # BRAIN_MEMORY_SYNC=0 turns both off. Uses the brain command's venv, else $BRAIN_PYTHON, python3 or python, skipping
 # the Windows Store stubs; without a Python 3 it does nothing.
 [ "${BRAIN_MEMORY_SYNC:-1}" = "0" ] && exit 0
+{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || selftime_bash() { :; }; } 2>/dev/null  # brain_t0, selftime_bash
 home="${BRAIN_HOME:-$HOME/.brain}"
 
 if [ "${1:-}" = "SessionStart" ]; then
   alert="$home/memory-sync/alert.txt"
-  [ -s "$alert" ] || exit 0
+  [ -s "$alert" ] || { selftime_bash "hook memory SessionStart [bash]"; exit 0; }
   text= bs='\' q='"'
   while IFS= read -r line || [ -n "$line" ]; do  # a JSON string: CR dropped, \ and " escaped, tabs to spaces
     line=${line//$'\r'/}
@@ -23,6 +24,7 @@ if [ "${1:-}" = "SessionStart" ]; then
     text+="$line${bs}n"
   done < "$alert"
   printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$text"
+  selftime_bash "hook memory SessionStart [bash]"
   exit 0
 fi
 
@@ -31,7 +33,7 @@ for py in "$home/venv/Scripts/python.exe" "$home/venv/bin/python" "${BRAIN_PYTHO
   [ -n "$py" ] || continue
   path=$(command -v "$py" 2>/dev/null) || continue
   case "$path" in *WindowsApps*) continue ;; esac
-  "$path" -X utf8 -I "$root/hooks/memory.py" session-end >/dev/null 2>&1
+  BRAIN_HOOK_T0=$brain_t0 "$path" -X utf8 -I "$root/hooks/memory.py" session-end >/dev/null 2>&1
   exit 0
 done
 exit 0

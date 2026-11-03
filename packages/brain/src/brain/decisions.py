@@ -26,7 +26,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import actions, config, defaults, graph, midsession, records
+from . import actions, config, defaults, graph, midsession, records, selftime
 
 KINDS = ("decision", "action", "permission")
 VIEW = "notes/decision_queue.md"
@@ -444,11 +444,11 @@ def hook_main(argv: list[str], stdin=None) -> int:
             event = argv[0] if argv else "SessionStart"
             print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}},
                              ensure_ascii=True))
-    except Exception:  # noqa: BLE001 - a hook never breaks a session start
-        pass
+    except Exception as exc:  # noqa: BLE001 - a hook never breaks a session start
+        selftime.error(exc)
     try:
         if data.get("session_id"):
             midsession.baseline(data)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        selftime.error(exc)
     return 0

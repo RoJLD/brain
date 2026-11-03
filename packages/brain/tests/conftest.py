@@ -19,6 +19,8 @@ def brain_home(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_HOME", str(home))
     monkeypatch.delenv("BRAIN_ROOT", raising=False)
     monkeypatch.delenv("BRAIN_CAPTURE", raising=False)
+    monkeypatch.setenv("BRAIN_SELFTIME", "0")  # the engine's own events: only test_selftime turns them on
+    monkeypatch.delenv("BRAIN_HOOK_T0", raising=False)
     monkeypatch.setenv("BRAIN_NOTIFY", "off")  # no test sends a real notification (test_notify fakes the transports)
     # no test reads the owner's permissions.yaml unless it says so: the never-grantable categories are the engine's
     monkeypatch.setenv("BRAIN_PERMISSIONS", str(tmp_path / "no-permissions.yaml"))
