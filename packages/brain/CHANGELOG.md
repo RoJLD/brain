@@ -17,7 +17,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   data file's SQLite tables; this engine: 90.0 % of 31,568 statements, a 300 KB summary). `brain audit`
   measures `test.coverage` (a module its tests run under 50 %, P2) and the new `feature.tests` (a have or partial
   feature whose module or script no test covers, P2), both outside the scout (ruleset 4); FEATURES.md's Tests cell
-  gives each feature's coverage. Docs: `docs/tests-graph.md`.
+  gives each feature's coverage. A summary narrows only what it measured (version 2: every function of each file
+  and every test module a context named): a symbol or a test added since, an older or context-less summary, keep
+  the names rule; a data file without test contexts is refused, branch data is read from its arcs, the def and
+  decorator lines count for no test, the repo's `fail_under` is off for the measure, and the trend reads today's
+  summary. Docs: `docs/tests-graph.md`.
 
 - **The session tree** (wi-brain-session-tree; ST-1, ST-2, scale study gap 19). The SessionStart event records both
   ids, the transcript's (`CLAUDE_CODE_SESSION_ID`) and the desktop app's `local_` id (`CLAUDE_CODE_HOST_SESSION_ID`),
