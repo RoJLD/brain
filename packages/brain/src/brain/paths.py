@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -98,11 +100,13 @@ def package_repo() -> Path | None:
 def installed_checkout() -> Path | None:
     """The clone the brain command is installed from when it is installed editable (in <BRAIN_HOME>/venv), read from
     its direct_url.json: how a hook run from the plugin's cached copy found the Brain's projects.yaml before the
-    installer wrote personal.json."""
-    from urllib.parse import urlparse  # here, not at the top: urllib.request costs a hook ~50 ms to import
-    from urllib.request import url2pathname
+    installer wrote personal.json. Read once per process and venv (bases() asks on every config read)."""
+    return _installed_checkout(str(brain_home() / "venv"))
 
-    venv = brain_home() / "venv"
+
+@functools.lru_cache(maxsize=4)
+def _installed_checkout(venv_dir: str) -> Path | None:
+    venv = Path(venv_dir)
     for f in (*venv.glob("Lib/site-packages/brain-*.dist-info/direct_url.json"),
               *venv.glob("lib/python3*/site-packages/brain-*.dist-info/direct_url.json")):
         try:
@@ -111,18 +115,46 @@ def installed_checkout() -> Path | None:
             continue
         url = data.get("url") or ""
         if (data.get("dir_info") or {}).get("editable") and url.startswith("file:"):
-            return Path(url2pathname(urlparse(url).path))
+            return file_url_path(url)
     return None
 
 
+def file_url_path(url: str) -> Path:
+    """The path of a file: URL (file:///E:/work/brain, file:///srv/brain, file://server/share/x) without
+    urllib.request, whose import costs a hook ~50 ms: urllib.parse only."""
+    from urllib.parse import unquote, urlparse
+
+    u = urlparse(url)
+    path = unquote(u.path)
+    if os.name == "nt":
+        if re.match(r"^/[A-Za-z]:", path):
+            path = path[1:]
+        if u.netloc and u.netloc != "localhost":
+            path = f"//{u.netloc}{path}"
+    elif u.netloc and u.netloc != "localhost":
+        path = f"//{u.netloc}{path}"
+    return Path(path)
+
+
+_MAIN: dict[str, Path] = {}   # folder -> its main checkout, for this process (wi-brain-yaml-fast-load)
+
+
 def main_checkout(d: str | Path) -> Path | None:
-    """The main checkout of the git repo ``d`` is in (itself when it is not a worktree), or None."""
+    """The main checkout of the git repo ``d`` is in (itself when it is not a worktree), or None. An answer is kept
+    for the process (a command asked git 25 to 56 times for the same few folders); None is not, so a repo made later
+    is seen."""
+    key = os.path.normcase(os.path.abspath(str(d)))
+    if key in _MAIN:
+        return _MAIN[key]
     try:
         common = subprocess.run(["git", "-C", str(d), "rev-parse", "--path-format=absolute", "--git-common-dir"],
                                 capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return None
-    return Path(common).parent if common else None
+    if not common:
+        return None
+    _MAIN[key] = Path(common).parent
+    return _MAIN[key]
 
 
 def find_root(start: str | Path | None = None) -> Path:

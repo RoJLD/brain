@@ -27,3 +27,24 @@ selftime_bash() {
     $((d % 1000000 / 1000)) "${2:-0}" "$$" >> "$dir/exec-bash-${at1:0:7}.jsonl" 2>/dev/null
   return 0
 }
+
+# brain_python CANDIDATE...: sets brain_py to the first candidate that is a Python, without a fork (was $(command -v),
+# ~55 ms on Windows): a path is tested with -x, a bare name looked up in PATH by hash; the Windows Store stubs
+# (WindowsApps) are skipped. Returns 1 when none is.
+brain_python() {
+  local py
+  for py in "$@"; do
+    [ -n "$py" ] || continue
+    if [[ $py == */* || $py == *'\'* ]]; then
+      [ -x "$py" ] || continue
+    else
+      hash "$py" 2>/dev/null || continue
+      py=${BASH_CMDS[$py]}
+      [ -n "$py" ] || continue
+    fi
+    case $py in *WindowsApps*) continue ;; esac
+    brain_py=$py
+    return 0
+  done
+  return 1
+}

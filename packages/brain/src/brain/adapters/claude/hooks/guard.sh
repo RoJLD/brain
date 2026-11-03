@@ -5,8 +5,10 @@
 # else python, skipping the Windows Store stubs. Without a Python 3, or on any error, the call goes through: it always
 # exits 0, so a guard never breaks a session.
 
-# needs_python KIND JSON: whether the guards have anything to read. A shell command that names neither git nor gh, nor
-# anything that writes a file, nor a program of the owner and power guards, has not: no Python started. Writing is a >
+# needs_python KIND JSON: whether the guards have anything to read. A shell command that names neither gh, nor git
+# but to read (git [-C DIR | --no-pager | -P] SUB, SUB in brain/guards.py's GIT_READS, without --output or a pager
+# option: tests/test_guards.py checks the list against the guards' tables), nor anything that writes a file, nor a
+# program of the owner and power guards, has not: no Python started. Writing is a >
 # that is not a descriptor copy (2>&1, >&2) or a discard (>/dev/null, >$null), sed with -i or --in-place, or a name of
 # brain/guards.py's tables (programs and cmdlets that write, interpreters, shells), looked for in the command only (its
 # JSON string, escapes and all), not in the tool name or the description. tests/test_guards.py sources this file to
@@ -14,13 +16,22 @@
 # config.json's power.node_clis come from <BRAIN_HOME>/cache/node-clis.txt, which brain/guards.py (node_tools) keeps
 # as an alternation, since this hook cannot find config.json (the plugin runs from a cached copy): none until the
 # first Python run writes it.
-{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || selftime_bash() { :; }; } 2>/dev/null  # brain_t0, selftime_bash
+{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python
 
 needs_python() {
   [ "$1" = "shell" ] || return 0
-  case "$2" in *git*|*'gh '*) return 0 ;; esac
+  case "$2" in *'gh '*) return 0 ;; esac
   local command='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"' text=$2 redirect discard found
   [[ $2 =~ $command ]] && text=${BASH_REMATCH[1]}
+  # git that only reads is taken out of the text; any other git (another subcommand, -c, --git-dir, an alias) stays
+  local gitread='(^|[^A-Za-z0-9_.-]|\\[nrt])git(\.exe)?[[:space:]]+((-C[[:space:]]+[^[:space:];&|"]+|--no-pager|-P)[[:space:]]+)*(status|log|diff|show|rev-parse|ls-files|ls-tree|blame|describe|shortlog|rev-list|merge-base|cat-file|name-rev|grep|check-ignore|count-objects|var|version|whatchanged|show-ref|for-each-ref)([^A-Za-z0-9_-]|$)'
+  local rest=$text reads=
+  while [[ $rest =~ $gitread ]]; do
+    rest=${rest/"${BASH_REMATCH[0]}"/"${BASH_REMATCH[1]} ${BASH_REMATCH[6]}"}
+    reads=1
+  done
+  case "$rest" in *git*) return 0 ;; esac
+  [[ -n $reads && $rest =~ --output|--open-files-in-pager|[[:space:]]-O ]] && return 0
   redirect=${text//[0-9*]>&[0-9]/}
   redirect=${redirect//>&[0-9]/}
   for discard in '/dev/null' ' /dev/null' '$null' ' $null'; do redirect=${redirect//">$discard"/}; done
@@ -34,22 +45,16 @@ needs_python() {
   [ -f "$cache" ] && IFS= read -r clis < "$cache"
   local node_clis="$before($clis)([^A-Za-z0-9_-]|$)"
   shopt -s nocasematch
-  [[ $text =~ $writers || $text =~ $owner_power || ( -n $clis && $text =~ $node_clis ) ]] && found=0 || found=1
+  [[ $rest =~ $writers || $rest =~ $owner_power || ( -n $clis && $rest =~ $node_clis ) ]] && found=0 || found=1
   shopt -u nocasematch
   return $found
 }
 
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0
-root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-input=$(cat)
+root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
+IFS= read -r -d '' input  # the hook's JSON, without $(cat)'s fork
 needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }
 
 home="${BRAIN_HOME:-$HOME/.brain}"
-for py in "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python; do
-  [ -n "$py" ] || continue
-  path=$(command -v "$py" 2>/dev/null) || continue
-  case "$path" in *WindowsApps*) continue ;; esac
-  printf '%s' "$input" | BRAIN_HOOK_T0=$brain_t0 "$path" -X utf8 -I "$root/hooks/guard.py" "${1:-}" 2>/dev/null
-  exit 0
-done
+brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null
 exit 0

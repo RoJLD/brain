@@ -220,11 +220,10 @@ def _open_hours(spans: list[tuple[datetime, datetime]]) -> tuple[float, int]:
 
 def _ddrs(root: Path) -> list[dict]:
     yaml = graph._yaml()
-    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     out = []
     for f in sorted((root / records.RECORDS_DIR / "ddr").glob("*.yaml")):
         try:
-            d = yaml.load(f.read_text(encoding="utf-8"), Loader=loader)
+            d = graph.load_yaml_file(f)
         except (OSError, yaml.YAMLError):
             continue
         if isinstance(d, dict) and d.get("id"):

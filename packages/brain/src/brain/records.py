@@ -95,13 +95,12 @@ def write(root: Path, kind: str, rec: dict, replace: bool = False) -> Path | Non
 
 
 def load(root: Path) -> dict[str, list[tuple[Path, dict]]]:
-    yaml = graph._yaml()
     out: dict[str, list[tuple[Path, dict]]] = {"ddr": [], "sr": [], "ar": []}
     base = root / RECORDS_DIR
     for f in sorted((base / "ddr").glob("*.yaml")):
-        out["ddr"].append((f, yaml.safe_load(f.read_text(encoding="utf-8"))))
+        out["ddr"].append((f, graph.load_yaml_file(f)))
     for f in sorted((base / "sr").glob("*/*.yaml")):
-        out["sr"].append((f, yaml.safe_load(f.read_text(encoding="utf-8"))))
+        out["sr"].append((f, graph.load_yaml_file(f)))
     for f in sorted((base / "ar").glob("*.jsonl")):
         for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
             if line.strip():

@@ -7,6 +7,8 @@ from pathlib import Path
 import networkx as nx
 import yaml
 
+from . import yamlio
+
 _DECISION_FILES = ("scientific_decisions.md", "decisions.md")
 _HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b")
 _DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
@@ -186,7 +188,7 @@ def _experiment_spec(repo_root: str | Path | None, exp_id: str) -> str | None:
     if not cfg.exists():
         return None
     try:
-        data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+        data = yamlio.load(cfg) or {}
     except yaml.YAMLError:
         return None
     if not isinstance(data, dict):
@@ -320,7 +322,7 @@ def _experiment_is_methodological(repo_root: str | Path | None, exp_id: str) -> 
     if not cfg.exists():
         return False
     try:
-        data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+        data = yamlio.load(cfg) or {}
     except yaml.YAMLError:
         return False
     return isinstance(data, dict) and data.get("methodological") is True
@@ -338,7 +340,7 @@ def _experiment_targets_edges(repo_root: str | Path | None, exp_id: str) -> bool
     if not cfg.exists():
         return False
     try:
-        data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+        data = yamlio.load(cfg) or {}
     except yaml.YAMLError:
         return False
     edges = data.get("edges") if isinstance(data, dict) else None

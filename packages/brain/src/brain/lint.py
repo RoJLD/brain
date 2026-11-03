@@ -235,7 +235,7 @@ def _frontmatter(text: str) -> dict:
     if end < 0:
         return {}
     try:
-        data = graph._yaml().safe_load(text[3:end])
+        data = graph.load_yaml(text[3:end])
     except Exception:  # a malformed header is reported as no description, never a crash
         return {}
     return data if isinstance(data, dict) else {}

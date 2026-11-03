@@ -192,6 +192,12 @@ brain whose `source/packs.yaml` gives its core pack `hooks:` gets them copied in
 `brain render --target claude --write`, at the version it pins; `inject-rules.sh` injects the files of config.json
 `rules`. The guards never block a session on an error: without Python, the call goes through.
 
+A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
+Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that
+may write, names `gh`, a program of the owner and power guards, or git other than to read (`git [-C DIR] status`,
+`log`, `diff`, `show`, `rev-parse`... without `--output`: `brain.guards.GIT_READS`, checked against the guards'
+tables). In Python a guard reads the registry through libyaml and does not import `urllib.request`.
+
 Two of the PreToolUse hooks keep the owner's say over how sessions run (the runbook: [`docs/guards.md`](docs/guards.md)):
 
 - **Session settings** (`guard.sh tool`, `brain.guards`): a session that changes Remote Control or a permission mode
