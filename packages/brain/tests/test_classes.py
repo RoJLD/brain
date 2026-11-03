@@ -152,3 +152,19 @@ def test_suggest_is_a_valid_block(brain):
                           "allows sealed only (untrack them, seal them, or waive it with its reason)",
                           "store records-ddr (confidential): 1 tracked file(s) go to git-private in clear, which its "
                           "class allows sealed only (untrack them, seal them, or waive it with its reason)"]
+
+
+def test_an_empty_gitkeep_holds_no_data(brain):
+    """A confidential folder kept in git by an empty .gitkeep (what brain init writes) sends nothing in clear; a
+    .gitkeep with content does."""
+    root = brain.root
+    (root / "people").mkdir()
+    (root / "people" / ".gitkeep").write_text("", encoding="utf-8")
+    run_git(root, "add", "people/.gitkeep")
+    run_git(root, "commit", "-q", "-m", "keep")
+    stores = {"people": {"class": "confidential", "paths": ["people/**"]}, "repo": {"class": "private", "paths": ["**"]}}
+    assert not any("store people" in e for e in classes.check(cfg=brain(stores)).errors)
+    (root / "people" / ".gitkeep").write_text("a name\n", encoding="utf-8")
+    run_git(root, "commit", "-q", "-am", "not empty")
+    assert any(e.startswith("store people (confidential): 1 tracked file(s) go to git-private in clear")
+               for e in classes.check(cfg=brain(stores)).errors)

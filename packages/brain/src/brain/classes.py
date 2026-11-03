@@ -97,6 +97,7 @@ TRANSCRIPTS = "~/.claude/projects"      # read under $CLAUDE_CONFIG_DIR when it 
 STORE_KEYS = {"class", "paths", "to", "waive", "project", "why"}
 REASON_MIN = 15
 SEALED_SUFFIXES = (".age", ".gpg")      # a tracked file that is already sealed is not in clear
+PLACEHOLDERS = (".gitkeep", ".keep")    # an empty one keeps a folder in git: no data, so never in clear
 SCOPES = "scopes.yaml"
 
 
@@ -357,7 +358,8 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> Report:
         for exit_ in s.to:
             if how(s.cls, exit_) == "never":
                 _refuse(rep, s, exit_, f"store {s.name} ({s.cls}) declares {exit_}, which its class forbids")
-        clear = [f for f in rep.files.get(s.name, []) if not f.endswith(SEALED_SUFFIXES)]
+        clear = [f for f in rep.files.get(s.name, []) if not f.endswith(SEALED_SUFFIXES)
+                 and not placeholder(cfg.root, f)]
         if clear and rep.remote and how(s.cls, rep.remote) not in ("clear",):
             allowed = how(s.cls, rep.remote)
             _refuse(rep, s, rep.remote,
@@ -366,6 +368,12 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> Report:
                     " (untrack them, seal them, or waive it with its reason)")
     _floors(cfg, rep, by_name)
     return rep
+
+
+def placeholder(root: Path, path: str) -> bool:
+    """An empty .gitkeep (or .keep) that only keeps a folder in git: it holds no data, whatever the folder's class."""
+    f = root / path
+    return f.name in PLACEHOLDERS and f.is_file() and f.stat().st_size == 0
 
 
 def _refuse(rep: Report, s: Store, exit_: str, line: str, advice: str = "") -> None:
