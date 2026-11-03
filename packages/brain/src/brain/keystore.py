@@ -257,13 +257,18 @@ def make(name: str) -> Backend:
 
 
 def backend() -> Backend | None:
-    """$BRAIN_KEYSTORE, else the mounted file, else this system's keystore, else keyring; None when none is there."""
+    """$BRAIN_KEYSTORE, else the mounted file, else this system's keystore, else keyring; None when none is there.
+    Under pytest, this machine's real keystore is refused unless BRAIN_TEST_KEYSTORE asks for it: a test that lost
+    its BRAIN_KEYSTORE=memory would otherwise write the owner's device key (it happened on 2026-11-03)."""
     forced = os.environ.get("BRAIN_KEYSTORE")
     if forced:
-        return make(forced)
-    if os.environ.get("BRAIN_VAULT_IDENTITY_FILE"):
-        return make("file")
-    for b in (WinCred(), Keychain(), SecretService(), Keyring()):
-        if b.available():
-            return b
-    return None
+        b = make(forced)
+    elif os.environ.get("BRAIN_VAULT_IDENTITY_FILE"):
+        b = make("file")
+    else:
+        b = next((x for x in (WinCred(), Keychain(), SecretService(), Keyring()) if x.available()), None)
+    if (b is not None and b.name not in ("memory", "file") and os.environ.get("PYTEST_CURRENT_TEST")
+            and not os.environ.get("BRAIN_TEST_KEYSTORE")):
+        raise KeystoreError(f"a test reached this machine's keystore ({b.name}): tests use BRAIN_KEYSTORE=memory "
+                            "(monkeypatch.context(), never monkeypatch.undo())")
+    return b

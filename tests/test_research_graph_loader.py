@@ -140,3 +140,19 @@ def test_loader_rejects_unknown_level(tmp_path):
         assert False, "expected ValidationError"
     except ValidationError as exc:
         assert any("unknown level" in e for e in exc.errors)
+
+
+def test_a_node_missing_a_required_prop_is_an_error(tmp_path):
+    (tmp_path / "nodes").mkdir()
+    (tmp_path / "schema.yaml").write_text(
+        "node_types: [Lesson]\nedge_types: [led_to]\nstatuses: [open]\nrequired_props:\n  Lesson: [trigger, check]\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "nodes" / "lessons.yaml").write_text(
+        "- {id: les-a, type: Lesson, status: open, title: t, props: {trigger: x, check: y}}\n"
+        "- {id: les-b, type: Lesson, status: open, title: t, props: {trigger: x, check: \"\"}}\n", encoding="utf-8"
+    )
+    (tmp_path / "edges.yaml").write_text("[]\n", encoding="utf-8")
+    with pytest.raises(ValidationError) as exc:
+        load_store(tmp_path)
+    assert exc.value.errors == ["node les-b: Lesson needs props check"]
