@@ -3,6 +3,17 @@
 The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `research-graph` X.Y.Z and `brain` X.Y.Z
 (`packages/brain/CHANGELOG.md` for the brain command).
 
+## 0.2.3 — 2026-11-03
+
+- **An anchor of another repo's file resolves in that repo's checkout.** A node may say `repo: <name>`: its anchor's
+  path is relative to that repo, not to `--repo-root` (the brain command derives the Doc, Test and Workflow nodes of a
+  project's other repos into the store whose CodeRefs name them, since 0.2.2). `check --repo-path NAME=PATH`
+  (repeatable) gives a repo's checkout; there `check` reads the anchor, and fails on a missing file with the repo
+  named (`anchor file missing: docs/install.md (repo brain)`). Without one, the anchor is not checked and an advisory
+  counts them per repo. `repo` names a Repo node, as a CodeRef's repo does. 0.2.2 read every anchor under
+  `--repo-root`, so a store holding another repo's nodes failed `check` on each of them. An overlay keeps such an
+  anchor relative to its repo.
+
 ## 0.2.2 — 2026-11-03
 
 - No change to the graph engine: the version follows the brain command's (one tag series).

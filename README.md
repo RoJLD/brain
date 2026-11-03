@@ -20,8 +20,8 @@ It holds two distributions, released together under one tag series (`vX.Y.Z` is 
 Python 3.10 or later; `research-graph` depends on networkx and PyYAML.
 
 ```bash
-pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.2.2"
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.2#subdirectory=packages/brain"   # the brain command
+pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.2.3"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.3#subdirectory=packages/brain"   # the brain command
 ```
 
 From an empty machine to a brain of your own (Windows first, Linux and macOS): [`docs/install.md`](docs/install.md).
@@ -55,6 +55,10 @@ notes/graph/
   edges.yaml           hand-written edges, then the block sync regenerates (# --- auto-derived ...)
 ```
 
+A node's `anchor` is `<path>#<fragment>`, the path relative to `--repo-root`. A node that stands for another repo's file
+(the `brain` command derives the Doc, Test and Workflow nodes of a project's other repos) says so with `repo: <name>`,
+which names a Repo node as a CodeRef's repo does: its path is relative to that repo's checkout.
+
 The schema belongs to the store: each store (a project, a person's brain, a team) declares its own types, statuses and
 layers, and its `owner`, the person or team who decides for it. Every path is given on the command line; nothing is
 written outside the store, the repo root and `--out`, and the engine keeps no state between calls.
@@ -67,7 +71,7 @@ written outside the store, the repo root and `--out`, and the engine keeps no st
 |---|---|
 | `init [--owner NAME] [--examples]` | A new store from the templates (above). |
 | `build` | Load and validate the store (with its overlays). |
-| `check` | Coverage (a node per dated heading of the decision logs, anchors that resolve), wiring and code-layer structure; advisories (consistency, stale generated views). Exit 1 on a problem. |
+| `check [--repo-path NAME=PATH ...]` | Coverage (a node per dated heading of the decision logs, anchors that resolve), wiring and code-layer structure; advisories (consistency, stale generated views). An anchor of another repo's node resolves in the checkout `--repo-path` gives for it; without one it is not checked (an advisory). Exit 1 on a problem. |
 | `sync [--write]` | Derive decision stubs from `notes/decisions.md` (ADR) and `notes/scientific_decisions.md` (SDR), experiment, hypothesis, verdict, sweep and exploration stubs from `experiments/` and `results/`, and the lineage edges; print them, or write `nodes/_generated_*.yaml` and the auto-derived block of `edges.yaml`. |
 | `kanban [--write] [--out F]` | The work layer as a markdown board (`notes/kanban_graph.md`); `--write` also writes the roadmap. |
 | `roadmap [--write] [--json] [--markdown]` | Milestones: status, trigger, reached, the items that move each (`notes/roadmap_graph.md`). |

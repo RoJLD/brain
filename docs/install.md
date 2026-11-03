@@ -29,10 +29,10 @@ git --version
 
 The installer makes a venv of its own in `~/.brain\venv` (where the hooks look for it), copies the `brain` launcher
 into `~/.brain\bin` and adds that folder alone to your user PATH. It prints a plan first; `-Apply` does it. Take it
-from the tag you were given (here v0.2.2):
+from the tag you were given (here v0.2.3):
 
 ```powershell
-git clone --depth 1 --branch v0.2.2 https://github.com/RoJLD/brain.git "$HOME\brain-engine"
+git clone --depth 1 --branch v0.2.3 https://github.com/RoJLD/brain.git "$HOME\brain-engine"
 powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages\brain\installer\install.ps1"
 powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages\brain\installer\install.ps1" -Apply
 ```
@@ -40,14 +40,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages
 `-ExecutionPolicy Bypass` applies to that one run only; it changes no setting. Open a new PowerShell window, then:
 
 ```powershell
-brain --version        # brain 0.2.2
+brain --version        # brain 0.2.3
 ```
 
 Without the installer, the same by hand (the venv must be `~/.brain\venv` for the hooks to find it):
 
 ```powershell
 py -3 -m venv "$HOME\.brain\venv"
-& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.2#subdirectory=packages/brain"
+& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.3#subdirectory=packages/brain"
 & "$HOME\.brain\venv\Scripts\brain.exe" --version
 ```
 
@@ -113,7 +113,7 @@ Python 3.10+, `python3-venv` (Debian, Ubuntu) and git; bash is there already.
 
 ```bash
 python3 -m venv ~/.brain/venv
-~/.brain/venv/bin/pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.2#subdirectory=packages/brain"
+~/.brain/venv/bin/pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.3#subdirectory=packages/brain"
 mkdir -p ~/.local/bin && ln -sf ~/.brain/venv/bin/brain ~/.local/bin/brain    # ~/.local/bin on your PATH
 brain --version
 brain init ~/my-brain --owner "Your Name" --apply

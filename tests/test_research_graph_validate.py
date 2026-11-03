@@ -4,6 +4,7 @@ import networkx as nx
 
 from research_graph.validate import (
     all_experiment_gaps,
+    anchor_errors,
     check_consistency,
     check_coverage,
     check_wiring,
@@ -19,6 +20,7 @@ from research_graph.validate import (
     staged_experiment_gaps,
     staged_experiment_ids,
     staged_module_without_test,
+    unchecked_anchors,
 )
 
 
@@ -114,6 +116,46 @@ def test_malformed_anchor_flagged(tmp_path):
     g.add_node("x", type="Hypothesis", status="open", anchor="no-hash-here")
     problems = check_coverage(g, tmp_path)
     assert any("malformed anchor" in p for p in problems)
+
+
+def _two_repos(tmp_path):
+    """A store's repo and another repo whose files some of its nodes stand for (repo: eng)."""
+    home, eng = tmp_path / "home", tmp_path / "eng"
+    (eng / "docs").mkdir(parents=True)
+    (eng / "docs" / "install.md").write_text("# Install\n", encoding="utf-8")
+    home.mkdir()
+    (home / "README.md").write_text("# home\n", encoding="utf-8")
+    g = nx.DiGraph()
+    g.add_node("repo-eng", type="Repo", status="active", anchor=None)
+    g.add_node("doc:home", type="Doc", status="active", anchor="README.md#home")
+    g.add_node("doc:eng", type="Doc", status="active", anchor="docs/install.md#install", repo="eng")
+    g.add_node("doc:eng-gone", type="Doc", status="active", anchor="docs/gone.md#x", repo="eng")
+    return home, eng, g
+
+
+def test_an_anchor_of_another_repo_resolves_in_its_checkout(tmp_path):
+    home, eng, g = _two_repos(tmp_path)
+    problems = check_coverage(g, home, {"ENG": eng})   # a repo's name matches in any case
+    assert problems == ["doc:eng-gone: anchor file missing: docs/gone.md (repo eng)"]
+    assert unchecked_anchors(g, {"eng": eng}) == []
+    # the store's own anchors stay relative to its root: the same path in eng's checkout does not hide one
+    g.add_node("doc:home-gone", type="Doc", status="active", anchor="docs/install.md#install")
+    assert "doc:home-gone: anchor file missing: docs/install.md" in anchor_errors(g, home, {"eng": eng})
+
+
+def test_an_anchor_of_a_repo_with_no_checkout_here_is_not_checked(tmp_path):
+    home, eng, g = _two_repos(tmp_path)
+    assert check_coverage(g, home) == [] and check_coverage(g, home, {"eng": tmp_path / "elsewhere"}) == []
+    assert unchecked_anchors(g) == [
+        "2 anchor(s) of repo 'eng' not checked: no checkout of it here (check --repo-path eng=PATH)"]
+
+
+def test_an_anchor_of_a_repo_names_a_repo_node(tmp_path):
+    home, eng, g = _two_repos(tmp_path)
+    g.add_node("doc:x", type="Doc", status="active", anchor="docs/install.md#install", repo="nope")
+    assert anchor_errors(g, home, {"eng": eng, "nope": eng}) == [
+        "doc:eng-gone: anchor file missing: docs/gone.md (repo eng)",
+        "doc:x: anchor of repo 'nope': no Repo node 'repo-nope'"]
 
 
 def test_experiments_missing_from_kanban(tmp_path):

@@ -33,9 +33,12 @@ The project's other repos: a store's CodeRefs may name another registered repo o
 engine whose code the store describes, say. ``brain sync`` also derives that repo's Doc, Test and Workflow nodes,
 from its committed state (the commit brain audit reads), into the same generated files; there a node stands for the
 files of its CodeRefs of that repo and for a Hook's scripts found by their hooks/<name> (the store's repo renders them
-from that repo); a Skill, a Plugin and the Spec anchors are the store's repo's alone. A repo whose checkout is not on
-the machine is left out (brain sync says so; brain check then warns that the files are stale). brain audit measures
-doc.links and test.links of such a repo from the same derivation against the store.
+from that repo); a Skill, a Plugin and the Spec anchors are the store's repo's alone. A Doc, Test or Workflow node of
+that repo carries ``repo: <name>``: its anchor is a path of that repo, and brain check gives research_graph check
+that repo's checkout (``--repo-path``, :func:`anchor_roots`), found as brain audit finds it (from the project's root,
+else from its main checkout when the root is a worktree). A repo whose checkout is not on the machine is left out
+(brain sync says so; brain check then warns that the files are stale). brain audit measures doc.links and test.links
+of such a repo from the same derivation against the store.
 """
 
 from __future__ import annotations
@@ -376,6 +379,7 @@ def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inve
         idx = inventory.Index.build({repo: rf})
         mod_ev = inventory.unit_evidence(rf, idx, idx.top_packages())
     mod_ev = mod_ev or {}
+    at = {} if home is None else {"repo": repo}   # another repo's node: its anchor is a path of that repo
     hand = store_nodes(tree, store) if hand is None else hand
     hand = [n for n in hand if n.get("type") not in TYPES]
     refs: dict[str, set] = {}
@@ -406,7 +410,7 @@ def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inve
             named = sorted({f for tok in PATH_REF.findall(sec.text) for f in resolve(tree, tok, path)})
             props = {"paths": named} if named else {}
             nodes.append({"id": did, "type": "Doc", "status": "active",
-                          "title": _title(f"{path} § {sec.title}" if sec.key else path),
+                          "title": _title(f"{path} § {sec.title}" if sec.key else path), **at,
                           "anchor": anchor(path, sec), **({"props": props} if props else {})})
             own = specs.get(path, "")
             if own:
@@ -454,7 +458,7 @@ def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inve
         if covers.get(t):
             props["covers"] = sorted(covers[t])
         nodes.append({"id": tests[t], "type": "Test", "status": "active",
-                      "title": _title(f"{t}: {doc}" if doc else t), "anchor": f"{t}#tests", "props": props})
+                      "title": _title(f"{t}: {doc}" if doc else t), **at, "anchor": f"{t}#tests", "props": props})
         f = posixpath.dirname(t)
         if f:
             edge(tests[t], f"test:{repo}:{f}", "part_of")
@@ -466,8 +470,8 @@ def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inve
                 d = posixpath.dirname(d)
     for f in folders:
         nodes.append({"id": f"test:{repo}:{f}", "type": "Test", "status": "active",
-                      "title": f"{f}/: {stats[f][0]} test module(s), {stats[f][1]} test(s)", "anchor": f"{f}#tests",
-                      "props": {"modules": stats[f][0], "cases": stats[f][1]}})
+                      "title": f"{f}/: {stats[f][0]} test module(s), {stats[f][1]} test(s)", **at,
+                      "anchor": f"{f}#tests", "props": {"modules": stats[f][0], "cases": stats[f][1]}})
         up = parent(f)
         if up:
             edge(f"test:{repo}:{f}", f"test:{repo}:{up}", "part_of")
@@ -510,8 +514,8 @@ def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inve
             props = {k: v for k, v in (("triggers", ", ".join(map(str, triggers))),
                                        ("runs_on", str(job.get("runs-on") or ""))) if v}
             nodes.append({"id": wid, "type": "Workflow", "status": "active",
-                          "title": _title(f"{name}: {job.get('name') or job_id}"), "anchor": f"{wf}#{job_id}",
-                          **({"props": props} if props else {})})
+                          "title": _title(f"{name}: {job.get('name') or job_id}"), **at,
+                          "anchor": f"{wf}#{job_id}", **({"props": props} if props else {})})
             wd1 = str((((job.get("defaults") or {}).get("run") or {}).get("working-directory")) or wd0)
             runs: set[str] = set()
             for step in job.get("steps") or []:
@@ -589,6 +593,12 @@ def other_trees(cfgs: list, own: str, named: set[str]) -> tuple[list[tuple[str, 
         ref, branch = inventory.reading_ref(c.path)
         got.append((c.name, inventory.git_tree(c.path, ref, branch), c))
     return got, missing
+
+
+def anchor_roots(cfgs: list, own: str) -> dict[str, Path]:
+    """The checkouts of the project's other repos (``cfgs``: projects.Repo, their paths read from the root, else from
+    its main checkout) that are on this machine: where research_graph check reads the anchors of their nodes."""
+    return {c.name: c.path for c in cfgs if c.name != own and (c.path / ".git").exists()}
 
 
 def merge(parts: list[Links]) -> Links:
