@@ -186,7 +186,8 @@ def _compose_config(files: dict[str, bytes]) -> tuple[str, str]:
     argv = stacks._resolve(["docker", "compose"])
     if not argv:
         return "", ""
-    with tempfile.TemporaryDirectory(prefix="brain-bundle-") as tmp:
+    # a docker compose that ran out of time may still hold the folder on Windows: left to the temp cleaner, not raised
+    with tempfile.TemporaryDirectory(prefix="brain-bundle-", ignore_cleanup_errors=True) as tmp:
         for rel, data in files.items():
             f = Path(tmp) / rel
             f.parent.mkdir(parents=True, exist_ok=True)

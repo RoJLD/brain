@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import GIT_ENV, run_git
+from conftest import GIT_ENV, git_init, run_git
 from test_capture import PLUGIN, _bash
 
 from brain import cli, memory
@@ -50,7 +50,7 @@ def world(tmp_path, monkeypatch):
     for k, v in GIT_ENV.items():
         monkeypatch.setenv(k, v)
     origin = tmp_path / "origin.git"
-    run_git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    git_init(origin, bare=True)
     work = tmp_path / "work"
     run_git(tmp_path, "clone", "-q", str(origin), str(work))
     run_git(work, "config", "commit.gpgsign", "false")

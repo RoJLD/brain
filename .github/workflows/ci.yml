@@ -40,9 +40,12 @@ jobs:
         run: |
           pip install -e .
           pip install --no-deps -e packages/brain
-          pip install pyyaml pytest "tomli>=2; python_version < '3.11'"
+          pip install pyyaml pytest pytest-xdist "tomli>=2; python_version < '3.11'"
       - name: Tests
-        run: pytest packages/brain -p no:randomly
+        # in parallel, one worker per core (pytest-xdist); the real docker client apart, on one process
+        run: pytest packages/brain -p no:randomly -n auto -m "not docker" --durations=15
+      - name: Tests (docker)
+        run: pytest packages/brain -p no:randomly -m docker
 
   brain-linux:
     # Advisory until the brain command's suite is green on Linux (its tests were first run on Windows).
@@ -57,9 +60,11 @@ jobs:
         run: |
           pip install -e .
           pip install --no-deps -e packages/brain
-          pip install pyyaml pytest
+          pip install pyyaml pytest pytest-xdist
       - name: Tests
-        run: pytest packages/brain -p no:randomly
+        run: pytest packages/brain -p no:randomly -n auto -m "not docker"
+      - name: Tests (docker)
+        run: pytest packages/brain -p no:randomly -m docker
 
   release-tag:
     # pip reinstalls a git-pinned dependency only when its version changes: a tag vX.Y.Z must carry __version__ X.Y.Z in

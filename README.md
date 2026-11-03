@@ -113,8 +113,8 @@ code, stdout, stderr and the files written, byte for byte. `RESEARCH_GRAPH_MODUL
 The brain command's tests run against both packages from this checkout (`packages/brain/README.md`, Tests):
 
 ```bash
-pip install -e . && pip install --no-deps -e packages/brain && pip install pyyaml pytest
-pytest packages/brain
+pip install -e . && pip install --no-deps -e packages/brain && pip install pyyaml pytest pytest-xdist
+pytest packages/brain -n auto
 ```
 
 ## Releasing

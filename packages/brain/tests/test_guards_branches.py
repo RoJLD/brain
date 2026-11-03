@@ -5,7 +5,7 @@ import json
 import shutil
 
 import pytest
-from conftest import GIT_ENV, run_git
+from conftest import GIT_ENV, git_init, run_git
 
 from brain import guards
 
@@ -23,7 +23,7 @@ def reg(tmp_path, monkeypatch):
     for name in ("demo", "other"):
         r = tmp_path / name
         r.mkdir()
-        run_git(r, "init", "-q", "-b", "main")
+        git_init(r)
         run_git(r, "config", "commit.gpgsign", "false")
         (r / "a.txt").write_text("a\n", encoding="utf-8")
         run_git(r, "add", "-A")

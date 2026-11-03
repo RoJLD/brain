@@ -2,6 +2,17 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+- **The tests run in parallel** (wi-brain-test-speed, TEST-1). `pytest packages/brain -n auto` (pytest-xdist, now in
+  the `test` extra) runs one worker per core; the CI's Windows and Linux jobs do. A test's git repository is a copy of
+  a template made once per worker (`conftest.git_init`, behind the `git_repo` and `make_repo` fixtures and every test
+  that ran `git init`): a few milliseconds instead of three git calls. The test that calls the real docker client is
+  marked `docker` and runs apart, on one process (`-m docker`). Measured on a 16-core Windows machine:
+  NUMBERS_PO6NH; on the CI's Windows runners: NUMBERS_CI.
+- `brain bundle`'s `docker compose config` no longer crashes when docker compose, killed at its timeout, still holds
+  its scratch folder on Windows: the problem is said (« no answer »), the folder left to the temp cleaner.
+
 ## 0.2.4 — 2026-11-03
 
 - **A session never installs or runs a third-party kit** (wi-brain-guard-third-party, EXT-6). The new `third-party`

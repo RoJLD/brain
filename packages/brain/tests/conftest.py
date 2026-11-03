@@ -54,24 +54,61 @@ def run_git(cwd, *args):
     return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True, env=env).stdout
 
 
+_TEMPLATES: dict[str, Path] = {}
+_TEMPLATE_ROOT: list[Path] = []
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _git_templates(tmp_path_factory):
+    """Where this test process (an xdist worker is one) keeps its template repositories, under pytest's basetemp."""
+    _TEMPLATE_ROOT[:] = [tmp_path_factory.mktemp("git-templates")]
+    yield
+    _TEMPLATES.clear()
+
+
+def _template(kind: str) -> Path:
+    """An empty repository made once per test process, copied by git_init: a copy takes a few milliseconds where
+    ``git init`` and its config calls take hundreds on Windows."""
+    if kind not in _TEMPLATES:
+        repo = _TEMPLATE_ROOT[0] / kind
+        run_git(_TEMPLATE_ROOT[0], "init", "-q", *(["--bare"] if kind == "bare" else []), "-b", "main", str(repo))
+        for key, value in (("commit.gpgsign", "false"), ("core.autocrlf", "false")):
+            run_git(repo, "config", key, value)
+        _TEMPLATES[kind] = repo
+    return _TEMPLATES[kind]
+
+
+def git_init(path, branch: str = "main", bare: bool = False) -> Path:
+    """``git init -q -b <branch> [--bare] <path>`` with commit.gpgsign and core.autocrlf off, by copying a template
+    repository: ``path`` may exist (empty or not), its files are left as they are."""
+    path = Path(path)
+    if bare:
+        shutil.copytree(_template("bare"), path, dirs_exist_ok=True)
+    else:
+        path.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(_template("work") / ".git", path / ".git")
+    if branch != "main":
+        (path / ("HEAD" if bare else ".git/HEAD")).write_text(f"ref: refs/heads/{branch}\n", encoding="utf-8")
+    return path
+
+
 @pytest.fixture
 def git_repo(tmp_path, monkeypatch):
     if not shutil.which("git"):
         pytest.skip("git not available")
     for k, v in GIT_ENV.items():
         monkeypatch.setenv(k, v)
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    run_git(repo, "init", "-q", "-b", "main")
-    run_git(repo, "config", "commit.gpgsign", "false")
-    (repo / "notes" / "graph" / "nodes").mkdir(parents=True)
-    (repo / "notes" / "graph" / "nodes" / "work.yaml").write_text(
-        "# work\n- {id: wi-a, type: WorkItem, status: todo,\n   title: \"A\",\n   props: {priority: P1}}\n"
-        "- {id: wi-b, type: WorkItem, status: todo, title: \"B\"}\n", encoding="utf-8")
-    (repo / "notes" / "decisions.md").write_text("# Decisions\n", encoding="utf-8")
-    run_git(repo, "add", "-A")
-    run_git(repo, "commit", "-q", "-m", "init")
-    return repo
+    if "git_repo" not in _TEMPLATES:   # its one commit made once per test process, then copied
+        repo = git_init(_TEMPLATE_ROOT[0] / "git_repo")
+        (repo / "notes" / "graph" / "nodes").mkdir(parents=True)
+        (repo / "notes" / "graph" / "nodes" / "work.yaml").write_text(
+            "# work\n- {id: wi-a, type: WorkItem, status: todo,\n   title: \"A\",\n   props: {priority: P1}}\n"
+            "- {id: wi-b, type: WorkItem, status: todo, title: \"B\"}\n", encoding="utf-8")
+        (repo / "notes" / "decisions.md").write_text("# Decisions\n", encoding="utf-8")
+        run_git(repo, "add", "-A")
+        run_git(repo, "commit", "-q", "-m", "init")
+        _TEMPLATES["git_repo"] = repo
+    return Path(shutil.copytree(_TEMPLATES["git_repo"], tmp_path / "repo"))
 
 
 @pytest.fixture
@@ -132,11 +169,7 @@ def make_repo(tmp_path, monkeypatch):
         return run_git(repo, "rev-parse", "HEAD").strip()
 
     def make(name, files, date="2026-10-01T12:00:00Z", branch="main"):
-        repo = tmp_path / name
-        repo.mkdir(parents=True)
-        run_git(repo, "init", "-q", "-b", branch)
-        run_git(repo, "config", "commit.gpgsign", "false")
-        run_git(repo, "config", "core.autocrlf", "false")
+        repo = git_init(tmp_path / name, branch)
         commit(repo, files, date, "init")
         return repo
 

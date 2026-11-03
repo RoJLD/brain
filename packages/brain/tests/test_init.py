@@ -7,7 +7,7 @@ import pytest
 
 from brain import __version__, cli, config, init, neutral, paths, projects, render, skew
 
-from conftest import run_git
+from conftest import git_init, run_git
 
 
 @pytest.fixture
@@ -182,7 +182,7 @@ def test_the_templates_name_no_one():
 
 def committed(root):
     """git init and a first commit of the new brain, as its owner would."""
-    run_git(root, "init", "-q", "-b", "main")
+    git_init(root)
     run_git(root, "config", "commit.gpgsign", "false")
     run_git(root, "add", "-A")
     run_git(root, "commit", "-q", "-m", "my brain")

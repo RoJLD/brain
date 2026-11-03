@@ -207,6 +207,24 @@ def test_cli_bundle_plan_as_json_and_an_unknown_bundle(tmp_path, monkeypatch, ca
     assert "unknown bundle 'nope' (shipped: sovereign)" in capsys.readouterr().err
 
 
+def test_a_compose_config_out_of_time_that_still_holds_its_folder_is_a_problem_not_a_crash(monkeypatch):
+    """docker compose killed at its timeout may leave a child holding the scratch folder (Windows refuses to remove
+    it): the problem is said, the folder left to the temp cleaner."""
+    held = []
+
+    def slow(argv, cwd, timeout):
+        held.append(open(cwd / "held", "w"))   # an open file: Windows cannot remove the folder
+        return None, ""
+    monkeypatch.setattr(stacks, "_resolve", lambda argv: argv)
+    monkeypatch.setattr(stacks, "_run", slow)
+    try:
+        assert bundles._compose_config({"compose.yaml": b"services: {}\n"}) == ("", "docker compose config no answer")
+    finally:
+        for f in held:
+            f.close()
+
+
+@pytest.mark.docker
 @pytest.mark.skipif(not shutil.which("docker"), reason="docker not on the PATH")
 def test_docker_compose_config_accepts_the_rendering(tmp_path, monkeypatch):
     """docker compose config (client side: no engine, nothing started) on the template and on the rendering."""

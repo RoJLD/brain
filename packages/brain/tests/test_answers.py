@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 import yaml
-from conftest import GIT_ENV, run_git
+from conftest import GIT_ENV, git_init, run_git
 
 from brain import answers, batch, capture, cli, decisions, graph, projects, records
 
@@ -186,8 +186,8 @@ def origin(registry, tmp_path, monkeypatch):
         monkeypatch.setenv(k, v)
     root = registry
     bare = tmp_path / "origin.git"
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
-    run_git(root, "init", "-q", "-b", "main")
+    git_init(bare, bare=True)
+    git_init(root)
     run_git(root, "config", "commit.gpgsign", "false")
     (root / ".gitignore").write_text(".claude/\n", encoding="utf-8")
     decisions.write_view(root, "demo")

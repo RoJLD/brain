@@ -321,12 +321,19 @@ brain health vault
 From a checkout of this repo, with research-graph from the same checkout:
 
 ```bash
-pip install -e . && pip install --no-deps -e packages/brain && pip install pyyaml pytest
-pytest packages/brain
+pip install -e . && pip install --no-deps -e packages/brain && pip install pyyaml pytest pytest-xdist
+pytest packages/brain -n auto
 ```
 
 The tests run as an invented owner, Ada (`tests/fixtures/brain/config.json`, set for every test by `conftest.py`
 through `BRAIN_CONFIG`), with a temporary `BRAIN_HOME`; they need git, and bash for the hooks (Git Bash on Windows).
+They read only fixtures, never a real brain's graph, records or rendered files: what checks a brain's own data is
+`brain check` and `brain audit`.
+
+`-n auto` runs them in parallel, one pytest-xdist worker per core: each test has its own temporary folder, `BRAIN_HOME`
+and environment, so no test shares state with another. A git repository in a test is a copy of a template made once
+per worker (`conftest.git_init`, the `git_repo` and `make_repo` fixtures), not a `git init`. The test that calls the
+real docker client is marked `docker`: the CI runs it apart, on one process (`pytest packages/brain -m docker`).
 
 ## Releasing
 
