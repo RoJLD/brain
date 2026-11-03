@@ -137,6 +137,44 @@ The views name the owner by `identity.display_name` (else `identity.owner`): the
 one is named; `settings.titles` there gives any panel a free title. `identity.owner` stays the id `--by` writes and the
 stores declare.
 
+### The owner's answers: one writer per batch
+
+The session that asks the owner records the answers, in one PR per batch (wi-brain-answers-lane):
+
+1. `brain decision batch --json` prints the questions for Claude Code's question tool, and writes each one (its text,
+   header and labels, the DDR's id) to `<BRAIN_HOME>/ledger/asked-<month>.jsonl`.
+2. When the tool returns, the capture hook ties each answer to the DDR its question came from (the id a repeated
+   question carries, else its text and header, else its header and labels) and writes it to
+   `ledger/answer-<month>.jsonl`: the answer exactly as the tool returned it, the labels it names (the DDR's own,
+   `(Recommandé)` dropped; a multiple choice is the labels joined by `, `, the rest of it the owner's text) and the
+   owner's notes. A question the session wrote by hand stays an ad-hoc DDR of the capture.
+3. `brain decision answer --captured` records this session's captured answers: a worktree of the project's main
+   checkout on `claude/answers-<stamp>` from origin's default branch, the answers written, `brain refresh --offline`,
+   one commit, one PR (`gh`), then merged; when the merge is refused because main moved, it merges main, takes main's
+   side of the generated files, refreshes again, pushes and retries (`--retries`, default 3; `--no-merge` stops at
+   the PR). A record that conflicts stops it. A decision answered meanwhile is left (`--again` replaces it).
+
+`--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
+label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file
+may start with a BOM (UTF-8, or UTF-16 from Windows PowerShell's `>`). In an agent's session (`CLAUDECODE`),
+`brain decision answer` and `--batch` record only an answer this session's own question tool captured: an answer
+relayed by a message is never recorded; the session that gets it applies it and acknowledges it (`brain decision
+ack`) once the asking session has recorded it and the mid-session announce names it. The owner's own terminal records
+anything.
+
+### Decisions by default, then reviewed
+
+`brain decision ask --low-stakes` marks a decision whose recommendation the asking session may apply at once,
+provisionally (wi-brain-decision-default): the DDR gets `default: {option, after}`, `after` 24 h from the ask. The
+owner may answer it as any other; without an answer, `brain refresh` (or `brain decision defaulted --apply`) records
+the recommendation as its answer, `by: default`, `via: default`, at the deadline, and the hooks announce it with « by
+default ». The mark is refused, at the ask and by `brain check`, on a decision whose text names money, keys,
+visibility, publication, accounts, arming, rules or scheduled tasks (`brain.defaults.REFUSED`, by words: a false alarm
+only keeps the decision with the owner). `brain decision defaulted` is the owner's review list (the defaults to
+review, the provisional ones, the reversed ones; `--seen` marks them read, from the owner's terminal only), with a
+line in the morning batch (`brain decision batch --zen`) and in the cockpit's queue panel (`brain tui`); any default is reversed with `brain decision answer ID
+<option> --again`.
+
 ## Where the brain is found
 
 `config.json` and `projects.yaml` are found at `$BRAIN_CONFIG` / `$BRAIN_PROJECTS`, else in the first of:

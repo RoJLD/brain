@@ -185,7 +185,8 @@ def render(queue: Path, answered: list[dict], asked: list[dict]) -> str:
     rows = []
     for top in answered:
         choice = "; ".join(top["choices"]) or (f"other: {top['other']}" if top.get("other") else "answered")
-        rows.append(f"- answered {top.get('id') or top['file'][:-5]}: {_short(choice, 80)} "
+        tag = " (by default: brain decision defaulted)" if top.get("via") == "default" else ""
+        rows.append(f"- answered {top.get('id') or top['file'][:-5]}: {_short(choice, 80)}{tag} "
                     f"({_short(top.get('title', ''), 80)})")
     rows += [f"- asked {top.get('id') or top['file'][:-5]}: {_short(top.get('title', ''), 100)} (waits on {owner})"
              for top in asked]
