@@ -54,8 +54,9 @@ from . import cockpit, config, decisions, paths, plan, resume, secretscan, statu
 LOG = "cockpit"  # <BRAIN_HOME>/ledger/cockpit-<month>.jsonl
 OUTPUT_MAX = 4000  # the end of a command's output kept in the log
 TIMEOUT_S = 900.0
-HERE = Path(__file__).resolve().parents[3]  # the brain's checkout: its install.ps1; the root of a denial outside every
-# project
+# The personal brain (its install.ps1; the root of a denial outside every project): $BRAIN_PERSONAL or the installer's
+# pointer, else the checkout that holds this package
+HERE = paths.personal_root() or Path(__file__).resolve().parents[3]
 GUI_EDITORS = ("code", "code-insiders", "codium", "cursor")
 LINE_EDITORS = ("vi", "vim", "nvim", "nano", "micro", "emacs")
 _TICKS_RE = re.compile(r"`([^`\n]+)`")
@@ -669,7 +670,7 @@ def argv(words: list[str], cwd: Path | None) -> list[str]:
         script = next((f for f in ((cwd / "install.ps1") if cwd else None, HERE / "install.ps1")
                        if f is not None and f.is_file()), None)
         if script is None:
-            raise ValueError("install.ps1 not found in the project's root nor in the brain's checkout")
+            raise ValueError("install.ps1 not found in the project's root nor in the personal brain")
         shell = "powershell" if os.name == "nt" else "pwsh"
         return [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), *words[1:]]
     raise ValueError(f"{head}: the cockpit runs brain and install.ps1 commands only")

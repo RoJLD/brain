@@ -46,15 +46,59 @@ def relative_transcript(path: str | Path) -> str:
         return p.name
 
 
+PERSONAL = "personal.json"   # <BRAIN_HOME>/personal.json: {"root": <the personal brain's main checkout>}
+
+
+def personal_file() -> Path:
+    """The machine's pointer to its personal brain, written by the installer (install.ps1 -Personal)."""
+    return brain_home() / PERSONAL
+
+
+def pointer_root() -> Path | None:
+    """The root <BRAIN_HOME>/personal.json names (a relative one read from BRAIN_HOME), or None: no file, not JSON,
+    no root."""
+    try:
+        data = json.loads(personal_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    root = data.get("root") if isinstance(data, dict) else None
+    if not isinstance(root, str) or not root:
+        return None
+    p = Path(root).expanduser()
+    return p if p.is_absolute() else brain_home() / p
+
+
+def personal_root() -> Path | None:
+    """The personal brain this machine runs: ``$BRAIN_PERSONAL``, else the pointer <BRAIN_HOME>/personal.json, else
+    None."""
+    env = os.environ.get("BRAIN_PERSONAL")
+    return Path(env).expanduser() if env else pointer_root()
+
+
+def bases(root: str | Path | None = None) -> list[Path]:
+    """Where the personal brain's files (config.json, projects.yaml, permissions.yaml) are looked for, in order:
+    ``$CLAUDE_BRAIN_DIR``, ``$BRAIN_PERSONAL``, the repo acted on (``root``: a worktree of the personal brain reads its
+    own files), the pointer <BRAIN_HOME>/personal.json, then, for an install from a checkout of a personal brain that
+    still holds the engine, the checkout that holds this package and the clone installed editable."""
+    out: list[Path] = []
+    for base in (os.environ.get("CLAUDE_BRAIN_DIR"), os.environ.get("BRAIN_PERSONAL"), root, pointer_root(),
+                 package_repo(), installed_checkout()):
+        if base and Path(base) not in out:
+            out.append(Path(base))
+    return out
+
+
 def package_repo() -> Path | None:
-    """The git checkout that holds this package (plugins/<core plugin>/brain -> repo root), when there is one."""
+    """The git checkout that holds this package as a plugin's folder (plugins/<core plugin>/brain -> repo root), when
+    there is one: a personal brain that still holds the engine. None for an installed package."""
     root = Path(__file__).resolve().parents[3]
     return root if (root / ".git").exists() and (root / "notes" / "graph").is_dir() else None
 
 
 def installed_checkout() -> Path | None:
-    """The clone the brain command is installed from (editable, in <BRAIN_HOME>/venv by install.ps1), read from its
-    direct_url.json: how a hook run from the plugin's cached copy finds the Brain's projects.yaml."""
+    """The clone the brain command is installed from when it is installed editable (in <BRAIN_HOME>/venv), read from
+    its direct_url.json: how a hook run from the plugin's cached copy found the Brain's projects.yaml before the
+    installer wrote personal.json."""
     from urllib.parse import urlparse  # here, not at the top: urllib.request costs a hook ~50 ms to import
     from urllib.request import url2pathname
 
@@ -83,7 +127,8 @@ def main_checkout(d: str | Path) -> Path | None:
 
 def find_root(start: str | Path | None = None) -> Path:
     """The repo to act on: $BRAIN_ROOT, else the nearest ancestor of ``start`` (cwd) with notes/graph/schema.yaml,
-    else the checkout that holds this package."""
+    else the personal brain ($BRAIN_PERSONAL, then <BRAIN_HOME>/personal.json), else the checkout that holds this
+    package."""
     env = os.environ.get("BRAIN_ROOT")
     if env:
         return Path(env).expanduser().resolve()
@@ -91,7 +136,11 @@ def find_root(start: str | Path | None = None) -> Path:
     for d in (here, *here.parents):
         if (d / "notes" / "graph" / "schema.yaml").is_file():
             return d
-    pkg = package_repo()
-    if pkg:
-        return pkg
-    raise SystemExit("brain: no notes/graph/schema.yaml above the current folder; pass --root or set BRAIN_ROOT")
+    for pkg in (personal_root(), package_repo()):
+        if pkg and (pkg / "notes" / "graph" / "schema.yaml").is_file():
+            return pkg.resolve()
+    reg = os.environ.get("BRAIN_PROJECTS")
+    if reg and Path(reg).expanduser().is_file():
+        return Path(reg).expanduser().resolve().parent  # a registry named outright: its brain's folder (--all)
+    raise SystemExit("brain: no notes/graph/schema.yaml above the current folder and no personal brain "
+                     "($BRAIN_PERSONAL, <BRAIN_HOME>/personal.json); pass --root, set BRAIN_ROOT, or run brain init")

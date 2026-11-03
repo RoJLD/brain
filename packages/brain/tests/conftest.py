@@ -27,6 +27,7 @@ def brain_home(tmp_path, monkeypatch):
     # view that still names someone else fails
     monkeypatch.setenv("BRAIN_CONFIG", str(BRAIN))
     monkeypatch.delenv("CLAUDE_BRAIN_DIR", raising=False)
+    monkeypatch.delenv("BRAIN_PERSONAL", raising=False)  # and no machine's personal brain: the pointer is in home
     return home
 
 

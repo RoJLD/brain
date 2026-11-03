@@ -28,7 +28,7 @@
       "type": "object",
       "required": ["repo", "pin"],
       "additionalProperties": false,
-      "description": "The engine this brain runs, once the brain command is installed from the engine's repo: its repo and the tag pinned. Absent while the command is installed from this repo (its pyproject.toml pins research-graph).",
+      "description": "The engine this brain runs: its repo and the tag pinned. The installer installs the brain command at that tag (pip, from the repo's packages/brain), research-graph at the same one; moved by a reviewed PR, then the installer on each machine.",
       "properties": {
         "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "owner/name of the engine's repo on GitHub."},
         "pin": {"type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$", "description": "The tag installed, vX.Y.Z; moved by a reviewed PR."}

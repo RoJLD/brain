@@ -9,7 +9,7 @@ import pytest
 
 import brain
 
-PLUGIN = Path(brain.__file__).resolve().parents[1]
+PLUGIN = Path(brain.__file__).resolve().parent / "adapters" / "claude"  # its hooks/ folder is a plugin's
 SCRIPT = PLUGIN / "hooks" / "inject-rules.sh"
 
 
@@ -45,3 +45,21 @@ def test_claude_brain_dir_then_the_plugin_copy(tmp_path):
     (tmp_path / "config.json").write_text('{"v": 1, "identity": {"owner": "Ada"}, "rules": []}', encoding="utf-8")
     assert _run({"BRAIN_CONFIG": str(tmp_path / "config.json")}, root=plugin)["additionalContext"] == \
         "the plugin's own\n"
+
+
+def test_the_personal_brain_the_installer_points_to(tmp_path, brain_home):
+    """A cached plugin finds its owner's rules from anywhere: $BRAIN_PERSONAL, else <BRAIN_HOME>/personal.json (its
+    root JSON-escaped as the installer may write it), before the plugin's own copy."""
+    me = tmp_path / "me"
+    (me / "rules").mkdir(parents=True)
+    (me / "rules" / "global.md").write_text("Ada's rules\n", encoding="utf-8")
+    (me / "config.json").write_text('{"v": 1, "identity": {"owner": "Ada"}, "rules": ["rules/global.md"]}',
+                                    encoding="utf-8")
+    plugin = tmp_path / "cache" / "core"
+    (plugin / "rules").mkdir(parents=True)
+    (plugin / "rules" / "global.md").write_text("the plugin's own\n", encoding="utf-8")
+    assert _run({}, root=plugin)["additionalContext"] == "the plugin's own\n"
+    assert _run({"BRAIN_PERSONAL": str(me)}, root=plugin)["additionalContext"] == "Ada's rules\n"
+    brain_home.mkdir(parents=True, exist_ok=True)
+    (brain_home / "personal.json").write_text(json.dumps({"root": str(me)}), encoding="utf-8")
+    assert _run({}, root=plugin)["additionalContext"] == "Ada's rules\n"

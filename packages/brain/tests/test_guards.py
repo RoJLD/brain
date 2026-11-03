@@ -16,7 +16,7 @@ from conftest import run_git
 import brain
 from brain import guards, paths, projects
 
-PLUGIN = Path(brain.__file__).resolve().parents[1]  # the plugin that holds the brain package
+PLUGIN = Path(brain.__file__).resolve().parent / "adapters" / "claude"  # its hooks/ folder is a plugin's
 # Fake keys are assembled at run time, so this file never holds one.
 FAKE_KEY = "sk-ant-" + "api03-" + "Xy7Qa9Lm2Pz4" * 3
 CLAUDE = "Co-Authored-By: " + "Claude Opus 5.5 <noreply@anthropic.com>"

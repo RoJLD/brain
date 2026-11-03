@@ -13,7 +13,7 @@ from conftest import run_git
 import brain
 from brain import cli, schema, timing
 
-PLUGIN = Path(brain.__file__).resolve().parents[1]  # the plugin that holds the brain package
+PLUGIN = Path(brain.__file__).resolve().parent / "adapters" / "claude"  # its hooks/ folder is a plugin's
 T0 = datetime(2026, 11, 2, 10, 0, 0, tzinfo=timezone.utc)
 
 

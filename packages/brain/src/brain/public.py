@@ -24,7 +24,8 @@ repo. It refuses, one finding per line, exit code 1:
 
 ``public.allow`` (``{glob: reason}``) excepts a file from every check but ``secret`` (a licence keeps its author's
 name). The tracked files are read at HEAD's working tree; ``--history`` adds the lines and the files of every commit
-not on the remote yet (``HEAD --not --remotes=<remote>``: the whole history before a first push), the remote being
+not on the remote yet (``HEAD --not --remotes=<remote>``: the whole history before a first push), their messages
+(every check of a line) and their author's and committer's e-mail addresses (a no-reply one passes), the remote being
 ``--remote``, else the one whose URL is in ``public.repos``, else ``origin``. ``--engine`` checks, in the personal
 brain's own checkout, the files brain boundary sends to the engine instead (the extraction's dry run: no history, no
 stamp).
@@ -274,7 +275,25 @@ def scan_history(repo: Path, rev_range: list[str], r: Rules) -> tuple[list[Findi
             f = file_finding(raw.strip(), r, commit)
             if f:
                 out.append(f)
-    return out, len(shas)
+    return out + scan_messages(repo, rev_range, r), len(shas)
+
+
+def scan_messages(repo: Path, rev_range: list[str], r: Rules) -> list[Finding]:
+    """The findings of the commits' messages (path ``<message>``: every check of a line) and of their author's and
+    committer's e-mail addresses (path ``<author>``: the generic e-mail shape; a no-reply address passes). A name is
+    not checked: the owner signs a public commit as they sign its licence."""
+    log = _git(repo, "log", "--format=%x00%H%x00%ae%x00%ce%x00%B%x01", *rev_range,
+               timeout=300).stdout.decode("utf-8", "replace")
+    out: list[Finding] = []
+    for record in log.split("\x01"):
+        parts = record.lstrip("\r\n").split("\0")
+        if len(parts) < 5:
+            continue
+        _, commit, author, committer, body = parts[:5]
+        out += scan_lines("<message>", enumerate(body.strip("\r\n").splitlines(), 1), r, commit)
+        for email in dict.fromkeys((author, committer)):
+            out += [Finding("pattern", "<author>", 0, what, commit) for what in _generic(email)]
+    return out
 
 
 def gitleaks_history(repo: Path, rev_range: list[str]) -> list[Finding] | None:

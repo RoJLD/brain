@@ -36,8 +36,9 @@ refuses one; :func:`mounts` lists them, and ``brain status --all`` counts them w
 
 A relative root is read from the registry's folder, else from its main checkout's when the registry sits in a git
 worktree (a worktree under a scratchpad has no ``../demo`` beside it). The registry is found through
-``$BRAIN_PROJECTS``, ``$CLAUDE_BRAIN_DIR`` (a project's name for the Brain checkout), the repo acted on, the
-checkout that holds this package, then the clone the brain command is installed from (a hook's case).
+``$BRAIN_PROJECTS``, else the places of :func:`brain.paths.bases`: ``$CLAUDE_BRAIN_DIR`` (a project's name for the
+Brain checkout), ``$BRAIN_PERSONAL``, the repo acted on, the pointer ``<BRAIN_HOME>/personal.json`` (a hook's case:
+the plugin runs from a cached copy), then a checkout that still holds this package.
 """
 
 from __future__ import annotations
@@ -142,9 +143,9 @@ def registry_file(root: Path | None = None) -> Path | None:
     env = os.environ.get("BRAIN_PROJECTS")
     if env:
         return Path(env).expanduser()
-    for base in (os.environ.get("CLAUDE_BRAIN_DIR"), root, paths.package_repo(), paths.installed_checkout()):
-        if base and (Path(base) / REGISTRY).is_file():
-            return Path(base) / REGISTRY
+    for base in paths.bases(root):
+        if (base / REGISTRY).is_file():
+            return base / REGISTRY
     return None
 
 

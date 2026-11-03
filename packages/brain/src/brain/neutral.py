@@ -247,7 +247,7 @@ def brain_root(start: Path | None = None) -> Path:
     cfg = config.load(here)
     if cfg.file and applies(cfg.root):
         return cfg.root
-    return paths.package_repo() or here
+    return paths.personal_root() or paths.package_repo() or here
 
 
 def engine_procedures() -> Path:

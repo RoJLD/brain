@@ -287,8 +287,8 @@ def memory_index(root: Path) -> Path:
 def sources(project: projects.Project, brain: projects.Project | None) -> list[Source]:
     """What a session in ``project`` gets before its first prompt, as far as files tell."""
     out: list[Source] = []
-    brain_root = brain.root if brain else Path(__file__).resolve().parents[3]
     cfg = config.load()
+    brain_root = brain.root if brain else (paths.personal_root() or cfg.root)
     rel = global_rules(cfg)
     rules = brain_root / rel
     if not rules.is_file():
@@ -465,13 +465,16 @@ def covered(u: Unit) -> list[str]:
 # --- the report ---
 
 def _brain(scope: list[projects.Project]) -> projects.Project | None:
-    """The project that holds the global rules: the one in scope with rules/global.md, else this package's checkout."""
+    """The project that holds the global rules: the one in scope with rules/global.md, else the personal brain
+    (brain.paths.personal_root), else this package's checkout."""
     rel = global_rules()
     for p in scope:
         if (p.root / rel).is_file():
             return p
-    repo = paths.package_repo()
-    return resume.project_for(repo) if repo and (repo / rel).is_file() else None
+    for repo in (paths.personal_root(), paths.package_repo()):
+        if repo and (repo / rel).is_file():
+            return resume.project_for(repo)
+    return None
 
 
 def _hard_by_owner(owners: list[projects.Project]) -> dict[str, dict]:

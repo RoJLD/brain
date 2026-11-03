@@ -8,11 +8,12 @@ from pathlib import Path
 
 import pytest
 import yaml
+from research_graph import init
 from test_guards import _needs_python, bash, decide, payload, pwsh
 
 from brain import guards, permissions, projects, queue, records
 
-REPO = Path(__file__).resolve().parents[1]
+PERMISSIONS = Path(__file__).resolve().parent / "fixtures" / "permissions.yaml"  # an owner's hierarchy
 AT = "2026-11-02T20:00:00Z"
 # Ada's config.json: the platform's node tools the power guard knows by name (config.json's power).
 POWER = {"node_clis": ["kubectl-acme", "acme-cli", "acme"], "node_services": ["acme-node-agent"]}
@@ -20,9 +21,9 @@ POWER = {"node_clis": ["kubectl-acme", "acme-cli", "acme"], "node_services": ["a
 
 @pytest.fixture
 def owner(tmp_path, monkeypatch):
-    """This repo's permissions.yaml (the never-grantable categories it declares, installer included), Ada's config.json
+    """An owner's permissions.yaml (the never-grantable categories it declares, installer included), Ada's config.json
     with her platform's node tools, a working folder."""
-    monkeypatch.setenv("BRAIN_PERMISSIONS", str(REPO / "permissions.yaml"))
+    monkeypatch.setenv("BRAIN_PERMISSIONS", str(PERMISSIONS))
     monkeypatch.setenv("BRAIN_PROJECTS", str(tmp_path / "no-projects.yaml"))
     monkeypatch.delenv(guards.ALLOW_ENV, raising=False)
     cfg = tmp_path / "ada-config.json"
@@ -211,7 +212,7 @@ def test_owner_passes_powershell_reads(owner, command):
 
 
 def _probes():
-    data = yaml.safe_load((REPO / "permissions.yaml").read_text(encoding="utf-8"))
+    data = yaml.safe_load(PERMISSIONS.read_text(encoding="utf-8"))
     cats, errors = permissions.categories(data)
     assert not errors
     return [(c.name, p) for c in cats for p in c.probes]
@@ -577,7 +578,8 @@ def _store(tmp_path):
     store = root / "notes" / "graph"
     (store / "nodes").mkdir(parents=True)
     (store / "edges").mkdir()
-    shutil.copy(REPO / "notes" / "graph" / "schema.yaml", store / "schema.yaml")
+    (store / "schema.yaml").write_text(init.template("schema.yaml").replace("{owner_line}", "owner: Ada\n"),
+                                       encoding="utf-8")
     (store / "nodes" / "work.yaml").write_text("- {id: wi-brain-x, type: WorkItem, status: todo, title: \"X\"}\n",
                                                 encoding="utf-8")
     (store / "edges" / "work.yaml").write_text("", encoding="utf-8")
@@ -669,7 +671,7 @@ def test_prefilter_reads_the_node_clis_from_the_cache(owner, brain_home):
 def test_prefilter_names_the_deny_rules_programs():
     """A deny rule of permissions.yaml names a program guard.sh's pre-filter starts Python for; add the name to
     guard.sh's owner_power list along with the rule."""
-    cats, _ = permissions.categories(yaml.safe_load((REPO / "permissions.yaml").read_text(encoding="utf-8")))
+    cats, _ = permissions.categories(yaml.safe_load(PERMISSIONS.read_text(encoding="utf-8")))
     specs = [permissions.parse(a)[1] for c in cats for r in c.deny for a in permissions.atoms(r)]
     commands = sorted({s.replace("*", "x") for s in specs if s})
     assert commands

@@ -1,6 +1,7 @@
 """Hook entry point, run by health.sh as ``python -I health.py <event>``.
 
-``-I`` keeps the user's site-packages and PYTHONPATH out; the plugin root is put on the path for the brain package.
+``-I`` keeps the user's site-packages and PYTHONPATH out; the plugin root goes first on the
+path, for a plugin folder that still holds the brain package; else the interpreter's own brain (the installed engine).
 The registry needs PyYAML (the brain command's venv has it); without it the hook logs the error and prints nothing.
 """
 

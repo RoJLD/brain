@@ -7,7 +7,7 @@ from pathlib import Path
 import brain
 from brain import capture, paths, plan
 
-PLUGIN = Path(brain.__file__).resolve().parents[1]  # the plugin that holds the brain package
+PLUGIN = Path(brain.__file__).resolve().parent / "adapters" / "claude"  # its hooks/ folder is a plugin's
 UPDATE, WRAP_UP = "mcp__ccd_turn__update_plan", "mcp__ccd_turn__wrap_up"
 ITEMS = [{"content": "Read the spec", "status": "in_progress"}, {"content": "Write the code", "status": "pending"},
          {"content": "Test it", "status": "pending"}]

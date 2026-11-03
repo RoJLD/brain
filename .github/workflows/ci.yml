@@ -24,8 +24,46 @@ jobs:
       - name: Tests (moved tests and golden outputs)
         run: pytest
 
+  brain:
+    # The brain command, from this checkout: research-graph installed editable first, so its git pin (the same tag)
+    # is not fetched. Windows first: its hooks run in Git Bash, its installer in Windows PowerShell.
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          pip install -e .
+          pip install --no-deps -e packages/brain
+          pip install pyyaml pytest
+      - name: Tests
+        run: pytest packages/brain -p no:randomly
+
+  brain-linux:
+    # Advisory until the brain command's suite is green on Linux (its tests were first run on Windows).
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          pip install -e .
+          pip install --no-deps -e packages/brain
+          pip install pyyaml pytest
+      - name: Tests
+        run: pytest packages/brain -p no:randomly
+
   release-tag:
-    # pip reinstalls a git-pinned dependency only when its version changes: a tag vX.Y.Z must carry __version__ X.Y.Z.
+    # pip reinstalls a git-pinned dependency only when its version changes: a tag vX.Y.Z must carry __version__ X.Y.Z in
+    # both distributions, and brain must pin research-graph at that tag.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -33,7 +71,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Tag matches __version__
+      - name: Tag matches both versions and the pin
         run: |
-          version=$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/research_graph/__init__.py').read_text()).group(1))")
-          test "${GITHUB_REF_NAME}" = "v${version}" || { echo "tag ${GITHUB_REF_NAME} != v${version}"; exit 1; }
+          v() { python -c "import re, pathlib, sys; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path(sys.argv[1]).read_text()).group(1))" "$1"; }
+          graph=$(v src/research_graph/__init__.py)
+          brain=$(v packages/brain/src/brain/__init__.py)
+          test "${GITHUB_REF_NAME}" = "v${graph}" || { echo "tag ${GITHUB_REF_NAME} != research-graph v${graph}"; exit 1; }
+          test "${GITHUB_REF_NAME}" = "v${brain}" || { echo "tag ${GITHUB_REF_NAME} != brain v${brain}"; exit 1; }
+          grep -q "research-graph @ git+https://github.com/RoJLD/brain.git@${GITHUB_REF_NAME}\"" packages/brain/pyproject.toml \
+            || { echo "packages/brain/pyproject.toml does not pin research-graph at ${GITHUB_REF_NAME}"; exit 1; }

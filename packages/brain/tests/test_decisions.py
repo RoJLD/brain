@@ -170,7 +170,7 @@ def test_hook_script_runs_isolated(store):
     _ask(root)
     decisions.answer(root, "alert-channel", ["Email"], at=AT)
     import brain
-    script = Path(brain.__file__).resolve().parents[1] / "hooks" / "announce.py"
+    script = Path(brain.__file__).resolve().parent / "adapters" / "claude" / "hooks" / "announce.py"
     out = subprocess.run([sys.executable, "-I", str(script), "SessionStart"], input=json.dumps({"cwd": str(root)}),
                          capture_output=True, text=True, timeout=30)
     assert out.returncode == 0 and out.stderr == ""

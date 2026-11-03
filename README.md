@@ -4,18 +4,24 @@ The public engine of the Brain: the code that keeps a person's or a team's work 
 readable by people and by agents. Each person keeps their own data (rules, decisions, backlog, memory) in a private
 repo of their own; this repo holds only code, templates and examples.
 
-It holds one package today, **`research-graph`** (module `research_graph`): a typed, layered knowledge graph kept as
-YAML in a git repo, with a loader that validates it, `sync` that derives nodes from the repo (decision logs,
-experiments), queries over the work layer (backlog, milestones, decisions waiting for the owner), its history from git,
-and generated markdown views (a kanban board and a roadmap). The `brain` command (`brain sync`, `check`, `refresh`,
-`decision pending`) and a quant research platform both run it, pinned by tag.
+It holds two distributions, released together under one tag series (`vX.Y.Z` is both at version X.Y.Z):
+
+- **`research-graph`** (module `research_graph`, at the repo's root): a typed, layered knowledge graph kept as YAML in
+  a git repo, with a loader that validates it, `sync` that derives nodes from the repo (decision logs, experiments),
+  queries over the work layer (backlog, milestones, decisions waiting for the owner), its history from git, and
+  generated markdown views (a kanban board and a roadmap). A quant research platform runs it, pinned by tag.
+- **`brain`** (`packages/brain`): the `brain` command, one command for a personal brain at zero token: records (DDR,
+  SR, AR), backlog, decisions waiting on the owner, journal, ADRs, generated views, `brain init` for a new brain, and
+  the Claude Code hooks and guards it renders into its owner's own plugin. It depends on `research-graph` at the same
+  tag. See [`packages/brain/README.md`](packages/brain/README.md).
 
 ## Install
 
-Python 3.10 or later; it depends on networkx and PyYAML.
+Python 3.10 or later; `research-graph` depends on networkx and PyYAML.
 
 ```bash
-pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.1.1"
+pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.2.0"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.0#subdirectory=packages/brain"   # the brain command
 ```
 
 ## Start your own graphs
@@ -96,11 +102,20 @@ code, stdout, stderr and the files written, byte for byte. `RESEARCH_GRAPH_MODUL
 (default `research_graph`); `RESEARCH_GRAPH_GOLDEN=update` rewrites the files, for a change of behaviour that is meant
 (review the diff).
 
+The brain command's tests run against both packages from this checkout (`packages/brain/README.md`, Tests):
+
+```bash
+pip install -e . && pip install --no-deps -e packages/brain && pip install pyyaml pytest
+pytest packages/brain
+```
+
 ## Releasing
 
-A release bumps `__version__` in `src/research_graph/__init__.py`, adds its `CHANGELOG.md` heading, and is tagged
-`vX.Y.Z` on the merge commit. The version must change with every tag: pip reinstalls a git-pinned dependency only when
-its version differs (CI checks that the tag matches). Consumers move by their pin.
+A release bumps `__version__` in `src/research_graph/__init__.py` and `packages/brain/src/brain/__init__.py` to the
+same X.Y.Z, moves the `research-graph @ ...@vX.Y.Z` pin in `packages/brain/pyproject.toml`, adds the heading of each
+`CHANGELOG.md`, and is tagged `vX.Y.Z` on the merge commit. The version must change with every tag: pip reinstalls a
+git-pinned dependency only when its version differs (CI checks that the tag, both versions and the pin agree).
+Consumers move by their pin.
 
 ## License
 

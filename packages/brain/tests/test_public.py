@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,6 @@ from brain import boundary, cli, config, guards, public
 
 from conftest import run_git
 
-REPO = Path(__file__).resolve().parents[1]
 PUBLIC = {"v": 1, "identity": {"owner": "Ada"},
           "public": {"repos": ["acme/engine"],
                      "deny": {"people": ["Ada"], "hosts": ["box1"], "repos": ["ada-private"], "paths": ["D:/work"]},
@@ -113,6 +113,20 @@ def test_history_stops_at_what_the_remote_has(pub, make_repo):
     assert public.check(pub, history=True)["commits"] == 1
 
 
+def test_history_reads_the_messages_and_the_authors_addresses(pub, make_repo):
+    """A commit message is published with its commit: a denied term there fails; so does an author's own e-mail
+    address, while a no-reply one passes and a name is the owner's to sign with."""
+    (pub / "NOTES.md").write_text("notes\n", encoding="utf-8")
+    env = dict(os.environ, GIT_AUTHOR_NAME="Ada", GIT_AUTHOR_EMAIL="ada@mail.acme.org",  # public-check:allow
+               GIT_COMMITTER_NAME="Ada",
+               GIT_COMMITTER_EMAIL="1+ada@users.noreply.github.com")
+    for args in (["add", "-A"], ["commit", "-q", "-m", "notes: written on box1\n\nNothing else."]):
+        subprocess.run(["git", "-C", str(pub), *args], check=True, capture_output=True, env=env)
+    found = [(f["check"], f["path"], f["line"]) for f in public.check(pub, history=True)["findings"]]
+    assert found == [("denied", "<message>", 1), ("pattern", "<author>", 0)]
+    assert public.check(pub)["findings"] == []  # the tree alone holds nothing
+
+
 def test_a_repo_outside_public_repos_is_checked_not_stamped(pub, capsys):
     run_git(pub, "remote", "set-url", "origin", "https://github.com/acme/other.git")
     assert cli.main(["check", "--public", "--repo", str(pub), "--history"]) == 0
@@ -186,13 +200,3 @@ def test_the_guard_message_and_override(pub, monkeypatch, capsys):
 def test_no_public_repo_no_push_check(git_repo):
     run_git(git_repo, "remote", "add", "origin", "https://github.com/acme/engine.git")
     assert not _push(git_repo)  # the tests' brain (Ada's fixture) names no public repo
-
-
-# --- this repo's engine side ---
-
-def test_this_repo_engine_side_is_ready_to_leave(monkeypatch):
-    """The step before the extraction (PB-1): brain check --public --engine is green on this checkout, with its owner's
-    real lists; a module or test that names the owner, a private repo, a host or a path fails here."""
-    monkeypatch.setenv("BRAIN_CONFIG", str(REPO / config.FILE))
-    data = public.check(REPO, engine=True)
-    assert data["findings"] == [], "\n".join(public.Finding(**f).text() for f in data["findings"][:20])

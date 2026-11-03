@@ -102,9 +102,14 @@
                  stores; --quick reads the files only (no audit, stack, code index or scheduler probe)
   brain projects [--keys] [--json]   the registry resolved: each project's stores, journals, decision logs, ledgers,
                  repos, stacks, code index and plugin; --keys: every key an entry may hold
+  brain init [DIR] --owner NAME [--kind person|team] [--tenant ID] [--tier lite|default] [--name NAME] [--apply]
+                 a new personal brain from the templates, in DIR (default: here): config.json, projects.yaml, the
+                 graph store, journal, ADR log, starter rules, CLAUDE.md, memory and records, and this machine's
+                 pointer <BRAIN_HOME>/personal.json when it has none; a plan, --apply writes it; never overwrites
   brain config [--json] [--keys] [--check]   the personal brain's config.json resolved (owner, registry, rules,
-                 memory, records, engine pin, public repos and how many denied terms, secrets by name); --keys: every
-                 key it may hold (from schemas/config.schema.json); --check: exit 1 when it breaks the contract
+                 memory, records, engine pin, public repos and how many denied terms, secrets by name, the machine's
+                 pointer); --keys: every key it may hold (from schemas/config.schema.json); --check: exit 1 when it
+                 breaks the contract
   brain profile [--json] [--quick]   (alias brain doctor) this machine's facts at zero token, each probe with its
                  own timeout (CPU, memory, GPUs and their VRAM, the inference backend, disks and BRAIN_HOME's size,
                  tools, container runtime, Kubernetes context, disk encryption), the active profile and its overrides,
@@ -322,9 +327,9 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from . import (__version__, actions, alerts, audit, backfill, batch, boundary, bundles, capture, cockpit, codeindex,
-               config, cost, decisions, detail, digest, features, forecast, graph, links, lint, memory, milestones,
-               neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota, records,
-               render, resume, specs, stacks, status, tidy, tiers, timing, transcript, usage)
+               config, cost, decisions, detail, digest, features, forecast, graph, init, links, lint, memory,
+               milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
+               records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, usage)
 from . import classes, keystore, vault
 from .inventory import AuditError
 
@@ -1588,7 +1593,8 @@ def cmd_config(args, root: Path) -> int:
                             ("claude", "{plugin}@{marketplace}".format(**data["claude"])
                              + (f" from {data['claude']['source']}" if data["claude"]["source"] else "")),
                             ("engine", f"{engine['repo']}@{engine['pin']}" if engine else
-                             "installed from this repo (pyproject.toml pins research-graph)"),
+                             "not pinned (config.json engine: {repo, pin}, the tag the installer installs)"),
+                            ("personal", data["personal"] or "no pointer ($BRAIN_PERSONAL, <BRAIN_HOME>/personal.json)"),
                             ("public", ", ".join(data["public_repos"])), ("denied", deny),
                             ("allowed", ", ".join(data["allow"])), ("secrets", ", ".join(data["secrets"]))):
             print("\n".join(status._row(label, text or "-")))
@@ -2468,6 +2474,16 @@ def build_parser() -> argparse.ArgumentParser:
     pj = sub.add_parser("projects", help="the project registry resolved (every project, or --project's)")
     pj.add_argument("--keys", action="store_true", help="every key a project's entry may hold, and what it holds")
     pj.add_argument("--json", action="store_true", help="stable keys")
+    ini = sub.add_parser("init", help="a new personal brain from the templates: config.json, projects.yaml, the graph "
+                                      "store, journal, ADR log, starter rules (a plan; --apply writes it)")
+    ini.add_argument("dir", nargs="?", help="the folder that becomes the brain's private repo (default: here)")
+    ini.add_argument("--owner", help="the person or team who decides for it (config.json identity.owner)")
+    ini.add_argument("--kind", choices=init.KINDS, default="person", help="a person (default) or a team")
+    ini.add_argument("--tenant", help="the tenant id, for a brain hosted for a team")
+    ini.add_argument("--tier", choices=init.TIERS, default="lite",
+                     help="the profile its machines start from (config.json tier.base; default lite)")
+    ini.add_argument("--name", default="brain", help="its name in projects.yaml (default brain)")
+    ini.add_argument("--apply", action="store_true", help="write it (default: the plan)")
     cf = sub.add_parser("config", help="the personal brain's config.json resolved: owner, registry, rules, memory, "
                                        "records, engine pin, public repos, denied terms, secrets by name")
     cf.add_argument("--keys", action="store_true", help="every key config.json may hold, and what it holds")
@@ -2855,6 +2871,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "perf":
         return perf.main(project=args.project, since=args.since, task=args.task, top=args.top, sources=args.sources,
                          as_json=args.json)
+    if args.cmd == "init":  # a new brain has no graph store yet
+        return init.main(args)
     root = Path(args.root).resolve() if args.root else None
     if args.cmd == "audit":  # its repos may have no graph store: before find_root
         return audit.main(args, root)

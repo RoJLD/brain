@@ -1,0 +1,11 @@
+# The projects this brain knows (brain --project NAME, brain refresh --all, brain decision pending --all); brain
+# projects --keys lists what an entry may hold. One entry per project, its paths relative to the project's root:
+#
+#   my-project:              # a project next to this brain, with its own graph store
+#     root: ../my-project    # start its store: research_graph --store ../my-project/notes/graph
+#                            #   --repo-root ../my-project init --owner "<you>"
+#     production: [.]        # a checkout a service runs from: the guards refuse edits there
+
+{name}:
+  root: .
+  title: {title}

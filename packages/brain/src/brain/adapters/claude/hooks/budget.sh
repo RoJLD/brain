@@ -3,7 +3,8 @@
 # or of the recorded estimate of the items the brief names, one notice each as hook context; it never blocks.
 # Fast path in bash builtins (no process started): Python sets the mtime of <BRAIN_HOME>/budget/<session>.mark in the
 # future, when the next check is due; while the mark is newer than the transcript its line 1 names, it stops.
-# Uses $BRAIN_PYTHON, else python3, else python, skipping the Windows Store stubs; without a Python 3 it does nothing.
+# Uses $BRAIN_PYTHON, else the brain command's venv (<BRAIN_HOME>/venv: the installed engine), else python3, else
+# python, skipping the Windows Store stubs; without a Python 3 it does nothing.
 # BRAIN_BUDGET_WATCH=0 turns it off.
 [ "${BRAIN_BUDGET_WATCH:-1}" = "0" ] && exit 0
 IFS= read -r -d '' payload
@@ -18,7 +19,8 @@ if [[ -f $mark ]]; then
 fi
 
 root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-for py in "${BRAIN_PYTHON:-}" python3 python; do
+home="${BRAIN_HOME:-$HOME/.brain}"
+for py in "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python; do
   [ -n "$py" ] || continue
   path=$(command -v "$py" 2>/dev/null) || continue
   case "$path" in *WindowsApps*) continue ;; esac

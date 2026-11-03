@@ -7,8 +7,9 @@ it too. The schema is validated by brain.schema's validator, then what a schema 
 exists, and its owner is the owner its graph stores declare in ``schema.yaml``.
 
 The file sits at the personal brain's root, next to the registry, and is found the same way (brain.projects):
-``$BRAIN_CONFIG`` names it, else ``config.json`` in ``$CLAUDE_BRAIN_DIR``, the repo acted on, the checkout that holds
-this package, then the clone the brain command is installed from. A brain without one runs on :data:`DEFAULTS`, its
+``$BRAIN_CONFIG`` names it, else ``config.json`` in the places of :func:`brain.paths.bases`: ``$CLAUDE_BRAIN_DIR``,
+``$BRAIN_PERSONAL``, the repo acted on, the machine's pointer ``<BRAIN_HOME>/personal.json`` (the installer writes
+it), then a checkout that still holds this package. A brain without one runs on :data:`DEFAULTS`, its
 owner read from its main graph store. Loading never fails: an unreadable file is reported by :func:`check` and the
 defaults apply, so a bad file never stops another command.
 """
@@ -49,9 +50,9 @@ def config_file(root: Path | None = None) -> Path | None:
     env = os.environ.get("BRAIN_CONFIG")
     if env:
         return Path(env).expanduser()
-    for base in (os.environ.get("CLAUDE_BRAIN_DIR"), root, paths.package_repo(), paths.installed_checkout()):
-        if base and (Path(base) / FILE).is_file():
-            return Path(base) / FILE
+    for base in paths.bases(root):
+        if (base / FILE).is_file():
+            return base / FILE
     return None
 
 
@@ -158,6 +159,7 @@ def describe(cfg: Config) -> dict:
             "registry": cfg.get("registry"), "rules": list(cfg.get("rules") or []), "memory": cfg.get("memory"),
             "records": cfg.get("records"), "source": cfg.get("source"), "engine": cfg.data.get("engine"),
             "claude": claude(cfg), "public_repos": list(pub.get("repos") or []),
+            "personal": str(paths.personal_root()) if paths.personal_root() else None,
             "deny": {cat: sum(1 for c, _ in terms if c == cat) for cat in DENY},
             "allow": sorted(allowed(cfg)), "secrets": sorted(cfg.data.get("secrets") or {})}
 

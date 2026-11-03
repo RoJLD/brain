@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from brain import audit, cli, features, graph, projects
+from brain import audit, cli, features, graph
 
 from test_audit import README, _found, _measure
 
@@ -12,7 +12,6 @@ SCHEMA = ("node_types: [WorkItem, Spec, ADR, Feature, CodeRef, Repo]\n"
           "statuses: [active, retired, todo, done, have, partial, planned, \"no\"]\n"
           "status_by_type:\n  Feature: [have, partial, planned, \"no\"]\n  CodeRef: [active, retired]\n"
           "  Repo: [active, retired]\n  WorkItem: [todo, done]\n")
-REPO = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -260,11 +259,3 @@ def test_audit_without_the_feature_type_pending_per_repo_unless_featured_today()
     from test_inventory import mem
     res = audit.measure(p, [audit.projects.Repo("lab", root)], {"lab": mem(plain, "lab")}, featured=True)
     assert {u for c, u in _found(res) if c.startswith("feature")} == {"FEATURES.md", "src/lab/core.py"}
-
-
-def test_dogfood_this_repo_features_md_is_the_render_of_its_graph():
-    store = REPO / "notes" / "graph"
-    name = projects._repo_folder(REPO).lower()  # the repo's name, as brain features render names it
-    want = features.render(features.load_store(store, name), name)
-    assert features.check_view((REPO / "FEATURES.md").read_text(encoding="utf-8"), want) == "", \
-        "FEATURES.md is stale: brain features render --write (brain sync)"

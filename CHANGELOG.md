@@ -1,5 +1,13 @@
 # Changelog — research-graph
 
+The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `research-graph` X.Y.Z and `brain` X.Y.Z
+(`packages/brain/CHANGELOG.md` for the brain command).
+
+## 0.2.0 — 2026-11-03
+
+- No change to the graph engine: its version follows the repo's single tag series, now that the `brain` command is
+  the repo's second distribution (`packages/brain`, which depends on `research-graph` at the same tag).
+
 ## 0.1.1 — 2026-11-02
 
 - Python 3.10: commit dates from git (`%cI`, UTC written `Z`) are read on every supported Python; 0.1.0 failed on

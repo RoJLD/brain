@@ -5,7 +5,8 @@
 # Fast path in bash builtins (no process started): when the session's folder is the one in its mark
 # (<BRAIN_HOME>/announce/<session>.mark: the folder, the queue, the pending DDRs) and neither the queue folder (a DDR
 # added or removed) nor a pending DDR (an answer) is newer than the mark, it stops.
-# Uses $BRAIN_PYTHON, else python3, else python, skipping the Windows Store stubs; without a Python 3 it does nothing.
+# Uses $BRAIN_PYTHON, else the brain command's venv (<BRAIN_HOME>/venv: the installed engine), else python3, else
+# python, skipping the Windows Store stubs; without a Python 3 it does nothing.
 IFS= read -r -d '' payload
 re_sid='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9._-]+)"'
 re_cwd='"cwd"[[:space:]]*:[[:space:]]*"([^"\\]*(\\.[^"\\]*)*)"'
@@ -32,7 +33,8 @@ if [[ -n $sid && -f $mark ]]; then
 fi
 
 root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-for py in "${BRAIN_PYTHON:-}" python3 python; do
+home="${BRAIN_HOME:-$HOME/.brain}"
+for py in "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python; do
   [ -n "$py" ] || continue
   path=$(command -v "$py" 2>/dev/null) || continue
   case "$path" in *WindowsApps*) continue ;; esac

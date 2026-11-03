@@ -3,18 +3,12 @@ brain render --target <tool> (wi-brain-neutral-source). The claude target reprod
 byte: a golden test on an invented brain (Ada's), then on this checkout when it has a neutral source."""
 
 import json
-import os
-import shutil
-import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
 
-import brain
 from brain import cli, neutral, render
 
-REPO = Path(brain.__file__).resolve().parents[3]
 
 RULES = """\
 ---
@@ -550,44 +544,3 @@ def test_an_unknown_target_or_a_broken_source_renders_nothing(ada, capsys):
     write(ada / "source", {"mcp.yaml": "servers: [\n"})
     assert render.main(ada, "claude") == 1
     assert "not readable YAML" in capsys.readouterr().out
-
-
-# --- this checkout: the hand-written step 1, reproduced ---------------------------------------------------------------
-
-def _inject(plugin: Path, config: str) -> str:
-    bash = shutil.which("bash")
-    if not bash:
-        pytest.skip("bash not available")
-    env = {k: v for k, v in os.environ.items() if k not in ("BRAIN_CONFIG", "CLAUDE_BRAIN_DIR")}
-    env.update({"CLAUDE_PLUGIN_ROOT": plugin.as_posix(), "BRAIN_CONFIG": config})
-    return subprocess.run([bash, (REPO / "plugins" / plugin.name / "hooks" / "inject-rules.sh").as_posix(),
-                           "SessionStart"], capture_output=True, env=env, check=True).stdout.decode("utf-8")
-
-
-@pytest.mark.skipif(not (REPO / neutral.FOLDER / neutral.PACKS).is_file(), reason="no neutral source here")
-def test_this_checkout_renders_its_claude_files_byte_for_byte(tmp_path, monkeypatch):
-    """The golden test: this checkout's neutral source rendered into an empty folder gives every committed Claude file
-    (marketplace, manifests, rules, skills, MCP servers, hooks) byte for byte, and the same injected rules."""
-    monkeypatch.setenv("BRAIN_CONFIG", str(REPO / "config.json"))
-    out = tmp_path / "render"
-    assert render.main(REPO, "claude", out=out, do_write=True) == 0
-    rendered = _files(out)
-    assert rendered, "nothing rendered"
-    for rel, data in rendered.items():
-        committed = (REPO / rel).read_bytes().replace(b"\r\n", b"\n")
-        assert data == committed, rel
-    core = render.render(REPO, "claude").outputs[1].rel.split("/")[1]
-    nowhere = str(tmp_path / "no-config.json")   # both read their plugin's own rules/global.md
-    assert _inject(out / "plugins" / core, nowhere) == _inject(REPO / "plugins" / core, nowhere)
-    assert render.main(REPO, "claude", check=True) == 0
-
-
-@pytest.mark.skipif(not (REPO / neutral.FOLDER / neutral.PACKS).is_file(), reason="no neutral source here")
-def test_this_checkouts_other_renders_are_current(monkeypatch):
-    """NS-1 (the owner, 2026-11-02): the brain's repo carries AGENTS.md and .agents/skills; brain sync keeps them current,
-    and this test fails when one is stale (a changed rule, CLAUDE.md or procedure not rendered again)."""
-    from brain import resume
-    monkeypatch.setenv("BRAIN_CONFIG", str(REPO / "config.json"))
-    name = resume.project_for(REPO).name
-    assert [t for t, *_ in render.rendered(REPO, name, REPO)] == ["agents"]
-    assert render.keep_current(REPO, name, fix=False) == []

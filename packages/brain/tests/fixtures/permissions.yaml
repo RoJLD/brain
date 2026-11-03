@@ -1,0 +1,36 @@
+# The tests' permission hierarchy (Ada's): the engine's never-grantable categories with an owner's additions, the shape
+# a personal brain's permissions.yaml takes (brain.permissions). No level holds a rule.
+v: 1
+
+# What no level may allow: the engine declares the categories (brain.permissions.NEVER); an entry adds a why, deny
+# rules rendered at the global level, more patterns (find) or a new category (with its find).
+never:
+  keys:
+    why: "Never type a secret: the owner adds keys"
+    deny: ["Shell(gh secret set *)"]
+  money:
+    why: "The owner decides anything touching money"
+  arming:
+    why: "Arming a fund and live orders are the owner's alone"
+  visibility:
+    why: "The owner decides repository visibility"
+    deny: ["Shell(gh repo create * --public*)", "Shell(gh repo create --public*)", "Shell(gh repo edit * --visibility*)",
+           "Shell(gh repo edit --visibility*)"]
+  accounts:
+    why: "The owner decides anything touching accounts"
+  scheduled:
+    why: "The owner decides new scheduled tasks or services"
+  legal:
+    why: "Accepting terms or reading for legal effect is never an agent's"
+  installer:
+    why: "install.ps1 -Apply is the owner's to run, never a standing grant; its plan without -Apply may be allowed"
+    find: 'install\.ps1\b[^|;&]*\s-Apply\b'
+    probes: ["powershell.exe -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Apply",
+             "powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:/work/brain/install.ps1 -Apply",
+             "pwsh -NoProfile -File install.ps1 -Apply", ".\\install.ps1 -Apply"]
+
+profiles: {}
+machines: {}
+tenants: {}
+sessions: {}
+rules: []

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Print the owner's rules as hook context for the event named in $1 (SessionStart or SubagentStart): the files of
 # config.json's "rules" (relative to its folder), else the plugin's rules/global.md. config.json is $BRAIN_CONFIG, else
-# $CLAUDE_BRAIN_DIR/config.json, else the one of the repo that holds the plugin (plugins/<plugin>/ -> its root); a
-# cached copy of the plugin has none, and injects its own rules/global.md.
+# the first found in $CLAUDE_BRAIN_DIR, $BRAIN_PERSONAL, the repo that holds the plugin (plugins/<plugin>/ -> its root)
+# and the personal brain the installer's pointer names (<BRAIN_HOME>/personal.json, {"root": ...}); without one (a
+# cached copy of the plugin on a machine with no pointer) it injects the plugin's own rules/global.md.
 # JSON is read and built with bash, tr, sed and awk only, so the hook needs nothing beyond bash (Git Bash on Windows).
 set -euo pipefail
 
@@ -10,10 +11,18 @@ event="${1:-SessionStart}"
 root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 config="${BRAIN_CONFIG:-}"
-if [ -z "$config" ] && [ -n "${CLAUDE_BRAIN_DIR:-}" ] && [ -f "$CLAUDE_BRAIN_DIR/config.json" ]; then
-  config="$CLAUDE_BRAIN_DIR/config.json"
+if [ -z "$config" ]; then
+  pointer="${BRAIN_HOME:-$HOME/.brain}/personal.json" personal=
+  if [ -f "$pointer" ]; then
+    json=$(tr -d '\r\n' < "$pointer")
+    key='"root"[[:space:]]*:[[:space:]]*"([^"]+)"'
+    # a JSON-escaped backslash (\\) becomes a slash: E:\\work\\me -> E:/work/me
+    [[ $json =~ $key ]] && personal=${BASH_REMATCH[1]//\\\\//}
+  fi
+  for base in "${CLAUDE_BRAIN_DIR:-}" "${BRAIN_PERSONAL:-}" "$root/../.." "$personal"; do
+    if [ -n "$base" ] && [ -f "$base/config.json" ]; then config="$base/config.json"; break; fi
+  done
 fi
-[ -n "$config" ] || config="$root/../../config.json"
 
 rules=()
 if [ -f "$config" ]; then

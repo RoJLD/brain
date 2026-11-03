@@ -1,9 +1,7 @@
 import json
-from pathlib import Path
 
 from brain import cli, config, projects
 
-REPO = Path(__file__).resolve().parents[1]
 
 
 def _brain(tmp_path, monkeypatch, cfg=None, owner="Ada"):
@@ -147,11 +145,3 @@ def test_check_all_reports_a_broken_config(tmp_path, monkeypatch, capsys):
     root = _brain(tmp_path, monkeypatch, {"v": 1, "identity": {"owner": "Bob"}})
     assert cli.check_registry(root, list(projects.load(root).values())) == 1
     assert "identity.owner 'Bob'" in capsys.readouterr().out
-
-
-def test_this_repo_config_keeps_the_contract(monkeypatch):
-    monkeypatch.delenv("BRAIN_PROJECTS", raising=False)
-    monkeypatch.setenv("BRAIN_CONFIG", str(REPO / config.FILE))
-    assert config.check(REPO) == []
-    cfg = config.load(REPO)
-    assert config.owner(cfg) == next(iter(config.store_owners(cfg).values())) and cfg.data["public"]["repos"]

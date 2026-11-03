@@ -11,7 +11,7 @@ import pytest
 import brain
 from brain import decisions
 
-SCRIPT = Path(brain.__file__).resolve().parents[1] / "hooks" / "announce.sh"
+SCRIPT = Path(brain.__file__).resolve().parent / "adapters" / "claude" / "hooks" / "announce.sh"
 AT = "2026-11-01T10:00:00Z"
 
 

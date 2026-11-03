@@ -1,13 +1,11 @@
 import io
 import json
 import shutil
-from pathlib import Path
 
 import pytest
 
 from brain import bundles, cli, stacks
 
-REPO = Path(__file__).resolve().parents[1]
 COMPONENTS = ("otel-collector", "prometheus", "loki", "grafana", "qdrant")
 REGISTRY = """\
 brain:
@@ -73,16 +71,16 @@ class Docker:
         return 0, ""
 
 
-def test_the_shipped_bundle_is_pinned_loopback_only_and_matches_the_registry(monkeypatch):
-    """The checks the plan makes, on the bundle and the registry this repo ships (the ADR's guarantees)."""
-    monkeypatch.setenv("BRAIN_PROJECTS", str(REPO / "projects.yaml"))
-    reg = stacks.load()
+def test_the_shipped_bundle_is_pinned_loopback_only_and_matches_the_registry(tmp_path, monkeypatch):
+    """The checks the plan makes, on the bundle this package ships and a registry that declares its stacks (the ADR's
+    guarantees; a personal brain's own registry is checked by its own tests)."""
+    reg = _registry(tmp_path, monkeypatch)
     comps = bundles.components(reg, "sovereign")
     assert bundles.names() == ["sovereign"] and sorted(s.name for s in comps) == sorted(COMPONENTS)
     doc, _ = bundles.render("sovereign", comps)
     ok, bad = bundles.problems("sovereign", doc, comps)
     assert bad == [] and ok[:2] == ["5 images pinned by tag and digest", "8 ports published on 127.0.0.1 only"]
-    assert all(s.placement == "local" and s.tier.get("class") == "service" and s.tier.get("fallback") for s in comps)
+    assert all(s.placement == "local" for s in comps)  # the classes and fallbacks are the registry's to declare
     assert {s.name: s.data for s in comps}["otel-collector"] == "home"  # the files DuckDB reads, on the host
     assert {s.data for s in comps if s.name != "otel-collector"} == {"volume"}  # databases in named volumes
 

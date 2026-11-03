@@ -1,7 +1,6 @@
 """wi-brain-project-views: the registry's keys, --project / --all on every view, brain status, brain projects, and
 the ids unique across every store of every project."""
 
-import io
 import json
 import shutil
 import sys
@@ -14,7 +13,6 @@ from brain import cli, codeindex, graph, projects, stacks, status
 
 from test_stacks import REGISTRY as STACKS, Fake
 
-REPO = Path(__file__).resolve().parents[1]
 
 
 def _registry(tmp_path, monkeypatch, text):
@@ -77,12 +75,6 @@ text: not a mapping
     assert "project shapes: stacks is a mapping or a file name" in errors
     assert "project shapes: repos[0]: lang is py or ts" in errors
     assert "project text: an entry is a mapping (brain projects --keys)" in errors
-
-
-def test_the_repos_registry_documents_every_key_it_uses(monkeypatch):
-    monkeypatch.setenv("BRAIN_PROJECTS", str(REPO / "projects.yaml"))
-    assert projects.check() == []
-    assert set(projects.KEYS) >= {k for e in projects.raw().values() if isinstance(e, dict) for k in e}
 
 
 def test_collisions_across_stores_waivers_and_stale_waivers(tmp_path, monkeypatch, store):

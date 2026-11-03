@@ -467,7 +467,8 @@ class Model:
 
 def permissions_file(root: Path | None = None) -> Path | None:
     """``$BRAIN_PERMISSIONS``, else permissions.yaml in ``root`` (the checkout acted on: a PR's worktree checks its own
-    file), else next to the registry (brain.projects), else in the checkout of this package or the installed clone."""
+    file), else next to the registry (brain.projects), else in the other places of :func:`brain.paths.bases` (the
+    personal brain)."""
     env = os.environ.get(ENV)
     if env:
         return Path(env).expanduser()
@@ -476,15 +477,16 @@ def permissions_file(root: Path | None = None) -> Path | None:
     reg = projects.registry_file(root)
     if reg and (reg.parent / FILE).is_file():
         return reg.parent / FILE
-    for base in (paths.package_repo(), paths.installed_checkout()):
-        if base and (Path(base) / FILE).is_file():
-            return Path(base) / FILE
+    for base in paths.bases(root):
+        if (base / FILE).is_file():
+            return base / FILE
     return None
 
 
 def engine_file(pfile: Path | None) -> Path | None:
-    """allow-rules.txt next to the permissions file, else in the checkout that holds this package."""
-    for base in ((pfile.parent if pfile else None), paths.package_repo()):
+    """allow-rules.txt next to the permissions file (a personal brain that still holds the engine's copy), else the
+    engine's own (package data, adapters/claude/allow-rules.txt)."""
+    for base in ((pfile.parent if pfile else None), Path(__file__).resolve().parent / "adapters" / "claude"):
         if base and (Path(base) / ENGINE_FILE).is_file():
             return Path(base) / ENGINE_FILE
     return None

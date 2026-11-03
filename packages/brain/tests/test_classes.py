@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 
@@ -7,7 +6,6 @@ from brain import classes, config
 
 from conftest import run_git
 
-REPO = Path(__file__).resolve().parents[1]
 MACHINE = {name: {"class": cls, "paths": [path]} for name, (path, cls) in classes.KNOWN.items()}
 
 
@@ -154,14 +152,3 @@ def test_suggest_is_a_valid_block(brain):
                           "allows sealed only (untrack them, seal them, or waive it with its reason)",
                           "store records-ddr (confidential): 1 tracked file(s) go to git-private in clear, which its "
                           "class allows sealed only (untrack them, seal them, or waive it with its reason)"]
-
-
-def test_this_repo_every_store_has_a_class(monkeypatch):
-    """This brain's config.json classes every tracked file and every engine store, and waives only its two known
-    gaps: the memory notes and the DDRs, confidential, in clear in the private remote until the encrypted-git trial."""
-    if "classes" not in json.loads((REPO / config.FILE).read_text(encoding="utf-8")):
-        pytest.skip("this checkout declares no classes")
-    monkeypatch.setenv("BRAIN_CONFIG", str(REPO / config.FILE))
-    rep = classes.check(REPO)
-    assert rep.errors == []
-    assert sorted(w.split(" ")[1] for w in rep.waived) == ["ddr", "memory"]

@@ -254,12 +254,12 @@ def gh_argv() -> list[str]:
 
 
 def remote_url() -> str | None:
-    """BRAIN_MEMORY_REMOTE, else the origin of the clone the brain command is installed from (or holds this
-    package)."""
+    """BRAIN_MEMORY_REMOTE, else the origin of the personal brain (``$BRAIN_PERSONAL``, <BRAIN_HOME>/personal.json),
+    else of the clone the brain command is installed from editable, or that holds this package."""
     env = os.environ.get("BRAIN_MEMORY_REMOTE")
     if env:
         return env
-    for repo in (paths.installed_checkout(), paths.package_repo()):
+    for repo in (paths.personal_root(), paths.installed_checkout(), paths.package_repo()):
         if not repo:
             continue
         try:

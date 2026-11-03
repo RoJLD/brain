@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 
@@ -7,7 +6,6 @@ from brain import boundary, cli, config
 
 from conftest import run_git
 
-REPO = Path(__file__).resolve().parents[1]
 
 MANIFEST = """v: 1
 rules:
@@ -158,22 +156,3 @@ def test_cli_boundary(repo, capsys):
     assert json.loads(capsys.readouterr().out)["unclassified"] == ["loose.txt"]
     (repo / boundary.FILE).write_text("v: 1\n", encoding="utf-8")
     assert cli.main(["--root", str(repo), "boundary"]) == 2
-
-
-def test_this_repo_every_tracked_file_has_a_side(monkeypatch):
-    """The guard of the boundary: a new file of this repo gets a rule of boundary.yaml (engine, personal, claude
-    or generated), so the engine side stays exact until it leaves."""
-    monkeypatch.setenv("BRAIN_CONFIG", str(REPO / config.FILE))
-    data = boundary.report(REPO)
-    assert data["unclassified"] == [], f"add a rule to boundary.yaml for: {data['unclassified']}"
-    assert data["errors"] == []
-    assert data["counts"]["engine"] > 0 and data["counts"]["personal"] > 0
-    assert all(t.startswith("packages/brain/") for t in data["engine_targets"].values())
-    # wi-brain-owner-neutral: the ratchet holds, so no module or test names the owner or a private name again
-    assert data["readiness_max"] is not None
-    assert data["readiness"]["total"] <= data["readiness_max"], (
-        f"the engine side names private terms again: {data['readiness']['files']}; read the owner and the personal "
-        "names from config.json (brain.config: owner_of(), claude()), and use invented names in tests (Ada, demo)")
-    # PB-1 (answered 2026-11-02): every personal configuration is initialisable by a wizard
-    for f in ("config.json", "projects.yaml", "notes/graph/schema.yaml", ".claude-plugin/marketplace.json"):
-        assert data["init"].get(f), f"{f}: no init in boundary.yaml"

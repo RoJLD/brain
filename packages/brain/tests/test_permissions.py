@@ -10,7 +10,7 @@ import yaml
 
 from brain import cli, permissions, queue
 
-REPO = Path(__file__).resolve().parents[1]
+INSTALLER = Path(__file__).resolve().parents[1] / "installer" / "install.ps1"
 ENGINE = ("# header: what this file is\n\n# brain up: start the stacks (Ada, 2026-11-01)\nBash(brain up)\n"
           "Bash(brain up *)\n# a comment after the rules starts a new block\nPowerShell(brain up)\n")
 HEAD = ("v: 1\nprofiles: {lite: {title: the lite profile}}\n"
@@ -518,22 +518,22 @@ def test_check_all_reports_the_hierarchy(tmp_path, monkeypatch, capsys):
     assert "error: permissions.yaml rules[0]: allow Bash(sudo *) is too broad" in capsys.readouterr().out
 
 
-# --- the repo's own files ---
+# --- the engine's own rules ---
 
-def test_this_repos_hierarchy_is_clean_and_holds_only_the_owners_seed(monkeypatch):
-    monkeypatch.setenv(permissions.ENV, str(REPO / permissions.FILE))
-    monkeypatch.setenv("BRAIN_PROJECTS", str(REPO / "projects.yaml"))
-    model = permissions.load(REPO)
+def test_the_engines_allow_rules_load_clean_under_an_owners_categories(monkeypatch):
+    """The engine's narrow allow rules ship as package data (adapters/claude/allow-rules.txt) and pass every check
+    under an owner's never-grantable categories (tests/fixtures/permissions.yaml, the installer's among them)."""
+    fixture = Path(__file__).resolve().parent / "fixtures" / permissions.FILE
+    monkeypatch.setenv(permissions.ENV, str(fixture))
+    model = permissions.load(fixture.parent)
     assert model.errors == []
-    assert model.engine_file == REPO / permissions.ENGINE_FILE
-    seeded = [r for r in model.rules if r.verdict == "allow" and r.level != "engine"]
-    assert seeded and all("ddr-2026-11-02-permission-seed" in r.by and r.origin.startswith("perm-") for r in seeded)
+    assert model.engine_file == Path(permissions.__file__).resolve().parent / "adapters" / "claude" / \
+        permissions.ENGINE_FILE
+    assert [r for r in model.rules if r.level == "engine"]
     names = [c.name for c in model.categories]
     assert names[:len(permissions.NEVER)] == [c[0] for c in permissions.NEVER] and "installer" in names
     assert permissions.never_rule("Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "
                                   "install.ps1 *)", model.categories) == "installer"
-    ctx = permissions.context(model, "brain")   # the repo's .claude/settings.json is the project level's render
-    assert not any(permissions.plan(model, ctx, "project", repo=REPO)[0]["missing"].values())
 
 
 def _dated(tmp_path, monkeypatch, rules: str):
@@ -636,10 +636,11 @@ def test_cli_requests(tmp_path, monkeypatch, capsys):
 # --- install.ps1: the permissions step, in PowerShell ---
 
 def _install_block() -> str:
-    text = (REPO / "install.ps1").read_text(encoding="utf-8")
-    start = text.index("# Permission rules, versioned in allow-rules.txt and permissions.yaml")
-    end = text.index("if (-not $Apply) { '(plan only")
-    return text[start:end]
+    """The installer's permissions step (its function, then a call), as installer/install.ps1 runs it."""
+    text = INSTALLER.read_text(encoding="utf-8")
+    start = text.index("# --- the permissions step")
+    end = text.index("# --- end of the permissions step")
+    return text[start:end] + "Update-Permissions\n"
 
 
 @pytest.mark.skipif(os.name != "nt" or not shutil.which("powershell.exe"), reason="Windows PowerShell")
@@ -662,7 +663,7 @@ def test_install_adds_the_user_scope_and_never_removes(tmp_path, render, apply):
     fake.write_text(f"@echo off\r\n{'echo ' + payload if payload else ''}\r\nexit /b {code}\r\n", encoding="utf-8")
     script = tmp_path / "install.ps1"   # the installer's permissions step, run as install.ps1 runs it
     script.write_text("$ErrorActionPreference = 'Stop'\n"
-                      f"$repo = '{repo}'\n$settings_path = '{settings}'\n"
+                      f"$repo = '{repo}'\n$settings_path = '{settings}'\n$allow_file = '{repo / 'allow-rules.txt'}'\n"
                       f"$venv_python = '{tmp_path / 'absent.exe' if render == 'none' else fake}'\n"
                       f"$Apply = ${str(apply).lower()}\n" + _install_block(), encoding="utf-8")
     res = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],

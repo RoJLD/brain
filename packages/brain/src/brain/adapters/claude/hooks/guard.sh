@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Run the PreToolUse guards (hooks/guard.py, brain/guards.py) on the hook's JSON on stdin; $1 is shell (Bash,
 # PowerShell) or edit (Edit, Write, MultiEdit, NotebookEdit). A refusal is one JSON line on stdout; nothing else is
-# printed. Uses $BRAIN_PYTHON, else python3, else python, skipping the Windows Store stubs. Without a Python 3, or on
-# any error, the call goes through: it always exits 0, so a guard never breaks a session.
+# printed. Uses $BRAIN_PYTHON, else the brain command's venv (<BRAIN_HOME>/venv: the installed engine), else python3,
+# else python, skipping the Windows Store stubs. Without a Python 3, or on any error, the call goes through: it always
+# exits 0, so a guard never breaks a session.
 
 # needs_python KIND JSON: whether the guards have anything to read. A shell command that names neither git nor gh, nor
 # anything that writes a file, nor a program of the owner and power guards, has not: no Python started. Writing is a >
@@ -41,7 +42,8 @@ root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 input=$(cat)
 needs_python "${1:-}" "$input" || exit 0
 
-for py in "${BRAIN_PYTHON:-}" python3 python; do
+home="${BRAIN_HOME:-$HOME/.brain}"
+for py in "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python; do
   [ -n "$py" ] || continue
   path=$(command -v "$py" 2>/dev/null) || continue
   case "$path" in *WindowsApps*) continue ;; esac
