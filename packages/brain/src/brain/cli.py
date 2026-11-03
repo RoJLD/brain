@@ -193,9 +193,18 @@
   brain vault canary   seal a fresh nonce to each recipient alone, open the one this machine's device key opens,
                  compare the digests ($BRAIN_HOME/vault/state.json): the daily proof, the scheduled task's command
   brain vault recipient add NAME --kind device|recovery|hardware|person (--age KEY | --gpg FILE) [--host H]
-                 [--write]   declare a public recipient in config.json (a plan without --write); refuses a private key
-  brain vault device init [--name N] [--adapter age|gpg]   this machine's device key, created straight into the OS
-                 keystore; prints its public half only (the owner's terminal only)
+                 [--replace] [--write]   declare a public recipient in config.json (a plan without --write); refuses
+                 a private key, and a declared name unless --replace (a rotation)
+  brain vault recipient remove NAME [--write]   take a recipient out (a lost machine, a revoked heir, a suspect key);
+                 refused below two recipients, for the only recovery key, or while a tenant or a scope names it
+  brain vault reseal [STORE...] [--apply] [--identity FILE|-]   seal again, to their store's current recipients, the
+                 sealed files that are not (a removed or replaced key, a new recipient): the plan, or --apply; opened
+                 with this machine's device key (then its previous one) or the key given (the owner's terminal only)
+  brain vault device init [--name N] [--adapter age|gpg] [--rotate]   this machine's device key, created straight
+                 into the OS keystore; prints its public half only; --rotate replaces it and keeps the previous one
+                 until forget-previous (the owner's terminal only)
+  brain vault device forget-previous   end a rotation once config.json declares the new key and nothing waits on a
+                 re-seal: the previous key is deleted from the keystore (the owner's terminal only)
   brain vault open FILE [--out DIR] [--identity FILE|-]   open a sealed file with the device key, a key file or a
                  key typed hidden (-) (the owner's terminal only: refused in an agent session)
   brain vault drill RECIPIENT [--identity FILE|-]   open that recipient's canary with its key and record the proof:
@@ -381,7 +390,7 @@ from . import (__version__, actions, alerts, audit, backfill, batch, boundary, b
                config, cost, decisions, detail, digest, features, forecast, graph, init, links, lint, memory,
                milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
                records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, update, usage)
-from . import answers, classes, defaults, governor, keystore, markers, selftime, vault
+from . import answers, classes, defaults, governor, keystore, markers, rotation, selftime, vault
 from . import skew
 from .inventory import AuditError
 
@@ -1882,8 +1891,9 @@ def cmd_classes(args, root: Path) -> int:
 
 
 def cmd_vault(args, root: Path) -> int:
-    """``brain vault``: status, seal, canary, recipient add, device init, open, drill (brain.vault). Open, drill and
-    device init are the owner's acts: refused in an agent session. Exit 2 on a refusal."""
+    """``brain vault``: status, seal, canary, recipient add and remove, reseal, device init and forget-previous, open,
+    drill (brain.vault). Open, drill, device init and forget-previous, and a reseal with a key given are the owner's
+    acts: refused in an agent session. Exit 2 on a refusal."""
     cfg = config.load(root)
     try:
         if args.vault_cmd == "status":
@@ -1904,18 +1914,45 @@ def cmd_vault(args, root: Path) -> int:
                                      f"sealed ({e['adapter']})" + (", opened by this machine's key"
                                                                    if e.get("opened_at") else "")))
             return 1 if any(e["error"] for e in res.values()) else 0
+        if args.vault_cmd == "recipient" and args.recipient_cmd == "remove":
+            plan, written = rotation.recipient_remove(cfg, args.name, args.write)
+            print(f"remove {plan['remove']}; left: {', '.join(plan['left'])}")
+            for f in plan["reseal"]:
+                print(f"  still opens with its key: {f}")
+            print(f"written to {cfg.file}; then brain vault reseal --apply" if written
+                  else "plan only: run again with --write to remove it")
+            return 0
         if args.vault_cmd == "recipient":
             entry, written = vault.recipient_add(cfg, args.name, args.kind, args.age or "", args.gpg or "",
-                                                 args.host or "", args.write)
+                                                 args.host or "", args.write, args.replace)
             print(json.dumps({args.name: entry}))
             print(f"written to {cfg.file}" if written else "plan only: run again with --write to add it")
             return 0
+        if args.vault_cmd == "reseal":
+            if args.identity:
+                vault.human_only("brain vault reseal --identity")
+            plan = rotation.reseal(cfg, args.apply, args.stores or None, args.identity or "device")
+            for p in plan:
+                state = ("done" if p.get("done") else f"error: {p['error']}" if p.get("error") else "to re-seal")
+                why = p["why"] or ", ".join(x for x in (f"gone: {' '.join(p['gone'])}" if p["gone"] else "",
+                                                         f"new: {' '.join(p['new'])}" if p["new"] else "") if x)
+                print(f"{state}: {p['file']} ({p['store']}; {why})")
+            print("nothing to re-seal" if not plan else "" if args.apply else "plan only: run again with --apply")
+            return 1 if any(p.get("error") for p in plan) else 0
+        if args.vault_cmd == "device" and args.device_cmd == "forget-previous":
+            vault.human_only("brain vault device forget-previous")
+            res = rotation.forget_previous(cfg)
+            print(f"{res['name']}: the previous device key is deleted from the keystore")
+            return 0
         if args.vault_cmd == "device":
             vault.human_only("brain vault device init")
-            facts = vault.device_init(cfg, args.name, args.adapter)
-            print(f"device key {facts['name']} ({facts['adapter']}) created in the keystore ({facts['keystore']})")
+            facts = vault.device_init(cfg, args.name, args.adapter, rotate=args.rotate)
+            print(f"device key {facts['name']} ({facts['adapter']}) created in the keystore ({facts['keystore']})"
+                  + ("; the previous one is kept until brain vault device forget-previous" if args.rotate else ""))
             print(f"public: {facts['public']}")
             print(f"declare it (a PR): {facts['declare']}")
+            if args.rotate:
+                print("then: brain vault reseal --apply, brain vault canary, brain vault device forget-previous")
             return 0
         if args.vault_cmd == "open":
             vault.human_only("brain vault open")
@@ -2841,12 +2878,27 @@ def build_parser() -> argparse.ArgumentParser:
     key.add_argument("--age", help="an age1... recipient or an ssh-ed25519 public key")
     key.add_argument("--gpg", help="an armored gpg public key file (copied into vault/keys/)")
     vra.add_argument("--host", help="the machine a device key belongs to")
+    vra.add_argument("--replace", action="store_true", help="give a declared name this key (a rotation)")
     vra.add_argument("--write", action="store_true", help="write config.json")
+    vrr = vr.add_parser("remove", help="a plan, or --write: take a recipient out of config.json (a lost machine, a "
+                                       "revoked heir, a suspect key); then brain vault reseal")
+    vrr.add_argument("name")
+    vrr.add_argument("--write", action="store_true", help="write config.json")
+    vre = va.add_parser("reseal", help="seal again, to their store's current recipients, the sealed files that are "
+                                       "not (a plan, or --apply)")
+    vre.add_argument("stores", nargs="*", metavar="STORE", help="only these stores")
+    vre.add_argument("--apply", action="store_true", help="re-seal them")
+    vre.add_argument("--identity", help="a key file, or - to type or paste it, hidden (default: this machine's "
+                                        "device key, then its previous one; the owner's terminal only)")
     vd = va.add_parser("device", help="this machine's device key").add_subparsers(dest="device_cmd", required=True)
     vdi = vd.add_parser("init", help="create it straight into the OS keystore, print its public half (the "
                                      "owner's terminal only)")
     vdi.add_argument("--name", help="kebab-case (default: this machine's name)")
     vdi.add_argument("--adapter", choices=vault.ADAPTERS, help="age or gpg (default: age when found)")
+    vdi.add_argument("--rotate", action="store_true", help="replace the existing key; the previous one is kept "
+                                                           "until forget-previous")
+    vd.add_parser("forget-previous", help="end a rotation: delete the previous key, once config.json declares the "
+                                          "new one and nothing waits on a re-seal (the owner's terminal only)")
     vo = va.add_parser("open", help="open a sealed file (the owner's terminal only)")
     vo.add_argument("file")
     vo.add_argument("--out", help="the folder to open into (default: <name>.opened beside the file)")

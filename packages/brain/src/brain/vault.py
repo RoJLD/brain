@@ -671,12 +671,7 @@ def open_sealed(cfg: config.Config, sealed: Path, out: Path, identity: str = "de
     out.mkdir(parents=True, exist_ok=True)
     with _private_dir("o") as tmp:
         plain = tmp / "plain"
-        if identity == "device":
-            ad.open(sealed, plain, ident=device_value(cfg))
-        elif identity == "-":
-            ad.open(sealed, plain)
-        else:
-            ad.open(sealed, plain, ident_file=Path(identity))
+        _open_with(ad, sealed, plain, _keys(cfg, ad, identity))
         stem = sealed.name[:-len(ad.suffix)]
         if stem.endswith(".tar.gz"):
             n = _safe_extract(plain, out)
@@ -686,49 +681,124 @@ def open_sealed(cfg: config.Config, sealed: Path, out: Path, identity: str = "de
     return {"file": str(sealed), "out": str(out), "entries": n}
 
 
-# --- the device key, the recipients ---
-def device_init(cfg: config.Config, name: str | None = None, adapter: str | None = None, now: datetime | None = None,
-                found: dict[str, Adapter] | None = None) -> dict:
-    """Create this machine's device key straight into the keystore; return its public facts only."""
+def _keys(cfg: config.Config, ad: Adapter, identity: str) -> list[tuple[str, str]]:
+    """What may open a sealed file: ``device`` (this machine's key, then its previous one mid-rotation), ``-`` (the
+    owner's key, asked once, hidden; gpg reads its block itself) or a key file."""
+    if identity == "-":
+        return [("ident", ask_key())] if ad.name == "age" else [("prompt", "")]
+    if identity != "device":
+        return [("file", identity)]
+    keys = [("ident", device_value(cfg))]
     ks = keystore.backend()
-    if ks is None:
-        raise VaultError("no keystore on this machine (Credential Manager, keychain, secret-tool or keyring)")
-    key = keystore_key(cfg)
-    if ks.get(key):
-        raise VaultError(f"this machine already has a device key ({ks.name}: {keystore.SERVICE}/{key}); rotation "
-                         "is not built yet")
-    name = name or host_name()
+    prev = ks.get(previous_key(cfg)) if ks is not None else None
+    if prev:
+        keys.append(("ident", prev))
+    return keys
+
+
+def _open_with(ad: Adapter, src: Path, dst: Path, keys: list[tuple[str, str]]) -> None:
+    last: VaultError | None = None
+    for how, value in keys:
+        dst.unlink(missing_ok=True)     # nothing of a failed attempt is kept
+        try:
+            if how == "file":
+                ad.open(src, dst, ident_file=Path(value))
+            elif how == "prompt":
+                ad.open(src, dst)
+            else:
+                ad.open(src, dst, ident=value)
+            return
+        except VaultError as exc:
+            last = exc
+    raise last or VaultError("no key to open it with")
+
+
+# --- the device key, the recipients ---
+def previous_key(cfg: config.Config) -> str:
+    """The keystore entry that keeps the replaced device key during a rotation, until the sealed files are re-sealed."""
+    return keystore_key(cfg) + "-previous"
+
+
+def device_init(cfg: config.Config, name: str | None = None, adapter: str | None = None, now: datetime | None = None,
+                found: dict[str, Adapter] | None = None, rotate: bool = False) -> dict:
+    """Create this machine's device key straight into the keystore; return its public facts only. ``rotate``
+    replaces an existing key: the old one moves to ``previous_key`` (still opening what was sealed to it) until
+    ``forget_previous``, once config.json declares the new key and ``reseal`` has run."""
+    ks, current = _device_slot(cfg, rotate)
+    old = device() if rotate else {}
+    name = name or old.get("name") or host_name()
     if not NAME.match(name):
         raise VaultError(f"{name!r}: a kebab-case name")
-    found = found if found is not None else adapters()
-    order = [adapter] if adapter else list(ADAPTERS)
-    ad = next((found[a] for a in order if a in found and found[a].found()), None)
-    if ad is None:
-        raise VaultError(f"{' or '.join(order)} not found: install age (or use gpg) first")
+    ad = _first_found(found if found is not None else adapters(), adapter)
     value, public = ad.keygen(f"device {name}")
-    ks.set(key, value)
-    if ks.get(key) != value:
-        raise VaultError(f"the keystore ({ks.name}) did not keep the device key")
-    del value
-    facts = {"name": name, "adapter": ad.name, "keystore": ks.name, "created": _iso(_now(now))}
-    if ad.name == "age":
-        facts["public"] = public
-        facts["declare"] = f"brain vault recipient add {name} --kind device --age {public} --host {name} --write"
-    else:
-        kf = vault_dir() / "keys" / f"{name}.asc"
-        kf.parent.mkdir(parents=True, exist_ok=True)
-        kf.write_text(public, encoding="utf-8")
-        facts["public"] = ad.public_id(str(kf))
-        facts["key_file"] = str(kf)
-        facts["declare"] = f"brain vault recipient add {name} --kind device --gpg {kf} --host {name} --write"
+    if rotate:
+        _keep(ks, previous_key(cfg), current, "the previous key: nothing was replaced")
+    _keep(ks, keystore_key(cfg), value, "the device key")
+    del value, current
+    t = _iso(_now(now))
+    facts = {"name": name, "adapter": ad.name, "keystore": ks.name, "created": t,
+             **_public_facts(ad, name, public, old if rotate else None)}
+    if rotate:
+        facts["previous"] = {k: old[k] for k in ("adapter", "public", "created", "key_file") if old.get(k)}
+        facts["rotated"] = t
     device_file().parent.mkdir(parents=True, exist_ok=True)
     device_file().write_text(json.dumps(facts, indent=2) + "\n", encoding="utf-8")
     return facts
 
 
+def _first_found(found: dict[str, Adapter], adapter: str | None) -> Adapter:
+    order = [adapter] if adapter else list(ADAPTERS)
+    ad = next((found[a] for a in order if a in found and found[a].found()), None)
+    if ad is None:
+        raise VaultError(f"{' or '.join(order)} not found: install age (or use gpg) first")
+    return ad
+
+
+def _device_slot(cfg: config.Config, rotate: bool) -> tuple[keystore.Backend, str | None]:
+    """The keystore, and the device key a rotation replaces; refused when there is one and no rotation, none to
+    rotate, or an unfinished rotation."""
+    ks = keystore.backend()
+    if ks is None:
+        raise VaultError("no keystore on this machine (Credential Manager, keychain, secret-tool or keyring)")
+    key = keystore_key(cfg)
+    current = ks.get(key)
+    if current and not rotate:
+        raise VaultError(f"this machine already has a device key ({ks.name}: {keystore.SERVICE}/{key}): brain vault "
+                         "device init --rotate replaces it")
+    if rotate and not current:
+        raise VaultError("no device key to rotate on this machine: brain vault device init")
+    if rotate and ks.get(previous_key(cfg)):
+        raise VaultError("the last rotation is not finished: declare the new key, brain vault reseal --apply, then "
+                         "brain vault device forget-previous")
+    return ks, current
+
+
+def _keep(ks: keystore.Backend, key: str, value: str, what: str) -> None:
+    ks.set(key, value)
+    if ks.get(key) != value:
+        raise VaultError(f"the keystore ({ks.name}) did not keep {what}")
+
+
+def _public_facts(ad: Adapter, name: str, public: str, old: dict | None) -> dict:
+    """The public half of a new device key and the line that declares it (``--replace`` for a rotation, ``old``)."""
+    replace = " --replace" if old is not None else ""
+    if ad.name == "age":
+        return {"public": public, "declare": f"brain vault recipient add {name} --kind device --age {public} "
+                                             f"--host {name}{replace} --write"}
+    kf = vault_dir() / "keys" / f"{name}.asc"
+    kf.parent.mkdir(parents=True, exist_ok=True)
+    if old is not None and old.get("key_file") == str(kf) and kf.is_file():
+        os.replace(kf, kf.with_name(f"{name}-previous.asc"))
+        old["key_file"] = str(kf.with_name(f"{name}-previous.asc"))
+    kf.write_text(public, encoding="utf-8")
+    return {"public": ad.public_id(str(kf)), "key_file": str(kf),
+            "declare": f"brain vault recipient add {name} --kind device --gpg {kf} --host {name}{replace} --write"}
+
+
 def recipient_add(cfg: config.Config, name: str, kind: str, age: str = "", gpg: str = "", host: str = "",
-                  write: bool = False) -> tuple[dict, bool]:
-    """Declare a public recipient in config.json (a plan, or --write); refuses any private key."""
+                  write: bool = False, replace: bool = False) -> tuple[dict, bool]:
+    """Declare a public recipient in config.json (a plan, or --write); refuses any private key. A declared name
+    takes a new key only with ``replace`` (a rotation: the sealed files then wait on ``reseal``)."""
     if not cfg.file:
         raise VaultError("no config.json to declare a recipient in")
     if private_material(age) or (gpg and Path(gpg).is_file() and private_material(
@@ -737,6 +807,9 @@ def recipient_add(cfg: config.Config, name: str, kind: str, age: str = "", gpg: 
                          "was copied anywhere)")
     if not NAME.match(name):
         raise VaultError(f"{name!r}: a kebab-case name")
+    if name in (_block(cfg).get("recipients") or {}) and not replace:
+        raise VaultError(f"{name} is declared already: --replace gives it this key (a rotation), then brain vault "
+                         "reseal")
     entry: dict = {"kind": kind}
     if age:
         entry["age"] = age.strip()
@@ -847,6 +920,7 @@ def drill(cfg: config.Config, name: str, identity: str = "-", now: datetime | No
 
 # --- status and health ---
 def status(cfg: config.Config, found: dict[str, Adapter] | None = None) -> dict:
+    from . import rotation  # it builds on this module: imported when used
     found = found if found is not None else adapters()
     recs, errors = recipients(cfg)
     ks = keystore.backend()
@@ -865,7 +939,7 @@ def status(cfg: config.Config, found: dict[str, Adapter] | None = None) -> dict:
                             "host": r.host, "fingerprint": r.fingerprint(cfg.root),
                             "canary": st["canary"].get(r.name) or {}, "drilled_at": st["drill"].get(r.name, "")}
                            for r in recs.values()],
-            "seals": st["seals"], "errors": errors}
+            "seals": st["seals"], "stale": rotation.stale_seals(cfg) if not errors else [], "errors": errors}
 
 
 def next_steps(s: dict) -> list[str]:
@@ -887,6 +961,17 @@ def next_steps(s: dict) -> list[str]:
                      "Windows, macOS and Linux): brain vault canary")
     if any(r["kind"] == "recovery" and not r["drilled_at"] for r in s["recipients"]):
         steps.append("drill the recovery key once a year, in your own terminal: brain vault drill recovery")
+    return steps + _rotation_steps(s)
+
+
+def _rotation_steps(s: dict) -> list[str]:
+    dev, steps = s["device"] or {}, []
+    if dev.get("previous"):
+        steps.append(f"finish the rotation of {dev.get('name')}: declare the new key ({dev.get('declare')}, a PR), "
+                     "brain vault reseal --apply, brain vault canary, then brain vault device forget-previous")
+    if s.get("stale"):
+        steps.append(f"{len(s['stale'])} sealed file(s) are not sealed to their store's current recipients: brain "
+                     "vault reseal (the plan), then --apply")
     return steps
 
 
@@ -937,6 +1022,17 @@ def health(cfg: config.Config, now: datetime | None = None, out=None,
                 warns.append(f"{r['name']}: never drilled (brain vault drill {r['name']})")
             elif t - d > timedelta(days=DRILL_DAYS):
                 warns.append(f"{r['name']}: drilled {_age(t - d)} ago")
+    revoked = [p for p in s["stale"] if p["gone"]]
+    if revoked:  # a removed or replaced key still opens them
+        fails.append(f"{len(revoked)} sealed file(s) still open with a key no longer declared (brain vault reseal)")
+    if any(p["new"] and not p["gone"] for p in s["stale"]):
+        warns.append(f"{sum(1 for p in s['stale'] if p['new'] and not p['gone'])} sealed file(s) a new recipient "
+                     "cannot open yet (brain vault reseal)")
+    if any(p["why"] for p in s["stale"]):
+        warns.append(f"{sum(1 for p in s['stale'] if p['why'])} sealed file(s) of a store config.json does not seal "
+                     "any more (brain vault status)")
+    if dev and dev.get("previous"):
+        warns.append(f"the rotation of {dev.get('name')} is not finished (brain vault status)")
     seals = [f"{k} {_age(t - (_parse(v.get('at', '')) or t))} ago" for k, v in sorted(s["seals"].items())]
     head = f"{len(recs)} recipient(s)" + (f", device {dev['name']} ({dev['adapter']}, {dev['keystore']})" if dev
                                           else "") + (f", last sealed: {', '.join(seals)}" if seals else "")
@@ -973,6 +1069,13 @@ def render_status(s: dict) -> list[str]:
                      + (f"; drilled {r['drilled_at']}" if r["drilled_at"] else ""))
     for name, v in sorted(s["seals"].items()):
         lines.append(f"sealed: {name} at {v.get('at')} to {', '.join(v.get('recipients') or [])}")
+    if dev and dev.get("previous"):
+        lines.append(f"rotation: {dev['name']} rotated {dev.get('rotated', '?')}; the previous key is kept until "
+                     "brain vault device forget-previous")
+    for p in s.get("stale") or []:
+        lines.append(f"to re-seal: {Path(p['file']).name} ({p['store']})" + (f": {p['why']}" if p["why"] else
+                     (f", still opens with {', '.join(p['gone'])}" if p["gone"] else "")
+                     + (f", not yet with {', '.join(p['new'])}" if p["new"] else "")))
     lines += [f"error: {e}" for e in s["errors"]]
     steps = next_steps(s)
     if steps:

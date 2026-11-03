@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from brain import config, keystore, vault
+from brain import config, keystore, rotation, vault
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_age.py"
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
@@ -124,6 +124,15 @@ def test_age_real_round_trip(brain, brain_home, tmp_path, monkeypatch):
     monkeypatch.setattr(vault.sys, "stdin", Tty())
     monkeypatch.setattr(vault.getpass, "getpass", lambda prompt: b)
     assert vault.drill(cfg, "recovery", "-", now=NOW)["recipient"] == "recovery"
+    (c, c_pub), = keygen(1, ad)   # a new machine joins: the real age seals the store again for it
+    keystore.Memory.data["device"] = a
+    cfg = brain({"box1": {"kind": "device", "age": a_pub}, "recovery": {"kind": "recovery", "age": b_pub},
+                 "box2": {"kind": "device", "age": c_pub}})
+    (done,) = rotation.reseal(cfg, apply=True)
+    assert done["done"]
+    keystore.Memory.data["device"] = c
+    vault.open_sealed(cfg, sealed, tmp_path / "resealed")
+    assert tree(tmp_path / "resealed" / "ledger") == tree(brain_home / "ledger")
 
 
 # --- refusals ---
@@ -177,6 +186,112 @@ def test_recipient_add_plans_then_writes(brain, tmp_path):
     pub.write_text("-----BEGIN PGP PUBLIC KEY BLOCK-----\nxx\n-----END PGP PUBLIC KEY BLOCK-----\n", encoding="utf-8")
     entry, _ = vault.recipient_add(config.load(), "box2", "device", gpg=str(pub), write=True)
     assert entry["gpg"] == "vault/keys/box2.asc" and (brain.root / "vault" / "keys" / "box2.asc").is_file()
+
+
+def test_recipient_remove_plans_refuses_then_writes(brain, brain_home):
+    """A recipient leaves config.json only by a plan then --write, never below two, never the only recovery key, never
+    while a tenant names it; the plan lists the sealed files its key still opens."""
+    found = fake_age()
+    (a, a_pub), (_, b_pub), (_, c_pub) = keygen(3, found["age"])
+    cfg = brain({"box1": {"kind": "device", "age": a_pub}, "recovery": {"kind": "recovery", "age": b_pub}})
+    with pytest.raises(vault.VaultError, match="1 recipient.*would be left"):
+        rotation.recipient_remove(cfg, "box1")
+    with pytest.raises(vault.VaultError, match="no recipient nope"):
+        rotation.recipient_remove(cfg, "nope")
+    with pytest.raises(vault.VaultError, match="declared already: --replace"):
+        vault.recipient_add(cfg, "box1", "device", age=c_pub, write=True)
+    cfg = brain({"box1": {"kind": "device", "age": a_pub}, "box2": {"kind": "device", "age": c_pub},
+                 "recovery": {"kind": "recovery", "age": b_pub}})
+    with pytest.raises(vault.VaultError, match="only recovery key"):
+        rotation.recipient_remove(cfg, "recovery")
+    vault.seal(cfg, "ledger", now=NOW, found=found)
+    plan, written = rotation.recipient_remove(cfg, "box2")
+    assert not written and plan["left"] == ["box1", "recovery"] and len(plan["reseal"]) == 1
+    assert "box2" in json.loads(cfg.file.read_text())["vault"]["recipients"]
+    rotation.recipient_remove(cfg, "box2", write=True)
+    assert "box2" not in json.loads(cfg.file.read_text())["vault"]["recipients"]
+    cfg = brain({"box1": {"kind": "device", "age": a_pub}, "box2": {"kind": "device", "age": c_pub},
+                 "recovery": {"kind": "recovery", "age": b_pub}}, tenants={"team-z": ["box2"]})
+    with pytest.raises(vault.VaultError, match="still named in vault.tenants.team-z"):
+        rotation.recipient_remove(cfg, "box2")
+
+
+def test_reseal_follows_a_new_and_a_replaced_recipient(brain, brain_home, tmp_path, capsys):
+    """A sealed file whose recipients changed is listed (health fails while a replaced key still opens it), sealed
+    again by the plan's --apply with the device key, and the old key then opens nothing."""
+    found = fake_age()
+    (a, a_pub), (b, b_pub), (c, c_pub), (d, d_pub) = keygen(4, found["age"])
+    keystore.Memory.data["device"] = a
+    cfg = brain({"box1": {"kind": "device", "age": a_pub}, "recovery": {"kind": "recovery", "age": b_pub}})
+    man = vault.seal(cfg, "ledger", now=NOW, found=found)
+    sealed = brain_home / "vault" / "sealed" / "ledger" / man["file"]
+    assert rotation.stale_seals(cfg) == [] and rotation.reseal(cfg, apply=True, found=found) == []
+
+    cfg = brain({"box1": {"kind": "device", "age": a_pub}, "recovery": {"kind": "recovery", "age": b_pub},
+                 "box2": {"kind": "device", "age": c_pub}})
+    (p,) = rotation.stale_seals(cfg)
+    assert p["new"] == ["box2"] and p["gone"] == []
+    vault.health(cfg, now=NOW, found=found)
+    assert "1 sealed file(s) a new recipient cannot open yet" in capsys.readouterr().out
+    (plan,) = rotation.reseal(cfg, found=found)
+    assert not plan.get("done") and rotation.stale_seals(cfg)  # a plan changes nothing
+    (done,) = rotation.reseal(cfg, apply=True, now=NOW, found=found)
+    assert done["done"] and rotation.stale_seals(cfg) == []
+    keystore.Memory.data["device"] = c
+    vault.open_sealed(cfg, sealed, tmp_path / "by-box2", found=found)
+    assert tree(tmp_path / "by-box2" / "ledger") == tree(brain_home / "ledger")
+    assert json.loads(sealed.with_name(sealed.name + ".json").read_text())["resealed"] == "2026-11-02T12:00:00Z"
+
+    keystore.Memory.data["device"] = a
+    cfg = brain({"box1": {"kind": "device", "age": a_pub}, "recovery": {"kind": "recovery", "age": d_pub},
+                 "box2": {"kind": "device", "age": c_pub}})   # the recovery key replaced
+    (p,) = rotation.stale_seals(cfg)
+    assert p["gone"] == ["recovery"] and p["new"] == ["recovery"]
+    assert vault.health(cfg, now=NOW, found=found) == 1
+    assert "still open with a key no longer declared" in capsys.readouterr().out
+    rotation.reseal(cfg, apply=True, found=found)
+    keystore.Memory.data["device"] = b
+    with pytest.raises(vault.VaultError, match="no identity matched"):
+        vault.open_sealed(cfg, sealed, tmp_path / "by-old", found=found)
+
+
+def test_device_rotation_keeps_the_previous_key_until_it_is_forgotten(brain, brain_home, tmp_path):
+    """--rotate keeps the old key beside the new one; the sealed files open with it until reseal; forget-previous
+    waits on config.json declaring the new key and on the re-seal, then deletes it."""
+    found = fake_age()
+    cfg = brain({})
+    old = vault.device_init(cfg, "box1", now=NOW, found=found)
+    (_, r_pub), = keygen(1, found["age"])
+    cfg = brain({"box1": {"kind": "device", "age": old["public"]}, "recovery": {"kind": "recovery", "age": r_pub}})
+    man = vault.seal(cfg, "ledger", now=NOW, found=found)
+    sealed = brain_home / "vault" / "sealed" / "ledger" / man["file"]
+    with pytest.raises(vault.VaultError, match="already has a device key.*--rotate"):
+        vault.device_init(cfg, found=found)
+    with pytest.raises(vault.VaultError, match="no previous device key"):
+        rotation.forget_previous(cfg, found=found)
+    old_value = keystore.Memory.data["device"]
+
+    new = vault.device_init(cfg, found=found, rotate=True, now=NOW + timedelta(days=1))
+    assert new["name"] == "box1" and new["public"] != old["public"] and new["previous"]["public"] == old["public"]
+    assert keystore.Memory.data["device-previous"] == old_value != keystore.Memory.data["device"]
+    assert "--replace --write" in new["declare"] and "AGE-SECRET" not in vault.device_file().read_text()
+    with pytest.raises(vault.VaultError, match="last rotation is not finished"):
+        vault.device_init(cfg, found=found, rotate=True)
+    vault.open_sealed(cfg, sealed, tmp_path / "mid", found=found)          # the previous key still opens it
+    with pytest.raises(vault.VaultError, match="does not declare the new key"):
+        rotation.forget_previous(cfg, found=found)
+
+    vault.recipient_add(cfg, "box1", "device", age=new["public"], host="box1", write=True, replace=True)
+    cfg = config.load()
+    assert any("rotation of box1" in s for s in vault.next_steps(vault.status(cfg, found)))
+    with pytest.raises(vault.VaultError, match="1 sealed file.*reseal --apply first"):
+        rotation.forget_previous(cfg, found=found)
+    (done,) = rotation.reseal(cfg, apply=True, found=found)
+    assert done["done"]
+    assert rotation.forget_previous(cfg, found=found)["forgot"] == old["public"]
+    assert "device-previous" not in keystore.Memory.data and "previous" not in vault.device()
+    vault.open_sealed(cfg, sealed, tmp_path / "after", found=found)        # the new key alone opens it now
+    assert tree(tmp_path / "after" / "ledger") == tree(brain_home / "ledger")
 
 
 def test_open_drill_and_device_init_are_human_acts(monkeypatch):
@@ -384,7 +499,8 @@ def test_cli_refuses_the_human_acts_in_an_agent_session(brain, monkeypatch, caps
     brain({"box1": {"kind": "device", "age": a_pub}, "recovery": {"kind": "recovery", "age": b_pub}})
     monkeypatch.setenv("CLAUDECODE", "1")
     for argv in (["vault", "open", str(tmp_path / "x.tar.gz.age")], ["vault", "drill", "recovery"],
-                 ["vault", "device", "init"]):
+                 ["vault", "device", "init"], ["vault", "device", "init", "--rotate"],
+                 ["vault", "device", "forget-previous"], ["vault", "reseal", "--apply", "--identity", "-"]):
         assert cli.main(["--root", str(brain.root), *argv]) == 2
         assert "is a human act: run it in your own terminal" in capsys.readouterr().err
     assert keystore.Memory.data == {}

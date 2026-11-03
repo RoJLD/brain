@@ -2,6 +2,25 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+- **The vault's recipients change safely** (wi-brain-vault-rotation, its first part).
+  - `brain vault recipient remove NAME`: a plan, then `--write`. It refuses to leave fewer than two recipients, to
+    remove the only recovery key, or to remove a recipient that `vault.tenants` or a scope still names. The plan lists
+    the sealed files the removed key still opens.
+  - `brain vault recipient add` refuses a declared name unless `--replace` is given, which is a rotation.
+  - `brain vault reseal [STORE...]`: the plan, then `--apply`. It seals again, to their store's current recipients,
+    the sealed files whose recipients changed: it opens each with this machine's device key (its previous one during a
+    rotation) or with the key the owner gives, seals it again with the same adapter, replaces the old copy, and records
+    `resealed` in the manifest.
+  - `brain vault device init --rotate` replaces this machine's key and keeps the previous one in the keystore
+    (`device-previous`), which still opens what was sealed to it. `brain vault device forget-previous` deletes it once
+    config.json declares the new key and nothing waits on a re-seal.
+  - `brain vault status` lists the files to re-seal and an unfinished rotation. `brain health vault` fails while a
+    removed or replaced key still opens a sealed file, and warns when a new recipient cannot open one yet.
+  - The runbook gains « Changing the recipients ».
+  - YubiKey recipients, each machine's canary seen from the others and post-quantum recipients stay for later.
+
 ## 0.2.4 — 2026-11-03
 
 - **A session never installs or runs a third-party kit** (wi-brain-guard-third-party, EXT-6). The new `third-party`

@@ -184,15 +184,43 @@ Enter. Nothing shows as you paste: the key is hidden, like a password, so it sta
 terminal's scrollback.
 The recovery canary must open and match its digest; `state.json` records the date and the health warning goes away.
 
+## Changing the recipients: rotation and re-sealing
+
+A sealed file opens with the keys it was sealed to, and with no other. When the recipients change, the sealed files
+this machine keeps (`$BRAIN_HOME/vault/sealed/`) are sealed again to the new set:
+
+```
+brain vault reseal            # the plan: each file whose recipients are not its store's current ones
+brain vault reseal --apply    # open each with this machine's device key, seal it again, replace the old copy
+```
+
+`brain vault status` lists those files ("to re-seal"), and `brain health vault` fails while a removed or replaced key
+still opens one. It only warns when a new recipient cannot open one yet. A copy already sent elsewhere (a remote, a
+NAS, a backup) stays readable by the keys it was sealed to: seal it again where it lives, or delete it there.
+
+**Rotating this machine's key** (a suspect key, a yearly habit), in your own terminal:
+
+1. `brain vault device init --rotate`: a new key goes into the keystore. The previous one is kept beside it
+   (`brain-vault/device-previous`) and still opens what was sealed to it. The command prints the new public key and
+   its line: `brain vault recipient add <name> --kind device --age age1... --host <name> --replace --write`.
+2. Declare it in a PR: `--replace` gives the name its new key. Pull it on this machine.
+3. `brain vault reseal --apply` (the previous key opens, the new set seals), then `brain vault canary`.
+4. `brain vault device forget-previous`: it deletes the previous key. It refuses while config.json still names the old
+   key or a sealed file waits on a re-seal.
+
 ## A lost or exposed key
 
-- **A lost machine**: open its sealed copies elsewhere with the recovery key (`brain vault open FILE --identity -`) and
-  remove its recipient from `config.json`. What was sealed to it stays readable by that key: the disk encryption is
-  what protects it.
-- **An exposed device key**: remove its recipient, delete the keystore entry (Windows: `cmdkey
-  /delete:brain-vault/device`), run `brain vault device init` again and declare the new key.
-- **The recovery key exposed or lost**: create a new one (step 3), declare it, remove the old one, and seal again what
-  matters.
+- **A lost machine**: take its recipient out (`brain vault recipient remove <name>`, the plan, then `--write` in a PR),
+  then `brain vault reseal --apply` on each machine that keeps sealed files. Open its sealed copies elsewhere with the
+  recovery key (`brain vault open FILE --identity -`). What was already sealed to the lost machine stays readable by
+  its key: the lost machine's disk encryption is what protects it.
+- **An exposed device key**: rotate it (above). On a machine that is gone, remove its recipient and delete its keystore
+  entry (Windows: `cmdkey /delete:brain-vault/device`).
+- **The recovery key exposed or lost**: create a new one (step 3), declare it, take the old one out (`recipient
+  remove` refuses to leave the vault without a recovery key, so declare the new one first), then `brain vault reseal
+  --apply`; drill the new one.
+- **A revoked heir, a member leaving a tenant**: `brain vault recipient remove <name>` (it refuses while
+  `vault.tenants` or a scope still names them: take them out there first), then `brain vault reseal --apply`.
 - **A private key pasted into `config.json`** by mistake: `brain check --all` refuses it; remove it and treat the key
   as exposed.
 
@@ -212,5 +240,6 @@ as `/c/...` and needs a short path for its agent's sockets: the vault handles bo
 | `$BRAIN_HOME/vault/device.json` | this machine's device key: name, adapter, public key, keystore, date |
 | `$BRAIN_HOME/vault/state.json` | the canaries (sealed, opened, digest, error), the drills, the last seal of each store |
 | `$BRAIN_HOME/vault/canary/` | one sealed nonce per recipient |
-| `$BRAIN_HOME/vault/sealed/<store>/` | the sealed copies and their manifests |
+| `$BRAIN_HOME/vault/sealed/<store>/` | the sealed copies and their manifests (`resealed` once sealed again) |
 | the OS keystore, `brain-vault/device` | the device key itself: never on disk in clear, never printed |
+| the OS keystore, `brain-vault/device-previous` | during a rotation only: the replaced key, until `forget-previous` |

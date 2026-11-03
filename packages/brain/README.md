@@ -306,13 +306,15 @@ sealed, resident, secret, `tenant:<id>`), and the class says where it may go and
 store without a class and a destination its class forbids, and `brain init` writes a starting block. What leaves a
 machine is sealed client-side to public keys (`brain vault`: age, gpg as the fallback), to a device key per machine,
 kept in the OS keystore, and an offline recovery key: two recipients at least, proven daily by a canary per recipient
-(`brain health vault`). Opening, drilling and creating a key are the owner's acts, refused in an agent session. The
-owner's steps, the canary's scheduled task per system and what to do with a lost key: the runbook
-[`docs/vault.md`](docs/vault.md).
+(`brain health vault`). When the recipients change (a lost machine, a revoked heir, a rotated key), `brain vault
+reseal` seals the kept copies again to the current set. Opening, drilling, and creating or rotating a key are the
+owner's acts, refused in an agent session. The owner's steps, the canary's scheduled task per system, the rotation
+and what to do with a lost key are in the runbook, [`docs/vault.md`](docs/vault.md).
 
 ```
 brain classes [--check] [--suggest] [--matrix] [PATH...]
-brain vault status | seal STORE | canary | recipient add NAME | device init | open FILE | drill RECIPIENT
+brain vault status | seal STORE | canary | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
+brain vault device init [--rotate] | device forget-previous | open FILE | drill RECIPIENT
 brain health vault
 ```
 
