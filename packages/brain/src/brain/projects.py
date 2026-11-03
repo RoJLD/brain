@@ -66,7 +66,8 @@ KEYS = {
                   "guards refuse edits and git changes there (brain.guards)",
     "repos": "the repos it spans, for brain audit: a path or {path, name, entry, roots, waive, item, lang, "
              "scout_limit} (default: the root and the production checkouts)",
-    "audit": "{spec: <id>}: the spec brain audit's debt items link to",
+    "audit": "{spec: <id>, max_lines: N, complexity: N}: the spec brain audit's debt items link to; brain audit "
+             "--diff's structure thresholds (default 1000 lines per code file, cyclomatic complexity 15)",
     "code_index": "the repos brain index has GitNexus index, relative to the root: a path or {path, branch}",
     "stacks": "what brain up / down / health start, stop and check: a mapping, or a YAML file relative to the root",
     "notify": "brain notify's channels and the project's routes per level: a mapping, or a YAML file relative to the "
@@ -86,7 +87,7 @@ KEYS = {
 TENANT_KEYS = {"export": "the file the tenant's contract export is dropped into: absolute, ~, or relative to BRAIN_HOME"}
 MOUNT_KEYS = {"title", "tenant"}
 REPO_KEYS = {"path", "name", "entry", "roots", "waive", "item", "lang", "scout_limit"}
-AUDIT_KEYS = {"spec"}
+AUDIT_KEYS = {"spec", "max_lines", "complexity"}
 REPO_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]*")
 WAIVE_REASON = 15
 
@@ -269,13 +270,22 @@ def _repo_folder(path: Path) -> str:
     return (main or path).name
 
 
+def _check_audit(p: Project) -> None:
+    """audit: {spec, max_lines, complexity}, the thresholds whole numbers of 1 or more."""
+    if not isinstance(p.audit, dict) or set(p.audit) - AUDIT_KEYS:
+        raise RepoError(f"project {p.name}: audit is a mapping of {', '.join(sorted(AUDIT_KEYS))}")
+    for key in ("max_lines", "complexity"):
+        v = p.audit.get(key)
+        if v is not None and (not isinstance(v, int) or isinstance(v, bool) or v < 1):
+            raise RepoError(f"project {p.name}: audit {key} is a whole number of 1 or more")
+
+
 def repos_of(p: Project) -> list[Repo]:
     """The repos ``p`` spans, for brain audit: its ``repos:`` entries, then each production checkout not listed (the
     root alone by default). A relative path is read from the root, else from its main checkout (a worktree)."""
     if not isinstance(p.repos, list):
         raise RepoError(f"project {p.name}: repos is a list of paths or mappings")
-    if not isinstance(p.audit, dict) or set(p.audit) - AUDIT_KEYS:
-        raise RepoError(f"project {p.name}: audit is a mapping of {', '.join(sorted(AUDIT_KEYS))}")
+    _check_audit(p)
     prod = {_norm(_resolve_root(os.path.relpath(x, p.root), p.root)) for x in p.production}
     decl = list(p.repos or ["."])
     decl += [os.path.relpath(x, p.root) for x in p.production]

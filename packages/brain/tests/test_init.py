@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from brain import __version__, cli, config, init, neutral, paths, projects, render
+from brain import __version__, cli, config, init, neutral, paths, projects, render, skew
 
 from conftest import run_git
 
@@ -16,6 +16,9 @@ def fresh(tmp_path, monkeypatch, brain_home):
     monkeypatch.delenv("BRAIN_CONFIG", raising=False)
     monkeypatch.delenv("BRAIN_PROJECTS", raising=False)
     monkeypatch.setattr(init, "machine_terms", lambda: {"users": ["ada-l"], "hosts": ["host-a"]})
+    # init pins v<version>; the tests run a dev engine, which stands here for that release (brain.skew)
+    monkeypatch.setattr(skew, "running", lambda: [skew.Engine(d, __version__, f"v{__version__}", "0" * 40)
+                                                  for d, _ in skew.DISTS])
     root = tmp_path / "ada-brain"
     root.mkdir()
     return root
