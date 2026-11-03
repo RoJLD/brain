@@ -9,8 +9,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   its `trigger`, `anti_pattern` and `check` required). `brain lesson add|seen|list|rules` (also `brain lessons`):
   `add` writes the node in `nodes/lessons.yaml` and refuses one close to a known lesson (mark it `seen`, or
   `--new`); a lesson seen twice (once if severe) with no open fix, or recurring after its fix (regressed), files an
-  item proposal (`priority_proposed`) linked `led_to`; `brain lessons --follow` prints each lesson's lineage
-  (learned from, led to, its PR, enforced by, recurred since its fix) and the friction per item by week;
+  item proposal (`priority_proposed`) linked `led_to`, or links the open item whose title is close to it;
+  `brain lessons --follow` prints each lesson's lineage (learned from, led to, its PR, enforced by, recurred since
+  its fix) and the friction per item by week;
   `brain lesson rules` indexes the iron rules (`Σ-NAME`, `Sigma-NAME`) of each registered repo's tracked Markdown,
   read only. `brain lint lessons [--propose]`: the open lessons a script could check (guard candidates) and those
   that say no `why_not_script`. `docs/lessons.md`.

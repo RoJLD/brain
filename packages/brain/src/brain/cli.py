@@ -2246,13 +2246,20 @@ def cmd_lesson(args, root: Path) -> int:
     except (lessons.LessonError, graph.GraphError) as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
+    _lesson_said(sub_cmd, out)
+    return 0
+
+
+def _lesson_said(sub_cmd: str, out: dict) -> None:
     node = out["node"]
     print(f"{sub_cmd}: {node['id']} [{node['status']}] seen {lessons.seen_of(node)}"
           + (", regressed after its fix" if out.get("regressed") else "") + "; then brain sync and brain check")
     if out.get("filed"):
         print(f"filed {out['filed']} (priority_proposed, led_to from {node['id']}): the fix to choose, a script "
               "first; wi-brain-ideation-board turns these into ideas once it exists")
-    return 0
+    if out.get("linked"):
+        print(f"linked {node['id']} led_to {out['linked']}: an open item close to it carries the fix (brain item "
+              "unlink to undo)")
 
 
 def _lesson_list(args, store: Path) -> int:

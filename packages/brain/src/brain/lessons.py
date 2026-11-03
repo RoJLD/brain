@@ -203,8 +203,7 @@ def add(store: Path, lid: str, title: str, *, trigger: str, anti_pattern: str, c
     fixes = {led_to, *(enforced_by or [])}  # one edge per node pair: what fixes it wins over learned_from
     edges = _edges(lid, LEARNED, frm, skip=fixes) + _edges(lid, ENFORCED, enforced_by) + _edges(lid, LED, [led_to])
     graph.append_edges(store, edges, EDGES, f"{today}: {lid} (brain lesson add)")
-    filed = _maybe_propose(store, lid, today) if propose else None
-    return {"node": node, "filed": filed}
+    return {"node": node, **_proposal(store, lid, today, propose)}
 
 
 def _edges(lid: str, etype: str, targets: list[str] | None, skip: set[str] = frozenset()) -> list[dict]:
@@ -221,7 +220,7 @@ def seen(store: Path, lid: str, frm: list[str] | None = None, pr: str = "", toda
          propose: bool = True) -> dict:
     """One more occurrence of a lesson: seen + 1, the PR added, a learned_from edge to each new node; a fixed one
     (enforced, resolved, or an item it led_to done) turns regressed. Files the proposal once the lesson recurs.
-    Returns {"node", "filed", "regressed"}."""
+    Returns {"node", "filed", "linked", "regressed"}."""
     today = today or date.today().isoformat()
     reg = Registry.load(store)
     node = reg.nodes.get(lid)
@@ -238,8 +237,8 @@ def seen(store: Path, lid: str, frm: list[str] | None = None, pr: str = "", toda
     linked = {e["to"] for e in reg.edges if e.get("from") == lid}
     graph.append_edges(store, _edges(lid, LEARNED, frm, skip=linked), EDGES,
                        f"{today}: {lid} (brain lesson seen)")
-    filed = _maybe_propose(store, lid, today, force=regressed) if propose else None
-    return {"node": Registry.load(store).nodes[lid], "filed": filed, "regressed": regressed}
+    out = _proposal(store, lid, today, propose, force=regressed)
+    return {"node": Registry.load(store).nodes[lid], **out, "regressed": regressed}
 
 
 def proposal_id(reg: Registry, lid: str) -> str:
@@ -250,9 +249,24 @@ def proposal_id(reg: Registry, lid: str) -> str:
     return nid
 
 
-def _maybe_propose(store: Path, lid: str, today: str, force: bool = False) -> str | None:
+def _proposal(store: Path, lid: str, today: str, propose: bool, force: bool = False) -> dict:
+    """{"filed": the new item's id, "linked": the open item it was linked to instead}, each None when not."""
+    got = _maybe_propose(store, lid, today, force) if propose else None
+    return {"filed": got[0] if got and got[1] else None, "linked": got[0] if got and not got[1] else None}
+
+
+def like_item(reg: Registry, node: dict) -> str | None:
+    """The open WorkItem whose title is closest to the lesson's title, past NEAR: it already carries the fix."""
+    best = max(((similarity(str(node.get("title", "")), str(n.get("title", ""))), n["id"])
+                for n in reg.nodes.values() if n.get("type") == "WorkItem"
+                and n.get("status") in ("todo", "doing", "blocked")), default=(0.0, ""))
+    return best[1] if best[0] >= NEAR else None
+
+
+def _maybe_propose(store: Path, lid: str, today: str, force: bool = False) -> tuple[str, bool] | None:
     """File the item proposal of a lesson that recurred (seen >= its threshold) or regressed, unless an open item it
-    led_to already carries the fix. The item's id: the lesson's with wi- for les-."""
+    led_to already carries the fix; an open item whose title is close to the lesson's (like_item) is linked led_to
+    instead of a new one. (the item's id, new); the new item's id: the lesson's with wi- for les-."""
     reg = Registry.load(store)
     node = reg.nodes[lid]
     if node.get("status") == "archived":
@@ -262,6 +276,11 @@ def _maybe_propose(store: Path, lid: str, today: str, force: bool = False) -> st
         return None
     if not force and (seen_of(node) < threshold(node) or node.get("status") in FIXED):
         return None
+    same = like_item(reg, node)
+    if same:
+        graph.append_edges(store, [{"from": lid, "to": same, "type": LED}], EDGES,
+                           f"{today}: {lid} (brain lesson, an open item carries the fix)")
+        return same, False
     p = _props(node)
     nid = proposal_id(reg, lid)
     why = "regressed after its fix" if force else f"seen {seen_of(node)} time(s)"
@@ -273,7 +292,7 @@ def _maybe_propose(store: Path, lid: str, today: str, force: bool = False) -> st
     graph.add_item(store, nid, f"Prevent {node.get('title', lid)}", props=props, file=WORK_FILE,
                    edges_file=EDGES, today=today)
     graph.append_edges(store, [{"from": lid, "to": nid, "type": LED}], EDGES, f"{today}: {lid} (brain lesson, proposal)")
-    return nid
+    return nid, True
 
 
 # --- rows: the list, --follow, the panel's data ---
@@ -686,9 +705,9 @@ def propose_guards(store: Path, findings: list[dict], today: str | None = None) 
     filed = []
     for f in findings:
         if f["kind"] == "guard" and not f["fix"]:
-            nid = _maybe_propose(store, f["lesson"], today, force=True)
-            if nid:
-                filed.append(nid)
+            got = _maybe_propose(store, f["lesson"], today, force=True)
+            if got:
+                filed.append(got[0])
     return filed
 
 

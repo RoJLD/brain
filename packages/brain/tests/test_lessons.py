@@ -305,3 +305,13 @@ def test_a_command_is_any_shell_tool_after_its_environment():
     assert lessons.is_command("grep -rl 'x' records/") and lessons.is_command("od -c f")
     assert lessons.is_command("git diff --cached --check")
     assert not lessons.is_command("props.retro") and not lessons.is_command("the owner says so")
+
+
+def test_an_open_item_close_to_the_lesson_is_linked_not_duplicated(lstore):
+    graph.add_item(lstore, "wi-demo-stale-guard", "Warn on a merge resolution made against a stale main that drops "
+                   "a merged PR's lines", props={"priority_proposed": "P2"})
+    out = _lesson(lstore, severity="high")
+    assert out["filed"] is None and out["linked"] == "wi-demo-stale-guard"
+    assert "wi-demo-merge-stale-main" not in graph.node_index(lstore)
+    led = [e["to"] for e in graph.load_yaml_list(lstore / lessons.EDGES) if e["type"] == "led_to"]
+    assert led == ["wi-demo-stale-guard"]
