@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import networkx as nx
-import yaml
 
+from . import yamlio
 from .model import WORK_OPEN
 from .query import PRIORITIES
 
@@ -166,7 +166,7 @@ def edit_props(text: str, nid: str, *, set_: Mapping[str, Any] | None = None,
 
 
 def _nodes(text: str) -> dict[str, dict]:
-    data = yaml.safe_load(text) or []
+    data = yamlio.loads(text) or []
     return {n["id"]: n for n in data if isinstance(n, dict) and "id" in n}
 
 

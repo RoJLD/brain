@@ -86,7 +86,7 @@ class Model:
 def _yaml_load(text: str):
     y = graph._yaml()
     try:
-        return y.load(text or "", Loader=getattr(y, "CSafeLoader", y.SafeLoader))
+        return graph.load_yaml(text or "")
     except y.YAMLError as exc:
         raise FeatureError(f"unreadable YAML: {exc}") from exc
 

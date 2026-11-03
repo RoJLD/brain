@@ -41,8 +41,7 @@ def _load_list(path: Path) -> list:
     """A YAML list, read with libyaml's loader when PyYAML has it (a large store loads faster)."""
     if not path.is_file():
         return []
-    yaml = graph._yaml()
-    data = yaml.load(path.read_text(encoding="utf-8"), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+    data = graph.load_yaml_file(path)
     return data if isinstance(data, list) else []
 
 

@@ -276,7 +276,7 @@ def scope_nodes(cfg: config.Config) -> dict[str, dict]:
     f = scopes_file(cfg)
     if not f:
         return {}
-    data = graph._yaml().safe_load(f.read_text(encoding="utf-8")) or {}
+    data = graph.load_yaml_file(f) or {}
     nodes = data.get("scopes") if isinstance(data, dict) else None
     return {str(k): (v if isinstance(v, dict) else {}) for k, v in nodes.items()} if isinstance(nodes, dict) else {}
 

@@ -696,7 +696,7 @@ def _load_into(model: Model, f: Path | None) -> None:
     if f and f.is_file():
         try:
             text = f.read_text(encoding="utf-8")
-            data = graph._yaml().safe_load(text) or {}
+            data = graph.load_yaml(text) or {}
         except Exception as exc:
             model.errors.append(f"{f.name}: not readable YAML ({exc})")
             data = {}
@@ -1295,7 +1295,7 @@ def grant(root: Path | None, *, rule: str, verdict: str = "allow", selectors: di
     text = raw if raw.endswith(("\n", "\r")) else raw + nl
     text += line + nl
     try:
-        after = graph._yaml().safe_load(text) or {}
+        after = graph.load_yaml(text) or {}
     except Exception:
         after = {}
     before = model.data.get("rules") or []

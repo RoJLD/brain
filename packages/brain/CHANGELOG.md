@@ -48,6 +48,12 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `paths.installed_checkout` reads its `file:` URL with `urllib.parse` (`paths.file_url_path`) and once per process:
   a guard no longer imports `urllib.request` (~50 ms). The registry and `permissions.yaml` are read through libyaml
   (`graph.load_yaml`). The exec form of the hooks (`args`, no shell) waits until it is checked on Windows.
+- **Fast YAML** (wi-brain-yaml-fast-load). Every YAML read of the engine goes through one helper,
+  `research_graph.yamlio` (`graph.load_yaml`, `load_yaml_file`, `load_yaml_all`): libyaml (`CSafeLoader`) when PyYAML
+  has it, and a per-process memo keyed by (path, size, mtime_ns) that keeps the data pickled and hands each caller a
+  fresh copy; a file written within 2 s of its read is checked against its text's digest. `graph.load_yaml_list`,
+  `records.load`, the registry and every module's `safe_load` used the pure-Python parser. `paths.main_checkout`
+  keeps its answers for the process (not a None). Numbers from `brain perf --engine` in the PR.
 - **Releasing:** `hooks/common.sh`'s `brain_version` moves with `__version__` (a test checks it).
 
 ## 0.2.3 — 2026-11-03
