@@ -270,6 +270,25 @@ child is alive. Each step gives the cost of one wake after the prompt cache expi
 turns yellow, orange and red at each step; `brain alerts` raises a master past 80 % with live children; the governor
 reminds a master past 80 % that calls `start_session`, and lets the call through: nothing blocks a new session.
 
+## Lessons
+
+What each finished item teaches is a node of the graph, so it can be found, counted and fixed, at zero token
+([`docs/lessons.md`](docs/lessons.md)):
+
+- **`brain retro ITEM`**, a step of the close-item procedure: the friction signals of the sessions that served the
+  item (merges and conflicts, guard refusals, failed tests, waits, tokens against the estimate, the owner's minutes,
+  pushes to its PRs after they were opened), the known lessons of the signals that fired and five questions; the
+  session answers in a few lines (`--record --note ...` writes them on the item). `brain retro --wave W`: a wave's
+  deep retro.
+- **`brain lesson add|seen`**: a Lesson node (`nodes/lessons.yaml`) with its trigger, anti-pattern and check, learned
+  from an item or a PR; a lesson close to a known one is refused, to be marked `seen` instead. A lesson seen twice
+  (once if severe) with nothing fixing it, or recurring after its fix, files an item proposal, its fix a script
+  first, a rule last.
+- **`brain lessons --follow`**: each lesson and what it led to (the item, its PR, whether it recurred since), and the
+  friction per item by week. **`brain lesson rules`**: the iron rules (`Σ-NAME`) cited in each registered repo's
+  Markdown, read only. **`brain lint lessons`**: the lessons a script could check (guard candidates) and those that
+  should say why not.
+
 ## Where the brain is found
 
 `config.json` and `projects.yaml` are found at `$BRAIN_CONFIG` / `$BRAIN_PROJECTS`, else in the first of:

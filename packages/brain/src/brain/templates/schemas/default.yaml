@@ -1,17 +1,20 @@
 # The vocabulary of this graph store, the brain's base (brain init, a template's graphs schema: default): the work
 # (items, milestones, specs), the decisions (the ADR log) and the records brain sync turns into nodes (DDR: a question
-# put to the owner; Session: an agent session; Action: what a session did). `research_graph check` validates every
-# node and edge against it; add the types your projects need (a research layer, a data layer...).
+# put to the owner; Session: an agent session; Action: what a session did) and the lessons (brain lesson: what a
+# finished item taught, its trigger, anti-pattern and check; brain retro asks for them at each close).
+# `research_graph check` validates every node and edge against it; add the types your projects need (a research
+# layer, a data layer...). required_props: what every node of a type must carry, non-empty.
 # owner: who decides for this store, a person or a team; `research_graph pending` lists the items blocked on them.
-{owner_line}node_types: [WorkItem, Milestone, Spec, ADR, DDR, Session, Action]
+{owner_line}node_types: [WorkItem, Milestone, Spec, ADR, DDR, Session, Action, Lesson]
 edge_types: [depends_on, part_of, specified_by, decided_by, supersedes, raised_by, answered_in, about, produced_by,
-             touches]
+             touches, learned_from, enforced_by, led_to]
 statuses: [todo, doing, blocked, done, dropped, pending, reached, proposed, active, superseded, answered, integrated,
-           archived, open, closed, recorded]
+           archived, open, closed, recorded, enforced, resolved, regressed]
 layers:
   work: [WorkItem, Milestone, Spec]
   decisions: [ADR]
   records: [DDR, Session, Action]
+  lessons: [Lesson]
 status_by_type:
   WorkItem: [todo, doing, blocked, done, dropped]
   Milestone: [pending, reached, dropped]
@@ -20,3 +23,6 @@ status_by_type:
   DDR: [pending, answered, integrated, archived]
   Session: [open, closed]
   Action: [recorded]
+  Lesson: [open, enforced, resolved, regressed, archived]
+required_props:
+  Lesson: [trigger, anti_pattern, check]
