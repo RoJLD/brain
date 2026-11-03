@@ -62,8 +62,8 @@ brain retro --wave F
 - **Recurrence.** `seen` adds one occurrence, the PR, and a `learned_from` edge to a new node. A lesson seen twice
   (once if severe) with no open item fixing it, or one that recurs after its fix (it was enforced or resolved, or an
   item it led to is done; it turns regressed), files an item proposal: `wi-<slug>` for `les-<slug>`,
-  `priority_proposed` P1, P2 or P3 by its severity, `led_to` from the lesson, the fix to choose in the order a script, a hook,
-  a template, a rule last. An open item whose title is close to the lesson's (the same measure) is linked `led_to`
+  `priority_proposed` P1, P2 or P3 by its severity, `led_to` from the lesson, the fix to choose in the order a script,
+  a hook, a template, a rule last. An open item whose title is close to the lesson's (the same measure) is linked `led_to`
   instead of a new one. The ideation board (an Idea node instead of an item) will take this over once it exists.
 - **The lineage.** `brain lessons --follow` prints each lesson, where it was learned, what it led to (the item, its
   status and PR), what enforces it and whether it recurred since its fix; then the friction per item by ISO week,
