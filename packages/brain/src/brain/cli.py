@@ -1469,12 +1469,10 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
     for what, load, error in (("stacks", stacks.load, stacks.StackError),
                               ("code_index", codeindex.load, codeindex.CodeIndexError)):
         try:
-            loaded = load(root)
+            load(root)
         except error as exc:
             errors.append(f"{what}: {exc}")
-            continue
-        if what == "stacks":   # each shipped bundle the registry declares components of renders without a problem
-            errors += [f"bundle {b}: {e}" for b in bundles.names() for e in _bundle_problems(loaded, b)]
+    errors += _bundles_check(root)
     ids = projects.collisions([p for p in projs if p.root.is_dir()])
     for c in ids["collisions"]:
         line = f"id {c['id']} is in {', '.join(c['where'])}"
@@ -1491,6 +1489,16 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
     print(f"registry: {len(projs)} project(s), {ids['stores']} store(s), "
           + (f"{len(errors)} error(s)" if errors else "ids unique"))
     return 1 if errors else 0
+
+
+def _bundles_check(root: Path | None) -> list[str]:
+    """Each bundle the engine ships, rendered with the components the registry declares: what would block its apply
+    (a registry that does not load is said by the stacks' own check)."""
+    try:
+        reg = stacks.load(root)
+    except stacks.StackError:
+        return []
+    return [f"bundle {b}: {e}" for b in bundles.names() for e in _bundle_problems(reg, b)]
 
 
 def _bundle_problems(reg: dict, bundle: str) -> list[str]:
@@ -1522,6 +1530,12 @@ def cmd_refresh(args, root: Path) -> int:
     return rc
 
 
+def _registry_too(args, root: Path | None) -> bool:
+    """--all, or a brain's own root (its neutral source): the registry, config.json, the classes, the permissions, the
+    stacks and bundles, the ids are checked too (brain refresh in a brain checks its own data, wi-brain-test-split)."""
+    return bool(getattr(args, "all", False) or (root is not None and neutral.applies(root)))
+
+
 def _each_store(args, root: Path, *, sync: bool, check: bool) -> int:
     """sync and/or check each store of each project in scope (refresh, sync --all, check --all); a main checkout on
     main or master is not written unless --on-main; --all with check ends with check_registry."""
@@ -1545,9 +1559,7 @@ def _each_store(args, root: Path, *, sync: bool, check: bool) -> int:
             rc = rc or (_check_store(args, p.root, store) if check else 0)
             if rc:
                 failed.append(p.name)
-    # --all, or a brain's own root (its config.json, its registry): the registry, config.json, the classes, the
-    # permissions, the stacks and bundles, the ids (brain refresh in a brain checks its own data, wi-brain-test-split)
-    if check and (getattr(args, "all", False) or (root is not None and neutral.applies(root))):
+    if check and _registry_too(args, root):
         print("== registry")
         if check_registry(root, scope):
             failed.append("registry")
