@@ -1443,7 +1443,11 @@ def cmd_check(args, root: Path) -> int:
     _merge_marks(root, "brain refresh regenerates them")
     if args.all:
         return _each_store(args, root, sync=False, check=True)
-    return _check_store(args, root, _store(args, root))
+    rc = _check_store(args, root, _store(args, root))
+    if _registry_too(args, root):   # a brain's own root: its own data too, as refresh checks it
+        print("== registry")
+        rc = check_registry(root, _registry_scope(root)) or rc
+    return rc
 
 
 def _merge_marks(root: Path, then: str, clear: bool = False) -> None:
@@ -1473,6 +1477,8 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
         except error as exc:
             errors.append(f"{what}: {exc}")
     errors += _bundles_check(root)
+    for name in stacks.uncloned(root):
+        print(f"warning: stacks of project {name}: its root is not on this machine, not checked here")
     ids = projects.collisions([p for p in projs if p.root.is_dir()])
     for c in ids["collisions"]:
         line = f"id {c['id']} is in {', '.join(c['where'])}"
@@ -1498,7 +1504,10 @@ def _bundles_check(root: Path | None) -> list[str]:
         reg = stacks.load(root)
     except stacks.StackError:
         return []
-    return [f"bundle {b}: {e}" for b in bundles.names() for e in _bundle_problems(reg, b)]
+    shipped = bundles.names()
+    unknown = [f"stack {s.name} ({s.project}): bundle {s.bundle!r} is not one the engine ships (shipped: "
+               f"{', '.join(shipped) or 'none'})" for s in reg.values() if s.bundle and s.bundle not in shipped]
+    return unknown + [f"bundle {b}: {e}" for b in shipped for e in _bundle_problems(reg, b)]
 
 
 def _bundle_problems(reg: dict, bundle: str) -> list[str]:
@@ -1507,7 +1516,9 @@ def _bundle_problems(reg: dict, bundle: str) -> list[str]:
     if not comps:
         return []
     doc, _ = bundles.render(bundle, comps)
-    return bundles.problems(bundle, doc, comps)[1]
+    tiers_off = [f"component {s.name} is of tier class {s.tier['class']!r}: a bundle's component is a service "
+                 "(class: service, with its fallback)" for s in comps if s.tier.get("class", "service") != "service"]
+    return bundles.problems(bundle, doc, comps)[1] + tiers_off
 
 
 def _on_main(root: Path) -> str:
@@ -1536,6 +1547,12 @@ def _registry_too(args, root: Path | None) -> bool:
     return bool(getattr(args, "all", False) or (root is not None and neutral.applies(root)))
 
 
+def _registry_scope(root: Path | None) -> list[projects.Project]:
+    """The projects whose stores the registry check reads the ids of: every registered one, as check --all (a
+    shared_ids waiver names an id another project holds), those not on this machine skipped by the check."""
+    return list(projects.load(root).values())
+
+
 def _each_store(args, root: Path, *, sync: bool, check: bool) -> int:
     """sync and/or check each store of each project in scope (refresh, sync --all, check --all); a main checkout on
     main or master is not written unless --on-main; --all with check ends with check_registry."""
@@ -1561,7 +1578,7 @@ def _each_store(args, root: Path, *, sync: bool, check: bool) -> int:
                 failed.append(p.name)
     if check and _registry_too(args, root):
         print("== registry")
-        if check_registry(root, scope):
+        if check_registry(root, scope if getattr(args, "all", False) else _registry_scope(root)):
             failed.append("registry")
     print(f"{args.cmd}: {len(failed)} project(s) failed" + (f": {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0
@@ -2710,7 +2727,8 @@ def build_parser() -> argparse.ArgumentParser:
                                                          "engine.pin (brain check says how they differ)")
     ck = sub.add_parser("check", help="records check, no conflict marker in the store, journals, decision logs and "
                                       "records, then research_graph check (--all: every project's, then the "
-                                      "registry and the ids across every store)")
+                                      "registry and the ids across every store; in a brain's own root, that "
+                                      "registry check too)")
     ck.add_argument("--all", action="store_true", help="every project of the registry, then the registry's keys, "
                                                        "repos, stacks and code_index, and the ids across every store")
     ck.add_argument("--public", action="store_true", help="before a push to a public repo: no private term, secret, "

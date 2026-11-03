@@ -228,3 +228,20 @@ def test_check_all_refuses_a_registry_the_shipped_bundle_does_not_match(tmp_path
     assert f"error: bundle sovereign: {why}" in capsys.readouterr().out
     monkeypatch.setenv("BRAIN_PROJECTS", str(tmp_path / "none.yaml"))   # no component declared: nothing to match
     assert cli._bundle_problems(stacks.load(), "sovereign") == []
+
+
+def test_a_bundle_component_is_a_service_and_its_bundle_one_the_engine_ships(tmp_path, monkeypatch):
+    """A component of a shipped bundle that declares a tier is of class service (ADR « La pile souveraine »: five
+    service stacks, each with its fallback); a stack whose bundle the engine does not ship (a typo, a bundle an
+    upgrade dropped) is said, where brain bundle apply with no name would skip it."""
+    core = QDRANT.replace("health:", "class: core, profile: lite, health:")
+    assert cli._bundle_problems(_registry(tmp_path, monkeypatch, qdrant=core), "sovereign") == [
+        "component qdrant is of tier class 'core': a bundle's component is a service (class: service, with its "
+        "fallback)"]
+    service = QDRANT.replace("health:", "class: service, profile: default, fallback: none, health:")
+    assert cli._bundle_problems(_registry(tmp_path, monkeypatch, qdrant=service), "sovereign") == []
+    _registry(tmp_path, monkeypatch, qdrant=QDRANT.replace("bundle: sovereign", "bundle: sovreign"))
+    assert cli._bundles_check(None)[:2] == [
+        "stack qdrant (brain): bundle 'sovreign' is not one the engine ships (shipped: sovereign)",
+        "bundle sovereign: service qdrant has no component: declare the stack qdrant with bundle: sovereign in "
+        "projects.yaml"]

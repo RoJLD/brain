@@ -378,9 +378,10 @@ def test_a_fresh_brain_passes_check_all_with_a_private_remote(fresh, capsys):
     assert cli.main(["--root", str(fresh), "check", "--all"]) == 0, capsys.readouterr().out
 
 
-def test_refresh_in_a_brain_checks_its_own_data(fresh, capsys):
-    """brain refresh in a brain's own root runs the registry check too (config.json, the classes, the permissions, the
-    stacks and bundles, the ids), as check --all does: what a brain's own tests used to check (wi-brain-test-split)."""
+def test_refresh_and_check_in_a_brain_check_its_own_data(fresh, capsys):
+    """brain refresh and brain check in a brain's own root run the registry check too (config.json, the classes, the
+    permissions, the stacks and bundles, the ids), as check --all does: what a brain's own tests used to check
+    (wi-brain-test-split)."""
     assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
     committed(fresh)
     capsys.readouterr()
@@ -390,5 +391,47 @@ def test_refresh_in_a_brain_checks_its_own_data(fresh, capsys):
     cfg = json.loads((fresh / "config.json").read_text(encoding="utf-8"))
     cfg["identity"]["owner"] = "Bob"   # no longer its stores' owner
     (fresh / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    for command in ("refresh", "check"):
+        assert cli.main(["--root", str(fresh), command]) == 1, command
+        assert "identity.owner 'Bob'" in capsys.readouterr().out
+
+
+def _register(brain, line):
+    with (brain / "projects.yaml").open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def test_a_brains_refresh_reads_the_ids_of_every_registered_project(fresh, tmp_path, capsys):
+    """The ids are unique across every registered project's stores, as check --all reads them: a collision with
+    another project fails, and a shared_ids waiver for it is no stale waiver."""
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    assert cli.main(["--root", str(fresh), "item", "add", "wi-first", "--title", "First"]) == 0
+    committed(fresh)
+    lab = tmp_path / "lab" / "notes" / "graph"
+    (lab / "nodes").mkdir(parents=True)
+    (lab / "schema.yaml").write_text("owner: Ada\nnode_types: [WorkItem]\n", encoding="utf-8")
+    (lab / "nodes" / "work.yaml").write_text('- {id: wi-first, type: WorkItem, status: todo, title: "Lab"}\n',
+                                            encoding="utf-8")
+    _register(fresh, f"lab: {{root: {(tmp_path / 'lab').as_posix()}}}")
+    capsys.readouterr()
     assert cli.main(["--root", str(fresh), "refresh"]) == 1
-    assert "identity.owner 'Bob'" in capsys.readouterr().out
+    assert "error: id wi-first is in" in capsys.readouterr().out
+    reg = fresh / "projects.yaml"
+    lab_root = (tmp_path / "lab").as_posix()
+    reg.write_text(reg.read_text(encoding="utf-8").replace(
+        f"lab: {{root: {lab_root}}}",
+        f"lab: {{root: {lab_root}, shared_ids: {{wi-first: 'the pilot item, mirrored in the lab'}}}}"), encoding="utf-8")
+    assert cli.main(["--root", str(fresh), "refresh"]) == 0
+    out = capsys.readouterr().out
+    assert "waived: id wi-first is in" in out and "remove it" not in out
+
+
+def test_a_project_cloned_elsewhere_leaves_its_stacks_unchecked_here(fresh, tmp_path, capsys):
+    """A registered project whose stacks file sits in a root this machine does not hold is skipped with a warning:
+    the verdict does not depend on which repos are cloned here."""
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    committed(fresh)
+    _register(fresh, f"far: {{root: {(tmp_path / 'far').as_posix()}, stacks: stacks.yaml}}")
+    capsys.readouterr()
+    assert cli.main(["--root", str(fresh), "refresh"]) == 0
+    assert "warning: stacks of project far: its root is not on this machine" in capsys.readouterr().out

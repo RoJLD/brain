@@ -29,12 +29,16 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   wake. The governor expires the watch's mark at each `start_session` call and reminds a master past 80 % without
   refusing the call (ST-4); `brain alerts` raises a master past 80 % with live children (source `session`); the
   cockpit colours the master's row at each step.
-- **A brain's own data is checked by the brain, not by its tests** (wi-brain-test-split). `brain refresh` in a
-  brain's own root (its neutral source, `source/packs.yaml`) ends with the registry check `brain check --all` runs:
-  the registry's keys, `config.json`'s contract, the data classes, the permission hierarchy, the stacks, the ids. That
-  check now also renders each bundle the engine ships with the components the registry declares and refuses a service
-  without a component or a component without a service (`brain bundle apply` would). A brain's repository no longer
-  needs a pytest suite over its own graph, records and rendered files: the engine's tests run on fixtures only.
+- **A brain's own data is checked by the brain, not by its tests** (wi-brain-test-split). `brain refresh` and
+  `brain check` in a brain's own root (its neutral source, `source/packs.yaml`) end with the registry check `brain
+  check --all` runs: the registry's keys, `config.json`'s contract, the data classes, the permission hierarchy, the
+  stacks, and the ids across every registered project (a `shared_ids` waiver names an id another project holds).
+  That check now also renders each bundle the engine ships with the components the registry declares and refuses
+  what `brain bundle apply` would (a service without a component, a component without a service), a component whose
+  tier class is not `service`, and a stack whose `bundle:` the engine does not ship. A project whose stacks file sits
+  in a root this machine does not hold is left out of the stacks with a warning (`stacks.uncloned`), so the verdict
+  no longer depends on which repos are cloned here. A brain's repository no longer needs a pytest suite over its own
+  graph, records and rendered files: the engine's tests run on fixtures only.
 
 ## 0.2.4 — 2026-11-03
 
