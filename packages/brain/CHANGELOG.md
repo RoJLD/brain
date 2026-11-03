@@ -7,6 +7,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 The brain command, published as this repo's second distribution, from the personal brain it was written in (a fresh
 history: its code, Claude hooks, tests and installer at their targets, then the changes below).
 
+- **The digest dates closures at any hour.** `digest.git_closures` bounds `git log` by full days at midnight and keeps
+  the commits whose own day falls in the window: a bare `--since=<day>` was read at the current time of day, so a
+  closure from the first day of margin showed up or not depending on the hour (failing before noon UTC).
+- **Python 3.10 reads pyproject.toml.** The `tomli` backport is a dependency below 3.11, and `brain.inventory` falls
+  back to it: the audit, the scout and the links measured nothing on 3.10 without `tomllib`.
 - **A package of its own.** `packages/brain`: `pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.0#subdirectory=packages/brain"`;
   it depends on `research-graph` at the same tag. The Claude hooks are package data
   (`src/brain/adapters/claude/hooks/`), copied into the owner's own plugin by `brain render --target claude`; the

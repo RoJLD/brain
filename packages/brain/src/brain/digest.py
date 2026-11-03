@@ -141,17 +141,20 @@ def closed_on(node: dict) -> tuple[str, str]:
 
 def git_closures(root: Path, store: Path, since: str = "", until: str = "") -> dict[str, tuple[str, str]]:
     """{node id: (day, status)}: the newest commit that turned each work item done or dropped, or each milestone
-    reached, from one ``git log -p`` of the store's nodes (a day of margin on each side; the caller filters by day);
-    {} outside git."""
+    reached, from one ``git log -p`` of the store's nodes, kept when its day falls in [since, until]; {} outside git.
+
+    git reads a bare ``--since=<day>`` at the current time of day, so the bounds are full days at midnight with a
+    day of margin on each side (for the committers' time zones), then the commits are filtered by their own day:
+    the result does not depend on the hour it runs."""
     try:
         rel = store.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
         return {}
     args = ["log", "--format=%x00%cs", "-p", "-U0", "--no-color", "--no-renames", "--no-ext-diff"]
     if since:
-        args.append(f"--since={date.fromisoformat(since) - timedelta(days=1)}")
+        args.append(f"--since={date.fromisoformat(since) - timedelta(days=1)}T00:00:00")
     if until:
-        args.append(f"--until={date.fromisoformat(until) + timedelta(days=2)}")
+        args.append(f"--until={date.fromisoformat(until) + timedelta(days=2)}T00:00:00")
     out = actions.git(root, *args, "--", f"{rel}/nodes", timeout=60)
     found: dict[str, tuple[str, str]] = {}
     for chunk in out.split("\x00")[1:]:
@@ -164,9 +167,12 @@ def git_closures(root: Path, store: Path, since: str = "", until: str = "") -> d
                 before[m.group(2)] = m.group(4)
             elif m:
                 after[m.group(2)] = (m.group(3), m.group(4))
+        day = day.strip()
+        if (since and day < since) or (until and day > until):
+            continue
         for nid, (ntype, status) in after.items():
             if status in CLOSED[ntype] and before.get(nid) != status:
-                found.setdefault(nid, (day.strip(), status))
+                found.setdefault(nid, (day, status))
     return found
 
 

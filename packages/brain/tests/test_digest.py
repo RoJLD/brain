@@ -182,6 +182,7 @@ def test_git_dates_a_closed_node_without_a_dated_prop(tmp_path, monkeypatch, git
     store = git_repo / "notes" / "graph"
     assert digest.git_closures(git_repo, store) == {"wi-b": ("2026-10-28", "done"), "ms-m": ("2026-10-30", "reached")}
     assert digest.git_closures(git_repo, store, "2026-10-29", "2026-11-02") == {"ms-m": ("2026-10-30", "reached")}
+    assert digest.git_closures(git_repo, store, "2026-10-28", "2026-10-29") == {"wi-b": ("2026-10-28", "done")}
     assert digest.git_closures(git_repo, tmp_path / "elsewhere") == {}
     _registry(tmp_path, monkeypatch, git_repo)
     p = projects.get("demo")

@@ -40,7 +40,7 @@ jobs:
         run: |
           pip install -e .
           pip install --no-deps -e packages/brain
-          pip install pyyaml pytest
+          pip install pyyaml pytest "tomli>=2; python_version < '3.11'"
       - name: Tests
         run: pytest packages/brain -p no:randomly
 
