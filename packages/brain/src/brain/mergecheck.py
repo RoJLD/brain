@@ -26,7 +26,7 @@ from pathlib import Path
 
 import yaml
 
-from . import projects
+from . import graph, projects
 from .inventory import AuditError, git
 
 GENERATED = "_generated_"
@@ -99,7 +99,7 @@ def hunks(diff: str) -> list[dict]:
 
 def _ids(text: str) -> list[str]:
     try:
-        data = yaml.safe_load(text)
+        data = graph.load_yaml(text)
     except yaml.YAMLError:
         return [m.group(1) for m in (_ID.match(ln) for ln in text.splitlines()) if m]
     return [str(n["id"]) for n in data if isinstance(n, dict) and n.get("id")] if isinstance(data, list) else []
