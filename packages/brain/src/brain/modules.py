@@ -18,6 +18,7 @@ holds no date of its own: it changes only when the registry or the items do.
 
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -58,8 +59,10 @@ def _props(n: dict) -> dict:
 
 
 def _secondary(n: dict) -> list[str]:
+    """props.modules_secondary: a list, or a string of ids separated by commas (as brain item set writes it)."""
     s = _props(n).get("modules_secondary") or []
-    return [str(x) for x in ([s] if isinstance(s, str) else s if isinstance(s, list) else [])]
+    s = re.split(r"[,\s]+", s.strip("[] ")) if isinstance(s, str) else s if isinstance(s, list) else []
+    return [str(x) for x in s if str(x)]
 
 
 def problems(store: Path) -> list[str]:

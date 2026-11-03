@@ -2,7 +2,7 @@
 
 A brain that builds a platform module by module keeps, in its store, the registry of those modules
 (`notes/graph/modules.yaml`). Each open item then names its module: `props.module`, its primary, one; and
-`props.modules_secondary`, a list. `brain sync` writes the view `notes/modules_graph.md` from both, and `brain check`
+`props.modules_secondary`, a list or a string of ids separated by commas. `brain sync` writes the view `notes/modules_graph.md` from both, and `brain check`
 warns about an open item the map does not place (`brain.modules`, zero token). A store without `modules.yaml` is not
 concerned.
 
@@ -24,7 +24,7 @@ concerned.
 ## An item's module
 
 ```bash
-brain item set wi-x props.module=D7 "props.modules_secondary=[D12]"
+brain item set wi-x props.module=D7 "props.modules_secondary=D12, B9"
 brain item set wi-y props.module=none "props.module_reason=the brain's own process, outside the tree"
 ```
 
