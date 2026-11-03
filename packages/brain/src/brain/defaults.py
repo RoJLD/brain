@@ -203,6 +203,17 @@ def render(project: str, data: dict, width: int = 118) -> list[str]:
     return lines
 
 
+def total_line(roots, now: str) -> str:
+    """The cockpit's line for several projects (their roots): the defaults to review and the provisional ones."""
+    data = {"defaulted": [], "provisional": []}
+    for root in roots:
+        if (Path(root) / "records" / "ddr").is_dir():
+            got = review(Path(root), now)
+            data["defaulted"] += got["defaulted"]
+            data["provisional"] += got["provisional"]
+    return line(data)
+
+
 def line(data: dict) -> str:
     """The one line of the morning batch and the cockpit ('' when nothing waits)."""
     n, p = len(data["defaulted"]), len(data["provisional"])

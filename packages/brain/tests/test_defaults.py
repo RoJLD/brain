@@ -151,3 +151,16 @@ def test_topics_are_words_not_parts_of_words():
     assert defaults.topics({"title": "Monkey keyboard arms-length", "question": "Keystroke or tagline?"}) == []
     assert defaults.topics({"title": "x", "question": "y", "options": [{"label": "Rotate the password"}]}) == [
         ("keys", "password")]
+
+
+def test_the_cockpit_line_sums_the_projects(store, tmp_path):
+    root = _root(store)
+    _ask(root, "Label wording", low_stakes=True)
+    defaults.finalize(root, AFTER)
+    _ask(root, "Other wording", low_stakes=True)
+    line = defaults.total_line([root, tmp_path / "no-records"], AFTER)
+    assert line == "Taken by default, to review: 1 (1 provisional) — brain decision defaulted"
+    assert defaults.total_line([tmp_path], AFTER) == ""
+    from brain import cockpit
+    text = cockpit.queue_lines({"projects": [], "defaulted": line, "denials_read": True})
+    assert text[1] == f"  {line}"

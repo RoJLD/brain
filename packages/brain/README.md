@@ -172,7 +172,7 @@ default ». The mark is refused, at the ask and by `brain check`, on a decision 
 visibility, publication, accounts, arming, rules or scheduled tasks (`brain.defaults.REFUSED`, by words: a false alarm
 only keeps the decision with the owner). `brain decision defaulted` is the owner's review list (the defaults to
 review, the provisional ones, the reversed ones; `--seen` marks them read, from the owner's terminal only), with a
-line in the morning batch (`brain decision batch --zen`); any default is reversed with `brain decision answer ID
+line in the morning batch (`brain decision batch --zen`) and in the cockpit's queue panel (`brain tui`); any default is reversed with `brain decision answer ID
 <option> --again`.
 
 ## Where the brain is found

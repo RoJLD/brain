@@ -35,7 +35,7 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   an answer, `brain refresh` or `brain decision defaulted --apply` records it `by: default`, `via: default` at the
   deadline and the hooks announce it « by default ». The mark is refused, at the ask and by `brain check`, on money,
   keys, visibility, publication, accounts, arming, rules and scheduled tasks. `brain decision defaulted` is the
-  owner's review list (`--seen` from their terminal), with a line in the morning batch; `answer ID <option> --again`
+  owner's review list (`--seen` from their terminal), with a line in the morning batch and the cockpit's queue panel; `answer ID <option> --again`
   reverses a default. The DDR schema gains `default` and the answer's `via: default`.
 
 ## 0.2.3 — 2026-11-03
