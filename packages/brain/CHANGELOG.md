@@ -22,6 +22,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   stays the id `--by` writes. The queue's title is « {name}'s queue » or « File de {name} » (`tui.json` settings
   `lang`, or `$BRAIN_LANG`), « My queue » when no one is named, and `settings.titles` gives any panel a free title.
 - Fixed: a date-typed prop (`due: 2026-11-08`) no longer breaks `brain queue`.
+- Fixed: the cockpit reads `tui.json`'s settings again after two writes that share one modification time (Windows'
+  coarse clock): its cache keys on the time and the size, and `save_state` clears it.
 - **A session's Remote Control and permission mode are the owner's** (wi-brain-guard-session-settings). The guards
   refuse `set_remote_control` and `set_session_permission_mode` under any MCP prefix, and the app's `set_setting` for
   a Remote Control or permission key, whatever the value; the refusal names the `brain queue add --guard` command
