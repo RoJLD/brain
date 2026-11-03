@@ -55,6 +55,8 @@
       "properties": {
         "at": {"type": "string", "format": "date-time"},
         "by": {"type": "string", "description": "Session id of the asker."},
+        "host_id": {"type": "string", "pattern": "^local_[0-9a-f-]{36}$", "description": "The desktop app's id of that session (CLAUDE_CODE_HOST_SESSION_ID), stamped by the brain commands (scale study gap 19); brain check refuses one that matches no session."},
+        "machine": {"type": "string", "description": "The machine the stamp was written on ($BRAIN_HOST, else the host name), so brain check knows where its host_id can be checked."},
         "model": {"type": "string"},
         "via": {"enum": ["ask-tool", "cli", "spec", "chat"], "description": "ask-tool: captured from Claude Code's question tool; spec: a question section of a spec."}
       }
@@ -66,6 +68,9 @@
       "properties": {
         "at": {"type": "string", "format": "date-time"},
         "by": {"type": "string"},
+        "session": {"type": "string", "description": "The transcript id of the session that recorded the answer (brain decision answer in a session)."},
+        "host_id": {"type": "string", "pattern": "^local_[0-9a-f-]{36}$", "description": "The desktop app's id of that session (CLAUDE_CODE_HOST_SESSION_ID), stamped by the brain commands (scale study gap 19); brain check refuses one that matches no session."},
+        "machine": {"type": "string", "description": "The machine the stamp was written on ($BRAIN_HOST, else the host name), so brain check knows where its host_id can be checked."},
         "choices": {"type": "array", "items": {"type": "string"}, "description": "Labels of the options chosen."},
         "other": {"type": "string", "description": "Free text, when the owner wrote their own answer."},
         "notes": {"type": "string"},
@@ -92,6 +97,8 @@
       "properties": {
         "at": {"type": "string", "format": "date-time"},
         "session": {"type": "string"},
+        "host_id": {"type": "string", "pattern": "^local_[0-9a-f-]{36}$", "description": "The desktop app's id of that session (CLAUDE_CODE_HOST_SESSION_ID), stamped by the brain commands (scale study gap 19); brain check refuses one that matches no session."},
+        "machine": {"type": "string", "description": "The machine the stamp was written on ($BRAIN_HOST, else the host name), so brain check knows where its host_id can be checked."},
         "in": {"type": "array", "items": {"type": "string"}, "description": "Where: ADR ids, item ids, spec sections."}
       }
     },
@@ -119,7 +126,9 @@
       "type": "object",
       "required": ["at"],
       "additionalProperties": false,
-      "properties": {"at": {"type": "string", "format": "date-time"}, "session": {"type": "string"}}
+      "properties": {"at": {"type": "string", "format": "date-time"}, "session": {"type": "string"},
+                     "host_id": {"type": "string", "pattern": "^local_[0-9a-f-]{36}$", "description": "The desktop app's id of that session (CLAUDE_CODE_HOST_SESSION_ID), stamped by the brain commands (scale study gap 19); brain check refuses one that matches no session."},
+                     "machine": {"type": "string", "description": "The machine the stamp was written on ($BRAIN_HOST, else the host name), so brain check knows where its host_id can be checked."}}
     }
   }
 }

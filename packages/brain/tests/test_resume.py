@@ -133,7 +133,8 @@ def test_git_section_with_prs_and_head(tmp_path, monkeypatch, git_repo):
     text = resume.build(projects.get("demo"), now=NOW)
     head = run_git(git_repo, "rev-parse", "--short", "HEAD").strip()
     assert "Open PRs (1):\n- #4 feat/x [draft]: Add X\n" in text
-    assert f"Generated 2026-11-02 09:30 UTC at {head} on main.\n" in text and text.endswith("Session: s-1.\n")
+    assert f"Generated 2026-11-02 09:30 UTC at {head} on main.\n" in text and text.endswith(
+        "Session: transcript s-1 (the ledger, the records, brain sessions).\n")
     assert "Hand-over notes that name an open item (newest first)\nNone: no notes folder found." in text
 
 
