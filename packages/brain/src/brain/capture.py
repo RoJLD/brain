@@ -140,6 +140,8 @@ def _ask_question(payload: dict) -> None:
     response = payload.get("tool_response") or {}
     answers = response.get("answers") or {} if isinstance(response, dict) else {}
     annotations = response.get("annotations") or {} if isinstance(response, dict) else {}
+    answers = answers if isinstance(answers, dict) else {}   # another shape: no answer rather than a lost call
+    annotations = annotations if isinstance(annotations, dict) else {}
     meta = _meta(payload)
     now = _now()
     tuid = payload.get("tool_use_id") or ""
@@ -174,9 +176,11 @@ def _ids(meta: dict) -> dict:
     return sessions.stamp() if me["host_id"] and me["session"] in ("", meta.get("session_id")) else {}
 
 
-def ddr_from_question(q: dict, answer: str | None, at: str, meta: dict, tool_use_id: str = "", index: int = 0,
+def ddr_from_question(q: dict, answer: str | list | None, at: str, meta: dict, tool_use_id: str = "", index: int = 0,
                       notes: str | None = None) -> dict:
-    """A DDR from one question of Claude Code's question tool, and its answer when there is one."""
+    """A DDR from one question of Claude Code's question tool, and its answer when there is one. The tool returns a
+    multiple choice as a list of labels (or, in a transcript, joined by ', '); a question the owner did not answer
+    (the tool's placeholder when they sent a message instead) leaves the DDR pending, as an empty answer does."""
     options = []
     recommended = None
     for o in q.get("options") or []:
@@ -208,21 +212,48 @@ def ddr_from_question(q: dict, answer: str | None, at: str, meta: dict, tool_use
     }
     if meta.get("model"):
         ddr["asked"]["model"] = meta["model"]
-    if answer:
-        # the tool joins the labels of a multiple choice with ", "
-        norm = re.sub(r"\s*\((?:recommandée?|recommended)\)", "", answer, flags=re.I)
-        choices = [o["label"] for o in ddr["options"] if norm == o["label"] or f", {o['label']}, " in f", {norm}, "]
+    if not answers_lane.unanswered(answer):
+        labels = [o["label"] for o in ddr["options"]]
+        if isinstance(answer, (list, tuple)):   # the tool's shape for a multiple choice: one label per item
+            items = [str(a) for a in answer if not answers_lane.unanswered(a)]
+            picked = [answers_lane.MARK_RE.sub("", a) for a in items]
+            choices = [lab for lab in labels if lab in picked]
+            rest = [a for a, p in zip(items, picked, strict=True) if p not in labels]
+            text = ", ".join(items)
+        else:   # a string: one label, or (a multiple choice) the labels joined with ", ", longest label first
+            text = str(answer)
+            norm = re.sub(r"\s*\((?:recommandée?|recommended)\)", "", text, flags=re.I)
+            if norm in labels or not ddr["multi_select"]:   # a single choice is a label exactly, else the owner's text
+                choices, rest = [norm] if norm in labels else [], [] if norm in labels else [text]
+            else:
+                choices, rest = _split_labels(norm, labels)
         ans: dict = {"at": at, "by": "user", "via": "ask-tool"}
         if choices:
             ans["choices"] = choices if ddr["multi_select"] else choices[:1]
-        else:
-            ans["other"] = answer
+        if rest or not choices:
+            ans["other"] = ", ".join(rest) or text
         if notes:
             ans["notes"] = notes
         ddr["answer"] = ans
         ddr["status"] = "answered"
         ddr["read"] = {"at": at, "session": meta.get("session_id") or "unknown", **_ids(meta)}
     return secretscan.clean(ddr)[0]
+
+
+def _split_labels(text: str, labels: list[str]) -> tuple[list[str], list[str]]:
+    """(the labels, the rest) of a multiple choice joined with ", ": the longest label that matches at each place
+    (a label may hold ", ")."""
+    tokens, picked, rest, i = text.split(", "), [], [], 0
+    while i < len(tokens):
+        for j in range(len(tokens), i, -1):
+            if ", ".join(tokens[i:j]) in labels:
+                picked.append(", ".join(tokens[i:j]))
+                i = j
+                break
+        else:
+            rest.append(tokens[i])
+            i += 1
+    return [lab for lab in labels if lab in picked], ([", ".join(rest)] if rest else [])
 
 
 def post_tool_use(payload: dict, family: str = "") -> None:

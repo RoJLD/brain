@@ -8,16 +8,23 @@ Three machine-local ledgers under $BRAIN_HOME/ledger (never the repo):
 - ``answer-<yyyy-mm>.jsonl``: each answer the question tool returned to one of those questions, written by the capture
   hook (:func:`capture`): the DDR's id, the answer exactly as the tool returned it, the labels it names (the DDR's own,
   the ``(Recommandé)`` mark dropped), the owner's free text (``other``) and notes, the session and the tool call;
-- ``answer-recorded-<yyyy-mm>.jsonl``: the captures ``--captured`` recorded, with their PR.
+- ``answer-recorded-<yyyy-mm>.jsonl``: the captures ``--captured`` recorded, with their PR, and the ones it retired
+  without writing them (``retired``: not answered, a label that names no option, older than the DDR's answer).
 
 A question is tied to its DDR by the id a repeated question carries at its end, else by its text and header, else by
-its header and labels; a question that matches no printed one (asked by hand) stays an ad-hoc DDR of the capture
-(brain.capture). Matching is exact (whitespace aside): a label is the tool's, never a prefix of one.
+its header and labels (only a question this session's batch printed); a question that matches no printed one (asked
+by hand) stays an ad-hoc DDR of the capture (brain.capture). Matching is exact (whitespace aside): a label is the
+tool's, never a prefix of one. The tool returns a multiple choice as a list of labels; a question the owner did not
+answer (they sent a message instead: the tool's placeholder, :data:`UNANSWERED_RE`) is captured as no answer at all.
+A label the session shortened or reworded in the tool, which names no option of the DDR, is kept ``unmapped``, never
+turned into the owner's free text: ``--captured`` refuses it.
 
 ``record_captured`` (``brain decision answer --captured``): the session's captured answers not recorded yet, written in
 a worktree of the project's main checkout on a new branch from its default branch, the views refreshed (``brain
 refresh``), committed, pushed, one PR opened, then merged with its retries (main moved: merge it, take its side of the
-generated files, refresh again, push, retry). One writer per batch: the session that asked the owner records.
+generated files, refresh again, push, retry). One writer per batch: the session that asked the owner records. A
+capture older than the answer the DDR already holds is stale: never written, even with ``--again``, and retired; an
+answer captured before a low-stakes deadline replaces the default taken meanwhile (the owner answered in time).
 
 ``refusal`` is the other half of that rule: in an agent's session, ``brain decision answer`` (and ``--batch``) records
 only an answer this session's own question tool captured; an answer relayed by a message is never recorded, the
@@ -44,6 +51,9 @@ from . import paths, secretscan
 ASKED, CAPTURED, RECORDED = "asked", "answer", "answer-recorded"
 MARK_RE = re.compile(r"\s*\((?:recommandée?|recommended)\)\s*$", re.I)
 ID_SUFFIX_RE = re.compile(r"\s*\((ddr-[a-z0-9-]+)\)\s*$")
+# The question tool's placeholder for a question the owner did not answer (they sent a message instead), as Claude
+# Code returns it: "[User did not answer this question — they sent a message instead. ...]".
+UNANSWERED_RE = re.compile(r"^\s*\[user did not answer\b", re.I)
 AGENT_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION")   # as brain.vault
 SESSION_ENV = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")
 RETRIES = 3
@@ -64,10 +74,13 @@ def _norm(text) -> str:
 
 # --- the ledgers ---
 
-def read(name: str, months: int = 2) -> list[dict]:
-    """The records of one ledger, its last ``months`` monthly files."""
+def read(name: str, months: int = 2, since: str = "") -> list[dict]:
+    """The records of one ledger, its last ``months`` monthly files, or every file from the month ``since`` (yyyy-mm)
+    on when it is given."""
     out = []
-    for f in sorted(paths.ledger_dir().glob(f"{name}-[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl"))[-months:]:
+    files = sorted(paths.ledger_dir().glob(f"{name}-[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl"))
+    files = [f for f in files if f.stem[-7:] >= since[:7]] if since else files[-months:]
+    for f in files:
         try:
             lines = f.read_text(encoding="utf-8").splitlines()
         except OSError:
@@ -97,28 +110,34 @@ def _append(name: str, recs: list[dict]) -> None:
 
 # --- what brain decision batch printed ---
 
-def remember(project: str, root: str | Path, batches: list[dict], at: str = "") -> int:
-    """Write the questions of ``batches`` (brain.batch.build's) to the asked ledger, once each; the count written."""
+def remember(project: str, root: str | Path, batches: list[dict], at: str = "", session: str | None = None) -> int:
+    """Write the questions of ``batches`` (brain.batch.build's) to the asked ledger, once each per session (the one
+    the command runs in, CLAUDE_CODE_SESSION_ID, unless ``session`` is given); the count written."""
     at = at or _now()
+    session = session_id() if session is None else session
     seen = {r.get("id") for r in read(ASKED)}
     out = []
     for b in batches:
         for ddr_id, q, e in zip(b["ids"], b["questions"], b["entries"]):
             labels = [o["label"] for o in q["options"]]
-            key = json.dumps([project, ddr_id, q["question"], q["header"], labels], ensure_ascii=False)
+            key = json.dumps([project, ddr_id, q["question"], q["header"], labels] + ([session] if session else []),
+                             ensure_ascii=False)
             rid = "aq-" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
             if rid in seen:
                 continue
             seen.add(rid)
             out.append({"v": 1, "id": rid, "at": at, "project": project, "root": str(root), "ddr": ddr_id,
                         "question": q["question"], "header": q["header"], "labels": labels,
-                        "options": [o["label"] for o in e.get("options") or []], "multi": bool(q["multiSelect"])})
+                        "options": [o["label"] for o in e.get("options") or []], "multi": bool(q["multiSelect"]),
+                        **({"session": session} if session else {})})
     _append(ASKED, out)
     return len(out)
 
 
-def match(q: dict, asked: list[dict]) -> dict | None:
-    """The printed question a question of the tool is (the latest one), None when none is, or several DDRs are."""
+def match(q: dict, asked: list[dict], session: str = "") -> dict | None:
+    """The printed question a question of the tool is (the latest one), None when none is, or several DDRs are. The
+    header-and-labels fallback looks only at the questions ``session``'s own batch printed: a question asked by hand
+    elsewhere with the same header and labels is not tied to some DDR printed weeks ago."""
     text, head = _norm(q.get("question")), q.get("header") or ""
     labels = [o.get("label") for o in q.get("options") or [] if isinstance(o, dict)]
     m = ID_SUFFIX_RE.search(text)
@@ -127,7 +146,8 @@ def match(q: dict, asked: list[dict]) -> dict | None:
     else:
         cands = [r for r in asked if _norm(r.get("question")) == text and r.get("header") == head]
         if not cands:
-            cands = [r for r in asked if r.get("header") == head and r.get("labels") == labels]
+            cands = [r for r in asked if r.get("header") == head and r.get("labels") == labels
+                     and session and r.get("session") == session]
     if len({r.get("ddr") for r in cands}) > 1:
         cands = [r for r in cands if r.get("labels") == labels]
     if not cands or len({r.get("ddr") for r in cands}) > 1:
@@ -135,46 +155,69 @@ def match(q: dict, asked: list[dict]) -> dict | None:
     return max(cands, key=lambda r: r.get("at") or "")
 
 
-def resolve(asked: dict, q: dict, raw: str) -> tuple[list[str], str]:
-    """(the DDR labels the tool's answer names, the owner's free text): a label is the tool's exactly; a multiple
-    choice is the labels joined by ', ' (a label may hold ', '), the rest of it the owner's text."""
+def unanswered(raw) -> bool:
+    """True when the tool's answer is none: empty, or its placeholder for a question the owner did not answer."""
+    if isinstance(raw, (list, tuple)):
+        return all(unanswered(r) for r in raw)
+    return raw is None or not str(raw).strip() or bool(UNANSWERED_RE.match(str(raw)))
+
+
+def resolve(asked: dict, q: dict, raw) -> tuple[list[str], str, list[str]]:
+    """(the DDR labels the tool's answer names, the owner's free text, the tool's labels that name no DDR option): a
+    label is the tool's exactly; a multiple choice is a list of labels (the tool's shape) or the labels joined by ', '
+    (a label may hold ', '), the rest of it the owner's text. A tool label the session reworded so that it names no
+    option of the DDR is ``unmapped``, never the owner's text."""
     tool = [o.get("label") for o in q.get("options") or [] if isinstance(o, dict) and o.get("label")]
     ddr_labels = asked.get("options") or []
     if tool == asked.get("labels") and len(tool) == len(ddr_labels):
         to_ddr = dict(zip(tool, ddr_labels))
     else:  # the session changed the labels: only one that is a DDR label once the mark is dropped
         to_ddr = {t: MARK_RE.sub("", t) for t in tool if MARK_RE.sub("", t) in ddr_labels}
+    lost = {t for t in tool if t not in to_ddr}
+    if isinstance(raw, (list, tuple)):
+        items = [str(r) for r in raw if not unanswered(r)]
+        picked = list(dict.fromkeys(to_ddr[r] for r in items if r in to_ddr))
+        unmapped = [r for r in items if r in lost]
+        rest = [r for r in items if r not in to_ddr and r not in lost]
+        return picked, ", ".join(rest).strip(), unmapped
     raw = str(raw)
     if raw in to_ddr:
-        return [to_ddr[raw]], ""
+        return [to_ddr[raw]], "", []
+    if raw in lost:
+        return [], "", [raw]
     if not asked.get("multi"):
-        return [], raw
-    tokens, picked, rest, i = raw.split(", "), [], [], 0
+        return [], raw, []
+    tokens, picked, rest, unmapped, i = raw.split(", "), [], [], [], 0
     while i < len(tokens):
         for j in range(len(tokens), i, -1):
-            lab = to_ddr.get(", ".join(tokens[i:j]))
-            if lab:
-                picked.append(lab)
-                i = j
-                break
+            text = ", ".join(tokens[i:j])
+            if text in to_ddr:
+                picked.append(to_ddr[text])
+            elif text in lost:
+                unmapped.append(text)
+            else:
+                continue
+            i = j
+            break
         else:
             rest.append(tokens[i])
             i += 1
-    return list(dict.fromkeys(picked)), ", ".join(rest).strip()
+    return list(dict.fromkeys(picked)), ", ".join(rest).strip(), unmapped
 
 
 def capture(q: dict, raw, notes, *, at: str, session: str, tool_use_id: str, index: int,
             asked: list[dict] | None = None) -> dict | None:
     """The capture hook's half: the answer to a question ``brain decision batch`` printed, written to the answer
     ledger (once per tool call); None when the question is not one of them (an ad-hoc question). An unanswered one
-    is matched and writes nothing (``{}``)."""
-    hit = match(q, read(ASKED) if asked is None else asked)
+    (empty, or the tool's placeholder when the owner sent a message instead) is matched and writes nothing (``{}``).
+    A multiple choice comes as a list of labels (the tool's shape) or as a string."""
+    hit = match(q, read(ASKED) if asked is None else asked, session)
     if hit is None:
         return None
-    if raw in (None, "", []):
+    if unanswered(raw):
         return {}
-    raw = ", ".join(map(str, raw)) if isinstance(raw, list) else str(raw)
-    choices, other = resolve(hit, q, raw)
+    choices, other, unmapped = resolve(hit, q, raw)
+    raw = ", ".join(str(r) for r in raw if not unanswered(r)) if isinstance(raw, (list, tuple)) else str(raw)
     suffix = re.sub(r"[^a-z0-9]+", "-", (tool_use_id[-10:] or at).lower()).strip("-")
     rec = {"v": 1, "id": f"ans-{at[:10]}-{suffix}-{index}", "at": at, "ddr": hit["ddr"], "project": hit["project"],
            "root": hit["root"], "session": session or "unknown", "tool_use_id": tool_use_id,
@@ -183,6 +226,8 @@ def capture(q: dict, raw, notes, *, at: str, session: str, tool_use_id: str, ind
         rec["choices"] = choices
     if other:
         rec["other"] = other
+    if unmapped:
+        rec["unmapped"] = unmapped
     if notes:
         rec["notes"] = str(notes)
     if rec["id"] not in {r.get("id") for r in read(CAPTURED)}:
@@ -224,14 +269,43 @@ def refusal(ddr_id: str, choices: list[str], other: str, env=None) -> str:
 
 # --- brain decision answer --captured ---
 
+def refused(c: dict) -> str:
+    """Why a capture is never recorded ('' when it may be): no answer, or a label that names no option."""
+    if unanswered(c.get("answer")):
+        return "not answered: the owner sent a message instead, never recorded"
+    if c.get("unmapped"):
+        return (f"the tool's label {', '.join(map(repr, c['unmapped']))} names no option of the DDR (a label the "
+                "session shortened): not recorded as free text; the owner records it from their own terminal "
+                f"(brain decision answer {c['ddr']} OPTION)")
+    return ""
+
+
 def unrecorded(session: str = "", project: str = "") -> list[dict]:
-    """The captured answers not recorded yet (one per DDR: the latest), of ``session`` and ``project`` when given."""
-    done = {r.get("id") for r in read(RECORDED)}
+    """The captured answers not recorded yet (one per DDR: the latest), of ``session`` and ``project`` when given. A
+    capture no later than one of the same DDR already recorded or retired is superseded; a question the owner did not
+    answer is returned only when its DDR has no answer captured (``--captured`` then refuses it and retires it). The
+    recorded ledger is read from the month of the oldest capture on, so that both windows match."""
+    every = read(CAPTURED)
+    by_id = {r.get("id"): r for r in every}
+    mine = [r for r in every if not session or r.get("session") == session]
+    since = min((r.get("at") or "" for r in mine), default="")[:7]
+    done: set = set()
+    high: dict[str, str] = {}
+    for r in read(RECORDED, since=since) if since else []:
+        done.add(r.get("id"))
+        at = r.get("captured_at") or (by_id.get(r.get("id")) or {}).get("at") or ""
+        if r.get("ddr") and at > high.get(r["ddr"], ""):
+            high[r["ddr"]] = at
     latest: dict[str, dict] = {}
-    for r in captured_by(session):
+    for r in mine:
         if r.get("id") in done or (project and r.get("project") != project):
             continue
-        if r.get("ddr") not in latest or (r.get("at") or "") >= (latest[r["ddr"]].get("at") or ""):
+        at = r.get("at") or ""
+        if at <= high.get(r.get("ddr"), ""):
+            continue
+        cur = latest.get(r.get("ddr"))
+        real = not unanswered(r.get("answer"))
+        if cur is None or (real, at) >= (not unanswered(cur.get("answer")), cur.get("at") or ""):
             latest[r["ddr"]] = r
     return sorted(latest.values(), key=lambda r: (r.get("at") or "", r["id"]))
 
@@ -318,8 +392,11 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
     open one PR, merge it with its retries; the captures are marked recorded once the PR is open. A DDR no longer
     pending is left (``again``: its answer replaced, a default reversed). A capture names its DDR by its full id: one
     the default branch does not hold yet (asked on a branch not merged) is left captured and said, the others are
-    recorded, and a DDR whose id merely contains it is never answered in its place."""
-    from . import decisions   # the engine (YAML), not the hook's part
+    recorded, and a DDR whose id merely contains it is never answered in its place. A capture with no answer (the
+    owner sent a message instead) or with a label that names no option is refused and retired; one older than the
+    answer the DDR holds is stale: retired, never written (``again`` included). An answer captured before a
+    low-stakes DDR's deadline replaces the default taken meanwhile (the owner answered in time)."""
+    from . import decisions, defaults  # the engine (YAML), not the hook's part
 
     if not caps:
         raise AnswersError("no captured answer to record")
@@ -331,20 +408,40 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
     _git(root, "fetch", "-q", "origin")
     base = _default_branch(root)
     _git(root, "worktree", "add", "-q", "-b", branch, str(worktree), f"origin/{base}")
-    written, skipped, missing = [], [], []
+    written, skipped, missing, retired = [], [], [], []
+
+    def retire(c: dict, why: str) -> None:
+        skipped.append(f"{c['ddr']} ({why})")
+        retired.append({"v": 1, "id": c["id"], "at": at, "ddr": c["ddr"], "captured_at": c.get("at") or "",
+                        "pr": "", "retired": why})
+
     try:
         for c in caps:
+            why = refused(c)
+            if why:
+                retire(c, why)
+                continue
             try:
                 _, ddr = decisions.find(worktree, c["ddr"], exact=True)
             except decisions.QueueError:
                 missing.append(c["ddr"])
                 continue
-            if ddr.get("status") != "pending" and not again:
-                skipped.append(f"{c['ddr']} ({ddr.get('status')})")
-                continue
+            replace = again
+            if ddr.get("status") != "pending":
+                ans, dflt = ddr.get("answer") or {}, ddr.get("default") or {}
+                if ddr.get("status") == "answered" and defaults.by_default(ddr) and dflt.get("after") and \
+                        defaults.before(c["at"], dflt["after"]):
+                    replace = True   # the owner answered before the deadline: the default taken meanwhile yields
+                elif ans.get("at") and not defaults.before(ans["at"], c["at"]):
+                    retire(c, f"answered at {ans['at']}, not before this capture: stale, retired")
+                    continue
+                elif not again:
+                    skipped.append(f"{c['ddr']} ({ddr.get('status')})")
+                    continue
             decisions.answer(worktree, c["ddr"], c.get("choices") or [], other=c.get("other") or "",
-                             notes=c.get("notes") or "", by=owner, via="ask-tool", at=c["at"], again=again)
+                             notes=c.get("notes") or "", by=owner, via="ask-tool", at=c["at"], again=replace)
             written.append(c)
+        _append(RECORDED, retired)
         if not written:
             raise AnswersError("nothing to record: " + "; ".join(
                 skipped + [f"{m} (not on {base} yet)" for m in missing]))
@@ -365,11 +462,12 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
     if p.returncode:
         raise AnswersError(f"gh pr create: {(p.stderr or p.stdout).strip()[:300]} (branch {branch} is pushed)")
     url = p.stdout.strip().splitlines()[-1] if p.stdout.strip() else ""
-    _append(RECORDED, [{"v": 1, "id": c["id"], "at": at, "ddr": c["ddr"], "pr": url, "branch": branch}
-                       for c in written])
+    _append(RECORDED, [{"v": 1, "id": c["id"], "at": at, "ddr": c["ddr"], "captured_at": c.get("at") or "",
+                        "pr": url, "branch": branch} for c in written])
     merged, log = (_merge(worktree, url, base, branch, retries, wait) if merge else (False, []))
     if merged:
         _git(root, "worktree", "remove", "--force", str(worktree), check=False)
         _git(root, "branch", "-D", branch, check=False)
     return {"pr": url, "branch": branch, "worktree": str(worktree), "recorded": [c["ddr"] for c in written],
-            "skipped": skipped, "missing": missing, "merged": merged, "log": log}
+            "skipped": skipped, "missing": missing, "retired": [r["ddr"] for r in retired], "merged": merged,
+            "log": log}

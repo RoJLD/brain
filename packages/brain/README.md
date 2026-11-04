@@ -206,12 +206,15 @@ stores declare.
 The session that asks the owner records the answers, in one PR per batch (wi-brain-answers-lane):
 
 1. `brain decision batch --json` prints the questions for Claude Code's question tool, and writes each one (its text,
-   header and labels, the DDR's id) to `<BRAIN_HOME>/ledger/asked-<month>.jsonl`.
+   header and labels, the DDR's id, the session) to `<BRAIN_HOME>/ledger/asked-<month>.jsonl`.
 2. When the tool returns, the capture hook ties each answer to the DDR its question came from (the id a repeated
-   question carries, else its text and header, else its header and labels) and writes it to
-   `ledger/answer-<month>.jsonl`: the answer exactly as the tool returned it, the labels it names (the DDR's own,
-   `(Recommandé)` dropped; a multiple choice is the labels joined by `, `, the rest of it the owner's text) and the
-   owner's notes. A question the session wrote by hand stays an ad-hoc DDR of the capture.
+   question carries, else its text and header, else its header and labels among the questions this session's batch
+   printed) and writes it to `ledger/answer-<month>.jsonl`: the answer exactly as the tool returned it, the labels it
+   names (the DDR's own, `(Recommandé)` dropped; a multiple choice is the tool's list of labels, or the labels joined
+   by `, `, the rest of it the owner's text) and the owner's notes. A label the session shortened in the tool, which
+   names no option, is kept `unmapped`, never the owner's text. A question the owner did not answer (they sent a
+   message instead: the tool's « [User did not answer this question… » placeholder) is no answer: nothing is
+   captured. A question the session wrote by hand stays an ad-hoc DDR of the capture (pending when unanswered).
 3. `brain decision answer --captured` records this session's captured answers: a worktree of the project's main
    checkout on `claude/answers-<stamp>` from origin's default branch, the answers written, `brain refresh --offline`,
    one commit, one PR (`gh`), then merged; when the merge is refused because main moved, it merges main, takes main's
@@ -219,6 +222,11 @@ The session that asks the owner records the answers, in one PR per batch (wi-bra
    the PR). A record that conflicts stops it. A decision answered meanwhile is left (`--again` replaces it). A
    capture names its DDR by its full id: one the default branch does not hold yet (asked on a branch not merged)
    is left captured and said, the others recorded; a DDR whose id merely contains it is never answered instead.
+   A capture with no answer (an older engine's placeholder rows) or an `unmapped` label is refused, listed and
+   retired (`ledger/answer-recorded-<month>.jsonl`, `retired`); so is a stale one, older than the answer the DDR
+   already holds (answered by hand or by `--batch` meanwhile), `--again` included. An older capture of a DDR whose
+   later capture was recorded never comes back. An answer captured before a low-stakes deadline replaces the
+   default another branch's refresh took meanwhile.
 
 `--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
 label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file
@@ -234,10 +242,14 @@ anything.
 provisionally (wi-brain-decision-default): the DDR gets `default: {option, after}`, `after` 24 h from the ask. The
 owner may answer it as any other; without an answer, `brain refresh` (or `brain decision defaulted --apply`) records
 the recommendation as its answer, `by: default`, `via: default`, at the deadline, and the hooks announce it with « by
-default ». The mark is refused, at the ask and by `brain check`, on a decision whose text names money, keys,
-visibility, publication, accounts, arming, rules or scheduled tasks (`brain.defaults.REFUSED`, by words: a false alarm
-only keeps the decision with the owner). `brain decision defaulted` is the owner's review list (the defaults to
-review, the provisional ones, the reversed ones; `--seen` marks them read, from the owner's terminal only), with a
+default »; a DDR whose answer the question tool captured on this machine before the deadline stays pending for
+`brain decision answer --captured`. The mark is refused, at the ask and by `brain check`, on a decision whose text
+(the recommendation's why and the linked ids included) names money, keys, visibility, publication, accounts, arming,
+rules or scheduled tasks (`brain.defaults.REFUSED`, by words, inside `-`/`_` compounds too, and amounts such as `40€`
+or `$50`: a false alarm only keeps the decision with the owner; `brain check` applies it to pending DDRs, never to one already answered). A stamp without a zone is read as UTC. `brain
+decision defaulted` is the owner's review list (the defaults to review, the provisional ones, the reversed ones:
+answered otherwise than the default after the deadline; `--seen` marks them read, from the owner's terminal only,
+and checks every id before it writes), with a
 line in the morning batch (`brain decision batch --zen`) and in the cockpit's queue panel (`brain tui`); any default is reversed with `brain decision answer ID
 <option> --again`.
 
