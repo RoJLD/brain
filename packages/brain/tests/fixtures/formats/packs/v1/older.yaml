@@ -1,0 +1,8 @@
+v: 1
+marketplace:
+  owner:
+    name: Ada
+packs:
+  core:
+    core: true
+    hooks: true

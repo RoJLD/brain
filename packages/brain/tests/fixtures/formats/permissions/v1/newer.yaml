@@ -1,0 +1,6 @@
+# permissions.yaml with a newer brain's additive keys: a section, a profile key, and a rule key.
+v: 1
+schedules: {nightly: {title: the nightly run}}
+profiles: {lite: {title: a light profile, colour: blue}}
+rules:
+  - {deny: "Bash(gh secret set *)", why: "only the owner sets a secret", hours: "9-18"}

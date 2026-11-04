@@ -22,6 +22,8 @@ def brain_home(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_SELFTIME", "0")  # the engine's own events: only test_selftime turns them on
     monkeypatch.delenv("BRAIN_HOOK_T0", raising=False)
     monkeypatch.setenv("BRAIN_NOTIFY", "off")  # no test sends a real notification (test_notify fakes the transports)
+    # the checks read strictly, as in CI, whether or not the suite runs there; the tolerant tests set BRAIN_STRICT=0
+    monkeypatch.setenv("BRAIN_STRICT", "1")
     # no test reads the owner's permissions.yaml unless it says so: the never-grantable categories are the engine's
     monkeypatch.setenv("BRAIN_PERMISSIONS", str(tmp_path / "no-permissions.yaml"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))  # no test reads the owner's transcripts

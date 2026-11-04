@@ -384,9 +384,13 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
         from . import projects
         nodes = [GLOBAL, *(p.name for p in projects.load(src.root).values())]
     known = set(nodes) | {GLOBAL}
+    from . import schema
+    refused = schema.newer(PACKS, src.data.get("v"))
+    if refused:          # a newer brain's packs: refused whole, never rendered half understood
+        return errors + [refused]
     for key in src.data:
         if key not in ("v", "marketplace", "pointers", "packs"):
-            errors.append(f"{PACKS}: unknown key {key!r}")
+            errors += schema.tolerate(f"{PACKS}: unknown key {key!r}")
     if not src.packs:
         errors.append(f"{PACKS}: no packs")
     cores = [p.id for p in src.packs if p.core]

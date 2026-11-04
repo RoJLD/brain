@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from brain import cli, permissions, queue
+from brain import __version__, cli, permissions, queue
 
 INSTALLER = Path(__file__).resolve().parents[1] / "installer" / "install.ps1"
 ENGINE = ("# header: what this file is\n\n# brain up: start the stacks (Ada, 2026-11-01)\nBash(brain up)\n"
@@ -260,7 +260,7 @@ def test_ask_and_deny_are_fine_in_a_never_category_and_the_engine_is_checked_too
 
 
 def test_the_file_is_checked(tmp_path, monkeypatch):
-    head = ("v: 2\ncolour: blue\nprofiles: {lite: {title: lite}}\nmachines: {BOX1: {title: x, profile: full}}\n"
+    head = ("v: 0\ncolour: blue\nprofiles: {lite: {title: lite}}\nmachines: {BOX1: {title: x, profile: full}}\n"
             "tenants: {a: {title: a, projects: [mine]}, b: {title: b, projects: [mine, ghost]}}\n"
             "sessions: {s1: {title: s, parent: s2}, s2: {title: s, parent: s1}, s3: {title: s, parent: none}}\n"
             "machines_note: 1\n")
@@ -277,6 +277,29 @@ def test_the_file_is_checked(tmp_path, monkeypatch):
     (root / permissions.FILE).write_text("v: 1\nrules:\n  - {allow: \"Bash(a)\", " + WHY + "}\nmachines: {}\n",
                                          encoding="utf-8")
     assert "rules is the file's last key (brain permissions grant appends to it)" in "\n".join(permissions.check())
+
+
+def test_a_newer_hierarchy_is_refused_and_a_newer_key_is_read(tmp_path, monkeypatch, capsys):
+    """wi-brain-tolerant-reader: a higher v is refused whole ("brain update"); outside CI an unknown key is a note,
+    and an allow rule that carries one is left out (the key may narrow it), a deny rule kept."""
+    root = _brain(tmp_path, monkeypatch, "  - {allow: \"Bash(a)\", " + WHY + "}\n", head="v: 2\nfuture: {}\n")
+    errors = permissions.check()
+    assert errors == [f"{permissions.FILE}: v2 is written by brain > {__version__}, which reads v1: brain update"]
+    (root / permissions.FILE).write_text(
+        "v: 1\nfuture: {x: 1}\nrules:\n  - {allow: \"Bash(a)\", only_on: BOX2, " + WHY + "}\n"
+        "  - {deny: \"Bash(b)\", only_on: BOX2, " + WHY + "}\n", encoding="utf-8")
+    assert sorted(permissions.check()) == [
+        f"{permissions.FILE} rules[0]: unknown key(s) only_on (known: {', '.join(sorted(permissions.RULE_KEYS))})",
+        f"{permissions.FILE} rules[1]: unknown key(s) only_on (known: {', '.join(sorted(permissions.RULE_KEYS))})",
+        f"{permissions.FILE}: unknown key(s) future (known: {', '.join(permissions.SECTIONS)})"]
+    monkeypatch.setenv("BRAIN_STRICT", "0")
+    capsys.readouterr()
+    assert permissions.check() == []
+    err = capsys.readouterr().err
+    assert "unknown key(s) future" in err and "rules[0]: allow rule left out" in err
+    texts = {(r.verdict, r.text) for r in permissions.load().rules}
+    assert ("deny", "Bash(b)") in texts and ("allow", "Bash(a)") not in texts
+    assert permissions.load().data["future"] == {"x": 1}
 
 
 def test_no_file_runs_on_allow_rules_alone(tmp_path, monkeypatch):

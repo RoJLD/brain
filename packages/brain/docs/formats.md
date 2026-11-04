@@ -1,0 +1,69 @@
+# Formats and versions: tolerant readers, strict writers
+
+A brain's local data must survive an upgrade of the engine and a rollback to the previous one: a newer engine reads
+what an older one wrote, and an older engine reads what a newer one wrote, or refuses it cleanly, never losing it.
+This page says how each format the engine reads carries its version, what the engine does with a field or a key it
+does not know, and what it does with a version above its own.
+
+## The rule
+
+- **A version per format.** `v` is an integer, one per format. An additive change (a new optional field or key)
+  keeps `v`; a rename, a removal or a change of meaning bumps it and ships a migration.
+- **Read mode, tolerant.** A field or a key the engine does not know is a newer brain's additive one: it is reported
+  (a warning, or a `brain: note:` line on stderr) and **kept**, never dropped. A rewrite keeps it too, so a round trip
+  through an older engine loses nothing.
+- **Strict mode.** What the engine writes is valid under its schema, an unknown field included as an error; the
+  checks in CI are strict too, since the engine there is the pin.
+- **A higher `v` is refused, in both modes**, with the same message:
+  `<file>: v2 is written by brain > 0.2.5, which reads v1: brain update`. Its other fields are not judged (their
+  meaning may have changed), and a record a newer brain wrote is never overwritten.
+
+## Which mode a check reads in
+
+`brain check`, `brain record check`, `brain config --check`, `brain permissions check` and the checks of
+`projects.yaml` and `packs.yaml` pick their mode from the environment (`brain.schema.mode`):
+
+| Environment | Mode |
+|---|---|
+| `BRAIN_STRICT=1` | strict |
+| `BRAIN_STRICT=0` | read (an older engine reading a newer one's data, in CI too: the rollback job) |
+| `CI` set (GitHub Actions sets `CI=true`) | strict |
+| otherwise (a machine) | read |
+
+Writing is always strict. The engine's test suite runs strict (`tests/conftest.py` sets `BRAIN_STRICT=1`); the
+tolerant tests set `BRAIN_STRICT=0`.
+
+## The formats
+
+| Format | Where | Version | Unknown field or key (read mode) | Higher `v` |
+|---|---|---|---|---|
+| DDR | `records/ddr/<id>.yaml` | `v` (`ddr.schema.json`) | a warning; `brain` rewrites keep it | refused; never overwritten |
+| SR | `records/sr/<yyyy-mm>/<id>.yaml` | `v` (`sr.schema.json`) | a warning; rewrites keep it | refused; never overwritten |
+| AR | `records/ar/<yyyy-mm>.jsonl`, one line each | `v` per line (`ar.schema.json`) | a warning; the line is never rewritten | the line is skipped and counted (a warning; an error in strict mode) |
+| event | the ledger's `events` and ops error lines | `v` per line (`event.schema.json`) | reported by `brain.schema.validate` | refused |
+| config.json | the brain's root | `v` (`config.schema.json`) | a note on stderr; the file is kept as written | refused |
+| permissions.yaml | the brain's root | `v` | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
+| packs.yaml | `source/packs.yaml` | `v` | a note | refused |
+| template.yaml | a template's folder | `engine:` range | a note (in CI: refused) | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |
+| projects.yaml | the brain's root | none yet | a project key (`KEYS`) or a `repos:` key (`REPO_KEYS`): a note, kept | - |
+
+AR lines are parsed one by one (`brain.records.parse_ar`): a line that is not a JSON object (a conflict marker, a
+truncated write) or that its schema refuses is an error of `brain record check`; a line a newer brain wrote (a higher
+`v`, a kind this engine does not know) is skipped and counted. Neither stops `brain sync`: the graph is built from the
+other lines, and a note says how many were left out.
+
+## The validator's keywords
+
+`brain.schema` validates with the standard library only, so the capture hooks can validate what they write. It
+implements the subset of JSON Schema 2020-12 the schemas use: `type`, `const`, `enum`, `required`, `properties`,
+`additionalProperties`, `items`, `minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, `pattern`,
+`format` (date, date-time), `$ref` to `#/$defs`, `allOf`, `if`/`then`. A schema that uses any other keyword is refused
+when it is loaded, and a test fails on it (`tests/test_formats_compat.py`): a validator in another language (ajv,
+jsonschema) enforces the same contract, never a stricter one.
+
+## Fixtures
+
+`tests/fixtures/formats/<format>/v<N>/` holds, per format, an `older` file (as brain 0.2.4 wrote it) and a `newer`
+one (a newer brain's additive keys under the same `v`). `tests/test_formats_compat.py` reads both, writes the records
+back through the engine and compares them, field for field (AR lines byte for byte), then checks the strict mode and
+the refusal of a higher `v`. A new format, or a new version of one, adds its pair.

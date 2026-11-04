@@ -57,7 +57,7 @@ from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
 
-from . import __version__, classes, config, graph, neutral, paths, render, vault
+from . import __version__, classes, config, graph, neutral, paths, render, schema, vault
 
 ENGINE_REPO = "RoJLD/brain"   # where this package is published: config.json engine.repo
 TEMPLATES = files(__package__) / "templates"
@@ -144,19 +144,21 @@ def load_template(spec: str = DEFAULT_TEMPLATE) -> Template:
         raise InitError(f"--template {spec}: {MANIFEST} is not readable YAML ({exc})") from exc
     if not isinstance(data, dict):
         raise InitError(f"--template {spec}: {MANIFEST} is a mapping")
+    # the engine range first: a newer template says "needs brain >=X", not "unknown key(s)" (docs/formats.md)
+    engine = str(data.get("engine") or "")
+    if not engine_fits(engine):
+        raise InitError(f"--template {spec}: it needs brain {engine}, this is {__version__} (install the engine at a "
+                        "tag that fits: brain update)")
     unknown = set(data) - TEMPLATE_KEYS
-    if unknown:
-        raise InitError(f"--template {spec}: {MANIFEST}: unknown key(s) {', '.join(sorted(unknown))} (known: "
-                        f"{', '.join(sorted(TEMPLATE_KEYS))})")
+    if unknown:   # a template within this engine's range: a newer key is noted in read mode, refused in CI
+        for message in schema.tolerate(f"--template {spec}: {MANIFEST}: unknown key(s) {', '.join(sorted(unknown))} "
+                                       f"(known: {', '.join(sorted(TEMPLATE_KEYS))})"):
+            raise InitError(message)
     name, version, fs = data.get("name"), data.get("version"), data.get("files")
     if not (isinstance(name, str) and NAME_RE.fullmatch(name)):
         raise InitError(f"--template {spec}: {MANIFEST}: name is lower case letters, digits, '.', '_' and '-'")
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         raise InitError(f"--template {spec}: {MANIFEST}: version is a whole number, 1 or more")
-    engine = str(data.get("engine") or "")
-    if not engine_fits(engine):
-        raise InitError(f"--template {spec}: it needs brain {engine}, this is {__version__} (install the engine at a "
-                        "tag that fits)")
     if not isinstance(fs, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in fs.items()):
         raise InitError(f"--template {spec}: {MANIFEST}: files maps the brain's path to the template's file")
     for rel, source in fs.items():

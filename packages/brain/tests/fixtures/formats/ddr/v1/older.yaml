@@ -1,0 +1,20 @@
+# A DDR as brain 0.2.4 wrote it: no host_id or machine stamps.
+v: 1
+id: ddr-2026-10-30-command-shape
+title: Command shape
+question: Which?
+options:
+- label: brain
+- label: atlas
+recommendation:
+  option: brain
+  why: one
+multi_select: false
+status: pending
+asked:
+  at: '2026-10-30T10:00:00Z'
+  by: aaaabbbb-1111-2222-3333-444455556666
+  via: spec
+links:
+  items:
+  - wi-one

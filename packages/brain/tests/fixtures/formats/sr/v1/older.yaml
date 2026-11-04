@@ -1,0 +1,11 @@
+# An SR as brain 0.2.4 wrote it: before host_id, name, parent, children and role.
+v: 1
+id: sr-2026-10-30-aaaabbbb
+tool: claude-code
+session_id: aaaabbbb-1111-2222-3333-444455556666
+status: closed
+start: '2026-10-30T10:00:00Z'
+end: '2026-10-30T11:00:00Z'
+tokens:
+  messages: 3
+  output: 120
