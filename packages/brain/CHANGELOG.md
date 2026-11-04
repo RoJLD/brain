@@ -4,6 +4,30 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **Tolerant readers, strict writers** (wi-brain-tolerant-reader, COMPAT-1's gate; `docs/formats.md`). The schema
+  validator gains two modes. Read mode keeps a field it does not know (a newer brain's additive one) and reports it;
+  strict mode, for every write and for the checks in CI (`CI` set, or `BRAIN_STRICT=1`), refuses it. A `v` above the
+  engine's is refused in both: « `<file>`: v2 is written by brain > 0.2.5, which reads v1: brain update ». It covers
+  the five schemas (DDR, SR, AR, event, config.json), `permissions.yaml` (an allow rule with an unknown key is left
+  out in read mode, since the key may narrow it), `packs.yaml`, the template manifest (its `engine:` range is checked
+  before its keys, so a newer template says « it needs brain >=X ») and `projects.yaml` (`KEYS`, `REPO_KEYS`). A DDR
+  or SR rewrite, even one rebuilt afresh (`--replace`, `brain record backfill --update`), puts back the unknown fields
+  of the file it replaces and never replaces one a newer brain wrote (backfill counts it `sr-refused`). AR lines
+  are parsed one by one: a broken line is an error of `brain record check`, a newer brain's line (a higher `v`, an
+  unknown kind) is skipped and counted, and neither stops `brain sync`. Fixtures under `tests/fixtures/formats/`: an
+  older and a newer file per format, round-tripped without loss.
+- **The validator enforces `maximum`** (wi-brain-schema-keywords). `config.json` `usage.guard` `critical: 950` no
+  longer passes and silently turns the governor's refusal off. `brain.schema` refuses a schema that uses a keyword it
+  does not implement (or `if`/`then` outside an `allOf` entry of their own, `items` as a list), and a test fails on
+  one.
+
+### Upgrade
+
+- Nothing to run. Outside CI, a check that used to fail on an unknown key in `config.json`, `permissions.yaml`,
+  `packs.yaml`, `projects.yaml` or a record now prints a note instead; CI (`CI` set) still fails on it. A `v` above 1
+  in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
+  update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
+
 - **Git's identity before the first commit** (wi-brain-install-git-identity). A fresh Git for Windows has no
   `user.name` nor `user.email`, and the first commit of `docs/install.md` stopped at « Author identity unknown ».
   `brain init --apply` now asks git, as a commit would (`git var GIT_AUTHOR_IDENT` and `GIT_COMMITTER_IDENT`, from

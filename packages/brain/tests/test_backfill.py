@@ -124,3 +124,25 @@ def test_backfill_dry_run_and_window(store, machine, capsys):
     assert not (root / "records").exists() or not list((root / "records").rglob("*.*"))
     report = backfill.run(root, since="2026-11-01", now=NOW)
     assert "2026-10" not in report and report["2026-11"]["sr-live"] == 1
+
+
+def test_backfill_keeps_a_newer_brains_data(store, machine):
+    """wi-brain-tolerant-reader: an update keeps a newer brain's SR fields; a newer SR is never replaced, and an AR id
+    a newer brain wrote is not appended again (its line is skipped by the reader, not by the dedup)."""
+    root = _root(store)
+    backfill.run(root, now=NOW, ledger=False)
+    f = root / "records" / "sr" / "2026-10" / "sr-2026-10-30-aaaabbbb.yaml"
+    sr = yaml.safe_load(f.read_text("utf-8"))
+    f.write_text(yaml.safe_dump({**sr, "end": "2026-10-30T10:10:00.000Z", "energy_wh": 1.5}), encoding="utf-8")
+    assert backfill.run(root, now=NOW, ledger=False, update=True)["2026-10"]["sr-updated"] == 1
+    new = yaml.safe_load(f.read_text("utf-8"))
+    assert new["energy_wh"] == 1.5 and new["end"] == "2026-10-30T10:22:00.000Z"
+    f.write_text(yaml.safe_dump({**new, "v": 2}), encoding="utf-8")
+    before = f.read_bytes()
+    assert backfill.run(root, now=NOW, ledger=False, update=True)["2026-10"]["sr-refused"] == 1
+    assert f.read_bytes() == before
+    ar_file = sorted((root / "records" / "ar").glob("*.jsonl"))[0]
+    lines = ar_file.read_text("utf-8").splitlines()
+    ar_file.write_text("\n".join([lines[0].replace('"v":1', '"v":2', 1)] + lines[1:]) + "\n", encoding="utf-8")
+    backfill.run(root, now=NOW, ledger=False)
+    assert len(ar_file.read_text("utf-8").splitlines()) == len(lines)

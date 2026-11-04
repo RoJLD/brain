@@ -1,15 +1,24 @@
-"""Validate DDR, SR and AR records and the ledger's events against their JSON Schemas (schemas/*.schema.json), then
-the rules a schema cannot say (the recommended option first, answers among the options...).
+"""Validate DDR, SR and AR records, the ledger's events and config.json against their JSON Schemas
+(schemas/*.schema.json), then the rules a schema cannot say (the recommended option first, answers among the options...).
 
 The validator covers the subset of JSON Schema 2020-12 the schemas use, with the standard library only, so the
-capture hooks and brain.timing can validate what they write: type, const, enum, required, properties, additionalProperties, items,
-minItems, maxItems, minLength, maxLength, minimum, pattern, format (date, date-time), $ref to #/$defs, allOf, if/then.
+capture hooks and brain.timing can validate what they write: type, const, enum, required, properties,
+additionalProperties, items, minItems, maxItems, minLength, maxLength, minimum, maximum, pattern, format (date,
+date-time), $ref to #/$defs, allOf, if/then. :func:`load` refuses a schema that uses any other keyword
+(:data:`KEYWORDS`), so every validator of the contract, in any language, enforces the same rules.
+
+Two modes (docs/formats.md; spec-brain-data-compat N3, N4): :data:`STRICT` for what the engine writes and for the CI at
+the pin, where an unknown field is an error; :data:`READ` for what it reads, where an unknown field is reported and
+kept, never dropped (a newer brain's additive field: a lossless round trip). In both, a ``v`` above the one this engine
+knows is refused: "written by brain > X: brain update". :func:`mode` picks the mode of a check.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -18,6 +27,16 @@ KINDS = ("ddr", "sr", "ar")
 SCHEMAS = KINDS + ("event", "config")  # event: the execution-time ledger and the ops error events (brain.timing);
 # config: a personal brain's config.json (brain.config)
 SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
+
+STRICT, READ = "strict", "read"
+# The keywords the validator enforces, then the annotations it reads without enforcing anything.
+KEYWORDS = frozenset({"type", "const", "enum", "required", "properties", "additionalProperties", "items", "minItems",
+                      "maxItems", "minLength", "maxLength", "minimum", "maximum", "pattern", "format", "$ref", "allOf",
+                      "if", "then"})
+ANNOTATIONS = frozenset({"$schema", "$id", "$defs", "$comment", "title", "description", "default", "examples"})
+_SUBSCHEMA_MAPS = ("properties", "$defs")      # {name: schema}: the names are not keywords
+_SUBSCHEMAS = ("additionalProperties", "items", "if", "then")
+_NOTED: set[str] = set()                        # the notes printed by this process (brain check may read a file twice)
 
 _TYPES = {
     "object": dict,
@@ -28,11 +47,103 @@ _TYPES = {
 }
 
 
+def keywords(schema, out: set[str] | None = None) -> set[str]:
+    """Every keyword ``schema`` uses, its subschemas' included (a property's name is not a keyword)."""
+    out = set() if out is None else out
+    if not isinstance(schema, dict):
+        return out
+    for key, sub in schema.items():
+        out.add(key)
+        if key in _SUBSCHEMA_MAPS and isinstance(sub, dict):
+            for s in sub.values():
+                keywords(s, out)
+        elif key in _SUBSCHEMAS:
+            keywords(sub, out)
+        elif key == "allOf" and isinstance(sub, list):
+            for s in sub:
+                keywords(s, out)
+    return out
+
+
+def _misplaced(schema, inside_allof: bool = False, out: list[str] | None = None) -> list[str]:
+    """The shapes the validator would half enforce: if/then outside an allOf entry or beside other keywords there (only
+    the pair is read), ``items`` as a list (only a schema is read)."""
+    out = [] if out is None else out
+    if not isinstance(schema, dict):
+        return out
+    if ("if" in schema or "then" in schema) and (not inside_allof or set(schema) - {"if", "then", "$comment"}):
+        out.append("if/then outside an allOf entry of their own")
+    if isinstance(schema.get("items"), list):
+        out.append("items as a list")
+    for key, sub in schema.items():
+        if key in _SUBSCHEMA_MAPS and isinstance(sub, dict):
+            for s in sub.values():
+                _misplaced(s, False, out)
+        elif key in _SUBSCHEMAS:
+            _misplaced(sub, False, out)
+        elif key == "allOf" and isinstance(sub, list):
+            for s in sub:
+                _misplaced(s, True, out)
+    return out
+
+
+def unsupported(schema: dict) -> list[str]:
+    """The keywords of ``schema`` the validator neither enforces nor reads as an annotation, and the shapes it would
+    enforce only in part (:func:`_misplaced`)."""
+    return sorted(keywords(schema) - KEYWORDS - ANNOTATIONS) + sorted(set(_misplaced(schema)))
+
+
 @lru_cache(maxsize=None)
 def load(kind: str) -> dict:
     if kind not in SCHEMAS:
         raise ValueError(f"unknown record kind {kind!r} (expected one of {', '.join(SCHEMAS)})")
-    return json.loads((SCHEMA_DIR / f"{kind}.schema.json").read_text(encoding="utf-8"))
+    data = json.loads((SCHEMA_DIR / f"{kind}.schema.json").read_text(encoding="utf-8"))
+    missing = unsupported(data)
+    if missing:   # a rule the validator would skip silently: refuse the schema rather than enforce half of it
+        raise ValueError(f"{kind}.schema.json uses {', '.join(missing)}, which brain.schema does not implement")
+    return data
+
+
+def mode() -> str:
+    """The mode a check reads files in: :data:`STRICT` in CI (``CI`` set, as GitHub Actions does: the engine there is
+    the pin) or with ``BRAIN_STRICT=1``; :data:`READ` elsewhere, or with ``BRAIN_STRICT=0`` (an older engine reading a
+    newer one's data: a rollback)."""
+    forced = os.environ.get("BRAIN_STRICT", "").strip().lower()
+    if forced:
+        return READ if forced in _OFF else STRICT
+    return STRICT if os.environ.get("CI", "").strip().lower() not in ("", *_OFF) else READ
+
+
+_OFF = ("0", "false", "no", "off", "n", "f")
+
+
+def known_v(kind: str) -> int:
+    """The ``v`` this engine reads and writes for ``kind``."""
+    return int(load(kind)["properties"]["v"]["const"])
+
+
+def newer(where: str, v, known: int = 1) -> str:
+    """The refusal of a file or a line whose ``v`` is above ``known``; "" otherwise (an equal or older ``v`` is read:
+    an older one is its schema's, or its migration's, to judge)."""
+    if isinstance(v, int) and not isinstance(v, bool) and v > known:
+        from . import __version__
+        return f"{where}: v{v} is written by brain > {__version__}, which reads v{known}: brain update"
+    return ""
+
+
+def tolerate(message: str, strict: bool | None = None, notes: list[str] | None = None) -> list[str]:
+    """An unknown key in an owner-edited file: ``[message]`` (an error) in strict mode; in read mode ``[]``, the key
+    being a newer brain's, kept and not refused: the note goes to ``notes`` when a loader collects them (a hook prints
+    nothing), else to stderr. ``strict`` overrides :func:`mode`."""
+    if (mode() == STRICT) if strict is None else strict:
+        return [message]
+    note = f"{message} (kept: a newer brain's key? strict in CI)"
+    if notes is not None:
+        notes.append(note)
+    elif note not in _NOTED:
+        _NOTED.add(note)
+        print(f"brain: note: {note}", file=sys.stderr)
+    return []
 
 
 def _is_type(value, t: str) -> bool:
@@ -65,9 +176,12 @@ def _resolve(ref: str, root: dict) -> dict:
     return node
 
 
-def _validate(value, schema: dict, root: dict, path: str, errors: list[str]) -> None:
+def _validate(value, schema: dict, root: dict, path: str, errors: list[str],
+              unknown: list[tuple[str, str]] | None = None) -> None:
+    """Append to ``errors`` what ``value`` breaks. An unknown field (additionalProperties: false) goes to ``unknown``
+    as (path, key) when a list is given, else to ``errors``."""
     if "$ref" in schema:
-        _validate(value, _resolve(schema["$ref"], root), root, path, errors)
+        _validate(value, _resolve(schema["$ref"], root), root, path, errors, unknown)
     if "type" in schema:
         types = schema["type"] if isinstance(schema["type"], list) else [schema["type"]]
         if not any(_is_type(value, t) for t in types):
@@ -88,6 +202,8 @@ def _validate(value, schema: dict, root: dict, path: str, errors: list[str]) -> 
             errors.append(f"{path}: {value!r} is not a {schema['format']}")
     if _is_type(value, "number") and "minimum" in schema and value < schema["minimum"]:
         errors.append(f"{path}: below {schema['minimum']}")
+    if _is_type(value, "number") and "maximum" in schema and value > schema["maximum"]:
+        errors.append(f"{path}: above {schema['maximum']}")
     if isinstance(value, list):
         if "minItems" in schema and len(value) < schema["minItems"]:
             errors.append(f"{path}: fewer than {schema['minItems']} items")
@@ -95,7 +211,7 @@ def _validate(value, schema: dict, root: dict, path: str, errors: list[str]) -> 
             errors.append(f"{path}: more than {schema['maxItems']} items")
         if "items" in schema:
             for i, v in enumerate(value):
-                _validate(v, schema["items"], root, f"{path}[{i}]", errors)
+                _validate(v, schema["items"], root, f"{path}[{i}]", errors, unknown)
     if isinstance(value, dict):
         for key in schema.get("required", []):
             if key not in value:
@@ -104,26 +220,58 @@ def _validate(value, schema: dict, root: dict, path: str, errors: list[str]) -> 
         extra = schema.get("additionalProperties", True)
         for key, v in value.items():
             if key in props:
-                _validate(v, props[key], root, f"{path}.{key}", errors)
+                _validate(v, props[key], root, f"{path}.{key}", errors, unknown)
             elif extra is False:
-                errors.append(f"{path}: unexpected field {key!r}")
+                if unknown is None:
+                    errors.append(f"{path}: unexpected field {key!r}")
+                elif (path, key) not in unknown:
+                    unknown.append((path, key))
             elif isinstance(extra, dict):
-                _validate(v, extra, root, f"{path}.{key}", errors)
+                _validate(v, extra, root, f"{path}.{key}", errors, unknown)
     for sub in schema.get("allOf", []):
         if "if" in sub:
             probe: list[str] = []
-            _validate(value, sub["if"], root, path, probe)
+            _validate(value, sub["if"], root, path, probe, None if unknown is None else [])
             if not probe and "then" in sub:
-                _validate(value, sub["then"], root, path, errors)
+                _validate(value, sub["then"], root, path, errors, unknown)
         else:
-            _validate(value, sub, root, path, errors)
+            _validate(value, sub, root, path, errors, unknown)
 
 
-def schema_errors(kind: str, record: dict) -> list[str]:
-    errors: list[str] = []
+def field_path(path: str, key: str) -> str:
+    """The dotted path of a field, list positions kept (``ddr.options[0].note``): what a rewrite carries."""
+    return f"{path}.{key}"
+
+
+def unknown_fields(kind: str, record) -> set[str]:
+    """The fields of ``record`` its schema does not know (:func:`field_path`): a newer brain's, which a rewrite keeps."""
+    if not isinstance(record, dict):
+        return set()
+    schema, unknown = load(kind), []
+    _validate(record, schema, schema, kind, [], unknown)
+    return {field_path(p, k) for p, k in unknown}
+
+
+def validate(kind: str, record: dict, mode: str = STRICT,
+             carry: set[str] | frozenset[str] = frozenset()) -> tuple[list[str], list[str]]:
+    """(errors, unknown fields) of ``record`` against its schema. A ``v`` above the known one is the only error (its
+    meaning may have changed). :data:`STRICT`: an unknown field is an error, except those in ``carry`` (the fields a
+    rewrite keeps from the file it replaces); :data:`READ`: unknown fields are returned, not errors."""
     schema = load(kind)
-    _validate(record, schema, schema, kind, errors)
-    return errors
+    refused = newer(kind, record.get("v") if isinstance(record, dict) else None, known_v(kind))
+    if refused:
+        return [refused], []
+    errors: list[str] = []
+    unknown: list[tuple[str, str]] = []
+    _validate(record, schema, schema, kind, errors, unknown)
+    if mode == READ:
+        return errors, [f"{p}: unknown field {k!r}" for p, k in unknown]
+    return errors + [f"{p}: unexpected field {k!r}" for p, k in unknown if field_path(p, k) not in carry], []
+
+
+def schema_errors(kind: str, record: dict, mode: str = STRICT) -> list[str]:
+    """The errors of :func:`validate` (unknown fields included in :data:`STRICT`)."""
+    return validate(kind, record, mode)[0]
 
 
 def _ddr_rules(r: dict) -> tuple[list[str], list[str]]:
@@ -187,10 +335,14 @@ def _event_rules(r: dict) -> tuple[list[str], list[str]]:
 _RULES = {"ddr": _ddr_rules, "sr": _sr_rules, "ar": _ar_rules, "event": _event_rules}
 
 
-def check(kind: str, record: dict) -> tuple[list[str], list[str]]:
-    """(errors, warnings) for one record."""
+def check(kind: str, record: dict, mode: str = STRICT,
+          carry: set[str] | frozenset[str] = frozenset()) -> tuple[list[str], list[str]]:
+    """(errors, warnings) for one record, in :func:`validate`'s ``mode`` (in :data:`READ` an unknown field is a
+    warning, the record kept as it is)."""
     if not isinstance(record, dict):
         return [f"{kind}: a record is a mapping, got {type(record).__name__}"], []
-    errors = schema_errors(kind, record)
-    rule_errors, warnings = _RULES[kind](record)
-    return errors + rule_errors, warnings
+    errors, unknown = validate(kind, record, mode, carry)
+    if newer(kind, record.get("v"), known_v(kind)):
+        return errors, []          # a newer format: its rules may have changed too
+    rule_errors, warnings = _RULES.get(kind, lambda r: ([], []))(record)
+    return errors + rule_errors, warnings + [f"{u} (kept: a newer brain's field? strict in CI)" for u in unknown]

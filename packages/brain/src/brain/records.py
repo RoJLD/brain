@@ -6,12 +6,21 @@ generated graph nodes and edges (``nodes/_generated_records.yaml``, ``edges/_gen
 - ``raised_by`` DDR -> Session, ``answered_in`` DDR -> ADR, ``about`` DDR -> WorkItem / Milestone / Spec,
   ``produced_by`` Action or ADR -> Session, ``touches`` Session or Action -> WorkItem / Milestone / Spec.
 An edge whose endpoint is not in the store is left out (and counted), so the store always loads.
+
+Reading is tolerant (docs/formats.md): AR lines are parsed one by one, and a line that is not a JSON object, that a newer
+brain wrote (a higher ``v``, an unknown kind) or that its schema refuses is left out and counted, never a crash; a field
+this engine does not know is kept, and a rewrite (``write(..., replace=True)``) carries it, so a round trip loses
+nothing. Writing is strict: what the engine writes is valid under its schema, and a record a newer brain wrote is
+never overwritten ("written by brain > X: brain update").
 """
 
 from __future__ import annotations
 
 import json
+import re
+import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from . import defaults, graph, paths, schema, secretscan
 
@@ -21,6 +30,17 @@ HEADERS = {
     "sr": "# SR (session record), computed from the transcript at zero token. "
           "Schema: brain/schemas/sr.schema.json\n",
 }
+
+
+AR_KINDS = tuple(schema.load("ar")["properties"]["kind"]["enum"])
+
+
+class Bad(NamedTuple):
+    """A record or an AR line :func:`load` leaves out: where, why, and whether a newer brain wrote it (a log line then
+    is skipped and counted, a warning in read mode; anything else is an error)."""
+    where: Path
+    reason: str
+    newer: bool = False
 
 
 def record_path(root: Path, kind: str, rec: dict) -> Path:
@@ -37,12 +57,13 @@ def _dump_yaml(rec: dict) -> str:
     return yaml.safe_dump(rec, sort_keys=False, allow_unicode=True, width=116, default_flow_style=False)
 
 
-def validate(kind: str, rec: dict) -> dict:
-    """The record after the secret scan; SystemExit with the errors when it is invalid."""
+def validate(kind: str, rec: dict, carry: frozenset[str] | set[str] = frozenset()) -> dict:
+    """The record after the secret scan; SystemExit with the errors when it is invalid (strict: an unknown field is
+    an error, except those in ``carry``, which a rewrite keeps from the file it replaces)."""
     clean, dropped = secretscan.clean(rec)
     if dropped:
         print(f"brain: {dropped} line(s) dropped by the secret scan in {clean.get('id')}")
-    errors, warnings = schema.check(kind, clean)
+    errors, warnings = schema.check(kind, clean, schema.STRICT, carry)
     for w in warnings:
         print(f"brain: warning: {w}")
     if errors:
@@ -50,13 +71,64 @@ def validate(kind: str, rec: dict) -> dict:
     return clean
 
 
+def _steps(kind: str, path: str) -> list[str | int]:
+    """``ddr.options[0].note`` -> ['options', 0, 'note'] (a :func:`brain.schema.field_path`)."""
+    return [int(i) if i else k for k, i in re.findall(r"\.([^.\[]+)|\[(\d+)\]", path[len(kind):])]
+
+
+def keep_unknown(kind: str, old: dict, rec: dict) -> tuple[dict, frozenset[str]]:
+    """(``rec`` with the fields of ``old`` this engine does not know put back where ``rec`` lacks them, their paths):
+    a rewrite built afresh (an SR from its transcript, a DDR from a file) keeps a newer brain's fields."""
+    carried = set()
+    for path in schema.unknown_fields(kind, old):
+        steps = _steps(kind, path)
+        src, dst = old, rec
+        for step in steps[:-1]:
+            src = src[step] if isinstance(src, (dict, list)) else None
+            ok = isinstance(dst, dict) and step in dst or isinstance(dst, list) and isinstance(step, int) \
+                and step < len(dst)
+            dst = dst[step] if ok else None
+            if not isinstance(dst, (dict, list)):
+                break
+        last = steps[-1] if steps else None
+        if isinstance(dst, dict) and isinstance(src, dict) and isinstance(last, str) and last in src:
+            dst.setdefault(last, src[last])
+            carried.add(path)
+    return rec, frozenset(carried)
+
+
 def ar_ids(root: Path) -> set[str]:
+    """The ids of every AR line, a newer brain's included (so none is appended twice); a bad line is passed over."""
     ids = set()
     for f in (root / RECORDS_DIR / "ar").glob("*.jsonl"):
-        for line in f.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                ids.add(json.loads(line)["id"])
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                rec = json.loads(line) if line.strip() else None
+            except (ValueError, RecursionError):
+                continue
+            if isinstance(rec, dict) and isinstance(rec.get("id"), str):
+                ids.add(rec["id"])
     return ids
+
+
+def parse_ar(line: str) -> tuple[dict | None, str, bool]:
+    """(the AR, why it is left out, whether a newer brain wrote it) for one line; never an exception."""
+    try:
+        rec = json.loads(line)
+    except (ValueError, RecursionError) as exc:
+        return None, f"not a JSON line ({type(exc).__name__}: {str(exc)[:80]})", False
+    if not isinstance(rec, dict):
+        return None, f"ar: a record is a mapping, got {type(rec).__name__}", False
+    refused = schema.newer("ar", rec.get("v"), schema.known_v("ar"))
+    if refused:
+        return None, f"{refused} (line skipped)", True
+    kind = rec.get("kind")
+    if isinstance(kind, str) and kind and kind not in AR_KINDS:
+        return None, f"ar.kind: {kind!r} is a newer brain's kind (line skipped): brain update", True
+    errors, _ = schema.validate("ar", rec, schema.READ)
+    if errors:
+        return None, "; ".join(errors), False
+    return rec, "", False
 
 
 def append_ars(root: Path, ars: list[dict], have: set[str] | None = None) -> list[dict]:
@@ -78,8 +150,25 @@ def append_ars(root: Path, ars: list[dict], have: set[str] | None = None) -> lis
 
 
 def write(root: Path, kind: str, rec: dict, replace: bool = False) -> Path | None:
-    """Validate and write one record; None when an AR with that id is already there."""
-    rec = validate(kind, rec)
+    """Validate and write one record; None when an AR with that id is already there. A rewrite keeps the fields of
+    the file it replaces that this engine does not know, and never replaces a record a newer brain wrote."""
+    carry: frozenset[str] = frozenset()
+    if kind != "ar" and replace:
+        try:
+            old_path = record_path(root, kind, rec)
+        except (KeyError, TypeError):
+            old_path = None
+        if old_path is not None and old_path.is_file():
+            try:
+                old = graph.load_yaml_file(old_path)
+            except Exception:    # an unreadable file: the new record replaces it, nothing of it can be carried
+                old = None
+            if isinstance(old, dict):
+                refused = schema.newer(kind, old.get("v"), schema.known_v(kind))
+                if refused:
+                    raise SystemExit(f"brain: {old_path.relative_to(root).as_posix()}: {refused}")
+                rec, carry = keep_unknown(kind, old, rec)
+    rec = validate(kind, rec, carry)
     path = record_path(root, kind, rec)
     path.parent.mkdir(parents=True, exist_ok=True)
     if kind == "ar":
@@ -94,28 +183,55 @@ def write(root: Path, kind: str, rec: dict, replace: bool = False) -> Path | Non
     return path
 
 
-def load(root: Path) -> dict[str, list[tuple[Path, dict]]]:
+def load(root: Path, bad: list[Bad] | None = None) -> dict[str, list[tuple[Path, dict]]]:
+    """The records that can be read, as they are (a field this engine does not know is kept). What is left out goes
+    to ``bad``: a file or a line that is not a mapping, a DDR or SR a newer brain wrote (refused), an AR line
+    :func:`parse_ar` leaves out (an AR line's place is ``<file>:<line>``)."""
+    bad = [] if bad is None else bad
     out: dict[str, list[tuple[Path, dict]]] = {"ddr": [], "sr": [], "ar": []}
     base = root / RECORDS_DIR
-    for f in sorted((base / "ddr").glob("*.yaml")):
-        out["ddr"].append((f, graph.load_yaml_file(f)))
-    for f in sorted((base / "sr").glob("*/*.yaml")):
-        out["sr"].append((f, graph.load_yaml_file(f)))
+    for kind, pattern in (("ddr", "*.yaml"), ("sr", "*/*.yaml")):
+        for f in sorted((base / kind).glob(pattern)):
+            try:
+                rec = graph.load_yaml_file(f)
+            except Exception as exc:   # a YAML error, a conflict marker: reported, the other records still load
+                bad.append(Bad(f, f"not readable YAML ({type(exc).__name__})"))
+                continue
+            if not isinstance(rec, dict):
+                bad.append(Bad(f, f"{kind}: a record is a mapping, got {type(rec).__name__}"))
+                continue
+            refused = schema.newer(kind, rec.get("v"), schema.known_v(kind))
+            if refused:
+                bad.append(Bad(f, refused))
+                continue
+            out[kind].append((f, rec))
     for f in sorted((base / "ar").glob("*.jsonl")):
-        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+        for i, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
             if line.strip():
-                out["ar"].append((f.with_name(f"{f.name}:{i}"), json.loads(line)))
+                rec, why, newer = parse_ar(line)
+                if rec is None:
+                    bad.append(Bad(f.with_name(f"{f.name}:{i}"), why, newer))
+                else:
+                    out["ar"].append((f.with_name(f"{f.name}:{i}"), rec))
     return out
 
 
-def check(root: Path) -> tuple[list[str], list[str]]:
-    """Every record valid, ids unique and matching their file, no line matching a secret pattern."""
+def check(root: Path, mode: str | None = None) -> tuple[list[str], list[str]]:
+    """Every record valid, ids unique and matching their file, no line matching a secret pattern. ``mode``
+    (default :func:`brain.schema.mode`): in read mode a field this engine does not know and an AR line a newer brain
+    wrote are warnings; in strict mode (CI) they are errors."""
+    mode = mode or schema.mode()
     errors, warnings = [], []
     seen: dict[str, Path] = {}
-    for kind, items in load(root).items():
+    bad: list[Bad] = []
+    recs = load(root, bad)
+    for b in bad:
+        rel = b.where.relative_to(root).as_posix() if b.where.is_relative_to(root) else str(b.where)
+        (warnings if b.newer and mode == schema.READ else errors).append(f"{rel}: {b.reason}")
+    for kind, items in recs.items():
         for f, rec in items:
             rel = f.relative_to(root).as_posix() if f.is_relative_to(root) else str(f)
-            e, w = schema.check(kind, rec)
+            e, w = schema.check(kind, rec, mode)
             if kind == "ddr" and isinstance(rec, dict):
                 e = e + defaults.check(rec)   # the low-stakes mark where a default never decides
             errors += [f"{rel}: {x}" for x in e]
@@ -129,7 +245,7 @@ def check(root: Path) -> tuple[list[str], list[str]]:
                 errors.append(f"{rel}: file name must be {rid}.yaml")
     for f in sorted((root / RECORDS_DIR).rglob("*")):
         if f.is_file() and f.suffix in (".yaml", ".jsonl", ".json", ".md"):
-            for line, name in secretscan.scan_lines(f.read_text(encoding="utf-8")):
+            for line, name in secretscan.scan_lines(f.read_text(encoding="utf-8", errors="replace")):
                 errors.append(f"{f.relative_to(root).as_posix()}:{line}: matches secret pattern {name}")
     return errors, warnings
 
@@ -172,8 +288,13 @@ def _title(text: str, n: int = 90) -> str:
 
 
 def graph_view(root: Path, store: Path) -> tuple[list[dict], list[dict], int]:
-    """(nodes, edges, links left out) generated from the records."""
-    recs = load(root)
+    """(nodes, edges, links left out) generated from the records (what :func:`load` leaves out is counted in a note:
+    brain record check lists it)."""
+    bad: list[Bad] = []
+    recs = load(root, bad)
+    if bad:
+        print(f"brain: note: {len(bad)} record(s) or AR line(s) left out of the graph (brain record check lists them)",
+              file=sys.stderr)
     known = set(graph.node_index(store).keys())
     for f in ("_generated_records.yaml",):
         for n in graph.load_yaml_list(store / "nodes" / f):

@@ -81,6 +81,11 @@ reviewed PR where the brain's main is protected); the refusal names the file and
 engine, or pass `--force`. A brain with no pin, or a
 pin that is not a release tag, is not compared.
 
+The local data survives an upgrade and a rollback: the engine reads tolerantly and writes strictly
+([`docs/formats.md`](docs/formats.md)). A field or a key it does not know, a newer brain's, is noted and kept, and a
+rewrite keeps it; a format whose `v` is above the engine's is refused with « written by brain > X: brain update ». The
+checks read strictly in CI (`CI` set) or with `BRAIN_STRICT=1`, tolerantly elsewhere or with `BRAIN_STRICT=0`.
+
 ### The scout
 
 `brain audit --diff` (the scout, run by the close-item procedure) lists what the units a change touches miss: a

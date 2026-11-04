@@ -148,7 +148,11 @@ def check(root: Path | None = None) -> list[str]:
         return [cfg.error] if cfg.file else []
     if cfg.file is None:
         return []
-    errors = [e.replace("config", FILE, 1) for e in schema.schema_errors("config", cfg.data)]
+    # read mode outside CI: a newer brain's key is noted and kept; a newer v is refused in both modes
+    found, unknown = schema.validate("config", cfg.data, schema.mode())
+    errors = [e.replace("config", FILE, 1) for e in found]
+    for u in unknown:
+        schema.tolerate(u.replace("config", FILE, 1), strict=False)
     for key in PATH_KEYS:
         if key in cfg.data and isinstance(cfg.data[key], str) and not cfg.path(key).exists():
             errors.append(f"{FILE}: {key} {cfg.data[key]!r} does not exist")

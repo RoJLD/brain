@@ -132,7 +132,8 @@ def load(root: Path) -> list[tuple[Path, dict]]:
 
 def find(root: Path, ref: str, exact: bool = False) -> tuple[Path, dict]:
     """A DDR by its id, else (unless ``exact``) by a part of its id that only one DDR has."""
-    entries = load(root)
+    bad: list[records.Bad] = []
+    entries = records.load(root, bad)["ddr"]
     for f, d in entries:
         if d.get("id") == ref:
             return f, d
@@ -140,6 +141,9 @@ def find(root: Path, ref: str, exact: bool = False) -> tuple[Path, dict]:
     if len(hits) == 1:
         return hits[0]
     if not hits:
+        left = [b for b in bad if b.where.stem == ref or (not exact and ref and ref in b.where.stem)]
+        if len(left) == 1:     # a DDR a newer brain wrote, or an unreadable one: say why, never "no DDR"
+            raise QueueError(f"{ref}: {left[0].reason}")
         raise QueueError(f"{ref}: no DDR in {root / records.RECORDS_DIR / 'ddr'}")
     raise QueueError(f"{ref}: several DDRs match ({', '.join(d['id'] for _, d in hits)})")
 

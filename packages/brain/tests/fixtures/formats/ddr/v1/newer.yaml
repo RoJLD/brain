@@ -1,0 +1,23 @@
+# A DDR as a newer brain could write it under the same v: additive fields at the top, in a stamp and in a list item.
+v: 1
+id: ddr-2026-10-30-command-shape
+title: Command shape
+question: Which?
+options:
+- label: brain
+  weight: 2
+- label: atlas
+recommendation:
+  option: brain
+  why: one
+multi_select: false
+status: pending
+asked:
+  at: '2026-10-30T10:00:00Z'
+  by: aaaabbbb-1111-2222-3333-444455556666
+  via: spec
+  timezone: Europe/Paris
+links:
+  items:
+  - wi-one
+confidence: 0.7
