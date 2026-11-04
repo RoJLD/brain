@@ -58,11 +58,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, graph, paths, projects
+from . import config, graph, paths, projects, schema
 
 FILE = "permissions.yaml"
 ENGINE_FILE = "allow-rules.txt"
@@ -435,6 +436,7 @@ class Model:
     rules: list[Rule] = field(default_factory=list)
     categories: list[Category] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)  # read mode: a newer brain's keys, kept (brain.schema.tolerate)
     registry: dict = field(default_factory=dict)   # name -> projects.Project
     today: date = field(default_factory=date.today)
     statuses: dict | None = None                   # item id -> status, read from the stores when a rule has a while
@@ -541,7 +543,12 @@ def _entry_errors(entry, where: str, model: Model, decl: dict) -> tuple[Rule | N
     errors = []
     unknown = sorted(set(map(str, entry)) - RULE_KEYS)
     if unknown:
-        errors.append(f"{where}: unknown key(s) {', '.join(unknown)} (known: {', '.join(sorted(RULE_KEYS))})")
+        errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (known: {', '.join(sorted(RULE_KEYS))})",
+                                  notes=model.notes)
+        if not errors and next((v for v in VERDICTS if v in entry), None) == "allow":
+            # read mode: a newer brain's key may narrow this grant; applied without it, it would grant more
+            model.notes.append(f"{where}: allow rule left out: its key(s) {', '.join(unknown)} are a newer brain's")
+            return None, []
     verdicts = [v for v in VERDICTS if v in entry]
     if len(verdicts) != 1:
         return None, errors + [f"{where}: exactly one of allow, ask or deny"]
@@ -603,9 +610,13 @@ def rule_errors(rule: Rule, cats: list[Category]) -> list[str]:
 def _sections_errors(model: Model) -> list[str]:
     errors = []
     data = model.data
+    refused = schema.newer(FILE, data.get("v"))
+    if refused:          # a newer brain's hierarchy: refused whole, its sections may mean something else now
+        return [refused]
     unknown = sorted(set(map(str, data)) - set(SECTIONS))
     if unknown:
-        errors.append(f"{FILE}: unknown key(s) {', '.join(unknown)} (known: {', '.join(SECTIONS)})")
+        errors += schema.tolerate(f"{FILE}: unknown key(s) {', '.join(unknown)} (known: {', '.join(SECTIONS)})",
+                                  notes=model.notes)
     if data and data.get("v") != 1:
         errors.append(f"{FILE}: v is 1")
     for name in ("profiles", "machines", "tenants", "sessions"):
@@ -624,7 +635,8 @@ def _sections_errors(model: Model) -> list[str]:
                                    "sessions": {"project", "parent"}}.get(name, set())
             extra = sorted(set(map(str, entry)) - allowed)
             if extra:
-                errors.append(f"{where}: unknown key(s) {', '.join(extra)} (known: {', '.join(sorted(allowed))})")
+                errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(extra)} "
+                                          f"(known: {', '.join(sorted(allowed))})", notes=model.notes)
             for k in ("profile", "project", "parent"):
                 if entry.get(k) is not None and not isinstance(entry[k], str):
                     errors.append(f"{where}.{k}: a name")
@@ -737,8 +749,11 @@ def _load_into(model: Model, f: Path | None) -> None:
 
 def check(root: Path | None = None) -> list[str]:
     """What is wrong in the hierarchy (brain check --all, brain permissions check): [] when there is no file and
-    allow-rules.txt is clean."""
-    return load(root).errors
+    allow-rules.txt is clean. In read mode a newer brain's keys are notes on stderr, not errors."""
+    model = load(root)
+    for note in model.notes:
+        print(f"brain: note: {note}", file=sys.stderr)
+    return model.errors
 
 
 # --- a context: the levels that apply to one project, machine and session --------------------------------------

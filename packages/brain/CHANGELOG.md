@@ -4,6 +4,29 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+### Upgrade
+
+- Nothing to run. Outside CI, a check that used to fail on an unknown key in `config.json`, `permissions.yaml`,
+  `packs.yaml`, `projects.yaml` or a record now prints a note instead; CI (`CI` set) still fails on it. A `v` above 1
+  in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
+  update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
+
+- **Tolerant readers, strict writers** (wi-brain-tolerant-reader, COMPAT-1's gate; `docs/formats.md`). The schema
+  validator gains two modes. Read mode keeps a field it does not know (a newer brain's additive one) and reports it;
+  strict mode, for every write and for the checks in CI (`CI` set, or `BRAIN_STRICT=1`), refuses it. A `v` above the
+  engine's is refused in both: « `<file>`: v2 is written by brain > 0.2.5, which reads v1: brain update ». It covers
+  the five schemas (DDR, SR, AR, event, config.json), `permissions.yaml` (an allow rule with an unknown key is left
+  out in read mode, since the key may narrow it), `packs.yaml`, the template manifest (its `engine:` range is checked
+  before its keys, so a newer template says « it needs brain >=X ») and `projects.yaml` (`KEYS`, `REPO_KEYS`). A DDR
+  or SR rewrite, even one rebuilt afresh (`--replace`, `brain record backfill --update`), puts back the unknown fields
+  of the file it replaces and never replaces one a newer brain wrote (backfill counts it `sr-refused`). AR lines
+  are parsed one by one: a broken line is an error of `brain record check`, a newer brain's line (a higher `v`, an
+  unknown kind) is skipped and counted, and neither stops `brain sync`. Fixtures under `tests/fixtures/formats/`: an
+  older and a newer file per format, round-tripped without loss.
+- **The validator enforces `maximum`** (wi-brain-schema-keywords). `config.json` `usage.guard` `critical: 950` no
+  longer passes and silently turns the governor's refusal off. `brain.schema` refuses a schema that uses a keyword it
+  does not implement (or `if`/`then` outside an `allOf` entry of their own, `items` as a list), and a test fails on
+  one.
 - **The answers' lane on the question tool's real shapes** (wi-brain-capture-multiselect,
   wi-brain-capture-unanswered). The tool returns a multiple choice as a list of labels: the capture of an ad-hoc
   question raised a TypeError and the whole tool call was lost (`ledger/errors.log`). `capture.ddr_from_question` and
@@ -32,6 +55,7 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   Left for after the command registry (they need `cli.py`): `brain record ddr --answer` without the one-writer
   check, `defaulted --apply` writing main checkouts, `--all --seen ID`, the refresh that writes the records graph
   before taking a default, and printing the refused captures apart from the skipped ones.
+
 - **Git's identity before the first commit** (wi-brain-install-git-identity). A fresh Git for Windows has no
   `user.name` nor `user.email`, and the first commit of `docs/install.md` stopped at « Author identity unknown ».
   `brain init --apply` now asks git, as a commit would (`git var GIT_AUTHOR_IDENT` and `GIT_COMMITTER_IDENT`, from
@@ -45,6 +69,20 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   engine installed. `docs/install.md` and `docs/pilot.md` say to read them at the tag installed, and now explain the
   vault that `brain init` names: data classes (`brain classes`), optional in the pilot (`vault OFF` until it is set
   up), the runbook for when it is wanted.
+- **A command registry** (wi-brain-cli-registry). Each top-level command is now a module of `brain.commands`
+  (`src/brain/commands/<name>.py`): its parser (`register(sub, ctx)`), its handlers (`run(args, root)`, and
+  `early(args)` for what runs before a root is resolved), its place in `brain --help` (`ORDER`) and its usage lines
+  (`USAGE`, `USAGE_ORDER`). `brain.cli` keeps `main` and `build_parser` as a facade: it lists the package, adds each
+  module's parser and dispatches to the module, and it no longer holds an `add_parser` call. A new command is a new
+  file; the README's « Adding a command » shows one. Nothing a command does or prints changed: `tests/help_dump.py`
+  prints the help and the arguments of every command and subcommand (149 parsers), byte for byte the same before and
+  after the move.
+  - `brain audit`'s new check `cmd.registry` (ruleset 5; P1 on a production path, NEW and LEFT in the scout) flags a
+    parser the `cli.py` beside a `commands/` package that lists its modules adds itself, and a module of that package
+    with no `register`.
+  - The inventory reads `pkgutil.iter_modules(__path__)` in a package's `__init__.py` as an import of each of its
+    modules, so the audit's production closure and the tests' reach go through the registry as through an import.
+  - The distribution's packages are `brain` and `brain.commands` (`pyproject.toml`): a wheel carries the registry.
 
 ## 0.2.5 — 2026-11-04
 

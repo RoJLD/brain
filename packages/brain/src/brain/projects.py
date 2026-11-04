@@ -50,7 +50,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import graph, paths
+from . import graph, paths, schema
 
 REGISTRY = "projects.yaml"
 DEFAULTS = {"stores": ["notes/graph"], "journal": "notes/journal.md", "decisions": "notes/decisions.md"}
@@ -304,9 +304,10 @@ def repos_of(p: Project) -> list[Repo]:
         if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
             raise RepoError(f"{where}: a path, or a mapping with a path")
         unknown = set(entry) - REPO_KEYS
-        if unknown:
-            raise RepoError(f"{where}: unknown key(s) {', '.join(sorted(unknown))} "
-                            f"(known: {', '.join(sorted(REPO_KEYS))})")
+        if unknown:   # read mode: a newer brain's key is kept and passed over (projects.check notes it)
+            for message in schema.tolerate(f"{where}: unknown key(s) {', '.join(sorted(unknown))} "
+                                           f"(known: {', '.join(sorted(REPO_KEYS))})", notes=[]):
+                raise RepoError(message)
         path = _resolve_root(entry["path"], p.root)
         if _norm(path) in seen:
             if i < len(p.repos or ["."]):
@@ -384,8 +385,8 @@ def check(root: Path | None = None) -> list[str]:
             errors += _check_mount(f"tenant {name}", entry)
             continue
         unknown = sorted(set(map(str, entry)) - set(KEYS))
-        if unknown:
-            errors.append(f"{where}: unknown key(s) {', '.join(unknown)} (brain projects --keys lists them)")
+        if unknown:   # read mode: a newer brain's key, noted and kept; strict (CI): an error
+            errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (brain projects --keys lists them)")
         errors += [f"{where}: {k} is a string" for k in ("root", "title") if k in entry
                    and not isinstance(entry[k], str)]
         errors += [f"{where}: {k} is a path or a list of paths" for k in ("stores", "journal", "decisions",

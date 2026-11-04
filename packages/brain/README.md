@@ -81,6 +81,11 @@ reviewed PR where the brain's main is protected); the refusal names the file and
 engine, or pass `--force`. A brain with no pin, or a
 pin that is not a release tag, is not compared.
 
+The local data survives an upgrade and a rollback: the engine reads tolerantly and writes strictly
+([`docs/formats.md`](docs/formats.md)). A field or a key it does not know, a newer brain's, is noted and kept, and a
+rewrite keeps it; a format whose `v` is above the engine's is refused with « written by brain > X: brain update ». The
+checks read strictly in CI (`CI` set) or with `BRAIN_STRICT=1`, tolerantly elsewhere or with `BRAIN_STRICT=0`.
+
 ### The scout
 
 `brain audit --diff` (the scout, run by the close-item procedure) lists what the units a change touches miss: a
@@ -443,6 +448,48 @@ brain vault status | seal STORE | canary | recipient add NAME [--replace] | reci
 brain vault device init [--rotate] | device forget-previous | open FILE | drill RECIPIENT
 brain health vault
 ```
+
+## Adding a command
+
+Each top-level command is a module of `src/brain/commands/`: its parser, its handlers and its lines of `brain --help`.
+`brain.cli` lists that package, adds each module's parser in `ORDER` and hands the parsed command to its module, so a
+new command is a new file and no shared file changes:
+
+```python
+"""``brain hello``: say hello (the module hello.py of the package)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+ORDER = 560          # its place in brain --help's list of commands
+USAGE_ORDER = 550    # its usage lines' place in brain --help's epilog ({owner}: the owner's display name)
+USAGE = """\
+  brain hello [--name N]   say hello to {owner}, or to N
+"""
+
+
+def register(sub, ctx) -> None:
+    hello = sub.add_parser("hello", help=f"say hello to {ctx.who}")
+    hello.add_argument("--name")
+
+
+def run(args, root: Path) -> int:
+    print(f"hello {args.name or 'world'}, from {root}")
+    return 0
+```
+
+- `register(sub, ctx)` adds the command's parser (its subcommands, an alias) to brain's subparsers; `ctx.who` is the
+  owner's display name for the help, `ctx.by` their id, the default of a `--by`.
+- `run(args, root)` gets the project's root: `--root`, else `--project`'s, else the nearest folder above with a graph
+  store. A command that must run before any root is resolved (a hook, a machine-wide command, a repo that may hold
+  no graph store) defines `early(args)`: its exit code, or `None` to go on to `run`.
+- `NO_PROJECT = {"hello"}`: no `--project` is added after its subcommand (the hooks', machine-wide commands).
+- What several commands share is in `_common.py` (the text options, the project, its store and scope) and
+  `_stores.py` (the passes of sync, check and refresh); a module whose name starts with `_` is not a command.
+- `brain audit` flags a parser added in `cli.py` and a module of `commands/` without `register` (the check
+  `cmd.registry`). `tests/test_cli_registry.py` checks every module's contract; `python tests/help_dump.py` prints
+  every command's and subcommand's help and arguments: run it before and after a change of the parsers, and diff.
 
 ## Tests
 

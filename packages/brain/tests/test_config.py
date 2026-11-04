@@ -1,6 +1,6 @@
 import json
 
-from brain import cli, config, projects
+from brain import __version__, cli, config, projects
 
 
 
@@ -50,18 +50,45 @@ def test_a_good_config_is_described_and_passes(tmp_path, monkeypatch):
 
 
 def test_the_contract_is_checked(tmp_path, monkeypatch):
-    bad = {**GOOD, "v": 2, "colour": "blue", "identity": {"owner": "Ada", "tenant": "Ada Lab"},
+    bad = {**GOOD, "v": 1, "colour": "blue", "identity": {"owner": "Ada", "tenant": "Ada Lab"},
            "engine": {"repo": "someone/brain", "pin": "main"}, "rules": ["rules/missing.md"],
            "memory": "nowhere", "public": {"deny": {"hosts": ["x"]}, "allow": {"LICENSE": "short"}},
            "secrets": {"TOKEN": ""}}
     root = _brain(tmp_path, monkeypatch, bad)
     errors = "\n".join(config.check(root))
-    for part in ("v: must be 1", "unexpected field 'colour'", "identity.tenant", "engine.pin",
+    for part in ("unexpected field 'colour'", "identity.tenant", "engine.pin",
                  "public.deny.hosts[0]: shorter than 2", "public.allow.LICENSE: shorter than 15",
                  "secrets.TOKEN: shorter than 1", "rules 'rules/missing.md' does not exist",
                  "memory 'nowhere' does not exist"):
         assert part in errors, part
     assert errors.startswith("config.json")
+    root = _brain(tmp_path / "newer", monkeypatch, {**bad, "v": 2})
+    errors = config.check(root)   # a newer contract: refused alone, its other fields are not judged by this engine
+    assert errors[0] == f"config.json: v2 is written by brain > {__version__}, which reads v1: brain update"
+    assert not any("colour" in e or "engine.pin" in e for e in errors)
+    root = _brain(tmp_path / "zero", monkeypatch, {**bad, "v": 0})
+    assert "config.json.v: must be 1" in config.check(root)
+
+
+def test_usage_guard_percentages_have_a_maximum(tmp_path, monkeypatch):
+    """wi-brain-schema-keywords: maximum is enforced, so critical: 950 no longer turns the governor's refusal off."""
+    cfg = {"v": 1, "identity": {"owner": "Ada"}, "usage": {"guard": {"warn": 80, "critical": 950, "memory": 100}}}
+    root = _brain(tmp_path, monkeypatch, cfg)
+    assert config.check(root) == ["config.json.usage.guard.critical: above 100"]
+
+
+def test_read_mode_keeps_a_newer_brains_key_and_notes_it(tmp_path, monkeypatch, capsys):
+    """wi-brain-tolerant-reader: outside CI an unknown key is a note, the file is kept as it is; in CI it is an
+    error."""
+    root = _brain(tmp_path, monkeypatch, {**GOOD, "colour": "blue", "identity": {**GOOD["identity"], "pet": "x"}})
+    monkeypatch.setenv("BRAIN_STRICT", "0")
+    assert config.check(root) == []
+    err = capsys.readouterr().err
+    assert "unknown field 'colour'" in err and "identity: unknown field 'pet'" in err
+    assert config.load(root).data["colour"] == "blue"
+    monkeypatch.setenv("BRAIN_STRICT", "1")
+    assert sorted(config.check(root)) == ["config.json.identity: unexpected field 'pet'",
+                                          "config.json: unexpected field 'colour'"]
 
 
 def test_owner_must_be_the_stores_owner(tmp_path, monkeypatch):

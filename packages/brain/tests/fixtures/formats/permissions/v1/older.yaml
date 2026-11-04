@@ -1,0 +1,5 @@
+# permissions.yaml as brain 0.2.4 read it.
+v: 1
+profiles: {lite: {title: a light profile}}
+rules:
+  - {deny: "Bash(gh secret set *)", why: "only the owner sets a secret"}

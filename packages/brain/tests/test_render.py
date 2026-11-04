@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from brain import cli, neutral, render
+from brain.commands import _stores
 
 
 RULES = """\
@@ -509,7 +510,7 @@ def test_sync_rewrites_a_rendered_agents_md_and_check_warns(ada, monkeypatch, ca
     args = cli.build_parser().parse_args(["--root", str(ada), "check"])
     cli._check_store(args, ada, store)
     assert "warning: render agents for demo: AGENTS.md differs" in capsys.readouterr().out
-    monkeypatch.setattr(cli, "_records_view", lambda *a: False)
+    monkeypatch.setattr(_stores, "_records_view", lambda *a: False)   # where sync reads it (brain.commands)
     monkeypatch.setattr(cli.links, "applies", lambda store: False)
     monkeypatch.setattr(cli.features, "has_type", lambda schema: False)
     args = cli.build_parser().parse_args(["--root", str(ada), "sync", "--offline"])

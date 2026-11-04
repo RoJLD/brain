@@ -30,7 +30,7 @@ version = {attr = "brain.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["brain"]
+include = ["brain", "brain.commands"]   # brain.commands: the command registry (one module per command)
 
 [tool.setuptools.package-data]
 brain = ["schemas/*.json", "tiers.yaml", "compose/*/*", "procedures/*/*", "templates/*", "templates/*/*",

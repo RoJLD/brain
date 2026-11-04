@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "identity": {"owner": "Ada", "pronouns": "they"},
+  "registry": "projects.yaml",
+  "usage": {"guard": {"warn": 80, "critical": 95, "night": 50}},
+  "telemetry": {"enabled": false}
+}
