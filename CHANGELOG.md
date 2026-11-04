@@ -3,7 +3,7 @@
 The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `research-graph` X.Y.Z and `brain` X.Y.Z
 (`packages/brain/CHANGELOG.md` for the brain command).
 
-## Unreleased
+## 0.2.5 — 2026-11-04
 
 - `code_layer.symbol_span(tree, symbol)`: the kind, first and last line of a symbol as `find_symbol` finds it,
   decorators and body included (what a change to it touches; `brain impact` without GitNexus).
