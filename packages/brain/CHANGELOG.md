@@ -123,6 +123,16 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `props.retro_notes`. `brain retro --wave W`: a wave's deep retro. The close-item procedure gains the step (2b,
   Retro), before the item is ticked and never stopping the close (`Retro: skipped (<why>)` when the store has no
   Lesson type yet or the ledger does not know the item), and a `Retro:` line in its report.
+- **A brain's own data is checked by the brain, not by its tests** (wi-brain-test-split). `brain refresh` and
+  `brain check` in a brain's own root (its neutral source, `source/packs.yaml`) end with the registry check `brain
+  check --all` runs: the registry's keys, `config.json`'s contract, the data classes, the permission hierarchy, the
+  stacks, and the ids across every registered project (a `shared_ids` waiver names an id another project holds).
+  That check now also renders each bundle the engine ships with the components the registry declares and refuses
+  what `brain bundle apply` would (a service without a component, a component without a service), a component whose
+  tier class is not `service`, and a stack whose `bundle:` the engine does not ship. A project whose stacks file sits
+  in a root this machine does not hold is left out of the stacks with a warning (`stacks.uncloned`), so the verdict
+  no longer depends on which repos are cloned here. A brain's repository no longer needs a pytest suite over its own
+  graph, records and rendered files: the engine's tests run on fixtures only.
 
 - **What the lessons asked for** (wi-brain-merge-stale-main, wi-brain-guard-public-commit,
   wi-brain-guard-public-chain, wi-brain-guard-heredoc-backslash). `brain merge-check [--base REF] [--no-fetch]

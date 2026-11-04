@@ -224,10 +224,13 @@ def not_applied(s: Stack) -> str:
 
 
 def load(root: Path | None = None) -> dict[str, Stack]:
-    """Every stack of the registry's projects, in declaration order."""
+    """Every stack of the registry's projects, in declaration order; a project whose stacks file is in a root not on
+    this machine is left out (:func:`uncloned`)."""
     out: dict[str, Stack] = {}
     for p in projects.load(root).values():
         decl = p.stacks
+        if isinstance(decl, str) and not p.root.is_dir():   # a project cloned elsewhere: its stacks are not run here
+            continue
         if isinstance(decl, str):
             f = p.root / decl
             if not f.is_file():
@@ -240,6 +243,11 @@ def load(root: Path | None = None) -> dict[str, Stack]:
                 raise StackError(f"stack {name!r} is declared by {out[str(name)].project} and {p.name}")
             out[str(name)] = _stack(str(name), p, d)
     return out
+
+
+def uncloned(root: Path | None = None) -> list[str]:
+    """The projects whose stacks file sits in a root this machine does not hold: :func:`load` leaves them out."""
+    return [p.name for p in projects.load(root).values() if isinstance(p.stacks, str) and not p.root.is_dir()]
 
 
 def plan(reg: dict[str, Stack], names: list[str]) -> list[Stack]:

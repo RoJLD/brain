@@ -1533,7 +1533,11 @@ def cmd_check(args, root: Path) -> int:
     _merge_marks(root, "brain refresh regenerates them")
     if args.all:
         return _each_store(args, root, sync=False, check=True)
-    return _check_store(args, root, _store(args, root))
+    rc = _check_store(args, root, _store(args, root))
+    if _registry_too(args, root):   # a brain's own root: its own data too, as refresh checks it
+        print("== registry")
+        rc = check_registry(root, _registry_scope(root)) or rc
+    return rc
 
 
 def _merge_marks(root: Path, then: str, clear: bool = False) -> None:
@@ -1562,6 +1566,7 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
             load(root)
         except error as exc:
             errors.append(f"{what}: {exc}")
+    errors += _bundles_check(root)
     ids = projects.collisions([p for p in projs if p.root.is_dir()])
     for c in ids["collisions"]:
         line = f"id {c['id']} is in {', '.join(c['where'])}"
@@ -1571,13 +1576,42 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
             errors.append(f"{line} (rename one, or waive it under shared_ids: with its reason)")
     for s in ids["stale"]:
         print(f"warning: shared_ids of {s}: no longer in two stores (remove it)")
-    for line in render.registry_warnings(neutral.brain_root(root), projs):
+    for line in render.registry_warnings(neutral.brain_root(root), projs) + _uncloned(root):
         print(f"warning: {line}")
     for e in errors:
         print(f"error: {e}")
     print(f"registry: {len(projs)} project(s), {ids['stores']} store(s), "
           + (f"{len(errors)} error(s)" if errors else "ids unique"))
     return 1 if errors else 0
+
+
+def _uncloned(root: Path | None) -> list[str]:
+    """The registered projects whose stacks this machine cannot read (their root is elsewhere): said, not failed."""
+    return [f"stacks of project {n}: its root is not on this machine, not checked here" for n in stacks.uncloned(root)]
+
+
+def _bundles_check(root: Path | None) -> list[str]:
+    """Each bundle the engine ships, rendered with the components the registry declares: what would block its apply
+    (a registry that does not load is said by the stacks' own check)."""
+    try:
+        reg = stacks.load(root)
+    except stacks.StackError:
+        return []
+    shipped = bundles.names()
+    unknown = [f"stack {s.name} ({s.project}): bundle {s.bundle!r} is not one the engine ships (shipped: "
+               f"{', '.join(shipped) or 'none'})" for s in reg.values() if s.bundle and s.bundle not in shipped]
+    return unknown + [f"bundle {b}: {e}" for b in shipped for e in _bundle_problems(reg, b)]
+
+
+def _bundle_problems(reg: dict, bundle: str) -> list[str]:
+    """What blocks ``brain bundle apply`` of ``bundle`` with this registry's components (none declared: nothing)."""
+    comps = bundles.components(reg, bundle)
+    if not comps:
+        return []
+    doc, _ = bundles.render(bundle, comps)
+    tiers_off = [f"component {s.name} is of tier class {s.tier['class']!r}: a bundle's component is a service "
+                 "(class: service, with its fallback)" for s in comps if s.tier.get("class", "service") != "service"]
+    return bundles.problems(bundle, doc, comps)[1] + tiers_off
 
 
 def _on_main(root: Path) -> str:
@@ -1598,6 +1632,18 @@ def cmd_refresh(args, root: Path) -> int:
     if not rc:
         _merge_marks(root, "regenerated", clear=True)
     return rc
+
+
+def _registry_too(args, root: Path | None) -> bool:
+    """--all, or a brain's own root (its neutral source): the registry, config.json, the classes, the permissions, the
+    stacks and bundles, the ids are checked too (brain refresh in a brain checks its own data, wi-brain-test-split)."""
+    return bool(getattr(args, "all", False) or (root is not None and neutral.applies(root)))
+
+
+def _registry_scope(root: Path | None) -> list[projects.Project]:
+    """The projects whose stores the registry check reads the ids of: every registered one, with --all or without
+    (a shared_ids waiver names an id another project holds), those not on this machine skipped by the check."""
+    return list(projects.load(root).values())
 
 
 def _each_store(args, root: Path, *, sync: bool, check: bool) -> int:
@@ -1623,9 +1669,9 @@ def _each_store(args, root: Path, *, sync: bool, check: bool) -> int:
             rc = rc or (_check_store(args, p.root, store) if check else 0)
             if rc:
                 failed.append(p.name)
-    if check and getattr(args, "all", False):
+    if check and _registry_too(args, root):
         print("== registry")
-        if check_registry(root, scope):
+        if check_registry(root, _registry_scope(root)):
             failed.append("registry")
     print(f"{args.cmd}: {len(failed)} project(s) failed" + (f": {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0
@@ -2985,7 +3031,8 @@ def build_parser() -> argparse.ArgumentParser:
                                                          "engine.pin (brain check says how they differ)")
     ck = sub.add_parser("check", help="records check, no conflict marker in the store, journals, decision logs and "
                                       "records, then research_graph check (--all: every project's, then the "
-                                      "registry and the ids across every store)")
+                                      "registry and the ids across every store; in a brain's own root, that "
+                                      "registry check too)")
     ck.add_argument("--all", action="store_true", help="every project of the registry, then the registry's keys, "
                                                        "repos, stacks and code_index, and the ids across every store")
     ck.add_argument("--public", action="store_true", help="before a push to a public repo: no private term, secret, "
@@ -3286,7 +3333,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--without", action="append", metavar="ID", help="turn a capability or stack off (repeatable)")
         if name == "set":
             sp.add_argument("--apply", action="store_true", help="write the choice (a second apply changes nothing)")
-    rf = sub.add_parser("refresh", help="sync then check for the project's stores, or every registered project's")
+    rf = sub.add_parser("refresh", help="sync then check for the project's stores, or every registered project's; "
+                                        "with --all, or in a brain's own root, the registry check of check --all too")
     rf.add_argument("--offline", action="store_true", help="no gh call (the features' statuses are not read)")
     rf.add_argument("--all", action="store_true", help="every project of the registry")
     rf.add_argument("--force", action="store_true", help="write even when the running engine is not config.json "

@@ -11,7 +11,9 @@ What it does, every command reading files and git, never a model:
   captured by the hooks at zero token (`brain record`, `brain capture`);
 - **backlog**: work items, milestones and specs in a `research-graph` store (`brain item add|set|close|link`,
   `brain milestone`, `brain spec`), with the views regenerated and checked (`brain sync`, `brain check`,
-  `brain refresh`);
+  `brain refresh`; in a brain's own root, check and refresh also run `brain check --all`'s registry check: the
+  registry, `config.json`, the classes, the permissions, the stacks and the bundles they declare, the ids of every
+  registered project);
 - **history**: the journal (`brain journal add`) and the decision log (`brain adr new`), append-only;
 - **views**: the owner's queue (`brain queue`), the status of every project (`brain status`), a cockpit (`brain tui`,
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
