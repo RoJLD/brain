@@ -140,6 +140,8 @@ def _ask_question(payload: dict) -> None:
     response = payload.get("tool_response") or {}
     answers = response.get("answers") or {} if isinstance(response, dict) else {}
     annotations = response.get("annotations") or {} if isinstance(response, dict) else {}
+    answers = answers if isinstance(answers, dict) else {}   # another shape: no answer rather than a lost call
+    annotations = annotations if isinstance(annotations, dict) else {}
     meta = _meta(payload)
     now = _now()
     tuid = payload.get("tool_use_id") or ""
@@ -218,11 +220,13 @@ def ddr_from_question(q: dict, answer: str | list | None, at: str, meta: dict, t
             choices = [lab for lab in labels if lab in picked]
             rest = [a for a, p in zip(items, picked, strict=True) if p not in labels]
             text = ", ".join(items)
-        else:   # a string: one label, or the labels of a multiple choice joined with ", "
+        else:   # a string: one label, or (a multiple choice) the labels joined with ", ", longest label first
             text = str(answer)
             norm = re.sub(r"\s*\((?:recommandée?|recommended)\)", "", text, flags=re.I)
-            choices = [lab for lab in labels if norm == lab or f", {lab}, " in f", {norm}, "]
-            rest = [] if choices else [text]
+            if norm in labels or not ddr["multi_select"]:   # a single choice is a label exactly, else the owner's text
+                choices, rest = [norm] if norm in labels else [], [] if norm in labels else [text]
+            else:
+                choices, rest = _split_labels(norm, labels)
         ans: dict = {"at": at, "by": "user", "via": "ask-tool"}
         if choices:
             ans["choices"] = choices if ddr["multi_select"] else choices[:1]
@@ -234,6 +238,22 @@ def ddr_from_question(q: dict, answer: str | list | None, at: str, meta: dict, t
         ddr["status"] = "answered"
         ddr["read"] = {"at": at, "session": meta.get("session_id") or "unknown", **_ids(meta)}
     return secretscan.clean(ddr)[0]
+
+
+def _split_labels(text: str, labels: list[str]) -> tuple[list[str], list[str]]:
+    """(the labels, the rest) of a multiple choice joined with ", ": the longest label that matches at each place
+    (a label may hold ", ")."""
+    tokens, picked, rest, i = text.split(", "), [], [], 0
+    while i < len(tokens):
+        for j in range(len(tokens), i, -1):
+            if ", ".join(tokens[i:j]) in labels:
+                picked.append(", ".join(tokens[i:j]))
+                i = j
+                break
+        else:
+            rest.append(tokens[i])
+            i += 1
+    return [lab for lab in labels if lab in picked], ([", ".join(rest)] if rest else [])
 
 
 def post_tool_use(payload: dict, family: str = "") -> None:

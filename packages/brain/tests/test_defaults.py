@@ -227,3 +227,50 @@ def test_33_seen_checks_every_id_before_writing(store):
     with pytest.raises(decisions.QueueError, match="plain-wording: not decided by default"):
         defaults.seen(root, ["label-wording", "plain-wording"], at=AFTER)
     assert "reviewed" not in decisions.find(root, "label-wording")[1]["default"]   # nothing half-written
+
+
+# --- the PR's own review (2 lenses, 2 skeptics each) ---
+
+@pytest.mark.parametrize("text,topic", [("Rotate the keys", "keys"), ("A new github PAT", "keys"),
+                                        ("Read the .env file", "keys")])
+def test_review_more_key_forms_are_refused(text, topic):
+    assert topic in {t for t, _ in defaults.topics({"title": "x", "question": text})}
+
+
+def test_review_code_words_stay_low_stakes():
+    for text in ("Raise max_tokens", "A primary_key column", "Restart the hook", "Run npm test"):
+        assert defaults.topics({"title": "x", "question": text}) == []
+
+
+def test_review_a_word_learned_later_never_fails_an_answered_decision(store):
+    root = _root(store)
+    ddr = _ask(root, "Label wording", low_stakes=True)
+    defaults.finalize(root, AFTER)
+    ddr = decisions.find(root, "label-wording")[1]
+    ddr["question"] = "Which one, at what cost?"   # a word the check learned after the default was taken
+    records.write(root, "ddr", ddr, replace=True)
+    assert records.check(root) == ([], [])
+    ddr["status"], ddr["answer"] = "pending", None
+    ddr.pop("answer")
+    records.write(root, "ddr", ddr, replace=True)
+    assert any("low-stakes mark refused" in e for e in records.check(root)[0])   # a pending one is refused
+
+
+def test_review_a_captured_answer_shows_in_the_review_not_due(store):
+    from brain import answers
+    root = _root(store)
+    ddr = _ask(root, "Label wording", low_stakes=True)
+    answers._append(answers.CAPTURED, [{"v": 1, "id": "ans-1", "at": BEFORE, "ddr": ddr["id"], "project": "demo",
+                                        "answer": "Long", "choices": ["Long"]}])
+    (e,) = defaults.review(root, AFTER)["provisional"]
+    assert e["due"] is False and e["captured"] == BEFORE
+    assert "answered in time through the question tool" in "\n".join(defaults.render("demo", defaults.review(root, AFTER)))
+
+
+def test_review_seen_twice_on_a_reversed_default_is_a_no_op(store):
+    root = _root(store)
+    _ask(root, "Label wording", low_stakes=True)
+    defaults.finalize(root, AFTER)
+    decisions.answer(root, "label-wording", ["Long"], at="2026-11-03T10:00:00Z", by="Ada", again=True)
+    assert defaults.seen(root, ["label-wording"], at="2026-11-03T12:00:00Z")
+    assert defaults.seen(root, ["label-wording"], at="2026-11-03T13:00:00Z") == ["ddr-2026-11-01-label-wording"]

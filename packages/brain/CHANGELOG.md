@@ -21,8 +21,12 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `unmapped` and refused, never recorded as free text. The header-and-labels match looks only at the questions this
   session's batch printed (the asked ledger now records the session). The recorded ledger is read from the month of
   the oldest capture on. The never-by-default check reads amounts with a currency sign (`40€`, `$50`), `-`/`_`
-  compounds (`ssh-key`, `API_KEY`, `cron-job`), more synonyms (cost, spend, restart, sign-in, Task Scheduler, PyPI,
-  settings.json), the recommendation's why and the linked ids. A stamp without a zone is UTC instead of a TypeError
+  compounds (`ssh-key`, `API_KEY`, `cron-job`), more synonyms and forms (cost, spend, sign-in, Task Scheduler,
+  PyPI, settings.json, a GitHub PAT, `.env`, rotating keys), the recommendation's why and the linked ids; `brain
+  check` applies it to pending DDRs only, so a word learned later never fails a decision already answered. A typed
+  single-choice answer that starts with a label (« No, because… ») stays the owner's text in an ad-hoc DDR, and a
+  joined multiple choice takes the longest label. The review list shows a low-stakes DDR answered in time through
+  the question tool as such, not « due now ». A stamp without a zone is UTC instead of a TypeError
   in refresh, the batch and the cockpit. `reversed` is a non-default answer after the deadline (compared as times),
   never one that took the default's option, and `--seen` clears it; `--seen` checks every id before it writes.
   Left for after the command registry (they need `cli.py`): `brain record ddr --answer` without the one-writer

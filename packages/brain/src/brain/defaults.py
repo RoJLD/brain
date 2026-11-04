@@ -39,14 +39,16 @@ REFUSED = {
              r"refunds?|euros?|eur|dollars?|usd|costs?|costing|coûts?|budgets?|spend\w*|spent|fees?|frais|"
              r"dépenses?|argent|prix|tarifs?|payer|paiements?|factures?|abonnements?|achats?|acheter|rembours\w*",
     "keys": r"secrets?|passwords?|passphrases?|credentials?|"
-            r"(?:api|access|auth|bearer|github|gh|hf|deploy|oauth|refresh|pypi) ?tokens?|[a-z0-9]+_tokens?|"
-            r"(?:private|ssh|age|gpg|pgp|recovery|device|api|signing|deploy|access) ?keys?|[a-z0-9]+_keys?|vault|"
+            r"(?:api|access|auth|bearer|github|gh|hf|deploy|oauth|refresh|pypi) ?tokens?|(?:github|gh) ?pats?|"
+            r"(?:rotat\w*|revok\w*|leak\w*) (?:the |a |an |our |my )?(?:keys?|tokens?)|\.env|"
+            r"(?-i:[A-Z0-9]+_(?:TOKENS?|KEYS?|SECRETS?))|"
+            r"(?:private|ssh|age|gpg|pgp|recovery|device|api|signing|deploy|access) ?keys?|vault|"
             r"clés?|clefs?|mots? de passe|jetons? d'accès|identifiants?",
     "visibility": r"visibility|visibilité|public|publics|publique?s?|private|privée?s?|open ?source",
     "publication": r"publish\w*|publication|releases?|tags?|tagg\w*|publier|publi[ée]e?s?|diffus\w*|newsletter|"
-                   r"blog|tweet\w*|pypi|npm",
+                   r"blog|tweet\w*|pypi",
     "accounts": r"accounts?|sign ?up|sign ?in|log ?in|comptes?|inscription",
-    "arming": r"arm|arms|armed|arming|armer|armée?s?|wake-on-lan|wol|shut ?down|reboot|restart\w*|power ?off|"
+    "arming": r"arm|arms|armed|arming|armer|armée?s?|wake-on-lan|wol|shut ?down|reboot|power ?off|"
               r"redémarr\w*|boot",
     "rules": r"rules?|règles?|global\.md|claude\.md|agents\.md|guards?|gardes?|polic(?:y|ies)|politiques?|"
              r"permissions\.yaml|settings(?:\.local)?\.json",
@@ -113,12 +115,14 @@ def refusal(ddr: dict) -> str:
 
 
 def check(ddr: dict) -> list[str]:
-    """brain check's errors for one DDR: the low-stakes mark where it is refused, or without its recommendation."""
+    """brain check's errors for one DDR: the low-stakes mark where it is refused, or without its recommendation. The
+    refusal is checked on a pending DDR only: one already answered keeps the record it has, so that a word the check
+    learns later never fails an old decision."""
     d = ddr.get("default")
     if not isinstance(d, dict):
         return []
     errors = []
-    why = refusal(ddr)
+    why = refusal(ddr) if ddr.get("status") == "pending" else ""
     if why:
         errors.append(f"low-stakes mark refused: {why}")
     if d.get("option") != (ddr.get("recommendation") or {}).get("option"):
@@ -189,6 +193,7 @@ def review(root: Path, now: str) -> dict:
     from . import decisions
 
     out = {"defaulted": [], "provisional": [], "reversed": [], "reviewed": 0}
+    captured = None
     for _, ddr in decisions.load(root):
         d = ddr.get("default")
         if not isinstance(d, dict):
@@ -198,6 +203,10 @@ def review(root: Path, now: str) -> dict:
         ans = ddr.get("answer") or {}
         if ddr.get("status") == "pending":
             e["due"] = is_due(ddr, now)
+            if e["due"]:
+                captured = answered_in_time() if captured is None else captured
+                if ddr["id"] in captured and before(captured[ddr["id"]], d["after"]):
+                    e["due"], e["captured"] = False, captured[ddr["id"]]
             e["hours_left"] = _hours_left(d["after"], now) if d.get("after") else None
             out["provisional"].append(e)
         elif by_default(ddr):
@@ -239,8 +248,11 @@ def seen(root: Path, ids: list[str], *, at: str, session: str = "") -> list[str]
 
     targets = [decisions.find(root, i)[1] for i in ids] if ids else \
         [d for _, d in decisions.load(root) if pending_review(d)]
-    wrong = [d["id"] for d in targets if not isinstance(d.get("default"), dict) or
-             not (by_default(d) or reversed_(d))]
+    def reviewable(d: dict) -> bool:   # a default, a reversed one, or one reviewed already (marked again)
+        return isinstance(d.get("default"), dict) and (by_default(d) or reversed_(d) or (
+            d.get("status") != "pending" and bool(d["default"].get("reviewed"))))
+
+    wrong = [d["id"] for d in targets if not reviewable(d)]
     if wrong:
         raise decisions.QueueError(f"{', '.join(wrong)}: not decided by default (nor reversed): nothing marked")
     done = []
@@ -262,7 +274,9 @@ def render(project: str, data: dict, width: int = 118) -> list[str]:
     for e in data["defaulted"]:
         lines.append(_cut(f"  {e['id']}: {e['title']} -> {e['option']} (final {e['after']})", width))
     for e in data["provisional"]:
-        when = "due now: brain refresh or --apply" if e.get("due") else f"final in {e.get('hours_left')} h"
+        when = "due now: brain refresh or --apply" if e.get("due") else \
+            "answered in time through the question tool: brain decision answer --captured" if e.get("captured") else \
+            f"final in {e.get('hours_left')} h"
         lines.append(_cut(f"  provisional {e['id']}: {e['title']} -> {e['option']} ({when}, unless answered)", width))
     for e in data["reversed"]:
         lines.append(_cut(f"  reversed {e['id']}: {e['title']}: {e['option']} -> {', '.join(e['answer'])}", width))

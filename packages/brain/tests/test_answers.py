@@ -510,3 +510,28 @@ def test_34_both_ledgers_are_read_over_the_same_months(brain_home):
                                        {"v": 1, "id": octo["id"], "at": "2026-11-01T00:05:00Z", "ddr": "ddr-b"},
                                        {"v": 1, "id": "x", "at": "2026-10-02T00:00:00Z", "ddr": "ddr-x"}])
     assert answers.unrecorded() == []
+
+
+# --- the PR's own review (2 lenses, 2 skeptics each) ---
+
+def test_review_a_typed_single_choice_keeps_the_owners_reason():
+    q = {"question": "Ship it?", "header": "Ship", "multiSelect": False,
+         "options": [{"label": "Yes (Recommended)"}, {"label": "No"}]}
+    ans = capture.ddr_from_question(q, "No, because it is slow", AT, {})["answer"]
+    assert ans == {"at": AT, "by": "user", "via": "ask-tool", "other": "No, because it is slow"}
+    assert capture.ddr_from_question(q, "No", AT, {})["answer"]["choices"] == ["No"]
+
+
+def test_review_a_joined_multiple_choice_takes_the_longest_label():
+    q = {"question": "Which?", "header": "Which", "multiSelect": True,
+         "options": [{"label": "A, b"}, {"label": "C"}, {"label": "A"}]}
+    ans = capture.ddr_from_question(q, "A, b, my idea", AT, {})["answer"]
+    assert ans["choices"] == ["A, b"] and ans["other"] == "my idea"
+
+
+def test_review_answers_of_another_shape_lose_nothing_else(brain_home):
+    q = FIXTURE["multiselect"]["questions"][0]
+    payload = {"session_id": "s-1", "tool_name": "AskUserQuestion", "tool_use_id": "toolu_01OTHERSHAPE",
+               "tool_input": {"questions": [q]}, "tool_response": {"questions": [q], "answers": ["x"]}}
+    assert capture.main(["post-tool-use"], stdin=io.StringIO(json.dumps(payload))) == 0
+    assert _errors(brain_home) == "" and _ledger(brain_home, "ddr")[0]["status"] == "pending"
