@@ -235,7 +235,15 @@ def alerts_of(p: projects.Project, out: dict, stack_reg, sched: dict | None, las
                                   sched=sched, watched=watched)
     except alerts.AlertsError as exc:
         return {"error": str(exc)}
-    return alerts.summary(found, (last.get(p.name) or {}).get("last_pass"))
+    d = alerts.summary(found, (last.get(p.name) or {}).get("last_pass"))
+    from . import schedule
+    try:
+        w = schedule.watch(schedule.parse(p))  # the dead-man of the alerts pass this project schedules here
+    except schedule.ScheduleError:
+        w = None  # brain check --all reports it
+    if w:
+        d["pass"] = w
+    return d
 
 
 def collect(p: projects.Project, *, quick: bool = False, stack_reg: dict | None = None, index: tuple | None = None,

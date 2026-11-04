@@ -26,7 +26,9 @@ the repos ``brain index`` has GitNexus index, relative to the root (brain.codein
 notification channels and the project's routes per level, inline or as a YAML file relative to the root, for ``brain
 notify`` (brain.notify). ``alerts`` declares where the project's alerts come from (scheduled tasks, stacks,
 alert files, event folders) and their levels, inline or as a YAML file relative to the root, for ``brain alerts`` and
-``brain status`` (brain.alerts).
+``brain status`` (brain.alerts). ``schedules`` declares the brain commands the machines' schedulers run (the alerts
+pass, a daily canary), inline or as a YAML file relative to the root, for ``brain schedule`` and the installer's
+schedule step (brain.schedule).
 
 An entry with a ``tenant`` key is a **mount**, not a project: an HMaaS tenant is another brain, with its own root,
 registry and keys, mounted opaque in the operator's registry (wi-brain-hmaas-multitenant, spec-brain-hmaas §6;
@@ -74,6 +76,9 @@ KEYS = {
               "root (brain.notify)",
     "alerts": "where brain alerts reads its alerts: scheduler folders, tasks and their cadences, stacks, alert files, "
               "event folders, levels; a mapping, or a YAML file relative to the root (brain.alerts)",
+    "schedules": "the brain commands a machine's scheduler runs, {name: {command, every, at, at_logon, machines, "
+                 "timeout, enabled}}: a mapping, or a YAML file relative to the root; installed by brain schedule "
+                 "install --apply, the installer's schedule step (brain.schedule)",
     "shared_ids": "ids its stores may share with another store, {id: reason of 15 characters or more}; any other id "
                   "found in two stores fails brain check --all",
     "usage": "the usage governor's caps for this project, {sessions: N, brainstorms: N}: lower than config.json "
@@ -107,6 +112,7 @@ class Project:
     code_index: list = field(default_factory=list)
     notify: dict | str | None = None
     alerts: dict | str | None = None
+    schedules: dict | str | None = None
     title: str = ""
     journals: list[Path] = field(default_factory=list)
     decision_logs: list[Path] = field(default_factory=list)
@@ -167,6 +173,7 @@ def _project(name: str, entry: dict, root: Path) -> Project:
                    production=[Path(os.path.normpath(root / p)) for p in _paths(e.get("production"))],
                    stacks=e.get("stacks"), repos=e.get("repos") or [], audit=e.get("audit") or {},
                    code_index=list(e.get("code_index") or []), notify=e.get("notify"), alerts=e.get("alerts"),
+                   schedules=e.get("schedules"),
                    title=str(e.get("title") or ""), journals=journals, decision_logs=logs,
                    ledgers={str(k): root / v for k, v in ledgers.items() if isinstance(v, str) and v},
                    shared_ids=dict(e["shared_ids"]) if isinstance(e.get("shared_ids"), dict) else {},
@@ -395,7 +402,7 @@ def check(root: Path | None = None) -> list[str]:
                 errors.append(f"{where}: shared_ids {nid!r}: a reason of {WAIVE_REASON} characters at least")
         if not isinstance(entry.get("code_index") or [], list):
             errors.append(f"{where}: code_index is a list of paths or {{path, branch}}")
-        errors += [f"{where}: {k} is a mapping or a file name" for k in ("stacks", "notify", "alerts")
+        errors += [f"{where}: {k} is a mapping or a file name" for k in ("stacks", "notify", "alerts", "schedules")
                    if not isinstance(entry.get(k) or {}, (dict, str))]
         from .governor import project_limits
         errors += [f"{where}: {e}" for e in project_limits(entry)[1]]

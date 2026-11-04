@@ -26,8 +26,8 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   GraphQL calls), keys (gh secret set|delete, gh auth token, ssh-keygen, age-keygen, gpg's secret keys, cmdkey,
   Set-Secret, kubectl create secret and Secret manifests), accounts (gh auth login|logout|refresh, docker, npm, az,
   gcloud and argocd logins, local users), scheduled (schtasks /create|/change|/delete, Register-ScheduledTask and
-  its kin, services, crontab but -l, at, systemctl enable, Run keys, a file written where it starts on its own, the
-  desktop app's scheduled-tasks tools), arming (--arm), installer (install.ps1 -Apply). A category the file does
+  its kin, brain schedule install --apply, services, crontab but -l, at, systemctl enable, Run keys, a file written
+  where it starts on its own, the desktop app's scheduled-tasks tools), arming (--arm), installer (install.ps1 -Apply). A category the file does
   not declare is not guarded; money and legal have no command, only their deny rules. Also refused: setting
   BRAIN_GUARD_ALLOW for later sessions (setx, the registry, Claude Code's settings, a shell profile; check override).
 - ``power`` (wi-brain-power-guard, TOPO-2): no act on a machine or the cluster: machine (shutdown, reboot, sleep,
@@ -1540,6 +1540,8 @@ def _owner_command(words: list[str], cwd: str, shell: str, command: str) -> tupl
             if any(str(o.get("kind")) == "Secret" for o in objs):
                 return "keys", f"kubectl {verb} of a Secret"
         return None
+    if (prog == "brain" or "brain" in low[1:3]) and "--apply" in low and             any(x == "schedule" and y == "install" for x, y in zip(low, low[1:])):
+        return "scheduled", "brain schedule install --apply (it creates, changes or removes scheduled tasks)"
     return _subcommand(prog, args)
 
 

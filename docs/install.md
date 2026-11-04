@@ -2,7 +2,7 @@
 
 This guide takes a machine with nothing on it to a working brain of your own: the `brain` command installed from a
 tag of this repo, a private brain repo created by `brain init`, and, if you use it, Claude Code reading its rules and
-guards. Windows first; Linux and macOS at the end. It needs no Docker, no GPU and no service: the Lite profile is the
+guards. Windows first; Linux, then macOS, at the end. It needs no Docker, no GPU and no service: the Lite profile is the
 default, and every command reads files and git, never a model.
 
 Your brain is yours: it lives in a folder and a git repo of your own, in your own account or organisation. The engine
@@ -126,20 +126,95 @@ brain tui                                                  # the cockpit (brain 
 `brain refresh` alone only checks in the main checkout (the views are refreshed from a worktree); working directly
 in the main checkout, use `brain sync` after an edit, or `brain refresh --on-main`. Every command has `--help`.
 
-## Linux and macOS
+## Linux
 
-Python 3.10+, `python3-venv` (Debian, Ubuntu) and git; bash is there already.
+What follows ran on Ubuntu 24.04 (Python 3.12, git 2.43, PowerShell 7.6), in a container first: the installer under
+`pwsh`, a brain of your own, the Lite scenario, the Claude Code hooks under bash and the guards on Linux paths. The
+Lite profile asks for Python, git and bash; `pwsh` only runs the installer, so it is optional (by hand below).
+
+### 1. What you need
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv git curl
+```
+
+For the installer, PowerShell from Microsoft's repository (optional):
+
+```bash
+. /etc/os-release
+curl -fsSLo /tmp/ms.deb "https://packages.microsoft.com/config/ubuntu/$VERSION_ID/packages-microsoft-prod.deb"
+sudo dpkg -i /tmp/ms.deb && sudo apt-get update && sudo apt-get install -y powershell
+```
+
+Name the machine before its first ledger line, in `~/.profile` (the ledgers, the memory notes and the profile carry
+it; the host name otherwise):
+
+```bash
+echo 'export BRAIN_MACHINE=my-server' >> ~/.profile
+```
+
+### 2. The brain command
+
+With the installer (a plan, then `-Apply`): its venv in `~/.brain/venv`, the `brain` command linked into
+`~/.local/bin`, which Ubuntu's `~/.profile` puts on the PATH at the next login once the folder exists:
+
+```bash
+git clone --depth 1 --branch v0.2.4 https://github.com/RoJLD/brain.git ~/brain-engine
+pwsh -NoProfile -File ~/brain-engine/packages/brain/installer/install.ps1
+pwsh -NoProfile -File ~/brain-engine/packages/brain/installer/install.ps1 -Apply
+exec bash -l               # a login shell again: ~/.local/bin, created by -Apply, is now on the PATH
+brain --version
+```
+
+By hand, without `pwsh`:
 
 ```bash
 python3 -m venv ~/.brain/venv
 ~/.brain/venv/bin/pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.4#subdirectory=packages/brain"
-mkdir -p ~/.local/bin && ln -sf ~/.brain/venv/bin/brain ~/.local/bin/brain    # ~/.local/bin on your PATH
+mkdir -p ~/.local/bin && ln -sf ~/.brain/venv/bin/brain ~/.local/bin/brain
+exec bash -l               # Ubuntu's ~/.profile puts ~/.local/bin on the PATH once it exists
 brain --version
-brain init ~/my-brain --owner "Your Name" --apply
-cd ~/my-brain && git init && git add -A && git commit -m "my brain" && brain check
 ```
 
-Then steps 4 and 5 above, with `~/my-brain` for the folder.
+### 3. Your brain
+
+```bash
+brain init ~/my-brain --owner "Your Name" --apply
+cd ~/my-brain && git init && git add -A && git commit -m "my brain" && brain check
+pwsh -NoProfile -File ~/brain-engine/packages/brain/installer/install.ps1 -Personal ~/my-brain            # the plan
+pwsh -NoProfile -File ~/brain-engine/packages/brain/installer/install.ps1 -Personal ~/my-brain -Apply
+```
+
+The second run writes the pointer `~/.brain/personal.json`, defines the merge driver in your brain's git config, reads
+the machine's profile (Lite on a server: `-Tier lite`), and plans the schedules (below). A brain cloned from an
+existing remote takes the same two runs, or its own bootstrap (`pwsh ./install.ps1 -Apply` in it, when it has one).
+The registry's projects whose roots are not on this machine are said `not found on this machine` by `brain status`,
+`brain alerts` and `brain health`; nothing fails.
+
+### 4. Claude Code (optional)
+
+Anthropic's installer puts `claude` in `~/.local/bin`; then the steps of the Windows section 4, with `~/my-brain`. Its
+login, like `gh auth login` and git's credentials, is yours to do on the machine. The hooks run under bash and find
+the engine in `~/.brain/venv/bin/python`.
+
+### 5. The schedules: the alerts pass on a machine that stays on
+
+`brain schedule install` (the installer's schedule step) installs what the registry's `schedules:` declare for this
+machine as a systemd user timer, `~/.config/systemd/user/brain-<name>.timer`, or in your crontab where no user
+systemd runs (a container, WSL). Both run the command through `bash -lc`, so the variables of your `~/.profile`
+reach it: `BRAIN_MACHINE`, and `BRAIN_NTFY_TOPIC` for the alerts pass (without it a pass sends nothing and says so).
+A user timer runs while you are logged in; on a server, keep them running with, once:
+
+```bash
+loginctl enable-linger "$USER"
+brain schedule list        # what is declared, installed, and the alerts pass's last run (SILENT after two cadences)
+```
+
+### macOS
+
+Python 3.10+ and git; then section 2 by hand (or `pwsh` from Homebrew) and sections 3 to 4. `brain schedule` has no
+macOS scheduler yet: its plan says so.
 
 ## Upgrade, uninstall
 

@@ -33,7 +33,11 @@ with the last pass (``$BRAIN_HOME/alerts/state.json``), sends each new alert, ea
 whose send failed through ``brain notify`` at its level with its key, sends ``resolved`` at info for a delivered one
 that closed, and appends each change to ``$BRAIN_HOME/alerts/alert-<yyyy-mm>.jsonl`` (the history, same schema).
 Nothing leaves the machine without a ``notify:`` route (none until ddr-2026-11-02-ntfy-server is answered), and
-``$BRAIN_NOTIFY=off`` sends nothing (the tests run so).
+``$BRAIN_NOTIFY=off`` sends nothing (the tests run so). A route whose channels all lack their variable (an unset
+``$BRAIN_NTFY_TOPIC``) sends nothing either: the pass says so in one line, records ``unset``, and sends those alerts
+at the first pass that finds the variable set. Each pass also records itself (``_pass`` in the state: when, where,
+the unset variables): the dead-man of brain.schedule reads it, since a silent pass cannot report its own silence.
+The Task Scheduler is read on Windows only: elsewhere its folders are skipped, as with ``--quick``.
 
 The registry (projects.yaml), inline or a YAML file relative to the project's root::
 
@@ -325,12 +329,13 @@ $out = foreach ($folder in @(FOLDERS)) {
 ConvertTo-Json -InputObject @($out) -Depth 4 -Compress
 """
 SCHEDULER_TIMEOUT = 60.0
+OFF_WINDOWS = "the Task Scheduler is read on Windows only"
 
 
 def _powershell(folders: list[str]) -> tuple[list[dict], str]:
     """Every task under ``folders``: (rows, '') or ([], why it could not be read). Replaced by a fake in the tests."""
     if os.name != "nt":
-        return [], "the Task Scheduler is read on Windows only"
+        return [], OFF_WINDOWS
     quoted = ", ".join("'" + f.replace("'", "''") + "'" for f in folders)  # a literal: -Command has no $args
     argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", PS_QUERY.replace("FOLDERS", quoted)]
     try:
@@ -359,6 +364,8 @@ def read_scheduler(cfgs: list[Config]) -> dict:
     if not folders:
         return {}
     rows, why = _scheduler(folders)
+    if why == OFF_WINDOWS:
+        return {}  # another system: no Task Scheduler to read, as with --quick
     if why:
         return {"error": why}
     return {"rows": rows}
@@ -822,6 +829,8 @@ def render(data: dict) -> list[str]:
                      + (" (--quick: scheduler, stacks, code index and audit not read)" if data.get("quick") else ""))
         for a in d["alerts"]:
             lines.append(f"  {a['level'].upper():<8} {a['key']}  {a['message']}")
+        if d.get("pass"):
+            lines.append(f"  pass     {d['pass']['line']}")
     if len(data["projects"]) > 1:
         n = sum(d.get("open", 0) for d in data["projects"])
         lines.append(f"all: {n} open alert(s) in {sum(1 for d in data['projects'] if d.get('open'))} of "
@@ -837,12 +846,16 @@ def status_line(d: dict) -> str:
     """brain status's alerts row."""
     if "error" in d:
         return f"error: {d['error']}"
+    w = d.get("pass")
+    if w and w.get("silent"):
+        return f"{w['line']}; " + status_line({k: v for k, v in d.items() if k != "pass"})
     if not d["open"]:
-        return f"none open; last notify pass {d['last_pass'] or 'never'}"
+        return f"none open; last notify pass {d['last_pass'] or 'never'}" + (f"; {w['line']}" if w else "")
     named = [f"{a['key']} ({a['level']})" for a in d["alerts"][:SHOWN]]
     more = d["open"] - len(named)
     return (f"{d['open']} open: {_counts(d['counts'])}; " + ", ".join(named)
-            + (f" and {more} more" if more > 0 else "") + f" (brain alerts); last notify pass {d['last_pass'] or 'never'}")
+            + (f" and {more} more" if more > 0 else "") + f" (brain alerts); last notify pass {d['last_pass'] or 'never'}"
+            + (f"; {w['line']}" if w else ""))
 
 
 # --- raise, resolve (what a project's writers call instead of a tracked alerts.md) ---
@@ -899,7 +912,7 @@ def changes(prev: dict, alerts: list[dict]) -> tuple[list[dict], list[dict]]:
     send = []
     for a in alerts:
         p = prev.get(a["key"])
-        if p is None or RANK[a["level"]] > RANK.get(p.get("level"), -1) or p.get("sent") == "failed":
+        if p is None or RANK[a["level"]] > RANK.get(p.get("level"), -1) or p.get("sent") in ("failed", "unset"):
             send.append(a)
     closed = [{"key": k, **v} for k, v in prev.items() if k not in now_keys]
     return send, closed
@@ -912,6 +925,7 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
     now = now or _now()
     st = state_load()
     lines = []
+    unset: set[str] = set()
     for d in data["projects"]:
         if not d.get("found") or "error" in d:
             continue
@@ -932,13 +946,21 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
                                 "sent": p.get("sent", "")}
         hist = []
         for a in send:
-            outcome = _send(cfg, why, name, a["level"], a["message"], a["key"], dry_run, now, env)
+            missing = [] if dry_run else notify.unset(cfg, a["level"], env)
+            if missing:  # said once for the pass, below; sent at the first pass that finds the variable
+                unset.update(missing)
+                outcome = "unset"
+            else:
+                outcome = _send(cfg, why, name, a["level"], a["message"], a["key"], dry_run, now, env)
+                lines.append(f"{name}: {a['level']} {a['key']}: {outcome}")
             opened[a["key"]]["sent"] = outcome
-            lines.append(f"{name}: {a['level']} {a['key']}: {outcome}")
             hist.append(_history(a, name, "open", now))
         for c in closed:
-            outcome = (_send(cfg, why, name, "info", f"resolved: {c.get('message', '')}", c["key"], dry_run, now,
-                             env) if c.get("sent") == "delivered" else "not sent (its alert was not delivered)")
+            missing = [] if dry_run or c.get("sent") != "delivered" else notify.unset(cfg, "info", env)
+            unset.update(missing)
+            outcome = ("unset" if missing else _send(cfg, why, name, "info", f"resolved: {c.get('message', '')}",
+                                                     c["key"], dry_run, now, env) if c.get("sent") == "delivered"
+                       else "not sent (its alert was not delivered)")
             lines.append(f"{name}: resolved {c['key']}: {outcome}")
             hist.append(_history({**c, "level": c.get("level") or "info"}, name, "resolved", now))
         if not dry_run:
@@ -947,7 +969,13 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
             st[name] = {"open": opened, "last_pass": _iso(now)}
         lines.append(f"{name}: {len(d['alerts'])} open, {len(send)} new, risen or retried, {len(closed)} resolved"
                      + (" (dry run: nothing recorded)" if dry_run else ""))
+    if unset:
+        lines.append(f"nothing sent: ${', $'.join(sorted(unset))} not set (brain notify setup ntfy); the alerts wait "
+                     "for the first pass that finds it")
     if not dry_run:
+        from .schedule import clock
+        st["_pass"] = {"at": _iso(now), "host": socket.gethostname() or "unknown", "unset": sorted(unset),
+                       "clock": clock()}
         _state_save(st)
     return lines
 

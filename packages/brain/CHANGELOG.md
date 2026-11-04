@@ -4,6 +4,29 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The schedules** (wi-brain-alerts-pass). The registry's new `schedules:` key, `{name: {command, every, at,
+  at_logon, machines, timeout, enabled}}`, declares the brain commands a machine's scheduler runs, the alerts pass
+  every 15 minutes and at logon first. New `brain schedule install [--apply] [--json]` (`brain.schedule`): the plan,
+  then the Task Scheduler (`\Brain\<name>`, the user's interactive token, the venv's `pythonw.exe`, IgnoreNew,
+  StartWhenAvailable), a systemd user timer or the user's crontab, through `bash -lc`; what this machine installed
+  and no longer declares is removed (`<BRAIN_HOME>/schedules/installed.json`), a task registered by hand never.
+  `brain schedule list`. The installer's new schedule step runs it (a plan line, applied by `-Apply`); `brain check
+  --all` checks the entries, refusing a control character or an unbalanced quote in a command. `--apply` is refused
+  from a Claude Code session, and the guards refuse `brain schedule install --apply` (owner, scheduled). A task
+  already deleted by hand is removed without an error; a schedule recorded under another scheduler than this run's
+  is left alone with a note; the Task Scheduler's XML is read in the OEM code page and compared with its entities
+  decoded.
+- **The alerts pass's dead-man** (wi-brain-alerts-pass). Each `brain alerts --notify` pass records itself (`_pass`
+  in the state: when, where, the unset variables); once the pass is installed here, `brain schedule list`, `brain
+  status`'s alerts row and the SessionStart health hook say SILENT when its last run (or its install, the later)
+  is older than two cadences of the machine's awake time, so a boot or a wake raises no false SILENT.
+  Without its channel's variable (an unset `BRAIN_NTFY_TOPIC`) a pass sends nothing, writes no notify audit line and
+  says so in one line; those alerts go at the first pass that finds it. Off Windows the alerts' Task Scheduler
+  folders are skipped instead of raising a `scheduler` warning.
+- **Linux** (wi-brain-install-linux). The installer ran under `pwsh` 7.6 on Ubuntu 24.04 (a container): the venv, the
+  `~/.local/bin` link, `brain init`, the personal brain's setup (pointer, merge driver, Lite profile, permissions), the
+  Claude Code plugin, the hooks under bash and the guards on Linux paths; `docs/install.md` gains its Linux section
+  from that run.
 - **Tests linked by their imports, and coverage measured** (wi-brain-test-links-auto, wi-brain-test-coverage;
   TEST-1). `brain sync`'s `tested_by` edges now also go to every Python test that imports a node's module itself,
   besides brain audit's strongest evidence; a CodeRef of a symbol (`path::name`) keeps only its file's tests that

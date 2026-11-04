@@ -295,10 +295,19 @@
                  status shows them in the project's section); --quick: the files and events only; --fail-on: exit 1
                  when one is open at that level or above; --notify: the pass a scheduled task runs, which sends each
                  new, risen or failed alert through brain notify at its level (resolved ones at info) and records
-                 the changes in $BRAIN_HOME/alerts (--dry-run: what it would send, nothing recorded)
+                 the changes in $BRAIN_HOME/alerts (--dry-run: what it would send, nothing recorded); without its
+                 channel's variable ($BRAIN_NTFY_TOPIC) it sends nothing and says so in one line
   brain alerts raise KEY [MESSAGE|-|@FILE] --level L [--task T] [--source S] [--code C] [--link URL]
   brain alerts resolve KEY [MESSAGE] [--level L]   a project's alert event (kind alert of the event schema) in
                  $BRAIN_HOME/ledger/alert-<yyyy-mm>.jsonl, what its writers call instead of a tracked alerts file
+  brain schedule install [--apply] [--json]   the brain commands the registry's schedules: declare for this machine
+                 (the alerts pass every 15 minutes and at logon, a daily canary), as a plan, then installed with
+                 --apply: the Task Scheduler (its Brain folder, the user's session, no console window) on Windows, a
+                 systemd user timer on Linux (else the user's crontab); what this machine installed and no longer
+                 declares is removed; the installer's schedule step runs it (creating a task is {owner}'s apply)
+  brain schedule list [--json]   every declared schedule, whether it runs here and is installed, and the alerts
+                 pass's dead-man: SILENT when its last pass is older than two cadences (the SessionStart health hook
+                 and brain status's alerts row say so)
   brain capture EVENT [git|gh]   the hooks' entry (hook JSON on stdin; prints nothing)
   brain memory status [--offline]   what a memory sync would do, note by note (export, import, conflict, kept),
                                   against main fetched now (--offline: as last fetched); writes nothing
@@ -1560,6 +1569,8 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
     errors += [f"classes: {e}" for e in data_classes.errors] + [f"vault: {e}" for e in vault.check(root)]
     errors += [f"tiers: {e}" for e in tiers.check(root)]
     errors += [f"alerts: {e}" for e in alerts.check(projects.load(root))]
+    from . import schedule
+    errors += [f"schedules: {e}" for e in schedule.check(projects.load(root))]
     for what, load, error in (("stacks", stacks.load, stacks.StackError),
                               ("code_index", codeindex.load, codeindex.CodeIndexError)):
         try:
@@ -3571,6 +3582,16 @@ def build_parser() -> argparse.ArgumentParser:
         a.add_argument("--source", help="who raises it: a monitor, a CLI, a watchdog")
         a.add_argument("--code", help="a catalogued code (an exit code, a scheduler result, a name)")
         a.add_argument("--link", help="a URL or a path to look at")
+    # --- the schedules (wi-brain-alerts-pass) ---
+    sc = sub.add_parser("schedule", help="the brain commands a machine's scheduler runs (projects.yaml schedules:): "
+                                         "the plan, installed with --apply").        add_subparsers(dest="schedule_cmd", required=True)
+    sci = sc.add_parser("install", help="the schedules declared for this machine, as a plan; --apply creates, updates "
+                                        "and removes them (the Task Scheduler, systemd --user or crontab)")
+    sci.add_argument("--apply", action="store_true", help="change the scheduler (idempotent)")
+    sci.add_argument("--json", action="store_true")
+    scl = sc.add_parser("list", help="every declared schedule, here or not, installed or not; the alerts pass's "
+                                     "dead-man")
+    scl.add_argument("--json", action="store_true")
     no = sub.add_parser("notify", help="the notification channels: ntfy, Telegram, e-mail, per project and level "
                                        "(projects.yaml notify:)").add_subparsers(dest="notify_cmd", required=True)
     ns = no.add_parser("send", help="send through the project's route for the level; exit 1 when nothing delivered")
@@ -3740,6 +3761,9 @@ def _dispatch(args) -> int:
     if args.cmd == "sessions":  # the machine's sessions: no graph store
         return cmd_sessions(args)
     root = Path(args.root).resolve() if args.root else None
+    if args.cmd == "schedule":  # the machine's scheduler: schedule names are global, any project's registry
+        from . import schedule
+        return schedule.main(args.schedule_cmd, getattr(args, "apply", False), root, args.json)
     if args.cmd == "update":  # the engine of this machine: a brain without a graph store updates too
         return cmd_update(args, root)
     if args.cmd == "audit":  # its repos may have no graph store: before find_root

@@ -39,7 +39,9 @@ pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.4#subdirectory=
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
 launcher on the user PATH, and, for a personal brain, sets up its Claude configuration (marketplace, plugin,
-permissions, memory) and the machine's pointer `<BRAIN_HOME>/personal.json`. It prints a plan; `-Apply` does it. The launcher is replaced even while a brain runs (a session's hooks call it): a new one is swapped in beside it, the old one renamed aside and removed on the next run.
+permissions, memory), the machine's pointer `<BRAIN_HOME>/personal.json`, the merge driver and the schedules (below).
+On Linux it runs under `pwsh` and links the command into `~/.local/bin` ([`docs/install.md`](../../docs/install.md),
+Linux). It prints a plan; `-Apply` does it. The launcher is replaced even while a brain runs (a session's hooks call it): a new one is swapped in beside it, the old one renamed aside and removed on the next run.
 
 ```powershell
 .\packages\brain\installer\install.ps1                       # the plan
@@ -307,6 +309,32 @@ What each finished item teaches is a node of the graph, so it can be found, coun
   friction per item by week. **`brain lesson rules`**: the iron rules (`Σ-NAME`) cited in each registered repo's
   Markdown, read only. **`brain lint lessons`**: the lessons a script could check (guard candidates) and those that
   should say why not.
+
+## Schedules and the alerts pass
+
+A project's `schedules:` entry in the registry declares the brain commands a machine's scheduler runs, `{name:
+{command, every, at, at_logon, machines, timeout, enabled}}`; the alerts pass, say:
+
+```yaml
+brain:
+  schedules:
+    alerts-pass: {command: alerts --all --notify, every: 15m, at_logon: true}
+```
+
+`brain schedule install` prints the plan for this machine and `--apply` installs it (`brain.schedule`): on Windows a
+Task Scheduler task `\Brain\<name>`, as the user, in their session, through the venv's `pythonw.exe` (no console
+window), never two runs at once; on Linux a systemd user timer `brain-<name>.timer` (else the user's crontab), through
+`bash -lc` so that the login profile's variables reach the command. What this machine installed
+(`<BRAIN_HOME>/schedules/installed.json`) and no longer declares is removed; a task registered by hand is never
+touched. The installer's schedule step runs it, so a schedule is a plan line that `-Apply` applies; creating a
+scheduled task stays the owner's decision: from a Claude Code session `--apply` is refused after the plan, and the
+guards refuse it as `owner:scheduled`. A command holds the brain command's arguments only: a newline or an
+unbalanced quote is refused by `brain check --all`. `brain schedule list` shows every declared schedule and the alerts pass's
+**dead-man**: once installed here, the pass is SILENT when its last run (`_pass` in `<BRAIN_HOME>/alerts/state.json`)
+or its install, the later, is older than two cadences of the machine's awake time (a machine asleep or off misses
+no pass); the SessionStart health hook says so in one line and `brain status`'s alerts row shows
+it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and says so in one line; the alerts go
+at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped.
 
 ## Where the brain is found
 

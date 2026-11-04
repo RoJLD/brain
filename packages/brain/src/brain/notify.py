@@ -531,6 +531,25 @@ def send(cfg: Config, msg: Message, *, only: list[str] | None = None, dry_run: b
     return res
 
 
+def unset(cfg: Config | None, level: str, env: Mapping[str, str] | None = None) -> list[str]:
+    """The variables a level's route lacks when every one of its channels lacks one; [] when it can send (or has
+    no route: brain notify says so)."""
+    route = cfg.levels.get(level) if cfg is not None else None
+    if not route or not route.channels:
+        return []
+    env = os.environ if env is None else env
+    if (env.get(SWITCH) or "").strip().lower() in ("off", "dry-run"):
+        return []  # brain notify's own switch decides
+    out = []
+    for n in route.channels:
+        ch = cfg.channels.get(n)
+        missing = ch.missing(env) if ch is not None else []
+        if not missing:
+            return []
+        out += missing
+    return out
+
+
 def notify(project: str | projects.Project, level: str, body: str, *, title: str = "", source: str = "",
            key: str = "", link: str = "", only: list[str] | None = None, dry_run: bool = False, force: bool = False,
            root: Path | None = None) -> Result:
