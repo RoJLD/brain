@@ -70,8 +70,9 @@ What it reads, at zero token:
 
 Each allowed call is logged in the guards ledger with `"decision": "allowed"`, its `case` and its input; a pass the
 ledger does not take (no ledger, `BRAIN_CAPTURE=0`) is a refusal. Anything the guard cannot read (no app files on the
-machine, a caller it cannot identify, an input of another shape) is a refusal, and so is an error: for a session's
-security settings the guard fails closed, where every other guard lets the call through. Not checked, because a hook
+machine, a caller it cannot identify, an input of another shape) is a refusal, and so is an error once the hook's
+JSON is read: for a session's security settings the guard fails closed, where every other guard lets the call
+through (a payload that is not JSON, which Claude Code never sends, names no tool and passes as before). Not checked, because a hook
 cannot see it: that an `archive_session` follows the `archive` case, and whether the target's PRs are merged and its
 worktree clean (the first ADR's wording); the turn being idle stands for « finished ». `set_session_permission_mode`
 and the app's settings stay refused in every case.
@@ -79,7 +80,12 @@ and the app's settings stay refused in every case.
 What it does not hold against: its inputs are files a session can write. A session that writes into the app's
 session files, or a note naming itself, is tampering, not drifting; the guard holds against a mistake, and the app
 still asks the owner to approve each switch unless its permission mode decides. The note is the handover's
-procedural mark (the ADR's « une fois sa note écrite »), not a credential.
+procedural mark (the ADR's « une fois sa note écrite »), not a credential. The names are chosen by the session that
+starts a child, so a session that starts a `coordinator-x` which starts a `coordinator-y` has built the mark; the
+guard checks one hop of lineage, not the whole chain back to the owner. While its note is under 6 hours old, a
+coordinator may turn Remote Control on for any coordinator it started, not only one. After a new root coordinator
+(started by the owner, so unnamed), the first two handovers stay the owner's gesture: the root has no name, and its
+first successor's parent is no coordinator by name.
 
 ## The third-party guard
 

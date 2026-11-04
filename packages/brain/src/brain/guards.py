@@ -1634,7 +1634,7 @@ RC_LIVE = ("running", "idle", "asking", "stale")   # a successor's: not archived
 def _coordinator(node: dict, titles: bool = False) -> bool:
     """Whether a session is a Brain coordinator by its name (given by the session that started it); ``titles`` also
     takes its title, for a refusal only (a live coordinator keeps its Remote Control)."""
-    return bool(COORDINATOR_NAME.match(str(node.get("name") or "")) or
+    return bool(COORDINATOR_NAME.fullmatch(str(node.get("name") or "")) or
                 titles and COORDINATOR_TITLE.match(str(node.get("title") or "")))
 
 
