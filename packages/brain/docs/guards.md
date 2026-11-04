@@ -6,7 +6,7 @@ goes to `<BRAIN_HOME>/ledger/errors.log`).
 
 | Hook | Tools | Decides |
 |---|---|---|
-| `guard.sh tool` (`brain.guards`) | `mcp__*__set_remote_control`, `mcp__*__set_session_permission_mode`, the app's `set_setting` for a Remote Control or permission key | refuses, always |
+| `guard.sh tool` (`brain.guards`) | `mcp__*__set_remote_control`, `mcp__*__set_session_permission_mode`, the app's `set_setting` for a Remote Control or permission key | refuses, but Remote Control's three exceptions |
 | `governor.sh` (`brain.governor`) | `mcp__*__start_session`, `Agent`, `Task`, `Workflow` | asks at WARN, refuses at CRITICAL, past a cap, or on a stale reading |
 
 Both are declared in `src/brain/adapters/claude/hooks/hooks.json`. A personal brain gets them with
@@ -24,7 +24,7 @@ is wherever its earlier commands left it: the guard reads it as the session's.
 ## The session-settings guard
 
 A session that turns Remote Control on or off, or changes a session's permission mode (higher or lower, its own or
-another's), is refused. The reason names the command that puts the exact action in the owner's queue:
+another's), is refused, but in Remote Control's three exceptions (below). The reason names the command that puts the exact action in the owner's queue:
 
 ```bash
 brain queue add --kind action --guard guard-0123456789 [--item ID]
@@ -34,6 +34,40 @@ The owner then switches it in the app (the toolbar's Remote Control switch, the 
 Settings for the default). The category is `security-settings`, never grantable: `brain permissions check` refuses an
 allow rule that names those tools, Remote Control or a permission mode, at every level. `BRAIN_GUARD_ALLOW` does not
 lift it, not even `all`. Refusals are in `<BRAIN_HOME>/ledger/guards-<month>.jsonl` (`"check": "security-settings"`).
+
+### Remote Control's three exceptions
+
+The owner decided three cases where a session switches Remote Control itself (wi-brain-guard-rc-archive, the ADRs of
+2026-11-04 on archiving and on the coordinators' handover). `set_remote_control` passes in exactly these, checked by
+the guard (`brain.guards.remote_control`), and is refused otherwise, the reason saying which condition failed:
+
+| Case | Call | The guard checks |
+|---|---|---|
+| `archive` | `enabled: false` on another session, just before archiving it | the caller started it; it is `idle` or `ended` (its transcript's tail); it is no live coordinator |
+| `handover-on` | `enabled: true` on another session | the caller is a Brain coordinator started by one (or by the owner); it started the target; the target is a coordinator, not archived; the caller's hand-over note exists |
+| `handover-off` | `enabled: false` on `self` (or its own id) | the caller is a coordinator started by one (or by the owner); its hand-over note exists; it started a coordinator that is detached and not archived |
+
+What it reads, at zero token:
+
+- **Who is calling**: the desktop app's session file whose `cliSessionId` is the hook's `session_id`; when Claude
+  Code's environment gives the app id (`CLAUDE_CODE_HOST_SESSION_ID`), the two must agree.
+- **Who started whom**: the app's own files only (`spawnedFrom.sessionId`), read again at the call. The ledger's
+  SessionStart events and the brief hash (what `brain sessions` adds) are not trusted here: any session can append to
+  the ledger, and the brief hash is a guess.
+- **A coordinator**: its name (`spawnedFrom.name`, given by the session that started it) starts with `coordinator-`,
+  `coordinateur-` or `coordination-`, or its title starts with « Coordination du Brain ». A title that only mentions a
+  coordinator is none.
+- **Detached**: the app's `lineageDetached` (`brain.sessions` reads it as `detached`).
+- **The hand-over note**: a `*.md` in `<BRAIN_HOME>/handover/` written in the last 6 hours whose first 2,000
+  characters name the caller's full app id (`local_…`).
+
+Each allowed call is logged in the guards ledger with `"decision": "allowed"`, its `case` and its input. Anything the
+guard cannot read (no app files on the machine, a caller it cannot identify, an input of another shape, an error) is a
+refusal. Not checked, because a hook cannot see it: that an `archive_session` follows the `archive` case, and whether
+the target's PRs are merged and its worktree clean (the first ADR's wording); the turn being idle stands for
+« finished ». `set_session_permission_mode` and the app's settings stay refused in every case. The inputs are files a
+session could write (the app's files, the notes): the guard holds against a mistake or a drifting session, and the app
+still asks the owner to approve each switch unless its permission mode decides.
 
 ## The third-party guard
 

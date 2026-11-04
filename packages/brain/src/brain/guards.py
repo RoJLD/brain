@@ -30,6 +30,10 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   where it starts on its own, the desktop app's scheduled-tasks tools), arming (--arm), installer (install.ps1 -Apply). A category the file does
   not declare is not guarded; money and legal have no command, only their deny rules. Also refused: setting
   BRAIN_GUARD_ALLOW for later sessions (setx, the registry, Claude Code's settings, a shell profile; check override).
+  A session's Remote Control and permission mode (security-settings, never lifted) are refused but in Remote Control's
+  three exceptions (wi-brain-guard-rc-archive, remote_control): off on a finished session the caller started; at a
+  handover between Brain coordinators, on for the coordinator the caller started to succeed it and off on itself,
+  once its hand-over note is in <BRAIN_HOME>/handover/; each one passes logged as decision allowed with its case.
 - ``power`` (wi-brain-power-guard, TOPO-2): no act on a machine or the cluster: machine (shutdown, reboot, sleep,
   Stop-Computer, systemctl and loginctl power verbs, boot arming by bcdedit, efibootmgr or ipmitool), node (the verbs
   but reads of the platform's node lifecycle CLIs, config.json's power.node_clis, a kubectl-<name> one as kubectl
@@ -1326,7 +1330,8 @@ OVERRIDE_HINT = re.compile(r"(?i)settings(?:\.local)?\.json|\.(?:bashrc|bash_pro
 INSTALL_APPLY = re.compile(r"(?i)^[-–—]a(?:p(?:p(?:l(?:y)?)?)?)?(?::\$?(?:true|1))?$")   # PowerShell takes – and —
 SCHEDULED_TOOL = re.compile(r"^mcp__.*scheduled[-_]?tasks?__(?:create|update)_scheduled_task$")
 # The desktop app's tools that change a session's Remote Control or permission mode, under any MCP prefix, and its
-# settings tool for a key of either (connect_new_sessions_to_remote_control): security-settings, the owner's alone.
+# settings tool for a key of either (connect_new_sessions_to_remote_control): security-settings, the owner's alone,
+# but Remote Control's three exceptions (remote_control).
 SESSION_SETTINGS_TOOL = re.compile(r"^mcp__.+__(?:set_remote_control|set_session_permission_mode)$")
 SETTINGS_TOOL = re.compile(r"^mcp__.+__set_setting$")
 SECURITY_KEY = re.compile(r"remote[_-]?control|permission", re.I)
@@ -1608,6 +1613,135 @@ def check_session_settings(tool: str, inp: dict, cwd: str):
     why = (owner_categories().get("security-settings") or {}).get("why") or         "a session's Remote Control and permission mode are switched in the app, by its owner"
     return "security-settings", (f"{tool} refused: security-settings is {config.owner_of()}'s alone "
                                  f"({why.rstrip('.')}); they switch it in the app"), req
+
+
+# Remote Control's three exceptions (wi-brain-guard-rc-archive; the owner's ADRs of 2026-11-04 on archiving and on
+# the coordinators' handover). A coordinator is marked by the name the session that started it gave it, or its title.
+RC_TOOL = re.compile(r"^mcp__.+__set_remote_control$")
+COORDINATOR_NAME = re.compile(r"(?i)^coordinat(?:or|eur|ion)-")
+COORDINATOR_TITLE = re.compile(r"(?i)^\s*(?:coordination du brain|brain coordinat(?:ion|or))\b")
+HANDOVER_DIR = "handover"    # <BRAIN_HOME>/handover/: the coordinators' hand-over notes (*.md)
+HANDOVER_NOTE_S = 6 * 3600   # a hand-over note counts this long after it was last written
+HANDOVER_HEAD = 2000         # the note's opening, which names whose note it is (its app id)
+HANDOVER_MAX = 512_000       # a bigger file is not read
+RC_FINISHED = ("idle", "ended")   # the states of a finished session (brain.sessions.state_of)
+RC_GONE = ("archived", "ended")
+
+
+def _coordinator(node: dict) -> bool:
+    """Whether a session is a Brain coordinator: its name (given by the session that started it) or its title."""
+    return bool(COORDINATOR_NAME.match(str(node.get("name") or "")) or
+                COORDINATOR_TITLE.match(str(node.get("title") or "")))
+
+
+def handover_note(host_id: str, now: float | None = None) -> Path | None:
+    """The session's hand-over note: a ``*.md`` in <BRAIN_HOME>/handover/ written in the last HANDOVER_NOTE_S whose
+    opening (HANDOVER_HEAD characters) names its full app id; None without one."""
+    import time
+
+    from . import sessions
+    if not sessions.HOST_RE.match(host_id or ""):
+        return None
+    now = time.time() if now is None else now
+    d = paths.brain_home() / HANDOVER_DIR
+    id_re = re.compile(rf"(?<![\w-]){re.escape(host_id)}(?![\w-])")
+    try:
+        files = [(f, f.stat()) for f in d.glob("*.md") if f.is_file()]
+    except OSError:
+        return None
+    for f, st in sorted(files, key=lambda x: -x[1].st_mtime):
+        if not (0 <= now - st.st_mtime <= HANDOVER_NOTE_S) or st.st_size > HANDOVER_MAX:
+            continue
+        try:
+            head = f.read_text(encoding="utf-8", errors="replace")[:HANDOVER_HEAD]
+        except OSError:
+            continue
+        if id_re.search(head):
+            return f
+    return None
+
+
+def remote_control(payload: dict, now: float | None = None) -> tuple[str | None, str]:
+    """(case, why) for a set_remote_control call: ``archive`` (off on a finished session the caller started),
+    ``handover-on`` (on for the coordinator the caller started to succeed it) or ``handover-off`` (off on the caller
+    itself at that handover, its successor detached), else None and why it is none of them. Read at zero token from
+    the desktop app's own session files (brain.sessions.app_index and app_meta: who started whom, the names, titles,
+    archived and detached flags) and the hand-over notes, never from the ledger's SessionStart events or the brief
+    hash, which any session can append to; what cannot be read is a refusal, never a guess."""
+    from . import sessions
+    inp = payload.get("tool_input") or {}
+    enabled, target = inp.get("enabled"), inp.get("session_id")
+    if not isinstance(enabled, bool) or not isinstance(target, str) or not target.strip():
+        return None, "its session_id or enabled cannot be read"
+    target = target.strip()
+    index = sessions.app_index()
+    if index is None:
+        return None, "the desktop app's session files are not on this machine"
+    sid = str(payload.get("session_id") or "")
+    callers = [h for h, m in index.items() if sid and m.get("session") == sid]
+    if len(callers) != 1:
+        return None, "this session is not in the desktop app's session files"
+    caller = callers[0]
+    own = sessions.here()["host_id"]
+    if own and own != caller:
+        return None, "this session's app id and its transcript's disagree"
+
+    def meta(host: str) -> dict:   # one session's own file, read again now (the index may be cached)
+        m = sessions.app_meta(host) if host in index else {}
+        return {**m, "source": "app"} if m.get("host_id") == host else {}
+
+    def mine(m: dict) -> bool:
+        return bool(m) and m.get("parent") == caller
+
+    def state(m: dict) -> str:
+        return "archived" if m.get("archived") else sessions.state_of(m, {}, now)
+
+    me = meta(caller)
+    if not me:
+        return None, "this session's app file cannot be read"
+
+    def handover() -> str:   # '' when the caller is a coordinator at its handover, else why not
+        if not _coordinator(me):
+            return "this session is not a Brain coordinator (its name or title)"
+        if me.get("parent") and not _coordinator(meta(str(me["parent"]))):
+            return "this session was not started by a Brain coordinator, nor by the owner"
+        if handover_note(caller, now) is None:
+            return (f"no hand-over note naming {caller} in {HANDOVER_DIR}/ written in the last "
+                    f"{HANDOVER_NOTE_S // 3600} h")
+        return ""
+
+    if target in ("self", caller):
+        if enabled:
+            return None, "a session never turns its own Remote Control on"
+        why = handover()
+        if why:
+            return None, why
+        def successor(m: dict) -> bool:
+            return mine(m) and _coordinator(m) and m.get("detached") is True and state(m) not in RC_GONE
+        succ = [h for h, m in sorted(index.items()) if m.get("parent") == caller and successor(meta(h))]
+        if not succ:
+            return None, "it has started no live coordinator to succeed it, detached"
+        return "handover-off", f"off on itself at its handover to {', '.join(succ)}"
+    node = meta(target) if sessions.HOST_RE.match(target) else {}
+    if not node:
+        return None, f"{json.dumps(target[:80], ensure_ascii=False)} is not in the desktop app's session files"
+    if not mine(node):
+        return None, f"{target} was not started by this session"
+    st = state(node)
+    if enabled:
+        if not _coordinator(node):
+            return None, f"{target} is not a Brain coordinator (its name or title), so not a successor"
+        why = handover()
+        if why:
+            return None, why
+        if st in RC_GONE:
+            return None, f"{target} is {st}"
+        return "handover-on", f"on for {target}, the coordinator it started to succeed it"
+    if _coordinator(node) and st not in RC_GONE:
+        return None, f"{target} is a live coordinator, which stays in Remote Control"
+    if st not in RC_FINISHED:
+        return None, f"{target} is {st}, not finished"
+    return "archive", f"off on {target}, a finished session it started, before archiving it"
 
 
 def _is_usage_allow(target) -> bool:
@@ -2997,13 +3131,14 @@ def allowed() -> set[str]:
     return set(GUARDS) | names if "all" in names else names
 
 
-def _record(payload: dict, guard: str, check: str, decision: str, reason: str, request: dict | None = None) -> bool:
-    """Append the refusal or override to the guards ledger; True when written. A request for the owner creates the
-    ledger folder: brain queue add --guard reads it there."""
+def _record(payload: dict, guard: str, check: str, decision: str, reason: str, request: dict | None = None,
+            case: str | None = None) -> bool:
+    """Append the refusal, override or exception (``case``) to the guards ledger; True when written. A request for
+    the owner, or an exception, creates the ledger folder: brain queue add --guard reads it there."""
     d = paths.ledger_dir()
     if os.environ.get("BRAIN_CAPTURE", "1") == "0":
         return False
-    if request is not None:
+    if request is not None or case is not None:
         d.mkdir(parents=True, exist_ok=True)
     if not d.is_dir():
         return False
@@ -3013,6 +3148,9 @@ def _record(payload: dict, guard: str, check: str, decision: str, reason: str, r
            "tool_use_id": payload.get("tool_use_id"), "cwd": payload.get("cwd")}
     if request is not None:
         rec["request"] = request
+    if case is not None:
+        rec["case"] = case
+        rec["what"] = {k: v for k, v in (payload.get("tool_input") or {}).items() if not str(k).startswith("_")}
     with open(d / f"guards-{at[:7]}.jsonl", "a", encoding="utf-8", newline="\n") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
     return True
@@ -3045,10 +3183,22 @@ def main(stdin=None, stdout=None) -> int:
     try:
         payload = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
         ok = allowed()
+        rc_why = ""
+        if RC_TOOL.match(str(payload.get("tool_name") or "")):
+            try:
+                case, rc_why = remote_control(payload)
+            except Exception as exc:   # an error is no exception: the call goes on to its refusal
+                _log("owner", exc)
+                case, rc_why = None, "the session tree could not be read"
+            if case:
+                _record(payload, "owner", "security-settings", "allowed", rc_why, case=case)
+                return 0
         for guard, check, reason, request in refusals(payload):
             if (guard in ok or f"{guard}:{check}" in ok) and check not in UNLIFTED:
                 _record(payload, guard, check, "overridden", reason, request)
                 continue
+            if rc_why and check == "security-settings":
+                reason += f" (none of the three exceptions: {rc_why})"
             recorded = _record(payload, guard, check, "denied", reason, request)
             if request is not None:
                 tool = payload.get("tool_name") or ""

@@ -11,6 +11,15 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
   update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
 
+- **Remote Control's three exceptions** (wi-brain-guard-rc-archive; the owner's ADRs of 2026-11-04). The
+  session-settings guard lets `set_remote_control` through in exactly three cases, each checked from the desktop
+  app's own session files and the hand-over notes: off on a finished (idle) session the caller started, before
+  archiving it; at a handover between Brain coordinators, on for the coordinator the caller started to succeed it, and
+  off on the caller itself once that successor is detached, both once the caller's hand-over note (a `*.md` in
+  `<BRAIN_HOME>/handover/` naming its app id, under 6 h old) exists. Each pass is logged in the guards ledger
+  (`"decision": "allowed"`, its `case`); anything the guard cannot read is a refusal. `set_session_permission_mode`
+  and the app's settings stay refused, and `BRAIN_GUARD_ALLOW` still lifts nothing. `brain.sessions` reads the app's
+  `lineageDetached` (`detached`). Acts once the engine is installed (`install.ps1 -Apply`). `docs/guards.md`.
 - **Tolerant readers, strict writers** (wi-brain-tolerant-reader, COMPAT-1's gate; `docs/formats.md`). The schema
   validator gains two modes. Read mode keeps a field it does not know (a newer brain's additive one) and reports it;
   strict mode, for every write and for the checks in CI (`CI` set, or `BRAIN_STRICT=1`), refuses it. A `v` above the
