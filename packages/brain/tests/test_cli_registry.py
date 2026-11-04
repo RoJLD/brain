@@ -1,17 +1,20 @@
 """wi-brain-cli-registry: each top-level command is a module of brain.commands; brain.cli builds the parser from them
-and dispatches."""
+and dispatches; brain audit flags a command outside the registry (check cmd.registry)."""
 
 import argparse
 import types
 from pathlib import Path
 
+import pytest
+
 import help_dump
-from brain import cli, commands
+from brain import audit, cli, commands, inventory
 from brain.commands import _registry
 from brain.commands import audit as audit_cmd
 from brain.commands import (bundle, capture, check, code_map, collisions, decision, down, health, impact, index, init,
                             memory, merge_check, merge_driver, milestone, perf, refresh, resume, retro, schedule,
                             sessions, spec, timed, up, update)
+from test_audit import README, _measure
 
 MODULES = _registry.load()
 
@@ -68,7 +71,7 @@ def test_the_commands_that_run_before_a_root_is_resolved_keep_their_phase():
 
 
 def test_brain_cli_adds_no_parser_itself():
-    assert "add_parser(" not in Path(cli.__file__).read_text(encoding="utf-8")
+    assert audit._parsers_added(Path(cli.__file__).read_text(encoding="utf-8")) == []
 
 
 def _fake(**handlers):
@@ -88,3 +91,42 @@ def test_the_dispatch_runs_early_first_then_run_with_the_root(monkeypatch, tmp_p
         assert cli._dispatch(args) is None                                           # no run: early's, even None
     assert "fake" not in _registry._OWNERS
 
+
+REGISTRY = {
+    "README.md": README,
+    "src/a/__init__.py": "",
+    "src/a/cli.py": "from a.commands import _registry\n\ndef main():\n    _registry.load()\n",
+    "src/a/commands/__init__.py": "import pkgutil\n\n\ndef _names():\n    return [m.name for m in "
+                                  "pkgutil.iter_modules(__path__)]\n",
+    "src/a/commands/hello.py": "def register(sub, ctx):\n    sub.add_parser('hello')\n\n\ndef run(args, root):\n"
+                               "    return 0\n",
+    "src/a/commands/_common.py": "def helper():\n    pass\n",
+}
+
+
+def _registry_found(files: dict) -> dict:
+    res = _measure({"a": files})
+    return {f["unit"]: f for f in res["repos"][0]["findings"] if f["check"] == "cmd.registry"}
+
+
+def test_audit_flags_a_parser_added_outside_the_registry_and_a_module_without_register():
+    assert _registry_found(REGISTRY) == {}
+    bad = dict(REGISTRY, **{
+        "src/a/cli.py": "def main(sub):\n    sub.add_parser('stray').add_subparsers().add_parser('leaf')\n",
+        "src/a/commands/half.py": "def run(args, root):\n    return 0\n"})
+    found = _registry_found(bad)
+    assert set(found) == {"src/a/cli.py", "src/a/commands/half.py"}
+    assert "adds 2 parser(s) itself, outside the command registry: stray, leaf" in found["src/a/cli.py"]["why"]
+    assert found["src/a/commands/half.py"]["fix"].startswith("define register(sub, ctx)")
+    assert audit.CHECKS["cmd.registry"].scout == "new+left" and audit.RULESET >= 5
+    plain = dict(bad, **{"src/a/commands/__init__.py": ""})   # a commands/ package that lists nothing: no registry
+    assert _registry_found(plain) == {}
+
+
+def test_the_engines_own_registry_passes_its_audit_check():
+    root = Path(__file__).resolve().parents[3]
+    if not (root / ".git").exists():
+        pytest.skip("not a git checkout")
+    rf = inventory.collect(inventory.work_tree(root), "brain")
+    assert [f["unit"] for f in audit.registry_findings("brain", rf)] == []
+    assert inventory.facts(rf.tree, "packages/brain/src/brain/commands/__init__.py").discovers
