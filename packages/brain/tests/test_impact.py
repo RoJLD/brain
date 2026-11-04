@@ -4,7 +4,7 @@ import pytest
 
 from brain import cli, impact
 from conftest import run_git
-from test_codemap import CORE, LAB, Nexus, _sha
+from test_codemap import CORE, LAB, FakeGitNexus, _sha
 
 GRAPH = {
     "notes/graph/nodes/features.yaml": """\
@@ -93,13 +93,13 @@ def _ids(rows, key="id"):
 
 def _chain(lab, make_repo, monkeypatch):
     """GitNexus up, lab indexed at main; the change edits go and helper's nested go, and adds a test module."""
-    nexus = Nexus(monkeypatch, {"lab": (lab, _sha(lab))}, CALLS)
+    gn = FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))}, CALLS)
     make_repo.write(lab, {"src/lab/core.py": HELPER2, "tests/test_new.py": "def test_x():\n    pass\n"})
-    return nexus
+    return gn
 
 
 def test_the_chain_from_touched_symbols_to_the_coderefs(lab, make_repo, monkeypatch, capsys):
-    nexus = _chain(lab, make_repo, monkeypatch)
+    gn = _chain(lab, make_repo, monkeypatch)
     rc, d = _impact(capsys, lab)
     assert (rc, d["mode"], d["index"], d["new"]) == (0, "gitnexus", _sha(lab, "main"), "worktree")
     assert [(s["name"], s["lines"]) for s in d["symbols"]] == [("go", [1, 2]), ("helper", [13, 16]),
@@ -109,7 +109,7 @@ def test_the_chain_from_touched_symbols_to_the_coderefs(lab, make_repo, monkeypa
         ("code:lab:lab/cli.py::main", "caller"), ("code:lab:lab/core.py::Engine.run", "caller"),
         ("code:lab:lab/core.py::go", "symbol")]                             # Engine's lines, LIMIT's: untouched
     assert [s["name"] for s in d["unmapped"]] == ["helper", "go"]          # the nested go: no CodeRef names it
-    assert [q for q in nexus.queries if "'CALLS'" in q and "r.confidence >= 0.8" not in q] == []
+    assert [q for q in gn.queries if "'CALLS'" in q and "r.confidence >= 0.8" not in q] == []
 
 
 def test_the_checklist_from_the_nodes_relying_on_them(lab, make_repo, monkeypatch, capsys):
@@ -147,7 +147,7 @@ def test_the_text_view(lab, make_repo, monkeypatch, capsys):
 
 
 def test_without_gitnexus_the_file_level_says_so_and_reads_the_ast(lab, make_repo, monkeypatch, capsys):
-    Nexus(monkeypatch, {"lab": (lab, _sha(lab))}, CALLS, up=False)
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))}, CALLS, up=False)
     make_repo.write(lab, {"src/lab/core.py": GO2})
     rc, d = _impact(capsys, lab)
     assert rc == 0 and d["mode"] == "files" and d["index"] == "" and d["symbols"] == d["callers"] == []
@@ -161,7 +161,7 @@ def test_without_gitnexus_the_file_level_says_so_and_reads_the_ast(lab, make_rep
 
 
 def test_a_repo_gitnexus_has_not_indexed_is_read_at_the_file_level(lab, make_repo, monkeypatch, capsys):
-    Nexus(monkeypatch, {})
+    FakeGitNexus(monkeypatch, {})
     make_repo.write(lab, {"src/lab/core.py": CORE.replace("LIMIT = 3", "LIMIT = 4"), "README.md": "# Lab 2\n"})
     rc, d = _impact(capsys, lab)
     assert d["why_files"] == "lab is not indexed: brain index lab"
@@ -175,14 +175,14 @@ def test_an_index_older_than_the_base_is_noted(lab, make_repo, monkeypatch, caps
     make_repo.commit(lab, {"src/lab/core.py": CORE.replace("LIMIT = 3", "LIMIT = 4")})   # main moves on
     run_git(lab, "checkout", "-q", "-B", "feature")
     make_repo.write(lab, {"src/lab/core.py": GO2.replace("LIMIT = 3", "LIMIT = 4")})
-    Nexus(monkeypatch, {"lab": (lab, indexed)})
+    FakeGitNexus(monkeypatch, {"lab": (lab, indexed)})
     rc, d = _impact(capsys, lab)
     assert d["note"].startswith(f"the index is at {indexed[:7]}, the base at {_sha(lab, 'main')[:7]}")
     assert {t["ref"] for t in d["coderefs"]} == {"code:lab:lab/core.py::go", "code:lab:lab/core.py::LIMIT"}
 
 
 def test_a_commit_range_with_a_rename_and_a_deletion(lab, make_repo, monkeypatch, capsys):
-    Nexus(monkeypatch, {}, up=False)
+    FakeGitNexus(monkeypatch, {}, up=False)
     a = _sha(lab)
     cli_text = (lab / "src/lab/cli.py").read_text(encoding="utf-8")
     b = make_repo.commit(lab, {"src/lab/cli.py": None, "src/lab/cmd.py": cli_text + "\nX = 1\n", "README.md": None,
@@ -201,7 +201,7 @@ def test_a_commit_range_with_a_rename_and_a_deletion(lab, make_repo, monkeypatch
 
 def test_an_edit_on_a_symbols_last_line_or_a_one_line_symbol_is_found(lab, make_repo, monkeypatch, capsys):
     """GitNexus counts lines from 0 (the fake keeps its rows), git from 1: go's last line and the constant LIMIT."""
-    Nexus(monkeypatch, {"lab": (lab, _sha(lab))})
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))})
     make_repo.write(lab, {"src/lab/core.py": GO2.replace("LIMIT = 3", "LIMIT = 4")})
     d = _impact(capsys, lab)[1]
     assert [(s["name"], s["lines"]) for s in d["symbols"]] == [("go", [1, 2]), ("LIMIT", [10, 10])]
@@ -211,7 +211,7 @@ def test_an_edit_on_a_symbols_last_line_or_a_one_line_symbol_is_found(lab, make_
 
 def test_a_moved_file_leaves_its_placed_coderefs_dangling(lab, monkeypatch, capsys):
     """A pure rename has no hunk: the CodeRefs the index placed in the old path are touched all the same."""
-    Nexus(monkeypatch, {"lab": (lab, _sha(lab))}, CALLS)
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))}, CALLS)
     run_git(lab, "mv", "src/lab/core.py", "src/lab/engine.py")
     d = _impact(capsys, lab)[1]
     assert (d["mode"], d["symbols"]) == ("gitnexus", [])
@@ -222,7 +222,7 @@ def test_a_moved_file_leaves_its_placed_coderefs_dangling(lab, monkeypatch, caps
 
 
 def test_a_deleted_or_moved_test_module_never_reaches_the_pytest_line(lab, make_repo, monkeypatch, capsys):
-    Nexus(monkeypatch, {}, up=False)
+    FakeGitNexus(monkeypatch, {}, up=False)
     run_git(lab, "checkout", "-q", "main")
     make_repo.commit(lab, {"tests/test_core.py": "def test_a():\n    pass\n", "tests/test_gone.py": "def test_b():\n"
                            "    pass\n", "docs/guide.md": "# Guide\n\n## Core\n"})
@@ -236,7 +236,7 @@ def test_a_deleted_or_moved_test_module_never_reaches_the_pytest_line(lab, make_
 
 def test_a_failed_code_map_falls_back_to_the_file_level(lab, make_repo, monkeypatch, capsys):
     """The census of the map times out while the other queries answer: the run says so, never a silent half."""
-    Nexus(monkeypatch, {"lab": (lab, _sha(lab))}, CALLS, fail="MATCH (f:File)")
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))}, CALLS, fail="MATCH (f:File)")
     make_repo.write(lab, {"src/lab/core.py": GO2})
     rc, d = _impact(capsys, lab)
     assert (rc, d["mode"], d["symbols"], d["callers"]) == (0, "files", [], [])
@@ -246,7 +246,7 @@ def test_a_failed_code_map_falls_back_to_the_file_level(lab, make_repo, monkeypa
 
 @pytest.mark.parametrize("up", [False, True])
 def test_a_malformed_coderef_is_left_out_not_a_crash(lab, make_repo, monkeypatch, capsys, up):
-    Nexus(monkeypatch, {"lab": (lab, _sha(lab))}, up=up)
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))}, up=up)
     make_repo.write(lab, {"src/lab/core.py": GO2, "notes/graph/nodes/extra.yaml":
                           '- {id: "code:lab:tools/x.ps1::Foo", type: CodeRef, status: active, title: x}\n'})
     rc, d = _impact(capsys, lab)
@@ -284,7 +284,7 @@ def test_hunks_cover_both_sides_and_an_insertion_touches_the_line_it_follows(lab
 
 
 def test_a_change_outside_any_coderef_lists_only_the_docs_it_edits(lab, make_repo, monkeypatch, capsys):
-    Nexus(monkeypatch, {"lab": (lab, _sha(lab))}, CALLS)
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))}, CALLS)
     make_repo.write(lab, {"docs/notes.txt": "x\n", "docs/guide.md": "# Guide\n\n## Core\n"})
     rc, d = _impact(capsys, lab)
     assert rc == 0 and d["coderefs"] == d["features"] == d["tests"] == [] and d["pytest"] == ""

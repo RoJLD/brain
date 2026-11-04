@@ -1,5 +1,5 @@
 """A personal brain's configuration, ``config.json``: the contract between the brain engine and the private repo of a
-person or a team (wi-brain-personal-brain, docs/specs/2026-11-02-personal-brain-boundary-design.md §4).
+person or a team (wi-brain-personal-brain).
 
 ``brain config [--json]`` shows it resolved, ``brain config --keys`` lists what it may hold (the descriptions of
 ``schemas/config.schema.json``, the one source) and ``brain config --check`` checks it; ``brain check --all`` checks
