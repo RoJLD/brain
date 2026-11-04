@@ -21,8 +21,10 @@ or (once wi-brain-scope-tree builds them) a container. A project's chain is the 
 rules from the root down (``rules/scopes/<id>.md``), then the project's own ``CLAUDE.md``: the nearest is read last.
 Until the tree has parents, a project's chain is the global rules then its own. A rules file may ``lock`` rule ids
 for its whole subtree; a lower rule that declares ``overrides:`` a locked id is reported (:func:`lock_findings`):
-a conflict of text stays a matter of judgement, made visible. A project the brain reads and never writes (``access:
-read``, brain.projects) is no scope of this source: its rules are written by its own sessions.
+a conflict of text stays a matter of judgement, made visible. A scope's file (``rules/scopes/<id>.md``) may hold its
+front matter only (scope, title, intro), a scope with no rule of its own yet: it renders nothing and locks nothing.
+A project the brain reads and never writes (``access: read``, brain.projects) is no scope of this source: its rules
+are written by its own sessions.
 
 **Exactness.** YAML flow sequences (``[a, b]``) stay inline when an adapter writes JSON, block sequences go one item
 per line: the source's style is the rendered file's, so the Claude adapter reproduces a hand-written manifest byte
@@ -417,8 +419,11 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
         if rf.preamble.strip():
             errors.append(f"{where}: text before the first rule (a rule is a '## ' section; the intro goes in the "
                           "front matter)")
-        if not rf.rules:
+        if not rf.rules and not rel.startswith(SCOPES + "/"):   # a scope's file may hold its front matter only
             errors.append(f"{where}: no rule (one '## ' section per rule)")
+        elif not rf.rules and rf.lock:
+            errors.append(f"{where}: lock in a scope file without a rule (it renders nothing and locks nothing: lock a "
+                          "rule where it is written)")
         for r in rf.rules:
             at = f"{where}:{r.line}"
             if not r.id:

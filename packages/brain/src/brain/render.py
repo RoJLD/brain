@@ -166,6 +166,8 @@ def render_claude(src: neutral.Source, project: str | None = None, project_root:
                                 f"pack {p.id}: the plugin's manifest"))
         for rel in p.items("rules"):
             rf = src.rule_files[rel]
+            if not rf.rules:   # a scope's file with its front matter only: nothing to inject
+                continue
             r.outputs.append(Output(f"{base}/rules/{Path(rel).name}", rf.render("claude"), "brain",
                                     f"pack {p.id}: rules ({rf.scope}), injected by the core plugin's hook"))
         if p.items("rules"):
@@ -211,7 +213,8 @@ def agents_md(src: neutral.Source, project: str | None, project_root: Path | Non
     parts = [f"<!-- {MARK} -->\n"]
     pointers = _pointers(src)
     for i, rf in enumerate(files):
-        parts.append(rf.render("agents").rstrip("\n") + "\n")
+        if rf.rules or rf.project:   # a scope's file without a rule renders nothing
+            parts.append(rf.render("agents").rstrip("\n") + "\n")
         last_global = rf.scope == neutral.GLOBAL and (i + 1 == len(files) or files[i + 1].scope != neutral.GLOBAL)
         if last_global and pointers:
             parts.append(pointers)

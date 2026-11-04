@@ -49,6 +49,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   stubs. The module map's view sits beside its store's board the same way (`notes/modules_graph.md` for the first
   store, as before), and the resume pack names the project's own views. Nothing changes for a project's first store
   at a root it owns.
+- **A scope's rules file may hold its front matter only** (`source/rules/scopes/<id>.md`: scope, title, intro), a
+  scope with no rule of its own yet. It renders nothing and locks nothing: `lock:` in it is refused. A file outside
+  `rules/scopes/` still needs a rule.
 
 - **Remote Control's three exceptions** (wi-brain-guard-rc-archive; the owner's ADRs of 2026-11-04). The
   session-settings guard lets the desktop app's `set_remote_control` through in exactly three cases, each checked

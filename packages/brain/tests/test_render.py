@@ -216,6 +216,26 @@ def test_check_reports_what_breaks_the_source(ada):
         assert bit in errors, bit
 
 
+def test_a_scope_file_may_hold_its_front_matter_only_and_renders_nothing(ada):
+    write(ada / "source", {"rules/scopes/demo.md": "---\ntitle: The demo's rules\nintro: None yet.\n---\n",
+                           "packs.yaml": PACKS.replace("    projects: [demo]\n",
+                                                       "    projects: [demo]\n    rules: [rules/scopes/demo.md]\n")})
+    src = neutral.load(ada)
+    assert src.rule_files["rules/scopes/demo.md"].scope == "demo" and neutral.check(src) == []
+    rendered = render.render_claude(src)
+    assert not any(o.rel.endswith("/rules/demo.md") for o in rendered.outputs)  # nothing to inject: no file
+    assert any(o.rel.endswith("/rules/global.md") for o in rendered.outputs)
+    write(ada / "source", {"rules/scopes/demo.md": "---\ntitle: T\nlock: [rule-git]\n---\n",
+                           "rules/scopes/acme.md": "---\ntitle: Acme\n---\n\nAn intro in the body.\n",
+                           "rules/empty.md": "---\nscope: global\ntitle: Nothing\n---\n"})
+    errors = neutral.check(neutral.load(ada))
+    assert ("rules/scopes/demo.md: lock in a scope file without a rule (it renders nothing and locks nothing: lock a "
+            "rule where it is written)") in errors
+    assert ("rules/scopes/acme.md: text before the first rule (a rule is a '## ' section; the intro goes in the front "
+            "matter)") in errors
+    assert "rules/empty.md: no rule (one '## ' section per rule)" in errors  # outside scopes/: refused as before
+
+
 def test_a_rule_without_its_graph_node_is_an_error(ada):
     write(ada, {"notes/graph/nodes/rules.yaml": GRAPH_RULES.replace("status: active, title: \"Worktrees\"",
                                                                      "status: retired, title: \"Worktrees\"")})
