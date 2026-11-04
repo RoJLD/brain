@@ -52,10 +52,12 @@ def test_check_refuses_a_read_only_entry_that_would_hold_a_way_in_and_an_unknown
     assert list(projects.load()) == ["demo", "plain"]  # what is not write is never loaded: it narrows
     with pytest.raises(SystemExit, match="'odd' is read only"):
         projects.get("odd")
-    assert os.path.normcase(str(tmp_path / "brain" / "upstream")) not in {os.path.normcase(r)
-                                                                           for r in guards.production_roots()}
+    upstream = tmp_path / "upstream"  # where root: ../upstream would lead; it exists, so a guard would hold it
+    upstream.mkdir()
+    assert os.path.normcase(str(upstream)) not in {os.path.normcase(os.path.abspath(r))
+                                                    for r in guards.production_roots()}
     folders, _ = guards.registered_repos()
-    assert not any(f.endswith(os.path.normcase(os.sep + "upstream")) for f in folders)
+    assert os.path.normcase(str(upstream)) not in {os.path.normcase(os.path.abspath(f)) for f in folders}
 
 
 def test_sync_check_and_refresh_all_pass_it_by_without_a_store_and_count_it(tmp_path, monkeypatch, store, capsys):
@@ -115,3 +117,13 @@ def test_status_all_counts_the_read_only_projects(tmp_path, monkeypatch, store, 
     _registry(tmp_path, monkeypatch, store, "")
     data = status.run(list(projects.load().values()), every=True, quick=True)
     assert data["total"]["read_only"] == 0 and not any(x.startswith("  read only") for x in status.render(data))
+
+
+def test_audit_and_its_diff_say_a_read_only_project_is_one(tmp_path, monkeypatch, store, git_repo, capsys):
+    _registry(tmp_path, monkeypatch, store, READ_ONLY)
+    monkeypatch.chdir(git_repo)
+    for argv in (["--project", "upstream", "audit", "--write"], ["--project", "upstream", "audit", "--diff"]):
+        assert cli.main(argv) == 2
+        assert "'upstream' is read only: the brain reads it and never writes it" in capsys.readouterr().err
+    assert cli.main(["--project", "nope", "audit"]) == 2
+    assert "unknown project 'nope'" in capsys.readouterr().err

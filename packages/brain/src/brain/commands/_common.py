@@ -37,15 +37,20 @@ def _kv(pairs: list[str]) -> dict:
 
 
 def _project(args, root: Path) -> projects.Project:
-    """--project's, else the registered project at ``root`` (a worktree of its checkout keeps its name)."""
-    return getattr(args, "project_obj", None) or resume.project_for(root)
+    """--project's; else, with --store, the project registered at ``root`` that lists that store (one that shares the
+    root runs its store with its own layout, never the owner's); else the registered project at ``root`` (a worktree
+    of its checkout keeps its name)."""
+    obj = getattr(args, "project_obj", None)
+    if obj:
+        return obj
+    store = getattr(args, "store", None)
+    return (store and projects.lister(Path(store).resolve(), root)) or resume.project_for(root)
 
 
 def _store(args, root: Path) -> Path:
     if getattr(args, "store", None):
         return Path(args.store).resolve()
-    stores = _project(args, root).stores
-    return stores[0] if stores else root / "notes" / "graph"
+    return projects.stores_of(_project(args, root))[0]
 
 
 def _repos(args, root: Path) -> list[projects.Repo]:

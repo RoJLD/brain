@@ -19,6 +19,12 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `brain --project <it>` says why it is not loaded. A project whose second store sits beside its first (both under
   `notes/`) has that store refused by `brain sync` until it gets a folder of its own: its board was written over the
   first's.
+- A project's second store derived the ADR and SDR stubs of the root's decision logs, as its first store does (every
+  store ran with research_graph's defaults); it now covers no decision log (`--no-decisions`), and `brain sync`
+  empties its `_generated_decisions.yaml`. An edge of it to one of those stubs (an item of it `decided_by` an ADR of
+  `notes/decisions.md`) no longer resolves and fails `brain sync` and `brain check`, each naming it (« that ADR stub
+  is notes/graph's only »): before upgrading, move such an edge to the first store or remove it, and drop the
+  `shared_ids` waiver of the stub, which turns stale.
 
 - **Projects the brain reads and never writes** (wi-brain-read-only-projects). A registry entry may say `access: read`
   (`write`, the default, is today's: the brain writes the project by PR; any other value is an error, « access is
@@ -48,9 +54,14 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   such a root cover every project registered there. Every store but a project's first at a root it owns gets
   research_graph's new `--views` (its parent folder: `ops/graph` writes `ops/kanban_graph.md`) and its decision logs
   (`--decisions`, the project's own from its first store, `--no-decisions` from another store): a project's second
-  store no longer writes its board over the first's, nor derives its ADR stubs. A store the project does not list
-  (`--store`) keeps research_graph's defaults, as before, and `brain init` starts a template's later graphs beside
-  their store. The module map's view sits beside its store's board the same way (`notes/modules_graph.md` for the
+  store no longer writes its board over the first's, nor derives its ADR stubs (an edge of it to one of them is
+  named by `brain sync` and `brain check`). `--store` without `--project` runs as the project registered at the root
+  that lists that store, with its layout and its passes only (`projects.lister`): the store of a project that shares
+  the root never gets the owner's defaults. A store no project lists keeps research_graph's defaults, as before, and
+  `brain init` starts a template's later graphs beside their store. A project's `stores: []` holds its root's
+  `notes/graph`, which sync and check run for it (`projects.stores_of`), and a store listed twice is refused by
+  `brain check --all`. `brain audit --project` (and `--diff`) refuses a read-only, mounted or unloaded project with
+  the reason `--project` gives (`projects.unloaded`). The module map's view sits beside its store's board the same way (`notes/modules_graph.md` for the
   first store, as before), and the resume pack names the project's own views. Nothing changes for a project's first
   store at a root it owns.
 - **A scope's rules file may hold its front matter only** (`source/rules/scopes/<id>.md`: scope, title, intro), a

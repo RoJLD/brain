@@ -1068,7 +1068,8 @@ def scope(args, root: Path | None) -> list[projects.Project]:
     if args.project:
         reg = _registered(root)
         if args.project not in reg:
-            raise AuditError(f"unknown project {args.project!r} (known: {', '.join(reg)})")
+            raise AuditError(projects.unloaded(args.project, root)
+                             or f"unknown project {args.project!r} (known: {', '.join(reg)})")
         return [projects.get(args.project, root)]
     here = root or Path.cwd()
     main = paths.main_checkout(here)

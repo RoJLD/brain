@@ -226,3 +226,76 @@ def test_a_store_the_project_does_not_list_keeps_the_defaults(tmp_path, monkeypa
     assert projects.layout(prog, root / "prog" / "graph") == ["--views", "prog", "--decisions", "prog/decisions.md"]
     team = projects.Project("team", root, [root / "notes" / "graph", root / "ops" / "graph"])
     assert projects.layout(team, root / "ops" / "graph") == ["--views", "ops", "--no-decisions"]
+
+
+def test_a_store_named_by_store_runs_as_the_project_that_lists_it(tmp_path, monkeypatch, capsys):
+    root = _root(tmp_path)
+    _registry(tmp_path, monkeypatch, root)
+    monkeypatch.chdir(root)
+    assert cli.main(["sync", "--offline"]) == 0
+    owner = _bytes(root, OWNER_VIEWS)
+    gen = root / "prog" / "graph" / "nodes" / "_generated_decisions.yaml"
+    stub = gen.read_bytes()
+    capsys.readouterr()
+    assert cli.main(["--store", "prog/graph", "sync", "--offline"]) == 0  # no --project: prog's store is prog's
+    out = capsys.readouterr().out
+    assert "prog shares its root with lab" in out and "== lab" not in out
+    assert _bytes(root, OWNER_VIEWS) == owner  # lab's board and roadmap are not written over with prog's
+    assert gen.read_bytes() == stub  # prog's ADR stub stays prog's own, not one of notes/decisions.md
+    assert "wi-prog-first" in (root / "prog" / "kanban_graph.md").read_text(encoding="utf-8")
+    assert cli.main(["--store", str(root / "prog" / "graph"), "check"]) == 0
+    assert "prog shares its root with lab" in capsys.readouterr().out
+    assert cli.main(["--store", "notes/graph", "check"]) == 0  # the owner's store: the owner, as before
+    assert "prog shares its root" not in capsys.readouterr().out
+
+
+def test_an_edge_of_a_later_store_to_a_stub_the_first_store_derives_says_why(tmp_path, monkeypatch, capsys):
+    """Before wi-brain-shared-root-projects every store ran with research_graph's defaults, so a second store derived
+    the stubs of notes/decisions.md too and an item of it could be decided_by one; it now covers no decision log."""
+    root = tmp_path / "team"
+    assert research_graph(["--store", str(root / "notes" / "graph"), "--repo-root", str(root), "init",
+                           "--examples"]) == 0
+    ops = root / "ops" / "graph"
+    assert research_graph(["--store", str(ops), "--repo-root", str(root), "init", "--examples"]) == 0  # as before
+    adr = sorted(i for i in _ids(ops) if i.startswith("adr-"))[0]
+    (ops / "nodes" / "work.yaml").write_text(
+        "- {id: wi-ops-first, type: WorkItem, status: todo, title: \"Operations first\"}\n", encoding="utf-8")
+    (ops / "edges" / "work.yaml").write_text(f"- {{from: wi-ops-first, to: {adr}, type: decided_by}}\n",
+                                             encoding="utf-8")
+    reg = tmp_path / "brain" / "projects.yaml"
+    reg.parent.mkdir()
+    reg.write_text(f"team:\n  root: {root.as_posix()}\n  stores: [notes/graph, ops/graph]\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    why = (f"error: ops/graph: edge wi-ops-first -> {adr}: that ADR stub is notes/graph's only (a store listed "
+           "after its project's first covers no decision log): move the edge to notes/graph, or remove it")
+    assert cli.main(["sync", "--all", "--offline"]) == 1
+    assert why in capsys.readouterr().out
+    assert cli.main(["check", "--all"]) == 1
+    assert why in capsys.readouterr().out
+    (ops / "edges" / "work.yaml").write_text("", encoding="utf-8")  # the edge moved away: nothing more to say
+    assert cli.main(["sync", "--all", "--offline"]) == 0
+    assert cli.main(["check", "--all"]) == 0
+    assert "that ADR stub" not in capsys.readouterr().out
+
+
+def test_an_owner_with_no_store_listed_still_holds_notes_graph(tmp_path, monkeypatch):
+    root = _root(tmp_path)
+    _registry(tmp_path, monkeypatch, root, prog=PROG.replace("prog/graph", "notes/graph"))
+    reg = tmp_path / "brain" / "projects.yaml"
+    reg.write_text(reg.read_text(encoding="utf-8").replace("  title: the lab\n", "  title: the lab\n  stores: []\n"),
+                   encoding="utf-8")
+    assert projects.load()["lab"].stores == []  # brain sync and check run its notes/graph all the same
+    assert list(projects.load()) == ["lab"]
+    assert projects.check() == ["project prog: shares its root with lab: its store notes/graph is lab's too (give it "
+                                "its own: stores:)"]
+
+
+def test_a_store_listed_twice_is_refused_and_keeps_its_place(tmp_path, monkeypatch):
+    root = _root(tmp_path)
+    reg = tmp_path / "brain" / "projects.yaml"
+    reg.parent.mkdir()
+    reg.write_text(f"lab:\n  root: {root.as_posix()}\n  stores: [notes/graph, notes/graph]\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    lab = projects.load()["lab"]
+    assert projects.layout(lab, root / "notes" / "graph") == []  # the first store keeps the defaults
+    assert projects.check() == ["project lab: its store notes/graph is listed twice"]

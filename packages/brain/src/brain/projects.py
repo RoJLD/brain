@@ -48,6 +48,7 @@ writes the owner's files through it. Each store's board and roadmap (and its mod
 research_graph covering the project's decision logs from its first store only; the first store of a project that owns
 its root keeps research_graph's defaults (notes/, notes/decisions.md), so nothing changes for it (:func:`views_dir`,
 :func:`layout`). A store whose views folder an earlier store at its root uses is not synced (:func:`view_clashes`).
+``--store`` names a store of the project that lists it (:func:`lister`), so it runs with that project's layout.
 
 An entry with a ``tenant`` key is a **mount**, not a project: an HMaaS tenant is another brain, with its own root,
 registry and keys, mounted opaque in the operator's registry (wi-brain-hmaas-multitenant, spec-brain-hmaas §6;
@@ -285,13 +286,19 @@ def _load(root: Path | None = None) -> tuple[dict[str, Project], dict[str, tuple
     return out, refused
 
 
+def stores_of(p: Project) -> list[Path]:
+    """The stores brain sync and check run for ``p``: those it lists, else its root's notes/graph (``stores: []``)."""
+    return list(p.stores) or [p.root / "notes" / "graph"]
+
+
 def _files(p: Project) -> dict[str, list[Path]]:
-    """The files a project writes at its root, by kind; its decision logs are those research_graph covers for its
-    first store (its defaults when it gets no option: brain.projects.layout)."""
+    """The files a project writes at its root, by kind (:func:`stores_of`); its decision logs are those research_graph
+    covers for its first store (its defaults when it gets no option: brain.projects.layout)."""
+    stores = stores_of(p)
     logs = list(p.decision_logs)
-    if p.stores and uses_defaults(p, p.stores[0]):
+    if uses_defaults(p, stores[0]):
         logs += [p.root / d for d in GRAPH_DECISIONS]
-    return {"store": list(p.stores), "journal": list(p.journals), "decision log": logs}
+    return {"store": stores, "journal": list(p.journals), "decision log": logs}
 
 
 def _claims(p: Project, entry: dict, held: dict[str, tuple[str, str]]) -> list[str]:
@@ -350,18 +357,27 @@ def mounts(root: Path | None = None) -> dict[str, Mount]:
     return out
 
 
+def unloaded(name: str, root: Path | None = None) -> str:
+    """Why ``name``, an entry of the registry, is not a loaded project: a tenant mount, a project the brain reads only,
+    a project at a shared root that does not declare its own files; '' for any other name. :func:`get` says it, and
+    so do the commands that resolve --project themselves (brain audit, its --diff)."""
+    entry = raw(root).get(name)
+    if is_mount(entry):
+        return (f"{name!r} is a tenant mount: another brain, opaque, that the operator does not read into (its state "
+                "comes from its contract export)")
+    if is_read_only(entry):
+        return f"{name!r} is read only: the brain reads it and never writes it"
+    refused = _load(root)[1].get(name)
+    return f"{name!r} is not loaded: {'; '.join(refused[1])}" if refused else ""
+
+
 def get(name: str, root: Path | None = None) -> Project:
     """A registered project; with ``root`` (``--root``, say a worktree), the same layout at that root."""
     reg = load(root)
     if name not in reg:
-        if is_mount(raw(root).get(name)):
-            raise SystemExit(f"brain: {name!r} is a tenant mount: another brain, opaque, that the operator does not "
-                             "read into (its state comes from its contract export)")
-        if is_read_only(raw(root).get(name)):
-            raise SystemExit(f"brain: {name!r} is read only: the brain reads it and never writes it")
-        refused = _load(root)[1].get(name)
-        if refused:
-            raise SystemExit(f"brain: {name!r} is not loaded: {'; '.join(refused[1])}")
+        why = unloaded(name, root)
+        if why:
+            raise SystemExit(f"brain: {why}")
         where = registry_file(root)
         raise SystemExit(f"brain: unknown project {name!r} (registry {where or 'not found'}; known: "
                          f"{', '.join(reg) or 'none'})")
@@ -384,6 +400,13 @@ def at_root(root: Path) -> list[Project]:
     if main and _norm(main.resolve()) != _norm(root):
         return [get(p.name, root) for p in reg.values() if _norm(p.root) == _norm(main.resolve())]
     return []
+
+
+def lister(store: Path, root: Path) -> Project | None:
+    """The project registered at ``root`` (at its main checkout, for a worktree) that lists ``store``, else None:
+    ``--store`` naming the store of a project that shares the root runs as that project, with its layout."""
+    key = _norm(store)
+    return next((p for p in at_root(root) if any(_norm(s) == key for s in p.stores)), None)
 
 
 def for_root(root: Path) -> Project:
@@ -529,7 +552,7 @@ def view_clashes(projs: list[Project]) -> dict[tuple[str, str], str]:
     taken: dict[str, dict[str, tuple[str, Path]]] = {}
     for p in projs:
         views = taken.setdefault(_norm(p.root), {})
-        for store in p.stores:
+        for store in stores_of(p):
             folder = views_dir(p, store)
             other, theirs = views.setdefault(_norm(folder), (p.name, store))
             if (other, _norm(theirs)) != (p.name, _norm(store)):
@@ -542,9 +565,9 @@ def view_clashes(projs: list[Project]) -> dict[tuple[str, str], str]:
 def check(root: Path | None = None) -> list[str]:
     """What is wrong in the registry: an entry that is not a mapping, an unknown key, a value of the wrong shape, a bad
     repos: or audit: entry, a shared id without its reason, a tenant mount that holds more than its title and export,
-    an access that is not read or write, a read-only project that holds more than its title, a project at a shared
-    root that is not loaded (:func:`_claims`), two stores that write their views in one folder. Stacks and code_index
-    entries are checked by their own loaders (brain.stacks, brain.codeindex)."""
+    an access that is not read or write, a read-only project that holds more than its title, a store listed twice, a
+    project at a shared root that is not loaded (:func:`_claims`), two stores that write their views in one folder.
+    Stacks and code_index entries are checked by their own loaders (brain.stacks, brain.codeindex)."""
     errors = []
     for name, entry in raw(root).items():
         where = f"project {name}"
@@ -570,6 +593,11 @@ def check(root: Path | None = None) -> list[str]:
         errors += [f"{where}: {k} is a path or a list of paths" for k in ("stores", "journal", "decisions",
                                                                          "production") if k in entry
                    and not _is_paths(entry[k])]
+        listed: set[str] = set()
+        for s in _paths(entry.get("stores")):
+            if _norm(Path(s)) in listed:
+                errors.append(f"{where}: its store {s} is listed twice")
+            listed.add(_norm(Path(s)))
         ledgers = entry.get("ledgers")
         if ledgers is not None and not (isinstance(ledgers, dict) and _is_paths(list(ledgers.values()))):
             errors.append(f"{where}: ledgers is a mapping of name -> path")
@@ -635,8 +663,10 @@ def collisions(projs: list[Project]) -> dict:
 # --- where a store's generated views go, and research_graph's options for it ---
 
 def _later(p: Project, store: Path) -> bool:
-    """A store the project lists after its first (a store it does not list, given by --store, is not one)."""
-    return any(_norm(store) == _norm(s) for s in p.stores[1:])
+    """A store the project lists after its first (a store it does not list, given by --store, is not one; nor is its
+    first listed again, which check() refuses)."""
+    return bool(p.stores) and _norm(store) != _norm(p.stores[0]) and any(_norm(store) == _norm(s)
+                                                                         for s in p.stores[1:])
 
 
 def uses_defaults(p: Project, store: Path) -> bool:

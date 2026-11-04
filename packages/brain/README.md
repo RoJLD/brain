@@ -373,7 +373,8 @@ registered owns it (its records, its decision queue, its rendered files, its rep
 one declares its own store, journal and decision log (the defaults are the owner's: until it does, it is not loaded,
 and `brain check --all` says what to declare). Its board and roadmap sit beside its store (`prog/graph` writes
 `prog/kanban_graph.md`), as do those of a project's second store. At such a root, `brain sync`, `check` and `refresh`
-cover every project registered there. `examples/projects.yaml` has both.
+cover every project registered there, and `--store prog/graph` runs as the project that lists that store.
+`examples/projects.yaml` has both.
 
 ## The Claude Code hooks
 

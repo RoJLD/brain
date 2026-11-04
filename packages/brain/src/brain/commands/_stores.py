@@ -103,6 +103,32 @@ def _activate_specs(args, root: Path, store: Path) -> int:
     return 0
 
 
+DECISION_STUBS = "_generated_decisions.yaml"   # research_graph's file of the stubs derived from the decision logs
+
+
+def _stub_edges(project: projects.Project, store: Path) -> list[str]:
+    """The edges of a store listed after its project's first to a decision stub that first store derives: the store
+    covers no decision log (--no-decisions), so research_graph finds no such node in it. Before
+    wi-brain-shared-root-projects every store derived the root's stubs; said with what to do."""
+    if not projects._later(project, store):
+        return []
+    first = graph.node_index(project.stores[0])
+    here = projects.node_ids(store)
+    files = [store / "edges.yaml", *sorted(f for f in (store / "edges").glob("*.yaml")
+                                           if not f.name.startswith(graph.GENERATED_PREFIX))]
+    label, first_label = _store_label(project.root, store), _store_label(project.root, project.stores[0])
+    stub = {nid: str(node.get("type") or "decision") for nid, (f, node) in first.items() if f.name == DECISION_STUBS
+            and here.get(nid, DECISION_STUBS) == DECISION_STUBS}   # still among its own stubs: the next sync drops it
+    out = []
+    for e in (e for f in files for e in graph.load_yaml_list(f) if isinstance(e, dict)):
+        for nid in (str(e.get("from") or ""), str(e.get("to") or "")):
+            if nid in stub:
+                out.append(f"{label}: edge {e.get('from')} -> {e.get('to')}: that {stub[nid]} stub is {first_label}'s "
+                           f"only (a store listed after its project's first covers no decision log): move the edge "
+                           f"to {first_label}, or remove it")
+    return out
+
+
 def _sync_store(args, root: Path, store: Path) -> int:
     project = _project(args, root)
     owner = not project.shares_root_with   # the root's own passes are its owner's
@@ -120,8 +146,11 @@ def _sync_store(args, root: Path, store: Path) -> int:
             repos = [(projects._repo_folder(root).lower(), root)]
         features.sync_prs(store, repos)
     rc = graph.research_graph(root, store, *layout, "sync", "--write")
-    if rc:
-        return rc
+    stubs = _stub_edges(project, store)   # a stub it derived before is gone: an edge to it dangles
+    for line in stubs:
+        print(f"error: {line}")
+    if rc or stubs:
+        return rc or 1
     if not owner:
         print(_shared_line(project))
         _write_module_view(project, root, store)
@@ -172,11 +201,14 @@ def _check_store(args, root: Path, store: Path) -> int:
     clash = _view_clash(args, project, root, store)
     if clash:
         print(f"error: {clash}")
+    stubs = _stub_edges(project, store)
+    for line in stubs:
+        print(f"error: {line}")
     if project.shares_root_with:   # its store's checks only: the root's are its owner's
         print(_shared_line(project))
         _store_checks(project, root, store)
-        return graph.research_graph(root, store, *layout, "check") or (1 if clash else 0)
-    rc = 1 if clash else 0
+        return graph.research_graph(root, store, *layout, "check") or (1 if clash or stubs else 0)
+    rc = 1 if clash or stubs else 0
     rc = (cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0) or rc
     if decisions.view_stale(root, _project(args, root).name):
         print(f"warning: {decisions.VIEW} is stale: brain sync (or brain decision view --write)")
@@ -324,7 +356,7 @@ def _each_store(args, root: Path, *, sync: bool, check: bool, written_on_main: b
             continue
         on_main = getattr(args, "on_main", False) or written_on_main
         branch = "" if on_main or not sync else _on_main(p.root)
-        for store in p.stores or [p.root / "notes" / "graph"]:
+        for store in projects.stores_of(p):
             if not (store / "schema.yaml").is_file():
                 print(f"== {p.name}: no store at {store}, skipped")
                 continue
