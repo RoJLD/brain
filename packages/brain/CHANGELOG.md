@@ -2,7 +2,21 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
-## Unreleased
+## 0.2.5 — 2026-11-04
+
+### Upgrade
+
+From 0.2.4, in a brain that 0.2.4 (or older) initialised, in this order:
+
+1. Move `config.json` `engine.pin` to `v0.2.5` and commit it: until then `brain sync` refuses another engine than the
+   pin (the engine-skew refusal since 0.2.4).
+2. Run `brain sync`: it rewrites the plugin's `guard.sh`, `health.sh` and `hooks.json`; until then `brain check`
+   exits 1.
+3. Add the `Lesson` node type to `notes/graph/schema.yaml` by hand, as `docs/lessons.md` shows: `brain lesson add`
+   refuses until then, and the close-item retro is skipped with one line meanwhile.
+4. Add `notes/modules_graph.md merge=brain` to `.gitattributes`, and the generated `notes/modules_graph.md` to
+   `boundary.yaml`, by hand: `brain init` keeps the files it made earlier.
+5. Restart the Claude Code sessions, so that no older bash hook from the plugin cache keeps running.
 
 - **The four high findings of the review of the PRs merged without one** (wi-brain-fix-merged-highs).
   - `brain sessions`, the Stop snapshot, the master's watch, the cockpit and `brain check` no longer raise
