@@ -2,6 +2,8 @@
 
 import json
 import re
+import shlex
+import subprocess
 
 import pytest
 
@@ -45,7 +47,8 @@ def test_apply_writes_a_brain_that_checks_and_points_to_it(fresh, monkeypatch, c
     assert list(stores) == ["memory", "ddr", "ledger", "sessions", "resume", "digest", "vault", "transcripts", "repo"]
     assert stores["memory"]["class"] == "confidential" and stores["repo"] == {
         "class": "private", "paths": ["**"], "why": "rules, graph, ADRs, journal, records"}
-    assert "the runbook: https://github.com/RoJLD/brain/blob/main/packages/brain/docs/vault.md" in out
+    # the runbook at the tag the owner installed, not main, which may be ahead of it (wi-brain-onboarding-tag-links)
+    assert f"the runbook: https://github.com/RoJLD/brain/blob/v{__version__}/packages/brain/docs/vault.md" in out
     assert data == {"v": 1, "identity": {"owner": "Ada", "kind": "person"}, "registry": "projects.yaml",
                     "rules": ["rules/global.md"], "memory": "memory", "records": "records",
                     "template": {"name": "generic", "version": 1},
@@ -63,6 +66,55 @@ def test_apply_writes_a_brain_that_checks_and_points_to_it(fresh, monkeypatch, c
     assert cli.main(["--root", str(fresh), "check"]) == 0
     out = capsys.readouterr().out
     assert "graph-check OK" in out and re.search(r"render claude: \d+ same\n", out)
+
+
+def no_git_identity(tmp_path, monkeypatch):
+    """A machine whose git has no identity, like a fresh Git for Windows: an empty global config, no system one, and
+    none of the variables that stand in for it."""
+    empty = tmp_path / "gitconfig-global"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"):
+        monkeypatch.delenv(var, raising=False)
+    return empty
+
+
+def test_apply_gives_gits_identity_commands_before_the_first_commit(fresh, tmp_path, monkeypatch, capsys):
+    """Without an identity the first commit stops at "Author identity unknown": brain init's next steps give the two
+    commands, and once they are run the first commit of install.md passes (wi-brain-install-git-identity)."""
+    no_git_identity(tmp_path, monkeypatch)
+    assert init.git_identity_missing(fresh) == ["user.name", "user.email"]
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    out = capsys.readouterr().out
+    line = next(x for x in out.splitlines() if "Author identity unknown" in x)
+    assert line.endswith(': git config --global user.name "Ada"; git config --global user.email "you@example.com"')
+    assert out.index("next: git init") < out.index(line) < out.index("Claude Code, once")
+    for cmd in line.split("): ", 1)[1].split("; "):
+        subprocess.run(shlex.split(cmd), check=True, cwd=fresh)
+    assert init.git_identity_missing(fresh) == []
+    for cmd in (["init"], ["add", "-A"], ["commit", "-q", "-m", "my brain"]):
+        subprocess.run(["git", *cmd], check=True, cwd=fresh, capture_output=True)
+    assert cli.main(["init", str(fresh), "--apply"]) == 0   # a second apply: the identity is set, no hint
+    assert "Author identity unknown" not in capsys.readouterr().out
+
+
+def test_the_identity_hint_names_only_what_is_missing(fresh, tmp_path, monkeypatch):
+    cfg = no_git_identity(tmp_path, monkeypatch)
+    cfg.write_text("[user]\n\tname = Ada\n", encoding="utf-8")
+    assert init.git_identity_missing(fresh) == ["user.email"]
+    assert init.identity_hint(["user.email"], "Ada").endswith(': git config --global user.email "you@example.com"')
+    # a team, or a name a shell would split: a placeholder the owner replaces
+    assert 'user.name "Your Name"' in init.identity_hint(["user.name"], "Ada's team", "team")
+    assert 'user.name "Your Name"' in init.identity_hint(["user.name"], 'Ada "AL" L', "person")
+    assert init.identity_hint([], "Ada") == ""
+
+
+def test_no_identity_hint_without_git(fresh, monkeypatch):
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("git")
+    monkeypatch.setattr(init.subprocess, "run", missing)
+    assert init.git_identity_missing(fresh) == []
 
 
 def test_apply_renders_a_local_claude_marketplace(fresh, capsys):

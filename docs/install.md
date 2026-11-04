@@ -8,6 +8,10 @@ default, and every command reads files and git, never a model.
 Your brain is yours: it lives in a folder and a git repo of your own, in your own account or organisation. The engine
 sends nothing anywhere (no telemetry, no account); its machine-local state lives in `~/.brain`. You hold your own keys.
 
+Read this page at the tag you install, `https://github.com/RoJLD/brain/blob/<tag>/docs/install.md` (for instance
+[`blob/v0.2.5`](https://github.com/RoJLD/brain/blob/v0.2.5/docs/install.md)): `main` may already describe commands
+that your tag does not have.
+
 ## Windows
 
 ### 1. What you need
@@ -59,6 +63,18 @@ brain, and the guards let every call through.
 
 ### 3. Your brain
 
+**Git's identity, once per machine.** Every commit carries a name and an email, and a fresh Git for Windows has
+neither: the first commit below would stop at « Author identity unknown ». `git config --global user.email` prints
+yours; if it prints nothing, set both (any email works for a private repo; GitHub's `...@users.noreply.github.com`
+address keeps yours out of the commits you push):
+
+```powershell
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+```
+
+`brain init --apply` prints these two lines in its next steps when git has no identity yet.
+
 Pick a folder outside any other repo, and your name as it should appear (in your queue, your rules, your plugin):
 
 ```powershell
@@ -78,6 +94,14 @@ must never reach a public repo: yours, this machine's user and host), `projects.
 commit), and a local Claude Code marketplace (`.claude-plugin/`, `plugins/brain-core/`). It never overwrites a file.
 
 Push it, if you want a remote, to a **private** repo in your own account or organisation, never a public one.
+
+**The vault, before anything leaves this machine sealed.** `brain init` ends by naming it. Each part of your brain has
+a data class that says where it may go (`brain classes`): the rules, graph and journal may sit in clear in your
+private repo, the machine's ledgers and transcripts never leave it in clear. The vault seals what leaves the machine
+to your own public keys (a device key per machine, an offline recovery key, a daily canary). Until you set it up,
+nothing is sealed and nothing needs it: `brain health vault` says `vault OFF (... nothing is sealed yet)`. When you
+want it, `brain vault status` lists the steps left and the [vault runbook](../packages/brain/docs/vault.md) walks
+through them, in your own terminal.
 
 ### 4. Claude Code (optional)
 
@@ -178,6 +202,13 @@ brain --version
 ```
 
 ### 3. Your brain
+
+Git's identity first, once, if `git config --global user.email` prints nothing (Windows, step 3):
+
+```bash
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+```
 
 ```bash
 brain init ~/my-brain --owner "Your Name" --apply
