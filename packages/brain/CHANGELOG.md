@@ -122,6 +122,19 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   Retro), before the item is ticked and never stopping the close (`Retro: skipped (<why>)` when the store has no
   Lesson type yet or the ledger does not know the item), and a `Retro:` line in its report.
 
+- **What the lessons asked for** (wi-brain-merge-stale-main, wi-brain-guard-public-commit,
+  wi-brain-guard-public-chain, wi-brain-guard-heredoc-backslash). `brain merge-check [--base REF] [--no-fetch]
+  [--worktree] [--path P] [--json]`: after a merge of main into a branch, a remote base fetched again and, against
+  the merge base of main and the branch before the merge, nothing main brought lost (its lines in the journals,
+  decision logs, edge files and CHANGELOGs, compared as content; the fields it changed on the graph's nodes; its
+  nodes, unless the branch removed them); exit 1 when behind or lost. The public guard gains its `commit` check: in
+  a checkout whose branch pushes to a public repo, a commit whose added lines hold a denied
+  term, an e-mail address, a home folder or a public.patterns match is refused at the commit, not at the push. Its
+  push refusal says to split a `brain check --public ... && git push` call. On Windows, a Bash heredoc holding a
+  doubled backslash that writes a file or feeds an interpreter gets a warning in the session's context (never a
+  refusal), recorded in the guards ledger as `heredoc:backslash`. `docs/guards.md`, `docs/merge-driver.md`; the
+  close-item procedure names `brain merge-check` after a merge of the base.
+
 ## 0.2.4 — 2026-11-03
 
 - **A session never installs or runs a third-party kit** (wi-brain-guard-third-party, EXT-6). The new `third-party`
