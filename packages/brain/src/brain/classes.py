@@ -1,4 +1,4 @@
-"""Data classes per store (wi-brain-data-classes; docs/specs/2026-11-02-vault-heirs-identity-brainstorm.md §3.1).
+"""Data classes per store (wi-brain-data-classes).
 
 Every store of a personal brain declares its class in ``config.json`` (``classes.stores``), and the class says where
 the store may go and how. The engine holds the classes and their matrix (:data:`POLICY`: a class by an exit gives
@@ -61,7 +61,7 @@ CLASS_TEXT = {
 
 EXITS = {
     "git-public": "a public git repo",
-    "git-private": "the private repo's remote (a forge, GitHub)",
+    "git-private": "the private repo's remote (a code host, GitHub)",
     "offsite": "a copy outside git that leaves the machine: a NAS, a data remote, a dataset host, an archive",
     "backup": "the backups",
     "devices": "the owner's other devices: a second machine, a phone's sync",

@@ -4,6 +4,25 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **Tests linked by their imports, and coverage measured** (wi-brain-test-links-auto, wi-brain-test-coverage;
+  TEST-1). `brain sync`'s `tested_by` edges now also go to every Python test that imports a node's module itself,
+  besides brain audit's strongest evidence; a CodeRef of a symbol (`path::name`) keeps only its file's tests that
+  name it (or each of its words, a `cmd_` prefix left out), or, once the store keeps a coverage summary, those whose
+  test contexts ran it. Measured on this engine's brain (main d28f77c): 1,522 edges become 584 by the static rules
+  (−1,026, most of which gave each `cli.py` subcommand's feature every CLI test; +88 from imports), 472 with the
+  coverage summary (+143, of which 138 ran the code by the contexts); 101 test modules linked instead of 99. New
+  `brain coverage [--repo R] --run [-n N] | --from DATA [--write] [--json]` (brain.testcov): the repo's pytest
+  suites run under pytest-cov with `--cov-context=test`, the checkout's code first on PYTHONPATH, reduced to
+  `<store>/coverage/<repo>.json` (statements, covered lines, and which test modules ran each function, read from the
+  data file's SQLite tables; this engine: 90.2 % of 32,296 statements, a 346 KB summary). `brain audit`
+  measures `test.coverage` (a module its tests run under 50 %, P2) and the new `feature.tests` (a have or partial
+  feature whose module or script no test covers, P2), both outside the scout (ruleset 4); FEATURES.md's Tests cell
+  gives each feature's coverage. A summary narrows only what it measured (version 2: every function of each file
+  and every test module a context named): a symbol or a test added since, an older or context-less summary, keep
+  the names rule; a data file without test contexts is refused, branch data is read from its arcs, the def and
+  decorator lines count for no test, the repo's `fail_under` is off for the measure, and the trend reads today's
+  summary. Docs: `docs/tests-graph.md`.
+
 - **The session tree** (wi-brain-session-tree; ST-1, ST-2, scale study gap 19). The SessionStart event records both
   ids, the transcript's (`CLAUDE_CODE_SESSION_ID`) and the desktop app's `local_` id (`CLAUDE_CODE_HOST_SESSION_ID`),
   and the parent, task and short name of the session's own app metadata file (`spawnedFrom`, a closed list of keys;
@@ -107,6 +126,19 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   in a root this machine does not hold is left out of the stacks with a warning (`stacks.uncloned`), so the verdict
   no longer depends on which repos are cloned here. A brain's repository no longer needs a pytest suite over its own
   graph, records and rendered files: the engine's tests run on fixtures only.
+
+- **What the lessons asked for** (wi-brain-merge-stale-main, wi-brain-guard-public-commit,
+  wi-brain-guard-public-chain, wi-brain-guard-heredoc-backslash). `brain merge-check [--base REF] [--no-fetch]
+  [--worktree] [--path P] [--json]`: after a merge of main into a branch, a remote base fetched again and, against
+  the merge base of main and the branch before the merge, nothing main brought lost (its lines in the journals,
+  decision logs, edge files and CHANGELOGs, compared as content; the fields it changed on the graph's nodes; its
+  nodes, unless the branch removed them); exit 1 when behind or lost. The public guard gains its `commit` check: in
+  a checkout whose branch pushes to a public repo, a commit whose added lines hold a denied
+  term, an e-mail address, a home folder or a public.patterns match is refused at the commit, not at the push. Its
+  push refusal says to split a `brain check --public ... && git push` call. On Windows, a Bash heredoc holding a
+  doubled backslash that writes a file or feeds an interpreter gets a warning in the session's context (never a
+  refusal), recorded in the guards ledger as `heredoc:backslash`. `docs/guards.md`, `docs/merge-driver.md`; the
+  close-item procedure names `brain merge-check` after a merge of the base.
 
 ## 0.2.4 — 2026-11-03
 

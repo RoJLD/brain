@@ -123,6 +123,11 @@
   brain merge-driver status [--json] | replay [MERGE | OURS..THEIRS]... [--since DATE] [--repo R] [--json]
                         the views waiting for brain refresh here; past merges merged again by git merge-tree, as
                         text then with the driver (nothing checked out): what conflicted before and after
+  brain merge-check [--base REF] [--no-fetch] [--worktree] [--path P]... [--repo DIR] [--json]   after a merge of
+                        main into a branch: a remote base fetched again, nothing main brought since the merge base
+                        lost (its lines in the journals, decision logs, edge files and CHANGELOGs, as content; the
+                        fields it changed on the graph's nodes; its nodes, unless the branch removed them); exit 1
+                        when the branch is behind the base or lost something
   brain collisions [--all] [--json]   at zero token: the files each open branch and worktree of the project's repos
                         touches (against the default branch, uncommitted changes included), crossed with each
                         startable item's predicted surface (its features' CodeRefs, its module, the files it names):
@@ -133,6 +138,13 @@
                         (config.json brief.classes), the budget, the cost estimate, the coordinator's id (--coordinator,
                         else $CLAUDE_CODE_HOST_SESSION_ID), the shared notes folder, and the definition of done and
                         the never-list read from {owner}'s rules
+  brain coverage [--repo R] [--run [-n N] | --from DATA [--cwd DIR]] [--python PY] [--write] [--json]
+                        a repo's line coverage: --run runs its pytest suites (from each suite's pytest configuration)
+                        under pytest-cov with test contexts, --from reads a coverage data file made elsewhere (the
+                        CI's .coverage, run with --cov-context=test); the summary (totals; per file its statements,
+                        covered lines and the test modules that ran each function) printed, and with --write kept in
+                        the store as coverage/<repo>.json: brain sync links a CodeRef's symbol to the tests that ran
+                        it, brain audit measures test.coverage, FEATURES.md shows each feature's coverage
   brain sessions [tree [ID] | show ID [--report]] [--hours H] [--all] [--json]   the session tree at zero token, from
                         the desktop app's session files (a closed list of keys, read only), the SessionStart events
                         and the briefs' hash: both ids of each session (the app's local_ id, the transcript's), its
@@ -2489,6 +2501,29 @@ def cmd_merge_driver(args) -> int:
     return mergedriver.main_replay(repo, args.since, args.merges, args.json)
 
 
+def cmd_merge_check(args) -> int:
+    """brain merge-check (brain.mergecheck): the repo here or --repo's, the registered project's files."""
+    from . import mergecheck
+    try:
+        top = Path(git_top(Path(args.repo or ".").resolve()))
+        try:
+            project = resume.project_for(top)
+        except (OSError, ValueError):
+            project = None
+        r = mergecheck.check(top, project if project and project.registered else None, args.base or "",
+                             fetch=not args.no_fetch, worktree=args.worktree, extra=args.path)
+    except AuditError as exc:
+        print(f"brain merge-check: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(r, ensure_ascii=False, indent=1) if args.json else "\n".join(mergecheck.render(r)))
+    return 1 if mergecheck.failed(r) else 0
+
+
+def git_top(d: Path) -> str:
+    from .inventory import git
+    return git(d, "rev-parse", "--show-toplevel").strip()
+
+
 def cmd_collisions(args, root: Path) -> int:
     """brain collisions (brain.collisions): the project here or --project's, or --all."""
     from . import collisions
@@ -2515,6 +2550,32 @@ def cmd_brief(args, root: Path) -> int:
     if args.write:
         Path(args.write).write_text(text + "\n", encoding="utf-8")
     print(text)
+    return 0
+
+
+# --- coverage (wi-brain-test-coverage; imported when it runs) ---
+
+def cmd_coverage(args, root: Path) -> int:
+    """brain coverage (brain.testcov): a repo of the project measured; the summary printed, kept with --write."""
+    from . import testcov
+    cfgs = _repos(args, root)
+    want = (args.repo or _root_repo(args, root) or "").lower()
+    c = next((c for c in cfgs if c.name.lower() == want), None)
+    if c is None:
+        raise SystemExit(f"brain coverage: no repo {want or '?'} in the project (repos: "
+                         f"{', '.join(x.name for x in cfgs) or 'none'})")
+    try:
+        summary, rc = testcov.measure(c, args.run, args.from_data, args.cwd, args.python, args.workers)
+    except (testcov.CoverageError, AuditError) as exc:
+        raise SystemExit(f"brain coverage: {exc}") from None
+    print(testcov.render(summary) if args.json else "\n".join(testcov.lines(summary)), end="" if args.json else "\n")
+    if args.write:
+        f = _store(args, root) / testcov.FOLDER / f"{c.name.lower()}.json"
+        f.parent.mkdir(exist_ok=True)
+        f.write_text(testcov.render(summary), encoding="utf-8", newline="\n")
+        print(f"brain coverage: wrote {f} (brain sync links the symbols, brain audit reads test.coverage)")
+    if rc:
+        print("brain coverage: some tests failed; their coverage is counted as run", file=sys.stderr)
     return 0
 
 
@@ -3511,6 +3572,14 @@ def build_parser() -> argparse.ArgumentParser:
     mgp.add_argument("--since", default="", help="the merges since this date (git log --since)")
     mgp.add_argument("--repo", help="the repo (default: the one here)")
     mgp.add_argument("--json", action="store_true")
+    mc = sub.add_parser("merge-check", help="after a merge of main into a branch: nothing of a fresh main lost (logs, "
+                                            "edge files, CHANGELOGs, node ids); exit 1 when lost or behind")
+    mc.add_argument("--base", help="the base (default: origin's default branch)")
+    mc.add_argument("--no-fetch", action="store_true", help="the base as last fetched")
+    mc.add_argument("--worktree", action="store_true", help="the working tree, not HEAD (a resolution not committed)")
+    mc.add_argument("--path", action="append", help="one more file whose lines must all stay (repeatable)")
+    mc.add_argument("--repo", help="the repo (default: the one here)")
+    mc.add_argument("--json", action="store_true")
     co_ = sub.add_parser("collisions", help="the files each open branch and worktree touches, crossed with the "
                                             "startable items' predicted surface: who can start now, who waits on whom")
     co_.add_argument("--all", action="store_true", help="every project of the registry")
@@ -3528,6 +3597,18 @@ def build_parser() -> argparse.ArgumentParser:
                                                 "coordinator, when it exists)")
     br.add_argument("--write", default="", help="also write the brief to this file")
     br.add_argument("--json", action="store_true")
+    # --- coverage (wi-brain-test-coverage) ---
+    cv = sub.add_parser("coverage", help="a repo's line coverage under its tests, with test contexts: printed, kept "
+                                         "in the store with --write (the tested_by links, test.coverage)")
+    cv.add_argument("--repo", default="", help="a repo of the project (default: the one that holds the store)")
+    cv.add_argument("--run", action="store_true", help="run the repo's pytest suites under pytest-cov")
+    cv.add_argument("-n", dest="workers", default="", help="pytest-xdist workers for --run (auto, 8...)")
+    cv.add_argument("--python", default="", help="the Python that runs the tests (default: this one)")
+    cv.add_argument("--from", dest="from_data", default="", help="a coverage data file (.coverage, run with "
+                                                                  "--cov-context=test) instead of a run")
+    cv.add_argument("--cwd", default="", help="with --from: the folder pytest ran in (default: the repo's root)")
+    cv.add_argument("--write", action="store_true", help="keep the summary in the store: coverage/<repo>.json")
+    cv.add_argument("--json", action="store_true")
     ses = sub.add_parser("sessions", help="the session tree: both ids, role, parent, children, state, context and "
                                           "each child's report (zero token)")
     ses_sub = ses.add_subparsers(dest="sessions_cmd")
@@ -3609,6 +3690,8 @@ def _dispatch(args) -> int:
         return init.main(args)
     if args.cmd == "merge-driver":  # git's entry and a repo's git config: no graph store
         return cmd_merge_driver(args)
+    if args.cmd == "merge-check":  # any git repo; the registered project's files when it is one
+        return cmd_merge_check(args)
     if args.cmd == "sessions":  # the machine's sessions: no graph store
         return cmd_sessions(args)
     root = Path(args.root).resolve() if args.root else None
@@ -3652,7 +3735,8 @@ def _dispatch(args) -> int:
             "profile": cmd_profile,
             "tui": cmd_tui, "usage": cmd_usage, "cost": cmd_cost, "forecast": cmd_forecast,
             "collisions": cmd_collisions, "brief": cmd_brief, "code-map": cmd_code_map,
-            "lesson": cmd_lesson, "lessons": cmd_lesson, "retro": cmd_retro}[args.cmd](args, root)
+            "lesson": cmd_lesson, "lessons": cmd_lesson, "retro": cmd_retro,
+            "coverage": cmd_coverage}[args.cmd](args, root)
 
 
 if __name__ == "__main__":

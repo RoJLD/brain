@@ -1,8 +1,8 @@
 """This machine's facts for ``brain doctor`` (alias ``brain profile``), at zero token and without the network
-(wi-brain-profile, docs/specs/2026-11-02-lite-tiers-adapters-plane-brainstorm.md §3.3, §3.6).
+(wi-brain-profile).
 
-The report has the fields of the machines brick's inventory contract (docs/specs/2026-11-02-agentic-brick-modules-
-brainstorm.md §7.3): ``schema``, ``health`` (ok, or degraded when a GPU's memory is unknown) and ``inventory`` with
+The report has the fields of the machines brick's inventory contract:
+``schema``, ``health`` (ok, or degraded when a GPU's memory is unknown) and ``inventory`` with
 ``cpu`` (model, logical cores, avx2, avx512), ``memory`` (total_bytes, free_bytes), ``gpus`` (vendor, name,
 vram_bytes, vram_free_bytes, utilization_percent; null when the source does not say), ``inference`` (the backend and
 every one available, in the order cuda, rocm, metal, cpu), ``load`` (load1) and ``platform`` (os, distro, version,

@@ -265,8 +265,8 @@ def test_version_is_the_short_head_sha(brain_home, git_repo, tmp_path, monkeypat
     outside = tmp_path / "no-repo"
     outside.mkdir()
     assert "version" not in timing.make_event("x", T0, T0, 0, 0, cwd=outside)
-    monkeypatch.setenv("BRAIN_HOST", "forge")
-    assert timing.make_event("x", T0, T0, 0, 0)["host"] == "forge"
+    monkeypatch.setenv("BRAIN_HOST", "build-host")
+    assert timing.make_event("x", T0, T0, 0, 0)["host"] == "build-host"
 
 
 def test_fmt_duration():

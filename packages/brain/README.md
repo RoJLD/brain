@@ -103,6 +103,15 @@ run them, the open items that deliver those features and the decisions pending o
 the file level, a Python symbol looked up by the AST, and says so on its second line. `brain code-map` resolves
 each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
 
+### Tests linked and coverage
+
+`brain sync` links each feature, item or hook to the test modules of its code (`tested_by`): the tests brain audit's
+evidence names, the tests that import the module themselves, and for a CodeRef of a symbol the tests that name it, or
+that ran it by the store's coverage summary. `brain coverage --repo R --run --write` runs a repo's suites under
+pytest-cov with test contexts and keeps that summary in the store (`coverage/<repo>.json`); `brain audit` then
+measures `test.coverage`, `feature.tests` reports a feature no test covers, and `FEATURES.md` shows each feature's
+coverage. The rules: [docs/tests-graph.md](docs/tests-graph.md).
+
 ## Start your own brain
 
 ```bash
@@ -229,6 +238,10 @@ Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md
   is merged by id, anything else as git would. The installer defines it in the personal brain's git config
   (`brain merge-driver install --apply`); `brain merge-driver replay` merges a repo's past merges again with and
   without it.
+- **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
+  merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
+  order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
+  when the branch is behind or lost something.
 - **`brain collisions [--all] [--frontier] [--json]`**: the files each open branch and worktree changes, crossed with
   each startable item's predicted surface (its features' CodeRefs, its module, the files it names): the items that
   can start now, and those that wait on a branch and its session.
