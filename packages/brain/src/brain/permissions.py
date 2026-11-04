@@ -104,7 +104,9 @@ NEVER = (
     ("legal", r"\blegal\b|\bterms\b|\blicen[cs]es?\b",
      r"\blegal\b|\blawyer\b|\bnotary\b|\bnotaire\b|\bterms of (?:service|use)\b|\btos\b|\bcgu\b|\bjuridique\b"),
     # A session's Remote Control and permission mode (wi-brain-guard-session-settings): the guards refuse the desktop
-    # app's tools that change them, and BRAIN_GUARD_ALLOW cannot lift that refusal (brain.guards.UNLIFTED).
+    # app's tools that change them, and BRAIN_GUARD_ALLOW cannot lift that refusal (brain.guards.UNLIFTED). No allow
+    # rule grants it either: Remote Control's three exceptions are the guard's own checks (brain.guards.remote_control,
+    # wi-brain-guard-rc-archive), never a permission.
     ("security-settings", r"\bsecurity[ -]settings?\b|(?<![a-z])remote[ _-]?control\b|\bpermission[ _-]?modes?\b",
      r"\bsecurity[ -]settings?\b|(?<![a-z])remote[ _-]?control(?![a-z])|(?<![a-z])permission[ _-]?modes?(?![a-z])|"
      r"set_session_permission_mode|\bbypass ?permissions\b|\bt[ée]l[ée]commande\b|\bmode de permission"),

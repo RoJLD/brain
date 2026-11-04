@@ -10,8 +10,8 @@ Where the tree comes from, the first that knows wins:
 
   the app     each session's metadata file (``%LOCALAPPDATA%/Claude-Data/*/claude-code-sessions/*/*/local_*.json``),
               read through a closed list of keys (:data:`APP_KEYS`): both ids, the parent (``spawnedFrom``), the
-              task, the short name, the title, the dates, whether it is archived, the model, the effort, the branch
-              and the number of its PRs. Never ``lastTurnReport``, ``pendingSystemReminder``,
+              task, the short name, the title, the dates, whether it is archived or detached (``lineageDetached``),
+              the model, the effort, the branch and the number of its PRs. Never ``lastTurnReport``, ``pendingSystemReminder``,
               ``promptAppendSnapshot``, ``remoteMcpServersConfig``, ``spawnSeed`` or any other key: they hold texts
               and, in most files, an e-mail address. Each file is parsed once per change (its size and mtime), the
               picked keys cached in ``<BRAIN_HOME>/cache/sessions-app.json``; nothing here ever writes the app's files;
@@ -56,7 +56,7 @@ APP_GLOB = "Claude-Data/*/claude-code-sessions/*/*"
 # keys below. Every other key is never read, never copied.
 APP_KEYS = {"host_id": "sessionId", "session": "cliSessionId", "title": "title", "created": "createdAt",
             "active": "lastActivityAt", "archived": "isArchived", "turns": "completedTurns", "model": "model",
-            "effort": "effort", "branch": "branch"}
+            "effort": "effort", "branch": "branch", "detached": "lineageDetached"}
 SPAWN_KEYS = {"parent": "sessionId", "task": "taskId", "name": "name", "side": "sideSession"}
 HOST_RE = re.compile(r"^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 LOCAL_RE = re.compile(r"\blocal_[0-9a-f][0-9a-f-]{7,35}\b")
