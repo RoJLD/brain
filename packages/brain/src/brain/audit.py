@@ -33,11 +33,12 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, features, graph, inventory, links, paths, projects
+from . import config, features, graph, inventory, links, paths, projects, testcov
 from .inventory import AuditError
 
-RULESET = 3   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
-#               (wi-brain-feature-matrix)
+RULESET = 4   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+#               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
+#               (wi-brain-test-links-auto)
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "
@@ -47,6 +48,7 @@ MILESTONE = "ms-brain-conformance"
 VIEW = "notes/audit.md"
 STREAK = 4
 README_LINES = 10
+COVERAGE_FLOOR = 50.0   # a module the tests run less of (percent of its statements) is a test.coverage finding
 SECTIONS = {"install": ("install", "setup", "getting started"),
             "usage": ("usage", "quick start", "quickstart", "example", "commands"),
             "tests": ("test", "development", "contributing")}
@@ -80,6 +82,10 @@ CHECKS = {c.id: c for c in (
           "anchors"),
     Check("test.links", "P2", "never", "a test module no graph node is tested_by (no Hook, and no node implemented_by "
           "a CodeRef, stands for its code)"),
+    Check("test.coverage", "P2", "never", f"a Python module the tests run under {COVERAGE_FLOOR:g} % of, by the "
+          "store's coverage summary (brain coverage)"),
+    Check("feature.tests", "P2", "never", "a have or partial feature with code that no test module is tested_by "
+          "(no test imports, names or runs its code)"),
     Check("features.md", "P0", "new+left", "FEATURES.md is not the render of the graph (P0), or is missing (P1 on a "
                                            "production repo, P2 elsewhere)"),
     Check("feature.links", "class", "new+left", "a module or script no feature is implemented by, or a have or "
@@ -154,6 +160,54 @@ def test_links(ctx: dict) -> list[dict] | str:
     return out
 
 
+def test_coverage(ctx: dict) -> list[dict] | str:
+    """test.coverage: a Python module of the repo that its tests run under COVERAGE_FLOOR % of, by the coverage summary
+    the store keeps (brain coverage --write, brain.testcov); a module the summary does not know (added since) is not
+    counted. Not measured without a summary. The trend reads today's summary (``ctx["coverage"]``, from measure), so
+    the week a summary is first committed is no rise of the debt."""
+    if not ctx["store"]:
+        return "no store to keep its coverage summary"
+    rel, rf = ctx["store"][0], ctx["rf"]
+    cov = ctx["coverage"]
+    if cov is None:
+        return f"no coverage summary in {rel} (brain coverage --run --write)"
+    files, at, out = cov.get("files") or {}, str(cov.get("commit") or "?")[:7], []
+    for u in rf.units:
+        f = files.get(u.path) if u.kind == "module" else None
+        if f and f.get("statements") and float(f.get("percent", 100)) < COVERAGE_FLOOR:
+            out.append(finding(rf.name, "test.coverage", u.path, f"the tests run {f['percent']:g} % of its "
+                               f"{f['statements']} statements (coverage at {at})",
+                               "test its paths no test runs, then brain coverage --run --write", u))
+    return out
+
+
+def feature_tests(ctx: dict) -> list[dict] | str:
+    """feature.tests: a have or partial feature with code in the repo (a module or a script its CodeRefs name, whichever
+    repo owns the feature; a data file is no code a test imports) that no test module of the repo is tested_by (the
+    links derived now: its CodeRefs' tests by brain audit's evidence, imports and coverage, brain.links)."""
+    fm = ctx.get("features")
+    if fm is None:
+        return NO_FEATURES
+    why = _no_store(ctx, "Test")
+    if why:
+        return why
+    rf = ctx["rf"]
+    lk, name, out = _derived(ctx), rf.name, []
+    tested = {e["from"] for e in lk.edges if e["type"] == "tested_by"}
+    units = {u.path for u in rf.units if u.kind in ("module", "script")}
+    for fid in sorted(fm.features):
+        status = fm.features[fid].get("status")
+        if status not in ("have", "partial") or fid in tested:
+            continue
+        code = [c for c in fm.code(fid) if links.code_ref_file(rf.tree, name, c) in units]
+        if code:
+            out.append(finding(name, "feature.tests", fid, f"a {status} feature no test module is tested_by: no test "
+                               f"imports, names or runs {', '.join(c.split(':', 2)[2] for c in code[:2])}"
+                               f"{' and more' if len(code) > 2 else ''}",
+                               "a test of its code (importing its module, naming its symbol), then brain sync"))
+    return out
+
+
 # --- features.md and feature.links (brain.features, wi-brain-feature-matrix) ---
 
 NO_FEATURES = "no Feature type in the project's store"
@@ -210,7 +264,8 @@ PENDING = {
     "feature.links": Pending("wi-brain-feature-matrix", True, "code", feature_links),
     "doc.links": Pending("wi-brain-doc-test-links", False, "every", doc_links),
     "test.links": Pending("wi-brain-doc-test-links", False, "code", test_links),
-    "test.coverage": Pending("no repo measures coverage", False, "python"),
+    "test.coverage": Pending("wi-brain-test-coverage", False, "python", test_coverage),
+    "feature.tests": Pending("wi-brain-test-links-auto", False, "code", feature_tests),
     "module.ts": Pending("wi-brain-audit-ts", False, "ts"),
     "cmd.leaves": Pending("wi-brain-audit-commands", False, "commands"),
     "code.layer": Pending("wi-brain-brain-coderefs", False, "no-code-layer"),
@@ -343,12 +398,13 @@ def _test_dir(rf: inventory.RepoFacts) -> str:
 def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inventory.Tree],
             only: set[str] | None = None, layered: set[str] | None = None,
             extra_dirs: dict[str, set] | None = None, linked: dict | None = None,
-            featured: bool | None = None) -> dict:
+            featured: bool | None = None, coverage: dict | None = None) -> dict:
     """Every check on every repo of ``p`` that has a tree (its findings only for the repos in ``only`` when given):
     the project's result, as the JSON output carries it. ``layered``: the repos whose store has a code layer, given
     by the trend from today's measure (a layer added since then is a rule of today, not a rise of the debt);
     ``linked``, likewise, the repos whose own store takes the Doc and Test links (doc.links, test.links), and
-    ``featured``, whether the project's store has the Feature type (then a week before it has no feature).
+    ``featured``, whether the project's store has the Feature type (then a week before it has no feature), and
+    ``coverage``, each repo's coverage summary (test.coverage: a summary committed since is a rule of today).
     ``extra_dirs``: more top-level folders whose paths a doc names are checked (the scout passes the base tree's, so
     a folder a change empties still has its dead references)."""
     cfgs = [c for c in cfgs if c.name in trees]
@@ -417,19 +473,23 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
         layered = {name for st in stores if st.code_layer for name in facts if f"repo-{name}" in st.repo_nodes}
     if linked is None:
         linked = _linked_stores(p, cfgs, trees)
+    if coverage is None:
+        coverage = {c.name: testcov.load(trees[linked[c.name][2]], linked[c.name][0], c.name)
+                    for c in cfgs if c.name in linked and linked[c.name][2] in trees}
     out_repos = []
     for c in cfgs:
         rf = facts[c.name]
         if only is not None and c.name not in only:
             continue
         ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm, "trees": trees,
-               "flabel": flabel,
+               "flabel": flabel, "coverage": coverage.get(c.name),
                "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
         out_repos.append(_repo_result(c, rf, idx, tops, mod_evidence, facts, dangling.get(c.name, []),
                                       sorted(set(unregistered.get(c.name, []))), covered, layered,
                                       missing.get(c.name, []), (extra_dirs or {}).get(c.name, set()), ctx))
     return {"name": p.name, "root": str(p.root), "repos": out_repos, "counts": _sum(out_repos), "facts": facts,
-            "mod_evidence": mod_evidence, "layered": layered, "linked": linked, "featured": featured}
+            "mod_evidence": mod_evidence, "layered": layered, "linked": linked, "featured": featured,
+            "coverage": coverage}
 
 
 def _feature_model(p: projects.Project, cfgs: list[projects.Repo],
@@ -670,10 +730,10 @@ def falling(debts: list[int]) -> int:
 
 def trend(p: projects.Project, cfgs: list[projects.Repo], refs: dict[str, str], n: int, today: date,
           only: set[str] | None = None, layered: set[str] | None = None, linked: dict | None = None,
-          featured: bool | None = None) -> dict:
+          featured: bool | None = None, coverage: dict | None = None) -> dict:
     """Each of the last ``n`` completed weeks re-measured at its end commit with today's rules and registry (and
     today's code layers, ``layered``, the stores that take today's Doc and Test links, ``linked``, and today's
-    Feature type, ``featured``); a repo with no commit at some week end leaves the whole window (like-for-like)."""
+    Feature type, ``featured``, and today's coverage summaries, ``coverage``); a repo with no commit at some week end leaves the whole window (like-for-like)."""
     weeks = week_ends(n, today)
     live = [c for c in cfgs if c.name in refs]
     commits = dict(zip([c.name for c in live], _parallel(
@@ -683,7 +743,7 @@ def trend(p: projects.Project, cfgs: list[projects.Repo], refs: dict[str, str], 
     for i, (label, end) in enumerate(weeks if scope else []):
         trees = dict(zip([c.name for c in scope], _parallel(
             lambda c, i=i: inventory.git_tree(c.path, commits[c.name][i]), scope)))
-        res = measure(p, scope, trees, only, layered, linked=linked, featured=featured)
+        res = measure(p, scope, trees, only, layered, linked=linked, featured=featured, coverage=coverage)
         out.append({"week": label, "end": end[:10], "debt": {s: res["counts"][s] for s in SEVERITIES}})
     return {"weeks": out, "repos": [c.name for c in scope],
             "left": sorted(c.name for c in cfgs if c not in scope)}
@@ -798,7 +858,7 @@ def render_text(data: dict, verbose: bool = False) -> list[str]:
 
 def _public(p: dict) -> dict:
     return {k: v for k, v in p.items() if k not in ("facts", "cfgs", "project", "mod_evidence", "layered",
-                                                    "linked", "featured")}
+                                                    "linked", "featured", "coverage")}
 
 
 def render_json(data: dict) -> str:
@@ -993,7 +1053,8 @@ def run(args, root: Path | None, today: date | None = None) -> dict:
                          for k, v in errors.items() if only is None or k in only]
         res["cfgs"], res["project"] = cfgs, p
         if n:
-            res["trend"] = trend(p, cfgs, refs, n, today, only, res["layered"], res["linked"], res["featured"])
+            res["trend"] = trend(p, cfgs, refs, n, today, only, res["layered"], res["linked"], res["featured"],
+                                 res["coverage"])
             res["trend"]["falling"] = falling([_total(w) for w in res["trend"]["weeks"]])
             trends[p.name] = res["trend"]
         data["projects"].append(res)

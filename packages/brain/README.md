@@ -101,6 +101,15 @@ run them, the open items that deliver those features and the decisions pending o
 the file level, a Python symbol looked up by the AST, and says so on its second line. `brain code-map` resolves
 each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
 
+### Tests linked and coverage
+
+`brain sync` links each feature, item or hook to the test modules of its code (`tested_by`): the tests brain audit's
+evidence names, the tests that import the module themselves, and for a CodeRef of a symbol the tests that name it, or
+that ran it by the store's coverage summary. `brain coverage --repo R --run --write` runs a repo's suites under
+pytest-cov with test contexts and keeps that summary in the store (`coverage/<repo>.json`); `brain audit` then
+measures `test.coverage`, `feature.tests` reports a feature no test covers, and `FEATURES.md` shows each feature's
+coverage. The rules: [docs/tests-graph.md](docs/tests-graph.md).
+
 ## Start your own brain
 
 ```bash

@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from . import graph, paths
+from . import graph, inventory, paths, testcov
 from .inventory import parse_code_ref
 
 TYPE = "Feature"
@@ -70,6 +70,7 @@ class Model:
     out: dict[str, list] = field(default_factory=dict)        # feature -> [(edge type, target)]
     into: dict[str, list] = field(default_factory=dict)       # feature -> [(edge type, source)]
     repo: dict[str, str] = field(default_factory=dict)        # feature -> its owner repo (props.repo, lowercase)
+    coverage: dict[str, dict] = field(default_factory=dict)   # repo -> the store's coverage summary (brain.testcov)
 
     def code(self, fid: str, active: bool = True) -> list[str]:
         """The CodeRefs ``fid`` is implemented by (the active ones by default)."""
@@ -118,7 +119,7 @@ def build(node_lists: list, edge_lists: list, default_repo: str = "") -> Model:
 def merge(models: list[Model]) -> Model:
     m = Model()
     for x in models:
-        for k in ("features", "nodes", "repo"):
+        for k in ("features", "nodes", "repo", "coverage"):
             getattr(m, k).update(getattr(x, k))
         for k in ("out", "into"):
             for fid, links in getattr(x, k).items():
@@ -141,7 +142,19 @@ def load_store(store: Path, default_repo: str = "") -> Model:
         raise FeatureError(f"{store / 'schema.yaml'} has no {TYPE} node type")
     nodes = [graph.load_yaml_list(f) for f in sorted((store / "nodes").glob("*.yaml"))]
     edges = [graph.load_yaml_list(f) for f in [store / "edges.yaml", *sorted((store / "edges").glob("*.yaml"))]]
-    return build(nodes, edges, default_repo)
+    m = build(nodes, edges, default_repo)
+    m.coverage = _store_coverage(store)
+    return m
+
+
+def _store_coverage(store: Path) -> dict[str, dict]:
+    """The coverage summaries of a store on disk, read as brain sync's links and brain audit read them: through its
+    checkout's work tree (tracked and untracked files, not ignored ones) and testcov.load; none outside a checkout."""
+    try:
+        top = Path(inventory.git(store, "rev-parse", "--show-toplevel").strip()).resolve()
+        return _tree_coverage(inventory.work_tree(top), store.resolve().relative_to(top).as_posix())
+    except (inventory.AuditError, OSError, ValueError):
+        return {}
 
 
 def load_tree(tree, rel: str, default_repo: str) -> Model | None:
@@ -156,8 +169,20 @@ def load_tree(tree, rel: str, default_repo: str) -> Model | None:
     edge_files = sorted(p for p in tree.files if (p.startswith(f"{rel}/edges/") and p.endswith(".yaml"))
                         or p == f"{rel}/edges.yaml")
     tree.prefetch(node_files + edge_files)
-    return build([_yaml_load(tree.text(f) or "") for f in node_files],
-                 [_yaml_load(tree.text(f) or "") for f in edge_files], default_repo)
+    m = build([_yaml_load(tree.text(f) or "") for f in node_files],
+              [_yaml_load(tree.text(f) or "") for f in edge_files], default_repo)
+    m.coverage = _tree_coverage(tree, rel)
+    return m
+
+
+def _tree_coverage(tree, rel: str) -> dict[str, dict]:
+    """Repo -> the coverage summary the store ``rel`` keeps for it (brain.testcov), read from a git tree."""
+    pre, out = f"{rel}/{testcov.FOLDER}/", {}
+    for f in sorted(p for p in tree.files if p.startswith(pre) and p.endswith(".json") and "/" not in p[len(pre):]):
+        got = testcov.load(tree, rel, f[len(pre):-5])
+        if got is not None:
+            out[f[len(pre):-5].lower()] = got
+    return out
 
 
 # --- FEATURES.md ---
@@ -177,6 +202,28 @@ def _code_cell(m: Model, fid: str, repo: str) -> str:
         label = path.rsplit("/", 1)[-1] + (f"::{sym}" if sym else "")
         out.append(f"[{label}]({path})" if r.lower() == repo else f"`{r}:{label}`")
     return ", ".join(out)
+
+
+def coverage_of(m: Model, fid: str) -> float | None:
+    """The percent of the statements of the feature's files (its whole-file CodeRefs, in whichever repo) that the
+    tests run, by the store's coverage summary of each repo; None when none of them is measured."""
+    s = c = 0
+    for cid in m.code(fid):
+        try:
+            r, path, sym = parse_code_ref(cid)
+        except ValueError:
+            continue
+        files = (m.coverage.get(r.lower()) or {}).get("files") or {}
+        f = files.get(path) or files.get(f"src/{path}")
+        if f and not sym:
+            s, c = s + int(f.get("statements") or 0), c + int(f.get("covered") or 0)
+    return round(100.0 * c / s, 1) if s else None
+
+
+def _tests_cell(m: Model, fid: str, repo: str) -> str:
+    pct = coverage_of(m, fid)
+    tests = ", ".join(f"`{x}`" for x in sorted(m.links(fid, "tested_by")))
+    return "; ".join(x for x in (f"{pct:g} % covered" if pct is not None else "", tests) if x)
 
 
 def _order(m: Model, ids: list[str]) -> list[tuple[str, int]]:
@@ -230,7 +277,7 @@ def render(m: Model, repo: str, store_label: str = "notes/graph") -> str:
         out.append(f"| [{d}](#{_slug(d)}) | " + " | ".join(str(sum(1 for f in by_domain[d] if status[f] == s))
                                                          for s in STATUSES) + " |")
     with_module = any((m.features[f].get("props") or {}).get("module") for f in feats)
-    with_tests = any(m.links(f, "tested_by") for f in feats)
+    with_tests = any(m.links(f, "tested_by") or coverage_of(m, f) is not None for f in feats)
     with_docs = any(m.links(f, "documented_in") for f in feats)
     head = ["Feature", "Status", "Value"] + (["Module"] if with_module else []) + ["Code"] \
         + (["Tests"] if with_tests else []) + (["Docs"] if with_docs else []) + ["Links"]
@@ -245,7 +292,7 @@ def render(m: Model, repo: str, store_label: str = "notes/graph") -> str:
             row = [("↳ " * depth) + f"**{_cell(node.get('title', f))}** `{f}`", status[f],
                    _cell(props.get("value", ""))] + ([_cell(props.get("module", ""))] if with_module else []) \
                 + [_code_cell(m, f, repo)] \
-                + ([", ".join(f"`{x}`" for x in sorted(m.links(f, "tested_by")))] if with_tests else []) \
+                + ([_tests_cell(m, f, repo)] if with_tests else []) \
                 + ([", ".join(f"`{x}`" for x in sorted(m.links(f, "documented_in")))] if with_docs else []) \
                 + [", ".join(links)]
             out.append("| " + " | ".join(row) + " |")
