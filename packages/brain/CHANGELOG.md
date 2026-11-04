@@ -6,9 +6,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 - **Git's identity before the first commit** (wi-brain-install-git-identity). A fresh Git for Windows has no
   `user.name` nor `user.email`, and the first commit of `docs/install.md` stopped at « Author identity unknown ».
-  `brain init --apply` now checks git's config from the new brain's folder and, when either is missing, adds to its
-  next steps the `git config --global` commands that set them (the owner's name for a person, a placeholder for a team
-  or a name a shell would split); nothing is printed when both are set or git is not found. `docs/install.md` (step 3,
+  `brain init --apply` now asks git, as a commit would (`git var GIT_AUTHOR_IDENT` and `GIT_COMMITTER_IDENT`, from
+  the new brain's folder), whether it has an identity; when it has none, its next steps add the `git config --global`
+  commands for the keys git's config lacks (the owner's name for a person, a placeholder for a team or a name a shell
+  would expand: `$`, a backtick, a backslash, a quote). Nothing is printed when the commit would pass (the config, the
+  `GIT_AUTHOR_*` variables, git's own guess) or git is not found. `docs/install.md` (step 3,
   Windows and Linux) and `docs/pilot.md` set the identity before the first commit.
 - **The onboarding at the installed tag** (wi-brain-onboarding-tag-links). The vault runbook that `brain init` and
   `brain vault status` print points to `blob/v<the running version>`, not `blob/main`, which may be ahead of the

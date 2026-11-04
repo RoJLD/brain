@@ -62,6 +62,8 @@ from . import __version__, classes, config, graph, neutral, paths, render, vault
 ENGINE_REPO = "RoJLD/brain"   # where this package is published: config.json engine.repo
 TEMPLATES = files(__package__) / "templates"
 DEFAULT_TEMPLATE = "generic"
+# a name the identity hint may print inside double quotes: no $, backtick, backslash or quote for a shell to expand
+SHELL_SAFE_NAME = re.compile(r"[\w .'-]+")
 MANIFEST = "template.yaml"
 TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs", "classes"}
 GRAPH_KEYS = {"name", "store", "schema"}
@@ -390,30 +392,38 @@ def show(root: Path, steps: list[Step]) -> list[str]:
     return out
 
 
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=10)
+
+
 def git_identity_missing(root: Path) -> list[str]:
-    """The keys of git's identity (``user.name``, ``user.email``) that no git config read from ``root`` sets: without
-    them a first commit stops at "Author identity unknown" (a fresh Git for Windows). Empty when both are set, and
-    when git is not found or fails otherwise (no hint rather than a wrong one)."""
-    missing = []
-    for key in ("user.name", "user.email"):
-        try:
-            done = subprocess.run(["git", "config", "--get", key], cwd=root, capture_output=True, text=True,
-                                  timeout=10)
-        except (OSError, subprocess.SubprocessError):
+    """The keys of git's identity (``user.name``, ``user.email``) a first commit in ``root`` lacks: it would stop at
+    "Author identity unknown" (a fresh Git for Windows). ``git var GIT_AUTHOR_IDENT`` and ``GIT_COMMITTER_IDENT``
+    decide as the commit does (the config, the ``GIT_AUTHOR_*``/``GIT_COMMITTER_*``/``EMAIL`` variables, git's own
+    guess); when they fail, the keys git's config does not set. Empty when the commit would pass, and when git is not
+    found or fails otherwise (no hint rather than a wrong one)."""
+    try:
+        if all(_git(root, "var", ident).returncode == 0 for ident in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT")):
             return []
-        if done.returncode == 1 or (done.returncode == 0 and not done.stdout.strip()):
-            missing.append(key)
-        elif done.returncode:
-            return []
+        missing = []
+        for key in ("user.name", "user.email"):
+            done = _git(root, "config", "--get", key)
+            if done.returncode == 1 or (done.returncode == 0 and not done.stdout.strip()):
+                missing.append(key)
+            elif done.returncode:
+                return []
+    except (OSError, subprocess.SubprocessError):
+        return []
     return missing
 
 
 def identity_hint(missing: list[str], owner: str, kind: str = "person") -> str:
     """The line ``brain init --apply`` adds to its next steps when git has no identity yet: the commands to set it,
-    once, before the first commit; '' when nothing is missing. The owner's name for a person, a placeholder else."""
+    once, before the first commit; '' when nothing is missing. The owner's name for a person when PowerShell and bash
+    both keep it as typed inside double quotes (letters, digits, spaces, ``.``, ``'``, ``-``), a placeholder else."""
     if not missing:
         return ""
-    name = owner if kind == "person" and owner and '"' not in owner else "Your Name"
+    name = owner if kind == "person" and SHELL_SAFE_NAME.fullmatch(owner or "") else "Your Name"
     cmds = {"user.name": f'git config --global user.name "{name}"',
             "user.email": 'git config --global user.email "you@example.com"'}
     return ("      git's identity first, once (none on this machine yet: the first commit would stop at \"Author "

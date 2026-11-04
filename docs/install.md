@@ -203,7 +203,8 @@ brain --version
 
 ### 3. Your brain
 
-Git's identity first, once, if `git config --global user.email` prints nothing (Windows, step 3):
+Git's identity first, once, if `git config --global user.email` prints nothing (see the Windows section, step 3,
+for why):
 
 ```bash
 git config --global user.name "Your Name"
@@ -244,8 +245,8 @@ brain schedule list        # what is declared, installed, and the alerts pass's 
 
 ### macOS
 
-Python 3.10+ and git; then section 2 by hand (or `pwsh` from Homebrew) and sections 3 to 4. `brain schedule` has no
-macOS scheduler yet: its plan says so.
+Python 3.10+ and git; then section 2 by hand (or `pwsh` from Homebrew) and sections 3 to 4, git's identity included.
+`brain schedule` has no macOS scheduler yet: its plan says so.
 
 ## Upgrade, uninstall
 

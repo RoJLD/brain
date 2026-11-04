@@ -68,11 +68,15 @@ def test_apply_writes_a_brain_that_checks_and_points_to_it(fresh, monkeypatch, c
     assert "graph-check OK" in out and re.search(r"render claude: \d+ same\n", out)
 
 
+NO_GUESS = "[user]\n\tuseConfigOnly = true\n"
+
+
 def no_git_identity(tmp_path, monkeypatch):
-    """A machine whose git has no identity, like a fresh Git for Windows: an empty global config, no system one, and
-    none of the variables that stand in for it."""
+    """A machine whose git has no identity, like a fresh Git for Windows: a global config that only forbids git to
+    guess one from the user and host names (as it can on Linux), no system one, and none of the variables that stand
+    in for it."""
     empty = tmp_path / "gitconfig-global"
-    empty.write_text("", encoding="utf-8")
+    empty.write_text(NO_GUESS, encoding="utf-8")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     for var in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"):
@@ -101,12 +105,18 @@ def test_apply_gives_gits_identity_commands_before_the_first_commit(fresh, tmp_p
 
 def test_the_identity_hint_names_only_what_is_missing(fresh, tmp_path, monkeypatch):
     cfg = no_git_identity(tmp_path, monkeypatch)
-    cfg.write_text("[user]\n\tname = Ada\n", encoding="utf-8")
+    cfg.write_text(NO_GUESS + "\tname = Ada\n", encoding="utf-8")
     assert init.git_identity_missing(fresh) == ["user.email"]
+    # the variables git reads before its config: the commit passes, so no hint
+    for var in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.setenv(var, "ada@example.invalid")
+    assert init.git_identity_missing(fresh) == []
     assert init.identity_hint(["user.email"], "Ada").endswith(': git config --global user.email "you@example.com"')
     # a team, or a name a shell would split: a placeholder the owner replaces
     assert 'user.name "Your Name"' in init.identity_hint(["user.name"], "Ada's team", "team")
-    assert 'user.name "Your Name"' in init.identity_hint(["user.name"], 'Ada "AL" L', "person")
+    for name in ('Ada "AL" L', "Ada $HOME", "Ada `id`", "Ada\\", "Ada; rm -rf x"):   # would expand or split
+        assert 'user.name "Your Name"' in init.identity_hint(["user.name"], name, "person"), name
+    assert 'user.name "Ada O\'Brien-Lé"' in init.identity_hint(["user.name"], "Ada O'Brien-Lé", "person")
     assert init.identity_hint([], "Ada") == ""
 
 
