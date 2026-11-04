@@ -4,6 +4,19 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **Git's identity before the first commit** (wi-brain-install-git-identity). A fresh Git for Windows has no
+  `user.name` nor `user.email`, and the first commit of `docs/install.md` stopped at « Author identity unknown ».
+  `brain init --apply` now asks git, as a commit would (`git var GIT_AUTHOR_IDENT` and `GIT_COMMITTER_IDENT`, from
+  the new brain's folder), whether it has an identity; when it has none, its next steps add the `git config --global`
+  commands for the keys git's config lacks (the owner's name for a person, a placeholder for a team or a name a shell
+  would expand: `$`, a backtick, a backslash, a quote). Nothing is printed when the commit would pass (the config, the
+  `GIT_AUTHOR_*` variables, git's own guess) or git is not found. `docs/install.md` (step 3,
+  Windows and Linux) and `docs/pilot.md` set the identity before the first commit.
+- **The onboarding at the installed tag** (wi-brain-onboarding-tag-links). The vault runbook that `brain init` and
+  `brain vault status` print points to `blob/v<the running version>`, not `blob/main`, which may be ahead of the
+  engine installed. `docs/install.md` and `docs/pilot.md` say to read them at the tag installed, and now explain the
+  vault that `brain init` names: data classes (`brain classes`), optional in the pilot (`vault OFF` until it is set
+  up), the runbook for when it is wanted.
 - **A command registry** (wi-brain-cli-registry). Each top-level command is now a module of `brain.commands`
   (`src/brain/commands/<name>.py`): its parser (`register(sub, ctx)`), its handlers (`run(args, root)`, and
   `early(args)` for what runs before a root is resolved), its place in `brain --help` (`ORDER`) and its usage lines
