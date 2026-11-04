@@ -229,6 +229,19 @@ def ledger_events(now: float | None = None) -> tuple[dict[str, dict], dict[str, 
 
 # --- the tree ---
 
+def _started_at(node: dict) -> float:
+    """When a node started, in seconds since the epoch: the app's createdAt (milliseconds), else the ledger's
+    SessionStart (ISO), else 0. One kind of number for every node: a family that mixes app and ledger-only children
+    sorts (an int and a str never meet)."""
+    created = node.get("created")
+    if isinstance(created, (int, float)) and not isinstance(created, bool) and created:
+        return created / 1000
+    dt = transcript.parse_ts(str(node.get("started") or ""))
+    if dt is None:
+        return 0.0
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
+
+
 class Tree:
     """Every session the app, the ledger and the briefs know, by key (the app's id when known, else the
     transcript's), with the indexes that resolve an id or a name, and each one's parent and children."""
@@ -249,7 +262,7 @@ class Tree:
         for key, node in self.nodes.items():
             self._link(key, node)
         for kids in self.children.values():
-            kids.sort(key=lambda k: self.nodes[k].get("created") or self.nodes[k].get("started") or 0)
+            kids.sort(key=lambda k: _started_at(self.nodes[k]))
 
     def _add(self, node: dict) -> str:
         key = node.get("host_id") or node.get("session")
