@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import classes, config, keystore, paths
+from . import __version__, classes, config, keystore, paths
 
 CHECK = "vault"                          # brain health vault
 KINDS = ("device", "recovery", "hardware", "person")
@@ -72,7 +72,8 @@ KEY_PROMPT = ("the SECRET key, the AGE-SECRET-KEY-1... line (not the public age1
               "type it, then Enter: ")
 BOILERPLATE = re.compile(r"report unexpected or unhelpful errors")   # age's last line after any error: not the error
 NOT_ON_PATH = "not found on this terminal's PATH (a terminal opened before the install misses it: open a new one)"
-RUNBOOK = "https://github.com/RoJLD/brain/blob/main/packages/brain/docs/vault.md"   # the owner's steps, generic
+# the owner's steps, generic, at the tag of the engine that runs (main may be ahead of it)
+RUNBOOK = f"https://github.com/RoJLD/brain/blob/v{__version__}/packages/brain/docs/vault.md"
 
 
 class VaultError(RuntimeError):

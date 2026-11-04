@@ -3,6 +3,10 @@
 Thank you for trying the brain. This page says what the pilot is, what to try in about an hour, and how to tell us
 what went wrong. The install itself is in [install.md](install.md).
 
+Read both pages at the tag you were given, `https://github.com/RoJLD/brain/blob/<tag>/docs/pilot.md` (for instance
+[`blob/v0.2.5`](https://github.com/RoJLD/brain/blob/v0.2.5/docs/pilot.md)), not on `main`, which may already
+describe a later engine than the one you run.
+
 ## What the pilot is
 
 - **Free and self-hosted.** You install the public engine (this repo, at the tag you were given) on your own machine.
@@ -25,10 +29,12 @@ what went wrong. The install itself is in [install.md](install.md).
 
 ## What to try (about an hour)
 
-1. **Install** (install.md, steps 1 to 3): the command, then `brain init` and the first commit. Note anything that
-   was unclear or failed, and how long it took. Before a Claude Code session, set the pilot's three settings
-   (install.md, *Before the first session*): `BRAIN_MEMORY_SYNC=0`, the engine's venv at `%USERPROFILE%\.brain\venv`
-   (or `BRAIN_PYTHON`), and Git Bash's `HOME` the same as your user folder (or `BRAIN_HOME`).
+1. **Install** (install.md, steps 1 to 3): the command, git's identity if this machine's git has none (a fresh Git
+   for Windows: `git config --global user.name` and `user.email`, install.md step 3), then `brain init` and the first
+   commit. Note anything that was unclear or failed, and how long it took. Before a Claude Code session, set the
+   pilot's three settings (install.md, *Before the first session*): `BRAIN_MEMORY_SYNC=0`, the engine's venv at
+   `%USERPROFILE%\.brain\venv` (or `BRAIN_PYTHON`), and Git Bash's `HOME` the same as your user folder (or
+   `BRAIN_HOME`).
 2. **The backlog.** Add three items, one after another (`brain item add ID --title ... --after OTHER`), set a priority
    (`brain item set ID priority=P1`), close one (`brain item close ID --pr "none"`, or the PR that did it), then
    `brain sync` and look at `notes/kanban_graph.md`.
@@ -43,6 +49,11 @@ what went wrong. The install itself is in [install.md](install.md).
    queue.
 7. **Publishable by construction.** Add a file under `src/` or `fixtures/` with your own name in it, `git add` it and
    run `brain check`: it should refuse. Take the name out: it passes.
+8. **The vault (optional).** `brain init` ends by naming it: `brain classes` shows where each part of your brain may
+   go, and `brain vault status` what is left to seal what leaves your machine to your own keys. Nothing needs it in
+   the pilot (`brain health vault`: `vault OFF`, nothing is sealed yet); if you try it, follow the
+   [vault runbook](../packages/brain/docs/vault.md) in your own terminal, never in a Claude Code session, and keep
+   your recovery key on paper.
 
 Anything else you want to try is welcome; what you expected and did not get is the most useful thing to tell us.
 
