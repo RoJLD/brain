@@ -20,7 +20,7 @@ def _graph(store):
         fh.write(
             "- {id: wi-a, type: WorkItem, status: todo, title: \"A\"}\n"
             "- {id: wi-b, type: WorkItem, status: todo, title: \"B\",\n"
-            "   props: {open: \"Ada (security): rotate the forge's admin password, seen on 2026-11-02\"}}\n"
+            "   props: {open: \"Ada (security): rotate the build server's admin password, seen on 2026-11-02\"}}\n"
             "- {id: wi-c, type: WorkItem, status: doing, title: \"C\",\n"
             "   props: {external_blocker: \"the cluster is not available yet (Ada, 2026-10-29)\"}}\n"
             "- {id: wi-d, type: WorkItem, status: done, title: \"D\", props: {open: \"an old question\"}}\n"

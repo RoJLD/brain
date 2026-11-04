@@ -1,5 +1,4 @@
-"""Compose bundles the engine ships, rendered and run by commands (wi-brain-sovereign-stack; spec
-docs/specs/2026-11-01-context-engine-human-queue-harness-brainstorm.md §10, ADR "La pile souveraine du Brain").
+"""Compose bundles the engine ships, rendered and run by commands (wi-brain-sovereign-stack).
 
 A bundle is a Compose project under ``compose/<bundle>/`` next to this module: its ``compose.yaml`` and the
 configuration files its services mount. ``brain bundle apply`` renders it into ``<BRAIN_HOME>/stacks/<bundle>/`` and

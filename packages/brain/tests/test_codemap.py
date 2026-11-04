@@ -103,7 +103,7 @@ def _nodes_of(repo, sha) -> tuple[list[dict], list[tuple[str, str]]]:
     return nodes, members
 
 
-class Nexus:
+class FakeGitNexus:
     """GitNexus for brain.codemap and brain.impact: its registry (/api/repos) and its MCP cypher tool, answering
     the queries those modules send from an index built by AST at each repo's indexed commit. ``calls``: (caller,
     callee, confidence) edges."""
@@ -176,7 +176,7 @@ def _sha(repo, ref="HEAD"):
 
 
 def test_each_coderef_resolves_to_its_node_with_the_coverage(lab, monkeypatch, capsys):
-    Nexus(monkeypatch, {"lab": (lab, _sha(lab))})
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))})
     assert cli.main(["--project", "demo", "code-map"]) == 0
     out = capsys.readouterr().out
     data = codemap.read("demo")
@@ -204,14 +204,14 @@ def test_each_coderef_resolves_to_its_node_with_the_coverage(lab, monkeypatch, c
 
 
 def test_gitnexus_down_writes_nothing_and_exits_1(lab, monkeypatch, capsys):
-    Nexus(monkeypatch, {"lab": (lab, _sha(lab))}, up=False)
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))}, up=False)
     assert cli.main(["--project", "demo", "code-map"]) == 1
     assert "gitnexus does not answer at http://127.0.0.1:4747; brain up gitnexus starts it" in capsys.readouterr().out
     assert codemap.read("demo") == {}
 
 
 def test_the_json_view_and_a_project_without_the_stack(lab, tmp_path, monkeypatch, capsys):
-    Nexus(monkeypatch, {"lab": (lab, _sha(lab))})
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))})
     assert cli.main(["--project", "demo", "code-map", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["code_map"] == codemap.VERSION
     (tmp_path / "projects.yaml").write_text(f"demo: {{root: {lab.as_posix()}}}\n", encoding="utf-8")
@@ -250,7 +250,7 @@ def test_a_worktree_of_the_project_maps_the_same_refs(lab, tmp_path, monkeypatch
     """brain code-map from a worktree of the project's checkout: its stores there."""
     wt = tmp_path / "wt"
     run_git(lab, "worktree", "add", "-q", str(wt))
-    Nexus(monkeypatch, {"lab": (lab, _sha(lab))})
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))})
     monkeypatch.chdir(wt)
     assert cli.main(["code-map"]) == 0
     assert codemap.read("demo")["repos"]["lab"]["resolved"] == 6

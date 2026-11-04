@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "brain/schemas/config.schema.json",
   "title": "config.json, a personal brain's configuration",
-  "description": "The contract between the brain engine and a personal brain, the private repo of a person or a team: who decides for it, where its registry, rules, memory and records are, the engine it pins, what must never reach a public repo and the secrets it names. Read by brain config, checked by brain config --check and brain check --all. Paths are relative to the file's folder. No secret value ever: a secret is named by its environment variable only. docs/specs/2026-11-02-personal-brain-boundary-design.md section 4.",
+  "description": "The contract between the brain engine and a personal brain, the private repo of a person or a team: who decides for it, where its registry, rules, memory and records are, the engine it pins, what must never reach a public repo and the secrets it names. Read by brain config, checked by brain config --check and brain check --all. Paths are relative to the file's folder. No secret value ever: a secret is named by its environment variable only.",
   "type": "object",
   "required": ["v", "identity"],
   "additionalProperties": false,

@@ -1060,7 +1060,7 @@ def _launched(prog: str, args: list[str], shell: str) -> list[str] | None:
 
 def _ssh_remote(args: list[str]) -> list[str] | None:
     """The remote command of ssh or plink: the words after the host, with the options OpenSSH also reads after the
-    host (ssh forge -t 'sudo reboot', ssh host -p 2222 cmd, ssh host -- cmd) skipped."""
+    host (ssh build-host -t 'sudo reboot', ssh host -p 2222 cmd, ssh host -- cmd) skipped."""
     i, host = 0, None
     while i < len(args):
         a = args[i]
@@ -1287,7 +1287,7 @@ SUBCOMMANDS = {
     "secret-tool": [("keys", {"store", "clear"})],
     "k3s": [("keys", {("token", "create"), ("token", "rotate")})],
 }
-# Their global options that take a value (docker -H ssh://forge login): skipped before the subcommand.
+# Their global options that take a value (docker -H ssh://build-host login): skipped before the subcommand.
 SUB_VALUES = {"docker": ("-H", "--host", "-c", "--context", "--config", "-l", "--log-level", "--tlscacert",
                          "--tlscert", "--tlskey"),
               "gcloud": ("--project", "--account", "--configuration", "--verbosity", "--impersonate-service-account"),
