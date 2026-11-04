@@ -269,6 +269,8 @@ class PyFacts:
     strings: frozenset = frozenset()   # string constants shaped like a dotted name, or a command name
     lines: int = 0
     subcommands: frozenset = frozenset()   # argparse subcommands it declares (add_parser("name"))
+    discovers: bool = False    # it imports its own package's modules by listing them, pkgutil.iter_modules(__path__)
+    #                            (a command registry, brain.commands): an import of each one
 
 
 _FACTS: dict[str, PyFacts] = {}
@@ -282,6 +284,13 @@ def _is_guard(stmt) -> bool:
     return ({type(s).__name__ for s in sides} == {"Name", "Constant"}
             and any(isinstance(s, ast.Name) and s.id == "__name__" for s in sides)
             and any(isinstance(s, ast.Constant) and s.value == "__main__" for s in sides))
+
+
+def _discovers(mod: ast.Module) -> bool:
+    """A call of iter_modules(__path__) (pkgutil's): the module lists its own package's modules to import them."""
+    return any(isinstance(n, ast.Call) and (getattr(n.func, "attr", None) or getattr(n.func, "id", None))
+               == "iter_modules" and n.args and isinstance(n.args[0], ast.Name) and n.args[0].id == "__path__"
+               for n in ast.walk(mod))
 
 
 def _imports(body, out: list, func: str = "") -> None:
@@ -426,7 +435,7 @@ def facts(tree: Tree, path: str) -> PyFacts:
         out = PyFacts(True, tuple(imports),
                       any(isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) for s in mod.body),
                       any(_is_guard(s) for s in mod.body), len(body), frozenset(strings), text.count("\n") + 1,
-                      frozenset(SUBPARSER.findall(text)))
+                      frozenset(SUBPARSER.findall(text)), _discovers(mod))
     _FACTS[key] = out
     return out
 
@@ -1039,13 +1048,22 @@ def subcommand_of(func: str, subs: frozenset) -> str:
     return n if n in {s.replace("-", "_") for s in subs} else ""
 
 
+def _listed(node: tuple[str, str], f: PyFacts, pkg: str, idx: Index) -> list[tuple[tuple[str, str], object]]:
+    """The modules a package's __init__ lists to import them (``discovers``: a command registry): each one of its
+    package, in its repo."""
+    if not (f.discovers and node[1].endswith("/__init__.py") and pkg):
+        return []
+    return [(n, ALL) for d, n in idx.modules.items() if d.rsplit(".", 1)[0] == pkg and n[0] == node[0]]
+
+
 def _py_edges(node: tuple[str, str], rf: RepoFacts, idx: Index, allowed) -> list[tuple[tuple[str, str], object]]:
     """A Python file's imports and string constants equal to a module or a command. An import inside the function of
-    an argparse subcommand counts only when that subcommand may run (``allowed``: ALL or the subcommands named)."""
+    an argparse subcommand counts only when that subcommand may run (``allowed``: ALL or the subcommands named). A
+    package's __init__ that lists its own modules (``discovers``: a command registry) imports each one of them."""
     f = facts(rf.tree, node[1])
     own = idx.dotted_of.get(node, "")
     own_pkg = own if node[1].endswith("/__init__.py") else own.rsplit(".", 1)[0] if "." in own else ""
-    out = []
+    out = _listed(node, f, own_pkg, idx)
     for mod, level, names, func in f.imports:
         if func and allowed != ALL and f.subcommands:
             sub = subcommand_of(func, f.subcommands)

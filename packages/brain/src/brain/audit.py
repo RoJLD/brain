@@ -23,6 +23,7 @@ and a finding at that severity or above, or a refused write; 2 a registry or usa
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import posixpath
@@ -36,9 +37,9 @@ from pathlib import Path
 from . import config, features, graph, inventory, links, paths, projects, testcov
 from .inventory import AuditError
 
-RULESET = 4   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+RULESET = 5   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
 #               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
-#               (wi-brain-test-links-auto)
+#               (wi-brain-test-links-auto); 5: cmd.registry (wi-brain-cli-registry)
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "
@@ -76,6 +77,8 @@ CHECKS = {c.id: c for c in (
     Check("test.module", "class", "new+left", "a Python module with no test evidence"),
     Check("test.script", "class", "new+left", "a script no test runs"),
     Check("cmd.documented", "class", "new+left", "a console script or command module the docs never name"),
+    Check("cmd.registry", "class", "new+left", "a command outside the command registry: a parser the cli.py beside a "
+          "commands/ package that lists its modules adds itself, or a module of that package with no register"),
     Check("coderef.module", "P2", "new", "a module of a repo with a code layer has no CodeRef"),
     Check("readme.sections", "P2", "never", "README headings for install, usage and tests (until readme.generated)"),
     Check("doc.links", "P2", "new+left", "a doc no section of which documents a graph node, or a spec no Spec node "
@@ -374,6 +377,61 @@ def _documented(u: inventory.Unit, rf: inventory.RepoFacts, docs: dict, shims: d
     return False
 
 
+def _parsers_added(text: str) -> list[str]:
+    """The parsers a Python file adds itself: the name of each add_parser call ("?" when it is not a literal)."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return []
+    calls = sorted((n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "add_parser"), key=lambda n: (n.func.end_lineno, n.func.end_col_offset))
+    return [str(n.args[0].value) if n.args and isinstance(n.args[0], ast.Constant) else "?" for n in calls]
+
+
+def _registries(t: inventory.Tree) -> list[str]:
+    """The prefix of each package of the tree whose commands/ lists its own modules (a command registry)."""
+    inits = [p for p in sorted(t.files) if p == "commands/__init__.py" or p.endswith("/commands/__init__.py")]
+    return [p[:-len("commands/__init__.py")] for p in inits if inventory.facts(t, p).discovers]
+
+
+def _imports_register(text: str) -> bool:
+    """A module-level import binds the name register (from ._impl import register; inventory.has_symbol reads
+    definitions only)."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return False
+    return any((a.asname or a.name) == "register" for s in tree.body if isinstance(s, ast.ImportFrom) for a in s.names)
+
+
+def _unregistered(t: inventory.Tree, pkg: str) -> list[str]:
+    """The modules of ``pkg``commands/ (not the ``_`` helpers) that define or import no register."""
+    mods = [p for p in sorted(t.files) if posixpath.dirname(p) == f"{pkg}commands" and p.endswith(".py")]
+    return [p for p in mods if not posixpath.basename(p).startswith("_")
+            and inventory.has_symbol(t, p, "register") is False and not _imports_register(t.text(p) or "")]
+
+
+def registry_findings(repo: str, rf: inventory.RepoFacts) -> list[dict]:
+    """cmd.registry (wi-brain-cli-registry): in a package whose commands/ lists its own modules (a command registry,
+    brain.commands), the cli.py beside it adds no parser itself, and every module of commands/ but the ``_`` ones
+    (helpers) defines register: a command is a module of the registry, never a line of a shared file."""
+    t = rf.tree
+    units = {u.path: u for u in rf.units if u.kind == "module"}
+    out = []
+    for pkg in _registries(t):
+        cli = f"{pkg}cli.py"
+        names = _parsers_added(t.text(cli) or "") if t.has(cli) else []
+        if names:
+            shown = ", ".join(names[:5]) + ("..." if len(names) > 5 else "")
+            out.append(finding(repo, "cmd.registry", cli, f"{cli} adds {len(names)} parser(s) itself, outside the "
+                               f"command registry: {shown}", f"make each command a module of {pkg}commands/ (its "
+                               "register, run or early)", units.get(cli)))
+        out += [finding(repo, "cmd.registry", path, f"{path} is a command module with no register: brain never adds "
+                        "its command", "define register(sub, ctx), or name it _<name>.py (a helper, not a command)",
+                        units.get(path)) for path in _unregistered(t, pkg)]
+    return out
+
+
 def _readme(rf: inventory.RepoFacts) -> str:
     return next((p for p in sorted(rf.tree.files) if "/" not in p and p.lower() == "readme.md"), "")
 
@@ -646,6 +704,8 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
         if u.kind == "command" and not _documented(u, rf, docs, shims):
             found.append(finding(name, "cmd.documented", u.name, f"no doc of the docs set names {u.name}",
                                  f"document {u.name} in README.md or docs/ (what it does, its options)", u))
+    # cmd.registry
+    found += registry_findings(name, rf)
     # coderef.module
     modules = [u for u in rf.units if u.kind == "module"]
     if name in layered:
@@ -1081,7 +1141,7 @@ def main(args, root: Path | None) -> int:
         if args.write or args.items:
             p = projs[0]
             proj = p["project"]
-            from .cli import _on_main
+            from .commands._common import _on_main
             branch = _on_main(proj.root)
             if branch:
                 raise SystemExit(f"brain: {proj.root} is a main checkout on {branch}: write from a worktree "

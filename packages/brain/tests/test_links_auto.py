@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from brain import audit, cli, features, links, projects, testcov
+from brain.commands import coverage as coverage_cmd
 
 from test_inventory import mem
 
@@ -248,8 +249,9 @@ def test_brain_coverage_from_a_data_file_writes_the_summary(tmp_path, monkeypatc
     rep = {"files": {str(root / "src" / "p" / "cli.py"): {"summary": {"num_statements": 9},
                                                          "executed_lines": [1, 4, 5, 8, 9, 12, 13]}}}
     monkeypatch.setattr(testcov, "_report", lambda python, d, where, out: rep)   # coverage json, not installed
-    monkeypatch.setattr(cli, "_repos", lambda args, r: [projects.Repo("demo", root)])
-    monkeypatch.setattr(cli, "_store", lambda args, r: root / "notes" / "graph")
+    # the helpers where brain coverage reads them (brain.commands.coverage, wi-brain-cli-registry)
+    monkeypatch.setattr(coverage_cmd, "_repos", lambda args, r: [projects.Repo("demo", root)])
+    monkeypatch.setattr(coverage_cmd, "_store", lambda args, r: root / "notes" / "graph")
     assert cli.main(["coverage", "--repo", "demo", "--from", str(data), "--write"]) == 0
     out = capsys.readouterr().out
     assert "demo: 77.8 % of 9 statements" in out and "coverage" in out

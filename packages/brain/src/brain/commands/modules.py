@@ -1,0 +1,51 @@
+"""``brain modules``: the module map: each open item's module against the store's modules.yaml, the generated view
+notes/modules_graph.md.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from .. import modules
+from ._common import _store, _store_label
+
+ORDER = 30   # its place in brain --help's list of commands (brain.commands)
+USAGE_ORDER = 40   # its usage lines' place in brain --help's epilog
+USAGE = """\
+  brain modules [--write] [--check] [--json]   the module map: each open item's props.module (and
+                 props.modules_secondary) against the store's modules.yaml; the view notes/modules_graph.md (per
+                 module its phase, status, items done and open, and the gaps), written by brain sync; --check: the
+                 open items with no module, or a module the registry does not know (brain check warns of them)
+"""
+
+
+def cmd_modules(args, root: Path) -> int:
+    """brain modules (brain.modules): the view printed, written with --write; --check: the module map's problems."""
+    store = _store(args, root)
+    if not modules.applies(store):
+        raise SystemExit(f"brain modules: no {modules.REGISTRY} in {store} (the registry of modules)")
+    if args.write:   # first, so --write --check writes the view and then checks the map
+        print(f"view: {modules.VIEW} " + ("written" if modules.write(root, store, _store_label(root, store))
+                                          else "unchanged"))
+    if args.check:
+        found = modules.problems(store)
+        print(json.dumps(found, indent=1) if args.json else "\n".join(found) or "module map: every open item placed")
+        return 1 if found else 0
+    if args.json:
+        print(json.dumps(modules.data(store), indent=1, ensure_ascii=False, default=str))   # a YAML date
+    elif not args.write:
+        print(modules.render(store, _store_label(root, store)), end="")
+    return 0
+
+
+def register(sub, ctx) -> None:
+    mo = sub.add_parser("modules", help="the module map: each open item's module against the store's modules.yaml, "
+                                        "the generated view notes/modules_graph.md")
+    mo.add_argument("--write", action="store_true", help="write notes/modules_graph.md (brain sync does)")
+    mo.add_argument("--check", action="store_true", help="the open items with no module or an unknown one (exit 1)")
+    mo.add_argument("--json", action="store_true", help="the map as JSON (each module's counts, the problems); with "
+                                                        "--check, the problems")
+
+
+run = cmd_modules

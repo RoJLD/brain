@@ -17,6 +17,20 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   engine installed. `docs/install.md` and `docs/pilot.md` say to read them at the tag installed, and now explain the
   vault that `brain init` names: data classes (`brain classes`), optional in the pilot (`vault OFF` until it is set
   up), the runbook for when it is wanted.
+- **A command registry** (wi-brain-cli-registry). Each top-level command is now a module of `brain.commands`
+  (`src/brain/commands/<name>.py`): its parser (`register(sub, ctx)`), its handlers (`run(args, root)`, and
+  `early(args)` for what runs before a root is resolved), its place in `brain --help` (`ORDER`) and its usage lines
+  (`USAGE`, `USAGE_ORDER`). `brain.cli` keeps `main` and `build_parser` as a facade: it lists the package, adds each
+  module's parser and dispatches to the module, and it no longer holds an `add_parser` call. A new command is a new
+  file; the README's « Adding a command » shows one. Nothing a command does or prints changed: `tests/help_dump.py`
+  prints the help and the arguments of every command and subcommand (149 parsers), byte for byte the same before and
+  after the move.
+  - `brain audit`'s new check `cmd.registry` (ruleset 5; P1 on a production path, NEW and LEFT in the scout) flags a
+    parser the `cli.py` beside a `commands/` package that lists its modules adds itself, and a module of that package
+    with no `register`.
+  - The inventory reads `pkgutil.iter_modules(__path__)` in a package's `__init__.py` as an import of each of its
+    modules, so the audit's production closure and the tests' reach go through the registry as through an import.
+  - The distribution's packages are `brain` and `brain.commands` (`pyproject.toml`): a wheel carries the registry.
 
 ## 0.2.5 — 2026-11-04
 
