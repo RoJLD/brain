@@ -11,7 +11,8 @@ ORDER = 190   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 220   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain projects [--keys] [--json]   the registry resolved: each project's stores, journals, decision logs, ledgers,
-                 repos, stacks, code index and plugin; --keys: every key an entry may hold
+                 repos, stacks, code index and plugin, then the projects the brain reads and never writes
+                 (access: read); --keys: every key an entry may hold
 """
 
 
@@ -21,14 +22,20 @@ def cmd_projects(args, root: Path) -> int:
         for k, text in projects.KEYS.items():
             print("\n".join(status._row(k, text)))
         return 0
-    projs = [args.project_obj] if getattr(args, "project_obj", None) else list(projects.load(root).values())
-    if not projs:
+    one = getattr(args, "project_obj", None)
+    projs = [one] if one else list(projects.load(root).values())
+    read_only = [] if one else list(projects.readonly(root).values())
+    if not projs and not read_only:
         raise SystemExit(f"brain: no project registry ({projects.REGISTRY}; $BRAIN_PROJECTS or $CLAUDE_BRAIN_DIR)")
-    data = [projects.describe(p) for p in projs]
+    data = [projects.describe(p) for p in projs] + [projects.describe_read_only(r) for r in read_only]
     if args.json:
         print(json.dumps({"projects": data}, ensure_ascii=False, indent=1, sort_keys=True))
         return 0
     for d in data:
+        if d["access"] == "read":
+            print(f"{d['name']} (read only: the brain reads it and never writes it)"
+                  + (f": {d['title']}" if d["title"] else ""))
+            continue
         print(f"{d['name']} ({d['root']}" + ("" if d["found"] else ", not found on this machine") + ")"
               + (f": {d['title']}" if d["title"] else ""))
         for key, label in (("stores", "stores"), ("journals", "journals"), ("decisions", "decisions"),

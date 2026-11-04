@@ -21,7 +21,8 @@ or (once wi-brain-scope-tree builds them) a container. A project's chain is the 
 rules from the root down (``rules/scopes/<id>.md``), then the project's own ``CLAUDE.md``: the nearest is read last.
 Until the tree has parents, a project's chain is the global rules then its own. A rules file may ``lock`` rule ids
 for its whole subtree; a lower rule that declares ``overrides:`` a locked id is reported (:func:`lock_findings`):
-a conflict of text stays a matter of judgement, made visible.
+a conflict of text stays a matter of judgement, made visible. A project the brain reads and never writes (``access:
+read``, brain.projects) is no scope of this source: its rules are written by its own sessions.
 
 **Exactness.** YAML flow sequences (``[a, b]``) stay inline when an adapter writes JSON, block sequences go one item
 per line: the source's style is the rendered file's, so the Claude adapter reproduces a hand-written manifest byte
@@ -380,9 +381,11 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
     errors = list(src.errors)
     if not src.data:
         return errors
+    readonly: set[str] = set()
     if nodes is None:
         from . import projects
         nodes = [GLOBAL, *(p.name for p in projects.load(src.root).values())]
+        readonly = set(projects.readonly(src.root))
     known = set(nodes) | {GLOBAL}
     from . import schema
     refused = schema.newer(PACKS, src.data.get("v"))
@@ -406,6 +409,9 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
                 errors.append(f"{where}: {k}: only {sorted(TARGET_TEXT_KEYS)} (got {sorted(rf.meta[k])})")
         if not rf.scope:
             errors.append(f"{where}: no scope (front matter scope: global, a project or a scope node)")
+        elif rf.scope in readonly:
+            errors.append(f"{where}: scope {rf.scope!r} is a read-only project: the brain never writes its rules (its "
+                          "own sessions do)")
         elif rf.scope not in known:
             errors.append(f"{where}: scope {rf.scope!r} is not a node of the scope tree ({', '.join(sorted(known))})")
         if rf.preamble.strip():
@@ -447,7 +453,9 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
             if name not in src.servers:
                 errors.append(f"{PACKS}: pack {p.id}: MCP server {name!r} not in {MCP}")
         for proj in p.projects or []:
-            if proj not in known:
+            if proj in readonly:
+                errors.append(f"{PACKS}: pack {p.id}: project {proj!r} is read only: the brain renders nothing for it")
+            elif proj not in known:
                 errors.append(f"{PACKS}: pack {p.id}: project {proj!r} is not registered")
     for name, proc in src.procedures.items():
         errors += _check_procedure(name, proc)

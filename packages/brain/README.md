@@ -364,6 +364,12 @@ repo acted on is `--root`, else `$BRAIN_ROOT`, else the nearest folder above wit
 personal brain. Machine-local state (ledgers, sessions, the resume pack, the vault) lives in `BRAIN_HOME`
 (`~/.brain`), never in a repo.
 
+### Projects the brain only reads
+
+An entry `access: read` in `projects.yaml` is a project the brain reads and never writes (its own sessions do): it
+holds `title` and `access` only, no command loads or names it (`--project` refuses it), no guard reaches into it, and
+`brain projects`, `brain status --all` and `brain check --all` count it. `examples/projects.yaml` has one.
+
 ## The Claude Code hooks
 
 `src/brain/adapters/claude/hooks/` is package data: `hooks.json` and a `.sh` launcher per hook, each running its `.py`

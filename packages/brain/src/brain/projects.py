@@ -30,6 +30,14 @@ alert files, event folders) and their levels, inline or as a YAML file relative 
 pass, a daily canary), inline or as a YAML file relative to the root, for ``brain schedule`` and the installer's
 schedule step (brain.schedule).
 
+An entry with ``access: read`` is a project the brain **reads and never writes** (another repo's own sessions write
+it): it holds ``title`` and ``access`` only (``parent`` joins them with wi-brain-scope-tree), the shape of a mount, so
+no root, store, ledger, guard or rendered rule reaches into it. :func:`load` never returns one, :func:`get` refuses one
+(every ``--project``), :func:`readonly` lists them, and ``brain projects``, ``brain status --all`` and the registry's
+check count them. ``access: write`` is the default, the brain writing the project by PR; any other value is an error,
+and the entry is not loaded until it is one (the key narrows: a typo never opens a way in). A brain older than the one
+that knows the key reads such an entry as a full project, so it lands in a registry only once every machine runs it.
+
 An entry with a ``tenant`` key is a **mount**, not a project: an HMaaS tenant is another brain, with its own root,
 registry and keys, mounted opaque in the operator's registry (wi-brain-hmaas-multitenant, spec-brain-hmaas §6;
 SCOPE-6). It holds ``title`` and ``tenant`` only, ``{export: <path>}`` naming where the tenant drops its contract
@@ -87,7 +95,11 @@ KEYS = {
               "yet",
     "tenant": "makes the entry a tenant mount: another brain, opaque, that no command reads into; {export: where the "
               "tenant drops its contract export, relative to BRAIN_HOME}; a mount holds title and tenant only",
+    "access": "write (the default: the brain writes the project, by PR) or read (it reads the project and never "
+              "writes it: an entry of title and access only, which no command loads, names or writes into)",
 }
+ACCESS = ("write", "read")
+READ_ONLY_KEYS = {"title", "access"}
 # What a mount's tenant: mapping may hold (wi-brain-tenant-export reads the export; a mount only says where it lands).
 TENANT_KEYS = {"export": "the file the tenant's contract export is dropped into: absolute, ~, or relative to BRAIN_HOME"}
 MOUNT_KEYS = {"title", "tenant"}
@@ -134,6 +146,13 @@ class Repo:
     lang: str = "py"                      # ts: module checks delegated to the repo's own checker
     scout_limit: int = 3
     folder: str = ""                      # its main checkout's folder name, case kept (a CodeRef's <repo> token)
+
+
+@dataclass
+class ReadOnly:
+    """A project the brain reads and never writes: its name and title; nothing else is declared."""
+    name: str
+    title: str = ""
 
 
 @dataclass
@@ -205,15 +224,31 @@ def is_mount(entry) -> bool:
     return isinstance(entry, dict) and "tenant" in entry
 
 
+def is_read_only(entry) -> bool:
+    """An entry the brain never writes: ``access`` other than write (read, or a value check() refuses: it narrows)."""
+    return isinstance(entry, dict) and "access" in entry and entry["access"] != "write"
+
+
 def load(root: Path | None = None) -> dict[str, Project]:
-    """The registered projects; a tenant mount is not one, so no command that walks them reads into it."""
+    """The registered projects; a tenant mount and a read-only project are not, so no command that walks them reads
+    into the one or writes into the other."""
     f = registry_file(root)
     out = {}
     for name, entry in raw(root).items():
-        if is_mount(entry):
+        if is_mount(entry) or is_read_only(entry):
             continue
         entry = entry if isinstance(entry, dict) else {}
         out[str(name)] = _project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent))
+    return out
+
+
+def readonly(root: Path | None = None) -> dict[str, ReadOnly]:
+    """The projects the brain reads and never writes, in the registry's order: each one's name and title."""
+    out = {}
+    for name, entry in raw(root).items():
+        if is_read_only(entry):
+            title = entry.get("title")
+            out[str(name)] = ReadOnly(str(name), title if isinstance(title, str) else "")
     return out
 
 
@@ -241,6 +276,8 @@ def get(name: str, root: Path | None = None) -> Project:
         if is_mount(raw(root).get(name)):
             raise SystemExit(f"brain: {name!r} is a tenant mount: another brain, opaque, that the operator does not "
                              "read into (its state comes from its contract export)")
+        if is_read_only(raw(root).get(name)):
+            raise SystemExit(f"brain: {name!r} is read only: the brain reads it and never writes it")
         where = registry_file(root)
         raise SystemExit(f"brain: unknown project {name!r} (registry {where or 'not found'}; known: "
                          f"{', '.join(reg) or 'none'})")
@@ -369,10 +406,24 @@ def _check_mount(where: str, entry: dict) -> list[str]:
     return errors
 
 
+def _check_read_only(where: str, entry: dict) -> list[str]:
+    """A read-only project holds title and access only: a root, a store, a ledger or a guard's list would be a way to
+    write or read into it."""
+    errors = []
+    extra = sorted(set(map(str, entry)) - READ_ONLY_KEYS)
+    if extra:
+        errors.append(f"{where}: a read-only project holds title and access only, not {', '.join(extra)} (each is a "
+                      "way to write or read into it)")
+    if "title" in entry and not isinstance(entry["title"], str):
+        errors.append(f"{where}: title is a string")
+    return errors
+
+
 def check(root: Path | None = None) -> list[str]:
     """What is wrong in the registry: an entry that is not a mapping, an unknown key, a value of the wrong shape, a bad
-    repos: or audit: entry, a shared id without its reason, a tenant mount that holds more than its title and export.
-    Stacks and code_index entries are checked by their own loaders (brain.stacks, brain.codeindex)."""
+    repos: or audit: entry, a shared id without its reason, a tenant mount that holds more than its title and export,
+    an access that is not read or write, a read-only project that holds more than its title. Stacks and code_index
+    entries are checked by their own loaders (brain.stacks, brain.codeindex)."""
     errors = []
     for name, entry in raw(root).items():
         where = f"project {name}"
@@ -383,6 +434,12 @@ def check(root: Path | None = None) -> list[str]:
             continue
         if is_mount(entry):
             errors += _check_mount(f"tenant {name}", entry)
+            continue
+        if "access" in entry and entry["access"] not in ACCESS:
+            errors.append(f"{where}: access is read or write")   # not loaded until it is one
+            continue
+        if is_read_only(entry):
+            errors += _check_read_only(where, entry)
             continue
         unknown = sorted(set(map(str, entry)) - set(KEYS))
         if unknown:   # read mode: a newer brain's key, noted and kept; strict (CI): an error
@@ -469,4 +526,9 @@ def describe(p: Project) -> dict:
             "production": [os.path.relpath(x, p.root).replace(os.sep, "/") for x in p.production],
             "repos": repos,
             "code_index": [e if isinstance(e, str) else str((e or {}).get("path")) for e in p.code_index],
-            "stacks": stacks, "shared_ids": sorted(map(str, p.shared_ids)), "plugin": p.plugin}
+            "stacks": stacks, "shared_ids": sorted(map(str, p.shared_ids)), "plugin": p.plugin, "access": "write"}
+
+
+def describe_read_only(r: ReadOnly) -> dict:
+    """A read-only project as brain projects prints it: nothing but its name, title and access."""
+    return {"name": r.name, "title": r.title, "access": "read"}

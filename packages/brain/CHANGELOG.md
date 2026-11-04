@@ -10,6 +10,20 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `packs.yaml`, `projects.yaml` or a record now prints a note instead; CI (`CI` set) still fails on it. A `v` above 1
   in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
   update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
+- An entry `access: read` in `projects.yaml` needs brain 0.2.6 or later on every machine before it lands in a
+  registry: an older brain notes the unknown key and reads the entry as a full project, at the registry's root with
+  the default store, journal and decision log (`docs/formats.md`).
+
+- **Projects the brain reads and never writes** (wi-brain-read-only-projects). A registry entry may say `access: read`
+  (`write`, the default, is today's: the brain writes the project by PR; any other value is an error, « access is
+  read or write », and the entry is not loaded until it is one). Such an entry holds `title` and `access` only, the
+  shape of a tenant mount: `brain check --all` names every other key it holds (a root, a store, a ledger, a
+  production list, repos...), each a way to write or read into it. `projects.load` never returns one, so sync, check,
+  refresh, status, resume, audit, the queue, the cockpit and the guards (the registered repos, the production
+  checkouts) pass it by; `projects.get` refuses it (« `<name>` is read only: the brain reads it and never writes
+  it »), so does every `--project`; the neutral source refuses it as a rule file's `scope:` or a pack's `projects:`.
+  `projects.readonly` lists them; `brain projects` (and `--json`, key `access`) shows them, `brain status --all` and
+  the registry's check count them (« registry: 2 project(s), 2 store(s), ids unique; 2 read only »).
 
 - **Remote Control's three exceptions** (wi-brain-guard-rc-archive; the owner's ADRs of 2026-11-04). The
   session-settings guard lets the desktop app's `set_remote_control` through in exactly three cases, each checked

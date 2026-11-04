@@ -169,8 +169,8 @@ def _merge_marks(root: Path, then: str, clear: bool = False) -> None:
 
 def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
     """The registry (its keys and shapes, repos, stacks, code_index), its alerts and config.json (brain.config),
-    then the ids: unique across every store of every project, unless waived under a project's shared_ids. Exit
-    code 1 on an error."""
+    then the ids: unique across every store of every project, unless waived under a project's shared_ids. The
+    projects the brain reads and never writes are counted. Exit code 1 on an error."""
     errors = projects.check(root) + config.check(root) + permissions.check(root)
     data_classes = classes.check(root)
     for w in data_classes.waived:
@@ -200,8 +200,9 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
         print(f"warning: {line}")
     for e in errors:
         print(f"error: {e}")
+    read_only = len(projects.readonly(root))
     print(f"registry: {len(projs)} project(s), {ids['stores']} store(s), "
-          + (f"{len(errors)} error(s)" if errors else "ids unique"))
+          + (f"{len(errors)} error(s)" if errors else "ids unique") + (f"; {read_only} read only" if read_only else ""))
     return 1 if errors else 0
 
 

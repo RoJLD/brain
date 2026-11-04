@@ -8,6 +8,7 @@
 #       edits and git changes there (work in a worktree, merge by PR, then pull).
 # stacks: what brain up / down / health start, stop and check (depends_on, cwd, start, stop, health {urls, cmd},
 #       logs, timeout, detach, watch); omit it when the project runs no service.
+# access: read for a project the brain reads and never writes (its own sessions write it): title and access only.
 #
 # Each store is started with `research_graph --store <root>/notes/graph --repo-root <root> init --owner <you>`.
 
@@ -21,3 +22,7 @@ my-project:          # a project next to it, with its own graph store
 team-project:        # a project with a second store (an operations graph, say)
   root: ../team-project
   stores: [notes/graph, ops/graph]
+
+upstream:            # read only: the brain reads it and never writes it (no root, no store, no guard)
+  title: a project the brain follows without writing to it
+  access: read
