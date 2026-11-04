@@ -118,8 +118,10 @@ def run(root: Path, since: str = "", until: str = "", quiet_hours: float = QUIET
     now = now or datetime.now(timezone.utc)
     report: dict[str, Counter] = defaultdict(Counter)
     found = main_transcripts(since, until)
-    recs = records.load(root)
-    have_ids = {a["id"] for _, a in recs["ar"]}
+    refused: list[records.Bad] = []
+    recs = records.load(root, refused)
+    have_ids = {a["id"] for _, a in recs["ar"]} | records.ar_ids(root)   # a newer brain's lines included
+    refused_files = {b.where for b in refused}
     have_fp = {fp for _, a in recs["ar"] if (fp := _fingerprint(a))}
     by_session: dict[str, list[dict]] = defaultdict(list)
     for _, a in recs["ar"]:
@@ -202,9 +204,13 @@ def run(root: Path, since: str = "", until: str = "", quiet_hours: float = QUIET
         sr = main.record(path, status="closed", extra_items=items, actions=[a["id"] for a in ars],
                          ddrs=ddrs_by.get(sid), subagents=subs, subagent_count=n_subs,
                          end_reason=reasons.get(sid, ""))
+        if not old and records.record_path(root, "sr", sr) in refused_files:
+            report[month]["sr-refused"] += 1      # a newer brain's SR, or an unreadable one: never replaced
+            continue
+        carry: frozenset[str] = frozenset()
         if old:
-            sr = _merge(old[1], sr)
-        sr = records.validate("sr", sr)
+            sr, carry = records.keep_unknown("sr", old[1], _merge(old[1], sr))
+        sr = records.validate("sr", sr, carry)
         if not dry_run:
             if old and records.record_path(root, "sr", sr) != old[0]:
                 old[0].unlink()

@@ -17,6 +17,7 @@ never overwritten ("written by brain > X: brain update").
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -70,14 +71,40 @@ def validate(kind: str, rec: dict, carry: frozenset[str] | set[str] = frozenset(
     return clean
 
 
+def _steps(kind: str, path: str) -> list[str | int]:
+    """``ddr.options[0].note`` -> ['options', 0, 'note'] (a :func:`brain.schema.field_path`)."""
+    return [int(i) if i else k for k, i in re.findall(r"\.([^.\[]+)|\[(\d+)\]", path[len(kind):])]
+
+
+def keep_unknown(kind: str, old: dict, rec: dict) -> tuple[dict, frozenset[str]]:
+    """(``rec`` with the fields of ``old`` this engine does not know put back where ``rec`` lacks them, their paths):
+    a rewrite built afresh (an SR from its transcript, a DDR from a file) keeps a newer brain's fields."""
+    carried = set()
+    for path in schema.unknown_fields(kind, old):
+        steps = _steps(kind, path)
+        src, dst = old, rec
+        for step in steps[:-1]:
+            src = src[step] if isinstance(src, (dict, list)) else None
+            ok = isinstance(dst, dict) and step in dst or isinstance(dst, list) and isinstance(step, int) \
+                and step < len(dst)
+            dst = dst[step] if ok else None
+            if not isinstance(dst, (dict, list)):
+                break
+        last = steps[-1] if steps else None
+        if isinstance(dst, dict) and isinstance(src, dict) and isinstance(last, str) and last in src:
+            dst.setdefault(last, src[last])
+            carried.add(path)
+    return rec, frozenset(carried)
+
+
 def ar_ids(root: Path) -> set[str]:
     """The ids of every AR line, a newer brain's included (so none is appended twice); a bad line is passed over."""
     ids = set()
     for f in (root / RECORDS_DIR / "ar").glob("*.jsonl"):
-        for line in f.read_text(encoding="utf-8").splitlines():
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
             try:
                 rec = json.loads(line) if line.strip() else None
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if isinstance(rec, dict) and isinstance(rec.get("id"), str):
                 ids.add(rec["id"])
@@ -88,15 +115,16 @@ def parse_ar(line: str) -> tuple[dict | None, str, bool]:
     """(the AR, why it is left out, whether a newer brain wrote it) for one line; never an exception."""
     try:
         rec = json.loads(line)
-    except ValueError as exc:
-        return None, f"not a JSON line ({exc})", False
+    except (ValueError, RecursionError) as exc:
+        return None, f"not a JSON line ({type(exc).__name__}: {str(exc)[:80]})", False
     if not isinstance(rec, dict):
         return None, f"ar: a record is a mapping, got {type(rec).__name__}", False
     refused = schema.newer("ar", rec.get("v"), schema.known_v("ar"))
     if refused:
         return None, f"{refused} (line skipped)", True
-    if rec.get("kind") not in AR_KINDS:
-        return None, f"ar.kind: {rec.get('kind')!r} is a newer brain's kind (line skipped): brain update", True
+    kind = rec.get("kind")
+    if isinstance(kind, str) and kind and kind not in AR_KINDS:
+        return None, f"ar.kind: {kind!r} is a newer brain's kind (line skipped): brain update", True
     errors, _ = schema.validate("ar", rec, schema.READ)
     if errors:
         return None, "; ".join(errors), False
@@ -139,7 +167,7 @@ def write(root: Path, kind: str, rec: dict, replace: bool = False) -> Path | Non
                 refused = schema.newer(kind, old.get("v"), schema.known_v(kind))
                 if refused:
                     raise SystemExit(f"brain: {old_path.relative_to(root).as_posix()}: {refused}")
-                carry = frozenset(schema.unknown_fields(kind, old))
+                rec, carry = keep_unknown(kind, old, rec)
     rec = validate(kind, rec, carry)
     path = record_path(root, kind, rec)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -178,7 +206,7 @@ def load(root: Path, bad: list[Bad] | None = None) -> dict[str, list[tuple[Path,
                 continue
             out[kind].append((f, rec))
     for f in sorted((base / "ar").glob("*.jsonl")):
-        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+        for i, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
             if line.strip():
                 rec, why, newer = parse_ar(line)
                 if rec is None:
@@ -217,7 +245,7 @@ def check(root: Path, mode: str | None = None) -> tuple[list[str], list[str]]:
                 errors.append(f"{rel}: file name must be {rid}.yaml")
     for f in sorted((root / RECORDS_DIR).rglob("*")):
         if f.is_file() and f.suffix in (".yaml", ".jsonl", ".json", ".md"):
-            for line, name in secretscan.scan_lines(f.read_text(encoding="utf-8")):
+            for line, name in secretscan.scan_lines(f.read_text(encoding="utf-8", errors="replace")):
                 errors.append(f"{f.relative_to(root).as_posix()}:{line}: matches secret pattern {name}")
     return errors, warnings
 

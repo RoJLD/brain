@@ -24,6 +24,8 @@ def brain_home(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_NOTIFY", "off")  # no test sends a real notification (test_notify fakes the transports)
     # the checks read strictly, as in CI, whether or not the suite runs there; the tolerant tests set BRAIN_STRICT=0
     monkeypatch.setenv("BRAIN_STRICT", "1")
+    from brain import schema
+    schema._NOTED.clear()   # each test sees its own read-mode notes
     # no test reads the owner's permissions.yaml unless it says so: the never-grantable categories are the engine's
     monkeypatch.setenv("BRAIN_PERMISSIONS", str(tmp_path / "no-permissions.yaml"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))  # no test reads the owner's transcripts

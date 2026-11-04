@@ -36,6 +36,7 @@ KEYWORDS = frozenset({"type", "const", "enum", "required", "properties", "additi
 ANNOTATIONS = frozenset({"$schema", "$id", "$defs", "$comment", "title", "description", "default", "examples"})
 _SUBSCHEMA_MAPS = ("properties", "$defs")      # {name: schema}: the names are not keywords
 _SUBSCHEMAS = ("additionalProperties", "items", "if", "then")
+_NOTED: set[str] = set()                        # the notes printed by this process (brain check may read a file twice)
 
 _TYPES = {
     "object": dict,
@@ -64,9 +65,32 @@ def keywords(schema, out: set[str] | None = None) -> set[str]:
     return out
 
 
+def _misplaced(schema, inside_allof: bool = False, out: list[str] | None = None) -> list[str]:
+    """The shapes the validator would half enforce: if/then outside an allOf entry or beside other keywords there (only
+    the pair is read), ``items`` as a list (only a schema is read)."""
+    out = [] if out is None else out
+    if not isinstance(schema, dict):
+        return out
+    if ("if" in schema or "then" in schema) and (not inside_allof or set(schema) - {"if", "then", "$comment"}):
+        out.append("if/then outside an allOf entry of their own")
+    if isinstance(schema.get("items"), list):
+        out.append("items as a list")
+    for key, sub in schema.items():
+        if key in _SUBSCHEMA_MAPS and isinstance(sub, dict):
+            for s in sub.values():
+                _misplaced(s, False, out)
+        elif key in _SUBSCHEMAS:
+            _misplaced(sub, False, out)
+        elif key == "allOf" and isinstance(sub, list):
+            for s in sub:
+                _misplaced(s, True, out)
+    return out
+
+
 def unsupported(schema: dict) -> list[str]:
-    """The keywords of ``schema`` the validator neither enforces nor reads as an annotation."""
-    return sorted(keywords(schema) - KEYWORDS - ANNOTATIONS)
+    """The keywords of ``schema`` the validator neither enforces nor reads as an annotation, and the shapes it would
+    enforce only in part (:func:`_misplaced`)."""
+    return sorted(keywords(schema) - KEYWORDS - ANNOTATIONS) + sorted(set(_misplaced(schema)))
 
 
 @lru_cache(maxsize=None)
@@ -86,8 +110,11 @@ def mode() -> str:
     newer one's data: a rollback)."""
     forced = os.environ.get("BRAIN_STRICT", "").strip().lower()
     if forced:
-        return READ if forced in ("0", "false", "no") else STRICT
-    return STRICT if os.environ.get("CI", "").strip().lower() not in ("", "0", "false") else READ
+        return READ if forced in _OFF else STRICT
+    return STRICT if os.environ.get("CI", "").strip().lower() not in ("", *_OFF) else READ
+
+
+_OFF = ("0", "false", "no", "off", "n", "f")
 
 
 def known_v(kind: str) -> int:
@@ -113,7 +140,8 @@ def tolerate(message: str, strict: bool | None = None, notes: list[str] | None =
     note = f"{message} (kept: a newer brain's key? strict in CI)"
     if notes is not None:
         notes.append(note)
-    else:
+    elif note not in _NOTED:
+        _NOTED.add(note)
         print(f"brain: note: {note}", file=sys.stderr)
     return []
 
@@ -211,8 +239,8 @@ def _validate(value, schema: dict, root: dict, path: str, errors: list[str],
 
 
 def field_path(path: str, key: str) -> str:
-    """The dotted path of a field with list positions dropped (``ddr.options[].note``): what a rewrite carries."""
-    return re.sub(r"\[\d+\]", "[]", f"{path}.{key}")
+    """The dotted path of a field, list positions kept (``ddr.options[0].note``): what a rewrite carries."""
+    return f"{path}.{key}"
 
 
 def unknown_fields(kind: str, record) -> set[str]:

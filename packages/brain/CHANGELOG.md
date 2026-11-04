@@ -11,13 +11,15 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   the five schemas (DDR, SR, AR, event, config.json), `permissions.yaml` (an allow rule with an unknown key is left
   out in read mode, since the key may narrow it), `packs.yaml`, the template manifest (its `engine:` range is checked
   before its keys, so a newer template says « it needs brain >=X ») and `projects.yaml` (`KEYS`, `REPO_KEYS`). A DDR
-  or SR rewrite keeps the unknown fields of the file it replaces and never replaces one a newer brain wrote. AR lines
+  or SR rewrite, even one rebuilt afresh (`--replace`, `brain record backfill --update`), puts back the unknown fields
+  of the file it replaces and never replaces one a newer brain wrote (backfill counts it `sr-refused`). AR lines
   are parsed one by one: a broken line is an error of `brain record check`, a newer brain's line (a higher `v`, an
   unknown kind) is skipped and counted, and neither stops `brain sync`. Fixtures under `tests/fixtures/formats/`: an
   older and a newer file per format, round-tripped without loss.
 - **The validator enforces `maximum`** (wi-brain-schema-keywords). `config.json` `usage.guard` `critical: 950` no
   longer passes and silently turns the governor's refusal off. `brain.schema` refuses a schema that uses a keyword it
-  does not implement, and a test fails on one.
+  does not implement (or `if`/`then` outside an `allOf` entry of their own, `items` as a list), and a test fails on
+  one.
 
 ### Upgrade
 

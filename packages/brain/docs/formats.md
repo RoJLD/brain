@@ -10,8 +10,13 @@ does not know, and what it does with a version above its own.
 - **A version per format.** `v` is an integer, one per format. An additive change (a new optional field or key)
   keeps `v`; a rename, a removal or a change of meaning bumps it and ships a migration.
 - **Read mode, tolerant.** A field or a key the engine does not know is a newer brain's additive one: it is reported
-  (a warning, or a `brain: note:` line on stderr) and **kept**, never dropped. A rewrite keeps it too, so a round trip
-  through an older engine loses nothing.
+  (a warning, or a `brain: note:` line on stderr) and **kept**, never dropped. A rewrite keeps it too, even one built
+  afresh (an SR from its transcript, `brain record ... --replace`, `brain record backfill --update`): the fields of the
+  file it replaces are put back at their exact place (`brain.records.keep_unknown`), so a round trip through an older
+  engine loses nothing.
+- **A new value of an enum is not additive.** A DDR `status` or an SR `role` this engine does not know fails the
+  record's check in both modes: such a change bumps `v`. The one exception is an AR line's `kind`, whose line is
+  skipped and counted.
 - **Strict mode.** What the engine writes is valid under its schema, an unknown field included as an error; the
   checks in CI are strict too, since the engine there is the pin.
 - **A higher `v` is refused, in both modes**, with the same message:
@@ -25,9 +30,9 @@ does not know, and what it does with a version above its own.
 
 | Environment | Mode |
 |---|---|
-| `BRAIN_STRICT=1` | strict |
-| `BRAIN_STRICT=0` | read (an older engine reading a newer one's data, in CI too: the rollback job) |
-| `CI` set (GitHub Actions sets `CI=true`) | strict |
+| `BRAIN_STRICT=0`, `false`, `no`, `off`, `n` or `f` | read (an older engine reading a newer one's data, in CI too: the rollback job) |
+| `BRAIN_STRICT` set to anything else (`1`, `on`...) | strict |
+| `CI` set to anything but `0`, `false`, `no`, `off` (GitHub Actions sets `CI=true`) | strict |
 | otherwise (a machine) | read |
 
 Writing is always strict. The engine's test suite runs strict (`tests/conftest.py` sets `BRAIN_STRICT=1`); the
@@ -38,7 +43,7 @@ tolerant tests set `BRAIN_STRICT=0`.
 | Format | Where | Version | Unknown field or key (read mode) | Higher `v` |
 |---|---|---|---|---|
 | DDR | `records/ddr/<id>.yaml` | `v` (`ddr.schema.json`) | a warning; `brain` rewrites keep it | refused; never overwritten |
-| SR | `records/sr/<yyyy-mm>/<id>.yaml` | `v` (`sr.schema.json`) | a warning; rewrites keep it | refused; never overwritten |
+| SR | `records/sr/<yyyy-mm>/<id>.yaml` | `v` (`sr.schema.json`) | a warning; rewrites keep it | refused; never overwritten (`brain record backfill` counts it `sr-refused`) |
 | AR | `records/ar/<yyyy-mm>.jsonl`, one line each | `v` per line (`ar.schema.json`) | a warning; the line is never rewritten | the line is skipped and counted (a warning; an error in strict mode) |
 | event | the ledger's `events` and ops error lines | `v` per line (`event.schema.json`) | reported by `brain.schema.validate` | refused |
 | config.json | the brain's root | `v` (`config.schema.json`) | a note on stderr; the file is kept as written | refused |
@@ -48,17 +53,17 @@ tolerant tests set `BRAIN_STRICT=0`.
 | projects.yaml | the brain's root | none yet | a project key (`KEYS`) or a `repos:` key (`REPO_KEYS`): a note, kept | - |
 
 AR lines are parsed one by one (`brain.records.parse_ar`): a line that is not a JSON object (a conflict marker, a
-truncated write) or that its schema refuses is an error of `brain record check`; a line a newer brain wrote (a higher
+truncated write, a byte that is not UTF-8) or that its schema refuses is an error of `brain record check`; a line a newer brain wrote (a higher
 `v`, a kind this engine does not know) is skipped and counted. Neither stops `brain sync`: the graph is built from the
-other lines, and a note says how many were left out.
+other lines, and a note says how many were left out. Their ids still count as recorded, so no AR is appended twice.
 
 ## The validator's keywords
 
 `brain.schema` validates with the standard library only, so the capture hooks can validate what they write. It
 implements the subset of JSON Schema 2020-12 the schemas use: `type`, `const`, `enum`, `required`, `properties`,
 `additionalProperties`, `items`, `minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, `pattern`,
-`format` (date, date-time), `$ref` to `#/$defs`, `allOf`, `if`/`then`. A schema that uses any other keyword is refused
-when it is loaded, and a test fails on it (`tests/test_formats_compat.py`): a validator in another language (ajv,
+`format` (date, date-time), `$ref` to `#/$defs`, `allOf`, `if`/`then` (as an `allOf` entry of their own). A schema
+that uses any other keyword, `if`/`then` elsewhere or `items` as a list is refused when it is loaded, and a test fails on it (`tests/test_formats_compat.py`): a validator in another language (ajv,
 jsonschema) enforces the same contract, never a stricter one.
 
 ## Fixtures

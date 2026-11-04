@@ -267,3 +267,78 @@ def test_the_template_manifest(tmp_path, monkeypatch, read_mode):
     # the engine range first: a template for a newer engine says so, not "unknown key(s)"
     with pytest.raises(init.InitError, match=r"it needs brain >=9\.0, this is .*brain update"):
         init.load_template(_template(tmp_path / "x", "newer", engine=">=9.0"))
+
+
+# --- the review's findings (RETRO-1/2/9) ----------------------------------------------------------------------------
+
+def test_a_rewrite_built_afresh_keeps_the_fields_of_the_file_it_replaces(tmp_path, read_mode):
+    """A rewrite from a record rebuilt from scratch (brain record sr --replace, ddr --file --replace) puts a newer
+    brain's fields back, at their exact place: a list item's field is carried for that item only."""
+    root = tmp_path / "brain"
+    newer = yaml.safe_load(fixture("ddr", "newer").read_text(encoding="utf-8"))
+    older = yaml.safe_load(fixture("ddr", "older").read_text(encoding="utf-8"))
+    path = records.record_path(root, "ddr", newer)
+    path.parent.mkdir(parents=True)
+    shutil.copyfile(fixture("ddr", "newer"), path)
+    records.write(root, "ddr", json.loads(json.dumps(older)), replace=True)
+    assert yaml.safe_load(path.read_text(encoding="utf-8")) == newer
+    other = json.loads(json.dumps(older))
+    other["options"][1]["weight"] = 3          # the old file had weight on options[0] only
+    with pytest.raises(SystemExit, match=r"ddr.options\[1\]: unexpected field 'weight'"):
+        records.write(root, "ddr", other, replace=True)
+
+
+def test_a_newer_ddr_is_named_as_such(tmp_path, read_mode):
+    from brain import decisions
+    root = tmp_path / "brain"
+    older = yaml.safe_load(fixture("ddr", "older").read_text(encoding="utf-8"))
+    path = records.record_path(root, "ddr", older)
+    path.parent.mkdir(parents=True)
+    path.write_text(yaml.safe_dump({**older, "v": 2}), encoding="utf-8")
+    with pytest.raises(decisions.QueueError, match="v2 is written by brain > .*: brain update"):
+        decisions.find(root, older["id"])
+    with pytest.raises(decisions.QueueError, match="v2 is written by brain"):
+        decisions.find(root, "command-shape")
+
+
+def test_an_ar_line_never_crashes_the_reader(tmp_path, read_mode):
+    root = tmp_path / "brain"
+    f = root / "records" / "ar" / "2026-10.jsonl"
+    f.parent.mkdir(parents=True)
+    good = fixture("ar", "older").read_text(encoding="utf-8").strip()
+    f.write_bytes(("[" * 100000 + "\n" + good + "\n").encode() + b'{"v":1,"id":"\xff"}\n'
+                  + b'{"v":1,"kind":["x"]}\n{"v":true}\n{"id":"x"}\n')
+    bad: list[records.Bad] = []
+    assert len(records.load(root, bad)["ar"]) == 1
+    assert len(bad) == 5 and not any(b.newer for b in bad)      # corrupt, not a newer brain's: errors in read mode
+    assert len(records.check(root)[0]) == 5
+    assert records.ar_ids(root) == {json.loads(good)["id"], "�", "x"}
+
+
+def test_the_keyword_guard_refuses_what_the_validator_half_enforces():
+    assert schema.unsupported({"properties": {"a": {"if": {"const": 1}, "then": {"const": 2}}}}) == [
+        "if/then outside an allOf entry of their own"]
+    assert schema.unsupported({"allOf": [{"if": {}, "then": {}, "required": ["m"]}]}) == [
+        "if/then outside an allOf entry of their own"]
+    assert schema.unsupported({"items": [{"type": "string"}]}) == ["items as a list"]
+    assert schema.unsupported({"allOf": [{"if": {}, "then": {}}, {"required": ["m"]}]}) == []
+
+
+@pytest.mark.parametrize("value, want", [("off", schema.READ), ("n", schema.READ), ("FALSE", schema.READ),
+                                         ("on", schema.STRICT), ("yes", schema.STRICT), ("1", schema.STRICT)])
+def test_brain_strict_values(value, want, monkeypatch):
+    monkeypatch.setenv("BRAIN_STRICT", value)
+    assert schema.mode() == want
+
+
+@pytest.mark.parametrize("value, want", [("true", schema.STRICT), ("1", schema.STRICT), ("no", schema.READ),
+                                         ("off", schema.READ), ("", schema.READ)])
+def test_ci_values(value, want, monkeypatch):
+    monkeypatch.delenv("BRAIN_STRICT")
+    monkeypatch.setenv("CI", value)
+    assert schema.mode() == want
+
+
+def test_a_note_is_printed_once(read_mode, capsys):
+    assert schema.tolerate("packs.yaml: unknown key 'x'") == schema.tolerate("packs.yaml: unknown key 'x'") == []
+    assert capsys.readouterr().err.count("unknown key 'x'") == 1
