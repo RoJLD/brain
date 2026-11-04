@@ -259,9 +259,10 @@ def _entry(ddr: dict, today: date) -> dict:
 
 def pending(project, kinds: tuple[str, ...] = KINDS, with_graph: bool = True, today: date | None = None) -> dict:
     """What waits on the owner (and on the model) in one project: its queue's DDRs, then each store's research_graph
-    pending lists."""
+    pending lists. A project that shares its root has no DDR of its own: the root's records are its owner's."""
     today = today or date.today()
-    ddrs = [d for _, d in load(project.root) if kind_of(d) in kinds] if (project.root / "records").is_dir() else []
+    own = (project.root / "records").is_dir() and not getattr(project, "shares_root_with", "")
+    ddrs = [d for _, d in load(project.root) if kind_of(d) in kinds] if own else []
     out = {"project": project.name, "root": str(project.root), "owner": config.owner_of(),
            "pending": [_entry(d, today) for d in ddrs if d.get("status") == "pending"],
            "answered": [_entry(d, today) for d in ddrs if d.get("status") == "answered"],

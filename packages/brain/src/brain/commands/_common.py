@@ -69,12 +69,17 @@ def _store_label(root: Path, store: Path) -> str:
 
 
 def _queue_changed(root: Path, args) -> None:
-    out = decisions.write_view(root, _project(args, root).name)
+    """The decision queue of the root's records written again: it is the root's owner's, whichever of the projects
+    that share the root acted."""
+    p = _project(args, root)
+    out = decisions.write_view(root, p.shares_root_with or p.name)
     print(f"view: {out.relative_to(root).as_posix()}")
 
 
-def _scope(args, root: Path) -> list[projects.Project]:
-    """--all: every registered project; else the one --project names or the one at ``root``."""
+def _scope(args, root: Path, *, root_shared: bool = False) -> list[projects.Project]:
+    """--all: every registered project; else the one --project names or the one at ``root``. ``root_shared`` (sync,
+    check, refresh): every project registered at ``root`` when several share it and neither --project nor --store
+    names one, so the views of the next ones are kept as current as the owner's."""
     if getattr(args, "all", False):
         if getattr(args, "project", None):
             raise SystemExit("brain: --project or --all, not both")
@@ -83,6 +88,10 @@ def _scope(args, root: Path) -> list[projects.Project]:
             raise SystemExit(f"brain: --all needs the project registry ({projects.REGISTRY}; $BRAIN_PROJECTS or "
                              "$CLAUDE_BRAIN_DIR)")
         return list(reg.values())
+    if root_shared and not getattr(args, "project_obj", None) and not getattr(args, "store", None):
+        here = projects.at_root(root)
+        if len(here) > 1:
+            return here
     return [_project(args, root)]
 
 

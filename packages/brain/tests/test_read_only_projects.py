@@ -98,7 +98,7 @@ def test_brain_projects_and_its_json_say_each_access(tmp_path, monkeypatch, stor
     assert "mirror (read only: the brain reads it and never writes it)\n" in out
     assert cli.main(["projects", "--json"]) == 0
     data = {d["name"]: d for d in json.loads(capsys.readouterr().out)["projects"]}
-    assert data["demo"]["access"] == "write"
+    assert data["demo"]["access"] == "write" and data["demo"]["shares_root_with"] == ""
     assert data["upstream"] == {"name": "upstream", "title": "a project the brain follows", "access": "read"}
     assert cli.main(["projects", "--keys"]) == 0
     assert "  access " in capsys.readouterr().out

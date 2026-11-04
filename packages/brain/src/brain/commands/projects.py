@@ -11,8 +11,8 @@ ORDER = 190   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 220   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain projects [--keys] [--json]   the registry resolved: each project's stores, journals, decision logs, ledgers,
-                 repos, stacks, code index and plugin, then the projects the brain reads and never writes
-                 (access: read); --keys: every key an entry may hold
+                 repos, stacks, code index and plugin, the project whose root it shares, then the projects the brain
+                 reads and never writes (access: read); --keys: every key an entry may hold
 """
 
 
@@ -38,10 +38,11 @@ def cmd_projects(args, root: Path) -> int:
             continue
         print(f"{d['name']} ({d['root']}" + ("" if d["found"] else ", not found on this machine") + ")"
               + (f": {d['title']}" if d["title"] else ""))
-        for key, label in (("stores", "stores"), ("journals", "journals"), ("decisions", "decisions"),
-                           ("ledgers", "ledgers"), ("repos", "repos"), ("production", "production"),
-                           ("code_index", "code index"), ("stacks", "stacks"), ("shared_ids", "shared ids"),
-                           ("plugin", "plugin")):
+        rows = [("shares_root_with", "shares root")] if d["shares_root_with"] else []
+        for key, label in rows + [("stores", "stores"), ("journals", "journals"), ("decisions", "decisions"),
+                                  ("ledgers", "ledgers"), ("repos", "repos"), ("production", "production"),
+                                  ("code_index", "code index"), ("stacks", "stacks"), ("shared_ids", "shared ids"),
+                                  ("plugin", "plugin")]:
             value = d[key]
             text = (", ".join(f"{k}: {v}" for k, v in value.items()) if isinstance(value, dict)
                     else ", ".join(map(str, value)) if isinstance(value, list) else str(value or ""))

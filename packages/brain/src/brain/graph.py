@@ -431,6 +431,8 @@ def research_graph_json(root: Path, store: Path, *args: str):
 
 
 def research_graph(root: Path, store: Path, *args: str) -> int:
+    """research_graph's exit code for ``args`` on ``store``, run from ``root``. ``args`` may start with the store's
+    layout options, before the subcommand (brain.projects.layout: ``--views``, ``--decisions``, ``--no-decisions``)."""
     argv = ["--store", str(store), "--repo-root", str(root), *args]
     print("$ research_graph " + " ".join(args), flush=True)
     cli = engine()

@@ -54,7 +54,8 @@ research_graph --store ops/graph --repo-root . --no-decisions --views ops check
 any other ADRs; default `notes/scientific_decisions.md` and `notes/decisions.md`), `--no-decisions` none, `--views
 DIR` the folder of the board and the roadmap (default `notes`).
 
-`examples/projects.yaml` is a registry for the `brain` command: one entry per project, each with its own store.
+`examples/projects.yaml` is a registry for the `brain` command: one entry per project, each with its own store; it
+shows a project with two stores, two projects at one root and a project the brain reads and never writes.
 
 ## A store
 

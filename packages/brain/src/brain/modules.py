@@ -1,6 +1,7 @@
 """The module map (wi-brain-module-map): each open item's module, ``props.module`` (its primary, one) and
 ``props.modules_secondary`` (a list), against the registry of modules the store keeps, ``<store>/modules.yaml``;
-the generated view ``notes/modules_graph.md`` (brain sync) and brain check's warnings. Zero token. A store without
+the generated view ``notes/modules_graph.md`` (brain sync; ``modules_graph.md`` beside the store's other views when
+they are not in notes/, brain.projects.views_dir) and brain check's warnings. Zero token. A store without
 a registry is not concerned.
 
 The registry is a YAML list, one entry per module:
@@ -25,7 +26,8 @@ from pathlib import Path
 from . import graph
 
 REGISTRY = "modules.yaml"
-VIEW = "notes/modules_graph.md"
+FILE = "modules_graph.md"
+VIEW = f"notes/{FILE}"   # the view of a project's first store at a root it owns
 NONE = "none"
 DORMANT_DAYS = 90
 OPEN = ("todo", "doing", "blocked")
@@ -208,9 +210,9 @@ def render(store: Path, store_label: str = "notes/graph") -> str:
     return "\n".join(out) + "\n"
 
 
-def write(root: Path, store: Path, store_label: str = "notes/graph") -> bool:
-    """Write the view; True when it changed."""
-    f = root / VIEW
+def write(root: Path, store: Path, store_label: str = "notes/graph", view: str = VIEW) -> bool:
+    """Write the view (``view``, relative to ``root``); True when it changed."""
+    f = root / view
     text = render(store, store_label)
     if f.is_file() and f.read_text(encoding="utf-8").replace("\r\n", "\n") == text:
         return False
@@ -219,6 +221,6 @@ def write(root: Path, store: Path, store_label: str = "notes/graph") -> bool:
     return True
 
 
-def stale(root: Path, store: Path, store_label: str = "notes/graph") -> bool:
-    f = root / VIEW
+def stale(root: Path, store: Path, store_label: str = "notes/graph", view: str = VIEW) -> bool:
+    f = root / view
     return not f.is_file() or f.read_text(encoding="utf-8").replace("\r\n", "\n") != render(store, store_label)

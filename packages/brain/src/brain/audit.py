@@ -1092,6 +1092,10 @@ def run(args, root: Path | None, today: date | None = None) -> dict:
         raise SystemExit("brain: --write and --items take one project (not --all)")
     if args.write and args.repo:
         raise SystemExit("brain: --write writes the whole project's view (not --repo)")
+    if args.write and projs and projs[0].shares_root_with:
+        owner = projs[0].shares_root_with
+        raise SystemExit(f"brain: {projs[0].name} shares its root with {owner}: {VIEW} is {owner}'s (brain --project "
+                         f"{owner} audit --write)")
     data = {"audit": 1, "ruleset": RULESET, "projects": []}
     trends = {}
     n = args.trend if args.trend else (5 if args.write else 0)

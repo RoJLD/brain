@@ -213,7 +213,7 @@ def records_of(p: projects.Project) -> dict:
     out = {"journals": journals,
            "records": {"ddr": len(list((base / "ddr").glob("*.yaml"))), "sr": len(list((base / "sr").rglob("*.yaml"))),
                        "ar": sum(f.read_bytes().count(b"\n") for f in (base / "ar").glob("*.jsonl"))}
-           if base.is_dir() else None,
+           if base.is_dir() and not p.shares_root_with else None,   # the root's records: its owner's
            "ledgers": [{"name": k, "path": _rel(v, p.root), **_ledger(v)} for k, v in p.ledgers.items()]}
     d = _optional("digest")
     if d is not None and hasattr(d, "latest"):
