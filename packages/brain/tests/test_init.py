@@ -385,6 +385,9 @@ def test_a_template_starts_each_graph_it_declares(fresh, tmp_path, capsys):
     assert "create   research/graph (research_graph init --owner Ada, layers work, decisions, records, lessons)" in out
     for store in ("notes/graph", "research/graph"):
         assert 'owner: "Ada"' in (fresh / store / "schema.yaml").read_text(encoding="utf-8"), store
+    # the later graph keeps its views beside it and covers no decision log, as brain sync then runs it
+    assert (fresh / "research" / "kanban_graph.md").is_file() and (fresh / "research" / "roadmap_graph.md").is_file()
+    assert not any("adr-" in f.read_text(encoding="utf-8") for f in (fresh / "research" / "graph" / "nodes").glob("*"))
 
 
 @pytest.mark.parametrize("graphs, why", [

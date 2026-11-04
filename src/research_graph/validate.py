@@ -21,6 +21,12 @@ def _posix(path: str | Path) -> str:
     return posixpath.normpath(str(path).replace("\\", "/"))
 
 
+def _key(path: str | Path) -> str:
+    """A log's path as coverage compares it: posix, normalised, case folded (a case-insensitive file system resolves
+    ``Notes/decisions.md`` to the log, so it counts for it)."""
+    return _posix(path).casefold()
+
+
 def decision_logs(logs: Iterable[str | Path] | None = None) -> list[tuple[str, str]]:
     """(path relative to the repo root, node type) of each decision log a store covers: ``logs`` as given, else
     :data:`DEFAULT_DECISIONS` (``[]``: none). A file named scientific_decisions.md holds SDRs, any other ADRs."""
@@ -50,7 +56,7 @@ def _node_decision_date_counts(graph: nx.DiGraph) -> dict[tuple[str, str], int]:
         path, frag = anchor.split("#", 1)
         m = _DATE_RE.match(frag)
         if m:
-            key = (_posix(path), m.group(1))
+            key = (_key(path), m.group(1))
             counts[key] = counts.get(key, 0) + 1
     return counts
 
@@ -78,7 +84,7 @@ def missing_decision_nodes(
         for date in _heading_dates(f):
             head_counts[date] = head_counts.get(date, 0) + 1
         for date, hc in sorted(head_counts.items()):
-            nc = node_counts.get((rel, date), 0)
+            nc = node_counts.get((_key(rel), date), 0)
             if nc < hc:
                 problems.append(f"{rel}: {date} has {hc} heading(s) but {nc} SDR/ADR node(s)")
     return problems

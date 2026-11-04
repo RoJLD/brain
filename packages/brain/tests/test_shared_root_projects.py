@@ -202,3 +202,27 @@ def test_the_roots_records_queue_and_audit_view_stay_the_owners(tmp_path, monkey
     assert capsys.readouterr().out.count("# Decision queue — ") == 1
     with pytest.raises(SystemExit, match="prog shares its root with lab: notes/audit.md is lab's"):
         cli.main(["--project", "prog", "audit", "--write"])
+
+
+def test_a_project_not_loaded_keeps_its_guards_and_claims_any_kind_of_file(tmp_path, monkeypatch):
+    from brain import guards
+    root = _root(tmp_path)
+    (tmp_path / "lab-prod").mkdir()
+    _registry(tmp_path, monkeypatch, root, prog="  stores: [prog/graph]\n  production: [../lab-prod]\n")
+    assert "prog" not in projects.load()  # it declares no journal nor decision log of its own
+    prod = {os.path.normcase(os.path.abspath(p)) for p in guards.production_roots()}
+    assert os.path.normcase(str(tmp_path / "lab-prod")) in prod  # a refusal to load never lifts a guard
+    _registry(tmp_path, monkeypatch, root, prog=PROG.replace("prog/journal.md", "notes/decisions.md"))
+    assert projects.check() == ["project prog: shares its root with lab: its journal notes/decisions.md is lab's "
+                                "decision log (give it its own: journal:)"]
+
+
+def test_a_store_the_project_does_not_list_keeps_the_defaults(tmp_path, monkeypatch):
+    root = _root(tmp_path)
+    _registry(tmp_path, monkeypatch, root)
+    lab, prog = projects.load()["lab"], projects.load()["prog"]
+    assert projects.layout(lab, root / "graph") == [] and projects.views_dir(lab, root / "graph") == root / "notes"
+    assert projects.layout(lab, root / "notes" / "graph") == []
+    assert projects.layout(prog, root / "prog" / "graph") == ["--views", "prog", "--decisions", "prog/decisions.md"]
+    team = projects.Project("team", root, [root / "notes" / "graph", root / "ops" / "graph"])
+    assert projects.layout(team, root / "ops" / "graph") == ["--views", "ops", "--no-decisions"]

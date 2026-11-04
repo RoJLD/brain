@@ -206,10 +206,11 @@ def main(argv: list[str] | None = None) -> int:
                     + "\n",
                     encoding="utf-8",
                 )
-            if dec_txt:
-                (nodes_dir / "_generated_decisions.yaml").write_text(
+            decisions_file = nodes_dir / "_generated_decisions.yaml"
+            if dec_txt or decisions_file.exists():  # derived from the logs (in git): none left is authoritative
+                decisions_file.write_text(
                     "# Auto-generated SDR/ADR coverage stubs (research_graph sync). Curate freely.\n"
-                    + dec_txt
+                    + (dec_txt or "[]")
                     + "\n",
                     encoding="utf-8",
                 )

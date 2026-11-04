@@ -545,3 +545,12 @@ def test_a_node_covers_the_log_its_anchor_names_not_another_of_the_same_name(tmp
     assert [s["anchor"] for s in decision_stubs(graph, repo, logs=["lab/decisions.md"])] == [
         "lab/decisions.md#2026-06-10-b"]  # the node of notes/decisions.md does not cover it
     assert [s["id"] for s in derive(store, repo, decisions=["lab/decisions.md"])["decisions"]] == ["adr-2026-06-10-b"]
+
+
+def test_an_anchor_counts_for_its_log_whatever_its_case(tmp_path):
+    store = _store(tmp_path, nodes_yaml=(
+        '- {id: adr-2026-06-10-a, type: ADR, status: active, anchor: "Notes/Decisions.md#2026-06-10-a"}\n'))
+    repo = tmp_path / "repo"
+    (repo / "notes").mkdir(parents=True)
+    (repo / "notes" / "decisions.md").write_text("## 2026-06-10 — a\n\nbody\n", encoding="utf-8")
+    assert decision_stubs(load_store(str(store)), repo) == []  # a case-insensitive file system resolves it

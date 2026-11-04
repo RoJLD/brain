@@ -176,3 +176,13 @@ def test_cli_no_decisions_covers_no_log_and_refuses_decisions_too(tmp_path, caps
     assert main(args + ["--decisions", str(repo / "lab" / "decisions.md"), "sync", "--write"]) == 0
     gen = (repo / "lab" / "graph" / "nodes" / "_generated_decisions.yaml").read_text(encoding="utf-8")
     assert 'anchor: "lab/decisions.md#2026-06-11-the-lab-s"' in gen  # a path inside the root is made relative
+
+
+def test_cli_sync_empties_the_generated_decisions_once_no_log_derives_them(tmp_path):
+    repo, args = _two_logs(tmp_path)
+    assert main(args + ["sync", "--write"]) == 0  # the defaults: notes/decisions.md, not this store's
+    gen = repo / "lab" / "graph" / "nodes" / "_generated_decisions.yaml"
+    assert "not-this-store" in gen.read_text(encoding="utf-8")
+    assert main(args + ["--no-decisions", "sync", "--write"]) == 0
+    assert "adr-" not in gen.read_text(encoding="utf-8")  # derived from the logs, in git: none left is authoritative
+    assert main(args + ["--no-decisions", "check"]) == 0

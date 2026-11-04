@@ -21,7 +21,7 @@ import networkx as nx
 import yaml
 
 from . import yamlio
-from .validate import _node_decision_date_counts, decision_logs
+from .validate import _key, _node_decision_date_counts, decision_logs
 
 _HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\s*[—:\-]*\s*(.*?)\s*$")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -90,7 +90,7 @@ def decision_stubs(
         for date, title in _headings(f):
             by_date.setdefault(date, []).append(title)
         for date, titles in sorted(by_date.items()):
-            deficit = len(titles) - existing.get((rel, date), 0)
+            deficit = len(titles) - existing.get((_key(rel), date), 0)
             # cover the deficit with the LAST `deficit` headings of that date (the new ones)
             for title in titles[len(titles) - deficit :] if deficit > 0 else []:
                 slug = _slug(title) if title else "entry"

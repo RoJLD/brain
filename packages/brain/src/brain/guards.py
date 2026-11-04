@@ -480,7 +480,7 @@ def _option_values(args: list[str], names: tuple[str, ...]) -> list[str]:
 
 def production_roots() -> list[str]:
     """Every project's production checkouts in the registry, as absolute paths."""
-    return [os.path.abspath(str(p)) for proj in projects.load().values() for p in proj.production]
+    return [os.path.abspath(str(p)) for proj in projects.guarded() for p in proj.production]
 
 
 def in_production(path: str, roots: list[str]) -> str | None:
@@ -3023,9 +3023,9 @@ def registered_repos() -> tuple[set[str], set[str]]:
     their main checkouts' normalised folders (a registry read from a worktree resolves its root there), and the slugs
     of their origin remotes."""
     folders: set[str] = set()
-    for p in projects.load().values():
+    for p in projects.guarded():   # a project not loaded yet keeps its guards
         try:
-            dirs = [r.path for r in projects.repos_of(p)]
+            dirs = [r.path for r in projects.repos_of(p)] or [p.root]
         except projects.RepoError:
             dirs = [p.root, *p.production]
         folders |= {os.path.normcase(os.path.abspath(str(paths.main_checkout(x) or x))) for x in dirs

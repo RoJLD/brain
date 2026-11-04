@@ -252,13 +252,20 @@ def load(root: Path | None = None) -> dict[str, Project]:
     return _load(root)[0]
 
 
-def _load(root: Path | None = None) -> tuple[dict[str, Project], dict[str, list[str]]]:
-    """(the projects loaded, {a project at a shared root not loaded: why}), in the registry's order."""
+def guarded(root: Path | None = None) -> list[Project]:
+    """Every project a guard protects (brain.guards, brain.governor): the loaded ones and those at a shared root that
+    are not loaded yet. A refusal to load never lifts a guard: their production checkouts stay refused to edits."""
+    loaded, refused = _load(root)
+    return list(loaded.values()) + [p for p, _ in refused.values()]
+
+
+def _load(root: Path | None = None) -> tuple[dict[str, Project], dict[str, tuple[Project, list[str]]]]:
+    """(the projects loaded, {a project at a shared root not loaded: (it, why)}), in the registry's order."""
     f = registry_file(root)
     out: dict[str, Project] = {}
-    refused: dict[str, list[str]] = {}
+    refused: dict[str, tuple[Project, list[str]]] = {}
     owners: dict[str, str] = {}
-    held: dict[str, dict[str, dict[str, str]]] = {}   # root -> kind -> normalised path -> the project that holds it
+    held: dict[str, dict[str, tuple[str, str]]] = {}   # root -> normalised path -> (the project that holds it, kind)
     for name, entry in raw(root).items():
         if is_mount(entry) or is_read_only(entry):
             continue
@@ -266,14 +273,14 @@ def _load(root: Path | None = None) -> tuple[dict[str, Project], dict[str, list[
         p = _project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent))
         owner = owners.setdefault(_norm(p.root), p.name)
         p.shares_root_with = "" if owner == p.name else owner
-        files = held.setdefault(_norm(p.root), {"store": {}, "journal": {}, "decision log": {}})
+        files = held.setdefault(_norm(p.root), {})
         why = _claims(p, entry, files) if p.shares_root_with else []
         if why:
-            refused[p.name] = why
+            refused[p.name] = (p, why)
             continue
         for kind, paths_ in _files(p).items():
             for x in paths_:
-                files[kind].setdefault(_norm(x), p.name)
+                files.setdefault(_norm(x), (p.name, kind))
         out[p.name] = p
     return out, refused
 
@@ -282,15 +289,16 @@ def _files(p: Project) -> dict[str, list[Path]]:
     """The files a project writes at its root, by kind; its decision logs are those research_graph covers for its
     first store (its defaults when it gets no option: brain.projects.layout)."""
     logs = list(p.decision_logs)
-    if p.stores and not layout(p, p.stores[0]):
+    if p.stores and uses_defaults(p, p.stores[0]):
         logs += [p.root / d for d in GRAPH_DECISIONS]
     return {"store": list(p.stores), "journal": list(p.journals), "decision log": logs}
 
 
-def _claims(p: Project, entry: dict, held: dict[str, dict[str, str]]) -> list[str]:
+def _claims(p: Project, entry: dict, held: dict[str, tuple[str, str]]) -> list[str]:
     """Why ``p``, at a root a project registered before it owns, cannot be loaded: a store, journal or decision log
-    it does not declare (the defaults are the owner's), or one a project registered there before it holds, or a
-    decision log outside the root (a decision's anchor is a path inside it)."""
+    it does not declare (the defaults are the owner's), or a file a project registered there before it holds, of any
+    kind (a journal that is the owner's decision log), or a decision log outside the root (a decision's anchor is a
+    path inside it)."""
     owner = p.shares_root_with
     errors = []
     for key, kind in (("stores", "store"), ("journal", "journal"), ("decisions", "decision log")):
@@ -301,10 +309,11 @@ def _claims(p: Project, entry: dict, held: dict[str, dict[str, str]]) -> list[st
         return errors
     for key, kind in (("stores", "store"), ("journal", "journal"), ("decisions", "decision log")):
         for x in _files(p)[kind]:
-            holder = held[kind].get(_norm(x))
+            holder, theirs = held.get(_norm(x), ("", ""))
             if holder:
+                what = "too" if theirs == kind else f"{theirs}"
                 errors.append(f"project {p.name}: shares its root with {owner}: its {kind} {_rel(x, p.root)} is "
-                              f"{holder}'s too (give it its own: {key}:)")
+                              f"{holder}'s {what} (give it its own: {key}:)")
     errors += [f"project {p.name}: its decision log {_rel(d, p.root)} is outside its root (a decision's anchor is a "
                "path inside it)" for d in p.decision_logs if not _inside(d, p.root)]
     return errors
@@ -350,9 +359,9 @@ def get(name: str, root: Path | None = None) -> Project:
                              "read into (its state comes from its contract export)")
         if is_read_only(raw(root).get(name)):
             raise SystemExit(f"brain: {name!r} is read only: the brain reads it and never writes it")
-        why = _load(root)[1].get(name)
-        if why:
-            raise SystemExit(f"brain: {name!r} is not loaded: {'; '.join(why)}")
+        refused = _load(root)[1].get(name)
+        if refused:
+            raise SystemExit(f"brain: {name!r} is not loaded: {'; '.join(refused[1])}")
         where = registry_file(root)
         raise SystemExit(f"brain: unknown project {name!r} (registry {where or 'not found'}; known: "
                          f"{', '.join(reg) or 'none'})")
@@ -577,7 +586,7 @@ def check(root: Path | None = None) -> list[str]:
         from .governor import project_limits
         errors += [f"{where}: {e}" for e in project_limits(entry)[1]]
     loaded, refused = _load(root)
-    for why in refused.values():
+    for _, why in refused.values():
         errors += why
     for p in loaded.values():
         try:
@@ -625,26 +634,32 @@ def collisions(projs: list[Project]) -> dict:
 
 # --- where a store's generated views go, and research_graph's options for it ---
 
-def _first(p: Project, store: Path) -> bool:
-    return not p.stores or _norm(store) == _norm(p.stores[0])
+def _later(p: Project, store: Path) -> bool:
+    """A store the project lists after its first (a store it does not list, given by --store, is not one)."""
+    return any(_norm(store) == _norm(s) for s in p.stores[1:])
+
+
+def uses_defaults(p: Project, store: Path) -> bool:
+    """Whether research_graph runs on ``store`` with its defaults (notes/ for the views, notes/decisions.md and
+    notes/scientific_decisions.md for the logs): a store of a project that owns its root, but one it lists after its
+    first."""
+    return not p.shares_root_with and not _later(p, store)
 
 
 def views_dir(p: Project, store: Path) -> Path:
-    """The folder of a store's board and roadmap (and its module map): ``notes/`` for the first store of a project that
-    owns its root, research_graph's default; else the store's parent folder (``ops/graph`` -> ``ops``)."""
-    if _first(p, store) and not p.shares_root_with:
-        return p.root / "notes"
-    return store.parent
+    """The folder of a store's board and roadmap (and its module map): ``notes/`` when research_graph keeps its
+    defaults (:func:`uses_defaults`); else the store's parent folder (``ops/graph`` -> ``ops``)."""
+    return p.root / "notes" if uses_defaults(p, store) else store.parent
 
 
 def layout(p: Project, store: Path) -> list[str]:
-    """research_graph's options for a store of ``p``, given before its subcommand: none for the first store of a
-    project that owns its root (its defaults: nothing changes for it); else ``--views`` (:func:`views_dir`) and the
-    decision logs it covers: the project's own from its first store, none from another store."""
-    if _first(p, store) and not p.shares_root_with:
+    """research_graph's options for a store of ``p``, given before its subcommand: none when it keeps its defaults
+    (nothing changes for it); else ``--views`` (:func:`views_dir`) and the decision logs it covers: the project's own
+    (a project that shares its root), none from a store listed after the first."""
+    if uses_defaults(p, store):
         return []
     out = ["--views", _rel(views_dir(p, store), p.root)]
-    if not _first(p, store):
+    if _later(p, store):
         return out + ["--no-decisions"]
     return out + [a for d in p.decision_logs for a in ("--decisions", _rel(d, p.root))]
 

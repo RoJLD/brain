@@ -38,17 +38,21 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   marketplace and AGENTS.md, the links graph and FEATURES.md, the public gate, the engine's skew, the session ids, the
   hygiene line (the queue keeps the owner's name, whichever project asks). Such a project declares its own stores,
   journal and decision log (the defaults are the owner's), none held by a project registered before it, its decision
-  logs inside the root; until it does it is not loaded, and `brain check --all` and `--project` say why (fail closed: no command writes the owner's
-  files through it). A store whose views folder an earlier store at its root uses is refused by `brain sync`
-  (`projects.view_clashes`) and by the checks. The permissions of a project that spans no repo are its root's
-  settings. `brain audit --write` from it is refused: `notes/audit.md` is the owner's. Without `--all` or
-  `--project`, `brain sync`, `check` and `refresh` at such a root cover every project registered there. Every store
-  but a project's first at a root it owns gets research_graph's new `--views` (its parent folder: `ops/graph` writes
-  `ops/kanban_graph.md`) and its decision logs (`--decisions`, the project's own from its first store, `--no-decisions`
-  from another store): a project's second store no longer writes its board over the first's, nor derives its ADR
-  stubs. The module map's view sits beside its store's board the same way (`notes/modules_graph.md` for the first
-  store, as before), and the resume pack names the project's own views. Nothing changes for a project's first store
-  at a root it owns.
+  logs inside the root; until it does it is not loaded, and `brain check --all` and `--project` say why (fail
+  closed: no command writes the owner's files through it; a file of any kind counts, a journal that is the owner's
+  decision log too), while the guards and the usage governor keep protecting it (`projects.guarded`: its production
+  checkouts stay refused to edits). A store whose views folder an earlier store at its root uses is refused by
+  `brain sync` (`projects.view_clashes`) and by the checks. The permissions of a project that spans no repo are its
+  root's settings, and its features' statuses come from the root's merged PRs. `brain audit --write` from it is
+  refused: `notes/audit.md` is the owner's. Without `--all` or `--project`, `brain sync`, `check` and `refresh` at
+  such a root cover every project registered there. Every store but a project's first at a root it owns gets
+  research_graph's new `--views` (its parent folder: `ops/graph` writes `ops/kanban_graph.md`) and its decision logs
+  (`--decisions`, the project's own from its first store, `--no-decisions` from another store): a project's second
+  store no longer writes its board over the first's, nor derives its ADR stubs. A store the project does not list
+  (`--store`) keeps research_graph's defaults, as before, and `brain init` starts a template's later graphs beside
+  their store. The module map's view sits beside its store's board the same way (`notes/modules_graph.md` for the
+  first store, as before), and the resume pack names the project's own views. Nothing changes for a project's first
+  store at a root it owns.
 - **A scope's rules file may hold its front matter only** (`source/rules/scopes/<id>.md`: scope, title, intro), a
   scope with no rule of its own yet. It renders nothing and locks nothing: `lock:` in it is refused. A file outside
   `rules/scopes/` still needs a rule.

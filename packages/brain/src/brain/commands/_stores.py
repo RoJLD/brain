@@ -43,9 +43,12 @@ def _write_module_view(project: projects.Project, root: Path, store: Path) -> No
         print(f"view: {view} written")
 
 
-def _view_clash(project: projects.Project, root: Path, store: Path) -> str:
-    """What to say when an earlier store at this root writes its views in this store's folder, else ''."""
-    clashes = projects.view_clashes(list(projects.load(root).values()))
+def _view_clash(args, project: projects.Project, root: Path, store: Path) -> str:
+    """What to say when an earlier store at this root writes its views in this store's folder, else '' (computed once
+    per command)."""
+    clashes = getattr(args, "_view_clashes", None)
+    if clashes is None:
+        clashes = args._view_clashes = projects.view_clashes(list(projects.load(root).values()))
     return clashes.get((project.name, _store_label(project.root, store)), "")
 
 
@@ -104,7 +107,7 @@ def _sync_store(args, root: Path, store: Path) -> int:
     project = _project(args, root)
     owner = not project.shares_root_with   # the root's own passes are its owner's
     layout = projects.layout(project, store)   # its views beside its store, its own decision logs
-    clash = _view_clash(project, root, store)
+    clash = _view_clash(args, project, root, store)
     if clash:   # its board would be written over another store's: nothing written
         print(f"error: {clash}: not synced")
         return 1
@@ -112,7 +115,10 @@ def _sync_store(args, root: Path, store: Path) -> int:
         return 1
     featured = features.has_type(graph.load_schema(store))
     if featured and not getattr(args, "offline", False):   # before the graph sync: it reads the statuses
-        features.sync_prs(store, [(c.name, c.path) for c in _repos(args, root) if c.path.is_dir()])
+        repos = [(c.name, c.path) for c in _repos(args, root) if c.path.is_dir()]
+        if not repos and not owner:   # a project that spans no repo: its features are named by the root's PRs
+            repos = [(projects._repo_folder(root).lower(), root)]
+        features.sync_prs(store, repos)
     rc = graph.research_graph(root, store, *layout, "sync", "--write")
     if rc:
         return rc
@@ -163,7 +169,7 @@ def _check_store(args, root: Path, store: Path) -> int:
     if _check_markers(project, root, store):   # every later step would read a half-merged file
         return 1
     layout = projects.layout(project, store)
-    clash = _view_clash(project, root, store)
+    clash = _view_clash(args, project, root, store)
     if clash:
         print(f"error: {clash}")
     if project.shares_root_with:   # its store's checks only: the root's are its owner's
