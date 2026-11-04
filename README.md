@@ -42,6 +42,18 @@ none. With `--examples` they hold a spec, a milestone, three work items and an A
 it the store is empty. It then runs `sync --write` and `kanban --write`, so `check` passes at once. It never
 overwrites a store, an ADR log or a spec.
 
+A second store in the same repo keeps its own decision log and views, given before the subcommand (to `init`, then to
+every `sync`, `check` and `kanban` of that store):
+
+```bash
+research_graph --store prog/graph --repo-root . --decisions prog/decisions.md --views prog init --owner "Your name"
+research_graph --store ops/graph --repo-root . --no-decisions --views ops check
+```
+
+`--decisions PATH` (repeatable) names the logs the store covers (a file named `scientific_decisions.md` holds SDRs,
+any other ADRs; default `notes/scientific_decisions.md` and `notes/decisions.md`), `--no-decisions` none, `--views
+DIR` the folder of the board and the roadmap (default `notes`).
+
 `examples/projects.yaml` is a registry for the `brain` command: one entry per project, each with its own store.
 
 ## A store

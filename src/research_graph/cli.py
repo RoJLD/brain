@@ -10,14 +10,14 @@ from . import history, priorities, query, report
 from .code_layer import FAILING, check_code_refs, orphan_code_refs, repo_heads, structure_errors
 from .export_gitnexus import build_payload, push
 from .init import init_store
-from .kanban import DEFAULT_OUT as KANBAN_OUT
-from .kanban import kanban_stale, render_kanban, write_kanban
+from .kanban import FILE as KANBAN_FILE
+from .kanban import kanban_stale, render_kanban, view_path, write_kanban
 from .loader import ValidationError, apply_overlay, load_store
 from .model import LayeredGraph
-from .roadmap import DEFAULT_OUT as ROADMAP_OUT
+from .roadmap import FILE as ROADMAP_FILE
 from .roadmap import render_roadmap, roadmap_stale, write_roadmap
 from .sync import derive, regenerate_edges_file_text, render_edges, render_stubs
-from .validate import check_consistency, check_coverage, check_wiring, unchecked_anchors
+from .validate import _posix, check_consistency, check_coverage, check_wiring, decision_logs, unchecked_anchors
 
 DEFAULT_STORE = "notes/graph"
 OPEN = ["doing", "todo", "blocked"]
@@ -42,6 +42,37 @@ def _name_path(value: str) -> tuple[str, Path]:
     return name, Path(path)
 
 
+def _inside(value: str, repo_root: str, option: str) -> str:
+    """``value`` relative to the repo root, posix; an absolute path inside the root is made relative. ValueError when
+    it is not inside the root (an anchor names a path relative to it)."""
+    path = Path(value)
+    if path.is_absolute():
+        try:
+            value = path.resolve().relative_to(Path(repo_root).resolve()).as_posix()
+        except ValueError:
+            raise ValueError(f"{option} {value}: not inside --repo-root {repo_root}") from None
+    rel = _posix(value)
+    if rel == ".." or rel.startswith("../"):
+        raise ValueError(f"{option} {value}: not inside --repo-root {repo_root}")
+    return rel
+
+
+def _layout(args) -> list[str]:
+    """The store's layout options, resolved in place (``args.decisions``: None for the defaults, [] with
+    --no-decisions), and as arguments again for the commands init runs after it."""
+    if args.no_decisions:
+        args.decisions = []
+    elif args.decisions is not None:
+        args.decisions = [_inside(d, args.repo_root, "--decisions") for d in args.decisions]
+    if args.views is not None:   # anywhere: no anchor names it
+        try:
+            args.views = _inside(args.views, args.repo_root, "--views")
+        except ValueError:
+            args.views = _posix(args.views)
+    out = ["--no-decisions"] if args.no_decisions else [a for d in args.decisions or [] for a in ("--decisions", d)]
+    return out + (["--views", args.views] if args.views is not None else [])
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows consoles default to cp1252 and choke on β/— in titles; force utf-8 output.
     try:
@@ -53,6 +84,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo-root", default=".")
     p.add_argument("--overlay", action="append", default=[],
                    help="Sibling graph store to add read-only, e.g. ../ops-repo/ops/graph (repeatable).")
+    logs = p.add_mutually_exclusive_group()
+    logs.add_argument("--decisions", action="append", metavar="PATH",
+                      help="A decision log the store covers, relative to --repo-root (repeatable): check wants an "
+                           "SDR/ADR node per dated heading, sync writes the missing ones, anchored at this path; a "
+                           "file named scientific_decisions.md holds SDRs, any other ADRs (default: "
+                           "notes/scientific_decisions.md and notes/decisions.md). init writes its ADR log at the "
+                           "first ADR log given.")
+    logs.add_argument("--no-decisions", action="store_true",
+                      help="The store covers no decision log (another store of the same repo covers them).")
+    p.add_argument("--views", metavar="DIR", help="The folder of the generated board and roadmap, relative to "
+                                                  "--repo-root (default notes): kanban --write and roadmap --write "
+                                                  "write there, check flags them stale there.")
     sub = p.add_subparsers(dest="cmd", required=True)
     ini = sub.add_parser("init", help="Start a store from the templates: schema, empty work layer, ADR log; then "
                                       "sync --write and kanban --write. Never overwrites.")
@@ -86,8 +129,9 @@ def main(argv: list[str] | None = None) -> int:
     cc.add_argument("--platform-root", help="Parent dir of the platform repos (default: parent of --repo-root).")
     cc.add_argument("--json", metavar="PATH", help="Also write the findings (resolved file, kind, line) as JSON.")
     kb = sub.add_parser("kanban", help="Render the work layer as a generated markdown board.")
-    kb.add_argument("--write", action="store_true", help=f"Write it to --out (default <repo-root>/{KANBAN_OUT}), "
-                                                         f"and the roadmap to <repo-root>/{ROADMAP_OUT} unless --out.")
+    kb.add_argument("--write", action="store_true", help=f"Write it to --out (default <repo-root>/<views>/{KANBAN_FILE}"
+                                                         f", views being --views or notes), and the roadmap to "
+                                                         f"<repo-root>/<views>/{ROADMAP_FILE} unless --out.")
     kb.add_argument("--out", help="Output file; a file without the GENERATED marker is never overwritten.")
     # --- read the backlog, the roadmap and the decisions (query.py, history.py)
     it = sub.add_parser("items", help="Work items with filters (default: the open ones).")
@@ -113,7 +157,8 @@ def main(argv: list[str] | None = None) -> int:
     ao.add_argument("--rev", default="HEAD")
     rm = sub.add_parser("roadmap", help="Milestones: status, trigger, reached, the items that move each.")
     rm.add_argument("--write", action="store_true", help=f"Write the markdown view to --out (default "
-                                                         f"<repo-root>/{ROADMAP_OUT}).")
+                                                         f"<repo-root>/<views>/{ROADMAP_FILE}, views being --views "
+                                                         "or notes).")
     rm.add_argument("--out", help="Output file; a file without the GENERATED marker is never overwritten.")
     rm.add_argument("--markdown", action="store_true", help="Print the markdown view instead of the summary.")
     rm.add_argument("--json", action="store_true")
@@ -138,11 +183,16 @@ def main(argv: list[str] | None = None) -> int:
     exp.add_argument("--mode", choices=["single", "typed"], default="single",
                      help="single: one Node table (works with the current sidecar); typed: a table per type.")
     args = p.parse_args(argv)
+    try:
+        args.layout = _layout(args)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
 
     if args.cmd == "init":
         return _init(args)
     if args.cmd == "sync":
-        res = derive(args.store, args.repo_root)
+        res = derive(args.store, args.repo_root, args.decisions)
         exp_txt = render_stubs(res["experiments"])
         dec_txt = render_stubs(res["decisions"])
         hyp_txt = render_stubs(res["hypotheses"])
@@ -280,9 +330,10 @@ def main(argv: list[str] | None = None) -> int:
             print(render_kanban(graph), end="")
             return 0
         try:
-            out = write_kanban(graph, args.out or Path(args.repo_root) / KANBAN_OUT)
+            out = write_kanban(graph, args.out or Path(args.repo_root) / view_path(KANBAN_FILE, args.views))
             # the roadmap is regenerated with the board, at its default place only (--out names the board)
-            road = None if args.out else write_roadmap(graph, Path(args.repo_root) / ROADMAP_OUT)
+            road = None if args.out else write_roadmap(graph, Path(args.repo_root) / view_path(ROADMAP_FILE,
+                                                                                               args.views))
         except FileExistsError as exc:
             print(exc, file=sys.stderr)
             return 1
@@ -304,11 +355,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "check":
         repos = dict(args.repo_path)
-        problems = check_coverage(graph, args.repo_root, repos)
+        problems = check_coverage(graph, args.repo_root, repos, args.decisions)
         problems += check_wiring(graph, args.repo_root)
         problems += structure_errors(graph)
         advisories = check_consistency(graph) + orphan_code_refs(graph) + unchecked_anchors(graph, repos)
-        for adv in advisories + kanban_stale(graph, args.repo_root) + roadmap_stale(graph, args.repo_root):
+        views = kanban_stale(graph, args.repo_root, args.views) + roadmap_stale(graph, args.repo_root, args.views)
+        for adv in advisories + views:
             print(f"advisory: {adv}")
         for adv in graph.graph.get("collapsed_edges", []):
             print(f"advisory: collapsed edge {adv}")
@@ -321,14 +373,16 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _init(args) -> int:
+    adr_logs = [rel for rel, kind in decision_logs(args.decisions) if kind == "ADR"]
     try:
-        written = init_store(args.store, args.repo_root, owner=args.owner, examples=args.examples)
+        written = init_store(args.store, args.repo_root, owner=args.owner, examples=args.examples,
+                             log=adr_logs[0] if adr_logs else None)
     except FileExistsError as exc:
         print(exc, file=sys.stderr)
         return 1
     for path in written:
         print(f"created {path}")
-    base = ["--store", str(args.store), "--repo-root", str(args.repo_root)]
+    base = ["--store", str(args.store), "--repo-root", str(args.repo_root), *args.layout]
     code = main(base + ["sync", "--write"]) or main(base + ["kanban", "--write"])
     if not code:
         print("next: research_graph check, then edit nodes/work.yaml and edges/work.yaml (research_graph --help)")
@@ -457,7 +511,7 @@ def _asof(graph, args) -> int:
 def _roadmap(graph, args) -> int:
     if args.write:
         try:
-            out = write_roadmap(graph, args.out or Path(args.repo_root) / ROADMAP_OUT)
+            out = write_roadmap(graph, args.out or Path(args.repo_root) / view_path(ROADMAP_FILE, args.views))
         except FileExistsError as exc:
             print(exc, file=sys.stderr)
             return 1

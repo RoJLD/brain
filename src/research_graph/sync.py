@@ -2,7 +2,8 @@
 
 The validator (``validate.check_coverage``) requires one ``Experiment`` node per
 ``experiments/expNNN_*/`` directory and at least one ``SDR``/``ADR`` node per dated
-``## YYYY-MM-DD`` heading in ``notes/scientific_decisions.md`` / ``notes/decisions.md``.
+``## YYYY-MM-DD`` heading in ``notes/scientific_decisions.md`` / ``notes/decisions.md`` (or the logs
+``--decisions`` names).
 Keeping those by hand drifts (the arc exp007->032 was 27 experiments behind). This module
 *derives* the missing stubs from the filesystem + decision headings so ``graph-check`` stays
 green, and is the fill-step behind the ``/wrap-up`` discipline. Edges + precise statuses stay
@@ -13,13 +14,14 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 import networkx as nx
 import yaml
 
 from . import yamlio
-from .validate import _node_decision_date_counts
+from .validate import _node_decision_date_counts, decision_logs
 
 _HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\s*[—:\-]*\s*(.*?)\s*$")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -72,20 +74,23 @@ def experiment_stubs(graph: nx.DiGraph, repo_root: Path) -> list[dict]:
     return stubs
 
 
-def decision_stubs(graph: nx.DiGraph, repo_root: Path) -> list[dict]:
-    """SDR/ADR stubs to cover the deficit (headings - existing nodes) per (file, date)."""
+def decision_stubs(
+    graph: nx.DiGraph, repo_root: Path, logs: Iterable[str | Path] | None = None
+) -> list[dict]:
+    """SDR/ADR stubs to cover the deficit (headings - existing nodes) per (file, date), for each decision log the store
+    covers (``logs``, relative to the repo root; None: notes/scientific_decisions.md and notes/decisions.md), each stub
+    anchored at its log's path."""
     existing = _node_decision_date_counts(graph)
     out: list[dict] = []
-    plan = {"scientific_decisions.md": "SDR", "decisions.md": "ADR"}
-    for fname, ntype in plan.items():
-        f = repo_root / "notes" / fname
+    for rel, ntype in decision_logs(logs):
+        f = repo_root / rel
         if not f.exists():
             continue
         by_date: dict[str, list[str]] = {}
         for date, title in _headings(f):
             by_date.setdefault(date, []).append(title)
         for date, titles in sorted(by_date.items()):
-            deficit = len(titles) - existing.get((fname, date), 0)
+            deficit = len(titles) - existing.get((rel, date), 0)
             # cover the deficit with the LAST `deficit` headings of that date (the new ones)
             for title in titles[len(titles) - deficit :] if deficit > 0 else []:
                 slug = _slug(title) if title else "entry"
@@ -95,7 +100,7 @@ def decision_stubs(graph: nx.DiGraph, repo_root: Path) -> list[dict]:
                         "type": ntype,
                         "title": (title or f"{ntype} {date}")[:90],
                         "status": "active",
-                        "anchor": f"notes/{fname}#{date}-{slug}",
+                        "anchor": f"{rel}#{date}-{slug}",
                     }
                 )
     return out
@@ -618,18 +623,21 @@ def _carry_forward(
     return kept, edges
 
 
-def derive(store: str | Path, repo_root: str | Path) -> dict[str, list[dict]]:
+def derive(
+    store: str | Path, repo_root: str | Path, decisions: Iterable[str | Path] | None = None
+) -> dict[str, list[dict]]:
     """Return the Experiment + decision + hypothesis stubs and the regenerated auto-derived edges.
 
     Stubs are computed against the hand-curated store only (so `--write` is idempotent). The
     auto-derived edges are produced in full and deduped only against the HAND edges, so stale
     auto-edges are never resurrected — the CLI rewrites the auto-derived block from this set.
+    ``decisions``: the decision logs the store covers (None: the defaults of :func:`decision_stubs`).
     """
     store = Path(store)
     root = Path(repo_root)
     hand = _hand_graph(store)
     exp = experiment_stubs(hand, root)
-    dec = decision_stubs(hand, root)
+    dec = decision_stubs(hand, root, decisions)
     hyp_nodes, hyp_edges = hypothesis_nodes_edges(root)
     hyp_l1 = hypothesis_l1_stubs(hand, root)
     v_nodes, v_edges = hypothesis_verdict_nodes_edges(root)

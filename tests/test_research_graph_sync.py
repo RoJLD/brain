@@ -515,3 +515,33 @@ def test_derive_rederives_when_results_present(tmp_path):
     assert "h2-explore-camp-classifiers=iorb" in _ids(res)
     assert "v-explore-camp-classifiers=vix" not in _ids(res)
     assert "v-sweep-fam-classifiers=iorb" in _ids(res)  # sweep family still absent -> kept
+
+
+def test_decision_stubs_cover_the_logs_given_anchored_at_their_path(tmp_path):
+    store = _store(tmp_path)
+    repo = tmp_path / "repo"
+    for rel in ("notes/decisions.md", "lab/decisions.md", "lab/scientific_decisions.md"):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(f"## 2026-06-10 — from {rel}\n\nbody\n", encoding="utf-8")
+    graph = load_store(str(store))
+    stubs = decision_stubs(graph, repo, logs=["lab/scientific_decisions.md", "lab/decisions.md"])
+    assert [(s["type"], s["anchor"]) for s in stubs] == [
+        ("SDR", "lab/scientific_decisions.md#2026-06-10-from-lab-scientific-decisions-md"),
+        ("ADR", "lab/decisions.md#2026-06-10-from-lab-decisions-md"),
+    ]  # notes/decisions.md is not a log of this store: no stub from it
+    assert decision_stubs(graph, repo, logs=[]) == []
+    assert [s["anchor"].split("#")[0] for s in decision_stubs(graph, repo)] == ["notes/decisions.md"]  # the default
+
+
+def test_a_node_covers_the_log_its_anchor_names_not_another_of_the_same_name(tmp_path):
+    store = _store(tmp_path, nodes_yaml=(
+        '- {id: adr-2026-06-10-a, type: ADR, status: active, anchor: "notes/decisions.md#2026-06-10-a"}\n'))
+    repo = tmp_path / "repo"
+    for rel, title in (("notes/decisions.md", "a"), ("lab/decisions.md", "b")):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(f"## 2026-06-10 — {title}\n\nbody\n", encoding="utf-8")
+    graph = load_store(str(store))
+    assert decision_stubs(graph, repo, logs=["notes/decisions.md"]) == []
+    assert [s["anchor"] for s in decision_stubs(graph, repo, logs=["lab/decisions.md"])] == [
+        "lab/decisions.md#2026-06-10-b"]  # the node of notes/decisions.md does not cover it
+    assert [s["id"] for s in derive(store, repo, decisions=["lab/decisions.md"])["decisions"]] == ["adr-2026-06-10-b"]
