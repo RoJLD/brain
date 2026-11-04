@@ -123,6 +123,19 @@ def test_audit_flags_a_parser_added_outside_the_registry_and_a_module_without_re
     assert _registry_found(plain) == {}
 
 
+def test_audit_takes_a_register_a_command_module_imports():
+    """The review of wi-brain-cli-registry: inventory.has_symbol reads definitions only, so a module whose register
+    comes from an import was flagged although the registry finds it."""
+    run = "\n\n\ndef run(args, root):\n    return 0\n"
+    found = _registry_found(dict(REGISTRY, **{
+        "src/a/commands/_impl.py": "def register(sub, ctx):\n    sub.add_parser('via')\n\n\ndef reg(sub, ctx):\n"
+                                   "    sub.add_parser('alias')\n",
+        "src/a/commands/via.py": "from ._impl import register" + run,
+        "src/a/commands/alias.py": "from ._impl import reg as register" + run,
+        "src/a/commands/other.py": "from ._impl import reg" + run}))
+    assert set(found) == {"src/a/commands/other.py"}   # reg is not register
+
+
 def test_the_engines_own_registry_passes_its_audit_check():
     root = Path(__file__).resolve().parents[3]
     if not (root / ".git").exists():

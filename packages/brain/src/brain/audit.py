@@ -394,11 +394,21 @@ def _registries(t: inventory.Tree) -> list[str]:
     return [p[:-len("commands/__init__.py")] for p in inits if inventory.facts(t, p).discovers]
 
 
+def _imports_register(text: str) -> bool:
+    """A module-level import binds the name register (from ._impl import register; inventory.has_symbol reads
+    definitions only)."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return False
+    return any((a.asname or a.name) == "register" for s in tree.body if isinstance(s, ast.ImportFrom) for a in s.names)
+
+
 def _unregistered(t: inventory.Tree, pkg: str) -> list[str]:
-    """The modules of ``pkg``commands/ (not the ``_`` helpers) that define no register."""
+    """The modules of ``pkg``commands/ (not the ``_`` helpers) that define or import no register."""
     mods = [p for p in sorted(t.files) if posixpath.dirname(p) == f"{pkg}commands" and p.endswith(".py")]
     return [p for p in mods if not posixpath.basename(p).startswith("_")
-            and inventory.has_symbol(t, p, "register") is False]
+            and inventory.has_symbol(t, p, "register") is False and not _imports_register(t.text(p) or "")]
 
 
 def registry_findings(repo: str, rf: inventory.RepoFacts) -> list[dict]:
