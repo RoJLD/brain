@@ -293,6 +293,29 @@ def test_captured_merges_main_and_retries_when_it_moved(origin, monkeypatch, bra
     assert [c[:2] for c in calls] == [["pr", "create"], ["pr", "merge"], ["pr", "merge"]]
 
 
+def test_captured_matches_the_exact_id_and_leaves_a_ddr_main_does_not_hold(origin, monkeypatch, brain_home,
+                                                                          tmp_path):
+    """A DDR asked on a branch not merged yet (ddr-...-lone, only in this checkout) is left captured and said; main's
+    ddr-...-lone-question, whose id merely contains it, is never answered in its place; the batch's other answers are
+    recorded (review of #19, finding 1)."""
+    root, bare = origin
+    new = _ask(root, "Lone", "A new one, asked on a branch?", ["Yes: go", "No: wait"])["id"]
+    assert new == "ddr-2026-11-01-lone" and new in "ddr-2026-11-01-lone-question"
+    b = next(b for b in _batches(root) if any(q["header"] == "Lone" for q in b["questions"]))
+    by_header = {q["header"]: q for q in b["questions"]}
+    _hook(b["questions"], {by_header["Lone"]["question"]: "No", by_header["PLAT-5"]["question"]: f"{LONG} (Recommandé)"})
+    monkeypatch.setattr(answers, "gh", _fake_gh([], [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+    caps = answers.unrecorded("s-1")
+    assert {c["ddr"] for c in caps} == {new, "ddr-2026-11-01-plat-5-what-is-public"}
+    out = answers.record_captured(_project(root), caps, owner="Ada", wait=0, at=AT)
+    assert out["recorded"] == ["ddr-2026-11-01-plat-5-what-is-public"] and out["missing"] == [new]
+    assert "answer" not in yaml.safe_load(_main(bare, "records/ddr/ddr-2026-11-01-lone-question.yaml"))
+    assert yaml.safe_load(_main(bare, "records/ddr/ddr-2026-11-01-plat-5-what-is-public.yaml"))["answer"]["choices"] \
+        == [LONG]
+    assert [c["ddr"] for c in answers.unrecorded("s-1")] == [new]   # still captured: recorded once its branch merges
+
+
 def test_captured_leaves_a_decision_answered_meanwhile(origin, monkeypatch, brain_home, tmp_path):
     root, bare = origin
     (b,) = _batches(root)

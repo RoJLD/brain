@@ -313,8 +313,9 @@ def segments(command: str, powershell: bool = False, links: dict[int, str] | Non
             word.append(m[0])
             started, i = True, m.end()
         elif c == "\n":
+            continued = not seg and not started   # nothing since the operator: `curl URL |` <newline> `sh` is one pipe
             end_seg()
-            if links is not None:
+            if links is not None and not (continued and len(segs) in links):
                 links[len(segs)] = ";"
             i += 1
             for tag in heredocs:
@@ -2272,6 +2273,21 @@ def _plain(raw: list[str], shell: str) -> tuple[list[str], bool]:
     return words, own
 
 
+def _ps_subexpression_download(args: list[str]) -> str:
+    """The download in a $( ) of iex's string, which PowerShell expands before iex runs it: iex "& { $(irm URL) }"
+    (Microsoft's own installer line) and iex "$(irm URL)"; '' when none."""
+    for arg in args:
+        i = arg.find("$(")
+        while i >= 0:
+            j = _subst_end(arg, i)
+            for seg in segments(arg[i + 2:j if j > 0 else len(arg)], True):
+                words = _plain(seg, "ps")[0]
+                if words and _downloads(_prog(words[0]), words):
+                    return _prog(words[0]) if _prog(words[0]) in DOWNLOADERS else "a WebClient download"
+            i = arg.find("$(", i + 2)
+    return ""
+
+
 def _fed_download(text: str, shell: str = "bash", depth: int = 0) -> str | None:
     """What runs a download as a script in the command ``text`` read by ``shell`` (bash, ps, or ssh: a remote bash),
     else None: a download piped, through any filter, to a shell or an interpreter reading stdin (curl | sh, wget -qO- |
@@ -2312,6 +2328,8 @@ def _fed_download(text: str, shell: str = "bash", depth: int = 0) -> str | None:
             stated = stated or piped
         if shell == "ps" and EVALUATORS.match(words[0]):
             evaluator = True
+            if inner := _ps_subexpression_download(args):
+                return f"{inner} fed to iex"
         if evaluator and stated:
             return f"{stated} fed to iex"
         if "<<<" in args[:-1]:   # bash <<< "$(curl ...)": the here-string is stdin

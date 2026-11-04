@@ -130,13 +130,13 @@ def load(root: Path) -> list[tuple[Path, dict]]:
     return [(f, d) for f, d in records.load(root)["ddr"] if isinstance(d, dict)]
 
 
-def find(root: Path, ref: str) -> tuple[Path, dict]:
-    """A DDR by its id, else by a part of its id that only one DDR has."""
+def find(root: Path, ref: str, exact: bool = False) -> tuple[Path, dict]:
+    """A DDR by its id, else (unless ``exact``) by a part of its id that only one DDR has."""
     entries = load(root)
     for f, d in entries:
         if d.get("id") == ref:
             return f, d
-    hits = [(f, d) for f, d in entries if ref and ref in str(d.get("id", ""))]
+    hits = [] if exact else [(f, d) for f, d in entries if ref and ref in str(d.get("id", ""))]
     if len(hits) == 1:
         return hits[0]
     if not hits:

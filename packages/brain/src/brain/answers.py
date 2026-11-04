@@ -316,7 +316,9 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
                     retries: int = RETRIES, wait: float = 5.0, at: str = "", again: bool = False) -> dict:
     """Record ``caps`` (one project's) in a worktree on a new branch from the default one, refresh, commit, push,
     open one PR, merge it with its retries; the captures are marked recorded once the PR is open. A DDR no longer
-    pending is left (``again``: its answer replaced, a default reversed)."""
+    pending is left (``again``: its answer replaced, a default reversed). A capture names its DDR by its full id: one
+    the default branch does not hold yet (asked on a branch not merged) is left captured and said, the others are
+    recorded, and a DDR whose id merely contains it is never answered in its place."""
     from . import decisions   # the engine (YAML), not the hook's part
 
     if not caps:
@@ -329,10 +331,14 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
     _git(root, "fetch", "-q", "origin")
     base = _default_branch(root)
     _git(root, "worktree", "add", "-q", "-b", branch, str(worktree), f"origin/{base}")
-    written, skipped = [], []
+    written, skipped, missing = [], [], []
     try:
         for c in caps:
-            _, ddr = decisions.find(worktree, c["ddr"])
+            try:
+                _, ddr = decisions.find(worktree, c["ddr"], exact=True)
+            except decisions.QueueError:
+                missing.append(c["ddr"])
+                continue
             if ddr.get("status") != "pending" and not again:
                 skipped.append(f"{c['ddr']} ({ddr.get('status')})")
                 continue
@@ -340,7 +346,8 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
                              notes=c.get("notes") or "", by=owner, via="ask-tool", at=c["at"], again=again)
             written.append(c)
         if not written:
-            raise AnswersError("nothing to record: " + "; ".join(skipped))
+            raise AnswersError("nothing to record: " + "; ".join(
+                skipped + [f"{m} (not on {base} yet)" for m in missing]))
         if refresh(worktree):
             raise AnswersError(f"brain refresh failed in {worktree}: fix it there, or remove the worktree")
         _git(worktree, "add", "-A")
@@ -365,4 +372,4 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
         _git(root, "worktree", "remove", "--force", str(worktree), check=False)
         _git(root, "branch", "-D", branch, check=False)
     return {"pr": url, "branch": branch, "worktree": str(worktree), "recorded": [c["ddr"] for c in written],
-            "skipped": skipped, "merged": merged, "log": log}
+            "skipped": skipped, "missing": missing, "merged": merged, "log": log}

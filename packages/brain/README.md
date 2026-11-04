@@ -211,7 +211,9 @@ The session that asks the owner records the answers, in one PR per batch (wi-bra
    checkout on `claude/answers-<stamp>` from origin's default branch, the answers written, `brain refresh --offline`,
    one commit, one PR (`gh`), then merged; when the merge is refused because main moved, it merges main, takes main's
    side of the generated files, refreshes again, pushes and retries (`--retries`, default 3; `--no-merge` stops at
-   the PR). A record that conflicts stops it. A decision answered meanwhile is left (`--again` replaces it).
+   the PR). A record that conflicts stops it. A decision answered meanwhile is left (`--again` replaces it). A
+   capture names its DDR by its full id: one the default branch does not hold yet (asked on a branch not merged)
+   is left captured and said, the others recorded; a DDR whose id merely contains it is never answered instead.
 
 `--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
 label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file

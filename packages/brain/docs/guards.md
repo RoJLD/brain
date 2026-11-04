@@ -42,7 +42,8 @@ shell` refuses, in a Bash, PowerShell or Terminal panel call, through wrappers, 
 
 | Check | Shapes |
 |---|---|
-| `download` | a download piped, through any filter, to a shell or an interpreter reading stdin (`curl ... \| sh`, `wget -qO- ... \| bash`, `curl ... \| python3 -`, `curl ... \| ssh host`, `iwr ... \| iex`, `irm ... \| iex`); a download in a process substitution a shell or `source` runs (`bash <(curl ...)`, `. <(wget -qO- ...)`); a PowerShell statement where `iex` meets a download (`iex (iwr ...)`, a WebClient's `DownloadString`); `sh -c`, `eval` or a here-string whose text is a download's output (`sh -c "$(curl ...)"`) |
+| `download` | a download piped, through any filter, to a shell or an interpreter reading stdin (`curl ... \| sh`, `wget -qO- ... \| bash`, `curl ... \| python3 -`, `curl ... \| ssh host`, `iwr ... \| iex`, `irm ... \| iex`, the pipe continued on the next line too); a download in a process substitution a shell or `source` runs (`bash <(curl ...)`, `. <(wget -qO- ...)`); a PowerShell statement where `iex` meets a download (`iex (iwr ...)`, a WebClient's `DownloadString`, a `$( )` in
+its string, which PowerShell expands first: `iex "& { $(irm ...) }"`); `sh -c`, `eval` or a here-string whose text is a download's output (`sh -c "$(curl ...)"`) |
 | `plugin` | `claude plugin install NAME@MARKETPLACE` whose marketplace is not in the owner's list, or with no marketplace named; `claude plugin marketplace add SOURCE` whose source is not |
 | `skills` | `skills add`, through `npx`, `bunx`, `pnpm dlx` or `yarn dlx` |
 
