@@ -27,6 +27,24 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `~/.local/bin` link, `brain init`, the personal brain's setup (pointer, merge driver, Lite profile, permissions), the
   Claude Code plugin, the hooks under bash and the guards on Linux paths; `docs/install.md` gains its Linux section
   from that run.
+- **Tests linked by their imports, and coverage measured** (wi-brain-test-links-auto, wi-brain-test-coverage;
+  TEST-1). `brain sync`'s `tested_by` edges now also go to every Python test that imports a node's module itself,
+  besides brain audit's strongest evidence; a CodeRef of a symbol (`path::name`) keeps only its file's tests that
+  name it (or each of its words, a `cmd_` prefix left out), or, once the store keeps a coverage summary, those whose
+  test contexts ran it. Measured on this engine's brain (main d28f77c): 1,522 edges become 584 by the static rules
+  (−1,026, most of which gave each `cli.py` subcommand's feature every CLI test; +88 from imports), 472 with the
+  coverage summary (+143, of which 138 ran the code by the contexts); 101 test modules linked instead of 99. New
+  `brain coverage [--repo R] --run [-n N] | --from DATA [--write] [--json]` (brain.testcov): the repo's pytest
+  suites run under pytest-cov with `--cov-context=test`, the checkout's code first on PYTHONPATH, reduced to
+  `<store>/coverage/<repo>.json` (statements, covered lines, and which test modules ran each function, read from the
+  data file's SQLite tables; this engine: 90.2 % of 32,296 statements, a 346 KB summary). `brain audit`
+  measures `test.coverage` (a module its tests run under 50 %, P2) and the new `feature.tests` (a have or partial
+  feature whose module or script no test covers, P2), both outside the scout (ruleset 4); FEATURES.md's Tests cell
+  gives each feature's coverage. A summary narrows only what it measured (version 2: every function of each file
+  and every test module a context named): a symbol or a test added since, an older or context-less summary, keep
+  the names rule; a data file without test contexts is refused, branch data is read from its arcs, the def and
+  decorator lines count for no test, the repo's `fail_under` is off for the measure, and the trend reads today's
+  summary. Docs: `docs/tests-graph.md`.
 
 - **The session tree** (wi-brain-session-tree; ST-1, ST-2, scale study gap 19). The SessionStart event records both
   ids, the transcript's (`CLAUDE_CODE_SESSION_ID`) and the desktop app's `local_` id (`CLAUDE_CODE_HOST_SESSION_ID`),

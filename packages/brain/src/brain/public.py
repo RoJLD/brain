@@ -1,5 +1,5 @@
 """``brain check --public [--repo DIR] [--remote NAME] [--history] [--engine] [--json]``: nothing private leaves for a
-public repo (wi-brain-public-boundary-check, docs/specs/2026-11-02-personal-brain-boundary-design.md §7). Zero token:
+public repo (wi-brain-public-boundary-check). Zero token:
 git and the files, read by script.
 
 It runs in the checkout of a public repo (config.json ``public.repos``) from the personal brain's installed engine, so
