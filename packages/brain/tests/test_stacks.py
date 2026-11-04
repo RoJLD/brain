@@ -308,7 +308,7 @@ BUNDLE = ("box: {root: x, stacks: {db: {bundle: b, depends_on: [docker], health:
 
 @pytest.mark.parametrize("placement, message", [
     ("{run: k8s://brain}", "placement 'k8s://brain' is not supported (only: local) (planned"),
-    ("ssh://orbit-02", "placement 'ssh://orbit-02' is not supported"),
+    ("ssh://node-b", "placement 'ssh://node-b' is not supported"),
     ("{data: nas:/brain}", "placement data 'nas:/brain' is not supported (only: home, volume) (planned"),
     ("{data: disk}", "placement data 'disk' is not supported (only: home, volume)"),
     ("{run: local, where: x}", "placement is a string or a mapping of run and data")])
