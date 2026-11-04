@@ -5,6 +5,7 @@ import io
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
@@ -46,7 +47,7 @@ def _project(root):
 def _batches(root):
     """What brain decision batch prints for the question tool, remembered as the command does."""
     data = batch.build(_project(root))
-    answers.remember("demo", root, data["batches"], at=AT)
+    answers.remember("demo", root, data["batches"], at=AT, session="s-1")
     return data["batches"]
 
 
@@ -139,13 +140,15 @@ def test_a_question_asked_by_hand_stays_an_ad_hoc_ddr(store, brain_home):
 
 
 def test_match_by_id_suffix_then_text_then_header_and_labels():
-    asked = [{"ddr": "ddr-1", "question": "Q?", "header": "H", "labels": ["A", "B"], "at": "1"},
-             {"ddr": "ddr-2", "question": "Q?", "header": "H", "labels": ["C", "D"], "at": "2"}]
+    asked = [{"ddr": "ddr-1", "question": "Q?", "header": "H", "labels": ["A", "B"], "at": "1", "session": "s-1"},
+             {"ddr": "ddr-2", "question": "Q?", "header": "H", "labels": ["C", "D"], "at": "2", "session": "s-1"}]
     q = {"question": "Q?", "header": "H", "options": [{"label": "C"}, {"label": "D"}]}
     assert answers.match(q, asked)["ddr"] == "ddr-2"  # the same text twice: the labels decide
     assert answers.match({"question": "Q? (ddr-1)", "header": "x"}, asked)["ddr"] == "ddr-1"
-    assert answers.match({"question": "Reworded", "header": "H", "options": [{"label": "A"}, {"label": "B"}]},
-                         asked)["ddr"] == "ddr-1"
+    reworded = {"question": "Reworded", "header": "H", "options": [{"label": "A"}, {"label": "B"}]}
+    assert answers.match(reworded, asked, "s-1")["ddr"] == "ddr-1"
+    # review of #19, finding 28: the header-and-labels fallback is this session's batch only
+    assert answers.match(reworded, asked, "s-other") is None and answers.match(reworded, asked) is None
     assert answers.match({"question": "Q?", "header": "H", "options": []}, asked) is None  # ambiguous
     assert answers.match({"question": "Other?", "header": "Z"}, asked) is None
 
@@ -333,3 +336,177 @@ def test_captured_leaves_a_decision_answered_meanwhile(origin, monkeypatch, brai
         answers.record_captured(_project(root), answers.unrecorded("s-1"), owner="Ada", wait=0, at=AT)
     assert "lone-question (answered)" in str(exc.value)
     assert not answers.read(answers.RECORDED)
+
+
+# --- the question tool's real shapes (wi-brain-capture-multiselect, wi-brain-capture-unanswered) ---
+
+FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "ask_tool_results.json").read_text(encoding="utf-8"))
+PLACEHOLDER = next(iter(FIXTURE["interrupted"]["answers"].values()))
+
+
+def _tool_result(name):
+    r = FIXTURE[name]
+    payload = {"session_id": "s-1", "tool_name": "AskUserQuestion", "tool_use_id": "toolu_01REALSHAPE",
+               "tool_input": {"questions": r["questions"]}, "tool_response": r}
+    return capture.main(["post-tool-use"], stdin=io.StringIO(json.dumps(payload, ensure_ascii=False)))
+
+
+def _errors(home):
+    f = home / "ledger" / "errors.log"
+    return f.read_text(encoding="utf-8") if f.exists() else ""
+
+
+def test_a_multiple_choice_returned_as_a_list_is_captured(brain_home):
+    """The tool returns a multiple choice as a list: the capture of the whole call was lost to a TypeError."""
+    assert _tool_result("multiselect") == 0
+    assert _errors(brain_home) == ""
+    (ddr,) = _ledger(brain_home, "ddr")
+    assert ddr["answer"]["choices"] == ["merge-check", "Two existing guards", "Public check at commit",
+                                        "Sort the 7 candidates"] and "other" not in ddr["answer"]
+    assert ddr["recommendation"]["option"] == "merge-check" and ddr["status"] == "answered"
+
+
+def test_ddr_from_question_takes_a_list_or_a_joined_string_and_keeps_free_text():
+    q = FIXTURE["multiselect"]["questions"][0]
+    for answer in (["Two existing guards", "merge-check (Recommandé)", "my own idea"],
+                   "merge-check (Recommandé), Two existing guards, my own idea"):
+        ans = capture.ddr_from_question(q, answer, AT, {"session_id": "s-1"})["answer"]
+        assert ans["choices"] == ["merge-check", "Two existing guards"]
+        if isinstance(answer, list):
+            assert ans["other"] == "my own idea"   # an item that names no option is the owner's text
+    one = capture.ddr_from_question({**q, "multiSelect": False}, ["Two existing guards"], AT, {})["answer"]
+    assert one["choices"] == ["Two existing guards"]
+
+
+def test_a_batch_multiple_choice_as_a_list_is_tied_to_its_ddr(store, brain_home):
+    root = _demo(store)
+    (b,) = _batches(root)
+    hosts = next(q for q in b["questions"] if q["header"] == "Hosts")
+    _hook(b["questions"], {hosts["question"]: ["Alpha (Recommandé)", "Beta, gamma", "my own idea"]})
+    (cap,) = _ledger(brain_home, "answer")
+    assert cap["choices"] == ["Alpha", "Beta, gamma"] and cap["other"] == "my own idea"
+    assert cap["answer"] == "Alpha (Recommandé), Beta, gamma, my own idea"
+
+
+def test_an_interrupted_question_is_no_answer(store, brain_home):
+    """The owner sent a message instead of answering: the tool's placeholder is never an answer."""
+    assert _tool_result("interrupted") == 0 and _errors(brain_home) == ""
+    ddrs = _ledger(brain_home, "ddr")
+    assert len(ddrs) == 2 and all(d["status"] == "pending" and "answer" not in d for d in ddrs)
+    root = _demo(store)
+    (b,) = _batches(root)
+    lone = next(q for q in b["questions"] if q["header"] == "Lone")
+    _hook(b["questions"], {lone["question"]: PLACEHOLDER})
+    assert not _ledger(brain_home, "answer")   # a printed question: nothing captured, as for an empty answer
+    assert answers.unanswered(PLACEHOLDER) and answers.unanswered([PLACEHOLDER]) and not answers.unanswered("No")
+
+
+def _cap(ddr, at, sid="s-1", n=0, **kw):
+    """A capture row as the hook writes it (an older engine's rows included)."""
+    rec = {"v": 1, "id": f"ans-{at[:10]}-{ddr[-6:]}-{at[11:13]}{at[14:16]}-{n}", "at": at, "ddr": ddr,
+           "project": "demo", "root": "x", "session": sid, "tool_use_id": "t", "question": "q", "header": "H",
+           "answer": kw.get("answer", ", ".join(kw.get("choices") or []) or kw.get("other", "")), "multi": False}
+    rec.update({k: v for k, v in kw.items() if k != "answer"})
+    answers._append(answers.CAPTURED, [rec])
+    return rec
+
+
+LONE = "ddr-2026-11-01-lone-question"
+
+
+def test_captured_refuses_and_retires_a_placeholder_row(origin, monkeypatch, brain_home):
+    """Rows an older engine wrote for an interrupted question (SIGMA-1 to 4): listed, refused, retired; --again never
+    writes them."""
+    root, bare = origin
+    _cap(LONE, "2026-11-04T03:16:21Z", answer=PLACEHOLDER, other=PLACEHOLDER)
+    monkeypatch.setattr(answers, "gh", _fake_gh([], [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+    (c,) = answers.unrecorded("s-1")
+    with pytest.raises(answers.AnswersError, match="nothing to record: .*not answered: the owner sent a message"):
+        answers.record_captured(_project(root), [c], owner="Ada", wait=0, at=AT, again=True)
+    assert "answer" not in yaml.safe_load(_main(bare, f"records/ddr/{LONE}.yaml"))
+    assert answers.read(answers.RECORDED)[0]["retired"].startswith("not answered") and not answers.unrecorded("s-1")
+
+
+def test_a_real_answer_wins_over_a_later_placeholder(brain_home):
+    _cap(LONE, "2026-11-04T03:00:00Z", choices=["No"])
+    _cap(LONE, "2026-11-04T03:16:21Z", answer=PLACEHOLDER, other=PLACEHOLDER)
+    assert [c["choices"] for c in answers.unrecorded("s-1")] == [["No"]]
+
+
+# --- review of #19: the medium and low findings of the answers' lane ---
+
+def test_5_an_older_capture_of_a_recorded_ddr_does_not_come_back(brain_home):
+    a = _cap(LONE, "2026-11-04T09:00:00Z", choices=["Yes"])
+    b = _cap(LONE, "2026-11-04T10:00:00Z", choices=["No"])
+    assert [c["id"] for c in answers.unrecorded("s-1")] == [b["id"]]
+    answers._append(answers.RECORDED, [{"v": 1, "id": b["id"], "at": "2026-11-04T10:05:00Z", "ddr": LONE,
+                                        "pr": "u"}])   # an older engine's row: no captured_at
+    assert answers.unrecorded("s-1") == [] and a["id"] not in {r["id"] for r in answers.read(answers.RECORDED)}
+
+
+def test_5_a_capture_older_than_the_ddr_answer_is_stale_even_with_again(origin, monkeypatch, brain_home, tmp_path):
+    root, bare = origin
+    _cap(LONE, "2026-11-03T09:00:00Z", choices=["Yes"])
+    other = tmp_path / "other"   # answered by hand on main after the capture (decision answer, --batch)
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True)
+    decisions.answer(other, "lone", ["No"], at="2026-11-03T10:00:00Z", by="Ada")
+    run_git(other, "add", "-A")
+    run_git(other, "commit", "-qm", "answered by hand")
+    run_git(other, "push", "-q", "origin", "main")
+    monkeypatch.setattr(answers, "gh", _fake_gh([], [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+    with pytest.raises(answers.AnswersError, match="stale, retired"):
+        answers.record_captured(_project(root), answers.unrecorded("s-1"), owner="Ada", wait=0, at=AT, again=True)
+    assert yaml.safe_load(_main(bare, f"records/ddr/{LONE}.yaml"))["answer"]["choices"] == ["No"]
+    assert answers.unrecorded("s-1") == []   # retired: it never comes back
+
+
+def test_6_an_answer_captured_before_the_deadline_beats_the_default(origin, monkeypatch, brain_home, tmp_path):
+    from brain import defaults
+    root, bare = origin
+    ddr = _ask(root, "Wording", "Which wording?", ["Short: fewer", "Long: more"], low_stakes=True)
+    run_git(root, "add", "-A")
+    run_git(root, "commit", "-qm", "a low-stakes decision")
+    run_git(root, "push", "-q", "origin", "main")
+    after = ddr["default"]["after"]
+    _cap(ddr["id"], "2026-11-02T08:30:00Z", choices=["Long"])   # the owner answered in time
+    assert defaults.finalize(root, "2026-11-02T09:05:00Z") == []   # this machine's refresh leaves it pending
+    other = tmp_path / "other"   # another machine's refresh took the default meanwhile
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True)
+    with monkeypatch.context() as m:
+        m.setenv("BRAIN_HOME", str(tmp_path / "elsewhere"))
+        assert defaults.finalize(other, "2026-11-02T09:05:00Z") == [ddr["id"]]
+    run_git(other, "add", "-A")
+    run_git(other, "commit", "-qm", "taken by default")
+    run_git(other, "push", "-q", "origin", "main")
+    monkeypatch.setattr(answers, "gh", _fake_gh([], [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+    out = answers.record_captured(_project(root), answers.unrecorded("s-1"), owner="Ada", wait=0, at=AT)
+    assert out["recorded"] == [ddr["id"]]
+    got = yaml.safe_load(_main(bare, f"records/ddr/{ddr['id']}.yaml"))["answer"]
+    assert got["choices"] == ["Long"] and got["by"] == "Ada" and got["at"] < after
+
+
+def test_8_a_shortened_label_is_kept_unmapped_and_refused(origin, monkeypatch, brain_home):
+    root, bare = origin
+    (b,) = _batches(root)
+    plat = next(q for q in b["questions"] if q["header"] == "PLAT-5")
+    short = {**plat, "options": [{"label": f"{SHORT} (Recommandé)"}, *plat["options"][1:]]}
+    _hook([short], {short["question"]: f"{SHORT} (Recommandé)"})
+    (cap,) = _ledger(brain_home, "answer")
+    assert cap["unmapped"] == [f"{SHORT} (Recommandé)"] and "other" not in cap and "choices" not in cap
+    monkeypatch.setattr(answers, "gh", _fake_gh([], [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+    with pytest.raises(answers.AnswersError, match="names no option of the DDR"):
+        answers.record_captured(_project(root), answers.unrecorded("s-1"), owner="Ada", wait=0, at=AT)
+    assert "answer" not in yaml.safe_load(_main(bare, "records/ddr/ddr-2026-11-01-plat-5-what-is-public.yaml"))
+
+
+def test_34_both_ledgers_are_read_over_the_same_months(brain_home):
+    sep = _cap("ddr-a", "2026-09-10T09:00:00Z", choices=["A"])
+    octo = _cap("ddr-b", "2026-10-31T23:50:00Z", choices=["B"])
+    answers._append(answers.RECORDED, [{"v": 1, "id": sep["id"], "at": "2026-09-10T10:00:00Z", "ddr": "ddr-a"},
+                                       {"v": 1, "id": octo["id"], "at": "2026-11-01T00:05:00Z", "ddr": "ddr-b"},
+                                       {"v": 1, "id": "x", "at": "2026-10-02T00:00:00Z", "ddr": "ddr-x"}])
+    assert answers.unrecorded() == []

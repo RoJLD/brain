@@ -1,0 +1,54 @@
+{
+  "_source": "Two AskUserQuestion tool results (toolUseResult, the PostToolUse hook's tool_response) copied from real Claude Code transcripts of 2026-11-03 and 2026-11-04, redacted: the questions, labels and descriptions are replaced, the shape is kept (keys, multiSelect, the list a multiple choice returns, the (Recommandé) mark, the placeholder text of a question the owner did not answer).",
+  "multiselect": {
+    "questions": [
+      {
+        "question": "Which follow-ups do I build here now (engine, a new PR from main)?",
+        "header": "Follow-ups",
+        "options": [
+          {"label": "merge-check (Recommandé)", "description": "The only serious lesson without a fix."},
+          {"label": "Two existing guards", "description": "A warning, never a refusal, and the chained-command refusal."},
+          {"label": "Public check at commit", "description": "The commit guard applies the public check to staged files."},
+          {"label": "Sort the 7 candidates", "description": "One proposed item per lesson a script can check."}
+        ],
+        "multiSelect": true
+      }
+    ],
+    "answers": {
+      "Which follow-ups do I build here now (engine, a new PR from main)?": [
+        "merge-check (Recommandé)",
+        "Two existing guards",
+        "Public check at commit",
+        "Sort the 7 candidates"
+      ]
+    }
+  },
+  "interrupted": {
+    "questions": [
+      {
+        "question": "Project X (the node that groups the bricks of the vision in the scope tree): what shape does it take?",
+        "header": "SIGMA-1",
+        "options": [
+          {"label": "A project, its store in the private repo (Recommandé)", "description": "-"},
+          {"label": "A container only", "description": "-"},
+          {"label": "A new private repository for X", "description": "-"}
+        ],
+        "multiSelect": false
+      },
+      {
+        "question": "Which projects are children of project X?",
+        "header": "SIGMA-2",
+        "options": [
+          {"label": "All five bricks", "description": "-"},
+          {"label": "The engine only", "description": "-"},
+          {"label": "Three bricks", "description": "-"}
+        ],
+        "multiSelect": false
+      }
+    ],
+    "answers": {
+      "Project X (the node that groups the bricks of the vision in the scope tree): what shape does it take?": "[User did not answer this question — they sent a message instead. Treat that message as their response; do not re-ask.]",
+      "Which projects are children of project X?": "[User did not answer this question — they sent a message instead. Treat that message as their response; do not re-ask.]"
+    }
+  }
+}

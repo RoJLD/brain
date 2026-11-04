@@ -174,9 +174,11 @@ def _ids(meta: dict) -> dict:
     return sessions.stamp() if me["host_id"] and me["session"] in ("", meta.get("session_id")) else {}
 
 
-def ddr_from_question(q: dict, answer: str | None, at: str, meta: dict, tool_use_id: str = "", index: int = 0,
+def ddr_from_question(q: dict, answer: str | list | None, at: str, meta: dict, tool_use_id: str = "", index: int = 0,
                       notes: str | None = None) -> dict:
-    """A DDR from one question of Claude Code's question tool, and its answer when there is one."""
+    """A DDR from one question of Claude Code's question tool, and its answer when there is one. The tool returns a
+    multiple choice as a list of labels (or, in a transcript, joined by ', '); a question the owner did not answer
+    (the tool's placeholder when they sent a message instead) leaves the DDR pending, as an empty answer does."""
     options = []
     recommended = None
     for o in q.get("options") or []:
@@ -208,15 +210,24 @@ def ddr_from_question(q: dict, answer: str | None, at: str, meta: dict, tool_use
     }
     if meta.get("model"):
         ddr["asked"]["model"] = meta["model"]
-    if answer:
-        # the tool joins the labels of a multiple choice with ", "
-        norm = re.sub(r"\s*\((?:recommandée?|recommended)\)", "", answer, flags=re.I)
-        choices = [o["label"] for o in ddr["options"] if norm == o["label"] or f", {o['label']}, " in f", {norm}, "]
+    if not answers_lane.unanswered(answer):
+        labels = [o["label"] for o in ddr["options"]]
+        if isinstance(answer, (list, tuple)):   # the tool's shape for a multiple choice: one label per item
+            items = [str(a) for a in answer if not answers_lane.unanswered(a)]
+            picked = [answers_lane.MARK_RE.sub("", a) for a in items]
+            choices = [lab for lab in labels if lab in picked]
+            rest = [a for a, p in zip(items, picked, strict=True) if p not in labels]
+            text = ", ".join(items)
+        else:   # a string: one label, or the labels of a multiple choice joined with ", "
+            text = str(answer)
+            norm = re.sub(r"\s*\((?:recommandée?|recommended)\)", "", text, flags=re.I)
+            choices = [lab for lab in labels if norm == lab or f", {lab}, " in f", {norm}, "]
+            rest = [] if choices else [text]
         ans: dict = {"at": at, "by": "user", "via": "ask-tool"}
         if choices:
             ans["choices"] = choices if ddr["multi_select"] else choices[:1]
-        else:
-            ans["other"] = answer
+        if rest or not choices:
+            ans["other"] = ", ".join(rest) or text
         if notes:
             ans["notes"] = notes
         ddr["answer"] = ans

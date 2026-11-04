@@ -69,7 +69,7 @@ def test_brain_check_refuses_a_hand_written_mark(store):
     ddr["default"] = {"option": "Short", "after": AFTER}
     records.write(root, "ddr", ddr, replace=True)
     errors, _ = records.check(root)
-    assert any("low-stakes mark refused: a decision on money ('euros')" in e for e in errors)
+    assert any("low-stakes mark refused: a decision on money ('Spend')" in e for e in errors)
     ddr = _ask(root, "Wording", "Which wording?")
     ddr["default"] = {"option": "Long", "after": AFTER}
     records.write(root, "ddr", ddr, replace=True)
@@ -148,7 +148,7 @@ def test_the_morning_batch_and_the_hooks_name_the_defaults(registry, tmp_path):
 
 
 def test_topics_are_words_not_parts_of_words():
-    assert defaults.topics({"title": "Monkey keyboard arms-length", "question": "Keystroke or tagline?"}) == []
+    assert defaults.topics({"title": "Monkey keyboard harmless", "question": "Keystroke or tagline?"}) == []
     assert defaults.topics({"title": "x", "question": "y", "options": [{"label": "Rotate the password"}]}) == [
         ("keys", "password")]
 
@@ -164,3 +164,66 @@ def test_the_cockpit_line_sums_the_projects(store, tmp_path):
     from brain import cockpit
     text = cockpit.queue_lines({"projects": [], "defaulted": line, "denials_read": True})
     assert text[1] == f"  {line}"
+
+
+# --- review of #19: the never-by-default check, naive stamps, the reversed list, --seen ---
+
+@pytest.mark.parametrize("text,topic", [
+    ("Spend $50 a month on the GPU host?", "money"), ("Bigger: +40€/month", "money"), ("€50 or nothing", "money"),
+    ("Coût : 30€ par mois", "money"), ("What does it cost?", "money"), ("Rotate the HF_TOKEN?", "keys"),
+    ("Where does API_KEY live?", "keys"), ("A new ssh-key for the runner", "keys"), ("A cron-job at night", "scheduled tasks"),
+    ("A systemd-timer", "scheduled tasks"), ("Use the Task Scheduler", "scheduled tasks"), ("Re-arm the host", "arming"),
+    ("A sign-in page", "accounts"), ("A pre-release", "publication"), ("Edit settings.json", "rules")])
+def test_7_amounts_compounds_and_synonyms_are_refused(text, topic):
+    assert topic in {t for t, _ in defaults.topics({"title": "x", "question": text})}
+
+
+def test_7_everyday_words_stay_low_stakes():
+    for text in ("The context tokens of a session", "Log format: JSON lines", "Which layout for the kanban?"):
+        assert defaults.topics({"title": "x", "question": text}) == []
+
+
+def test_29_the_recommendation_why_and_the_linked_ids_are_read(store):
+    ddr = {"title": "Nightly host", "question": "Which host for the nightly runs?",
+           "options": [{"label": "Big host"}, {"label": "Small host"}],
+           "recommendation": {"option": "Big host", "why": "halves the runtime"}, "links": {"items": ["wi-nightly-billing"]}}
+    assert defaults.topics(ddr) == [("money", "billing")]
+    ddr["links"] = {}
+    ddr["recommendation"]["why"] = "it needs a new GitHub account for the runner"
+    assert defaults.topics(ddr) == [("accounts", "account")]
+    with pytest.raises(decisions.QueueError, match="never decided by default"):
+        decisions.ask(_root(store), title="Nightly host", question="Which host?", options=["Big", "Small"],
+                      why="it costs 30 euros more", at=AT, project="demo", low_stakes=True)
+
+
+def test_30_a_stamp_without_a_zone_is_utc_not_a_crash(store):
+    root = _root(store)
+    ddr = _ask(root, "Label wording", low_stakes=True)
+    ddr["default"]["after"] = "2026-11-02T09:00:00"   # a hand edit, no Z
+    records.write(root, "ddr", ddr, replace=True)
+    assert defaults.review(root, "2026-11-02T08:00")["provisional"][0]["hours_left"] == 1
+    assert defaults.finalize(root, AFTER) == ["ddr-2026-11-01-label-wording"]
+
+
+def test_31_an_answer_that_took_the_default_option_is_not_reversed_and_seen_clears_one(store):
+    root = _root(store)
+    _ask(root, "Log format", low_stakes=True)
+    decisions.answer(root, "log-format", ["Short"], at="2026-11-03T09:00:00Z", by="Ada")   # late, the same option
+    assert defaults.review(root, "2026-11-03T10:00:00Z")["reversed"] == []
+    _ask(root, "Label wording", low_stakes=True)
+    defaults.finalize(root, AFTER)
+    decisions.answer(root, "label-wording", ["Long"], at="2026-11-03T10:00:00+01:00", by="Ada", again=True)
+    assert [e["id"] for e in defaults.review(root, "2026-11-03T12:00:00Z")["reversed"]] == \
+        ["ddr-2026-11-01-label-wording"]
+    assert defaults.seen(root, ["label-wording"], at="2026-11-03T12:00:00Z") == ["ddr-2026-11-01-label-wording"]
+    assert defaults.review(root, "2026-11-03T12:00:00Z")["reversed"] == []   # reviewed since that answer
+
+
+def test_33_seen_checks_every_id_before_writing(store):
+    root = _root(store)
+    _ask(root, "Label wording", low_stakes=True)
+    _ask(root, "Plain wording")
+    defaults.finalize(root, AFTER)
+    with pytest.raises(decisions.QueueError, match="plain-wording: not decided by default"):
+        defaults.seen(root, ["label-wording", "plain-wording"], at=AFTER)
+    assert "reviewed" not in decisions.find(root, "label-wording")[1]["default"]   # nothing half-written

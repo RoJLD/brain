@@ -4,6 +4,30 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The answers' lane on the question tool's real shapes** (wi-brain-capture-multiselect,
+  wi-brain-capture-unanswered). The tool returns a multiple choice as a list of labels: the capture of an ad-hoc
+  question raised a TypeError and the whole tool call was lost (`ledger/errors.log`). `capture.ddr_from_question` and
+  `answers.capture` take the list (or the labels joined by `, `). When the owner sends a message instead of answering,
+  the tool returns a placeholder for each question (« [User did not answer this question — they sent a message
+  instead. …] »): it was captured as the owner's free text. It is now no answer: nothing is captured for a printed
+  question, an ad-hoc DDR stays pending, and `brain decision answer --captured` refuses, lists and retires the rows an
+  older engine wrote, `--again` included. A test fixture holds both tool results, copied from real transcripts and
+  redacted.
+- **The answers' lane, review of #19** (wi-brain-answers-fixes). `--captured` retires what it does not write (a new
+  `retired` reason in `answer-recorded`, with each capture's `captured_at`): an older capture of a DDR whose later one
+  was recorded never comes back; a capture older than the answer the DDR holds is stale, never written, `--again`
+  included. An answer captured before a low-stakes deadline wins: `brain refresh` leaves such a DDR pending, and
+  `--captured` replaces a default another branch took meanwhile. A label the session shortened in the tool is kept
+  `unmapped` and refused, never recorded as free text. The header-and-labels match looks only at the questions this
+  session's batch printed (the asked ledger now records the session). The recorded ledger is read from the month of
+  the oldest capture on. The never-by-default check reads amounts with a currency sign (`40€`, `$50`), `-`/`_`
+  compounds (`ssh-key`, `API_KEY`, `cron-job`), more synonyms (cost, spend, restart, sign-in, Task Scheduler, PyPI,
+  settings.json), the recommendation's why and the linked ids. A stamp without a zone is UTC instead of a TypeError
+  in refresh, the batch and the cockpit. `reversed` is a non-default answer after the deadline (compared as times),
+  never one that took the default's option, and `--seen` clears it; `--seen` checks every id before it writes.
+  Left for after the command registry (they need `cli.py`): `brain record ddr --answer` without the one-writer
+  check, `defaulted --apply` writing main checkouts, `--all --seen ID`, the refresh that writes the records graph
+  before taking a default, and printing the refused captures apart from the skipped ones.
 - **Git's identity before the first commit** (wi-brain-install-git-identity). A fresh Git for Windows has no
   `user.name` nor `user.email`, and the first commit of `docs/install.md` stopped at « Author identity unknown ».
   `brain init --apply` now asks git, as a commit would (`git var GIT_AUTHOR_IDENT` and `GIT_COMMITTER_IDENT`, from
