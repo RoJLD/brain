@@ -161,3 +161,17 @@ def test_a_data_file_path_with_a_hash_or_a_percent(tmp_path):
         ctxs, _ = testcov.contexts(data, root, root)
         assert ctxs["src/p/cli.py"][5] == {"tests/test_run.py"}
     assert not (tmp_path / "c").exists()   # no stray file where the URI was cut
+
+
+# --- the CI measures the coverage (wi-brain-test-coverage) ---
+
+def test_the_ci_keeps_a_coverage_data_file_brain_coverage_reads():
+    import yaml
+    root = Path(__file__).resolve().parents[3]
+    ci = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    steps = {s.get("name"): s for s in ci["jobs"]["brain"]["steps"]}
+    run = steps["Tests"]
+    assert run["working-directory"] == "packages/brain" and run["env"]["COVERAGE_FILE"] == "coverage.data"
+    assert "--cov-context=test" in run["run"] and "--cov-fail-under=0" in run["run"]
+    assert steps["Coverage data"]["with"]["path"] == "packages/brain/coverage.data"
+    assert "relative_files = true" in (root / "packages" / "brain" / "pyproject.toml").read_text(encoding="utf-8")

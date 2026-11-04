@@ -4,6 +4,10 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **Coverage in the CI** (wi-brain-test-coverage). The `brain` job on Windows, Python 3.12, runs the suite from
+  `packages/brain` with `--cov=src --cov-context=test` and keeps the data file as the artifact `coverage-data`, which
+  `brain coverage --from coverage.data --cwd packages/brain` reads (`relative_files = true` in packages/brain's
+  pyproject.toml; `pytest-cov` joins the test extras). It never fails on a threshold. Docs: `docs/tests-graph.md`.
 - **The schedules** (wi-brain-alerts-pass). The registry's new `schedules:` key, `{name: {command, every, at,
   at_logon, machines, timeout, enabled}}`, declares the brain commands a machine's scheduler runs, the alerts pass
   every 15 minutes and at logon first. New `brain schedule install [--apply] [--json]` (`brain.schedule`): the plan,

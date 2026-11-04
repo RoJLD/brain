@@ -45,7 +45,7 @@ test module. `brain impact` and the risk register read them.
 
 ```bash
 brain coverage --repo brain --run -n 8 --write    # run the repo's suites under pytest-cov, keep the summary
-brain coverage --repo brain --from .coverage --cwd packages/brain --write    # a data file made elsewhere (CI)
+brain coverage --repo brain --from coverage.data --cwd packages/brain --write    # the CI's data file
 brain coverage --repo brain --run --json          # the summary on stdout, nothing written
 ```
 
@@ -73,6 +73,21 @@ or class body, run at import and count for no test, so the summary does not depe
 first, nor on `-n`. Its keys are sorted: a run that changes nothing writes the same file. Commit it with the store,
 like any record: brain sync, FEATURES.md and brain audit read it from there (the checkout's tracked and untracked,
 not ignored, files), the same on every machine.
+
+## In the CI
+
+The engine's CI measures the coverage in the run that tests it: the `brain` job on Windows, Python 3.12, runs the
+suite from `packages/brain` (`pytest tests -n auto -m "not docker"`) with `--cov=src --cov-context=test`, and
+`relative_files = true` (packages/brain/pyproject.toml) names the files relative to that folder. The data file is the
+run's artifact `coverage-data` (14 days). To keep it in the store, from a checkout of the engine at the run's commit:
+
+```bash
+gh run download <run id> -R RoJLD/brain -n coverage-data -D packages/brain
+brain coverage --repo brain --from packages/brain/coverage.data --cwd packages/brain --write
+```
+
+The CI only measures; it never fails on a threshold, and the summary enters the store by the owner's PR, like any
+record.
 
 ## What the audit measures
 

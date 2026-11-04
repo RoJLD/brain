@@ -40,10 +40,25 @@ jobs:
         run: |
           pip install -e .
           pip install --no-deps -e packages/brain
-          pip install pyyaml pytest pytest-xdist "tomli>=2; python_version < '3.11'"
+          pip install pyyaml pytest pytest-xdist pytest-cov "tomli>=2; python_version < '3.11'"
       - name: Tests
-        # in parallel, one worker per core (pytest-xdist); the real docker client apart, on one process
-        run: pytest packages/brain -p no:randomly -n auto -m "not docker" --durations=15
+        # in parallel, one worker per core (pytest-xdist); the real docker client apart, on one process. On 3.12 the
+        # same run measures the coverage with test contexts (wi-brain-test-coverage): its data file is the artifact
+        # coverage-data, which `brain coverage --repo brain --from coverage.data --cwd packages/brain` reads in a
+        # checkout at the same commit (packages/brain/docs/tests-graph.md)
+        working-directory: packages/brain
+        env:
+          COVERAGE_FILE: coverage.data
+        run: >-
+          pytest tests -p no:randomly -n auto -m "not docker" --durations=15
+          ${{ matrix.python-version == '3.12' && '--cov=src --cov-context=test --cov-report=term:skip-covered --cov-fail-under=0' || '' }}
+      - name: Coverage data
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-data
+          path: packages/brain/coverage.data
+          retention-days: 14
       - name: Tests (docker)
         run: pytest packages/brain -p no:randomly -m docker
 

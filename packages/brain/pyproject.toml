@@ -18,7 +18,7 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 # pytest-xdist: the suite runs in parallel (pytest -n auto), each worker with its own temp folders and BRAIN_HOME
-test = ["pytest>=8", "pytest-xdist>=3.5"]
+test = ["pytest>=8", "pytest-xdist>=3.5", "pytest-cov>=5"]
 # brain tui's Textual app (the cockpit); without it brain tui draws its text view
 tui = ["textual>=1.0"]
 
@@ -41,3 +41,7 @@ testpaths = ["tests"]
 addopts = "-p no:cacheprovider"
 # docker: calls the real docker client, flaky on a busy runner; the CI runs it apart, on one process, after the rest
 markers = ["docker: calls the real docker client (the CI runs these apart: -m docker)"]
+
+[tool.coverage.run]
+# the CI's coverage data names its files relative to packages/brain, so brain coverage --from reads it in any checkout
+relative_files = true
