@@ -141,6 +141,20 @@ def test_the_brief_hash_fills_in_without_the_app(brain_home):
     assert tree.children["boss-1"] == ["kid-1", "kid-2"] and tree.role("kid-1") == "sub"
 
 
+def test_a_family_of_app_ledger_and_brief_children_sorts_by_start():
+    """The app's createdAt (an int, milliseconds), a ledger-only child's SessionStart (an ISO string: its app file
+    deleted, or half-written while the app rewrites it) and a brief-only child (no time) meet in one family: the
+    children sort on one kind of number instead of raising TypeError (review of #34, finding 4)."""
+    at = 1793736000   # 2026-11-03T20:00:00Z
+    app = {"local_boss": {"host_id": "local_boss", "session": "s-boss", "created": at * 1000},
+           "local_late": {"host_id": "local_late", "session": "s-late", "parent": "local_boss",
+                          "created": (at + 600) * 1000}}
+    starts = {"s-gone": {"session": "s-gone", "host_id": "local_gone", "parent": "local_boss",
+                         "started": "2026-11-03T20:05:00Z"}}
+    tree = sessions.Tree(app, starts, {"s-brief": "s-boss"})
+    assert tree.children["local_boss"] == ["s-brief", "local_gone", "local_late"]
+
+
 def test_a_relay_has_both(app):
     _family(app)
     app(GHOST, "dddddddd-0000-4000-8000-000000000004", parent=CHILD, name="grandchild")

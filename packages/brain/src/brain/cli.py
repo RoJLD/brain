@@ -1134,6 +1134,9 @@ def cmd_answer_captured(args, root: Path) -> int:
     print(f"recorded {len(out['recorded'])} answer(s) on {out['branch']}: {out['pr']}")
     if out["skipped"]:
         print(f"not pending, left: {', '.join(out['skipped'])} (--again replaces an answer)")
+    if out["missing"]:
+        print(f"not on the default branch yet, left captured: {', '.join(out['missing'])} (record them once the "
+              "branch that asked them is merged)")
     for line in out["log"]:
         print(f"  {line}")
     if not out["merged"]:

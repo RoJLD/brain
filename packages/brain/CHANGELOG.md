@@ -4,6 +4,20 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **The four high findings of the review of the PRs merged without one** (wi-brain-fix-merged-highs).
+  - `brain sessions`, the Stop snapshot, the master's watch, the cockpit and `brain check` no longer raise
+    `TypeError` on a family that mixes an app child (its `createdAt`, milliseconds) with a ledger-only one (its
+    SessionStart, ISO: its app file deleted, or half-written while the app rewrites it): the children sort on one
+    start time in seconds (#34).
+  - The third-party guard refuses a pipe continued on the next line (`curl URL |` then `sh`, `irm URL |` then
+    `iex`): a newline right after `|`, `&&`, `||` or `;` keeps the operator's link (#26).
+  - It refuses `iex "& { $(irm URL) }"`, `iex "$(irm URL)"` and `Invoke-Expression "..."` alike, directly or through
+    `powershell -c`: PowerShell expands the string's `$( )` before `iex` runs it (#26).
+  - `brain decision answer --captured` finds each DDR by its exact id on the default branch: one asked on a branch
+    not merged yet is left captured and said (« not on the default branch yet »), the batch's other answers are
+    recorded, and a DDR whose id merely contains the captured one is no longer answered in its place
+    (`decisions.find(..., exact=True)`; #19).
+
 - **The schedules** (wi-brain-alerts-pass). The registry's new `schedules:` key, `{name: {command, every, at,
   at_logon, machines, timeout, enabled}}`, declares the brain commands a machine's scheduler runs, the alerts pass
   every 15 minutes and at logon first. New `brain schedule install [--apply] [--json]` (`brain.schedule`): the plan,
