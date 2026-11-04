@@ -257,6 +257,33 @@ def test_closure_seeds_console_scripts_and_dotted_modules():
     assert inventory.command_at("x\n  lab run\n", "lab") and not inventory.command_at("the lab platform", "lab")
 
 
+REGISTRY = {   # a command registry (brain.commands): its package lists its modules instead of importing them
+    "pyproject.toml": '[project.scripts]\na = "a.cli:main"\n',
+    "src/a/__init__.py": "",
+    "src/a/cli.py": "from a import commands\n\ndef main():\n    commands.load()\n",
+    "src/a/commands/__init__.py": "import importlib\nimport pkgutil\n\n\ndef load():\n    return [importlib.import_module"
+                                  "(f'{__name__}.{m.name}') for m in pkgutil.iter_modules(__path__)]\n",
+    "src/a/commands/hello.py": "from a import core\n\ndef register(sub, ctx):\n    sub.add_parser('hello')\n",
+    "src/a/core.py": "def go(): pass\n",
+    "tests/test_cli.py": "from a.cli import main\n\ndef test_main():\n    main()\n",
+}
+
+
+def test_a_package_that_lists_its_modules_imports_each_one():
+    """wi-brain-cli-registry: brain's commands are found by pkgutil.iter_modules(__path__); the production closure
+    and the tests' reach go through the registry as through an import, or the audit would see none of them."""
+    rf = inventory.collect(mem(REGISTRY), "a")
+    idx = inventory.Index.build({"a": rf})
+    assert inventory.facts(rf.tree, "src/a/commands/__init__.py").discovers
+    assert not inventory.facts(rf.tree, "src/a/cli.py").discovers
+    reached = inventory.closure({"a": rf}, {"a": ["script:a"]}, idx)[0]
+    assert {("a", "src/a/commands/hello.py"), ("a", "src/a/core.py")} <= set(reached)
+    vias = _modules(REGISTRY, tops=("a",))
+    assert vias["a/commands/hello.py"] == vias["a/core.py"] == "indirect (unnamed)"   # reached by test_cli's import
+    alone = dict(REGISTRY, **{"src/a/commands/__init__.py": "def load():\n    return []\n"})
+    assert _modules(alone, tops=("a",))["a/commands/hello.py"] == ""   # no listing: nothing reaches it
+
+
 def test_parse_code_ref_pinned_to_the_engines_grammar():
     p = inventory.parse_code_ref
     assert p("code:demo-data:demo_data/venues/lighter.py::LighterVenue") == (

@@ -1081,7 +1081,7 @@ def main(args, root: Path | None) -> int:
         if args.write or args.items:
             p = projs[0]
             proj = p["project"]
-            from .cli import _on_main
+            from .commands._common import _on_main
             branch = _on_main(proj.root)
             if branch:
                 raise SystemExit(f"brain: {proj.root} is a main checkout on {branch}: write from a worktree "
