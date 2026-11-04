@@ -308,9 +308,12 @@ window), never two runs at once; on Linux a systemd user timer `brain-<name>.tim
 `bash -lc` so that the login profile's variables reach the command. What this machine installed
 (`<BRAIN_HOME>/schedules/installed.json`) and no longer declares is removed; a task registered by hand is never
 touched. The installer's schedule step runs it, so a schedule is a plan line that `-Apply` applies; creating a
-scheduled task stays the owner's decision. `brain schedule list` shows every declared schedule and the alerts pass's
+scheduled task stays the owner's decision: from a Claude Code session `--apply` is refused after the plan, and the
+guards refuse it as `owner:scheduled`. A command holds the brain command's arguments only: a newline or an
+unbalanced quote is refused by `brain check --all`. `brain schedule list` shows every declared schedule and the alerts pass's
 **dead-man**: once installed here, the pass is SILENT when its last run (`_pass` in `<BRAIN_HOME>/alerts/state.json`)
-is older than two cadences; the SessionStart health hook says so in one line and `brain status`'s alerts row shows
+or its install, the later, is older than two cadences of the machine's awake time (a machine asleep or off misses
+no pass); the SessionStart health hook says so in one line and `brain status`'s alerts row shows
 it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and says so in one line; the alerts go
 at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped.
 

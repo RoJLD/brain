@@ -334,7 +334,7 @@ def test_without_the_topic_a_pass_sends_nothing_and_says_so_once(tmp_path, monke
                      "that finds it"]
     st = alerts.state_load()
     assert {k: v["sent"] for k, v in st["demo"]["open"].items()} == {"m:x": "unset", "m:y": "unset"}
-    assert st["_pass"] == {"at": "2026-11-03T12:00:00Z", "host": st["_pass"]["host"], "unset": ["T_TOPIC"]}
+    assert {k: v for k, v in st["_pass"].items() if k not in ("host", "clock")} ==         {"at": "2026-11-03T12:00:00Z", "unset": ["T_TOPIC"]}
     assert not fake.posts and not (tmp_path / "brain-home" / "notify").exists()  # no audit line either
     lines = alerts.notify_pass(alerts.run([p], quick=True), reg, env=ENV)   # the topic is set: both go
     assert sorted(lines[:2]) == ["demo: error m:y: delivered", "demo: warn m:x: delivered"] and len(fake.posts) == 2
@@ -398,3 +398,135 @@ def test_installer_step(tmp_path, monkeypatch, python):
     else:
         assert f"create   schedule {name}: brain alerts --all --notify, every 15m (\\Brain\\{name}) (to do: " \
                "--apply)" in res.stdout, res.stdout
+
+
+# --- the review of #39: one regression test per high and medium finding ---
+
+def test_a_session_cannot_apply_and_the_guard_refuses_it(tmp_path, monkeypatch, capsys):
+    reg = _registry(tmp_path, monkeypatch, PASS)
+    runs = Runs({"schtasks /Query": (1, ""), "schtasks /Create": (0, "")})
+    monkeypatch.setattr(schedule, "system", lambda run=None: _win(runs))
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert schedule.install(reg, apply=True, here="ada-desktop") == 2
+    out = capsys.readouterr()
+    assert out.out.startswith("create   schedule alerts-pass") and "(to do: --apply)" in out.out   # the plan only
+    assert out.err.startswith("brain schedule: install --apply refused: the actions are")
+    assert not [c for c in runs.calls if "/Create" in c[0]] and not schedule.record_file().exists()
+    monkeypatch.delenv("CLAUDECODE")
+    from test_guards import bash
+
+    from brain import guards
+    monkeypatch.delenv(guards.ALLOW_ENV, raising=False)
+    monkeypatch.setenv("BRAIN_PERMISSIONS", str(Path(__file__).parent / "fixtures" / "permissions.yaml"))
+    for cmd in ("brain schedule install --apply", "python -I -m brain --root ~/b schedule install --apply"):
+        reason = bash(tmp_path, cmd)
+        assert reason and "owner:scheduled" in reason, cmd
+    assert bash(tmp_path, "brain schedule install") is None and bash(tmp_path, "brain schedule list --json") is None
+
+
+@pytest.mark.parametrize("entry", [
+    'x: {command: [alerts, --all, --notify, "y\\n* * * * * touch /tmp/pwned #"], every: 15m}',
+    "x: {command: \"alerts --notify 'y\\n*/5 * * * * id #'\", every: 15m}",
+    'x: {command: [vault, "a\\tb"], at: "07:30"}',
+])
+def test_a_control_character_in_a_command_is_refused(tmp_path, monkeypatch, entry):
+    errors = schedule.check(_registry(tmp_path, monkeypatch, entry))
+    assert len(errors) == 1 and "command holds a control character" in errors[0], errors
+
+
+def test_an_unbalanced_quote_is_a_bad_declaration_not_a_crash(tmp_path, monkeypatch):
+    reg = _registry(tmp_path, monkeypatch, PASS, "canary: {command: notify send p info today's canary, at: '07:30'}")
+    assert schedule.check(reg) == ["project demo: schedules canary: command: No closing quotation"]
+    assert schedule.watch(reg, here="ada-desktop") is None and schedule.hook_line(reg) == ""
+    row = status.alerts_of(reg["demo"], {}, {}, {}, {})   # brain status and the alerts pass go on
+    assert "pass" not in row and row["open"] == 0
+    (tmp_path / "demo" / "sched.yaml").write_text("x: [unclosed\n", encoding="utf-8")
+    reg = _registry(tmp_path, monkeypatch, alerts_entry="{}")
+    reg["demo"].schedules = "sched.yaml"
+    assert schedule.check(reg)[0].startswith("project demo: schedules file sched.yaml: ")
+
+
+def test_a_task_already_deleted_by_hand_is_removed_without_an_error(tmp_path, monkeypatch, capsys):
+    reg = _registry(tmp_path, monkeypatch)
+    runs = Runs({"schtasks /Delete": (1, ""), "schtasks /Query": (1, "")})
+    monkeypatch.setattr(schedule, "system", lambda run=None: _win(runs))
+    schedule.record_file().parent.mkdir(parents=True)
+    schedule.record_file().write_text(json.dumps({"alerts-pass": {"where": "\\Brain\\alerts-pass",
+                                                                  "system": "the Task Scheduler"}}), encoding="utf-8")
+    assert schedule.install(reg, apply=True, here="ada-desktop") == 0
+    assert "(done)" in capsys.readouterr().out and schedule.installed() == {}
+
+
+def test_a_quoted_argument_and_a_dollar_read_back_the_same(tmp_path, monkeypatch):
+    s = schedule.Schedule("c", "demo", ["vault", "canary", "--note", "daily check"], at="07:30")
+    want = _win(Runs()).wanted(s, PY)
+    assert "&quot;daily check&quot;" in want
+    have = want.replace("&quot;", '"')   # the Task Scheduler writes a quote back as is
+    assert _win(Runs()).same(have, want)
+    unit = schedule.Systemd(Runs(), folder=tmp_path).wanted(
+        schedule.Schedule("d", "demo", ["notify", "send", "p", "info", "a${HOME}b"], every=900.0), PurePosixPath("/py"))
+    assert "a$${HOME}b" in unit["service"]
+
+
+def test_a_schedule_recorded_under_another_scheduler_is_left_alone(tmp_path, monkeypatch):
+    s = schedule.declared(_registry(tmp_path, monkeypatch, PASS))[0]
+    runs = Runs({"crontab -l": (0, "")})
+    record = {"alerts-pass": {"where": "~/.config/systemd/user/brain-alerts-pass.timer", "system": "systemd --user"},
+              "gone": {"where": "x", "system": "systemd --user"}}
+    for schedules in ([s], []):
+        steps = schedule.plan(schedules, "orbit-test", schedule.Cron(runs), PurePosixPath("/py"), record)
+        assert [st.action for st in steps if st.name] == ["note", "note"]   # kept, created or removed: neither
+        assert "was installed with systemd --user" in steps[0].line and "nothing changed" in steps[0].line
+    assert not [c for c in runs.calls if c[0] == ["crontab", "-"]]
+
+
+def test_the_hook_keeps_each_report_when_the_other_fails(monkeypatch, capsys):
+    monkeypatch.setattr(stacks, "load", lambda *a, **k: {})
+    monkeypatch.setattr(stacks, "watched_down", lambda reg, *a: ["- web (demo): timed out"])
+    monkeypatch.setattr(schedule, "hook_line", lambda reg: 1 / 0)
+    stacks.hook_main(["SessionStart"], stdin=io.BytesIO(b"{}"))
+    assert "1 watched stack(s) down" in json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    monkeypatch.setattr(stacks, "watched_down", lambda reg, *a: 1 / 0)
+    monkeypatch.setattr(schedule, "hook_line", lambda reg: "The alerts pass is silent on this machine: SILENT")
+    stacks.hook_main(["SessionStart"], stdin=io.BytesIO(b"{}"))
+    assert "silent" in json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_downtime_is_no_silence_and_a_new_install_beats_an_old_pass(tmp_path, monkeypatch):
+    reg = _registry(tmp_path, monkeypatch, PASS)
+    _installed("2026-11-01T10:00:00+00:00")
+    d = tmp_path / "brain-home" / "alerts"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "state.json").write_text(json.dumps({"_pass": {"at": "2026-11-03T03:00:00Z",   # 9 h before NOW, then sleep
+                                                        "clock": {"boot": 1000, "awake": 5000}}}), encoding="utf-8")
+    monkeypatch.setattr(schedule, "clock", lambda: {"boot": 1000, "awake": 5600})        # 10 min awake since
+    assert not schedule.watch(reg, here="ada-desktop", now=NOW)["silent"]
+    monkeypatch.setattr(schedule, "clock", lambda: {"boot": 1000, "awake": 5000 + 3000})  # 50 min awake: silent
+    assert schedule.watch(reg, here="ada-desktop", now=NOW)["silent"]
+    monkeypatch.setattr(schedule, "clock", lambda: {"boot": 40000, "awake": 120})         # rebooted 2 min ago
+    assert not schedule.watch(reg, here="ada-desktop", now=NOW)["silent"]
+    monkeypatch.setattr(schedule, "clock", lambda: {})                                    # no clock: wall time
+    assert schedule.watch(reg, here="ada-desktop", now=NOW)["silent"]
+    _installed("2026-11-03T11:55:00+00:00")    # armed 5 min ago, after an old pass run by hand
+    assert not schedule.watch(reg, here="ada-desktop", now=NOW)["silent"]
+
+
+def test_a_resolution_without_the_topic_is_not_a_failure(tmp_path, monkeypatch):
+    fake = Fake()
+    monkeypatch.setattr(notify, "_post_json", fake.post)
+    monkeypatch.setattr(alerts, "_now", lambda: NOW)
+    reg = _registry(tmp_path, monkeypatch, alerts_entry="{files: [a.md]}",
+                    notify_entry=NTFY.replace("levels: {", "levels: {info: [ntfy], "))
+    p = reg["demo"]
+    (p.root / "a.md").write_text("## 2026-11-03 — m\nWARN  m:x  bad\n", encoding="utf-8")
+    alerts.notify_pass(alerts.run([p], quick=True), reg, env=ENV)
+    (p.root / "a.md").write_text("## 2026-11-03 — m\n", encoding="utf-8")
+    env = {k: v for k, v in ENV.items() if k != "T_TOPIC"}
+    lines = alerts.notify_pass(alerts.run([p], quick=True), reg, env=env)
+    assert "demo: resolved m:x: unset" in lines and lines[-1].startswith("nothing sent: $T_TOPIC not set")
+    assert len(fake.posts) == 1 and alerts.state_load()["_pass"]["unset"] == ["T_TOPIC"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows")
+def test_schtasks_is_read_in_the_oem_code_page():
+    assert schedule._oem().startswith("cp") and schedule.clock()["awake"] > 0

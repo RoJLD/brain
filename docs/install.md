@@ -163,6 +163,7 @@ With the installer (a plan, then `-Apply`): its venv in `~/.brain/venv`, the `br
 git clone --depth 1 --branch v0.2.4 https://github.com/RoJLD/brain.git ~/brain-engine
 pwsh -NoProfile -File ~/brain-engine/packages/brain/installer/install.ps1
 pwsh -NoProfile -File ~/brain-engine/packages/brain/installer/install.ps1 -Apply
+exec bash -l               # a login shell again: ~/.local/bin, created by -Apply, is now on the PATH
 brain --version
 ```
 
@@ -171,7 +172,8 @@ By hand, without `pwsh`:
 ```bash
 python3 -m venv ~/.brain/venv
 ~/.brain/venv/bin/pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.4#subdirectory=packages/brain"
-mkdir -p ~/.local/bin && ln -sf ~/.brain/venv/bin/brain ~/.local/bin/brain    # ~/.local/bin on your PATH
+mkdir -p ~/.local/bin && ln -sf ~/.brain/venv/bin/brain ~/.local/bin/brain
+exec bash -l               # Ubuntu's ~/.profile puts ~/.local/bin on the PATH once it exists
 brain --version
 ```
 

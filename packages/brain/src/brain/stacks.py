@@ -533,16 +533,23 @@ def hook_main(argv: list[str], stdin=None) -> int:
     try:
         # the hook's JSON, as bytes (a codepage decode can fail): nothing in it is needed
         stdin.read() if stdin is not None else getattr(sys.stdin, "buffer", sys.stdin).read()
-        rows = watched_down(load())
+        from .capture import _log_error
         parts = []
-        if rows:
-            names = " ".join(r[2:].split(" ", 1)[0] for r in rows)
-            parts.append(f"{len(rows)} watched stack(s) down. `brain up {names}` starts them (allowed without a "
-                         "prompt); `brain health --all` shows every stack.\n" + "\n".join(rows))
-        from . import projects, schedule
-        silent = schedule.hook_line(projects.load())
-        if silent:
-            parts.append(silent)
+        try:
+            rows = watched_down(load())
+            if rows:
+                names = " ".join(r[2:].split(" ", 1)[0] for r in rows)
+                parts.append(f"{len(rows)} watched stack(s) down. `brain up {names}` starts them (allowed without a "
+                             "prompt); `brain health --all` shows every stack.\n" + "\n".join(rows))
+        except Exception as exc:  # noqa: BLE001 - one report's error never drops the other
+            _log_error("stacks-health", exc)
+        try:
+            from . import projects, schedule
+            silent = schedule.hook_line(projects.load())
+            if silent:
+                parts.append(silent)
+        except Exception as exc:  # noqa: BLE001
+            _log_error("alerts-dead-man", exc)
         if parts:
             text = "\n".join(parts)
             event = argv[0] if argv else "SessionStart"

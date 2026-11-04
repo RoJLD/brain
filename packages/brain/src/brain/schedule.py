@@ -31,16 +31,22 @@ Schedule names are global, like stack names. Where it goes, per system:
 
 What this machine installed is recorded in ``$BRAIN_HOME/schedules/installed.json``: a schedule no longer declared
 for this machine, or declared ``enabled: false``, is removed by the next apply; a task the brain did not install (one
-registered by hand under ``\\Brain\\``) is never touched. Creating a scheduled task is the owner's decision: a session
-only reads the plan; the owner runs the apply (install.ps1 -Apply).
+registered by hand under ``\\Brain\\``) is never touched, and one recorded under another scheduler than the one this
+run finds (systemd --user out of a login session) is left as it is, said in a note. A command is the brain command's
+arguments: a control character (a newline) or an unbalanced quote is refused. Creating a scheduled task is the
+owner's decision: ``--apply`` is refused from a Claude Code session (CLAUDECODE set) after printing the plan, and the
+guards refuse ``brain schedule install --apply`` (owner, scheduled); the owner runs the apply (install.ps1 -Apply).
 
 The dead-man (:func:`watch`): the alerts pass is the schedule whose command is ``alerts ... --notify``; once installed
-here, it is silent when its last pass (``$BRAIN_HOME/alerts/state.json``, written by every pass) is older than two
-cadences, plus a grace. The SessionStart health hook says so in one line and brain status's alerts row shows it.
+here, it is silent when the later of its last pass (``$BRAIN_HOME/alerts/state.json``, written by every pass) and its
+install is older than two cadences, plus a grace, counted in the machine's awake time (:func:`clock`: a machine off
+or asleep misses no pass, so the first session after a boot or a wake is not told SILENT). The SessionStart health
+hook says so in one line and brain status's alerts row shows it.
 """
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -127,7 +133,10 @@ def _entries(p: projects.Project) -> dict:
         f = p.root / value
         if not f.is_file():
             raise ScheduleError(f"project {p.name}: schedules file {value} not found")
-        value = graph.load_yaml(f.read_text(encoding="utf-8")) or {}
+        try:
+            value = graph.load_yaml(f.read_text(encoding="utf-8")) or {}
+        except Exception as exc:  # noqa: BLE001 (a YAML or decode error: a bad declaration, never a crash)
+            raise ScheduleError(f"project {p.name}: schedules file {value}: {type(exc).__name__}") from None
     if value is None:
         return {}
     if not isinstance(value, dict):
@@ -135,9 +144,18 @@ def _entries(p: projects.Project) -> dict:
     return value
 
 
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
 def _command(conf: dict, where: str) -> list[str]:
     cmd = conf.get("command")
-    command = shlex.split(cmd) if isinstance(cmd, str) else [str(c) for c in cmd] if isinstance(cmd, list) else []
+    try:
+        command = shlex.split(cmd) if isinstance(cmd, str) else [str(c) for c in cmd] if isinstance(cmd, list) else []
+    except ValueError as exc:  # an unbalanced quote
+        raise ScheduleError(f"{where}: command: {exc}") from None
+    if any(CONTROL.search(c) for c in command):
+        # a newline would split a crontab line or a unit file: the command is the brain command's arguments, nothing more
+        raise ScheduleError(f"{where}: command holds a control character (a newline, a tab)")
     if not command:
         raise ScheduleError(f"{where}: command, the brain command's arguments, is missing")
     if command[0] == "brain":
@@ -239,10 +257,21 @@ def _record(data: dict) -> None:
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
-def _run(argv: list[str], *, input: str | None = None, timeout: float = RUN_TIMEOUT) -> subprocess.CompletedProcess:
-    """A scheduler's command, its output captured (replaced by a fake in the tests)."""
+def _oem() -> str:
+    """The console code page a windowless child writes in (schtasks: cp850 on a French Windows), utf-8 elsewhere."""
     try:
-        return subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout, encoding="utf-8",
+        import ctypes
+        return f"cp{ctypes.windll.kernel32.GetOEMCP()}"
+    except (ImportError, AttributeError, OSError):
+        return "utf-8"
+
+
+def _run(argv: list[str], *, input: str | None = None, timeout: float = RUN_TIMEOUT) -> subprocess.CompletedProcess:
+    """A scheduler's command, its output captured (replaced by a fake in the tests). schtasks writes the OEM code
+    page, whatever its XML header says."""
+    try:
+        return subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout,
+                              encoding=_oem() if os.name == "nt" and argv[:1] == ["schtasks"] else "utf-8",
                               errors="replace", stdin=None if input is not None else subprocess.DEVNULL,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError) as exc:
@@ -354,8 +383,8 @@ class Windows(System):
     @staticmethod
     def summary(xml: str) -> dict:
         """What decides same or update: the description, the action, the triggers' kinds and cadences, the limit."""
-        def tag(name: str) -> list[str]:
-            return [m.strip() for m in re.findall(rf"<{name}>(.*?)</{name}>", xml, re.S)]
+        def tag(name: str) -> list[str]:   # entities decoded: the Task Scheduler writes a quote back as is
+            return [html.unescape(m.strip()) for m in re.findall(rf"<{name}>(.*?)</{name}>", xml, re.S)]
         kinds = sorted(set(re.findall(r"<(LogonTrigger|TimeTrigger|CalendarTrigger)\b", xml)))
         times = sorted(b[11:16] for b in re.findall(r"<CalendarTrigger>.*?<StartBoundary>(.*?)</StartBoundary>",
                                                      xml, re.S))
@@ -381,7 +410,9 @@ class Windows(System):
 
     def delete(self, name: str) -> str:
         r = self.run(["schtasks", "/Delete", "/TN", self.where(name), "/F"])
-        return "" if r.returncode == 0 else _why(r)
+        if r.returncode == 0 or self.current(name) is None:   # already gone (deleted by hand): removed all the same
+            return ""
+        return _why(r)
 
 
 def _why(r: subprocess.CompletedProcess) -> str:
@@ -395,7 +426,8 @@ def _bash_lc(argv: list[str]) -> str:
 
 
 def _unit_quote(text: str) -> str:
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
+    """One ExecStart argument: systemd expands %, $VAR and ${VAR} even inside quotes, so each is doubled."""
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$") + '"'
 
 
 class Systemd(System):
@@ -563,17 +595,31 @@ def plan(schedules: list[Schedule], here: str, sys_: System | None, python: Path
     if sys_ is None:
         return [Step("note", s.name, f"schedule {s.name}: {s.when()}: no scheduler supported here yet "
                      f"({sys.platform}): run brain {shlex.join(s.command)} by hand") for s in live]
-    steps = [_step(s, sys_, python or interpreter()) for s in live]
-    names = {s.name for s in live}
-    steps += [Step("remove", name, f"remove   schedule {name} ({rec.get('where') or sys_.where(name)}): no longer "
-                   "declared for this machine", lambda name=name: sys_.delete(name))
-              for name, rec in sorted(record.items()) if name not in names]
+    elsewhere = {n: r for n, r in record.items() if r.get("system") and r["system"] != sys_.label}
+    steps = [_moved(s.name, elsewhere[s.name], sys_) if s.name in elsewhere else _step(s, sys_, python or interpreter())
+             for s in live]
+    steps += _removals(record, {s.name for s in live}, elsewhere, sys_)
     return steps + [Step("note", "", f"note     {n}") for n in sys_.notes(live)]
+
+
+def _removals(record: dict, live: set[str], elsewhere: dict, sys_: System) -> list[Step]:
+    """A step for each schedule this machine installed and no longer declares."""
+    return [_moved(name, rec, sys_) if name in elsewhere else
+            Step("remove", name, f"remove   schedule {name} ({rec.get('where') or sys_.where(name)}): no longer "
+                 "declared for this machine", lambda name=name: sys_.delete(name))
+            for name, rec in sorted(record.items()) if name not in live]
+
+
+def _moved(name: str, rec: dict, sys_: System) -> Step:
+    """A schedule installed with another scheduler than the one this run finds (systemd --user out of a login
+    session, say): left as it is, so that no task is orphaned or doubled."""
+    return Step("note", name, f"note     schedule {name} was installed with {rec['system']} ({rec.get('where', '')}); "
+                f"this run finds {sys_.label}: nothing changed (apply where {rec['system']} answers, a login session)")
 
 
 def _stamp(sys_: System, name: str) -> dict:
     return {"where": sys_.where(name), "system": sys_.label,
-            "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}
+            "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), "clock": clock()}
 
 
 def _apply(st: Step, sys_: System, record: dict) -> str:
@@ -597,6 +643,13 @@ def install(registry: Mapping[str, projects.Project], apply: bool = False, *, ru
     except ScheduleError as exc:
         print(f"brain schedule: {exc}", file=sys.stderr)
         return 2
+    if apply:
+        from .detail import refused
+        why = refused()
+        if why:   # the owner's decision: a session prints the plan, the owner runs the apply (install.ps1 -Apply)
+            install(registry, False, run=run, here=here, as_json=as_json)
+            print(f"brain schedule: install --apply refused: {why}", file=sys.stderr)
+            return 2
     here = here or machine()
     sys_ = system(run)
     record = installed()
@@ -673,6 +726,36 @@ def last_pass() -> dict:
     return p if isinstance(p, dict) else {}
 
 
+def clock() -> dict:
+    """{boot, awake}: when this machine booted (epoch seconds) and how long it has been awake since, sleep left out
+    (Windows' unbiased interrupt time, Linux's monotonic clock); {} elsewhere. The dead-man counts awake time only."""
+    import time
+    try:
+        if os.name == "nt":
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            k32.GetTickCount64.restype = ctypes.c_ulonglong
+            unbiased = ctypes.c_ulonglong()
+            if not k32.QueryUnbiasedInterruptTime(ctypes.byref(unbiased)):
+                return {}
+            return {"boot": round(time.time() - k32.GetTickCount64() / 1000), "awake": round(unbiased.value / 1e7)}
+        if sys.platform.startswith("linux"):
+            btime = next(int(ln.split()[1]) for ln in Path("/proc/stat").read_text().splitlines()
+                         if ln.startswith("btime "))
+            return {"boot": btime, "awake": round(time.monotonic())}
+    except (OSError, AttributeError, ValueError, StopIteration):
+        pass
+    return {}
+
+
+def _awake_since(ref) -> float | None:
+    """The awake seconds since a recorded clock: across a reboot, the time awake since the boot; None unknown."""
+    cur = clock()
+    if not cur or not isinstance(ref, dict) or "boot" not in ref or "awake" not in ref:
+        return None
+    return cur["awake"] - ref["awake"] if abs(cur["boot"] - ref["boot"]) < 300 else cur["awake"]
+
+
 def _ago(seconds_: float) -> str:
     m = int(seconds_ // 60)
     return f"{m} min" if m < 120 else f"{m // 60} h" if m < 2880 else f"{m // 1440} d"
@@ -703,6 +786,20 @@ def limit_of(s: Schedule) -> float:
     return 2 * s.cadence() + min(max(s.cadence() / 10, 60), 900)
 
 
+def _silent(s: Schedule, rec: dict, lp: dict, last: datetime | None, now: datetime) -> bool:
+    """Whether the installed pass missed two cadences of awake time since the later of its last pass and its install
+    (an old pass run by hand never makes a new install SILENT; a machine asleep or off misses no pass)."""
+    armed = _ts(rec.get("at"))
+    since, ref = max(((t, c) for t, c in ((last, lp.get("clock")), (armed, rec.get("clock"))) if t),
+                     key=lambda tc: tc[0], default=(None, None))
+    if since is None:
+        return True
+    if (now - since).total_seconds() <= limit_of(s):
+        return False
+    awake = _awake_since(ref)
+    return awake is None or awake > limit_of(s)
+
+
 def watch(registry: Mapping[str, projects.Project] | list, *, here: str | None = None,
           now: datetime | None = None, project: str | None = None) -> dict | None:
     """The alerts pass declared for this machine (``project``: only that project's): {schedule, project, every,
@@ -714,8 +811,7 @@ def watch(registry: Mapping[str, projects.Project] | list, *, here: str | None =
     rec = installed().get(s.name)
     lp = last_pass()
     last = _ts(lp["at"]) if lp.get("at") else None
-    since = last or (_ts(rec.get("at")) if rec else None)
-    silent = bool(rec) and (since is None or (now - since).total_seconds() > limit_of(s))
+    silent = bool(rec) and _silent(s, rec, lp, last, now)
     unset = [str(v) for v in lp.get("unset") or []] if rec else []
     line = _pass_line(s, rec, last, silent, now)
     if unset:

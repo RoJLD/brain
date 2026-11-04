@@ -956,8 +956,11 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
             opened[a["key"]]["sent"] = outcome
             hist.append(_history(a, name, "open", now))
         for c in closed:
-            outcome = (_send(cfg, why, name, "info", f"resolved: {c.get('message', '')}", c["key"], dry_run, now,
-                             env) if c.get("sent") == "delivered" else "not sent (its alert was not delivered)")
+            missing = [] if dry_run or c.get("sent") != "delivered" else notify.unset(cfg, "info", env)
+            unset.update(missing)
+            outcome = ("unset" if missing else _send(cfg, why, name, "info", f"resolved: {c.get('message', '')}",
+                                                     c["key"], dry_run, now, env) if c.get("sent") == "delivered"
+                       else "not sent (its alert was not delivered)")
             lines.append(f"{name}: resolved {c['key']}: {outcome}")
             hist.append(_history({**c, "level": c.get("level") or "info"}, name, "resolved", now))
         if not dry_run:
@@ -970,7 +973,9 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
         lines.append(f"nothing sent: ${', $'.join(sorted(unset))} not set (brain notify setup ntfy); the alerts wait "
                      "for the first pass that finds it")
     if not dry_run:
-        st["_pass"] = {"at": _iso(now), "host": socket.gethostname() or "unknown", "unset": sorted(unset)}
+        from .schedule import clock
+        st["_pass"] = {"at": _iso(now), "host": socket.gethostname() or "unknown", "unset": sorted(unset),
+                       "clock": clock()}
         _state_save(st)
     return lines
 

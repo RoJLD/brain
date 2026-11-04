@@ -11,10 +11,15 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   StartWhenAvailable), a systemd user timer or the user's crontab, through `bash -lc`; what this machine installed
   and no longer declares is removed (`<BRAIN_HOME>/schedules/installed.json`), a task registered by hand never.
   `brain schedule list`. The installer's new schedule step runs it (a plan line, applied by `-Apply`); `brain check
-  --all` checks the entries.
+  --all` checks the entries, refusing a control character or an unbalanced quote in a command. `--apply` is refused
+  from a Claude Code session, and the guards refuse `brain schedule install --apply` (owner, scheduled). A task
+  already deleted by hand is removed without an error; a schedule recorded under another scheduler than this run's
+  is left alone with a note; the Task Scheduler's XML is read in the OEM code page and compared with its entities
+  decoded.
 - **The alerts pass's dead-man** (wi-brain-alerts-pass). Each `brain alerts --notify` pass records itself (`_pass`
   in the state: when, where, the unset variables); once the pass is installed here, `brain schedule list`, `brain
-  status`'s alerts row and the SessionStart health hook say SILENT when its last run is older than two cadences.
+  status`'s alerts row and the SessionStart health hook say SILENT when its last run (or its install, the later)
+  is older than two cadences of the machine's awake time, so a boot or a wake raises no false SILENT.
   Without its channel's variable (an unset `BRAIN_NTFY_TOPIC`) a pass sends nothing, writes no notify audit line and
   says so in one line; those alerts go at the first pass that finds it. Off Windows the alerts' Task Scheduler
   folders are skipped instead of raising a `scheduler` warning.
