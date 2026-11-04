@@ -110,6 +110,10 @@ pytest-cov with test contexts and keeps that summary in the store (`coverage/<re
 measures `test.coverage`, `feature.tests` reports a feature no test covers, and `FEATURES.md` shows each feature's
 coverage. The rules: [docs/tests-graph.md](docs/tests-graph.md).
 
+### The module map
+
+A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place. See [docs/modules.md](docs/modules.md).
+
 ## Start your own brain
 
 ```bash

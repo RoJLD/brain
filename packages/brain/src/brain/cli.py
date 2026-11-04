@@ -23,6 +23,10 @@
   brain features render [--write] [--repo R --out PATH]   FEATURES.md, the matrix by domain (no --write: exit 1
                  when the file is not the render); sync [--offline]: statuses named by merged PRs
                  ("feat-brain-x: have"), then FEATURES.md
+  brain modules [--write] [--check] [--json]   the module map: each open item's props.module (and
+                 props.modules_secondary) against the store's modules.yaml; the view notes/modules_graph.md (per
+                 module its phase, status, items done and open, and the gaps), written by brain sync; --check: the
+                 open items with no module, or a module the registry does not know (brain check warns of them)
   brain milestone suggest [--only ID]... [--write]   the open items attached to no milestone, each with its proposal
                  (props.milestone_proposed, never overwritten) or a new one: the milestone most items of its spec
                  belong to, then its depends_on neighbours', then its theme's; --write stores the new ones (ms-x?)
@@ -441,7 +445,7 @@ from . import (__version__, actions, alerts, audit, backfill, batch, boundary, b
                milestones, neutral, notes, notify, paths, perf, permissions, probe, projects, public, queue, quota,
                records, render, resume, specs, stacks, status, tidy, tiers, timing, transcript, update, usage)
 from . import answers, classes, defaults, governor, keystore, markers, rotation, selftime, vault
-from . import skew
+from . import modules, skew
 from . import lessons
 from .inventory import AuditError
 
@@ -827,6 +831,37 @@ def _root_repo(args, root: Path) -> str:
         if c.path.resolve() == root.resolve():
             return c.name
     return projects._repo_folder(root).lower()
+
+
+def _store_label(root: Path, store: Path) -> str:
+    return store.relative_to(root).as_posix() if store.is_relative_to(root) else store.as_posix()
+
+
+def _module_warnings(root: Path, store: Path) -> list[str]:
+    """brain check's lines on the module map: its view stale, an open item it does not place."""
+    if not modules.applies(store):
+        return []
+    stale = [f"{modules.VIEW} is stale: brain sync (or brain modules --write)"]         if modules.stale(root, store, _store_label(root, store)) else []
+    return stale + [f"module map: {line}" for line in modules.problems(store)]
+
+
+def cmd_modules(args, root: Path) -> int:
+    """brain modules (brain.modules): the view printed, written with --write; --check: the module map's problems."""
+    store = _store(args, root)
+    if not modules.applies(store):
+        raise SystemExit(f"brain modules: no {modules.REGISTRY} in {store} (the registry of modules)")
+    if args.write:   # first, so --write --check writes the view and then checks the map
+        print(f"view: {modules.VIEW} " + ("written" if modules.write(root, store, _store_label(root, store))
+                                          else "unchanged"))
+    if args.check:
+        found = modules.problems(store)
+        print(json.dumps(found, indent=1) if args.json else "\n".join(found) or "module map: every open item placed")
+        return 1 if found else 0
+    if args.json:
+        print(json.dumps(modules.data(store), indent=1, ensure_ascii=False, default=str))   # a YAML date
+    elif not args.write:
+        print(modules.render(store, _store_label(root, store)), end="")
+    return 0
 
 
 def _features_view(args, root: Path, store: Path, write: bool, repo: str = "", out: str = "") -> int:
@@ -1404,6 +1439,8 @@ def _sync_store(args, root: Path, store: Path) -> int:
             return 1
     if featured and _features_view(args, root, store, write=True):   # after the links: FEATURES.md shows them
         return 1
+    if modules.applies(store) and modules.write(root, store, _store_label(root, store)):
+        print(f"view: {modules.VIEW} written")
     if (root / records.RECORDS_DIR / "ddr").is_dir():
         for ddr_id in defaults.finalize(root, _now()):   # 24 h without an answer: the low-stakes default is final
             print(f"{ddr_id}: taken by default (brain decision defaulted)")
@@ -1444,6 +1481,8 @@ def _check_store(args, root: Path, store: Path) -> int:
             print(f"warning: the links graph could not be checked: {exc}")
     for line in milestones.orphan_lines(store, root):
         print(line)
+    for line in _module_warnings(root, store):   # every open item has its module (wi-brain-module-map)
+        print(f"warning: {line}")
     for line in skew.check_lines(root):   # the running engine against config.json engine.pin
         print(line)
     rc = _check_session_ids(root) or rc   # a DDR's local_ id that matches no session (scale study gap 19)
@@ -2665,6 +2704,12 @@ def build_parser() -> argparse.ArgumentParser:
     cl.add_argument("--outcome", help="one line: what was done and checked")
     cl.add_argument("--status", default="done", choices=["done", "dropped"])
 
+    mo = sub.add_parser("modules", help="the module map: each open item's module against the store's modules.yaml, "
+                                        "the generated view notes/modules_graph.md")
+    mo.add_argument("--write", action="store_true", help="write notes/modules_graph.md (brain sync does)")
+    mo.add_argument("--check", action="store_true", help="the open items with no module or an unknown one (exit 1)")
+    mo.add_argument("--json", action="store_true", help="the map as JSON (each module's counts, the problems); with "
+                                                        "--check, the problems")
     fe = sub.add_parser("features", help="the feature matrix: Feature nodes, FEATURES.md and a SQLite index with "
                                          "full-text search (brain.features)").add_subparsers(dest="features_cmd",
                                                                                             required=True)
@@ -3677,7 +3722,7 @@ def _dispatch(args) -> int:
     if args.cmd == "record":
         return {"sr": cmd_record_sr, "ar": cmd_record_ar, "ddr": cmd_record_ddr, "backfill": cmd_record_backfill,
                 "check": cmd_record_check, "sync": cmd_record_sync}[args.record_kind](args, root)
-    return {"item": cmd_item, "features": cmd_features, "milestone": cmd_milestone, "spec": cmd_spec,
+    return {"item": cmd_item, "features": cmd_features, "modules": cmd_modules, "milestone": cmd_milestone, "spec": cmd_spec,
             "journal": cmd_journal, "adr": cmd_adr,
             "decision": cmd_decision, "queue": cmd_queue, "sync": cmd_sync, "check": cmd_check,
             "refresh": cmd_refresh, "tidy": cmd_tidy, "resume": cmd_resume, "digest": cmd_digest, "lint": cmd_lint,
