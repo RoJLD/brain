@@ -95,7 +95,8 @@ cannot set; the call passes and the ledger records it. Refusals and overrides go
 ``<BRAIN_HOME>/ledger/guards-<month>.jsonl`` when the ledger exists (a request for the owner creates it), with the
 check that refused (edit, git, shell-write, an owner category, machine, node, wake, cluster, bot, download, plugin,
 skills, attribution, secrets, markers, public, commit, name; backslash for the heredoc warning). An internal error lets the call through and goes to ``ledger/errors.log``: a guard never breaks
-a session.
+a session. A session-settings call is the exception: an error there is a refusal (Remote Control's exceptions fail
+closed).
 """
 
 from __future__ import annotations
@@ -1616,27 +1617,32 @@ def check_session_settings(tool: str, inp: dict, cwd: str):
 
 
 # Remote Control's three exceptions (wi-brain-guard-rc-archive; the owner's ADRs of 2026-11-04 on archiving and on
-# the coordinators' handover). A coordinator is marked by the name the session that started it gave it, or its title.
-RC_TOOL = re.compile(r"^mcp__.+__set_remote_control$")
-COORDINATOR_NAME = re.compile(r"(?i)^coordinat(?:or|eur|ion)-")
-COORDINATOR_TITLE = re.compile(r"(?i)^\s*(?:coordination du brain|brain coordinat(?:ion|or))\b")
+# the coordinators' handover). A coordinator is marked by the name the session that started it gave it (the app's
+# spawnedFrom.name, fixed at the start), never by its title, which a session can change.
+RC_TOOL = re.compile(r"^mcp__ccd_session_mgmt__set_remote_control$")   # the desktop app's own server only
+COORDINATOR_NAME = re.compile(r"(?i)^(?:coordinat(?:or|eur)-[a-z0-9]{1,3}|coordination-du-brain(?:-[a-z0-9-]*)?)$")
+COORDINATOR_TITLE = re.compile(r"(?i)^\s*(?:coordination du brain|brain coordinat(?:ion|or))\b")   # refusals only
 HANDOVER_DIR = "handover"    # <BRAIN_HOME>/handover/: the coordinators' hand-over notes (*.md)
 HANDOVER_NOTE_S = 6 * 3600   # a hand-over note counts this long after it was last written
-HANDOVER_HEAD = 2000         # the note's opening, which names whose note it is (its app id)
+HANDOVER_HEAD = 2000         # the note's opening, whose first app id says whose note it is
 HANDOVER_MAX = 512_000       # a bigger file is not read
+LOCAL_ID = re.compile(r"(?<![\w-])local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\w-])")
 RC_FINISHED = ("idle", "ended")   # the states of a finished session (brain.sessions.state_of)
-RC_GONE = ("archived", "ended")
+RC_LIVE = ("running", "idle", "asking", "stale")   # a successor's: not archived, ended or unknown on this machine
 
 
-def _coordinator(node: dict) -> bool:
-    """Whether a session is a Brain coordinator: its name (given by the session that started it) or its title."""
+def _coordinator(node: dict, titles: bool = False) -> bool:
+    """Whether a session is a Brain coordinator by its name (given by the session that started it); ``titles`` also
+    takes its title, for a refusal only (a live coordinator keeps its Remote Control)."""
     return bool(COORDINATOR_NAME.match(str(node.get("name") or "")) or
-                COORDINATOR_TITLE.match(str(node.get("title") or "")))
+                titles and COORDINATOR_TITLE.match(str(node.get("title") or "")))
 
 
 def handover_note(host_id: str, now: float | None = None) -> Path | None:
-    """The session's hand-over note: a ``*.md`` in <BRAIN_HOME>/handover/ written in the last HANDOVER_NOTE_S whose
-    opening (HANDOVER_HEAD characters) names its full app id; None without one."""
+    """The session's hand-over note: a ``*.md`` (a regular file, no link) in <BRAIN_HOME>/handover/ written in the
+    last HANDOVER_NOTE_S whose first app id, in its opening (HANDOVER_HEAD characters), is the session's; None
+    without one. A note that names it after another id (its successor's, which names its predecessor) is not its own."""
+    import stat
     import time
 
     from . import sessions
@@ -1644,19 +1650,19 @@ def handover_note(host_id: str, now: float | None = None) -> Path | None:
         return None
     now = time.time() if now is None else now
     d = paths.brain_home() / HANDOVER_DIR
-    id_re = re.compile(rf"(?<![\w-]){re.escape(host_id)}(?![\w-])")
     try:
-        files = [(f, f.stat()) for f in d.glob("*.md") if f.is_file()]
+        files = [(f, f.lstat()) for f in d.glob("*.md")]
     except OSError:
         return None
     for f, st in sorted(files, key=lambda x: -x[1].st_mtime):
-        if not (0 <= now - st.st_mtime <= HANDOVER_NOTE_S) or st.st_size > HANDOVER_MAX:
+        if not stat.S_ISREG(st.st_mode) or not (0 <= now - st.st_mtime <= HANDOVER_NOTE_S) or \
+                st.st_size > HANDOVER_MAX:
             continue
         try:
-            head = f.read_text(encoding="utf-8", errors="replace")[:HANDOVER_HEAD]
+            first = LOCAL_ID.search(f.read_text(encoding="utf-8", errors="replace")[:HANDOVER_HEAD])
         except OSError:
             continue
-        if id_re.search(head):
+        if first and first.group(0) == host_id:
             return f
     return None
 
@@ -1665,7 +1671,7 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
     """(case, why) for a set_remote_control call: ``archive`` (off on a finished session the caller started),
     ``handover-on`` (on for the coordinator the caller started to succeed it) or ``handover-off`` (off on the caller
     itself at that handover, its successor detached), else None and why it is none of them. Read at zero token from
-    the desktop app's own session files (brain.sessions.app_index and app_meta: who started whom, the names, titles,
+    the desktop app's own session files (brain.sessions.app_index and app_meta: who started whom, the names,
     archived and detached flags) and the hand-over notes, never from the ledger's SessionStart events or the brief
     hash, which any session can append to; what cannot be read is a refusal, never a guess."""
     from . import sessions
@@ -1685,9 +1691,12 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
     own = sessions.here()["host_id"]
     if own and own != caller:
         return None, "this session's app id and its transcript's disagree"
+    dirs = sessions.app_dirs()
 
-    def meta(host: str) -> dict:   # one session's own file, read again now (the index may be cached)
-        m = sessions.app_meta(host) if host in index else {}
+    def meta(host: str) -> dict:   # one session's own file, read again now (the index may be cached); one file only
+        if host not in index or sum((d / f"{host}.json").is_file() for d in dirs) != 1:
+            return {}
+        m = sessions.app_meta(host)
         return {**m, "source": "app"} if m.get("host_id") == host else {}
 
     def mine(m: dict) -> bool:
@@ -1697,16 +1706,16 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
         return "archived" if m.get("archived") else sessions.state_of(m, {}, now)
 
     me = meta(caller)
-    if not me:
-        return None, "this session's app file cannot be read"
+    if not me or me.get("session") != sid:
+        return None, "this session's own app file cannot be read, or names another transcript"
 
     def handover() -> str:   # '' when the caller is a coordinator at its handover, else why not
         if not _coordinator(me):
-            return "this session is not a Brain coordinator (its name or title)"
-        if me.get("parent") and not _coordinator(meta(str(me["parent"]))):
-            return "this session was not started by a Brain coordinator, nor by the owner"
+            return "this session is not a Brain coordinator (the name its starter gave it)"
+        if not me.get("parent") or not _coordinator(meta(str(me["parent"]))):
+            return "this session was not started by a Brain coordinator (the name its starter gave it)"
         if handover_note(caller, now) is None:
-            return (f"no hand-over note naming {caller} in {HANDOVER_DIR}/ written in the last "
+            return (f"no hand-over note of {caller} (its first app id) in {HANDOVER_DIR}/ written in the last "
                     f"{HANDOVER_NOTE_S // 3600} h")
         return ""
 
@@ -1716,8 +1725,9 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
         why = handover()
         if why:
             return None, why
+
         def successor(m: dict) -> bool:
-            return mine(m) and _coordinator(m) and m.get("detached") is True and state(m) not in RC_GONE
+            return mine(m) and _coordinator(m) and m.get("detached") is True and state(m) in RC_LIVE
         succ = [h for h, m in sorted(index.items()) if m.get("parent") == caller and successor(meta(h))]
         if not succ:
             return None, "it has started no live coordinator to succeed it, detached"
@@ -1730,14 +1740,14 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
     st = state(node)
     if enabled:
         if not _coordinator(node):
-            return None, f"{target} is not a Brain coordinator (its name or title), so not a successor"
+            return None, f"{target} is not a Brain coordinator (the name this session gave it), so not a successor"
         why = handover()
         if why:
             return None, why
-        if st in RC_GONE:
+        if st not in RC_LIVE:
             return None, f"{target} is {st}"
         return "handover-on", f"on for {target}, the coordinator it started to succeed it"
-    if _coordinator(node) and st not in RC_GONE:
+    if _coordinator(node, titles=True) and st not in ("archived", "ended"):
         return None, f"{target} is a live coordinator, which stays in Remote Control"
     if st not in RC_FINISHED:
         return None, f"{target} is {st}, not finished"
@@ -3180,20 +3190,23 @@ def request_title(request: dict) -> str:
 
 
 def main(stdin=None, stdout=None) -> int:
+    payload = None
     try:
         payload = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
         ok = allowed()
-        rc_why = ""
+        rc_why, case = "", None
         if RC_TOOL.match(str(payload.get("tool_name") or "")):
             try:
                 case, rc_why = remote_control(payload)
+                # every decision is logged: a pass the ledger did not take is no pass
+                if case and not _record(payload, "owner", "security-settings", "allowed", rc_why, case=case):
+                    case, rc_why = None, "the pass could not be logged in the guards ledger"
             except Exception as exc:   # an error is no exception: the call goes on to its refusal
                 _log("owner", exc)
-                case, rc_why = None, "the session tree could not be read"
-            if case:
-                _record(payload, "owner", "security-settings", "allowed", rc_why, case=case)
-                return 0
+                case, rc_why = None, "the session tree or the ledger could not be read"
         for guard, check, reason, request in refusals(payload):
+            if case and check == "security-settings":   # one of the three exceptions, logged above
+                continue
             if (guard in ok or f"{guard}:{check}" in ok) and check not in UNLIFTED:
                 _record(payload, guard, check, "overridden", reason, request)
                 continue
@@ -3220,6 +3233,15 @@ def main(stdin=None, stdout=None) -> int:
         try:
             from .capture import _log_error
             _log_error("guard", exc)
+        except Exception:
+            pass
+        try:   # but a session's security settings fail closed: an error there is a refusal
+            p = payload if isinstance(payload, dict) else {}
+            if session_setting(str(p.get("tool_name") or ""), p.get("tool_input") or {}):
+                (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                    "permissionDecisionReason": "brain guard: a session's Remote Control or permission mode is the "
+                                                "owner's; the guard failed, so it refuses (ledger/errors.log)"}}) + "\n")
         except Exception:
             pass
     return 0

@@ -46,11 +46,12 @@ def lab(tmp_path, monkeypatch, brain_home):
                            "content": uses or [{"type": "text", "text": "done"}]}}
         (projects / f"{CLI[host]}.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
 
-    def note(host=F, age_s=0.0, pad=0, name="coordinator-2026-11-04-f.md"):
+    def note(host=F, age_s=0.0, pad=0, name="coordinator-2026-11-04-f.md", text=None):
         d = brain_home / "handover"
         d.mkdir(parents=True, exist_ok=True)
         f = d / name
-        f.write_text(f"# Hand-over: coordinator F\n{'x' * pad}\nCoordinator F is `{host}`.\n", encoding="utf-8")
+        f.write_text(text if text is not None else
+                     f"# Hand-over: coordinator F\n{'x' * pad}\nCoordinator F is `{host}`.\n", encoding="utf-8")
         t = time.time() - age_s
         os.utime(f, (t, t))
         return f
@@ -134,18 +135,18 @@ def test_on_for_its_successor_at_its_handover_passes(lab):
 
 
 def test_on_is_refused_without_a_hand_over_note(lab):
-    refused(lab, call(lab, G, True), f"no hand-over note naming {F} in handover/ written in the last 6 h")
+    refused(lab, call(lab, G, True), f"no hand-over note of {F} (its first app id) in handover/ written in the last 6 h")
 
 
 @pytest.mark.parametrize("kw", [{"age_s": 7 * 3600}, {"host": G}, {"pad": guards.HANDOVER_HEAD},
                                 {"name": "coordinator-f.txt"}])
 def test_an_old_or_someone_elses_note_does_not_count(lab, kw):
     lab.note(**kw)
-    refused(lab, call(lab, G, True), "no hand-over note naming")
+    refused(lab, call(lab, G, True), f"no hand-over note of {F}")
 
 
 @pytest.mark.parametrize("target,why", [
-    (K, f"{K} is not a Brain coordinator (its name or title), so not a successor"),
+    (K, f"{K} is not a Brain coordinator (the name this session gave it), so not a successor"),
     (X, f"{X} was not started by this session"),
     ("self", "a session never turns its own Remote Control on"),
     (F, "a session never turns its own Remote Control on"),
@@ -161,25 +162,26 @@ def test_on_for_an_archived_successor_is_refused(lab):
     refused(lab, call(lab, G, True), f"{G} is archived")
 
 
-def test_only_a_coordinator_hands_over(lab):
+def test_only_a_coordinator_hands_over(lab, monkeypatch):
     """K is not a coordinator: a child it names coordinator-k gets no Remote Control from it."""
     q = "local_88888888-0000-4000-8000-888888888888"
-    CLI[q] = "88888888-cli0-4000-8000-000000000000"
+    monkeypatch.setitem(CLI, q, "88888888-cli0-4000-8000-000000000000")
     lab.put(q, parent=K, name="coordinator-k")
     lab.turn(q, "idle")
     lab.note(host=K)
     refused(lab, call(lab, q, True, caller=K), "this session is not a Brain coordinator")
 
 
-def test_a_coordinator_named_by_a_session_that_is_none_does_not_hand_over(lab):
+def test_a_coordinator_named_by_a_session_that_is_none_does_not_hand_over(lab, monkeypatch):
     """K (no coordinator) starts C named coordinator-c: C's own successor gets nothing (two hops, one check)."""
     c, d = "local_12121212-0000-4000-8000-121212121212", "local_34343434-0000-4000-8000-343434343434"
-    CLI[c], CLI[d] = "12121212-cli0-4000-8000-000000000000", "34343434-cli0-4000-8000-000000000000"
+    monkeypatch.setitem(CLI, c, "12121212-cli0-4000-8000-000000000000")
+    monkeypatch.setitem(CLI, d, "34343434-cli0-4000-8000-000000000000")
     lab.put(c, parent=K, name="coordinator-c")
     lab.put(d, parent=c, name="coordinator-d")
     lab.turn(d, "idle")
     lab.note(host=c)
-    refused(lab, call(lab, d, True, caller=c), "this session was not started by a Brain coordinator, nor by the owner")
+    refused(lab, call(lab, d, True, caller=c), "this session was not started by a Brain coordinator")
 
 
 def test_a_title_that_mentions_a_coordinator_is_no_coordinator(lab):
@@ -194,16 +196,19 @@ def test_off_on_itself_at_its_handover_passes(lab):
     lab.note()
     for target in ("self", F):
         assert decide(call(lab, target, False)) is None
-    assert {(r["decision"], r["case"]) for r in rows(lab)} == {("allowed", "handover-off")}
+    got = rows(lab)
+    assert len(got) == 2 and {(r["decision"], r["case"]) for r in got} == {("allowed", "handover-off")}
+    assert [r["what"]["session_id"] for r in got] == ["self", F] and G in got[0]["reason"]
 
 
 def test_off_on_itself_without_a_note_is_refused(lab):
-    refused(lab, call(lab, "self", False), "no hand-over note naming")
+    refused(lab, call(lab, "self", False), f"no hand-over note of {F}")
 
 
 @pytest.mark.parametrize("change", [{"detached": None}, {"detached": False}, {"archived": True, "detached": True}])
 def test_off_on_itself_needs_a_live_detached_successor(lab, change):
     lab.note()
+    lab.put(K, parent=F, name="rc-guard", detached=True)   # a detached child that is no coordinator does not count
     lab.put(G, parent=F, name="coordinator-g", title="Coordination du Brain — coordinateur G", **change)
     refused(lab, call(lab, "self", False), "it has started no live coordinator to succeed it, detached")
 
@@ -261,9 +266,116 @@ def test_an_error_is_a_refusal_never_a_pass(lab, monkeypatch):
     def broken():
         raise OSError("disk")
     monkeypatch.setattr(sessions, "app_index", broken)
-    refused(lab, call(lab, G, True), "the session tree could not be read")
+    refused(lab, call(lab, G, True), "the session tree or the ledger could not be read")
 
 
 def test_the_override_still_lifts_nothing(lab, monkeypatch):
     monkeypatch.setenv(guards.ALLOW_ENV, "all")
     refused(lab, call(lab, R, False), f"{R} is running, not finished")
+
+
+# --- the review's findings (RETRO-1/2/9) ---
+
+def test_a_successor_unknown_on_this_machine_does_not_count(lab, tmp_path):
+    lab.note()
+    (tmp_path / "claude-config" / "projects" / "E--lab" / f"{CLI[G]}.jsonl").unlink()
+    refused(lab, call(lab, "self", False), "it has started no live coordinator to succeed it, detached")
+    refused(lab, call(lab, G, True), f"{G} is unknown")
+
+
+@pytest.mark.parametrize("kw", [
+    {"age_s": -3600},                                                   # written in the future
+    {"age_s": guards.HANDOVER_NOTE_S + 60},                             # just too old
+    {"pad": guards.HANDOVER_MAX},                                       # too big to read
+    {"text": f"# Hand-over\nCoordinator F is `x{F}`.\n"},               # a longer token, not the id
+    {"text": f"# Hand-over\nCoordinator F is `{F}-extra`.\n"},
+    {"text": f"# Hand-over: coordinator G\nG is `{G}`, started by coordinator F (`{F}`).\n"},   # G's own note
+])
+def test_a_note_that_is_not_the_callers_own_does_not_count(lab, kw):
+    lab.note(**kw)
+    refused(lab, call(lab, G, True), f"no hand-over note of {F}")
+
+
+def test_a_note_just_inside_the_window_counts(lab):
+    lab.note(age_s=guards.HANDOVER_NOTE_S - 60)
+    assert decide(call(lab, G, True)) is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need a privilege on Windows")
+def test_a_linked_note_does_not_count(lab, tmp_path):
+    real = tmp_path / "elsewhere.md"
+    real.write_text(f"# Hand-over\nCoordinator F is `{F}`.\n", encoding="utf-8")
+    (lab.home / "handover").mkdir(parents=True, exist_ok=True)
+    (lab.home / "handover" / "coordinator-f.md").symlink_to(real)
+    refused(lab, call(lab, G, True), f"no hand-over note of {F}")
+
+
+def test_a_title_never_makes_a_coordinator(lab, monkeypatch):
+    """A session can retitle itself (set_session_title): K titled « Coordination du Brain » is still K."""
+    lab.put(K, parent=F, name="rc-guard", title="Coordination du Brain — coordinateur K")
+    q = "local_56565656-0000-4000-8000-565656565656"
+    monkeypatch.setitem(CLI, q, "56565656-cli0-4000-8000-000000000000")
+    lab.put(q, parent=K, name="coordinator-q")
+    lab.turn(q, "idle")
+    lab.note(host=K)
+    refused(lab, call(lab, q, True, caller=K), "this session is not a Brain coordinator")
+    lab.note()   # nor does a title make F's successor
+    lab.put(K, parent=F, name="rc-guard", title="Coordination du Brain — coordinateur K", detached=True)
+    lab.put(G, parent=F, name="coordinator-g", detached=False)
+    refused(lab, call(lab, K, True), f"{K} is not a Brain coordinator")
+    refused(lab, call(lab, "self", False), "it has started no live coordinator")
+    refused(lab, call(lab, K, False), f"{K} is a live coordinator")   # but it protects one from the archive case
+
+
+@pytest.mark.parametrize("name", ["coordinator-report", "coordination-notes", "coordinator", "coordinator-gg-2"])
+def test_a_name_that_only_starts_like_a_coordinator_is_none(lab, name):
+    lab.note()
+    lab.put(K, parent=F, name=name, title="A child")
+    refused(lab, call(lab, K, True), f"{K} is not a Brain coordinator")
+    assert decide(call(lab, K, False)) is None   # and it is archived like any finished child
+
+
+def test_a_coordinator_started_by_no_one_does_not_hand_over(lab):
+    """No parent in the app's file is no proof the owner started it: the owner switches a root's Remote Control."""
+    f = next((lab.cwd / "appdata").rglob(f"{F}.json"))
+    data = json.loads(f.read_text(encoding="utf-8"))
+    data["spawnedFrom"] = {"name": "coordinator-f", "taskId": "task_1"}   # a name, but no parent's id
+    f.write_text(json.dumps(data), encoding="utf-8")
+    lab.note()
+    refused(lab, call(lab, G, True), "this session was not started by a Brain coordinator")
+
+
+def test_an_ambiguous_caller_or_target_is_refused(lab, tmp_path):
+    lab.note()
+    lab.put(Z, title="A twin", cli=CLI[F])   # two app files with F's transcript
+    refused(lab, call(lab, G, True), "this session is not in the desktop app's session files")
+    lab.put(Z, title="Coordination du Brain — coordinateur D", archived=True)
+    other = tmp_path / "appdata" / "Claude-Data" / "claude_u" / "claude-code-sessions" / "acct" / "org"
+    other.mkdir(parents=True)
+    src = tmp_path / "appdata" / "Claude-Data" / "claude_t" / "claude-code-sessions" / "acct" / "org" / f"{G}.json"
+    (other / f"{G}.json").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")   # G in two accounts
+    refused(lab, call(lab, G, True), f'"{G}" is not in the desktop app\'s session files')
+
+
+def test_a_pass_the_ledger_does_not_take_is_refused(lab, monkeypatch):
+    lab.note()
+    monkeypatch.setenv("BRAIN_CAPTURE", "0")
+    refused(lab, call(lab, G, True), "the pass could not be logged in the guards ledger")
+
+
+def test_another_servers_tool_gets_no_exception(lab):
+    lab.note()
+    p = call(lab, G, True)
+    p["tool_name"] = "mcp__other__set_remote_control"
+    reason = decide(p)
+    assert reason and "security-settings is Ada's alone" in reason and "three exceptions" not in reason
+
+
+@pytest.mark.parametrize("tool", [RC, "mcp__ccd_session_mgmt__set_session_permission_mode"])
+def test_an_error_in_the_guard_fails_closed_for_security_settings(lab, monkeypatch, tool):
+    def broken(*args, **kwargs):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(guards, "check_owner", broken)
+    monkeypatch.setattr(guards, "remote_control", lambda payload: (None, "x"))
+    reason = decide(call(lab, R, False, tool=tool, mode="plan"))
+    assert reason and "the guard failed, so it refuses" in reason

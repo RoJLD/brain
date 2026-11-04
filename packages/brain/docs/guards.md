@@ -2,7 +2,7 @@
 
 Two PreToolUse hooks of the engine's Claude Code plugin keep the owner's say over how sessions run. Both are scripts,
 not rules: they decide before the call, at zero token, and never break a session (an error lets the call through and
-goes to `<BRAIN_HOME>/ledger/errors.log`).
+goes to `<BRAIN_HOME>/ledger/errors.log`, but for a session's Remote Control or permission mode, where it refuses).
 
 | Hook | Tools | Decides |
 |---|---|---|
@@ -38,36 +38,48 @@ lift it, not even `all`. Refusals are in `<BRAIN_HOME>/ledger/guards-<month>.jso
 ### Remote Control's three exceptions
 
 The owner decided three cases where a session switches Remote Control itself (wi-brain-guard-rc-archive, the ADRs of
-2026-11-04 on archiving and on the coordinators' handover). `set_remote_control` passes in exactly these, checked by
-the guard (`brain.guards.remote_control`), and is refused otherwise, the reason saying which condition failed:
+2026-11-04 on archiving and on the coordinators' handover). `mcp__ccd_session_mgmt__set_remote_control` (the desktop
+app's own server; any other prefix gets the plain refusal) passes in exactly these, checked by the guard
+(`brain.guards.remote_control`), and is refused otherwise, the reason saying which condition failed:
 
 | Case | Call | The guard checks |
 |---|---|---|
-| `archive` | `enabled: false` on another session, just before archiving it | the caller started it; it is `idle` or `ended` (its transcript's tail); it is no live coordinator |
-| `handover-on` | `enabled: true` on another session | the caller is a Brain coordinator started by one (or by the owner); it started the target; the target is a coordinator, not archived; the caller's hand-over note exists |
-| `handover-off` | `enabled: false` on `self` (or its own id) | the caller is a coordinator started by one (or by the owner); its hand-over note exists; it started a coordinator that is detached and not archived |
+| `archive` | `enabled: false` on another session, just before archiving it | the caller started it; it is `idle` or `ended` (its transcript's tail); it is no live coordinator (by name or title) |
+| `handover-on` | `enabled: true` on another session | the caller is a coordinator started by a coordinator; it started the target; the target is a coordinator, live on this machine; the caller's hand-over note exists |
+| `handover-off` | `enabled: false` on `self` (or its own id) | the caller is a coordinator started by a coordinator; its hand-over note exists; it started a coordinator that is detached and live on this machine |
 
 What it reads, at zero token:
 
-- **Who is calling**: the desktop app's session file whose `cliSessionId` is the hook's `session_id`; when Claude
-  Code's environment gives the app id (`CLAUDE_CODE_HOST_SESSION_ID`), the two must agree.
+- **Who is calling**: the one desktop app session file whose `cliSessionId` is the hook's `session_id`, read again at
+  the call and naming that same transcript; when Claude Code's environment gives the app id
+  (`CLAUDE_CODE_HOST_SESSION_ID`), the two must agree. A session whose file is in two account folders is refused.
 - **Who started whom**: the app's own files only (`spawnedFrom.sessionId`), read again at the call. The ledger's
   SessionStart events and the brief hash (what `brain sessions` adds) are not trusted here: any session can append to
-  the ledger, and the brief hash is a guess.
-- **A coordinator**: its name (`spawnedFrom.name`, given by the session that started it) starts with `coordinator-`,
-  `coordinateur-` or `coordination-`, or its title starts with « Coordination du Brain ». A title that only mentions a
-  coordinator is none.
+  the ledger, and the brief hash is a guess. A file without a parent's id is no proof the owner started it: a root
+  coordinator's Remote Control stays the owner's gesture.
+- **A coordinator**: its name, `spawnedFrom.name`, fixed by the session that started it: `coordinator-<x>` or
+  `coordinateur-<x>` (one to three letters or digits) or `coordination-du-brain[-…]`. Never its title, which a session
+  can change (`set_session_title`); a title starting « Coordination du Brain » only protects a live session from the
+  `archive` case. `coordinator-report` is no coordinator.
+- **Live on this machine**: `running`, `idle`, `asking` or `stale`; not archived, and not `unknown` (no transcript).
 - **Detached**: the app's `lineageDetached` (`brain.sessions` reads it as `detached`).
-- **The hand-over note**: a `*.md` in `<BRAIN_HOME>/handover/` written in the last 6 hours whose first 2,000
-  characters name the caller's full app id (`local_…`).
+- **The hand-over note**: a regular `*.md` file (no link) in `<BRAIN_HOME>/handover/`, at most 512 kB, written in the
+  last 6 hours (not in the future), whose first `local_…` id in its first 2,000 characters is the caller's: a note
+  opens with whose it is, so the successor's note, which names its predecessor after itself, is not the
+  predecessor's.
 
-Each allowed call is logged in the guards ledger with `"decision": "allowed"`, its `case` and its input. Anything the
-guard cannot read (no app files on the machine, a caller it cannot identify, an input of another shape, an error) is a
-refusal. Not checked, because a hook cannot see it: that an `archive_session` follows the `archive` case, and whether
-the target's PRs are merged and its worktree clean (the first ADR's wording); the turn being idle stands for
-« finished ». `set_session_permission_mode` and the app's settings stay refused in every case. The inputs are files a
-session could write (the app's files, the notes): the guard holds against a mistake or a drifting session, and the app
-still asks the owner to approve each switch unless its permission mode decides.
+Each allowed call is logged in the guards ledger with `"decision": "allowed"`, its `case` and its input; a pass the
+ledger does not take (no ledger, `BRAIN_CAPTURE=0`) is a refusal. Anything the guard cannot read (no app files on the
+machine, a caller it cannot identify, an input of another shape) is a refusal, and so is an error: for a session's
+security settings the guard fails closed, where every other guard lets the call through. Not checked, because a hook
+cannot see it: that an `archive_session` follows the `archive` case, and whether the target's PRs are merged and its
+worktree clean (the first ADR's wording); the turn being idle stands for « finished ». `set_session_permission_mode`
+and the app's settings stay refused in every case.
+
+What it does not hold against: its inputs are files a session can write. A session that writes into the app's
+session files, or a note naming itself, is tampering, not drifting; the guard holds against a mistake, and the app
+still asks the owner to approve each switch unless its permission mode decides. The note is the handover's
+procedural mark (the ADR's « une fois sa note écrite »), not a credential.
 
 ## The third-party guard
 
