@@ -4,7 +4,7 @@ and uncommitted changes, a branch without a worktree, and a graph whose items na
 import shutil
 
 import pytest
-from conftest import FIXTURES, GIT_ENV, run_git
+from conftest import FIXTURES, GIT_ENV, git_init, run_git
 
 from brain import brief, cli, collisions, config, projects
 
@@ -51,13 +51,13 @@ def project(tmp_path, monkeypatch):
     for k, v in GIT_ENV.items():
         monkeypatch.setenv(k, v)
     origin = tmp_path / "origin.git"
-    run_git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    git_init(origin, bare=True)
     main = tmp_path / "main"
     (main / "notes" / "graph" / "nodes").mkdir(parents=True)
     (main / "notes" / "graph" / "edges").mkdir(parents=True)
     (main / "src").mkdir()
     (main / "docs").mkdir()
-    run_git(tmp_path, "init", "-q", "-b", "main", str(main))
+    git_init(main)
     run_git(main, "config", "commit.gpgsign", "false")
     (main / "notes" / "graph" / "schema.yaml").write_text("owner: Ada\n", encoding="utf-8")
     (main / "notes" / "graph" / "nodes" / "work.yaml").write_text(NODES, encoding="utf-8")

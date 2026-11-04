@@ -7,7 +7,7 @@ import sys
 import time
 
 import pytest
-from conftest import GIT_ENV, run_git
+from conftest import GIT_ENV, git_init, run_git
 
 from brain import cli, projects, tidy
 
@@ -20,10 +20,10 @@ def repo(tmp_path, monkeypatch):
     for k, v in GIT_ENV.items():
         monkeypatch.setenv(k, v)
     origin = tmp_path / "origin.git"
-    run_git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    git_init(origin, bare=True)
     main = tmp_path / "main"
     main.mkdir()
-    run_git(main, "init", "-q", "-b", "main")
+    git_init(main)
     run_git(main, "config", "commit.gpgsign", "false")
     (main / "a.txt").write_text("a\n", encoding="utf-8")
     run_git(main, "add", "-A")
@@ -309,6 +309,6 @@ def test_a_repo_without_a_default_branch_is_reported(tmp_path, monkeypatch):
         pytest.skip("git not available")
     bare = tmp_path / "r"
     bare.mkdir()
-    run_git(bare, "init", "-q", "-b", "trunk")
+    git_init(bare, "trunk")
     rp = tidy.plan_repo("x", "r", bare, False)
     assert rp.error.startswith("no default branch") and tidy.render(rp)[0].endswith(rp.error)

@@ -17,7 +17,8 @@ dependencies = ["pyyaml>=6", "research-graph @ git+https://github.com/RoJLD/brai
 dynamic = ["version"]
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+# pytest-xdist: the suite runs in parallel (pytest -n auto), each worker with its own temp folders and BRAIN_HOME
+test = ["pytest>=8", "pytest-xdist>=3.5"]
 # brain tui's Textual app (the cockpit); without it brain tui draws its text view
 tui = ["textual>=1.0"]
 
@@ -38,3 +39,5 @@ brain = ["schemas/*.json", "tiers.yaml", "compose/*/*", "procedures/*/*", "templ
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-p no:cacheprovider"
+# docker: calls the real docker client, flaky on a busy runner; the CI runs it apart, on one process, after the rest
+markers = ["docker: calls the real docker client (the CI runs these apart: -m docker)"]

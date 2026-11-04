@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 
-from conftest import run_git
+from conftest import git_init, run_git
 
 from brain import actions, schema
 
@@ -52,7 +52,7 @@ def test_push_needs_evidence(git_repo, tmp_path):
     assert actions.from_tool_call("git push", git_repo, {"stderr": "Everything up-to-date"}, META) == []
     # quiet push: the remote-tracking ref equals the local branch
     remote = tmp_path / "remote.git"
-    run_git(tmp_path, "init", "-q", "--bare", str(remote))
+    git_init(remote, bare=True)
     run_git(git_repo, "remote", "add", "origin", str(remote))
     run_git(git_repo, "push", "-q", "-u", "origin", "main")
     (quiet,) = actions.from_tool_call("git push -q -u origin main", git_repo, {"stdout": ""}, META)

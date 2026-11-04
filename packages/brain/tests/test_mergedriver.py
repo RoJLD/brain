@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import GIT_ENV, run_git
+from conftest import GIT_ENV, git_init, run_git
 
 from brain import cli, mergedriver as md
 
@@ -213,7 +213,7 @@ def repo(tmp_path, monkeypatch):
     r = tmp_path / "brain"
     (r / "notes" / "graph" / "nodes").mkdir(parents=True)
     (r / "notes" / "graph" / "edges").mkdir(parents=True)
-    run_git(tmp_path, "init", "-q", "-b", "main", str(r))
+    git_init(r)
     run_git(r, "config", "commit.gpgsign", "false")
     run_git(r, "config", "core.autocrlf", "false")
     (r / ".gitattributes").write_text(md.ATTRIBUTES, encoding="utf-8")

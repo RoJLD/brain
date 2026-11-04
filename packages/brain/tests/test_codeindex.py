@@ -8,7 +8,7 @@ import threading
 import pytest
 
 from brain import cli, codeindex, stacks
-from conftest import run_git
+from conftest import git_init, run_git
 
 REGISTRY = """\
 infra:
@@ -34,7 +34,7 @@ def repos(tmp_path, monkeypatch):
     for name in ("alpha", "beta"):
         r = tmp_path / name
         r.mkdir()
-        run_git(r, "init", "-q", "-b", "main")
+        git_init(r)
         run_git(r, "config", "commit.gpgsign", "false")
         (r / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
         run_git(r, "add", "-A")

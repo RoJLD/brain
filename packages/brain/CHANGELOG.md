@@ -136,6 +136,18 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   doubled backslash that writes a file or feeds an interpreter gets a warning in the session's context (never a
   refusal), recorded in the guards ledger as `heredoc:backslash`. `docs/guards.md`, `docs/merge-driver.md`; the
   close-item procedure names `brain merge-check` after a merge of the base.
+- **The tests run in parallel** (wi-brain-test-speed, TEST-1). `pytest packages/brain -n auto` (pytest-xdist, now in
+  the `test` extra) runs one worker per core; the CI's Windows and Linux jobs do. A test's git repository is a copy of
+  a template made once per worker (`conftest.git_init`, behind the `git_repo` and `make_repo` fixtures and every test
+  that ran `git init`): 24 ms instead of 329 ms on Windows (47 ms instead of 580 ms for `git_repo`, which copies its
+  committed template); the branches guard's tests copy their two repositories, made once per module (84 s to 14 s).
+  The test that calls the real docker client is marked `docker` and runs apart, on one process (`-m docker`).
+  Measured: on a 16-core Windows machine, 885 s on one process to 165-183 s with `-n auto`; on the CI's Windows
+  runners (4 workers), 386-391 s to 173-191 s; on its Linux runner, 42 s to 34 s.
+- `brain bundle`'s `docker compose config` no longer crashes when docker compose, killed at its timeout, leaves a
+  child holding its scratch folder on Windows (Python 3.10's `TemporaryDirectory` recursed until `RecursionError`):
+  docker compose runs from outside the folder (the file given with `-f`), the folder goes by `shutil.rmtree` with its
+  errors ignored, and the problem is said (« no answer »).
 
 ## 0.2.4 — 2026-11-03
 
