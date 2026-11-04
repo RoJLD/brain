@@ -17,6 +17,10 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
     not merged yet is left captured and said (« not on the default branch yet »), the batch's other answers are
     recorded, and a DDR whose id merely contains the captured one is no longer answered in its place
     (`decisions.find(..., exact=True)`; #19).
+- **Coverage in the CI** (wi-brain-test-coverage). The `brain` job on Windows, Python 3.12, runs the suite from
+  `packages/brain` with `--cov=src --cov-context=test` and keeps the data file as the artifact `coverage-data`, which
+  `brain coverage --from coverage.data --cwd packages/brain` reads (`relative_files = true` in packages/brain's
+  pyproject.toml; `pytest-cov` joins the test extras). It never fails on a threshold. Docs: `docs/tests-graph.md`.
 
 - **The schedules** (wi-brain-alerts-pass). The registry's new `schedules:` key, `{name: {command, every, at,
   at_logon, machines, timeout, enabled}}`, declares the brain commands a machine's scheduler runs, the alerts pass

@@ -4,3 +4,7 @@ __pycache__/
 build/
 dist/
 .venv/
+# coverage data (pytest-cov; the CI keeps packages/brain/coverage.data as an artifact)
+.coverage
+.coverage.*
+coverage.data
