@@ -27,7 +27,13 @@ any edge from a CodeRef, so the code of a CodeRef counts for the nodes implement
   from the repo's root or from the doc's own folder); every section of a doc inside a Plugin's or a Skill's folder
   documents it; never from a Spec to its own sections.
 - tested_by: from a node with code (a Hook's scripts, the files of its CodeRefs) to each Test module that covers that
-  code, with brain audit's evidence (so a hook's .sh that no test runs has none, as test.script says).
+  code, with brain audit's evidence (so a hook's .sh that no test runs has none, as test.script says), and to each
+  Python test that imports the module itself (``import``, ``from ... import``, ``-m``: the test's own statements, not
+  their closure; wi-brain-test-links-auto). A CodeRef of a symbol (``path::name``) keeps, of its file's tests, those
+  that name it (the symbol as a word, or each of its words, a cmd_ prefix left out: main(["record", "ddr"]) for
+  cmd_record_ddr); when the store keeps a coverage summary of the repo (``coverage/<repo>.json``, brain coverage,
+  brain.testcov), those its test contexts saw run the symbol, and those that name it outright. A whole file keeps
+  every test of its file: a test that runs it only through another module (audit runs inventory) is not its test.
 
 The project's other repos: a store's CodeRefs may name another registered repo of its project (code:<repo>:...), an
 engine whose code the store describes, say. ``brain sync`` also derives that repo's Doc, Test and Workflow nodes,
@@ -51,7 +57,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import graph, inventory
+from . import graph, inventory, testcov
 
 GENERATED = "_generated_links.yaml"
 TYPES = ("Doc", "Test", "Workflow")
@@ -188,6 +194,7 @@ def _folder_named(folder: str, text: str) -> bool:
 class Code:
     files: set = field(default_factory=set)
     folders: set = field(default_factory=set)
+    symbols: dict = field(default_factory=dict)   # a file only symbol CodeRefs name -> those symbols
 
 
 def _anchor_file(node: dict) -> str:
@@ -221,13 +228,36 @@ def hook_scripts(tree: inventory.Tree, node: dict) -> set[str]:
     return named or (scripts if len(scripts) == 1 else set())
 
 
+def code_ref_target(tree: inventory.Tree, repo: str, cid: str) -> tuple[str, str]:
+    """(file, symbol) of a CodeRef of this repo (src/<path>, else <path>; symbol '' for a whole file), ('', '') for
+    another repo's or a malformed id."""
+    try:
+        r, path, sym = inventory.parse_code_ref(cid)
+    except ValueError:
+        return "", ""
+    if r.lower() != repo.lower():
+        return "", ""
+    return (f"src/{path}" if tree.has(f"src/{path}") else path), sym
+
+
 def code_ref_file(tree: inventory.Tree, repo: str, cid: str) -> str:
     """The file of a CodeRef of this repo (src/<path>, else <path>), '' for another repo's or a malformed id."""
-    try:
-        r, path, _ = inventory.parse_code_ref(cid)
-    except ValueError:
-        return ""
-    return (f"src/{path}" if tree.has(f"src/{path}") else path) if r.lower() == repo.lower() else ""
+    return code_ref_target(tree, repo, cid)[0]
+
+
+def refs_code(tree: inventory.Tree, repo: str, refs: set[str]) -> Code:
+    """The files of a node's CodeRefs of this repo; ``symbols``: a file only symbol CodeRefs name -> those symbols."""
+    out, whole = Code(), set()
+    for f, sym in (code_ref_target(tree, repo, r) for r in refs):
+        if not f:
+            continue
+        out.files.add(f)
+        if sym:
+            out.symbols.setdefault(f, set()).add(sym)
+        else:
+            whole.add(f)
+    out.symbols = {f: s for f, s in out.symbols.items() if f not in whole}
+    return out
 
 
 def node_code(tree: inventory.Tree, repo: str, node: dict, refs: set[str] = frozenset(),
@@ -239,7 +269,7 @@ def node_code(tree: inventory.Tree, repo: str, node: dict, refs: set[str] = froz
     hooks/<name> (the store's repo renders them from that repo's sources), and a Skill or a Plugin stands for nothing
     there."""
     t, af = node.get("type"), _anchor_file(node)
-    out = Code({f for f in (code_ref_file(tree, repo, r) for r in refs) if f})
+    out = refs_code(tree, repo, refs)
     if home is not None:
         if t == "Hook":
             out.files |= {f for s in hook_scripts(home, node) for f in resolve(tree, "hooks/" + s.rsplit("/", 1)[-1])}
@@ -296,6 +326,75 @@ def testpaths(tree: inventory.Tree) -> list[str]:
         if m:
             return [inventory._norm(x) for x in m.group(1).split()]
     return []
+
+
+RUN_M = re.compile(r"""(?:(?<![\w-])-m[ \t]+|["']-m["'][ \t]*,[ \t]*["']|run_module\([ \t]*["'])"""
+                   r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
+
+
+def _module(dotted: str, idx: inventory.Index) -> str:
+    """The longest prefix of a dotted name that is a module of the index ('' when none)."""
+    parts = dotted.split(".")
+    return next((".".join(parts[:k]) for k in range(len(parts), 0, -1) if ".".join(parts[:k]) in idx.modules), "")
+
+
+def imports_of(rf: inventory.RepoFacts, idx: inventory.Index | None) -> dict[str, set]:
+    """Module path -> the Python tests that import it (their own import statements, fixtures left out: ``import
+    p.m``, ``from p import m``, ``from p.m import x``) or run it (``-m p.m``, ``"-m", "p.m"``, ``run_module("p.m")``);
+    not their closure, and not a dotted name a string or a comment holds."""
+    out: dict[str, set] = {}
+    if rf.evidence is None or idx is None:
+        return out
+    for t, (imps, _, _) in rf.evidence.per_test.items():
+        mods = set()
+        for mod, names in imps:
+            explicit = [f"{mod}.{n}" for n in names if f"{mod}.{n}" in idx.modules]
+            mods.update(explicit or [_module(mod, idx)])
+        mods.update(_module(m, idx) for m in RUN_M.findall(inventory.without_fixtures(rf.tree.text(t) or "")))
+        for d in mods - {""}:
+            repo, path = idx.modules[d]
+            if repo == rf.name:
+                out.setdefault(path, set()).add(t)
+    return out
+
+
+def names_symbol(rf: inventory.RepoFacts, test: str, symbols: set[str], exact: bool = False) -> bool:
+    """A test of a file counts for a CodeRef of one of its symbols when its text names the symbol (its last part, as
+    a word, any case) or, unless ``exact``, each word of it, a cmd_ prefix (a subcommand's handler) left out:
+    main(["record", "ddr"]) for cmd_record_ddr, a "production" path for check_production. A test that is not Python
+    passes: what runs the file runs its symbols."""
+    per = rf.evidence.per_test.get(test) if rf.evidence is not None else None
+    if per is None:
+        return True
+    words = per[2] | {w for x in per[2] for w in re.split(r"[_-]+", x) if w}
+    for sym in symbols:
+        last = sym.rsplit(".", 1)[-1].lower()
+        parts = [w for w in last.split("_") if w]
+        if last in words or not exact and all(w in words for w in parts[parts[:1] == ["cmd"]:]):
+            return True
+    return False
+
+
+def code_tests(rf: inventory.RepoFacts, c: Code, tests_of: dict, imported: dict, cov: dict | None) -> set[str]:
+    """The test modules of a node's code: per file, brain audit's evidence and the tests that import it. A symbol
+    CodeRef keeps those that name it; when the coverage summary knows the symbol (it measured it, with test contexts),
+    those of its tests the contexts saw run it, those that name it outright, and those the summary never saw (added
+    since), by the names rule. A symbol the summary does not know (added or renamed since) keeps the names rule."""
+    got: set[str] = set()
+    seen = set((cov or {}).get("test_modules") or ())
+    for p in c.files:
+        ts = tests_of.get(p, set()) | imported.get(p, set())
+        if p not in c.symbols:
+            got |= ts
+            continue
+        for sym in c.symbols[p]:
+            if not testcov.known(cov, p, sym):
+                got |= {t for t in ts if names_symbol(rf, t, {sym})}
+                continue
+            ran = testcov.ran(cov, p, sym)
+            got |= {t for t in ts if t in ran or names_symbol(rf, t, {sym}, exact=True)
+                    or (t not in seen and names_symbol(rf, t, {sym}))}
+    return got
 
 
 def script_tests(u: inventory.Unit, rf: inventory.RepoFacts, idx: inventory.Index, mod_ev: dict) -> set[str]:
@@ -428,6 +527,7 @@ def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inve
     # tests
     covers: dict[str, set] = {t: set() for t in rf.tests}
     tests_of: dict[str, set] = {}
+    imported = imports_of(rf, idx)
     for u in rf.units:
         if u.kind == "module":
             via, ts = mod_ev.get(u.path, ("", []))
@@ -476,8 +576,9 @@ def derive(tree: inventory.Tree, repo: str, store: str = "notes/graph", rf: inve
         if up:
             edge(f"test:{repo}:{f}", f"test:{repo}:{up}", "part_of")
     tested: set[str] = set()
+    cov = testcov.load(home if home is not None else tree, store, repo)
     for nid, c in code.items():
-        for t in sorted(set().union(*(tests_of.get(p, set()) for p in c.files))):
+        for t in sorted(code_tests(rf, c, tests_of, imported, cov)):
             if t in tests:
                 edge(nid, tests[t], "tested_by")
                 tested.add(tests[t])

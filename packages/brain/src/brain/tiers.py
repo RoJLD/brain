@@ -1,5 +1,5 @@
 """The tier registry and the profiles: Lite, Défaut, Recommandé, Personnalisable (wi-brain-tier-registry,
-wi-brain-profile; docs/specs/2026-11-02-lite-tiers-adapters-plane-brainstorm.md §3.3, §3.4).
+wi-brain-profile).
 
 Every capability of the engine (``tiers.yaml`` next to this module) and every stack of projects.yaml declares its
 class (core, extra, service), the profile that brings it in (lite, default, recommended, custom), what it provides,

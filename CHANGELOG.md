@@ -8,6 +8,12 @@ The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `resea
 - `code_layer.symbol_span(tree, symbol)`: the kind, first and last line of a symbol as `find_symbol` finds it,
   decorators and body included (what a change to it touches; `brain impact` without GitNexus).
 
+- **Required props per node type.** A schema may say `required_props: {<type>: [prop, ...]}`: `check` (the loader,
+  overlays too) refuses a node of that type without each prop or with it empty (`node les-x: Lesson needs props
+  check`); `Schema.missing_props` says which. The store template (`research_graph init`) gains the `Lesson` type (layer
+  `lessons`, statuses open, enforced, resolved, regressed, archived; edges `learned_from`, `enforced_by`, `led_to`;
+  `trigger`, `anti_pattern` and `check` required), the brain command's lessons registry.
+
 ## 0.2.4 — 2026-11-03
 
 - **Fast YAML** (wi-brain-yaml-fast-load): `research_graph.yamlio`, the one helper of every load: `loads` parses

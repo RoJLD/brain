@@ -603,6 +603,7 @@ class RepoFacts:
     console: dict[str, str]          # console script (or package.json bin) -> its module, or its file for a bin
     root_of: dict[str, str] = field(default_factory=dict)   # module path -> its package root
     evidence: "Evidence | None" = None
+    reach: "Reach | None" = None     # the tests' import reach (unit_evidence sets both)
     no_entry: bool = False           # a production repo no declared entry reaches: every unit counted as prod
     bins: dict[str, str] = field(default_factory=dict)      # package.json bin -> that package.json
 
@@ -931,9 +932,9 @@ def script_evidence(u: Unit, ev: Evidence) -> tuple[str, list[str]]:
 
 def unit_evidence(rf: RepoFacts, idx: "Index", tops: set | None) -> dict[str, tuple[str, list[str]]]:
     """Module path -> (via, tests) for every module unit of a repo (module_evidence, with the repo's stems,
-    re-exports and import reach); sets ``rf.evidence``."""
+    re-exports and import reach); sets ``rf.evidence`` and ``rf.reach``."""
     ev = rf.evidence = evidence(rf.tree, rf.tests, tops)
-    reach = tests_reach(rf, ev, idx)
+    reach = rf.reach = tests_reach(rf, ev, idx)
     mods = [u for u in rf.units if u.kind == "module"]
     stems: dict[str, int] = {}
     for u in mods:

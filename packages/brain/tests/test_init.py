@@ -27,7 +27,7 @@ def fresh(tmp_path, monkeypatch, brain_home):
 def test_the_plan_writes_nothing(fresh, brain_home, capsys):
     assert cli.main(["init", str(fresh), "--owner", "Ada"]) == 0
     out = capsys.readouterr().out
-    assert "create   config.json" in out and "create   notes/graph (research_graph init --owner Ada, layers work, decisions, records)" in out
+    assert "create   config.json" in out and "create   notes/graph (research_graph init --owner Ada, layers work, decisions, records, lessons)" in out
     assert "create   source/packs.yaml" in out
     assert "render   .claude-plugin/marketplace.json (and plugins/brain-core/ with the engine's hooks" in out
     assert f"point    {paths.personal_file()}" in out and "(plan only: brain init --apply writes it)" in out
@@ -319,8 +319,8 @@ def test_a_template_starts_each_graph_it_declares(fresh, tmp_path, capsys):
                                                     "schema": "default"}]
     assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl), "--apply"]) == 0
     out = capsys.readouterr().out
-    assert "create   notes/graph (research_graph init --owner Ada, layers work, decisions, records)" in out
-    assert "create   research/graph (research_graph init --owner Ada, layers work, decisions, records)" in out
+    assert "create   notes/graph (research_graph init --owner Ada, layers work, decisions, records, lessons)" in out
+    assert "create   research/graph (research_graph init --owner Ada, layers work, decisions, records, lessons)" in out
     for store in ("notes/graph", "research/graph"):
         assert 'owner: "Ada"' in (fresh / store / "schema.yaml").read_text(encoding="utf-8"), store
 

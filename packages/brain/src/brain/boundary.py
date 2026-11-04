@@ -1,5 +1,5 @@
-"""The boundary between the public engine and the personal brain, file by file (wi-brain-personal-brain,
-docs/specs/2026-11-02-personal-brain-boundary-design.md §3): ``boundary.yaml`` at the repo's root and
+"""The boundary between the public engine and the personal brain, file by file (wi-brain-personal-brain):
+``boundary.yaml`` at the repo's root and
 ``brain boundary [--check] [--side S] [--readiness] [--json]``.
 
 Each tracked file (``git ls-files``) takes the side of the first rule whose glob matches (``**`` any folders, ``*``

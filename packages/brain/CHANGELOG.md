@@ -4,6 +4,25 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+- **Tests linked by their imports, and coverage measured** (wi-brain-test-links-auto, wi-brain-test-coverage;
+  TEST-1). `brain sync`'s `tested_by` edges now also go to every Python test that imports a node's module itself,
+  besides brain audit's strongest evidence; a CodeRef of a symbol (`path::name`) keeps only its file's tests that
+  name it (or each of its words, a `cmd_` prefix left out), or, once the store keeps a coverage summary, those whose
+  test contexts ran it. Measured on this engine's brain (main d28f77c): 1,522 edges become 584 by the static rules
+  (−1,026, most of which gave each `cli.py` subcommand's feature every CLI test; +88 from imports), 472 with the
+  coverage summary (+143, of which 138 ran the code by the contexts); 101 test modules linked instead of 99. New
+  `brain coverage [--repo R] --run [-n N] | --from DATA [--write] [--json]` (brain.testcov): the repo's pytest
+  suites run under pytest-cov with `--cov-context=test`, the checkout's code first on PYTHONPATH, reduced to
+  `<store>/coverage/<repo>.json` (statements, covered lines, and which test modules ran each function, read from the
+  data file's SQLite tables; this engine: 90.2 % of 32,296 statements, a 346 KB summary). `brain audit`
+  measures `test.coverage` (a module its tests run under 50 %, P2) and the new `feature.tests` (a have or partial
+  feature whose module or script no test covers, P2), both outside the scout (ruleset 4); FEATURES.md's Tests cell
+  gives each feature's coverage. A summary narrows only what it measured (version 2: every function of each file
+  and every test module a context named): a symbol or a test added since, an older or context-less summary, keep
+  the names rule; a data file without test contexts is refused, branch data is read from its arcs, the def and
+  decorator lines count for no test, the repo's `fail_under` is off for the measure, and the trend reads today's
+  summary. Docs: `docs/tests-graph.md`.
+
 - **The session tree** (wi-brain-session-tree; ST-1, ST-2, scale study gap 19). The SessionStart event records both
   ids, the transcript's (`CLAUDE_CODE_SESSION_ID`) and the desktop app's `local_` id (`CLAUDE_CODE_HOST_SESSION_ID`),
   and the parent, task and short name of the session's own app metadata file (`spawnedFrom`, a closed list of keys;
@@ -49,6 +68,67 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   for an assignment; a method through its class's HAS_METHOD edge) into `<BRAIN_HOME>/code-map/<project>.json`, with
   the coverage per repo (symbols with a CodeRef over all symbols, files with a CodeRef over the indexed files) and
   each CodeRef that does not resolve, with why. Exit 1 when GitNexus does not answer.
+- **The vault's recipients change safely** (wi-brain-vault-rotation, its first part).
+  - `brain vault recipient remove NAME`: a plan, then `--write`. It refuses to leave a store with fewer than two
+    distinct keys or with no recovery key, each store on its own (a tenant's or a scope's key does not stand for the
+    owner's stores), to remove the only recovery key, and to remove a recipient that `vault.tenants` or a scope still
+    names. The plan lists the sealed files the removed key still opens.
+  - `brain vault recipient add` refuses a declared name unless `--replace` is given (a rotation), and a key another
+    name already holds. `--replace` keeps the recipient's kind (a change of kind is refused), its `classes`, `why`
+    and host, and copies a new gpg key file even where the old one lies.
+  - The canary and the drill prove a key, not a name: a key replaced under the same name is « never sealed » and
+    « never drilled » until they run again (state.json keeps each proof's fingerprint; an older drill is tied once to
+    the key its canary held).
+  - `brain vault reseal [STORE...]`: the plan, then `--apply`. It seals again, to their store's current recipients,
+    the sealed files whose recipients changed: it opens each with this machine's device key (its previous one during a
+    rotation) or with the key the owner gives, seals it again with the same adapter, replaces the old copy, and records
+    `resealed` in the manifest (written atomically). It leaves a file as it is when its store would fall under its
+    floors, or would leave a recovery key for one never drilled; an unreadable manifest is that file's error.
+  - `brain vault device init --rotate` replaces this machine's key and keeps the previous one in the keystore
+    (`device-previous`), which still opens what was sealed to it; the name stays, and a failure puts the keystore back
+    as it was. `brain vault device forget-previous` deletes the previous key once config.json declares the new key, no
+    longer declares the old one, and nothing waits on a re-seal.
+  - `brain vault status` lists the files to re-seal and an unfinished rotation. `brain health vault` fails while a
+    removed or replaced key still opens a sealed file or a store has fewer than two distinct keys, and warns when a
+    new recipient cannot open one yet or a store is sealed to no recovery key.
+  - The runbook gains « Changing the recipients ».
+  - YubiKey recipients, each machine's canary seen from the others and post-quantum recipients stay for later.
+- **A test never reaches the real keystore or ~/.brain.** Under pytest, `keystore.backend()` refuses this machine's
+  keystore unless `BRAIN_TEST_KEYSTORE` asks for it, and `paths.brain_home()` refuses the default ~/.brain: on
+  2026-11-03 a test's `monkeypatch.undo()` dropped the conftest's settings and the rest of it rotated the owner's real
+  device key (restored the same day; nothing was lost).
+
+- **Lessons in the graph** (wi-brain-lessons-registry). A `Lesson` node type in `brain init`'s default schema (layer
+  `lessons`, statuses open, enforced, resolved, regressed, archived; edges `learned_from`, `enforced_by`, `led_to`;
+  its `trigger`, `anti_pattern` and `check` required). `brain lesson add|seen|list|rules` (also `brain lessons`):
+  `add` writes the node in `nodes/lessons.yaml` and refuses one close to a known lesson (mark it `seen`, or
+  `--new`); a lesson seen twice (once if severe) with no open fix, or recurring after its fix (regressed), files an
+  item proposal (`priority_proposed`) linked `led_to`, or links the open item whose title is close to it;
+  `brain lessons --follow` prints each lesson's lineage (learned from, led to, its PR, enforced by, recurred since
+  its fix) and the friction per item by week;
+  `brain lesson rules` indexes the iron rules (`Σ-NAME`, `Sigma-NAME`) of each registered repo's tracked Markdown,
+  read only. `brain lint lessons [--propose]`: the open lessons a script could check (guard candidates) and those
+  that say no `why_not_script`. `docs/lessons.md`.
+- **The retro at each close** (wi-brain-lessons-loop). `brain retro ITEM [--record --note ...]`: the friction
+  signals of the item's sessions (merges and conflicts, guard refusals from the guards ledger, failed test runs,
+  waits, tokens against the estimate, the owner's minutes, pushes to its PRs after opening from the action
+  records), the known lessons of the signals that fired and five questions; `--record` writes `props.retro` and
+  `props.retro_notes`. `brain retro --wave W`: a wave's deep retro. The close-item procedure gains the step (2b,
+  Retro), before the item is ticked and never stopping the close (`Retro: skipped (<why>)` when the store has no
+  Lesson type yet or the ledger does not know the item), and a `Retro:` line in its report.
+
+- **What the lessons asked for** (wi-brain-merge-stale-main, wi-brain-guard-public-commit,
+  wi-brain-guard-public-chain, wi-brain-guard-heredoc-backslash). `brain merge-check [--base REF] [--no-fetch]
+  [--worktree] [--path P] [--json]`: after a merge of main into a branch, a remote base fetched again and, against
+  the merge base of main and the branch before the merge, nothing main brought lost (its lines in the journals,
+  decision logs, edge files and CHANGELOGs, compared as content; the fields it changed on the graph's nodes; its
+  nodes, unless the branch removed them); exit 1 when behind or lost. The public guard gains its `commit` check: in
+  a checkout whose branch pushes to a public repo, a commit whose added lines hold a denied
+  term, an e-mail address, a home folder or a public.patterns match is refused at the commit, not at the push. Its
+  push refusal says to split a `brain check --public ... && git push` call. On Windows, a Bash heredoc holding a
+  doubled backslash that writes a file or feeds an interpreter gets a warning in the session's context (never a
+  refusal), recorded in the guards ledger as `heredoc:backslash`. `docs/guards.md`, `docs/merge-driver.md`; the
+  close-item procedure names `brain merge-check` after a merge of the base.
 - **The tests run in parallel** (wi-brain-test-speed, TEST-1). `pytest packages/brain -n auto` (pytest-xdist, now in
   the `test` extra) runs one worker per core; the CI's Windows and Linux jobs do. A test's git repository is a copy of
   a template made once per worker (`conftest.git_init`, behind the `git_repo` and `make_repo` fixtures and every test

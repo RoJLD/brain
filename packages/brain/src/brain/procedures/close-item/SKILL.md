@@ -9,7 +9,8 @@ argument-hint: "[item id, PR link or short description]"
 The owner's rule (their rules for every project): an item is done only when it is documented, tested, linked in the project's graph, merged and applied,
 ticked in the project's backlog, historised in its journal, its session archived and its worktree removed, and memory
 updated when a durable fact changed. Walk the steps below in order for the item in `$ARGUMENTS` (or the item this
-session worked on), check each one yourself, and do what is missing. Stop at the first step you cannot complete and say why.
+session worked on), check each one yourself, and do what is missing. Stop at the first step you cannot complete and
+say why; the retro (step 2b) never stops the close.
 
 ## 0. Read the project's own procedure first
 
@@ -41,12 +42,32 @@ a `Root cause:` line for a symptom fix, a `Justified: <unit>: <reason>` line for
 ## 2. Merged and applied
 
 - The PR is merged with `gh` after local verification (tests, linters), in dependency order for stacked branches,
-  with no AI attribution in its commits or body. Check: `gh pr view <n> --json state,mergedAt,mergeCommit`.
+  with no AI attribution in its commits or body. After merging the base into the branch, `brain merge-check` (where
+  the `brain` command serves the project) says whether the resolution lost a line or a node of a fresh base. Check: `gh pr view <n> --json state,mergedAt,mergeCommit`.
 - Applied: where the change runs somewhere (a production checkout, a scheduled task, an installed copy), that place
   is updated the project's way (for example `git pull --ff-only` in the production checkout, then the project's setup
   command) and checked on its next real run when there is one.
 - The owner decides repository visibility, new scheduled tasks or services, and anything touching money, keys or
   accounts: ask instead of applying those.
+
+## 2b. Retro, before the item is ticked
+
+The owner's lessons loop: a short retro at every item's close, made before step 3 ticks the item, so that a lesson
+seen again in the item that fixes it is not taken for a regression of that fix. The retro never stops the close: when
+one of its commands fails (the ledger does not know the item, the store's schema has no Lesson type yet), write
+`Retro: skipped (<why>)` in the report and go on to step 3.
+
+Where the `brain` command serves the project, run `brain [--project P] retro <id>`: it prints the friction signals of
+the sessions that served the item (merges and conflicts, guard refusals, failed tests, waits, tokens against the
+estimate, the owner's minutes, pushes to its PRs after they were opened) and the known lessons of the signals that
+fired. Answer its five questions in a few lines and record them on the item:
+`brain retro <id> --record --note "..." --note "..."`. Each new lesson becomes a node,
+`brain lesson add les-<project>-<slug> --title ... --trigger ... --anti-pattern ... --check ... --signal <signal>
+--from <id> --pr "<repo> #<n>"`, its signal the one it shows in (merges, guards, tests, waits, tokens, owner, rework),
+so a later retro lists it, and its check in backticks when a command can tell it happened again; a known one seen
+again is `brain lesson seen <les-id> --from <id>`. A lesson that recurs files its fix as an item proposal by itself, a
+script first, a rule last. A coordinator runs `brain retro --wave <W>` at each wave's end or hand-over, the deep
+retro. In the same PR as the backlog change.
 
 ## 3. Ticked in the backlog
 
@@ -82,4 +103,5 @@ what the repository or its history already records.
 ## Report
 
 End with one line per step - done, already done, not applicable (why) or blocked (what is missing) - a line
-`Scout: audit --diff exit N, M fixed, K deferred`, and the links: PR, journal entry, backlog item.
+`Scout: audit --diff exit N, M fixed, K deferred`, a line `Retro: friction N, lessons added or seen`
+(or `Retro: skipped (<why>)`), and the links: PR, journal entry, backlog item.
