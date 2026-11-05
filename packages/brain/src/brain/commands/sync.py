@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .. import skew
-from ._common import _store
+from ._common import _scope, _store
 from ._stores import _each_store, _sync_store
 
 ORDER = 110   # its place in brain --help's list of commands (brain.commands)
@@ -16,7 +16,8 @@ USAGE = """\
   brain sync [--all] [--offline]   the ready proposed specs turned active (brain spec activate --write), then
                         research_graph sync --write, the records' graph view, the decision queue view,
                         the links graph (Doc, Test and Workflow nodes, documented_in, tested_by and runs, brain.links),
-                        the features' statuses from merged PRs (gh; not with --offline) and FEATURES.md, kanban --write
+                        the features' statuses from merged PRs (gh; not with --offline) and FEATURES.md, kanban --write;
+                        at a root several projects share, each one's stores (the root's own passes are its owner's)
 """
 
 
@@ -25,6 +26,9 @@ def cmd_sync(args, root: Path) -> int:
         return 1
     if args.all:
         return _each_store(args, root, sync=True, check=False)
+    scope = _scope(args, root, root_shared=True)
+    if len(scope) > 1:   # projects that share this root: each one's views kept current
+        return _each_store(args, root, sync=True, check=False, written_on_main=True, scope=scope)
     return _sync_store(args, root, _store(args, root))
 
 

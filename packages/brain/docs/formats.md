@@ -50,7 +50,7 @@ tolerant tests set `BRAIN_STRICT=0`.
 | permissions.yaml | the brain's root | `v` | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
 | packs.yaml | `source/packs.yaml` | `v` | a note | refused |
 | template.yaml | a template's folder | `engine:` range | a note (in CI: refused) | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |
-| projects.yaml | the brain's root | none yet | a project key (`KEYS`) or a `repos:` key (`REPO_KEYS`): a note, kept | - |
+| projects.yaml | the brain's root | none yet | a project key (`KEYS`) or a `repos:` key (`REPO_KEYS`): a note, kept. `access` is a key that **narrows**: a brain that does not know it (0.2.5 and before) keeps the note and reads an `access: read` entry as a full project, at the registry's root with the default store, journal and decision log, so such an entry lands in a registry only once every machine runs brain 0.2.6 or later | - |
 
 AR lines are parsed one by one (`brain.records.parse_ar`): a line that is not a JSON object (a conflict marker, a
 truncated write, a byte that is not UTF-8) or that its schema refuses is an error of `brain record check`; a line a newer brain wrote (a higher

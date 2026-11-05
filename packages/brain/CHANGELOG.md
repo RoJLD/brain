@@ -10,6 +10,63 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `packs.yaml`, `projects.yaml` or a record now prints a note instead; CI (`CI` set) still fails on it. A `v` above 1
   in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
   update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
+- An entry `access: read` in `projects.yaml` needs brain 0.2.6 or later on every machine before it lands in a
+  registry: an older brain notes the unknown key and reads the entry as a full project, at the registry's root with
+  the default store, journal and decision log (`docs/formats.md`). A project that shares its root with another needs
+  the same: an older brain writes its board over its owner's.
+- A registry that lists two projects at one root now loads the second only once it declares its own `stores`,
+  `journal` and `decisions` (the defaults are the first's files): `brain check --all` says what to declare, and
+  `brain --project <it>` says why it is not loaded. A project whose second store sits beside its first (both under
+  `notes/`) has that store refused by `brain sync` until it gets a folder of its own: its board was written over the
+  first's.
+- A project's second store derived the ADR and SDR stubs of the root's decision logs, as its first store does (every
+  store ran with research_graph's defaults); it now covers no decision log (`--no-decisions`), and `brain sync`
+  empties its `_generated_decisions.yaml`. An edge of it to one of those stubs (an item of it `decided_by` an ADR of
+  `notes/decisions.md`) no longer resolves and fails `brain sync` and `brain check`, each naming it (« that ADR stub
+  is notes/graph's only »): before upgrading, move such an edge to the first store or remove it, and drop the
+  `shared_ids` waiver of the stub, which turns stale.
+
+- **Projects the brain reads and never writes** (wi-brain-read-only-projects). A registry entry may say `access: read`
+  (`write`, the default, is today's: the brain writes the project by PR; any other value is an error, « access is
+  read or write », and the entry is not loaded until it is one). Such an entry holds `title` and `access` only, the
+  shape of a tenant mount: `brain check --all` names every other key it holds (a root, a store, a ledger, a
+  production list, repos...), each a way to write or read into it. `projects.load` never returns one, so sync, check,
+  refresh, status, resume, audit, the queue, the cockpit and the guards (the registered repos, the production
+  checkouts) pass it by; `projects.get` refuses it (« `<name>` is read only: the brain reads it and never writes
+  it »), so does every `--project`; the neutral source refuses it as a rule file's `scope:` or a pack's `projects:`.
+  `projects.readonly` lists them; `brain projects` (and `--json`, key `access`) shows them, `brain status --all` and
+  the registry's check count them (« registry: 2 project(s), 2 store(s), ids unique; 2 read only »).
+- **Projects that share a root** (wi-brain-shared-root-projects). The first project registered at a root owns it
+  (`projects.for_root`, `classes.own_project` already read it so; now tested); each next one gets
+  `Project.shares_root_with`, spans no repo by default (`repos_of`), and gets its stores' passes only: research_graph
+  with its views beside its store and its own decision logs, its specs, its features' statuses, its module map. The
+  root's own passes stay the owner's: the records and their view, the decision queue and the defaults, the rendered
+  marketplace and AGENTS.md, the links graph and FEATURES.md, the public gate, the engine's skew, the session ids, the
+  hygiene line (the queue keeps the owner's name, whichever project asks). Such a project declares its own stores,
+  journal and decision log (the defaults are the owner's), none held by a project registered before it, its decision
+  logs inside the root; until it does it is not loaded, and `brain check --all` and `--project` say why (fail
+  closed: no command writes the owner's files through it; a file of any kind counts, a journal that is the owner's
+  decision log too), while the guards and the usage governor keep protecting it (`projects.guarded`: its production
+  checkouts stay refused to edits). A store whose views folder an earlier store at its root uses is refused by
+  `brain sync` (`projects.view_clashes`) and by the checks. The permissions of a project that spans no repo are its
+  root's settings, and its features' statuses come from the root's merged PRs. `brain audit --write` from it is
+  refused: `notes/audit.md` is the owner's. Without `--all` or `--project`, `brain sync`, `check` and `refresh` at
+  such a root cover every project registered there. Every store but a project's first at a root it owns gets
+  research_graph's new `--views` (its parent folder: `ops/graph` writes `ops/kanban_graph.md`) and its decision logs
+  (`--decisions`, the project's own from its first store, `--no-decisions` from another store): a project's second
+  store no longer writes its board over the first's, nor derives its ADR stubs (an edge of it to one of them is
+  named by `brain sync` and `brain check`). `--store` without `--project` runs as the project registered at the root
+  that lists that store, with its layout and its passes only (`projects.lister`): the store of a project that shares
+  the root never gets the owner's defaults. A store no project lists keeps research_graph's defaults, as before, and
+  `brain init` starts a template's later graphs beside their store. A project's `stores: []` holds its root's
+  `notes/graph`, which sync and check run for it (`projects.stores_of`), and a store listed twice is refused by
+  `brain check --all`. `brain audit --project` (and `--diff`) refuses a read-only, mounted or unloaded project with
+  the reason `--project` gives (`projects.unloaded`). The module map's view sits beside its store's board the same way (`notes/modules_graph.md` for the
+  first store, as before), and the resume pack names the project's own views. Nothing changes for a project's first
+  store at a root it owns.
+- **A scope's rules file may hold its front matter only** (`source/rules/scopes/<id>.md`: scope, title, intro), a
+  scope with no rule of its own yet. It renders nothing and locks nothing: `lock:` in it is refused. A file outside
+  `rules/scopes/` still needs a rule.
 
 - **Remote Control's three exceptions** (wi-brain-guard-rc-archive; the owner's ADRs of 2026-11-04). The
   session-settings guard lets the desktop app's `set_remote_control` through in exactly three cases, each checked

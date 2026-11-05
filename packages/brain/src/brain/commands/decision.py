@@ -53,10 +53,13 @@ def cmd_decision(args, root: Path) -> int:
                     raise SystemExit("brain: decision view --write takes one project (brain refresh --all writes "
                                      "every project's views)")
                 for p in _scope(args, root):
+                    if p.shares_root_with:   # the root's queue is its owner's, printed once
+                        continue
                     print(decisions.view(p.root, p.name) if p.root.is_dir() else f"# {p.name}: {p.root} not found\n",
                           end="")
                 return 0
-            name = _project(args, root).name
+            here = _project(args, root)
+            name = here.shares_root_with or here.name
             if args.write:
                 _queue_changed(root, args)
             else:
@@ -179,7 +182,8 @@ def cmd_answer_captured(args, root: Path) -> int:
 def cmd_defaulted(args, root: Path) -> int:
     """``brain decision defaulted``: the review list of the decisions taken by default (brain.defaults)."""
     now = args.at or _now()
-    scope = [p for p in _scope(args, root) if (p.root / records.RECORDS_DIR / "ddr").is_dir()]
+    scope = [p for p in _scope(args, root) if (p.root / records.RECORDS_DIR / "ddr").is_dir()
+             and not p.shares_root_with]   # the root's records are its owner's
     if args.seen is not None and answers.agent_session():
         raise decisions.QueueError(f"--seen is {config.name_of()}'s own note that they read the defaults: from their "
                                    "terminal or the cockpit, not an agent's session")

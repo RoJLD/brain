@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .. import public
-from ._common import _store, root_of
+from ._common import _scope, _store, root_of
 from ._stores import _check_store, _each_store, _merge_marks, _registry_scope, _registry_too, check_registry
 
 ORDER = 120   # its place in brain --help's list of commands (brain.commands)
@@ -21,7 +21,8 @@ USAGE = """\
                         project's, then the registry
                         (its keys, repos, stacks, code_index), the tier registry (every capability and stack declares
                         its class, profile, requirements, cost and fallback) and the ids, unique across every store of
-                        every project (an id shared on purpose is waived under shared_ids:)
+                        every project (an id shared on purpose is waived under shared_ids:); at a root several projects
+                        share, each one's stores (the root's own checks are its owner's)
   brain check --public [--repo DIR] [--remote NAME] [--history] [--engine] [--json]   before a push to a public repo
                         (config.json public.repos), at zero token: no denied term (public.deny), secret, e-mail or home
                         folder, data or sealed file, nor a domain's patterns (public.patterns, public.refuse) in the
@@ -35,6 +36,9 @@ def cmd_check(args, root: Path) -> int:
     _merge_marks(root, "brain refresh regenerates them")
     if args.all:
         return _each_store(args, root, sync=False, check=True)
+    scope = _scope(args, root, root_shared=True)
+    if len(scope) > 1:   # the projects that share this root
+        return _each_store(args, root, sync=False, check=True, scope=scope)
     rc = _check_store(args, root, _store(args, root))
     if _registry_too(args, root):   # a brain's own root: its own data too, as refresh checks it
         print("== registry")

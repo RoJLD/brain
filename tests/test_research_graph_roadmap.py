@@ -73,3 +73,16 @@ def test_kanban_write_regenerates_both_views_and_check_flags_a_stale_roadmap(sto
     assert main(args + ["roadmap", "--write", "--out", str(tmp_path / "r.md")]) == 0
     assert main(args + ["roadmap", "--markdown"]) == 0
     assert capsys.readouterr().out.endswith(render_roadmap(load_store(store)))
+
+
+def test_roadmap_write_goes_to_the_views_folder(store, tmp_path, capsys):
+    repo = tmp_path / "out"
+    args = ["--store", str(store), "--repo-root", str(repo), "--views", "prog"]
+    assert main(args + ["roadmap", "--write"]) == 0
+    view = repo / "prog" / "roadmap_graph.md"
+    assert view.read_text(encoding="utf-8") == render_roadmap(load_store(store))
+    assert roadmap_stale(load_store(store), repo, views="prog") == [] and not (repo / DEFAULT_OUT).exists()
+    view.write_text(MARKER + " old -->\n", encoding="utf-8")
+    assert roadmap_stale(load_store(store), repo, views="prog") == [
+        "prog/roadmap_graph.md is stale: run `research_graph kanban --write`"]
+    assert roadmap_stale(load_store(store), repo) == []  # the default folder holds none

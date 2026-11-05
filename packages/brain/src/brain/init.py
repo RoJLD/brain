@@ -368,12 +368,15 @@ def apply(root: Path, steps: list[Step], owner: str) -> int:
     init, else of the render (whose lines are printed)."""
     root = Path(root).resolve()
     code = 0
+    first = True
     for s in steps:
         if s.action in ("create", "point"):
             s.path.parent.mkdir(parents=True, exist_ok=True)
             s.path.write_text(s.text or "", encoding="utf-8", newline="\n")
-        elif s.action == "store":
-            rc = graph.research_graph(root, s.path, "init", "--owner", " ".join(owner.split()))
+        elif s.action == "store":   # a later graph keeps its views beside it and no decision log (brain.projects)
+            later = [] if first else ["--views", s.path.parent.relative_to(root).as_posix(), "--no-decisions"]
+            first = False
+            rc = graph.research_graph(root, s.path, *later, "init", "--owner", " ".join(owner.split()))
             if not rc and s.text:   # the brain's schema over the one research_graph init just wrote: a new store only
                 (s.path / "schema.yaml").write_text(s.text, encoding="utf-8", newline="\n")
             code = code or rc

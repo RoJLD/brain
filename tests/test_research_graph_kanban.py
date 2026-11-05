@@ -160,3 +160,26 @@ def test_stale_view_is_an_advisory_in_check(tmp_path, capsys):
         ["--store", str(store), "--repo-root", str(repo), "check"]
     )  # the fixture fails wiring rules
     assert f"advisory: {stale[0]}" in capsys.readouterr().out
+
+
+def test_views_puts_the_board_and_the_roadmap_in_another_folder(tmp_path, capsys):
+    store = _copy_store(tmp_path)
+    repo = tmp_path / "repo"
+    args = ["--store", str(store), "--repo-root", str(repo)]
+    assert main(args + ["--views", "lab", "kanban", "--write"]) == 0
+    assert (repo / "lab" / "kanban_graph.md").read_text(encoding="utf-8") == render_kanban(load_store(store))
+    assert (repo / "lab" / "roadmap_graph.md").exists() and not (repo / "notes").exists()
+    graph = load_store(store)
+    assert kanban_stale(graph, repo, views="lab") == [] and kanban_stale(graph, repo) == []
+    (store / "nodes" / "more.yaml").write_text("- {id: wi-new, type: WorkItem, status: todo, title: new}\n",
+                                               encoding="utf-8")
+    assert kanban_stale(load_store(store), repo, views="lab") == [
+        "lab/kanban_graph.md is stale: run `research_graph kanban --write`"]
+    capsys.readouterr()
+    main(args + ["--views", "lab", "check"])  # the fixture fails wiring rules
+    out = capsys.readouterr().out
+    assert "advisory: lab/kanban_graph.md is stale" in out and "advisory: lab/roadmap_graph.md is stale" not in out
+    main(args + ["check"])  # without --views: notes/, where there is no view
+    assert "is stale" not in capsys.readouterr().out
+    assert main(args + ["--views", str(tmp_path / "boards"), "kanban", "--write"]) == 0  # outside the root: no anchor
+    assert (tmp_path / "boards" / "kanban_graph.md").exists()

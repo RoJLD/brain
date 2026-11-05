@@ -131,3 +131,58 @@ def test_cli_sync_writes_hypotheses(tmp_path, capsys):
     main(["--store", str(store), "--repo-root", str(repo), "sync", "--write"])
     gen = (store / "nodes" / "_generated_hypotheses.yaml").read_text(encoding="utf-8")
     assert "h2-exp037_x" in gen
+
+
+_LOG_SCHEMA = "node_types: [ADR, WorkItem]\nedge_types: [decided_by]\nstatuses: [active, todo]\n"
+
+
+def _two_logs(tmp_path):
+    """A repo whose notes/decisions.md is another store's, and the log lab/decisions.md of the store lab/graph."""
+    repo = tmp_path / "repo"
+    store = repo / "lab" / "graph"
+    (store / "nodes").mkdir(parents=True)
+    (store / "schema.yaml").write_text(_LOG_SCHEMA, encoding="utf-8")
+    (store / "edges.yaml").write_text("", encoding="utf-8")
+    (repo / "notes").mkdir()
+    (repo / "notes" / "decisions.md").write_text("## 2026-06-10 — Not this store's\n\nbody\n", encoding="utf-8")
+    (repo / "lab" / "decisions.md").write_text("## 2026-06-11 — The lab's\n\nbody\n", encoding="utf-8")
+    return repo, ["--store", str(store), "--repo-root", str(repo)]
+
+
+def test_cli_sync_and_check_cover_the_decision_logs_given(tmp_path, capsys):
+    repo, args = _two_logs(tmp_path)
+    assert main(args + ["--decisions", "lab/decisions.md", "sync", "--write"]) == 0
+    gen = (repo / "lab" / "graph" / "nodes" / "_generated_decisions.yaml").read_text(encoding="utf-8")
+    assert 'anchor: "lab/decisions.md#2026-06-11-the-lab-s"' in gen and "not-this-store" not in gen
+    capsys.readouterr()
+    assert main(args + ["--decisions", "lab/decisions.md", "check"]) == 0
+    assert "graph-check OK" in capsys.readouterr().out
+    assert main(args + ["check"]) == 1  # the defaults read notes/decisions.md, which this store does not cover
+    assert "notes/decisions.md: 2026-06-10 has 1 heading(s) but 0 SDR/ADR node(s)" in capsys.readouterr().err
+
+
+def test_cli_no_decisions_covers_no_log_and_refuses_decisions_too(tmp_path, capsys):
+    repo, args = _two_logs(tmp_path)
+    assert main(args + ["--no-decisions", "sync", "--write"]) == 0
+    assert not (repo / "lab" / "graph" / "nodes" / "_generated_decisions.yaml").exists()
+    assert main(args + ["--no-decisions", "check"]) == 0
+    with pytest.raises(SystemExit) as exc:
+        main(args + ["--no-decisions", "--decisions", "lab/decisions.md", "check"])
+    assert exc.value.code == 2
+    capsys.readouterr()
+    assert main(args + ["--decisions", str(tmp_path / "elsewhere.md"), "check"]) == 2
+    err = capsys.readouterr().err
+    assert "--decisions" in err and "not inside --repo-root" in err
+    assert main(args + ["--decisions", str(repo / "lab" / "decisions.md"), "sync", "--write"]) == 0
+    gen = (repo / "lab" / "graph" / "nodes" / "_generated_decisions.yaml").read_text(encoding="utf-8")
+    assert 'anchor: "lab/decisions.md#2026-06-11-the-lab-s"' in gen  # a path inside the root is made relative
+
+
+def test_cli_sync_empties_the_generated_decisions_once_no_log_derives_them(tmp_path):
+    repo, args = _two_logs(tmp_path)
+    assert main(args + ["sync", "--write"]) == 0  # the defaults: notes/decisions.md, not this store's
+    gen = repo / "lab" / "graph" / "nodes" / "_generated_decisions.yaml"
+    assert "not-this-store" in gen.read_text(encoding="utf-8")
+    assert main(args + ["--no-decisions", "sync", "--write"]) == 0
+    assert "adr-" not in gen.read_text(encoding="utf-8")  # derived from the logs, in git: none left is authoritative
+    assert main(args + ["--no-decisions", "check"]) == 0

@@ -926,8 +926,8 @@ class ClaudeCode(Adapter):
         proj = model.registry.get(ctx.project)
         if proj is None:
             return []
-        try:
-            folders = [r.path for r in projects.repos_of(proj)]
+        try:   # a project that shares its root spans no repo: its sessions read the root's settings
+            folders = [r.path for r in projects.repos_of(proj)] or [proj.root]
         except projects.RepoError:
             folders = [proj.root]
         return [Path(f) / ".claude" / name for f in folders]

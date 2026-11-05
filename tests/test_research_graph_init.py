@@ -62,3 +62,30 @@ def test_init_never_overwrites(tmp_path, capsys):
     assert main(_args(root) + ["check"]) == 0
     assert main(_args(root) + ["init"]) == 1
     assert "already a store" in capsys.readouterr().err
+
+
+def test_init_writes_the_adr_log_and_the_views_where_they_are_given(tmp_path, capsys):
+    root = tmp_path / "shared"
+    args = ["--store", str(root / "prog" / "graph"), "--repo-root", str(root), "--decisions", "prog/decisions.md",
+            "--views", "prog"]
+    assert main(args + ["init", "--owner", "Ada", "--examples"]) == 0
+    assert (root / "prog" / "decisions.md").read_text(encoding="utf-8").startswith("# ")
+    assert (root / "prog" / "kanban_graph.md").exists() and (root / "prog" / "roadmap_graph.md").exists()
+    assert not (root / "notes").exists()  # nothing at the defaults
+    gen = (root / "prog" / "graph" / "nodes" / "_generated_decisions.yaml").read_text(encoding="utf-8")
+    assert 'anchor: "prog/decisions.md#2026-01-01-keep-the-work-state-in-this-graph"' in gen
+    capsys.readouterr()
+    assert main(args + ["check"]) == 0
+    out = capsys.readouterr().out
+    assert "graph-check OK" in out and "advisory" not in out  # the views it wrote are current
+
+
+def test_init_with_no_decisions_writes_no_log_and_no_edge_to_one(tmp_path, capsys):
+    root = tmp_path / "second"
+    args = ["--store", str(root / "ops" / "graph"), "--repo-root", str(root), "--no-decisions", "--views", "ops"]
+    assert main(args + ["init", "--examples"]) == 0
+    assert not (root / "notes").exists() and not (root / "ops" / "decisions.md").exists()
+    edges = (root / "ops" / "graph" / "edges" / "work.yaml").read_text(encoding="utf-8")
+    assert "decided_by}" not in edges
+    capsys.readouterr()
+    assert main(args + ["check"]) == 0

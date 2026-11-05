@@ -8,14 +8,16 @@ import json
 from pathlib import Path
 
 from .. import modules
-from ._common import _store, _store_label
+from ._common import _project, _store, _store_label
+from ._stores import _module_view
 
 ORDER = 30   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 40   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain modules [--write] [--check] [--json]   the module map: each open item's props.module (and
-                 props.modules_secondary) against the store's modules.yaml; the view notes/modules_graph.md (per
-                 module its phase, status, items done and open, and the gaps), written by brain sync; --check: the
+                 props.modules_secondary) against the store's modules.yaml; the view notes/modules_graph.md (beside
+                 the store's board when it is not in notes/; per module its phase, status, items done and open, and
+                 the gaps), written by brain sync; --check: the
                  open items with no module, or a module the registry does not know (brain check warns of them)
 """
 
@@ -26,8 +28,9 @@ def cmd_modules(args, root: Path) -> int:
     if not modules.applies(store):
         raise SystemExit(f"brain modules: no {modules.REGISTRY} in {store} (the registry of modules)")
     if args.write:   # first, so --write --check writes the view and then checks the map
-        print(f"view: {modules.VIEW} " + ("written" if modules.write(root, store, _store_label(root, store))
-                                          else "unchanged"))
+        view = _module_view(_project(args, root), root, store)
+        print(f"view: {view} " + ("written" if modules.write(root, store, _store_label(root, store), view)
+                                  else "unchanged"))
     if args.check:
         found = modules.problems(store)
         print(json.dumps(found, indent=1) if args.json else "\n".join(found) or "module map: every open item placed")

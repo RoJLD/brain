@@ -364,6 +364,18 @@ repo acted on is `--root`, else `$BRAIN_ROOT`, else the nearest folder above wit
 personal brain. Machine-local state (ledgers, sessions, the resume pack, the vault) lives in `BRAIN_HOME`
 (`~/.brain`), never in a repo.
 
+### Projects the brain only reads, projects that share a root
+
+An entry `access: read` in `projects.yaml` is a project the brain reads and never writes (its own sessions do): it
+holds `title` and `access` only, no command loads or names it (`--project` refuses it), no guard reaches into it, and
+`brain projects`, `brain status --all` and `brain check --all` count it. Several projects may share a root: the first
+registered owns it (its records, its decision queue, its rendered files, its repo for `brain audit`), and each next
+one declares its own store, journal and decision log (the defaults are the owner's: until it does, it is not loaded,
+and `brain check --all` says what to declare). Its board and roadmap sit beside its store (`prog/graph` writes
+`prog/kanban_graph.md`), as do those of a project's second store. At such a root, `brain sync`, `check` and `refresh`
+cover every project registered there, and `--store prog/graph` runs as the project that lists that store.
+`examples/projects.yaml` has both.
+
 ## The Claude Code hooks
 
 `src/brain/adapters/claude/hooks/` is package data: `hooks.json` and a `.sh` launcher per hook, each running its `.py`
