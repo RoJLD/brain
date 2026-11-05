@@ -253,11 +253,27 @@ def load(root: Path | None = None) -> dict[str, Project]:
     return _load(root)[0]
 
 
+#: The keys of an entry that name a local path a guard protects (its root, production checkouts and repos).
+GUARDED_PATH_KEYS = ("root", "production", "repos")
+
+
 def guarded(root: Path | None = None) -> list[Project]:
-    """Every project a guard protects (brain.guards, brain.governor): the loaded ones and those at a shared root that
-    are not loaded yet. A refusal to load never lifts a guard: their production checkouts stay refused to edits."""
+    """Every project a guard protects (brain.guards, brain.governor): the loaded ones, those at a shared root that
+    are not loaded yet, and every entry the walk skips as read only (``access: read``, or an access value check()
+    refuses) that still names a local path. A refusal to load never lifts a guard: a typo in ``access``, or
+    ``access: read`` added to a project that has a production checkout, keeps its checkouts refused to edits while
+    brain check is red. A valid read-only entry (title and access only) names no path, so it adds nothing."""
     loaded, refused = _load(root)
-    return list(loaded.values()) + [p for p, _ in refused.values()]
+    out = list(loaded.values()) + [p for p, _ in refused.values()]
+    f = registry_file(root)
+    for name, entry in raw(root).items():
+        if is_mount(entry) or not is_read_only(entry) or not any(k in entry for k in GUARDED_PATH_KEYS):
+            continue
+        try:
+            out.append(_project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent)))
+        except (TypeError, ValueError):   # a malformed path value: check() names it; the other entries stay guarded
+            continue
+    return out
 
 
 def _load(root: Path | None = None) -> tuple[dict[str, Project], dict[str, tuple[Project, list[str]]]]:

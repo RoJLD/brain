@@ -52,12 +52,25 @@ def test_check_refuses_a_read_only_entry_that_would_hold_a_way_in_and_an_unknown
     assert list(projects.load()) == ["demo", "plain"]  # what is not write is never loaded: it narrows
     with pytest.raises(SystemExit, match="'odd' is read only"):
         projects.get("odd")
-    upstream = tmp_path / "upstream"  # where root: ../upstream would lead; it exists, so a guard would hold it
+    # Fail closed: an entry the walk skips (access: read that check() refuses, or an access value it does not know)
+    # still keeps the guards of every local path it declares. A typo in access, or access: read added to a project
+    # with a production checkout, must never lift a production or branch guard while check() is red.
+    upstream, odd = tmp_path / "upstream", tmp_path / "odd"
     upstream.mkdir()
-    assert os.path.normcase(str(upstream)) not in {os.path.normcase(os.path.abspath(r))
-                                                    for r in guards.production_roots()}
+    odd.mkdir()
+    roots = {os.path.normcase(os.path.abspath(r)) for r in guards.production_roots()}
+    assert os.path.normcase(str(upstream)) in roots
     folders, _ = guards.registered_repos()
-    assert os.path.normcase(str(upstream)) not in {os.path.normcase(os.path.abspath(f)) for f in folders}
+    folders = {os.path.normcase(os.path.abspath(f)) for f in folders}
+    assert os.path.normcase(str(upstream)) in folders and os.path.normcase(str(odd)) in folders
+
+
+def test_a_valid_read_only_entry_adds_no_guard_and_no_path(tmp_path, monkeypatch, store):
+    """title and access only: there is no local path to guard, so the guards' inputs are those of demo alone."""
+    _registry(tmp_path, monkeypatch, store, "")
+    before = (sorted(guards.production_roots()), guards.registered_repos())
+    _registry(tmp_path, monkeypatch, store, READ_ONLY)
+    assert (sorted(guards.production_roots()), guards.registered_repos()) == before
 
 
 def test_sync_check_and_refresh_all_pass_it_by_without_a_store_and_count_it(tmp_path, monkeypatch, store, capsys):
