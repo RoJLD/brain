@@ -72,3 +72,27 @@ jsonschema) enforces the same contract, never a stricter one.
 one (a newer brain's additive keys under the same `v`). `tests/test_formats_compat.py` reads both, writes the records
 back through the engine and compares them, field for field (AR lines byte for byte), then checks the strict mode and
 the refusal of a higher `v`. A new format, or a new version of one, adds its pair.
+
+## The upgrade test (`compat-prev`)
+
+The fixtures prove each reader on its own; the upgrade test proves an engine on a real brain, in both directions
+(wi-brain-upgrade-test; spec-brain-data-compat N8, COMPAT-2 and COMPAT-3). CI's `compat-prev` job runs it on every
+pull request, from the last tag before the commit (`git describe --tags --abbrev=0`), before any tag is cut:
+
+```bash
+python packages/brain/installer/stranger_test.py --source . --upgrade-from v0.2.5     # or --upgrade-from <a checkout>
+```
+
+1. **The previous engine writes** every registered format into a new brain: brain init, a decision, an AR, an SR,
+   the older `permissions.yaml`, its own exec events. A format registered here (a `<format>/v<N>/` folder) that the
+   test does not place fails it, so the test grows with the registry.
+2. **This checkout is installed over it**, the pin moved if the version changed, and runs strict (`BRAIN_STRICT=1`):
+   the store plan (`brain init` on the existing brain), `brain check`, `brain record check` and the stranger test's
+   Lite scenario.
+3. **The rollback.** Each `newer` fixture's additive keys are laid over the brain's files, a vault drill is put on
+   record, and the previous engine is installed back over this one, as the installer does until the pin moves. It
+   runs `brain check`, `brain record check`, `brain permissions check`, `brain vault status` (which must show the
+   drill) and a newer template's plan, in read mode. An engine with the read mode must pass them; one before it
+   (0.2.5) may refuse, cleanly. Either way no file of the brain, and not the vault state, is changed or removed.
+
+The job uploads its report (`compat-prev-report`, every step's command, exit code and output).

@@ -11,6 +11,16 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
   update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
 
+- **The upgrade test, on every pull request** (wi-brain-upgrade-test; spec-brain-data-compat N8, COMPAT-2 and
+  COMPAT-3). `installer/stranger_test.py --upgrade-from TAG|DIR`: the tag writes every registered format into a new
+  brain (a decision, an AR, an SR, `permissions.yaml`, its exec events; a format with fixtures and no place in the
+  test fails it), then this engine is installed over it and runs strict: the store plan, `brain check`, `brain record
+  check` and the Lite scenario. Then the rollback: the `newer` fixtures' additive keys laid over the brain, a vault
+  drill on record, the tag installed back, and its check, record check, permissions check, vault status (the drill
+  shown) and a newer template's plan run in read mode; a tag with the read mode must pass them, 0.2.5 may refuse
+  cleanly, and no file of the brain or the vault state may change. CI's new `compat-prev` job (Windows, pull requests)
+  runs it from the last tag and uploads its report. The stranger test's exit code is 1, not 2, when the scenario
+  fails after a good install. `docs/formats.md`.
 - **Remote Control's three exceptions** (wi-brain-guard-rc-archive; the owner's ADRs of 2026-11-04). The
   session-settings guard lets the desktop app's `set_remote_control` through in exactly three cases, each checked
   from the app's own session files and the hand-over notes: off on a finished (idle) session the caller started,

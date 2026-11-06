@@ -48,3 +48,110 @@ def test_a_deny_needs_its_category(st):
 def test_the_hooks_bash_is_never_wsls(st):
     """On Windows a bare bash is WSL's System32 one, found before the PATH: the harness names Git's."""
     assert "system32" not in st.git_bash().lower()
+
+
+# --- the upgrade test (--upgrade-from, wi-brain-upgrade-test) -------------------------------------------------------
+
+def test_every_registered_format_has_a_place_in_the_upgrade_test(st, tmp_path):
+    """A format registered with its fixtures (tests/fixtures/formats/<format>/v<N>/) and no place in where() would be
+    neither written by the older engine nor read back by it: the upgrade test must grow with the registry."""
+    names = {fmt for fmt, _ in st.formats()}
+    assert {"ar", "config", "ddr", "event", "packs", "permissions", "projects", "sr", "template"} <= names
+    assert names <= set(st.where(tmp_path / "brain", tmp_path / "home"))
+    for fmt, v in st.formats():
+        assert st.fixture(fmt, "older", v).is_file() and st.fixture(fmt, "newer", v).is_file()
+
+
+def test_a_missing_format_fails_the_formats_step(st, tmp_path):
+    root, home = tmp_path / "brain", tmp_path / "home"
+    (root / "records" / "ar").mkdir(parents=True)
+    (root / "records" / "ar" / "2026-11.jsonl").write_text("{}\n", encoding="utf-8")
+    step = st.written(root, home)
+    assert not step["ok"] and "missing: config v1" in step["out"] and "ar: 2026-11.jsonl" in step["out"]
+    assert "template v1" not in step["out"]          # a template's folder, not a brain's file
+
+
+def test_the_overlay_adds_only_what_the_newer_fixture_adds(st):
+    older = {"mine": {"root": ".", "repos": [{"path": ".", "lang": "py"}]}}       # a fixture's one project
+    newer = {"mine": {"root": ".", "repos": [{"path": ".", "lang": "py", "ci": "github"}], "formats": {"a": 1}},
+             "new": True}
+    target = {"brain": {"root": ".", "title": "Ada", "repos": [{"path": ".", "name": "brain"}]}, "v": 1}
+    assert st.overlay(target, older, newer) == {
+        "brain": {"root": ".", "title": "Ada", "repos": [{"path": ".", "name": "brain", "ci": "github"}],
+                  "formats": {"a": 1}}, "v": 1, "new": True}
+    kept = {"identity": {"owner": "Ada Example"}, "v": 1}
+    assert st.overlay(kept, {"identity": {"owner": "Ada"}}, {"identity": {"owner": "Ada", "pronouns": "they"}}) == {
+        "identity": {"owner": "Ada Example", "pronouns": "they"}, "v": 1}   # the brain's own value never replaced
+
+
+def test_only_additive_lines_are_laid_over(st):
+    """The newer AR fixture also holds a higher v and a new kind: a newer brain's lines, not additive ones."""
+    import json
+    lines = [json.loads(x) for x in st.additive_lines("ar")]
+    assert [(r["v"], r["kind"]) for r in lines] == [(1, "commit")] and lines[0]["signed"] is True
+    assert [json.loads(x)["cpu_s"] for x in st.additive_lines("event")] == [0.4]
+
+
+def test_the_newer_data_reaches_every_file_of_a_format(st, tmp_path):
+    import json
+    root, home = tmp_path / "brain", tmp_path / "home"
+    root.mkdir()
+    (root / "config.json").write_text(json.dumps({"v": 1, "identity": {"owner": "Ada Example"}}), encoding="utf-8")
+    ledger = home / ".brain" / "ledger" / "engine"
+    ledger.mkdir(parents=True)
+    (ledger / "exec-2026-11.jsonl").write_text("", encoding="utf-8")
+    step = st.add_newer(root, home)
+    assert step["ok"] and "config: config.json +keys" in step["out"]
+    data = json.loads((root / "config.json").read_text(encoding="utf-8"))
+    assert data["identity"] == {"owner": "Ada Example", "pronouns": "they"} and data["telemetry"] == {"enabled": False}
+    assert '"cpu_s":0.4' in (ledger / "exec-2026-11.jsonl").read_text(encoding="utf-8")
+
+
+def test_a_file_changed_or_removed_is_data_lost(st, tmp_path):
+    root = tmp_path / "brain"
+    (root / ".git").mkdir(parents=True)
+    (root / ".git" / "index").write_text("x", encoding="utf-8")
+    (root / "a.txt").write_text("a", encoding="utf-8")
+    (root / "b.txt").write_text("b", encoding="utf-8")
+    state = tmp_path / "state.json"
+    state.write_text('{"drill": {}}', encoding="utf-8")
+    before = st.snapshot(root, [state])
+    assert len(before) == 3                             # .git left out
+    (root / ".git" / "index").write_text("y", encoding="utf-8")
+    assert st.lost(before, st.snapshot(root, [state])) == []
+    (root / "a.txt").unlink()
+    state.write_text("{}", encoding="utf-8")
+    assert st.lost(before, st.snapshot(root, [state])) == [f"changed: {state.as_posix()}",
+                                                           f"removed: {(root / 'a.txt').as_posix()}"]
+
+
+def test_upgrade_from_takes_a_tag_or_a_checkout(st, tmp_path):
+    assert st.upgrade_from("v0.2.5") == ("v0.2.5", "")
+    assert st.upgrade_from(str(tmp_path)) == ("", str(tmp_path.resolve()))
+
+
+def test_a_new_key_takes_its_place_in_the_newer_fixture(st):
+    """permissions.yaml's rules stay its last key (brain permissions grant appends to it): a newer section lands before
+    them, where the newer fixture has it."""
+    older = {"v": 1, "profiles": {}, "rules": []}
+    newer = {"v": 1, "schedules": {"nightly": {}}, "profiles": {}, "rules": []}
+    target = {"v": 1, "never": [], "profiles": {"lite": {}}, "rules": [{"deny": "x"}]}
+    assert list(st.overlay(target, older, newer)) == ["v", "never", "schedules", "profiles", "rules"]
+
+
+def test_a_failed_step_after_a_good_install_exits_1(st, tmp_path, monkeypatch):
+    """2 is for an install that failed; a scenario or upgrade step that fails is a no-go, 1 (the report's steps list
+    used to be the install's own list, so a later failure counted as an install's)."""
+    calls = []
+
+    def install(work, ref, source, pre_tag, over=False, step="install"):
+        calls.append((ref, source, step))
+        return tmp_path / "venv" / "bin", [{"step": step, "cmd": "pip", "rc": 0, "ok": True, "out": ""}]
+
+    bad = [{"step": "check", "cmd": "brain check", "rc": 1, "ok": False, "out": ""}]
+    monkeypatch.setattr(st, "install", install)
+    monkeypatch.setattr(st, "scenario", lambda work, env, scripts: bad)
+    monkeypatch.setattr(st, "upgrade", lambda work, env, scripts, prev, head: bad)
+    assert st.main(["--work", str(tmp_path / "a"), "--source", str(tmp_path)]) == 1
+    assert st.main(["--work", str(tmp_path / "b"), "--source", str(tmp_path), "--upgrade-from", "v0.2.5"]) == 1
+    assert calls[-1] == ("v0.2.5", "", "install previous")     # the tag first; upgrade() installs the source over it

@@ -81,6 +81,38 @@ jobs:
       - name: Tests (docker)
         run: pytest packages/brain -p no:randomly -m docker
 
+  compat-prev:
+    # The upgrade test (wi-brain-upgrade-test; spec-brain-data-compat N8, COMPAT-2 and COMPAT-3), before any tag: the
+    # last tag before this commit writes every registered format into a new brain, this checkout is installed over it
+    # and runs the store plan, the scenario and brain check on it, then the tag again reads HEAD's additive data
+    # (the rollback the installer does until the pin moves), the vault drill included, and loses none of it.
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The last tag
+        id: prev
+        shell: bash
+        run: echo "tag=$(git describe --tags --abbrev=0 --match 'v*' HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Upgrade from ${{ steps.prev.outputs.tag }}, then back
+        shell: bash
+        run: |
+          pip install pyyaml
+          python packages/brain/installer/stranger_test.py --source . --upgrade-from "${{ steps.prev.outputs.tag }}" \
+            --work "$RUNNER_TEMP/compat-prev"
+      - name: Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-prev-report
+          path: ${{ runner.temp }}/compat-prev/report.json
+          retention-days: 14
+
   release-tag:
     # pip reinstalls a git-pinned dependency only when its version changes: a tag vX.Y.Z must carry __version__ X.Y.Z in
     # both distributions, and brain must pin research-graph at that tag.
