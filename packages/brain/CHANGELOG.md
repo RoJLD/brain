@@ -6,6 +6,12 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ### Upgrade
 
+- **`brain update` moves `engine.pin` in a brain without an installer of its own** (wi-brain-update-moves-pin,
+  COMPAT-5). The update *to* this version is run by the older engine, which only reminds you of the pin: once it is
+  installed, run `brain update` again in your own terminal and answer `y`; it writes `engine.pin`, commits
+  `config.json` and runs `brain sync`. A brain whose `config.json` declares `engine.installer` changes nothing: its
+  pin still moves by a reviewed PR.
+
 - Nothing to run for the machine-local state (wi-brain-state-safe-io). `vault/state.json` gains `"v": 1` at its
   next write, which brain 0.2.5 reads unchanged; `schedules/installed.json` and `alerts/state.json` keep their v 1
   unwritten. Each of the four files may now have a `<name>.bak` beside it, and a file that was unreadable a
@@ -21,6 +27,17 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `packs.yaml`, `projects.yaml` or a record now prints a note instead; CI (`CI` set) still fails on it. A `v` above 1
   in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
   update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
+
+- **`brain update` moves the pin where no review step exists** (wi-brain-update-moves-pin, spec-brain-data-compat
+  COMPAT-5). For a brain whose `config.json` declares no `engine.installer` (one from `brain init`), the plan's last
+  steps write the new tag into `engine.pin` (the file's other keys, their order and its indent kept; written
+  atomically), commit `config.json` alone (« brain update: engine.pin vX -> vY »), then run `brain sync` with the new
+  engine, on the owner's `y` or `--yes`. With the latest engine already installed and the pin behind it, the plan
+  moves the pin alone. The pin never moves backwards, nor to or from a pin that is not a release tag, nor for an
+  editable install; a `config.json` with changes not committed, or a brain that is not a git repo, is left as it is
+  (exit 1, with what to do by hand). From a Claude Code session the command refuses, as before, and says to run it in
+  the owner's terminal. A brain that declares its installer keeps the reviewed pin PR, shown and never done. The plan's
+  `--json` gains `pin.move` (`"write"` or `"pr"`).
 
 - **Machine-local state is never reset and saved over** (wi-brain-state-safe-io, spec-brain-data-compat N4;
   `docs/formats.md`, « Machine-local state »). `brain.stateio` loads and saves a truth-local file: a file that is not
