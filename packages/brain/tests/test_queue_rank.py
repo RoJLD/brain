@@ -184,7 +184,12 @@ def test_a_denial_expires_when_its_session_is_archived_or_gone(tmp_path, monkeyp
     assert queue.stale({"sessions": []}, state) == "" and queue.stale({"sessions": ["cli-1"]}, None) == ""
 
 
-def test_status_and_zen_show_the_bands(store, capsys):
+def test_status_and_zen_show_the_bands(store, capsys, monkeypatch):
+    class Today(date):   # brain status reads the real date: pinned to the fixture's day, or the bands drift with it
+        @classmethod
+        def today(cls):
+            return TODAY
+    monkeypatch.setattr(queue, "date", Today)
     root = _queue(store)
     proj = projects.for_root(root)
     forecast.save({**FC, "project": proj.name})
