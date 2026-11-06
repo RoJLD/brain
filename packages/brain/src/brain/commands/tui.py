@@ -115,9 +115,9 @@ def register(sub, ctx) -> None:
                     help=f"the sessions whose transcript was written in the last N hours (default {cockpit.HOURS:g})")
     tu.add_argument("--plain", action="store_true", help="the text view redrawn in place, even with the tui extra")
     tu.add_argument("--sort", action="append", default=[], metavar="PANEL:KEY",
-                    help="a panel's sort, -KEY reversed: sessions:state|age|project|context|cost, "
-                         "queue:unblocks|age|kind|project, frontier:priority|unblocks|milestone|age|project "
-                         "(repeatable)")
+                    help="a panel's sort, -KEY reversed: "
+                         + ", ".join(f"{n}:{'|'.join(keys)}" for n, keys in cockpit.SORTS.items())
+                         + " (the first: the default; repeatable)")
     tu.add_argument("--filter", action="append", default=[], metavar="PANEL:FIELD=VALUE",
                     help="a panel's filter: sessions:state=open|all|asking|running|stale|idle|ended, "
                          "queue:kind=all|decision|action|permission, frontier:priority=all|P0-P1|P0-P2|none, "
