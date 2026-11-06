@@ -111,6 +111,25 @@ foreign one is never written here.
 | `quota.load_status` | the quota forecast | derived (local) | `{}` is right: rebuilt |
 | `update._read_cache` | `update.json` | derived (local) | `{}` is right: the tags are asked again |
 
+## Public-check stamps: a derived file with its whole key
+
+A green `brain check --public --history` on a public repo writes `$BRAIN_HOME/public-check/<owner>/<repo>/<sha>`
+(atomically), which the `public` guard reads before a `git push` (wi-brain-public-stamp-binding, spec-brain-data-compat
+N2). It is a cache, so it carries every input it depends on:
+
+| Field | What |
+|---|---|
+| `v` | 2 (0.2.5 and older wrote none) |
+| `key.engine` | the engine version that checked |
+| `key.rules` | sha256 of config.json's `public.deny` (as brain.config reads it), `allow`, `patterns` and `refuse`, in a canonical form: key order and spacing do not count |
+| `key.gitleaks` | whether gitleaks read the history (with no commit to read: whether it was on the PATH) |
+| `at`, `repo`, `remote`, `files`, `commits`, `gitleaks` | what the check read, for the owner |
+
+The guard computes the key now and refuses the push when the stamp's differs: another engine version, other rules,
+gitleaks then and not now or the other way round. A stamp without `v` 2 and a `key` (0.2.5's), an unreadable one,
+and one a newer brain wrote are refused the same way, never a crash; each refusal ends with the fix, « rerun brain
+check --public --history ». A stamp is never upgraded in place: the check writes a new one.
+
 ## The validator's keywords
 
 `brain.schema` validates with the standard library only, so the capture hooks can validate what they write. It

@@ -26,7 +26,8 @@ USAGE = """\
                         (config.json public.repos), at zero token: no denied term (public.deny), secret, e-mail or home
                         folder, data or sealed file, nor a domain's patterns (public.patterns, public.refuse) in the
                         tracked files, and with --history in the commits not on the remote yet (gitleaks too when on
-                        the PATH); green with --history, it stamps HEAD for the public guard on git push; --engine:
+                        the PATH); green with --history, it stamps HEAD for the public guard on git push, keyed by
+                        the engine version, the rules' hash and gitleaks (a change of any: rerun it); --engine:
                         the files brain boundary sends to the engine, in this checkout (a dry run)
 """
 
