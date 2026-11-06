@@ -63,7 +63,7 @@ Fixes come as new tags (0.2.4 brought `brain update`, 0.2.5 the lessons, merge-c
 command: move to the next tag by hand (install.md, *Upgrade by hand*) until your version has one
 (`brain update --help` answers). From then on, `brain update` shows what changes and installs it on your `y`, and the
 cockpit's title bar (`brain tui`) says when a newer version is out (`u` opens the same plan). Nothing is ever
-installed without your yes. Since 0.2.6, the same yes also moves `engine.pin` in your brain's `config.json` to the
+installed without your yes (`brain update`, `packages/brain/src/brain/update.py`). Since 0.2.6, the same yes also moves `engine.pin` in your brain's `config.json` to the
 new tag, commits it and runs `brain sync`: run `brain update` in your own terminal, not from a Claude Code session
 (it refuses there), then restart Claude Code's sessions. The update *to* 0.2.6 is still run by your older engine,
 which only reminds you of the pin: once it is installed, run `brain update` once more and answer `y`; it moves the pin

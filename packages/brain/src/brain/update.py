@@ -457,18 +457,9 @@ def move_pin(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
     file = Path(pin["file"])
     root = file.parent
     hand = f"move {file.name} engine.pin {pin['from']} -> {pin['to']} and commit it, then brain sync"
-    top = _git(root, "rev-parse", "--show-toplevel", runner=runner)
-    if top.returncode != 0:
-        return 1, [f"pin      {root} is not a git repo (or git cannot run): nothing written; {hand}"]
-    branch = (_git(root, "rev-parse", "--abbrev-ref", "HEAD", runner=runner).stdout or "").strip()
-    if not branch or branch == "HEAD":
-        return 1, [f"pin      {root} is on no branch (a detached HEAD): nothing written; {hand} on its branch"]
-    if _git(root, "ls-files", "--error-unmatch", "--", file.name, runner=runner).returncode != 0:
-        return 1, [f"pin      {file.name} is not tracked in {root}: nothing written; {hand}"]
-    dirty = _git(root, "status", "--porcelain", "--", file.name, runner=runner)
-    if dirty.returncode != 0 or (dirty.stdout or "").strip():
-        return 1, [f"pin      {file.name} has changes not committed: nothing written; commit them, then brain update "
-                   f"again (or {hand})"]
+    branch, why = _pin_branch(root, file.name, runner)
+    if why:
+        return 1, [f"pin      {why}: nothing written; {hand}"]
     try:
         write_pin(file, pin["from"], pin["to"])
     except (OSError, ValueError) as exc:
@@ -481,15 +472,36 @@ def move_pin(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
                    f"{done.returncode}): commit it yourself, then brain sync", *said]
     out = [f"pin      {file.name} engine.pin {pin['from']} -> {pin['to']}, committed on {branch} in {root} "
            f"({msg!r}; not pushed)"]
+    code, said = _sync(p["python"], root, runner)
+    return code, [*out, *said]
+
+
+def _pin_branch(root: Path, name: str, runner) -> tuple[str, str]:
+    """(the brain's branch, '') when the pin may be written and committed there; else ('', why not)."""
+    if _git(root, "rev-parse", "--show-toplevel", runner=runner).returncode != 0:
+        return "", f"{root} is not a git repo (or git cannot run)"
+    branch = (_git(root, "rev-parse", "--abbrev-ref", "HEAD", runner=runner).stdout or "").strip()
+    if not branch or branch == "HEAD":
+        return "", f"{root} is on no branch (a detached HEAD)"
+    if _git(root, "ls-files", "--error-unmatch", "--", name, runner=runner).returncode != 0:
+        return "", f"{name} is not tracked in {root}"
+    dirty = _git(root, "status", "--porcelain", "--", name, runner=runner)
+    if dirty.returncode != 0 or (dirty.stdout or "").strip():
+        return "", f"{name} has changes not committed (commit them, then brain update again)"
+    return branch, ""
+
+
+def _sync(python: str, root: Path, runner) -> tuple[int, list[str]]:
+    """brain sync in the brain, run by the venv's engine (the one the pin now names)."""
     try:
-        sync = runner([p["python"], "-m", "brain", "--root", str(root), "sync"], capture_output=True, text=True,
+        sync = runner([python, "-m", "brain", "--root", str(root), "sync"], capture_output=True, text=True,
                       stdin=subprocess.DEVNULL, cwd=str(root))
     except (OSError, subprocess.SubprocessError) as exc:
-        return 1, [*out, f"sync     brain sync failed: {exc}; run it in {root}"]
+        return 1, [f"sync     brain sync failed: {exc}; run it in {root}"]
     said = ((sync.stdout or "") + (sync.stderr or "")).strip().splitlines()
     if sync.returncode != 0:
-        return 1, [*out, f"sync     brain sync failed with exit code {sync.returncode}: run it in {root}", *said[-20:]]
-    return 0, [*out, f"synced   brain sync in {root}"]
+        return 1, [f"sync     brain sync failed with exit code {sync.returncode}: run it in {root}", *said[-20:]]
+    return 0, [f"synced   brain sync in {root}"]
 
 
 def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
@@ -542,18 +554,25 @@ def main(root: Path | None, *, check_only: bool, yes: bool, as_json: bool, refus
     if refused:
         out(f"brain update: {refused}; run it yourself in a terminal")
         return 1
-    if not yes:
-        moving = f"move engine.pin to {p['pin']['to']}, commit it and run brain sync" if pin_writes(p) else ""
-        if ask is None and not sys.stdin.isatty():
-            out("brain update --yes " + ("installs it" + (" and moves the pin" if moving else "") if p.get("spec")
-                                         else "moves the pin"))
-            return 0
-        question = f"Install brain {p['tag']}" + (f", {moving}" if moving else "") if p.get("spec") else \
-            moving[0].upper() + moving[1:]
-        reply = (ask or input)(f"{question} now? [y/N] ")
-        if reply.strip().lower() not in ("y", "yes", "o", "oui"):
-            out("nothing installed" if p.get("spec") else "nothing moved")
-            return 0
+    if not yes and not _owner_says_yes(p, ask, out):
+        return 0
     code, done = apply(p)
     out("\n".join(done))
     return code
+
+
+def _owner_says_yes(p: dict, ask, out) -> bool:
+    """The owner's y at the prompt (a terminal), naming what runs: the install, the pin's move, or both."""
+    moving = f"move engine.pin to {p['pin']['to']}, commit it and run brain sync" if pin_writes(p) else ""
+    if p.get("spec"):
+        question = f"Install brain {p['tag']}" + (f", {moving}" if moving else "")
+        does = "installs it" + (" and moves the pin" if moving else "")
+    else:
+        question, does = moving[0].upper() + moving[1:], "moves the pin"
+    if ask is None and not sys.stdin.isatty():
+        out(f"brain update --yes {does}")
+        return False
+    if (ask or input)(f"{question} now? [y/N] ").strip().lower() in ("y", "yes", "o", "oui"):
+        return True
+    out("nothing installed" if p.get("spec") else "nothing moved")
+    return False

@@ -420,7 +420,7 @@ def test_a_config_with_changes_not_committed_is_left_alone(venv, pin_repo):
     ran = []
     code, done = update.apply(p, runner=_runner(ran))
     assert code == 1 and f.read_bytes() == before
-    assert any("has changes not committed: nothing written" in line for line in done)
+    assert any("has changes not committed (commit them, then brain update again): nothing written" in line for line in done)
     assert len(ran) == 1  # installed, but no brain sync
 
 
