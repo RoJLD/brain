@@ -200,3 +200,92 @@ def test_the_guard_message_and_override(pub, monkeypatch, capsys):
 def test_no_public_repo_no_push_check(git_repo):
     run_git(git_repo, "remote", "add", "origin", "https://github.com/acme/engine.git")
     assert not _push(git_repo)  # the tests' brain (Ada's fixture) names no public repo
+
+
+# --- the stamp's key (wi-brain-public-stamp-binding) ---
+
+def _stamp_head(pub, monkeypatch, gitleaks=False):
+    monkeypatch.setattr(public, "gitleaks_exe", lambda: "gitleaks" if gitleaks else None)
+    monkeypatch.setattr(public, "gitleaks_history", lambda repo, rev: [] if gitleaks else None)
+    assert cli.main(["check", "--public", "--repo", str(pub), "--history"]) == 0
+    return run_git(pub, "rev-parse", "HEAD").strip()
+
+
+def test_a_fresh_stamp_carries_its_key_and_passes(pub, monkeypatch):
+    head = _stamp_head(pub, monkeypatch)
+    data = json.loads(public.stamp_path("acme/engine", head).read_text(encoding="utf-8"))
+    assert data["v"] == public.STAMP_V == 2
+    assert data["key"] == public.stamp_key(config.load(), False)
+    assert set(data["key"]) == {"engine", "rules", "gitleaks"} and len(data["key"]["rules"]) == 64
+    assert public.stamp_refusal("acme/engine", head, config.load()) == ""
+    assert not _push(pub)
+
+
+def test_a_stamp_from_another_engine_version_is_refused(pub, monkeypatch):
+    import brain
+    _stamp_head(pub, monkeypatch)
+    monkeypatch.setattr(brain, "__version__", "9.9.9")
+    (reason,) = [r for _, r in _push(pub)]
+    assert "was stamped by brain " in reason and "not this brain 9.9.9" in reason
+    assert "rerun brain check --public --history" in reason
+
+
+def test_a_stamp_under_other_deny_rules_is_refused(pub, monkeypatch):
+    _stamp_head(pub, monkeypatch)
+    cfg_file = Path(os.environ["BRAIN_CONFIG"])
+    changed = json.loads(json.dumps(PUBLIC))
+    changed["public"]["deny"]["hosts"].append("box2")
+    cfg_file.write_text(json.dumps(changed), encoding="utf-8")
+    (reason,) = [r for _, r in _push(pub)]
+    assert "stamped under other rules" in reason and "rerun brain check --public --history" in reason
+    # the same rules written another way are the same rules
+    cfg_file.write_text(json.dumps(PUBLIC, indent=2, sort_keys=True), encoding="utf-8")
+    assert not _push(pub)
+    # a change to allow, patterns or refuse counts too
+    for key, value in (("allow", {"NOTICE": "x"}), ("patterns", {"p": "x"}), ("refuse", {"x/**": "x"})):
+        other = json.loads(json.dumps(PUBLIC))
+        other["public"][key] = {**other["public"][key], **value}
+        cfg_file.write_text(json.dumps(other), encoding="utf-8")
+        assert _push(pub), key
+
+
+def test_a_stamp_with_or_without_gitleaks_is_refused_when_that_changed(pub, monkeypatch):
+    _stamp_head(pub, monkeypatch, gitleaks=False)
+    monkeypatch.setattr(public, "gitleaks_exe", lambda: "gitleaks")
+    (reason,) = [r for _, r in _push(pub)]
+    assert "stamped without gitleaks, which is now on the PATH" in reason
+    _stamp_head(pub, monkeypatch, gitleaks=True)
+    assert not _push(pub)
+    monkeypatch.setattr(public, "gitleaks_exe", lambda: None)
+    (reason,) = [r for _, r in _push(pub)]
+    assert "stamped with gitleaks, which is no longer on the PATH" in reason
+
+
+def test_no_commit_to_read_keys_gitleaks_by_its_presence(pub, monkeypatch):
+    head = run_git(pub, "rev-parse", "HEAD").strip()
+    run_git(pub, "update-ref", "refs/remotes/origin/main", head)  # nothing left to push but HEAD itself
+    for there in (False, True):
+        monkeypatch.setattr(public, "gitleaks_exe", lambda there=there: "gitleaks" if there else None)
+        data = public.check(pub, history=True)
+        assert data["commits"] == 0 and data["gitleaks"] is there
+        public.stamp(data, config.load())
+        assert public.stamp_refusal("acme/engine", head, config.load()) == ""
+
+
+def test_an_old_format_or_unreadable_stamp_is_refused_with_the_fix(pub, monkeypatch):
+    head = run_git(pub, "rev-parse", "HEAD").strip()
+    f = public.stamp_path("acme/engine", head)
+    f.parent.mkdir(parents=True)
+    # what brain 0.2.5 wrote: no v, no key
+    f.write_text(json.dumps({"at": "2026-11-01T10:00:00Z", "commits": 1, "files": 3, "gitleaks": False,
+                             "remote": "origin", "repo": str(pub)}) + "\n", encoding="utf-8")
+    assert public.stamped("acme/engine", head)
+    (reason,) = [r for _, r in _push(pub)]
+    assert "a stamp of an older format (no ruleset key)" in reason
+    assert "rerun brain check --public --history" in reason
+    for text in ("{not json", "[1, 2]", '{"v": 2, "key": "x"}', '{"v": 3, "key": {}}', "\xff"):
+        f.write_bytes(text.encode("latin-1"))
+        (reason,) = [r for _, r in _push(pub)]
+        assert "rerun brain check --public --history" in reason, text
+    _stamp_head(pub, monkeypatch)
+    assert not _push(pub)

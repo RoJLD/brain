@@ -32,7 +32,10 @@ stamp).
 
 A green check with ``--history`` writes the stamp ``<BRAIN_HOME>/public-check/<owner>/<repo>/<sha>`` (HEAD's sha, the
 repo's GitHub owner and name): the ``public`` guard (brain.guards) refuses a ``git push`` to a repo of
-``public.repos`` until every commit it pushes has one.
+``public.repos`` until every commit it pushes has one. A stamp is a derived file keyed by what it was checked under
+(``v`` 2, ``key``: the engine version, the sha256 of config.json's public deny, allow, patterns and refuse, and
+whether gitleaks read the history; wi-brain-public-stamp-binding): the guard refuses one whose key differs from
+now's, and one without a key (0.2.5 and older), naming the fix, « rerun brain check --public --history ».
 
 :func:`gate` is what ``brain check`` runs in a brain or repo with a boundary.yaml (``brain init`` writes one): brain
 boundary's check and the ``--engine`` scan, so that what may be published one day holds nothing private from the
@@ -41,6 +44,7 @@ first commit (wi-brain-public-ready-init).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -54,6 +58,8 @@ from pathlib import Path
 from . import boundary, config, paths, secretscan
 
 STAMPS = "public-check"
+STAMP_V = 2  # none: no v and no key (up to 0.2.5); 2: keyed by the engine, the rules and gitleaks
+NO_STAMP = "has no green brain check --public"
 CHECKS = ("denied", "secret", "pattern", "file", "domain")
 MAX_FILE = 1_000_000
 ALLOW_MARK = "public-check:allow"
@@ -138,7 +144,60 @@ def stamp_path(slug: str, sha: str) -> Path:
 
 
 def stamped(slug: str, sha: str) -> bool:
+    """A stamp file exists for ``sha``, whatever its key: :func:`stamp_refusal` is what the guard asks."""
     return bool(slug and sha) and stamp_path(slug, sha).is_file()
+
+
+def gitleaks_exe() -> str | None:
+    return shutil.which("gitleaks")
+
+
+def rules_hash(cfg: config.Config) -> str:
+    """sha256 of the rules a check applies from config.json: public.deny (as brain.config reads it), allow, patterns
+    and refuse, in a canonical form (key order and whitespace do not count)."""
+    pub = cfg.data.get("public") if isinstance(cfg.data.get("public"), dict) else {}
+
+    def as_map(key: str) -> dict:
+        v = pub.get(key)
+        return {str(k): str(x) for k, x in v.items()} if isinstance(v, dict) else {}
+
+    canon = {"deny": [list(t) for t in config.deny_terms(cfg)], "allow": config.allowed(cfg),
+             "patterns": as_map("patterns"), "refuse": as_map("refuse")}
+    return hashlib.sha256(json.dumps(canon, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def stamp_key(cfg: config.Config, gitleaks: bool) -> dict:
+    """What a stamp is valid for (spec-brain-data-compat N2, wi-brain-public-stamp-binding): the engine version that
+    checked, the hash of the rules it applied, and whether gitleaks read the history."""
+    from . import __version__
+    return {"engine": __version__, "rules": rules_hash(cfg), "gitleaks": bool(gitleaks)}
+
+
+def stamp_refusal(slug: str, sha: str, cfg: config.Config) -> str:
+    """Why the stamp of ``sha`` does not let it be pushed now, '' when it does: none, unreadable, of the old format
+    (no key), made by another engine version, under other rules, or with gitleaks where it is now missing (or the
+    other way round). Never raises."""
+    f = stamp_path(slug, sha) if slug and sha else None
+    try:
+        data = json.loads(f.read_text(encoding="utf-8")) if f else None
+    except FileNotFoundError:
+        data = None
+    except (OSError, ValueError):
+        return "has an unreadable stamp"
+    if data is None:
+        return NO_STAMP
+    key = data.get("key") if isinstance(data, dict) else None
+    if not isinstance(key, dict) or data.get("v") != STAMP_V:
+        return "has a stamp of an older format (no ruleset key)"
+    now = stamp_key(cfg, gitleaks_exe() is not None)
+    if key.get("engine") != now["engine"]:
+        return f"was stamped by brain {key.get('engine')}, not this brain {now['engine']}"
+    if key.get("rules") != now["rules"]:
+        return "was stamped under other rules (config.json public.deny, allow, patterns or refuse changed since)"
+    if key.get("gitleaks") is not now["gitleaks"]:
+        return ("was stamped without gitleaks, which is now on the PATH" if now["gitleaks"] else
+                "was stamped with gitleaks, which is no longer on the PATH")
+    return ""
 
 
 # --- the checks ---
@@ -303,7 +362,7 @@ def scan_messages(repo: Path, rev_range: list[str], r: Rules) -> list[Finding]:
 def gitleaks_history(repo: Path, rev_range: list[str]) -> list[Finding] | None:
     """gitleaks over the commits of ``rev_range`` (``git``, then the older ``detect``): its findings, or None when
     it is not on the PATH or fails."""
-    exe = shutil.which("gitleaks")
+    exe = gitleaks_exe()
     if not exe:
         return None
     opts = " ".join(rev_range)
@@ -371,10 +430,12 @@ def check(repo: Path, cfg: config.Config | None = None, *, history: bool = False
         rev_range = ["HEAD", "--not", f"--remotes={name}"] if name else ["HEAD"]
         hist, commits = scan_history(repo, rev_range, r)
         found += hist
-        leaks = gitleaks_history(repo, rev_range) if commits else []
+        # no commit to read: gitleaks counts as run when it is there (the stamp's key says what the push will find)
+        leaks = gitleaks_history(repo, rev_range) if commits else ([] if gitleaks_exe() else None)
         found += leaks or []
         if leaks is None:
-            notes.append("gitleaks is not on the PATH: the history's secrets by brain.secretscan's patterns only")
+            notes.append("gitleaks is not on the PATH (or it failed): the history's secrets by brain.secretscan's "
+                         "patterns only")
     found = _dedupe(found)
     return {"repo": str(repo), "slug": slug, "remote": name, "head": head, "engine": engine, "history": history,
             "files": len(files), "unread": unread, "commits": commits, "gitleaks": leaks is not None,
@@ -382,16 +443,20 @@ def check(repo: Path, cfg: config.Config | None = None, *, history: bool = False
             "counts": {c: sum(1 for f in found if f.check == c) for c in CHECKS}, "notes": notes}
 
 
-def stamp(data: dict) -> Path | None:
-    """Write the stamp of a green check with its history of a public repo's HEAD; None when it does not qualify."""
+def stamp(data: dict, cfg: config.Config | None = None) -> Path | None:
+    """Write the stamp of a green check with its history of a public repo's HEAD, keyed by :func:`stamp_key` (the
+    rules of ``cfg``, the config the check read); None when it does not qualify."""
     if data["findings"] or not data["history"] or data["engine"] or not data["head"] or not data["slug"]:
         return None
+    cfg = cfg or config.load()
     f = stamp_path(data["slug"], data["head"])
     f.parent.mkdir(parents=True, exist_ok=True)
     at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    f.write_text(json.dumps({"at": at, "repo": data["repo"], "remote": data["remote"], "files": data["files"],
-                             "commits": data["commits"], "gitleaks": data["gitleaks"]}, sort_keys=True) + "\n",
-                 encoding="utf-8")
+    tmp = f.with_name(f.name + ".tmp")
+    tmp.write_text(json.dumps({"v": STAMP_V, "key": stamp_key(cfg, data["gitleaks"]), "at": at, "repo": data["repo"],
+                               "remote": data["remote"], "files": data["files"], "commits": data["commits"],
+                               "gitleaks": data["gitleaks"]}, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, f)
     return f
 
 
@@ -459,7 +524,7 @@ def main(repo: Path, *, history: bool = False, remote: str = "", engine: bool = 
         print(f"brain check --public: {exc}")
         return 2
     cfg = config.load()
-    where = stamp(data) if is_public(data["slug"], cfg) else None
+    where = stamp(data, cfg) if is_public(data["slug"], cfg) else None
     if as_json:
         print(json.dumps({**data, "stamp": where.as_posix() if where else None}, ensure_ascii=False, indent=1,
                          sort_keys=True))
