@@ -20,7 +20,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   deny, allow, patterns and refuse, and whether gitleaks read the history. The push guard refuses a stamp whose key
   differs from now's (another engine, rules changed since, gitleaks gained or lost), an old-format or unreadable one,
   naming why and the fix, « rerun brain check --public --history ». A check with no commit to read keys gitleaks by
-  its presence on the PATH; a stamp is written atomically.
+  its presence on the PATH; a gitleaks on the PATH that fails stamps nothing (exit 1, « fix gitleaks or take it off
+  the PATH »), since the guard would refuse that stamp; a stamp is written atomically; a newer brain's stamp, a
+  nested or unreadable one, or any surprise while reading it refuses the push instead of letting it through.
 - **The public and secrets checks fail closed** (wi-brain-guards-fail-closed, COMPAT-4). After `brain sync` and the
   install, a machine whose `config.json` is unreadable, not an object, has a `public` that is not an object or a `v`
   above 1, whose `$BRAIN_CONFIG` names no file, or whose `personal.json` names a folder without `config.json` (a

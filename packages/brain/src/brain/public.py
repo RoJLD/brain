@@ -176,7 +176,14 @@ def stamp_key(cfg: config.Config, gitleaks: bool) -> dict:
 def stamp_refusal(slug: str, sha: str, cfg: config.Config) -> str:
     """Why the stamp of ``sha`` does not let it be pushed now, '' when it does: none, unreadable, of the old format
     (no key), made by another engine version, under other rules, or with gitleaks where it is now missing (or the
-    other way round). Never raises."""
+    other way round). Never raises: anything unexpected refuses (the guard fails closed)."""
+    try:
+        return _stamp_refusal(slug, sha, cfg)
+    except Exception as exc:  # noqa: BLE001 - a deeply nested file (RecursionError) or any other surprise refuses
+        return f"has an unreadable stamp ({type(exc).__name__})"
+
+
+def _stamp_refusal(slug: str, sha: str, cfg: config.Config) -> str:
     f = stamp_path(slug, sha) if slug and sha else None
     try:
         data = json.loads(f.read_text(encoding="utf-8")) if f else None
@@ -186,16 +193,21 @@ def stamp_refusal(slug: str, sha: str, cfg: config.Config) -> str:
         return "has an unreadable stamp"
     if data is None:
         return NO_STAMP
+    v = data.get("v") if isinstance(data, dict) else None
+    if isinstance(v, int) and not isinstance(v, bool) and v > STAMP_V:
+        return f"has a stamp written by a newer brain (v {v}, this engine knows v {STAMP_V})"
     key = data.get("key") if isinstance(data, dict) else None
-    if not isinstance(key, dict) or data.get("v") != STAMP_V:
+    if not isinstance(key, dict) or v != STAMP_V:
         return "has a stamp of an older format (no ruleset key)"
     now = stamp_key(cfg, gitleaks_exe() is not None)
     if key.get("engine") != now["engine"]:
-        return f"was stamped by brain {key.get('engine')}, not this brain {now['engine']}"
+        return (f"was stamped by brain {key.get('engine')}, not this brain {now['engine']} (if a rerun does not clear "
+                "it, the hook and the brain command run different engine copies: brain sync)")
     if key.get("rules") != now["rules"]:
         return "was stamped under other rules (config.json public.deny, allow, patterns or refuse changed since)"
     if key.get("gitleaks") is not now["gitleaks"]:
-        return ("was stamped without gitleaks, which is now on the PATH" if now["gitleaks"] else
+        return ("was stamped without gitleaks, which is now on the PATH (if the check says gitleaks failed, fix it "
+                "or take it off the PATH)" if now["gitleaks"] else
                 "was stamped with gitleaks, which is no longer on the PATH")
     return ""
 
@@ -425,7 +437,7 @@ def check(repo: Path, cfg: config.Config | None = None, *, history: bool = False
     if not config.deny_terms(cfg):
         notes.append("config.json has no public.deny: no private term is looked for")
     found, unread = scan_tree(repo, files, r)
-    commits, leaks = 0, None
+    commits, leaks, failed = 0, None, False
     if history and not engine and head:
         rev_range = ["HEAD", "--not", f"--remotes={name}"] if name else ["HEAD"]
         hist, commits = scan_history(repo, rev_range, r)
@@ -433,12 +445,16 @@ def check(repo: Path, cfg: config.Config | None = None, *, history: bool = False
         # no commit to read: gitleaks counts as run when it is there (the stamp's key says what the push will find)
         leaks = gitleaks_history(repo, rev_range) if commits else ([] if gitleaks_exe() else None)
         found += leaks or []
-        if leaks is None:
-            notes.append("gitleaks is not on the PATH (or it failed): the history's secrets by brain.secretscan's "
-                         "patterns only")
+        failed = leaks is None and gitleaks_exe() is not None
+        if failed:
+            notes.append("gitleaks is on the PATH but failed: nothing is stamped (the push guard would refuse a stamp "
+                         "made without it); fix gitleaks or take it off the PATH, then rerun")
+        elif leaks is None:
+            notes.append("gitleaks is not on the PATH: the history's secrets by brain.secretscan's patterns only")
     found = _dedupe(found)
     return {"repo": str(repo), "slug": slug, "remote": name, "head": head, "engine": engine, "history": history,
             "files": len(files), "unread": unread, "commits": commits, "gitleaks": leaks is not None,
+            "gitleaks_failed": failed,
             "findings": [asdict(f) for f in found],
             "counts": {c: sum(1 for f in found if f.check == c) for c in CHECKS}, "notes": notes}
 
@@ -446,7 +462,8 @@ def check(repo: Path, cfg: config.Config | None = None, *, history: bool = False
 def stamp(data: dict, cfg: config.Config | None = None) -> Path | None:
     """Write the stamp of a green check with its history of a public repo's HEAD, keyed by :func:`stamp_key` (the
     rules of ``cfg``, the config the check read); None when it does not qualify."""
-    if data["findings"] or not data["history"] or data["engine"] or not data["head"] or not data["slug"]:
+    if (data["findings"] or not data["history"] or data["engine"] or not data["head"] or not data["slug"]
+            or data.get("gitleaks_failed")):
         return None
     cfg = cfg or config.load()
     f = stamp_path(data["slug"], data["head"])
@@ -475,6 +492,8 @@ def render(data: dict, stamped_at: Path | None = None) -> list[str]:
     if data["findings"]:
         lines.append(f"refused: {len(data['findings'])} finding(s); take them out (or except a file in public.allow, "
                      f"a line with {ALLOW_MARK}), nothing is stamped")
+    elif data.get("gitleaks_failed"):
+        lines.append("refused: gitleaks failed, nothing is stamped (see the note)")
     elif stamped_at:
         lines.append(f"green: stamped {stamped_at.as_posix()} (the public guard lets git push send {head})")
     elif data["engine"]:
@@ -530,4 +549,4 @@ def main(repo: Path, *, history: bool = False, remote: str = "", engine: bool = 
                          sort_keys=True))
     else:
         print("\n".join(render(data, where)))
-    return 1 if data["findings"] else 0
+    return 1 if data["findings"] or data.get("gitleaks_failed") else 0

@@ -128,7 +128,8 @@ N2). It is a cache, so it carries every input it depends on:
 The guard computes the key now and refuses the push when the stamp's differs: another engine version, other rules,
 gitleaks then and not now or the other way round. A stamp without `v` 2 and a `key` (0.2.5's), an unreadable one,
 and one a newer brain wrote are refused the same way, never a crash; each refusal ends with the fix, « rerun brain
-check --public --history ». A stamp is never upgraded in place: the check writes a new one.
+check --public --history ». A stamp is never upgraded in place: the check writes a new one. A gitleaks that is on
+the PATH but fails stamps nothing (the check exits 1 and says so): its stamp would be refused at every push.
 
 ## The validator's keywords
 

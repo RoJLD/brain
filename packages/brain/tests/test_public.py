@@ -289,3 +289,26 @@ def test_an_old_format_or_unreadable_stamp_is_refused_with_the_fix(pub, monkeypa
         assert "rerun brain check --public --history" in reason, text
     _stamp_head(pub, monkeypatch)
     assert not _push(pub)
+
+
+def test_gitleaks_on_the_path_but_failing_stamps_nothing(pub, monkeypatch, capsys):
+    """A stamp made without gitleaks while it is on the PATH would be refused at every push: the check says so."""
+    monkeypatch.setattr(public, "gitleaks_exe", lambda: "gitleaks")
+    monkeypatch.setattr(public, "gitleaks_history", lambda repo, rev: None)  # it ran and failed
+    assert cli.main(["check", "--public", "--repo", str(pub), "--history"]) == 1
+    out = capsys.readouterr().out
+    assert "gitleaks is on the PATH but failed" in out and "refused: gitleaks failed, nothing is stamped" in out
+    head = run_git(pub, "rev-parse", "HEAD").strip()
+    assert not public.stamped("acme/engine", head)
+
+
+def test_a_newer_or_pathological_stamp_is_refused_never_raised(pub):
+    head = run_git(pub, "rev-parse", "HEAD").strip()
+    f = public.stamp_path("acme/engine", head)
+    f.parent.mkdir(parents=True)
+    f.write_text(json.dumps({"v": 3, "key": {}}), encoding="utf-8")
+    assert "written by a newer brain (v 3" in public.stamp_refusal("acme/engine", head, config.load())
+    f.write_text("[" * 200000 + "]" * 200000, encoding="utf-8")  # json.loads raises RecursionError
+    assert "unreadable stamp" in public.stamp_refusal("acme/engine", head, config.load())
+    (reason,) = [r for _, r in _push(pub)]
+    assert "rerun brain check --public --history" in reason
