@@ -166,8 +166,15 @@ def backup(path: Path) -> Path | None:
         return None
     bak = path.with_name(path.name + BACKUP)
     tmp = path.with_name(f"{path.name}{BACKUP}.{os.getpid()}.tmp")
-    shutil.copyfile(path, tmp)
-    os.replace(tmp, bak)
+    try:
+        shutil.copyfile(path, tmp)
+        os.replace(tmp, bak)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
     return bak
 
 
