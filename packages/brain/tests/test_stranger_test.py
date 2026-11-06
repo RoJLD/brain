@@ -188,3 +188,15 @@ def test_a_failed_step_after_a_good_install_exits_1(st, tmp_path, monkeypatch):
     assert st.main(["--work", str(tmp_path / "a"), "--source", str(tmp_path)]) == 1
     assert st.main(["--work", str(tmp_path / "b"), "--source", str(tmp_path), "--upgrade-from", "v0.2.5"]) == 1
     assert calls[-1] == ("v0.2.5", "", "install previous")     # the tag first; upgrade() installs the source over it
+
+
+def test_docker_on_the_path_is_a_no_go_for_the_pilot_only(st, tmp_path, monkeypatch):
+    """The pilot's go needs a machine without docker; the upgrade test does not (GitHub's Windows runners have it)."""
+    good = [{"step": "check", "cmd": "brain check", "rc": 0, "ok": True, "out": ""}]
+    monkeypatch.setattr(st, "install", lambda work, ref, source, pre_tag, over=False, step="install": (
+        tmp_path / "venv" / "bin", [{"step": step, "cmd": "pip", "rc": 0, "ok": True, "out": ""}]))
+    monkeypatch.setattr(st, "scenario", lambda work, env, scripts: good)
+    monkeypatch.setattr(st, "upgrade", lambda work, env, scripts, prev, head: good)
+    monkeypatch.setattr(st.shutil, "which", lambda name, path=None: "docker" if name == "docker" else None)
+    assert st.main(["--work", str(tmp_path / "a"), "--source", str(tmp_path)]) == 1
+    assert st.main(["--work", str(tmp_path / "b"), "--source", str(tmp_path), "--upgrade-from", "v0.2.5"]) == 0

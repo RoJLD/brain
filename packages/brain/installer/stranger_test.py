@@ -48,7 +48,9 @@ COMPAT-3; CI's ``compat-prev`` job on every pull request, from the last tag), in
    still nothing lost over the round trip.
 
 After each install, brain's ``direct_url.json`` must name the engine meant (the tag, or the checkout): two engines
-can share a version. ``--upgrade-from`` refuses an empty value and the ``--source`` checkout itself. The upgrade test
+can share a version. ``--upgrade-from`` refuses an empty value and the ``--source`` checkout itself. Docker on the
+reduced PATH is only reported here (the pilot's isolation, not the upgrade's; GitHub's Windows runners have it). The
+upgrade test
 reads PyYAML in the harness's own Python (CI installs it) and the fixtures from the checkout it runs from.
 
 Exit code 0 on a go, 1 when a check fails (an upgrade's or rollback's install included), 2 when the first install
@@ -650,8 +652,10 @@ def main(argv: list[str] | None = None) -> int:
         texts.update(brain_files(work / "ada-brain"))
         report["leaks"] = leaks(texts, deny)
     failed = [s for s in report["steps"] if not s["ok"]]
-    report["verdict"] = "go" if installed and not failed and not report["leaks"] and \
-        not report.get("docker_on_path") else "no-go"
+    # docker off the PATH is the pilot's isolation (a stranger's machine needs none), not what the upgrade test checks:
+    # there it is reported only (GitHub's Windows runners keep docker.exe in System32)
+    docker = bool(report.get("docker_on_path")) and not prev
+    report["verdict"] = "go" if installed and not failed and not report["leaks"] and not docker else "no-go"
     (work / "report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
     if args.json:
         print(json.dumps(report, indent=1, ensure_ascii=False))
@@ -665,7 +669,7 @@ def main(argv: list[str] | None = None) -> int:
             if not s["ok"]:
                 print("       " + "\n       ".join(s["out"].strip().splitlines()[-12:]))
         if report.get("docker_on_path"):
-            print("  FAIL docker is on the reduced PATH")
+            print(f"  {'FAIL' if docker else 'note'} docker is on the reduced PATH")
         for lk in report["leaks"]:
             print(f"  LEAK {lk['category']} term {lk['term']!r} in {lk['where']}")
         print(f"verdict: {report['verdict']} (report: {work / 'report.json'})")
