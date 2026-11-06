@@ -2,8 +2,10 @@
 # Run the PreToolUse guards (hooks/guard.py, brain/guards.py) on the hook's JSON on stdin; $1 is shell (Bash,
 # PowerShell) or edit (Edit, Write, MultiEdit, NotebookEdit). A refusal is one JSON line on stdout; nothing else is
 # printed. Uses $BRAIN_PYTHON, else the brain command's venv (<BRAIN_HOME>/venv: the installed engine), else python3,
-# else python, skipping the Windows Store stubs. Without a Python 3, or on any error, the call goes through: it always
-# exits 0, so a guard never breaks a session.
+# else python, skipping the Windows Store stubs. It always exits 0, so a guard never breaks a session: on an error the
+# call goes through, except where a leak is possible (COMPAT-4, wi-brain-guards-fail-closed): when no Python is found,
+# or the one found cannot run guard.py (it cannot import brain: a broken or missing venv), a shell command that names
+# git and commit or push is refused (commits_or_pushes), the reason naming the fix (brain update, the installer).
 
 # needs_python KIND JSON: whether the guards have anything to read. A shell command that names neither gh, nor git
 # but to read (git [-C DIR | --no-pager | -P] SUB, SUB in brain/guards.py's GIT_READS, without --output or a pager
@@ -51,11 +53,40 @@ needs_python() {
   return $found
 }
 
+# commits_or_pushes KIND JSON: whether a shell command names git, then commit or push (any case, any path or quote
+# around git, any option between): what the public and secrets checks judge, refused when they cannot run. Wider than
+# the guards on purpose (git log --grep push is caught too): it only ever runs while the guards are broken.
+commits_or_pushes() {
+  [ "$1" = "shell" ] || return 1
+  local command='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"' text=$2 found
+  [[ $2 =~ $command ]] && text=${BASH_REMATCH[1]}
+  local edge='(^|[^A-Za-z0-9_.-]|\\[nrt])'
+  local gitcp="${edge}git(\.exe)?([^A-Za-z0-9_.-]|\\\\[nrt])(.*([^A-Za-z0-9_-]|\\\\[nrt]))?(commit|push)([^A-Za-z0-9_-]|$)"
+  shopt -s nocasematch
+  [[ $text =~ $gitcp ]] && found=0 || found=1
+  shopt -u nocasematch
+  return $found
+}
+
+# refuse_cannot_run WHY: the refusal of a commit or push while the guards cannot run, one JSON line on stdout.
+refuse_cannot_run() {
+  local why=${1//\\/\\\\}
+  why=${why//\"/\\\"}
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the guards cannot run (%s), so the public and secrets checks refuse git commit and git push: run brain update (or the installer, install.ps1 -Apply), then retry. The SessionStart health says the same."}}\n' "$why"
+}
+
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0
 root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
 IFS= read -r -d '' input  # the hook's JSON, without $(cat)'s fork
 needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }
 
 home="${BRAIN_HOME:-$HOME/.brain}"
-brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null
+brain_py=
+brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
+# here no Python was found, or the one found failed: guard.py's main never fails, so it could not import brain
+why="no Python 3 found (BRAIN_PYTHON, <BRAIN_HOME>/venv, python3, python)"
+[ -n "$brain_py" ] && why="$brain_py cannot import brain"
+[ -n "$brain_py" ] && [ "$brain_py" = "${BRAIN_PYTHON:-}" ] && why="$why; BRAIN_PYTHON chose it: fix or unset BRAIN_PYTHON"
+selftime_bash "hook guard ${1:-} [cannot run]" 1
+commits_or_pushes "${1:-}" "$input" && refuse_cannot_run "$why"
 exit 0
