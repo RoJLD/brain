@@ -76,7 +76,12 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   the push is told to split them: the guard judges the whole call before its first part runs. Its ``commit`` check
   runs brain.public's line checks (the denied terms outside public.allow, e-mail addresses and home folders,
   public.patterns) on what a git commit records in a checkout whose remote is a public repo, so the owner's name in a
-  test's data is refused at the commit, not at the push (the lesson les-brain-owner-name-in-fixtures).
+  test's data is refused at the commit, not at the push (the lesson les-brain-owner-name-in-fixtures). Its ``config``
+  check makes the public and secrets checks fail closed (COMPAT-4, wi-brain-guards-fail-closed): every git commit and
+  git push is refused while the configuration they read is unexpected (brain.config.unexpected: config.json
+  unreadable, not an object, ``public`` not an object, a ``v`` above the known one, $BRAIN_CONFIG naming no file, or
+  no config.json found although $BRAIN_PERSONAL or personal.json names a personal brain; never an unknown key), the
+  reason naming the fix; guard.sh refuses them too when no Python that imports brain can run the guards.
 - A warning, never a refusal: a Bash heredoc that holds a doubled backslash and writes a file or feeds an
   interpreter, on Windows, gets a note in the session's context (additionalContext): through the Bash tool the
   doubled backslash has arrived single; Write or Edit, or a byte check after (the lesson
@@ -94,9 +99,10 @@ guard:check pair (owner:installer, power:cluster) or ``all``, in Claude Code's o
 cannot set; the call passes and the ledger records it. Refusals and overrides go to
 ``<BRAIN_HOME>/ledger/guards-<month>.jsonl`` when the ledger exists (a request for the owner creates it), with the
 check that refused (edit, git, shell-write, an owner category, machine, node, wake, cluster, bot, download, plugin,
-skills, attribution, secrets, markers, public, commit, name; backslash for the heredoc warning). An internal error lets the call through and goes to ``ledger/errors.log``: a guard never breaks
-a session. A session-settings call is the exception: an error there is a refusal (Remote Control's exceptions fail
-closed).
+skills, attribution, secrets, markers, public, commit, config, name; backslash for the heredoc warning). An internal
+error lets the call through and goes to ``ledger/errors.log``: a guard never breaks a session. Two exceptions fail
+closed: a session-settings call, where an error is a refusal (Remote Control's exceptions), and a commit or push the
+public and secrets checks cannot judge (the ``config`` check above, and guard.sh without a Python that imports brain).
 """
 
 from __future__ import annotations
@@ -2652,6 +2658,30 @@ def _commits(cmds: list[tuple[list[str], str]], continues: bool = False):
             yield d, f"git {sub} --continue", added, False
 
 
+def _pushes(cmds: list[tuple[list[str], str]]):
+    """(words, folder, git push's arguments) for each git push of ``cmds`` (not its -h or --help)."""
+    for words, d in cmds:
+        if _prog(words[0]) != "git":
+            continue
+        parts = git_parts(words, d)
+        if parts and parts[1] == "push" and "-h" not in parts[2] and "--help" not in parts[2]:
+            yield words, parts[0], parts[2]
+
+
+def check_config(cmds: list[tuple[list[str], str]]) -> str | None:
+    """The public and secrets checks fail closed (COMPAT-4, wi-brain-guards-fail-closed): a git commit or git push is
+    refused while the configuration they read is unexpected (config.unexpected), the reason naming the fix. Only
+    then is config.json read: every other call never pays for it."""
+    what = next(("git commit" for _ in _commits(cmds)), None) or next(("git push" for _ in _pushes(cmds)), None)
+    if not what:
+        return None
+    why = config.unexpected()
+    if not why:
+        return None
+    return (f"{what} refused: the public and secrets checks cannot trust the configuration, so they fail closed: "
+            f"{why}")
+
+
 def check_secrets(cmds: list[tuple[list[str], str]]) -> str | None:
     for d, _, added, every in _commits(cmds):
         hits = commit_secrets(d, added, every)
@@ -2737,13 +2767,7 @@ def _push_commits(repo: str, refspecs: list[str], flags: set[str]) -> list[tuple
 
 def check_public(cmds: list[tuple[list[str], str]]) -> str | None:
     cfg = None
-    for words, d in cmds:
-        if _prog(words[0]) != "git":
-            continue
-        parts = git_parts(words, d)
-        if not parts or parts[1] != "push" or "-h" in parts[2] or "--help" in parts[2]:
-            continue
-        d, _, args = parts
+    for words, d, args in _pushes(cmds):
         cfg = cfg or config.load()
         if not public.public_repos(cfg):
             return None
@@ -3104,6 +3128,7 @@ def refusals(payload: dict):
                               ("power", None, lambda: check_power(cmds, powershell, command)),
                               ("third-party", None, lambda: check_third_party(cmds, cwd, powershell, command)),
                               ("attribution", "attribution", lambda: check_attribution(command, cmds)),
+                              ("public", "config", lambda: check_config(cmds)),
                               ("secrets", "secrets", lambda: check_secrets(cmds)),
                               ("markers", "markers", lambda: check_markers(cmds)),
                               ("public", "public", lambda: check_public(cmds)),

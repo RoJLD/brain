@@ -6,11 +6,27 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ### Upgrade
 
+- **The public and secrets checks fail closed** (wi-brain-guards-fail-closed, COMPAT-4). After `brain sync` and the
+  install, a machine whose `config.json` is unreadable, not an object, has a `public` that is not an object or a `v`
+  above 1, whose `$BRAIN_CONFIG` names no file, or whose `personal.json` names a folder without `config.json` (a
+  renamed personal brain) is refused every `git commit` and `git push` until it is fixed; so is a machine whose hooks
+  find no Python that imports brain. Check first: `brain config --check` and `brain config` (its `file` and
+  `personal`).
 - Nothing to run. Outside CI, a check that used to fail on an unknown key in `config.json`, `permissions.yaml`,
   `packs.yaml`, `projects.yaml` or a record now prints a note instead; CI (`CI` set) still fails on it. A `v` above 1
   in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
   update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
 
+- **The public and secrets checks fail closed** (wi-brain-guards-fail-closed, COMPAT-4; the 2026-11-04 REVERSAL of
+  the guards' internal-error policy, for these checks only). A new check, `public:config`, refuses every `git commit`
+  and `git push` while `brain.config.unexpected` finds the configuration unexpected: `config.json` unreadable or not
+  an object, `public` not an object, a `v` above the engine's, `$BRAIN_CONFIG` naming no file, or no `config.json`
+  found although `$BRAIN_PERSONAL` or `personal.json` names a personal brain. An unknown key never refuses. Each
+  reason names its fix (`brain config --check`, `brain update`, `install.ps1 -Apply`). `guard.sh` refuses a shell
+  command naming git and commit or push when it finds no Python, or the one it finds cannot import brain (« the
+  guards cannot run »); before, it let every call through in silence. The SessionStart health says both (`health.py`
+  through `brain.stacks.hook_main`, `health.sh` when no Python can run it). `BRAIN_GUARD_ALLOW=public:config` lifts
+  the Python check. `docs/guards.md`.
 - **Remote Control's three exceptions** (wi-brain-guard-rc-archive; the owner's ADRs of 2026-11-04). The
   session-settings guard lets the desktop app's `set_remote_control` through in exactly three cases, each checked
   from the app's own session files and the hand-over notes: off on a finished (idle) session the caller started,

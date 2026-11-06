@@ -11,7 +11,9 @@ The file sits at the personal brain's root, next to the registry, and is found t
 ``$BRAIN_PERSONAL``, the repo acted on, the machine's pointer ``<BRAIN_HOME>/personal.json`` (the installer writes
 it), then a checkout that still holds this package. A brain without one runs on :data:`DEFAULTS`, its
 owner read from its main graph store. Loading never fails: an unreadable file is reported by :func:`check` and the
-defaults apply, so a bad file never stops another command.
+defaults apply, so a bad file never stops another command. The one exception is where a leak is possible:
+:func:`unexpected` says why the public and secrets guards cannot trust the configuration, and they then refuse every
+git commit and git push (COMPAT-4).
 """
 
 from __future__ import annotations
@@ -67,6 +69,34 @@ def load(root: Path | None = None) -> Config:
     if not isinstance(data, dict):
         return Config(f, f.parent.resolve(), error=f"{f.name}: an object, got {type(data).__name__}")
     return Config(f, f.parent.resolve(), data)
+
+
+def unexpected(cfg: Config | None = None) -> str:
+    """Why the public and secrets guards cannot trust the configuration, with its fix; "" when they can (COMPAT-4,
+    wi-brain-guards-fail-closed). Unexpected is: ``$BRAIN_CONFIG`` naming no file; config.json unreadable or not an
+    object; ``public`` not an object; a ``v`` above the one this engine knows; or no config.json found although
+    ``$BRAIN_PERSONAL`` or the pointer <BRAIN_HOME>/personal.json names a personal brain (every brain init writes one).
+    An unknown key is never unexpected: a newer brain's is kept (tolerant reader)."""
+    cfg = cfg or load()
+    if cfg.error and os.environ.get("BRAIN_CONFIG") and cfg.file is None:
+        return f"BRAIN_CONFIG names {cfg.error}: point it at the personal brain's config.json, or unset it"
+    if cfg.error and cfg.file is not None:
+        return f"{cfg.error}: fix {cfg.file} (brain config --check shows what is wrong)"
+    if cfg.file is None:
+        named = paths.personal_root()
+        if named is None:
+            return ""
+        by = "BRAIN_PERSONAL" if os.environ.get("BRAIN_PERSONAL") else str(paths.personal_file())
+        where = "does not exist" if not named.is_dir() else f"holds no {FILE}"
+        return (f"{by} names the personal brain {named}, which {where}: point it at the personal brain's main checkout "
+                "(rerun the installer: install.ps1 -Apply), or set BRAIN_PERSONAL")
+    if "public" in cfg.data and not isinstance(cfg.data["public"], dict):
+        return (f"{FILE}: public is a {type(cfg.data['public']).__name__}, not an object: fix {cfg.file} "
+                "(brain config --keys lists public's keys)")
+    try:
+        return schema.newer(FILE, cfg.data.get("v"), schema.known_v("config"))
+    except (OSError, ValueError, KeyError) as exc:   # the engine's own schema is broken: brain update reinstalls it
+        return f"the engine's config.schema.json cannot be read ({exc}): brain update"
 
 
 def store_owners(cfg: Config) -> dict[str, str]:
