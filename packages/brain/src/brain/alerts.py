@@ -890,9 +890,10 @@ def _state_shape(data: dict) -> str:
     return f"{', '.join(bad[:3])} not an object" if bad else ""
 
 
-def state() -> stateio.State:
-    """The alerts already sent and the last pass on this machine, under brain.stateio's policy."""
-    return stateio.load(state_dir() / "state.json", known=STATE_V, check=_state_shape)
+def state(write: bool = False) -> stateio.State:
+    """The alerts already sent and the last pass on this machine, under brain.stateio's policy (set aside only to
+    write)."""
+    return stateio.load(state_dir() / "state.json", known=STATE_V, check=_state_shape, aside=write)
 
 
 def state_load() -> dict:
@@ -900,7 +901,7 @@ def state_load() -> dict:
 
 
 def _state_save(data: dict) -> None:
-    stateio.save(state(), data, write_v=False)
+    stateio.save(state(write=True), data, write_v=False)
 
 
 def _history(a: dict, project: str, state: str, now: datetime) -> dict:
@@ -928,7 +929,7 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
     """Send the changes since the last pass through brain notify and record them (nothing written with
     ``dry_run``); the lines to print. A project whose alerts could not be read keeps its state."""
     now = now or _now()
-    loaded = state()
+    loaded = state(write=not dry_run)
     if not dry_run and not loaded.writable:   # sent without a record, every pass would send them again
         return [f"nothing sent: {loaded.refusal()}"]
     st = loaded.data
@@ -984,7 +985,10 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
         from .schedule import clock
         st["_pass"] = {"at": _iso(now), "host": socket.gethostname() or "unknown", "unset": sorted(unset),
                        "clock": clock()}
-        _state_save(st)
+        try:
+            _state_save(st)
+        except (stateio.StateError, OSError) as exc:   # a newer brain wrote it meanwhile: said, not a traceback
+            lines.append(f"sent, but not recorded (the next pass may send again): {exc}")
     return lines
 
 

@@ -512,14 +512,14 @@ def _state_shape(data: dict) -> str:
     return f"{', '.join(bad)} not an object" if bad else ""
 
 
-def _state() -> stateio.State:
-    return stateio.load(state_file(), known=STATE_V, check=_state_shape)
+def _state(write: bool = False) -> stateio.State:
+    return stateio.load(state_file(), known=STATE_V, check=_state_shape, aside=write)
 
 
 def load_state(write: bool = False) -> dict:
     """The canaries, drills and seals on record. ``write``: the caller will save it, so a state this engine must not
     write (a newer brain's) is refused here, before any work (VaultError)."""
-    st = _state()
+    st = _state(write)
     if write and not st.writable:
         raise VaultError(st.refusal())
     data = st.data
@@ -548,7 +548,7 @@ def proven_canary(st: dict, name: str, fingerprint: str) -> dict:
 
 def save_state(st: dict) -> None:
     try:
-        stateio.save(_state(), st, indent=2)
+        stateio.save(_state(write=True), st, indent=2)
     except stateio.StateError as exc:
         raise VaultError(str(exc)) from None
 

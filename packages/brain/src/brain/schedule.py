@@ -244,9 +244,9 @@ def _record_shape(data: dict) -> str:
     return f"{', '.join(bad[:3])} not an object" if bad else ""
 
 
-def record_state() -> stateio.State:
-    """This machine's record of the tasks it installed, under brain.stateio's policy."""
-    return stateio.load(record_file(), known=RECORD_V, check=_record_shape)
+def record_state(write: bool = False) -> stateio.State:
+    """This machine's record of the tasks it installed, under brain.stateio's policy (set aside only to write)."""
+    return stateio.load(record_file(), known=RECORD_V, check=_record_shape, aside=write)
 
 
 def installed() -> dict:
@@ -254,7 +254,7 @@ def installed() -> dict:
 
 
 def _record(data: dict) -> None:
-    stateio.save(record_state(), data, write_v=False)
+    stateio.save(record_state(write=True), data, write_v=False)
 
 
 # --- the systems ---
@@ -657,7 +657,7 @@ def install(registry: Mapping[str, projects.Project], apply: bool = False, *, ru
             return 2
     here = here or machine()
     sys_ = system(run)
-    rstate = record_state()
+    rstate = record_state(write=apply)
     if apply and not rstate.writable:   # a newer brain's record: applying here would orphan or double its tasks
         install(registry, False, run=run, here=here, as_json=as_json)
         print(f"brain schedule: install --apply refused: {rstate.refusal()}", file=sys.stderr)
@@ -666,13 +666,20 @@ def install(registry: Mapping[str, projects.Project], apply: bool = False, *, ru
     steps = plan(schedules, here, sys_, record=record)
     rows = [{"action": st.action, "name": st.name, "line": st.line,
              "outcome": _apply(st, sys_, record) if apply and st.action != "note" else ""} for st in steps]
+    unsaved = ""
     if apply and sys_ is not None:
-        _record(record)
+        try:
+            _record(record)
+        except (stateio.StateError, OSError) as exc:   # a newer brain wrote it meanwhile, or the disk refused
+            unsaved = f"the tasks are applied, but their record is not written: {exc}"
     if as_json:
         print(json.dumps({"machine": here, "system": sys_.label if sys_ else None, "steps": rows,
                           "applied": apply}, indent=2))
     else:
         print("\n".join(_render(rows, apply)))
+    if unsaved:
+        print(f"brain schedule: {unsaved}", file=sys.stderr)
+        return 1
     return 1 if any(r["outcome"].startswith("failed") for r in rows) else 0
 
 

@@ -65,7 +65,9 @@ nothing else keeps. Such a file is read and written through `brain.stateio` (`lo
 - reads a missing file as an empty record;
 - **sets aside** a file that is not JSON, not an object, or not the shape its owner expects: it is moved beside
   itself as `<name>.unreadable-<UTC stamp>` (a line on stderr names it) and the record starts afresh. It is never
-  replaced by `{}` and saved over;
+  replaced by `{}` and saved over. Only a command that writes the file sets it aside: a read-only one (`brain
+  status`, the cockpit, a plan, a dry run) reads it as empty and moves nothing. A byte that is not UTF-8 counts as
+  not JSON, and a file a writer replaced between the read and the move is read again;
 - reads a file whose `v` is above the engine's (or is not an integer) as it is, but treats it as **read-only**: the
   command that would write it refuses up front, « written by a newer brain (v N, this engine knows v M): brain
   update »; an OSError other than a missing file (a lock, a permission) is read-only too, and nothing is moved;
@@ -82,7 +84,7 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 | `schedules/installed.json` | `v` 1, unwritten | `brain schedule install --apply` prints the plan and refuses (exit 2) |
 | `alerts/state.json` | `v` 1, unwritten | the notify pass sends nothing (« nothing sent: ... »), since sending without a record would send again each pass |
 | `vault/state.json` | `v` 1, written from 0.2.6 | `brain vault seal`, `canary` and `drill` refuse before any work; `status` and the health still read it |
-| `usage/sessions.json` | `v` = the scanner's `SCAN_V` (2) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
+| `usage/sessions.json` | `v` 2 (`LEDGER_V`, apart from the scanner's `SCAN_V`, which only rescans rows) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
 
 ### The `return {}` sites, classified
 

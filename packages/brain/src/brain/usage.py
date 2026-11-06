@@ -624,10 +624,14 @@ def _ledger_shape(data: dict) -> str:
     return f"row {bad[0]} not an object" if bad else ""
 
 
-def ledger() -> stateio.State:
-    """The ledger under brain.stateio's policy (truth-local: the rows of deleted transcripts live only here); its
-    ``v`` is the scanner's (``SCAN_V``)."""
-    return stateio.load(ledger_file(), known=SCAN_V, check=_ledger_shape)
+LEDGER_V = 2   # the ledger file's format (brain.stateio), apart from SCAN_V: a better scanner rescans rows, it does
+#                not make the ledger read-only for the engine before it
+
+
+def ledger(write: bool = False) -> stateio.State:
+    """The ledger under brain.stateio's policy (truth-local: the rows of deleted transcripts live only here; set
+    aside only to write)."""
+    return stateio.load(ledger_file(), known=LEDGER_V, check=_ledger_shape, aside=write)
 
 
 def load() -> dict:
@@ -636,7 +640,7 @@ def load() -> dict:
 
 
 def save(rows: dict, state: stateio.State | None = None) -> None:
-    stateio.save(state or ledger(), {"rows": rows}, indent=None, separators=(",", ":"), sort_keys=False)
+    stateio.save(state or ledger(write=True), {"rows": rows}, indent=None, separators=(",", ":"), sort_keys=False)
 
 
 def main_transcripts() -> list[Path]:
@@ -647,7 +651,7 @@ def main_transcripts() -> list[Path]:
 def update(prices: dict | None = None, rescan: bool = False) -> tuple[dict, int]:
     """The ledger brought up to date with the transcripts on this machine: (rows, sessions scanned). A row whose
     transcript is gone is kept. A ledger a newer brain wrote is read, brought up to date in memory, never saved."""
-    st = ledger()
+    st = ledger(write=True)
     rows = st.data.get("rows") or {}
     scanned = 0
     for f in main_transcripts():
@@ -665,7 +669,10 @@ def update(prices: dict | None = None, rescan: bool = False) -> tuple[dict, int]
             continue
         scanned += 1
     if scanned and st.writable:
-        save(rows, st)
+        try:
+            save(rows, st)
+        except (stateio.StateError, OSError) as exc:   # a newer brain wrote it meanwhile: the rows stay in memory
+            print(f"brain usage: {exc}", file=sys.stderr)
     elif scanned:
         print(f"brain usage: {st.refusal()}", file=sys.stderr)
     return rows, scanned

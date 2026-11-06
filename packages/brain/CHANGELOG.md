@@ -31,7 +31,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   notify pass sends nothing rather than send again each pass), `vault/state.json` (gains a `v`; a non-object no
   longer crashes `brain vault`; `seal`, `canary` and `drill` refuse a newer state before any work; the one-way drill
   migration backs up first) and `usage/sessions.json` (a newer ledger is updated in memory, never saved). The 17
-  `return {}` readers are classified in the same page; the rest of the truth-local ones follow.
+  `return {}` readers are classified in the same page; the rest of the truth-local ones follow. Only a command that
+  writes a file sets it aside (`brain status` and the cockpit move nothing); `brain vault reseal --apply` refuses a
+  newer state before resealing; a backup that fails (a locked `.bak`) is said and the write goes on.
 
 - **The public and secrets checks fail closed** (wi-brain-guards-fail-closed, COMPAT-4; the 2026-11-04 REVERSAL of
   the guards' internal-error policy, for these checks only). A new check, `public:config`, refuses every `git commit`

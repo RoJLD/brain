@@ -2,7 +2,6 @@
 installed.json, alerts/state.json, vault/state.json, usage/sessions.json."""
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -40,6 +39,39 @@ def test_an_unreadable_or_non_object_file_is_set_aside_never_saved_over(tmp_path
     assert f"set aside as {st.aside.name}" in capsys.readouterr().err
     stateio.save(st, {"a": 1})
     assert st.aside.read_text(encoding="utf-8") == text  # the copy is kept: the new record never overwrites it
+
+
+def test_a_file_that_is_not_utf8_is_set_aside_never_a_crash(tmp_path, brain_home):
+    f = tmp_path / "s.json"
+    f.write_bytes(b'{"a": "caf\xe9"}')   # cp1252, as a Windows editor may save it
+    assert stateio.load(f, aside=False).status == "unreadable" and f.exists()
+    st = stateio.load(f)
+    assert st.status == "aside" and "not JSON" in st.why and st.aside.read_bytes() == b'{"a": "caf\xe9"}'
+    _write(alerts.state_dir() / "state.json", "").write_bytes(b"\xe9")
+    assert alerts.state_load() == {}  # brain status reads it without a traceback
+
+
+def test_a_file_a_writer_replaced_meanwhile_is_read_again_not_set_aside(tmp_path, monkeypatch):
+    f = _write(tmp_path / "s.json", "{bad")
+    real = stateio.set_aside
+
+    def racing(path, why, seen=None):
+        path.write_text('{"a": 1}', encoding="utf-8")   # a writer's os.replace lands between the read and the move
+        return real(path, why, seen)
+    monkeypatch.setattr(stateio, "set_aside", racing)
+    st = stateio.load(f)
+    assert st.status == "ok" and st.data == {"a": 1} and not _asides(f)
+
+
+def test_a_backup_that_fails_does_not_stop_the_write(tmp_path, monkeypatch, capsys):
+    f = _write(tmp_path / "s.json", '{"a": 1}')
+
+    def locked(src, dst):
+        raise PermissionError("locked by a scanner")
+    monkeypatch.setattr(stateio.shutil, "copyfile", locked)
+    stateio.save(stateio.load(f), {"a": 2})
+    assert json.loads(f.read_text(encoding="utf-8"))["a"] == 2 and "no backup (PermissionError)" in capsys.readouterr().err
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
 
 
 def test_a_shape_the_owner_refuses_is_set_aside(tmp_path):
@@ -131,11 +163,15 @@ def test_a_secret_is_never_copied(brain_home):
 
 # --- schedules/installed.json ---
 
-def test_installed_json_corrupt_or_wrong_shape_is_set_aside(brain_home):
+def test_installed_json_corrupt_or_wrong_shape_is_set_aside_by_a_write_only(brain_home):
     f = _write(schedule.record_file(), '{"alerts-pass": "not a record"}')
-    assert schedule.installed() == {} and len(_asides(f)) == 1
+    assert schedule.installed() == {} and f.exists() and not _asides(f)  # a plan or a listing moves nothing
+    schedule._record({"alerts-pass": {"system": "schtasks"}})
+    assert len(_asides(f)) == 1 and json.loads(f.read_text(encoding="utf-8")) == {"alerts-pass": {"system": "schtasks"}}
     _write(f, "{broken")
-    assert schedule.installed() == {} and len(_asides(f)) == 2
+    assert schedule.installed() == {} and len(_asides(f)) == 1
+    schedule._record({})
+    assert len(_asides(f)) == 2
 
 
 def test_installed_json_keeps_v1_unwritten_and_a_newer_one_refuses_the_apply(brain_home, capsys):
@@ -161,10 +197,11 @@ def _alerts_file() -> Path:
 
 def test_alerts_state_corrupt_or_wrong_shape_is_set_aside_and_the_pass_records_afresh(brain_home):
     f = _write(_alerts_file(), "[]")
-    assert alerts.state_load() == {} and len(_asides(f)) == 1
+    assert alerts.state_load() == {} and not _asides(f)  # brain status, the cockpit: read only
+    assert alerts.notify_pass({"projects": []}, {}, dry_run=True) == [] and not _asides(f)
     _write(f, '{"demo": 3}')
     alerts.notify_pass({"projects": []}, {})
-    assert len(_asides(f)) == 2 and "_pass" in json.loads(f.read_text(encoding="utf-8"))
+    assert len(_asides(f)) == 1 and "_pass" in json.loads(f.read_text(encoding="utf-8"))
     assert schedule.last_pass()["host"]
 
 
@@ -188,11 +225,12 @@ def test_alerts_state_is_written_atomically_with_a_backup(brain_home):
 
 def test_vault_state_that_is_not_an_object_no_longer_crashes(brain_home):
     f = _write(vault.state_file(), "[1, 2]")
-    assert vault.load_state() == {"canary": {}, "drill": {}, "seals": {}} and len(_asides(f)) == 1
+    assert vault.load_state() == {"canary": {}, "drill": {}, "seals": {}} and not _asides(f)  # status: read only
+    assert vault.load_state(write=True) == {"canary": {}, "drill": {}, "seals": {}} and len(_asides(f)) == 1
     _write(f, '{"drill": ["x"]}')
-    assert vault.load_state()["drill"] == {} and len(_asides(f)) == 2
+    assert vault.load_state(write=True)["drill"] == {} and len(_asides(f)) == 2
     _write(f, "{oops")
-    assert vault.load_state()["seals"] == {} and len(_asides(f)) == 3
+    assert vault.load_state(write=True)["seals"] == {} and len(_asides(f)) == 3
 
 
 def test_vault_state_gains_a_v_and_its_legacy_migration_backs_up_first(brain_home):
@@ -203,7 +241,7 @@ def test_vault_state_gains_a_v_and_its_legacy_migration_backs_up_first(brain_hom
     assert json.loads(Path(str(f) + ".bak").read_text(encoding="utf-8"))["drill"] == {"r": "2026-01-01"}
 
 
-def test_vault_state_newer_v_is_read_and_every_write_is_refused(brain_home):
+def test_vault_state_newer_v_is_read_and_every_write_is_refused(brain_home, monkeypatch):
     f = _write(vault.state_file(), json.dumps({"v": 2, "drill": {"r": "2026-01-01"}, "seals": {}, "canary": {}}))
     assert vault.load_state()["drill"]["r"]["at"] == "2026-01-01"  # migrated in memory, never written over it
     with pytest.raises(vault.VaultError, match="newer brain"):
@@ -212,6 +250,10 @@ def test_vault_state_newer_v_is_read_and_every_write_is_refused(brain_home):
         vault.drill(None, "r")  # refused before any key is asked
     with pytest.raises(vault.VaultError, match="newer brain"):
         vault.save_state({"canary": {}, "drill": {}, "seals": {}})
+    from brain import rotation
+    monkeypatch.setattr(rotation, "stale_seals", lambda cfg: [{"store": "s", "file": "f"}])
+    with pytest.raises(vault.VaultError, match="newer brain"):
+        rotation.reseal(None, apply=True)  # refused before any file is sealed again
     assert json.loads(f.read_text(encoding="utf-8"))["v"] == 2 and not Path(str(f) + ".bak").exists()
 
 
@@ -227,11 +269,16 @@ def _fake_scan(monkeypatch, tmp_path):
 
 def test_usage_ledger_corrupt_or_wrong_shape_is_set_aside_not_lost(brain_home):
     f = _write(usage.ledger_file(), '{"v": 2, "rows": []}')
-    assert usage.load() == {} and len(_asides(f)) == 1
+    assert usage.load() == {} and not _asides(f)  # brain cost, the budget: read only
+    assert usage.ledger(write=True).status == "aside" and len(_asides(f)) == 1
     _write(f, '{"v": 2, "rows": {"gone.jsonl": 3}}')
-    assert usage.load() == {} and len(_asides(f)) == 2
-    _write(f, "\x00\x01")
-    assert usage.load() == {} and len(_asides(f)) == 3
+    assert usage.ledger(write=True).data == {} and len(_asides(f)) == 2
+
+
+def test_usage_ledger_v_is_its_format_not_the_scanner(brain_home, monkeypatch):
+    f = _write(usage.ledger_file(), json.dumps({"v": usage.LEDGER_V, "rows": {"a": {"v": 1}}}))
+    monkeypatch.setattr(usage, "SCAN_V", usage.SCAN_V + 1)  # a better scanner rescans rows, the file stays writable
+    assert usage.ledger(write=True).writable and usage.load() == {"a": {"v": 1}}
 
 
 def test_usage_ledger_newer_v_is_brought_up_to_date_in_memory_only(brain_home, tmp_path, monkeypatch, capsys):
@@ -251,4 +298,3 @@ def test_usage_ledger_is_saved_with_its_v_atomically_and_backed_up(brain_home, t
     assert data["v"] == usage.SCAN_V and set(data["rows"]) == {"gone.jsonl", "p/s.jsonl"}
     assert json.loads(Path(str(f) + ".bak").read_text(encoding="utf-8"))["rows"] == {"gone.jsonl": {"cost": 2}}
     assert not [p for p in f.parent.iterdir() if p.name.endswith(".tmp")]
-    assert os.path.getsize(f) == len(f.read_bytes())
