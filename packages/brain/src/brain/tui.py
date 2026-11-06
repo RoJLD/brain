@@ -868,7 +868,9 @@ class CockpitApp(App):
                 kind="apply", label="Update", project="brain", ref=f"v{info['latest']}", cwd=paths.brain_home(),
                 steps=[["brain", "update", "--yes"]], preview=["brain", "update", "--check"], handover=True,
                 plan=[f"Installs brain v{info['latest']} into the brain's venv and swaps its launcher; a pinned "
-                      "brain's config.json engine.pin stays to move by a reviewed PR.",
+                      "brain's config.json engine.pin is then written, committed and brain sync run when the brain "
+                      "declares no installer of its own (COMPAT-5), else left to move by a reviewed PR: the plan "
+                      "below says which.",
                       then.format(cmd="brain update --yes")]))
 
     def action_pause(self) -> None:

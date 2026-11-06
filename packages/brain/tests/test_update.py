@@ -458,3 +458,21 @@ def test_the_question_names_the_pin_with_the_install(venv, pin_repo, monkeypatch
     update.main(None, check_only=False, yes=False, as_json=False, ask=lambda q: asked.append(q) or "n",
                 out=lambda s: None)
     assert asked == ["Install brain v0.2.3, move engine.pin to v0.2.3, commit it and run brain sync now? [y/N] "]
+
+
+def test_write_pin_keeps_the_line_endings_and_the_bom(tmp_path):
+    """A config.json Windows PowerShell 5.1 wrote: a BOM, CRLF, four spaces; only the pin changes."""
+    f = tmp_path / "config.json"
+    body = '{\r\n    "engine": {\r\n        "pin": "v0.2.2",\r\n        "repo": "ada/engine"\r\n    },\r\n    "v": 1\r\n}\r\n'
+    f.write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))
+    update.write_pin(f, "v0.2.2", "v0.2.3")
+    assert f.read_bytes() == b"\xef\xbb\xbf" + body.replace("v0.2.2", "v0.2.3").encode("utf-8")
+
+
+def test_an_untracked_config_is_left_alone(venv, pin_repo):
+    from conftest import run_git
+    run_git(pin_repo, "rm", "-q", "--cached", "config.json")
+    run_git(pin_repo, "commit", "-q", "-m", "untrack")
+    (pin_repo / ".git" / "info" / "exclude").write_text("config.json\n", encoding="utf-8")  # ignored: status is clean
+    code, done = update.apply(_plan("0.2.3"), runner=_runner([]))
+    assert code == 1 and "is not tracked in" in done[0] and _pin(pin_repo) == "v0.2.2"

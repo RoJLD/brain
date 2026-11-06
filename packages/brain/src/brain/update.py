@@ -415,12 +415,14 @@ def _git(root: Path, *args: str, runner=subprocess.run):
 
 
 def write_pin(file: Path, frm: str, to: str) -> None:
-    """engine.pin ``frm`` -> ``to`` in config.json, its other keys, their order and its indent kept, written
-    atomically (brain.stateio.write_atomic; git holds the previous version, so no .bak beside it). Raises ValueError
-    when the file no longer pins ``frm`` (moved since the plan) or is not JSON."""
+    """engine.pin ``frm`` -> ``to`` in config.json, its other keys, their order, its indent, its line endings and its
+    BOM kept, written atomically (brain.stateio.write_atomic; git holds the previous version, so no .bak beside it).
+    Raises ValueError when the file no longer pins ``frm`` (moved since the plan) or is not JSON."""
     from . import stateio
 
-    text = file.read_text(encoding="utf-8-sig")
+    raw = file.read_bytes()
+    bom = raw.startswith(b"\xef\xbb\xbf")
+    text = raw.decode("utf-8-sig")
     data = json.loads(text)
     eng = data.get("engine") if isinstance(data, dict) else None
     if not isinstance(eng, dict) or eng.get("pin") != frm:
@@ -428,13 +430,16 @@ def write_pin(file: Path, frm: str, to: str) -> None:
     eng["pin"] = to
     m = re.search(r"\n([ \t]+)\S", text)
     indent = m.group(1) if m else None
-    stateio.write_atomic(file, json.dumps(data, indent=indent, ensure_ascii=False) + "\n")
+    out = json.dumps(data, indent=indent, ensure_ascii=False) + "\n"
+    if "\r\n" in text:
+        out = out.replace("\n", "\r\n")
+    stateio.write_atomic(file, ("﻿" if bom else "") + out)
 
 
 def move_pin(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
     """The pin step of a brain without an installer of its own (COMPAT-5): config.json written and committed alone
-    in the brain's repo, then brain sync run with the venv's engine. Refused, nothing written, when the brain's root
-    is not a git repo or config.json has changes not committed."""
+    in the brain's repo (not pushed), then brain sync run with the venv's engine. Refused, nothing written, when the
+    brain's root is not a git repo, config.json is not tracked there or it has changes not committed."""
     pin = p["pin"]
     file = Path(pin["file"])
     root = file.parent
@@ -442,6 +447,8 @@ def move_pin(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
     top = _git(root, "rev-parse", "--show-toplevel", runner=runner)
     if top.returncode != 0:
         return 1, [f"pin      {root} is not a git repo: nothing written; {hand}"]
+    if _git(root, "ls-files", "--error-unmatch", "--", file.name, runner=runner).returncode != 0:
+        return 1, [f"pin      {file.name} is not tracked in {root}: nothing written; {hand}"]
     dirty = _git(root, "status", "--porcelain", "--", file.name, runner=runner)
     if dirty.returncode != 0 or (dirty.stdout or "").strip():
         return 1, [f"pin      {file.name} has changes not committed: nothing written; commit them, then brain update "
@@ -456,7 +463,7 @@ def move_pin(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
         said = ((done.stdout or "") + (done.stderr or "")).strip().splitlines()[-10:]
         return 1, [f"pin      {file.name} engine.pin written ({pin['to']}), but git commit failed (exit "
                    f"{done.returncode}): commit it yourself, then brain sync", *said]
-    out = [f"pin      {file.name} engine.pin {pin['from']} -> {pin['to']}, committed in {root} ({msg!r})"]
+    out = [f"pin      {file.name} engine.pin {pin['from']} -> {pin['to']}, committed in {root} ({msg!r}; not pushed)"]
     try:
         sync = runner([p["python"], "-m", "brain", "--root", str(root), "sync"], capture_output=True, text=True,
                       stdin=subprocess.DEVNULL, cwd=str(root))
