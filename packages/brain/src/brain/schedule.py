@@ -60,7 +60,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping
 
-from . import graph, paths, projects
+from . import graph, paths, projects, stateio
 
 KEYS = {"command", "every", "at", "at_logon", "machines", "timeout", "enabled"}
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,40}")
@@ -236,20 +236,25 @@ def record_file() -> Path:
     return paths.brain_home() / "schedules" / "installed.json"
 
 
+RECORD_V = 1   # truth-local (brain.stateio): v 1 stays unwritten, so that 0.2.5 reads every key as a schedule
+
+
+def _record_shape(data: dict) -> str:
+    bad = sorted(k for k, r in data.items() if not isinstance(r, dict))
+    return f"{', '.join(bad[:3])} not an object" if bad else ""
+
+
+def record_state() -> stateio.State:
+    """This machine's record of the tasks it installed, under brain.stateio's policy."""
+    return stateio.load(record_file(), known=RECORD_V, check=_record_shape)
+
+
 def installed() -> dict:
-    try:
-        data = json.loads(record_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return record_state().data
 
 
 def _record(data: dict) -> None:
-    f = record_file()
-    f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, f)
+    stateio.save(record_state(), data, write_v=False)
 
 
 # --- the systems ---
@@ -652,7 +657,12 @@ def install(registry: Mapping[str, projects.Project], apply: bool = False, *, ru
             return 2
     here = here or machine()
     sys_ = system(run)
-    record = installed()
+    rstate = record_state()
+    if apply and not rstate.writable:   # a newer brain's record: applying here would orphan or double its tasks
+        install(registry, False, run=run, here=here, as_json=as_json)
+        print(f"brain schedule: install --apply refused: {rstate.refusal()}", file=sys.stderr)
+        return 2
+    record = rstate.data
     steps = plan(schedules, here, sys_, record=record)
     rows = [{"action": st.action, "name": st.name, "line": st.line,
              "outcome": _apply(st, sys_, record) if apply and st.action != "note" else ""} for st in steps]
@@ -718,11 +728,8 @@ def _ts(text) -> datetime | None:
 
 def last_pass() -> dict:
     """The last notify pass on this machine ({at, host, unset}), from $BRAIN_HOME/alerts/state.json; {} before one."""
-    try:
-        data = json.loads((paths.brain_home() / "alerts" / "state.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    p = data.get("_pass") if isinstance(data, dict) else None
+    from .alerts import state_load   # brain.alerts imports this module
+    p = state_load().get("_pass")
     return p if isinstance(p, dict) else {}
 
 
