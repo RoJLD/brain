@@ -81,12 +81,11 @@ IFS= read -r -d '' input  # the hook's JSON, without $(cat)'s fork
 needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }
 
 home="${BRAIN_HOME:-$HOME/.brain}"
-if brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python; then
-  BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
-  why="$brain_py cannot import brain"
-else
-  why="no Python 3 found (BRAIN_PYTHON, <BRAIN_HOME>/venv, python3, python)"
-fi
+brain_py=
+brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
+# here no Python was found, or the one found failed: guard.py's main never fails, so it could not import brain
+why="no Python 3 found (BRAIN_PYTHON, <BRAIN_HOME>/venv, python3, python)"
+[ -n "$brain_py" ] && why="$brain_py cannot import brain"
 selftime_bash "hook guard ${1:-} [cannot run]" 1
 commits_or_pushes "${1:-}" "$input" && refuse_cannot_run "$why"
 exit 0
