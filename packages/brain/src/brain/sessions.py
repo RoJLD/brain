@@ -173,7 +173,8 @@ def app_index() -> dict[str, dict] | None:
     cache = _read_json(cache_f)
     cache = cache if isinstance(cache, dict) else {}
     fresh = {}
-    for f in (f for d in dirs for f in d.glob("local_*.json")):
+    for f in (f for d in dirs for f in sorted(d.glob("local_*.json"))):   # sorted: children started together keep
+        # one order on every system (a directory lists in its own order on Linux)
         st = _stat(f)
         hit = _picked(f, st, cache) if st else None
         if hit:
