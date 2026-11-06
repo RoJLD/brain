@@ -71,7 +71,9 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   setext heading (======= under a line of text) and a file under a fixtures folder pass.
 - ``public``: no ``git push`` to a repo of config.json's ``public.repos`` (the remote named or given as a URL, else
   the branch's upstream, else origin) until every commit it sends has the stamp of a green ``brain check --public
-  --history`` (brain.public): the refspecs' sources, every branch with --all or --mirror, the tags with --tags or
+  --history`` (brain.public) made under the key it is checked with now: this engine's version, the hash of
+  config.json's public rules, gitleaks on the PATH or not (a stamp of 0.2.5 or older has no key and is refused, with
+  « rerun brain check --public --history »): the refspecs' sources, every branch with --all or --mirror, the tags with --tags or
   --follow-tags, else HEAD. A push to any other repo passes untouched. A call that runs ``brain check --public`` before
   the push is told to split them: the guard judges the whole call before its first part runs. Its ``commit`` check
   runs brain.public's line checks (the denied terms outside public.allow, e-mail addresses and home folders,
@@ -2780,13 +2782,18 @@ def check_public(cmds: list[tuple[list[str], str]]) -> str | None:
         slug = public.repo_slug(url)
         if not public.is_public(slug, cfg):
             continue
-        missing = [(ref, sha) for ref, sha in _push_commits(d, refspecs, flags) if not public.stamped(slug, sha)]
+        # a stamp counts only under the key it was made with: this engine, these rules, gitleaks as now
+        # (wi-brain-public-stamp-binding)
+        missing = [(ref, sha, why) for ref, sha in _push_commits(d, refspecs, flags)
+                   if (why := public.stamp_refusal(slug, sha, cfg))]
         if missing:
-            ref, sha = missing[0]
+            ref, sha, why = missing[0]
             more = f" and {len(missing) - 1} more" if len(missing) > 1 else ""
+            fix = ("run brain check --public --history" if why == public.NO_STAMP else
+                   "rerun brain check --public --history (the stamp is not valid under this ruleset)")
             return (f"git push refused: {slug} is a public repo (config.json public.repos) and {ref} ({sha[:8]}){more} "
-                    f"has no green brain check --public; run brain check --public --history in {d}, take out what it "
-                    "finds, then push again" + (CHAIN_HINT if _checks_first(cmds, words) else ""))
+                    f"{why}; {fix} in {d}, take out what it finds, then push again"
+                    + (CHAIN_HINT if _checks_first(cmds, words) else ""))
     return None
 
 
