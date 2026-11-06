@@ -32,7 +32,7 @@ COMPAT-3; CI's ``compat-prev`` job on every pull request, from the last tag), in
    exec events; a format with no place in :func:`where` fails the step. Then its brain check.
 2. **The upgrade.** ``--ref`` or ``--source`` is installed over it, as an upgrade does; ``engine.pin`` is moved and
    committed if the version changed (docs/install.md); then, strict (``BRAIN_STRICT=1``: N reads N-1's data with no
-   note), the store plan (``brain init`` on the existing brain), brain check, brain record check and the rest of the
+   note), the store plan (``brain init`` on the existing brain), brain sync (the plugin rendered again), brain check, brain record check and the rest of the
    Lite scenario (``refresh --force`` for a checkout or a branch, which no pin names), and a recovery key declared.
 3. **The rollback.** HEAD's additive fixtures (each ``newer`` file's keys that its ``older`` one lacks, JSONL lines
    under the same ``v`` and of a known kind) are laid over the brain's files, and a vault drill is recorded by HEAD's
@@ -417,8 +417,14 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
     if not phase("upgrade", inst):
         return steps
     strict = dict(env, BRAIN_STRICT="1")
+    dev = bool(source or pre_tag)
     phase("HEAD", [pin_moved(root, strict, scripts)])
-    phase("HEAD", run_steps(lite_steps(root, scripts, first=False, dev=bool(source or pre_tag)) + [
+    phase("HEAD", run_steps(lite_steps(root, scripts, first=False, dev=dev)[:2] + [   # version, store plan
+        # the documented step after an upgrade: brain sync renders the plugin again (docs/install.md)
+        ("sync", [brain, "sync", *(["--force"] if dev else [])], None, None),
+        ("git add", ["git", "add", "-A"], None, None),
+        ("commit", ["git", "commit", "-q", "--allow-empty", "-m", "brain sync after the upgrade"], None, None),
+    ] + lite_steps(root, scripts, first=False, dev=dev)[2:] + [
         ("record check", [brain, "record", "check"], None, lambda o: "0 error(s), 0 warning(s)" in o),
         ("recipient", [brain, "vault", "recipient", "add", "recovery", "--kind", "recovery", "--age", RECOVERY,
                        "--write"], None, None),
