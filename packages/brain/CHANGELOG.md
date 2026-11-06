@@ -35,6 +35,18 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   writes a file sets it aside (`brain status` and the cockpit move nothing); `brain vault reseal --apply` refuses a
   newer state before resealing; a backup that fails (a locked `.bak`) is said and the write goes on.
 
+- **The upgrade test, on every pull request** (wi-brain-upgrade-test; spec-brain-data-compat N8, COMPAT-2 and
+  COMPAT-3). `installer/stranger_test.py --upgrade-from TAG|DIR`: the tag writes every registered format into a new
+  brain (a decision, an AR, an SR, `permissions.yaml`, its exec events; a format with fixtures and no place in the
+  test fails it), then this engine is installed over it and runs strict: the store plan, `brain sync`, `brain check`,
+  `brain record check` and the Lite scenario. Then the rollback: the `newer` fixtures' additive keys laid over the
+  brain, a canary and a drill on record, the tag installed back, and its check, record check, permissions check,
+  vault status (the drill shown), `brain perf` and a newer template's plan run in read mode; a tag with the read mode
+  must pass them, 0.2.5 may only refuse the newer keys. Then this engine again makes the same reads, all passing. No
+  file of the brain or of the vault may change and the ledgers may only grow, over the whole round trip; after each
+  install, `direct_url.json` must name the engine meant. CI's new `compat-prev` job (Windows, pull requests) runs it
+  from the last tag (none found fails it) and uploads its report. The stranger test's exit code is 1, not 2, when a
+  step fails after a good first install. `docs/formats.md`.
 - **The public and secrets checks fail closed** (wi-brain-guards-fail-closed, COMPAT-4; the 2026-11-04 REVERSAL of
   the guards' internal-error policy, for these checks only). A new check, `public:config`, refuses every `git commit`
   and `git push` while `brain.config.unexpected` finds the configuration unexpected: `config.json` unreadable or not

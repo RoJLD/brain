@@ -126,3 +126,34 @@ jsonschema) enforces the same contract, never a stricter one.
 one (a newer brain's additive keys under the same `v`). `tests/test_formats_compat.py` reads both, writes the records
 back through the engine and compares them, field for field (AR lines byte for byte), then checks the strict mode and
 the refusal of a higher `v`. A new format, or a new version of one, adds its pair.
+
+## The upgrade test (`compat-prev`)
+
+The fixtures prove each reader on its own; the upgrade test proves an engine on a real brain, in both directions
+(wi-brain-upgrade-test; spec-brain-data-compat N8, COMPAT-2 and COMPAT-3). CI's `compat-prev` job runs it on every
+pull request, from the last tag before the commit (`git describe --tags --abbrev=0 --match 'v*' HEAD`; no tag
+fails the job), before any tag is cut:
+
+```bash
+python packages/brain/installer/stranger_test.py --source . --upgrade-from v0.2.5     # or --upgrade-from <a checkout>
+```
+
+1. **The previous engine writes** every registered format into a new brain: brain init, a decision, an AR, an SR,
+   the older `permissions.yaml`, its own exec events. A format registered here (a `<format>/v<N>/` folder) that the
+   test does not place fails it, so the test grows with the registry.
+2. **This checkout is installed over it**, the pin moved if the version changed, and runs strict (`BRAIN_STRICT=1`):
+   the store plan (`brain init` on the existing brain), `brain sync` (the documented step after an upgrade: the
+   plugin rendered again), `brain check`, `brain record check` and the stranger test's Lite scenario.
+3. **The rollback.** Each `newer` fixture's additive keys are laid over the brain's files (a format they reach no
+   file of fails the step), a canary and a drill are put on record (their entries as `vault.canary` and `vault.drill`
+   write them; no real seal), and the previous engine is installed back over this one, as the installer does until
+   the pin moves. In read mode it runs `brain check`, `brain record check`, `brain permissions check`,
+   `brain vault status` (which must show the drill), `brain perf` (the ledger's events) and a newer template's plan.
+   An engine with the read mode must pass them; one before it (0.2.5) may only refuse the newer keys (every `error:`
+   line an unknown key or field, no traceback). No file of the brain or of `$BRAIN_HOME/vault` is changed or removed,
+   and the ledger's files only grow.
+4. **And back.** This checkout is installed again and makes the same reads, all passing, the drill shown; nothing is
+   lost over the round trip.
+
+After each install the harness checks that brain's `direct_url.json` names the engine meant: the tag and HEAD can
+share a version. The job uploads its report (`compat-prev-report`, every step's command, exit code and output).
