@@ -15,7 +15,8 @@ Eight panels, each read through the function its command already uses:
               by brain.usage; the costliest first: ``--sort sessions:cost``), last write;
   queue       the owner's queue (brain.queue.collect, as brain queue calls it): decisions, actions, permissions, in
               three bands (now, this week, when you can), ranked by what each holds up (its score; brain queue
-              --explain), with the recommended option and how to answer; titled with the owner's display name;
+              --explain; ``--sort queue:score``: the score alone, across the bands), with the recommended option and
+              how to answer; titled with the owner's display name;
   alerts      each project's open alerts by level (brain.status.alerts_of, as brain status and brain alerts: the
               scheduler, the exec ledger, the stacks, the code index, the audit, the alert events and files);
   milestones  each pending milestone's items done out of its live items, and how many are reached (brain.status);
@@ -627,7 +628,7 @@ class Cockpit:
 # --- the view: filters, sort and search over the table panels ---
 
 SORTS = {"sessions": ("state", "age", "project", "context", "cost", "ctx", "role"),
-         "queue": ("band", "unblocks", "age", "kind", "project"),
+         "queue": ("band", "score", "unblocks", "age", "kind", "project"),
          "frontier": ("priority", "unblocks", "milestone", "age", "project")}
 FILTERS = {"sessions": {"state": ("open", ALL, *STATES)},  # open: not ended
            "queue": {"kind": (ALL, *queue.KINDS), "band": (ALL, *queue.BANDS)},
@@ -635,7 +636,8 @@ FILTERS = {"sessions": {"state": ("open", ALL, *STATES)},  # open: not ended
 OPEN_VALUES = {("frontier", "milestone")}  # any milestone id too: the panel's own (choices)
 SORT_COLUMNS = {"sessions": {"State": "state", "Last": "age", "Project": "project", "Context": "context", "Ctx": "ctx",
                              "Role": "role"},
-                "queue": {"Band": "band", "Unblocks": "unblocks", "Age": "age", "Kind": "kind", "Project": "project"},
+                "queue": {"Band": "band", "Score": "score", "Unblocks": "unblocks", "Age": "age", "Kind": "kind",
+                          "Project": "project"},
                 "frontier": {"P": "priority", "Unblocks": "unblocks", "Milestone": "milestone", "Age": "age",
                              "Project": "project"}}
 
@@ -652,7 +654,10 @@ SORT_KEYS = {
                  "role": lambda r: (("master", "relay", "sub", "solo").index(r.get("role") or "solo"), r["age_s"]),
                  "cost": lambda r: (r.get("cost_usd") is None, -(r.get("cost_usd") or 0), r["age_s"])},
     "queue": {"band": lambda e: (queue.BANDS.index(e.get("band") or "later"), e.get("order") is None,
-                                 e.get("order") or 0, -e.get("score", 0), -e.get("unblocks", 0)),
+                                 e.get("order") or 0, -(e.get("score") or 0), -e.get("unblocks", 0)),
+              # the highest score first (one without a score last), then what it unblocks, then the oldest
+              "score": lambda e: (e.get("score") is None, -(e.get("score") or 0), -e.get("unblocks", 0),
+                                  e.get("since") or "9999"),
               "unblocks": lambda e: (-e.get("unblocks", 0), not e.get("blocking"), e.get("since") or "9999"),
               "age": lambda e: (_age_first(e.get("age_days")), -e.get("unblocks", 0)),
               "kind": lambda e: (e.get("kind") or "", e.get("category") or "", -e.get("unblocks", 0)),

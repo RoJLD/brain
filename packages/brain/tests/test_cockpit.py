@@ -380,6 +380,50 @@ def test_parse_view_and_the_remembered_state(brain_home):
     assert cockpit.save_state({}, path=blocked / "tui.json") is False  # never raised
 
 
+SCORED = {"projects": [
+    {"project": "demo", "entries": [
+        _entry("ddr-lo", "decision", 1, 5, "Low score, now", band="now", score=2, since="2026-11-01"),
+        _entry("ddr-hi", "decision", 0, 1, "High score, later", band="later", score=9.5, since="2026-11-05"),
+        _entry("wi-x:needs", "action", 3, 3, "Tie, younger", band="week", score=4, since="2026-11-03"),
+        _entry("ddr-old", "decision", 3, 17, "Tie, older", band="week", score=4, since="2026-10-20")]},
+    {"project": "other", "entries": [
+        _entry("ddr-more", "decision", 5, 2, "Tie, unblocks more", band="week", score=4, since="2026-11-04"),
+        _entry("perm-none", "permission", 9, 0, "No score, unblocks most", band="now", since="2026-11-06"),
+        _entry("perm-null", "permission", 1, 0, "A null score", band="now", score=None, since="2026-11-06")]}]}
+
+
+def test_the_queue_sorts_by_score(brain_home, capsys, monkeypatch):
+    """wi-brain-tui-queue-sort-score: the queue's Score column sorts; the highest score first across the bands, one
+    without a score last, ties by what each unblocks, then the oldest."""
+    def ids(view):
+        return [e["id"] for e in cockpit.shown("queue", SCORED, view)]
+
+    by_score = ["ddr-hi", "ddr-more", "ddr-old", "wi-x:needs", "ddr-lo", "perm-none", "perm-null"]
+    assert ids({"sort": "score"}) == by_score
+    assert ids({"sort": "score", "reverse": True}) == by_score[::-1]
+    assert ids({}) == ["ddr-lo", "perm-none", "perm-null", "ddr-more", "wi-x:needs", "ddr-old", "ddr-hi"]  # by band
+    assert ids({"sort": "score", "kind": "decision"}) == ["ddr-hi", "ddr-more", "ddr-old", "ddr-lo"]
+    assert cockpit.SORTS["queue"][:2] == ("band", "score") and cockpit.SORT_COLUMNS["queue"]["Score"] == "score"
+    for name, keys in cockpit.SORTS.items():  # every sort has its key, every sorting column is a column and a sort
+        assert set(keys) == set(cockpit.SORT_KEYS[name])
+        assert set(cockpit.SORT_COLUMNS[name]) <= set(cockpit.COLUMNS[name])
+        assert set(cockpit.SORT_COLUMNS[name].values()) <= set(keys)
+    assert cockpit.parse_view(["queue:-score"]) == {"queue": {"sort": "score", "reverse": True}}
+    assert cockpit.view_of("queue", {"sort": "score"})["sort"] == "score"
+    cockpit.save_state({"panels": {"queue": {"sort": "score", "reverse": True}, "frontier": {"sort": "score"}}})
+    state = cockpit.load_state()["panels"]
+    assert (state["queue"]["sort"], state["queue"]["reverse"]) == ("score", True)  # tui.json keeps it
+    assert state["frontier"]["sort"] == "priority"  # a sort the panel does not know: its default
+    lines = cockpit.queue_lines(SCORED, view={"sort": "score"})
+    assert lines[0].endswith("[sort score]")
+    assert [next(i for i in by_score if f" {i}" in x) for x in lines[1:]] == by_score  # the text view, same order
+    assert "9.5" in lines[1] and lines[-1].split()[1] == "-"  # its score shown, '-' without one
+    monkeypatch.setenv("COLUMNS", "120")  # argparse wraps at the terminal's width
+    with pytest.raises(SystemExit):
+        cli.main(["tui", "--help"])
+    assert "queue:band|score|unblocks|age|kind|project" in capsys.readouterr().out  # the help lists every sort
+
+
 def test_the_project_selector_switches_the_scope_and_keeps_each_probe(tmp_path, monkeypatch, store):
     cp = _cockpit(tmp_path, monkeypatch, store)
     calls = []

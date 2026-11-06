@@ -192,8 +192,9 @@ days) and **when you can**. Within a band, the owner's own order first (`brain q
 | effort | the owner's minutes (`--minutes`; a decision's reading time), a quick one a little higher |
 | age, blocking | the days it has waited (at most 2), and 4 for a blocking one |
 
-The same bands show in `brain status`, the cockpit's queue panel (a Band and a Score column, sorted and filtered by
-band) and the morning batches (`brain decision batch --zen`: the band now always in the session). A denied tool call
+The same bands show in `brain status`, the cockpit's queue panel (a Band and a Score column, filtered by band, sorted
+by band, then the owner's order and the score; or by the score alone across the bands: s, a click on Score, or
+`brain tui --sort queue:score`) and the morning batches (`brain decision batch --zen`: the band now always in the session). A denied tool call
 expires once every session it was refused in is archived or gone in the Claude desktop app.
 
 The views name the owner by `identity.display_name` (else `identity.owner`): the queue's title is « Ada's queue », or

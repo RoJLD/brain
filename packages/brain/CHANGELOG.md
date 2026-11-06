@@ -22,6 +22,12 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
   update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
 
+- **The cockpit's queue sorts by score** (wi-brain-tui-queue-sort-score). The queue panel's `score` sort ranks by
+  the score alone, across the bands: the highest first (an entry without a score last), then what it unblocks, then
+  the oldest. It is the second sort of `s`, a click on the Score column, `brain tui --sort queue:score`, and a view
+  `tui.json` remembers (a saved sort a panel does not know still falls back to its default). The default stays by
+  band, the owner's order, then the score. `brain tui --help` now lists every panel's sorts from the code.
+
 - **Machine-local state is never reset and saved over** (wi-brain-state-safe-io, spec-brain-data-compat N4;
   `docs/formats.md`, « Machine-local state »). `brain.stateio` loads and saves a truth-local file: a file that is not
   JSON, not an object or not its expected shape is set aside as `<name>.unreadable-<stamp>`, never replaced by `{}`
