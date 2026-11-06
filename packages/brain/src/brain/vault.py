@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import __version__, classes, config, keystore, paths
+from . import __version__, classes, config, keystore, paths, stateio
 
 CHECK = "vault"                          # brain health vault
 KINDS = ("device", "recovery", "hardware", "person")
@@ -504,18 +504,33 @@ def state_file() -> Path:
     return vault_dir() / "state.json"
 
 
-def load_state() -> dict:
-    try:
-        data = json.loads(state_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = {}
+STATE_V = 1   # truth-local (brain.stateio); written from 0.2.6, read as 1 when absent
+
+
+def _state_shape(data: dict) -> str:
+    bad = sorted(k for k in ("canary", "drill", "seals") if not isinstance(data.get(k, {}), dict))
+    return f"{', '.join(bad)} not an object" if bad else ""
+
+
+def _state(write: bool = False) -> stateio.State:
+    return stateio.load(state_file(), known=STATE_V, check=_state_shape, aside=write)
+
+
+def load_state(write: bool = False) -> dict:
+    """The canaries, drills and seals on record. ``write``: the caller will save it, so a state this engine must not
+    write (a newer brain's) is refused here, before any work (VaultError)."""
+    st = _state(write)
+    if write and not st.writable:
+        raise VaultError(st.refusal())
+    data = st.data
     for k in ("canary", "drill", "seals"):
         data.setdefault(k, {})
     legacy = {n: d for n, d in data["drill"].items() if isinstance(d, str)}
     if legacy:  # a drill recorded by name only: tied once, for good, to the key its canary held then
         for n, at in legacy.items():
             data["drill"][n] = {"at": at, "fingerprint": (data["canary"].get(n) or {}).get("fingerprint", "")}
-        save_state(data)
+        if st.writable:   # with a backup first (brain.stateio): the migration is one way
+            stateio.save(st, data, indent=2)
     return data
 
 
@@ -532,11 +547,10 @@ def proven_canary(st: dict, name: str, fingerprint: str) -> dict:
 
 
 def save_state(st: dict) -> None:
-    f = state_file()
-    f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps(st, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, f)
+    try:
+        stateio.save(_state(write=True), st, indent=2)
+    except stateio.StateError as exc:
+        raise VaultError(str(exc)) from None
 
 
 def device_file() -> Path:
@@ -618,6 +632,7 @@ def seal(cfg: config.Config, name: str, items: list[Path] | None = None, out: Pa
     s = store(cfg, name)
     recs = for_store(cfg, s)
     need = min_recipients(cfg)
+    load_state(write=True)   # refused before sealing anything when the record cannot be written
     if len(recs) < need:
         raise VaultError(f"store {s.name} would be sealed to {len(recs)} recipient(s): every sealed store needs "
                          f"{need} at least, a device key and the recovery key (brain vault status)")
@@ -925,7 +940,7 @@ def canary(cfg: config.Config, now: datetime | None = None, found: dict[str, Ada
         raise VaultError("; ".join(errors))
     found = found if found is not None else adapters()
     dev = device()
-    st = load_state()
+    st = load_state(write=True)
     cdir = vault_dir() / "canary"
     cdir.mkdir(parents=True, exist_ok=True)
     ident: str | None = None
@@ -969,7 +984,7 @@ def drill(cfg: config.Config, name: str, identity: str = "-", now: datetime | No
           found: dict[str, Adapter] | None = None) -> dict:
     """Open a recipient's canary with its key (a key file, or ``-``: typed into the tool) and record the proof: the
     recovery key's yearly drill. The CLI refuses it in an agent session."""
-    st = load_state()
+    st = load_state(write=True)
     entry = st["canary"].get(name)
     if not entry or not entry.get("digest"):
         raise VaultError(f"no canary for {name}: brain vault canary first")

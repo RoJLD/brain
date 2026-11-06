@@ -67,6 +67,7 @@ def reseal(cfg: config.Config, apply: bool = False, only: list[str] | None = Non
     plan = [p for p in stale_seals(cfg) if not only or p["store"] in only]
     if not apply:
         return plan
+    vault.load_state(write=True)   # refused before any file is sealed again when the record cannot be written
     found = found if found is not None else vault.adapters()
     t = vault._iso(vault._now(now))
     keys: dict[str, list] = {}

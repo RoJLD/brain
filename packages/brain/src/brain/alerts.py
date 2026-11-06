@@ -67,7 +67,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from . import graph, notify, paths, projects, timing
+from . import graph, notify, paths, projects, stateio, timing
 
 LEVELS = notify.LEVELS
 RANK = {lvl: i for i, lvl in enumerate(LEVELS)}
@@ -882,20 +882,26 @@ def state_dir() -> Path:
     return paths.brain_home() / "alerts"
 
 
+STATE_V = 1   # truth-local (brain.stateio): v 1 stays unwritten, so that 0.2.5 reads every key as a project
+
+
+def _state_shape(data: dict) -> str:
+    bad = sorted(k for k, r in data.items() if not isinstance(r, dict))
+    return f"{', '.join(bad[:3])} not an object" if bad else ""
+
+
+def state(write: bool = False) -> stateio.State:
+    """The alerts already sent and the last pass on this machine, under brain.stateio's policy (set aside only to
+    write)."""
+    return stateio.load(state_dir() / "state.json", known=STATE_V, check=_state_shape, aside=write)
+
+
 def state_load() -> dict:
-    try:
-        data = json.loads((state_dir() / "state.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return state().data
 
 
 def _state_save(data: dict) -> None:
-    d = state_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    tmp = d / "state.json.tmp"
-    tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, d / "state.json")
+    stateio.save(state(write=True), data, write_v=False)
 
 
 def _history(a: dict, project: str, state: str, now: datetime) -> dict:
@@ -923,7 +929,10 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
     """Send the changes since the last pass through brain notify and record them (nothing written with
     ``dry_run``); the lines to print. A project whose alerts could not be read keeps its state."""
     now = now or _now()
-    st = state_load()
+    loaded = state(write=not dry_run)
+    if not dry_run and not loaded.writable:   # sent without a record, every pass would send them again
+        return [f"nothing sent: {loaded.refusal()}"]
+    st = loaded.data
     lines = []
     unset: set[str] = set()
     for d in data["projects"]:
@@ -976,7 +985,10 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
         from .schedule import clock
         st["_pass"] = {"at": _iso(now), "host": socket.gethostname() or "unknown", "unset": sorted(unset),
                        "clock": clock()}
-        _state_save(st)
+        try:
+            _state_save(st)
+        except (stateio.StateError, OSError) as exc:   # a newer brain wrote it meanwhile: said, not a traceback
+            lines.append(f"sent, but not recorded (the next pass may send again): {exc}")
     return lines
 
 

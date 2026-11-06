@@ -44,11 +44,12 @@ import json
 import os
 import re
 import statistics
+import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import paths, secretscan, transcript
+from . import paths, secretscan, stateio, transcript
 
 SCAN_V = 2  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours)
 START_MESSAGES = 10
@@ -615,22 +616,31 @@ def ledger_file() -> Path:
     return paths.brain_home() / "usage" / "sessions.json"
 
 
+def _ledger_shape(data: dict) -> str:
+    rows = data.get("rows", {})
+    if not isinstance(rows, dict):
+        return "rows not an object"
+    bad = sorted(k for k, r in rows.items() if not isinstance(r, dict))
+    return f"row {bad[0]} not an object" if bad else ""
+
+
+LEDGER_V = 2   # the ledger file's format (brain.stateio), apart from SCAN_V: a better scanner rescans rows, it does
+#                not make the ledger read-only for the engine before it
+
+
+def ledger(write: bool = False) -> stateio.State:
+    """The ledger under brain.stateio's policy (truth-local: the rows of deleted transcripts live only here; set
+    aside only to write)."""
+    return stateio.load(ledger_file(), known=LEDGER_V, check=_ledger_shape, aside=write)
+
+
 def load() -> dict:
     """{transcript (relative): row}; {} without a ledger."""
-    try:
-        data = json.loads(ledger_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data.get("rows") or {} if isinstance(data, dict) else {}
+    return ledger().data.get("rows") or {}
 
 
-def save(rows: dict) -> None:
-    f = ledger_file()
-    f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"v": SCAN_V, "rows": rows}, ensure_ascii=False, separators=(",", ":")),
-                   encoding="utf-8")
-    os.replace(tmp, f)
+def save(rows: dict, state: stateio.State | None = None) -> None:
+    stateio.save(state or ledger(write=True), {"rows": rows}, indent=None, separators=(",", ":"), sort_keys=False)
 
 
 def main_transcripts() -> list[Path]:
@@ -640,8 +650,9 @@ def main_transcripts() -> list[Path]:
 
 def update(prices: dict | None = None, rescan: bool = False) -> tuple[dict, int]:
     """The ledger brought up to date with the transcripts on this machine: (rows, sessions scanned). A row whose
-    transcript is gone is kept."""
-    rows = load()
+    transcript is gone is kept. A ledger a newer brain wrote is read, brought up to date in memory, never saved."""
+    st = ledger(write=True)
+    rows = st.data.get("rows") or {}
     scanned = 0
     for f in main_transcripts():
         key = paths.relative_transcript(f)
@@ -657,8 +668,13 @@ def update(prices: dict | None = None, rescan: bool = False) -> tuple[dict, int]
         except OSError:
             continue
         scanned += 1
-    if scanned:
-        save(rows)
+    if scanned and st.writable:
+        try:
+            save(rows, st)
+        except (stateio.StateError, OSError) as exc:   # a newer brain wrote it meanwhile: the rows stay in memory
+            print(f"brain usage: {exc}", file=sys.stderr)
+    elif scanned:
+        print(f"brain usage: {st.refusal()}", file=sys.stderr)
     return rows, scanned
 
 

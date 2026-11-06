@@ -6,6 +6,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ### Upgrade
 
+- Nothing to run for the machine-local state (wi-brain-state-safe-io). `vault/state.json` gains `"v": 1` at its
+  next write, which brain 0.2.5 reads unchanged; `schedules/installed.json` and `alerts/state.json` keep their v 1
+  unwritten. Each of the four files may now have a `<name>.bak` beside it, and a file that was unreadable a
+  `<name>.unreadable-<stamp>`: both are safe to delete once you have looked.
+
 - **The public and secrets checks fail closed** (wi-brain-guards-fail-closed, COMPAT-4). After `brain sync` and the
   install, a machine whose `config.json` is unreadable, not an object, has a `public` that is not an object or a `v`
   above 1, whose `$BRAIN_CONFIG` names no file, or whose `personal.json` names a folder without `config.json` (a
@@ -16,6 +21,19 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `packs.yaml`, `projects.yaml` or a record now prints a note instead; CI (`CI` set) still fails on it. A `v` above 1
   in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
   update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
+
+- **Machine-local state is never reset and saved over** (wi-brain-state-safe-io, spec-brain-data-compat N4;
+  `docs/formats.md`, « Machine-local state »). `brain.stateio` loads and saves a truth-local file: a file that is not
+  JSON, not an object or not its expected shape is set aside as `<name>.unreadable-<stamp>`, never replaced by `{}`
+  and saved; a `v` above the engine's makes it read-only (« written by a newer brain: brain update »); every write
+  backs up to `<name>.bak` beside the file (a secret is never copied), then writes atomically, synced. It now carries
+  `schedules/installed.json` (`brain schedule install --apply` refuses a newer record), `alerts/state.json` (the
+  notify pass sends nothing rather than send again each pass), `vault/state.json` (gains a `v`; a non-object no
+  longer crashes `brain vault`; `seal`, `canary` and `drill` refuse a newer state before any work; the one-way drill
+  migration backs up first) and `usage/sessions.json` (a newer ledger is updated in memory, never saved). The 17
+  `return {}` readers are classified in the same page; the rest of the truth-local ones follow. Only a command that
+  writes a file sets it aside (`brain status` and the cockpit move nothing); `brain vault reseal --apply` refuses a
+  newer state before resealing; a backup that fails (a locked `.bak`) is said and the write goes on.
 
 - **The upgrade test, on every pull request** (wi-brain-upgrade-test; spec-brain-data-compat N8, COMPAT-2 and
   COMPAT-3). `installer/stranger_test.py --upgrade-from TAG|DIR`: the tag writes every registered format into a new
