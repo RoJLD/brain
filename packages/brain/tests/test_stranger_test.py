@@ -101,33 +101,66 @@ def test_the_newer_data_reaches_every_file_of_a_format(st, tmp_path):
     ledger.mkdir(parents=True)
     (ledger / "exec-2026-11.jsonl").write_text("", encoding="utf-8")
     step = st.add_newer(root, home)
-    assert step["ok"] and "config: config.json +keys" in step["out"]
+    assert "config: config.json +keys" in step["out"] and "event: exec-2026-11.jsonl +1 line(s)" in step["out"]
     data = json.loads((root / "config.json").read_text(encoding="utf-8"))
     assert data["identity"] == {"owner": "Ada Example", "pronouns": "they"} and data["telemetry"] == {"enabled": False}
     assert '"cpu_s":0.4' in (ledger / "exec-2026-11.jsonl").read_text(encoding="utf-8")
+    # the formats it reached no file of fail the step: the rollback would test nothing of them
+    assert not step["ok"] and "reached no file: ar v1, ddr v1, packs v1, permissions v1, projects v1, sr v1" in \
+        step["out"]
 
 
-def test_a_file_changed_or_removed_is_data_lost(st, tmp_path):
+def test_a_file_changed_or_removed_is_data_lost_and_a_ledger_may_only_grow(st, tmp_path):
     root = tmp_path / "brain"
     (root / ".git").mkdir(parents=True)
     (root / ".git" / "index").write_text("x", encoding="utf-8")
     (root / "a.txt").write_text("a", encoding="utf-8")
     (root / "b.txt").write_text("b", encoding="utf-8")
+    ledger = tmp_path / "home" / ".brain" / "ledger"
+    ledger.mkdir(parents=True)
+    events = ledger / "exec-2026-11.jsonl"
+    events.write_text('{"v":1}\n', encoding="utf-8")
     state = tmp_path / "state.json"
     state.write_text('{"drill": {}}', encoding="utf-8")
-    before = st.snapshot(root, [state])
-    assert len(before) == 3                             # .git left out
+    before = st.snapshot([root, ledger, state])
+    assert len(before) == 4                             # .git left out
     (root / ".git" / "index").write_text("y", encoding="utf-8")
-    assert st.lost(before, st.snapshot(root, [state])) == []
+    events.write_text('{"v":1}\n{"v":1,"task":"another engine"}\n', encoding="utf-8")   # appended: kept
+    assert st.lost(before) == []
+    events.write_text('{"v":2}\n', encoding="utf-8")                                    # rewritten: lost
     (root / "a.txt").unlink()
     state.write_text("{}", encoding="utf-8")
-    assert st.lost(before, st.snapshot(root, [state])) == [f"changed: {state.as_posix()}",
-                                                           f"removed: {(root / 'a.txt').as_posix()}"]
+    assert st.lost(before) == [f"changed: {events.as_posix()}", f"changed: {state.as_posix()}",
+                               f"removed: {(root / 'a.txt').as_posix()}"]
+    (root / "b.txt").write_text("bb", encoding="utf-8")                                  # grown, not a ledger: lost
+    assert f"changed: {(root / 'b.txt').as_posix()}" in st.lost(before)
 
 
-def test_upgrade_from_takes_a_tag_or_a_checkout(st, tmp_path):
+def test_upgrade_from_takes_a_tag_or_a_checkout_never_nothing(st, tmp_path):
     assert st.upgrade_from("v0.2.5") == ("v0.2.5", "")
     assert st.upgrade_from(str(tmp_path)) == ("", str(tmp_path.resolve()))
+    with pytest.raises(SystemExit, match="empty"):
+        st.upgrade_from("")                             # a CI step that found no tag: never the plain test, green
+    with pytest.raises(SystemExit, match="the --source checkout itself"):
+        st.upgrade_from(str(tmp_path), str(tmp_path))
+
+
+def test_the_engine_is_named_by_its_install(st, tmp_path, monkeypatch):
+    """Two engines can share a version: the venv's brain is told by its direct_url.json."""
+    tag = '{"url": "https://github.com/RoJLD/brain.git", "vcs_info": {"vcs": "git", "requested_revision": "v0.2.5"}}'
+    folder = '{"url": "file:///D:/a/brain/brain/packages/brain", "dir_info": {}}'
+    for out, ref, source, want in ((tag, "v0.2.5", "", True), (tag, "v0.2.4", "", False),
+                                   (folder, "", "D:/a/brain/brain", True), (folder, "v0.2.5", "", False),
+                                   ("", "v0.2.5", "", False)):
+        monkeypatch.setattr(st, "_py", lambda scripts, code, env, root, out=out: (0, out + "\n"))
+        assert st.engine_is(tmp_path, {}, tmp_path, ref, source)["ok"] is want, (out, ref, source)
+
+
+def test_an_older_engine_may_only_refuse_the_newer_keys(st):
+    for line, ok in (("error: config.json: unexpected field 'telemetry'", True),
+                     ("error: permissions.yaml: unknown key(s) schedules", True),
+                     ("error: boundary: x.md: no rule of boundary.yaml classifies it", False)):
+        assert bool(st.NEWER.search(line)) is ok
 
 
 def test_a_new_key_takes_its_place_in_the_newer_fixture(st):

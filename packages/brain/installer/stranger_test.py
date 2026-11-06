@@ -32,20 +32,27 @@ COMPAT-3; CI's ``compat-prev`` job on every pull request, from the last tag), in
    exec events; a format with no place in :func:`where` fails the step. Then its brain check.
 2. **The upgrade.** ``--ref`` or ``--source`` is installed over it, as an upgrade does; ``engine.pin`` is moved and
    committed if the version changed (docs/install.md); then, strict (``BRAIN_STRICT=1``: N reads N-1's data with no
-   note), the store plan (``brain init`` on the existing brain), brain sync (the plugin rendered again), brain check, brain record check and the rest of the
-   Lite scenario (``refresh --force`` for a checkout or a branch, which no pin names), and a recovery key declared.
+   note), the store plan (``brain init`` on the existing brain), brain sync (the plugin rendered again, the documented
+   step after an upgrade), brain check, brain record check and the rest of the Lite scenario (``refresh --force`` for
+   a checkout or a branch, which no pin names), and a recovery key declared.
 3. **The rollback.** HEAD's additive fixtures (each ``newer`` file's keys that its ``older`` one lacks, JSONL lines
-   under the same ``v`` and of a known kind) are laid over the brain's files, and a vault drill is recorded by HEAD's
-   vault; TAG is installed back over HEAD (as ``install.ps1 -Apply`` does until the pin PR merges) and runs, in read
-   mode (``BRAIN_STRICT=0``), brain check, brain record check, brain permissions check, brain vault status (which
-   must show the drill) and a newer template's init plan. A TAG with the read mode must pass them; one before it
-   (0.2.5) may refuse, cleanly (exit 1 or 2, no traceback, no usage error). Either way no file of the brain and not
-   the vault state is changed or removed (sha-256 before and after).
+   under the same ``v`` and of a known kind) are laid over the brain's files (a format they reach no file of fails
+   the step), and a canary and a drill are put on record: their entries, field for field, saved by HEAD's vault (no
+   age here, so no real seal or drill). TAG is installed back over HEAD (as ``install.ps1 -Apply`` does until the pin
+   PR merges) and runs, in read mode (``BRAIN_STRICT=0``), brain check, brain record check, brain permissions check,
+   brain vault status (which must show the drill), brain perf (the ledger's events) and a newer template's init plan.
+   A TAG with the read mode must pass them; one before it (0.2.5) may only refuse HEAD's newer keys (exit 1 or 2,
+   every ``error:`` line an unknown key or field, no traceback, no usage error). No file of the brain and of
+   ``$BRAIN_HOME/vault`` is changed or removed, and the ledger's files only grow (sha-256 before and after).
+4. **And back.** HEAD is installed again and makes the same reads in read mode, all exiting 0, with the drill shown;
+   still nothing lost over the round trip.
 
-The upgrade test reads PyYAML in the harness's own Python (CI installs it) and the fixtures from the checkout it runs
-from.
+After each install, brain's ``direct_url.json`` must name the engine meant (the tag, or the checkout): two engines
+can share a version. ``--upgrade-from`` refuses an empty value and the ``--source`` checkout itself. The upgrade test
+reads PyYAML in the harness's own Python (CI installs it) and the fixtures from the checkout it runs from.
 
-Exit code 0 on a go, 1 when a check fails, 2 when the install fails. ``--json`` prints the report; it is also
+Exit code 0 on a go, 1 when a check fails (an upgrade's or rollback's install included), 2 when the first install
+fails. ``--json`` prints the report; it is also
 written to ``<work>/report.json``.
 """
 
@@ -230,6 +237,9 @@ FORMATS = FIXTURES / "formats"
 SESSION = "aaaabbbb-1111-2222-3333-444455556666"        # the transcript fixture's session
 RECOVERY = "age1" + "strangerrecoverypublickeyfortheupgradetest".ljust(58, "0")   # a public key's shape, no key
 SEALED, DRILLED = "2026-11-01T08:00:00Z", "2026-11-01T09:00:00Z"
+DIGEST = "0" * 64                                     # a canary's sha-256 (no canary file: nothing is opened here)
+# what an engine before the read mode may say of HEAD's additive data: its refusal, never another error
+NEWER = re.compile(r"unknown key|unknown field|unexpected field|brain update|written by brain >")
 
 
 def where(root: Path, home: Path) -> dict[str, list[Path]]:
@@ -312,8 +322,10 @@ def _dump(f: Path, data) -> None:
 
 def add_newer(root: Path, home: Path) -> dict:
     """HEAD's additive fixtures put into the brain HEAD worked on: each registered format's newer keys laid over its
-    files (JSONL: the additive lines appended). The step that reports it."""
-    out = []
+    files (JSONL: the additive lines appended). The step that reports it; it fails when a format's newer keys reached
+    none of its files (the rollback would then test nothing of it)."""
+    out: list[str] = []
+    reached: set[str] = set()
     places = where(root, home)
     for fmt, v in formats():
         for f in places.get(fmt, []):
@@ -328,26 +340,91 @@ def add_newer(root: Path, home: Path) -> dict:
                 add = [] if after == before else ["keys"]
                 if add:
                     _dump(f, after)
+            if add:
+                reached.add(fmt)
             what = (f"+{len(add)} line(s)" if f.suffix == ".jsonl" else "+keys") if add else "unchanged"
             out.append(f"{fmt}: {f.name} {what}")
-    return {"step": "newer data", "cmd": "HEAD's additive fixtures laid over the brain", "rc": 0, "ok": True,
-            "out": "\n".join(out)}
+    missing = [f"{fmt} v{v}" for fmt, v in formats() if fmt != "template" and fmt not in reached]
+    if missing:
+        out.append("reached no file: " + ", ".join(missing))
+    return {"step": "newer data", "cmd": "HEAD's additive fixtures laid over the brain", "rc": int(bool(missing)),
+            "ok": not missing, "out": "\n".join(out)}
 
 
-def snapshot(root: Path, extra: list[Path]) -> dict[str, str]:
-    """{path: sha256} of every file of the brain (but .git) and of ``extra``."""
+def snapshot(bases: list[Path]) -> dict[str, tuple[int, str]]:
+    """{path: (size, sha256)} of every file under ``bases`` (folders or files; .git left out)."""
     import hashlib
-    files = [f for f in root.rglob("*") if f.is_file() and ".git" not in f.relative_to(root).parts]
-    return {f.as_posix(): hashlib.sha256(f.read_bytes()).hexdigest() for f in files + [f for f in extra if f.is_file()]}
+    out = {}
+    for base in bases:
+        if base.is_file():
+            files = [base]
+        else:
+            files = [f for f in base.rglob("*") if f.is_file() and ".git" not in f.relative_to(base).parts] \
+                if base.is_dir() else []
+        for f in files:
+            data = f.read_bytes()
+            out[f.as_posix()] = (len(data), hashlib.sha256(data).hexdigest())
+    return out
 
 
-def lost(before: dict[str, str], after: dict[str, str]) -> list[str]:
-    """What the older engine removed or rewrote: data lost in the rollback direction."""
-    return sorted(f"{'removed' if p not in after else 'changed'}: {p}" for p, h in before.items() if after.get(p) != h)
+def appended(path: str) -> bool:
+    """A ledger file is append-only: another engine may add its lines, never change the ones there."""
+    return "/ledger/" in path
+
+
+def lost(before: dict[str, tuple[int, str]]) -> list[str]:
+    """What an engine removed or rewrote since ``before`` was taken: data lost (a ledger file may only grow)."""
+    import hashlib
+    out = []
+    for p, (size, h) in before.items():
+        f = Path(p)
+        if not f.is_file():
+            out.append(f"removed: {p}")
+            continue
+        data = f.read_bytes()
+        grows = appended(p)
+        if hashlib.sha256(data[:size] if grows else data).hexdigest() != h or (len(data) < size if grows else
+                                                                                  len(data) != size):
+            out.append(f"changed: {p}")
+    return sorted(out)
 
 
 def _py(scripts: Path, code: str, env: dict, root: Path) -> tuple[int, str]:
     return run([_exe(scripts, "python"), "-c", code], env, root)
+
+
+def engine_is(scripts: Path, env: dict, root: Path, ref: str, source: str) -> dict:
+    """The step that checks which engine the venv now runs, from brain's direct_url.json: the tag (its requested
+    revision) or the checkout (its folder). Two engines can share a version (HEAD before its bump): a reinstall that
+    kept the other one's files would otherwise test the wrong engine and pass."""
+    rc, text = _py(scripts, "from importlib.metadata import distribution\n"
+                   "print(distribution('brain').read_text('direct_url.json') or '')", env, root)
+    try:
+        info = json.loads(text.strip().splitlines()[-1]) if rc == 0 and text.strip() else {}
+    except ValueError:
+        info = {}
+    url = str(info.get("url", "")).rstrip("/")
+    if source:
+        ok = url.lower().endswith("/" + Path(source).name.lower()) or \
+            url.lower().endswith("/" + Path(source).name.lower() + "/packages/brain")
+        want = f"the checkout {Path(source).name}"
+    else:
+        ok = (info.get("vcs_info") or {}).get("requested_revision") == ref
+        want = f"the ref {ref}"
+    return {"step": "engine", "cmd": f"the venv runs {want}", "rc": rc, "ok": rc == 0 and ok, "out": text}
+
+
+def read_steps(brain: str, check, codes: tuple) -> list[tuple]:
+    """The reads an engine makes of a brain another engine wrote: its checks, the vault (which must show the drill)
+    and the ledger's events (brain perf)."""
+    return [
+        ("version", [brain, "--version"], None, lambda o: o.startswith("brain ")),
+        ("check", [brain, "check"], None, check, codes),
+        ("record check", [brain, "record", "check"], None, check, codes),
+        ("permissions", [brain, "permissions", "check"], None, check, codes),
+        ("vault status", [brain, "vault", "status"], None, lambda o: f"drilled {DRILLED}" in o),
+        ("events", [brain, "perf", "--since", "2026-01-01"], None, check, codes),
+    ]
 
 
 def pin_moved(root: Path, env: dict, scripts: Path) -> dict:
@@ -401,7 +478,7 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
         ("sr", [brain, "record", "sr", "--transcript", str(FIXTURES / "transcript.jsonl"), "--session", SESSION,
                 "--summary", "a first session", "--closed"], None, None),
     ]
-    ok = phase("previous", run_steps(first + older, env, root))
+    ok = phase("previous", [engine_is(scripts, env, root, *prev)] + run_steps(first + older, env, root))
     shutil.copyfile(fixture("permissions", "older"), root / "permissions.yaml")
     with (root / "boundary.yaml").open("a", encoding="utf-8", newline="\n") as fh:    # the template has no rule for it
         fh.write('  - {glob: "permissions.yaml", side: personal, why: "the permission hierarchy"}\n')
@@ -414,7 +491,7 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
 
     ref, source, pre_tag = head
     _, inst = install(work, ref, source, pre_tag, over=True, step="upgrade")
-    if not phase("upgrade", inst):
+    if not phase("upgrade", inst + [engine_is(scripts, env, root, ref, source)]):
         return steps
     strict = dict(env, BRAIN_STRICT="1")
     dev = bool(source or pre_tag)
@@ -438,45 +515,55 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
                    f"shutil.copytree(init.TEMPLATES / init.DEFAULT_TEMPLATE, {str(template)!r}, dirs_exist_ok=True)\n"
                    "cfg = config.load(pathlib.Path.cwd())\n"
                    "fp = vault.recipients(cfg)[0]['recovery'].fingerprint(cfg.root)\n"
-                   "st = vault.load_state()\n"   # the shapes vault.canary and vault.drill write
-                   f"st['canary']['recovery'] = {{'sealed_at': {SEALED!r}, 'fingerprint': fp}}\n"
+                   "st = vault.load_state()\n"   # the entries vault.canary and vault.drill write, field for field
+                   f"st['canary']['recovery'] = {{'sealed_at': {SEALED!r}, 'opened_at': '', 'error': '', "
+                   f"'adapter': 'age', 'fingerprint': fp, 'digest': {DIGEST!r}}}\n"
                    f"st['drill']['recovery'] = {{'at': {DRILLED!r}, 'fingerprint': fp}}\n"
                    "vault.save_state(st)\n"
                    "print(vault.state_file())", env, root)
-    state = Path(text.strip().splitlines()[-1]) if rc == 0 and text.strip() else home / ".brain" / "vault" / "state.json"
     manifest = template / "template.yaml"
     if rc == 0 and manifest.is_file():
-        _dump(manifest, overlay(_load(manifest), _load(fixture("template", "older")), _load(fixture("template", "newer"))))
-    phase("rollback", [{"step": "drill", "cmd": "a vault drill on record, written by HEAD", "rc": rc, "ok": rc == 0,
-                        "out": text}, add_newer(root, home)])
-    before = snapshot(root, [state])
+        _dump(manifest, overlay(_load(manifest), _load(fixture("template", "older")),
+                                _load(fixture("template", "newer"))))
+    phase("rollback", [{"step": "drill", "cmd": "a canary and a drill on record (their entries, written by HEAD's "
+                        "vault)", "rc": rc, "ok": rc == 0, "out": text}, add_newer(root, home)])
+    kept = [root, home / ".brain" / "ledger", home / ".brain" / "vault"]
+    before = snapshot(kept)
     prev_ref, prev_source = prev
     _, inst = install(work, prev_ref, prev_source, False, over=True, step="rollback install")
-    if not phase("rollback", inst):
+    if not phase("rollback", inst + [engine_is(scripts, env, root, prev_ref, prev_source)]):
         return steps
     rc, text = _py(scripts, "import brain.schema as s; print(hasattr(s, 'mode'))", env, root)
     tolerant = text.strip().endswith("True")
     codes = (0,) if tolerant else (0, 1, 2)      # 1: a check's errors; 2: a command's refusal (brain init's)
 
-    def clean(o: str) -> bool:                   # a refusal, not a command the older engine lacks
-        return "usage: brain" not in o and "invalid choice" not in o
+    def clean(o: str) -> bool:
+        """A refusal of HEAD's newer keys, not a command the older engine lacks, nor any other error."""
+        if "usage: brain" in o or "invalid choice" in o:
+            return False
+        return tolerant or all(NEWER.search(line) for line in o.splitlines() if line.lstrip().startswith("error:"))
 
     reads = dict(env, BRAIN_STRICT="0")
     empty = work / "template-plan"
     empty.mkdir(exist_ok=True)
-    phase("rollback", run_steps([
-        ("version", [brain, "--version"], None, lambda o: o.startswith("brain ")),
-        ("check", [brain, "check"], None, clean, codes),
-        ("record check", [brain, "record", "check"], None, clean, codes),
-        ("permissions", [brain, "permissions", "check"], None, clean, codes),
-        ("vault status", [brain, "vault", "status"], None, lambda o: f"drilled {DRILLED}" in o),
-    ], reads, root) + run_steps([
-        ("template plan", [brain, "init", "--owner", OWNER, "--template", str(template)], None, clean, codes),
+    phase("rollback", run_steps(read_steps(brain, clean, codes), reads, root) + run_steps([
+        ("template plan", [brain, "init", "--owner", OWNER, "--template", str(template)], None,
+         lambda o: clean(o) and ("plan only" in o or bool(NEWER.search(o))), codes),
     ], reads, empty))
-    gone = lost(before, snapshot(root, [state]))
-    phase("rollback", [{"step": "no loss", "cmd": f"{len(before)} file(s) unchanged, the vault drill included "
-                        f"({'read mode' if tolerant else 'an engine before the read mode: refusals allowed'})",
-                        "rc": int(bool(gone)), "ok": not gone, "out": "\n".join(gone)}])
+    gone = lost(before)
+    mode = "read mode" if tolerant else "an engine before the read mode: refusals of the newer keys allowed"
+    phase("rollback", [{"step": "no loss", "cmd": f"{len(before)} file(s) unchanged (ledgers only appended), the "
+                        f"vault drill included ({mode})", "rc": int(bool(gone)), "ok": not gone,
+                        "out": "\n".join(gone)}])
+
+    # and back: HEAD reads what both engines left, in read mode, and nothing is lost over the whole round trip
+    _, inst = install(work, ref, source, pre_tag, over=True, step="reinstall")
+    if not phase("back", inst + [engine_is(scripts, env, root, ref, source)]):
+        return steps
+    phase("back", run_steps(read_steps(brain, None, (0,)), reads, root))
+    gone = lost(before)
+    phase("back", [{"step": "no loss", "cmd": f"{len(before)} file(s) unchanged over the round trip", "rc":
+                    int(bool(gone)), "ok": not gone, "out": "\n".join(gone)}])
     return steps
 
 
@@ -502,9 +589,17 @@ def brain_files(root: Path) -> dict[str, str]:
     return out
 
 
-def upgrade_from(value: str) -> tuple[str, str]:
-    """--upgrade-from's (ref, source): a folder is a checkout to install, anything else a tag of the public repo."""
-    return ("", str(Path(value).resolve())) if Path(value).is_dir() else (value, "")
+def upgrade_from(value: str, source: str = "") -> tuple[str, str]:
+    """--upgrade-from's (ref, source): a folder is a checkout to install, anything else a tag of the public repo. An
+    empty value (a CI step that found no tag) or the --source checkout itself is refused: it would test nothing."""
+    if not value.strip():
+        raise SystemExit("--upgrade-from: empty (no previous tag found?)")
+    if Path(value).is_dir():
+        folder = str(Path(value).resolve())
+        if source and Path(folder) == Path(source).resolve():
+            raise SystemExit("--upgrade-from: the --source checkout itself: an upgrade from it tests nothing")
+        return "", folder
+    return value, ""
 
 
 def parse_deny(values: list[str]) -> list[tuple[str, str]]:
@@ -534,7 +629,7 @@ def main(argv: list[str] | None = None) -> int:
     work = Path(args.work or tempfile.mkdtemp(prefix="stranger-")).resolve()
     work.mkdir(parents=True, exist_ok=True)
     source = str(Path(args.source).resolve()) if args.source else ""
-    prev = upgrade_from(args.upgrade_from) if args.upgrade_from else None
+    prev = upgrade_from(args.upgrade_from, source) if args.upgrade_from is not None else None
     if prev:
         scripts, steps = install(work, prev[0], prev[1], False, step="install previous")
     else:

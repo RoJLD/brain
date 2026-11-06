@@ -98,7 +98,10 @@ jobs:
       - name: The last tag
         id: prev
         shell: bash
-        run: echo "tag=$(git describe --tags --abbrev=0 --match 'v*' HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          tag=$(git describe --tags --abbrev=0 --match 'v*' HEAD)
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Upgrade from ${{ steps.prev.outputs.tag }}, then back
         shell: bash
         run: |
