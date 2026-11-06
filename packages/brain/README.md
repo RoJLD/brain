@@ -55,10 +55,24 @@ Linux). It prints a plan; `-Apply` does it. The launcher is replaced even while 
 `brain update` (since 0.2.4) reads the latest release tag of the engine's public repo (`config.json` `engine.repo`,
 else RoJLD/brain) with `git ls-remote`, no token, and prints the plan: the version and its CHANGELOG sections, the
 tag installed into the brain's venv (pip, the `tui` extra kept), the launcher swapped in on Windows (as the installer
-does, even while a brain runs), and, for a brain that pins its engine (`config.json` `engine.pin`), the pin to move by
-a reviewed PR, shown and never done. It installs only on the owner's yes: `y` at its prompt, or `--yes`; never from a
-Claude Code session's shell. `brain update --check` prints the plan and installs nothing; `--json` gives its data. A
-checkout installed editable is not updated by pip (`git pull` there).
+does, even while a brain runs), and, for a brain that pins its engine (`config.json` `engine.pin`), the pin to move.
+How it moves depends on the brain (COMPAT-5):
+
+- **A brain without an installer of its own** (no `engine.installer`, such as one from `brain init`) has no review
+  step, so the plan moves the pin itself: it writes the new tag into `engine.pin` (the file's other keys, their order
+  and its indent kept), commits `config.json` alone in the brain's repo (« brain update: engine.pin vX -> vY »), then
+  runs `brain sync` with the new engine. When the brain's venv already holds the latest tag and the pin lags it (an
+  update made before this), the plan moves the pin alone. It never moves the pin backwards, nor to or from a pin that
+  is not a release tag, nor for an editable install; a `config.json` with changes not committed or not tracked, a
+  brain that is not a git repo or is on a detached HEAD, is left as it is and the plan says what to do by hand. The
+  commit lands on the brain's current branch, never pushed. The plan's `--json` says so in
+  `pin.move`: `"write"`.
+- **A brain that declares its installer** keeps the reviewed PR: the pin to move is shown, never done
+  (`pin.move`: `"pr"`).
+
+It runs only on the owner's yes: `y` at its prompt, or `--yes`; never from a Claude Code session's shell, which is
+told to run it in the owner's own terminal. `brain update --check` prints the plan and changes nothing; `--json`
+gives its data. A checkout installed editable is not updated by pip (`git pull` there).
 
 The cockpit's title bar always shows the installed version. Once the screen is drawn, it checks the tags in the
 background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.3 · 0.2.4 available »
@@ -77,8 +91,9 @@ A pinned brain runs its pinned engine. `brain check` warns when the running brai
 `config.json` `engine.pin`: a newer or an older version, or the pin's version from other code (another git revision,
 an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh` and
 `brain render --write` then refuse to write, since they would render the plugin's hooks and generate the links with
-another engine. After `brain update`, set `engine.pin` to the new tag in `config.json` and commit it (by a
-reviewed PR where the brain's main is protected); the refusal names the file and the tag. Otherwise run the pinned
+another engine. `brain update` moves the pin of a brain without an installer of its own; in a brain that declares
+one, set `engine.pin` to the new tag in `config.json` and commit it by a reviewed PR; the refusal names the file and
+the tag. Otherwise run the pinned
 engine, or pass `--force`. A brain with no pin, or a
 pin that is not a release tag, is not compared.
 

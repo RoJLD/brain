@@ -253,9 +253,14 @@ Python 3.10+ and git; then section 2 by hand (or `pwsh` from Homebrew) and secti
 - **Upgrade with `brain update`** (a version that has it: `brain update --help` answers): it prints the plan (the
   new version, what its CHANGELOG says, the install into `~/.brain\venv`, the launcher swap) and installs it when you
   answer `y`; `brain update --check` only prints it. The cockpit's title bar shows the installed version and, when a
-  newer one is out, « brain X · Y available »; `u` opens the same plan. Then, in your brain, move `engine.pin` in
-  `config.json` to the new tag and commit it (the plan reminds you; otherwise the installer's next `-Apply` puts the
-  pinned tag back), then `brain sync` (the plugin's hooks). Until the pin moves, `brain sync` refuses to write with an
+  newer one is out, « brain X · Y available »; `u` opens the same plan. In a brain without an installer of its own
+  (one from `brain init`: no `engine.installer` in `config.json`), the same `y` also moves `engine.pin` to the new
+  tag, commits `config.json` and runs `brain sync` (the plugin's hooks); the plan shows it first. Run it in your own
+  terminal: from a Claude Code session it refuses and says so. If your `config.json` has changes not committed, it
+  leaves the pin and says so: commit them, then `brain update` again (it then moves the pin alone; so does the first
+  `brain update` after an update to 0.2.6, which an older engine ran and which left the pin behind). In a brain that
+  declares its installer, move `engine.pin` by a reviewed PR (the plan reminds you; otherwise the installer's next
+  `-Apply` puts the pinned tag back), then `brain sync`. Until the pin moves, `brain sync` refuses to write with an
   engine other than the pinned one and says which line to change.
 - **Upgrade through your brain's installer**, when your brain has one and declares it (`config.json` `engine`
   `installer`, say `"install.ps1"`): after the PR that moves `engine.pin`, the cockpit's title bar reads « brain X ·

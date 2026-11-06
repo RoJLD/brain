@@ -16,9 +16,19 @@ title bar says so, ``brain 0.2.1 · pin v0.2.3: -Apply``, and the cockpit's ``u`
 :func:`plan` is what ``brain update`` does: the version and the CHANGELOG sections since the installed one (read
 from the tag), installing the tag into the brain's venv (``<BRAIN_HOME>/venv``, pip, the extras installed kept), the
 launcher swapped in (``<BRAIN_HOME>/bin/brain.exe``, even while a brain runs: install.ps1's Set-Launcher), and for a
-pinned brain (``config.json`` ``engine.pin``) the pin to move by a reviewed PR, shown, never done here. :func:`apply`
-runs it: only from ``brain update --yes``, the terminal's yes or the cockpit's confirmation, the owner's gesture;
-never from a Claude Code session's shell, never on its own.
+pinned brain (``config.json`` ``engine.pin``) the pin to move. Which way the pin moves depends on the brain
+(COMPAT-5, spec-brain-data-compat):
+
+- a brain that declares its own installer (``engine.installer``, say install.ps1) moves it by a reviewed PR:
+  shown, never done here (``pin.move`` ``"pr"``);
+- a brain that declares none (one from ``brain init``, the pilot's) has no review step: the plan writes the new tag
+  into ``engine.pin``, commits ``config.json`` alone in the brain's repo, then runs ``brain sync`` with the new engine
+  (``pin.move`` ``"write"``). The pin also moves alone, with no install, when the installed engine is already the
+  latest tag and past the pin (an update made before this one). It never moves backwards, nor to or from a pin that
+  is not a release tag, nor for an editable install; a ``config.json`` with changes not committed is left as it is.
+
+:func:`apply` runs it: only from ``brain update --yes``, the terminal's yes or the cockpit's confirmation (which runs
+``brain update --yes`` in a window), the owner's gesture; never from a Claude Code session's shell, never on its own.
 """
 
 from __future__ import annotations
@@ -71,6 +81,14 @@ def installer(root: Path | None = None) -> Path | None:
         return None
     f = cfg.root / name
     return f if f.is_file() else None
+
+
+def declared_installer(root: Path | None = None) -> str | None:
+    """The installer config.json ``engine.installer`` names, whether or not the file exists: a brain that declares
+    one keeps the reviewed pin PR even while the file is missing (brain config --check says so)."""
+    data = config.load(root).data.get("engine")
+    name = data.get("installer") if isinstance(data, dict) else None
+    return name if isinstance(name, str) and name else None
 
 
 def lag(installed: str, pin: str | None) -> str | None:
@@ -270,9 +288,11 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None) -> dict:
            "spec": None, "launcher": None, "pin": None, "blocked": ""}
     target = f"v{latest}" if info.get("newer") else f"v{installed}"
     pin = info.get("pin")
+    editable = paths.installed_checkout()
     if pin and pin != target:
         cfg = config.load(root)
-        out["pin"] = {"file": str(cfg.file) if cfg.file else config.FILE, "from": pin, "to": target}
+        out["pin"] = {"file": str(cfg.file) if cfg.file else config.FILE, "from": pin, "to": target,
+                      "move": _pin_move(cfg, pin, target, latest, editable, py, bool(info.get("newer")))}
     if not latest:
         out["blocked"] = f"the tags of {repo} could not be read (offline?)"
         return out
@@ -280,7 +300,6 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None) -> dict:
         out["blocked"] = f"brain {installed} is the latest"
         return out
     out["changelog"] = (read_changelog or changelog)(repo, out["tag"], installed)
-    editable = paths.installed_checkout()
     if editable:
         out["blocked"] = f"brain is installed editable from {editable}: update that checkout (git pull) instead"
         return out
@@ -292,6 +311,37 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None) -> dict:
     pair = launcher(py)
     out["launcher"] = [str(pair[0]), str(pair[1])] if pair else None
     return out
+
+
+def _pin_move(cfg, pin: str, target: str, latest: str | None, editable, py: Path, newer: bool) -> str:
+    """How the plan moves the pin (COMPAT-5): "write" (written, committed, then brain sync) for a brain that declares
+    no installer, forwards to the latest release tag, installed into the brain's venv; "pr" (shown: a reviewed PR,
+    or by hand) otherwise."""
+    if cfg.file is None or cfg.error or declared_installer(cfg.root) or config.unexpected(cfg):
+        return "pr"
+    have, want = version_of(pin), version_of(target)
+    if not have or not want or want <= have or target != f"v{latest}" or editable or not py.is_file():
+        return "pr"
+    if not newer and venv_version(py) != latest:
+        return "pr"   # the pin alone: only to the engine the brain's venv runs, whatever engine runs this command
+    return "write"
+
+
+def venv_version(py: Path) -> str | None:
+    """The version of brain installed in that venv (its brain-X.Y.Z.dist-info), None when there is none or several."""
+    found = {d.name[len("brain-"):-len(".dist-info")] for sp in _site_packages(py) if sp.is_dir()
+             for d in sp.glob("brain-*.dist-info")}
+    return found.pop() if len(found) == 1 else None
+
+
+def pin_writes(p: dict) -> bool:
+    """Whether the plan writes and commits the pin itself (a brain without an installer of its own)."""
+    return bool(p.get("pin") and p["pin"].get("move") == "write")
+
+
+def runs(p: dict) -> bool:
+    """Whether the plan has anything to run on the owner's yes: an install, or the pin alone."""
+    return bool(p.get("spec") or pin_writes(p))
 
 
 def lines(p: dict) -> list[str]:
@@ -316,7 +366,13 @@ def lines(p: dict) -> list[str]:
                      f"(pip install \"{p['spec']}\")")
         if p.get("launcher"):
             steps.append(f"launcher {p['launcher'][0]} -> {p['launcher'][1]} (swapped in even while a brain runs)")
-    if p.get("pin"):
+    if pin_writes(p):
+        pin = p["pin"]
+        where = Path(pin["file"]).parent
+        steps.append(f"pin      {Path(pin['file']).name} engine.pin {pin['from']} -> {pin['to']}: written and committed "
+                     f"in {where} (this brain declares no installer of its own: no pin PR to review)")
+        steps.append(f"sync     brain sync in {where}, with {pin['to']} (the plugin's hooks and views)")
+    elif p.get("pin"):
         pin = p["pin"]
         steps.append(f"pin      {Path(pin['file']).name} engine.pin {pin['from']} -> {pin['to']}: move it by a reviewed "
                      f"PR in {Path(pin['file']).parent} (shown, not done here; until it merges, the installer's next "
@@ -325,7 +381,7 @@ def lines(p: dict) -> list[str]:
         steps.append(f"restart  brain tui and the sessions, to run {p['tag']}")
     if steps:
         out += ["", "The plan (brain update --yes, or the cockpit's u, runs it on the owner's yes):"
-                if p.get("spec") else "To do by hand:", *(f"  {s}" for s in steps)]
+                if runs(p) else "To do by hand:", *(f"  {s}" for s in steps)]
     if p.get("blocked") and newer:
         out += ["", f"Not applicable here: {p['blocked']}"]
     return out
@@ -362,10 +418,102 @@ def set_launcher(src: Path, dst: Path) -> str:
     return "swapped"
 
 
+def _git(root: Path, *args: str, runner=subprocess.run):
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    cmd = ["git", "-C", str(root), *args]
+    try:
+        return runner(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
+    except (OSError, subprocess.SubprocessError) as exc:   # git missing: said as a failure, never a traceback
+        return subprocess.CompletedProcess(cmd, 127, "", str(exc))
+
+
+def write_pin(file: Path, frm: str, to: str) -> None:
+    """engine.pin ``frm`` -> ``to`` in config.json, its other keys, their order, its indent, its line endings and its
+    BOM kept, written atomically (brain.stateio.write_atomic; git holds the previous version, so no .bak beside it).
+    Raises ValueError when the file no longer pins ``frm`` (moved since the plan) or is not JSON."""
+    from . import stateio
+
+    raw = file.read_bytes()
+    bom = raw.startswith(b"\xef\xbb\xbf")
+    text = raw.decode("utf-8-sig")
+    data = json.loads(text)
+    eng = data.get("engine") if isinstance(data, dict) else None
+    if not isinstance(eng, dict) or eng.get("pin") != frm:
+        raise ValueError(f"{file.name} engine.pin is no longer {frm}: nothing written (brain update again)")
+    eng["pin"] = to
+    m = re.search(r"\n([ \t]+)\S", text)
+    indent = m.group(1) if m else None
+    out = json.dumps(data, indent=indent, ensure_ascii=False) + "\n"
+    if "\r\n" in text:
+        out = out.replace("\n", "\r\n")
+    stateio.write_atomic(file, ("﻿" if bom else "") + out)
+
+
+def move_pin(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
+    """The pin step of a brain without an installer of its own (COMPAT-5): config.json written and committed alone
+    in the brain's repo (not pushed), then brain sync run with the venv's engine. Refused, nothing written, when the
+    brain's root is not a git repo, config.json is not tracked there or it has changes not committed."""
+    pin = p["pin"]
+    file = Path(pin["file"])
+    root = file.parent
+    hand = f"move {file.name} engine.pin {pin['from']} -> {pin['to']} and commit it, then brain sync"
+    branch, why = _pin_branch(root, file.name, runner)
+    if why:
+        return 1, [f"pin      {why}: nothing written; {hand}"]
+    try:
+        write_pin(file, pin["from"], pin["to"])
+    except (OSError, ValueError) as exc:
+        return 1, [f"pin      {exc}"]
+    msg = f"brain update: engine.pin {pin['from']} -> {pin['to']}"
+    done = _git(root, "commit", "--quiet", "-m", msg, "--", file.name, runner=runner)
+    if done.returncode != 0:
+        said = ((done.stdout or "") + (done.stderr or "")).strip().splitlines()[-10:]
+        return 1, [f"pin      {file.name} engine.pin written ({pin['to']}), but git commit failed (exit "
+                   f"{done.returncode}): commit it yourself, then brain sync", *said]
+    out = [f"pin      {file.name} engine.pin {pin['from']} -> {pin['to']}, committed on {branch} in {root} "
+           f"({msg!r}; not pushed)"]
+    code, said = _sync(p["python"], root, runner)
+    return code, [*out, *said]
+
+
+def _pin_branch(root: Path, name: str, runner) -> tuple[str, str]:
+    """(the brain's branch, '') when the pin may be written and committed there; else ('', why not)."""
+    if _git(root, "rev-parse", "--show-toplevel", runner=runner).returncode != 0:
+        return "", f"{root} is not a git repo (or git cannot run)"
+    branch = (_git(root, "rev-parse", "--abbrev-ref", "HEAD", runner=runner).stdout or "").strip()
+    if not branch or branch == "HEAD":
+        return "", f"{root} is on no branch (a detached HEAD)"
+    if _git(root, "ls-files", "--error-unmatch", "--", name, runner=runner).returncode != 0:
+        return "", f"{name} is not tracked in {root}"
+    dirty = _git(root, "status", "--porcelain", "--", name, runner=runner)
+    if dirty.returncode != 0 or (dirty.stdout or "").strip():
+        return "", f"{name} has changes not committed (commit them, then brain update again)"
+    return branch, ""
+
+
+def _sync(python: str, root: Path, runner) -> tuple[int, list[str]]:
+    """brain sync in the brain, run by the venv's engine (the one the pin now names)."""
+    try:
+        sync = runner([python, "-m", "brain", "--root", str(root), "sync"], capture_output=True, text=True,
+                      stdin=subprocess.DEVNULL, cwd=str(root))
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, [f"sync     brain sync failed: {exc}; run it in {root}"]
+    said = ((sync.stdout or "") + (sync.stderr or "")).strip().splitlines()
+    if sync.returncode != 0:
+        return 1, [f"sync     brain sync failed with exit code {sync.returncode}: run it in {root}", *said[-20:]]
+    return 0, [f"synced   brain sync in {root}"]
+
+
 def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
-    """Run a plan's install and launcher steps (the pin is shown, never moved): (exit code, what was done)."""
-    if p.get("blocked") or not p.get("spec"):
+    """Run a plan's install and launcher steps, then its pin step: moved, committed and synced for a brain without
+    an installer of its own (:func:`move_pin`), shown only for one with (a reviewed PR): (exit code, what was done).
+    A plan with no install but a pin to write moves the pin alone."""
+    if not p.get("spec"):
+        if pin_writes(p):
+            return move_pin(p, runner)
         return 1, [p.get("blocked") or "nothing to apply"]
+    if p.get("blocked"):
+        return 1, [p["blocked"]]
     cmd = [p["python"], "-m", "pip", "install", "--quiet", "--disable-pip-version-check", p["spec"]]
     try:
         proc = runner(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -382,11 +530,15 @@ def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
                        "installer")
         except OSError as exc:
             return 1, [*out, f"launcher {dst}: {exc} (rerun installer/install.ps1 -Apply)"]
-    if p.get("pin"):
+    code = 0
+    if pin_writes(p):
+        code, moved = move_pin(p, runner)
+        out += moved
+    elif p.get("pin"):
         pin = p["pin"]
         out.append(f"to do    move {Path(pin['file']).name} engine.pin {pin['from']} -> {pin['to']} by a reviewed PR")
     out.append(f"restart  brain tui and the sessions, to run {p['tag']}")
-    return 0, out
+    return code, out
 
 
 def main(root: Path | None, *, check_only: bool, yes: bool, as_json: bool, refused: str = "",
@@ -397,19 +549,30 @@ def main(root: Path | None, *, check_only: bool, yes: bool, as_json: bool, refus
         out(json.dumps(p, ensure_ascii=False, indent=1, sort_keys=True))
     else:
         out("\n".join(lines(p)))
-    if check_only or not p.get("spec"):
+    if check_only or not runs(p):
         return 0
     if refused:
         out(f"brain update: {refused}; run it yourself in a terminal")
         return 1
-    if not yes:
-        if ask is None and not sys.stdin.isatty():
-            out("brain update --yes installs it")
-            return 0
-        reply = (ask or input)(f"Install brain {p['tag']} now? [y/N] ")
-        if reply.strip().lower() not in ("y", "yes", "o", "oui"):
-            out("nothing installed")
-            return 0
+    if not yes and not _owner_says_yes(p, ask, out):
+        return 0
     code, done = apply(p)
     out("\n".join(done))
     return code
+
+
+def _owner_says_yes(p: dict, ask, out) -> bool:
+    """The owner's y at the prompt (a terminal), naming what runs: the install, the pin's move, or both."""
+    moving = f"move engine.pin to {p['pin']['to']}, commit it and run brain sync" if pin_writes(p) else ""
+    if p.get("spec"):
+        question = f"Install brain {p['tag']}" + (f", {moving}" if moving else "")
+        does = "installs it" + (" and moves the pin" if moving else "")
+    else:
+        question, does = moving[0].upper() + moving[1:], "moves the pin"
+    if ask is None and not sys.stdin.isatty():
+        out(f"brain update --yes {does}")
+        return False
+    if (ask or input)(f"{question} now? [y/N] ").strip().lower() in ("y", "yes", "o", "oui"):
+        return True
+    out("nothing installed" if p.get("spec") else "nothing moved")
+    return False
