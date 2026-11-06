@@ -12,11 +12,23 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `config.json` and runs `brain sync`. A brain whose `config.json` declares `engine.installer` changes nothing: its
   pin still moves by a reviewed PR.
 
+- Rerun `brain check --public --history` in a public repo's checkout before its next push
+  (wi-brain-public-stamp-binding): a stamp written by brain 0.2.5 or older has no key and the push guard refuses it.
+
 - Nothing to run for the machine-local state (wi-brain-state-safe-io). `vault/state.json` gains `"v": 1` at its
   next write, which brain 0.2.5 reads unchanged; `schedules/installed.json` and `alerts/state.json` keep their v 1
   unwritten. Each of the four files may now have a `<name>.bak` beside it, and a file that was unreadable a
   `<name>.unreadable-<stamp>`: both are safe to delete once you have looked.
 
+- **A public-check stamp is valid only under the key it was made with** (wi-brain-public-stamp-binding,
+  spec-brain-data-compat N2 and finding 11; `docs/formats.md`, « Public-check stamps »). The stamp of a green `brain
+  check --public --history` now carries `v` 2 and a `key`: the engine version, the sha256 of config.json's public
+  deny, allow, patterns and refuse, and whether gitleaks read the history. The push guard refuses a stamp whose key
+  differs from now's (another engine, rules changed since, gitleaks gained or lost), an old-format or unreadable one,
+  naming why and the fix, « rerun brain check --public --history ». A check with no commit to read keys gitleaks by
+  its presence on the PATH; a gitleaks on the PATH that fails stamps nothing (exit 1, « fix gitleaks or take it off
+  the PATH »), since the guard would refuse that stamp; a stamp is written atomically; a newer brain's stamp, a
+  nested or unreadable one, or any surprise while reading it refuses the push instead of letting it through.
 - **The public and secrets checks fail closed** (wi-brain-guards-fail-closed, COMPAT-4). After `brain sync` and the
   install, a machine whose `config.json` is unreadable, not an object, has a `public` that is not an object or a `v`
   above 1, whose `$BRAIN_CONFIG` names no file, or whose `personal.json` names a folder without `config.json` (a
