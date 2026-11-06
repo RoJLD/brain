@@ -343,7 +343,19 @@ def _pin(root):
     return json.loads((root / "config.json").read_text(encoding="utf-8"))["engine"]["pin"]
 
 
-def _plan(installed, tags=TAGS):
+def _venv_has(version):
+    """The brain venv holds brain at ``version`` (its dist-info), as pip leaves it."""
+    py = update.venv_python()
+    if py.is_file():
+        for d in update._site_packages(py):
+            if d.is_dir():
+                for old in d.glob("brain-*.dist-info"):
+                    old.rmdir()
+                (d / f"brain-{version}.dist-info").mkdir()
+
+
+def _plan(installed, tags=TAGS, venv_has=None):
+    _venv_has(venv_has or installed)
     return update.plan(update.check(fetch=_fetch(tags), now=NOW, installed=installed, refresh=True),
                        read_changelog=lambda *a: [])
 
@@ -418,7 +430,7 @@ def test_a_brain_that_is_not_a_git_repo_is_left_alone(venv, pinned, monkeypatch)
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(pinned.parent))  # no repo above the brain's folder
     p = _plan("0.2.3")
     code, done = update.apply(p, runner=_runner([]))
-    assert code == 1 and "is not a git repo: nothing written" in done[0] and _pin(pinned) == "v0.2.2"
+    assert code == 1 and "is not a git repo (or git cannot run): nothing written" in done[0] and _pin(pinned) == "v0.2.2"
 
 
 def test_a_failed_sync_is_reported(venv, pin_repo):
@@ -439,6 +451,7 @@ def _fixed_check(installed):
 
 def test_the_pin_moves_on_the_owners_yes_only_never_from_a_session(venv, pin_repo, monkeypatch, capsys):
     monkeypatch.setattr(update, "check", _fixed_check("0.2.3"))
+    _venv_has("0.2.3")
     moved = []
     monkeypatch.setattr(update, "apply", lambda p, runner=None: moved.append(p) or (0, ["moved"]))
     asked = []
@@ -476,3 +489,28 @@ def test_an_untracked_config_is_left_alone(venv, pin_repo):
     (pin_repo / ".git" / "info" / "exclude").write_text("config.json\n", encoding="utf-8")  # ignored: status is clean
     code, done = update.apply(_plan("0.2.3"), runner=_runner([]))
     assert code == 1 and "is not tracked in" in done[0] and _pin(pin_repo) == "v0.2.2"
+
+
+def test_the_pin_alone_follows_the_venvs_engine_not_the_running_one(venv, pin_repo):
+    """A brain run from another interpreter (a checkout's venv) at the latest tag, the brain's venv still at the pin:
+    the pin stays, since brain sync would run the venv's older engine against it."""
+    p = _plan("0.2.3", venv_has="0.2.2")
+    assert p["pin"]["move"] == "pr" and not update.runs(p)
+    assert _plan("0.2.3")["pin"]["move"] == "write"
+
+
+def test_a_detached_head_is_left_alone(venv, pin_repo):
+    from conftest import run_git
+    run_git(pin_repo, "checkout", "-q", "--detach")
+    code, done = update.apply(_plan("0.2.3"), runner=_runner([]))
+    assert code == 1 and "a detached HEAD" in done[0] and _pin(pin_repo) == "v0.2.2"
+
+
+def test_git_missing_is_said_not_raised(venv, pin_repo):
+    def run(cmd, **kw):
+        if cmd[0] == "git":
+            raise FileNotFoundError("git")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    code, done = update.apply(_plan("0.2.2"), runner=run)
+    assert code == 1 and done[0].startswith("installed brain v0.2.3")
+    assert any("git cannot run" in line for line in done) and _pin(pin_repo) == "v0.2.2"

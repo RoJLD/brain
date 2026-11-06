@@ -32,10 +32,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   COMPAT-5). For a brain whose `config.json` declares no `engine.installer` (one from `brain init`), the plan's last
   steps write the new tag into `engine.pin` (the file's other keys, their order and its indent kept; written
   atomically), commit `config.json` alone (« brain update: engine.pin vX -> vY »), then run `brain sync` with the new
-  engine, on the owner's `y` or `--yes`. With the latest engine already installed and the pin behind it, the plan
-  moves the pin alone. The pin never moves backwards, nor to or from a pin that is not a release tag, nor for an
-  editable install; a `config.json` with changes not committed, or a brain that is not a git repo, is left as it is
-  (exit 1, with what to do by hand). From a Claude Code session the command refuses, as before, and says to run it in
+  engine, on the owner's `y` or `--yes`. With the latest engine already in the brain's venv and the pin behind it, the
+  plan moves the pin alone. The pin never moves backwards, nor to or from a pin that is not a release tag, nor for an
+  editable install; a `config.json` with changes not committed or not tracked, or a brain that is not a git repo or
+  is on a detached HEAD, is left as it is (exit 1, with what to do by hand); the commit lands on the current branch,
+  never pushed. From a Claude Code session the command refuses, as before, and says to run it in
   the owner's terminal. A brain that declares its installer keeps the reviewed pin PR, shown and never done. The plan's
   `--json` gains `pin.move` (`"write"` or `"pr"`).
 

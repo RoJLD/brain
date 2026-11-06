@@ -60,10 +60,11 @@ How it moves depends on the brain (COMPAT-5):
 - **A brain without an installer of its own** (no `engine.installer`, such as one from `brain init`) has no review
   step, so the plan moves the pin itself: it writes the new tag into `engine.pin` (the file's other keys, their order
   and its indent kept), commits `config.json` alone in the brain's repo (« brain update: engine.pin vX -> vY »), then
-  runs `brain sync` with the new engine. When the installed engine is already the latest tag and the pin lags it (an
+  runs `brain sync` with the new engine. When the brain's venv already holds the latest tag and the pin lags it (an
   update made before this), the plan moves the pin alone. It never moves the pin backwards, nor to or from a pin that
-  is not a release tag, nor for an editable install; a `config.json` with changes not committed, or a brain that is
-  not a git repo, is left as it is and the plan says what to do by hand. The plan's `--json` says so in
+  is not a release tag, nor for an editable install; a `config.json` with changes not committed or not tracked, a
+  brain that is not a git repo or is on a detached HEAD, is left as it is and the plan says what to do by hand. The
+  commit lands on the brain's current branch, never pushed. The plan's `--json` says so in
   `pin.move`: `"write"`.
 - **A brain that declares its installer** keeps the reviewed PR: the pin to move is shown, never done
   (`pin.move`: `"pr"`).

@@ -292,7 +292,7 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None) -> dict:
     if pin and pin != target:
         cfg = config.load(root)
         out["pin"] = {"file": str(cfg.file) if cfg.file else config.FILE, "from": pin, "to": target,
-                      "move": _pin_move(cfg, pin, target, latest, editable, py)}
+                      "move": _pin_move(cfg, pin, target, latest, editable, py, bool(info.get("newer")))}
     if not latest:
         out["blocked"] = f"the tags of {repo} could not be read (offline?)"
         return out
@@ -313,7 +313,7 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None) -> dict:
     return out
 
 
-def _pin_move(cfg, pin: str, target: str, latest: str | None, editable, py: Path) -> str:
+def _pin_move(cfg, pin: str, target: str, latest: str | None, editable, py: Path, newer: bool) -> str:
     """How the plan moves the pin (COMPAT-5): "write" (written, committed, then brain sync) for a brain that declares
     no installer, forwards to the latest release tag, installed into the brain's venv; "pr" (shown: a reviewed PR,
     or by hand) otherwise."""
@@ -322,7 +322,16 @@ def _pin_move(cfg, pin: str, target: str, latest: str | None, editable, py: Path
     have, want = version_of(pin), version_of(target)
     if not have or not want or want <= have or target != f"v{latest}" or editable or not py.is_file():
         return "pr"
+    if not newer and venv_version(py) != latest:
+        return "pr"   # the pin alone: only to the engine the brain's venv runs, whatever engine runs this command
     return "write"
+
+
+def venv_version(py: Path) -> str | None:
+    """The version of brain installed in that venv (its brain-X.Y.Z.dist-info), None when there is none or several."""
+    found = {d.name[len("brain-"):-len(".dist-info")] for sp in _site_packages(py) if sp.is_dir()
+             for d in sp.glob("brain-*.dist-info")}
+    return found.pop() if len(found) == 1 else None
 
 
 def pin_writes(p: dict) -> bool:
@@ -411,7 +420,11 @@ def set_launcher(src: Path, dst: Path) -> str:
 
 def _git(root: Path, *args: str, runner=subprocess.run):
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-    return runner(["git", "-C", str(root), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
+    cmd = ["git", "-C", str(root), *args]
+    try:
+        return runner(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
+    except (OSError, subprocess.SubprocessError) as exc:   # git missing: said as a failure, never a traceback
+        return subprocess.CompletedProcess(cmd, 127, "", str(exc))
 
 
 def write_pin(file: Path, frm: str, to: str) -> None:
@@ -446,7 +459,10 @@ def move_pin(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
     hand = f"move {file.name} engine.pin {pin['from']} -> {pin['to']} and commit it, then brain sync"
     top = _git(root, "rev-parse", "--show-toplevel", runner=runner)
     if top.returncode != 0:
-        return 1, [f"pin      {root} is not a git repo: nothing written; {hand}"]
+        return 1, [f"pin      {root} is not a git repo (or git cannot run): nothing written; {hand}"]
+    branch = (_git(root, "rev-parse", "--abbrev-ref", "HEAD", runner=runner).stdout or "").strip()
+    if not branch or branch == "HEAD":
+        return 1, [f"pin      {root} is on no branch (a detached HEAD): nothing written; {hand} on its branch"]
     if _git(root, "ls-files", "--error-unmatch", "--", file.name, runner=runner).returncode != 0:
         return 1, [f"pin      {file.name} is not tracked in {root}: nothing written; {hand}"]
     dirty = _git(root, "status", "--porcelain", "--", file.name, runner=runner)
@@ -463,7 +479,8 @@ def move_pin(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
         said = ((done.stdout or "") + (done.stderr or "")).strip().splitlines()[-10:]
         return 1, [f"pin      {file.name} engine.pin written ({pin['to']}), but git commit failed (exit "
                    f"{done.returncode}): commit it yourself, then brain sync", *said]
-    out = [f"pin      {file.name} engine.pin {pin['from']} -> {pin['to']}, committed in {root} ({msg!r}; not pushed)"]
+    out = [f"pin      {file.name} engine.pin {pin['from']} -> {pin['to']}, committed on {branch} in {root} "
+           f"({msg!r}; not pushed)"]
     try:
         sync = runner([p["python"], "-m", "brain", "--root", str(root), "sync"], capture_output=True, text=True,
                       stdin=subprocess.DEVNULL, cwd=str(root))
