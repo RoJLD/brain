@@ -158,7 +158,9 @@ def test_sort_filter_and_search_change_the_tables_and_are_remembered():
         await pilot.press("escape")  # cleared, back to the panel
         assert app.search == "" and app.focused is app.query_one("#frontier") and len(_ids(app, "frontier")) == 3
         await pilot.press("2")
-        await pilot.press("s", "s", "s")  # the queue: band, unblocks, age, kind
+        await pilot.press("s")  # the queue: band, then score
+        assert app.views["queue"]["sort"] == "score"
+        await pilot.press("s", "s", "s")  # unblocks, age, kind
         assert app.views["queue"]["sort"] == "kind"
         await pilot.press("8", "s")  # a panel without a view: s does nothing
         assert app.is_running
@@ -172,6 +174,11 @@ def test_a_column_title_sorts_and_the_project_selector_changes_the_scope():
         table.post_message(DataTable.HeaderSelected(table, band.key, 0, band.label))
         await pilot.pause(0.1)
         assert app.views["queue"] == {**cockpit.view_of("queue"), "reverse": True}  # its sort already: reversed
+        score = next(c for c in table.ordered_columns if str(c.label) == "Score")
+        table.post_message(DataTable.HeaderSelected(table, score.key, 1, score.label))
+        await pilot.pause(0.1)
+        assert app.views["queue"]["sort"] == "score" and not app.views["queue"]["reverse"]  # the highest first
+        assert _ids(app, "queue") == ["ddr-b", "ddr-a"]  # no score: what each unblocks
         age = next(c for c in table.ordered_columns if str(c.label) == "Age")
         table.post_message(DataTable.HeaderSelected(table, age.key, 5, age.label))
         await pilot.pause(0.1)
