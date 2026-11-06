@@ -145,8 +145,8 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
 - **The public and secrets checks fail closed** (`public:config`; COMPAT-4, wi-brain-guards-fail-closed; the
   2026-11-04 REVERSAL of the internal-error policy, for these checks only). They refuse every `git commit` and
   `git push`, whatever the repo, while the configuration they read is unexpected, the reason naming the fix:
-  `config.json` unreadable or not an object (fix it: `brain config --check`), `public` not an object
-  (`brain config --keys`), a `v` above the one the engine reads (`brain update`), `$BRAIN_CONFIG` naming no file, or no
+  `config.json` unreadable or not an object (fix it: `brain config --check`), `public` or one of its keys (`repos`, `deny`, `allow`,
+  `patterns`, `refuse`) of another type (`brain config --keys`), a `v` that is not a whole number, or above the one the engine reads (`brain update`), `$BRAIN_CONFIG` naming no file, or no
   `config.json` found although `$BRAIN_PERSONAL` or `<BRAIN_HOME>/personal.json` names a personal brain (a renamed or
   moved folder: point the pointer at the main checkout, `install.ps1 -Apply`). An unknown key never refuses (a newer
   brain's, kept). `guard.sh` refuses them as well when it finds no Python, or the one it finds cannot import brain (a

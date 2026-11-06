@@ -61,7 +61,7 @@ commits_or_pushes() {
   local command='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"' text=$2 found
   [[ $2 =~ $command ]] && text=${BASH_REMATCH[1]}
   local edge='(^|[^A-Za-z0-9_.-]|\\[nrt])'
-  local gitcp="${edge}git(\.exe)?[^A-Za-z0-9_.-](.*([^A-Za-z0-9_-]|\\\\[nrt]))?(commit|push)([^A-Za-z0-9_-]|$)"
+  local gitcp="${edge}git(\.exe)?([^A-Za-z0-9_.-]|\\\\[nrt])(.*([^A-Za-z0-9_-]|\\\\[nrt]))?(commit|push)([^A-Za-z0-9_-]|$)"
   shopt -s nocasematch
   [[ $text =~ $gitcp ]] && found=0 || found=1
   shopt -u nocasematch
@@ -86,6 +86,7 @@ brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin
 # here no Python was found, or the one found failed: guard.py's main never fails, so it could not import brain
 why="no Python 3 found (BRAIN_PYTHON, <BRAIN_HOME>/venv, python3, python)"
 [ -n "$brain_py" ] && why="$brain_py cannot import brain"
+[ -n "$brain_py" ] && [ "$brain_py" = "${BRAIN_PYTHON:-}" ] && why="$why; BRAIN_PYTHON chose it: fix or unset BRAIN_PYTHON"
 selftime_bash "hook guard ${1:-} [cannot run]" 1
 commits_or_pushes "${1:-}" "$input" && refuse_cannot_run "$why"
 exit 0

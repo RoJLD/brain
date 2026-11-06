@@ -29,6 +29,8 @@ FILE = "config.json"
 DEFAULTS = {"registry": "projects.yaml", "rules": [], "memory": "memory", "records": "records", "source": "source"}
 PATH_KEYS = ("registry", "memory", "records", "source")   # declared paths that must exist (and each of rules)
 DENY = ("people", "users", "hosts", "repos", "paths")
+# public's keys the public checks read, and their type (config.schema.json): another type is unexpected (COMPAT-4)
+PUBLIC_KEYS = {"repos": list, "deny": dict, "allow": dict, "patterns": dict, "refuse": dict}
 NO_OWNER = "the owner"
 # The names of the Claude rendering (adapters.claude) when config.json gives none: the engine's own, no person's.
 CLAUDE = {"marketplace": "brain", "plugin": "brain-core", "source": ""}
@@ -63,7 +65,7 @@ def load(root: Path | None = None) -> Config:
     if not f or not f.is_file():
         return Config(None, Path(root or os.getcwd()).resolve(), error=f"{f} not found" if f else "")
     try:
-        data = json.loads(f.read_text(encoding="utf-8"))
+        data = json.loads(f.read_text(encoding="utf-8-sig"))   # a BOM, as Windows PowerShell 5.1 writes, is read
     except (OSError, ValueError) as exc:
         return Config(f, f.parent.resolve(), error=f"{f.name}: not readable JSON ({exc})")
     if not isinstance(data, dict):
@@ -74,7 +76,8 @@ def load(root: Path | None = None) -> Config:
 def unexpected(cfg: Config | None = None) -> str:
     """Why the public and secrets guards cannot trust the configuration, with its fix; "" when they can (COMPAT-4,
     wi-brain-guards-fail-closed). Unexpected is: ``$BRAIN_CONFIG`` naming no file; config.json unreadable or not an
-    object; ``public`` not an object; a ``v`` above the one this engine knows; or no config.json found although
+    object; ``public`` not an object, or one of :data:`PUBLIC_KEYS` of another type; a ``v`` that is not a whole
+    number or is above the one this engine knows; or no config.json found although
     ``$BRAIN_PERSONAL`` or the pointer <BRAIN_HOME>/personal.json names a personal brain (every brain init writes one).
     An unknown key is never unexpected: a newer brain's is kept (tolerant reader)."""
     cfg = cfg or load()
@@ -90,11 +93,19 @@ def unexpected(cfg: Config | None = None) -> str:
         where = "does not exist" if not named.is_dir() else f"holds no {FILE}"
         return (f"{by} names the personal brain {named}, which {where}: point it at the personal brain's main checkout "
                 "(rerun the installer: install.ps1 -Apply), or set BRAIN_PERSONAL")
-    if "public" in cfg.data and not isinstance(cfg.data["public"], dict):
-        return (f"{FILE}: public is a {type(cfg.data['public']).__name__}, not an object: fix {cfg.file} "
+    pub = cfg.data.get("public")
+    if "public" in cfg.data and not isinstance(pub, dict):
+        return (f"{FILE}: public is a {type(pub).__name__}, not an object: fix {cfg.file} "
                 "(brain config --keys lists public's keys)")
+    for key, kind in PUBLIC_KEYS.items():   # a known key of another type reads as nothing: no repo is public
+        if pub and key in pub and not isinstance(pub[key], kind):
+            want = "a list" if kind is list else "an object"
+            return f"{FILE}: public.{key} is a {type(pub[key]).__name__}, not {want}: fix {cfg.file} (brain config --check)"
+    v = cfg.data.get("v")
+    if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
+        return f"{FILE}: v is {v!r}, not a whole number: fix {cfg.file} (brain config --check)"
     try:
-        return schema.newer(FILE, cfg.data.get("v"), schema.known_v("config"))
+        return schema.newer(FILE, v, schema.known_v("config"))
     except (OSError, ValueError, KeyError) as exc:   # the engine's own schema is broken: brain update reinstalls it
         return f"the engine's config.schema.json cannot be read ({exc}): brain update"
 

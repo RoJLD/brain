@@ -18,7 +18,11 @@ GOOD = {"v": 1, "identity": {"owner": "Ada"}, "public": {"repos": ["acme/engine"
 BROKEN = [("unreadable", '{"v": 1, "identity": {"owner": "Ada"},}', "brain config --check"),
           ("not an object", "[1, 2]", "an object, got list"),
           ("public not an object", json.dumps({**GOOD, "public": ["acme/engine"]}), "public is a list"),
-          ("v above the known one", json.dumps({**GOOD, "v": 99}), "brain update")]
+          ("v above the known one", json.dumps({**GOOD, "v": 99}), "brain update"),
+          ("public.repos not a list", json.dumps({**GOOD, "public": {"repos": "acme/engine"}}), "public.repos is a str"),
+          ("public.deny not an object", json.dumps({**GOOD, "public": {"deny": ["Ada"]}}), "public.deny is a list"),
+          ("v not a whole number", json.dumps({**GOOD, "v": 99.0}), "v is 99.0"),
+          ("v a string", json.dumps({**GOOD, "v": "2"}), "v is '2'")]
 
 
 def _config(tmp_path, monkeypatch, text):
@@ -44,6 +48,13 @@ def test_an_unknown_key_or_an_older_v_is_never_unexpected(tmp_path, monkeypatch)
     assert config.unexpected() == ""
     _config(tmp_path, monkeypatch, json.dumps({k: v for k, v in GOOD.items() if k != "public"}))
     assert config.unexpected() == ""
+
+
+def test_a_bom_is_read_not_refused(tmp_path, monkeypatch):
+    """Windows PowerShell 5.1 writes UTF-8 with a BOM, and the installer reads it: so does the engine."""
+    f = _config(tmp_path, monkeypatch, "")
+    f.write_bytes(b"\xef\xbb\xbf" + json.dumps(GOOD).encode("utf-8"))
+    assert config.unexpected() == "" and config.load().data["public"] == GOOD["public"]
 
 
 def test_brain_config_naming_no_file_is_unexpected(tmp_path, monkeypatch):
@@ -137,7 +148,7 @@ def _guard_sh(tmp_path, command, kind="shell", python=True):
 def test_guard_sh_refuses_commits_and_pushes_when_the_guards_cannot_run(tmp_path, python):
     for command in ("git commit -m x", "git push origin main", 'GIT -C "C:\\work\\x" push', "git -c a=b commit -m x",
                     '& "C:\\Program Files\\Git\\cmd\\git.exe" push origin HEAD',
-                    "cd x && git add -A && git commit -m y"):
+                    "cd x && git add -A && git commit -m y", "git\tcommit -m x", "git \\\n  push"):
         rc, out = _guard_sh(tmp_path, command, python=python)
         assert rc == 0 and out, command
         hso = json.loads(out)["hookSpecificOutput"]
@@ -147,6 +158,16 @@ def test_guard_sh_refuses_commits_and_pushes_when_the_guards_cannot_run(tmp_path
     for command in ("git status", "rm -rf build", "echo x > f", "gitleaks detect"):
         assert _guard_sh(tmp_path, command, python=python) == (0, ""), command
     assert _guard_sh(tmp_path, "git commit -m x", kind="edit", python=python) == (0, "")
+    if python:   # the interpreter BRAIN_PYTHON chose: the reason says to fix it, brain update would not
+        assert "fix or unset BRAIN_PYTHON" in _guard_sh(tmp_path, "git push", python=python)[1]
+
+
+def test_health_sh_judges_the_interpreter_guard_sh_runs(tmp_path):
+    """health.sh tries guard.sh's candidates in guard.sh's order: a BRAIN_PYTHON without brain is reported."""
+    text = (PLUGIN / "hooks" / "health.sh").read_text(encoding="utf-8")
+    guard = (PLUGIN / "hooks" / "guard.sh").read_text(encoding="utf-8")
+    first = [line.split(" &&")[0] for t in (text, guard) for line in t.splitlines() if line.startswith("brain_python ")]
+    assert first[0] == first[1], first
 
 
 def test_the_prefilter_always_starts_python_for_a_commit_or_a_push():
