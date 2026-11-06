@@ -57,6 +57,14 @@ frontier by priority. ``HELP`` says what each panel shows, where it comes from a
 (the TUI's i);
 ``when`` shows a time in the cockpit's timezone (``TZS``: this machine's, by default, or UTC).
 
+The states (wi-brain-tui-states, spec 2026-11-02 cockpit-ux §4.10): an empty table says why (``why_empty``: a filter
+or the search hides N rows, with the key that changes it; a project not on this machine; nothing in the scope, the
+owner named); a panel not probed yet says what it waits for (``probe_wait``: the probe's countdown, then its progress
+per project); a read that fails keeps its panels' last content, its error and the time of the data shown in the
+snapshot (``errors``, ``panel_at``), and is read again at the next tick; a stack or a code index repo that is not OK
+names its last OK measure this cockpit saw; a project the registry names but this machine lacks is greyed in the
+project selector (``scope_choices``).
+
 Read-only: nothing here writes a record or a ledger, and nothing calls a model. The one file written is the screen's
 own state, ``<BRAIN_HOME>/tui.json`` (the scope, each panel's view and the settings: theme, timezone; ``save_state``),
 by the interactive views. Its settings also hold, set by hand: ``lang`` (en, fr: the queue's title, « File d'Ada »;
@@ -475,6 +483,7 @@ class Cockpit:
         # the project selector's choices: the registry, the command's own projects first (a worktree keeps its root)
         self.choices = {p.name: p for p in registry + self.projs}
         self.choices.update({p.name: p for p in self.projs})
+        self.registry = bool(registry)  # False: no projects.yaml, the selector holds this folder's project only
         self.sessions = Sessions(queue.Placer(registry + self.projs), hours)
         self.scanned: dict | None = None  # queue.scan, from the last probe
         self.probes: dict[str, dict] = {}  # project -> what its last probe measured, and when
@@ -484,6 +493,10 @@ class Cockpit:
         self.dirty: set[str] = set()  # panels to draw again at the next refresh (a new scope)
         self.read_at: str | None = None
         self.probed_at: str | None = None
+        self.errors: dict[str, dict] = {}  # panel -> {at, error}: its last read failed, its last content kept
+        self.panel_at: dict[str, str] = {}  # panel -> when its content was last read
+        self.progress: dict | None = None  # the probe running: {what, n, total}
+        self.last_ok: dict[tuple, str] = {}  # (project, stacks|code_index, name) -> its last OK measure
         self.lock = threading.Lock()
 
     @property
@@ -568,13 +581,18 @@ class Cockpit:
         The alerts come from what the probe measured (as brain status and brain alerts compute them) and the
         scheduler, read once."""
         now = now or datetime.now(timezone.utc)
+        at = transcript.iso(now)
+        found = self.found
+        self.progress = {"what": "the denied calls", "n": 0, "total": len(found)}
         self.scanned = queue.scan(queue.DAYS)
         stack_reg, index = status._probes(self.root, False)
-        found = self.found
-        measured = {p.name: {"audit": status.audit_of(p, detail=AUDIT_TOP), **status.probed(p, stack_reg, index)}
-                    for p in found}
+        measured = {}
+        for i, p in enumerate(found, 1):
+            self.progress = {"what": p.name, "n": i, "total": len(found)}
+            measured[p.name] = m = {"audit": status.audit_of(p, detail=AUDIT_TOP), **status.probed(p, stack_reg, index)}
+            self._last_ok(p.name, m, at)
+        self.progress = {"what": "the alerts and digests", "n": 0, "total": len(found)}
         sched, last = alerts.read_scheduler(status._alert_configs(found)), alerts.state_load()
-        at = transcript.iso(now)
         for p in found:
             m = measured[p.name]
             self.probes[p.name] = {
@@ -584,6 +602,18 @@ class Cockpit:
                 "digest": digest_of(p)}
         self._probed_panels(now)
         self._set(queue=self._queue())
+
+    def _last_ok(self, project: str, measured: dict, at: str) -> None:
+        """Each stack and code index repo OK now is remembered at ``at``; one that is not carries ``last_ok``, its
+        last OK measure this cockpit saw (none: never seen OK since it started)."""
+        for kind in ("stacks", "code_index"):
+            rows = measured.get(kind)
+            for r in rows if isinstance(rows, list) else []:
+                key = (project, kind, r.get("name") or r.get("repo"))
+                if r.get("state") == "OK":
+                    self.last_ok[key] = at
+                elif key in self.last_ok:
+                    r["last_ok"] = self.last_ok[key]
 
     def _probed_panels(self, now: datetime | None = None) -> None:
         """The probed panels of the scope, from what each project's last probe measured (none: not probed yet)."""
@@ -602,27 +632,60 @@ class Cockpit:
 
     def refresh(self, probe: bool = False) -> set[str]:
         """One tick: the sessions (a transcript only when it changed), the file panels whose files changed (all of
-        them the first time), then the probes when asked; the panels whose content changed."""
-        groups = self.changed()
-        if "graph" in groups:
-            self.read_graph()
-        updated = {p for g in groups for p in FILE_PANELS[g]} | self.dirty
-        self.dirty = set()
-        if self.read_sessions():
-            updated.add("sessions")
+        them the first time), then the probes when asked; the panels whose content changed. A read that fails is
+        never raised: its panels keep their last content, its error goes to ``errors`` (``snapshot``), and it is
+        read again at the next tick (the probe, at the next probe)."""
+        updated, self.dirty = set(self.dirty), set()
+        try:
+            groups = self.changed()
+            if "graph" in groups:
+                self.read_graph()
+            updated |= self._read_ok({p for g in groups for p in FILE_PANELS[g]})
+        except Exception as exc:  # shown in the panels, never fatal
+            self.sigs.pop("graph", None)  # read again at the next tick
+            updated |= self._failed(FILE_PANELS["graph"], exc)
+        try:
+            changed, had_error = self.read_sessions(), "sessions" in self.errors
+            self._read_ok({"sessions"})
+            if changed or had_error:
+                updated.add("sessions")
+        except Exception as exc:  # the same
+            updated |= self._failed(("sessions",), exc)
         if probe:
-            self.probe()
-            updated |= {*PROBE_PANELS, "queue"}
+            try:
+                self.probe()
+                updated |= self._read_ok({*PROBE_PANELS, "queue"})
+            except Exception as exc:  # the same: probed again at the next probe
+                updated |= self._failed(PROBE_PANELS, exc)
+            finally:
+                self.progress = None
         if updated:
             self.read_at = transcript.iso(datetime.now(timezone.utc))
         return updated
+
+    def _read_ok(self, panels) -> set[str]:
+        at = transcript.iso(datetime.now(timezone.utc))
+        for p in panels:
+            self.panel_at[p] = at
+            self.errors.pop(p, None)
+        return set(panels)
+
+    def _failed(self, panels, exc: Exception) -> set[str]:
+        """The panels' read failed: its error and time (the first failure's while the same error goes on)."""
+        error = {"at": transcript.iso(datetime.now(timezone.utc)), "error": f"{type(exc).__name__}: {exc}"}
+        for p in panels:
+            old = self.errors.get(p)
+            self.errors[p] = old if old and old["error"] == error["error"] else error
+        return set(panels)
 
     def snapshot(self) -> dict:
         with self.lock:
             panels = dict(self.panels)
         return {"cockpit": 1, "scope": self.scope,
                 "projects": [{"name": p.name, "root": str(p.root), "found": p.root.is_dir()} for p in self.projs],
-                "read_at": self.read_at, "probed_at": self.probed_at, "panels": panels}
+                "read_at": self.read_at, "probed_at": self.probed_at, "panels": panels, "registry": self.registry,
+                "errors": dict(self.errors), "panel_at": dict(self.panel_at),
+                "probing": dict(self.progress) if self.progress else None}
 
 
 # --- the view: filters, sort and search over the table panels ---
@@ -756,6 +819,79 @@ def note(name: str, panel: dict | None, view: dict | None, search: str = "", sor
 def _noted(line: str, name: str, panel: dict | None, view: dict | None, search: str) -> str:
     text = note(name, panel, view, search)
     return f"{line} [{text}]" if text else line
+
+
+# --- the states: why a panel is empty, what a panel not probed waits for (wi-brain-tui-states) ---
+
+NOTHING = {"sessions": "No session wrote its transcript in the last {hours:g} h",
+           "queue": "Nothing waits on {owner} in {scope}",
+           "alerts": "No open alert in {scope}",
+           "milestones": "No pending milestone in {scope}",
+           "frontier": "No startable item in {scope}"}
+EMPTY_COLUMN = {"sessions": "Title", "queue": "What", "alerts": "Message", "milestones": "Title", "frontier": "Title"}
+
+
+def span(seconds: float) -> str:
+    """A countdown: 45 s, 1 min 40, 2 h 05."""
+    s = max(0, round(seconds))
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} min" + (f" {s % 60:02d}" if s % 60 else "")
+    return f"{s // 3600} h {s % 3600 // 60:02d}"
+
+
+def probe_wait(progress: dict | None, seconds: float | None = None, paused: bool = False) -> str:
+    """What a panel not probed yet waits for: the probe running (``progress``: what it reads, project n of total),
+    paused, or due in ``seconds`` (None: at the next tick)."""
+    if progress:
+        n = f" {progress['n']}/{progress['total']}" if progress.get("n") else ""
+        return f"probing: {progress['what']}{n}"
+    if paused:
+        return "not probed yet: paused (space resumes, r probes now)"
+    if seconds is None or seconds < 1:
+        return "not probed yet: the probe starts at the next tick"
+    return f"not probed yet: probe in {span(seconds)} (r for now)"
+
+
+def _scope_text(scope: str) -> str:
+    return "every project" if scope == ALL else scope
+
+
+def why_empty(name: str, snap: dict, view: dict | None = None, search: str = "", wait: str = "") -> str:
+    """Why a table panel of ``snap`` shows no row ('' when it shows one): not read or not probed yet (``wait``, as
+    ``probe_wait`` says it), its first read failed, a filter or the search hides its rows (and the key that changes
+    it), or nothing in the scope (and the projects of the scope this machine lacks)."""
+    panel = (snap.get("panels") or {}).get(name)
+    error = (snap.get("errors") or {}).get(name)
+    if panel is None:
+        if error:
+            when_again = "probe" if name in PROBE_PANELS else "tick"
+            return f"read failed: {error['error']} (read again at the next {when_again})"
+        return (wait or "not probed yet") if name in PROBE_PANELS else "not read yet"
+    every = entries(name, panel)
+    v = view_of(name, view) if view is not None and name in SORTS else None
+    if shown(name, panel, view, search):
+        return ""
+    if every:
+        hides = [f"{f} {v[f]}" for f, vals in FILTERS[name].items() if v[f] != ALL] if v else []
+        keys = (["f changes the filters"] if hides else []) + (["Escape clears the search"] if search.strip() else [])
+        hides += [f"search '{search.strip()}'"] if search.strip() else []
+        return f"{len(every)} hidden by {', '.join(hides)}: {', '.join(keys)}"
+    missing = [p for p in snap.get("projects") or [] if not p.get("found", True)]
+    text = NOTHING[name].format(owner=config.name_of(), scope=_scope_text(snap.get("scope", "")),
+                                hours=panel.get("hours", HOURS))
+    return text + "".join(f"; {p['name']} is not on this machine ({p['root']})" for p in missing)
+
+
+def scope_choices(choices: dict) -> list[tuple[str, str, bool]]:
+    """The project selector's options: (label, value, on this machine), global first; a project the registry names
+    but this machine lacks keeps its place, labelled so (the TUI greys it)."""
+    out = [("global: every project", ALL, True)]
+    for name, p in choices.items():
+        found = p is not None and Path(p.root).is_dir()
+        out.append((name if found else f"{name} (not on this machine)", name, found))
+    return out
 
 
 def parse_view(sorts: list[str] | None = None, filters: list[str] | None = None) -> dict[str, dict]:
@@ -1129,23 +1265,38 @@ def audit_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
     return lines
 
 
-def _states(rows, what: str) -> str:
+def _last_ok_text(iso: str | None, now: datetime) -> str:
+    if not iso:
+        return ""
+    try:
+        t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return f"last OK {ago((now - t).total_seconds())}" + (" ago" if (now - t).total_seconds() >= 60 else "")
+
+
+def _states(rows, what: str, now: datetime | None = None) -> str:
     if isinstance(rows, dict):
         return f"error: {rows.get('error')}"
     if not rows:
         return f"no {what} declared"
+    now = now or datetime.now(timezone.utc)
     bad = [r for r in rows if r.get("state") != "OK"]
+
+    def why(r):
+        parts = [p for p in (r.get("why"), _last_ok_text(r.get("last_ok"), now)) if p]
+        return f" ({'; '.join(parts)})" if parts else ""
     return f"{len(rows) - len(bad)} of {len(rows)} OK" + "".join(
-        f"; {r.get('name') or r.get('repo')} {r['state']}" + (f" ({r['why']})" if r.get("why") else "") for r in bad)
+        f"; {r.get('name') or r.get('repo')} {r['state']}{why(r)}" for r in bad)
 
 
-def health_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
+def health_lines(panel: dict | None, width: int = WIDTH, now: datetime | None = None) -> list[str]:
     if not panel:
         return [f"{title('health')}: not probed yet"]
     lines = [title("health")]
     for g in panel.get("projects") or []:
-        lines.append(_line("  ", f"{g['project']}: stacks {_states(g['stacks'], 'stack')}; code index "
-                                 f"{_states(g['code_index'], 'repo')}", width))
+        lines.append(_line("  ", f"{g['project']}: stacks {_states(g['stacks'], 'stack', now)}; code index "
+                                 f"{_states(g['code_index'], 'repo', now)}", width))
     ex = panel.get("exec") or {}
     if ex:
         reg = "; ".join(f"{r['task']} +{r['change']:.0%}" for r in ex.get("regressions") or [])
@@ -1265,14 +1416,28 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
 
     def v(name):
         return None if views is None else views.get(name, {})
-    for lines in (session_lines(p.get("sessions") or {}, width, v("sessions"), search),
-                  queue_lines(p.get("queue") or {}, width, v("queue"), search),
-                  alert_lines(p.get("alerts"), width),
-                  milestone_lines(p.get("milestones") or {}, width),
-                  frontier_lines(p.get("frontier") or {}, width, view=v("frontier"), search=search),
-                  audit_lines(p.get("audit"), width), health_lines(p.get("health"), width),
-                  digest_lines(p.get("digest"), width)):
-        out += ["", *lines]
+    for name, lines in (("sessions", session_lines(p.get("sessions") or {}, width, v("sessions"), search)),
+                        ("queue", queue_lines(p.get("queue") or {}, width, v("queue"), search)),
+                        ("alerts", alert_lines(p.get("alerts"), width)),
+                        ("milestones", milestone_lines(p.get("milestones") or {}, width)),
+                        ("frontier", frontier_lines(p.get("frontier") or {}, width, view=v("frontier"), search=search)),
+                        ("audit", audit_lines(p.get("audit"), width)), ("health", health_lines(p.get("health"), width)),
+                        ("digest", digest_lines(p.get("digest"), width))):
+        out += ["", *lines, *(_line("  ", s, width) for s in states(name, snap, v(name), search, tz))]
+    return out
+
+
+def states(name: str, snap: dict, view: dict | None = None, search: str = "", tz: str | None = None) -> list[str]:
+    """What the text view adds under a panel: its failed read (the error, and the time of the data still shown), and
+    for a table panel that shows no row, why (``why_empty``; a panel not probed yet says so in its heading)."""
+    panel, error = (snap.get("panels") or {}).get(name), (snap.get("errors") or {}).get(name)
+    out = []
+    if error and panel is not None:
+        data_at = (snap.get("panel_at") or {}).get(name)
+        out.append(f"read failed at {when(error['at'], tz)}: {error['error']}; data of {when(data_at, tz)}")
+    if name in COLUMNS and (panel is not None or error or name not in PROBE_PANELS):
+        why = why_empty(name, snap, view, search)
+        out += [f"({why})"] if why else []
     return out
 
 

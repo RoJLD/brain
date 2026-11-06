@@ -25,7 +25,10 @@ USAGE = """\
                  else (--plain) the same text redrawn in place; --once prints it once (--quick: no probe), --json its
                  data (unfiltered). The project selector (p: global or one project), the sessions', queue's and
                  frontier's filters and sorts (f, s, o), the search (/), a panel's help (i) and full view (m, Escape
-                 back), the pause (space) and ? for every key; a refresh keeps the scroll and the cursor; the
+                 back), the pause (space) and ? for every key; a refresh keeps the scroll and the cursor; an empty
+                 table says why (a filter, nothing in the scope, a project not on this machine), a panel not probed
+                 yet its countdown then its progress, a failed read keeps the last content and its time (--all
+                 without a registry: this folder's project); the
                  interactive views remember the scope, views, theme and timezone (--tz, t; default local) in
                  $BRAIN_HOME/tui.json (--reset forgets them; --project, --all, --sort, --filter and --tz win).
                  Enter: the row's detail (a DDR's options, an item's spec, ADRs and PR, a session's plan); in it, o
@@ -53,7 +56,15 @@ def cmd_tui(args, root: Path) -> int:
     saved = cockpit.load_state() if interactive and not args.reset else {}
     views = {n: {**(saved.get("panels") or {}).get(n, {}), **flags.get(n, {})} for n in cockpit.SORTS}
     settings = {"tz": "local", **(saved.get("settings") or {}), **({"tz": args.tz} if args.tz else {})}
-    cp = cockpit.Cockpit(_scope(args, root), every=args.all, root=root, hours=args.hours)
+    try:
+        projs = _scope(args, root)
+    except SystemExit as exc:  # --all without a registry: this folder's project, and the selector says why
+        if not args.all or getattr(args, "project", None):
+            raise
+        print(f"{exc}; brain tui shows this folder's project", file=sys.stderr)
+        args.all = False
+        projs = _scope(args, root)
+    cp = cockpit.Cockpit(projs, every=args.all, root=root, hours=args.hours)
     if not (args.all or getattr(args, "project", None)) and saved.get("scope") in (cockpit.ALL, *cp.choices):
         cp.select(saved["scope"])  # the last scope shown, when it is still registered
     if args.detail:  # the files first; the probes only when the row is not found in them (an alert, a denial)
