@@ -2,7 +2,9 @@
 
 Two PreToolUse hooks of the engine's Claude Code plugin keep the owner's say over how sessions run. Both are scripts,
 not rules: they decide before the call, at zero token, and never break a session (an error lets the call through and
-goes to `<BRAIN_HOME>/ledger/errors.log`, but for a session's Remote Control or permission mode, where it refuses).
+goes to `<BRAIN_HOME>/ledger/errors.log`, but for a session's Remote Control or permission mode, where it refuses,
+and for a commit or push the public and secrets checks cannot judge: see « The public and secrets checks fail
+closed »).
 
 | Hook | Tools | Decides |
 |---|---|---|
@@ -140,6 +142,18 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
   the staged diff, commit `-a`'s changes, the files an earlier `git add` of the same call stages (untracked ones too,
   but not after `git add -u`), each by its path in the repo, so `public.allow` matches from a subfolder. Override, the
   owner's: `BRAIN_GUARD_ALLOW=public:commit`.
+- **The public and secrets checks fail closed** (`public:config`; COMPAT-4, wi-brain-guards-fail-closed; the
+  2026-11-04 REVERSAL of the internal-error policy, for these checks only). They refuse every `git commit` and
+  `git push`, whatever the repo, while the configuration they read is unexpected, the reason naming the fix:
+  `config.json` unreadable or not an object (fix it: `brain config --check`), `public` or one of its keys (`repos`, `deny`, `allow`,
+  `patterns`, `refuse`) of another type (`brain config --keys`), a `v` that is not a whole number, or above the one the engine reads (`brain update`), `$BRAIN_CONFIG` naming no file, or no
+  `config.json` found although `$BRAIN_PERSONAL` or `<BRAIN_HOME>/personal.json` names a personal brain (a renamed or
+  moved folder: point the pointer at the main checkout, `install.ps1 -Apply`). An unknown key never refuses (a newer
+  brain's, kept). `guard.sh` refuses them as well when it finds no Python, or the one it finds cannot import brain (a
+  missing or broken venv): « the guards cannot run ... brain update ». The SessionStart health says both: « The
+  public and secrets guards refuse every git commit and git push: ... » and « The brain guards cannot run ».
+  Override, the owner's: `BRAIN_GUARD_ALLOW=public:config` (not for guard.sh's refusal, which runs without Python).
+  Every other guard keeps letting the call through on an internal error.
 - **A chained check and push**: the push guard judges the whole call before any part of it runs, so `brain check
   --public ... && git push` is refused although the check would pass; the refusal now says to run them in two calls
   (les-brain-guard-judges-chain-early). A `git add ... && git commit` in one call is fine: the commit guards read
@@ -237,5 +251,8 @@ scale study's) is Claude Code's own setting: the owner sets it through their ins
 - **Every start is refused as stale**: a session reads get_usage, then notes each window it shows
   (`brain usage quota --observe 41 --resets 2026-11-09T12:00Z`). A machine that never notes a reading is not checked.
 - **The hook seems silent**: `brain perf --engine --task "hook governor"` shows each run's time and the errors it
-  caught (`ledger/errors.log` has their text); a missing Python lets every call through.
+  caught (`ledger/errors.log` has their text); a missing Python lets every call through, but a git commit or git
+  push, which guard.sh refuses (« the guards cannot run »: `brain update`, or `install.ps1 -Apply`).
+- **Every commit and push is refused with « cannot trust the configuration »**: `brain config --check` shows what is
+  wrong in `config.json`; `brain config` shows which file was found and the personal brain `personal.json` names.
 - **A cap looks wrong**: `brain usage guard` shows the count and where it comes from (`app` or `records`).
