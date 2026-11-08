@@ -25,7 +25,10 @@ USAGE = """\
                  else (--plain) the same text redrawn in place; --once prints it once (--quick: no probe), --json its
                  data (unfiltered). The project selector (p: global or one project), the sessions', queue's and
                  frontier's filters and sorts (f, s, o), the search (/), a panel's help (i) and full view (m, Escape
-                 back), the pause (space) and ? for every key; a refresh keeps the scroll and the cursor; the
+                 back), the pause (space) and ? for every key; a refresh keeps the scroll and the cursor; an empty
+                 table says why (a filter, nothing in the scope, a project not on this machine), a panel not probed
+                 yet its countdown then its progress, a failed read keeps the last content and its time (--all
+                 without a registry: this folder's project); the
                  interactive views remember the scope, views, theme and timezone (--tz, t; default local) in
                  $BRAIN_HOME/tui.json (--reset forgets them; --project, --all, --sort, --filter and --tz win).
                  Enter: the row's detail (a DDR's options, an item's spec, ADRs and PR, a session's plan); in it, o
@@ -53,7 +56,8 @@ def cmd_tui(args, root: Path) -> int:
     saved = cockpit.load_state() if interactive and not args.reset else {}
     views = {n: {**(saved.get("panels") or {}).get(n, {}), **flags.get(n, {})} for n in cockpit.SORTS}
     settings = {"tz": "local", **(saved.get("settings") or {}), **({"tz": args.tz} if args.tz else {})}
-    cp = cockpit.Cockpit(_scope(args, root), every=args.all, root=root, hours=args.hours)
+    projs = _projects(args, root)
+    cp = cockpit.Cockpit(projs, every=args.all, root=root, hours=args.hours)
     if not (args.all or getattr(args, "project", None)) and saved.get("scope") in (cockpit.ALL, *cp.choices):
         cp.select(saved["scope"])  # the last scope shown, when it is still registered
     if args.detail:  # the files first; the probes only when the row is not found in them (an alert, a denial)
@@ -65,6 +69,7 @@ def cmd_tui(args, root: Path) -> int:
         if d is None:
             print(f"brain tui: {args.detail}: no row, DDR, item or milestone of that id in {cp.scope}",
                   file=sys.stderr)
+            _failed_reads(cp.snapshot())
             return 1
         print(detail.as_json(d) if args.json else "\n".join(detail.lines(d)))
         return 0
@@ -73,7 +78,7 @@ def cmd_tui(args, root: Path) -> int:
         snap = cp.snapshot()
         print(json.dumps(snap, ensure_ascii=False, indent=1, sort_keys=True) if args.json
               else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz)))
-        return 0
+        return 1 if _failed_reads(snap) else 0
     cockpit.save_state({"scope": cp.scope, "panels": views, "settings": settings})
     if not args.plain:
         try:
@@ -87,6 +92,28 @@ def cmd_tui(args, root: Path) -> int:
             return tui.run(cp, refresh=args.refresh, probe=args.probe, views=views, search=args.search,
                            settings=settings)
     return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"])
+
+
+def _projects(args, root: Path) -> list:
+    """The scope's projects; --all without a registry: this folder's project, which stderr says (args.all goes off)."""
+    try:
+        return _scope(args, root)
+    except SystemExit as exc:
+        if not args.all or getattr(args, "project", None):
+            raise
+        print(f"{exc}; brain tui shows this folder's project", file=sys.stderr)
+        args.all = False
+        return _scope(args, root)
+
+
+def _failed_reads(snap: dict) -> bool:
+    """A one-shot read (--once, --json, --detail) that failed: each error on stderr, once per error; True if any."""
+    by_error: dict[str, list[str]] = {}
+    for name, e in (snap.get("errors") or {}).items():
+        by_error.setdefault(e["error"], []).append(name)
+    for error, names in by_error.items():
+        print(f"brain tui: reading {', '.join(names)} failed: {error}", file=sys.stderr)
+    return bool(by_error)
 
 
 def _duration(text: str) -> float:

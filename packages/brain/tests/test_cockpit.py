@@ -1,17 +1,19 @@
 """wi-brain-tui-cockpit: the cockpit's data layer (brain.cockpit), its text view and brain tui."""
 
+import argparse
 import io
 import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 import brain
-from brain import alerts, cli, cockpit, digest, plan, projects, status
+from brain import alerts, cli, cockpit, digest, plan, projects, resume, status
+from brain.commands import tui as tui_command
 
 from test_project_views import _status_project
 
@@ -422,6 +424,144 @@ def test_the_queue_sorts_by_score(brain_home, capsys, monkeypatch):
     with pytest.raises(SystemExit):
         cli.main(["tui", "--help"])
     assert "queue:band|score|unblocks|age|kind|project" in capsys.readouterr().out  # the help lists every sort
+
+
+def test_an_empty_table_says_why_and_a_panel_not_probed_what_it_waits_for():
+    """wi-brain-tui-states (spec 2026-11-02 cockpit-ux §4.10): why a table shows no row, what a probe waits for."""
+    snap = {"scope": "demo", "panels": {"queue": SCORED, "sessions": {"hours": 24, "rows": []},
+                                        "milestones": {"projects": []}, "frontier": {"projects": []}},
+            "projects": [{"name": "demo", "root": "/w/demo", "found": True},
+                         {"name": "far", "root": "../nowhere", "found": False}]}
+
+    def why(name, view=None, search="", wait=""):
+        return cockpit.why_empty(name, snap, view, search, wait)
+
+    assert why("queue", {}) == "" and why("queue", {"kind": "action"}) == ""  # rows shown: nothing to say
+    assert why("queue", {"kind": "action", "band": "later"}) == (
+        "7 hidden by kind action, band later: f changes the filters")
+    assert why("queue", {"kind": "action"}, " nothing ") == (
+        "7 hidden by kind action, search 'nothing': f changes the filters, Escape clears the search")
+    assert why("queue", None, "nothing") == "7 hidden by search 'nothing': Escape clears the search"
+    missing = "; far is not on this machine (../nowhere)"
+    assert why("sessions", {}) == "No session wrote its transcript in the last 24 h" + missing
+    assert why("frontier", {}) == "No startable item in demo" + missing
+    snap["scope"], snap["panels"]["queue"] = cockpit.ALL, {"projects": []}
+    assert why("queue", {}) == "Nothing waits on Ada in every project" + missing  # the owner named
+    assert why("milestones") == "No pending milestone in every project" + missing
+    assert why("alerts") == "not probed yet" and why("alerts", wait="probing: demo 1/2") == "probing: demo 1/2"
+    snap["errors"] = {"alerts": {"at": "2026-11-06T10:00:00Z", "error": "OSError: x"}}
+    assert why("alerts") == "read failed: OSError: x"
+    del snap["panels"]["queue"]
+    assert why("queue") == "not read yet"
+    assert cockpit.probe_wait({"what": "demo", "n": 1, "total": 2}) == "probing: demo 1/2"
+    assert cockpit.probe_wait({"what": "the denied calls", "n": 0, "total": 2}) == "probing: the denied calls"
+    assert cockpit.probe_wait(None, 100) == "not probed yet: probe in 1 min 40 (r for now)"
+    assert cockpit.probe_wait(None) == cockpit.probe_wait(None, 0.4) == (
+        "not probed yet: the probe starts at the next tick")
+    assert cockpit.probe_wait(None, 100, paused=True) == "not probed yet: paused (space resumes, r probes now)"
+    assert [cockpit.span(s) for s in (5, 60, 100, 3725)] == ["5 s", "1 min", "1 min 40", "1 h 02"]
+    lines = cockpit.render({**snap, "panels": {"queue": {"projects": []}}, "errors": {}})
+    assert "  (Nothing waits on Ada in every project" + missing + ")" in lines  # the text view says it too
+    assert "  (not read yet)" in lines and "  (not probed yet)" not in lines  # the heading says it for a probe
+
+
+def test_a_failed_read_keeps_the_last_content_and_is_read_again(tmp_path, monkeypatch, store, capsys):
+    """wi-brain-tui-states: a read that fails is never raised; its panels keep their content, the error and the
+    time of the data are in the snapshot, it is read again at the next tick, and a project the registry names but
+    this machine lacks is labelled in the selector."""
+    cp = _cockpit(tmp_path, monkeypatch, store)
+    assert cockpit.scope_choices(cp.choices)[1:] == [("demo", "demo", True),
+                                                     ("far (not on this machine)", "far", False)]
+    assert cockpit.scope_choices({"x": None})[1] == ("x (not on this machine)", "x", False)
+    assert cp.snapshot()["registry"] is True
+    cp.refresh()
+    before, read_at = cp.snapshot()["panels"]["frontier"], cp.snapshot()["read_at"]
+    real, calls = status._store, []
+
+    def gone(p):
+        calls.append(p.name)
+        raise OSError("disk gone")
+    monkeypatch.setattr(status, "_store", gone)
+    with (store / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
+        f.write("\n")  # a change: the graph is read again
+    assert cp.refresh() == {"queue", "milestones", "frontier"}  # never raised; to draw again with the error
+    snap = cp.snapshot()
+    error = snap["errors"]["frontier"]
+    assert error["error"] == "OSError: disk gone" and snap["panels"]["frontier"] == before  # the last content
+    assert snap["panel_at"]["frontier"] <= error["at"] and "sessions" not in snap["errors"]
+    assert snap["read_at"] == read_at  # nothing was read
+    text = "\n".join(cockpit.render(snap, tz="utc"))
+    assert f"  read failed at {cockpit.when(error['at'], 'utc')}: OSError: disk gone; data of " in text
+    n = len(calls)
+    assert cp.refresh() == set() and len(calls) > n  # read again, though no file changed; the same error: no redraw
+    assert cp.snapshot()["errors"]["frontier"]["at"] == error["at"]  # its first time kept
+    assert cli.main(["tui", "--project", "demo", "--once", "--quick"]) == 1  # a one-shot read says it failed
+    assert "brain tui: reading queue, milestones, frontier failed: OSError: disk gone" in capsys.readouterr().err
+    assert cli.main(["tui", "--project", "demo", "--detail", "wi-nope", "--quick"]) == 1
+    err = capsys.readouterr().err  # no row: and why it may be missing
+    assert "wi-nope: no row" in err and "reading queue, milestones, frontier failed: OSError: disk gone" in err
+    monkeypatch.setattr(status, "_store", real)
+    assert cp.refresh() == {"queue", "milestones", "frontier"} and cp.snapshot()["errors"] == {}
+    assert cp.refresh() == set()  # back to reading on a change only
+
+
+def test_the_probe_says_its_progress_and_a_stack_its_last_ok_measure(tmp_path, monkeypatch, store, brain_home):
+    cp = _cockpit(tmp_path, monkeypatch, store)
+    seen = []
+    monkeypatch.setattr(status, "audit_of", lambda p, detail=0: seen.append(dict(cp.progress)) or {
+        "counts": {}, "repos": 1, "unreadable": [], "by_repo": [], "top": []})
+    monkeypatch.setattr(status, "_probes", lambda root, quick: (None, None))
+    monkeypatch.setattr(alerts, "read_scheduler", lambda cfgs: {})
+    monkeypatch.setattr(status, "alerts_of", lambda p, m, reg, sched, last: {"open": 0, "counts": {}, "alerts": []})
+    states = iter(["OK", "DOWN", "DOWN"])
+    monkeypatch.setattr(status, "probed", lambda p, reg, ix: {
+        "stacks": [{"name": "gitnexus", "state": next(states), "why": "no container"}], "code_index": []})
+    t0 = datetime(2026, 11, 6, 10, 0, tzinfo=timezone.utc)
+    cp.probe(now=t0)
+    assert seen == [{"what": "demo", "n": 1, "total": 1}]  # project n of total, while it is measured
+    cp.probe(now=t0 + timedelta(hours=2))
+    health = cp.snapshot()["panels"]["health"]
+    assert health["projects"][0]["stacks"][0]["last_ok"] == "2026-11-06T10:00:00Z"
+    assert "gitnexus DOWN (no container; last OK 3 h ago)" in cockpit.health_lines(
+        health, now=t0 + timedelta(hours=3))[1]
+    assert cp.refresh(probe=True) and cp.snapshot()["probing"] is None  # done: no progress left
+    assert cp.snapshot()["errors"] == {}
+
+    def fails(p, detail=0):
+        raise OSError("audit gone")
+    monkeypatch.setattr(status, "audit_of", fails)
+    assert cp.refresh(probe=True) == set(cockpit.PROBE_PANELS)  # a failed probe: never raised
+    snap = cp.snapshot()
+    assert {n: e["error"] for n, e in snap["errors"].items()} == dict.fromkeys(cockpit.PROBE_PANELS,
+                                                                               "OSError: audit gone")
+    assert snap["panels"]["health"]["projects"] == health["projects"] and snap["probing"] is None  # kept
+    cp.select("demo")  # another scope: the old scope's errors go
+    assert cp.snapshot()["errors"] == {} and cp.snapshot()["panels"]["health"]["projects"] == health["projects"]
+
+
+def test_the_tui_command_says_its_failed_reads_and_reads_its_durations(capsys):
+    """brain.commands.tui, directly: one line per error, its panels named; a duration of at least 250 ms."""
+    assert tui_command._failed_reads({"errors": {}}) is False and tui_command._failed_reads({}) is False
+    assert capsys.readouterr().err == ""
+    assert tui_command._failed_reads({"errors": {"audit": {"at": "t", "error": "OSError: x"},
+                                                 "health": {"at": "t", "error": "OSError: x"},
+                                                 "digest": {"at": "t", "error": "ValueError: y"}}}) is True
+    assert capsys.readouterr().err.splitlines() == ["brain tui: reading audit, health failed: OSError: x",
+                                                    "brain tui: reading digest failed: ValueError: y"]
+    assert tui_command._duration("500ms") == 0.5 and tui_command._duration("5m") == 300
+    for bad in ("100ms", "soon"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            tui_command._duration(bad)
+
+
+def test_brain_tui_all_without_a_registry_shows_this_folders_project(tmp_path, monkeypatch, store, capsys):
+    root = store.parents[1]
+    monkeypatch.setenv("BRAIN_PROJECTS", str(tmp_path / "no-registry.yaml"))
+    assert cli.main(["--root", str(root), "tui", "--all", "--once", "--quick"]) == 0
+    out, err = capsys.readouterr()
+    assert "--all needs the project registry" in err and "brain tui shows this folder's project" in err
+    assert out.startswith(f"brain {brain.__version__} cockpit: ") and "cockpit: all" not in out
+    assert cockpit.Cockpit([resume.project_for(root)]).snapshot()["registry"] is False
 
 
 def test_the_project_selector_switches_the_scope_and_keeps_each_probe(tmp_path, monkeypatch, store):

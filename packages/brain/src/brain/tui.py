@@ -24,9 +24,14 @@ Keys (the footer shows those of the focused panel, ? lists them all):
            an action's command: each after a confirmation that shows the exact brain command, run as the owner's and
            logged; Escape goes back
   q        quit
+The states (brain.cockpit's ``why_empty``, ``probe_wait``): a table with no row says why in its one line (a filter or
+the search hides N rows, and the key that changes it; nothing in the scope; a project not on this machine), a panel
+not probed yet shows the probe's countdown, then its progress per project, and a project of the registry missing on
+this machine is greyed in the selector (no registry: the tooltip says the selector holds this folder's project only).
 The reads run in one worker thread at a time, so the screen never waits on them, and an error is shown as a
-notification, never a crash; an action's commands run in another, and the panels are read again after them. A refresh keeps the view still: a table's cells are updated in place when its rows are
-the same, else it is rebuilt with its scroll where it was and its cursor on its record. The scope, the views and the
+notification, never a crash: the panels of a read that fails keep their last content, the error and the time of the
+data in their frame; an action's commands run in another, and the panels are read again after them. A refresh keeps
+the view still: a table's cells are updated in place when its rows are the same, else it is rebuilt with its scroll where it was and its cursor on its record. The scope, the views and the
 settings (the theme picked in the command palette, the timezone) are saved to <BRAIN_HOME>/tui.json at each change.
 The title bar shows the installed version; once the screen is drawn, a worker reads whether a newer one is out
 (brain.update.check: the engine's tags, cached 24 h, silent offline; the pin of config.json and the installer it
@@ -436,6 +441,7 @@ class CockpitApp(App):
         self.next_probe = 0.0
         self.timer = None
         self.records: dict[str, dict[str, dict]] = {}  # each table's rows by key: the detail of the one selected
+        self.notified: set[tuple] = set()  # the failed reads already notified: (at, error)
         self.update_info: dict | None = None  # brain.update.check's answer, once the background check has one
         self.handover: dict | None = None  # an install handed over (brain.handover.prepare): brain.tui.run starts it
 
@@ -444,7 +450,8 @@ class CockpitApp(App):
         with Horizontal(id="bar"):
             yield Label("Project")
             yield Select(self._scopes(), value=self.scope, allow_blank=False, compact=True, id="scope",
-                         tooltip="p: global, or one registered project")
+                         tooltip="p: global, or one registered project" if getattr(self.cockpit, "registry", True)
+                         else "p: no project registry (projects.yaml): this folder's project only")
             yield SearchInput(value=self.search, placeholder="/ search ids, titles, projects", compact=True,
                               id="search")
         with Grid(id="grid"):
@@ -462,8 +469,10 @@ class CockpitApp(App):
         screen = self.screen_stack[0] if self.screen_stack else self.screen
         return screen.query_one(selector, kind) if kind else screen.query_one(selector)
 
-    def _scopes(self) -> list[tuple[str, str]]:
-        return [("global: every project", cockpit.ALL), *((n, n) for n in self.cockpit.choices)]
+    def _scopes(self) -> list[tuple]:
+        """The selector's options; a project this machine lacks greyed (it can still be picked: its panels say so)."""
+        return [(label if found else Text(label, style="dim"), value)
+                for label, value, found in cockpit.scope_choices(self.cockpit.choices)]
 
     def on_mount(self) -> None:
         if self.settings.get("theme") in self.available_themes:
@@ -504,7 +513,11 @@ class CockpitApp(App):
     # --- reading, in a worker thread ---
 
     def tick(self, probe: bool | None = None, force: bool = False) -> None:
-        if self.busy or (self.paused and not force and self.pending is None):
+        if self.busy:
+            if self.probing:
+                self._waits()  # the probe's progress, project by project
+            return
+        if self.paused and not force and self.pending is None:
             return
         scope, self.pending = self.pending, None
         if scope is not None:
@@ -535,12 +548,34 @@ class CockpitApp(App):
         self.want_probe = self.want_probe or want
         if error:
             self.notify(error, title="brain tui", severity="error")
+        failed: dict[tuple, list[str]] = {}
+        for name, e in (self.cockpit.snapshot().get("errors") or {}).items():
+            failed.setdefault((e["at"], e["error"]), []).append(name)
+        for (at, text), names in failed.items():  # each failed read notified once; its panels keep their content
+            if (at, text) not in self.notified:
+                self.notified.add((at, text))
+                self.notify(f"{text} ({', '.join(names)}: the last content kept)", title="brain tui",
+                            severity="error")
         if self._columns():
             updated = set(cockpit.PANELS)
         self.draw(updated)
-        self._subtitle()
+        self._waits()
         if self.pending is not None:
             self.tick()
+
+    def _wait(self) -> str:
+        """What a panel not probed yet waits for: the probe running, paused, or due in so many seconds."""
+        progress = self.cockpit.snapshot().get("probing") or ({"what": "starting", "n": 0} if self.probing else None)
+        due = None if self.want_probe else self.next_probe - time.monotonic()
+        return cockpit.probe_wait(progress, due, self.paused)
+
+    def _waits(self) -> None:
+        """The probed panels not probed yet drawn again (their countdown, the probe's progress), and the subtitle."""
+        panels = self.cockpit.snapshot()["panels"]
+        waiting = {n for n in cockpit.PROBE_PANELS if panels.get(n) is None}
+        if waiting:
+            self.draw(waiting)
+        self._subtitle()
 
     # --- drawing ---
 
@@ -572,7 +607,8 @@ class CockpitApp(App):
         return True
 
     def draw(self, updated: set[str]) -> None:
-        panels = self.cockpit.snapshot()["panels"]
+        snap = self.cockpit.snapshot()
+        panels = snap["panels"]
         for name in cockpit.PANELS:
             if name not in updated:
                 continue
@@ -580,13 +616,26 @@ class CockpitApp(App):
             widget = self._q(f"#{name}")
             widget.border_title = self._title(name, cockpit.heading(name, panel))
             if name in cockpit.COLUMNS:
-                self._fill(widget, name, panel)
-            else:
-                lines = TEXTS[name](panel)
-                self._q(f"#{name}-text", Static).update(Text("\n".join(lines[1:] if name != "digest"
-                                                                                else lines)))
+                self._fill(widget, name, panel, snap)
+                continue
+            lines = TEXTS[name](panel)
+            body = lines[1:] if name != "digest" else lines
+            if panel is None:  # not probed yet, or its first probe failed
+                error = (snap.get("errors") or {}).get(name)
+                body = [f"read failed: {error['error']} (read again at the next probe)" if error else self._wait()]
+            self._q(f"#{name}-text", Static).update(Text("\n".join(body)))
+            widget.border_subtitle = escape(self._failed_note(name, snap))
 
-    def _fill(self, table: DataTable, name: str, panel: dict | None) -> None:
+    def _failed_note(self, name: str, snap: dict) -> str:
+        """A panel whose last read failed and that still shows its last content: the error and the data's time."""
+        error = (snap.get("errors") or {}).get(name)
+        if not error or snap["panels"].get(name) is None:
+            return ""
+        tz = self.settings["tz"]
+        return (f"read failed {cockpit.when(error['at'], tz)}: {error['error']}; data of "
+                f"{cockpit.when((snap.get('panel_at') or {}).get(name), tz)}")
+
+    def _fill(self, table: DataTable, name: str, panel: dict | None, snap: dict | None = None) -> None:
         """The table's rows from the view, the view kept still. The same records in the same order: only the cells
         that changed are updated, the scroll and the cursor untouched. Otherwise the rows are rebuilt, the cursor
         on the record it was on (wherever the sort puts it, without scrolling to it), the scroll where it was."""
@@ -606,13 +655,15 @@ class CockpitApp(App):
             seen.add(key)
             rows.append((key, cells))
             self.records[name][key] = r
+        if not rows:
+            rows.append(self._empty_row(name, panel, view, snap))
         keys = [k for k, _ in rows]
         if table.row_count and keys == [k.value for k in table.rows]:
             columns = [c.key for c in table.ordered_columns]
             for key, cells in rows:
                 for column, new, old in zip(columns, cells, table.get_row(key)):
-                    if new != old:
-                        table.update_cell(key, column, new)
+                    if new != old:  # the line that says why may grow: its column follows
+                        table.update_cell(key, column, new, update_width=key == "~empty")
         else:
             keep, row = None, table.cursor_row
             if table.row_count:
@@ -632,7 +683,14 @@ class CockpitApp(App):
         sub = cockpit.note(name, panel, view, self.search, sort=view is not None)
         if name == "queue" and (panel or {}).get("defaulted"):   # the defaults to review (brain decision defaulted)
             sub = f"{panel['defaulted']}; {sub}" if sub else panel["defaulted"]
-        table.border_subtitle = escape(sub)
+        failed = self._failed_note(name, snap) if snap else ""
+        table.border_subtitle = escape(f"{failed}; {sub}" if failed and sub else failed or sub)
+
+    def _empty_row(self, name: str, panel: dict | None, view: dict | None, snap: dict | None) -> tuple[str, tuple]:
+        """The one line of an empty table, which says why (no record behind it: Enter opens nothing)."""
+        why = cockpit.why_empty(name, snap or {"panels": {name: panel}}, view, self.search, wait=self._wait())
+        cols = cockpit.columns(name, self.multi is not False)
+        return "~empty", tuple(Text(why, style="italic") if c == cockpit.EMPTY_COLUMN[name] else "" for c in cols)
 
     def _draw_tables(self) -> None:
         self.draw(set(cockpit.COLUMNS))
@@ -646,7 +704,7 @@ class CockpitApp(App):
         self.sub_title = (f"{scope} | files every {_seconds(self.refresh_s)}, checked {checked}, changed {changed} | "
                           f"probes every {_seconds(self.probe_s)}, run {probed} | {'UTC' if tz == 'utc' else 'local'}"
                           + (" | PAUSED (space resumes)" if self.paused else "")
-                          + (" | probing..." if self.probing else ""))
+                          + (f" | {self._wait()}" if self.probing else ""))
 
     # --- the view: scope, search, sort, filters ---
 
@@ -873,7 +931,7 @@ class CockpitApp(App):
 
     def action_pause(self) -> None:
         self.paused = not self.paused
-        self._subtitle()
+        self._waits()
 
     def action_toggle_tz(self) -> None:
         self.settings["tz"] = "utc" if self.settings["tz"] == "local" else "local"
