@@ -310,8 +310,8 @@ NOW = {"projects": [{"project": "demo", "counts": {}, "entries": [
     {"id": "ddr-b", "kind": "action", "band": "week", "unblocks": 4, "age_days": 2, "title": "Pick a theme", "since": ""}]}]}
 
 
-def test_the_overview_opens_on_its_cards_and_a_card_opens_its_tab_filtered(monkeypatch):
-    """UX-19: one card per tab; Enter opens the tab with the card's filter, which is not saved and goes with the tab."""
+def test_the_overview_opens_on_its_cards(monkeypatch):
+    """UX-19: one card per tab, what counts in it, and the overview's own help."""
     monkeypatch.setitem(PANELS, "queue", NOW)
 
     async def check(app, pilot, fake):
@@ -325,8 +325,14 @@ def test_the_overview_opens_on_its_cards_and_a_card_opens_its_tab_filtered(monke
         await pilot.press("i")  # the tab's own help: no panel on the screen
         await pilot.pause(0.1)
         assert isinstance(app.screen, tui.PanelHelp) and app.screen.panel_name == "overview"
-        await pilot.press("escape")
-        await pilot.pause(0.1)
+    _run(check)
+
+
+def test_a_card_opens_its_tab_with_a_filter_never_saved(monkeypatch):
+    monkeypatch.setitem(PANELS, "queue", NOW)
+
+    async def check(app, pilot, fake):
+        queue = app.query_one("#card-queue")
         await pilot.press("enter")
         table = app.query_one("#queue", DataTable)
         assert app.tab == "queue" and app.focused is table and _ids(app, "queue") == ["ddr-a"]
