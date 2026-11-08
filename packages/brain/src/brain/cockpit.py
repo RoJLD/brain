@@ -70,7 +70,8 @@ owner asks, each with its key (0 to 9, a comma), its label, its question, its co
 and its views, each a list of panels (``tab_panels``). A tab without a view is not built yet: it arrives with its item,
 its key waiting for it (``built_tabs``, ``not_built``). Under 120 columns or 30 rows (``narrow``) the bar is reduced to
 its numbers, the active tab named (``tab_labels``), and the grid is not offered (``tab_views``); the text view and
-``--tab`` print one tab's panels (``render``).
+``--tab`` print one tab's panels (``render``). The overview's default view is one card per tab (``cards``, UX-19): what
+counts in that tab in a few lines, and the filters it opens with; the text view prints them with ``--tab overview``.
 
 Read-only: nothing here writes a record or a ledger, and nothing calls a model. The one file written is the screen's
 own state, ``<BRAIN_HOME>/tui.json`` (the scope, each panel's view, the last tab and each tab's view, and the settings:
@@ -1030,6 +1031,13 @@ HELP = {
              "from": "brain.perf, as brain perf",
              "read": "at each probe",
              "detail": "brain perf"},
+    "overview": {"what": "One card per tab: what counts in it, at a glance. Enter or a click opens that tab, already "
+                         "filtered as its card says (band now, the sessions asking), whatever the owner's filters and "
+                         "search; a filter that is never saved and goes when the tab is left. v shows the grid of every "
+                         "panel (not on a narrow terminal), then the digest.",
+                 "from": "the panels already read, nothing more",
+                 "read": "as its panels are",
+                 "detail": "brain tui --once --tab overview"},
 }
 
 
@@ -1038,6 +1046,10 @@ def help_lines(name: str) -> list[str]:
     its keys. ``{owner}`` in a text is config.json's owner."""
     h = {k: v.replace("{owner}", config.name_of()) for k, v in HELP[name].items()}
     keys = ("s next sort, o reverse, f filters and sort, a column title sorts; " if name in SORTS else "")
+    if name == "overview":
+        return [h["what"], "", f"From: {h['from']}.", f"Read: {h['read']}.", f"Detail: {h['detail']}.", "",
+                "Keys: Enter or a click opens a card's tab, the arrows move between the cards, v the next view, a tab's "
+                "key goes straight to it."]
     return [h["what"], "", f"From: {h['from']}.", f"Read: {h['read']}.", f"Detail: {h['detail']}.", "",
             f"Keys: {keys}/ search, {TABS[panel_tab(name)]['key']} opens its tab, m full view where a tab shows several "
             "panels, Escape back to the overview."]
@@ -1374,8 +1386,9 @@ def exec_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
     return lines
 
 
-def digest_lines(panel: dict | None, width: int = WIDTH, lines_max: int = 12) -> list[str]:
-    """The digest panel's text: its first ``lines_max`` lines per project (0: all of them)."""
+def digest_lines(panel: dict | None, width: int = WIDTH, lines_max: int = 12, titled: bool = True) -> list[str]:
+    """The digest panel's text: its first ``lines_max`` lines per project (0: all of them). ``titled`` False: under a
+    frame that says Digest already, no « Digest » on each project's line and no first heading of the digest itself."""
     if not panel:
         return [f"{title('digest')}: not probed yet"]
     lines = []
@@ -1383,9 +1396,12 @@ def digest_lines(panel: dict | None, width: int = WIDTH, lines_max: int = 12) ->
         rec = g["records"]
         journal = "; ".join(f"{Path(j['path']).name} {j['last'] or 'no entry'}" for j in rec.get("journals") or [])
         r = rec.get("records") or {}
-        lines.append(f"Digest {g['project']} ({g['digest']}{', written' if g['written'] else ', built offline'}); "
+        lines.append(f"{'Digest ' if titled else ''}{g['project']} "
+                     f"({g['digest']}{', written' if g['written'] else ', built offline'}); "
                      f"journal {journal or '-'}" + (f"; {r['ddr']} DDR, {r['sr']} SR, {r['ar']} AR" if r else ""))
         body = [x for x in g["text"].splitlines() if x.strip()]
+        if not titled and body and body[0].startswith("# Digest"):
+            body = body[1:]
         lines += [_line("  ", x, width) for x in body[:lines_max or None]]
         if lines_max and len(body) > lines_max:
             lines.append(f"  ... {len(body) - lines_max} more line(s) (brain digest)")
@@ -1466,6 +1482,8 @@ def heading(name: str, panel: dict | None) -> str:
              "frontier": frontier_lines, "audit": audit_lines, "health": health_lines, "exec": exec_lines}
     if name == "digest":
         return title("digest") if panel else f"{title('digest')}: not probed yet"
+    if name in TABS and name not in lines:  # a tab's own help (the overview's cards)
+        return tab_title(name)
     return lines[name](panel if name in PROBE_PANELS else panel or {})[0]
 
 
@@ -1473,7 +1491,10 @@ def heading(name: str, panel: dict | None) -> str:
 
 NARROW_COLUMNS, NARROW_ROWS = 120, 30  # under either: the tabs alone, the grid not offered, the bar's numbers (UX-2)
 TAB_PADDING = 2  # a tab's padding in the bar, in columns
-VIEW_LABELS = {"grid": {"en": "Grid", "fr": "Grille"}, "digest": {"en": "Digest", "fr": "Digest"},
+CARD_LINES = 4  # a card's lines at most (UX-19: 3 to 5, with its frame)
+CARD_ORDER = ("queue", "sessions", "milestones", "frontier", "health", "resources", "lessons", "ideas", "features")
+VIEW_LABELS = {"cards": {"en": "Cards", "fr": "Cartes"}, "grid": {"en": "Grid", "fr": "Grille"},
+               "digest": {"en": "Digest", "fr": "Digest"},
                "list": {"en": "List", "fr": "Liste"}, "frames": {"en": "Frames", "fr": "Cadres"}}
 
 
@@ -1492,24 +1513,97 @@ def _sessions_asking(panels: dict) -> str:
     return f"{n}!" if n else ""
 
 
+def _card(tab: str, head: str, lines: list[str], foot: str = "", filters: dict | None = None) -> dict:
+    """A tab's card: ``{tab, title, lines, foot, filters}``; ``filters``: {panel: {field: value}}, what it opens with."""
+    return {"tab": tab, "title": f"{TABS[tab]['key']} {head}", "lines": [" ".join(x.split()) for x in lines][:CARD_LINES],
+            "foot": foot, "filters": filters or {}}
+
+
+def _counted(head: str, n: int, word: str) -> str:
+    return f"{head} · {n} {word}" if n else head
+
+
+def _summary(counts: dict[str, int]) -> list[str]:
+    """One line: « 1 this week · 2 when you can », what has a count; none without one."""
+    words = [f"{n} {word}" for word, n in counts.items() if n]
+    return [" · ".join(words)] if words else []
+
+
+def _queue_card(snap: dict, wait: str = "") -> dict:
+    rows = shown("queue", (snap.get("panels") or {}).get("queue"), view_of("queue"))
+    now = [e for e in rows if e.get("band") == "now"]
+    bands = {queue.BAND_NAMES[b]: sum(e.get("band") == b for e in rows) for b in queue.BANDS if b != "now"}
+    lines = [e["title"] for e in (now or rows)[:CARD_LINES - 1]] + _summary(bands)
+    opens = ("Enter: the queue, band now", {"queue": {"kind": ALL, "band": "now"}}) if now else ("Enter: the queue", {})
+    return _card("queue", _counted(title("queue"), len(now), "now"), lines or [why_empty("queue", snap)], *opens)
+
+
+def _session_line(r: dict) -> str:
+    what = r["title"] or r["step"] or r["branch"]
+    return ("! " if r["state"] == "asking" else "") + session_text(r) + (f": {what}" if what else "")
+
+
+def _sessions_card(snap: dict, wait: str = "") -> dict:
+    rows = entries("sessions", (snap.get("panels") or {}).get("sessions"))
+    asking = [r for r in rows if r["state"] == "asking"]
+    states = {s: sum(r["state"] == s for r in rows) for s in STATES if s not in ("asking", "ended")}
+    top = asking or [r for r in rows if r["state"] == "running"]
+    lines = [_session_line(r) for r in top[:CARD_LINES - 1]] + _summary(states)
+    opens = ("Enter: the sessions asking", {"sessions": {"state": "asking"}}) if asking else ("Enter: the sessions", {})
+    return _card("sessions", _counted(title("sessions"), len(asking), "asking"),
+                 lines or ([f"{len(rows)} ended"] if rows else [why_empty("sessions", snap)]), *opens)
+
+
+def _milestones_card(snap: dict, wait: str = "") -> dict:
+    panel = (snap.get("panels") or {}).get("milestones") or {}
+    rows = sorted(entries("milestones", panel), key=lambda m: -(m["done"] / m["items"] if m["items"] else 0))
+    lines = [f"{short_milestone(m['id'], m['project'])} {m['done']}/{m['items']} {bar(m['done'], m['items'])}"
+             for m in rows[:CARD_LINES - 1]]
+    reached = sum(g.get("reached", 0) for g in panel.get("projects") or [])
+    lines += [f"{reached} reached"] if reached else []
+    return _card("milestones", _counted(title("milestones"), len(rows), "pending"),
+                 lines or [why_empty("milestones", snap)], "Enter: the milestones")
+
+
+def _frontier_card(snap: dict, wait: str = "") -> dict:
+    rows = shown("frontier", (snap.get("panels") or {}).get("frontier"), view_of("frontier"))
+    lines = [f"{r['priority'] or '-'} {r['id'].removeprefix('wi-').removeprefix(r['project'] + '-')}: unblocks "
+             f"{r.get('unblocks', 0)}" for r in rows[:CARD_LINES]]
+    return _card("frontier", _counted(title("frontier"), len(rows), "startable"),
+                 lines or [why_empty("frontier", snap, view_of("frontier"))], "Enter: the frontier")
+
+
+def _health_card(snap: dict, wait: str = "") -> dict:
+    panels = snap.get("panels") or {}
+    alerts_ = sorted(entries("alerts", panels.get("alerts")), key=lambda a: -alerts.RANK.get(a["level"], 0))  # the worst
+    unread = [f"{g['project']}: error: {g['error']}" for g in (panels.get("alerts") or {}).get("projects") or []
+              if "error" in g]
+    lines = (unread + [f"{a['level']} {a['message']}" for a in alerts_])[:CARD_LINES - 1] or [
+        why_empty("alerts", snap, wait=wait)]
+    audit_ = [f"audit {g['project']}: {_counts(g['counts'])}" for g in (panels.get("audit") or {}).get("projects") or []
+              if "counts" in g]
+    return _card("health", _counted(tab_title("health"), len(alerts_), "alert(s)"), lines + audit_[:1], "Enter: health")
+
+
 # key: 0 to 9 or a comma. views: {view: its panels, in the order they show}, the default first; none: not built yet, its
-# key waits for it (arrives: what brings it). count: what the bar says of the tab, from the panels.
+# key waits for it (arrives: what brings it). count: what the bar says of the tab, from the panels. card: its card in the
+# overview.
 TABS = {
     "overview": {"key": "0", "label": {"en": "Overview", "fr": "Vue d'ensemble"},
                  "question": {"en": "What waits on me, at a glance?", "fr": "Qu'est-ce qui m'attend, d'un coup d'œil ?"},
-                 "views": {"grid": PANELS, "digest": ("digest",)}},
+                 "views": {"cards": (), "grid": PANELS, "digest": ("digest",)}},
     "queue": {"key": "1", "label": {"en": "Queue", "fr": "File"},
               "question": {"en": "What must I decide or do?", "fr": "Que dois-je décider ou faire ?"},
-              "views": {"list": ("queue",)}, "count": _queue_now},
+              "views": {"list": ("queue",)}, "count": _queue_now, "card": _queue_card},
     "sessions": {"key": "2", "label": {"en": "Sessions", "fr": "Sessions"},
                  "question": {"en": "Who is working, who waits on me?", "fr": "Qui travaille, qui m'attend ?"},
-                 "views": {"list": ("sessions",)}, "count": _sessions_asking},
+                 "views": {"list": ("sessions",)}, "count": _sessions_asking, "card": _sessions_card},
     "frontier": {"key": "3", "label": {"en": "Frontier", "fr": "Frontier"},
                  "question": {"en": "What can start?", "fr": "Que peut-on démarrer ?"},
-                 "views": {"list": ("frontier",)}},
+                 "views": {"list": ("frontier",)}, "card": _frontier_card},
     "milestones": {"key": "4", "label": {"en": "Milestones", "fr": "Jalons"},
                    "question": {"en": "Where are we going, and when?", "fr": "Où va-t-on, et quand ?"},
-                   "views": {"list": ("milestones",)}},
+                   "views": {"list": ("milestones",)}, "card": _milestones_card},
     "ideas": {"key": "5", "label": {"en": "Ideas", "fr": "Idées"},
               "question": {"en": "What waits upstream?", "fr": "Qu'est-ce qui attend en amont ?"},
               "views": {}, "arrives": "the ideas board"},
@@ -1522,7 +1616,7 @@ TABS = {
                  "views": {}, "arrives": "the capability graph"},
     "health": {"key": "8", "label": {"en": "Health", "fr": "Santé"},
                "question": {"en": "What is breaking or getting worse?", "fr": "Qu'est-ce qui casse ou se dégrade ?"},
-               "views": {"frames": ("alerts", "audit", "health", "exec")}, "count": _alerts_open},
+               "views": {"frames": ("alerts", "audit", "health", "exec")}, "count": _alerts_open, "card": _health_card},
     "resources": {"key": "9", "label": {"en": "Resources", "fr": "Ressources"},
                   "question": {"en": "What does what runs cost?", "fr": "Que coûte ce qui tourne ?"},
                   "views": {}, "arrives": "the resources view"},
@@ -1606,6 +1700,17 @@ def panel_tab(panel: str) -> str:
                 "overview")
 
 
+def card_tabs() -> tuple[str, ...]:
+    """The tabs that have a card, in the overview's order: what waits on the owner first."""
+    return tuple(n for n in CARD_ORDER if TABS[n]["views"] and TABS[n].get("card"))
+
+
+def cards(snap: dict, wait: str = "") -> list[dict]:
+    """The overview's cards (UX-19): each tab's title, lines, foot and the filters it opens with; ``wait``: what a panel
+    not probed yet waits for, as ``probe_wait`` says it."""
+    return [TABS[n]["card"](snap, wait) for n in card_tabs()]
+
+
 def bar_status(changed: str | None, probe_in: float | None, probing: bool = False, paused: bool = False,
                tz: str | None = "local") -> str:
     """The global bar's right end: the last change and the next probe (``probe_in``: the seconds it is due in; None: at
@@ -1620,7 +1725,7 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
     """The text view: every panel, one after the other; ``views`` (each table panel's view, {} its defaults) and
     ``search`` narrow the sessions, the queue and the frontier (None: everything, in the panels' order); ``tz``
     shows the header's times in that timezone (None: as recorded, UTC); ``tab`` prints that tab's panels and frames
-    alone. The header names the installed version."""
+    alone, the overview's cards for the overview. The header names the installed version."""
     p = snap["panels"]
 
     def stamp(iso):
@@ -1628,6 +1733,10 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
     head = (f"brain {__version__} cockpit: {snap['scope']}; files read {stamp(snap.get('read_at')) or '-'}, probes "
             f"{stamp(snap.get('probed_at')) or 'not run'}")
     out = [head]
+    if tab == "overview":
+        for card in cards(snap, wait="not probed yet"):
+            out += ["", card["title"], *(_line("  ", x, width) for x in card["lines"])]
+        return out
 
     def v(name):
         return None if views is None else views.get(name, {})

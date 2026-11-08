@@ -635,7 +635,9 @@ def test_times_follow_the_timezone_and_every_panel_has_its_help(monkeypatch):
         2026, 10, 31, tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
     head = cockpit.render({"scope": "x", "read_at": "2026-11-02T18:29:04Z", "panels": {}}, tz="utc")[0]
     assert head == f"brain {brain.__version__} cockpit: x; files read 2026-11-02 18:29:04 (utc), probes not run"
-    assert set(cockpit.HELP) == {*cockpit.PANELS, *cockpit.FRAMES}
+    assert set(cockpit.HELP) == {*cockpit.PANELS, *cockpit.FRAMES, "overview"}
+    assert "the arrows" in cockpit.help_lines("overview")[-1] and "m full view" not in cockpit.help_lines("overview")[-1]
+    assert cockpit.heading("overview", None) == "Overview"
     for name in cockpit.HELP:
         lines = cockpit.help_lines(name)
         assert lines[0] and any(x.startswith("From: ") for x in lines) and any(x.startswith("Detail: ") for x in lines)
@@ -708,10 +710,12 @@ def test_the_bar_is_reduced_to_its_numbers_when_narrow_or_when_it_does_not_fit(m
 
 
 def test_a_tabs_views_and_the_grid_on_a_narrow_terminal():
-    assert cockpit.tab_views("overview") == ("grid", "digest") and cockpit.tab_views("overview", True) == ("digest",)
-    assert cockpit.tab_view("overview") == "grid" and cockpit.tab_view("overview", "digest") == "digest"
-    assert cockpit.tab_view("overview", "grid", True) == "digest"  # no grid here, and its choice kept for a wide one
-    assert cockpit.tab_view("overview", "gone") == "grid"
+    assert cockpit.tab_views("overview") == ("cards", "grid", "digest")
+    assert cockpit.tab_views("overview", True) == ("cards", "digest")
+    assert cockpit.tab_view("overview") == "cards" and cockpit.tab_view("overview", "digest") == "digest"
+    assert cockpit.tab_view("overview", "grid", True) == "cards"  # no grid here, and its choice kept for a wide one
+    assert cockpit.tab_view("overview", "gone") == "cards"
+    assert cockpit.tab_panels("overview", "cards") == ()
     assert cockpit.tab_panels("overview", "digest") == ("digest",) and cockpit.tab_panels("overview") == cockpit.PANELS
     assert cockpit.tab_panels("health", "frames") == ("alerts", "audit", "health", "exec")
 
@@ -751,6 +755,126 @@ def test_the_global_bar_says_the_last_change_and_the_next_probe():
     assert cockpit.bar_status(at, 0.5, tz="utc").endswith("probe now")
     assert cockpit.bar_status(at, 60, probing=True, tz="utc").endswith("probing")
     assert cockpit.bar_status(at, 60, paused=True, tz="utc").endswith("paused")
+
+
+def _card_of(snap, tab, wait=""):
+    return next(c for c in cockpit.cards(snap, wait) if c["tab"] == tab)
+
+
+def test_the_cards_say_what_counts_in_each_tab():
+    """UX-19, spec §4.0.3: each built tab's card, at most four lines, and what it opens with."""
+    def entry(i, band):
+        return {"id": f"d{i}", "kind": "action", "band": band, "title": f"Entry  {i}\nmore", "unblocks": 0, "age_days": 0,
+                "since": "", "score": 10 - i}
+    panels = {
+        "queue": {"projects": [{"project": "p", "entries": [entry(1, "now"), entry(2, "now"), entry(3, "now"),
+                                                            entry(4, "now"), entry(5, "week"), entry(6, "later")]}]},
+        "sessions": {"hours": 24, "rows": [
+            {"state": "asking", "session_id": "aaaaaaaa11", "project": "p", "title": "Waits", "step": "", "branch": "",
+             "age_s": 1},
+            {"state": "running", "session_id": "bbbbbbbb22", "project": "p", "title": "Runs", "step": "", "branch": "",
+             "age_s": 1, "name": "runner"},
+            {"state": "ended", "session_id": "cccccccc33", "project": "p", "title": "", "step": "", "branch": "",
+             "age_s": 1}]},
+        "milestones": {"projects": [{"project": "brain", "reached": 2, "pending": [
+            {"id": "ms-brain-far", "title": "Far", "items": 10, "done": 1},
+            {"id": "ms-brain-near", "title": "Near", "items": 4, "done": 3}]}]},
+        "frontier": {"projects": [{"project": "brain", "items": [
+            {"id": "wi-brain-b", "priority": "P2", "unblocks": 1, "title": "B", "milestone": ""},
+            {"id": "wi-brain-a", "priority": "P0", "unblocks": 4, "title": "A", "milestone": ""}]}]},
+        "alerts": {"projects": [{"project": "p", "alerts": [{"level": "warn", "key": "k", "message": "the  canary"}]}]},
+        "audit": {"projects": [{"project": "p", "counts": {"P0": 1}}, {"project": "broken", "error": "x"}]}}
+    snap = {"scope": "p", "panels": panels}
+    assert cockpit.card_tabs() == ("queue", "sessions", "milestones", "frontier", "health")
+    assert [c["tab"] for c in cockpit.cards(snap)] == list(cockpit.card_tabs())
+    q = _card_of(snap, "queue")
+    assert q["title"].endswith("· 4 now") and q["title"].startswith("1 ")
+    assert q["lines"] == ["Entry 1 more", "Entry 2 more", "Entry 3 more", "1 this week · 1 when you can"]  # flat, and whole
+    assert q["filters"] == {"queue": {"kind": "all", "band": "now"}}  # over the owner's: its count is what opens
+    assert q["foot"] == "Enter: the queue, band now"
+    s = _card_of(snap, "sessions")
+    assert s["title"] == "2 Sessions · 1 asking" and s["filters"] == {"sessions": {"state": "asking"}}
+    assert s["lines"] == ["! aaaaaaaa: Waits", "1 running"]  # who waits first; an ended one counts for nothing
+    m = _card_of(snap, "milestones")
+    assert m["title"] == "4 Milestones · 2 pending" and m["filters"] == {}
+    assert m["lines"] == ["near 3/4 ########..", "far 1/10 #.........", "2 reached"]  # the nearest first
+    f = _card_of(snap, "frontier")
+    assert f["title"] == "3 Frontier · 2 startable"
+    assert f["lines"] == ["P0 a: unblocks 4", "P2 b: unblocks 1"]
+    h = _card_of(snap, "health")
+    assert h["title"] == "8 Health · 1 alert(s)" and h["lines"] == ["warn the canary", "audit p: P0 1, P1 0, P2 0, info 0"]
+
+
+def test_the_cards_when_nothing_presses():
+    def snap(**panels):
+        return {"scope": "p", "panels": panels}
+    later = {"projects": [{"project": "p", "entries": [{"id": "a", "kind": "action", "band": "later", "title": "Later",
+                                                        "unblocks": 0, "age_days": 0, "since": ""}]}]}
+    q = _card_of(snap(queue=later), "queue")
+    assert q["lines"] == ["Later", "1 when you can"] and q["filters"] == {} and q["foot"] == "Enter: the queue"
+    assert "now" not in q["title"]
+
+    def session(state, **kw):
+        return {"state": state, "session_id": "abcdefgh12", "title": "", "step": "", "branch": "", **kw}
+    s = _card_of(snap(sessions={"rows": [session("running", name="one", step="2/3 Write"),
+                                         session("running", name="two", branch="b"), session("running", name="three"),
+                                         session("idle", name="four")]}), "sessions")
+    assert s["lines"] == ["one: 2/3 Write", "two: b", "three", "3 running · 1 idle"]  # none asking: who runs; never « x: »
+    assert s["filters"] == {} and s["foot"] == "Enter: the sessions" and s["title"] == "2 Sessions"
+    assert _card_of(snap(sessions={"rows": [session("ended", name="x")]}), "sessions")["lines"] == ["1 ended"]
+    assert _card_of(snap(sessions={"rows": [session("asking", name="x")]}), "sessions")["lines"] == ["! x"]
+    m = _card_of(snap(milestones={"projects": [{"project": "b", "reached": 0, "pending": [
+        {"id": "ms-b-empty", "title": "E", "items": 0, "done": 0}, {"id": "ms-b-half", "title": "H", "items": 2, "done": 1}]}]}),
+        "milestones")
+    assert m["lines"] == ["half 1/2 #####.....", "empty 0/0 .........."]  # an item-less milestone: last, no division
+
+
+def test_a_card_is_at_most_four_lines_and_the_worst_alert_comes_first():
+    alert = {"projects": [
+        {"project": "a", "alerts": [{"level": "warn", "key": f"k{i}", "message": f"warn {i}"} for i in range(3)]},
+        {"project": "b", "alerts": [{"level": "critical", "key": "c", "message": "the worst"}]},
+        {"project": "c", "error": "bad alerts:"}]}
+    h = _card_of({"scope": "all", "panels": {"alerts": alert, "audit": {"projects": [{"project": "a", "counts": {}}]}}},
+                 "health")
+    assert h["lines"] == ["c: error: bad alerts:", "critical the worst", "warn warn 0", "audit a: P0 0, P1 0, P2 0, info 0"]
+    assert h["title"] == "8 Health · 4 alert(s)"  # a config that cannot be read is said, never « no open alert »
+    assert _card_of({"scope": "c", "panels": {"alerts": {"projects": [{"project": "c", "error": "bad"}]}}},
+                    "health")["lines"] == ["c: error: bad"]
+    many = {"projects": [{"project": "p", "items": [{"id": f"wi-{i}", "priority": "P1", "unblocks": 0, "title": "x",
+                                                     "milestone": ""} for i in range(9)]}]}
+    assert len(_card_of({"panels": {"frontier": many}}, "frontier")["lines"]) == cockpit.CARD_LINES
+
+
+def test_a_card_says_why_it_has_nothing():
+    """The states of wi-brain-tui-states in a card: not read yet, not probed yet, nothing in the scope; no filter."""
+    snap = {"scope": "demo", "panels": {}}
+    assert _card_of(snap, "queue")["lines"] == ["not read yet"] and _card_of(snap, "queue")["filters"] == {}
+    assert _card_of(snap, "sessions")["lines"] == ["not read yet"] and _card_of(snap, "sessions")["filters"] == {}
+    assert _card_of(snap, "health", "probe in 2 min")["lines"] == ["probe in 2 min"]
+    empty = {"scope": "demo", "panels": {"queue": {"projects": []}, "alerts": {"projects": []},
+                                         "frontier": {"projects": []}, "milestones": {"projects": []},
+                                         "sessions": {"hours": 24, "rows": []}}}
+    assert _card_of(empty, "queue")["lines"][0].startswith("Nothing waits on ")
+    assert _card_of(empty, "health")["lines"] == ["No open alert in demo"]
+    assert _card_of(empty, "frontier")["lines"] == ["No startable item in demo"]
+    assert _card_of(empty, "milestones")["lines"] == ["No pending milestone in demo"]
+    assert _card_of(empty, "sessions")["lines"] == ["No session wrote its transcript in the last 24 h"]
+    assert _card_of(empty, "queue")["title"] == f"1 {cockpit.title('queue')}"  # no count to say
+
+
+def test_the_text_view_prints_the_overviews_cards():
+    snap = {"scope": "demo", "panels": {"frontier": {"projects": [{"project": "p", "items": [
+        {"id": "wi-a", "priority": "P1", "unblocks": 2, "title": "A", "milestone": ""}]}]}}}
+    lines = cockpit.render(snap, tab="overview")
+    assert "3 Frontier · 1 startable" in lines and "  P1 a: unblocks 2" in lines
+    assert "  not probed yet" in lines and not any(x.startswith("Enter") for x in lines)  # a text view has no Enter
+
+
+def test_the_digest_under_its_frame_does_not_repeat_its_title():
+    panel = {"projects": [{"project": "demo", "digest": "last-week", "written": True, "records": {"journals": []},
+                           "text": "# Digest of demo\n\n## Items closed\n"}]}
+    assert cockpit.digest_lines(panel)[:2] == ["Digest demo (last-week, written); journal -", "  # Digest of demo"]
+    assert cockpit.digest_lines(panel, titled=False) == ["demo (last-week, written); journal -", "  ## Items closed"]
 
 
 def test_brain_tui_tab_starts_there_and_prints_it(tmp_path, monkeypatch, store, capsys):

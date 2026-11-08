@@ -14,7 +14,7 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 - **The cockpit's tabs** (wi-brain-tui-layout, UX-2, UX-18; spec 2026-11-03 cockpit-ux-round2 §4.0). One tab per
   question, in data (`cockpit.TABS`: key, label in English and French, question, views and their panels, count): 0
-  overview (its views: the grid, the digest), 1 queue, 2 sessions, 3 frontier, 4 milestones, 8 health (alerts on top;
+  overview, 1 queue, 2 sessions, 3 frontier, 4 milestones, 8 health (alerts on top;
   audit debt, stacks and index, and a new frame of exec times with the slowest steps). Ideas (5), lessons (6), features
   (7), resources (9) and settings (the comma) arrive with their items, and until then their key says so. The bar shows
   each tab's state in digits and signs (the queue's band now, the sessions asking `!`, the open alerts), a click on it,
@@ -24,6 +24,16 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   the tab's question and holds an `[i]`; the global bar says the last change and the next probe. The last tab and each
   tab's view are kept in `tui.json`. `brain tui --tab NAME` starts there, and with `--once` or `--plain` prints that
   tab's panels alone.
+
+- **The cockpit's overview: one card per tab** (wi-brain-tui-layout, UX-19; spec cockpit-ux-round2 §4.0.3). The overview
+  opens on its cards (`cockpit.cards`, each tab declaring its own): the queue's band now, the sessions asking, the nearest
+  milestones, what can start, the open alerts, worst first across the projects, and the audit. Enter or a click opens
+  the tab, already filtered as the card says, its search cleared, by a filter that is never saved and goes when the tab
+  is left (the filters dialog makes it the owner's); the arrows move between them, and they take one column on a narrow terminal. The grid and the digest are its other views
+  (`v`). `brain tui --once --tab overview` prints the cards. In the digest view the frame no longer repeats its title on
+  each project and above the digest (L9); in the grid, open alerts take a whole row (L11). A key now moves the focus at
+  once, so `1` then Enter opens the queue's row, not the previous tab's. A table's cell is text, never markup: a title
+  like « Move [/docs] out » crashed the cockpit, and « [blocking] » vanished from the queue's Id column.
 
 - **`brain update` moves `engine.pin` in a brain without an installer of its own** (wi-brain-update-moves-pin,
   COMPAT-5). The update *to* this version is run by the older engine, which only reminds you of the pin: once it is
