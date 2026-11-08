@@ -32,7 +32,10 @@ USAGE = """\
                  numbers under 120 columns or 30 rows, where the cards take one column and the grid is not offered;
                  --tab NAME starts there, and with --once or --plain prints that tab's panels alone (the overview:
                  its cards). The project selector (p: global or one
-                 project), the sessions', queue's and frontier's filters and sorts (f, s, o), the search (/), a panel's
+                 project), the sessions', queue's and frontier's filters and sorts (f, s, o), a table's columns (C:
+                 shown or hidden, their order, the longest a title may be; the sessions also offer Cost, App id, Id and
+                 Branch), the palette (ctrl+p: every tab, view, project, sort, filter and table's columns, and reset
+                 the views), the search (/), a panel's
                  help (i), a full view where a tab shows several panels (m, Escape back), the pause (space) and ? for
                  every key; a refresh keeps the scroll and the cursor; an empty
                  table says why (a filter, nothing in the scope, a project not on this machine), a panel not probed
@@ -91,8 +94,9 @@ def cmd_tui(args, root: Path) -> int:
         print(json.dumps(snap, ensure_ascii=False, indent=1, sort_keys=True) if args.json
               else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz, tab=args.tab)))
         return 1 if _failed_reads(snap) else 0
-    tab, tabs = args.tab or saved.get("tab"), saved.get("tabs") or {}
-    cockpit.save_state({"scope": cp.scope, "panels": views, "settings": settings, "tab": tab, "tabs": tabs})
+    tab, tabs, columns = args.tab or saved.get("tab"), saved.get("tabs") or {}, saved.get("columns") or {}
+    cockpit.save_state({"scope": cp.scope, "panels": views, "settings": settings, "tab": tab, "tabs": tabs,
+                        "columns": columns})
     if not args.plain:
         try:
             from .. import tui
@@ -103,7 +107,7 @@ def cmd_tui(args, root: Path) -> int:
                   "venv); the text view meanwhile (Ctrl-C quits)", file=sys.stderr)
         else:
             return tui.run(cp, refresh=args.refresh, probe=args.probe, views=views, search=args.search,
-                           settings=settings, tab=tab, tabs=tabs)
+                           settings=settings, tab=tab, tabs=tabs, columns=columns)
     return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"], tab=args.tab)
 
 

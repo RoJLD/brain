@@ -408,7 +408,7 @@ def test_the_queue_sorts_by_score(brain_home, capsys, monkeypatch):
     assert cockpit.SORTS["queue"][:2] == ("band", "score") and cockpit.SORT_COLUMNS["queue"]["Score"] == "score"
     for name, keys in cockpit.SORTS.items():  # every sort has its key, every sorting column is a column and a sort
         assert set(keys) == set(cockpit.SORT_KEYS[name])
-        assert set(cockpit.SORT_COLUMNS[name]) <= set(cockpit.COLUMNS[name])
+        assert set(cockpit.SORT_COLUMNS[name]) <= set(cockpit.every_column(name))
         assert set(cockpit.SORT_COLUMNS[name].values()) <= set(keys)
     assert cockpit.parse_view(["queue:-score"]) == {"queue": {"sort": "score", "reverse": True}}
     assert cockpit.view_of("queue", {"sort": "score"})["sort"] == "score"
@@ -875,6 +875,74 @@ def test_the_digest_under_its_frame_does_not_repeat_its_title():
                            "text": "# Digest of demo\n\n## Items closed\n"}]}
     assert cockpit.digest_lines(panel)[:2] == ["Digest demo (last-week, written); journal -", "  # Digest of demo"]
     assert cockpit.digest_lines(panel, titled=False) == ["demo (last-week, written); journal -", "  ## Items closed"]
+
+
+def _session_row():
+    return {"state": "running", "session_id": "abcdef1234567890", "project": "p", "step": "2/3 Write", "model": "m",
+            "effort": "high", "context": 1000, "budget": 2000, "output_tokens": 10, "age_s": 5, "title": "A long title",
+            "branch": "b", "cost_usd": 12.5, "host_id": "local_0123456789abcdef"}
+
+
+def test_a_tables_columns_can_be_chosen():
+    row = _session_row()
+    assert cockpit.columns("sessions") == cockpit.COLUMNS["sessions"]  # the default: the extras hidden
+    assert cockpit.every_column("sessions")[-4:] == ("Cost", "App id", "Id", "Branch")
+    assert cockpit.every_column("queue") == cockpit.COLUMNS["queue"]
+    chosen = {"shown": ["Title", "Cost", "App id", "Id", "Branch", "Project", "State"]}
+    assert cockpit.columns("sessions", True, chosen) == ("Title", "Cost", "App id", "Id", "Branch", "Project", "State")
+    assert cockpit.cells("sessions", row, True, None, chosen) == ("A long title", "$12.50", "local_01234567", "abcdef12", "b",
+                                                                  "p", "running")
+    assert cockpit.columns("sessions", False, chosen)[-2:] == ("Branch", "State")  # one project: no Project column
+    assert cockpit.cells("sessions", row, False, None, chosen)[-2:] == ("b", "running")
+    only = {"shown": ["Project"]}
+    assert cockpit.columns("sessions", False, only) == tuple(c for c in cockpit.COLUMNS["sessions"] if c != "Project")
+    assert cockpit.columns("sessions", True, {"shown": ["Nope"]}) == cockpit.COLUMNS["sessions"]  # none left: the default
+    assert cockpit.cells("sessions", row, True, None, {"shown": ["Title"], "width": 6}) == ("A lon…",)
+    assert cockpit.SORT_COLUMNS["sessions"]["Cost"] == "cost"
+    # a row with nothing to say in an extra column
+    bare = {**row, "cost_usd": None, "host_id": "", "branch": ""}
+    assert cockpit.cells("sessions", bare, True, None, {"shown": ["Cost", "App id", "Branch"]}) == ("-", "-", "-")
+    # no chosen: the row is what it always was, aligned with its columns
+    assert len(cockpit.cells("sessions", row)) == len(cockpit.columns("sessions"))
+    assert cockpit.cells("sessions", row, False)[:2] == ("running", "local_01234567")
+
+
+def test_the_chosen_columns_are_remembered_and_a_foreign_one_left_out(tmp_path):
+    f = tmp_path / "tui.json"
+    cockpit.save_state({"columns": {"sessions": {"shown": ["Title", "Nope", 3], "width": 60},
+                                    "queue": {"shown": [], "width": 41}, "audit": {"shown": ["x"]}, "frontier": "x",
+                                    "alerts": {"shown": "Level", "width": True}}}, f)
+    assert cockpit.load_state(f)["columns"] == {"sessions": {"shown": ["Title"], "width": 60}}
+    cockpit.save_state({"columns": {}}, f)
+    assert "columns" not in cockpit.load_state(f)
+
+
+def test_the_palette_reaches_every_tab_project_sort_filter_and_table():
+    entries = cockpit.palette({"demo": None, "quant": None})
+    titles = [e["title"] for e in entries]
+    assert len(titles) == len(set(titles))  # the palette finds an entry by its words
+    does = {e["do"] for e in entries}
+    assert {("tab", n) for n in cockpit.built_tabs()} <= does and ("tab", "ideas") not in does
+    assert {("view", "overview", v) for v in cockpit.tab_views("overview")} <= does and ("view", "queue", "list") not in does
+    assert {("scope", "all"), ("scope", "demo"), ("scope", "quant")} <= does
+    assert {("sort", n, k) for n in cockpit.SORTS for k in cockpit.SORTS[n]} <= does
+    assert {("filter", n, f, v) for n in cockpit.FILTERS for f, vals in cockpit.FILTERS[n].items() for v in vals} <= does
+    assert {("columns", n) for n in cockpit.COLUMNS} <= does and ("reset",) in does
+    assert "Go to Frontier" in titles and "Frontier: sort by unblocks" in titles and "Reset the views" in titles
+    assert "Project: quant (not on this machine)" in titles
+    assert next(e for e in entries if e["do"] == ("tab", "frontier"))["help"] == "key 3: What can start?"
+
+
+def test_brain_tui_gives_the_app_its_columns(tmp_path, monkeypatch, store):
+    pytest.importorskip("textual")
+    from brain import tui
+    _cockpit(tmp_path, monkeypatch, store)
+    seen = {}
+    monkeypatch.setattr(tui, "run", lambda cp, **kw: seen.update(kw) or 0)
+    chosen = {"sessions": {"shown": ["Title"], "width": 40}}
+    cockpit.save_state({"scope": "demo", "columns": chosen})
+    assert cli.main(["tui", "--project", "demo"]) == 0
+    assert seen["columns"] == chosen and cockpit.load_state()["columns"] == chosen  # kept by the start's own save
 
 
 def test_brain_tui_tab_starts_there_and_prints_it(tmp_path, monkeypatch, store, capsys):

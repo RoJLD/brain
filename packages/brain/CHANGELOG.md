@@ -25,6 +25,13 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   tab's view are kept in `tui.json`. `brain tui --tab NAME` starts there, and with `--once` or `--plain` prints that
   tab's panels alone.
 
+- **The cockpit's column chooser and palette** (wi-brain-tui-layout; spec cockpit-ux §4.4). `C` chooses a table's columns
+  (`cockpit.columns`, `brain.tui_palette`): shown or hidden, their order, and the longest its title may be, the rest in
+  the detail; the sessions also offer Cost, App id, Id and Branch (`EXTRA_COLUMNS`), the Cost column sorting by cost. They
+  are kept in `tui.json`'s `columns`, which an older engine ignores. A state's colour follows its word wherever it is
+  placed. The palette (`ctrl+p`, `cockpit.palette`) gains an entry for each tab and view, project, sort, filter and table's
+  columns, and « Reset the views », which keeps the project, the theme and the timezone.
+
 - **The cockpit's detail beside the list** (wi-brain-tui-layout, UX-20; spec cockpit-ux-round2 §4.0.2). From 140 columns,
   on a tab that is one list (`cockpit.detail_beside`), a row's detail sits right of the list and follows the cursor
   (`brain.tui_side`): it is read once the cursor rests, in a worker thread, and remembered per row until its panel changes,

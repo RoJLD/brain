@@ -14,7 +14,9 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.markup import escape
 from textual.screen import ModalScreen
-from textual.widgets import (Button, Checkbox, Footer, Input, Label, OptionList, RadioButton, RadioSet, Select, Static)
+from textual.widgets import (Button, Checkbox, Footer, Input, Label, OptionList, RadioButton, RadioSet, Select,
+                             SelectionList, Static)
+from textual.widgets.selection_list import Selection
 
 from . import cockpit, config, detail
 
@@ -69,6 +71,69 @@ class ViewScreen(ModalScreen):
             self.dismiss(cockpit.view_of(self.panel_name))
         else:
             self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ColumnsScreen(ModalScreen):
+    """One table's columns: space shows or hides the one under the cursor, Up and Down (shift+up, shift+down) move it, and
+    a limit for its titles; Apply keeps them, Reset brings the defaults back, Escape changes nothing."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("shift+up", "move(-1)", "Move up"),
+                Binding("shift+down", "move(1)", "Move down")]
+    CSS = """
+    ColumnsScreen { align: center middle; }
+    #columns { width: 64; max-height: 92%; height: auto; border: round $accent; padding: 1 2; background: $surface; }
+    #columns .field { margin-top: 1; color: $text-muted; }
+    #column-list { height: auto; max-height: 20; }
+    #columns-buttons { height: auto; margin-top: 1; }
+    #columns-buttons Button { margin-right: 1; min-width: 8; }
+    """
+
+    def __init__(self, name: str, chosen: dict | None) -> None:
+        super().__init__()
+        self.panel_name, self.width = name, (chosen or {}).get("width") or 0
+        self.on = list(cockpit.columns(name, True, chosen))
+        self.order = [*self.on, *(c for c in cockpit.every_column(name) if c not in self.on)]
+
+    def _selections(self, selected) -> list[Selection]:
+        return [Selection(c, c, c in selected) for c in self.order]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="columns"):
+            yield Label(f"{cockpit.title(self.panel_name)}: columns, in order (space shows or hides)")
+            yield SelectionList(*self._selections(self.on), id="column-list")
+            yield Label(f"The longest a value of {cockpit.EMPTY_COLUMN[self.panel_name]} may be", classes="field")
+            yield Select([("no limit" if w == 0 else str(w), w) for w in cockpit.TITLE_WIDTHS], value=self.width,
+                         allow_blank=False, id="title-width")
+            with Horizontal(id="columns-buttons"):
+                yield Button("Up", id="up")
+                yield Button("Down", id="down")
+                yield Button("Apply", variant="primary", id="apply")
+                yield Button("Reset", id="reset")
+                yield Button("Cancel", id="cancel")
+
+    def action_move(self, step: int) -> None:
+        """The column under the cursor one place up or down, the cursor with it."""
+        table = self.query_one("#column-list", SelectionList)
+        i, selected = table.highlighted, set(table.selected)
+        if i is None or not 0 <= i + step < len(self.order):
+            return
+        self.order[i], self.order[i + step] = self.order[i + step], self.order[i]
+        table.clear_options()
+        table.add_options(self._selections(selected))
+        table.highlighted = i + step
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button = event.button.id
+        if button in ("up", "down"):
+            self.action_move(-1 if button == "up" else 1)
+        elif button == "apply":
+            selected = set(self.query_one("#column-list", SelectionList).selected)
+            self.dismiss({"shown": [c for c in self.order if c in selected],
+                          "width": self.query_one("#title-width", Select).value})
+        else:
+            self.dismiss({} if button == "reset" else None)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

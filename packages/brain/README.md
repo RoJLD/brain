@@ -94,6 +94,11 @@ once the cursor rests, and remembers each row until its panel changes. Enter giv
 opens a link, and Escape gives the focus back; `a`, `d` and `A` work from the list too, each after its confirmation.
 Narrower, or on a tab of several panels, Enter opens it over them.
 
+`C` chooses the columns of the focused table: shown or hidden (space), their order (Up, Down, or `shift+up`, `shift+down`),
+and the longest its title may be, the rest in the detail; the sessions also offer Cost, App id, Id and Branch. The palette
+(`ctrl+p`) reaches every tab, view, project, sort, filter and table's columns without learning a key, and resets the views.
+The chosen columns are kept in `<BRAIN_HOME>/tui.json`.
+
 The cockpit's title bar always shows the installed version. Once the screen is drawn, it checks the tags in the
 background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.3 · 0.2.4 available »
 when a newer one is out; `u` then opens `brain update`'s plan in a confirmation, run on `y`.

@@ -19,6 +19,8 @@ Keys (the footer shows those of the focused panel, ? lists them all):
   /        search every table (each word, case ignored); Enter keeps it, Escape clears it
   s, o     the focused panel's next sort, and its order reversed (sessions, queue, frontier); a column title too
   f        the focused panel's filters and sort, in a dialog
+  C        the focused table's columns: shown or hidden, their order, the longest a title may be (brain.tui_palette)
+  ctrl+p   the palette: every tab, view, project, sort, filter and table's columns, and reset the views
   i        what the focused panel shows, where it comes from and the command for the detail (a click on a
            panel's frame too: the [i] in its title, or the toolbar's)
   m        where a tab shows several panels, the focused one's full view, its breadcrumb in its title; Escape (or m)
@@ -69,6 +71,7 @@ from textual.markup import escape
 from textual.widgets import DataTable, Footer, Header, Input, Label, Select, Static, Tab, Tabs
 
 from . import cockpit, detail, handover, paths, update
+from .tui_palette import PaletteAndColumns
 from .tui_screens import AnswerScreen, ConfirmScreen, DetailScreen, LinkScreen, PanelHelp, ResultScreen, ViewScreen
 from .tui_side import DetailBeside, DetailPane
 
@@ -76,15 +79,21 @@ INTERVALS = (0.5, 1.0, 2.0, 5.0, 10.0)
 TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines, "exec": cockpit.exec_lines,
          "digest": lambda panel: cockpit.digest_lines(panel, width=1000, lines_max=0, titled=False)}  # it scrolls: all of it
 STYLES = {"sessions": {"asking": "bold magenta", "running": "green", "stale": "yellow", "idle": "cyan", "ended": "dim"},
-          "alerts": {"critical": "bold red", "error": "red", "warn": "yellow", "info": "dim"}}  # the first column
+          "alerts": {"critical": "bold red", "error": "red", "warn": "yellow", "info": "dim"}}
+STYLE_COLUMN = {"sessions": "State", "alerts": "Level"}  # the column those words are in, wherever it is chosen to be
 MASTER_STYLES = {70: "yellow", 80: "bold dark_orange", 90: "bold red"}  # a master's row at each step (ST-4)
 PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back", "toggle_max", "pick_scope", "search",
-                 "next_sort", "reverse", "filters", "panel_help", "toggle_tz", "update", "side_act",
-                 "side_open")  # the panels' keys, off while a dialog or a detail is on top of them
+                 "next_sort", "reverse", "filters", "panel_help", "toggle_tz", "update", "side_act", "side_open",
+                 "columns")  # the panels' keys, off while a dialog or a detail is on top of them
 # every panel and frame, as the grid places them: with open alerts their row is whole (L11), the digest beside the stacks
 EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec")
 CARD_COLUMNS = 3
 STATUS_COLUMNS = 100  # narrower, the global bar keeps its width for the search: the subtitle has the times
+
+
+def _same_cell(new, old) -> bool:
+    """Two cells show the same: a Text's equality leaves out its style, and a master's row changes colour at each step."""
+    return new == old and getattr(new, "style", "") == getattr(old, "style", "")
 
 
 def _seconds(s: float) -> str:
@@ -120,7 +129,7 @@ class SearchInput(Input):
     BINDINGS = [Binding("escape", "app.clear_search", "Clear")]
 
 
-class CockpitApp(DetailBeside, App):
+class CockpitApp(DetailBeside, PaletteAndColumns, App):
     TITLE = update.title(None)  # the installed version; the newer one once the background check answers
     ESCAPE_TO_MINIMIZE = False  # Escape's steps are action_back's: the search before a full view
     CSS = """
@@ -168,6 +177,7 @@ class CockpitApp(DetailBeside, App):
         Binding("p", "pick_scope", "Project"),
         Binding("slash", "search", "Search", key_display="/"),
         Binding("v", "next_view", "View"),
+        Binding("C", "columns", "Columns", key_display="C"),  # shown on a table
         Binding("m", "toggle_max", "Full view"),
         Binding("r", "read_all", "Refresh"),
         Binding("space", "pause", "Pause"),
@@ -188,7 +198,8 @@ class CockpitApp(DetailBeside, App):
 
     def __init__(self, cp, refresh: float = cockpit.REFRESH_S, probe: float = cockpit.PROBE_S,
                  views: dict[str, dict] | None = None, search: str = "", settings: dict | None = None,
-                 tab: str | None = None, tabs: dict[str, dict] | None = None) -> None:
+                 tab: str | None = None, tabs: dict[str, dict] | None = None,
+                 columns: dict[str, dict] | None = None) -> None:
         super().__init__()
         self.cockpit, self.refresh_s, self.probe_s = cp, refresh, probe
         self.views = {n: cockpit.view_of(n, (views or {}).get(n)) for n in cockpit.SORTS}
@@ -199,6 +210,7 @@ class CockpitApp(DetailBeside, App):
         self.multi: bool | None = None  # whether the tables show the project column
         self.tab = tab if tab in cockpit.built_tabs() else "overview"
         self.tab_views = {t: v["view"] for t, v in (tabs or {}).items()}  # the view each tab last showed
+        self.chosen = dict(columns or {})  # each table's columns, when chosen (cockpit.columns)
         self.tab_focus: dict[str, str] = {}  # the panel each tab last focused
         self.card_focus: str | None = None  # the card last focused
         self.entered: dict[str, dict] = {}  # the filters a card opened its tab with: never saved, gone with the tab
@@ -558,9 +570,7 @@ class CockpitApp(DetailBeside, App):
             return False
         self.multi = multi
         for name in cockpit.COLUMNS:
-            table = self._q(f"#{name}", DataTable)
-            table.clear(columns=True)
-            table.add_columns(*cockpit.columns(name, multi))
+            self._set_columns(name)
         return True
 
     def draw(self, updated: set[str]) -> None:
@@ -607,13 +617,10 @@ class CockpitApp(DetailBeside, App):
         rows: list[tuple[str, tuple]] = []
         seen: set[str] = set()
         self.records[name] = {}
+        chosen = self.chosen.get(name)
+        cols = cockpit.columns(name, self.multi is not False, chosen)
         for r in cockpit.shown(name, panel, view, self.search):
-            cells = cockpit.cells(name, r, self.multi is not False, self.settings["tz"])
-            if name in STYLES:
-                cells = (Text(cells[0], style=STYLES[name].get(cells[0], "")), *cells[1:])
-            if name == "sessions" and r.get("ctx_step"):  # a master past 70, 80, 90 % of its budget
-                cells = (cells[0], *(Text(str(c), style=MASTER_STYLES[r["ctx_step"]]) for c in cells[1:]))
-            cells = tuple(c if isinstance(c, Text) else Text(str(c)) for c in cells)  # text, never markup: « [/docs] »
+            cells = self._styled(name, r, cols, cockpit.cells(name, r, self.multi is not False, self.settings["tz"], chosen))
             key = base = cockpit.row_key(name, r)
             while key in seen:
                 key = f"{base}#{len(seen)}"
@@ -627,7 +634,7 @@ class CockpitApp(DetailBeside, App):
             columns = [c.key for c in table.ordered_columns]
             for key, cells in rows:
                 for column, new, old in zip(columns, cells, table.get_row(key)):
-                    if new != old:  # the line that says why may grow: its column follows
+                    if not _same_cell(new, old):  # the line that says why may grow: its column follows
                         table.update_cell(key, column, new, update_width=key == "~empty")
         else:
             keep, row = None, table.cursor_row
@@ -651,6 +658,13 @@ class CockpitApp(DetailBeside, App):
         failed = self._failed_note(name, snap) if snap else ""
         table.border_subtitle = escape(f"{failed}; {sub}" if failed and sub else failed or sub)
 
+    def _styled(self, name: str, r: dict, cols: tuple, cells: tuple) -> tuple:
+        """A row's cells as text, never markup (« [/docs] »): the state's or level's colour on its word; every other cell
+        of a master's row past 70, 80, 90 % of its budget in that step's."""
+        word = STYLE_COLUMN.get(name)
+        step = MASTER_STYLES.get(r.get("ctx_step"), "") if name == "sessions" else ""
+        return tuple(Text(str(cell), style=STYLES[name].get(cell, "") if c == word else step) for c, cell in zip(cols, cells))
+
     def _shown_view(self, name: str) -> dict | None:
         """A panel's view as shown: its own, and the filters a card opened it with (never saved)."""
         view = self.views.get(name)
@@ -659,8 +673,9 @@ class CockpitApp(DetailBeside, App):
     def _empty_row(self, name: str, panel: dict | None, view: dict | None, snap: dict | None) -> tuple[str, tuple]:
         """The one line of an empty table, which says why (no record behind it: Enter opens nothing)."""
         why = cockpit.why_empty(name, snap or {"panels": {name: panel}}, view, self.search, wait=self._wait())
-        cols = cockpit.columns(name, self.multi is not False)
-        return "~empty", tuple(Text(why, style="italic") if c == cockpit.EMPTY_COLUMN[name] else "" for c in cols)
+        cols = cockpit.columns(name, self.multi is not False, self.chosen.get(name))
+        at = cockpit.EMPTY_COLUMN[name] if cockpit.EMPTY_COLUMN[name] in cols else cols[0]  # its column may be hidden
+        return "~empty", tuple(Text(why, style="italic") if c == at else "" for c in cols)
 
     def _draw_tables(self) -> None:
         self.draw(set(cockpit.COLUMNS))
@@ -683,7 +698,7 @@ class CockpitApp(DetailBeside, App):
 
     def _save(self) -> None:
         cockpit.save_state({"scope": self.scope, "panels": self.views, "settings": self.settings, "tab": self.tab,
-                            "tabs": {t: {"view": v} for t, v in self.tab_views.items()}})
+                            "tabs": {t: {"view": v} for t, v in self.tab_views.items()}, "columns": self.chosen})
 
     def watch_theme(self, theme: str) -> None:
         """The theme picked in the command palette becomes the default one (saved with the settings)."""
@@ -878,6 +893,8 @@ class CockpitApp(DetailBeside, App):
             return bool(self.search) or self.screen.maximized is not None or self.tab != "overview"
         if action in ("side_act", "side_open"):
             return self._side_allows(action, parameters)
+        if action == "columns":  # the palette's entry names its table; the key needs one focused
+            return bool(parameters) or isinstance(self.focused, DataTable)
         if action == "next_view":  # shown on a tab with several views
             return len(cockpit.tab_views(self.tab, self._narrow())) > 1
         if action == "toggle_max":  # a tab of one panel is its full view already
@@ -975,8 +992,8 @@ class CockpitApp(DetailBeside, App):
 
 def run(cp, refresh: float = cockpit.REFRESH_S, probe: float = cockpit.PROBE_S, views: dict[str, dict] | None = None,
         search: str = "", settings: dict | None = None, tab: str | None = None,
-        tabs: dict[str, dict] | None = None) -> int:
-    app = CockpitApp(cp, refresh, probe, views, search, settings, tab, tabs)
+        tabs: dict[str, dict] | None = None, columns: dict[str, dict] | None = None) -> int:
+    app = CockpitApp(cp, refresh, probe, views, search, settings, tab, tabs, columns)
     app.run()
     if app.handover:  # an install handed over: the window starts once the app is gone (brain.handover)
         return handover.start(app.handover)
