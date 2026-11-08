@@ -73,10 +73,12 @@ its numbers, the active tab named (``tab_labels``), and the grid is not offered 
 ``--tab`` print one tab's panels (``render``). The overview's default view is one card per tab (``cards``, UX-19): what
 counts in that tab in a few lines, and the filters it opens with; the text view prints them with ``--tab overview``.
 From 140 columns, on a tab that is one list, a row's detail sits beside it (``detail_beside``, UX-20, brain.tui_side).
+Each table's columns can be chosen (``columns``, ``cells``: shown or hidden, their order, the longest a title may be;
+``EXTRA_COLUMNS``, hidden by default) and are kept in ``tui.json``; ``palette`` is the command palette's entries, in data.
 
 Read-only: nothing here writes a record or a ledger, and nothing calls a model. The one file written is the screen's
 own state, ``<BRAIN_HOME>/tui.json`` (the scope, each panel's view, the last tab and each tab's view, and the settings:
-theme, timezone; ``save_state``), by the interactive views. Its settings also hold, set by hand: ``lang`` (en, fr: the queue's title, « File d'Ada »;
+theme, timezone, each table's columns; ``save_state``), by the interactive views. Its settings also hold, set by hand: ``lang`` (en, fr: the queue's title, « File d'Ada »;
 $BRAIN_LANG wins) and ``titles`` (a free title per panel, ``{"queue": "Ma file"}``), read by every view (``title``).
 """
 
@@ -720,7 +722,7 @@ FILTERS = {"sessions": {"state": ("open", ALL, *STATES)},  # open: not ended
            "frontier": {"priority": (ALL, "P0-P1", "P0-P2", "none"), "milestone": (ALL, "none")}}
 OPEN_VALUES = {("frontier", "milestone")}  # any milestone id too: the panel's own (choices)
 SORT_COLUMNS = {"sessions": {"State": "state", "Last": "age", "Project": "project", "Context": "context", "Ctx": "ctx",
-                             "Role": "role"},
+                             "Role": "role", "Cost": "cost"},
                 "queue": {"Band": "band", "Score": "score", "Unblocks": "unblocks", "Age": "age", "Kind": "kind",
                           "Project": "project"},
                 "frontier": {"P": "priority", "Unblocks": "unblocks", "Milestone": "milestone", "Age": "age",
@@ -1047,6 +1049,7 @@ def help_lines(name: str) -> list[str]:
     its keys. ``{owner}`` in a text is config.json's owner."""
     h = {k: v.replace("{owner}", config.name_of()) for k, v in HELP[name].items()}
     keys = ("s next sort, o reverse, f filters and sort, a column title sorts; " if name in SORTS else "")
+    keys += "C its columns; " if name in COLUMNS else ""
     if name == "overview":
         return [h["what"], "", f"From: {h['from']}.", f"Read: {h['read']}.", f"Detail: {h['detail']}.", "",
                 "Keys: Enter or a click opens a card's tab, the arrows move between the cards, v the next view, a tab's "
@@ -1063,9 +1066,9 @@ def state_path() -> Path:
 
 
 def load_state(path: Path | None = None) -> dict:
-    """The scope, the panels' views, the last tab and each tab's view, and the settings (``theme``, ``tz``) the
-    interactive cockpit last showed; {} without them (the file missing, unreadable or not this shape). A tab or a view
-    this engine does not have is left out."""
+    """The scope, the panels' views, the last tab and each tab's view, each table's columns and the settings (``theme``,
+    ``tz``) the interactive cockpit last showed; {} without them (the file missing, unreadable or not this shape). A tab,
+    a view or a column this engine does not have is left out."""
     try:
         data = json.loads((path or state_path()).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -1078,6 +1081,7 @@ def load_state(path: Path | None = None) -> dict:
     if isinstance(data.get("panels"), dict):
         out["panels"] = {n: view_of(n, v) for n, v in data["panels"].items() if n in SORTS and isinstance(v, dict)}
     out.update(_saved_tabs(data))
+    out.update(_saved_columns(data))
     if isinstance(data.get("settings"), dict):
         got = data["settings"]
         out["settings"] = {k: got[k] for k in ("theme", "tz", "lang") if isinstance(got.get(k), str) and got[k]
@@ -1088,6 +1092,21 @@ def load_state(path: Path | None = None) -> dict:
             if titles:
                 out["settings"]["titles"] = titles
     return out
+
+
+def _saved_columns(data: dict) -> dict:
+    """Each table's chosen columns in a saved state: those it has, and a title width it offers."""
+    saved = data.get("columns")
+    out = {}
+    for name, c in (saved if isinstance(saved, dict) else {}).items():
+        if name not in COLUMNS or not isinstance(c, dict):
+            continue
+        given = c.get("shown") if isinstance(c.get("shown"), list) else []
+        shown = list(dict.fromkeys(x for x in given if isinstance(x, str) and x in every_column(name)))
+        width = c.get("width") if type(c.get("width")) is int and c.get("width") in TITLE_WIDTHS else 0
+        if shown or width:
+            out[name] = {"shown": shown, "width": width}
+    return {"columns": out} if out else {}
 
 
 def _saved_tabs(data: dict) -> dict:
@@ -1419,20 +1438,34 @@ COLUMNS = {
     "milestones": ("Project", "Done", "Progress", "Milestone", "Title"),
     "frontier": ("P", "Project", "Unblocks", "Milestone", "Age", "Id", "Title"),
 }
+EXTRA_COLUMNS = {"sessions": ("Cost", "App id", "Id", "Branch")}  # offered by the column chooser, hidden by default
+TITLE_WIDTHS = (0, 40, 60, 80, 100)  # the longest a table's title may be, the rest in the detail; 0: no limit
 
 
 def _days_text(days) -> str:
     return f"{days} d" if days is not None else "-"
 
 
-def cells(name: str, r: dict, project: bool = True, tz: str | None = None) -> tuple[str, ...]:
-    """One record of a table panel (an item of ``entries``) as its row, ``columns(name, project)``; its times in
-    ``tz`` (None: as recorded, UTC)."""
-    row = _cells(name, r, tz)
-    if project:
-        return row
-    i = COLUMNS[name].index("Project")
-    return row[:i] + row[i + 1:]
+def every_column(name: str) -> tuple[str, ...]:
+    """All a table can show: its default columns, then those the column chooser offers."""
+    return COLUMNS[name] + EXTRA_COLUMNS.get(name, ())
+
+
+def cells(name: str, r: dict, project: bool = True, tz: str | None = None, chosen: dict | None = None) -> tuple[str, ...]:
+    """One record of a table panel (an item of ``entries``) as its row, ``columns(name, project, chosen)``; its times in
+    ``tz`` (None: as recorded, UTC); its title cut to ``chosen``'s width."""
+    row = dict(zip(every_column(name), (*_cells(name, r, tz), *_extra_cells(name, r))))
+    width = (chosen or {}).get("width")
+    if width:
+        row[EMPTY_COLUMN[name]] = _cut(row[EMPTY_COLUMN[name]], width)
+    return tuple(row[c] for c in columns(name, project, chosen))
+
+
+def _extra_cells(name: str, r: dict) -> tuple[str, ...]:
+    if name == "sessions":
+        return (usage.usd(r.get("cost_usd")), sessions.short(r.get("host_id") or "") or "-", r["session_id"][:8],
+                r.get("branch") or "-")
+    return ()
 
 
 def _cells(name: str, r: dict, tz: str | None = None) -> tuple[str, ...]:
@@ -1463,9 +1496,11 @@ def row_key(name: str, r: dict) -> str:
     return r["session_id"] if name == "sessions" else f"{r['project']}/{r.get('id') or r.get('key')}"
 
 
-def columns(name: str, project: bool = True) -> tuple[str, ...]:
-    """A table's columns; without the project column when the scope holds one project."""
-    return tuple(c for c in COLUMNS[name] if project or c != "Project")
+def columns(name: str, project: bool = True, chosen: dict | None = None) -> tuple[str, ...]:
+    """A table's columns, as ``chosen`` orders them (``{"shown": [...], "width": n}``; none, or none left: the default);
+    without the project column when the scope holds one project."""
+    shown = [c for c in (chosen or {}).get("shown") or () if c in every_column(name) and (project or c != "Project")]
+    return tuple(shown) or tuple(c for c in COLUMNS[name] if project or c != "Project")
 
 
 def table(name: str, panel: dict | None, view: dict | None = None, search: str = "", project: bool = True,
@@ -1718,6 +1753,30 @@ def cards(snap: dict, wait: str = "") -> list[dict]:
     """The overview's cards (UX-19): each tab's title, lines, foot and the filters it opens with; ``wait``: what a panel
     not probed yet waits for, as ``probe_wait`` says it."""
     return [TABS[n]["card"](snap, wait) for n in card_tabs()]
+
+
+def palette(choices: dict, is_narrow: bool = False) -> list[dict]:
+    """The command palette's entries (spec cockpit-ux §4.4): every tab and view offered at this size, project, sort, filter
+    and table's columns, each ``{title, help, do}``; ``do``: what brain.tui_palette runs, a tuple."""
+    out = []
+    for n in built_tabs():
+        name = tab_title(n)
+        out.append({"title": f"Go to {name}", "help": f"key {TABS[n]['key']}: {tab_question(n)}", "do": ("tab", n)})
+        views = tab_views(n, is_narrow)
+        out += [{"title": f"{name}: the {VIEW_LABELS[v][lang()]} view", "help": "v changes it", "do": ("view", n, v)}
+                for v in views if len(views) > 1]
+    out += [{"title": f"Project: {label}", "help": "p opens the selector", "do": ("scope", value)}
+            for label, value, _ in scope_choices(choices)]
+    for name in SORTS:
+        out += [{"title": f"{title(name)}: sort by {key}", "help": "s changes it, o reverses it", "do": ("sort", name, key)}
+                for key in SORTS[name]]
+        out += [{"title": f"{title(name)}: {field} {value}", "help": "f holds its filters",
+                 "do": ("filter", name, field, value)} for field, values in FILTERS[name].items() for value in values]
+    out += [{"title": f"{title(name)}: choose its columns", "help": "C on its table", "do": ("columns", name)}
+            for name in COLUMNS]
+    out.append({"title": "Reset the views", "help": "every sort, filter, column and tab's view back to its default; the "
+                                                    "project, the theme and the timezone stay", "do": ("reset",)})
+    return out
 
 
 def bar_status(changed: str | None, probe_in: float | None, probing: bool = False, paused: bool = False,

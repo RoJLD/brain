@@ -564,4 +564,4 @@ def test_run_gives_the_app_its_tab_and_views(monkeypatch):
 
     monkeypatch.setattr(tui, "CockpitApp", App)
     assert tui.run(FakeCockpit(), tab="health", tabs={"overview": {"view": "digest"}}) == 0
-    assert seen["args"][-2:] == ("health", {"overview": {"view": "digest"}})
+    assert seen["args"][-3:] == ("health", {"overview": {"view": "digest"}}, None)
