@@ -592,7 +592,7 @@ def test_the_project_selector_switches_the_scope_and_keeps_each_probe(tmp_path, 
 def test_brain_tui_starts_from_the_remembered_scope_and_views(tmp_path, monkeypatch, store, capsys):
     root = _cockpit(tmp_path, monkeypatch, store).projs[0].root
     seen = {}
-    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None: seen.update(
+    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None: seen.update(
         scope=cp.scope, views=views, search=search, tz=tz) or 0)
     assert cli.main(["tui", "--project", "demo", "--plain", "--sort", "frontier:-unblocks", "--filter",
                      "queue:kind=decision", "--search", "pick"]) == 0
@@ -635,8 +635,8 @@ def test_times_follow_the_timezone_and_every_panel_has_its_help(monkeypatch):
         2026, 10, 31, tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
     head = cockpit.render({"scope": "x", "read_at": "2026-11-02T18:29:04Z", "panels": {}}, tz="utc")[0]
     assert head == f"brain {brain.__version__} cockpit: x; files read 2026-11-02 18:29:04 (utc), probes not run"
-    assert set(cockpit.HELP) == set(cockpit.PANELS)
-    for name in cockpit.PANELS:
+    assert set(cockpit.HELP) == {*cockpit.PANELS, *cockpit.FRAMES}
+    for name in cockpit.HELP:
         lines = cockpit.help_lines(name)
         assert lines[0] and any(x.startswith("From: ") for x in lines) and any(x.startswith("Detail: ") for x in lines)
         assert ("s next sort" in lines[-1]) == (name in cockpit.SORTS)
@@ -647,11 +647,138 @@ def test_the_settings_are_remembered(tmp_path, monkeypatch, store, capsys):
     assert cockpit.load_state()["settings"] == {"theme": "nord"}  # an unknown timezone or key is left out
     _cockpit(tmp_path, monkeypatch, store)
     seen = {}
-    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None: seen.update(
-        tz=tz) or 0)
+    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None:
+                        seen.update(tz=tz, tab=tab) or 0)
     assert cli.main(["tui", "--project", "demo", "--plain", "--tz", "utc"]) == 0
     assert seen["tz"] == "utc" and cockpit.load_state()["settings"] == {"theme": "nord", "tz": "utc"}
     assert cli.main(["tui", "--project", "demo", "--plain"]) == 0 and seen["tz"] == "utc"  # remembered
     assert cli.main(["tui", "--project", "demo", "--plain", "--reset"]) == 0 and seen["tz"] == "local"  # the default
     assert cli.main(["tui", "--project", "demo", "--once", "--quick", "--tz", "utc"]) == 0
     assert "(utc), probes not run" in capsys.readouterr().out.splitlines()[0]
+
+
+# --- the tabs (wi-brain-tui-layout, UX-18) ---
+
+def test_the_tabs_are_the_eleven_of_ux18_with_their_keys():
+    assert [(n, t["key"]) for n, t in cockpit.TABS.items()] == [
+        ("overview", "0"), ("queue", "1"), ("sessions", "2"), ("frontier", "3"), ("milestones", "4"), ("ideas", "5"),
+        ("lessons", "6"), ("features", "7"), ("health", "8"), ("resources", "9"), ("settings", ",")]
+    assert cockpit.built_tabs() == ("overview", "queue", "sessions", "frontier", "milestones", "health")
+    for name, t in cockpit.TABS.items():
+        assert set(t["label"]) == set(cockpit.LANGS) and set(t["question"]) == set(cockpit.LANGS)
+        assert t["views"] or t["arrives"], name  # a tab not built says what brings it
+    # every panel and frame has a tab, and each view its words
+    assert {p for t in cockpit.built_tabs() for p in cockpit.tab_panels(t)} == {*cockpit.PANELS, *cockpit.FRAMES}
+    assert {v for t in cockpit.TABS.values() for v in t["views"]} <= set(cockpit.VIEW_LABELS)
+    assert [cockpit.panel_tab(p) for p in ("queue", "alerts", "exec", "digest")] == ["queue", "health", "health",
+                                                                                      "overview"]
+
+
+def test_a_tab_label_says_its_state_in_digits_and_signs(tmp_path, monkeypatch):
+    panels = {"queue": {"projects": [{"project": "d", "entries": [{"id": "a", "band": "now"}, {"id": "b", "band": "week"},
+                                                                  {"id": "c", "band": "now"}]}]},
+              "sessions": {"rows": [{"state": "asking"}, {"state": "running"}]},
+              "alerts": {"projects": [{"project": "d", "alerts": [{"key": "k"}]}]}}
+    snap = {"panels": panels}
+    assert [cockpit.tab_count(n, snap) for n in ("queue", "sessions", "health", "frontier")] == ["2", "1!", "1", ""]
+    assert cockpit.tab_count("queue", {}) == "" and cockpit.tab_count("health", {"panels": {"alerts": None}}) == ""
+    assert cockpit.tab_label("sessions", snap) == "2 Sessions 1!" and cockpit.tab_label("frontier", snap) == "3 Frontier"
+    monkeypatch.setenv("BRAIN_LANG", "fr")
+    assert cockpit.tab_label("health", snap) == "8 Santé 1" and cockpit.tab_question("queue").startswith("Que dois-je")
+    assert cockpit.tab_label("queue", snap).startswith(("1 File d'", "1 File de "))  # the owner's name, in French
+    assert cockpit.not_built("ideas") == "Idées is not here yet: it arrives with the ideas board"
+
+
+def test_the_bar_is_reduced_to_its_numbers_when_narrow_or_when_it_does_not_fit(monkeypatch):
+    snap = {"panels": {"sessions": {"rows": [{"state": "asking"}]}}}
+    assert not cockpit.narrow(120, 30) and cockpit.narrow(119, 30) and cockpit.narrow(120, 29)
+    wide = cockpit.tab_labels(snap, "queue", 160, 48)
+    assert wide["sessions"] == "2 Sessions 1!" and list(wide) == list(cockpit.built_tabs())
+    assert cockpit.tab_labels(snap, "sessions", 100, 48) == {
+        "overview": "0", "queue": "1", "sessions": "2 Sessions 1!", "frontier": "3", "milestones": "4", "health": "8"}
+    assert cockpit.tab_labels(snap, "queue", 160, 29)["sessions"] == "2"  # short too
+    # the eleven, once built: more than 120 columns with their counts, so their numbers there, and it fits
+    every = {n: {**t, "views": t["views"] or {"list": ()}} for n, t in cockpit.TABS.items()}
+    monkeypatch.setattr(cockpit, "TABS", every)
+    assert len(cockpit.built_tabs()) == 11
+    at_120 = cockpit.tab_labels(snap, "queue", 120, 40)
+    assert at_120["frontier"] == "3" and at_120["settings"] == ","
+    assert sum(len(x) + cockpit.TAB_PADDING for x in at_120.values()) <= 120
+    assert cockpit.tab_labels(snap, "queue", 200, 40)["settings"] == ", Settings"
+
+
+def test_a_tabs_views_and_the_grid_on_a_narrow_terminal():
+    assert cockpit.tab_views("overview") == ("grid", "digest") and cockpit.tab_views("overview", True) == ("digest",)
+    assert cockpit.tab_view("overview") == "grid" and cockpit.tab_view("overview", "digest") == "digest"
+    assert cockpit.tab_view("overview", "grid", True) == "digest"  # no grid here, and its choice kept for a wide one
+    assert cockpit.tab_view("overview", "gone") == "grid"
+    assert cockpit.tab_panels("overview", "digest") == ("digest",) and cockpit.tab_panels("overview") == cockpit.PANELS
+    assert cockpit.tab_panels("health", "frames") == ("alerts", "audit", "health", "exec")
+
+
+def test_the_last_tab_and_views_are_remembered_and_a_foreign_one_left_out(tmp_path):
+    f = tmp_path / "tui.json"
+    cockpit.save_state({"tab": "health", "tabs": {"overview": {"view": "digest"}}}, f)
+    assert cockpit.load_state(f) == {"tab": "health", "tabs": {"overview": {"view": "digest"}}}
+    cockpit.save_state({"tab": "ideas", "tabs": {"overview": {"view": "x"}, "nope": {"view": "grid"}, "queue": 3,
+                                                 "health": {"view": ["frames"]}}}, f)
+    assert cockpit.load_state(f) == {"tabs": {}}  # not built yet, an unknown view or tab: left out
+
+
+def test_the_text_view_prints_one_tab(tmp_path, monkeypatch):
+    health = {"projects": [{"project": "demo", "stacks": [], "code_index": []}],
+              "exec": {"days": 7, "runs": 3, "failed": 1, "regressions": [{"task": "sync", "change": 0.5}],
+                       "slowest": [{"project": "demo", "task": "sync", "runs": 3, "failed": 1, "median_s": 2.5,
+                                    "max_s": 9}]}}
+    snap = {"scope": "demo", "panels": {"health": health, "queue": {"projects": []}}}
+    lines = cockpit.render(snap, tab="health")
+    assert "Exec times (3 run(s) in 7 d, 1 failed)" in lines and "Stacks and index" in lines
+    assert "Audit debt: not probed yet" in lines
+    assert "  2.5 s (max 9 s, 3 run(s), 1 failed) demo: sync" in lines and "  regression: sync +50%" in lines
+    assert not any(x.startswith("Ada's queue") for x in lines)
+    assert any(x.startswith("Ada's queue") for x in cockpit.render(snap, tab="queue"))
+    every = cockpit.render(snap)  # no tab: the panels, the exec line in the stacks' frame and no frame of its own
+    assert any(x.startswith("Ada's queue") for x in every) and not any(x.startswith("Exec times") for x in every)
+    assert cockpit.exec_lines(None) == ["Exec times: not probed yet"]
+    assert cockpit.exec_lines({"projects": []}) == ["Exec times", "  no run read"]
+    assert cockpit.heading("exec", None) == "Exec times: not probed yet"
+
+
+def test_the_global_bar_says_the_last_change_and_the_next_probe():
+    at = "2026-11-08T10:15:00Z"
+    assert cockpit.bar_status(at, 125, tz="utc") == "changed 10:15 · probe in 2 min 05"
+    assert cockpit.bar_status(None, None, tz="utc") == "changed - · probe now"
+    assert cockpit.bar_status(at, 0.5, tz="utc").endswith("probe now")
+    assert cockpit.bar_status(at, 60, probing=True, tz="utc").endswith("probing")
+    assert cockpit.bar_status(at, 60, paused=True, tz="utc").endswith("paused")
+
+
+def test_brain_tui_tab_starts_there_and_prints_it(tmp_path, monkeypatch, store, capsys):
+    _cockpit(tmp_path, monkeypatch, store)
+    assert cli.main(["tui", "--project", "demo", "--once", "--quick", "--tab", "frontier"]) == 0
+    out = capsys.readouterr().out
+    assert "Frontier (" in out and "Milestones (" not in out
+    seen = {}
+    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None:
+                        seen.update(tab=tab) or 0)
+    assert cli.main(["tui", "--project", "demo", "--plain", "--tab", "health"]) == 0
+    assert seen["tab"] == "health" and cockpit.load_state()["tab"] == "health"
+    assert cli.main(["tui", "--project", "demo", "--plain"]) == 0
+    assert seen["tab"] is None and cockpit.load_state()["tab"] == "health"  # the text view prints all, the tab is kept
+    with pytest.raises(SystemExit):
+        cli.main(["tui", "--tab", "ideas"])  # not built yet: not a choice
+
+
+def test_brain_tui_gives_the_app_the_tab_it_is_told_or_the_one_it_last_showed(tmp_path, monkeypatch, store):
+    pytest.importorskip("textual")
+    from brain import tui
+    _cockpit(tmp_path, monkeypatch, store)
+    seen = {}
+    monkeypatch.setattr(tui, "run", lambda cp, **kw: seen.update(tab=kw["tab"], tabs=kw["tabs"]) or 0)
+    cockpit.save_state({"scope": "demo", "tab": "frontier", "tabs": {"overview": {"view": "digest"}}})
+    assert cli.main(["tui", "--project", "demo"]) == 0
+    assert seen == {"tab": "frontier", "tabs": {"overview": {"view": "digest"}}}  # the last ones shown
+    assert cli.main(["tui", "--project", "demo", "--tab", "health"]) == 0
+    assert seen["tab"] == "health" and cockpit.load_state()["tabs"] == {"overview": {"view": "digest"}}
+    assert cli.main(["tui", "--project", "demo", "--reset"]) == 0
+    assert seen == {"tab": None, "tabs": {}}  # forgotten
