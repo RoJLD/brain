@@ -56,14 +56,7 @@ def cmd_tui(args, root: Path) -> int:
     saved = cockpit.load_state() if interactive and not args.reset else {}
     views = {n: {**(saved.get("panels") or {}).get(n, {}), **flags.get(n, {})} for n in cockpit.SORTS}
     settings = {"tz": "local", **(saved.get("settings") or {}), **({"tz": args.tz} if args.tz else {})}
-    try:
-        projs = _scope(args, root)
-    except SystemExit as exc:  # --all without a registry: this folder's project, and the selector says why
-        if not args.all or getattr(args, "project", None):
-            raise
-        print(f"{exc}; brain tui shows this folder's project", file=sys.stderr)
-        args.all = False
-        projs = _scope(args, root)
+    projs = _projects(args, root)
     cp = cockpit.Cockpit(projs, every=args.all, root=root, hours=args.hours)
     if not (args.all or getattr(args, "project", None)) and saved.get("scope") in (cockpit.ALL, *cp.choices):
         cp.select(saved["scope"])  # the last scope shown, when it is still registered
@@ -99,6 +92,18 @@ def cmd_tui(args, root: Path) -> int:
             return tui.run(cp, refresh=args.refresh, probe=args.probe, views=views, search=args.search,
                            settings=settings)
     return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"])
+
+
+def _projects(args, root: Path) -> list:
+    """The scope's projects; --all without a registry: this folder's project, which stderr says (args.all goes off)."""
+    try:
+        return _scope(args, root)
+    except SystemExit as exc:
+        if not args.all or getattr(args, "project", None):
+            raise
+        print(f"{exc}; brain tui shows this folder's project", file=sys.stderr)
+        args.all = False
+        return _scope(args, root)
 
 
 def _failed_reads(snap: dict) -> bool:

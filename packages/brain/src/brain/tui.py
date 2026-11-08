@@ -655,12 +655,8 @@ class CockpitApp(App):
             seen.add(key)
             rows.append((key, cells))
             self.records[name][key] = r
-        if not rows:  # one line that says why (no record behind it: Enter opens nothing)
-            snap = snap or {"panels": {name: panel}}
-            why = cockpit.why_empty(name, snap, view, self.search, wait=self._wait())
-            cols = cockpit.columns(name, self.multi is not False)
-            rows.append(("~empty", tuple(Text(why, style="italic") if c == cockpit.EMPTY_COLUMN[name] else ""
-                                         for c in cols)))
+        if not rows:
+            rows.append(self._empty_row(name, panel, view, snap))
         keys = [k for k, _ in rows]
         if table.row_count and keys == [k.value for k in table.rows]:
             columns = [c.key for c in table.ordered_columns]
@@ -689,6 +685,12 @@ class CockpitApp(App):
             sub = f"{panel['defaulted']}; {sub}" if sub else panel["defaulted"]
         failed = self._failed_note(name, snap) if snap else ""
         table.border_subtitle = escape(f"{failed}; {sub}" if failed and sub else failed or sub)
+
+    def _empty_row(self, name: str, panel: dict | None, view: dict | None, snap: dict | None) -> tuple[str, tuple]:
+        """The one line of an empty table, which says why (no record behind it: Enter opens nothing)."""
+        why = cockpit.why_empty(name, snap or {"panels": {name: panel}}, view, self.search, wait=self._wait())
+        cols = cockpit.columns(name, self.multi is not False)
+        return "~empty", tuple(Text(why, style="italic") if c == cockpit.EMPTY_COLUMN[name] else "" for c in cols)
 
     def _draw_tables(self) -> None:
         self.draw(set(cockpit.COLUMNS))

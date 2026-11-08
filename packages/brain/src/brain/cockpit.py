@@ -621,21 +621,21 @@ class Cockpit:
     def _probed_panels(self, now: datetime | None = None) -> None:
         """The probed panels of the scope, from what each project's last probe measured (none: not probed yet)."""
         got = [self.probes[p.name] for p in self.found if p.name in self.probes]
-        new: dict[str, dict] = {}
-        if got:  # built first, then swapped in at once: a draw never sees them gone
-            now = now or datetime.now(timezone.utc)
-            new = {"alerts": {"projects": [g["alerts"] for g in got]},
-                   "audit": {"projects": [g["audit"] for g in got]},
-                   "health": {"projects": [g["health"] for g in got],
-                              "exec": perf_summary(None if self.every else {p.name for p in self.projs}, now)},
-                   "digest": {"projects": [g["digest"] for g in got]}}
-            for name in new:
-                self.panel_at[name] = min(g["at"] for g in got)  # the time of the data shown
+        new = self._probed_content(got, now) if got else {}  # built first, then swapped in: a draw never sees them gone
+        oldest = min(g["at"] for g in got) if got else None
+        self.panel_at.update(dict.fromkeys(new, oldest))  # the time of the data shown
         with self.lock:
             for name in PROBE_PANELS:
                 self.panels.pop(name, None)
             self.panels.update(new)
-        self.probed_at = min(g["at"] for g in got) if got and not self.needs_probe() else None
+        self.probed_at = oldest if got and not self.needs_probe() else None
+
+    def _probed_content(self, got: list[dict], now: datetime | None) -> dict[str, dict]:
+        now = now or datetime.now(timezone.utc)
+        only = None if self.every else {p.name for p in self.projs}
+        return {"alerts": {"projects": [g["alerts"] for g in got]}, "audit": {"projects": [g["audit"] for g in got]},
+                "health": {"projects": [g["health"] for g in got], "exec": perf_summary(only, now)},
+                "digest": {"projects": [g["digest"] for g in got]}}
 
     def refresh(self, probe: bool = False) -> set[str]:
         """One tick: the sessions (a transcript only when it changed), the file panels whose files changed (all of
@@ -875,20 +875,34 @@ def why_empty(name: str, snap: dict, view: dict | None = None, search: str = "",
     ``probe_wait`` says it), its first read failed, a filter or the search hides its rows (and the key that changes
     it), or nothing in the scope (and the projects of the scope this machine lacks)."""
     panel = (snap.get("panels") or {}).get(name)
-    error = (snap.get("errors") or {}).get(name)
     if panel is None:
-        if error:
-            return f"read failed: {error['error']}"
-        return (wait or "not probed yet") if name in PROBE_PANELS else "not read yet"
-    every = entries(name, panel)
-    v = view_of(name, view) if view is not None and name in SORTS else None
+        return _why_no_panel(name, snap, wait)
     if shown(name, panel, view, search):
         return ""
-    if every:
-        hides = [f"{f} {v[f]}" for f, vals in FILTERS[name].items() if v[f] != ALL] if v else []
-        keys = (["f changes the filters"] if hides else []) + (["Escape clears the search"] if search.strip() else [])
-        hides += [f"search '{search.strip()}'"] if search.strip() else []
-        return f"{len(every)} hidden by {', '.join(hides)}: {', '.join(keys)}"
+    every = entries(name, panel)
+    return _why_hidden(name, len(every), view, search) if every else _why_nothing(name, panel, snap)
+
+
+def _why_no_panel(name: str, snap: dict, wait: str) -> str:
+    error = (snap.get("errors") or {}).get(name)
+    if error:
+        return f"read failed: {error['error']}"
+    return (wait or "not probed yet") if name in PROBE_PANELS else "not read yet"
+
+
+def _why_hidden(name: str, total: int, view: dict | None, search: str) -> str:
+    """All ``total`` rows hidden: by which filters and search, and the key that changes each."""
+    v = view_of(name, view) if view is not None and name in SORTS else None
+    hides = [f"{f} {v[f]}" for f in FILTERS[name] if v[f] != ALL] if v else []
+    keys = ["f changes the filters"] if hides else []
+    if search.strip():
+        hides.append(f"search '{search.strip()}'")
+        keys.append("Escape clears the search")
+    return f"{total} hidden by {', '.join(hides)}: {', '.join(keys)}"
+
+
+def _why_nothing(name: str, panel: dict, snap: dict) -> str:
+    """No row at all: nothing in the scope, and the projects of the scope this machine lacks."""
     missing = [p for p in snap.get("projects") or [] if not p.get("found", True)]
     text = NOTHING[name].format(owner=config.name_of(), scope=_scope_text(snap.get("scope", "")),
                                 hours=panel.get("hours", HOURS))

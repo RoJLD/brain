@@ -1,5 +1,6 @@
 """wi-brain-tui-cockpit: the cockpit's data layer (brain.cockpit), its text view and brain tui."""
 
+import argparse
 import io
 import json
 import os
@@ -12,6 +13,7 @@ import pytest
 
 import brain
 from brain import alerts, cli, cockpit, digest, plan, projects, resume, status
+from brain.commands import tui as tui_command
 
 from test_project_views import _status_project
 
@@ -535,6 +537,21 @@ def test_the_probe_says_its_progress_and_a_stack_its_last_ok_measure(tmp_path, m
     assert snap["panels"]["health"]["projects"] == health["projects"] and snap["probing"] is None  # kept
     cp.select("demo")  # another scope: the old scope's errors go
     assert cp.snapshot()["errors"] == {} and cp.snapshot()["panels"]["health"]["projects"] == health["projects"]
+
+
+def test_the_tui_command_says_its_failed_reads_and_reads_its_durations(capsys):
+    """brain.commands.tui, directly: one line per error, its panels named; a duration of at least 250 ms."""
+    assert tui_command._failed_reads({"errors": {}}) is False and tui_command._failed_reads({}) is False
+    assert capsys.readouterr().err == ""
+    assert tui_command._failed_reads({"errors": {"audit": {"at": "t", "error": "OSError: x"},
+                                                 "health": {"at": "t", "error": "OSError: x"},
+                                                 "digest": {"at": "t", "error": "ValueError: y"}}}) is True
+    assert capsys.readouterr().err.splitlines() == ["brain tui: reading audit, health failed: OSError: x",
+                                                    "brain tui: reading digest failed: ValueError: y"]
+    assert tui_command._duration("500ms") == 0.5 and tui_command._duration("5m") == 300
+    for bad in ("100ms", "soon"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            tui_command._duration(bad)
 
 
 def test_brain_tui_all_without_a_registry_shows_this_folders_project(tmp_path, monkeypatch, store, capsys):
