@@ -5,13 +5,16 @@ lays the panels out and maps the keys.
 The tabs (wi-brain-tui-layout, UX-18; brain.cockpit's ``TABS``): one per question, on a bar that says each one's state
 (the queue's band now, the sessions asking, the open alerts). There is one widget per panel, in one grid: a tab or a view
 is a layout of them, so a panel keeps its cursor and its scroll from one tab to another. Under 120 columns or 30 rows the
-bar is reduced to its numbers and the grid is not offered (UX-2). The last tab and each tab's view are remembered.
+bar is reduced to its numbers, the cards go to one column and the grid is not offered (UX-2). The last tab and each tab's
+view are remembered. The overview shows one card per tab (UX-19, brain.cockpit's ``cards``), its grid and its digest
+being its other views; a card opens its tab already filtered, by a filter never saved and gone when the tab is left.
 
 Keys (the footer shows those of the focused panel, ? lists them all):
   0-9, ,   go to a tab: 0 overview, 1 queue, 2 sessions, 3 frontier, 4 milestones, 8 health (the number in a panel's
            title); 5 ideas, 6 lessons, 7 features, 9 resources and the comma (settings) wait for their items
   ctrl+pageup, ctrl+pagedown    the previous and the next tab (a click on the bar too, its tooltips name each tab)
-  v        the tab's next view (the overview: its grid, its digest); a click on its word in the toolbar too
+  v        the tab's next view (the overview: its cards, its grid, its digest); a click on its word in the toolbar too
+  Enter    on a card, its tab, already filtered as the card says (a click too); the arrows move between the cards
   p        the project selector: global (every registered project) or one project
   /        search every table (each word, case ignored); Enter keeps it, Escape clears it
   s, o     the focused panel's next sort, and its order reversed (sessions, queue, frontier); a column title too
@@ -68,14 +71,16 @@ from .tui_screens import AnswerScreen, ConfirmScreen, DetailScreen, PanelHelp, R
 
 INTERVALS = (0.5, 1.0, 2.0, 5.0, 10.0)
 TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines, "exec": cockpit.exec_lines,
-         "digest": lambda panel: cockpit.digest_lines(panel, width=1000, lines_max=0)}  # it scrolls: all of it
+         "digest": lambda panel: cockpit.digest_lines(panel, width=1000, lines_max=0, titled=False)}  # it scrolls: all of it
 STYLES = {"sessions": {"asking": "bold magenta", "running": "green", "stale": "yellow", "idle": "cyan", "ended": "dim"},
           "alerts": {"critical": "bold red", "error": "red", "warn": "yellow", "info": "dim"}}  # the first column
 MASTER_STYLES = {70: "yellow", 80: "bold dark_orange", 90: "bold red"}  # a master's row at each step (ST-4)
 PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back", "toggle_max", "pick_scope", "search",
                  "next_sort", "reverse", "filters", "panel_help", "toggle_tz",
                  "update")  # the panels' keys, off while a dialog or a detail is on top of them
-EVERY_FRAME = (*cockpit.PANELS, *cockpit.FRAMES)
+# every panel and frame, as the grid places them: with open alerts their row is whole (L11), the digest beside the stacks
+EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec")
+CARD_COLUMNS = 3
 STATUS_COLUMNS = 100  # narrower, the global bar keeps its width for the search: the subtitle has the times
 
 
@@ -87,6 +92,25 @@ class ViewTable(DataTable):
     """A table panel with a view (sessions, queue, frontier): its keys show in the footer while it has the focus."""
     BINDINGS = [Binding("s", "app.next_sort", "Sort"), Binding("o", "app.reverse", "Order"),
                 Binding("f", "app.filters", "Filter")]
+
+
+class Card(Static, can_focus=True):
+    """A tab's card in the overview (brain.cockpit's ``cards``): Enter or a click opens its tab, already filtered; the
+    arrows move between the cards."""
+    BINDINGS = [Binding("enter", "open", "Open tab"), Binding("left", "app.card_move(-1, 0)", show=False),
+                Binding("right", "app.card_move(1, 0)", show=False), Binding("up", "app.card_move(0, -1)", show=False),
+                Binding("down", "app.card_move(0, 1)", show=False)]
+
+    def __init__(self, tab: str) -> None:
+        super().__init__(id=f"card-{tab}", classes="card")
+        self.tab_name = tab
+
+    def action_open(self) -> None:
+        self.app.open_card(self.tab_name)
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.app.open_card(self.tab_name)
 
 
 class SearchInput(Input):
@@ -109,6 +133,9 @@ class CockpitApp(App):
     #views { width: auto; }
     #grid.all { grid-size: 2 5; grid-rows: 3fr 3fr 2fr 2fr 2fr; }
     #grid.all #sessions, #grid.all #digest { column-span: 2; }
+    #grid.all.alerts-wide { grid-rows: 3fr 2fr 3fr 2fr 2fr; }
+    #grid.all.alerts-wide #alerts { column-span: 2; }
+    #grid.all.alerts-wide #digest { column-span: 1; }
     #grid.frames { grid-size: 3 2; grid-rows: 1fr 2fr; }
     #grid.frames #alerts { column-span: 3; }
     #grid.frames.stacked { grid-size: 1 4; grid-rows: 2fr 1fr 1fr 1fr; }
@@ -116,6 +143,10 @@ class CockpitApp(App):
     .panel { border: round $primary; height: 100%; }
     .panel:focus, .panel:focus-within { border: round $accent; }
     .panel.off { display: none; }
+    #cards-grid { grid-size: 3; grid-rows: auto; height: auto; }
+    #cards-grid.one { grid-size: 1; }
+    .card { border: round $primary; height: auto; min-height: 6; padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
+    .card:focus { border: round $accent; }
     """
     BINDINGS = [
         Binding("0", "tab('overview')", "Tabs", key_display="0-9"),  # the footer's word for the keys of every tab
@@ -153,6 +184,9 @@ class CockpitApp(App):
         self.tab = tab if tab in cockpit.built_tabs() else "overview"
         self.tab_views = {t: v["view"] for t, v in (tabs or {}).items()}  # the view each tab last showed
         self.tab_focus: dict[str, str] = {}  # the panel each tab last focused
+        self.card_focus: str | None = None  # the card last focused
+        self.entered: dict[str, dict] = {}  # the filters a card opened its tab with: never saved, gone with the tab
+        self.laid_out: str | None = None  # the view _layout last laid out
         self.framed = False  # the frame is mounted: a resize lays it out again
         self.last_panel = cockpit.tab_panels(self.tab)[0]
         self.busy = self.probing = False
@@ -189,6 +223,12 @@ class CockpitApp(App):
                 else:
                     with VerticalScroll(id=name, classes="panel"):
                         yield Static(id=f"{name}-text")
+        cards = VerticalScroll(id="cards")
+        cards.can_focus = False  # the cards take the focus, not their scroll
+        with cards:
+            with Grid(id="cards-grid"):
+                for tab in cockpit.card_tabs():
+                    yield Card(tab)
         yield Footer()
 
     def _base(self):
@@ -234,15 +274,35 @@ class CockpitApp(App):
             self._base().minimize()  # its panel left the screen: the grid gone on a narrow terminal
         self._q("#status").display = self.size.width >= STATUS_COLUMNS
         grid = self._q("#grid")
+        grid.display = view != "cards"
         grid.set_class(view == "grid", "all")
         grid.set_class(view == "frames", "frames")
         grid.set_class(self._narrow(), "stacked")
+        self._alerts_row()
         for name in EVERY_FRAME:
             self._q(f"#{name}").set_class(name not in shown, "off")
+        self._q("#cards").display = view == "cards"
+        self._q("#cards-grid").set_class(self._narrow(), "one")
+        self.laid_out = view
         self._toolbar(view)
         self._bar()
         self._titles()
+        self._draw_cards()
         self.refresh_bindings()
+
+    def _alerts_row(self) -> None:
+        """In the grid, open alerts get a whole row (L11): their message reads in full."""
+        panels = self.cockpit.snapshot()["panels"]
+        self._q("#grid").set_class(bool(cockpit.entries("alerts", panels.get("alerts"))), "alerts-wide")
+
+    def _draw_cards(self) -> None:
+        if self.tab != "overview" or self._view() != "cards":
+            return  # not on screen: drawn when shown
+        for card in cockpit.cards(self.cockpit.snapshot(), self._wait()):
+            widget = self._q(f"#card-{card['tab']}", Card)
+            widget.border_title = escape(card["title"])
+            widget.border_subtitle = escape(card["foot"])
+            widget.update(Text("\n".join(card["lines"])))
 
     def _toolbar(self, view: str) -> None:
         """The tab's question, its views (the one shown in brackets and bold; a click or v) and its [i]."""
@@ -268,18 +328,48 @@ class CockpitApp(App):
                 tab.tooltip = tip
 
     def _focus_body(self) -> None:
-        """The focus on the panel the tab last focused, else its first (once the layout has applied)."""
+        """The focus on the panel or card the tab last focused, else its first (once the layout has applied)."""
         shown = cockpit.tab_panels(self.tab, self._view())
-        last = self.tab_focus.get(self.tab)
-        self.last_panel = last if last in shown else shown[0]
-        self.call_after_refresh(self._q(f"#{self.last_panel}").focus)
+        if not shown:  # the cards
+            cards = self._base().query(Card)
+            target = next((c for c in cards if c.id == self.card_focus), cards.first())
+        else:
+            last = self.tab_focus.get(self.tab)
+            self.last_panel = last if last in shown else shown[0]
+            target = self._q(f"#{self.last_panel}")
+        self._base().set_focus(target, scroll_visible=False)  # at once: the next key goes to it, not to what it left
+        if not shown:
+            self.call_after_refresh(target.scroll_visible, animate=False)  # once laid out: a card may be below the fold
 
     def _show(self, name: str) -> None:
         self._base().minimize()
+        left, self.entered = set(self.entered), {}  # what a card filtered goes with its tab
         self.tab = name
         self._save()
         self._layout()
         self._focus_body()
+        if left:
+            self.draw(left)
+
+    def open_card(self, tab: str) -> None:
+        """A card's tab, already filtered as the card says, its rows all shown: the search cleared, the card's filter over
+        the owner's; a filter not saved, gone when the tab is left."""
+        card = next(c for c in cockpit.cards(self.cockpit.snapshot()) if c["tab"] == tab)
+        self._q("#search", Input).value = ""  # the card's count, not what a search left of it
+        self.action_tab(tab)
+        self.entered = card["filters"]
+        if self.entered:
+            self.draw(set(self.entered))
+
+    def action_card_move(self, dx: int, dy: int) -> None:
+        """The arrows on a card: the next one on its row, the one above or below (the last, from a shorter row); nothing
+        past an edge."""
+        cards = list(self._base().query(Card))
+        columns = 1 if self._narrow() else CARD_COLUMNS
+        row, column = divmod(cards.index(self.focused) if self.focused in cards else 0, columns)
+        row, column = row + dy, column + dx
+        if 0 <= column < columns and row >= 0 and row * columns < len(cards):
+            self._base().set_focus(cards[min(row * columns + column, len(cards) - 1)])
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         """A click on the bar. A key has shown its tab already (action_tab), and an event of an earlier key is stale:
@@ -294,9 +384,12 @@ class CockpitApp(App):
             self.call_after_refresh(self._resized)  # the app's own handler sets the size after this one
 
     def _resized(self) -> None:
+        before = self.laid_out
         self._layout()
-        if self.last_panel not in cockpit.tab_panels(self.tab, self._view()):  # the grid gone, on a narrow terminal
+        if self.laid_out != before:  # the grid gone, on a narrow terminal: its focus with it
             self._focus_body()
+        elif isinstance(self.focused, Card):  # the cards rearranged: the focused one still in sight
+            self.call_after_refresh(self.focused.scroll_visible, animate=False)
 
     def action_tab(self, name: str) -> None:
         if not cockpit.TABS[name]["views"]:
@@ -472,6 +565,9 @@ class CockpitApp(App):
             widget.border_subtitle = escape(self._failed_note(source, snap))
         if updated:
             self._bar()
+            self._draw_cards()
+        if "alerts" in updated:
+            self._alerts_row()
 
     def _failed_note(self, name: str, snap: dict) -> str:
         """A panel whose last read failed and that still shows its last content: the error and the data's time."""
@@ -486,7 +582,7 @@ class CockpitApp(App):
         """The table's rows from the view, the view kept still. The same records in the same order: only the cells
         that changed are updated, the scroll and the cursor untouched. Otherwise the rows are rebuilt, the cursor
         on the record it was on (wherever the sort puts it, without scrolling to it), the scroll where it was."""
-        view = self.views.get(name)
+        view = self._shown_view(name)
         rows: list[tuple[str, tuple]] = []
         seen: set[str] = set()
         self.records[name] = {}
@@ -496,6 +592,7 @@ class CockpitApp(App):
                 cells = (Text(cells[0], style=STYLES[name].get(cells[0], "")), *cells[1:])
             if name == "sessions" and r.get("ctx_step"):  # a master past 70, 80, 90 % of its budget
                 cells = (cells[0], *(Text(str(c), style=MASTER_STYLES[r["ctx_step"]]) for c in cells[1:]))
+            cells = tuple(c if isinstance(c, Text) else Text(str(c)) for c in cells)  # text, never markup: « [/docs] »
             key = base = cockpit.row_key(name, r)
             while key in seen:
                 key = f"{base}#{len(seen)}"
@@ -532,6 +629,11 @@ class CockpitApp(App):
             sub = f"{panel['defaulted']}; {sub}" if sub else panel["defaulted"]
         failed = self._failed_note(name, snap) if snap else ""
         table.border_subtitle = escape(f"{failed}; {sub}" if failed and sub else failed or sub)
+
+    def _shown_view(self, name: str) -> dict | None:
+        """A panel's view as shown: its own, and the filters a card opened it with (never saved)."""
+        view = self.views.get(name)
+        return {**view, **self.entered[name]} if view is not None and name in self.entered else view
 
     def _empty_row(self, name: str, panel: dict | None, view: dict | None, snap: dict | None) -> tuple[str, tuple]:
         """The one line of an empty table, which says why (no record behind it: Enter opens nothing)."""
@@ -575,7 +677,7 @@ class CockpitApp(App):
         self._save()
         self._subtitle()
         self.tick()
-        self._q(f"#{self.last_panel}").focus()
+        self._focus_body()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search" and event.value != self.search:
@@ -585,12 +687,14 @@ class CockpitApp(App):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "search":
-            self._q(f"#{self.last_panel}").focus()
+            self._focus_body()
 
     def on_descendant_focus(self, event) -> None:
         panel = next((w for w in event.widget.ancestors_with_self if w.has_class("panel")), None)
         if panel is not None:
             self.last_panel = self.tab_focus[self.tab] = panel.id
+        elif isinstance(event.widget, Card):
+            self.card_focus = event.widget.id
 
     def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
         name = event.data_table.id
@@ -711,7 +815,13 @@ class CockpitApp(App):
         name = self._view_panel()
         if name:
             panel = self.cockpit.snapshot()["panels"].get(name)
-            self.push_screen(ViewScreen(name, self.views[name], panel), lambda v: self._set_view(name, v))
+            self.push_screen(ViewScreen(name, self._shown_view(name), panel), lambda v: self._chosen_view(name, v))
+
+    def _chosen_view(self, name: str, view: dict | None) -> None:
+        """The filters dialog's answer: what it shows is the owner's now, a card's filter with it; Cancel changes nothing."""
+        if view is not None:
+            self.entered.pop(name, None)
+            self._set_view(name, view)
 
     def action_pick_scope(self) -> None:
         select = self._q("#scope", Select)
@@ -723,7 +833,7 @@ class CockpitApp(App):
 
     def action_clear_search(self) -> None:
         self._q("#search", Input).value = ""
-        self._q(f"#{self.last_panel}").focus()
+        self._focus_body()
 
     # --- keys ---
 
@@ -750,7 +860,8 @@ class CockpitApp(App):
             self.action_tab("overview")
 
     def action_panel_help(self, name: str | None = None) -> None:
-        self.push_screen(PanelHelp(name or self.last_panel))
+        own = self.tab if not cockpit.tab_panels(self.tab, self._view()) else self.last_panel  # the cards: the tab's own
+        self.push_screen(PanelHelp(name or own))
 
     def on_click(self, event: events.Click) -> None:
         """A click on a panel's frame, its top line (the [i] in its title): that panel's help."""

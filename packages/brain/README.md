@@ -76,13 +76,17 @@ gives its data. A checkout installed editable is not updated by pip (`git pull` 
 
 The cockpit (`brain tui`) has one tab per question, each on its key: `0` the overview, `1` the queue, `2` the sessions,
 `3` the frontier, `4` the milestones, `8` health (alerts on top; audit debt, stacks and index, and the exec times).
+The overview shows one card per tab, what counts in it in a few lines: the band now, the sessions asking, the nearest
+milestones, what can start, the open alerts. Enter or a click opens its tab, already filtered as the card says, whatever your
+filters and search (a filter that is not saved and goes when you leave the tab); the arrows move between the cards.
 Ideas (`5`), lessons (`6`), features (`7`), resources (`9`) and settings (the comma) arrive with their items, and until
 then their key says so. The bar shows what waits in each tab, in digits and signs: « 1 Ada's queue 3 » the band now, « 2
 Sessions 1! » the sessions asking, « 8 Health 2 » the open alerts. A click on it, `ctrl+pageup` and
 `ctrl+pagedown` also change tab, and Escape goes back one step at a time: the search, a full view, then the overview. A tab with several views says so in its toolbar:
-`v` or a click changes it, and the overview has the grid of every panel and the digest. `--tab NAME` starts on a tab, and
-with `--once` or `--plain` prints its panels alone. Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1
-Ada's queue 3 2 3 4 8`), the grid is not offered and the health frames stack. The last tab and each tab's view are kept
+`v` or a click changes it, and the overview's other views are the grid of every panel, where open alerts take a whole
+row, and the digest. `--tab NAME` starts on a tab, and with `--once` or `--plain` prints its panels alone (the overview:
+its cards). Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
+one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.
 
 The cockpit's title bar always shows the installed version. Once the screen is drawn, it checks the tags in the

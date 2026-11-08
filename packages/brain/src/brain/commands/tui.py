@@ -24,13 +24,14 @@ USAGE = """\
                  every --refresh, default 2 s; + and - change it), the probes (alerts, audit, health, digest, denied
                  calls) every --probe and on the r key; the Textual app with the tui extra (pip install brain[tui]),
                  else (--plain) the same text redrawn in place; --once prints it once (--quick: no probe), --json its
-                 data (unfiltered). One tab per question, each on its key: 0 overview (its views, v: the grid, the
-                 digest), 1 {owner}'s queue, 2 sessions, 3 frontier, 4 milestones, 8 health (alerts, audit, stacks and
-                 index, exec times), ctrl+pageup and ctrl+pagedown the previous and next, Escape back to the overview;
+                 data (unfiltered). One tab per question, each on its key: 0 overview (its views, v: one card per tab,
+                 which Enter or a click opens already filtered, the grid, the digest), 1 {owner}'s queue, 2 sessions,
+                 3 frontier, 4 milestones, 8 health (alerts, audit, stacks and index, exec times), ctrl+pageup and ctrl+pagedown the previous and next, Escape back to the overview;
                  Escape first clears the search and closes a full view; the bar shows the queue's band now, the
                  sessions asking and the open alerts, and is reduced to its
-                 numbers under 120 columns or 30 rows, where the grid is not offered; --tab NAME starts there, and
-                 with --once or --plain prints that tab's panels alone. The project selector (p: global or one
+                 numbers under 120 columns or 30 rows, where the cards take one column and the grid is not offered;
+                 --tab NAME starts there, and with --once or --plain prints that tab's panels alone (the overview:
+                 its cards). The project selector (p: global or one
                  project), the sessions', queue's and frontier's filters and sorts (f, s, o), the search (/), a panel's
                  help (i), a full view where a tab shows several panels (m, Escape back), the pause (space) and ? for
                  every key; a refresh keeps the scroll and the cursor; an empty
@@ -163,7 +164,7 @@ def register(sub, ctx) -> None:
                     help="the rows holding every word of TEXT (ids, titles, projects; case ignored)")
     tu.add_argument("--tab", choices=cockpit.built_tabs(),
                     help="start on that tab (default: the last one shown, else the overview); with --once or --plain, "
-                         "print its panels alone")
+                         "print its panels alone (the overview: its cards)")
     tu.add_argument("--tz", choices=cockpit.TZS,
                     help="the times shown: this machine's timezone (local, the interactive default) or UTC; --once "
                          "and --json keep the recorded UTC times unless it is given")

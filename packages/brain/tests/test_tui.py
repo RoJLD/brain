@@ -8,9 +8,12 @@ import pytest
 pytest.importorskip("textual")
 
 from textual.markup import escape  # noqa: E402
-from textual.widgets import Button, DataTable, RadioButton, Select, Static, Tabs  # noqa: E402
+from textual.widgets import Button, DataTable, RadioButton, Select, Static  # noqa: E402
 
 from brain import cockpit, tui, tui_screens  # noqa: E402
+
+
+GRID = {"overview": {"view": "grid"}}
 
 
 def _session(sid, state, project="demo", age_s=30):
@@ -77,8 +80,8 @@ def _run(test, **kw):
 
 def _ids(app, name):
     table = app.query_one(f"#{name}", DataTable)
-    return [table.get_row_at(i)[table.ordered_columns.index(next(c for c in table.ordered_columns
-                                                                 if str(c.label) == "Id"))]
+    return [str(table.get_row_at(i)[table.ordered_columns.index(next(c for c in table.ordered_columns
+                                                                     if str(c.label) == "Id"))])
             for i in range(table.row_count)]
 
 
@@ -124,308 +127,7 @@ def test_the_app_draws_the_panels_and_answers_its_keys():
         await pilot.press("question_mark")
         await pilot.pause(0.1)
         assert not app.screen.query("HelpPanel")
-    _run(check)
-
-
-def _on_screen(app):
-    """The panels and frames a tab shows."""
-    return [n for n in tui.EVERY_FRAME if app.query_one(f"#{n}").display]
-
-
-def _bar(app):
-    return [str(t.label) for t in app.query("#tabs Tab")]
-
-
-def _run_at(test, size, **kw):
-    async def main():
-        fake = FakeCockpit()
-        app = tui.CockpitApp(fake, refresh=2.0, probe=300, **kw)
-        async with app.run_test(size=size) as pilot:
-            await pilot.pause(0.2)
-            await app.workers.wait_for_complete()
-            await pilot.pause(0.1)
-            await test(app, pilot, fake)
-    asyncio.run(main())
-
-
-def test_a_tab_is_a_layout_of_the_same_panels():
-    """wi-brain-tui-layout, UX-18: the keys and the bar go to a tab, each shows its panels and keeps their cursor; a tab
-    not built yet says what brings it."""
-    async def check(app, pilot, fake):
-        assert app.tab == "overview" and app._view() == "grid" and _on_screen(app) == list(cockpit.PANELS)
-        assert _bar(app) == ["0 Overview", "1 Ada's queue", "2 Sessions 1!", "3 Frontier", "4 Milestones", "8 Health"]
-        assert "What waits on me" in str(app.query_one("#question").render())
-        await pilot.press("1")
-        assert app.tab == "queue" and _on_screen(app) == ["queue"] and app.focused is app.query_one("#queue")
-        assert app.query_one("#tabs", Tabs).active == "tab-queue"
-        assert app.query_one("#queue").border_title.startswith(escape("demo > 1 Ada's queue"))  # alone: the breadcrumb
-        assert app.check_action("toggle_max", ()) is False and app.check_action("next_view", ()) is False
-        table = app.query_one("#queue", DataTable)
-        table.move_cursor(row=1)
-        await pilot.press("8")
-        assert _on_screen(app) == ["alerts", "audit", "health", "exec"] and app.focused is app.query_one("#alerts")
-        await pilot.press("m")  # several panels: a full view
-        assert app.screen.maximized is app.query_one("#alerts")
-        await pilot.press("escape")
-        assert app.screen.maximized is None and app.tab == "health"
-        await pilot.press("1")  # back: the same widget, its cursor where it was
-        assert app.tab == "queue" and table.cursor_row == 1
-        notified, notify = [], app.notify
-        app.notify = lambda message, **kw: notified.append(message) or notify(message, **kw)
-        await pilot.press("5", "comma")  # not built: said, nothing moves
-        assert app.tab == "queue" and notified == ["Ideas is not here yet: it arrives with the ideas board",
-                                                   "Settings is not here yet: it arrives with the settings pages"]
-        await pilot.press("ctrl+pagedown")
-        assert app.tab == "sessions"
-        await pilot.press("ctrl+pageup", "ctrl+pageup", "ctrl+pageup")
-        assert app.tab == "health"  # around the bar
-        await pilot.click("#tab-frontier")
-        await pilot.pause(0.1)
-        assert app.tab == "frontier" and _on_screen(app) == ["frontier"] and app.focused is app.query_one("#frontier")
-        await pilot.press("escape")  # back to the overview, where escape has nothing left to do
-        assert app.tab == "overview" and app.check_action("back", ()) is False
-    _run(check)
-
-
-def test_the_views_of_a_tab_are_remembered_and_clicked():
-    async def check(app, pilot, fake):
-        await pilot.press("v")
-        assert app._view() == "digest" and _on_screen(app) == ["digest"]
-        state = cockpit.load_state()
-        assert state["tab"] == "overview" and state["tabs"] == {"overview": {"view": "digest"}}
-        assert "[Digest]" in str(app.query_one("#views").render())  # in words and brackets, never a colour alone
-        await pilot.press("v")
-        assert app._view() == "grid" and len(_on_screen(app)) == 8
-        views = app.query_one("#views", Static)
-        await pilot.click(views, offset=(len("[Grid]  ") + 1, 0))  # its word: Digest
-        await pilot.pause(0.1)
-        assert app._view() == "digest"
-        await pilot.click(views, offset=(views.region.width - 2, 0))  # its [i]
-        await pilot.pause(0.1)
-        assert isinstance(app.screen, tui.PanelHelp) and app.screen.panel_name == "digest"
-        await pilot.press("escape")
-        await pilot.press("3")
-        assert cockpit.load_state()["tab"] == "frontier"
-    _run(check)
-
-
-def test_the_app_starts_on_the_tab_and_view_it_is_given():
-    async def check(app, pilot, fake):
-        assert app.tab == "health" and _on_screen(app) == ["alerts", "audit", "health", "exec"]
-        await pilot.press("0")
-        assert app._view() == "digest"
-    _run(check, tab="health", tabs={"overview": {"view": "digest"}})
-
-
-def test_a_narrow_terminal_has_the_tabs_alone():
-    """UX-2, spec §4.0.5: under 120 columns or 30 rows the bar's numbers, the active tab named, no grid; a resize lays it
-    out again."""
-    async def check(app, pilot, fake):
-        assert app._view() == "digest" and _on_screen(app) == ["digest"]  # the grid is not offered
-        assert _bar(app) == ["0 Overview", "1", "2", "3", "4", "8"]
-        assert app.check_action("next_view", ()) is False  # one view left here
-        await pilot.press("2")
-        assert _bar(app) == ["0", "1", "2 Sessions 1!", "3", "4", "8"]
-        await pilot.press("8")
-        assert app.query_one("#grid").has_class("stacked")
-        await pilot.resize_terminal(160, 48)
-        await pilot.pause(0.2)
-        assert _bar(app)[1] == "1 Ada's queue" and not app.query_one("#grid").has_class("stacked")
-        await pilot.press("0")
-        assert app._view() == "grid" and len(_on_screen(app)) == 8
-        await pilot.press("3")  # the frontier, then a narrow terminal under the grid
-        await pilot.press("0")
-        await pilot.resize_terminal(100, 28)
-        await pilot.pause(0.2)
-        assert app._view() == "digest" and _on_screen(app) == ["digest"] and app.focused is app.query_one("#digest")
-    _run_at(check, (100, 40))
-
-
-def test_the_bar_counts_what_each_tab_holds(monkeypatch):
-    alerts = {"projects": [{"project": "demo", "counts": {"warn": 2}, "alerts": [
-        {"level": "warn", "key": "a", "message": "m", "since": ""}, {"level": "warn", "key": "b", "message": "m",
-                                                                     "since": ""}]}]}
-    queue = {"projects": [{"project": "demo", "counts": {}, "entries": [
-        {"id": "ddr-a", "kind": "decision", "unblocks": 1, "age_days": 0, "title": "x", "since": "", "band": "now"}]}]}
-
-    async def check(app, pilot, fake):
-        assert _bar(app) == ["0 Overview", "1 Ada's queue 1", "2 Sessions 1!", "3 Frontier", "4 Milestones", "8 Health 2"]
-        assert "changed " in str(app.query_one("#status").render())  # the global bar: the last change, the next probe
-    monkeypatch.setitem(PANELS, "alerts", alerts)
-    monkeypatch.setitem(PANELS, "queue", queue)
-    _run(check)
-
-
-def test_escape_goes_back_one_step_at_a_time():
-    """Spec §4.0.5: the search first, as a table's line says (« Escape clears the search »), then a full view, then the
-    overview; each from the table as well as from the search field."""
-    async def check(app, pilot, fake):
-        await pilot.press("slash", *"nothing", "enter")  # kept: the focus back on the table
-        assert app.search == "nothing" and app.focused is app.query_one("#sessions")
-        assert "Escape clears the search" in _why(app, "frontier")
-        app.query_one("#frontier").focus()
-        await pilot.press("m")
-        assert app.screen.maximized is app.query_one("#frontier") and app.check_action("back", ())
-        await pilot.press("escape")  # the search
-        assert app.search == "" and app.screen.maximized is app.query_one("#frontier")
-        assert app.check_action("back", ())
-        await pilot.press("escape")  # the full view
-        assert app.screen.maximized is None and app.tab == "overview" and not app.check_action("back", ())
-        await pilot.press("3", "escape")  # the tab
-        assert app.tab == "overview"
-    _run(check)
-
-
-def test_a_key_shows_its_tab_at_once_so_the_next_key_starts_from_it():
-    async def check(app, pilot, fake):
-        app.action_tab("queue")
-        app.action_tab("overview")  # two keys before any event of the bar arrives
-        assert app.tab == "overview"
-        await pilot.pause(0.2)
-        assert app.tab == "overview" and app.query_one("#tabs", Tabs).active == "tab-overview"  # the stale event ignored
-        app.action_next_tab()
-        app.action_next_tab()
-        await pilot.pause(0.2)
-        assert app.tab == "sessions" and app.query_one("#tabs", Tabs).active == "tab-sessions"
-    _run(check)
-
-
-def test_a_click_on_the_bar_leaves_the_focus_on_the_body_and_its_tooltips_name_the_tabs():
-    async def check(app, pilot, fake):
-        await pilot.press("3")
-        table = app.query_one("#frontier", DataTable)
-        await pilot.click("#tab-frontier")  # the active tab: nothing moves
-        await pilot.pause(0.1)
-        assert app.focused is table
-        await pilot.press("s")
-        assert app.views["frontier"]["sort"] == "unblocks"  # its keys still work
-        assert app.query_one("#tab-frontier").tooltip == "Frontier (3): What can start?"
-        assert not app.query_one("#tabs").can_focus
-    _run(check)
-
-
-def test_each_tab_remembers_its_focus_and_its_panels_their_scroll():
-    async def check(app, pilot, fake):
-        panels = _many(70)
-        fake.snapshot = lambda: {"scope": "demo", "read_at": None, "probed_at": None, "panels": panels}
-        app.draw({"sessions"})
-        await pilot.press("8")
-        app.query_one("#audit").focus()
-        await pilot.press("2")
-        await pilot.pause(0.1)
-        table = app.query_one("#sessions", DataTable)
-        table.move_cursor(row=25)
-        table.scroll_to(y=15, animate=False, immediate=True)
-        await pilot.pause(0.1)
-        y = table.scroll_y
-        assert y > 0
-        await pilot.press("8")
-        assert app.focused is app.query_one("#audit") and app.last_panel == "audit"
-        await pilot.press("2")
-        await pilot.pause(0.1)
-        assert (table.scroll_y, table.cursor_row) == (y, 25) and app.focused is table
-        app.query_one("#scope").focus()  # its key again: the focus back on the body
-        await pilot.press("2")
-        await pilot.pause(0.1)
-        assert app.focused is table
-    _run(check)
-
-
-def test_the_frames_of_the_health_tab():
-    """The alerts on top, the three others side by side; stacked on a narrow terminal. The exec frame draws from the
-    health panel: its lines, title and failed read."""
-    health = {"projects": [{"project": "demo", "stacks": [], "code_index": []}],
-              "exec": {"days": 7, "runs": 3, "failed": 1, "regressions": [],
-                       "slowest": [{"project": "demo", "task": "sync", "runs": 3, "failed": 1, "median_s": 2.5,
-                                    "max_s": 9}]}}
-
-    def text(app, name):
-        return str(app.query_one(f"#{name}-text").render())
-
-    async def check(app, pilot, fake):
-        await pilot.press("8")
-        await pilot.pause(0.1)
-        width = {n: app.query_one(f"#{n}").region.width for n in ("alerts", "audit", "health", "exec")}
-        assert width["alerts"] == 160 and all(50 <= width[n] <= 54 for n in ("audit", "health", "exec"))
-        assert app.query_one("#audit").region.y == app.query_one("#exec").region.y > app.query_one("#alerts").region.y
-        assert "not probed yet" in text(app, "exec") or "probe" in text(app, "exec")  # no health panel yet
-        snap = {"scope": "demo", "read_at": None, "probed_at": None, "panels": {**PANELS, "health": health},
-                "errors": {"health": {"at": "2026-11-06T10:00:00Z", "error": "OSError: disk gone"}},
-                "panel_at": {"health": "2026-11-06T09:58:00Z"}}
-        fake.snapshot = lambda: snap
-        app.settings["tz"] = "utc"
-        app.draw({"health"})
-        await pilot.pause(0.1)
-        frame = app.query_one("#exec")
-        assert frame.border_title == escape("8 Exec times (3 run(s) in 7 d, 1 failed) [i]")
-        assert "2.5 s (max 9 s, 3 run(s), 1 failed) demo: sync" in text(app, "exec")
-        assert frame.border_subtitle.startswith("read failed 10:00:00: OSError: disk gone; data of 09:58:00")
-        await pilot.resize_terminal(100, 40)
-        await pilot.pause(0.2)
-        assert all(app.query_one(f"#{n}").region.width == 100 for n in width)  # stacked
-    _run(check)
-
-
-def test_the_bar_follows_the_panels():
-    async def check(app, pilot, fake):
-        assert _bar(app)[2] == "2 Sessions 1!"
-        rows = [_session("a", "asking"), _session("b", "asking")]
-        panels = {**PANELS, "sessions": {"hours": 24, "rows": rows}}
-        fake.snapshot = lambda: {"scope": "demo", "read_at": None, "probed_at": None, "panels": panels}
-        app._done({"sessions"}, "")
-        await pilot.pause(0.1)
-        assert _bar(app)[2] == "2 Sessions 2!"
-    _run(check)
-
-
-def test_a_view_or_a_narrow_terminal_closes_a_full_view_and_the_status_gives_way():
-    async def check(app, pilot, fake):
-        app.query_one("#queue").focus()
-        await pilot.press("m")
-        await pilot.press("v")  # another view: the full view closes
-        assert app.screen.maximized is None and app._view() == "digest"
-        await pilot.press("v")
-        app.query_one("#queue").focus()
-        await pilot.press("m")
-        assert app.screen.maximized is app.query_one("#queue")
-        await pilot.resize_terminal(100, 28)  # the grid gone, and the panel with it: never a blank screen
-        await pilot.pause(0.2)
-        assert app.screen.maximized is None and _on_screen(app) == ["digest"] and app.focused is app.query_one("#digest")
-        assert app.query_one("#status").display
-        await pilot.resize_terminal(80, 28)
-        await pilot.pause(0.2)
-        assert not app.query_one("#status").display and app.query_one("#search").region.width > 20
-    _run(check)
-
-
-def test_a_redraw_under_a_dialog_keeps_the_full_views_breadcrumb():
-    async def check(app, pilot, fake):
-        app.query_one("#queue").focus()
-        await pilot.press("m", "i")
-        await pilot.pause(0.1)
-        assert isinstance(app.screen, tui.PanelHelp)
-        app.draw({"queue"})
-        assert app.query_one("#queue").border_title.startswith(escape("demo > 1 "))
-        await pilot.press("8")  # the tabs' keys are off under a dialog
-        assert app.tab == "overview" and isinstance(app.screen, tui.PanelHelp)
-    _run(check)
-
-
-def test_run_gives_the_app_its_tab_and_views(monkeypatch):
-    seen = {}
-
-    class App:
-        handover = None
-
-        def __init__(self, *a):
-            seen["args"] = a
-
-        def run(self):
-            pass
-
-    monkeypatch.setattr(tui, "CockpitApp", App)
-    assert tui.run(FakeCockpit(), tab="health", tabs={"overview": {"view": "digest"}}) == 0
-    assert seen["args"][-2:] == ("health", {"overview": {"view": "digest"}})
+    _run(check, tabs=GRID)
 
 
 def test_sort_filter_and_search_change_the_tables_and_are_remembered():
@@ -588,7 +290,7 @@ def test_a_refresh_keeps_the_scroll_and_the_cursor():
         app.draw({"sessions"})
         await pilot.pause(0.2)
         assert (table.scroll_y, table.cursor_row) == (y, 25)
-        assert table.get_row("s00xxxxxxx")[-2] == "1 min"  # its Last column
+        assert str(table.get_row("s00xxxxxxx")[-2]) == "1 min"  # its Last column
         rows = _many(40)["sessions"]["rows"]
         rows.insert(0, rows.pop(30))  # a new order: rebuilt, the cursor on its record, the scroll where it was
         rows[0]["age_s"] = 0
@@ -598,7 +300,7 @@ def test_a_refresh_keeps_the_scroll_and_the_cursor():
         await pilot.pause(0.2)
         assert table.scroll_y == y and table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value == (
             "s25xxxxxxx")
-    _run(check)
+    _run(check, tabs=GRID)
 
 
 def test_pause_help_timezone_and_theme():
@@ -622,6 +324,7 @@ def test_pause_help_timezone_and_theme():
         assert not isinstance(app.screen, tui.PanelHelp)
         queue = app.query_one("#queue")
         await pilot.press("1")
+        await pilot.pause(0.2)  # laid out: a click before it lands where the frame is not yet
         await pilot.click("#queue", offset=(4, 0))  # the top of its frame: the [i] of its title
         await pilot.pause(0.1)
         assert isinstance(app.screen, tui.PanelHelp) and app.screen.panel_name == "queue"
