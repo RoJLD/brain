@@ -5,6 +5,7 @@ panels; the app (``brain.tui``) opens them, runs what they return, and holds the
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 
 from rich.text import Text
@@ -16,6 +17,14 @@ from textual.screen import ModalScreen
 from textual.widgets import (Button, Checkbox, Footer, Input, Label, OptionList, RadioButton, RadioSet, Select, Static)
 
 from . import cockpit, config, detail
+
+
+def detail_lines(d: dict) -> Iterator[Static]:
+    """A detail's sections as widgets, one a line: a wrapped line keeps its indent."""
+    for i, (heading, lines) in enumerate(d["sections"]):
+        yield Static(Text(heading, style="bold"), classes="heading" + (" first" if not i else ""))
+        for line in lines:
+            yield Static(Text(line), classes="line")
 
 
 class ViewScreen(ModalScreen):
@@ -112,11 +121,8 @@ class DetailScreen(ModalScreen):
         with Vertical(id="detail"):
             yield Label(Text(self.d["title"]), id="detail-title")
             with VerticalScroll(id="detail-body"):
-                for i, (heading, lines) in enumerate(self.d["sections"]):
-                    yield Static(Text(heading, style="bold"), classes="heading" + (" first" if not i else ""))
-                    for line in lines:  # one widget a line: a wrapped line keeps its indent
-                        yield Static(Text(line), classes="line")
-            yield Static(Text(_foot(self.d)), id="detail-foot")
+                yield from detail_lines(self.d)
+            yield Static(Text(detail_foot(self.d)), id="detail-foot")
         yield Footer()
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
@@ -130,17 +136,13 @@ class DetailScreen(ModalScreen):
         self.dismiss(None)
 
     def action_open(self) -> None:
-        links = self.d["links"]
-        if len(links) == 1:
-            self.app.open_link(links[0])
-        else:
-            self.app.push_screen(LinkScreen(links), lambda i: self.app.open_link(links[i]) if i is not None else None)
+        self.app.open_links(self.d["links"])
 
     def action_act(self, kind: str) -> None:
         self.app.start_action(self.acts[kind])
 
 
-def _foot(d: dict) -> str:
+def detail_foot(d: dict) -> str:
     keys = {"answer": "a", "done": "d", "apply": "A"}
     acts = "; ".join(f"{keys[a.kind]} {a.label}: " + ("; then ".join(detail.shown(s) for s in a.steps) if a.steps
                                                        else "brain decision answer ... --via tui --by "

@@ -66,11 +66,14 @@ class FakeCockpit:
         return {"scope": self.scope, "read_at": "2026-11-02T10:00:00Z", "probed_at": None, "panels": PANELS}
 
 
-def _run(test, **kw):
+OVER = (130, 48)  # under 140 columns: the detail opens over the list
+
+
+def _run(test, size=(160, 48), **kw):
     async def main():
         fake = FakeCockpit()
         app = tui.CockpitApp(fake, refresh=2.0, probe=300, **kw)
-        async with app.run_test(size=(160, 48)) as pilot:
+        async with app.run_test(size=size) as pilot:
             await pilot.pause(0.2)
             await app.workers.wait_for_complete()
             await pilot.pause(0.1)
@@ -377,7 +380,7 @@ def test_enter_opens_a_rows_detail_and_o_its_links(monkeypatch):
         await pilot.pause(0.1)
         assert isinstance(app.screen, tui.DetailScreen) and app.screen.d["id"] == "ddr-b"
         assert app.screen.d["actions"] == [] and not app.screen.check_action("act", ("answer",))
-    _run(check)
+    _run(check, size=OVER)
 
 
 def _ddr_panels(root, ref):
@@ -434,7 +437,7 @@ def test_answering_a_decision_confirms_the_command_then_runs_it(tmp_path, monkey
         assert ran == [("answer", [["brain", "--root", str(root), "decision", "answer", ddr["id"], "Grid and tabs",
                                     "--via", "tui", "--by", "Ada"]])]
         assert app.screen is app.screen_stack[0]  # done: back to the panels, read again
-    _run(check)
+    _run(check, size=OVER)
 
 
 def test_apply_shows_the_plan_then_runs_the_command_and_marks_it_done(tmp_path, monkeypatch):
@@ -472,7 +475,7 @@ def test_apply_shows_the_plan_then_runs_the_command_and_marks_it_done(tmp_path, 
                                                        ["brain", "--root", str(root), "queue", "done", ddr["id"],
                                                         "--note", r"applied in brain tui: .\install.ps1 -Apply"]])]
         assert app.handover == {"script": "h"}
-    _run(check)
+    _run(check, size=OVER)
 
 
 def test_the_actions_are_refused_in_a_session_shell(tmp_path, monkeypatch):
@@ -494,7 +497,7 @@ def test_the_actions_are_refused_in_a_session_shell(tmp_path, monkeypatch):
         await pilot.press("a")
         await pilot.pause(0.1)
         assert app.screen is detail_screen  # refused: no answer dialog
-    _run(check)
+    _run(check, size=OVER)
 
 
 def test_the_title_shows_the_version_and_the_check_never_delays_the_first_paint(monkeypatch):

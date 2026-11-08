@@ -72,6 +72,7 @@ its key waiting for it (``built_tabs``, ``not_built``). Under 120 columns or 30 
 its numbers, the active tab named (``tab_labels``), and the grid is not offered (``tab_views``); the text view and
 ``--tab`` print one tab's panels (``render``). The overview's default view is one card per tab (``cards``, UX-19): what
 counts in that tab in a few lines, and the filters it opens with; the text view prints them with ``--tab overview``.
+From 140 columns, on a tab that is one list, a row's detail sits beside it (``detail_beside``, UX-20, brain.tui_side).
 
 Read-only: nothing here writes a record or a ledger, and nothing calls a model. The one file written is the screen's
 own state, ``<BRAIN_HOME>/tui.json`` (the scope, each panel's view, the last tab and each tab's view, and the settings:
@@ -1490,6 +1491,7 @@ def heading(name: str, panel: dict | None) -> str:
 # --- the tabs: one per question the owner asks (wi-brain-tui-layout, spec cockpit-ux-round2 §4.0, UX-18) ---
 
 NARROW_COLUMNS, NARROW_ROWS = 120, 30  # under either: the tabs alone, the grid not offered, the bar's numbers (UX-2)
+DETAIL_COLUMNS = 140  # from here the detail sits right of the list (UX-20)
 TAB_PADDING = 2  # a tab's padding in the bar, in columns
 CARD_LINES = 4  # a card's lines at most (UX-19: 3 to 5, with its frame)
 CARD_ORDER = ("queue", "sessions", "milestones", "frontier", "health", "resources", "lessons", "ideas", "features")
@@ -1698,6 +1700,13 @@ def panel_tab(panel: str) -> str:
     """The tab that opens a panel or a frame: the one that holds it, the overview for the digest."""
     return next((n for n, t in TABS.items() if n != "overview" and any(panel in ps for ps in t["views"].values())),
                 "overview")
+
+
+def detail_beside(tab: str, view: str, columns: int) -> bool:
+    """Whether a row's detail sits beside the list (UX-20): wide enough, on a view that is one table; else it opens over
+    it."""
+    panels = tab_panels(tab, view)
+    return columns >= DETAIL_COLUMNS and len(panels) == 1 and panels[0] in COLUMNS
 
 
 def card_tabs() -> tuple[str, ...]:

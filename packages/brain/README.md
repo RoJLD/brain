@@ -89,6 +89,11 @@ its cards). Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.
 
+From 140 columns, on a tab that is one list, a row's detail sits right of the list and follows the cursor: it reads
+once the cursor rests, and remembers each row until its panel changes. Enter gives it the focus, where it scrolls and `o`
+opens a link, and Escape gives the focus back; `a`, `d` and `A` work from the list too, each after its confirmation.
+Narrower, or on a tab of several panels, Enter opens it over them.
+
 The cockpit's title bar always shows the installed version. Once the screen is drawn, it checks the tags in the
 background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.3 · 0.2.4 available »
 when a newer one is out; `u` then opens `brain update`'s plan in a confirmation, run on `y`.

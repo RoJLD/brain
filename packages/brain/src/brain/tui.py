@@ -32,7 +32,9 @@ Keys (the footer shows those of the focused panel, ? lists them all):
            cockpit closes and a window installs, then relaunches it (brain.handover)
   t        the times in this machine's timezone or in UTC
   Enter    the row's detail (brain.detail; a second click on a row too): a DDR's options, an item's spec, ADRs and
-           PR, a session's plan...; in it, o opens a link (the file at its line in the editor, the PR in the
+           PR, a session's plan... From 140 columns on a tab of one list it sits right of the list and follows the
+           cursor (brain.tui_side, UX-20): Enter gives it the focus, Escape gives it back, and a, d, A work from the list
+           too; else it opens over the panels. In it, o opens a link (the file at its line in the editor, the PR in the
            browser, another item's detail), a answers a decision, d marks an action or a permission done, A applies
            an action's command: each after a confirmation that shows the exact brain command, run as the owner's and
            logged; Escape goes back
@@ -41,7 +43,7 @@ The states (brain.cockpit's ``why_empty``, ``probe_wait``): a table with no row 
 the search hides N rows, and the key that changes it; nothing in the scope; a project not on this machine), a panel
 not probed yet shows the probe's countdown, then its progress per project, and a project of the registry missing on
 this machine is greyed in the selector (no registry: the tooltip says the selector holds this folder's project only).
-The reads run in one worker thread at a time, so the screen never waits on them, and an error is shown as a
+The reads run in one worker thread at a time (the detail beside the list has its own), so the screen never waits on them, and an error is shown as a
 notification, never a crash: the panels of a read that fails keep their last content, the error and the time of the
 data in their frame; an action's commands run in another, and the panels are read again after them. A refresh keeps
 the view still: a table's cells are updated in place when its rows are the same, else it is rebuilt with its scroll where it was and its cursor on its record. The scope, the views and the
@@ -67,7 +69,8 @@ from textual.markup import escape
 from textual.widgets import DataTable, Footer, Header, Input, Label, Select, Static, Tab, Tabs
 
 from . import cockpit, detail, handover, paths, update
-from .tui_screens import AnswerScreen, ConfirmScreen, DetailScreen, PanelHelp, ResultScreen, ViewScreen
+from .tui_screens import AnswerScreen, ConfirmScreen, DetailScreen, LinkScreen, PanelHelp, ResultScreen, ViewScreen
+from .tui_side import DetailBeside, DetailPane
 
 INTERVALS = (0.5, 1.0, 2.0, 5.0, 10.0)
 TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines, "exec": cockpit.exec_lines,
@@ -76,8 +79,8 @@ STYLES = {"sessions": {"asking": "bold magenta", "running": "green", "stale": "y
           "alerts": {"critical": "bold red", "error": "red", "warn": "yellow", "info": "dim"}}  # the first column
 MASTER_STYLES = {70: "yellow", 80: "bold dark_orange", 90: "bold red"}  # a master's row at each step (ST-4)
 PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back", "toggle_max", "pick_scope", "search",
-                 "next_sort", "reverse", "filters", "panel_help", "toggle_tz",
-                 "update")  # the panels' keys, off while a dialog or a detail is on top of them
+                 "next_sort", "reverse", "filters", "panel_help", "toggle_tz", "update", "side_act",
+                 "side_open")  # the panels' keys, off while a dialog or a detail is on top of them
 # every panel and frame, as the grid places them: with open alerts their row is whole (L11), the digest beside the stacks
 EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec")
 CARD_COLUMNS = 3
@@ -117,7 +120,7 @@ class SearchInput(Input):
     BINDINGS = [Binding("escape", "app.clear_search", "Clear")]
 
 
-class CockpitApp(App):
+class CockpitApp(DetailBeside, App):
     TITLE = update.title(None)  # the installed version; the newer one once the background check answers
     ESCAPE_TO_MINIMIZE = False  # Escape's steps are action_back's: the search before a full view
     CSS = """
@@ -143,6 +146,16 @@ class CockpitApp(App):
     .panel { border: round $primary; height: 100%; }
     .panel:focus, .panel:focus-within { border: round $accent; }
     .panel.off { display: none; }
+    #body { height: 1fr; }
+    #grid, #cards { width: 1fr; }
+    #side { width: 42%; height: 100%; display: none; border: round $primary; padding: 0 1; background: $surface; }
+    #side:focus-within { border: round $accent; }
+    #side-title { text-style: bold; width: 1fr; margin-bottom: 1; }
+    #side-body { height: 1fr; }
+    #side-body .heading { margin-top: 1; }
+    #side-body .heading.first { margin-top: 0; }
+    #side-body .line { padding-left: 2; }
+    #side-foot { height: auto; max-height: 30%; color: $text-muted; margin-top: 1; }
     #cards-grid { grid-size: 3; grid-rows: auto; height: auto; }
     #cards-grid.one { grid-size: 1; }
     .card { border: round $primary; height: auto; min-height: 6; padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
@@ -164,6 +177,9 @@ class CockpitApp(App):
         Binding("minus", "slower", "Slower", key_display="-", show=False),
         Binding("t", "toggle_tz", "Timezone", show=False),
         Binding("u", "update", "Update"),  # shown once a newer engine is out
+        Binding("a", "side_act('answer')", "Answer"),  # the detail beside the list: shown when its row has them
+        Binding("d", "side_act('done')", "Done"),
+        Binding("A", "side_act('apply')", "Apply", key_display="A"),
         Binding("ctrl+pageup", "prev_tab", "Previous tab", show=False, priority=True),  # a table's own page left, right
         Binding("ctrl+pagedown", "next_tab", "Next tab", show=False, priority=True),
         *(Binding("comma" if t["key"] == "," else t["key"], f"tab('{name}')", cockpit.TABS[name]["label"]["en"],
@@ -187,6 +203,7 @@ class CockpitApp(App):
         self.card_focus: str | None = None  # the card last focused
         self.entered: dict[str, dict] = {}  # the filters a card opened its tab with: never saved, gone with the tab
         self.laid_out: str | None = None  # the view _layout last laid out
+        self._side_init()
         self.framed = False  # the frame is mounted: a resize lays it out again
         self.last_panel = cockpit.tab_panels(self.tab)[0]
         self.busy = self.probing = False
@@ -215,20 +232,22 @@ class CockpitApp(App):
         with Horizontal(id="toolbar"):
             yield Label(id="question")
             yield Static(id="views")
-        with Grid(id="grid"):  # one widget per panel: a tab or a view is a layout of them (_layout)
-            for name in EVERY_FRAME:
-                if name in cockpit.COLUMNS:
-                    kind = ViewTable if name in cockpit.SORTS else DataTable
-                    yield kind(id=name, classes="panel", zebra_stripes=True, cursor_type="row")
-                else:
-                    with VerticalScroll(id=name, classes="panel"):
-                        yield Static(id=f"{name}-text")
-        cards = VerticalScroll(id="cards")
-        cards.can_focus = False  # the cards take the focus, not their scroll
-        with cards:
-            with Grid(id="cards-grid"):
-                for tab in cockpit.card_tabs():
-                    yield Card(tab)
+        with Horizontal(id="body"):
+            with Grid(id="grid"):  # one widget per panel: a tab or a view is a layout of them (_layout)
+                for name in EVERY_FRAME:
+                    if name in cockpit.COLUMNS:
+                        kind = ViewTable if name in cockpit.SORTS else DataTable
+                        yield kind(id=name, classes="panel", zebra_stripes=True, cursor_type="row")
+                    else:
+                        with VerticalScroll(id=name, classes="panel"):
+                            yield Static(id=f"{name}-text")
+            cards = VerticalScroll(id="cards")
+            cards.can_focus = False  # the cards take the focus, not their scroll
+            with cards:
+                with Grid(id="cards-grid"):
+                    for tab in cockpit.card_tabs():
+                        yield Card(tab)
+            yield DetailPane(id="side")
         yield Footer()
 
     def _base(self):
@@ -283,6 +302,7 @@ class CockpitApp(App):
             self._q(f"#{name}").set_class(name not in shown, "off")
         self._q("#cards").display = view == "cards"
         self._q("#cards-grid").set_class(self._narrow(), "one")
+        self._side_layout(view)
         self.laid_out = view
         self._toolbar(view)
         self._bar()
@@ -386,8 +406,8 @@ class CockpitApp(App):
     def _resized(self) -> None:
         before = self.laid_out
         self._layout()
-        if self.laid_out != before:  # the grid gone, on a narrow terminal: its focus with it
-            self._focus_body()
+        if self.laid_out != before or (not self.beside and self._base().focused is self._q("#side-body")):
+            self._focus_body()  # the grid or the pane gone, on a narrower terminal: their focus with them
         elif isinstance(self.focused, Card):  # the cards rearranged: the focused one still in sight
             self.call_after_refresh(self.focused.scroll_visible, animate=False)
 
@@ -566,6 +586,7 @@ class CockpitApp(App):
         if updated:
             self._bar()
             self._draw_cards()
+            self._side_changed(updated)
         if "alerts" in updated:
             self._alerts_row()
 
@@ -708,7 +729,12 @@ class CockpitApp(App):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         name = event.data_table.id
         r = self.records.get(name, {}).get(event.row_key.value)
-        if r is not None:
+        if r is None:
+            return
+        if self.beside:  # its detail is there: Enter goes to it, up to date
+            self._side_read()
+            self._q("#side-body").focus()
+        else:
             self.open_detail(name, r)
 
     def open_detail(self, name: str, r: dict) -> None:
@@ -718,6 +744,13 @@ class CockpitApp(App):
             self.notify(f"{type(exc).__name__}: {exc}", title="detail", severity="error")
             return
         self.push_screen(DetailScreen(d))
+
+    def open_links(self, links: list[dict]) -> None:
+        """A detail's links: the one there is, else a list to pick from."""
+        if len(links) == 1:
+            self.open_link(links[0])
+        else:
+            self.push_screen(LinkScreen(links), lambda i: self.open_link(links[i]) if i is not None else None)
 
     def open_link(self, x: dict) -> None:
         """A link of a detail: another item's detail, else the file in the editor or the PR in the browser."""
@@ -744,8 +777,8 @@ class CockpitApp(App):
             self.notify(why, title=a.label, severity="error")
             return
         if a.kind == "answer":
-            title = next((s for s in self.screen_stack if isinstance(s, DetailScreen)), None)
-            self.push_screen(AnswerScreen(a, title.d["title"] if title else a.ref),
+            shown = next((s.d for s in self.screen_stack if isinstance(s, DetailScreen)), self.side_d)
+            self.push_screen(AnswerScreen(a, shown["title"] if shown else a.ref),
                              lambda steps: self._confirm(a, steps) if steps else None)
         else:
             self._confirm(a, a.steps)
@@ -776,6 +809,7 @@ class CockpitApp(App):
                 self.pop_screen()
         if results and (a.kind == "apply" or not ok):
             self.push_screen(ResultScreen(f"{a.label} {a.ref}", results))
+        self._side_acted()
         self.tick(force=True)  # the panels read again: the DDR answered, the stamp written
 
     def _hand_over(self, a, steps: list[list[str]]) -> None:
@@ -842,6 +876,8 @@ class CockpitApp(App):
             return False
         if action == "back":  # nothing to go back from on the overview, no search, no full view
             return bool(self.search) or self.screen.maximized is not None or self.tab != "overview"
+        if action in ("side_act", "side_open"):
+            return self._side_allows(action, parameters)
         if action == "next_view":  # shown on a tab with several views
             return len(cockpit.tab_views(self.tab, self._narrow())) > 1
         if action == "toggle_max":  # a tab of one panel is its full view already
