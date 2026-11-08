@@ -915,9 +915,18 @@ def test_the_chosen_columns_are_remembered_and_a_foreign_one_left_out(tmp_path):
     assert cockpit.load_state(f)["columns"] == {"sessions": {"shown": ["Title"], "width": 60}}
     cockpit.save_state({"columns": {}}, f)
     assert "columns" not in cockpit.load_state(f)
+    cockpit.save_state({"columns": {"sessions": {"shown": 3}, "queue": {"shown": True, "width": True},
+                                    "frontier": {"shown": ["Id", "Id", "P"], "width": False}}}, f)
+    assert cockpit.load_state(f)["columns"] == {"frontier": {"shown": ["Id", "P"], "width": 0}}  # damaged: never raised
 
 
-def test_the_palette_reaches_every_tab_project_sort_filter_and_table():
+def test_the_palette_reaches_every_sort_and_filter():
+    does = {e["do"] for e in cockpit.palette({})}
+    assert {("sort", n, k) for n in cockpit.SORTS for k in cockpit.SORTS[n]} <= does
+    assert {("filter", n, f, v) for n in cockpit.FILTERS for f, vals in cockpit.FILTERS[n].items() for v in vals} <= does
+
+
+def test_the_palette_reaches_every_tab_project_and_table():
     entries = cockpit.palette({"demo": None, "quant": None})
     titles = [e["title"] for e in entries]
     assert len(titles) == len(set(titles))  # the palette finds an entry by its words
@@ -925,9 +934,8 @@ def test_the_palette_reaches_every_tab_project_sort_filter_and_table():
     assert {("tab", n) for n in cockpit.built_tabs()} <= does and ("tab", "ideas") not in does
     assert {("view", "overview", v) for v in cockpit.tab_views("overview")} <= does and ("view", "queue", "list") not in does
     assert {("scope", "all"), ("scope", "demo"), ("scope", "quant")} <= does
-    assert {("sort", n, k) for n in cockpit.SORTS for k in cockpit.SORTS[n]} <= does
-    assert {("filter", n, f, v) for n in cockpit.FILTERS for f, vals in cockpit.FILTERS[n].items() for v in vals} <= does
     assert {("columns", n) for n in cockpit.COLUMNS} <= does and ("reset",) in does
+    assert ("view", "overview", "grid") not in {e["do"] for e in cockpit.palette({}, is_narrow=True)}
     assert "Go to Frontier" in titles and "Frontier: sort by unblocks" in titles and "Reset the views" in titles
     assert "Project: quant (not on this machine)" in titles
     assert next(e for e in entries if e["do"] == ("tab", "frontier"))["help"] == "key 3: What can start?"
@@ -943,6 +951,8 @@ def test_brain_tui_gives_the_app_its_columns(tmp_path, monkeypatch, store):
     cockpit.save_state({"scope": "demo", "columns": chosen})
     assert cli.main(["tui", "--project", "demo"]) == 0
     assert seen["columns"] == chosen and cockpit.load_state()["columns"] == chosen  # kept by the start's own save
+    assert cli.main(["tui", "--project", "demo", "--reset"]) == 0
+    assert seen["columns"] == {} and "columns" not in cockpit.load_state()  # forgotten
 
 
 def test_brain_tui_tab_starts_there_and_prints_it(tmp_path, monkeypatch, store, capsys):

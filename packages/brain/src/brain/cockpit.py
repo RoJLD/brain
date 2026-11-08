@@ -1049,6 +1049,7 @@ def help_lines(name: str) -> list[str]:
     its keys. ``{owner}`` in a text is config.json's owner."""
     h = {k: v.replace("{owner}", config.name_of()) for k, v in HELP[name].items()}
     keys = ("s next sort, o reverse, f filters and sort, a column title sorts; " if name in SORTS else "")
+    keys += "C its columns; " if name in COLUMNS else ""
     if name == "overview":
         return [h["what"], "", f"From: {h['from']}.", f"Read: {h['read']}.", f"Detail: {h['detail']}.", "",
                 "Keys: Enter or a click opens a card's tab, the arrows move between the cards, v the next view, a tab's "
@@ -1065,9 +1066,9 @@ def state_path() -> Path:
 
 
 def load_state(path: Path | None = None) -> dict:
-    """The scope, the panels' views, the last tab and each tab's view, and the settings (``theme``, ``tz``) the
-    interactive cockpit last showed; {} without them (the file missing, unreadable or not this shape). A tab or a view
-    this engine does not have is left out."""
+    """The scope, the panels' views, the last tab and each tab's view, each table's columns and the settings (``theme``,
+    ``tz``) the interactive cockpit last showed; {} without them (the file missing, unreadable or not this shape). A tab,
+    a view or a column this engine does not have is left out."""
     try:
         data = json.loads((path or state_path()).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -1100,8 +1101,9 @@ def _saved_columns(data: dict) -> dict:
     for name, c in (saved if isinstance(saved, dict) else {}).items():
         if name not in COLUMNS or not isinstance(c, dict):
             continue
-        shown = [x for x in c.get("shown") or [] if isinstance(x, str) and x in every_column(name)]
-        width = c.get("width") if isinstance(c.get("width"), int) and c.get("width") in TITLE_WIDTHS else 0
+        given = c.get("shown") if isinstance(c.get("shown"), list) else []
+        shown = list(dict.fromkeys(x for x in given if isinstance(x, str) and x in every_column(name)))
+        width = c.get("width") if type(c.get("width")) is int and c.get("width") in TITLE_WIDTHS else 0
         if shown or width:
             out[name] = {"shown": shown, "width": width}
     return {"columns": out} if out else {}
@@ -1753,14 +1755,14 @@ def cards(snap: dict, wait: str = "") -> list[dict]:
     return [TABS[n]["card"](snap, wait) for n in card_tabs()]
 
 
-def palette(choices: dict) -> list[dict]:
-    """The command palette's entries (spec cockpit-ux §4.4): every tab and view, project, sort, filter and table's columns,
-    each ``{title, help, do}``; ``do``: what brain.tui_palette runs, a tuple."""
+def palette(choices: dict, is_narrow: bool = False) -> list[dict]:
+    """The command palette's entries (spec cockpit-ux §4.4): every tab and view offered at this size, project, sort, filter
+    and table's columns, each ``{title, help, do}``; ``do``: what brain.tui_palette runs, a tuple."""
     out = []
     for n in built_tabs():
         name = tab_title(n)
         out.append({"title": f"Go to {name}", "help": f"key {TABS[n]['key']}: {tab_question(n)}", "do": ("tab", n)})
-        views = tab_views(n)
+        views = tab_views(n, is_narrow)
         out += [{"title": f"{name}: the {VIEW_LABELS[v][lang()]} view", "help": "v changes it", "do": ("view", n, v)}
                 for v in views if len(views) > 1]
     out += [{"title": f"Project: {label}", "help": "p opens the selector", "do": ("scope", value)}

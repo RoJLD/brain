@@ -9,12 +9,32 @@ from __future__ import annotations
 from collections.abc import Iterable
 from functools import partial
 
+from rich.text import Text
 from textual.app import SystemCommand
 from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Select
 
 from . import cockpit
 from .tui_screens import ColumnsScreen
+
+
+STYLES = {"sessions": {"asking": "bold magenta", "running": "green", "stale": "yellow", "idle": "cyan", "ended": "dim"},
+          "alerts": {"critical": "bold red", "error": "red", "warn": "yellow", "info": "dim"}}
+STYLE_COLUMN = {"sessions": "State", "alerts": "Level"}  # the column those words are in, wherever it is chosen to be
+MASTER_STYLES = {70: "yellow", 80: "bold dark_orange", 90: "bold red"}  # a master's row at each step (ST-4)
+
+
+def styled(name: str, r: dict, cols: tuple, cells: tuple) -> tuple:
+    """A row's cells as text, never markup (« [/docs] »): the state's or level's colour on its word; every other cell of a
+    master's row past 70, 80, 90 % of its budget in that step's."""
+    word = STYLE_COLUMN.get(name)
+    step = MASTER_STYLES.get(r.get("ctx_step"), "") if name == "sessions" else ""
+    return tuple(Text(str(cell), style=STYLES[name].get(cell, "") if c == word else step) for c, cell in zip(cols, cells))
+
+
+def same_cell(new, old) -> bool:
+    """Two cells show the same: a Text's equality leaves out its style, and a master's row changes colour at each step."""
+    return new == old and getattr(new, "style", "") == getattr(old, "style", "")
 
 
 class PaletteAndColumns:
@@ -24,8 +44,9 @@ class PaletteAndColumns:
         yield from super().get_system_commands(screen)
         if isinstance(screen, ModalScreen):  # a dialog is open: the panels' keys are off, and so are their entries
             return
-        for entry in cockpit.palette(self.cockpit.choices):
-            yield SystemCommand(entry["title"], entry["help"], partial(self.palette_do, *entry["do"]))
+        for entry in cockpit.palette(self.cockpit.choices, self._narrow()):
+            title = entry["title"].replace("[", "\\[")  # the palette reads it as markup: a title or a project's name is text
+            yield SystemCommand(title, entry["help"], partial(self.palette_do, *entry["do"]))
 
     def palette_do(self, what: str, *args) -> None:
         {"tab": self.action_tab, "view": self._palette_view, "scope": self._palette_scope, "sort": self._palette_sort,
@@ -57,10 +78,9 @@ class PaletteAndColumns:
         self.chosen, self.entered, self.tab_views = {}, {}, {}
         self._save()
         for name in cockpit.COLUMNS:
-            self._set_columns(name)
+            self._rebuild_columns(name)
         self._layout()
         self._focus_body()
-        self.draw(set(cockpit.COLUMNS))
 
     def action_columns(self, name: str | None = None) -> None:
         """A table's column chooser: the focused table's, or the one the palette names."""
@@ -75,8 +95,16 @@ class PaletteAndColumns:
         else:  # reset: the defaults
             self.chosen.pop(name, None)
         self._save()
+        self._rebuild_columns(name)
+
+    def _rebuild_columns(self, name: str) -> None:
+        """A table with its new columns, the cursor on the record it was on."""
+        table = self._q(f"#{name}", DataTable)
+        key = self._side_row(name)
         self._set_columns(name)
         self.draw({name})
+        if key is not None and key in table.rows:
+            table.move_cursor(row=table.get_row_index(key))
 
     def _set_columns(self, name: str) -> None:
         table = self._q(f"#{name}", DataTable)

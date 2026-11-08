@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -83,9 +84,10 @@ class ColumnsScreen(ModalScreen):
                 Binding("shift+down", "move(1)", "Move down")]
     CSS = """
     ColumnsScreen { align: center middle; }
-    #columns { width: 64; max-height: 92%; height: auto; border: round $accent; padding: 1 2; background: $surface; }
+    #columns { width: 64; max-width: 100%; max-height: 100%; height: auto; border: round $accent; padding: 1 2;
+               background: $surface; }
     #columns .field { margin-top: 1; color: $text-muted; }
-    #column-list { height: auto; max-height: 20; }
+    #column-list { height: auto; }
     #columns-buttons { height: auto; margin-top: 1; }
     #columns-buttons Button { margin-right: 1; min-width: 8; }
     """
@@ -99,13 +101,25 @@ class ColumnsScreen(ModalScreen):
     def _selections(self, selected) -> list[Selection]:
         return [Selection(c, c, c in selected) for c in self.order]
 
+    def _fit(self) -> None:
+        """The list scrolls so that the buttons stay on the screen; on a very short terminal the dialog scrolls too."""
+        self.query_one("#column-list", SelectionList).styles.max_height = max(5, self.app.size.height - 15)
+
+    def on_mount(self) -> None:
+        self._fit()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._fit()
+
     def compose(self) -> ComposeResult:
-        with Vertical(id="columns"):
+        dialog = VerticalScroll(id="columns")
+        dialog.can_focus = False  # its fields take the focus, not its scroll
+        with dialog:
             yield Label(f"{cockpit.title(self.panel_name)}: columns, in order (space shows or hides)")
             yield SelectionList(*self._selections(self.on), id="column-list")
             yield Label(f"The longest a value of {cockpit.EMPTY_COLUMN[self.panel_name]} may be", classes="field")
             yield Select([("no limit" if w == 0 else str(w), w) for w in cockpit.TITLE_WIDTHS], value=self.width,
-                         allow_blank=False, id="title-width")
+                         allow_blank=False, compact=True, id="title-width")
             with Horizontal(id="columns-buttons"):
                 yield Button("Up", id="up")
                 yield Button("Down", id="down")

@@ -41,7 +41,7 @@ USAGE = """\
                  table says why (a filter, nothing in the scope, a project not on this machine), a panel not probed
                  yet its countdown then its progress, a failed read keeps the last content and its time (--all
                  without a registry: this folder's project); the
-                 interactive views remember the scope, views, last tab, theme and timezone (--tz, t; default local) in
+                 interactive views remember the scope, views, last tab, columns, theme and timezone (--tz, t; default local) in
                  $BRAIN_HOME/tui.json (--reset forgets them; --project, --all, --sort, --filter, --tab and --tz win).
                  Enter: the row's detail (a DDR's options, an item's spec, ADRs and PR, a session's plan): from 140
                  columns, on a tab of one list, it sits right of the list and follows the cursor (Enter gives it the
@@ -60,7 +60,7 @@ USAGE = """\
 
 def cmd_tui(args, root: Path) -> int:
     """The cockpit (brain.cockpit): the Textual app with the tui extra, else its text redrawn in place; --once or
-    --json: one read. The interactive views start from the scope, the views and the tab they last showed
+    --json: one read. The interactive views start from the scope, the views, the tab and the columns they last showed
     (<BRAIN_HOME>/tui.json; --project or --all, --sort, --filter and --tab win, --reset forgets them) and remember
     them."""
     try:
@@ -175,7 +175,7 @@ def register(sub, ctx) -> None:
                     help="the times shown: this machine's timezone (local, the interactive default) or UTC; --once "
                          "and --json keep the recorded UTC times unless it is given")
     tu.add_argument("--reset", action="store_true",
-                    help="start from the defaults: forget the scope, views and tab remembered in "
+                    help="start from the defaults: forget the scope, views, tab and columns remembered in "
                          "<BRAIN_HOME>/tui.json")
     tu.add_argument("--detail", metavar="ID",
                     help="print a row's detail and exit, as Enter shows it: a DDR (its options, its answer), an item "

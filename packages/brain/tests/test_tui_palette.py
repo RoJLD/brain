@@ -4,7 +4,7 @@ from test_tui import OVER, PANELS, _run, _session
 from textual.command import CommandPalette
 from textual.widgets import Button, DataTable, Select, SelectionList
 
-from brain import cockpit, tui, tui_screens
+from brain import cockpit, tui_palette, tui_screens
 
 
 def _labels(app, name):
@@ -54,6 +54,42 @@ def test_c_chooses_a_tables_columns_and_they_are_remembered():
     _run(check, size=OVER)
 
 
+def test_a_chosen_column_keeps_the_cursor_on_its_record():
+    async def check(app, pilot, fake):
+        _still(fake)
+        await pilot.press("3")
+        table = app.query_one("#frontier", DataTable)
+        table.move_cursor(row=2)
+        await pilot.pause(0.1)
+        app._chosen_columns("frontier", {"shown": ["Id", "P"], "width": 0})
+        await pilot.pause(0.1)
+        assert _labels(app, "frontier") == ["Id", "P"] and table.cursor_row == 2
+        assert str(table.get_row_at(table.cursor_row)[0]) == "wi-two"
+    _run(check, size=OVER)
+
+
+def test_the_chooser_keeps_its_buttons_on_a_short_terminal_and_opens_on_what_is_saved():
+    """The sessions have 18 columns: the list scrolls, Apply stays where a click reaches it."""
+    async def check(app, pilot, fake):
+        _still(fake)
+        for size in ((120, 30), (80, 24)):
+            await pilot.resize_terminal(*size)
+            await pilot.pause(0.2)
+            await pilot.press("2", "C")
+            await pilot.pause(0.2)
+            apply_ = app.screen.query_one("#apply", Button)
+            assert 0 <= apply_.region.y and apply_.region.bottom <= size[1], size
+            assert app.screen.query_one("#title-width", Select).value == 40  # the saved width
+            await pilot.press("escape")
+            await pilot.pause(0.1)
+        await pilot.press("C")
+        await pilot.pause(0.2)
+        await pilot.click("#apply")
+        await pilot.pause(0.2)
+        assert app.screen is app.screen_stack[0] and app.chosen["sessions"]["width"] == 40
+    _run(check, columns={"sessions": {"shown": [], "width": 40}})
+
+
 def test_up_and_down_move_a_column_and_its_cursor_with_it():
     async def check(app, pilot, fake):
         _still(fake)
@@ -77,6 +113,17 @@ def test_up_and_down_move_a_column_and_its_cursor_with_it():
         dialog.query_one("#up", Button).press()
         await pilot.pause(0.1)
         assert dialog.order == order and list(chooser.selected) == order  # what is shown stays shown
+        chooser.highlighted = 0
+        await pilot.press("space")  # a hidden column stays hidden when it moves
+        await pilot.pause(0.1)
+        dialog.query_one("#down", Button).press()
+        await pilot.pause(0.1)
+        assert order[0] not in chooser.selected and order[1] in chooser.selected
+        dialog.query_one("#up", Button).press()
+        await pilot.pause(0.1)
+        chooser.highlighted = 0
+        await pilot.press("space")
+        await pilot.pause(0.1)
         chooser.highlighted = len(order) - 1
         await pilot.press("shift+down")  # past the bottom: nothing
         assert dialog.order == order
@@ -130,7 +177,14 @@ def test_the_chosen_columns_and_the_state_colour_follow_a_new_order():
         assert _labels(app, "sessions") == ["Title", "State", "Cost"]
         title, state, cost = table.get_row_at(0)
         assert (str(title), str(state), str(cost)) == ("Task abcdef123456", "asking", "$3.00")
-        assert state.style == "bold magenta" and title.style == tui.MASTER_STYLES[80]  # its word's colour, wherever it is
+        assert state.style == "bold magenta" and title.style == tui_palette.MASTER_STYLES[80]  # its word's colour, wherever it is
+        panels = {**PANELS, "alerts": {"projects": [{"project": "demo", "alerts": [
+            {"level": "warn", "key": "k", "message": "m", "since": ""}]}]}}
+        app.chosen["alerts"] = {"shown": ["Message", "Level"], "width": 0}
+        app._set_columns("alerts")
+        app.draw({"alerts"})
+        message, level = app.query_one("#alerts", DataTable).get_row_at(0)
+        assert level.style == "yellow" and message.style == ""
         cost_column = next(c for c in table.ordered_columns if str(c.label) == "Cost")
         table.post_message(DataTable.HeaderSelected(table, cost_column.key, 2, cost_column.label))  # a title sorts
         await pilot.pause(0.1)
@@ -186,21 +240,39 @@ def test_the_palette_goes_to_a_tab_for_real():
     _run(check, size=OVER)
 
 
+def test_a_title_with_brackets_does_not_break_the_palette():
+    """The palette reads its titles as markup: a free title or a project's name is text."""
+    async def check(app, pilot, fake):
+        _still(fake)
+        cockpit.save_state({"settings": {"titles": {"frontier": "[/x] file [prod]"}}})
+        assert any(c.title.startswith("Go to \\[/x] file \\[prod]") for c in app.get_system_commands(app.screen))
+        app.action_command_palette()
+        await pilot.pause(0.2)
+        await pilot.press(*"file")
+        await pilot.pause(0.5)
+        assert app.is_running and isinstance(app.screen, CommandPalette)
+    _run(check, size=OVER)
+
+
 def test_the_palettes_entries_do_what_they_say():
     async def check(app, pilot, fake):
         _still(fake)
-        _command(app, "Overview: the Grid view").callback()
+        await pilot.press("1")
+        _command(app, "Overview: the Grid view").callback()  # from another tab: there first
         await pilot.pause(0.1)
         assert app.tab == "overview" and app._view() == "grid"
         _command(app, "Go to Health").callback()
         await pilot.pause(0.1)
         assert app.tab == "health"
-        _command(app, "Frontier: sort by unblocks").callback()  # its tab, its sort
+        app.views["frontier"] = {**app.views["frontier"], "reverse": True}
+        _command(app, "Frontier: sort by unblocks").callback()  # its tab, its sort, in its own order
         await pilot.pause(0.1)
-        assert app.tab == "frontier" and app.views["frontier"]["sort"] == "unblocks"
+        assert app.tab == "frontier" and app.views["frontier"]["sort"] == "unblocks" and not app.views["frontier"]["reverse"]
+        await pilot.press("1")
+        app.entered = {"queue": {"band": "now"}}  # a card's filter: the entry's is the owner's and takes its place
         _command(app, f"{cockpit.title('queue')}: kind decision").callback()
         await pilot.pause(0.1)
-        assert app.tab == "queue" and app.views["queue"]["kind"] == "decision"
+        assert app.tab == "queue" and app.views["queue"]["kind"] == "decision" and app.entered == {}
         assert cockpit.load_state()["panels"]["queue"]["kind"] == "decision"
         _command(app, "Sessions: choose its columns").callback()
         await pilot.pause(0.1)
@@ -214,6 +286,25 @@ def test_the_palettes_entries_do_what_they_say():
         await app.workers.wait_for_complete()
         assert fake.selected == ["all"]
     _run(check, size=OVER)
+
+
+def test_the_palette_offers_no_grid_on_a_narrow_terminal():
+    async def check(app, pilot, fake):
+        titles = [c.title for c in app.get_system_commands(app.screen)]
+        assert "Overview: the Digest view" in titles and "Overview: the Grid view" not in titles
+    _run(check, size=(100, 28))
+
+
+def test_reset_the_views_lays_the_overview_out_again():
+    async def check(app, pilot, fake):
+        _still(fake)
+        assert app._view() == "grid" and _labels(app, "frontier") == ["Id"]
+        _command(app, "Reset the views").callback()
+        await pilot.pause(0.2)
+        assert app._view() == "cards" and app.query_one("#cards").display and not app.query_one("#grid").display
+        assert app.focused is app.query_one("#card-queue")
+        assert _labels(app, "frontier")[0] == "P" and app.query_one("#frontier", DataTable).row_count == 3
+    _run(check, size=OVER, tabs={"overview": {"view": "grid"}}, columns={"frontier": {"shown": ["Id"], "width": 0}})
 
 
 def test_reset_the_views_keeps_the_project_and_the_theme():

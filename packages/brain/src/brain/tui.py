@@ -50,7 +50,7 @@ notification, never a crash: the panels of a read that fails keep their last con
 data in their frame; an action's commands run in another, and the panels are read again after them. A refresh keeps
 the view still: a table's cells are updated in place when its rows are the same, else it is rebuilt with its scroll where it was and its cursor on its record. The scope, the views and the
 settings (the theme picked in the command palette, the timezone) are saved to <BRAIN_HOME>/tui.json at each change.
-The title bar shows the installed version; once the screen is drawn, a worker reads whether a newer one is out
+The chosen columns are kept there too. The title bar shows the installed version; once the screen is drawn, a worker reads whether a newer one is out
 (brain.update.check: the engine's tags, cached 24 h, silent offline; the pin of config.json and the installer it
 declares) and adds it there (« brain 0.2.2 · 0.2.3 available », « brain 0.2.1 · pin v0.2.3: -Apply »), so the first
 paint never waits on it.
@@ -71,17 +71,13 @@ from textual.markup import escape
 from textual.widgets import DataTable, Footer, Header, Input, Label, Select, Static, Tab, Tabs
 
 from . import cockpit, detail, handover, paths, update
-from .tui_palette import PaletteAndColumns
+from .tui_palette import PaletteAndColumns, same_cell, styled
 from .tui_screens import AnswerScreen, ConfirmScreen, DetailScreen, LinkScreen, PanelHelp, ResultScreen, ViewScreen
 from .tui_side import DetailBeside, DetailPane
 
 INTERVALS = (0.5, 1.0, 2.0, 5.0, 10.0)
 TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines, "exec": cockpit.exec_lines,
          "digest": lambda panel: cockpit.digest_lines(panel, width=1000, lines_max=0, titled=False)}  # it scrolls: all of it
-STYLES = {"sessions": {"asking": "bold magenta", "running": "green", "stale": "yellow", "idle": "cyan", "ended": "dim"},
-          "alerts": {"critical": "bold red", "error": "red", "warn": "yellow", "info": "dim"}}
-STYLE_COLUMN = {"sessions": "State", "alerts": "Level"}  # the column those words are in, wherever it is chosen to be
-MASTER_STYLES = {70: "yellow", 80: "bold dark_orange", 90: "bold red"}  # a master's row at each step (ST-4)
 PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back", "toggle_max", "pick_scope", "search",
                  "next_sort", "reverse", "filters", "panel_help", "toggle_tz", "update", "side_act", "side_open",
                  "columns")  # the panels' keys, off while a dialog or a detail is on top of them
@@ -89,11 +85,6 @@ PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back",
 EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec")
 CARD_COLUMNS = 3
 STATUS_COLUMNS = 100  # narrower, the global bar keeps its width for the search: the subtitle has the times
-
-
-def _same_cell(new, old) -> bool:
-    """Two cells show the same: a Text's equality leaves out its style, and a master's row changes colour at each step."""
-    return new == old and getattr(new, "style", "") == getattr(old, "style", "")
 
 
 def _seconds(s: float) -> str:
@@ -620,7 +611,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
         chosen = self.chosen.get(name)
         cols = cockpit.columns(name, self.multi is not False, chosen)
         for r in cockpit.shown(name, panel, view, self.search):
-            cells = self._styled(name, r, cols, cockpit.cells(name, r, self.multi is not False, self.settings["tz"], chosen))
+            cells = styled(name, r, cols, cockpit.cells(name, r, self.multi is not False, self.settings["tz"], chosen))
             key = base = cockpit.row_key(name, r)
             while key in seen:
                 key = f"{base}#{len(seen)}"
@@ -634,7 +625,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
             columns = [c.key for c in table.ordered_columns]
             for key, cells in rows:
                 for column, new, old in zip(columns, cells, table.get_row(key)):
-                    if not _same_cell(new, old):  # the line that says why may grow: its column follows
+                    if not same_cell(new, old):  # the line that says why may grow: its column follows
                         table.update_cell(key, column, new, update_width=key == "~empty")
         else:
             keep, row = None, table.cursor_row
@@ -657,13 +648,6 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
             sub = f"{panel['defaulted']}; {sub}" if sub else panel["defaulted"]
         failed = self._failed_note(name, snap) if snap else ""
         table.border_subtitle = escape(f"{failed}; {sub}" if failed and sub else failed or sub)
-
-    def _styled(self, name: str, r: dict, cols: tuple, cells: tuple) -> tuple:
-        """A row's cells as text, never markup (« [/docs] »): the state's or level's colour on its word; every other cell
-        of a master's row past 70, 80, 90 % of its budget in that step's."""
-        word = STYLE_COLUMN.get(name)
-        step = MASTER_STYLES.get(r.get("ctx_step"), "") if name == "sessions" else ""
-        return tuple(Text(str(cell), style=STYLES[name].get(cell, "") if c == word else step) for c, cell in zip(cols, cells))
 
     def _shown_view(self, name: str) -> dict | None:
         """A panel's view as shown: its own, and the filters a card opened it with (never saved)."""
@@ -893,8 +877,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
             return bool(self.search) or self.screen.maximized is not None or self.tab != "overview"
         if action in ("side_act", "side_open"):
             return self._side_allows(action, parameters)
-        if action == "columns":  # the palette's entry names its table; the key needs one focused
-            return bool(parameters) or isinstance(self.focused, DataTable)
+        if action == "columns":  # the key needs a table focused; the palette calls action_columns with its own
+            return isinstance(self.focused, DataTable)
         if action == "next_view":  # shown on a tab with several views
             return len(cockpit.tab_views(self.tab, self._narrow())) > 1
         if action == "toggle_max":  # a tab of one panel is its full view already

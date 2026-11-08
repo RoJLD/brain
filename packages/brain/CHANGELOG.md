@@ -10,7 +10,7 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   the frontier, 4 the milestones, 8 health and 0 the overview, where 1 to 8 used to focus a panel of the grid. `m` is
   offered only where a tab shows several panels, and Escape goes back one step at a time: the search, a full view, then
   the overview. `tui.json` gains `tab` and `tabs`;
-  an older engine ignores them.
+  an older engine ignores them and forgets them at its next save.
 
 - **The cockpit's tabs** (wi-brain-tui-layout, UX-2, UX-18; spec 2026-11-03 cockpit-ux-round2 §4.0). One tab per
   question, in data (`cockpit.TABS`: key, label in English and French, question, views and their panels, count): 0
@@ -28,7 +28,7 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 - **The cockpit's column chooser and palette** (wi-brain-tui-layout; spec cockpit-ux §4.4). `C` chooses a table's columns
   (`cockpit.columns`, `brain.tui_palette`): shown or hidden, their order, and the longest its title may be, the rest in
   the detail; the sessions also offer Cost, App id, Id and Branch (`EXTRA_COLUMNS`), the Cost column sorting by cost. They
-  are kept in `tui.json`'s `columns`, which an older engine ignores. A state's colour follows its word wherever it is
+  are kept in `tui.json`'s `columns`, which an older engine ignores and forgets at its next save. A state's colour follows its word wherever it is
   placed. The palette (`ctrl+p`, `cockpit.palette`) gains an entry for each tab and view, project, sort, filter and table's
   columns, and « Reset the views », which keeps the project, the theme and the timezone.
 
