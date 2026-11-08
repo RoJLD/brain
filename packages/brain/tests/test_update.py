@@ -131,11 +131,13 @@ def test_up_to_date_has_no_plan(venv):
     assert update.lines(p)[0].startswith("brain 0.2.2 is up to date (the latest tag of RoJLD/brain is v0.2.2")
 
 
-def test_a_pinned_brain_shows_the_pin_to_move(venv, pinned):
+def test_a_pinned_brain_shows_the_pin_to_move(venv, installer_brain):
+    """A brain that declares its own installer (an install.ps1) keeps the reviewed pin PR (COMPAT-5)."""
+    pinned = installer_brain
     info = update.check(fetch=_fetch(), now=NOW, installed="0.2.2")
     p = update.plan(info, read_changelog=lambda *a: None)
     assert info["repo"] == "ada/engine" and "ada/engine.git@v0.2.3" in p["spec"]
-    assert p["pin"] == {"file": str(pinned / "config.json"), "from": "v0.2.2", "to": "v0.2.3"}
+    assert p["pin"] == {"file": str(pinned / "config.json"), "from": "v0.2.2", "to": "v0.2.3", "move": "pr"}
     text = "\n".join(update.lines(p))
     assert "pin      config.json engine.pin v0.2.2 -> v0.2.3: move it by a reviewed PR" in text
     assert "the CHANGELOG at v0.2.3 could not be read" in text
@@ -307,3 +309,208 @@ def test_config_check_reports_a_missing_installer(installer_brain):
     assert config.check() == []
     (installer_brain / "install.ps1").unlink()
     assert config.check() == ["config.json: engine.installer 'install.ps1' does not exist"]
+
+
+# --- wi-brain-update-moves-pin (COMPAT-5): a brain without an installer of its own has its pin moved by brain update ---
+
+@pytest.fixture
+def pin_repo(pinned, monkeypatch):
+    """Ada's pinned brain (v0.2.2, no installer of its own) as a git repo, config.json committed and indented."""
+    from conftest import GIT_ENV, git_init, run_git
+    if not shutil.which("git"):
+        pytest.skip("git not available")
+    for k, v in GIT_ENV.items():
+        monkeypatch.setenv(k, v)
+    cfg = {"v": 1, "identity": {"owner": "Ada", "kind": "person"}, "engine": {"repo": "ada/engine", "pin": "v0.2.2"}}
+    (pinned / "config.json").write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    git_init(pinned)
+    run_git(pinned, "add", "config.json")
+    run_git(pinned, "commit", "-q", "-m", "init")
+    return pinned
+
+
+def _runner(ran, sync_code=0):
+    """git runs for real; pip and brain sync are recorded (brain sync exits ``sync_code``)."""
+    def run(cmd, **kw):
+        if cmd[0] == "git":
+            return subprocess.run(cmd, **kw)
+        ran.append(cmd)
+        return subprocess.CompletedProcess(cmd, sync_code if cmd[1:4] == ["-m", "brain", "--root"] else 0, "", "")
+    return run
+
+
+def _pin(root):
+    return json.loads((root / "config.json").read_text(encoding="utf-8"))["engine"]["pin"]
+
+
+def _venv_has(version):
+    """The brain venv holds brain at ``version`` (its dist-info), as pip leaves it."""
+    py = update.venv_python()
+    if py.is_file():
+        for d in update._site_packages(py):
+            if d.is_dir():
+                for old in d.glob("brain-*.dist-info"):
+                    old.rmdir()
+                (d / f"brain-{version}.dist-info").mkdir()
+
+
+def _plan(installed, tags=TAGS, venv_has=None):
+    _venv_has(venv_has or installed)
+    return update.plan(update.check(fetch=_fetch(tags), now=NOW, installed=installed, refresh=True),
+                       read_changelog=lambda *a: [])
+
+
+def test_without_an_installer_the_plan_writes_the_pin(venv, pin_repo):
+    from conftest import run_git
+    p = _plan("0.2.2")
+    assert p["pin"] == {"file": str(pin_repo / "config.json"), "from": "v0.2.2", "to": "v0.2.3", "move": "write"}
+    text = "\n".join(update.lines(p))
+    assert "pin      config.json engine.pin v0.2.2 -> v0.2.3: written and committed in" in text
+    assert "sync     brain sync in" in text and "reviewed PR" not in text
+    ran = []
+    code, done = update.apply(p, runner=_runner(ran))
+    assert code == 0, done
+    assert ran[0][1:4] == ["-m", "pip", "install"]  # the install first, then the pin
+    assert ran[1] == [p["python"], "-m", "brain", "--root", str(pin_repo), "sync"]  # with the new engine
+    assert _pin(pin_repo) == "v0.2.3"
+    assert run_git(pin_repo, "log", "-1", "--format=%s").strip() == "brain update: engine.pin v0.2.2 -> v0.2.3"
+    assert run_git(pin_repo, "status", "--porcelain") == ""  # committed, nothing left behind (no .bak in the repo)
+    text = (pin_repo / "config.json").read_text(encoding="utf-8")
+    assert text.startswith('{\n  "v": 1,\n  "identity"') and text.endswith("}\n")  # its order and indent kept
+    assert any(line.startswith("synced   brain sync in") for line in done)
+
+
+def test_the_pin_moves_alone_when_the_engine_is_already_the_latest(venv, pin_repo):
+    """An update made before this one installed v0.2.3 and left the pin behind: no install, the pin moves."""
+    p = _plan("0.2.3")
+    assert p["spec"] is None and update.pin_writes(p) and update.runs(p)
+    assert "The plan (brain update --yes" in "\n".join(update.lines(p))
+    ran = []
+    code, done = update.apply(p, runner=_runner(ran))
+    assert code == 0 and _pin(pin_repo) == "v0.2.3" and [c[1:3] for c in ran] == [["-m", "brain"]]  # no pip
+
+
+def test_the_pin_is_never_moved_backwards_nor_off_a_tag(venv, pin_repo):
+    behind = _plan("0.2.1", TAGS[:2])  # the latest tag, v0.2.1, is below the pin v0.2.2
+    assert behind["pin"]["move"] == "pr" and not update.runs(behind)
+    cfg = json.loads((pin_repo / "config.json").read_text(encoding="utf-8"))
+    cfg["engine"]["pin"] = "main"
+    (pin_repo / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    assert _plan("0.2.2")["pin"]["move"] == "pr"
+
+
+def test_an_editable_install_never_moves_the_pin(venv, pin_repo, monkeypatch, tmp_path):
+    monkeypatch.setattr(update.paths, "installed_checkout", lambda: tmp_path / "engine-checkout")
+    for installed in ("0.2.2", "0.2.3"):
+        p = _plan(installed)
+        assert p["pin"]["move"] == "pr" and not update.runs(p)
+
+
+def test_a_declared_installer_keeps_the_pr_even_when_its_file_is_missing(venv, installer_brain):
+    (installer_brain / "install.ps1").unlink()
+    p = _plan("0.2.2")
+    assert p["pin"]["move"] == "pr" and not update.pin_writes(p)
+
+
+def test_a_config_with_changes_not_committed_is_left_alone(venv, pin_repo):
+    p = _plan("0.2.2")
+    f = pin_repo / "config.json"
+    f.write_text(f.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    before = f.read_bytes()
+    ran = []
+    code, done = update.apply(p, runner=_runner(ran))
+    assert code == 1 and f.read_bytes() == before
+    assert any("has changes not committed (commit them, then brain update again): nothing written" in line for line in done)
+    assert len(ran) == 1  # installed, but no brain sync
+
+
+def test_a_brain_that_is_not_a_git_repo_is_left_alone(venv, pinned, monkeypatch):
+    if not shutil.which("git"):
+        pytest.skip("git not available")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(pinned.parent))  # no repo above the brain's folder
+    p = _plan("0.2.3")
+    code, done = update.apply(p, runner=_runner([]))
+    assert code == 1 and "is not a git repo (or git cannot run): nothing written" in done[0] and _pin(pinned) == "v0.2.2"
+
+
+def test_a_failed_sync_is_reported(venv, pin_repo):
+    code, done = update.apply(_plan("0.2.3"), runner=_runner([], sync_code=1))
+    assert code == 1 and _pin(pin_repo) == "v0.2.3" and "brain sync failed with exit code 1" in done[-1]
+
+
+def test_a_pin_moved_since_the_plan_is_not_overwritten(pin_repo):
+    with pytest.raises(ValueError, match="no longer v0.2.1"):
+        update.write_pin(pin_repo / "config.json", "v0.2.1", "v0.2.3")
+    assert _pin(pin_repo) == "v0.2.2"
+
+
+def _fixed_check(installed):
+    return lambda root=None, refresh=False, **kw: _real_check(root, refresh=refresh, installed=installed,
+                                                               fetch=_fetch())
+
+
+def test_the_pin_moves_on_the_owners_yes_only_never_from_a_session(venv, pin_repo, monkeypatch, capsys):
+    monkeypatch.setattr(update, "check", _fixed_check("0.2.3"))
+    _venv_has("0.2.3")
+    moved = []
+    monkeypatch.setattr(update, "apply", lambda p, runner=None: moved.append(p) or (0, ["moved"]))
+    asked = []
+    assert update.main(None, check_only=False, yes=False, as_json=False,
+                       ask=lambda q: asked.append(q) or "n", out=lambda s: None) == 0
+    assert moved == [] and asked == ["Move engine.pin to v0.2.3, commit it and run brain sync now? [y/N] "]
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert cli.main(["update", "--yes"]) == 1 and moved == []  # a Claude Code session never moves it
+    assert "run it yourself in a terminal" in capsys.readouterr().out and _pin(pin_repo) == "v0.2.2"
+    monkeypatch.delenv("CLAUDECODE")
+    assert cli.main(["update", "--yes"]) == 0 and len(moved) == 1  # the owner's --yes
+
+
+def test_the_question_names_the_pin_with_the_install(venv, pin_repo, monkeypatch):
+    monkeypatch.setattr(update, "check", _fixed_check("0.2.2"))
+    asked = []
+    update.main(None, check_only=False, yes=False, as_json=False, ask=lambda q: asked.append(q) or "n",
+                out=lambda s: None)
+    assert asked == ["Install brain v0.2.3, move engine.pin to v0.2.3, commit it and run brain sync now? [y/N] "]
+
+
+def test_write_pin_keeps_the_line_endings_and_the_bom(tmp_path):
+    """A config.json Windows PowerShell 5.1 wrote: a BOM, CRLF, four spaces; only the pin changes."""
+    f = tmp_path / "config.json"
+    body = '{\r\n    "engine": {\r\n        "pin": "v0.2.2",\r\n        "repo": "ada/engine"\r\n    },\r\n    "v": 1\r\n}\r\n'
+    f.write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))
+    update.write_pin(f, "v0.2.2", "v0.2.3")
+    assert f.read_bytes() == b"\xef\xbb\xbf" + body.replace("v0.2.2", "v0.2.3").encode("utf-8")
+
+
+def test_an_untracked_config_is_left_alone(venv, pin_repo):
+    from conftest import run_git
+    run_git(pin_repo, "rm", "-q", "--cached", "config.json")
+    run_git(pin_repo, "commit", "-q", "-m", "untrack")
+    (pin_repo / ".git" / "info" / "exclude").write_text("config.json\n", encoding="utf-8")  # ignored: status is clean
+    code, done = update.apply(_plan("0.2.3"), runner=_runner([]))
+    assert code == 1 and "is not tracked in" in done[0] and _pin(pin_repo) == "v0.2.2"
+
+
+def test_the_pin_alone_follows_the_venvs_engine_not_the_running_one(venv, pin_repo):
+    """A brain run from another interpreter (a checkout's venv) at the latest tag, the brain's venv still at the pin:
+    the pin stays, since brain sync would run the venv's older engine against it."""
+    p = _plan("0.2.3", venv_has="0.2.2")
+    assert p["pin"]["move"] == "pr" and not update.runs(p)
+    assert _plan("0.2.3")["pin"]["move"] == "write"
+
+
+def test_a_detached_head_is_left_alone(venv, pin_repo):
+    from conftest import run_git
+    run_git(pin_repo, "checkout", "-q", "--detach")
+    code, done = update.apply(_plan("0.2.3"), runner=_runner([]))
+    assert code == 1 and "a detached HEAD" in done[0] and _pin(pin_repo) == "v0.2.2"
+
+
+def test_git_missing_is_said_not_raised(venv, pin_repo):
+    def run(cmd, **kw):
+        if cmd[0] == "git":
+            raise FileNotFoundError("git")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    code, done = update.apply(_plan("0.2.2"), runner=run)
+    assert code == 1 and done[0].startswith("installed brain v0.2.3")
+    assert any("git cannot run" in line for line in done) and _pin(pin_repo) == "v0.2.2"
