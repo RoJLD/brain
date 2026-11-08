@@ -42,7 +42,7 @@ class FakeCockpit:
     def __init__(self):
         self.calls, self.selected = [], []
         self.scope, self.every = "demo", False
-        self.choices = {"demo": None, "quant": None}
+        self.choices = {"demo": None, "quant": None}  # no project behind them: as if not on this machine
 
     @property
     def multi(self):
@@ -80,6 +80,14 @@ def _ids(app, name):
     return [table.get_row_at(i)[table.ordered_columns.index(next(c for c in table.ordered_columns
                                                                  if str(c.label) == "Id"))]
             for i in range(table.row_count)]
+
+
+def _why(app, name):
+    """The one line an empty table shows (wi-brain-tui-states), '' when it shows rows."""
+    table = app.query_one(f"#{name}", DataTable)
+    if table.row_count != 1 or "~empty" not in [k.value for k in table.rows]:
+        return ""
+    return "".join(str(c) for c in table.get_row("~empty"))
 
 
 def test_the_app_draws_the_panels_and_answers_its_keys():
@@ -153,7 +161,8 @@ def test_sort_filter_and_search_change_the_tables_and_are_remembered():
         await pilot.press("slash")
         assert app.focused is app.query_one("#search")
         await pilot.press(*"tui")
-        assert _ids(app, "frontier") == ["wi-two"] and app.query_one("#queue").row_count == 0
+        assert _ids(app, "frontier") == ["wi-two"]
+        assert _why(app, "queue") == "2 hidden by search 'tui': Escape clears the search"  # its one line says why
         assert "q" not in [b for b in "tui"] and app.is_running  # the letters went to the search, not the keys
         await pilot.press("escape")  # cleared, back to the panel
         assert app.search == "" and app.focused is app.query_one("#frontier") and len(_ids(app, "frontier")) == 3
@@ -200,9 +209,47 @@ def test_the_app_starts_from_the_views_it_is_given():
     async def check(app, pilot, fake):
         assert _ids(app, "frontier") == ["wi-two", "wi-three", "wi-one"] and app.query_one("#sessions").row_count == 2
         await pilot.press("slash", *"task end")  # every table: the sessions' titles too
-        assert app.query_one("#sessions").row_count == 1 and app.query_one("#frontier").row_count == 0
+        assert app.query_one("#sessions").row_count == 1
+        assert _why(app, "frontier") == "3 hidden by search 'task end': Escape clears the search"
         assert app.query_one("#sessions").border_subtitle == "1 of 2 shown; state all; search 'task end'; sort state"
     _run(check, views={"sessions": {"state": "all"}, "frontier": {"sort": "unblocks"}})
+
+
+def test_the_panels_say_why_they_are_empty_and_what_a_probe_waits_for():
+    """wi-brain-tui-states: an empty table's one line, a panel not probed yet (its countdown, then the probe's
+    progress), a failed read (the last content kept, its error and its time in the frame, notified once), and a
+    project not on this machine greyed in the selector."""
+    async def check(app, pilot, fake):
+        snap = {"scope": "demo", "read_at": None, "probed_at": None,
+                "projects": [{"name": "demo", "root": "E:/nowhere", "found": False}],
+                "panels": {**PANELS, "queue": {"projects": []}, "audit": None}, "probing": None,
+                "errors": {"frontier": {"at": "2026-11-06T10:00:00Z", "error": "OSError: disk gone"}},
+                "panel_at": {"frontier": "2026-11-06T09:58:00Z"}}
+        fake.snapshot = lambda: snap
+        app.settings["tz"] = "utc"
+        app.want_probe, app.next_probe = False, tui.time.monotonic() + 100
+        notified, notify = [], app.notify
+        app.notify = lambda message, **kw: notified.append(message) or notify(message, **kw)
+        app._done(set(cockpit.PANELS), "")
+        assert _why(app, "queue") == "Nothing waits on Ada in demo; demo is not on this machine (E:/nowhere)"
+        assert _why(app, "alerts").startswith("not probed yet: probe in 1 min ")  # its countdown
+        assert app.query_one("#frontier").border_subtitle.startswith(
+            "read failed 10:00:00: OSError: disk gone; data of 09:58:00")
+        assert _ids(app, "frontier") == ["wi-one", "wi-three", "wi-two"]  # the last content, kept
+        app._done(set(), "")
+        assert notified == ["OSError: disk gone (frontier: the last content kept)"]  # notified once
+        snap["probing"], app.busy, app.probing = {"what": "quant", "n": 2, "total": 3}, True, True
+        app.tick()  # busy: the probe's progress drawn, nothing read
+        assert _why(app, "alerts") == "probing: quant 2/3" and app.sub_title.endswith("| probing: quant 2/3")
+        audit = app.query_one("#audit-text")
+        assert "probing: quant 2/3" in str(getattr(audit, "content", None) or audit.renderable)
+        app.busy = app.probing = False
+        await pilot.press("2", "enter")  # the line that says why opens nothing
+        await pilot.pause(0.1)
+        assert app.screen is app.screen_stack[0]
+        assert [(str(label), getattr(label, "style", "")) for label, _ in app._scopes()][1:] == [
+            ("demo (not on this machine)", "dim"), ("quant (not on this machine)", "dim")]  # greyed
+    _run(check)
 
 
 def test_an_error_in_a_read_is_shown_not_fatal():

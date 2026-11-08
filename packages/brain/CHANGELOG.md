@@ -52,6 +52,18 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   the owner's terminal. A brain that declares its installer keeps the reviewed pin PR, shown and never done. The plan's
   `--json` gains `pin.move` (`"write"` or `"pr"`).
 
+- **The cockpit's empty, error and offline states** (wi-brain-tui-states; spec 2026-11-02 cockpit-ux §4.10). An
+  empty table shows one line that says why (`cockpit.why_empty`): a filter or the search hides N rows, and the key
+  that changes it; nothing in the scope, the owner named; a project not on this machine. A panel not probed yet shows
+  the probe's countdown, then its progress project by project (`probe_wait`). `Cockpit.refresh` no longer raises: a
+  failed read keeps its panels' content, its error and the data's time go to the snapshot (`errors`, `panel_at`) and
+  the panel's frame, the TUI notifies it once, and it is read again at the next tick, a probed panel at the next
+  probe (before, a failed graph read waited for the next file change). `--once` and `--json` print a failed read on
+  stderr and exit 1 (they used to raise); `--detail` names it when it finds no row. A stack or code index repo not OK
+  names its last OK measure. The project selector greys a registered project this machine lacks; `brain tui --all` without a
+  registry shows the folder's project instead of exiting. `brain tui --json` gains `errors`, `panel_at`, `probing`
+  and `registry`.
+
 - **The cockpit's queue sorts by score** (wi-brain-tui-queue-sort-score). The queue panel's `score` sort ranks by
   the score alone, across the bands: the highest first (an entry without a score last), then what it unblocks, then
   the oldest. It is the second sort of `s`, a click on the Score column, `brain tui --sort queue:score`, and a view

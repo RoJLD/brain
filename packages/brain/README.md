@@ -87,6 +87,16 @@ must replace on Windows: on `y` the cockpit exits, a new window waits for it, ru
 view (a failure says so and waits for Enter), then relaunches `brain tui` with the same arguments. A queue
 action's `install.ps1 -Apply`, applied with `A` in its detail, goes the same way.
 
+A cockpit panel never stays blank without saying why. An empty table shows one line: « 7 hidden by kind action: f
+changes the filters », « Nothing waits on Ada in every project », « far is not on this machine (../nowhere) ». A panel
+not probed yet shows the probe's countdown (« probe in 1 min 40 (r for now) »), then its progress (« probing: quant
+2/3 »). A read that fails keeps the panel's last content, with the error and the time of the data in its frame; it is
+notified once and read again at the next tick (a probed panel: at the next probe). `--once` and `--json` print a
+failed read on stderr and exit 1; `--detail` names it when it finds no row. A stack or a code index repo that is not
+OK names its last OK measure this cockpit saw (« gitnexus DOWN (last OK 2 h ago) »). The project selector greys a
+registered project this machine lacks, and `brain tui --all` without a project registry shows the folder's project
+and says so.
+
 A pinned brain runs its pinned engine. `brain check` warns when the running brain or research-graph is not
 `config.json` `engine.pin`: a newer or an older version, or the pin's version from other code (another git revision,
 an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh` and
