@@ -40,7 +40,9 @@ USAGE = """\
                  without a registry: this folder's project); the
                  interactive views remember the scope, views, last tab, theme and timezone (--tz, t; default local) in
                  $BRAIN_HOME/tui.json (--reset forgets them; --project, --all, --sort, --filter, --tab and --tz win).
-                 Enter: the row's detail (a DDR's options, an item's spec, ADRs and PR, a session's plan); in it, o
+                 Enter: the row's detail (a DDR's options, an item's spec, ADRs and PR, a session's plan): from 140
+                 columns, on a tab of one list, it sits right of the list and follows the cursor (Enter gives it the
+                 focus, Escape gives it back; a, d and A work from the list too), else it opens over the panels; in it, o
                  opens a link in the editor or the browser, a answers a decision, d marks an action or a permission
                  done, A applies an action's command, each run as {owner}'s after a confirmation of the exact brain
                  command and logged in $BRAIN_HOME/ledger/cockpit-<month>.jsonl (refused in a Claude Code session).

@@ -25,6 +25,13 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   tab's view are kept in `tui.json`. `brain tui --tab NAME` starts there, and with `--once` or `--plain` prints that
   tab's panels alone.
 
+- **The cockpit's detail beside the list** (wi-brain-tui-layout, UX-20; spec cockpit-ux-round2 §4.0.2). From 140 columns,
+  on a tab that is one list (`cockpit.detail_beside`), a row's detail sits right of the list and follows the cursor
+  (`brain.tui_side`): it is read once the cursor rests, in a worker thread, and remembered per row until its panel changes,
+  so an arrow held down reads nothing. Enter gives it the focus, Escape gives it back, `o` opens a link from it, and `a`, `d`
+  and `A` work from the list too, after the same confirmation. Narrower, or on a tab of several panels, Enter opens it
+  over them as before.
+
 - **The cockpit's overview: one card per tab** (wi-brain-tui-layout, UX-19; spec cockpit-ux-round2 §4.0.3). The overview
   opens on its cards (`cockpit.cards`, each tab declaring its own): the queue's band now, the sessions asking, the nearest
   milestones, what can start, the open alerts, worst first across the projects, and the audit. Enter or a click opens

@@ -1,8 +1,6 @@
 """wi-brain-tui-layout: the cockpit's tabs, the overview's cards and their keys (the Textual app; the data is
 brain.cockpit's, tested in test_cockpit; the app's helpers are test_tui's)."""
 
-import asyncio
-
 from test_tui import GRID, PANELS, FakeCockpit, _ids, _many, _run, _session, _why  # skipped with it, without Textual
 from textual.markup import escape
 from textual.widgets import DataTable, Select, Static, Tabs
@@ -17,18 +15,6 @@ def _on_screen(app):
 
 def _bar(app):
     return [str(t.label) for t in app.query("#tabs Tab")]
-
-
-def _run_at(test, size, **kw):
-    async def main():
-        fake = FakeCockpit()
-        app = tui.CockpitApp(fake, refresh=2.0, probe=300, **kw)
-        async with app.run_test(size=size) as pilot:
-            await pilot.pause(0.2)
-            await app.workers.wait_for_complete()
-            await pilot.pause(0.1)
-            await test(app, pilot, fake)
-    asyncio.run(main())
 
 
 def test_a_tab_is_a_layout_of_the_same_panels():
@@ -126,7 +112,7 @@ def test_a_narrow_terminal_has_the_tabs_alone():
         await pilot.resize_terminal(100, 28)
         await pilot.pause(0.2)
         assert app._view() == "cards" and app.focused is app.query_one("#card-queue")  # the focus followed
-    _run_at(check, (100, 40))
+    _run(check, size=(100, 40))
 
 
 def test_the_bar_counts_what_each_tab_holds(monkeypatch):
@@ -445,7 +431,7 @@ def test_the_focused_card_stays_in_sight():
         await pilot.pause(0.3)
         body = scroll.region
         assert app.focused is health and health.region.y >= body.y and health.region.bottom <= body.bottom
-    _run_at(check, (100, 25))
+    _run(check, size=(100, 25))
 
 
 def test_the_cards_are_drawn_again_when_shown():
