@@ -666,8 +666,8 @@ class CockpitApp(App):
             columns = [c.key for c in table.ordered_columns]
             for key, cells in rows:
                 for column, new, old in zip(columns, cells, table.get_row(key)):
-                    if new != old:
-                        table.update_cell(key, column, new)
+                    if new != old:  # the line that says why may grow: its column follows
+                        table.update_cell(key, column, new, update_width=key == "~empty")
         else:
             keep, row = None, table.cursor_row
             if table.row_count:

@@ -448,7 +448,7 @@ def test_an_empty_table_says_why_and_a_panel_not_probed_what_it_waits_for():
     assert why("milestones") == "No pending milestone in every project" + missing
     assert why("alerts") == "not probed yet" and why("alerts", wait="probing: demo 1/2") == "probing: demo 1/2"
     snap["errors"] = {"alerts": {"at": "2026-11-06T10:00:00Z", "error": "OSError: x"}}
-    assert why("alerts") == "read failed: OSError: x (read again at the next probe)"
+    assert why("alerts") == "read failed: OSError: x"
     del snap["panels"]["queue"]
     assert why("queue") == "not read yet"
     assert cockpit.probe_wait({"what": "demo", "n": 1, "total": 2}) == "probing: demo 1/2"
@@ -463,7 +463,7 @@ def test_an_empty_table_says_why_and_a_panel_not_probed_what_it_waits_for():
     assert "  (not read yet)" in lines and "  (not probed yet)" not in lines  # the heading says it for a probe
 
 
-def test_a_failed_read_keeps_the_last_content_and_is_read_again(tmp_path, monkeypatch, store):
+def test_a_failed_read_keeps_the_last_content_and_is_read_again(tmp_path, monkeypatch, store, capsys):
     """wi-brain-tui-states: a read that fails is never raised; its panels keep their content, the error and the
     time of the data are in the snapshot, it is read again at the next tick, and a project the registry names but
     this machine lacks is labelled in the selector."""
@@ -473,23 +473,31 @@ def test_a_failed_read_keeps_the_last_content_and_is_read_again(tmp_path, monkey
     assert cockpit.scope_choices({"x": None})[1] == ("x (not on this machine)", "x", False)
     assert cp.snapshot()["registry"] is True
     cp.refresh()
-    before = cp.snapshot()["panels"]["frontier"]
-    real = status._store
+    before, read_at = cp.snapshot()["panels"]["frontier"], cp.snapshot()["read_at"]
+    real, calls = status._store, []
 
     def gone(p):
+        calls.append(p.name)
         raise OSError("disk gone")
     monkeypatch.setattr(status, "_store", gone)
     with (store / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
         f.write("\n")  # a change: the graph is read again
-    assert cp.refresh() == {"queue", "milestones", "frontier"}  # never raised
+    assert cp.refresh() == {"queue", "milestones", "frontier"}  # never raised; to draw again with the error
     snap = cp.snapshot()
     error = snap["errors"]["frontier"]
     assert error["error"] == "OSError: disk gone" and snap["panels"]["frontier"] == before  # the last content
     assert snap["panel_at"]["frontier"] <= error["at"] and "sessions" not in snap["errors"]
+    assert snap["read_at"] == read_at  # nothing was read
     text = "\n".join(cockpit.render(snap, tz="utc"))
     assert f"  read failed at {cockpit.when(error['at'], 'utc')}: OSError: disk gone; data of " in text
-    assert cp.refresh() == {"queue", "milestones", "frontier"}  # read again, though no file changed
-    assert cp.snapshot()["errors"]["frontier"]["at"] == error["at"]  # the same error: its first time kept
+    n = len(calls)
+    assert cp.refresh() == set() and len(calls) > n  # read again, though no file changed; the same error: no redraw
+    assert cp.snapshot()["errors"]["frontier"]["at"] == error["at"]  # its first time kept
+    assert cli.main(["tui", "--project", "demo", "--once", "--quick"]) == 1  # a one-shot read says it failed
+    assert "brain tui: reading queue, milestones, frontier failed: OSError: disk gone" in capsys.readouterr().err
+    assert cli.main(["tui", "--project", "demo", "--detail", "wi-nope", "--quick"]) == 1
+    err = capsys.readouterr().err  # no row: and why it may be missing
+    assert "wi-nope: no row" in err and "reading queue, milestones, frontier failed: OSError: disk gone" in err
     monkeypatch.setattr(status, "_store", real)
     assert cp.refresh() == {"queue", "milestones", "frontier"} and cp.snapshot()["errors"] == {}
     assert cp.refresh() == set()  # back to reading on a change only
@@ -515,6 +523,18 @@ def test_the_probe_says_its_progress_and_a_stack_its_last_ok_measure(tmp_path, m
     assert "gitnexus DOWN (no container; last OK 3 h ago)" in cockpit.health_lines(
         health, now=t0 + timedelta(hours=3))[1]
     assert cp.refresh(probe=True) and cp.snapshot()["probing"] is None  # done: no progress left
+    assert cp.snapshot()["errors"] == {}
+
+    def fails(p, detail=0):
+        raise OSError("audit gone")
+    monkeypatch.setattr(status, "audit_of", fails)
+    assert cp.refresh(probe=True) == set(cockpit.PROBE_PANELS)  # a failed probe: never raised
+    snap = cp.snapshot()
+    assert {n: e["error"] for n, e in snap["errors"].items()} == dict.fromkeys(cockpit.PROBE_PANELS,
+                                                                               "OSError: audit gone")
+    assert snap["panels"]["health"]["projects"] == health["projects"] and snap["probing"] is None  # kept
+    cp.select("demo")  # another scope: the old scope's errors go
+    assert cp.snapshot()["errors"] == {} and cp.snapshot()["panels"]["health"]["projects"] == health["projects"]
 
 
 def test_brain_tui_all_without_a_registry_shows_this_folders_project(tmp_path, monkeypatch, store, capsys):

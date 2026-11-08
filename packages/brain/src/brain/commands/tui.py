@@ -76,6 +76,7 @@ def cmd_tui(args, root: Path) -> int:
         if d is None:
             print(f"brain tui: {args.detail}: no row, DDR, item or milestone of that id in {cp.scope}",
                   file=sys.stderr)
+            _failed_reads(cp.snapshot())
             return 1
         print(detail.as_json(d) if args.json else "\n".join(detail.lines(d)))
         return 0
@@ -84,7 +85,7 @@ def cmd_tui(args, root: Path) -> int:
         snap = cp.snapshot()
         print(json.dumps(snap, ensure_ascii=False, indent=1, sort_keys=True) if args.json
               else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz)))
-        return 0
+        return 1 if _failed_reads(snap) else 0
     cockpit.save_state({"scope": cp.scope, "panels": views, "settings": settings})
     if not args.plain:
         try:
@@ -98,6 +99,16 @@ def cmd_tui(args, root: Path) -> int:
             return tui.run(cp, refresh=args.refresh, probe=args.probe, views=views, search=args.search,
                            settings=settings)
     return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"])
+
+
+def _failed_reads(snap: dict) -> bool:
+    """A one-shot read (--once, --json, --detail) that failed: each error on stderr, once per error; True if any."""
+    by_error: dict[str, list[str]] = {}
+    for name, e in (snap.get("errors") or {}).items():
+        by_error.setdefault(e["error"], []).append(name)
+    for error, names in by_error.items():
+        print(f"brain tui: reading {', '.join(names)} failed: {error}", file=sys.stderr)
+    return bool(by_error)
 
 
 def _duration(text: str) -> float:

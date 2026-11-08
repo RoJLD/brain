@@ -228,6 +228,8 @@ def test_the_panels_say_why_they_are_empty_and_what_a_probe_waits_for():
         fake.snapshot = lambda: snap
         app.settings["tz"] = "utc"
         app.want_probe, app.next_probe = False, tui.time.monotonic() + 100
+        notified, notify = [], app.notify
+        app.notify = lambda message, **kw: notified.append(message) or notify(message, **kw)
         app._done(set(cockpit.PANELS), "")
         assert _why(app, "queue") == "Nothing waits on Ada in demo; demo is not on this machine (E:/nowhere)"
         assert _why(app, "alerts").startswith("not probed yet: probe in 1 min ")  # its countdown
@@ -235,7 +237,7 @@ def test_the_panels_say_why_they_are_empty_and_what_a_probe_waits_for():
             "read failed 10:00:00: OSError: disk gone; data of 09:58:00")
         assert _ids(app, "frontier") == ["wi-one", "wi-three", "wi-two"]  # the last content, kept
         app._done(set(), "")
-        assert app.notified == {("2026-11-06T10:00:00Z", "OSError: disk gone")}  # notified once
+        assert notified == ["OSError: disk gone (frontier: the last content kept)"]  # notified once
         snap["probing"], app.busy, app.probing = {"what": "quant", "n": 2, "total": 3}, True, True
         app.tick()  # busy: the probe's progress drawn, nothing read
         assert _why(app, "alerts") == "probing: quant 2/3" and app.sub_title.endswith("| probing: quant 2/3")

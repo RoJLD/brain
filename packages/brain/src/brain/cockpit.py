@@ -61,8 +61,8 @@ The states (wi-brain-tui-states, spec 2026-11-02 cockpit-ux §4.10): an empty ta
 or the search hides N rows, with the key that changes it; a project not on this machine; nothing in the scope, the
 owner named); a panel not probed yet says what it waits for (``probe_wait``: the probe's countdown, then its progress
 per project); a read that fails keeps its panels' last content, its error and the time of the data shown in the
-snapshot (``errors``, ``panel_at``), and is read again at the next tick; a stack or a code index repo that is not OK
-names its last OK measure this cockpit saw; a project the registry names but this machine lacks is greyed in the
+snapshot (``errors``, ``panel_at``), and is read again at the next tick (a probed panel: at the next probe); a stack
+or a code index repo that is not OK names its last OK measure this cockpit saw; a project the registry names but this machine lacks is greyed in the
 project selector (``scope_choices``).
 
 Read-only: nothing here writes a record or a ledger, and nothing calls a model. The one file written is the screen's
@@ -525,6 +525,9 @@ class Cockpit:
         self.projs, self.every, self.sigs = projs, every, {}
         with self.lock:
             self.panels = {k: v for k, v in self.panels.items() if k == "sessions"}
+        # the errors and data times were the old scope's
+        self.errors = {k: v for k, v in self.errors.items() if k == "sessions"}
+        self.panel_at = {k: v for k, v in self.panel_at.items() if k == "sessions"}
         self._probed_panels()
         self.dirty = set(PANELS)
 
@@ -618,50 +621,54 @@ class Cockpit:
     def _probed_panels(self, now: datetime | None = None) -> None:
         """The probed panels of the scope, from what each project's last probe measured (none: not probed yet)."""
         got = [self.probes[p.name] for p in self.found if p.name in self.probes]
+        new: dict[str, dict] = {}
+        if got:  # built first, then swapped in at once: a draw never sees them gone
+            now = now or datetime.now(timezone.utc)
+            new = {"alerts": {"projects": [g["alerts"] for g in got]},
+                   "audit": {"projects": [g["audit"] for g in got]},
+                   "health": {"projects": [g["health"] for g in got],
+                              "exec": perf_summary(None if self.every else {p.name for p in self.projs}, now)},
+                   "digest": {"projects": [g["digest"] for g in got]}}
+            for name in new:
+                self.panel_at[name] = min(g["at"] for g in got)  # the time of the data shown
         with self.lock:
             for name in PROBE_PANELS:
                 self.panels.pop(name, None)
-        if got:
-            now = now or datetime.now(timezone.utc)
-            self._set(alerts={"projects": [g["alerts"] for g in got]},
-                      audit={"projects": [g["audit"] for g in got]},
-                      health={"projects": [g["health"] for g in got],
-                              "exec": perf_summary(None if self.every else {p.name for p in self.projs}, now)},
-                      digest={"projects": [g["digest"] for g in got]})
+            self.panels.update(new)
         self.probed_at = min(g["at"] for g in got) if got and not self.needs_probe() else None
 
     def refresh(self, probe: bool = False) -> set[str]:
         """One tick: the sessions (a transcript only when it changed), the file panels whose files changed (all of
-        them the first time), then the probes when asked; the panels whose content changed. A read that fails is
-        never raised: its panels keep their last content, its error goes to ``errors`` (``snapshot``), and it is
-        read again at the next tick (the probe, at the next probe)."""
-        updated, self.dirty = set(self.dirty), set()
+        them the first time), then the probes when asked; the panels whose content changed, or whose read failed
+        with a new error. A read that fails is never raised: its panels keep their last content, its error goes to
+        ``errors`` (``snapshot``), and it is read again at the next tick (the probe, at the next probe)."""
+        read, failed, self.dirty = set(self.dirty), set(), set()
         try:
             groups = self.changed()
             if "graph" in groups:
                 self.read_graph()
-            updated |= self._read_ok({p for g in groups for p in FILE_PANELS[g]})
+            read |= self._read_ok({p for g in groups for p in FILE_PANELS[g]})
         except Exception as exc:  # shown in the panels, never fatal
             self.sigs.pop("graph", None)  # read again at the next tick
-            updated |= self._failed(FILE_PANELS["graph"], exc)
+            failed |= self._failed(FILE_PANELS["graph"], exc)
         try:
             changed, had_error = self.read_sessions(), "sessions" in self.errors
             self._read_ok({"sessions"})
             if changed or had_error:
-                updated.add("sessions")
+                read.add("sessions")
         except Exception as exc:  # the same
-            updated |= self._failed(("sessions",), exc)
+            failed |= self._failed(("sessions",), exc)
         if probe:
             try:
                 self.probe()
-                updated |= self._read_ok({*PROBE_PANELS, "queue"})
+                read |= self._read_ok({*PROBE_PANELS, "queue"})
             except Exception as exc:  # the same: probed again at the next probe
-                updated |= self._failed(PROBE_PANELS, exc)
+                failed |= self._failed(PROBE_PANELS, exc)
             finally:
                 self.progress = None
-        if updated:
+        if read:
             self.read_at = transcript.iso(datetime.now(timezone.utc))
-        return updated
+        return read | failed
 
     def _read_ok(self, panels) -> set[str]:
         at = transcript.iso(datetime.now(timezone.utc))
@@ -671,12 +678,17 @@ class Cockpit:
         return set(panels)
 
     def _failed(self, panels, exc: Exception) -> set[str]:
-        """The panels' read failed: its error and time (the first failure's while the same error goes on)."""
+        """The panels' read failed: its error and time (the first failure's while the same error goes on); the
+        panels whose error is new, to draw again (the same error again changes nothing on screen)."""
         error = {"at": transcript.iso(datetime.now(timezone.utc)), "error": f"{type(exc).__name__}: {exc}"}
+        new = set()
         for p in panels:
             old = self.errors.get(p)
-            self.errors[p] = old if old and old["error"] == error["error"] else error
-        return set(panels)
+            if old and old["error"] == error["error"]:
+                continue
+            self.errors[p] = error
+            new.add(p)
+        return new
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -866,8 +878,7 @@ def why_empty(name: str, snap: dict, view: dict | None = None, search: str = "",
     error = (snap.get("errors") or {}).get(name)
     if panel is None:
         if error:
-            when_again = "probe" if name in PROBE_PANELS else "tick"
-            return f"read failed: {error['error']} (read again at the next {when_again})"
+            return f"read failed: {error['error']}"
         return (wait or "not probed yet") if name in PROBE_PANELS else "not read yet"
     every = entries(name, panel)
     v = view_of(name, view) if view is not None and name in SORTS else None
