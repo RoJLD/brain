@@ -33,6 +33,12 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `brain status` and the cockpit's health card. A send during a quiet reports `held` (`brain notify send` exit 0).
   Takes effect once this release is installed.
 
+### Fixed
+
+- `brain <cmd> --help` no longer crashes without a stdout (pythonw.exe, Python 3.10: argparse wrote to None); it
+  survives a cp1252 pipe too, the CLI already writing UTF-8 with `errors=replace` (`wi-brain-help-encoding`). Takes
+  effect with the next tagged release.
+
 ## 0.2.6 — 2026-11-09
 
 ### Upgrade
