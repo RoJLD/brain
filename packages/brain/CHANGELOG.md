@@ -6,6 +6,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ### Fixes
 
+- `brain.nowindow` also gives no window to a child whose `creationflags` is passed positionally or as `None` (the
+  wrapper skipped the first and raised `TypeError` on the second); its review, which #70 never had.
 - The merge driver after the review of #21 (`wi-brain-mergedriver-review-fixes`): a driver that cannot run (its
   launcher gone, an engine without it) no longer leaves ours alone with no conflict marker: its command falls back to
   `git merge-file` when it wrote nothing (exit 2 or more); `brain merge-driver install --apply` rewrites an older
