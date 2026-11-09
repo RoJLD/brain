@@ -6,11 +6,58 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ### Upgrade
 
+From 0.2.5, in this order. No hand edit of a brain's data is needed: the upgrade test (`compat-prev`,
+`docs/release.md`) installs this engine over a brain 0.2.5 wrote, moves the pin and runs `brain sync`, `brain check`
+and `brain record check`.
+
+1. **Check the configuration first**, with 0.2.5 still installed: `brain config --check` and `brain config` (its `file`
+   and `personal`). The public and secrets checks now fail closed (wi-brain-guards-fail-closed, COMPAT-4): from
+   the install on, every `git commit` and `git push` is refused on a machine whose `config.json` is unreadable or not
+   an object, has a `public` (or one of its keys) of another type or a `v` above 1, whose `$BRAIN_CONFIG` names no
+   file, or whose `personal.json` names a folder without `config.json` (a renamed personal brain); so too when the
+   hooks find no Python that imports brain. An unknown key never refuses. The override is
+   `BRAIN_GUARD_ALLOW=public:config`.
+2. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. 0.2.5 runs
+   this update and only reminds you of the pin. A brain whose `config.json` declares `engine.installer`: merge the PR
+   that moves `engine.pin`, then run the installer's `-Apply` instead.
+3. **Move the pin and render the hooks.** Run `brain update` again and answer `y`: 0.2.6 now does what 0.2.5 left to
+   you (wi-brain-update-moves-pin, COMPAT-5): it writes `engine.pin`, commits `config.json` alone (never pushed) and
+   runs `brain sync`, which rewrites `guard.sh` and `health.sh`. With changes in `config.json` not committed, it leaves
+   the pin and says so. A brain that declares its installer: run `brain sync` after `-Apply`; its pin never moves
+   except by the reviewed PR.
+4. **Restart the Claude Code sessions**, so that no older bash hook from the plugin cache keeps running.
+5. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
+   push (wi-brain-public-stamp-binding). A stamp written by brain 0.2.5 or older has no key, and the push guard
+   refuses it, as it refuses any stamp made under another engine, other public rules or with gitleaks gained or lost.
+   So this step comes back after every engine upgrade.
+
+Nothing to run for these:
+
 - **The cockpit's number keys now go to tabs** (wi-brain-tui-layout). Nothing to run: 1 is the queue, 2 the sessions, 3
   the frontier, 4 the milestones, 8 health and 0 the overview, where 1 to 8 used to focus a panel of the grid. `m` is
   offered only where a tab shows several panels, and Escape goes back one step at a time: the search, a full view, then
   the overview. `tui.json` gains `tab` and `tabs`;
   an older engine ignores them and forgets them at its next save.
+
+- Nothing to run for the machine-local state (wi-brain-state-safe-io). `vault/state.json` gains `"v": 1` at its
+  next write, which brain 0.2.5 reads unchanged; `schedules/installed.json` and `alerts/state.json` keep their v 1
+  unwritten. Each of the four files may now have a `<name>.bak` beside it, and a file that was unreadable a
+  `<name>.unreadable-<stamp>`: both are safe to delete once you have looked.
+
+- Nothing to run. Outside CI, a check that used to fail on an unknown key in `config.json`, `permissions.yaml`,
+  `packs.yaml`, `projects.yaml` or a record now prints a note instead; CI (`CI` set) still fails on it. A `v` above 1
+  in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
+  update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
+
+### Changes
+
+- **The release checklist** (wi-brain-release-checklist; spec-brain-data-compat, gate item 6). `docs/release.md` says
+  every step of a release, from the version PR to the pin. CI's new `release-check` job (`installer/release_check.py`,
+  standard library only) reads the last tag on every pull request. On a version PR, it fails when a registered schema
+  changed since that tag and this version's CHANGELOG section has no `### Upgrade` with something in it, and when
+  the two `__version__`, the research-graph pin, the hooks' `brain_version` and both CHANGELOGs' dated sections do not
+  agree: what `release-tag` used to find out only after the tag. Any other pull request passes it at once. An Unreleased
+  section now keeps its `### Upgrade` apart from its `### Changes`.
 
 - **The cockpit's tabs** (wi-brain-tui-layout, UX-2, UX-18; spec 2026-11-03 cockpit-ux-round2 §4.0). One tab per
   question, in data (`cockpit.TABS`: key, label in English and French, question, views and their panels, count): 0
@@ -49,20 +96,6 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   once, so `1` then Enter opens the queue's row, not the previous tab's. A table's cell is text, never markup: a title
   like « Move [/docs] out » crashed the cockpit, and « [blocking] » vanished from the queue's Id column.
 
-- **`brain update` moves `engine.pin` in a brain without an installer of its own** (wi-brain-update-moves-pin,
-  COMPAT-5). The update *to* this version is run by the older engine, which only reminds you of the pin: once it is
-  installed, run `brain update` again in your own terminal and answer `y`; it writes `engine.pin`, commits
-  `config.json` and runs `brain sync`. A brain whose `config.json` declares `engine.installer` changes nothing: its
-  pin still moves by a reviewed PR.
-
-- Rerun `brain check --public --history` in a public repo's checkout before its next push
-  (wi-brain-public-stamp-binding): a stamp written by brain 0.2.5 or older has no key and the push guard refuses it.
-
-- Nothing to run for the machine-local state (wi-brain-state-safe-io). `vault/state.json` gains `"v": 1` at its
-  next write, which brain 0.2.5 reads unchanged; `schedules/installed.json` and `alerts/state.json` keep their v 1
-  unwritten. Each of the four files may now have a `<name>.bak` beside it, and a file that was unreadable a
-  `<name>.unreadable-<stamp>`: both are safe to delete once you have looked.
-
 - **A public-check stamp is valid only under the key it was made with** (wi-brain-public-stamp-binding,
   spec-brain-data-compat N2 and finding 11; `docs/formats.md`, « Public-check stamps »). The stamp of a green `brain
   check --public --history` now carries `v` 2 and a `key`: the engine version, the sha256 of config.json's public
@@ -72,16 +105,6 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   its presence on the PATH; a gitleaks on the PATH that fails stamps nothing (exit 1, « fix gitleaks or take it off
   the PATH »), since the guard would refuse that stamp; a stamp is written atomically; a newer brain's stamp, a
   nested or unreadable one, or any surprise while reading it refuses the push instead of letting it through.
-- **The public and secrets checks fail closed** (wi-brain-guards-fail-closed, COMPAT-4). After `brain sync` and the
-  install, a machine whose `config.json` is unreadable, not an object, has a `public` that is not an object or a `v`
-  above 1, whose `$BRAIN_CONFIG` names no file, or whose `personal.json` names a folder without `config.json` (a
-  renamed personal brain) is refused every `git commit` and `git push` until it is fixed; so is a machine whose hooks
-  find no Python that imports brain. Check first: `brain config --check` and `brain config` (its `file` and
-  `personal`).
-- Nothing to run. Outside CI, a check that used to fail on an unknown key in `config.json`, `permissions.yaml`,
-  `packs.yaml`, `projects.yaml` or a record now prints a note instead; CI (`CI` set) still fails on it. A `v` above 1
-  in `config.json`, `permissions.yaml` or a record was refused before and is still refused, now with « brain
-  update »; `packs.yaml`'s `v`, written but never read until now, is refused the same way.
 
 - **`brain update` moves the pin where no review step exists** (wi-brain-update-moves-pin, spec-brain-data-compat
   COMPAT-5). For a brain whose `config.json` declares no `engine.installer` (one from `brain init`), the plan's last
