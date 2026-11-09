@@ -4,6 +4,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+### Added
+
+- `schedules:` entries take `days` (mon to sun), the days `at` runs on, so that a weekly command can be declared and
+  installed like any other (`days: [mon]`): a `ScheduleByWeek` trigger on Windows, `OnCalendar=Mon ...` under systemd,
+  the day-of-week field in a crontab. A task whose days changed is planned as an update (wi-brain-schedule-hidden-all).
 - **Quiet mode** (wi-brain-quiet-mode): `brain quiet --for 2h` or a project's `notify: quiet_hours: "22:00-07:00"`
   (local time) holds every notification below `critical`; a critical one still goes through. The held ones are summed
   up in one message per project when the quiet ends (`brain quiet --off`, or the next alerts pass). No task is

@@ -384,7 +384,8 @@ What each finished item teaches is a node of the graph, so it can be found, coun
 ## Schedules and the alerts pass
 
 A project's `schedules:` entry in the registry declares the brain commands a machine's scheduler runs, `{name:
-{command, every, at, at_logon, machines, timeout, enabled}}`; the alerts pass, say:
+{command, every, at, days, at_logon, machines, timeout, enabled}}`, with `days` the days `at` runs on (`days: [mon]`
+is weekly, none is every day); the alerts pass, say:
 
 ```yaml
 brain:
