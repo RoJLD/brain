@@ -79,7 +79,7 @@ ENGINE_FAILS = 3      # the engine's errors of one task and class in ERROR_HOURS
 MONTHS = 2            # the event files read: this month's and the one before
 SHOWN = 3             # alerts named in brain status's row
 SOURCES = ("scheduler", "ledger", "stack", "code-index", "audit", "events", "file", "engine", "session")
-MASTER_HOURS = 6      # a master's watch state written this recently is a live master's
+MASTER_HOURS = 6      # a master the session tree does not know: its watch state written this recently is a live one's
 KEYS = {"scheduler", "exits", "tasks", "stacks", "files", "events", "levels"}
 TASK_KEYS = {"every", "missed", "level", "ledger", "running"}
 EXIT_LEVELS = ("ok", *LEVELS)
@@ -672,28 +672,59 @@ def engine_alerts(cfg: Config, now: datetime) -> list[Alert]:
     return out
 
 
+def _live_now(tree, session: str, m: dict, mtime: float, floor: float) -> int:
+    """The live children of the master ``session`` now: read from the session tree when it knows the master (0 once
+    the master itself is archived or ended, whatever its state file's age, and 0 for the state of a transcript the
+    app's master has left, e.g. after a /clear: its current transcript has its own state); else the count its last
+    check kept, while that state is under MASTER_HOURS old (review of #34, finding 26).
+
+    Assumption, not yet checked against a real /clear in the desktop app: after a /clear the app moves its file's
+    ``cliSessionId`` to the new transcript (``sessions.host_for`` assumes the same). Were the app to keep the old id,
+    both would go wrong: the current transcript's state has no ``host_id`` then (host_for refuses it) and counts 0, so
+    the master past 80 % now raises no alert of its own; and the earlier transcript's state, whose ``host_id`` and
+    session still match the app's node, keeps counting its live children: a stale alert at its pre-/clear pct until the
+    master or all of its children are archived or that state is pruned (budget.KEEP_DAYS)."""
+    from . import sessions
+
+    key = tree.key_of(m.get("host_id") or "") or tree.key_of(session)
+    if not key:
+        return int(m.get("live") or 0) if mtime >= floor else 0
+    node = tree.nodes[key]
+    if not sessions.alive(node, tree.ends) or (node.get("session") or session) != session:
+        return 0
+    return sum(1 for k in tree.children.get(key, []) if sessions.alive(tree.nodes[k], tree.ends))
+
+
 def master_alerts(cfg: Config, now: datetime) -> list[Alert]:
     """A master past 80 % of its budget that still has live children (wi-brain-master-watch, ST-4): the budget
-    watch's state of each session (``<BRAIN_HOME>/budget/<session>.json``, its ``master``), written in the last
-    MASTER_HOURS; key ``session:master:<id>``, warn from 80 %, error from 90 %."""
-    from . import budget
+    watch's state of each session (``<BRAIN_HOME>/budget/<session>.json``, its ``master``: its pct), its liveness and
+    its live children read from the session tree now (:func:`_live_now`); key ``session:master:<id>``, warn from
+    80 %, error from 90 %."""
+    from . import budget, sessions
 
     out = []
     floor = now.timestamp() - MASTER_HOURS * 3600
     try:
-        files = [f for f in budget.state_dir().glob("*.json") if f.stat().st_mtime >= floor]
+        files = [(f, f.stat().st_mtime) for f in sorted(budget.state_dir().glob("*.json"))]
     except OSError:
         return out
-    for f in sorted(files):
+    tree = None
+    for f, mtime in files:
         m = budget.master_of(f.stem)
-        if not m or m.get("pct", 0) < 80 or not m.get("live"):
+        if not m or m.get("pct", 0) < 80:
+            continue
+        if tree is None:  # read once, and only when a master is past 80 %
+            starts, ends = sessions.ledger_events(now.timestamp())
+            tree = sessions.Tree(sessions.app_index(), starts, None, ends)
+        live = _live_now(tree, f.stem, m, mtime, floor)
+        if not live:
             continue
         who = m.get("host_id") or f.stem
         level = cfg.levels.get("session") or ("error" if m["pct"] >= 90 else "warn")
         out.append(Alert(cfg.project, f"session:master:{who}", level, "session", who,
-                         f"master {who} at {m['pct']:.0f} % of its budget with {m['live']} live child(ren): it starts "
+                         f"master {who} at {m['pct']:.0f} % of its budget with {live} live child(ren): it starts "
                          "no new child, hands over to a fresh master and drains (ST-3); brain sessions show " + who,
-                         _iso(datetime.fromtimestamp(m.get("at") or f.stat().st_mtime, timezone.utc))))
+                         _iso(datetime.fromtimestamp(m.get("at") or mtime, timezone.utc))))
     return out
 
 

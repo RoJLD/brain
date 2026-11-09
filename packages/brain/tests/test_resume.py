@@ -138,6 +138,26 @@ def test_git_section_with_prs_and_head(tmp_path, monkeypatch, git_repo):
     assert "Hand-over notes that name an open item (newest first)\nNone: no notes folder found." in text
 
 
+def test_a_nested_claude_does_not_print_its_outer_sessions_app_id(tmp_path, monkeypatch, store):
+    """Review of #34, finding 50: a ``claude`` started from a desktop session's shell inherits its
+    CLAUDE_CODE_HOST_SESSION_ID; the pack's Session line names that app id only when the app's file of it names this
+    session's transcript, so SendMessage is not pointed at the outer session."""
+    from brain import sessions
+    p = _project(tmp_path, monkeypatch, store)
+    host = "local_22222222-2222-4222-8222-222222222222"
+    d = tmp_path / "appdata" / "Claude-Data" / "claude_t" / "claude-code-sessions" / "acct" / "org"
+    d.mkdir(parents=True)
+    (d / f"{host}.json").write_text(json.dumps({"sessionId": host, "cliSessionId": "s-outer"}), encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv(sessions.HOST_ENV, host)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-nested")
+    text = resume.build(p, offline=True, now=NOW)
+    assert host not in text and text.endswith(
+        "Session: transcript s-nested (the ledger, the records, brain sessions).\n")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-outer")  # the outer session itself keeps its app id
+    assert f"Session: app {host} (SendMessage" in resume.build(p, offline=True, now=NOW)
+
+
 def test_worktree_of_a_registered_checkout_keeps_the_project_name(tmp_path, monkeypatch, git_repo):
     (git_repo / "notes" / "graph" / "schema.yaml").write_text("node_types: [WorkItem]\n", encoding="utf-8")
     _registry(tmp_path, monkeypatch, git_repo)

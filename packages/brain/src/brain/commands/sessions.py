@@ -4,6 +4,8 @@ token).
 
 from __future__ import annotations
 
+import argparse
+
 ORDER = 540   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 200   # its usage lines' place in brain --help's epilog
 USAGE = """\
@@ -12,10 +14,11 @@ USAGE = """\
                         and the briefs' hash: both ids of each session (the app's local_ id, the transcript's), its
                         short name, role (master, sub, relay, solo), parent, children live/started, state and context
                         against its budget (the brief's; a master's: usage.master_budget, else the model's window);
-                        tree: the families with a live member, each child's end-of-turn report (its PRs, head, items,
-                        DDRs, what it waits on, what comes next); show: one session, by either id (a prefix of 8 or
-                        more) or its short name, and what a message would meet (live, idle, archived); --report: its
-                        last final message in full, read from its transcript
+                        tree: the families with a member active in the last H hours, each child's end-of-turn report
+                        (its PRs, head, items, DDRs, what it waits on, what comes next); show: one session, by either
+                        id (a prefix of 8 or more) or its short name, and what a message would meet (live, idle,
+                        archived); --report: its last final message in full, read from its transcript; the options
+                        go before or after tree/show
 """
 NO_PROJECT = {"sessions"}   # its parsers that take no --project after them
 
@@ -45,10 +48,14 @@ def register(sub, ctx) -> None:
             sp_.add_argument("--report", action="store_true", help="its last final message in full, from its "
                                                                    "transcript (never stored)")
     for sp_ in (ses, *ses_sub.choices.values()):
-        sp_.add_argument("--hours", type=float, default=24.0, help="active in the last H hours (default 24)")
-        sp_.add_argument("--all", action="store_true", help="every session, archived ones included")
-        sp_.add_argument("--no-briefs", action="store_true", help="skip the token ledger's brief hash")
-        sp_.add_argument("--json", action="store_true")
+        # the subcommands' own copies default to SUPPRESS: given before tree/show, an option is not reset by the
+        # subparser's default (review of #34, finding 56)
+        keep = {} if sp_ is ses else {"default": argparse.SUPPRESS}
+        sp_.add_argument("--hours", type=float, default=24.0 if sp_ is ses else argparse.SUPPRESS,
+                         help="active in the last H hours (default 24)")
+        sp_.add_argument("--all", action="store_true", help="every session, archived ones included", **keep)
+        sp_.add_argument("--no-briefs", action="store_true", help="skip the token ledger's brief hash", **keep)
+        sp_.add_argument("--json", action="store_true", **keep)
 
 
 def early(args) -> int:
