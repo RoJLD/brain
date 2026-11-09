@@ -2,6 +2,14 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+### Changes
+
+- `brain --project P` run from a linked git worktree of P's repo acts on that worktree, not on the registry's root
+  (wi-brain-root-from-cwd). An explicit `--root` still wins; a cwd in another repo or a plain folder keeps the
+  registry's root.
+
 ## 0.2.6 — 2026-11-09
 
 ### Upgrade
