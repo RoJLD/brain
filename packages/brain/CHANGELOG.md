@@ -2,7 +2,25 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
-## Unreleased
+## 0.2.7 — 2026-11-09
+
+### Upgrade
+
+From 0.2.6, in this order. No schema, store or hook changes, and no hand edit of a brain's data is needed.
+
+1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
+2. **Restart Claude Code's sessions**, so that they run the hooks `brain sync` rendered.
+3. **In each public repo's checkout**, run `brain check --public --history` before the next push: a stamp is valid only
+   under the engine that made it, so the push guard refuses the old one until then.
+4. **Read this if a script of yours runs `brain --project P` from a linked worktree of P's repo:** it now acts on that
+   worktree, not on the registry's root. Pass `--root` to choose another.
+
+Nothing to do for the rest: a scheduled task opens no window for its children from its next run, with no reinstall;
+`days` and `quiet_hours` are optional; quiet mode creates its two files in `<BRAIN_HOME>/notify` when first used.
+Optional: declare `usage.plans` in `config.json` so that `brain usage quota` knows the plan in force; until a plan has 3
+converted readings it reports `uncalibrated`.
 
 ### Fixes
 
@@ -11,6 +29,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   dozens of times per pass. A brain with no console now starts each child with `CREATE_NO_WINDOW`.
 - `brain status` reads the quota's clock from `usage.now_utc`, like the rest of the quota: a test that froze that clock
   saw the real time in the status row, and failed on every commit once its fixed reset (2026-11-09 12:00 UTC) had passed.
+- `brain <cmd> --help` no longer crashes without a stdout (pythonw.exe, Python 3.10: argparse wrote to None); it
+  survives a cp1252 pipe too, the CLI already writing UTF-8 with `errors=replace` (`wi-brain-help-encoding`).
 
 ### Changes
 
@@ -34,13 +54,6 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   up in one message per project when the quiet ends (`brain quiet --off`, or the next alerts pass). No task is
   paused and no scheduled task is touched: collection and the alerts pass run on. The state is in `brain quiet`,
   `brain status` and the cockpit's health card. A send during a quiet reports `held` (`brain notify send` exit 0).
-  Takes effect once this release is installed.
-
-### Fixed
-
-- `brain <cmd> --help` no longer crashes without a stdout (pythonw.exe, Python 3.10: argparse wrote to None); it
-  survives a cp1252 pipe too, the CLI already writing UTF-8 with `errors=replace` (`wi-brain-help-encoding`). Takes
-  effect with the next tagged release.
 
 ## 0.2.6 — 2026-11-09
 

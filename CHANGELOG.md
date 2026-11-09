@@ -3,6 +3,10 @@
 The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `research-graph` X.Y.Z and `brain` X.Y.Z
 (`packages/brain/CHANGELOG.md` for the brain command).
 
+## 0.2.7 — 2026-11-09
+
+- No change in `research-graph`: the version moves with the shared tag.
+
 ## 0.2.6 — 2026-11-09
 
 - No change in `research-graph`: the version moves with the shared tag.

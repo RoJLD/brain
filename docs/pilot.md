@@ -4,7 +4,7 @@ Thank you for trying the brain. This page says what the pilot is, what to try in
 what went wrong. The install itself is in [install.md](install.md).
 
 Read both pages at the tag you were given, `https://github.com/RoJLD/brain/blob/<tag>/docs/pilot.md` (for instance
-[`blob/v0.2.6`](https://github.com/RoJLD/brain/blob/v0.2.6/docs/pilot.md)), not on `main`, which may already
+[`blob/v0.2.7`](https://github.com/RoJLD/brain/blob/v0.2.7/docs/pilot.md)), not on `main`, which may already
 describe a later engine than the one you run.
 
 ## What the pilot is
@@ -59,7 +59,7 @@ Anything else you want to try is welcome; what you expected and did not get is t
 
 ## Updates during the pilot
 
-Fixes come as new tags (0.2.4 brought `brain update`, 0.2.5 the lessons, merge-check and the schedules, 0.2.6 the fail-closed guards, the upgrade test and the cockpit's tabs, then later ones), announced by the person who invited you. 0.2.2 has no update
+Fixes come as new tags (0.2.4 brought `brain update`, 0.2.5 the lessons, merge-check and the schedules, 0.2.6 the fail-closed guards, the upgrade test and the cockpit's tabs, 0.2.7 quiet mode and no window for a scheduled brain's programs, then later ones), announced by the person who invited you. 0.2.2 has no update
 command: move to the next tag by hand (install.md, *Upgrade by hand*) until your version has one
 (`brain update --help` answers). From then on, `brain update` shows what changes and installs it on your `y`, and the
 cockpit's title bar (`brain tui`) says when a newer version is out (`u` opens the same plan). Nothing is ever
