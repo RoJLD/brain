@@ -1058,6 +1058,12 @@ def _registered(root: Path | None) -> dict[str, projects.Project]:
     return reg
 
 
+def _not_registered(name: str, root: Path | None, reg) -> str:
+    """Why --project ``name`` is not one to audit: what --project says (read only, a mount, not loaded), else
+    unknown."""
+    return projects.unloaded(name, root) or f"unknown project {name!r} (known: {', '.join(reg)})"
+
+
 def scope(args, root: Path | None) -> list[projects.Project]:
     """--all: every registered project; --project; else the project whose root (or one of whose repos) is the main
     checkout of --root or the current folder; else the project of the nearest graph store."""
@@ -1068,7 +1074,7 @@ def scope(args, root: Path | None) -> list[projects.Project]:
     if args.project:
         reg = _registered(root)
         if args.project not in reg:
-            raise AuditError(f"unknown project {args.project!r} (known: {', '.join(reg)})")
+            raise AuditError(_not_registered(args.project, root, reg))
         return [projects.get(args.project, root)]
     here = root or Path.cwd()
     main = paths.main_checkout(here)
@@ -1092,6 +1098,10 @@ def run(args, root: Path | None, today: date | None = None) -> dict:
         raise SystemExit("brain: --write and --items take one project (not --all)")
     if args.write and args.repo:
         raise SystemExit("brain: --write writes the whole project's view (not --repo)")
+    if args.write and projs and projs[0].shares_root_with:
+        owner = projs[0].shares_root_with
+        raise SystemExit(f"brain: {projs[0].name} shares its root with {owner}: {VIEW} is {owner}'s (brain --project "
+                         f"{owner} audit --write)")
     data = {"audit": 1, "ruleset": RULESET, "projects": []}
     trends = {}
     n = args.trend if args.trend else (5 if args.write else 0)

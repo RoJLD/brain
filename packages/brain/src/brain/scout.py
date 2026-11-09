@@ -49,7 +49,8 @@ def resolve(args, root: Path | None) -> tuple[projects.Project, list[projects.Re
     reg = projects.load(root)
     if args.project:
         if args.project not in reg:
-            raise AuditError(f"unknown project {args.project!r} (known: {', '.join(reg) or 'none'})")
+            raise AuditError(projects.unloaded(args.project, root)
+                             or f"unknown project {args.project!r} (known: {', '.join(reg) or 'none'})")
         reg = {args.project: reg[args.project]}
     for p in reg.values():
         cfgs = projects.repos_of(p)

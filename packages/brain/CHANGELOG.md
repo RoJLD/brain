@@ -2,6 +2,98 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+### Upgrade
+
+From 0.2.8, in this order. This release newly refuses what passed (a project's second store beside its first, a
+project at a shared root without its own files, an edge of a second store to a root ADR stub, an `access` value other
+than read or write), so it is a minor version, 0.3.0 (`docs/release.md`, « The version policy »). No registered
+schema, store or format file changes (`access` is an additive key of `projects.yaml`). Steps 1 to 3 apply only where
+the registry has what they name; do them before installing, since `brain update` runs `brain sync`.
+
+1. **Move an edge of a later store to a root ADR stub**, where a project lists more than one store. A store after its
+   first derived the ADR and SDR stubs of the root's decision logs, as its first store does (every store ran with
+   research_graph's defaults); it now covers no decision log (`--no-decisions`), and `brain sync` empties its
+   `_generated_decisions.yaml`. An edge of it to one of those stubs (an item of it `decided_by` an ADR of
+   `notes/decisions.md`) no longer resolves and fails `brain sync` and `brain check`, each naming it (« that ADR stub
+   is notes/graph's only »): move such an edge to the first store or remove it, and drop the `shared_ids` waiver of
+   the stub, which turns stale.
+2. **Give a project at a shared root its own files**, where the registry lists two projects at one root. The second is
+   loaded only once it declares its own `stores`, `journal` and `decisions` (the defaults are the first's files);
+   until then no command runs it. `brain check --all` says what to declare, and `brain --project <it>` says why it is
+   not loaded.
+3. **Give a store beside the first a folder of its own**, where a project's second store sits beside its first (both
+   under `notes/`): `brain sync` refuses that store until it has one, since its board was written over the first's.
+4. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
+5. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
+6. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
+   push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
+7. **Wait for every machine before an `access: read` entry or a shared root**: such an entry lands in a registry only
+   once every machine that reads it runs brain 0.3.0 or later. An older brain (0.2.8 and before) notes the unknown key
+   `access` (in CI, under `BRAIN_STRICT`, refuses it) and reads the entry as a full project, at the registry's root
+   with the default store, journal and decision log (`docs/formats.md`); a project that shares its root with another
+   gets its board written over its owner's by an older brain.
+
+Nothing to run for the rest.
+
+### Added
+
+- **Projects the brain reads and never writes** (wi-brain-read-only-projects). A registry entry may say `access: read`
+  (`write`, the default, is today's: the brain writes the project by PR; any other value is an error, « access is
+  read or write », and the entry is not loaded until it is one). Such an entry holds `title` and `access` only, the
+  shape of a tenant mount: `brain check --all` names every other key it holds (a root, a store, a ledger, a
+  production list, repos...), each a way to write or read into it. `projects.load` never returns one, so sync, check,
+  refresh, status, resume, audit, the queue, the cockpit and the guards (the registered repos, the production
+  checkouts) pass it by; `projects.get` refuses it (« `<name>` is read only: the brain reads it and never writes
+  it »), so does every `--project`; the neutral source refuses it as a rule file's `scope:` or a pack's `projects:`.
+  `projects.readonly` lists them; `brain projects` (and `--json`, key `access`) shows them, `brain status --all` and
+  the registry's check count them (« registry: 2 project(s), 2 store(s), ids unique; 2 read only »).
+- **Projects that share a root** (wi-brain-shared-root-projects). The first project registered at a root owns it
+  (`projects.for_root`, `classes.own_project` already read it so; now tested); each next one gets
+  `Project.shares_root_with`, spans no repo by default (`repos_of`), and gets its stores' passes only: research_graph
+  with its views beside its store and its own decision logs, its specs, its features' statuses, its module map. The
+  root's own passes stay the owner's: the records and their view, the decision queue and the defaults, the rendered
+  marketplace and AGENTS.md, the links graph and FEATURES.md, the public gate, the engine's skew, the session ids, the
+  hygiene line (the queue keeps the owner's name, whichever project asks). Such a project declares its own stores,
+  journal and decision log (the defaults are the owner's), none held by a project registered before it, its decision
+  logs inside the root; until it does it is not loaded, and `brain check --all` and `--project` say why (fail
+  closed: no command writes the owner's files through it; a file of any kind counts, a journal that is the owner's
+  decision log too), while the guards and the usage governor keep protecting it (`projects.guarded`: its production
+  checkouts stay refused to edits). An owner skipped for its access value (a typo, or `access: read` on an entry that
+  still names its root) keeps its root and its files: the next project there stays a sharer and never becomes its
+  owner, and `--store` naming the owner's store is refused with the reason (`projects._claimant`). A store whose
+  views folder an earlier store at its root uses is refused by `brain sync` (`projects.view_clashes`) and by the
+  checks, an owner skipped for its access value included (`projects.holders`). The permissions of a project that spans no repo are its
+  root's settings, and its features' statuses come from the root's merged PRs. `brain audit --write` from it is
+  refused: `notes/audit.md` is the owner's. Without `--all` or `--project`, `brain sync`, `check` and `refresh` at
+  such a root cover every project registered there. Every store but a project's first at a root it owns gets
+  research_graph's new `--views` (its parent folder: `ops/graph` writes `ops/kanban_graph.md`) and its decision logs
+  (`--decisions`, the project's own from its first store, `--no-decisions` from another store): a project's second
+  store no longer writes its board over the first's, nor derives its ADR stubs (an edge of it to one of them is
+  named by `brain sync` and `brain check`). `--store` without `--project` runs as the project registered at the root
+  that lists that store, with its layout and its passes only (`projects.lister`): the store of a project that shares
+  the root never gets the owner's defaults. At a root one project holds, a store it does not list keeps
+  research_graph's defaults, as before; at a root several share, `--store` without `--project` fails closed: the store
+  of a project not loaded is refused with the reason, and a store none lists is refused too (never run as the owner
+  with its defaults). Only `access: read` is read only (`projects.is_read_only`); any other value than read or write
+  is invalid wherever the registry is read (`projects.bad_access`): `brain check --all`, `--project` and the neutral
+  source's scopes and packs name it (« access is read or write, not 'maybe' »), and it is never loaded, listed or
+  counted as read only. And `brain init` starts a template's later graphs beside their store, a later graph being
+  known by its place in the template's graphs (also when the first one exists already and is kept). A project's
+  `stores: []` holds its root's `notes/graph`, which sync and check run for it (`projects.stores_of`), and a store
+  listed twice is refused by `brain check --all`. `brain audit --project` (and `--diff`) refuses a read-only, mounted
+  or unloaded project with the reason `--project` gives (`projects.unloaded`). The module map's view sits beside its
+  store's board the same way (`notes/modules_graph.md` for the first store, as before), and the resume pack names the
+  project's own views. Nothing changes for a project's first store at a root it owns.
+- **A scope's rules file may hold its front matter only** (`source/rules/scopes/<id>.md`: scope, title, intro), a
+  scope with no rule of its own yet. It renders nothing and locks nothing: `lock:` in it is refused. A file outside
+  `rules/scopes/` still needs a rule.
+- The upgrade test (`compat-prev`) lays an `access: read` entry and a second project at the brain's root over the
+  previous tag's brain, then rolls back over them (`tests/fixtures/formats/projects/v1/newer.yaml`).
+
 ## 0.2.8 — 2026-11-09 — the review fixes
 
 ### Upgrade

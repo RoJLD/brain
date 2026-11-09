@@ -30,6 +30,26 @@ alert files, event folders) and their levels, inline or as a YAML file relative 
 pass, a daily canary), inline or as a YAML file relative to the root, for ``brain schedule`` and the installer's
 schedule step (brain.schedule).
 
+An entry with ``access: read`` is a project the brain **reads and never writes** (another repo's own sessions write
+it): it holds ``title`` and ``access`` only (``parent`` joins them with wi-brain-scope-tree), the shape of a mount, so
+no root, store, ledger, guard or rendered rule reaches into it. :func:`load` never returns one, :func:`get` refuses one
+(every ``--project``), :func:`readonly` lists them, and ``brain projects``, ``brain status --all`` and the registry's
+check count them. ``access: write`` is the default, the brain writing the project by PR; any other value is an error,
+and the entry is not loaded until it is one (the key narrows: a typo never opens a way in). A brain older than the one
+that knows the key reads such an entry as a full project, so it lands in a registry only once every machine runs it.
+
+**Projects that share a root.** The first project registered at a root owns it; each next one gets
+``Project.shares_root_with`` (the owner's name). It spans no repo by default, and the brain runs only its stores'
+passes for it: the root's own (the records and their view, the decision queue, the rendered files, the links and
+FEATURES.md, the public gate, the hygiene line) stay the owner's. It declares its own stores, journal and decision log
+(the defaults are the owner's files), none of them held by a project registered at the root before it, its decision
+logs inside the root; until it does, it is not loaded (:func:`get` says why, :func:`check` lists it), so no command
+writes the owner's files through it. Each store's board and roadmap (and its module map) sit in its parent folder,
+research_graph covering the project's decision logs from its first store only; the first store of a project that owns
+its root keeps research_graph's defaults (notes/, notes/decisions.md), so nothing changes for it (:func:`views_dir`,
+:func:`layout`). A store whose views folder an earlier store at its root uses is not synced (:func:`view_clashes`).
+``--store`` names a store of the project that lists it (:func:`lister`), so it runs with that project's layout.
+
 An entry with a ``tenant`` key is a **mount**, not a project: an HMaaS tenant is another brain, with its own root,
 registry and keys, mounted opaque in the operator's registry (wi-brain-hmaas-multitenant, spec-brain-hmaas §6;
 SCOPE-6). It holds ``title`` and ``tenant`` only, ``{export: <path>}`` naming where the tenant drops its contract
@@ -88,7 +108,14 @@ KEYS = {
               "yet",
     "tenant": "makes the entry a tenant mount: another brain, opaque, that no command reads into; {export: where the "
               "tenant drops its contract export, relative to BRAIN_HOME}; a mount holds title and tenant only",
+    "access": "write (the default: the brain writes the project, by PR) or read (it reads the project and never "
+              "writes it: an entry of title and access only, which no command loads, names or writes into)",
 }
+ACCESS = ("write", "read")
+READ_ONLY_KEYS = {"title", "access"}
+# the decision logs research_graph covers for a store given none (research_graph.validate.DEFAULT_DECISIONS; not
+# imported: a guard reads this module on every call)
+GRAPH_DECISIONS = ("notes/scientific_decisions.md", "notes/decisions.md")
 # What a mount's tenant: mapping may hold (wi-brain-tenant-export reads the export; a mount only says where it lands).
 TENANT_KEYS = {"export": "the file the tenant's contract export is dropped into: absolute, ~, or relative to BRAIN_HOME"}
 MOUNT_KEYS = {"title", "tenant"}
@@ -120,6 +147,7 @@ class Project:
     ledgers: dict[str, Path] = field(default_factory=dict)
     shared_ids: dict = field(default_factory=dict)
     plugin: object = None            # reserved (wi-brain-command-plugins), kept as declared
+    shares_root_with: str = ""       # the project registered first at this root, which owns it ('': this one does)
 
 
 @dataclass
@@ -135,6 +163,13 @@ class Repo:
     lang: str = "py"                      # ts: module checks delegated to the repo's own checker
     scout_limit: int = 3
     folder: str = ""                      # its main checkout's folder name, case kept (a CodeRef's <repo> token)
+
+
+@dataclass
+class ReadOnly:
+    """A project the brain reads and never writes: its name and title; nothing else is declared."""
+    name: str
+    title: str = ""
 
 
 @dataclass
@@ -206,15 +241,176 @@ def is_mount(entry) -> bool:
     return isinstance(entry, dict) and "tenant" in entry
 
 
+def is_read_only(entry) -> bool:
+    """A project the brain reads and never writes: ``access: read``, and only that value (a typo is
+    :func:`bad_access`, never a deliberate read-only project)."""
+    return isinstance(entry, dict) and entry.get("access") == "read"
+
+
+def bad_access(entry) -> bool:
+    """An entry whose ``access`` is neither read nor write: invalid, reported as such (check(), :func:`unloaded`, the
+    neutral source), never loaded (the key narrows: a typo never opens a way in) and never shown as read only."""
+    return isinstance(entry, dict) and "access" in entry and entry["access"] not in ACCESS
+
+
+def invalid_access(root: Path | None = None) -> dict[str, object]:
+    """{name: its access value} of the entries whose access is neither read nor write, in the registry's order."""
+    return {str(name): entry["access"] for name, entry in raw(root).items()
+            if not is_mount(entry) and bad_access(entry)}
+
+
+def _skipped(entry) -> bool:
+    """An entry the registry's walk never loads: a tenant mount, a read-only project, an invalid access."""
+    return is_mount(entry) or is_read_only(entry) or bad_access(entry)
+
+
 def load(root: Path | None = None) -> dict[str, Project]:
-    """The registered projects; a tenant mount is not one, so no command that walks them reads into it."""
+    """The registered projects; a tenant mount and a read-only project are not, so no command that walks them reads
+    into the one or writes into the other. A project registered at a root another one holds (registered before it)
+    shares it: ``shares_root_with`` names that owner; it is loaded only once it declares its own files
+    (:func:`_claims`). An owner skipped for its access value still holds its root (:func:`_claimant`)."""
+    return _load(root)[0]
+
+
+def refused(root: Path | None = None) -> dict[str, list[str]]:
+    """{a project at a shared root that is not loaded: why (:func:`_claims`)}, in the registry's order."""
+    return {name: why for name, (_, why) in _load(root)[1].items()}
+
+
+#: The keys of an entry that name a local path a guard protects (its root, production checkouts and repos).
+GUARDED_PATH_KEYS = ("root", "production", "repos")
+
+
+def guarded(root: Path | None = None) -> list[Project]:
+    """Every project a guard protects (brain.guards, brain.governor): the loaded ones, those at a shared root that
+    are not loaded yet, and every entry the walk skips as read only (``access: read``) or as invalid (an access value
+    check() refuses, :func:`bad_access`) that still names a local path. A refusal to load never lifts a guard: a typo
+    in ``access``, or ``access: read`` added to a project that has a production checkout, keeps its checkouts refused
+    to edits while brain check is red. A valid read-only entry (title and access only) names no path, so it adds nothing."""
+    loaded, refused = _load(root)
+    out = list(loaded.values()) + [p for p, _ in refused.values()]
     f = registry_file(root)
-    out = {}
     for name, entry in raw(root).items():
-        if is_mount(entry):
+        if is_mount(entry) or not _skipped(entry) or not any(k in entry for k in GUARDED_PATH_KEYS):
+            continue
+        try:
+            out.append(_project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent)))
+        except (TypeError, ValueError):   # a malformed path value: check() names it; the other entries stay guarded
+            continue
+    return out
+
+
+def _load(root: Path | None = None) -> tuple[dict[str, Project], dict[str, tuple[Project, list[str]]]]:
+    """(the projects loaded, {a project at a shared root not loaded: (it, why)}), in the registry's order."""
+    f = registry_file(root)
+    out: dict[str, Project] = {}
+    refused: dict[str, tuple[Project, list[str]]] = {}
+    owners: dict[str, str] = {}
+    held: dict[str, dict[str, tuple[str, str]]] = {}   # root -> normalised path -> (the project that holds it, kind)
+    for name, entry in raw(root).items():
+        skipped = _skipped(entry)
+        p = _claimant(str(name), entry, f.parent) if skipped else None
+        if skipped and p is None:
             continue
         entry = entry if isinstance(entry, dict) else {}
-        out[str(name)] = _project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent))
+        p = p or _project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent))
+        owner = owners.setdefault(_norm(p.root), p.name)
+        p.shares_root_with = "" if owner == p.name else owner
+        files = held.setdefault(_norm(p.root), {})
+        why = _claims(p, entry, files) if p.shares_root_with and not skipped else []
+        if why:
+            refused[p.name] = (p, why)
+            continue
+        for kind, paths_ in _files(p).items():
+            for x in paths_:
+                files.setdefault(_norm(x), (p.name, kind))
+        if not skipped:
+            out[p.name] = p
+    return out, refused
+
+
+def _claimant(name: str, entry, base: Path) -> Project | None:
+    """An entry the walk skips for its access value that still holds its root: an invalid access (a typo), or
+    ``access: read`` on an entry that still names its ``root`` (both refused by check()). It is never loaded, yet it
+    keeps the root it was registered at and the files it would write there, so the next project at that root stays a
+    sharer and never becomes its owner (fail closed: a typo never hands another project the owner's views, records or
+    rendered files). None for a tenant mount, a valid read-only entry (no root of its own) or a malformed path."""
+    if not isinstance(entry, dict) or is_mount(entry) or not (bad_access(entry) or "root" in entry):
+        return None
+    try:
+        return _project(name, entry, _resolve_root(str(entry.get("root") or "."), base))
+    except (TypeError, ValueError):   # a malformed path value: check() names it
+        return None
+
+
+def _withheld(root: Path | None = None) -> list[Project]:
+    """The entries the walk skips that still hold a root (:func:`_claimant`), in the registry's order."""
+    f = registry_file(root)
+    found = ((str(n), e) for n, e in raw(root).items() if _skipped(e))
+    return [p for p in (_claimant(n, e, f.parent) for n, e in found) if p is not None]
+
+
+def holders(root: Path | None = None) -> list[Project]:
+    """Every project that holds files at its root, in the registry's order: those loaded and the entries the walk
+    skips for their access value that still hold their root (:func:`_withheld`), so that a typo in an owner's access
+    never frees its views folder for the next project (:func:`view_clashes`)."""
+    loaded = load(root)
+    withheld = {p.name: p for p in _withheld(root)}
+    return [loaded.get(n) or withheld[n] for n in map(str, raw(root)) if n in loaded or n in withheld]
+
+
+def stores_of(p: Project) -> list[Path]:
+    """The stores brain sync and check run for ``p``: those it lists, else its root's notes/graph (``stores: []``)."""
+    return list(p.stores) or [p.root / "notes" / "graph"]
+
+
+def _files(p: Project) -> dict[str, list[Path]]:
+    """The files a project writes at its root, by kind (:func:`stores_of`); its decision logs are those research_graph
+    covers for its first store (its defaults when it gets no option: brain.projects.layout)."""
+    stores = stores_of(p)
+    logs = list(p.decision_logs)
+    if uses_defaults(p, stores[0]):
+        logs += [p.root / d for d in GRAPH_DECISIONS]
+    return {"store": stores, "journal": list(p.journals), "decision log": logs}
+
+
+def _claims(p: Project, entry: dict, held: dict[str, tuple[str, str]]) -> list[str]:
+    """Why ``p``, at a root a project registered before it owns, cannot be loaded: a store, journal or decision log
+    it does not declare (the defaults are the owner's), or a file a project registered there before it holds, of any
+    kind (a journal that is the owner's decision log), or a decision log outside the root (a decision's anchor is a
+    path inside it)."""
+    owner = p.shares_root_with
+    errors = []
+    for key, kind in (("stores", "store"), ("journal", "journal"), ("decisions", "decision log")):
+        if not _paths(entry.get(key)):
+            errors.append(f"project {p.name}: shares its root with {owner}: it declares no {kind} of its own (the "
+                          f"default is {owner}'s: give it {key}:)")
+    if errors:
+        return errors
+    for key, kind in (("stores", "store"), ("journal", "journal"), ("decisions", "decision log")):
+        for x in _files(p)[kind]:
+            holder, theirs = held.get(_norm(x), ("", ""))
+            if holder:
+                what = "too" if theirs == kind else f"{theirs}"
+                errors.append(f"project {p.name}: shares its root with {owner}: its {kind} {_rel(x, p.root)} is "
+                              f"{holder}'s {what} (give it its own: {key}:)")
+    errors += [f"project {p.name}: its decision log {_rel(d, p.root)} is outside its root (a decision's anchor is a "
+               "path inside it)" for d in p.decision_logs if not _inside(d, p.root)]
+    return errors
+
+
+def _inside(path: Path, root: Path) -> bool:
+    return Path(os.path.normpath(path)).is_relative_to(Path(os.path.normpath(root)))
+
+
+def readonly(root: Path | None = None) -> dict[str, ReadOnly]:
+    """The projects the brain reads and never writes, in the registry's order: each one's name and title. Only
+    ``access: read``: another value is a typo that check() names, never a deliberate read-only project."""
+    out = {}
+    for name, entry in raw(root).items():
+        if is_read_only(entry):
+            title = entry.get("title")
+            out[str(name)] = ReadOnly(str(name), title if isinstance(title, str) else "")
     return out
 
 
@@ -235,19 +431,76 @@ def mounts(root: Path | None = None) -> dict[str, Mount]:
     return out
 
 
+def unloaded(name: str, root: Path | None = None) -> str:
+    """Why ``name``, an entry of the registry, is not a loaded project: a tenant mount, a project the brain reads only,
+    a project at a shared root that does not declare its own files; '' for any other name. :func:`get` says it, and
+    so do the commands that resolve --project themselves (brain audit, its --diff)."""
+    entry = raw(root).get(name)
+    if is_mount(entry):
+        return (f"{name!r} is a tenant mount: another brain, opaque, that the operator does not read into (its state "
+                "comes from its contract export)")
+    if bad_access(entry):   # a typo, named as one: brain check --all refuses it the same way
+        return f"{name!r} is not loaded: access is read or write, not {entry['access']!r}"
+    if is_read_only(entry):
+        return f"{name!r} is read only: the brain reads it and never writes it"
+    refused = _load(root)[1].get(name)
+    return f"{name!r} is not loaded: {'; '.join(refused[1])}" if refused else ""
+
+
 def get(name: str, root: Path | None = None) -> Project:
     """A registered project; with ``root`` (``--root``, say a worktree), the same layout at that root."""
     reg = load(root)
     if name not in reg:
-        if is_mount(raw(root).get(name)):
-            raise SystemExit(f"brain: {name!r} is a tenant mount: another brain, opaque, that the operator does not "
-                             "read into (its state comes from its contract export)")
+        why = unloaded(name, root)
+        if why:
+            raise SystemExit(f"brain: {why}")
         where = registry_file(root)
         raise SystemExit(f"brain: unknown project {name!r} (registry {where or 'not found'}; known: "
                          f"{', '.join(reg) or 'none'})")
     if root is None:
         return reg[name]
-    return _project(name, raw(root).get(name) or {}, root)
+    p = _project(name, raw(root).get(name) or {}, root)
+    p.shares_root_with = reg[name].shares_root_with
+    return p
+
+
+def at_root(root: Path) -> list[Project]:
+    """The registered projects at ``root``, its owner first; a worktree of a registered checkout gets them at the
+    worktree. [] when none is registered there."""
+    root = root.resolve()
+    reg = load(root)
+    here = [p for p in reg.values() if _norm(p.root) == _norm(root)]
+    if here:
+        return here
+    main = paths.main_checkout(root)
+    if main and _norm(main.resolve()) != _norm(root):
+        return [get(p.name, root) for p in reg.values() if _norm(p.root) == _norm(main.resolve())]
+    return []
+
+
+def lister(store: Path, root: Path) -> Project | None:
+    """The project registered at ``root`` (at its main checkout, for a worktree) that lists ``store``, else None:
+    ``--store`` naming the store of a project that shares the root runs as that project, with its layout. Fail
+    closed at a root several projects share: the store of one that is not loaded (one at a shared root without its
+    own files, or an owner skipped for its access value, :func:`_claimant`) is refused with the reason
+    (:func:`unloaded`), and a store none lists is refused too, never run as the owner with its defaults (the board,
+    roadmap and decision stubs of the owner would be written with another store's items)."""
+    key = _norm(store)
+    here = at_root(root)
+    hit = next((p for p in here if any(_norm(s) == key for s in stores_of(p))), None)
+    if hit:
+        return hit
+    base = root.resolve()
+    main = paths.main_checkout(base)
+    homes = {_norm(base)} | ({_norm(main.resolve())} if main else set())
+    refused = [p for p in [p for p, _ in _load(root)[1].values()] + _withheld(root) if _norm(p.root) in homes]
+    for p in refused:
+        if any(_norm(s) == key for s in stores_of(p)):
+            raise SystemExit(f"brain: {unloaded(p.name, root)}")
+    if len(here) + len(refused) > 1:
+        raise SystemExit(f"brain: --store {store}: no registered project lists it, at a root {len(here) + len(refused)} "
+                         "projects share; name one with --project")
+    return None
 
 
 def cwd_worktree(project: Project, cwd: str | Path | None = None) -> Path | None:
@@ -272,7 +525,8 @@ def cwd_worktree(project: Project, cwd: str | Path | None = None) -> Path | None
 
 
 def for_root(root: Path) -> Project:
-    """The registered project whose root is ``root``, else one with the default layout named after the folder."""
+    """The registered project whose root is ``root``, the first registered there when several share it (it owns the
+    root), else one with the default layout named after the folder."""
     root = root.resolve()
     for p in load(root).values():
         if p.root == root:
@@ -311,12 +565,14 @@ def _check_audit(p: Project) -> None:
 
 def repos_of(p: Project) -> list[Repo]:
     """The repos ``p`` spans, for brain audit: its ``repos:`` entries, then each production checkout not listed (the
-    root alone by default). A relative path is read from the root, else from its main checkout (a worktree)."""
+    root alone by default; none for a project that shares its root, whose repo is its owner's). A relative path is
+    read from the root, else from its main checkout (a worktree)."""
     if not isinstance(p.repos, list):
         raise RepoError(f"project {p.name}: repos is a list of paths or mappings")
     _check_audit(p)
     prod = {_norm(_resolve_root(os.path.relpath(x, p.root), p.root)) for x in p.production}
-    decl = list(p.repos or ["."])
+    declared = p.repos or ([] if p.shares_root_with else ["."])
+    decl = list(declared)
     decl += [os.path.relpath(x, p.root) for x in p.production]
     out: list[Repo] = []
     seen: set[str] = set()
@@ -332,7 +588,7 @@ def repos_of(p: Project) -> list[Repo]:
                 raise RepoError(message)
         path = _resolve_root(entry["path"], p.root)
         if _norm(path) in seen:
-            if i < len(p.repos or ["."]):
+            if i < len(declared):
                 raise RepoError(f"{where}: {entry['path']} is listed twice")
             continue
         seen.add(_norm(path))
@@ -391,9 +647,41 @@ def _check_mount(where: str, entry: dict) -> list[str]:
     return errors
 
 
+def _check_read_only(where: str, entry: dict) -> list[str]:
+    """A read-only project holds title and access only: a root, a store, a ledger or a guard's list would be a way to
+    write or read into it."""
+    errors = []
+    extra = sorted(set(map(str, entry)) - READ_ONLY_KEYS)
+    if extra:
+        errors.append(f"{where}: a read-only project holds title and access only, not {', '.join(extra)} (each is a "
+                      "way to write or read into it)")
+    if "title" in entry and not isinstance(entry["title"], str):
+        errors.append(f"{where}: title is a string")
+    return errors
+
+
+def view_clashes(projs: list[Project]) -> dict[tuple[str, str], str]:
+    """The stores whose views folder (:func:`views_dir`) a store registered before them at the same root uses: brain
+    sync would write one's board over the other's. {(project, the store relative to its root): what to say}."""
+    out = {}
+    taken: dict[str, dict[str, tuple[str, Path]]] = {}
+    for p in projs:
+        views = taken.setdefault(_norm(p.root), {})
+        for store in stores_of(p):
+            folder = views_dir(p, store)
+            other, theirs = views.setdefault(_norm(folder), (p.name, store))
+            if (other, _norm(theirs)) != (p.name, _norm(store)):
+                out[(p.name, _rel(store, p.root))] = (
+                    f"project {p.name}: its store {_rel(store, p.root)} writes its views in {_rel(folder, p.root)}, "
+                    f"as {other}'s store {_rel(theirs, p.root)} does (give each store a folder of its own)")
+    return out
+
+
 def check(root: Path | None = None) -> list[str]:
     """What is wrong in the registry: an entry that is not a mapping, an unknown key, a value of the wrong shape, a bad
-    repos: or audit: entry, a shared id without its reason, a tenant mount that holds more than its title and export.
+    repos: or audit: entry, a shared id without its reason, a tenant mount that holds more than its title and export,
+    an access that is not read or write, a read-only project that holds more than its title, a store listed twice, a
+    project at a shared root that is not loaded (:func:`_claims`), two stores that write their views in one folder.
     Stacks and code_index entries are checked by their own loaders (brain.stacks, brain.codeindex)."""
     errors = []
     for name, entry in raw(root).items():
@@ -406,6 +694,12 @@ def check(root: Path | None = None) -> list[str]:
         if is_mount(entry):
             errors += _check_mount(f"tenant {name}", entry)
             continue
+        if bad_access(entry):
+            errors.append(f"{where}: access is read or write, not {entry['access']!r}")   # not loaded until it is one
+            continue
+        if is_read_only(entry):
+            errors += _check_read_only(where, entry)
+            continue
         unknown = sorted(set(map(str, entry)) - set(KEYS))
         if unknown:   # read mode: a newer brain's key, noted and kept; strict (CI): an error
             errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (brain projects --keys lists them)")
@@ -414,6 +708,11 @@ def check(root: Path | None = None) -> list[str]:
         errors += [f"{where}: {k} is a path or a list of paths" for k in ("stores", "journal", "decisions",
                                                                          "production") if k in entry
                    and not _is_paths(entry[k])]
+        listed: set[str] = set()
+        for s in _paths(entry.get("stores")):
+            if _norm(Path(s)) in listed:
+                errors.append(f"{where}: its store {s} is listed twice")
+            listed.add(_norm(Path(s)))
         ledgers = entry.get("ledgers")
         if ledgers is not None and not (isinstance(ledgers, dict) and _is_paths(list(ledgers.values()))):
             errors.append(f"{where}: ledgers is a mapping of name -> path")
@@ -429,12 +728,15 @@ def check(root: Path | None = None) -> list[str]:
                    if not isinstance(entry.get(k) or {}, (dict, str))]
         from .governor import project_limits
         errors += [f"{where}: {e}" for e in project_limits(entry)[1]]
-    for p in load(root).values():
+    loaded, refused = _load(root)
+    for _, why in refused.values():
+        errors += why
+    for p in loaded.values():
         try:
             repos_of(p)
         except RepoError as exc:
             errors.append(str(exc))
-    return errors
+    return errors + list(view_clashes(holders(root)).values())
 
 
 def node_ids(store: Path) -> dict[str, str]:
@@ -473,6 +775,40 @@ def collisions(projs: list[Project]) -> dict:
     return {"stores": len(read), "collisions": out, "stale": stale}
 
 
+# --- where a store's generated views go, and research_graph's options for it ---
+
+def _later(p: Project, store: Path) -> bool:
+    """A store the project lists after its first (a store it does not list, given by --store, is not one; nor is its
+    first listed again, which check() refuses)."""
+    return bool(p.stores) and _norm(store) != _norm(p.stores[0]) and any(_norm(store) == _norm(s)
+                                                                         for s in p.stores[1:])
+
+
+def uses_defaults(p: Project, store: Path) -> bool:
+    """Whether research_graph runs on ``store`` with its defaults (notes/ for the views, notes/decisions.md and
+    notes/scientific_decisions.md for the logs): a store of a project that owns its root, but one it lists after its
+    first."""
+    return not p.shares_root_with and not _later(p, store)
+
+
+def views_dir(p: Project, store: Path) -> Path:
+    """The folder of a store's board and roadmap (and its module map): ``notes/`` when research_graph keeps its
+    defaults (:func:`uses_defaults`); else the store's parent folder (``ops/graph`` -> ``ops``)."""
+    return p.root / "notes" if uses_defaults(p, store) else store.parent
+
+
+def layout(p: Project, store: Path) -> list[str]:
+    """research_graph's options for a store of ``p``, given before its subcommand: none when it keeps its defaults
+    (nothing changes for it); else ``--views`` (:func:`views_dir`) and the decision logs it covers: the project's own
+    (a project that shares its root), none from a store listed after the first."""
+    if uses_defaults(p, store):
+        return []
+    out = ["--views", _rel(views_dir(p, store), p.root)]
+    if _later(p, store):
+        return out + ["--no-decisions"]
+    return out + [a for d in p.decision_logs for a in ("--decisions", _rel(d, p.root))]
+
+
 def _rel(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix()
 
@@ -491,4 +827,10 @@ def describe(p: Project) -> dict:
             "production": [os.path.relpath(x, p.root).replace(os.sep, "/") for x in p.production],
             "repos": repos,
             "code_index": [e if isinstance(e, str) else str((e or {}).get("path")) for e in p.code_index],
-            "stacks": stacks, "shared_ids": sorted(map(str, p.shared_ids)), "plugin": p.plugin}
+            "stacks": stacks, "shared_ids": sorted(map(str, p.shared_ids)), "plugin": p.plugin, "access": "write",
+            "shares_root_with": p.shares_root_with}
+
+
+def describe_read_only(r: ReadOnly) -> dict:
+    """A read-only project as brain projects prints it: nothing but its name, title and access."""
+    return {"name": r.name, "title": r.title, "access": "read"}

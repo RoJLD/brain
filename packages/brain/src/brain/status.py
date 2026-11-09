@@ -23,7 +23,8 @@ Per project, from what the Brain already reads:
 Once for all the projects shown, ``quota``: the plan's weekly window from the readings the sessions noted, the percent
 at the reset at the last 24 h's pace and the advice (brain.quota; ``--quick``: without the live sessions and queue).
 
-``--all`` adds the totals, the ids found in more than one store (``brain check --all`` fails on them) and the tenant
+``--all`` adds the totals, the ids found in more than one store (``brain check --all`` fails on them), the projects
+the brain reads and never writes (``access: read``, counted by name) and the tenant
 mounts, counted and never read into (whether each one's contract export is there, not what it says). ``--quick``
 skips what probes or measures (audit, stacks, code index, the scheduler): the files only. ``--json`` prints the data with stable keys
 and no timestamp. Status reports and exits 0; ``brain check``, ``brain health`` and ``brain audit --fail-on`` fail.
@@ -213,7 +214,7 @@ def records_of(p: projects.Project) -> dict:
     out = {"journals": journals,
            "records": {"ddr": len(list((base / "ddr").glob("*.yaml"))), "sr": len(list((base / "sr").rglob("*.yaml"))),
                        "ar": sum(f.read_bytes().count(b"\n") for f in (base / "ar").glob("*.jsonl"))}
-           if base.is_dir() else None,
+           if base.is_dir() and not p.shares_root_with else None,   # the root's records: its owner's
            "ledgers": [{"name": k, "path": _rel(v, p.root), **_ledger(v)} for k, v in p.ledgers.items()]}
     d = _optional("digest")
     if d is not None and hasattr(d, "latest"):
@@ -342,6 +343,8 @@ def run(projs: list[projects.Project], *, every: bool = False, quick: bool = Fal
         data["ids"] = projects.collisions([p for p in projs if p.root.is_dir()])
         data["tenants"] = tenants_of(root)
         data["total"]["tenants"] = len(data["tenants"])
+        data["read_only"] = [{"name": r.name, "title": r.title} for r in projects.readonly(root).values()]
+        data["total"]["read_only"] = len(data["read_only"])
     fc = quota.status_of(projs, root, usage.now_utc(), quick=quick)
     data["quota"] = {k: v for k, v in fc.items() if k != "now"}
     data["quiet"] = quiet.summary(projs)
@@ -469,6 +472,9 @@ def render(data: dict) -> list[str]:
         live = [c for c in ids["collisions"] if not c["waived"]]
         rows.append(("ids", f"{len(live)} shared by two stores or more, {len(ids['collisions']) - len(live)} waived, "
                             f"across {ids['stores']} store(s)" + ("; brain check --all lists them" if live else "")))
+        if data.get("read_only"):
+            rows.append(("read only", f"{len(data['read_only'])} (the brain reads them, never writes): "
+                                      + ", ".join(r["name"] for r in data["read_only"])))
         if data.get("tenants"):
             rows.append(("tenants", _tenants(data["tenants"])))
         lines += [x for k, v in rows for x in _row(k, v)]

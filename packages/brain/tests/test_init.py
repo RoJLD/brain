@@ -385,6 +385,35 @@ def test_a_template_starts_each_graph_it_declares(fresh, tmp_path, capsys):
     assert "create   research/graph (research_graph init --owner Ada, layers work, decisions, records, lessons)" in out
     for store in ("notes/graph", "research/graph"):
         assert 'owner: "Ada"' in (fresh / store / "schema.yaml").read_text(encoding="utf-8"), store
+    # the later graph keeps its views beside it and covers no decision log, as brain sync then runs it
+    assert (fresh / "research" / "kanban_graph.md").is_file() and (fresh / "research" / "roadmap_graph.md").is_file()
+    assert not any("adr-" in f.read_text(encoding="utf-8") for f in (fresh / "research" / "graph" / "nodes").glob("*"))
+
+
+def test_a_later_graph_after_a_kept_first_one_keeps_its_views_beside_it(fresh, tmp_path, capsys):
+    """The first graph exists (a keep step) and the second does not: the second is still a later graph, decided by its
+    index in the template's graphs, never by the first store step apply meets (it wrote its board over the first's)."""
+    tpl = tmp_path / "lab"
+    tpl.mkdir()
+    for name in ("projects.yaml", "packs.yaml", "rules.md"):
+        (tpl / name).write_text(init.template(name), encoding="utf-8")
+    files = ('files: {projects.yaml: projects.yaml, source/packs.yaml: packs.yaml, rules/global.md: rules.md, '
+             'memory/.gitkeep: "", records/.gitkeep: ""}\n')
+    manifest = tpl / "template.yaml"
+    manifest.write_text("name: lab\nversion: 1\ngraphs: [{name: work, store: notes/graph}]\n" + files, encoding="utf-8")
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl), "--apply"]) == 0
+    board = (fresh / "notes" / "kanban_graph.md").read_bytes()
+    nodes = sorted(p.name for p in (fresh / "notes" / "graph" / "nodes").glob("*"))
+    manifest.write_text("name: lab\nversion: 1\ngraphs: [{name: work, store: notes/graph}, "
+                        "{name: research, store: research/graph}]\n" + files, encoding="utf-8")
+    capsys.readouterr()
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl), "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "keep     notes/graph (a graph store already)" in out and "create   research/graph" in out
+    assert (fresh / "research" / "kanban_graph.md").is_file() and (fresh / "research" / "roadmap_graph.md").is_file()
+    assert (fresh / "notes" / "kanban_graph.md").read_bytes() == board
+    assert sorted(p.name for p in (fresh / "notes" / "graph" / "nodes").glob("*")) == nodes
+    assert not any("adr-" in f.read_text(encoding="utf-8") for f in (fresh / "research" / "graph" / "nodes").glob("*"))
 
 
 @pytest.mark.parametrize("graphs, why", [

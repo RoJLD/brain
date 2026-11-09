@@ -206,7 +206,8 @@ claude plugin install brain-core@brain
 
 A template is data and a manifest, never code: `template.yaml` gives its `name`, `version`, the `engine` versions that
 can render it (`">=0.2.2"`), a `title`, its `graphs` (a list of `{name, store, schema}`, the brain's main store
-first, each started by `research_graph init`; `schema: default` only for now) and its `files` (`{the brain's path:
+first, each started by `research_graph init`, every later one with its board and roadmap beside its store and no
+decision log, also when the first exists already; `schema: default` only for now) and its `files` (`{the brain's path:
 the template's file}`, `""` for an empty one), rendered with `{owner}`, `{owner_q}` (quoted for YAML or JSON),
 `{name}` and `{title_q}`. It must write what config.json names (`projects.yaml`, `rules/global.md`,
 `source/packs.yaml`, `memory/`, `records/`); the engine writes config.json, the graph stores and the Claude
@@ -469,6 +470,22 @@ personal brain. `--project P` alone resolves to the git worktree the cwd is in w
 repo P's root is in (so a sub-session in a worktree never writes to the main checkout); an explicit `--root` wins, and
 a cwd in another repo (a code repo of P, say) or a plain folder keeps the registry's root. Machine-local state (ledgers, sessions, the resume pack, the vault) lives in `BRAIN_HOME`
 (`~/.brain`), never in a repo.
+
+### Projects the brain only reads, projects that share a root
+
+An entry `access: read` in `projects.yaml` is a project the brain reads and never writes (its own sessions do): it
+holds `title` and `access` only, no command loads or names it (`--project` refuses it), no guard reaches into it, and
+`brain projects`, `brain status --all` and `brain check --all` count it. Only `read` is read only: any other value
+than `read` or `write` is invalid, named as such by `brain check --all`, `--project` and the rules' scopes and packs,
+and the entry is never loaded (it needs brain 0.3.0 or later on every machine: an older brain loads it as a full
+project). Several projects may share a root: the first
+registered owns it (its records, its decision queue, its rendered files, its repo for `brain audit`), and each next
+one declares its own store, journal and decision log (the defaults are the owner's: until it does, it is not loaded,
+and `brain check --all` says what to declare). A first entry the brain skips for its `access` value (a typo, or
+`access: read` with a `root:` still there) keeps owning its root, so the next one never takes it over. Its board and roadmap sit beside its store (`prog/graph` writes
+`prog/kanban_graph.md`), as do those of a project's second store. At such a root, `brain sync`, `check` and `refresh`
+cover every project registered there, and `--store prog/graph` runs as the project that lists that store.
+`examples/projects.yaml` has both.
 
 ## The Claude Code hooks
 

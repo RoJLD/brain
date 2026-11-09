@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import posixpath
 import re
 from collections.abc import Iterable
 from pathlib import Path
@@ -10,8 +11,27 @@ import yaml
 from . import yamlio
 
 _DECISION_FILES = ("scientific_decisions.md", "decisions.md")
+# the decision logs a store covers when none is given (--decisions): an SDR log, then an ADR log
+DEFAULT_DECISIONS = tuple(f"notes/{f}" for f in _DECISION_FILES)
 _HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b")
 _DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def _posix(path: str | Path) -> str:
+    return posixpath.normpath(str(path).replace("\\", "/"))
+
+
+def _key(path: str | Path) -> str:
+    """A log's path as coverage compares it: posix, normalised, case folded (a case-insensitive file system resolves
+    ``Notes/decisions.md`` to the log, so it counts for it)."""
+    return _posix(path).casefold()
+
+
+def decision_logs(logs: Iterable[str | Path] | None = None) -> list[tuple[str, str]]:
+    """(path relative to the repo root, node type) of each decision log a store covers: ``logs`` as given, else
+    :data:`DEFAULT_DECISIONS` (``[]``: none). A file named scientific_decisions.md holds SDRs, any other ADRs."""
+    paths = DEFAULT_DECISIONS if logs is None else logs
+    return [(_posix(p), "SDR" if Path(p).name == "scientific_decisions.md" else "ADR") for p in paths]
 
 
 def missing_experiment_nodes(graph: nx.DiGraph, repo_root: Path) -> list[str]:
@@ -24,6 +44,8 @@ def missing_experiment_nodes(graph: nx.DiGraph, repo_root: Path) -> list[str]:
 
 
 def _node_decision_date_counts(graph: nx.DiGraph) -> dict[tuple[str, str], int]:
+    """SDR and ADR nodes per (the log their anchor names, relative to the repo root; the date of their heading): a
+    node covers the log at its anchor's path, not another log of the same file name."""
     counts: dict[tuple[str, str], int] = {}
     for _, a in graph.nodes(data=True):
         if a.get("type") not in {"SDR", "ADR"}:
@@ -34,7 +56,7 @@ def _node_decision_date_counts(graph: nx.DiGraph) -> dict[tuple[str, str], int]:
         path, frag = anchor.split("#", 1)
         m = _DATE_RE.match(frag)
         if m:
-            key = (Path(path).name, m.group(1))
+            key = (_key(path), m.group(1))
             counts[key] = counts.get(key, 0) + 1
     return counts
 
@@ -48,22 +70,23 @@ def _heading_dates(path: Path) -> list[str]:
     return out
 
 
-def missing_decision_nodes(graph: nx.DiGraph, repo_root: Path) -> list[str]:
+def missing_decision_nodes(
+    graph: nx.DiGraph, repo_root: Path, logs: Iterable[str | Path] | None = None
+) -> list[str]:
+    """A dated heading of a decision log the store covers (:func:`decision_logs`) without its SDR/ADR node."""
     node_counts = _node_decision_date_counts(graph)
     problems: list[str] = []
-    for fname in _DECISION_FILES:
-        f = repo_root / "notes" / fname
+    for rel, _ in decision_logs(logs):
+        f = repo_root / rel
         if not f.exists():
             continue
         head_counts: dict[str, int] = {}
         for date in _heading_dates(f):
             head_counts[date] = head_counts.get(date, 0) + 1
         for date, hc in sorted(head_counts.items()):
-            nc = node_counts.get((fname, date), 0)
+            nc = node_counts.get((_key(rel), date), 0)
             if nc < hc:
-                problems.append(
-                    f"notes/{fname}: {date} has {hc} heading(s) but {nc} SDR/ADR node(s)"
-                )
+                problems.append(f"{rel}: {date} has {hc} heading(s) but {nc} SDR/ADR node(s)")
     return problems
 
 
@@ -152,11 +175,17 @@ def empty_decision_bodies(repo_root: str | Path) -> list[str]:
     return problems
 
 
-def check_coverage(graph: nx.DiGraph, repo_root: str | Path, repos: dict[str, Path] | None = None) -> list[str]:
+def check_coverage(
+    graph: nx.DiGraph,
+    repo_root: str | Path,
+    repos: dict[str, Path] | None = None,
+    decisions: Iterable[str | Path] | None = None,
+) -> list[str]:
+    """``decisions``: the decision logs the store covers (None: :data:`DEFAULT_DECISIONS`)."""
     repo = Path(repo_root)
     return (
         missing_experiment_nodes(graph, repo)
-        + missing_decision_nodes(graph, repo)
+        + missing_decision_nodes(graph, repo, decisions)
         + anchor_errors(graph, repo, repos)
     )
 

@@ -8,8 +8,11 @@
 #       edits and git changes there (work in a worktree, merge by PR, then pull).
 # stacks: what brain up / down / health start, stop and check (depends_on, cwd, start, stop, health {urls, cmd},
 #       logs, timeout, detach, watch); omit it when the project runs no service.
+# access: read for a project the brain reads and never writes (its own sessions write it): title and access only.
 #
-# Each store is started with `research_graph --store <root>/notes/graph --repo-root <root> init --owner <you>`.
+# Each store is started with `research_graph --store <root>/notes/graph --repo-root <root> init --owner <you>`; a
+# store elsewhere names its views folder and its decision log (`--views ops --no-decisions`, `--views prog
+# --decisions prog/decisions.md`), as `brain sync` then passes them.
 
 my-brain:            # this brain: your rules, decisions and personal backlog
   root: .
@@ -18,6 +21,19 @@ my-project:          # a project next to it, with its own graph store
   root: ../my-project
   production: [.]
 
-team-project:        # a project with a second store (an operations graph, say)
-  root: ../team-project
+team-project:        # a project with a second store (an operations graph, say): its board and roadmap are in ops/,
+  root: ../team-project   # beside it, and the project's ADR log is covered by its first store only
   stores: [notes/graph, ops/graph]
+
+lab:                 # two projects at one root: the first registered owns it (its records, its views in notes/,
+  root: ../lab       # its repo for brain audit)...
+prog:                # ...the next has its own store, journal and ADR log, its views beside its store (prog/)
+  root: ../lab
+  title: a programme kept in the lab's repo
+  stores: [prog/graph]
+  journal: prog/journal.md
+  decisions: prog/decisions.md
+
+upstream:            # read only: the brain reads it and never writes it (no root, no store, no guard)
+  title: a project the brain follows without writing to it
+  access: read

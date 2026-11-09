@@ -60,10 +60,11 @@ plain: {root: ../plain}
 
 def test_registry_check_refuses_what_load_tolerates(tmp_path, monkeypatch):
     _registry(tmp_path, monkeypatch, """\
-typo: {root: ., storse: [notes/graph], title: [x]}
-shapes: {journal: 3, ledgers: [a.jsonl], shared_ids: {adr-x: short}, stacks: [x], repos: [{path: ., lang: go}]}
+typo: {root: ./typo, storse: [notes/graph], title: [x]}
+shapes: {root: ./shapes, journal: 3, ledgers: [a.jsonl], shared_ids: {adr-x: short}, stacks: [x],
+         repos: [{path: ., lang: go}]}
 text: not a mapping
-""")
+""")  # one root each: a project at a root another one owns must declare its own files to be loaded
     reg = projects.load()  # never fails: the other commands keep working
     assert reg["shapes"].journals[0].name == "journal.md" and reg["text"].stores
     errors = projects.check()

@@ -177,7 +177,8 @@ def settings(cwd: str) -> dict:
     projs: dict = {}
     try:
         raw = projects.raw(cfg.root)
-        for name, p in projects.load(cfg.root).items():
+        for p in projects.guarded(cfg.root):   # a project not loaded yet keeps its caps
+            name = p.name
             own, errs = project_limits(raw.get(name))
             errors += [f"project {name}: {e}" for e in errs]
             roots = [str(p.root), *map(str, p.production)]

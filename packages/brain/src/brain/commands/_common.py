@@ -37,15 +37,20 @@ def _kv(pairs: list[str]) -> dict:
 
 
 def _project(args, root: Path) -> projects.Project:
-    """--project's, else the registered project at ``root`` (a worktree of its checkout keeps its name)."""
-    return getattr(args, "project_obj", None) or resume.project_for(root)
+    """--project's; else, with --store, the project registered at ``root`` that lists that store (one that shares the
+    root runs its store with its own layout, never the owner's); else the registered project at ``root`` (a worktree
+    of its checkout keeps its name)."""
+    obj = getattr(args, "project_obj", None)
+    if obj:
+        return obj
+    store = getattr(args, "store", None)
+    return (store and projects.lister(Path(store).resolve(), root)) or resume.project_for(root)
 
 
 def _store(args, root: Path) -> Path:
     if getattr(args, "store", None):
         return Path(args.store).resolve()
-    stores = _project(args, root).stores
-    return stores[0] if stores else root / "notes" / "graph"
+    return projects.stores_of(_project(args, root))[0]
 
 
 def _repos(args, root: Path) -> list[projects.Repo]:
@@ -69,12 +74,17 @@ def _store_label(root: Path, store: Path) -> str:
 
 
 def _queue_changed(root: Path, args) -> None:
-    out = decisions.write_view(root, _project(args, root).name)
+    """The decision queue of the root's records written again: it is the root's owner's, whichever of the projects
+    that share the root acted."""
+    p = _project(args, root)
+    out = decisions.write_view(root, p.shares_root_with or p.name)
     print(f"view: {out.relative_to(root).as_posix()}")
 
 
-def _scope(args, root: Path) -> list[projects.Project]:
-    """--all: every registered project; else the one --project names or the one at ``root``."""
+def _scope(args, root: Path, *, root_shared: bool = False) -> list[projects.Project]:
+    """--all: every registered project; else the one --project names or the one at ``root``. ``root_shared`` (sync,
+    check, refresh): every project registered at ``root`` when several share it and neither --project nor --store
+    names one, so the views of the next ones are kept as current as the owner's."""
     if getattr(args, "all", False):
         if getattr(args, "project", None):
             raise SystemExit("brain: --project or --all, not both")
@@ -83,6 +93,10 @@ def _scope(args, root: Path) -> list[projects.Project]:
             raise SystemExit(f"brain: --all needs the project registry ({projects.REGISTRY}; $BRAIN_PROJECTS or "
                              "$CLAUDE_BRAIN_DIR)")
         return list(reg.values())
+    if root_shared and not getattr(args, "project_obj", None) and not getattr(args, "store", None):
+        here = projects.at_root(root)
+        if len(here) > 1:
+            return here
     return [_project(args, root)]
 
 

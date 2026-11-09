@@ -157,8 +157,10 @@ def _header(project: projects.Project, repo: str) -> Section:
                    "global rules and the memory are injected already; the history: `brain digest` (the past week).")
     s.lines.append(f"Rules: {config.claude(config.load())['plugin']} rules/global.md (every project)"
                    + (f"; this project: {', '.join(rules)}" if rules else "") + ".")
-    views = [v for v in ("notes/kanban_graph.md", "notes/roadmap_graph.md", "notes/decision_queue.md")
-             if (project.root / v).is_file()]
+    folder = projects.views_dir(project, project.stores[0]) if project.stores else project.root / "notes"
+    own = [folder / "kanban_graph.md", folder / "roadmap_graph.md"]   # beside its store when it shares its root
+    queue = [] if project.shares_root_with else [project.root / "notes" / "decision_queue.md"]
+    views = [projects._rel(f, project.root) for f in own + queue if f.is_file()]
     s.lines.append("Details: `brain decision pending`, `research_graph work-frontier | blocked | milestone <id>`"
                    + (f", {', '.join(views)}" if views else "") + "; everything: `brain resume --budget 0`.")
     return s

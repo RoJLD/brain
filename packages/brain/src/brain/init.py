@@ -91,6 +91,7 @@ class Step:
     path: Path             # point (the pointer)
     text: str | None = None
     why: str = ""
+    graph: int | None = None   # a graph's keep or store step: its index in the template's graphs (0: the first)
 
 
 @dataclass
@@ -349,11 +350,12 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
         else:
             steps.append(Step("create", p, text))
             created.add(rel)
-    for g in tpl.graphs:
+    for i, g in enumerate(tpl.graphs):
         schema = root / g["store"] / "schema.yaml"
-        steps.append(Step("keep", schema.parent, why="a graph store already") if schema.exists() else
+        steps.append(Step("keep", schema.parent, why="a graph store already", graph=i) if schema.exists() else
                      Step("store", schema.parent, schema_text(g["schema"], owner),
-                          why=f"research_graph init --owner {owner}, layers {', '.join(schema_layers(g['schema']))}"))
+                          why=f"research_graph init --owner {owner}, layers {', '.join(schema_layers(g['schema']))}",
+                          graph=i))
     steps.append(_render_step(root, created, claude_names(root)["plugin"], tpl.graphs[0]["store"]))
     pointer, there = paths.personal_file(), paths.pointer_root()
     if there is None:
@@ -372,8 +374,10 @@ def apply(root: Path, steps: list[Step], owner: str) -> int:
         if s.action in ("create", "point"):
             s.path.parent.mkdir(parents=True, exist_ok=True)
             s.path.write_text(s.text or "", encoding="utf-8", newline="\n")
-        elif s.action == "store":
-            rc = graph.research_graph(root, s.path, "init", "--owner", " ".join(owner.split()))
+        elif s.action == "store":   # a later graph keeps its views beside it and no decision log (brain.projects)
+            # later by its index in the template's graphs: the first one may be kept (it exists) and this one new
+            later = [] if not s.graph else ["--views", s.path.parent.relative_to(root).as_posix(), "--no-decisions"]
+            rc = graph.research_graph(root, s.path, *later, "init", "--owner", " ".join(owner.split()))
             if not rc and s.text:   # the brain's schema over the one research_graph init just wrote: a new store only
                 (s.path / "schema.yaml").write_text(s.text, encoding="utf-8", newline="\n")
             code = code or rc
