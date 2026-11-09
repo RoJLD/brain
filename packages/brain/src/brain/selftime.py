@@ -181,7 +181,9 @@ class run:
             elif exc_type is not None:
                 code, why = 1, _bare(exc_type)
                 error(exc, self.task)
-            now = datetime.now(timezone.utc)
+            # start and end from one clock, rounded the same way: datetime.now() against fromtimestamp(time.time())
+            # put the end 1 ms before the start now and then; the end is never before the run's own start
+            now = datetime.fromtimestamp(max(time.time(), self._epoch), timezone.utc)
             ev = _envelope("exec", self.task, now)
             start = datetime.fromtimestamp(self._epoch - self._before, timezone.utc)
             ev.update(start=timing.iso(start), end=ev["at"], duration_s=round(max(duration, 0.0), 3), exit=code,

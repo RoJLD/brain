@@ -50,6 +50,17 @@ def test_a_run_writes_its_exec_event(on):
     assert 0 <= ev["duration_s"] < 5
 
 
+def test_the_end_is_never_before_the_start(on, monkeypatch):
+    """A clock read that rounds the start up across a millisecond (or a wall clock stepped back) put the end 1 ms
+    before the start (wi-brain-selftime-end-before-start): both come from time.time(), the end clamped to the start."""
+    clock = iter([1762700000.1239995, 1762700000.1239991])   # enter, then exit a hair earlier
+    monkeypatch.setattr(selftime.time, "time", lambda: next(clock))
+    with selftime.run("hook guard shell", from_import=False):
+        pass
+    (ev,) = _lines(on, "exec-2*.jsonl")
+    assert _valid(ev)["end"] == ev["start"] == "2025-11-09T14:53:20.124Z"   # clamped, from the same clock
+
+
 def test_an_uncaught_error_is_an_exec_failure_and_an_error_event_without_its_message(on):
     with pytest.raises(perf.PerfError):
         with selftime.run("brain perf", from_import=False):
