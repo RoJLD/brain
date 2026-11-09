@@ -278,22 +278,25 @@ The session that asks the owner records the answers, in one PR per batch (wi-bra
    retired (`ledger/answer-recorded-<month>.jsonl`, `retired`); so is a stale one, older than the answer the DDR
    already holds (answered by hand or by `--batch` meanwhile), `--again` included. An older capture of a DDR whose
    later capture was recorded never comes back. An answer captured before a low-stakes deadline replaces the
-   default another branch's refresh took meanwhile.
+   default another branch's refresh took meanwhile. The command prints the retired captures (« retired, never
+   recorded », each with its reason; `--dry-run` marks the refused ones) apart from the decisions left because they
+   are no longer pending (« not pending, left », which `--again` replaces).
 
 `--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
 label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file
 may start with a BOM (UTF-8, or UTF-16 from Windows PowerShell's `>`). In an agent's session (`CLAUDECODE`),
-`brain decision answer` and `--batch` record only an answer this session's own question tool captured: an answer
-relayed by a message is never recorded; the session that gets it applies it and acknowledges it (`brain decision
-ack`) once the asking session has recorded it and the mid-session announce names it. The owner's own terminal records
-anything.
+`brain decision answer`, `--batch` and `brain record ddr` (an answer by `--id ID --answer/--other`, or one a `--file`
+adds or changes) record only an answer this session's own question tool captured: an answer relayed by a message is
+never recorded; the session that gets it applies it and acknowledges it (`brain decision ack`) once the asking session
+has recorded it and the mid-session announce names it. The owner's own terminal records anything.
 
 ### Decisions by default, then reviewed
 
 `brain decision ask --low-stakes` marks a decision whose recommendation the asking session may apply at once,
 provisionally (wi-brain-decision-default): the DDR gets `default: {option, after}`, `after` 24 h from the ask. The
-owner may answer it as any other; without an answer, `brain refresh` (or `brain decision defaulted --apply`) records
-the recommendation as its answer, `by: default`, `via: default`, at the deadline, and the hooks announce it with « by
+owner may answer it as any other; without an answer, `brain refresh` (before it writes any view, so that the records'
+graph and the kanban show it answered) or `brain decision defaulted --apply` records the recommendation as its
+answer, `by: default`, `via: default`, at the deadline, and the hooks announce it with « by
 default »; a DDR whose answer the question tool captured on this machine before the deadline stays pending for
 `brain decision answer --captured`. The mark is refused, at the ask and by `brain check`, on a decision whose text
 (the recommendation's why and the linked ids included) names money, keys, visibility, publication, accounts, arming,
@@ -301,7 +304,8 @@ rules or scheduled tasks (`brain.defaults.REFUSED`, by words, inside `-`/`_` com
 or `$50`: a false alarm only keeps the decision with the owner; `brain check` applies it to pending DDRs, never to one already answered). A stamp without a zone is read as UTC. `brain
 decision defaulted` is the owner's review list (the defaults to review, the provisional ones, the reversed ones:
 answered otherwise than the default after the deadline; `--seen` marks them read, from the owner's terminal only,
-and checks every id before it writes), with a
+and checks every id before it writes; with `--all` it takes full ids, each marked in the one project that holds it;
+`--apply` and `--seen` never write a main checkout on main or master unless `--on-main`, as `brain refresh`), with a
 line in the morning batch (`brain decision batch --zen`) and in the cockpit's queue panel (`brain tui`); any default is reversed with `brain decision answer ID
 <option> --again`.
 

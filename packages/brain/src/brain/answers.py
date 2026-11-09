@@ -26,7 +26,8 @@ generated files, refresh again, push, retry). One writer per batch: the session 
 capture older than the answer the DDR already holds is stale: never written, even with ``--again``, and retired; an
 answer captured before a low-stakes deadline replaces the default taken meanwhile (the owner answered in time).
 
-``refusal`` is the other half of that rule: in an agent's session, ``brain decision answer`` (and ``--batch``) records
+``refusal`` is the other half of that rule: in an agent's session, ``brain decision answer`` (``--batch``, and ``brain
+record ddr`` when it writes an answer) records
 only an answer this session's own question tool captured; an answer relayed by a message is never recorded, the
 session that receives it applies it and acknowledges it once the asking session recorded it (the mid-session announce
 names it). The owner's own terminal records anything.
@@ -394,8 +395,10 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
     the default branch does not hold yet (asked on a branch not merged) is left captured and said, the others are
     recorded, and a DDR whose id merely contains it is never answered in its place. A capture with no answer (the
     owner sent a message instead) or with a label that names no option is refused and retired; one older than the
-    answer the DDR holds is stale: retired, never written (``again`` included). An answer captured before a
-    low-stakes DDR's deadline replaces the default taken meanwhile (the owner answered in time)."""
+    answer the DDR holds is stale: retired, never written (``again`` included). The retired ones are returned apart
+    (``refused``, each with its reason) from the ones left (``skipped``: not pending, ``--again`` replaces them). An
+    answer captured before a low-stakes DDR's deadline replaces the default taken meanwhile (the owner answered in
+    time)."""
     from . import decisions, defaults  # the engine (YAML), not the hook's part
 
     if not caps:
@@ -408,10 +411,10 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
     _git(root, "fetch", "-q", "origin")
     base = _default_branch(root)
     _git(root, "worktree", "add", "-q", "-b", branch, str(worktree), f"origin/{base}")
-    written, skipped, missing, retired = [], [], [], []
+    written, skipped, missing, retired, refusals = [], [], [], [], []
 
     def retire(c: dict, why: str) -> None:
-        skipped.append(f"{c['ddr']} ({why})")
+        refusals.append(f"{c['ddr']} ({why})")
         retired.append({"v": 1, "id": c["id"], "at": at, "ddr": c["ddr"], "captured_at": c.get("at") or "",
                         "pr": "", "retired": why})
 
@@ -444,7 +447,7 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
         _append(RECORDED, retired)
         if not written:
             raise AnswersError("nothing to record: " + "; ".join(
-                skipped + [f"{m} (not on {base} yet)" for m in missing]))
+                refusals + skipped + [f"{m} (not on {base} yet)" for m in missing]))
         if refresh(worktree):
             raise AnswersError(f"brain refresh failed in {worktree}: fix it there, or remove the worktree")
         _git(worktree, "add", "-A")
@@ -469,5 +472,5 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
         _git(root, "worktree", "remove", "--force", str(worktree), check=False)
         _git(root, "branch", "-D", branch, check=False)
     return {"pr": url, "branch": branch, "worktree": str(worktree), "recorded": [c["ddr"] for c in written],
-            "skipped": skipped, "missing": missing, "retired": [r["ddr"] for r in retired], "merged": merged,
-            "log": log}
+            "skipped": skipped, "missing": missing, "retired": [r["ddr"] for r in retired], "refused": refusals,
+            "merged": merged, "log": log}

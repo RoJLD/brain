@@ -8,6 +8,16 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 - `brain.nowindow` also gives no window to a child whose `creationflags` is passed positionally or as `None` (the
   wrapper skipped the first and raised `TypeError` on the second); its review, which #70 never had.
+- **The answers' lane, the rest of the review of #19** (wi-brain-answers-fixes). `brain record ddr` applies the
+  one-writer rule to an answer it writes (`--id ID --answer/--other`, or a `--file` that adds or changes one): in an
+  agent's session only an answer its own question tool captured (finding 9). `brain decision defaulted --apply` and
+  `--seen` no longer write a main checkout on main or master unless `--on-main`, as `brain refresh` (finding 32).
+  `--all --seen ID...` takes full ids, each marked in the one project that holds it, every id found and checked in
+  every project before anything is written; the queue views are rewritten even when a check refuses (finding 33).
+  `brain refresh` and `brain sync` take the low-stakes defaults due before they write the records' graph and the
+  kanban, which showed those DDRs pending until the next refresh (finding 35). `--captured` prints the captures it
+  retired (« retired, never recorded », with each reason; `--dry-run` marks the refused ones) apart from the
+  decisions left because they are no longer pending, the only ones `--again` replaces.
 
 ## 0.2.7 — 2026-11-09
 

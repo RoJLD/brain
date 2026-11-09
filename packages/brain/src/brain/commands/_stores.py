@@ -53,9 +53,20 @@ def _activate_specs(args, root: Path, store: Path) -> int:
     return 0
 
 
+def _take_defaults(root: Path) -> bool:
+    """The low-stakes defaults due now, taken (24 h without an answer: brain.defaults), before any view is written:
+    the records' graph and the kanban then show those DDRs answered. False when the project has no DDR."""
+    if not (root / records.RECORDS_DIR / "ddr").is_dir():
+        return False
+    for ddr_id in defaults.finalize(root, _now()):
+        print(f"{ddr_id}: taken by default (brain decision defaulted)")
+    return True
+
+
 def _sync_store(args, root: Path, store: Path) -> int:
     if _activate_specs(args, root, store):
         return 1
+    ddrs = _take_defaults(root)
     featured = features.has_type(graph.load_schema(store))
     if featured and not getattr(args, "offline", False):   # before the graph sync: it reads the statuses
         features.sync_prs(store, [(c.name, c.path) for c in _repos(args, root) if c.path.is_dir()])
@@ -78,9 +89,7 @@ def _sync_store(args, root: Path, store: Path) -> int:
         return 1
     if modules.applies(store) and modules.write(root, store, _store_label(root, store)):
         print(f"view: {modules.VIEW} written")
-    if (root / records.RECORDS_DIR / "ddr").is_dir():
-        for ddr_id in defaults.finalize(root, _now()):   # 24 h without an answer: the low-stakes default is final
-            print(f"{ddr_id}: taken by default (brain decision defaulted)")
+    if ddrs:
         _queue_changed(root, args)
     if neutral.applies(root) and render.main(root, "claude", do_write=True):   # the marketplace from the source
         return 1
