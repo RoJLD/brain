@@ -35,8 +35,10 @@ From 1.0 on, the first number takes the middle one's place for a change that bre
   heading names no theme after its date. It reads files and titles, not meanings: a step written as prose, or a
   change that newly refuses with no step for it, is the version PR's author to catch, with « Read what changed » below.
 
-0.2.7 is the last release before this policy: its `### Upgrade` had a step beyond the standard ones (a script that
-runs `brain --project P` from a worktree), and it stayed a patch (the maintainer's decision, 2026-11-09). The check runs against the tag
+0.2.7 is the last release before this policy: its `### Upgrade` had a step beyond the standard ones (step 4, a script
+that runs `brain --project P` from a worktree), and it stayed a patch (the maintainer's decision, 2026-11-09). The
+check would refuse its steps 2 and 3 as well: they are standard steps, but under the titles they had before this policy
+named them, **Restart Claude Code's sessions** and **In each public repo's checkout**. The check runs against the tag
 before a version, so it never judges 0.2.7.
 
 ### The standard steps

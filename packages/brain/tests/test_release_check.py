@@ -471,9 +471,18 @@ def test_the_release_page_gives_each_standard_step_its_title():
 
 def test_0_2_7_is_the_last_release_before_the_policy():
     """Decided 2026-11-09: 0.2.7 stays a patch. Its Upgrade asked more than the standard steps: the policy, not 0.2.7,
-    is what changed, so the check never runs against it (a version PR is checked against the tag before it)."""
+    is what changed, so the check never runs against it (a version PR is checked against the tag before it).
+
+    The check would refuse three of its four steps, and the page says which and why: step 4, the one beyond the
+    standard steps, and steps 2 and 3, the standard ones under the titles they had before the policy named them."""
     upgrade = release_check.upgrade_section((ROOT / BRAIN_LOG).read_text(encoding="utf-8"), "0.2.7")
     assert release_check.is_patch("v0.2.6", "0.2.7")
-    assert release_check.steps_beyond_standard(upgrade)
+    beyond = release_check.steps_beyond_standard(upgrade)
+    titles = [release_check.TITLE_RE.match(release_check.STEP_RE.match(line).group(1)).group(1) for line in beyond]
+    assert [line.split(".", 1)[0] for line in beyond] == ["2", "3", "4"], beyond
+    assert titles[2].startswith("Read this if a script of yours runs `brain --project P`"), beyond
     page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
-    assert "0.2.7 is the last release before this policy" in page
+    note = page.split("0.2.7 is the last release before this policy", 1)[1].split("\n\n", 1)[0]
+    for old_title in titles[:2]:
+        assert f"**{old_title}**" in note, old_title
+    assert "`brain --project P`" in note
