@@ -18,6 +18,10 @@ The repo's two distributions share one tag series: a tag `vX.Y.Z` is both `resea
   `_generated_decisions.yaml` once no log derives a stub (the logs are in git: none left is authoritative), where it
   kept the old stubs.
 
+## 0.2.8 — 2026-11-09
+
+- No change in `research-graph`: the version moves with the shared tag.
+
 ## 0.2.7 — 2026-11-09
 
 - No change in `research-graph`: the version moves with the shared tag.

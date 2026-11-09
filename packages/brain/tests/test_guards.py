@@ -284,6 +284,7 @@ SHELL_WRITES_REFUSED = [
     ("lab", "python -c \"import os; [os.remove(f) for f in os.listdir('.')]\""),
     ("plat", "node -e \"require('fs').writeFileSync('{lab}/n.json', '{{}}')\""),
     ("plat", "bash -c 'rm -f {lab}/x'"), ("lab", "bash -lc \"echo x > b\""), ("plat", "sh -c 'cd {lab} && touch x'"),
+    ("plat", "bash -euo pipefail -c 'rm -f {lab}/x'"), ("lab", "bash -co pipefail \"echo x > b\""),
     ("plat", "pwsh -NoProfile -Command \"Set-Content -Path {lab_win}\\x -Value y\""),
     ("lab", "powershell -EncodedCommand {enc}"), ("lab", "cmd //c \"del /q x && echo y > z\""),
 ]
@@ -544,6 +545,17 @@ def test_secret_staged_by_the_same_command_refused(repo):
 def test_commit_all_scans_tracked_changes(repo):
     (repo / "notes" / "decisions.md").write_text(f"# Decisions\napi_key: \"{'Ab1' * 8}\"\n", encoding="utf-8")
     assert "notes/decisions.md:2 (assignment)" in bash(repo, 'git commit -am "decisions"')
+
+
+def test_a_commits_pathspec_and_a_whole_tree_add_are_scanned(repo):
+    """Review of #26, findings 20 and 21: git commit PATH records that path's working tree, and git add -A or -u
+    from a subfolder stages the whole worktree (git 2.0); the secrets check reads both."""
+    (repo / "notes" / "decisions.md").write_text(f"# Decisions\nKEY={FAKE_KEY}\n", encoding="utf-8")
+    for command in ('git commit -m x notes/decisions.md', 'git commit -m x -- notes/decisions.md'):
+        assert "notes/decisions.md:2" in bash(repo, command), command
+    sub = repo / "notes" / "graph"
+    for command in ("git add -A && git commit -m x", "git add -u && git commit -m x", "git add :/ && git commit -m x"):
+        assert "decisions.md:2" in bash(sub, command), command
 
 
 @pytest.mark.parametrize("line", [

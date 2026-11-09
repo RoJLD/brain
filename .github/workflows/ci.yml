@@ -119,7 +119,8 @@ jobs:
   release-check:
     # The version PR's check (docs/release.md; spec-brain-data-compat, gate item 6), before any tag: a registered schema
     # changed since the last tag with no ### Upgrade in this version's CHANGELOG section, or a place left at the old
-    # version. Any other pull request passes at once. Standard library only: nothing to install.
+    # version, a section with no theme, or a patch that breaks the version policy (a schema change, an Upgrade step
+    # beyond the standard ones). Any other pull request passes at once. Standard library only: nothing to install.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:

@@ -13,7 +13,8 @@ from ._stores import _each_store, _sync_store
 ORDER = 110   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 110   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain sync [--all] [--offline]   the ready proposed specs turned active (brain spec activate --write), then
+  brain sync [--all] [--offline]   an earlier engine's merge-driver line brought to this one (brain.mergedriver),
+                        the ready proposed specs turned active (brain spec activate --write), then
                         research_graph sync --write, the records' graph view, the decision queue view,
                         the links graph (Doc, Test and Workflow nodes, documented_in, tested_by and runs, brain.links),
                         the features' statuses from merged PRs (gh; not with --offline) and FEATURES.md, kanban --write;
@@ -24,6 +25,10 @@ USAGE = """\
 def cmd_sync(args, root: Path) -> int:
     if skew.refuse(root, "sync", args.force):   # another engine than config.json engine.pin: nothing written
         return 1
+    from .. import mergedriver
+    note = mergedriver.upgrade(root)   # an earlier engine's driver line, so an upgrade needs no merge-driver step
+    if note:
+        print(note)
     if args.all:
         return _each_store(args, root, sync=True, check=False)
     scope = _scope(args, root, root_shared=True)

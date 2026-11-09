@@ -61,7 +61,7 @@ def who(session: str = "", env=None) -> dict:
         sid, host = (me["session"] if session == me["host_id"] else ""), session
     else:
         sid = session or me["session"]
-        host = me["host_id"] if not session or session == me["session"] else ""
+        host = sessions.host_for(env=env) if not session or session == me["session"] else ""  # not an inherited one
     out = {"session": sid} if sid else {}
     if host:
         out.update({"host_id": host, "machine": sessions.stamp({sessions.HOST_ENV: host}).get("machine", "")})

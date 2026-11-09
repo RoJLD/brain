@@ -35,7 +35,7 @@ What it does, every command reading files and git, never a model:
 Python 3.10 or later. The command depends on PyYAML and on `research-graph` at the same tag.
 
 ```bash
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.7#subdirectory=packages/brain"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.8#subdirectory=packages/brain"
 ```
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
@@ -320,7 +320,7 @@ Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md
   is merged by id, anything else as git would. The installer defines it in the personal brain's git config
   (`brain merge-driver install --apply`); `brain merge-driver replay` merges a repo's past merges again with and
   without it. A driver that cannot run falls back to git's own `merge-file`, so ours is never left without its
-  conflict markers (`brain.mergedriver`).
+  conflict markers, and `brain sync` brings an earlier engine's driver line to this one (`brain.mergedriver`).
 - **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
@@ -346,27 +346,53 @@ and its recap.
 
 - **`brain sessions [--hours H] [--all] [--json]`**: the sessions active in the last 24 h with both ids, role
   (`master`, `sub`, `relay`, `solo`), parent, children live/started, state and context against its budget (the
-  brief's; a master's without one: config.json `usage.master_budget`, else the model's window, 1M).
-- **`brain sessions tree [ID]`**: the families with a live member, or ID's, each child with its report: a master
-  learns what its children did without paging their transcripts (archived branches counted, `--all` draws them).
+  brief's; a master's without one: config.json `usage.master_budget`, else the model's window, 1M). The options may
+  come before or after `tree` and `show`.
+- **`brain sessions tree [ID]`**: the families with a member active in the last `--hours` (the app's last activity,
+  else its SessionStart), or ID's, each child with its report: a master learns what its children did without paging
+  their transcripts (archived branches counted, `--all` draws them). A session detached to the top level
+  (`lineageDetached`, a hand-over's session living on) heads its own family; a parent the app's file no longer names
+  does not come back from the ledger or the brief hash (the briefs give a parent only to a session the app does not
+  know). A report's wait and recap come from the wrap-up of its last turn only.
 - **`brain sessions show ID [--report]`**: one session by either id (a prefix of 8 or more) or its short name, its
   family, and what a message would meet: live and working (it waits in the queue), idle (it starts a turn), archived
   (lost). `--report` prints its last final message in full, read from its transcript, never stored.
 
 `brain decision ask`, `answer`, `ack` and `archive` (and the question-tool capture) stamp the session's transcript id
-and its app id with the machine (`host_id`, `machine`); `brain check` refuses a DDR stamped on this machine whose
-`local_` id matches no session the app or the ledger knows, and warns for one stamped elsewhere or before the stamps.
-The resume pack prints both ids. The cockpit's sessions panel shows the short name (else the app id) in Session, then
+and its app id with the machine (`host_id`, `machine`), the app id only when the app's own file of it names this
+session's transcript (a `claude` started from a desktop session's shell inherits that session's id); `brain check`
+(`brain.sessions`) refuses a DDR stamped on this machine in the last 7 days whose `local_` id matches no session the
+app or the ledger knows, and warns for an older one (its session may have left the app and the ledger's two months
+since), one stamped elsewhere or before the stamps.
+The resume pack prints both ids, the app id under the same rule. The cockpit's sessions panel shows the short name (else the app id) in Session, then
 Role, Parent, Kids (live/started) and Ctx (% of the budget), and the ids in a session's detail.
 
-**The master's watch** (the budget watch, `budget.sh`): a session that called `start_session` is a master, its
-children read from the app's files and the SessionStart events. At 70 % of its budget it says how many more children
+**The master's watch** (the budget watch, `budget.sh`, `brain.budget`): a session that started a session is a master
+(a `start_session` call the owner asked for, or one that starts a proposal by its `proposal_id`, whose result is not
+an error, or a child the app's files name; a proposal card, `offer` or `own_initiative`, starts nothing until the
+owner starts it), its children read from the app's files
+and the SessionStart events. A child is live until the app archives it (its recorded end counts only for a session
+the app does not know: the app resumes its own on a message). At 70 % of its budget it says how many more children
 fit before 80 % (the context a child costs, measured on the family, else 22k); at 80 %: start no new child, hand over
 to a fresh master and drain yours (ask the owner nothing new, touch no other master's children), with a draft
-hand-over note listing the live children with both ids, items and state; at 90 %: drain only, compact only once no
-child is alive. Each step gives the cost of one wake after the prompt cache expired. The master's row in the cockpit
-turns yellow, orange and red at each step; `brain alerts` raises a master past 80 % with live children; the governor
-reminds a master past 80 % that calls `start_session`, and lets the call through: nothing blocks a new session.
+hand-over note listing the live children with both ids, items and their state now (read from their transcripts); at
+90 %: drain only, compact only once no child is alive. Each step gives the cost of one wake after the prompt cache
+expired; a subagent's tool call never uses a step up, the main thread's next call gives it. The master's row in the
+cockpit turns yellow, orange and red at each step; `brain alerts` (`brain.alerts`) raises a master past 80 % with live
+children, both read from the session tree at each pass (an archived master, or all of its children archived, close the
+alert at once; a session the app does not know, master or child, also ends with its recorded `SessionEnd`, while one
+the app knows lives until archived, since the app resumes it on a message; the state of a transcript the app's master
+has left, after a `/clear`, raises nothing, its current transcript's own state decides, assuming the app moves its
+file's `cliSessionId` to the new transcript after a `/clear`, as `brain.sessions.host_for` assumes too: not yet checked
+against a real `/clear` in the desktop app, and were the app to keep the old id, both would go wrong: the current
+transcript's state, which then has no app id, would count no live child, so the master past 80 % now would raise no
+alert of its own, while the earlier transcript's state, still matched to the app's master, would keep its stale alert
+at the pct it had before the `/clear` until the master or all of its children are archived or that state is pruned
+(14 days); a master the tree does not know counts while its watch state is under 6 h old). An unarchived master left
+past 80 % with unarchived children keeps its alert until the master or all of its children are archived (or, for one
+the app does not know, ended; archiving one child of several keeps it, with one live child fewer) or its watch state
+is pruned (14 days), by design: those children still spend; the governor reminds a master past 80 % that calls
+`start_session`, and lets the call through: nothing blocks a new session.
 
 ## Lessons
 
@@ -466,22 +492,31 @@ brain whose `source/packs.yaml` gives its core pack `hooks:` gets them copied in
 
 A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
 Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that
-may write, names `gh`, a program of the owner and power guards, `claude plugin` or `skills add`, or git other than to
+may write, names `gh`, a program of the owner and power guards, `claude` then `plugin` or `skills` then `add` (whatever
+comes between: a quoted `claude.exe`, global options, a line continuation), or git other than to
 read (`git [-C DIR] status`, `log`, `diff`, `show`, `rev-parse`... without `--output`: `brain.guards.GIT_READS`,
 checked against the guards' tables). In Python a guard reads the registry through libyaml and does not import `urllib.request`.
 
 Two guards keep what a session brings in and what it records clean (the runbook: [`docs/guards.md`](docs/guards.md)):
 
 - **Third-party kits** (`guard.sh shell`, check `third-party`): a session never installs or runs a third-party kit. A
-  download fed to a shell or an interpreter (`curl ... | sh`, `bash <(curl ...)`, `sh -c "$(curl ...)"`, `iwr ... |
-  iex`, `iex (irm ...)`), `claude plugin install` and `claude plugin marketplace add` from a source outside the owner's
-  list (config.json `adapters.claude.sources`; the brain's own marketplace always passes) and `npx skills add` are
-  refused, each an action for the owner's queue with its exact command (`brain queue add --kind action --guard
-  <ref>`). A download to a file (`curl -o`) passes; what the owner types in their own terminal is never seen.
-- **Conflict markers** (check `markers`): a git commit, or a merge, rebase or cherry-pick `--continue`, whose staged
-  lines add `<<<<<<< `, `||||||| `, `>>>>>>> ` or a bare `=======` is refused with the file and line; `brain check`
-  fails on a store, journal, decision log or record file that holds one. A Markdown setext heading (`=======` under a
-  line of text) and a file under a `fixtures` folder pass.
+  download fed to a shell or an interpreter (`curl ... | sh`, `curl ... | bash /dev/stdin`, `bash <(curl ...)`, `sh
+  -c "$(curl ...)"`, `eval $(curl ...)`, `bash <<<"$(curl ...)"`, `iwr ... | iex`, `iex (irm ...)`), `claude plugin
+  install` (and its `--marketplace`) and `claude plugin marketplace add` from a source outside the owner's list
+  (config.json `adapters.claude.sources`; the brain's own marketplace always passes) and `skills add` (`npx`, `bunx`,
+  `bun x`, `pnpm dlx`, `npm -w pkg exec`, `corepack pnpm dlx`; npm's Windows shims too: `claude.cmd`, `skills.cmd`,
+  `npx.cmd`, `pnpm.cmd`, their `.ps1` and `.bat`) are refused, each an action for the owner's queue with its exact command
+  (`brain queue add --kind action --guard <ref>`). A download to a file (`curl -o`) or read as data (`python3 analyze.py <(curl ...)`)
+  passes; what the owner types in their own terminal is never seen. (`brain.guards`)
+- **Conflict markers** (check `markers`): a git commit, or a merge, rebase or cherry-pick `--continue`, that adds
+  `<<<<<<< `, `||||||| `, `>>>>>>> ` or a bare `=======` is refused with the file and line: the staged lines, commit
+  `-a`'s, the paths the commit names, an earlier `git add`'s (`-A` or `-u` with no path: the whole worktree), and,
+  during a merge, only the lines new against every parent; `brain check` fails on a store, journal, decision log or
+  record file that holds one. A Markdown or reST setext heading (`=======` under a line of text; `.md`, `.qmd`, `.Rmd`,
+  `.rst`, and `.txt` under a title no longer than the underline, so a half-resolved `requirements.txt` is still
+  refused) and a file under a `fixtures` folder pass; a commit in a folder that is not yet a repo passes, as for git
+  (any other git failure is logged in errors.log).
+  (`brain.markers`)
 
 Two of the PreToolUse hooks keep the owner's say over how sessions run (the runbook: [`docs/guards.md`](docs/guards.md)):
 
@@ -610,7 +645,12 @@ real docker client is marked `docker`: the CI runs it apart, on one process (`py
 
 With research-graph, under the repo's single tag series: see the root README. `CHANGELOG.md` here is the command's.
 A release moves `brain_version` in `src/brain/adapters/claude/hooks/common.sh` with `__version__` (the hooks' bash
-fast paths stamp it on their events; `tests/test_selftime.py` checks the two agree).
+fast paths stamp it on their events; `tests/test_selftime.py` checks the two agree). Which number moves is
+[`docs/release.md`](../../docs/release.md)'s version policy: before 1.0 the middle one for a change an owner must act
+on or a format that moves, the last for what needs nothing; `installer/release_check.py` (CI's `release-check`)
+refuses a patch with a schema change or an `### Upgrade` step beyond the standard ones, an `### Upgrade` that leaves
+out a standard step, a section with no theme, and a section of either CHANGELOG that repeats an entry an earlier one
+released.
 
 ## License
 
