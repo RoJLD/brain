@@ -19,8 +19,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
     cockpit's Kids, as `brain sessions` reads it (`brain.sessions.alive`; finding 24);
   - `brain alerts` reads a master's liveness and live children from the session tree at each pass: an archived master
     or all of its children archived close the alert at once (one child of several archived keeps it, one live child
-    fewer), a master waiting on its children for hours keeps it, and the state of a transcript the app's master has
-    left (after a `/clear`) no longer raises it for up to 14 days (finding 26);
+    fewer; a session the app does not know also ends with its recorded SessionEnd), a master waiting on its children
+    for hours keeps it, and the state of a transcript the app's master has left (after a `/clear`) no longer raises it
+    for up to 14 days (finding 26), assuming the app moves its file's `cliSessionId` to the new transcript after a
+    `/clear` (not yet checked against a real one; were it kept, the earlier transcript's stale alert would stay and the
+    current one would raise none, as the README says);
   - a session detached to the top level (`lineageDetached`) is no longer its old master's child, and a parent the
     app's file no longer names does not come back from the SessionStart event (finding 27), nor from the brief hash
     that `brain sessions`, `sessions tree` and `sessions show` read by default: the briefs give a parent only to a
