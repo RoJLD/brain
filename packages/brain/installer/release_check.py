@@ -8,7 +8,11 @@ is checked. On a version PR, it fails when:
   ``packages/brain/CHANGELOG.md`` has no ``### Upgrade`` with something in it: an upgrade that needs a step and does
   not say so is how a brain breaks on its owner's machine (``brain update`` prints that section);
 - the version is not coherent: both ``__version__``, the research-graph pin, the hooks' ``brain_version``, a dated
-  section in both CHANGELOGs. CI's ``release-tag`` job checks part of this too, but only once the tag exists.
+  section in both CHANGELOGs. CI's ``release-tag`` job checks part of this too, but only once the tag exists;
+- the brain's section heading names no theme after its date (``## X.Y.Z — YYYY-MM-DD — theme``);
+- the version policy (docs/release.md, « The version policy ») is broken by a patch, a version whose X.Y is the last
+  tag's: a registered schema changed since that tag, or its ``### Upgrade`` numbers a step that is not one of the
+  standard steps (:data:`STANDARD_STEPS`, by the bold title that opens the step). Such a release is a minor one.
 
 Standard library only, and the working tree is what is read: the job runs before any install, and it can be run before
 committing. Exit 0 when it passes or there is nothing to check, 1 when it fails, 2 when it cannot tell (no tag, no git).
@@ -52,6 +56,13 @@ TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 HEADING_RE = re.compile(r"^## (\d+\.\d+\.\d+)\b(.*)$")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 UPGRADE_RE = re.compile(r"^### Upgrade\b")
+# A numbered step of ### Upgrade: at the start of a line, not indented (a sub-step or a continuation line is part of
+# the step above it); its title is the bold text that opens it.
+STEP_RE = re.compile(r"^\d+[.)]\s+(.*)$")
+TITLE_RE = re.compile(r"^\*\*(.+?)\*\*")
+# The steps every release asks of an owner, whatever it changed (docs/release.md, « The standard steps »): the only ones
+# a patch's ### Upgrade may number. Compared by title, case and a closing ``.`` or ``:`` aside.
+STANDARD_STEPS = ("Install the engine", "Restart the Claude Code sessions", "Refresh the public stamp")
 
 
 class CannotTell(Exception):
@@ -121,6 +132,39 @@ def upgrade_section(changelog: str, version: str) -> str | None:
     return "\n".join(lines).strip() if found else None
 
 
+def theme(rest: str) -> str:
+    """The theme a section heading names after its date (``## X.Y.Z — YYYY-MM-DD — theme``), or ''."""
+    match = DATE_RE.search(rest)
+    return rest[match.end():].strip(" \t—–-:,") if match else ""
+
+
+def _title(text: str) -> str:
+    return text.strip().rstrip(".:").strip().casefold()
+
+
+def steps_beyond_standard(upgrade: str) -> list[str]:
+    """The numbered steps of an ``### Upgrade`` that are not standard steps, as their lines; [] when there are none."""
+    standard = {_title(step) for step in STANDARD_STEPS}
+    beyond = []
+    for line in upgrade.splitlines():
+        step = STEP_RE.match(line)
+        if not step:
+            continue
+        title = TITLE_RE.match(step.group(1))
+        if not title or _title(title.group(1)) not in standard:
+            beyond.append(line.strip())
+    return beyond
+
+
+def is_patch(tag: str, version: str) -> bool:
+    """Whether ``version`` moves only the last number of ``tag``: X.Y the same, Z after it."""
+    now, before = TAG_RE.match(version), TAG_RE.match(tag)
+    if not (now and before):
+        return False
+    (x, y, z), (px, py, pz) = map(int, now.groups()), map(int, before.groups())
+    return (x, y) == (px, py) and z > pz
+
+
 def coherence(repo: Path, tag: str, version: str) -> list[str]:
     """What the version PR left behind: every place that says the version, and that it moves forward."""
     problems = []
@@ -143,6 +187,26 @@ def coherence(repo: Path, tag: str, version: str) -> list[str]:
             problems.append(f"{path} has no section ## {version}")
         elif not DATE_RE.search(rest):
             problems.append(f"{path}: the section ## {version} has no date")
+        elif path == f"{BRAIN}/CHANGELOG.md" and not theme(rest):
+            problems.append(f"{path}: the section ## {version} names no theme: ## {version} — YYYY-MM-DD — what this "
+                            f"release is about (docs/release.md, « The version policy »)")
+    return problems
+
+
+def policy(tag: str, version: str, changed: list[str], upgrade: str | None) -> list[str]:
+    """What a patch may not hold (docs/release.md, « The version policy »); nothing for any other version."""
+    if not is_patch(tag, version):
+        return []
+    problems = []
+    rule = f"{version} is a patch of {tag}"
+    if changed:
+        problems.append(f"{rule} and registered schemas changed since {tag} ({', '.join(changed)}): a format that "
+                        f"moves is a minor version, not a patch")
+    beyond = steps_beyond_standard(upgrade or "")
+    if beyond:
+        problems.append(f"{rule} and its ### Upgrade asks more than the standard steps "
+                        f"({', '.join(STANDARD_STEPS)}): {' | '.join(beyond)}; a change an owner must act on is a "
+                        f"minor version, not a patch")
     return problems
 
 
@@ -161,14 +225,18 @@ def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
     problems = coherence(repo, tag, version)
     changed = changed_schemas(repo, tag)
     changelog = f"{BRAIN}/CHANGELOG.md"
+    upgrade = upgrade_section(read(repo, changelog), version)
     if not changed:
         said.append(f"no registered schema changed since {tag}")
     else:
         said.append(f"registered schemas changed since {tag}: {', '.join(changed)}")
-        if not upgrade_section(read(repo, changelog), version):
+        if not upgrade:
             problems.append(f"{changelog}: registered schemas changed since {tag} ({', '.join(changed)}) and the "
                             f"section ## {version} has no ### Upgrade with something in it: say what an owner does, "
                             f"or that there is nothing to run")
+    if is_patch(tag, version):
+        said.append(f"a patch of {tag}: it may hold no schema change and no Upgrade step beyond the standard ones")
+    problems += policy(tag, version, changed, upgrade)
     return said, problems
 
 

@@ -8,6 +8,13 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 - `brain.nowindow` also gives no window to a child whose `creationflags` is passed positionally or as `None` (the
   wrapper skipped the first and raised `TypeError` on the second); its review, which #70 never had.
+- A written version policy (`docs/release.md`, « The version policy », wi-brain-versioning-policy): before 1.0 the
+  middle number moves for a change an owner must act on or a format that moves, the last for what needs nothing; each
+  release has a theme; a fix that cannot wait is a patch cut from the last tag; a release a week, the review fixes on
+  it. CI's `release-check` now refuses a patch whose registered schemas changed since the last tag or whose
+  `### Upgrade` numbers a step beyond the three standard ones (by their bold titles: **Install the engine**,
+  **Restart the Claude Code sessions**, **Refresh the public stamp**), and a brain section heading with no theme
+  (`## X.Y.Z — YYYY-MM-DD — theme`). 0.2.7 is the last release before the policy.
 - An exec event's end is never before its start (`wi-brain-selftime-end-before-start`): both come from one clock,
   the end clamped to the start; `datetime.now()` against a start rounded up across a millisecond put it 1 ms before,
   now and then, and the schema refused the event (a test failed on CI with `event.end: before start`).

@@ -6,6 +6,55 @@ runs by itself: the jobs below refuse what they can check, and the rest is this 
 
 `vX.Y.Z` is the new tag, and `vP` the last one, below.
 
+## The version policy
+
+Which number moves is decided by what an owner has to do, not by how much changed. Before 1.0:
+
+| The release holds | The number | Example |
+|---|---|---|
+| a change an owner must act on: a numbered step of `### Upgrade` beyond the standard steps below, anything that newly refuses what passed, a config or a git setting to rewrite | the middle one, `0.Y.0` | 0.2.6 (guards fail closed, `brain update` twice) |
+| a format that moves: a registered schema changed since `vP` (`SCHEMAS` in `packages/brain/installer/release_check.py`), what `brain init` wrote once | the middle one, `0.Y.0` | 0.2.5 (the Lesson type, the `merge=brain` line) |
+| only what needs nothing: fixes and additions an owner gets by the standard steps alone | the last one, `0.Y.Z` | a fix of a crash |
+
+From 1.0 on, the first number takes the middle one's place for a change that breaks a brain; that is decided at 1.0.
+
+- **Each release has a theme and says so**: the wave it was planned for, in the heading of its section of
+  `packages/brain/CHANGELOG.md`, `## X.Y.Z — YYYY-MM-DD — theme`, and in its tag message. Work outside the theme
+  waits for the next release, unless it is a fix that cannot wait.
+- **A fix that cannot wait** (a brain that no longer starts, a guard that refuses every commit, data lost) is a patch
+  cut from the last tag, not a release of whatever main holds: its PR merges on main first, then a branch `release/X.Y`
+  from `vX.Y.Z` (made once per minor) takes it by cherry-pick with its CHANGELOG entry, and the version PR of
+  `X.Y.Z+1` targets that branch. The tag is cut there (« 3. The tag », from `release/X.Y` instead of main), then
+  `release/X.Y` merges back into main by a PR, so that the tag is in main's history and the next `compat-prev`
+  upgrades from it. It holds the fix and nothing else, so it needs nothing beyond the standard steps.
+- **The cadence**: a release a week, the wave planned for it with its theme; a week with nothing merged has none. The
+  review fixes of a wave's PRs are released on the cadence, in the next wave, never as a patch of their own unless
+  they are a fix that cannot wait.
+- **`release-check` refuses** a patch (X.Y the last tag's, Z after it) when a registered schema changed since `vP`, or
+  when its `### Upgrade` numbers a step whose bold title is not a standard step's; and any version whose brain section
+  heading names no theme after its date. It reads files and titles, not meanings: a step written as prose, or a
+  change that newly refuses with no step for it, is the version PR's author to catch, with « Read what changed » below.
+
+0.2.7 is the last release before this policy: its `### Upgrade` had a step beyond the standard ones (a script that
+runs `brain --project P` from a worktree), and it stayed a patch (the maintainer's decision, 2026-11-09). The check runs against the tag
+before a version, so it never judges 0.2.7.
+
+### The standard steps
+
+What every release asks of an owner, whatever it changed. A patch's `### Upgrade` numbers these and nothing else, each
+opening with its title in bold as here (a title is compared without its case or a closing `.` or `:`); a minor one
+numbers them too, in their place among its own steps. With nothing else to do, the section says « Nothing to run for
+the rest » after them.
+
+```markdown
+1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
+2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
+3. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
+   push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
+```
+
 ## 1. Before the version PR
 
 - The items named for this release are merged, each reviewed, CI green on Windows (the `brain` job) included.
@@ -17,6 +66,8 @@ runs by itself: the jobs below refuse what they can check, and the rest is this 
   - what `brain init` wrote once and keeps afterwards (`templates/generic/`, the store's `schema.yaml`);
   - the hooks (`adapters/claude/hooks/`: `brain sync` and a restart of the sessions);
   - anything that newly refuses, or a stamp or cache that a new engine invalidates.
+- **Choose the number** by « The version policy » above: any of these that asks an owner something beyond the
+  standard steps makes it `0.Y.0`.
 
 ## 2. The version PR
 
@@ -29,12 +80,12 @@ One branch, `chore/release-X.Y.Z`, one PR that moves the version and nothing els
 | `packages/brain/src/brain/adapters/claude/hooks/common.sh` | `brain_version` |
 | `README.md`, `packages/brain/README.md`, `docs/install.md`, `docs/pilot.md` | the install lines and what the new tag brings |
 | `packages/brain/installer/stranger_test.py` | the default `--ref`, and the usage line |
-| `CHANGELOG.md`, `packages/brain/CHANGELOG.md` | `## Unreleased` becomes `## X.Y.Z — YYYY-MM-DD`; a distribution with no change still gets its section, in one line |
+| `CHANGELOG.md`, `packages/brain/CHANGELOG.md` | `## Unreleased` becomes `## X.Y.Z — YYYY-MM-DD`, and `## X.Y.Z — YYYY-MM-DD — theme` in the brain's; a distribution with no change still gets its section, in one line |
 | the `### Upgrade` section, `packages/brain/CHANGELOG.md` | see below |
 
 **The `### Upgrade` section** is the first thing in the brain's section, and `brain update` prints it. Numbered steps
-for what an owner must do from `vP`, in the order that works, each with its reason and what fails until it is done;
-then what needs nothing, said so. Everything else is under `### Changes`. Check it against the `compat-prev` report of
+for what an owner must do from `vP`, in the order that works, each opening with its title in bold and then its reason
+and what fails until it is done, the standard steps under their own titles; then what needs nothing, said so. Everything else is under `### Changes`. Check it against the `compat-prev` report of
 the PR: what the test had to run, the section says. A release with nothing to do says « Nothing to run ». Each PR on
 the way adds its step to Unreleased's `### Upgrade` and its entry to `### Changes`, so this is a matter of reading them
 in order and numbering them.
@@ -52,8 +103,9 @@ wi-brain-old-store-fixture):
 
 - **`release-check`** (`packages/brain/installer/release_check.py`) sees that this is a version PR because `__version__`
   is not the last tag's. It fails when a registered schema changed since the last tag and this version's section has no
-  `### Upgrade` with something in it, or when the two `__version__`, the pin, `brain_version` and the two dated sections
-  do not agree. Run it before pushing: `python packages/brain/installer/release_check.py`.
+  `### Upgrade` with something in it, when the two `__version__`, the pin, `brain_version` and the two dated sections
+  do not agree, when the brain's section names no theme, or when a patch breaks the version policy (a schema change, a
+  step beyond the standard ones). Run it before pushing: `python packages/brain/installer/release_check.py`.
   It reads files, not meanings: a section can be there and wrong, and `permissions.yaml`, whose keys are constants in
   `brain.permissions`, has no file for it to compare (wi-brain-schema-diff compares keys). This list still applies.
 - **`compat-prev`** installs `vP`, writes every registered format, installs this checkout over it, runs the store plan,
@@ -79,7 +131,7 @@ git push origin vX.Y.Z
 
 CI's `release-tag` job then checks that the tag, both `__version__` and the pin agree. Once it is green,
 `brain update --check` on a machine at `vP` shows the new version and its `### Upgrade`. A tag is never moved: a
-mistake is a new patch version.
+mistake is a new version, a patch when its fix needs nothing beyond the standard steps (« The version policy »).
 
 ## 4. The pin and the machines
 

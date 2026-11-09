@@ -151,7 +151,8 @@ the refusal of a higher `v`. A new format, or a new version of one, adds its pai
 
 [`docs/release.md`](../../../docs/release.md) says when these are frozen. Its `release-check` job holds the list of each
 format's schema files (`SCHEMAS` in `installer/release_check.py`): a version PR that changed one since the last tag and
-has no `### Upgrade` in its CHANGELOG section fails. A new folder here adds its entry there, or a test fails.
+has no `### Upgrade` in its CHANGELOG section fails, and so does a patch version that changed one at all (a format that
+moves is a minor version, « The version policy »). A new folder here adds its entry there, or a test fails.
 
 ## The upgrade test (`compat-prev`)
 

@@ -46,10 +46,21 @@ def versions(repo: Path, version: str) -> None:
     write(repo, COMMON, f"#!/usr/bin/env bash\nbrain_version={version}\nnext=1\n")
 
 
-def changelogs(repo: Path, version: str, brain_body: str = "- A change.\n") -> None:
+def changelogs(repo: Path, version: str, brain_body: str = "- A change.\n", theme: str = " — A theme") -> None:
     write(repo, ROOT_LOG, f"# Changelog\n\n## {version} — 2026-11-09\n\n- Nothing new.\n\n## 0.2.5 — 2026-11-04\n\n- Old.\n")
-    write(repo, BRAIN_LOG, f"# Changelog\n\n## {version} — 2026-11-09\n\n{brain_body}\n"
+    write(repo, BRAIN_LOG, f"# Changelog\n\n## {version} — 2026-11-09{theme}\n\n{brain_body}\n"
                            "## 0.2.5 — 2026-11-04\n\n### Upgrade\n\n1. An old step.\n")
+
+
+# The standard steps as an owner reads them (docs/release.md), continuation lines, a sub-step and prose included
+STANDARD_UPGRADE = (
+    "### Upgrade\n\nFrom 0.2.5, in this order.\n\n"
+    "1. **Install the engine**, in your own terminal: `brain update`, then `y`.\n"
+    "   A brain that declares `engine.installer`: its `-Apply`.\n"
+    "2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.\n"
+    "   1. a nested line is part of its step.\n"
+    "3. **Refresh the public stamp:** `brain check --public --history` in each public repo's checkout.\n\n"
+    "Nothing to run for the rest.\n\n- A note.\n\n### Fixes\n\n- A fix.\n")
 
 
 @pytest.fixture
@@ -85,8 +96,8 @@ def run(repo: Path, capsys) -> tuple[int, str]:
 
 
 def test_schema_changed_without_an_upgrade_section_fails(repo, capsys):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6")
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0")
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
     rc, text = run(repo, capsys)
@@ -95,8 +106,8 @@ def test_schema_changed_without_an_upgrade_section_fails(repo, capsys):
 
 
 def test_schema_changed_with_an_upgrade_section_passes(repo, capsys):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6", "### Upgrade\n\n1. Run brain sync.\n\n### Changes\n\n- A change.\n")
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", "### Upgrade\n\n1. Run brain sync.\n\n### Changes\n\n- A change.\n")
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
     rc, text = run(repo, capsys)
@@ -118,8 +129,8 @@ def test_a_version_pr_without_a_schema_change_needs_no_upgrade_section(repo, cap
 
 
 def test_a_store_schema_counts_too(repo, capsys):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6")
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0")
     write(repo, STORE_SCHEMA, "node_types: [Lesson]\n")
     commit(repo)
     rc, text = run(repo, capsys)
@@ -128,8 +139,8 @@ def test_a_store_schema_counts_too(repo, capsys):
 
 
 def test_a_removed_schema_counts_too(repo, capsys):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6")
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0")
     (repo / CONFIG_SCHEMA).unlink()
     commit(repo)
     assert run(repo, capsys)[0] == 1
@@ -138,8 +149,8 @@ def test_a_removed_schema_counts_too(repo, capsys):
 def test_a_schema_changed_in_an_earlier_pr_since_the_tag_still_counts(repo, capsys):
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6")
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0")
     commit(repo)
     assert run(repo, capsys)[0] == 1
 
@@ -151,8 +162,8 @@ def test_a_schema_changed_in_an_earlier_pr_since_the_tag_still_counts(repo, caps
     "### Changes\n\n- Upgrade by hand.\n",
 ])
 def test_an_upgrade_section_that_says_nothing_does_not_count(repo, capsys, body):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6", body)
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", body)
     write(repo, CONFIG_SCHEMA, "{}\n")
     commit(repo)
     assert run(repo, capsys)[0] == 1
@@ -264,6 +275,122 @@ def test_the_script_runs_alone_as_ci_runs_it(repo):
     assert "FAILED" in done.stderr
 
 
+# The version policy (docs/release.md, « The version policy »)
+
+
+@pytest.mark.parametrize("tag, version, patch", [
+    ("v0.2.5", "0.2.6", True),
+    ("v0.2.5", "0.2.9", True),
+    ("v0.2.5", "0.3.0", False),
+    ("v0.2.5", "1.0.0", False),
+    ("v1.0.0", "1.0.1", True),
+    ("v0.2.5", "0.2.5", False),
+    ("v0.2.5", "0.2.4", False),
+    ("v0.2.5", "0.2.6rc1", False),
+])
+def test_a_patch_moves_only_the_last_number(tag, version, patch):
+    assert release_check.is_patch(tag, version) is patch
+
+
+def test_a_patch_with_a_schema_change_fails_even_with_its_upgrade_section(repo, capsys):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", "### Upgrade\n\n1. Run brain sync.\n\n### Changes\n\n- A change.\n")
+    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert "0.2.6 is a patch of v0.2.5 and registered schemas changed" in text and CONFIG_SCHEMA in text
+    assert "minor version" in text
+
+
+def test_the_same_change_as_a_minor_version_passes(repo, capsys):
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", "### Upgrade\n\n1. **Edit config.json** by hand.\n\n### Changes\n\n- A change.\n")
+    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 0, text
+    assert "a patch of" not in text
+
+
+def test_a_patch_with_only_the_standard_steps_passes(repo, capsys):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", STANDARD_UPGRADE)
+    write(repo, OTHER, "x = 2\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 0, text
+    assert "a patch of v0.2.5" in text
+
+
+def test_a_patch_without_an_upgrade_section_passes(repo, capsys):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", "### Fixes\n\n- A fix.\n")
+    commit(repo)
+    assert run(repo, capsys)[0] == 0
+
+
+@pytest.mark.parametrize("step", [
+    "4. **Read this if a script of yours runs `brain --project P`:** it now acts on the worktree.",  # 0.2.7's step 4
+    "4. **Check the configuration first**, with the old engine still installed.",
+    "4. Run `brain merge-driver install --apply`.",                                               # no title at all
+    "4) **Edit config.json**: add `usage.plans`.",
+])
+def test_a_patch_with_a_step_beyond_the_standard_ones_fails(repo, capsys, step):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", STANDARD_UPGRADE.replace("\nNothing to run", f"{step}\n\nNothing to run"))
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert "asks more than the standard steps" in text and step in text
+
+
+def test_the_standard_steps_are_told_apart_by_their_title():
+    upgrade = ("1. **install the engine.** again\n"
+               "2. **Restart the Claude Code sessions:** now\n"
+               "   3. **An indented line** is part of the step above\n"
+               "10. **Refresh the public stamp**\n"
+               "- 4. **A bullet** is not a step\n"
+               "5. **Restart Claude Code's sessions**, another title\n"
+               "6. Install the engine, with no bold title\n")
+    assert release_check.steps_beyond_standard(upgrade) == [
+        "5. **Restart Claude Code's sessions**, another title", "6. Install the engine, with no bold title"]
+    assert release_check.steps_beyond_standard("Nothing to run.") == []
+
+
+def test_a_minor_version_may_ask_anything(repo, capsys):
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run", "4. **Edit config.json**.\n\nNothing to run"))
+    commit(repo)
+    assert run(repo, capsys)[0] == 0
+
+
+@pytest.mark.parametrize("after_the_date", ["", " ", " —", " — :", " - "])
+def test_a_section_heading_without_a_theme_fails(repo, capsys, after_the_date):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", theme=after_the_date)
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert "names no theme" in text
+
+
+def test_the_theme_is_what_follows_the_date():
+    assert release_check.theme(" — 2026-11-10 — The review fixes") == "The review fixes"
+    assert release_check.theme(" — 2026-11-10: guards") == "guards"
+    assert release_check.theme(" — 2026-11-10") == ""
+    assert release_check.theme(" — no date — a theme") == ""
+
+
+def test_the_root_changelog_needs_no_theme(repo, capsys):
+    """research-graph's section is often one line: the theme is said once, in the brain's."""
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 0, text
+
+
 # This repo's own contract
 
 
@@ -323,3 +450,30 @@ def test_the_release_page_says_each_step():
     for needed in ("### Upgrade", "release-check", "compat-prev", "release-tag", "git tag -a", "engine.pin",
                    "brain check --public --history", "tests/fixtures/formats", "brain_version"):
         assert needed in page, needed
+
+
+def test_the_release_page_writes_the_version_policy():
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    policy = page.split("## The version policy", 1)[1].split("\n## ", 1)[0]
+    for needed in ("minor", "patch", "theme", "cut from the last tag", "cadence", "review fixes", "0.2.7",
+                   "## X.Y.Z — YYYY-MM-DD — theme"):
+        assert needed in policy, needed
+
+
+def test_the_release_page_gives_each_standard_step_its_title():
+    """The template an Upgrade section copies, so that a patch's steps are the ones the check knows."""
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    template = page.split("### The standard steps", 1)[1].split("\n#", 1)[0]
+    assert release_check.steps_beyond_standard(template) == []
+    for title in release_check.STANDARD_STEPS:
+        assert f"**{title}**" in template, title
+
+
+def test_0_2_7_is_the_last_release_before_the_policy():
+    """Decided 2026-11-09: 0.2.7 stays a patch. Its Upgrade asked more than the standard steps: the policy, not 0.2.7,
+    is what changed, so the check never runs against it (a version PR is checked against the tag before it)."""
+    upgrade = release_check.upgrade_section((ROOT / BRAIN_LOG).read_text(encoding="utf-8"), "0.2.7")
+    assert release_check.is_patch("v0.2.6", "0.2.7")
+    assert release_check.steps_beyond_standard(upgrade)
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    assert "0.2.7 is the last release before this policy" in page
