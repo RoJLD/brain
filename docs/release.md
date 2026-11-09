@@ -66,6 +66,15 @@ nothing else to do, the section says « Nothing to run for the rest » after the
 ## 1. Before the version PR
 
 - The items named for this release are merged, each reviewed, CI green on Windows (the `brain` job) included.
+- **The version PR closes its wave** (the closure rule). Where a store plans the releases as waves (a Milestone of
+  kind wave named by its release, `packages/brain/docs/formats.md`, « Milestone kinds »), the wave named by this
+  version may hold no open item that is neither carried by name to a later wave nor dropped: in the brain that holds
+  that store, `brain wave close X.Y.Z --carry-to X.Y.Z+1 [--drop ID]... --write` writes each open item's
+  `props.carried_to` (or drops it), reaches the wave with what it did, then `brain sync` (a PR there, like any
+  backlog change). `release_check.py --store <that store>` refuses the version PR until then, naming the items, and
+  `brain wave check X.Y.Z` says the same from the brain; CI holds no owner's store and does not run it, so the
+  maintainer runs it by hand before opening the version PR. A store with no wave of this version passes. `brain next`
+  then shows the next wave, the carried items first.
 - `compat-prev` is green on main's latest PR: the upgrade test goes from the last tag to HEAD and back
   ([`packages/brain/docs/formats.md`](../packages/brain/docs/formats.md), « The upgrade test »).
 - **Read what changed**: `git log vP..origin/main` and `git diff --stat vP origin/main`. Look for what a brain that

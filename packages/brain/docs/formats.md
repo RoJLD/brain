@@ -57,6 +57,26 @@ truncated write, a byte that is not UTF-8) or that its schema refuses is an erro
 `v`, a kind this engine does not know) is skipped and counted. Neither stops `brain sync`: the graph is built from the
 other lines, and a note says how many were left out. Their ids still count as recorded, so no AR is appended twice.
 
+### Milestone kinds (the store)
+
+A graph store's `schema.yaml` is a registered format (`store` in `SCHEMAS`, with what `brain init` writes once:
+`gitattributes`, `boundary.yaml`). The kinds of milestone add no node type, edge type or status: they are props of a
+`Milestone` (brain.waves), so the store's `schema.yaml` does not change. What `brain init` writes once gains two lines
+for the new generated view `notes/plan_graph.md` (its `merge=brain` line and its `generated` side), which makes the
+release that brings them a minor one (`docs/release.md`, « The version policy »); 0.3.0 is one already. A brain made
+before keeps its own files: the view falls under `notes/**` there, and `brain check` passes as before.
+
+| `props.kind` | Its members (`part_of` it) | Its props | brain check refuses |
+|---|---|---|---|
+| none | items and milestones, as before | `trigger`, `reached` | - |
+| `wave` | work items; it is itself `part_of` a milestone or an era (a warning without one) | `release: X.Y.Z` (its name), `week` (optional) | a `release` that is not `X.Y.Z`, two waves of one release, a member that is not a work item, an item `part_of` two waves, a `carried_to` that names no later wave, a reached wave that still holds an open item |
+| `era` | milestones | `exit` (the Go/NoGo question, a DDR once its milestones are reached), `stage_to` and `serves` (optional, free labels) | a member that is not a milestone (a warning without `exit`, and once its exit is due) |
+
+An item's wave is the one it is `part_of`, or, once that wave closed without it, the later one its `props.carried_to`
+names (a wave's id or its release; `brain wave close` writes the id): the edge to its first wave stays, as where it was
+planned. Any other `props.kind` is refused. An engine that does not know the kinds (0.2.8 and before) reads a wave or
+an era as a plain milestone, and `props.carried_to` as an unknown prop it keeps.
+
 ## Machine-local state: `brain.stateio`
 
 A **truth-local** file lives under `$BRAIN_HOME` on one machine, with no git behind it: losing it loses a record

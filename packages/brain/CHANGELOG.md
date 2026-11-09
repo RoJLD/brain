@@ -8,9 +8,14 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 From 0.2.8, in this order. This release newly refuses what passed (a project's second store beside its first, a
 project at a shared root without its own files, an edge of a second store to a root ADR stub, an `access` value other
-than read or write), so it is a minor version, 0.3.0 (`docs/release.md`, « The version policy »). No registered
-schema, store or format file changes (`access` is an additive key of `projects.yaml`). Steps 1 to 3 apply only where
-the registry has what they name; do them before installing, since `brain update` runs `brain sync`.
+than read or write), so it is a minor version, 0.3.0 (`docs/release.md`, « The version policy »). No registered schema
+changes (`access` is an additive key of `projects.yaml`, a milestone's `kind` an additive prop of the store, whose
+`schema.yaml` stays as it is); what `brain init` writes once (`store` in `SCHEMAS`) gains two lines for the new view
+`notes/plan_graph.md` (`gitattributes`, `boundary.yaml`), which alone would make it a minor version, and 0.3.0 is one
+already. A brain made before keeps its own files and needs nothing for it: the view falls under `notes/**` there.
+`brain sync` (run by `brain update`) writes that view in a store that holds a wave or an era, and nowhere else. Steps 1
+to 3 apply only where the registry has what they name; do them before installing, since `brain update` runs `brain
+sync`.
 
 1. **Move an edge of a later store to a root ADR stub**, where a project lists more than one store. A store after its
    first derived the ADR and SDR stubs of the root's decision logs, as its first store does (every store ran with
@@ -41,6 +46,25 @@ Nothing to run for the rest.
 
 ### Added
 
+- **Waves and eras: the plan as one generated tree** (wi-brain-waves-as-releases, wi-brain-eras; brain.waves). A
+  Milestone may carry `props.kind`: `wave`, named by its release (`props.release: X.Y.Z`, `props.week` optional), its
+  members work items by `part_of`, itself part of a milestone or an era; `era`, its members milestones, its exit the
+  Go/NoGo question asked as a DDR once they are reached (`props.exit`, `props.stage_to` and `props.serves` optional).
+  `brain check` refuses a malformed or repeated release, a wave holding a milestone, an era holding an item, an item
+  in two waves, a `props.carried_to` that names no later wave and a reached wave that still holds an open item; it
+  warns about a wave in no milestone or era, an era without its exit and one whose exit is due
+  (`docs/formats.md`, « Milestone kinds »). `brain sync`, its one writer, writes `notes/plan_graph.md` beside the
+  store's other views: era > milestone > wave > items, each item with its status and what waits on the owner (its
+  `props.open`, its `external_blocker`, the pending DDRs on it), each wave's carried items first, then the startable
+  ones; `brain check` says when it is stale. `brain next [--json]` prints the current wave (the lowest release not
+  closed): its carried items first, its startable items, what waits on the owner, the other open ones, then the next
+  wave, at zero token. The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave
+  close X.Y.Z [--carry-to X.Y.Z] [--drop ID]... [--write]` carries each open item by name (`props.carried_to`) or
+  drops it, then reaches the wave, and refuses while one is neither; `brain wave check X.Y.Z` is the rule alone, and
+  `release_check.py --store DIR` refuses a version PR whose wave breaks it. `brain wave add X.Y.Z [--parent MS]`
+  adds a wave; `brain wave import [--write]` proposes a wave per release the items' free-text `props.wave` names and
+  lists the other values for the owner to place. `brain milestone suggest` never proposes a wave or an era. No era is
+  created by the engine: an era is the owner's.
 - **Projects the brain reads and never writes** (wi-brain-read-only-projects). A registry entry may say `access: read`
   (`write`, the default, is today's: the brain writes the project by PR; any other value is an error, « access is
   read or write », and the entry is not loaded until it is one). Such an entry holds `title` and `access` only, the

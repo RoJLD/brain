@@ -99,7 +99,9 @@ class Index:
     def __init__(self, nodes: dict[str, dict], edges: list[dict]):
         self.nodes = nodes
         self.milestones = {k for k, n in nodes.items() if n.get("type") == "Milestone"}
-        self.pending = {m for m in self.milestones if nodes[m].get("status") == "pending"}
+        # the candidates of a suggestion: a wave or an era (brain.waves) is the owner's plan, never proposed by signal
+        self.pending = {m for m in self.milestones if nodes[m].get("status") == "pending"
+                        and _props(nodes[m]).get("kind") not in ("wave", "era")}
         self.member: dict[str, set[str]] = defaultdict(set)
         self.specs: dict[str, set[str]] = defaultdict(set)
         self.by_spec: dict[str, set[str]] = defaultdict(set)

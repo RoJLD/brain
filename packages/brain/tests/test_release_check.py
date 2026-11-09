@@ -705,3 +705,39 @@ def test_0_2_7_is_the_last_release_before_the_policy():
     for old_title in titles[:2]:
         assert f"**{old_title}**" in note, old_title
     assert "`brain --project P`" in note
+
+
+# The closure rule (brain.waves): with --store, the wave the version names may hold no open item left behind
+
+WAVE_STORE = {
+    "schema.yaml": "node_types: [WorkItem, Milestone]\nedge_types: [part_of]\n"
+                   "statuses: [todo, doing, done, dropped, pending, reached]\n",
+    "nodes/work.yaml": (
+        "- {id: wave-0.2.6, type: Milestone, status: pending, title: W, props: {kind: wave, release: 0.2.6}}\n"
+        "- {id: wave-0.2.7, type: Milestone, status: pending, title: N, props: {kind: wave, release: 0.2.7}}\n"
+        "- {id: wi-open, type: WorkItem, status: todo, title: Open}\n"
+        "- {id: wi-done, type: WorkItem, status: done, title: Done}\n"),
+    "edges/work.yaml": ("- {from: wi-open, to: wave-0.2.6, type: part_of}\n"
+                        "- {from: wi-done, to: wave-0.2.6, type: part_of}\n"),
+}
+
+
+def test_a_version_pr_whose_wave_holds_an_open_item_fails_with_store(repo, tmp_path, capsys):
+    store = tmp_path / "plan"
+    for rel, text in WAVE_STORE.items():
+        write(store, rel, text)
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    commit(repo)
+    assert run(repo, capsys)[0] == 0   # without --store: the closure is not checked
+    rc = release_check.main(["--repo", str(repo), "--store", str(store)])
+    text = "".join(capsys.readouterr())
+    assert rc == 1
+    assert "FAILED: wave 0.2.6 (wave-0.2.6) holds 1 open item(s) neither carried nor dropped: wi-open" in text
+    write(store, "nodes/work.yaml", WAVE_STORE["nodes/work.yaml"].replace(
+        "title: Open}", "title: Open, props: {carried_to: 0.2.7}}"))
+    rc = release_check.main(["--repo", str(repo), "--store", str(store)])
+    text = "".join(capsys.readouterr())
+    assert rc == 0, text
+    assert "the wave 0.2.6 in" in text and "closed or none" in text
+    assert release_check.main(["--repo", str(repo), "--store", str(tmp_path / "nowhere")]) == 2
