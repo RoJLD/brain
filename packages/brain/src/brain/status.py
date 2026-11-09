@@ -40,7 +40,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import alerts, audit, codeindex, config, cost, forecast, graph, notes, projects, quota, records, resume, stacks
+from . import (alerts, audit, codeindex, config, cost, forecast, graph, notes, projects, quiet, quota, records,
+               resume, stacks)
 
 STATUS_ORDER = ("todo", "doing", "blocked", "done", "dropped")
 QUICK = "skipped (--quick)"
@@ -343,6 +344,7 @@ def run(projs: list[projects.Project], *, every: bool = False, quick: bool = Fal
         data["total"]["tenants"] = len(data["tenants"])
     fc = quota.status_of(projs, root, datetime.now(timezone.utc), quick=quick)
     data["quota"] = {k: v for k, v in fc.items() if k != "now"}
+    data["quiet"] = quiet.summary(projs)
     return data
 
 
@@ -426,6 +428,8 @@ def _row(label: str, text: str) -> list[str]:
 
 def render(data: dict) -> list[str]:
     lines = []
+    if data.get("quiet") and quiet.line(data["quiet"]):
+        lines.append(f"quiet: {quiet.line(data['quiet'])}")
     for d in data["projects"]:
         head = f"{d['project']} ({d['root']})" + (f": {d['title']}" if d.get("title") else "")
         lines.append(head if d["found"] else f"{head}: not found on this machine")

@@ -13,6 +13,7 @@ A project's ``schedules:`` entry, inline or a YAML file relative to its root, on
             that installed it, ``python -I -m brain <command>``
   every     a cadence (1m to 1d: 15m, 1h, 1d); at   a daily time HH:MM; at_logon  true: also at logon (one of the
             three at least)
+  days      the days ``at`` runs on instead of every day: mon to sun (a name or a list: ``days: [mon]`` is weekly)
   machines  the machines it runs on ($BRAIN_MACHINE, else the host name, lowercase; default every machine)
   timeout   how long a run may last before the scheduler stops it (default 10m)
   enabled   false: removed from this machine (and never installed)
@@ -62,7 +63,10 @@ from typing import Callable, Mapping
 
 from . import graph, paths, projects, stateio
 
-KEYS = {"command", "every", "at", "at_logon", "machines", "timeout", "enabled"}
+KEYS = {"command", "every", "at", "days", "at_logon", "machines", "timeout", "enabled"}
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")   # in the week's order: the crontab's number is the index + 1
+WIN_DAYS = {"mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday", "fri": "Friday",
+            "sat": "Saturday", "sun": "Sunday"}
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,40}")
 DURATION = re.compile(r"(\d+)\s*([smhd])")
 UNIT = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -89,18 +93,23 @@ class Schedule:
     machines: list[str] = field(default_factory=list)
     timeout: float = DEFAULT_TIMEOUT
     enabled: bool = True
+    days: list[str] = field(default_factory=list)   # the days at runs on, in the week's order; none: every day
 
     def here(self, machine: str) -> bool:
         return self.enabled and (not self.machines or machine in self.machines)
 
     def when(self) -> str:
+        on = ", ".join(self.days) if self.days else "daily"
         parts = ([f"every {duration_text(self.every)}"] if self.every else []) + (
-            [f"daily at {self.at}"] if self.at else []) + (["at logon"] if self.at_logon else [])
+            [f"{on} at {self.at}"] if self.at else []) + (["at logon"] if self.at_logon else [])
         return " and ".join(parts)
 
     def cadence(self) -> float:
-        """The longest wait between two runs: the every, else a day."""
-        return self.every or 86400.0
+        """The longest wait between two runs: the every, else the widest gap between its days, else a day."""
+        if self.every or not self.days:
+            return self.every or 86400.0
+        at = [DAYS.index(d) for d in self.days]
+        return 86400.0 * max((b - a) % 7 or 7 for a, b in zip(at, at[1:] + at[:1]))
 
     def describe(self) -> str:
         return f"{MARK} {self.name} ({self.project}): brain {shlex.join(self.command)}, {self.when()}"
@@ -184,6 +193,20 @@ def _when(conf: dict, where: str) -> tuple[float | None, str]:
     return every, at
 
 
+def _days(conf: dict, at: str, where: str) -> list[str]:
+    """The days at runs on, in the week's order, each once; none: every day."""
+    days = conf.get("days") or []
+    days = [days] if isinstance(days, str) else days
+    if not isinstance(days, list):
+        raise ScheduleError(f"{where}: days is a list of days (mon to sun)")
+    wrong = sorted(str(d) for d in days if str(d).lower() not in DAYS)
+    if wrong:
+        raise ScheduleError(f"{where}: days: {', '.join(wrong)} (known: {', '.join(DAYS)})")
+    if days and not at:
+        raise ScheduleError(f"{where}: days says which days at runs on: at is missing")
+    return [d for d in DAYS if d in {str(x).lower() for x in days}]
+
+
 def _entry(project: str, name: str, conf) -> Schedule:
     where = f"project {project}: schedules {name}"
     if not NAME.fullmatch(name):
@@ -200,7 +223,8 @@ def _entry(project: str, name: str, conf) -> Schedule:
     if not isinstance(machines, list):
         raise ScheduleError(f"{where}: machines is a list of machine names")
     return Schedule(name, project, command, every, at, bool(conf.get("at_logon")), [str(m).lower() for m in machines],
-                    _duration(conf, "timeout", where, DEFAULT_TIMEOUT), conf.get("enabled", True) is not False)
+                    _duration(conf, "timeout", where, DEFAULT_TIMEOUT), conf.get("enabled", True) is not False,
+                    _days(conf, at, where))
 
 
 def parse(p: projects.Project) -> list[Schedule]:
@@ -366,9 +390,12 @@ class Windows(System):
                             "<StopAtDurationEnd>false</StopAtDurationEnd></Repetition></TimeTrigger>")
         if s.at:
             hh, mm = map(int, s.at.split(":"))
+            by = ("<ScheduleByWeek><WeeksInterval>1</WeeksInterval><DaysOfWeek>"
+                  + "".join(f"<{WIN_DAYS[d]} />" for d in s.days)
+                  + "</DaysOfWeek></ScheduleByWeek>") if s.days else (
+                "<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>")
             triggers.append(f"<CalendarTrigger><StartBoundary>{_iso_local(start.replace(hour=hh, minute=mm))}"
-                            "</StartBoundary><Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval>"
-                            "</ScheduleByDay></CalendarTrigger>")
+                            f"</StartBoundary><Enabled>true</Enabled>{by}</CalendarTrigger>")
         argv = _argv(s, python)
         args = subprocess.list2cmdline(argv[1:])
         return ('<?xml version="1.0" encoding="UTF-16"?>\n'
@@ -393,8 +420,10 @@ class Windows(System):
         kinds = sorted(set(re.findall(r"<(LogonTrigger|TimeTrigger|CalendarTrigger)\b", xml)))
         times = sorted(b[11:16] for b in re.findall(r"<CalendarTrigger>.*?<StartBoundary>(.*?)</StartBoundary>",
                                                      xml, re.S))
+        days = sorted(re.findall(rf"<({'|'.join(WIN_DAYS.values())})\b", xml))
         return {"description": tag("Description"), "command": tag("Command"), "arguments": tag("Arguments"),
-                "kinds": kinds, "interval": tag("Interval"), "at": times, "limit": tag("ExecutionTimeLimit")}
+                "kinds": kinds, "interval": tag("Interval"), "at": times, "days": days,
+                "limit": tag("ExecutionTimeLimit")}
 
     def current(self, name: str) -> str | None:
         r = self.run(["schtasks", "/Query", "/TN", self.where(name), "/XML", "ONE"])
@@ -452,9 +481,10 @@ class Systemd(System):
         return str(self.folder / f"{self.unit(name)}.timer")
 
     def wanted(self, s: Schedule, python: Path) -> dict[str, str]:
+        on = ",".join(d.capitalize() for d in s.days) + " " if s.days else ""
         timer = ["OnStartupSec=1min" if s.at_logon else "", "OnActiveSec=1min" if s.every else "",
                  f"OnUnitActiveSec={duration_text(s.every)}" if s.every else "",
-                 f"OnCalendar=*-*-* {s.at}:00" if s.at else "", "Persistent=true" if s.at else ""]
+                 f"OnCalendar={on}*-*-* {s.at}:00" if s.at else "", "Persistent=true" if s.at else ""]
         return {
             "service": (f"[Unit]\nDescription={s.describe()}\n\n[Service]\nType=oneshot\n"
                         f"ExecStart=/bin/bash -lc {_unit_quote(_bash_lc(_argv(s, python)))}\n"
@@ -515,7 +545,8 @@ def _cron_when(s: Schedule) -> list[str]:
                    else f"0 */{m // 60} * * *")
     if s.at:
         hh, mm = s.at.split(":")
-        out.append(f"{int(mm)} {int(hh)} * * *")
+        on = ",".join(str(DAYS.index(d) + 1) for d in s.days) or "*"
+        out.append(f"{int(mm)} {int(hh)} * * {on}")
     if s.at_logon:
         out.append("@reboot")
     return out

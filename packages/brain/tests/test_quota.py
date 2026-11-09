@@ -27,6 +27,12 @@ def now(monkeypatch):
     return NOW
 
 
+@pytest.fixture(autouse=True)
+def one_reading_calibrates(monkeypatch):
+    """The older tests convert from one reading; the per-plan tests set CAL_MIN back to 3."""
+    monkeypatch.setattr(quota, "CAL_MIN", 1)
+
+
 @pytest.fixture
 def week():
     """$100 an hour from 12:00 to 21:00, then $50 in the 21:00 hour: $900 by the 21:00 reading."""
@@ -113,7 +119,8 @@ def test_advice_levels():
 
 
 def test_without_a_reading_this_week_the_percent_is_estimated(week):
-    old = [{"at": "2026-10-28T20:00:00Z", "window": "week", "pct": 50.0, "resets": "2026-11-02T12:00:00Z"}]
+    old = [{"at": "2026-10-28T20:00:00Z", "window": "week", "pct": 50.0, "resets": "2026-11-02T12:00:00Z",
+            "plan": "Ultra"}]
     rows = week + [{"session_id": "s0", "hours": _hours("2026-10-26T12:00", 10, 50.0)}]  # $500 in last week's window
     fc = quota.forecast(rows, old, NOW)
     assert fc["resets"] == RESET and fc["estimated"] is True and fc["reading"] is None
@@ -124,11 +131,11 @@ def test_without_a_reading_this_week_the_percent_is_estimated(week):
 def test_nothing_known_says_how_to_read_the_quota():
     fc = quota.forecast([], [], NOW)
     assert fc["level"] == "unknown" and fc["pct_now"] is None and fc["conversion"] is None
-    assert fc["line"] == ("week: not known; read get_usage, then brain usage quota --observe N --resets T "
-                          "(brain usage quota)")
+    assert fc["line"].startswith("week: not known; uncalibrated: Ultra has 0 of 1")
+    assert fc["line"].endswith("; read get_usage, then brain usage quota --observe N --resets T (brain usage quota)")
     small = [{"at": "2026-11-02T13:00:00Z", "window": "week", "pct": 1.0, "resets": RESET}]
     fc = quota.forecast([{"hours": {"2026-11-02T12": {"cost": 2.0}}}], small, NOW)
-    assert fc["conversion"] is None and "needs $5 of ledger cost" in fc["advice"]
+    assert fc["conversion"] is None and "needs $5 of ledger cost" in fc["advice"] and "uncalibrated" in fc["advice"]
 
 
 def test_the_live_sessions_left_and_how_many_queue_items_fit(week):
@@ -176,3 +183,56 @@ def test_cli_notes_a_reading_and_status_shows_the_line(project, now, capsys):
     data = status.run([project], quick=True)
     assert data["quota"]["line"] == fc["line"] and "now" not in data["quota"]
     assert any(x.startswith("  quota       week 28 % now") for x in status.render(data))
+
+
+PLANS = (("2026-11-06", "Pro"), ("", "Ultra"))  # Ultra until the 6th, then Pro
+
+
+def _rd(at, pct, plan=None, window="week", resets=RESET):
+    return {"at": at, "window": window, "pct": pct, "resets": resets, **({"plan": plan} if plan else {})}
+
+
+def test_a_plan_change_leaves_the_old_plans_readings_out(monkeypatch):
+    monkeypatch.setattr(quota, "CAL_MIN", 3)
+    now = datetime(2026, 11, 8, 12, tzinfo=UTC)
+    rows = [{"hours": _hours("2026-10-26T12", 400, 10.0)}]  # $10 an hour throughout
+    ultra = [_rd(f"2026-11-0{d}T20:00:00Z", 30.0, resets=f"2026-11-0{d + 1}T12:00:00Z") for d in (3, 4, 5)]
+    fc = quota.forecast(rows, ultra, now, plans=PLANS)  # three Ultra readings, but the plan in force is Pro
+    assert fc["plan"] == "Pro" and fc["readings"] == 0 and fc["conversion"] is None
+    assert fc["uncalibrated"] == {"plan": "Pro", "n": 0, "needed": 3}
+    assert fc["level"] == "unknown" and fc["advice"].startswith("uncalibrated: Pro has 0 of 3")
+    # the same readings with the plan in force being theirs convert
+    assert quota.forecast(rows, ultra, now, plans=(("", "Ultra"),))["conversion"]["n"] == 3
+
+
+def test_an_uncalibrated_plan_estimates_from_the_5h_window(monkeypatch):
+    monkeypatch.setattr(quota, "CAL_MIN", 3)
+    now = datetime(2026, 11, 8, 12, tzinfo=UTC)
+    rows = [{"hours": _hours("2026-11-08T07", 5, 10.0)}]  # $10 an hour since 07:00
+    readings = [_rd("2026-11-08T10:00:00Z", 20.0, "Pro", "5h", "2026-11-08T12:00:00Z"),  # $30 since the window began
+                _rd("2026-11-08T11:00:00Z", 10.0, "Pro"),
+                _rd("2026-11-03T20:00:00Z", 60.0, "Ultra")]  # another plan: never in the median
+    fc = quota.forecast(rows, readings, now + timedelta(minutes=-30), plans=PLANS)
+    assert fc["uncalibrated"] == {"plan": "Pro", "n": 1, "needed": 3} and fc["conversion"] is None  # one Pro reading
+    w5 = fc["window_5h"]
+    assert w5["read_pct"] == 20.0 and w5["converted"] is True
+    assert w5["pct_now"] == pytest.approx(20 + 15 * 20 / 30, abs=0.05)  # $15 since the reading at 20 % per $30
+    text = " | ".join(quota.render(fc))
+    assert "uncalibrated: Pro has 1 of 3" in text and "5h window about 30 %" in text
+    assert "uncalibrated" in fc["line"] and "the 5h window is about 30 %" in fc["line"]
+
+
+def test_a_calibrated_plan_converts_with_its_own_readings_only(monkeypatch):
+    monkeypatch.setattr(quota, "CAL_MIN", 3)
+    now = datetime(2026, 11, 9, 12, tzinfo=UTC)
+    rows = [{"hours": _hours("2026-11-01T12", 200, 10.0)}]
+    pro = [_rd(f"2026-11-0{d}T10:00:00Z", p, "Pro", resets=f"2026-11-0{d + 1}T12:00:00Z") for d, p in
+           ((6, 10.0), (7, 20.0), (8, 40.0))]
+    ultra = [_rd("2026-11-03T20:00:00Z", 5.0, "Ultra", resets="2026-11-04T12:00:00Z")]  # a wildly other factor
+    with_ultra = quota.forecast(rows, ultra + pro, now, plans=PLANS)
+    pro_only = quota.forecast(rows, pro, now, plans=PLANS)
+    assert with_ultra["conversion"] == pro_only["conversion"] and with_ultra["uncalibrated"] is None
+    assert with_ultra["conversion"]["n"] == 3 and with_ultra["plan"] == "Pro"
+    assert "window_5h" not in with_ultra
+    # a median over the Ultra reading too would have been lower: it is not in
+    assert quota.calibrate(rows, ultra + pro, "week", now)["n"] == 4

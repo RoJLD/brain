@@ -6,9 +6,27 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ### Changes
 
+- `brain usage quota` converts dollars to percent with the readings of the plan in force only
+  (wi-brain-quota-per-plan; config.json `usage.plans`, a reading's own `plan` first): a median across an Ultra and a
+  Pro week was neither plan's quota. Until the plan has 3 converted readings (`quota.CAL_MIN`) the conversion is
+  reported `uncalibrated` (in the text, the JSON's `uncalibrated` and the `brain status` line), the weekly window is
+  not converted, and the 5-hour window is estimated from its latest reading plus the ledger's cost since
+  (`window_5h`). The weekly reset is still read from every reading: it is the account's.
 - `brain --project P` run from a linked git worktree of P's repo acts on that worktree, not on the registry's root
   (wi-brain-root-from-cwd). An explicit `--root` still wins; a cwd in another repo or a plain folder keeps the
   registry's root.
+
+### Added
+
+- `schedules:` entries take `days` (mon to sun), the days `at` runs on, so that a weekly command can be declared and
+  installed like any other (`days: [mon]`): a `ScheduleByWeek` trigger on Windows, `OnCalendar=Mon ...` under systemd,
+  the day-of-week field in a crontab. A task whose days changed is planned as an update (wi-brain-schedule-hidden-all).
+- **Quiet mode** (wi-brain-quiet-mode): `brain quiet --for 2h` or a project's `notify: quiet_hours: "22:00-07:00"`
+  (local time) holds every notification below `critical`; a critical one still goes through. The held ones are summed
+  up in one message per project when the quiet ends (`brain quiet --off`, or the next alerts pass). No task is
+  paused and no scheduled task is touched: collection and the alerts pass run on. The state is in `brain quiet`,
+  `brain status` and the cockpit's health card. A send during a quiet reports `held` (`brain notify send` exit 0).
+  Takes effect once this release is installed.
 
 ## 0.2.6 — 2026-11-09
 
