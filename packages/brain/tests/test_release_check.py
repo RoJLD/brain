@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -42,13 +43,28 @@ def git(repo: Path, *args: str) -> None:
 def versions(repo: Path, version: str) -> None:
     write(repo, GRAPH_INIT, f'__version__ = "{version}"\n')
     write(repo, BRAIN_INIT, f'__version__ = "{version}"\n')
-    write(repo, PYPROJECT, f'dependencies = ["research-graph @ git+https://github.com/RoJLD/brain.git@v{version}",\n]\n')
+    pin = f"research-graph @ git+https://github.com/RoJLD/brain.git@v{version}"
+    write(repo, PYPROJECT, f'dependencies = ["{pin}",\n]\n')
     write(repo, COMMON, f"#!/usr/bin/env bash\nbrain_version={version}\nnext=1\n")
 
 
-def changelogs(repo: Path, version: str, brain_body: str = "- A change.\n") -> None:
-    write(repo, ROOT_LOG, f"# Changelog\n\n## {version} — 2026-11-09\n\n- Nothing new.\n\n## 0.2.5 — 2026-11-04\n\n- Old.\n")
-    write(repo, BRAIN_LOG, f"# Changelog\n\n## {version} — 2026-11-09\n\n{brain_body}\n"
+# The standard steps as an owner reads them (docs/release.md), continuation lines, a sub-step and prose included
+STANDARD_UPGRADE = (
+    "### Upgrade\n\nFrom 0.2.5, in this order.\n\n"
+    "1. **Install the engine**, in your own terminal: `brain update`, then `y`.\n"
+    "   A brain that declares `engine.installer`: its `-Apply`.\n"
+    "2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.\n"
+    "   1. a nested line is part of its step.\n"
+    "3. **Refresh the public stamp:** `brain check --public --history` in each public repo's checkout.\n\n"
+    "Nothing to run for the rest.\n\n- A note.\n\n### Fixes\n\n- A fix.\n")
+# A section with no ### Upgrade at all
+NO_UPGRADE = "### Changes\n\n- A change.\n"
+
+
+def changelogs(repo: Path, version: str, brain_body: str = STANDARD_UPGRADE, theme: str = " — A theme") -> None:
+    write(repo, ROOT_LOG, f"# Changelog\n\n## {version} — 2026-11-09\n\n- Nothing new.\n\n"
+                          "## 0.2.5 — 2026-11-04\n\n- Old.\n")
+    write(repo, BRAIN_LOG, f"# Changelog\n\n## {version} — 2026-11-09{theme}\n\n{brain_body}\n"
                            "## 0.2.5 — 2026-11-04\n\n### Upgrade\n\n1. An old step.\n")
 
 
@@ -85,18 +101,19 @@ def run(repo: Path, capsys) -> tuple[int, str]:
 
 
 def test_schema_changed_without_an_upgrade_section_fails(repo, capsys):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6")
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", NO_UPGRADE)
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
     rc, text = run(repo, capsys)
     assert rc == 1
     assert "FAILED" in text and CONFIG_SCHEMA in text and "### Upgrade" in text
+    assert "number the standard steps" in text and "nothing to run" not in text
 
 
 def test_schema_changed_with_an_upgrade_section_passes(repo, capsys):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6", "### Upgrade\n\n1. Run brain sync.\n\n### Changes\n\n- A change.\n")
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run", "4. **Run brain sync**.\n\nNothing to run"))
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
     rc, text = run(repo, capsys)
@@ -107,7 +124,7 @@ def test_schema_changed_with_an_upgrade_section_passes(repo, capsys):
 # Around them
 
 
-def test_a_version_pr_without_a_schema_change_needs_no_upgrade_section(repo, capsys):
+def test_a_version_pr_without_a_schema_change_needs_only_the_standard_steps(repo, capsys):
     versions(repo, "0.2.6")
     changelogs(repo, "0.2.6")
     write(repo, OTHER, "x = 2\n")
@@ -118,8 +135,8 @@ def test_a_version_pr_without_a_schema_change_needs_no_upgrade_section(repo, cap
 
 
 def test_a_store_schema_counts_too(repo, capsys):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6")
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", NO_UPGRADE)
     write(repo, STORE_SCHEMA, "node_types: [Lesson]\n")
     commit(repo)
     rc, text = run(repo, capsys)
@@ -128,8 +145,8 @@ def test_a_store_schema_counts_too(repo, capsys):
 
 
 def test_a_removed_schema_counts_too(repo, capsys):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6")
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", NO_UPGRADE)
     (repo / CONFIG_SCHEMA).unlink()
     commit(repo)
     assert run(repo, capsys)[0] == 1
@@ -138,8 +155,8 @@ def test_a_removed_schema_counts_too(repo, capsys):
 def test_a_schema_changed_in_an_earlier_pr_since_the_tag_still_counts(repo, capsys):
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6")
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", NO_UPGRADE)
     commit(repo)
     assert run(repo, capsys)[0] == 1
 
@@ -151,8 +168,8 @@ def test_a_schema_changed_in_an_earlier_pr_since_the_tag_still_counts(repo, caps
     "### Changes\n\n- Upgrade by hand.\n",
 ])
 def test_an_upgrade_section_that_says_nothing_does_not_count(repo, capsys, body):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6", body)
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", body)
     write(repo, CONFIG_SCHEMA, "{}\n")
     commit(repo)
     assert run(repo, capsys)[0] == 1
@@ -264,6 +281,248 @@ def test_the_script_runs_alone_as_ci_runs_it(repo):
     assert "FAILED" in done.stderr
 
 
+def test_the_script_writes_utf_8_to_a_pipe_whatever_the_code_page(repo):
+    """A message that quotes « a title » reaches a UTF-8 reader as written (on Windows a pipe is in the ANSI page)."""
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", theme="")
+    commit(repo)
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}   # what a Windows pipe gets (-I drops it)
+    done = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(repo)], capture_output=True, env=env, check=False)
+    assert done.returncode == 1
+    assert "« The version policy »" in done.stderr.decode("utf-8")
+
+
+# The version policy (docs/release.md, « The version policy »)
+
+
+@pytest.mark.parametrize("tag, version, patch", [
+    ("v0.2.5", "0.2.6", True),
+    ("v0.2.5", "0.2.9", True),
+    ("v0.2.5", "0.3.0", False),
+    ("v0.2.5", "1.0.0", False),
+    ("v1.0.0", "1.0.1", True),
+    ("v0.2.5", "0.2.5", False),
+    ("v0.2.5", "0.2.4", False),
+    ("v0.2.5", "0.2.6rc1", False),
+])
+def test_a_patch_moves_only_the_last_number(tag, version, patch):
+    assert release_check.is_patch(tag, version) is patch
+
+
+def test_a_patch_with_a_schema_change_fails_even_with_its_upgrade_section(repo, capsys):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", "### Upgrade\n\n1. Run brain sync.\n\n### Changes\n\n- A change.\n")
+    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert "0.2.6 is a patch of v0.2.5 and registered schemas changed" in text and CONFIG_SCHEMA in text
+    assert "minor version" in text
+
+
+def test_the_same_change_as_a_minor_version_passes(repo, capsys):
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run",
+                                                       "4. **Edit config.json** by hand.\n\nNothing to run"))
+    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 0, text
+    assert "a patch of" not in text
+
+
+def test_a_patch_with_only_the_standard_steps_passes(repo, capsys):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", STANDARD_UPGRADE)
+    write(repo, OTHER, "x = 2\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 0, text
+    assert "a patch of v0.2.5" in text
+
+
+@pytest.mark.parametrize("version", ["0.2.6", "0.3.0"])
+def test_a_version_without_an_upgrade_section_fails(repo, capsys, version):
+    """Every release asks the standard steps of an owner (« The standard steps »): a patch with nothing else to do
+    still numbers them, so that `brain update` prints them."""
+    versions(repo, version)
+    changelogs(repo, version, "### Fixes\n\n- A fix.\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert f"the section ## {version} does not number the standard steps" in text
+    for title in release_check.STANDARD_STEPS:
+        assert f"**{title}**" in text, title
+
+
+@pytest.mark.parametrize("version", ["0.2.6", "0.3.0"])
+@pytest.mark.parametrize("left_out", [0, 1, 2])
+def test_an_upgrade_section_without_one_of_the_standard_steps_fails(repo, capsys, version, left_out):
+    lines = STANDARD_UPGRADE.splitlines(keepends=True)
+    steps = [i for i, line in enumerate(lines) if release_check.STEP_RE.match(line)]
+    title = release_check.STANDARD_STEPS[left_out]
+    body = "".join(line for i, line in enumerate(lines) if i != steps[left_out])
+    versions(repo, version)
+    changelogs(repo, version, body)
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    missing = text.split("does not number the standard steps", 1)[1].splitlines()[0]
+    assert f"**{title}**" in missing
+    assert [other for other in release_check.STANDARD_STEPS if f"**{other}**" in missing] == [title]
+
+
+def test_the_standard_steps_are_found_by_their_title():
+    assert release_check.standard_steps_missing(STANDARD_UPGRADE) == []
+    assert release_check.standard_steps_missing("") == list(release_check.STANDARD_STEPS)
+    # a sub-step, a bullet or a step with no bold title is not one
+    assert release_check.standard_steps_missing("   1. **Install the engine**\n- 2. **Refresh the public stamp**\n"
+                                                "3. Restart the Claude Code sessions\n") == list(
+        release_check.STANDARD_STEPS)
+
+
+@pytest.mark.parametrize("step", [
+    "4. **Read this if a script of yours runs `brain --project P`:** it now acts on the worktree.",  # 0.2.7's step 4
+    "4. **Check the configuration first**, with the old engine still installed.",
+    "4. Run `brain merge-driver install --apply`.",                                               # no title at all
+    "4) **Edit config.json**: add `usage.plans`.",
+])
+def test_a_patch_with_a_step_beyond_the_standard_ones_fails(repo, capsys, step):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", STANDARD_UPGRADE.replace("\nNothing to run", f"{step}\n\nNothing to run"))
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert "asks more than the standard steps" in text and step in text
+
+
+def test_the_standard_steps_are_told_apart_by_their_title():
+    upgrade = ("1. **install the engine.** again\n"
+               "2. **Restart the Claude Code sessions:** now\n"
+               "   3. **An indented line** is part of the step above\n"
+               "10. **Refresh the public stamp**\n"
+               "- 4. **A bullet** is not a step\n"
+               "5. **Restart Claude Code's sessions**, another title\n"
+               "6. Install the engine, with no bold title\n")
+    assert release_check.steps_beyond_standard(upgrade) == [
+        "5. **Restart Claude Code's sessions**, another title", "6. Install the engine, with no bold title"]
+    assert release_check.steps_beyond_standard("Nothing to run.") == []
+
+
+def test_a_minor_version_may_ask_anything(repo, capsys):
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run",
+                                                       "4. **Edit config.json**.\n\nNothing to run"))
+    commit(repo)
+    assert run(repo, capsys)[0] == 0
+
+
+HOTFIX = "- A guard no longer refuses every commit: it reads the config\n  before the index.\n"
+
+
+def test_an_entry_a_patch_from_release_x_y_released_fails_in_the_next_version(repo, capsys):
+    """The fix merged on main, shipped in 0.2.6 from release/0.2; release/0.2 merged back and main's Unreleased kept
+    it."""
+    versions(repo, "0.3.0")
+    write(repo, ROOT_LOG, "# Changelog\n\n## 0.3.0 — 2026-11-16\n\n- Nothing new.\n\n"
+                          "## 0.2.6 — 2026-11-10\n\n- Same.\n")
+    write(repo, BRAIN_LOG, f"# Changelog\n\n## 0.3.0 — 2026-11-16 — A theme\n\n### Fixes\n\n- Another fix.\n"
+                           f"{HOTFIX.replace('it reads', 'it  reads')}\n"
+                           f"## 0.2.6 — 2026-11-10 — The guard\n\n### Fixes\n\n{HOTFIX}\n"
+                           "## 0.2.5 — 2026-11-04\n\n### Upgrade\n\n1. An old step.\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert "the section ## 0.3.0 repeats an entry that 0.2.6 released: A guard no longer refuses" in text
+    assert "Another fix" not in text
+
+
+def test_entries_are_bullets_with_their_continuation_lines():
+    log = ("## Unreleased\n\n- Pending.\n\n## 0.2.6 — 2026-11-10 — T\n\n### Fixes\n\n- One\n  two.\n- Three.\n"
+           "Not a bullet.\n  - nor this.\n\n## 0.2.5 — 2026-11-04\n\n1. A step.\n- Pending.\n")
+    assert release_check.entries(log) == {"0.2.6": ["One two.", "Three."], "0.2.5": ["Pending."]}
+    assert release_check.entries_already_released(log, "0.2.6") == []
+    assert release_check.entries_already_released(log + "\n## 0.2.4 — 2026-11-01\n\n- Three.\n", "0.2.6") == [
+        ("Three.", "0.2.4")]
+
+
+def test_an_entry_the_root_changelog_repeats_fails_too(repo, capsys):
+    """The merge back takes the fix out of both CHANGELOGs' Unreleased (« 3. The tag »): research-graph's is read
+    too."""
+    versions(repo, "0.3.0")
+    write(repo, ROOT_LOG, f"# Changelog\n\n## 0.3.0 — 2026-11-16\n\n- Another change.\n{HOTFIX}\n"
+                          f"## 0.2.6 — 2026-11-10\n\n{HOTFIX}\n## 0.2.5 — 2026-11-04\n\n- Old.\n")
+    write(repo, BRAIN_LOG, f"# Changelog\n\n## 0.3.0 — 2026-11-16 — A theme\n\n{STANDARD_UPGRADE}\n"
+                           "## 0.2.6 — 2026-11-10 — The guard\n\n- No change in the command.\n\n"
+                           "## 0.2.5 — 2026-11-04\n\n### Upgrade\n\n1. An old step.\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert f"{ROOT_LOG}: the section ## 0.3.0 repeats an entry that 0.2.6 released: A guard no longer refuses" in text
+    assert BRAIN_LOG + ": the section" not in text
+
+
+def test_what_repeats_by_design_is_no_repeated_entry():
+    """A distribution with no change says so in one line, the same each time, and every ### Upgrade numbers the
+    standard steps: neither is an entry released twice."""
+    no_change = "- No change in `research-graph`: the version moves with the shared tag.\n"
+    log = (f"## 0.3.0 — 2026-11-16\n\n{no_change}\n## 0.2.7 — 2026-11-09\n\n{no_change}\n")
+    assert release_check.entries_already_released(log, "0.3.0") == []
+    upgrade = "### Upgrade\n\n1. **Install the engine**\n   - A brain that declares `engine.installer`: its `-Apply`.\n"
+    log = (f"## 0.3.0 — 2026-11-16 — T\n\n{upgrade}\n### Changes\n\n- New.\n\n"
+           f"## 0.2.7 — 2026-11-09 — T\n\n{upgrade}\n### Changes\n\n- Old.\n")
+    assert release_check.entries(log) == {"0.3.0": ["New."], "0.2.7": ["Old."]}
+    assert release_check.entries_already_released(log, "0.3.0") == []
+
+
+@pytest.mark.parametrize("log", [BRAIN_LOG, ROOT_LOG])
+def test_the_changelogs_repeat_no_released_entry(log):
+    text = (ROOT / log).read_text(encoding="utf-8")
+    for version in release_check.entries(text):
+        assert release_check.entries_already_released(text, version) == [], version
+
+
+@pytest.mark.parametrize("after_the_date", ["", " ", " —", " — :", " - "])
+def test_a_section_heading_without_a_theme_fails(repo, capsys, after_the_date):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", theme=after_the_date)
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert "names no theme" in text
+
+
+def test_the_theme_is_what_follows_the_date():
+    assert release_check.theme(" — 2026-11-10 — The review fixes") == "The review fixes"
+    assert release_check.theme(" — 2026-11-10: guards") == "guards"
+    assert release_check.theme(" — 2026-11-10") == ""
+    assert release_check.theme(" — no date — a theme") == ""
+    assert release_check.theme(" (2026-11-10) — guards") == "guards"
+
+
+@pytest.mark.parametrize("heading", ["## 0.2.6 (2026-11-09)", "## 0.2.6 — 2026-11-09 — )", "## 0.2.6 [2026-11-09] — …",
+                                     "## 0.2.6 — 2026-11-09 — « »"])
+def test_punctuation_after_the_date_is_no_theme(repo, capsys, heading):
+    """A theme says what the release is about: what is left after the date has a letter or a digit in it."""
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    log = (repo / BRAIN_LOG).read_text(encoding="utf-8").replace("## 0.2.6 — 2026-11-09 — A theme", heading)
+    write(repo, BRAIN_LOG, log)
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert "names no theme" in text
+
+
+def test_the_root_changelog_needs_no_theme(repo, capsys):
+    """research-graph's section is often one line: the theme is said once, in the brain's."""
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 0, text
+
+
 # This repo's own contract
 
 
@@ -323,3 +582,113 @@ def test_the_release_page_says_each_step():
     for needed in ("### Upgrade", "release-check", "compat-prev", "release-tag", "git tag -a", "engine.pin",
                    "brain check --public --history", "tests/fixtures/formats", "brain_version"):
         assert needed in page, needed
+
+
+def test_the_release_page_writes_the_version_policy():
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    policy = page.split("## The version policy", 1)[1].split("\n## ", 1)[0]
+    for needed in ("minor", "patch", "theme", "cut from the last tag", "cadence", "review fixes", "0.2.7",
+                   "## X.Y.Z — YYYY-MM-DD — theme"):
+        assert needed in policy, needed
+
+
+def test_the_policy_examples_say_they_were_patches_before_it():
+    """0.2.5 and 0.2.6 were patches, released before the policy: an example that names them as minor versions says so,
+    and the page says every release up to 0.2.7 predates the policy, not 0.2.7 alone."""
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    policy = page.split("## The version policy", 1)[1].split("\n## ", 1)[0]
+    rows = [line for line in policy.splitlines() if line.startswith("| ") and "`0.Y.0`" in line]
+    assert rows
+    for row in rows:
+        for version in ("0.2.5", "0.2.6"):
+            if version in row:
+                assert f"{version}, a patch before this policy, would be 0.Y.0 under it" in row, row
+    assert "Every release up to 0.2.7 predates this policy" in policy
+
+
+def test_the_page_says_which_releases_were_cut_as_patches():
+    """Not every release before the policy was a patch: the last minor one, read from the CHANGELOG, is named as the
+    one after which every release was (the root CHANGELOG, which goes back to 0.1.0)."""
+    log = (ROOT / ROOT_LOG).read_text(encoding="utf-8")
+    released = [line.split()[1] for line in log.splitlines() if release_check.HEADING_RE.match(line)]
+    released.sort(key=lambda version: tuple(map(int, version.split("."))))
+    released = released[:released.index("0.2.7") + 1]
+    minors = [now for before, now in zip(released, released[1:]) if not release_check.is_patch(f"v{before}", now)]
+    assert minors and minors[-1] == "0.2.0"
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    policy = " ".join(page.split("## The version policy", 1)[1].split("\n## ", 1)[0].split())
+    assert f"every one after {minors[-1]} was cut as a patch" in policy
+    assert "predates this policy and was cut as a patch" not in policy
+
+
+def test_the_release_page_says_one_thing_of_a_release_with_nothing_else_to_do():
+    """Every Upgrade numbers the standard steps, so no release has nothing to do: « The standard steps » and section 2
+    both say « Nothing to run for the rest », and neither says a bare « Nothing to run »."""
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    standard = page.split("### The standard steps", 1)[1].split("\n## ", 1)[0]
+    version_pr = page.split("## 2. The version PR", 1)[1].split("\n## ", 1)[0]
+    for part in (standard, version_pr):
+        assert "« Nothing to run for the rest »" in part
+    assert "« Nothing to run »" not in page
+
+
+def test_choose_the_number_gives_both_rows_of_the_policy_for_a_minor():
+    """Section 1's bullet is the guidance read when choosing: a step beyond the standard ones, and a format that moves
+    (a registered schema, what `brain init` wrote once) even with no step, each make it 0.Y.0."""
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    before = page.split("## 1. Before the version PR", 1)[1].split("\n## ", 1)[0]
+    bullet = " ".join(before.split("**Choose the number**", 1)[1].split("\n- ", 1)[0].split())
+    for needed in ("beyond the standard steps", "registered schema", "`brain init` wrote once", "even with no step",
+                   "`0.Y.0`"):
+        assert needed in bullet, needed
+
+
+def test_the_tag_section_names_the_theme_and_the_patch_that_cannot_wait():
+    """The policy names the theme in the tag message and cuts a fix that cannot wait from release/X.Y (« 3. The tag »):
+    the tag section shows both, and says that release-tag does not check the theme."""
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    tag = page.split("## 3. The tag", 1)[1].split("\n## ", 1)[0]
+    assert 'git tag -a vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z — theme: what it brings"' in tag
+    assert "git switch release/X.Y" in tag and "release/X.Y` merges back into main" in tag
+    assert "does not check the theme" in tag
+    assert "takes out of main's `## Unreleased` every entry that `## X.Y.Z+1`" in tag
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "theme" not in ci.split("  release-tag:", 1)[1]   # what the page says of the job stays true
+
+
+def test_the_release_page_gives_each_standard_step_its_title():
+    """The template an Upgrade section copies, so that a patch's steps are the ones the check knows."""
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    template = page.split("### The standard steps", 1)[1].split("\n#", 1)[0]
+    assert release_check.steps_beyond_standard(template) == []
+    for title in release_check.STANDARD_STEPS:
+        assert f"**{title}**" in template, title
+
+
+def test_the_script_and_the_policy_keep_to_120_columns():
+    """The repo's wrap (ruff's line-length); CI ignores E501, so this is where it is held. A table row is one line."""
+    long = [f"release_check.py:{n}" for n, line in enumerate(SCRIPT.read_text(encoding="utf-8").splitlines(), 1)
+            if len(line) > 120]
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    policy = page.split("## The version policy", 1)[1].split("\n## ", 1)[0]
+    long += [line[:40] for line in policy.splitlines() if len(line) > 120 and not line.startswith("|")]
+    assert long == []
+
+
+def test_0_2_7_is_the_last_release_before_the_policy():
+    """Decided 2026-11-09: 0.2.7 stays a patch. Its Upgrade asked more than the standard steps: the policy, not 0.2.7,
+    is what changed, so the check never runs against it (a version PR is checked against the tag before it).
+
+    The check would refuse three of its four steps, and the page says which and why: step 4, the one beyond the
+    standard steps, and steps 2 and 3, the standard ones under the titles they had before the policy named them."""
+    upgrade = release_check.upgrade_section((ROOT / BRAIN_LOG).read_text(encoding="utf-8"), "0.2.7")
+    assert release_check.is_patch("v0.2.6", "0.2.7")
+    beyond = release_check.steps_beyond_standard(upgrade)
+    titles = [release_check.TITLE_RE.match(release_check.STEP_RE.match(line).group(1)).group(1) for line in beyond]
+    assert [line.split(".", 1)[0] for line in beyond] == ["2", "3", "4"], beyond
+    assert titles[2].startswith("Read this if a script of yours runs `brain --project P`"), beyond
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    note = page.split("0.2.7 is the last release before this policy", 1)[1].split("\n\n", 1)[0]
+    for old_title in titles[:2]:
+        assert f"**{old_title}**" in note, old_title
+    assert "`brain --project P`" in note

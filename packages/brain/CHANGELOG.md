@@ -98,6 +98,20 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   prints the captures it retired (« retired, never recorded », with each reason; `--dry-run` marks the refused ones)
   apart from the decisions left because they are no longer pending, the only ones `--again` replaces.
 
+### Changes
+
+- A written version policy (`docs/release.md`, « The version policy », wi-brain-versioning-policy): before 1.0 the
+  middle number moves for a change an owner must act on or a format that moves, the last for what needs nothing; each
+  release has a theme; a fix that cannot wait is a patch cut from the last tag; a release a week, the review fixes on
+  it. CI's `release-check` now refuses a patch whose registered schemas changed since the last tag or whose
+  `### Upgrade` numbers a step beyond the three standard ones (by their bold titles: **Install the engine**,
+  **Restart the Claude Code sessions**, **Refresh the public stamp**), any version whose `### Upgrade` leaves
+  out one of these three (a version PR's section numbers them, so `brain update` prints them), a brain section heading with no theme
+  (`## X.Y.Z — YYYY-MM-DD — theme`; punctuation alone after the date, `## 0.3.0 (2026-11-16)`, is none), and a section of either CHANGELOG that repeats an entry an earlier section
+  released (a fix that cannot wait, left in main's `## Unreleased` when `release/X.Y` merged back; by its text, a
+  « No change » line and the `### Upgrade` steps aside). It writes its messages in UTF-8
+  to a pipe. Every release up to 0.2.7 predates the policy, and 0.2.7 is the last.
+
 ## 0.2.7 — 2026-11-09
 
 ### Upgrade
