@@ -680,8 +680,10 @@ def _live_now(tree, session: str, m: dict, mtime: float, floor: float) -> int:
 
     Assumption, not yet checked against a real /clear in the desktop app: after a /clear the app moves its file's
     ``cliSessionId`` to the new transcript (``sessions.host_for`` assumes the same). Were the app to keep the old id,
-    the current transcript's state would be the one counted as 0 here, and a live master past 80 % would raise no
-    alert."""
+    both would go wrong: the current transcript's state has no ``host_id`` then (host_for refuses it) and counts 0, so
+    the master past 80 % now raises no alert of its own; and the earlier transcript's state, whose ``host_id`` and
+    session still match the app's node, keeps counting its live children: a stale alert at its pre-/clear pct until the
+    master or all of its children are archived or that state is pruned (budget.KEEP_DAYS)."""
     from . import sessions
 
     key = tree.key_of(m.get("host_id") or "") or tree.key_of(session)

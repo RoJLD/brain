@@ -633,6 +633,24 @@ def test_a_masters_earlier_transcript_raises_no_alert(app, brain_home):
     assert a.key == f"session:master:{MASTER}" and "1 live child(ren)" in a.message
 
 
+def test_were_the_app_to_keep_the_old_id_after_a_clear_both_effects(app, brain_home):
+    """The /clear assumption's other branch, as the README and alerts._live_now name it (second skeptic of #78): were
+    the app to keep the earlier transcript's id in its file, the current transcript's state (95 %, no app id: host_for
+    refuses it) would count no live child, and the earlier transcript's state (85 %) would keep its stale alert."""
+    new = "ffffffff-0000-4000-8000-000000000006"
+    app(MASTER, M_CLI, title="Ada's coordinator")  # the app kept the earlier transcript's id
+    app(CHILD, C_CLI, parent=MASTER, name="f1-tree", title="F1 tree")
+    _events(brain_home, {"at": _iso_ago(60), "event": "session_start", "session_id": new, "source": "clear"})
+    d = brain_home / "budget"
+    d.mkdir(parents=True, exist_ok=True)
+    for sid, pct, live, host in ((M_CLI, 85.0, 1, MASTER), (new, 95.0, 0, "")):
+        (d / f"{sid}.json").write_text(json.dumps({"v": 1, "session": sid, "master": {
+            "pct": pct, "step": 80 if pct < 90 else 90, "live": live, "started": live, "budget": 1_000_000,
+            "host_id": host, "at": time.time() - 60}}), encoding="utf-8")
+    (a,) = alerts.master_alerts(alerts.Config("brain"), datetime.now(timezone.utc))
+    assert a.key == f"session:master:{MASTER}" and "at 85 % " in a.message  # the stale one, not the 95 %
+
+
 def test_a_cli_session_started_from_a_desktop_session_keeps_its_own_identity(app, brain_home, monkeypatch):
     """Finding 50: a ``claude`` started from a desktop session's shell inherits its CLAUDE_CODE_HOST_SESSION_ID; the
     app's file of that id names another transcript, so the nested session takes neither its id nor its place."""

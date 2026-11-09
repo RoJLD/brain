@@ -90,7 +90,8 @@ def host_for(session: str = "", env=None) -> str:
     of that id names another transcript. A ``claude`` started from a desktop session's shell inherits that session's
     ``CLAUDE_CODE_HOST_SESSION_ID``: it is not the nested session's (review of #34, finding 50). A file that names no
     transcript yet (a session just started) does not refuse the id. It assumes the app's file always names the
-    session's current transcript, a /clear included (not yet checked against a real /clear in the desktop app)."""
+    session's current transcript, a /clear included (not yet checked against a real /clear in the desktop app; were
+    it wrong, the new transcript would get '' here: see ``alerts._live_now`` for what the master's alert does then)."""
     me = here(env)
     host, sid = me["host_id"], session or me["session"]
     if not host or not sid:
