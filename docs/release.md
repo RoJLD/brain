@@ -71,7 +71,10 @@ numbers them too, in their place among its own steps. With nothing else to do, t
   - the hooks (`adapters/claude/hooks/`: `brain sync` and a restart of the sessions);
   - anything that newly refuses, or a stamp or cache that a new engine invalidates.
 - **Choose the number** by « The version policy » above: any of these that asks an owner something beyond the
-  standard steps makes it `0.Y.0`.
+  standard steps makes it `0.Y.0`, and so does a format that moves, a registered schema changed since `vP` or what
+  `brain init` wrote once, even with no step for it. Only what an owner gets by the standard steps alone is `0.Y.Z`.
+  `release-check` refuses a patch that changes a file `SCHEMAS` registers (the formats, and part of what `brain init`
+  writes once); a file `brain init` writes that it does not register is yours to see.
 
 ## 2. The version PR
 

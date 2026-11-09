@@ -486,6 +486,17 @@ def test_the_release_page_says_one_thing_of_a_release_with_nothing_else_to_do():
     assert "« Nothing to run »" not in page
 
 
+def test_choose_the_number_gives_both_rows_of_the_policy_for_a_minor():
+    """Section 1's bullet is the guidance read when choosing: a step beyond the standard ones, and a format that moves
+    (a registered schema, what `brain init` wrote once) even with no step, each make it 0.Y.0."""
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    before = page.split("## 1. Before the version PR", 1)[1].split("\n## ", 1)[0]
+    bullet = " ".join(before.split("**Choose the number**", 1)[1].split("\n- ", 1)[0].split())
+    for needed in ("beyond the standard steps", "registered schema", "`brain init` wrote once", "even with no step",
+                   "`0.Y.0`"):
+        assert needed in bullet, needed
+
+
 def test_the_tag_section_names_the_theme_and_the_patch_that_cannot_wait():
     """The policy names the theme in the tag message and cuts a fix that cannot wait from release/X.Y (« 3. The tag »):
     the tag section shows both, and says that release-tag does not check the theme."""
