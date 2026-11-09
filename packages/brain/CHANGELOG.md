@@ -41,7 +41,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
     init` later in the call) passes with no `errors.log` entry, as on main; a `.txt` heading passes only under a
     title no longer than its underline (reST's rule), so a bare `=======` left in `requirements.txt` is still
     refused; bash's option values are no script (`curl ... | bash -o pipefail /dev/stdin`, `| bash -o pipefail`, `|
-    bash -O extglob`, `| bash -eo pipefail` refused; a script's own `-s` no longer reads as bash's); a launcher's
+    bash -O extglob`, `| bash -eo pipefail`, and an `o` or `O` anywhere in a cluster, one value each: `| bash -oe
+    pipefail`, `| bash -Ox extglob`, refused; a script's own `-s` no longer reads as bash's); a launcher's
     global option with a value is skipped before its verb (`npm -w pkg exec`, `npm --loglevel silent exec`); npm's
     Windows shims `claude.cmd`, `claude.ps1` and `skills.cmd` are claude and skills.
 - **The answers' lane, the rest of the review of #19** (wi-brain-answers-fixes). `brain record ddr` applies the

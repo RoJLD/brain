@@ -1189,7 +1189,8 @@ BASH_VALUES = ("--rcfile", "--init-file")   # bash's long options that take the 
 
 def _bash_words(args: list[str]) -> tuple[list[str], list[str]]:
     """(options, operands) of a bash-family shell's ``args``: its options up to the first operand (the script, or -),
-    the values of -o, +o, -O, +O (a cluster ending in one: -eo pipefail), --rcfile and --init-file skipped; what
+    the values of -o, +o, -O, +O, --rcfile and --init-file skipped; a short cluster takes one value word for each o
+    or O it holds, wherever the letter sits (-eo pipefail, -oe pipefail, -oO pipefail extglob), as bash reads it; what
     follows the script is the script's."""
     i = 0
     while i < len(args):
@@ -1198,7 +1199,8 @@ def _bash_words(args: list[str]) -> tuple[list[str], list[str]]:
             return args[:i], args[i + 1:]
         if a == "-" or not a.startswith(("-", "+")):
             break
-        i += 2 if a in BASH_VALUES or (not a.startswith("--") and a[-1] in "oO") else 1
+        values = int(a in BASH_VALUES) if a.startswith("--") else a.count("o") + a.count("O")
+        i += 1 + values
     return args[:i], args[i:]
 
 
