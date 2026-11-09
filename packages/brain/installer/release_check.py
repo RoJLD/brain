@@ -36,9 +36,10 @@ BRAIN = "packages/brain"
 SRC = f"{BRAIN}/src/brain"
 FIXTURES = f"{BRAIN}/tests/fixtures/formats"
 
-# What a format's shape is written in, per format; a folder of FIXTURES must be a key here (tests/test_release_check.py),
-# so a format registered there is checked here. permissions.yaml has no file of its own: its keys are constants of
-# brain.permissions, and a file's diff cannot tell them from the rest of the module (wi-brain-schema-diff compares keys).
+# What a format's shape is written in, per format; a folder of FIXTURES must be a key here
+# (tests/test_release_check.py), so a format registered there is checked here. permissions.yaml has no file of its own:
+# its keys are constants of brain.permissions, and a file's diff cannot tell them from the rest of the module
+# (wi-brain-schema-diff compares keys).
 # "store" is not a format with a fixture yet: what `brain init` wrote once and keeps afterwards, so that a brain never
 # gets a change of these files by itself (0.2.5's Lesson type and merge=brain line).
 SCHEMAS = {
@@ -92,7 +93,8 @@ def last_tag(repo: Path) -> str:
 
 
 def changed_schemas(repo: Path, tag: str) -> list[str]:
-    """The registered schema files that differ between ``tag`` and the working tree, removed or renamed ones included."""
+    """The registered schema files that differ between ``tag`` and the working tree, removed or renamed ones
+    included."""
     paths = sorted({path for group in SCHEMAS.values() for path in group})
     return [line for line in git(repo, "diff", "--name-only", tag, "--", *paths).splitlines() if line]
 
@@ -296,8 +298,8 @@ def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
         said.append(f"registered schemas changed since {tag}: {', '.join(changed)}")
         if not upgrade:
             problems.append(f"{changelog}: registered schemas changed since {tag} ({', '.join(changed)}) and the "
-                            f"section ## {version} has no ### Upgrade with something in it: number the standard steps and "
-                            f"what an owner does beyond them (docs/release.md, « The standard steps »)")
+                            f"section ## {version} has no ### Upgrade with something in it: number the standard "
+                            f"steps and what an owner does beyond them (docs/release.md, « The standard steps »)")
     missing = standard_steps_missing(upgrade or "")
     if missing:
         problems.append(f"{changelog}: the section ## {version} does not number the standard steps "

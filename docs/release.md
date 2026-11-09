@@ -41,19 +41,18 @@ From 1.0 on, the first number takes the middle one's place for a change that bre
   PR's author to catch, with « Read what changed » below.
 
 Every release up to 0.2.7 predates this policy, and every one after 0.2.0 was cut as a patch, the ones that would now
-be minor versions included (0.2.5 and 0.2.6 above). 0.2.7 is the last release before this policy: its `### Upgrade` had a step beyond
-the standard ones (step 4, a script that runs `brain --project P` from a worktree), and it stayed a patch (the
-maintainer's decision, 2026-11-09). The
-check would refuse its steps 2 and 3 as well: they are standard steps, but under the titles they had before this policy
-named them, **Restart Claude Code's sessions** and **In each public repo's checkout**. The check runs against the tag
-before a version, so it never judges 0.2.7.
+be minor versions included (0.2.5 and 0.2.6 above). 0.2.7 is the last release before this policy: its `### Upgrade`
+had a step beyond the standard ones (step 4, a script that runs `brain --project P` from a worktree), and it stayed a
+patch (the maintainer's decision, 2026-11-09). The check would refuse its steps 2 and 3 as well: they are standard
+steps under their older titles, **Restart Claude Code's sessions** and **In each public repo's checkout**. The check
+runs against the tag before a version, so it never judges 0.2.7.
 
 ### The standard steps
 
 What every release asks of an owner, whatever it changed. A patch's `### Upgrade` numbers these and nothing else, each
 opening with its title in bold as here (a title is compared without its case or a closing `.` or `:`); a minor one
-numbers them too, in their place among its own steps. `release-check` refuses a version that leaves one out. With nothing else to do, the section says
-« Nothing to run for the rest » after them.
+numbers them too, in their place among its own steps. `release-check` refuses a version that leaves one out. With
+nothing else to do, the section says « Nothing to run for the rest » after them.
 
 ```markdown
 1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs

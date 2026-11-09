@@ -43,7 +43,8 @@ def git(repo: Path, *args: str) -> None:
 def versions(repo: Path, version: str) -> None:
     write(repo, GRAPH_INIT, f'__version__ = "{version}"\n')
     write(repo, BRAIN_INIT, f'__version__ = "{version}"\n')
-    write(repo, PYPROJECT, f'dependencies = ["research-graph @ git+https://github.com/RoJLD/brain.git@v{version}",\n]\n')
+    pin = f"research-graph @ git+https://github.com/RoJLD/brain.git@v{version}"
+    write(repo, PYPROJECT, f'dependencies = ["{pin}",\n]\n')
     write(repo, COMMON, f"#!/usr/bin/env bash\nbrain_version={version}\nnext=1\n")
 
 
@@ -61,7 +62,8 @@ NO_UPGRADE = "### Changes\n\n- A change.\n"
 
 
 def changelogs(repo: Path, version: str, brain_body: str = STANDARD_UPGRADE, theme: str = " — A theme") -> None:
-    write(repo, ROOT_LOG, f"# Changelog\n\n## {version} — 2026-11-09\n\n- Nothing new.\n\n## 0.2.5 — 2026-11-04\n\n- Old.\n")
+    write(repo, ROOT_LOG, f"# Changelog\n\n## {version} — 2026-11-09\n\n- Nothing new.\n\n"
+                          "## 0.2.5 — 2026-11-04\n\n- Old.\n")
     write(repo, BRAIN_LOG, f"# Changelog\n\n## {version} — 2026-11-09{theme}\n\n{brain_body}\n"
                            "## 0.2.5 — 2026-11-04\n\n### Upgrade\n\n1. An old step.\n")
 
@@ -320,7 +322,8 @@ def test_a_patch_with_a_schema_change_fails_even_with_its_upgrade_section(repo, 
 
 def test_the_same_change_as_a_minor_version_passes(repo, capsys):
     versions(repo, "0.3.0")
-    changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run", "4. **Edit config.json** by hand.\n\nNothing to run"))
+    changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run",
+                                                       "4. **Edit config.json** by hand.\n\nNothing to run"))
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
     rc, text = run(repo, capsys)
@@ -408,7 +411,8 @@ def test_the_standard_steps_are_told_apart_by_their_title():
 
 def test_a_minor_version_may_ask_anything(repo, capsys):
     versions(repo, "0.3.0")
-    changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run", "4. **Edit config.json**.\n\nNothing to run"))
+    changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run",
+                                                       "4. **Edit config.json**.\n\nNothing to run"))
     commit(repo)
     assert run(repo, capsys)[0] == 0
 
@@ -417,9 +421,11 @@ HOTFIX = "- A guard no longer refuses every commit: it reads the config\n  befor
 
 
 def test_an_entry_a_patch_from_release_x_y_released_fails_in_the_next_version(repo, capsys):
-    """The fix merged on main, shipped in 0.2.6 from release/0.2; release/0.2 merged back and main's Unreleased kept it."""
+    """The fix merged on main, shipped in 0.2.6 from release/0.2; release/0.2 merged back and main's Unreleased kept
+    it."""
     versions(repo, "0.3.0")
-    write(repo, ROOT_LOG, "# Changelog\n\n## 0.3.0 — 2026-11-16\n\n- Nothing new.\n\n## 0.2.6 — 2026-11-10\n\n- Same.\n")
+    write(repo, ROOT_LOG, "# Changelog\n\n## 0.3.0 — 2026-11-16\n\n- Nothing new.\n\n"
+                          "## 0.2.6 — 2026-11-10\n\n- Same.\n")
     write(repo, BRAIN_LOG, f"# Changelog\n\n## 0.3.0 — 2026-11-16 — A theme\n\n### Fixes\n\n- Another fix.\n"
                            f"{HOTFIX.replace('it reads', 'it  reads')}\n"
                            f"## 0.2.6 — 2026-11-10 — The guard\n\n### Fixes\n\n{HOTFIX}\n"
@@ -441,7 +447,8 @@ def test_entries_are_bullets_with_their_continuation_lines():
 
 
 def test_an_entry_the_root_changelog_repeats_fails_too(repo, capsys):
-    """The merge back takes the fix out of both CHANGELOGs' Unreleased (« 3. The tag »): research-graph's is read too."""
+    """The merge back takes the fix out of both CHANGELOGs' Unreleased (« 3. The tag »): research-graph's is read
+    too."""
     versions(repo, "0.3.0")
     write(repo, ROOT_LOG, f"# Changelog\n\n## 0.3.0 — 2026-11-16\n\n- Another change.\n{HOTFIX}\n"
                           f"## 0.2.6 — 2026-11-10\n\n{HOTFIX}\n## 0.2.5 — 2026-11-04\n\n- Old.\n")
@@ -656,6 +663,16 @@ def test_the_release_page_gives_each_standard_step_its_title():
     assert release_check.steps_beyond_standard(template) == []
     for title in release_check.STANDARD_STEPS:
         assert f"**{title}**" in template, title
+
+
+def test_the_script_and_the_policy_keep_to_120_columns():
+    """The repo's wrap (ruff's line-length); CI ignores E501, so this is where it is held. A table row is one line."""
+    long = [f"release_check.py:{n}" for n, line in enumerate(SCRIPT.read_text(encoding="utf-8").splitlines(), 1)
+            if len(line) > 120]
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    policy = page.split("## The version policy", 1)[1].split("\n## ", 1)[0]
+    long += [line[:40] for line in policy.splitlines() if len(line) > 120 and not line.startswith("|")]
+    assert long == []
 
 
 def test_0_2_7_is_the_last_release_before_the_policy():
