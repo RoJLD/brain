@@ -276,6 +276,24 @@ def policy(tag: str, version: str, changed: list[str], upgrade: str | None) -> l
     return problems
 
 
+def sections(repo: Path, version: str, upgrade: str | None) -> list[str]:
+    """What ``version``'s CHANGELOG sections miss, whatever the version: a standard step its ``### Upgrade`` does not
+    number, an entry either section repeats from an earlier one."""
+    changelog = f"{BRAIN}/CHANGELOG.md"
+    problems = []
+    missing = standard_steps_missing(upgrade or "")
+    if missing:
+        problems.append(f"{changelog}: the section ## {version} does not number the standard steps "
+                        f"{', '.join(f'**{step}**' for step in missing)} in its ### Upgrade: every release asks them "
+                        f"of an owner, each opening with its title in bold (docs/release.md, « The standard steps »)")
+    for log in ("CHANGELOG.md", changelog):
+        for entry, other in entries_already_released(read(repo, log), version):
+            problems.append(f"{log}: the section ## {version} repeats an entry that {other} released: "
+                            f"{entry[:100]}{'...' if len(entry) > 100 else ''}; take it out of ## Unreleased when "
+                            f"release/X.Y merges back into main (docs/release.md, « 3. The tag »)")
+    return problems
+
+
 def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
     """(what it says, what fails) for the checkout ``repo`` against the tag ``tag``."""
     versions = {name: version_in(repo, path) for name, path in VERSIONS.items()}
@@ -300,16 +318,7 @@ def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
             problems.append(f"{changelog}: registered schemas changed since {tag} ({', '.join(changed)}) and the "
                             f"section ## {version} has no ### Upgrade with something in it: number the standard "
                             f"steps and what an owner does beyond them (docs/release.md, « The standard steps »)")
-    missing = standard_steps_missing(upgrade or "")
-    if missing:
-        problems.append(f"{changelog}: the section ## {version} does not number the standard steps "
-                        f"{', '.join(f'**{step}**' for step in missing)} in its ### Upgrade: every release asks them "
-                        f"of an owner, each opening with its title in bold (docs/release.md, « The standard steps »)")
-    for log in ("CHANGELOG.md", changelog):
-        for entry, other in entries_already_released(read(repo, log), version):
-            problems.append(f"{log}: the section ## {version} repeats an entry that {other} released: "
-                            f"{entry[:100]}{'...' if len(entry) > 100 else ''}; take it out of ## Unreleased when "
-                            f"release/X.Y merges back into main (docs/release.md, « 3. The tag »)")
+    problems += sections(repo, version, upgrade)
     if is_patch(tag, version):
         said.append(f"a patch of {tag}: it may hold no schema change and no Upgrade step beyond the standard ones")
     problems += policy(tag, version, changed, upgrade)
