@@ -2,6 +2,17 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+### Fixes
+
+- The merge driver after the review of #21 (`wi-brain-mergedriver-review-fixes`): a driver that cannot run (its
+  launcher gone, an engine without it) no longer leaves ours alone with no conflict marker: its command falls back to
+  `git merge-file` when it wrote nothing (exit 2 or more); `brain merge-driver install --apply` rewrites an older
+  config. A log entry both sides hold (a squash-merged or cherry-picked one, an add/add) is written once, not twice.
+  The CHANGELOG union keeps a bullet both added once, with its continuation lines, and never drops a line of a
+  released section.
+
 ## 0.2.7 — 2026-11-09
 
 ### Upgrade

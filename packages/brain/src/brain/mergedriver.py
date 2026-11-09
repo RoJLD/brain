@@ -309,6 +309,30 @@ def _trimmed(lines: list[str], lead: bool = False) -> list[str]:
     return out
 
 
+def _text(lines: list[str]) -> str:
+    """A section's or a block's text for comparing two sides: line ends and trailing blank lines left out."""
+    return "\n".join(x.rstrip("\r\n") for x in lines).strip()
+
+
+def _blocks(lines: list[str]) -> list[list[str]]:
+    """Lines cut into blocks: an entry line with the lines that continue it (indented or not an entry, not blank);
+    every other line a block of its own."""
+    out: list[list[str]] = []
+    for line in lines:
+        if out and _entry(out[-1][0]) and line.strip() and not _entry(line) and not H2.match(line) \
+                and not line.lstrip().startswith("#"):
+            out[-1].append(line)
+        else:
+            out.append([line])
+    return out
+
+
+def _new_blocks(ours: list[str], theirs: list[str]) -> list[str]:
+    """Theirs without the entries (a bullet and its continuation lines) ours has already in the same hunk."""
+    mine = {_text(b) for b in _blocks(ours) if _entry(b[0])}
+    return [x for b in _blocks(theirs) if not (_entry(b[0]) and _text(b) in mine) for x in b]
+
+
 def _dates(text: str) -> list[str]:
     return [m.group(1) for m in map(DATED.match, _lines(text)) if m]
 
@@ -338,6 +362,11 @@ def log(base: str, ours: str, theirs: str, size: int = 7, style: str = "merge") 
             continue
         united = True
         (lo, so), (lt, st) = _sections(seg.ours), _sections(seg.theirs)
+        # diff3 keeps what both sides added alike inside the hunk (an add/add, a squash-merged or cherry-picked
+        # entry): theirs' copy of a section or of the lead lines ours has already is not written twice
+        mine = {_text(s) for s in so}
+        st = [s for s in st if _text(s) not in mine]
+        lt = [] if _text(lt) == _text(lo) else lt
         # stable both ways: ours first on a tie
         secs = sorted(so + st, key=lambda s: DATED.match(s[0]).group(1), reverse=newest_first)
         if not newest_first:
@@ -436,6 +465,7 @@ def union(base: str, ours: str, theirs: str, size: int = 7, style: str = "merge"
                 out.append(seg)
                 continue
             rest = seg.theirs[1:] if opened else seg.theirs   # its heading once
+            rest = _new_blocks(seg.ours, rest)   # an entry both added here once, with its continuation lines
             while rest and not rest[0].strip():
                 rest = rest[1:]
             gap = [nl] if opened and seg.ours and seg.ours[-1].strip() else []
@@ -446,8 +476,9 @@ def union(base: str, ours: str, theirs: str, size: int = 7, style: str = "merge"
         out.extend(lines if lines is not None else [seg])
     lines = [x for x in out if isinstance(x, str)]
     if len(lines) == len(out):
-        out = _dedupe(out, ours, theirs)
-        if section is not None:
+        if section is None:   # a section's hunks are deduplicated where they merge: never the released ones
+            out = _dedupe(out, ours, theirs)
+        else:
             out = _coalesce(out, section)
     res = render(out, size, style, nl)
     if yaml_check and not res.conflicts and not _yaml_ok(res.text):
@@ -715,10 +746,14 @@ def run(base: str, ours: str, theirs: str, path: str, size: int = 7) -> int:
 # --- install ---------------------------------------------------------------------------------------------------
 
 def command(launcher: str | None = None) -> str:
-    """The driver's command line for git (run by sh): the brain launcher on PATH by its full path, else this Python."""
+    """The driver's command line for git (run by sh): the brain launcher on PATH by its full path, else this Python.
+    An exit of 2 or more means nothing was written to %A (run's 2, argparse's 2 under an engine without the driver,
+    sh's 126 or 127 for a launcher gone): git's own merge then writes its markers, so ours is never left alone with
+    no marker. 0 and 1 are the driver's own result, %A written."""
     exe = launcher or shutil.which("brain")
     head = f'"{Path(exe).as_posix()}"' if exe else f'"{Path(sys.executable).as_posix()}" -m brain'
-    return f"{head} merge-driver run %O %A %B %P %L"
+    return (f"{head} merge-driver run %O %A %B %P %L; rc=$?; "
+            f"if [ $rc -ge 2 ]; then git merge-file --marker-size=%L %A %O %B; else exit $rc; fi")
 
 
 def attribute_lines(repo: Path) -> list[str]:
@@ -761,8 +796,9 @@ def install(repo: Path, apply: bool = False, launcher: str | None = None, as_jso
         return 1
     changed = False
     if apply and not p.done:
-        for key, value in ((f"merge.{NAME}.name", "brain: views keep one side, logs union, YAML by id"),
-                           (f"merge.{NAME}.driver", p.driver)):
+        # the driver first: a name with no driver makes git abort every merge of those paths
+        for key, value in ((f"merge.{NAME}.driver", p.driver),
+                           (f"merge.{NAME}.name", "brain: views keep one side, logs union, YAML by id")):
             r = _git("config", "--local", key, value, cwd=p.repo)
             if r.returncode:
                 print(f"brain merge-driver install: git config {key} failed: {_decode(r.stderr).strip()}",
