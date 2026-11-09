@@ -460,6 +460,20 @@ def test_the_release_page_writes_the_version_policy():
         assert needed in policy, needed
 
 
+def test_the_policy_examples_say_they_were_patches_before_it():
+    """0.2.5 and 0.2.6 were patches, released before the policy: an example that names them as minor versions says so,
+    and the page says every release up to 0.2.7 predates the policy, not 0.2.7 alone."""
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    policy = page.split("## The version policy", 1)[1].split("\n## ", 1)[0]
+    rows = [line for line in policy.splitlines() if line.startswith("| ") and "`0.Y.0`" in line]
+    assert rows
+    for row in rows:
+        for version in ("0.2.5", "0.2.6"):
+            if version in row:
+                assert f"{version}, a patch before this policy, would be 0.Y.0 under it" in row, row
+    assert "Every release up to 0.2.7 predates this policy" in policy
+
+
 def test_the_release_page_gives_each_standard_step_its_title():
     """The template an Upgrade section copies, so that a patch's steps are the ones the check knows."""
     page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")

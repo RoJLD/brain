@@ -12,8 +12,8 @@ Which number moves is decided by what an owner has to do, not by how much change
 
 | The release holds | The number | Example |
 |---|---|---|
-| a change an owner must act on: a numbered step of `### Upgrade` beyond the standard steps below, anything that newly refuses what passed, a config or a git setting to rewrite | the middle one, `0.Y.0` | 0.2.6 (guards fail closed, `brain update` twice) |
-| a format that moves: a registered schema changed since `vP` (`SCHEMAS` in `packages/brain/installer/release_check.py`), what `brain init` wrote once | the middle one, `0.Y.0` | 0.2.5 (the Lesson type, the `merge=brain` line) |
+| a change an owner must act on: a numbered step of `### Upgrade` beyond the standard steps below, anything that newly refuses what passed, a config or a git setting to rewrite | the middle one, `0.Y.0` | 0.2.6, a patch before this policy, would be 0.Y.0 under it (guards fail closed, `brain update` twice) |
+| a format that moves: a registered schema changed since `vP` (`SCHEMAS` in `packages/brain/installer/release_check.py`), what `brain init` wrote once | the middle one, `0.Y.0` | 0.2.5, a patch before this policy, would be 0.Y.0 under it (the Lesson type, the `merge=brain` line) |
 | only what needs nothing: fixes and additions an owner gets by the standard steps alone | the last one, `0.Y.Z` | a fix of a crash |
 
 From 1.0 on, the first number takes the middle one's place for a change that breaks a brain; that is decided at 1.0.
@@ -35,8 +35,10 @@ From 1.0 on, the first number takes the middle one's place for a change that bre
   heading names no theme after its date. It reads files and titles, not meanings: a step written as prose, or a
   change that newly refuses with no step for it, is the version PR's author to catch, with « Read what changed » below.
 
-0.2.7 is the last release before this policy: its `### Upgrade` had a step beyond the standard ones (step 4, a script
-that runs `brain --project P` from a worktree), and it stayed a patch (the maintainer's decision, 2026-11-09). The
+Every release up to 0.2.7 predates this policy and was cut as a patch, the ones that would now be minor versions
+included (0.2.5 and 0.2.6 above). 0.2.7 is the last release before this policy: its `### Upgrade` had a step beyond
+the standard ones (step 4, a script that runs `brain --project P` from a worktree), and it stayed a patch (the
+maintainer's decision, 2026-11-09). The
 check would refuse its steps 2 and 3 as well: they are standard steps, but under the titles they had before this policy
 named them, **Restart Claude Code's sessions** and **In each public repo's checkout**. The check runs against the tag
 before a version, so it never judges 0.2.7.
