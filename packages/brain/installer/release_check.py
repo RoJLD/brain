@@ -245,6 +245,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--repo", default=".", help="the checkout (default: here)")
     ap.add_argument("--against", default="", help="the tag to compare with (default: the last tag before HEAD)")
     args = ap.parse_args(argv)
+    # Its messages quote docs/release.md's « » titles: a pipe on Windows is in the ANSI code page, and a reader of
+    # UTF-8 (CI, a test) would fail on them. A console is written in UTF-16 whatever this says.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     repo = Path(args.repo)
     try:
         said, problems = check(repo, args.against or last_tag(repo))

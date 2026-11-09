@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -274,6 +275,17 @@ def test_the_script_runs_alone_as_ci_runs_it(repo):
                           encoding="utf-8", check=False)
     assert done.returncode == 1
     assert "FAILED" in done.stderr
+
+
+def test_the_script_writes_utf_8_to_a_pipe_whatever_the_code_page(repo):
+    """A message that quotes « a title » reaches a UTF-8 reader as written (on Windows a pipe is in the ANSI page)."""
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6", theme="")
+    commit(repo)
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}   # what a Windows pipe gets (-I drops it)
+    done = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(repo)], capture_output=True, env=env, check=False)
+    assert done.returncode == 1
+    assert "« The version policy »" in done.stderr.decode("utf-8")
 
 
 # The version policy (docs/release.md, « The version policy »)
