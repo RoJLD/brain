@@ -346,7 +346,8 @@ and its recap.
   else its SessionStart), or ID's, each child with its report: a master learns what its children did without paging
   their transcripts (archived branches counted, `--all` draws them). A session detached to the top level
   (`lineageDetached`, a hand-over's session living on) heads its own family; a parent the app's file no longer names
-  does not come back from the ledger. A report's wait and recap come from the wrap-up of its last turn only.
+  does not come back from the ledger or the brief hash (the briefs give a parent only to a session the app does not
+  know). A report's wait and recap come from the wrap-up of its last turn only.
 - **`brain sessions show ID [--report]`**: one session by either id (a prefix of 8 or more) or its short name, its
   family, and what a message would meet: live and working (it waits in the queue), idle (it starts a turn), archived
   (lost). `--report` prints its last final message in full, read from its transcript, never stored.
@@ -357,7 +358,7 @@ session's transcript (a `claude` started from a desktop session's shell inherits
 (`brain.sessions`) refuses a DDR stamped on this machine in the last 7 days whose `local_` id matches no session the
 app or the ledger knows, and warns for an older one (its session may have left the app and the ledger's two months
 since), one stamped elsewhere or before the stamps.
-The resume pack prints both ids. The cockpit's sessions panel shows the short name (else the app id) in Session, then
+The resume pack prints both ids, the app id under the same rule. The cockpit's sessions panel shows the short name (else the app id) in Session, then
 Role, Parent, Kids (live/started) and Ctx (% of the budget), and the ids in a session's detail.
 
 **The master's watch** (the budget watch, `budget.sh`, `brain.budget`): a session that started a session is a master
@@ -373,7 +374,10 @@ hand-over note listing the live children with both ids, items and their state no
 expired; a subagent's tool call never uses a step up, the main thread's next call gives it. The master's row in the
 cockpit turns yellow, orange and red at each step; `brain alerts` (`brain.alerts`) raises a master past 80 % with
 live children, both read from the session tree at each pass (an archived master or its archived children close the
-alert at once; a master the tree does not know counts while its watch state is under 6 h old); the governor reminds
+alert at once; the state of a transcript the app's master has left, after a `/clear`, raises nothing, its current
+transcript's own state decides; a master the tree does not know counts while its watch state is under 6 h old). An
+unarchived master left past 80 % with unarchived children keeps its alert until one of them is archived or its watch
+state is pruned (14 days), by design: those children still spend; the governor reminds
 a master past 80 % that calls `start_session`, and lets the call through: nothing blocks a new session.
 
 ## Lessons

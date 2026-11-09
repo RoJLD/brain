@@ -674,14 +674,16 @@ def engine_alerts(cfg: Config, now: datetime) -> list[Alert]:
 
 def _live_now(tree, session: str, m: dict, mtime: float, floor: float) -> int:
     """The live children of the master ``session`` now: read from the session tree when it knows the master (0 once
-    the master itself is archived or ended, whatever its state file's age); else the count its last check kept,
-    while that state is under MASTER_HOURS old (review of #34, finding 26)."""
+    the master itself is archived or ended, whatever its state file's age, and 0 for the state of a transcript the
+    app's master has left, e.g. after a /clear: its current transcript has its own state); else the count its last
+    check kept, while that state is under MASTER_HOURS old (review of #34, finding 26)."""
     from . import sessions
 
     key = tree.key_of(m.get("host_id") or "") or tree.key_of(session)
     if not key:
         return int(m.get("live") or 0) if mtime >= floor else 0
-    if not sessions.alive(tree.nodes[key], tree.ends):
+    node = tree.nodes[key]
+    if not sessions.alive(node, tree.ends) or (node.get("session") or session) != session:
         return 0
     return sum(1 for k in tree.children.get(key, []) if sessions.alive(tree.nodes[k], tree.ends))
 

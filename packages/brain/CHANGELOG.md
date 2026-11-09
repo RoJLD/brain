@@ -18,14 +18,18 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   - an unarchived app child with a recorded SessionEnd stays live for the master's watch, its hand-over draft and the
     cockpit's Kids, as `brain sessions` reads it (`brain.sessions.alive`; finding 24);
   - `brain alerts` reads a master's liveness and live children from the session tree at each pass: an archived master
-    or archived children close the alert at once, a master waiting on its children for hours keeps it (finding 26);
+    or archived children close the alert at once, a master waiting on its children for hours keeps it, and the state
+    of a transcript the app's master has left (after a `/clear`) no longer raises it for up to 14 days (finding 26);
   - a session detached to the top level (`lineageDetached`) is no longer its old master's child, and a parent the
-    app's file no longer names does not come back from the SessionStart event (finding 27);
+    app's file no longer names does not come back from the SessionStart event (finding 27), nor from the brief hash
+    that `brain sessions`, `sessions tree` and `sessions show` read by default: the briefs give a parent only to a
+    session the app does not know;
   - `brain check` refuses an unknown `local_` stamp only when it is under 7 days old; an older one is a warning (its
     session may have left the app and the ledger's two months), so a valid DDR no longer keeps the check red (finding
     23);
   - a `claude` started from a desktop session's shell no longer takes that session's app id in its SessionStart
-    event, its session record, the master's watch or its DDR stamps (`brain.sessions.host_for`; finding 50);
+    event, its session record, the master's watch, its DDR stamps or the resume pack's Session line
+    (`brain.sessions.host_for`; finding 50);
   - a child's report takes its wait and recap from the wrap-up of its last turn only (finding 51), and the 80 %
     hand-over draft shows each child's state now, read from its transcript (finding 52);
   - `brain sessions tree` keeps `--hours` for sessions the app does not know (finding 55), and the options given

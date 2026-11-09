@@ -417,6 +417,7 @@ def _now(project: projects.Project, now: datetime, health: bool) -> Section:
     from . import sessions
 
     me = sessions.here()
+    me["host_id"] = sessions.host_for(me["session"])  # not an outer desktop session's id (review of #34, finding 50)
     if me["session"] or me["host_id"]:  # both ids, which serve different tools (wi-brain-session-tree)
         s.lines.append("Session: " + "; ".join(
             ([f"app {me['host_id']} (SendMessage, the app's session tools)"] if me["host_id"] else [])

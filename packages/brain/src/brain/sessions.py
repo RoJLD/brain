@@ -23,7 +23,7 @@ Where the tree comes from, the first that knows wins:
 
 The lineage of a session the app knows is the app's alone: a session detached to the top level (``lineageDetached``,
 a hand-over's session living on after its master) has no parent (``detached_from`` keeps the old one), and a parent
-its file no longer names does not come back from the ledger. The app's id in the environment is taken only when the
+its file no longer names does not come back from the ledger or the briefs. The app's id in the environment is taken only when the
 app's file of it names this session's transcript (:func:`host_for`: a nested ``claude`` inherits its outer session's).
 
 A session's role is computed, never stored: ``master`` (it started sessions), ``sub`` (a session started it),
@@ -328,10 +328,12 @@ class Tree:
         self.by_session.setdefault(sid, key)
 
     def _merge_family(self, child: str, parent: str) -> None:
-        """The brief hash's parent of ``child``, unless a better source gave one; either may be new."""
+        """The brief hash's parent of ``child``, unless a better source gave one; either may be new. The lineage of a
+        session the app knows is the app's alone: a session it detached or whose ``spawnedFrom`` it removed gets no
+        parent from the briefs either (review of #34, finding 27, as ``brain sessions`` loads the tree by default)."""
         key = self.by_session.get(child) or self._add({"session": child, "source": "briefs"})
         node = self.nodes[key]
-        if node.get("parent"):
+        if node.get("parent") or node.get("source") == "app":
             return
         if parent not in self.by_session:
             self._add({"session": parent, "source": "briefs"})

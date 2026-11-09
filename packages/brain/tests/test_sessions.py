@@ -570,6 +570,48 @@ def test_a_detached_session_is_no_longer_its_old_masters_child(app, brain_home):
     assert [k["host_id"] for k in budget.children({"host_id": MASTER})] == [OTHER]
 
 
+def test_the_brief_hash_gives_no_parent_back_to_a_session_the_app_knows(app, brain_home, monkeypatch, capsys):
+    """Finding 27, as ``brain sessions`` loads the tree by default (with the briefs): the brief hash links a
+    hand-over's fresh master to the session that started it, but the app detached it; and the app removed another's
+    spawnedFrom. Neither comes back under its old master; a session the app never knew still takes the briefs'."""
+    from brain import usage
+    raw = sessions.Tree({"fapp": {"host_id": "fapp", "session": "fcli", "detached": True, "parent": "mapp"},
+                         "mapp": {"host_id": "mapp", "session": "mcli"}}, {}, {"fcli": "mcli"})
+    assert raw.role("fapp") == "solo" and raw.role("mapp") == "solo" and "parent" not in raw.nodes["fapp"]
+    _family(app)
+    app(GHOST, "dddddddd-0000-4000-8000-000000000004", parent=MASTER, name="f3-next", detached=True)
+    app(CHILD, C_CLI, title="F1 tree")  # the app removed its spawnedFrom
+    monkeypatch.setattr(usage, "load", lambda *a, **k: {})
+    monkeypatch.setattr(usage, "link_families", lambda rows: {
+        "dddddddd-0000-4000-8000-000000000004": M_CLI, C_CLI: M_CLI, "cli-only": M_CLI})
+    tree = sessions.load()
+    assert tree.role(GHOST) == "solo" and tree.role(CHILD) == "solo" and "parent" not in tree.nodes[GHOST]
+    assert tree.children[MASTER] == ["cli-only", OTHER]  # a brief-only child has no start time: first
+    assert tree.nodes["cli-only"]["parent_source"] == "briefs"
+    assert cli.main(["sessions", "tree", MASTER, "--json"]) == 0  # the command's own load, briefs included
+    (fam,) = json.loads(capsys.readouterr().out)
+    assert [c["key"] for c in fam["children"]] == ["cli-only", OTHER]
+    assert cli.main(["sessions", "show", "f3-next", "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert (shown["role"], shown["parent"]) == ("solo", "")
+
+
+def test_a_masters_earlier_transcript_raises_no_alert(app, brain_home):
+    """Finding 26: a /clear gives the app's master a new transcript under the same app id; the earlier transcript's
+    state (85 %) no longer raises the alert for days, the current transcript's own state decides."""
+    app(MASTER, "ffffffff-0000-4000-8000-000000000006", title="Ada's coordinator")  # its transcript after /clear
+    app(CHILD, C_CLI, parent=MASTER, name="f1-tree", title="F1 tree")
+    d = brain_home / "budget"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{M_CLI}.json").write_text(json.dumps({"v": 1, "session": M_CLI, "master": {
+        "pct": 85.0, "step": 80, "live": 1, "started": 1, "budget": 1_000_000, "host_id": MASTER,
+        "at": time.time() - 3600}}), encoding="utf-8")
+    assert alerts.master_alerts(alerts.Config("brain"), datetime.now(timezone.utc)) == []
+    app(MASTER, M_CLI, title="Ada's coordinator")  # the same transcript: the alert stands
+    (a,) = alerts.master_alerts(alerts.Config("brain"), datetime.now(timezone.utc))
+    assert a.key == f"session:master:{MASTER}" and "1 live child(ren)" in a.message
+
+
 def test_a_cli_session_started_from_a_desktop_session_keeps_its_own_identity(app, brain_home, monkeypatch):
     """Finding 50: a ``claude`` started from a desktop session's shell inherits its CLAUDE_CODE_HOST_SESSION_ID; the
     app's file of that id names another transcript, so the nested session takes neither its id nor its place."""
