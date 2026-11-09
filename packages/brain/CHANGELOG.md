@@ -2,6 +2,13 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+### Fixes
+
+- `brain.nowindow` also gives no window to a child whose `creationflags` is passed positionally or as `None` (the
+  wrapper skipped the first and raised `TypeError` on the second); its review, which #70 never had.
+
 ## 0.2.7 — 2026-11-09
 
 ### Upgrade
