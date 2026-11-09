@@ -554,6 +554,27 @@ def test_master_alerts_read_the_masters_family_now(app, brain_home):
     assert f"session:master:{MASTER}" not in keys()
 
 
+def test_the_masters_alert_stays_until_the_master_or_all_its_children_are_archived(app, brain_home):
+    """The README's wording after the skeptic of #78: archiving one child of several keeps the alert, with one live
+    child fewer; it closes once all of them are archived."""
+    _family(app)
+    app(GHOST, "dddddddd-0000-4000-8000-000000000004", parent=MASTER, name="f3-next", title="F3 next")
+    d = brain_home / "budget"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{M_CLI}.json").write_text(json.dumps({"v": 1, "session": M_CLI, "master": {
+        "pct": 85.0, "step": 80, "live": 2, "started": 3, "budget": 1_000_000, "host_id": MASTER,
+        "at": time.time() - 3600}}), encoding="utf-8")
+
+    def alert():
+        return {a.key: a.message for a in alerts.master_alerts(alerts.Config("brain"), datetime.now(timezone.utc))}
+
+    assert "with 2 live child(ren)" in alert()[f"session:master:{MASTER}"]  # f1-tree and f3-next
+    app(CHILD, C_CLI, parent=MASTER, name="f1-tree", archived=True, title="F1 tree")  # one of the two archived
+    assert "with 1 live child(ren)" in alert()[f"session:master:{MASTER}"]
+    app(GHOST, "dddddddd-0000-4000-8000-000000000004", parent=MASTER, name="f3-next", archived=True, title="F3")
+    assert alert() == {}  # all of them archived
+
+
 def test_a_detached_session_is_no_longer_its_old_masters_child(app, brain_home):
     """Finding 27: lineageDetached takes a session out of its old master's family; a parent the app's file no longer
     names does not come back from the SessionStart event."""

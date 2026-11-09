@@ -382,8 +382,9 @@ cockpit turns yellow, orange and red at each step; `brain alerts` (`brain.alerts
 live children, both read from the session tree at each pass (an archived master or its archived children close the
 alert at once; the state of a transcript the app's master has left, after a `/clear`, raises nothing, its current
 transcript's own state decides; a master the tree does not know counts while its watch state is under 6 h old). An
-unarchived master left past 80 % with unarchived children keeps its alert until one of them is archived or its watch
-state is pruned (14 days), by design: those children still spend; the governor reminds
+unarchived master left past 80 % with unarchived children keeps its alert until the master or all of its children
+are archived (archiving one child of several keeps it, with one live child fewer) or its watch state is pruned (14
+days), by design: those children still spend; the governor reminds
 a master past 80 % that calls `start_session`, and lets the call through: nothing blocks a new session.
 
 ## Lessons
