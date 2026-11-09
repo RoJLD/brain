@@ -2,6 +2,14 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+### Added
+
+- `schedules:` entries take `days` (mon to sun), the days `at` runs on, so that a weekly command can be declared and
+  installed like any other (`days: [mon]`): a `ScheduleByWeek` trigger on Windows, `OnCalendar=Mon ...` under systemd,
+  the day-of-week field in a crontab. A task whose days changed is planned as an update (wi-brain-schedule-hidden-all).
+
 ## 0.2.6 — 2026-11-09
 
 ### Upgrade

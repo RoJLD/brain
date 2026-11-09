@@ -244,6 +244,51 @@ def test_the_crontab_keeps_the_other_lines(tmp_path, monkeypatch):
         schedule._cron_when(schedule.Schedule("odd", "d", ["x"], every=420.0))
 
 
+# --- the days at runs on ---
+
+WEEKLY = "audit: {command: cost audit --write, at: '09:00', days: [mon]}"
+
+
+def test_days_make_a_weekly_schedule_on_each_system(tmp_path, monkeypatch):
+    s = schedule.declared(_registry(tmp_path, monkeypatch, WEEKLY))[0]
+    assert s.days == ["mon"] and s.when() == "mon at 09:00" and s.cadence() == 7 * 86400.0
+    xml = _win(Runs()).wanted(s, PY)
+    assert "<ScheduleByWeek><WeeksInterval>1</WeeksInterval><DaysOfWeek><Monday /></DaysOfWeek></ScheduleByWeek>" in xml
+    assert "ScheduleByDay" not in xml and "<StartBoundary>2026-11-03T09:00:00</StartBoundary>" in xml
+    sd = schedule.Systemd(Runs(), folder=tmp_path / "u", user="ada")
+    assert "OnCalendar=Mon *-*-* 09:00:00\nPersistent=true\n" in sd.wanted(s, PurePosixPath("/py"))["timer"]
+    assert schedule._cron_when(s) == ["0 9 * * 1"]
+
+
+def test_days_are_read_in_the_weeks_order_with_the_widest_gap(tmp_path, monkeypatch):
+    s = schedule.declared(_registry(tmp_path, monkeypatch, "x: {command: alerts, at: '07:30', days: [fri, MON, mon]}"))[0]
+    assert s.days == ["mon", "fri"] and s.when() == "mon, fri at 07:30" and s.cadence() == 4 * 86400.0
+    assert schedule._cron_when(s) == ["30 7 * * 1,5"]
+    one = schedule.declared(_registry(tmp_path, monkeypatch, "x: {command: alerts, at: '07:30', days: sun}"))[0]
+    assert one.days == ["sun"] and schedule._cron_when(one) == ["30 7 * * 7"]
+
+
+@pytest.mark.parametrize("entry, error", [
+    ("x: {command: alerts, at: '09:00', days: [someday]}", "days: someday"),
+    ("x: {command: alerts, at: '09:00', days: {mon: true}}", "days is a list of days"),
+    ("x: {command: alerts, every: 1h, days: [mon]}", "at is missing"),
+])
+def test_bad_days_are_refused(tmp_path, monkeypatch, entry, error):
+    errors = schedule.check(_registry(tmp_path, monkeypatch, entry))
+    assert len(errors) == 1 and error in errors[0], errors
+
+
+def test_a_task_whose_days_changed_is_updated_and_the_scheduler_export_reads_the_same(tmp_path, monkeypatch):
+    s = schedule.declared(_registry(tmp_path, monkeypatch, WEEKLY))[0]
+    win = _win(Runs())
+    want = win.wanted(s, PY)
+    export = want.replace("<Monday />", "<Monday />\n      ")   # the Task Scheduler writes its XML back indented
+    assert win.same(export, want)
+    assert not win.same(want.replace("Monday", "Tuesday"), want)
+    daily = schedule.Schedule(s.name, s.project, s.command, at=s.at)
+    assert not win.same(win.wanted(daily, PY), want)
+
+
 def test_the_system_is_chosen_by_what_runs_here(monkeypatch):
     monkeypatch.setattr(schedule.shutil, "which", lambda n: f"/usr/bin/{n}")
     assert isinstance(schedule.system(Runs(), "win32"), schedule.Windows)
