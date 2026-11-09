@@ -129,6 +129,16 @@ def _stub_edges(project: projects.Project, store: Path) -> list[str]:
     return out
 
 
+def _take_defaults(root: Path) -> bool:
+    """The low-stakes defaults due now, taken (24 h without an answer: brain.defaults), before any view is written:
+    the records' graph and the kanban then show those DDRs answered. False when the project has no DDR."""
+    if not (root / records.RECORDS_DIR / "ddr").is_dir():
+        return False
+    for ddr_id in defaults.finalize(root, _now()):
+        print(f"{ddr_id}: taken by default (brain decision defaulted)")
+    return True
+
+
 def _sync_store(args, root: Path, store: Path) -> int:
     project = _project(args, root)
     owner = not project.shares_root_with   # the root's own passes are its owner's
@@ -139,8 +149,26 @@ def _sync_store(args, root: Path, store: Path) -> int:
         return 1
     if _activate_specs(args, root, store):
         return 1
-    featured = features.has_type(graph.load_schema(store))
-    if featured and not getattr(args, "offline", False):   # before the graph sync: it reads the statuses
+    if not owner:   # a project that shares the root: its store's passes only, never the root's defaults or views
+        rc = _sync_graph(args, project, root, store, layout, owner=False)
+        if rc:
+            return rc
+        print(_shared_line(project))
+        _write_module_view(project, root, store)
+        return graph.research_graph(root, store, *layout, "kanban", "--write")
+    ddrs = _take_defaults(root)
+    queued = []
+    try:
+        return _sync_views(args, project, root, store, layout, ddrs, queued)
+    finally:
+        if ddrs and not queued:   # a view step failed after the defaults were taken: the queue view still shows them
+            _queue_changed(root, args)
+
+
+def _sync_graph(args, project: projects.Project, root: Path, store: Path, layout: list[str], *, owner: bool) -> int:
+    """The features' statuses (before the graph sync: it reads them), the graph sync with the store's layout, then the
+    edges to a decision stub the store no longer derives; 0, else the failing code."""
+    if features.has_type(graph.load_schema(store)) and not getattr(args, "offline", False):
         repos = [(c.name, c.path) for c in _repos(args, root) if c.path.is_dir()]
         if not repos and not owner:   # a project that spans no repo: its features are named by the root's PRs
             repos = [(projects._repo_folder(root).lower(), root)]
@@ -149,12 +177,11 @@ def _sync_store(args, root: Path, store: Path) -> int:
     stubs = _stub_edges(project, store)   # a stub it derived before is gone: an edge to it dangles
     for line in stubs:
         print(f"error: {line}")
-    if rc or stubs:
-        return rc or 1
-    if not owner:
-        print(_shared_line(project))
-        _write_module_view(project, root, store)
-        return graph.research_graph(root, store, *layout, "kanban", "--write")
+    return rc or (1 if stubs else 0)
+
+
+def _graph_views(args, root: Path, store: Path) -> int:
+    """The records' graph and the links graph, after the graph sync; 1 when the links graph cannot be written."""
     if _records_view(root, store):
         n, e, left = records.write_graph(root, store)
         print(f"records graph: {n} node(s), {e} edge(s)" + (f", {left} link(s) to nodes not in the store"
@@ -167,13 +194,23 @@ def _sync_store(args, root: Path, store: Path) -> int:
         except AuditError as exc:
             print(f"brain: links graph not written: {exc}", file=sys.stderr)
             return 1
-    if featured and _features_view(args, root, store, write=True):   # after the links: FEATURES.md shows them
+    return 0
+
+
+def _sync_views(args, project: projects.Project, root: Path, store: Path, layout: list[str], ddrs: bool,
+                queued: list) -> int:
+    """The views the root's owner writes after the defaults are taken; ``queued`` is set once the queue view is."""
+    rc = _sync_graph(args, project, root, store, layout, owner=True)
+    if rc:
+        return rc
+    if _graph_views(args, root, store):
         return 1
+    if features.has_type(graph.load_schema(store)) and _features_view(args, root, store, write=True):
+        return 1   # after the links: FEATURES.md shows them
     _write_module_view(project, root, store)
-    if (root / records.RECORDS_DIR / "ddr").is_dir():
-        for ddr_id in defaults.finalize(root, _now()):   # 24 h without an answer: the low-stakes default is final
-            print(f"{ddr_id}: taken by default (brain decision defaulted)")
+    if ddrs:
         _queue_changed(root, args)
+        queued.append(True)
     if neutral.applies(root) and render.main(root, "claude", do_write=True):   # the marketplace from the source
         return 1
     for line in render.keep_current(root, project.name, fix=True):   # AGENTS.md and the like, here

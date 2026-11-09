@@ -74,6 +74,37 @@ def test_cli_ddr_lifecycle(store, capsys):
     assert cli.main(["--root", str(root), "record", "check"]) == 0
 
 
+def test_9_record_ddr_answers_only_what_the_session_captured(store, monkeypatch, tmp_path):
+    """Review of #19, finding 9: an agent's session whose relayed answer brain decision answer refuses could record it
+    with brain record ddr --id X --answer (or --file --replace) as the owner's."""
+    from brain import answers
+    root = _root(store)
+    records.write(root, "ddr", DDR)
+    f = root / "records" / "ddr" / f"{DDR['id']}.yaml"
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-receiver")
+    base = ["--root", str(root), "record", "ddr"]
+    for extra in (["--answer", "brain", "--by", "Ada"], ["--other", "medium please"]):
+        with pytest.raises(SystemExit, match="never recorded"):
+            cli.main(base + ["--id", DDR["id"], *extra])
+    answered = dict(DDR, status="answered", answer={"at": "2026-10-30T11:00:00Z", "by": "Ada", "via": "chat",
+                                                    "choices": ["brain"]})
+    other = tmp_path / "answered.yaml"
+    other.write_text(yaml.safe_dump(answered), encoding="utf-8")
+    with pytest.raises(SystemExit, match="never recorded"):
+        cli.main(base + ["--file", str(other), "--replace"])
+    assert yaml.safe_load(f.read_text(encoding="utf-8"))["status"] == "pending"
+    assert cli.main(base + ["--id", DDR["id"], "--read", "--session", "s-1"]) == 0   # a stamp with no answer
+    answers._append(answers.CAPTURED, [{"v": 1, "id": "ans-1", "at": "2026-10-30T11:00:00Z", "ddr": DDR["id"],
+                                        "project": "demo", "session": "sess-receiver", "answer": "brain",
+                                        "choices": ["brain"]}])
+    assert cli.main(base + ["--id", DDR["id"], "--answer", "brain"]) == 0   # this session's question tool's
+    assert cli.main(base + ["--file", str(f), "--replace"]) == 0   # the answer it already holds, unchanged
+    monkeypatch.delenv("CLAUDECODE")
+    assert cli.main(base + ["--id", DDR["id"], "--other", "medium please"]) == 0   # the owner's own terminal
+    assert yaml.safe_load(f.read_text(encoding="utf-8"))["answer"]["other"] == "medium please"
+
+
 def test_cli_imports_the_ledger(store, brain_home):
     root = _root(store)
     (brain_home / "ledger").mkdir(parents=True)
