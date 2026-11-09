@@ -486,6 +486,18 @@ def test_the_release_page_says_one_thing_of_a_release_with_nothing_else_to_do():
     assert "« Nothing to run »" not in page
 
 
+def test_the_tag_section_names_the_theme_and_the_patch_that_cannot_wait():
+    """The policy names the theme in the tag message and cuts a fix that cannot wait from release/X.Y (« 3. The tag »):
+    the tag section shows both, and says that release-tag does not check the theme."""
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    tag = page.split("## 3. The tag", 1)[1].split("\n## ", 1)[0]
+    assert 'git tag -a vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z — theme: what it brings"' in tag
+    assert "git switch release/X.Y" in tag and "release/X.Y` merges back into main" in tag
+    assert "does not check the theme" in tag
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "theme" not in ci.split("  release-tag:", 1)[1]   # what the page says of the job stays true
+
+
 def test_the_release_page_gives_each_standard_step_its_title():
     """The template an Upgrade section copies, so that a patch's steps are the ones the check knows."""
     page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")

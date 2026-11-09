@@ -124,18 +124,24 @@ jobs read the PR, and a schema merged after it would reach the tag with no job h
 
 ## 3. The tag: the owner
 
-From an up-to-date main, at the version PR's merge commit:
+From an up-to-date main, at the version PR's merge commit. The tag message names the release's theme, the one its
+section heading names (« The version policy »):
 
 ```bash
 git switch main
 git pull --ff-only
 git log -1 --oneline                                  # the merge of chore/release-X.Y.Z
 brain check --public --history                        # the stamp the push guard reads
-git tag -a vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z: what it brings"
+git tag -a vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z — theme: what it brings"
 git push origin vX.Y.Z
 ```
 
-CI's `release-tag` job then checks that the tag, both `__version__` and the pin agree. Once it is green,
+**A fix that cannot wait** (« The version policy ») is tagged the same way from `release/X.Y`, at the merge of its
+version PR, instead of main: `git switch release/X.Y`, then `git pull --ff-only` and the lines after it. Then
+`release/X.Y` merges back into main by a PR.
+
+CI's `release-tag` job then checks that the tag, both `__version__` and the pin agree. It does not check the theme of
+the tag message: `release-check` checked it in the section heading, and the owner copies it. Once it is green,
 `brain update --check` on a machine at `vP` shows the new version and its `### Upgrade`. A tag is never moved: a
 mistake is a new version, a patch when its fix needs nothing beyond the standard steps (« The version policy »).
 
