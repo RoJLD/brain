@@ -6,6 +6,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ### Fixes
 
+- `brain.nowindow` also gives no window to a child whose `creationflags` is passed positionally or as `None` (the
+  wrapper skipped the first and raised `TypeError` on the second); its review, which #70 never had.
 - An exec event's end is never before its start (`wi-brain-selftime-end-before-start`): both come from one clock,
   the end clamped to the start; `datetime.now()` against a start rounded up across a millisecond put it 1 ms before,
   now and then, and the schema refused the event (a test failed on CI with `event.end: before start`).

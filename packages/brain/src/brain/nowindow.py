@@ -16,6 +16,7 @@ from typing import Callable
 
 CREATE_NO_WINDOW = 0x08000000
 OWN_CONSOLE = 0x00000010 | 0x00000008   # CREATE_NEW_CONSOLE, DETACHED_PROCESS: neither goes with CREATE_NO_WINDOW
+FLAGS_AT = 13   # creationflags' index among Popen's positional parameters after self (args 0 ... startupinfo 12)
 
 
 def has_console() -> bool:
@@ -26,8 +27,9 @@ def has_console() -> bool:
     return bool(ctypes.windll.kernel32.GetConsoleWindow())
 
 
-def flags(creationflags: int) -> int:
-    """A child's creation flags once it is sure to open no window."""
+def flags(creationflags: int | None) -> int:
+    """A child's creation flags once it is sure to open no window (None, a wrapper's default, is Popen's 0)."""
+    creationflags = creationflags or 0
     return creationflags if creationflags & OWN_CONSOLE else creationflags | CREATE_NO_WINDOW
 
 
@@ -38,7 +40,9 @@ def install(console: Callable[[], bool] = has_console) -> bool:
         return False
 
     def __init__(self, *args, **kwargs):
-        if len(args) < 13:   # creationflags is Popen's 13th positional parameter: one passed there is left as it is
+        if len(args) > FLAGS_AT:   # passed positionally: that one is the child's flags
+            args = (*args[:FLAGS_AT], flags(args[FLAGS_AT]), *args[FLAGS_AT + 1:])
+        else:
             kwargs["creationflags"] = flags(kwargs.get("creationflags", 0))
         original(self, *args, **kwargs)
 
