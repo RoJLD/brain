@@ -25,7 +25,7 @@ import argparse
 import os
 import sys
 
-from . import __version__, config, paths, projects, selftime
+from . import __version__, config, nowindow, paths, projects, selftime
 from .commands import _registry as registry
 from .commands._common import root_of
 
@@ -70,6 +70,7 @@ def _project_after(parser: argparse.ArgumentParser, skip: set[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    nowindow.install()  # under pythonw.exe, a scheduled task's: each git or gh would otherwise open a window
     if sys.stdout is None:  # pythonw.exe has no console: argparse's help writes to a stream, so give it one
         sys.stdout = open(os.devnull, "w", encoding="utf-8")
     if sys.stderr is None:
