@@ -106,21 +106,30 @@ def _activate_specs(args, root: Path, store: Path) -> int:
 DECISION_STUBS = "_generated_decisions.yaml"   # research_graph's file of the stubs derived from the decision logs
 
 
+def _edge_files(store: Path) -> list[Path]:
+    """A store's hand-written edge files (its generated ones left out)."""
+    return [store / "edges.yaml", *sorted(f for f in (store / "edges").glob("*.yaml")
+                                          if not f.name.startswith(graph.GENERATED_PREFIX))]
+
+
+def _first_stubs(first: Path, store: Path) -> dict[str, str]:
+    """{id: type} of the decision stubs the store ``first`` derives that ``store`` does not hold as a node of its own
+    (one still among its own stubs counts: the next sync drops it)."""
+    here = projects.node_ids(store)
+    return {nid: str(node.get("type") or "decision") for nid, (f, node) in graph.node_index(first).items()
+            if f.name == DECISION_STUBS and here.get(nid, DECISION_STUBS) == DECISION_STUBS}
+
+
 def _stub_edges(project: projects.Project, store: Path) -> list[str]:
     """The edges of a store listed after its project's first to a decision stub that first store derives: the store
     covers no decision log (--no-decisions), so research_graph finds no such node in it. Before
     wi-brain-shared-root-projects every store derived the root's stubs; said with what to do."""
     if not projects._later(project, store):
         return []
-    first = graph.node_index(project.stores[0])
-    here = projects.node_ids(store)
-    files = [store / "edges.yaml", *sorted(f for f in (store / "edges").glob("*.yaml")
-                                           if not f.name.startswith(graph.GENERATED_PREFIX))]
     label, first_label = _store_label(project.root, store), _store_label(project.root, project.stores[0])
-    stub = {nid: str(node.get("type") or "decision") for nid, (f, node) in first.items() if f.name == DECISION_STUBS
-            and here.get(nid, DECISION_STUBS) == DECISION_STUBS}   # still among its own stubs: the next sync drops it
+    stub = _first_stubs(project.stores[0], store)
     out = []
-    for e in (e for f in files for e in graph.load_yaml_list(f) if isinstance(e, dict)):
+    for e in (e for f in _edge_files(store) for e in graph.load_yaml_list(f) if isinstance(e, dict)):
         for nid in (str(e.get("from") or ""), str(e.get("to") or "")):
             if nid in stub:
                 out.append(f"{label}: edge {e.get('from')} -> {e.get('to')}: that {stub[nid]} stub is {first_label}'s "

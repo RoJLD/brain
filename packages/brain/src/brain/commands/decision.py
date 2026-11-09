@@ -193,11 +193,16 @@ def cmd_answer_captured(args, root: Path) -> int:
     return 0
 
 
+def _own_records(projs: list) -> list:
+    """The projects that hold their root's records (a DDR folder, and the root is theirs: a project that shares it
+    leaves them to its owner)."""
+    return [p for p in projs if (p.root / records.RECORDS_DIR / "ddr").is_dir() and not p.shares_root_with]
+
+
 def cmd_defaulted(args, root: Path) -> int:
     """``brain decision defaulted``: the review list of the decisions taken by default (brain.defaults)."""
     now = args.at or _now()
-    scope = [p for p in _scope(args, root) if (p.root / records.RECORDS_DIR / "ddr").is_dir()
-             and not p.shares_root_with]   # the root's records are its owner's
+    scope = _own_records(_scope(args, root))
     if args.seen is not None and answers.agent_session():
         raise decisions.QueueError(f"--seen is {config.name_of()}'s own note that they read the defaults: from their "
                                    "terminal or the cockpit, not an agent's session")
