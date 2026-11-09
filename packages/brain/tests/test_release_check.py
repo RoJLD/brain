@@ -341,6 +341,19 @@ def test_a_patch_with_only_the_standard_steps_passes(repo, capsys):
     assert "a patch of v0.2.5" in text
 
 
+def test_unreleased_numbers_each_owner_action_as_a_step():
+    """docs/release.md: each PR on the way adds its step to Unreleased's ### Upgrade, numbered, beside the standard
+    steps. An owner action written as a bullet is invisible to release_check, which then lets a patch through (#50's
+    review): so Unreleased's ### Upgrade, when it has one, holds no bullet and numbers every standard step."""
+    text = (PACKAGE / "CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0] if "## Unreleased" in text else ""
+    if "### Upgrade" not in unreleased:
+        return
+    upgrade = unreleased.split("### Upgrade", 1)[1].split("\n### ", 1)[0]
+    assert not [line for line in upgrade.splitlines() if line.startswith(("- ", "* "))], upgrade
+    assert release_check.standard_steps_missing(upgrade) == []
+
+
 @pytest.mark.parametrize("version", ["0.2.6", "0.3.0"])
 def test_a_version_without_an_upgrade_section_fails(repo, capsys, version):
     """Every release asks the standard steps of an owner (« The standard steps »): a patch with nothing else to do

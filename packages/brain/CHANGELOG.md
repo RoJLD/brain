@@ -6,25 +6,38 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ### Upgrade
 
-From 0.2.8, the standard steps of the release (install the engine, restart the Claude Code sessions, refresh the public
-stamp). No registered schema, store or format file changes (`access` is an additive key of `projects.yaml`). What an
-owner does beyond them, only where it applies:
+From 0.2.8, in this order. This release newly refuses what passed (a project's second store beside its first, a
+project at a shared root without its own files, an edge of a second store to a root ADR stub, an `access` value other
+than read or write), so it is a minor version, 0.3.0 (`docs/release.md`, « The version policy »). No registered
+schema, store or format file changes (`access` is an additive key of `projects.yaml`). Steps 1 to 3 apply only where
+the registry has what they name; do them before installing, since `brain update` runs `brain sync`.
 
-- An entry `access: read` in `projects.yaml` needs brain 0.2.9 or later on every machine before it lands in a
-  registry: an older brain (0.2.8 and before) notes the unknown key and reads the entry as a full project, at the
-  registry's root with the default store, journal and decision log (`docs/formats.md`). A project that shares its root
-  with another needs the same: an older brain writes its board over its owner's.
-- A registry that lists two projects at one root now loads the second only once it declares its own `stores`,
-  `journal` and `decisions` (the defaults are the first's files): `brain check --all` says what to declare, and
-  `brain --project <it>` says why it is not loaded. A project whose second store sits beside its first (both under
-  `notes/`) has that store refused by `brain sync` until it gets a folder of its own: its board was written over the
-  first's.
-- A project's second store derived the ADR and SDR stubs of the root's decision logs, as its first store does (every
-  store ran with research_graph's defaults); it now covers no decision log (`--no-decisions`), and `brain sync`
-  empties its `_generated_decisions.yaml`. An edge of it to one of those stubs (an item of it `decided_by` an ADR of
-  `notes/decisions.md`) no longer resolves and fails `brain sync` and `brain check`, each naming it (« that ADR stub
-  is notes/graph's only »): before upgrading, move such an edge to the first store or remove it, and drop the
-  `shared_ids` waiver of the stub, which turns stale.
+1. **Move an edge of a later store to a root ADR stub**, where a project lists more than one store. A store after its
+   first derived the ADR and SDR stubs of the root's decision logs, as its first store does (every store ran with
+   research_graph's defaults); it now covers no decision log (`--no-decisions`), and `brain sync` empties its
+   `_generated_decisions.yaml`. An edge of it to one of those stubs (an item of it `decided_by` an ADR of
+   `notes/decisions.md`) no longer resolves and fails `brain sync` and `brain check`, each naming it (« that ADR stub
+   is notes/graph's only »): move such an edge to the first store or remove it, and drop the `shared_ids` waiver of
+   the stub, which turns stale.
+2. **Give a project at a shared root its own files**, where the registry lists two projects at one root. The second is
+   loaded only once it declares its own `stores`, `journal` and `decisions` (the defaults are the first's files);
+   until then no command runs it. `brain check --all` says what to declare, and `brain --project <it>` says why it is
+   not loaded.
+3. **Give a store beside the first a folder of its own**, where a project's second store sits beside its first (both
+   under `notes/`): `brain sync` refuses that store until it has one, since its board was written over the first's.
+4. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
+5. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
+6. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
+   push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
+7. **Wait for every machine before an `access: read` entry or a shared root**: such an entry lands in a registry only
+   once every machine that reads it runs brain 0.3.0 or later. An older brain (0.2.8 and before) notes the unknown key
+   `access` (in CI, under `BRAIN_STRICT`, refuses it) and reads the entry as a full project, at the registry's root
+   with the default store, journal and decision log (`docs/formats.md`); a project that shares its root with another
+   gets its board written over its owner's by an older brain.
+
+Nothing to run for the rest.
 
 ### Added
 
@@ -49,7 +62,9 @@ owner does beyond them, only where it applies:
   logs inside the root; until it does it is not loaded, and `brain check --all` and `--project` say why (fail
   closed: no command writes the owner's files through it; a file of any kind counts, a journal that is the owner's
   decision log too), while the guards and the usage governor keep protecting it (`projects.guarded`: its production
-  checkouts stay refused to edits). A store whose views folder an earlier store at its root uses is refused by
+  checkouts stay refused to edits). An owner skipped for its access value (a typo, or `access: read` on an entry that
+  still names its root) keeps its root and its files: the next project there stays a sharer and never becomes its
+  owner, and `--store` naming the owner's store is refused with the reason (`projects._claimant`). A store whose views folder an earlier store at its root uses is refused by
   `brain sync` (`projects.view_clashes`) and by the checks. The permissions of a project that spans no repo are its
   root's settings, and its features' statuses come from the root's merged PRs. `brain audit --write` from it is
   refused: `notes/audit.md` is the owner's. Without `--all` or `--project`, `brain sync`, `check` and `refresh` at
