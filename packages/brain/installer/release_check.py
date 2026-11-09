@@ -232,8 +232,8 @@ def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
         said.append(f"registered schemas changed since {tag}: {', '.join(changed)}")
         if not upgrade:
             problems.append(f"{changelog}: registered schemas changed since {tag} ({', '.join(changed)}) and the "
-                            f"section ## {version} has no ### Upgrade with something in it: say what an owner does, "
-                            f"or that there is nothing to run")
+                            f"section ## {version} has no ### Upgrade with something in it: number the standard steps and "
+                            f"what an owner does beyond them (docs/release.md, « The standard steps »)")
     if is_patch(tag, version):
         said.append(f"a patch of {tag}: it may hold no schema change and no Upgrade step beyond the standard ones")
     problems += policy(tag, version, changed, upgrade)

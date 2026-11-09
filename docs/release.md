@@ -47,8 +47,8 @@ before a version, so it never judges 0.2.7.
 
 What every release asks of an owner, whatever it changed. A patch's `### Upgrade` numbers these and nothing else, each
 opening with its title in bold as here (a title is compared without its case or a closing `.` or `:`); a minor one
-numbers them too, in their place among its own steps. With nothing else to do, the section says « Nothing to run for
-the rest » after them.
+numbers them too, in their place among its own steps. With nothing else to do, the section says
+« Nothing to run for the rest » after them.
 
 ```markdown
 1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
@@ -89,10 +89,12 @@ One branch, `chore/release-X.Y.Z`, one PR that moves the version and nothing els
 
 **The `### Upgrade` section** is the first thing in the brain's section, and `brain update` prints it. Numbered steps
 for what an owner must do from `vP`, in the order that works, each opening with its title in bold and then its reason
-and what fails until it is done, the standard steps under their own titles; then what needs nothing, said so. Everything else is under `### Changes`. Check it against the `compat-prev` report of
-the PR: what the test had to run, the section says. A release with nothing to do says « Nothing to run ». Each PR on
-the way adds its step to Unreleased's `### Upgrade` and its entry to `### Changes`, so this is a matter of reading them
-in order and numbering them.
+and what fails until it is done, the standard steps under their own titles; then what needs nothing, said so.
+Everything else is under `### Changes`. Check it against the `compat-prev` report of the PR: what the test had to run,
+the section says. Every release numbers at least the standard steps (« The standard steps »), so none has nothing to
+do: a release that asks nothing more says « Nothing to run for the rest » after them. Each PR on the way adds its step
+to Unreleased's `### Upgrade` and its entry to `### Changes`, so this is a matter of reading them in order and
+numbering them.
 
 **The fixture freeze.** `packages/brain/tests/fixtures/formats/<format>/v<N>/` holds what the readers are tested on, and
 it only grows: an `older` file is what a released engine wrote, and is never edited. By hand for now (a `brain fixtures freeze` command is planned,

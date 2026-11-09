@@ -103,6 +103,7 @@ def test_schema_changed_without_an_upgrade_section_fails(repo, capsys):
     rc, text = run(repo, capsys)
     assert rc == 1
     assert "FAILED" in text and CONFIG_SCHEMA in text and "### Upgrade" in text
+    assert "number the standard steps" in text and "nothing to run" not in text
 
 
 def test_schema_changed_with_an_upgrade_section_passes(repo, capsys):
@@ -472,6 +473,17 @@ def test_the_policy_examples_say_they_were_patches_before_it():
             if version in row:
                 assert f"{version}, a patch before this policy, would be 0.Y.0 under it" in row, row
     assert "Every release up to 0.2.7 predates this policy" in policy
+
+
+def test_the_release_page_says_one_thing_of_a_release_with_nothing_else_to_do():
+    """Every Upgrade numbers the standard steps, so no release has nothing to do: « The standard steps » and section 2
+    both say « Nothing to run for the rest », and neither says a bare « Nothing to run »."""
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    standard = page.split("### The standard steps", 1)[1].split("\n## ", 1)[0]
+    version_pr = page.split("## 2. The version PR", 1)[1].split("\n## ", 1)[0]
+    for part in (standard, version_pr):
+        assert "« Nothing to run for the rest »" in part
+    assert "« Nothing to run »" not in page
 
 
 def test_the_release_page_gives_each_standard_step_its_title():
