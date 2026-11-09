@@ -2,7 +2,7 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
-## Unreleased
+## 0.2.6 — 2026-11-09
 
 ### Upgrade
 

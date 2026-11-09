@@ -20,8 +20,8 @@ It holds two distributions, released together under one tag series (`vX.Y.Z` is 
 Python 3.10 or later; `research-graph` depends on networkx and PyYAML.
 
 ```bash
-pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.2.5"
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.5#subdirectory=packages/brain"   # the brain command
+pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.2.6"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.6#subdirectory=packages/brain"   # the brain command
 ```
 
 From an empty machine to a brain of your own (Windows first, Linux and macOS): [`docs/install.md`](docs/install.md).
