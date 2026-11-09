@@ -47,7 +47,7 @@ def test_check_refuses_a_read_only_entry_that_would_hold_a_way_in_and_an_unknown
     errors = projects.check()
     assert ("project upstream: a read-only project holds title and access only, not journal, production, repos, root, "
             "stores (each is a way to write or read into it)") in errors
-    assert "project odd: access is read or write" in errors
+    assert "project odd: access is read or write, not 'maybe'" in errors
     assert not any(e.startswith("project plain") for e in errors)  # access: write is the default, said
     assert list(projects.load()) == ["demo", "plain"]  # what is not write is never loaded: it narrows
     with pytest.raises(SystemExit, match="'odd' is not loaded: access is read or write, not 'maybe'"):
@@ -64,6 +64,38 @@ def test_check_refuses_a_read_only_entry_that_would_hold_a_way_in_and_an_unknown
     folders, _ = guards.registered_repos()
     folders = {os.path.normcase(os.path.abspath(f)) for f in folders}
     assert os.path.normcase(str(upstream)) in folders and os.path.normcase(str(odd)) in folders
+
+
+def test_only_access_read_is_read_only_and_any_other_value_is_invalid_everywhere(tmp_path, monkeypatch, store,
+                                                                                capsys):
+    """access: read alone is a read-only project; a value other than read or write (a typo) is reported as invalid
+    wherever the registry is read, never shown or counted as read only, and never loaded."""
+    assert projects.is_read_only({"access": "read"}) and not projects.bad_access({"access": "read"})
+    assert not projects.is_read_only({"access": "write"}) and not projects.bad_access({"access": "write"})
+    for value in ("wirte", "Read", "", None, True):
+        assert not projects.is_read_only({"access": value}) and projects.bad_access({"access": value}), value
+    root = _registry(tmp_path, monkeypatch, store, "upstream: {access: read}\nodd: {title: Odd, access: wirte}\n")
+    assert list(projects.load()) == ["demo"] and list(projects.readonly()) == ["upstream"]
+    assert projects.invalid_access() == {"odd": "wirte"}
+    assert projects.check() == ["project odd: access is read or write, not 'wirte'"]
+    assert projects.unloaded("odd") == "'odd' is not loaded: access is read or write, not 'wirte'"
+    with pytest.raises(SystemExit, match="'odd' is not loaded: access is read or write, not 'wirte'"):
+        cli.main(["status", "--project", "odd", "--quick"])
+    source = root / "source"
+    (source / "rules" / "scopes").mkdir(parents=True)
+    (source / "packs.yaml").write_text("v: 1\npacks:\n  core: {core: true, rules: [rules/global.md]}\n"
+                                       "  side: {projects: [odd]}\n", encoding="utf-8")
+    (source / "rules" / "global.md").write_text("---\nscope: global\n---\n\n## One\n<!-- id: rule-one -->\n\nText.\n",
+                                                encoding="utf-8")
+    (source / "rules" / "scopes" / "odd.md").write_text("---\ntitle: Odd\n---\n", encoding="utf-8")
+    errors = neutral.check(neutral.load(root))
+    assert "rules/scopes/odd.md: scope 'odd' is not loaded: access is read or write, not 'wirte'" in errors
+    assert "packs.yaml: pack side: project 'odd' is not loaded: access is read or write, not 'wirte'" in errors
+    assert not any("read only" in e or "read-only" in e for e in errors)
+    assert cli.main(["projects"]) == 0
+    assert "odd" not in capsys.readouterr().out
+    data = status.run(list(projects.load().values()), every=True, quick=True)
+    assert data["read_only"] == [{"name": "upstream", "title": ""}] and data["total"]["read_only"] == 1
 
 
 def test_a_valid_read_only_entry_adds_no_guard_and_no_path(tmp_path, monkeypatch, store):

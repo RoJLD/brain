@@ -242,8 +242,26 @@ def is_mount(entry) -> bool:
 
 
 def is_read_only(entry) -> bool:
-    """An entry the brain never writes: ``access`` other than write (read, or a value check() refuses: it narrows)."""
-    return isinstance(entry, dict) and "access" in entry and entry["access"] != "write"
+    """A project the brain reads and never writes: ``access: read``, and only that value (a typo is
+    :func:`bad_access`, never a deliberate read-only project)."""
+    return isinstance(entry, dict) and entry.get("access") == "read"
+
+
+def bad_access(entry) -> bool:
+    """An entry whose ``access`` is neither read nor write: invalid, reported as such (check(), :func:`unloaded`, the
+    neutral source), never loaded (the key narrows: a typo never opens a way in) and never shown as read only."""
+    return isinstance(entry, dict) and "access" in entry and entry["access"] not in ACCESS
+
+
+def invalid_access(root: Path | None = None) -> dict[str, object]:
+    """{name: its access value} of the entries whose access is neither read nor write, in the registry's order."""
+    return {str(name): entry["access"] for name, entry in raw(root).items()
+            if not is_mount(entry) and bad_access(entry)}
+
+
+def _skipped(entry) -> bool:
+    """An entry the registry's walk never loads: a tenant mount, a read-only project, an invalid access."""
+    return is_mount(entry) or is_read_only(entry) or bad_access(entry)
 
 
 def load(root: Path | None = None) -> dict[str, Project]:
@@ -260,15 +278,15 @@ GUARDED_PATH_KEYS = ("root", "production", "repos")
 
 def guarded(root: Path | None = None) -> list[Project]:
     """Every project a guard protects (brain.guards, brain.governor): the loaded ones, those at a shared root that
-    are not loaded yet, and every entry the walk skips as read only (``access: read``, or an access value check()
-    refuses) that still names a local path. A refusal to load never lifts a guard: a typo in ``access``, or
-    ``access: read`` added to a project that has a production checkout, keeps its checkouts refused to edits while
-    brain check is red. A valid read-only entry (title and access only) names no path, so it adds nothing."""
+    are not loaded yet, and every entry the walk skips as read only (``access: read``) or as invalid (an access value
+    check() refuses, :func:`bad_access`) that still names a local path. A refusal to load never lifts a guard: a typo
+    in ``access``, or ``access: read`` added to a project that has a production checkout, keeps its checkouts refused
+    to edits while brain check is red. A valid read-only entry (title and access only) names no path, so it adds nothing."""
     loaded, refused = _load(root)
     out = list(loaded.values()) + [p for p, _ in refused.values()]
     f = registry_file(root)
     for name, entry in raw(root).items():
-        if is_mount(entry) or not is_read_only(entry) or not any(k in entry for k in GUARDED_PATH_KEYS):
+        if is_mount(entry) or not _skipped(entry) or not any(k in entry for k in GUARDED_PATH_KEYS):
             continue
         try:
             out.append(_project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent)))
@@ -285,7 +303,7 @@ def _load(root: Path | None = None) -> tuple[dict[str, Project], dict[str, tuple
     owners: dict[str, str] = {}
     held: dict[str, dict[str, tuple[str, str]]] = {}   # root -> normalised path -> (the project that holds it, kind)
     for name, entry in raw(root).items():
-        if is_mount(entry) or is_read_only(entry):
+        if _skipped(entry):
             continue
         entry = entry if isinstance(entry, dict) else {}
         p = _project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent))
@@ -352,7 +370,7 @@ def readonly(root: Path | None = None) -> dict[str, ReadOnly]:
     ``access: read``: another value is a typo that check() names, never a deliberate read-only project."""
     out = {}
     for name, entry in raw(root).items():
-        if is_read_only(entry) and entry["access"] == "read":
+        if is_read_only(entry):
             title = entry.get("title")
             out[str(name)] = ReadOnly(str(name), title if isinstance(title, str) else "")
     return out
@@ -383,9 +401,9 @@ def unloaded(name: str, root: Path | None = None) -> str:
     if is_mount(entry):
         return (f"{name!r} is a tenant mount: another brain, opaque, that the operator does not read into (its state "
                 "comes from its contract export)")
+    if bad_access(entry):   # a typo, named as one: brain check --all refuses it the same way
+        return f"{name!r} is not loaded: access is read or write, not {entry['access']!r}"
     if is_read_only(entry):
-        if entry["access"] != "read":   # a typo, named as one: brain check --all refuses it the same way
-            return f"{name!r} is not loaded: access is read or write, not {entry['access']!r}"
         return f"{name!r} is read only: the brain reads it and never writes it"
     refused = _load(root)[1].get(name)
     return f"{name!r} is not loaded: {'; '.join(refused[1])}" if refused else ""
@@ -637,8 +655,8 @@ def check(root: Path | None = None) -> list[str]:
         if is_mount(entry):
             errors += _check_mount(f"tenant {name}", entry)
             continue
-        if "access" in entry and entry["access"] not in ACCESS:
-            errors.append(f"{where}: access is read or write")   # not loaded until it is one
+        if bad_access(entry):
+            errors.append(f"{where}: access is read or write, not {entry['access']!r}")   # not loaded until it is one
             continue
         if is_read_only(entry):
             errors += _check_read_only(where, entry)
