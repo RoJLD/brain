@@ -2,6 +2,14 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+### Fixes
+
+- An exec event's end is never before its start (`wi-brain-selftime-end-before-start`): both come from one clock,
+  the end clamped to the start; `datetime.now()` against a start rounded up across a millisecond put it 1 ms before,
+  now and then, and the schema refused the event (a test failed on CI with `event.end: before start`).
+
 ## 0.2.7 — 2026-11-09
 
 ### Upgrade
