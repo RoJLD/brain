@@ -13,8 +13,10 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   release has a theme; a fix that cannot wait is a patch cut from the last tag; a release a week, the review fixes on
   it. CI's `release-check` now refuses a patch whose registered schemas changed since the last tag or whose
   `### Upgrade` numbers a step beyond the three standard ones (by their bold titles: **Install the engine**,
-  **Restart the Claude Code sessions**, **Refresh the public stamp**), and a brain section heading with no theme
-  (`## X.Y.Z — YYYY-MM-DD — theme`). 0.2.7 is the last release before the policy.
+  **Restart the Claude Code sessions**, **Refresh the public stamp**), a brain section heading with no theme
+  (`## X.Y.Z — YYYY-MM-DD — theme`), and a brain section that repeats an entry an earlier section released (a fix
+  that cannot wait, left in main's `## Unreleased` when `release/X.Y` merged back). 0.2.7 is the last release before
+  the policy.
 - The merge driver after the review of #21 (`wi-brain-mergedriver-review-fixes`): a driver that cannot run (its
   launcher gone, an engine without it) no longer leaves ours alone with no conflict marker: its command falls back to
   `git merge-file` when it wrote nothing (exit 2 or more); `brain merge-driver install --apply` rewrites an older

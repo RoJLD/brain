@@ -378,7 +378,40 @@ def test_a_minor_version_may_ask_anything(repo, capsys):
     assert run(repo, capsys)[0] == 0
 
 
-@pytest.mark.parametrize("after_the_date", ["", " ", " —", " — :", " - "])
+HOTFIX = "- A guard no longer refuses every commit: it reads the config\n  before the index.\n"
+
+
+def test_an_entry_a_patch_from_release_x_y_released_fails_in_the_next_version(repo, capsys):
+    """The fix merged on main, shipped in 0.2.6 from release/0.2; release/0.2 merged back and main's Unreleased kept it."""
+    versions(repo, "0.3.0")
+    write(repo, ROOT_LOG, "# Changelog\n\n## 0.3.0 — 2026-11-16\n\n- Nothing new.\n\n## 0.2.6 — 2026-11-10\n\n- Same.\n")
+    write(repo, BRAIN_LOG, f"# Changelog\n\n## 0.3.0 — 2026-11-16 — A theme\n\n### Fixes\n\n- Another fix.\n"
+                           f"{HOTFIX.replace('it reads', 'it  reads')}\n"
+                           f"## 0.2.6 — 2026-11-10 — The guard\n\n### Fixes\n\n{HOTFIX}\n"
+                           "## 0.2.5 — 2026-11-04\n\n### Upgrade\n\n1. An old step.\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert "the section ## 0.3.0 repeats an entry that 0.2.6 released: A guard no longer refuses" in text
+    assert "Another fix" not in text
+
+
+def test_entries_are_bullets_with_their_continuation_lines():
+    log = ("## Unreleased\n\n- Pending.\n\n## 0.2.6 — 2026-11-10 — T\n\n### Fixes\n\n- One\n  two.\n- Three.\n"
+           "Not a bullet.\n  - nor this.\n\n## 0.2.5 — 2026-11-04\n\n1. A step.\n- Pending.\n")
+    assert release_check.entries(log) == {"0.2.6": ["One two.", "Three."], "0.2.5": ["Pending."]}
+    assert release_check.entries_already_released(log, "0.2.6") == []
+    assert release_check.entries_already_released(log + "\n## 0.2.4 — 2026-11-01\n\n- Three.\n", "0.2.6") == [
+        ("Three.", "0.2.4")]
+
+
+def test_the_brain_changelog_repeats_no_released_entry():
+    log = (ROOT / BRAIN_LOG).read_text(encoding="utf-8")
+    for version in release_check.entries(log):
+        assert release_check.entries_already_released(log, version) == [], version
+
+
+@pytest.mark.parametrize("after_the_date",["", " ", " —", " — :", " - "])
 def test_a_section_heading_without_a_theme_fails(repo, capsys, after_the_date):
     versions(repo, "0.2.6")
     changelogs(repo, "0.2.6", theme=after_the_date)
@@ -517,6 +550,7 @@ def test_the_tag_section_names_the_theme_and_the_patch_that_cannot_wait():
     assert 'git tag -a vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z — theme: what it brings"' in tag
     assert "git switch release/X.Y" in tag and "release/X.Y` merges back into main" in tag
     assert "does not check the theme" in tag
+    assert "takes out of main's `## Unreleased` every entry that `## X.Y.Z+1`" in tag
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "theme" not in ci.split("  release-tag:", 1)[1]   # what the page says of the job stays true
 

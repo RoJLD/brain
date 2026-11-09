@@ -26,13 +26,15 @@ From 1.0 on, the first number takes the middle one's place for a change that bre
   from `vX.Y.Z` (made once per minor) takes it by cherry-pick with its CHANGELOG entry, and the version PR of
   `X.Y.Z+1` targets that branch. The tag is cut there (« 3. The tag », from `release/X.Y` instead of main), then
   `release/X.Y` merges back into main by a PR, so that the tag is in main's history and the next `compat-prev`
-  upgrades from it. It holds the fix and nothing else, so it needs nothing beyond the standard steps.
+  upgrades from it; that PR takes the fix's entry out of main's `## Unreleased`, since `## X.Y.Z+1` now holds it. It
+  holds the fix and nothing else, so it needs nothing beyond the standard steps.
 - **The cadence**: a release a week, the wave planned for it with its theme; a week with nothing merged has none. The
   review fixes of a wave's PRs are released on the cadence, in the next wave, never as a patch of their own unless
   they are a fix that cannot wait.
 - **`release-check` refuses** a patch (X.Y the last tag's, Z after it) when a registered schema changed since `vP`, or
   when its `### Upgrade` numbers a step whose bold title is not a standard step's; and any version whose brain section
-  heading names no theme after its date. It reads files and titles, not meanings: a step written as prose, or a
+  heading names no theme after its date, or whose brain section repeats an entry an earlier section released (a fix
+  that cannot wait, left in `## Unreleased` by the merge back). It reads files and titles, not meanings: a step written as prose, or a
   change that newly refuses with no step for it, is the version PR's author to catch, with « Read what changed » below.
 
 Every release up to 0.2.7 predates this policy and was cut as a patch, the ones that would now be minor versions
@@ -114,7 +116,8 @@ wi-brain-old-store-fixture):
   is not the last tag's. It fails when a registered schema changed since the last tag and this version's section has no
   `### Upgrade` with something in it, when the two `__version__`, the pin, `brain_version` and the two dated sections
   do not agree, when the brain's section names no theme, or when a patch breaks the version policy (a schema change, a
-  step beyond the standard ones). Run it before pushing: `python packages/brain/installer/release_check.py`.
+  step beyond the standard ones), or when the brain's section repeats an entry an earlier section released. Run it
+  before pushing: `python packages/brain/installer/release_check.py`.
   It reads files, not meanings: a section can be there and wrong, and `permissions.yaml`, whose keys are constants in
   `brain.permissions`, has no file for it to compare (wi-brain-schema-diff compares keys). This list still applies.
 - **`compat-prev`** installs `vP`, writes every registered format, installs this checkout over it, runs the store plan,
@@ -141,7 +144,8 @@ git push origin vX.Y.Z
 
 **A fix that cannot wait** (« The version policy ») is tagged the same way from `release/X.Y`, at the merge of its
 version PR, instead of main: `git switch release/X.Y`, then `git pull --ff-only` and the lines after it. Then
-`release/X.Y` merges back into main by a PR.
+`release/X.Y` merges back into main by a PR, which takes out of main's `## Unreleased` every entry that `## X.Y.Z+1`
+now holds: the next version PR's `release-check` refuses a section that repeats an entry already released.
 
 CI's `release-tag` job then checks that the tag, both `__version__` and the pin agree. It does not check the theme of
 the tag message: `release-check` checked it in the section heading, and the owner copies it. Once it is green,
