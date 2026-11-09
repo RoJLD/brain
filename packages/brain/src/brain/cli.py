@@ -22,6 +22,7 @@ levels) is declared under alerts: (brain.alerts).
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from . import __version__, config, paths, projects, selftime
@@ -69,6 +70,10 @@ def _project_after(parser: argparse.ArgumentParser, skip: set[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.stdout is None:  # pythonw.exe has no console: argparse's help writes to a stream, so give it one
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
     for stream in (sys.stdout, sys.stderr):  # records and logs are UTF-8; a pipe on Windows defaults to cp1252
         if hasattr(stream, "reconfigure") and not stream.isatty():
             stream.reconfigure(encoding="utf-8", errors="replace")
