@@ -21,6 +21,11 @@ Where the tree comes from, the first that knows wins:
               start_session call wrote), the parent of a session the app never knew (a command-line session, another
               machine's ledger), read from the token ledger as ``brain usage`` last left it.
 
+The lineage of a session the app knows is the app's alone: a session detached to the top level (``lineageDetached``,
+a hand-over's session living on after its master) has no parent (``detached_from`` keeps the old one), and a parent
+its file no longer names does not come back from the ledger or the briefs. The app's id in the environment is taken only when the
+app's file of it names this session's transcript (:func:`host_for`: a nested ``claude`` inherits its outer session's).
+
 A session's role is computed, never stored: ``master`` (it started sessions), ``sub`` (a session started it),
 ``relay`` (both), ``solo``. Its state: ``archived`` (the app's), ``ended`` (its SessionEnd event), else the cockpit's
 reading of its transcript's tail (``running``, ``asking``, ``idle``, ``stale``); ``live`` is any state but archived and
@@ -80,10 +85,26 @@ def here(env=None) -> dict:
             "host_id": host if HOST_RE.match(host) else ""}
 
 
-def stamp(env=None) -> dict:
-    """The ids a record of this session carries (scale study gap 19): {host_id, machine} when the app's id is known,
-    {} otherwise; the transcript's id is the record's own ``by`` or ``session``."""
-    h = here(env)["host_id"]
+def host_for(session: str = "", env=None) -> str:
+    """The app's id of ``session`` (else of this process's session) from the environment; '' when the app's own file
+    of that id names another transcript. A ``claude`` started from a desktop session's shell inherits that session's
+    ``CLAUDE_CODE_HOST_SESSION_ID``: it is not the nested session's (review of #34, finding 50). A file that names no
+    transcript yet (a session just started) does not refuse the id. It assumes the app's file always names the
+    session's current transcript, a /clear included (not yet checked against a real /clear in the desktop app; were
+    it wrong, the new transcript would get '' here: see ``alerts._live_now`` for what the master's alert does then)."""
+    me = here(env)
+    host, sid = me["host_id"], session or me["session"]
+    if not host or not sid:
+        return host
+    named = app_meta(host).get("session")
+    return host if not named or named == sid else ""
+
+
+def stamp(env=None, session: str = "") -> dict:
+    """The ids a record of this session carries (scale study gap 19): {host_id, machine} when the app's id is known
+    and is this session's (:func:`host_for`), {} otherwise; the transcript's id is the record's own ``by`` or
+    ``session``."""
+    h = host_for(session, env)
     if not h:
         return {}
     from .timing import host
@@ -243,6 +264,27 @@ def _started_at(node: dict) -> float:
     return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
 
 
+LINEAGE = ("parent", "task")  # what the app's spawnedFrom says of a session's place: the app's file alone decides it
+
+
+def _detach(node: dict) -> dict:
+    """An app session detached to the top level (``lineageDetached``: the app's « Detach to top level », a hand-over's
+    session living on after its master): no parent, the old one kept as ``detached_from`` (review of #34, finding
+    27)."""
+    if node.get("detached") is True and node.get("parent"):
+        node["detached_from"] = node.pop("parent")
+        node.pop("task", None)
+    return node
+
+
+def alive(node: dict, ends: dict[str, str] | None = None) -> bool:
+    """A session is live until the app archives it; its recorded end counts only for a session the app does not
+    know, since the app resumes its own on a message (as :func:`state_of` reads it; review of #34, finding 24)."""
+    if node.get("archived"):
+        return False
+    return node.get("source") == "app" or (node.get("session") or "") not in (ends or {})
+
+
 class Tree:
     """Every session the app, the ledger and the briefs know, by key (the app's id when known, else the
     transcript's), with the indexes that resolve an id or a name, and each one's parent and children."""
@@ -254,7 +296,7 @@ class Tree:
         self.by_session: dict[str, str] = {}
         self.ends = ends or {}
         for meta in (app or {}).values():
-            self._add({**meta, "source": "app"})
+            self._add(_detach({**meta, "source": "app"}))
         for sid, ev in (starts or {}).items():
             self._merge_start(sid, ev)
         for child, parent in (families or {}).items():  # the brief hash: transcript ids on both sides
@@ -273,21 +315,27 @@ class Tree:
         return key
 
     def _merge_start(self, sid: str, ev: dict) -> None:
-        """A SessionStart event: a node of its own, else what the app's file has forgotten (the file wins)."""
+        """A SessionStart event: a node of its own, else what the app's file has forgotten (the file wins). The
+        lineage of a session the app knows is the app's alone: a parent its file no longer names was removed (or
+        detached), and the event does not bring it back (review of #34, finding 27)."""
         key = self.by_session.get(sid) or ev.get("host_id") or sid
         node = self.nodes.get(key)
         if node is None:
             self._add({**ev, "source": "ledger"})
             return
+        lineage = LINEAGE if node.get("source") == "app" else ()
         for k, v in ev.items():
-            node.setdefault(k, v)
+            if k not in lineage:
+                node.setdefault(k, v)
         self.by_session.setdefault(sid, key)
 
     def _merge_family(self, child: str, parent: str) -> None:
-        """The brief hash's parent of ``child``, unless a better source gave one; either may be new."""
+        """The brief hash's parent of ``child``, unless a better source gave one; either may be new. The lineage of a
+        session the app knows is the app's alone: a session it detached or whose ``spawnedFrom`` it removed gets no
+        parent from the briefs either (review of #34, finding 27, as ``brain sessions`` loads the tree by default)."""
         key = self.by_session.get(child) or self._add({"session": child, "source": "briefs"})
         node = self.nodes[key]
-        if node.get("parent"):
+        if node.get("parent") or node.get("source") == "app":
             return
         if parent not in self.by_session:
             self._add({"session": parent, "source": "briefs"})
@@ -471,6 +519,16 @@ def last_wrap_up(records: list[dict]) -> dict:
     return {}
 
 
+def last_turn(records: list[dict]) -> list[dict]:
+    """The records of the turn ``records`` end with: those after its last prompt (the cockpit's reading). A wrap-up
+    from an earlier turn, its question answered since, is not this turn's (review of #34, finding 51)."""
+    from . import cockpit
+    for i in range(len(records) - 1, -1, -1):
+        if cockpit._prompt(records[i]) and not records[i].get("isMeta"):
+            return records[i + 1:]
+    return records
+
+
 def last_text(records: list[dict]) -> str:
     """The last final message of the session's turn: the text of its last assistant record that has one."""
     for r in reversed(records):
@@ -514,7 +572,7 @@ def build_report(session: str, records: list[dict], sr: dict, meta: dict, plan_s
     ids, its plan, its pending DDRs and the items its brief names (the budget watch's); texts cut to
     :data:`REPORT_TEXT` characters and secret-scanned."""
     from . import cockpit
-    wrap, final, turn_ = last_wrap_up(records), last_text(records), cockpit.turn(records)
+    wrap, final, turn_ = last_wrap_up(last_turn(records)), last_text(records), cockpit.turn(records)
     plan_steps = plan_steps or []
     named = " ".join([str(wrap.get("recap") or ""), str(wrap.get("ask") or ""), final])
     blocked, waits, nxt = _waits(wrap, turn_, plan_steps)
@@ -656,15 +714,17 @@ def tree_lines(tree: Tree, roots: list[str], now: float | None = None, reports: 
 
 
 def families(tree: Tree, now: float | None = None, hours: float = 24.0) -> list[str]:
-    """The roots of the families with a member active in the last ``hours`` and not archived, newest first."""
+    """The roots of the families with a member active in the last ``hours`` and not archived, newest first: a
+    member's last activity is :func:`last_seen`'s (the app's, else its SessionStart), so a ledger-only or brief-only
+    member with no date in the window does not keep its family (review of #34, finding 55)."""
     now = time.time() if now is None else now
     floor = (now - hours * 3600) * 1000
     keep: dict[str, float] = {}
     for key, node in tree.nodes.items():
         if node.get("archived") or not (tree.children.get(key) or node.get("parent")):
             continue
-        act = float(node.get("active") or 0)
-        if act and act < floor:
+        act = last_seen(node)
+        if act < floor:
             continue
         root = tree.root(key)
         keep[root] = max(keep.get(root, 0.0), act)
@@ -799,27 +859,51 @@ def _stamped_ids(d: dict):
                 yield where, st, ident
 
 
-def unknown_ids(ddrs: list[tuple[Path, dict]], tree: Tree | None = None) -> tuple[list[str], list[str]]:
+REFUSE_DAYS = 7  # a stamp this recent whose session is unknown is refused; an older one, only warned about
+
+
+def _recent(st: dict, floor: float) -> bool:
+    """The stamp was written after ``floor`` (seconds since the epoch); a stamp without a readable date is not."""
+    dt = transcript.parse_ts(str(st.get("at") or ""))
+    if dt is None:
+        return False
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp() >= floor
+
+
+def _judge(line: str, ident: str, st: dict, me: str, app_seen: bool, floor: float) -> tuple[str, str]:
+    """('refuse' | 'warn' | '', the message) for one stamp whose id matches no session."""
+    if not HOST_RE.match(ident):
+        return "refuse", f"{line} (not an app id: local_ and a UUID)"
+    if st.get("machine") == me and _recent(st, floor):
+        return "refuse", f"{line} on {me}"
+    if not app_seen:
+        return "", ""
+    if st.get("machine") == me:
+        return "warn", f"{line} on {me} (stamped over {REFUSE_DAYS} days ago: its session may have left the app " \
+                       "and the ledger's two months since)"
+    return "warn", f"{line} here" + (f" (stamped on {st['machine']})" if st.get("machine") else "")
+
+
+def unknown_ids(ddrs: list[tuple[Path, dict]], tree: Tree | None = None,
+                now: float | None = None) -> tuple[list[str], list[str]]:
     """(refusals, warnings) for the ``local_`` ids the DDRs carry: a stamp written on this machine (its ``machine``)
-    whose app id matches no session the app or the ledger knows is refused, as is one that is not an app id at all;
-    one written elsewhere, or before stamps named their machine, is a warning only when the app is on this machine.
-    Nothing when neither knows a session."""
+    in the last :data:`REFUSE_DAYS` days whose app id matches no session the app or the ledger knows is refused, as
+    is one that is not an app id at all; an older one (its session may have been removed from the app and its
+    SessionStart left the ledger's two months since: the refusal would never clear on an append-only record; review of
+    #34, finding 23), one written elsewhere, or before stamps named their machine, is a warning only when the app is
+    on this machine. Nothing when neither knows a session."""
     from .timing import host
-    tree = tree or Tree(app_index(), ledger_events()[0])
+    tree = tree or Tree(app_index(), ledger_events(now)[0])
     if not tree.app_seen and not tree.nodes:
         return [], []
     me = host()
+    floor = (time.time() if now is None else now) - REFUSE_DAYS * 86400
     known = {n.get("host_id") for n in tree.nodes.values() if n.get("host_id")}
-    refused, warned = [], []
+    out: dict[str, list[str]] = {"refuse": [], "warn": [], "": []}
     for f, d in ddrs:
         for where, st, ident in _stamped_ids(d):
-            if ident in known:
-                continue
-            line = f"{d.get('id') or f.name}: {where} names {ident}, which matches no session"
-            if not HOST_RE.match(ident):
-                refused.append(f"{line} (not an app id: local_ and a UUID)")
-            elif st.get("machine") == me:
-                refused.append(f"{line} on {me}")
-            elif tree.app_seen:
-                warned.append(f"{line} here" + (f" (stamped on {st['machine']})" if st.get("machine") else ""))
-    return refused, warned
+            if ident not in known:
+                line = f"{d.get('id') or f.name}: {where} names {ident}, which matches no session"
+                verdict, text = _judge(line, ident, st, me, tree.app_seen, floor)
+                out[verdict].append(text)
+    return out["refuse"], out["warn"]

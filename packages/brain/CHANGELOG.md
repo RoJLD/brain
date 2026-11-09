@@ -8,6 +8,36 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 - `brain.nowindow` also gives no window to a child whose `creationflags` is passed positionally or as `None` (the
   wrapper skipped the first and raised `TypeError` on the second); its review, which #70 never had.
+- The session tree and the master's watch after the review of #34 (its medium and low findings):
+  - a proposal card (`start_session` with `initiation` `offer` or `own_initiative`) and a call whose result is an
+    error no longer make a session a master: a worker keeps its COST-1 checkpoint at 80 %; the app is asked at each
+    check whether the owner started a session from the card, and a call that starts it by `proposal_id` counts
+    (finding 22);
+  - a budget state kept from before the master's watch asks the app at its next check, as meant (finding 53);
+  - a subagent's tool call no longer uses up a step's notice: the main thread's next call gives it (finding 25);
+  - an unarchived app child with a recorded SessionEnd stays live for the master's watch, its hand-over draft and the
+    cockpit's Kids, as `brain sessions` reads it (`brain.sessions.alive`; finding 24);
+  - `brain alerts` reads a master's liveness and live children from the session tree at each pass: an archived master
+    or all of its children archived close the alert at once (one child of several archived keeps it, one live child
+    fewer; a session the app does not know also ends with its recorded SessionEnd), a master waiting on its children
+    for hours keeps it, and the state of a transcript the app's master has left (after a `/clear`) no longer raises it
+    for up to 14 days (finding 26), assuming the app moves its file's `cliSessionId` to the new transcript after a
+    `/clear` (not yet checked against a real one; were it kept, the earlier transcript's stale alert would stay and the
+    current one would raise none, as the README says);
+  - a session detached to the top level (`lineageDetached`) is no longer its old master's child, and a parent the
+    app's file no longer names does not come back from the SessionStart event (finding 27), nor from the brief hash
+    that `brain sessions`, `sessions tree` and `sessions show` read by default: the briefs give a parent only to a
+    session the app does not know;
+  - `brain check` refuses an unknown `local_` stamp only when it is under 7 days old; an older one is a warning (its
+    session may have left the app and the ledger's two months), so a valid DDR no longer keeps the check red (finding
+    23);
+  - a `claude` started from a desktop session's shell no longer takes that session's app id in its SessionStart
+    event, its session record, the master's watch, its DDR stamps or the resume pack's Session line
+    (`brain.sessions.host_for`; finding 50);
+  - a child's report takes its wait and recap from the wrap-up of its last turn only (finding 51), and the 80 %
+    hand-over draft shows each child's state now, read from its transcript (finding 52);
+  - `brain sessions tree` keeps `--hours` for sessions the app does not know (finding 55), and the options given
+    before `tree` or `show` are no longer reset (finding 56).
 - The merge driver after the review of #21 (`wi-brain-mergedriver-review-fixes`): a driver that cannot run (its
   launcher gone, an engine without it) no longer leaves ours alone with no conflict marker: its command falls back to
   `git merge-file` when it wrote nothing (exit 2 or more); `brain merge-driver install --apply` rewrites an older
@@ -17,6 +47,44 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 - An exec event's end is never before its start (`wi-brain-selftime-end-before-start`): both come from one clock,
   the end clamped to the start; `datetime.now()` against a start rounded up across a millisecond put it 1 ms before,
   now and then, and the schema refused the event (a test failed on CI with `event.end: before start`).
+- The third-party and conflict-marker guards after the review of #26 (`wi-brain-guards-kits-review-fixes`):
+  - `guard.sh` starts Python for `claude` then `plugin`, or `skills` then `add`, whatever comes between: a quoted
+    `claude.exe` (the desktop app's, by its full path), global options (`claude --model opus plugin ...`) and a line
+    continuation no longer skip the guard.
+  - Refused now: a here-string glued to its `<<<` (`bash <<<"$(curl ...)"`, `sh<<<...`), an unquoted `eval $(curl
+    ...)` or `sh -c $(curl ...)`, a shell, `source`, `.` or python reading the download through `/dev/stdin` or
+    `/dev/fd/0` (`curl ... | bash /dev/stdin`, `source /dev/stdin <<< "$(curl ...)"`), `curl ... | python3 -E`.
+  - `claude plugin`: global options before `plugin` and the values of `--config`, `--scope`, `--marketplace`,
+    `--sparse a b` no longer shift the plugin or source checked; every operand is checked, and `plugin install
+    --marketplace SOURCE` is checked as a source. `skills add` through `bun x` and after a launcher's global option
+    (`pnpm --silent dlx`, `npm --yes exec`) is refused; `skills add REPO --list` and `-h` pass.
+  - Pass now: a process substitution a named script reads as data (`python3 analyze.py <(curl ...)`, `bash
+    ./compare.sh <(curl ...)`), and `curl ... | python -I parse.py` (python's `-I` takes no value).
+  - Markers: a merge's resolution commits over content the merged branch already holds (a line counts only when new
+    against every parent); `git add -A`, `-u` or `-p` with no path read the whole worktree from a subfolder, `:/` and
+    exclusions are read as pathspecs, and `-u`/`-p` read no untracked file; `git commit PATH` (`--only`, `-i`) reads
+    PATH's working tree (the secrets and public checks too); a pure `git mv` adds no line; a path with a space (git's
+    TAB) or C-quoted keeps its setext heading; `.qmd`, `.Rmd` and `.txt` headings pass; only the files whose changes
+    hold a marker-like line are read (`git diff -G`), an untracked file is read whole, and a diff git cannot show
+    whole is an error in `errors.log`, never a silent pass.
+  - After the review of #79: a commit in a folder that is no git worktree when the guard runs (missing, or its `git
+    init` later in the call, git's "not a git repository") passes with no `errors.log` entry, as on main, while
+    any other failure of that check (git missing from PATH, a timeout, dubious ownership) is a logged error; a
+    `.txt` heading passes only under a title no longer than its underline (reST's rule), so a bare `=======` left
+    in `requirements.txt` is still refused; bash's option values are no script (`curl ... | bash -o pipefail
+    /dev/stdin`, `| bash -o pipefail`, `| bash -O extglob`, `| bash -eo pipefail`, and an `o` or `O` anywhere in a
+    cluster, one value each: `| bash -oe pipefail`, `| bash -Ox extglob`, refused; a script's own `-s` no longer
+    reads as bash's); a launcher's global option with a value is skipped before its verb (`npm -w pkg exec`, `npm
+    --loglevel silent exec`); npm's Windows shims `claude.cmd`, `claude.ps1` and `skills.cmd` are claude and skills,
+    and the launchers' own (`npx.cmd`, `pnpm.cmd`, `npx.ps1`, `bunx.cmd`) unwrap too: `npx.cmd skills add` and
+    `pnpm.cmd dlx skills add` are refused (`_prog` reads a shim of a launcher, claude or skills; another script keeps
+    its name).
+  - After the second skeptic round of #79: every check reads `bash -c`'s command past the options' values too, as
+    bash does (`bash -euo pipefail -c '...'`, `bash -co pipefail '...'`, `bash --rcfile FILE -c '...'`, `bash -c --
+    '...'`): `bash -euo pipefail -c 'curl ... | sh'`, `... -c 'npx skills add ...'` and a production write behind
+    `-euo pipefail` were not seen. `corepack` is a launcher: `corepack pnpm dlx skills add`, `corepack pnpm@9.12.0
+    dlx ...`, `corepack yarn dlx ...` and `corepack npx skills add` are refused; corepack's own verbs (`enable`,
+    `install`, `up`) run nothing.
 - **The answers' lane, the rest of the review of #19** (wi-brain-answers-fixes). `brain record ddr` applies the
   one-writer rule to an answer it writes (`--id ID --answer/--other`, or a `--file` that adds or changes one): in an
   agent's session only an answer its own question tool captured (finding 9). `brain decision defaulted --apply` and

@@ -16,20 +16,25 @@ for it. What it compares, both read at zero token:
 
 At 80 % of either it injects the checkpoint reminder once as hook context; at 100 % once more (the task may be
 expanded to the next step); both at once when a session starts past 100 %. It never blocks the tool call or the
-session, and a subagent's tool calls count but are not told.
+session, and a subagent's tool calls count but are not told: the notices they find due wait for the main thread's
+next call.
 
-The master's watch (wi-brain-master-watch; ST-3, ST-4, ST-10): a session that has called start_session is a master.
-Its context budget is its brief's, else ``usage.master_budget``, else the model's window (brain.sessions.budget_of),
-and its context steps are 70, 80, 90 and 100 % instead of 80 and 100 (:data:`MASTER_STEPS`). Its children come from
-the desktop app's session files and the SessionStart events (brain.sessions, a closed list of keys; read only when a
-check is due, and only for a master); a child is live until the app archives it or its end is recorded.
+The master's watch (wi-brain-master-watch; ST-3, ST-4, ST-10): a session that has started a session is a master: a
+start_session call the owner asked for (``initiation`` user_asked or none, or a ``proposal_id`` the owner told it to
+start) whose result is not an error, or a child the app's files name. A proposal (``offer``, ``own_initiative``) starts nothing: the app is asked at
+each check whether the owner started one from it. Its context budget is its brief's, else ``usage.master_budget``,
+else the model's window (brain.sessions.budget_of), and its context steps are 70, 80, 90 and 100 % instead of 80 and
+100 (:data:`MASTER_STEPS`). Its children come from the desktop app's session files and the SessionStart events
+(brain.sessions, a closed list of keys; read only when a check is due, and only for a master); a child is live until
+the app archives it (a child the app does not know: until its end is recorded; brain.sessions.alive), and a child
+detached to the top level (``lineageDetached``) is no longer its child.
 
   70 %  the room left in children before 80 %: what is left of the budget over the context one child costs the
         master, measured on its family (its context growth since its first child over the children it saw start),
         else :data:`CHILD_K`;
   80 %  start no new child, hand over to a fresh master and drain yours (answer them, review and merge their PRs,
         archive them; ask the owner nothing new, touch no other master's children), with a draft hand-over note: the
-        live children with both ids, their items and state;
+        live children with both ids, their items and their state now (their transcript's tail);
   90 %  drain only; compact only once no child is alive.
 
 Each step also gives the cost of one wake after the prompt cache expired (the context rewritten at the model's
@@ -136,11 +141,8 @@ def _feed(state: dict, path: Path, main: bool) -> None:
             if t == "assistant":
                 msg = rec.get("message") or {}
                 mid, model = msg.get("id"), msg.get("model")
-                content = msg.get("content")
-                if main and isinstance(content, list):  # each block is in one record only: before the dedupe
-                    state["starts"] = state.get("starts", 0) + sum(
-                        1 for b in content if isinstance(b, dict) and b.get("type") == "tool_use"
-                        and _START_RE.search(str(b.get("name") or "")))
+                if main:  # each block is in one record only: before the dedupe
+                    _count_starts(state, msg.get("content"))
                 if not mid or model == "<synthetic>" or mid in recent:
                     continue
                 recent.append(mid)
@@ -150,21 +152,66 @@ def _feed(state: dict, path: Path, main: bool) -> None:
                 if main:
                     state["ctx"] = part["input"] + part["cache_read"] + part["cache_write"]
                     state["model"] = model or state.get("model") or ""
-            elif (t == "user" and main and state["texts"] < BRIEF_TEXTS and not rec.get("isMeta")
-                  and "toolUseResult" not in rec):
-                text = transcript._text_of((rec.get("message") or {}).get("content"))
-                if not text.strip():
-                    continue
-                state["texts"] += 1
-                if state["texts"] == 1:
-                    state["items"] = list(dict.fromkeys(usage._ID_RE.findall(text)))[:20]
-                m = transcript._BUDGET_RE.search(text) if state["budget"] is None else None
-                if m:
-                    state["budget"] = int(float(m.group(1).replace(",", "."))
-                                          * (1_000 if m.group(2).lower() == "k" else 1_000_000))
+            elif t == "user" and main:
+                _feed_user(state, rec)
     except OSError:
         pass
     del recent[:-_RECENT]
+
+
+def _feed_user(state: dict, rec: dict) -> None:
+    """A user record of the main transcript: a start_session call refused (its result an error), else one of the
+    first user texts (the brief: its items, its context budget)."""
+    content = (rec.get("message") or {}).get("content")
+    if state.get("start_ids"):
+        _refused_starts(state, content)
+    if state["texts"] >= BRIEF_TEXTS or rec.get("isMeta") or "toolUseResult" in rec:
+        return
+    text = transcript._text_of(content)
+    if not text.strip():
+        return
+    state["texts"] += 1
+    if state["texts"] == 1:
+        state["items"] = list(dict.fromkeys(usage._ID_RE.findall(text)))[:20]
+    m = transcript._BUDGET_RE.search(text) if state["budget"] is None else None
+    if m:
+        state["budget"] = int(float(m.group(1).replace(",", "."))
+                              * (1_000 if m.group(2).lower() == "k" else 1_000_000))
+
+
+def _is_start(block) -> bool:
+    return isinstance(block, dict) and block.get("type") == "tool_use" \
+        and bool(_START_RE.search(str(block.get("name") or "")))
+
+
+def _starts_a_child(block: dict) -> bool:
+    """A start_session call that starts a session now: the owner asked for it (``initiation`` user_asked, or none) or
+    it starts a proposal the owner told it to start (``proposal_id``); not a proposal card (``offer``,
+    ``own_initiative``: nothing runs until the owner starts it; review of #34, finding 22)."""
+    inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+    return bool(inp.get("proposal_id")) or inp.get("initiation") in ("user_asked", None)
+
+
+def _count_starts(state: dict, content) -> None:
+    """The start_session calls of an assistant record: one that starts a child counts (its id kept until its result
+    says it was refused); a proposal only asks the app later whether a child came of it (``offers``)."""
+    for b in content if isinstance(content, list) else []:
+        if not _is_start(b):
+            continue
+        if _starts_a_child(b):
+            state["starts"] = state.get("starts", 0) + 1
+            state["start_ids"] = [*state.get("start_ids", []), str(b.get("id") or "")][-_RECENT:]
+        else:
+            state["offers"] = state.get("offers", 0) + 1
+
+
+def _refused_starts(state: dict, content) -> None:
+    """A start_session call whose result is an error (a guard denied it, the app refused it) started nothing."""
+    ids = state["start_ids"]
+    for b in content if isinstance(content, list) else []:
+        if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("is_error") and b.get("tool_use_id") in ids:
+            ids.remove(b["tool_use_id"])
+            state["starts"] = max(0, state.get("starts", 0) - 1)
 
 
 # --- the items' estimates, read once ---
@@ -243,9 +290,10 @@ def children(state: dict) -> list[dict]:
     out = []
     for k in tree.children.get(key, []) if key else []:
         n = tree.nodes[k]
-        out.append({"host_id": n.get("host_id") or "", "session": n.get("session") or "", "name": n.get("name") or "",
-                    "title": n.get("title") or "",
-                    "live": not n.get("archived") and (n.get("session") or "") not in ends})
+        sid = n.get("session") or ""
+        out.append({"host_id": n.get("host_id") or "", "session": sid, "name": n.get("name") or "",
+                    "title": n.get("title") or "", "source": n.get("source") or "",
+                    "live": sessions.alive(n, ends), "ended": ends.get(sid, "")})
         state.setdefault("kids", {}).setdefault(n.get("host_id") or n.get("session") or k, state.get("ctx", 0))
     return out
 
@@ -267,8 +315,22 @@ def wake_cost(state: dict) -> float | None:
     return usage.message_cost({"cache_write": ctx}, model) if ctx and model else None
 
 
+def kid_state(kid: dict, rep: dict) -> str:
+    """A child's state now: its transcript's tail (brain.sessions.state_of: running, asking, idle, stale); what its
+    last report says it waits on while that report is still its state (its turn ended since, or it still asks); the
+    report's turn only without a transcript here (review of #34, finding 52)."""
+    from . import sessions
+
+    node = {"session": kid.get("session") or "", "source": kid.get("source") or ""}
+    now = sessions.state_of(node, {node["session"]: kid["ended"]} if kid.get("ended") else {})
+    if rep.get("waits_on") and now in ("idle", "unknown", rep.get("turn")):
+        return "waits on " + rep["waits_on"][:60]
+    return now if now != "unknown" else rep.get("turn") or "live"
+
+
 def handover_draft(kids: list[dict]) -> list[str]:
-    """The draft hand-over note's lines: each live child with both ids, its items and state (from its report)."""
+    """The draft hand-over note's lines: each live child with both ids, its items (from its report) and its state
+    now (:func:`kid_state`)."""
     from . import sessions
 
     out = []
@@ -277,7 +339,7 @@ def handover_draft(kids: list[dict]) -> list[str]:
             continue
         rep = sessions.read_report(k["session"]) if k["session"] else {}
         items = ", ".join((rep.get("items") or [])[:3]) or "-"
-        state = ("waits on " + rep["waits_on"][:60]) if rep.get("waits_on") else rep.get("turn") or "live"
+        state = kid_state(k, rep)
         prs = ", ".join(f"#{p.get('number')}" for p in rep.get("prs") or [])
         out.append(f"- {k['name'] or k['title'][:40] or '-'}: app {k['host_id'] or '-'}, transcript "
                    f"{k['session'] or '-'}; items {items}; {state}" + (f"; PR {prs}" if prs else ""))
@@ -384,7 +446,13 @@ def next_check(state: dict) -> float:
         return next((s for limit, s in CHECK_S if top < limit), CHECK_S[-1][1])
     waiting = (state.get("items") and "cost" not in ms) or (state.get("budget") is None
                                                             and state.get("texts", 0) < BRIEF_TEXTS)
-    return IDLE_S if waiting else DONE_S
+    return IDLE_S if waiting or _proposed(state) else DONE_S
+
+
+def _proposed(state: dict) -> bool:
+    """A session that proposed a session (an offer, a proposal card) and has no child yet: the app is asked at each
+    check whether the owner started one from it."""
+    return bool(state.get("offers")) and not is_master(state)
 
 
 def master_summary(state: dict) -> dict | None:
@@ -398,14 +466,16 @@ def master_summary(state: dict) -> dict | None:
             "host_id": state.get("host_id") or "", "at": time.time()}
 
 
-def _watch_master(state: dict, data: dict, fresh: bool) -> None:
+def _watch_master(state: dict, data: dict, legacy: bool) -> None:
     """A master's children (``state["_children"]``, for this check only) and budget: its app id from the
-    environment, the app asked once for a state kept from before the master's watch."""
+    environment (when it is this session's: brain.sessions.host_for); the app asked once for a state kept from
+    before the master's watch (``legacy``: judged before the new records are fed, which add ``starts``; review of
+    #34, finding 53), and at each check for a session that proposed one (:func:`_proposed`)."""
     from . import sessions
 
     if not state.get("host_id") and not data.get("agent_id"):
-        state["host_id"] = sessions.here()["host_id"]
-    if not (is_master(state) or (not fresh and "starts" not in state)):
+        state["host_id"] = sessions.host_for(str(data.get("session_id") or ""))
+    if not (is_master(state) or legacy or _proposed(state)):
         return
     state.setdefault("starts", 0)
     state["_children"] = children(state)
@@ -420,10 +490,10 @@ def check(data: dict) -> str:
     if not _SID_RE.match(sid) or not path:
         return ""
     state = _load(sid)
-    fresh = state is None
     if state is None:
         state = _new(sid, path)
         _prune()
+    legacy = "starts" not in state  # kept from before the master's watch: before _feed adds the key
     state["transcript"] = path
     main = Path(path)
     _feed(state, main, True)
@@ -433,12 +503,14 @@ def check(data: dict) -> str:
         state["estimates"] = estimates_of(str(data.get("cwd") or "."), state["items"])
         state["prior_usd"] = prior_cost(sid, list(state["estimates"]))
         state["resolved_at"] = time.time()
-    _watch_master(state, data, fresh)
-    out = notices(state)
+    _watch_master(state, data, legacy)
+    # a subagent's call counts but is not told, and leaves the steps due to the main thread's next call: marked given
+    # here, they would never be shown (review of #34, finding 25)
+    out = [] if data.get("agent_id") else notices(state)
     state["master"] = master_summary(state)
     state.pop("_children", None)
     _save(state, next_check(state))
-    return "" if data.get("agent_id") else "\n".join(out)
+    return "\n".join(out)
 
 
 def master_of(session: str) -> dict | None:

@@ -119,7 +119,7 @@ def session_start(payload: dict) -> None:
     name its own app metadata file holds (brain.sessions: a closed list of keys, that file only)."""
     from . import sessions
 
-    host = sessions.here()["host_id"]
+    host = sessions.host_for(str(payload.get("session_id") or ""))  # not one a nested CLI inherited
     app = sessions.app_meta(host) if host else {}
     event = {"at": _now(), "event": "session_start", "session_id": payload.get("session_id"),
              "host_id": host, "parent": app.get("parent"), "task": app.get("task"), "name": app.get("name"),
@@ -173,7 +173,9 @@ def _ids(meta: dict) -> dict:
     from . import sessions
 
     me = sessions.here()
-    return sessions.stamp() if me["host_id"] and me["session"] in ("", meta.get("session_id")) else {}
+    if not me["host_id"] or me["session"] not in ("", meta.get("session_id")):
+        return {}
+    return sessions.stamp(session=meta.get("session_id") or "")
 
 
 def ddr_from_question(q: dict, answer: str | list | None, at: str, meta: dict, tool_use_id: str = "", index: int = 0,
@@ -304,7 +306,7 @@ def _tree_fields(sid: str) -> dict:
     the sessions it started, from the app's files and the ledger) and role; {} without the app's id."""
     from . import sessions
 
-    host = sessions.here()["host_id"]
+    host = sessions.host_for(sid)  # not one a nested CLI inherited
     if not host:
         return {}
     tree = sessions.Tree(sessions.app_index(), sessions.ledger_events()[0])
