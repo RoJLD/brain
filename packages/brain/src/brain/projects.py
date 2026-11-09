@@ -348,10 +348,11 @@ def _inside(path: Path, root: Path) -> bool:
 
 
 def readonly(root: Path | None = None) -> dict[str, ReadOnly]:
-    """The projects the brain reads and never writes, in the registry's order: each one's name and title."""
+    """The projects the brain reads and never writes, in the registry's order: each one's name and title. Only
+    ``access: read``: another value is a typo that check() names, never a deliberate read-only project."""
     out = {}
     for name, entry in raw(root).items():
-        if is_read_only(entry):
+        if is_read_only(entry) and entry["access"] == "read":
             title = entry.get("title")
             out[str(name)] = ReadOnly(str(name), title if isinstance(title, str) else "")
     return out

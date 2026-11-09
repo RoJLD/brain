@@ -52,6 +52,7 @@ def test_check_refuses_a_read_only_entry_that_would_hold_a_way_in_and_an_unknown
     assert list(projects.load()) == ["demo", "plain"]  # what is not write is never loaded: it narrows
     with pytest.raises(SystemExit, match="'odd' is not loaded: access is read or write, not 'maybe'"):
         projects.get("odd")  # a typo is named as one, not as a read-only project
+    assert list(projects.readonly()) == ["upstream"]  # nor listed or counted as one (brain projects, status, check)
     # Fail closed: an entry the walk skips (access: read that check() refuses, or an access value it does not know)
     # still keeps the guards of every local path it declares. A typo in access, or access: read added to a project
     # with a production checkout, must never lift a production or branch guard while check() is red.
