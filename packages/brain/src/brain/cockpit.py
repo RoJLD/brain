@@ -346,11 +346,19 @@ class Sessions:
                         "output_tokens": tokens.get("output"), "cost_usd": cost_of(sr), "last_write": _iso(mtime),
                         "age_s": int(age), **self._family(tree, sid)})
         states = {r["session_id"]: r["state"] for r in out}
-        for r in out:  # a child is live while the app has not archived it and its end is not recorded
+        for r in out:  # a child is live while the app has not archived it (one the app does not know: until it ended)
             kids = [tree.nodes[k] for k in tree.children.get(r["key"], [])] if r["key"] else []
-            r["kids_live"] = sum(1 for k in kids if not k.get("archived") and states.get(k.get("session")) != "ended")
+            r["kids_live"] = sum(1 for k in kids if self._kid_live(k, states))
             r["ctx_pct"], r["ctx_step"] = self._ctx(r)
         return sorted(out, key=lambda r: (STATES.index(r["state"]), r["age_s"]))
+
+    @staticmethod
+    def _kid_live(node: dict, states: dict[str, str]) -> bool:
+        """brain.sessions.alive's reading: the app resumes its own sessions on a message, so a recorded end kills
+        only a child the app does not know (review of #34, finding 24)."""
+        if node.get("archived"):
+            return False
+        return node.get("source") == "app" or states.get(node.get("session")) != "ended"
 
     def _family(self, tree: "sessions.Tree", sid: str) -> dict:
         """The session's place in the tree (wi-brain-session-tree): app id, short name, role, parent, children."""
