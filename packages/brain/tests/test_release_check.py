@@ -273,6 +273,12 @@ def test_every_registered_format_has_its_schema_declared():
     assert set(release_check.SCHEMAS) - folders == {"store"}
 
 
+def test_every_json_schema_of_the_engine_is_registered():
+    registered = {path for paths in release_check.SCHEMAS.values() for path in paths}
+    found = {p.relative_to(ROOT).as_posix() for p in (PACKAGE / "src" / "brain" / "schemas").glob("*.schema.json")}
+    assert found and found <= registered
+
+
 def test_only_permissions_has_no_schema_file():
     assert [name for name, paths in release_check.SCHEMAS.items() if not paths] == ["permissions"]
 
@@ -291,10 +297,14 @@ def test_the_real_version_files_are_where_the_script_reads_them():
 
 
 def test_the_changelog_says_each_upgrade():
+    """The 0.2.5 section, and the steps from 0.2.5 (the item's part 1)."""
     log = (ROOT / BRAIN_LOG).read_text(encoding="utf-8")
     assert "brain sync" in release_check.upgrade_section(log, "0.2.5")
-    unreleased = log.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
-    upgrade = unreleased.split("### Upgrade", 1)[1].split("\n### ", 1)[0]
+    # Unreleased until the version PR dates it: this test must pass on that PR as well
+    upgrade = release_check.upgrade_section(log, "0.2.6")
+    if upgrade is None:
+        unreleased = log.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+        upgrade = unreleased.split("### Upgrade", 1)[1].split("\n### ", 1)[0]
     for needed in ("brain update", "engine.pin", "brain config --check", "brain check --public --history",
                    "Restart the Claude Code sessions"):
         assert needed in upgrade, needed

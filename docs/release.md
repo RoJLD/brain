@@ -1,8 +1,8 @@
 # Releasing
 
 A tag `vX.Y.Z` is both `research-graph` and `brain` at X.Y.Z. A release has four moves, in this order: the version PR,
-the tag, the pin, the machines. The maintainer prepares the PRs; the owner of the repo pushes and tags. Nothing here runs
-by itself: the jobs below refuse what they can check, and the rest is this list.
+the tag, the pin, the machines. The maintainer prepares the PRs; the owner of the repo pushes and tags. Nothing here
+runs by itself: the jobs below refuse what they can check, and the rest is this list.
 
 `vX.Y.Z` is the new tag, and `vP` the last one, below.
 
@@ -35,10 +35,12 @@ One branch, `chore/release-X.Y.Z`, one PR that moves the version and nothing els
 **The `### Upgrade` section** is the first thing in the brain's section, and `brain update` prints it. Numbered steps
 for what an owner must do from `vP`, in the order that works, each with its reason and what fails until it is done;
 then what needs nothing, said so. Everything else is under `### Changes`. Check it against the `compat-prev` report of
-the PR: what the test had to run, the section says. A release with nothing to do says « Nothing to run ».
+the PR: what the test had to run, the section says. A release with nothing to do says « Nothing to run ». Each PR on
+the way adds its step to Unreleased's `### Upgrade` and its entry to `### Changes`, so this is a matter of reading them
+in order and numbering them.
 
 **The fixture freeze.** `packages/brain/tests/fixtures/formats/<format>/v<N>/` holds what the readers are tested on, and
-it only grows: a released fixture is never edited. By hand for now (a `brain fixtures freeze` command is planned,
+it only grows: an `older` file is what a released engine wrote, and is never edited. By hand for now (a `brain fixtures freeze` command is planned,
 wi-brain-old-store-fixture):
 
 - a format whose `v` moved adds its folder `v<N>` with `older` and `newer` files, and a migration (`formats.md`);
@@ -59,7 +61,8 @@ wi-brain-old-store-fixture):
   no harm: it installs from the checkout.
 
 Before merging, from the branch: `pytest packages/brain -p no:randomly -n auto -m "not docker"` and
-`brain check --public --history`. Then merge the PR by its normal review.
+`brain check --public --history`. Then merge the PR by its normal review. **Nothing else merges until the tag**: the
+jobs read the PR, and a schema merged after it would reach the tag with no job having seen it.
 
 ## 3. The tag: the owner
 
@@ -85,8 +88,8 @@ steps for that version; in general:
 
 - **A brain with an installer of its own** (`config.json` `engine.installer`): a PR in the brain that moves `engine.pin`
   to `vX.Y.Z`, with anything else its brain holds that names the version, and the rules that follow the engine's change
-  (in the same PR, so that they never name a command the pin does not have). Run `brain sync` with the new engine, so the
-  hooks it renders go in too. After its merge, on each machine: `<installer> -Apply` (its plan first), then restart
+  (in the same PR, so that they never name a command the pin does not have). Run `brain sync` with the new engine (a venv at the tag: the machine's own is still the
+  old one, and sync refuses another engine than the pin), so the hooks it renders go in too. After its merge, on each machine: `<installer> -Apply` (its plan first), then restart
   the sessions.
 - **A brain from `brain init`** (no `engine.installer`): `brain update` in the owner's terminal, then `y`. It installs
   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. Then restart the sessions. An engine older
