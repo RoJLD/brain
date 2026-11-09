@@ -60,7 +60,9 @@ def ada(tmp_path, monkeypatch, brain_home):
     return setup
 
 
-def reading(brain_home, pct, at=NOW - timedelta(minutes=5), window="week", resets=RESETS):
+def reading(brain_home, pct, at=NOW - timedelta(minutes=5), window="week", resets=None):
+    if resets is None:   # a reading at the real time needs a reset after it, whatever the day the suite runs
+        resets = RESETS if iso(at) < RESETS else iso(at + timedelta(days=7))
     f = brain_home / "usage" / "quota.jsonl"
     f.parent.mkdir(parents=True, exist_ok=True)
     with open(f, "a", encoding="utf-8") as fh:

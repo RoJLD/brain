@@ -4,6 +4,11 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+### Fixes
+
+- `brain status` reads the quota's clock from `usage.now_utc`, like the rest of the quota: a test that froze that clock
+  saw the real time in the status row, and failed on every commit once its fixed reset (2026-11-09 12:00 UTC) had passed.
+
 ### Changes
 
 - `brain usage quota` converts dollars to percent with the readings of the plan in force only
