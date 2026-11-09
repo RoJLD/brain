@@ -602,7 +602,7 @@ fast paths stamp it on their events; `tests/test_selftime.py` checks the two agr
 [`docs/release.md`](../../docs/release.md)'s version policy: before 1.0 the middle one for a change an owner must act
 on or a format that moves, the last for what needs nothing; `installer/release_check.py` (CI's `release-check`)
 refuses a patch with a schema change or an `### Upgrade` step beyond the standard ones, a section with no theme, and
-a section that repeats an entry an earlier one released.
+a section of either CHANGELOG that repeats an entry an earlier one released.
 
 ## License
 

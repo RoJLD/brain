@@ -13,8 +13,9 @@ is checked. On a version PR, it fails when:
 - the version policy (docs/release.md, « The version policy ») is broken by a patch, a version whose X.Y is the last
   tag's: a registered schema changed since that tag, or its ``### Upgrade`` numbers a step that is not one of the
   standard steps (:data:`STANDARD_STEPS`, by the bold title that opens the step). Such a release is a minor one;
-- the brain's section repeats an entry an earlier section released: a fix that cannot wait, released from
-  ``release/X.Y``, and left in main's ``## Unreleased`` when that branch merged back.
+- either CHANGELOG's section repeats an entry an earlier section of it released: a fix that cannot wait, released from
+  ``release/X.Y``, and left in main's ``## Unreleased`` when that branch merged back (by its text; a « No change »
+  line and the ``### Upgrade`` steps repeat by design and are not compared).
 
 Standard library only, and the working tree is what is read: the job runs before any install, and it can be run before
 committing. Exit 0 when it passes or there is nothing to check, 1 when it fails, 2 when it cannot tell (no tag, no git).
@@ -136,16 +137,20 @@ def upgrade_section(changelog: str, version: str) -> str | None:
 
 def entries(changelog: str) -> dict[str, list[str]]:
     """The bullets of each version's section, by version: a bullet is a line opening with ``- `` and its indented
-    continuation lines, its whitespace collapsed. ``## Unreleased`` is not a version and is left out."""
+    continuation lines, its whitespace collapsed. ``## Unreleased`` is not a version and is left out, and so is each
+    ``### Upgrade``, which numbers the standard steps every time."""
     found: dict[str, list[str]] = {}
     current: list[str] | None = None
     bullet: list[str] | None = None
+    in_upgrade = False
     for line in changelog.splitlines():
         if line.startswith("## "):
             match = HEADING_RE.match(line)
             current = found.setdefault(match.group(1), []) if match else None
-            bullet = None
-        elif current is not None and line.startswith("- "):
+            bullet, in_upgrade = None, False
+        elif line.startswith("### "):
+            bullet, in_upgrade = None, bool(UPGRADE_RE.match(line))
+        elif current is not None and not in_upgrade and line.startswith("- "):
             bullet = [line[2:]]
             current.append("")
         elif bullet is not None and line[:1] in (" ", "\t") and line.strip():
@@ -159,10 +164,15 @@ def entries(changelog: str) -> dict[str, list[str]]:
 
 def entries_already_released(changelog: str, version: str) -> list[tuple[str, str]]:
     """(entry, the version that released it) for each bullet of ``version``'s section that an earlier section holds:
-    a fix released by a patch from ``release/X.Y`` and left in main's ``## Unreleased`` by the merge back."""
+    a fix released by a patch from ``release/X.Y`` and left in main's ``## Unreleased`` by the merge back.
+
+    Compared by their text, whitespace aside: an entry reworded on the way is the version PR's author to see. A line
+    opening with « No change » is the one-line section of a distribution with nothing new, the same each time, and is
+    never a repeat."""
     sections = entries(changelog)
     earlier = {entry: other for other, bullets in sections.items() if other != version for entry in bullets}
-    return [(entry, earlier[entry]) for entry in sections.get(version, []) if entry in earlier]
+    return [(entry, earlier[entry]) for entry in sections.get(version, [])
+            if entry in earlier and not entry.casefold().startswith("no change")]
 
 
 def theme(rest: str) -> str:
@@ -269,10 +279,11 @@ def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
             problems.append(f"{changelog}: registered schemas changed since {tag} ({', '.join(changed)}) and the "
                             f"section ## {version} has no ### Upgrade with something in it: number the standard steps and "
                             f"what an owner does beyond them (docs/release.md, « The standard steps »)")
-    for entry, other in entries_already_released(read(repo, changelog), version):
-        problems.append(f"{changelog}: the section ## {version} repeats an entry that {other} released: "
-                        f"{entry[:100]}{'...' if len(entry) > 100 else ''}; take it out of ## Unreleased when "
-                        f"release/X.Y merges back into main (docs/release.md, « 3. The tag »)")
+    for log in ("CHANGELOG.md", changelog):
+        for entry, other in entries_already_released(read(repo, log), version):
+            problems.append(f"{log}: the section ## {version} repeats an entry that {other} released: "
+                            f"{entry[:100]}{'...' if len(entry) > 100 else ''}; take it out of ## Unreleased when "
+                            f"release/X.Y merges back into main (docs/release.md, « 3. The tag »)")
     if is_patch(tag, version):
         said.append(f"a patch of {tag}: it may hold no schema change and no Upgrade step beyond the standard ones")
     problems += policy(tag, version, changed, upgrade)

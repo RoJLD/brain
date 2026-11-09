@@ -405,10 +405,39 @@ def test_entries_are_bullets_with_their_continuation_lines():
         ("Three.", "0.2.4")]
 
 
-def test_the_brain_changelog_repeats_no_released_entry():
-    log = (ROOT / BRAIN_LOG).read_text(encoding="utf-8")
-    for version in release_check.entries(log):
-        assert release_check.entries_already_released(log, version) == [], version
+def test_an_entry_the_root_changelog_repeats_fails_too(repo, capsys):
+    """The merge back takes the fix out of both CHANGELOGs' Unreleased (« 3. The tag »): research-graph's is read too."""
+    versions(repo, "0.3.0")
+    write(repo, ROOT_LOG, f"# Changelog\n\n## 0.3.0 — 2026-11-16\n\n- Another change.\n{HOTFIX}\n"
+                          f"## 0.2.6 — 2026-11-10\n\n{HOTFIX}\n## 0.2.5 — 2026-11-04\n\n- Old.\n")
+    write(repo, BRAIN_LOG, f"# Changelog\n\n## 0.3.0 — 2026-11-16 — A theme\n\n{STANDARD_UPGRADE}\n"
+                           "## 0.2.6 — 2026-11-10 — The guard\n\n- No change in the command.\n\n"
+                           "## 0.2.5 — 2026-11-04\n\n### Upgrade\n\n1. An old step.\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert f"{ROOT_LOG}: the section ## 0.3.0 repeats an entry that 0.2.6 released: A guard no longer refuses" in text
+    assert BRAIN_LOG + ": the section" not in text
+
+
+def test_what_repeats_by_design_is_no_repeated_entry():
+    """A distribution with no change says so in one line, the same each time, and every ### Upgrade numbers the
+    standard steps: neither is an entry released twice."""
+    no_change = "- No change in `research-graph`: the version moves with the shared tag.\n"
+    log = (f"## 0.3.0 — 2026-11-16\n\n{no_change}\n## 0.2.7 — 2026-11-09\n\n{no_change}\n")
+    assert release_check.entries_already_released(log, "0.3.0") == []
+    upgrade = "### Upgrade\n\n1. **Install the engine**\n   - A brain that declares `engine.installer`: its `-Apply`.\n"
+    log = (f"## 0.3.0 — 2026-11-16 — T\n\n{upgrade}\n### Changes\n\n- New.\n\n"
+           f"## 0.2.7 — 2026-11-09 — T\n\n{upgrade}\n### Changes\n\n- Old.\n")
+    assert release_check.entries(log) == {"0.3.0": ["New."], "0.2.7": ["Old."]}
+    assert release_check.entries_already_released(log, "0.3.0") == []
+
+
+@pytest.mark.parametrize("log", [BRAIN_LOG, ROOT_LOG])
+def test_the_changelogs_repeat_no_released_entry(log):
+    text = (ROOT / log).read_text(encoding="utf-8")
+    for version in release_check.entries(text):
+        assert release_check.entries_already_released(text, version) == [], version
 
 
 @pytest.mark.parametrize("after_the_date", ["", " ", " —", " — :", " - "])
