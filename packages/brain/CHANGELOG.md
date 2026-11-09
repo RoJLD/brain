@@ -2,6 +2,11 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+- Test: `brain <cmd> --help` (a help holds a Σ) survives a cp1252 pipe and a missing stdout (pythonw); the CLI
+  already writes UTF-8 with `errors=replace` (`wi-brain-help-encoding`).
+
 ## 0.2.6 — 2026-11-09
 
 ### Upgrade
