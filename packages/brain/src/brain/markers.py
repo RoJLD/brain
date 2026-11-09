@@ -5,7 +5,7 @@ places look for them: the commit guard (brain.guards, check markers) in the adde
 ``brain check`` in a store's files, its journals, its decision logs and its records, which every brain command loads
 (a YAML file with a marker breaks them all, and the generated views of a stale merge pass the graph check). Two shapes
 pass: a Markdown or reStructuredText setext heading (``=======`` under a line of text, in a file with no other
-marker) and a file under a test fixtures folder (``fixtures``, ``fixture``, ``testdata``), where a marker is the data a test reads.
+marker; .md, .markdown, .mdx, .qmd, .Rmd, .rst and .txt) and a file under a test fixtures folder (``fixtures``, ``fixture``, ``testdata``), where a marker is the data a test reads.
 """
 
 from __future__ import annotations
@@ -15,7 +15,9 @@ from pathlib import Path
 
 MARKER = re.compile(r"^(?:<{7}|\|{7}|>{7}) |^={7}\r?$")
 SIDE = re.compile(r"^(?:<{7}|\|{7}|>{7}) ")   # the markers no text shares: a file with one has no ======= heading
-SETEXT = (".md", ".markdown", ".mdx", ".rst")   # a ======= under a line of text is a heading there
+# A ======= under a line of text is a heading there: Markdown (Quarto's and R Markdown's too) and reStructuredText,
+# whose sources are often .txt (Sphinx, CHANGES.txt).
+SETEXT = (".md", ".markdown", ".mdx", ".qmd", ".rmd", ".rst", ".txt")
 FIXTURES = {"fixtures", "fixture", "testdata"}   # a folder whose files are a test's data
 MAX_FILE = 5_000_000
 
@@ -40,15 +42,49 @@ def _kept(found: list[tuple[str, int, bool]], sided: set[str]) -> list[str]:
 
 def scan_text(path: str, text: str) -> list[str]:
     """``path:line`` for each marker of a file's ``text``."""
+    return scan_lines(path, text.splitlines())
+
+
+def scan_lines(path: str, lines) -> list[str]:
+    """``path:line`` for each marker of a file's ``lines`` (any iterable, so a big file is read as it goes)."""
     if exempt(path):
         return []
     found, sided, previous = [], set(), None
-    for i, line in enumerate(text.splitlines(), 1):
+    for i, line in enumerate(lines, 1):
+        line = line.rstrip("\n")
         if MARKER.match(line):
             found.append((path, i, line.startswith("=") and heading(line, previous, path)))
             sided |= {path} if SIDE.match(line) else set()
         previous = line
     return _kept(found, sided)
+
+
+ESCAPES = {"t": "\t", "n": "\n", "r": "\r", "a": "\a", "b": "\b", "f": "\f", "v": "\v"}
+
+
+def _unquote(text: str) -> str:
+    """A path git C-quoted (core.quotePath: "caf\\303\\251 notes.md", its \\" and \\\\), without its escapes."""
+    out, i = bytearray(), 0
+    while i < len(text):
+        if text[i] == "\\" and re.match(r"[0-7]{3}", text[i + 1:i + 4]):
+            out.append(int(text[i + 1:i + 4], 8) & 0xFF)
+            i += 4
+        elif text[i] == "\\" and i + 1 < len(text):
+            out += ESCAPES.get(text[i + 1], text[i + 1]).encode()
+            i += 2
+        else:
+            out += text[i].encode()
+            i += 1
+    return out.decode("utf-8", "replace")
+
+
+def diff_path(header: str) -> str:
+    """The path of a unified diff's ``+++ `` line: without the TAB git adds after a path with a space (for GNU
+    patch), unquoted when git C-quoted it, without its b/ prefix."""
+    path = header[4:].rstrip("\r\n").rstrip("\t")
+    if len(path) > 1 and path.startswith('"') and path.endswith('"'):
+        path = _unquote(path[1:-1])
+    return path[2:] if path.startswith("b/") else path
 
 
 def scan_diff(diff: str) -> list[str]:
@@ -57,8 +93,7 @@ def scan_diff(diff: str) -> list[str]:
     found, sided, path, line, previous = [], set(), "", 0, None
     for raw in diff.splitlines():
         if raw.startswith("+++ "):
-            path = raw[4:].strip('"')
-            path = path[2:] if path.startswith("b/") else path
+            path = diff_path(raw)
         elif raw.startswith("@@"):
             m = re.search(r"\+(\d+)", raw)
             line, previous = (int(m.group(1)) if m else 0), None

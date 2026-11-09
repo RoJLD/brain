@@ -96,10 +96,10 @@ shell` refuses, in a Bash, PowerShell or Terminal panel call, through wrappers, 
 
 | Check | Shapes |
 |---|---|
-| `download` | a download piped, through any filter, to a shell or an interpreter reading stdin (`curl ... \| sh`, `wget -qO- ... \| bash`, `curl ... \| python3 -`, `curl ... \| ssh host`, `iwr ... \| iex`, `irm ... \| iex`, the pipe continued on the next line too); a download in a process substitution a shell or `source` runs (`bash <(curl ...)`, `. <(wget -qO- ...)`); a PowerShell statement where `iex` meets a download (`iex (iwr ...)`, a WebClient's `DownloadString`, a `$( )` in
-its string, which PowerShell expands first: `iex "& { $(irm ...) }"`); `sh -c`, `eval` or a here-string whose text is a download's output (`sh -c "$(curl ...)"`) |
-| `plugin` | `claude plugin install NAME@MARKETPLACE` whose marketplace is not in the owner's list, or with no marketplace named; `claude plugin marketplace add SOURCE` whose source is not |
-| `skills` | `skills add`, through `npx`, `bunx`, `pnpm dlx` or `yarn dlx` |
+| `download` | a download piped, through any filter, to a shell or an interpreter reading stdin (`curl ... \| sh`, `wget -qO- ... \| bash`, `curl ... \| python3 -`, `curl ... \| bash /dev/stdin`, `curl ... \| source /dev/stdin`, `curl ... \| ssh host`, `iwr ... \| iex`, `irm ... \| iex`, the pipe continued on the next line too); a download in a process substitution a shell or `source` runs as its script (`bash <(curl ...)`, `. <(wget -qO- ...)`); a PowerShell statement where `iex` meets a download (`iex (iwr ...)`, a WebClient's `DownloadString`, a `$( )` in
+its string, which PowerShell expands first: `iex "& { $(irm ...) }"`); `sh -c`, `eval` or a here-string whose text is a download's output, quoted or not (`sh -c "$(curl ...)"`, `eval $(curl ...)`, `bash <<<"$(curl ...)"`, `source /dev/stdin <<< "$(curl ...)"`) |
+| `plugin` | `claude plugin install NAME@MARKETPLACE` whose marketplace is not in the owner's list, or with no marketplace named, and its `--marketplace SOURCE` whose source is not; `claude plugin marketplace add SOURCE` whose source is not; claude's global options before `plugin` (`claude --model opus plugin ...`) and the options' values (`--config`, `--scope`, `--sparse a b`) never shift what is checked |
+| `skills` | `skills add`, through `npx`, `bunx`, `bun x`, `pnpm dlx`, `yarn dlx` or `npm exec`, a launcher's global options before its verb too (`pnpm --silent dlx`) |
 
 The owner's list is config.json `adapters.claude.sources`: a marketplace name (no slash) for `plugin install`, a
 source (`owner/repo`, a git URL, a folder from the brain's root) for `marketplace add`. The brain's own marketplace,
@@ -111,8 +111,12 @@ source repo and folder always pass:
 ```
 
 What passes: a download to a file (`curl -o f`, `iwr -OutFile`), a download read as data (`curl ... | jq`, `| python
--m json.tool`), a download then a script that reads its own stdin (`curl -o f ...; python - <<EOF`), `pip install -e
-.`, the commands' `--help`, and text that names the shapes (a commit message, a grep). A refusal is an action for the
+-m json.tool`, `| python -I parse.py`, a script named before a process substitution: `python3 analyze.py <(curl
+...)`, `diff <(curl ...) <(curl ...)`), a download then a script that reads its own stdin (`curl -o f ...; python -
+<<EOF`), `pip install -e .`, the commands' `--help` and `-h`, `skills add REPO --list` (it lists, installs nothing),
+and text that names the shapes (a commit message, a grep). `guard.sh` starts Python for any command naming `claude`
+or `skills` with a later `plugin` or `add` word, whatever comes between (a quoted `claude.exe`, global options, a
+line continuation). A refusal is an action for the
 owner with the call's exact command (`brain queue add --kind action --guard <ref>`, the title « Third-party script »,
 « Third-party plugin » or « Third-party skill »); the owner reads the kit, then runs it in their own terminal, which
 no hook sees. Override, the owner's: `BRAIN_GUARD_ALLOW=third-party` or `third-party:<check>`.
@@ -123,13 +127,24 @@ A merge that leaves `<<<<<<< `, `||||||| `, `>>>>>>> ` or a bare `=======` in a 
 loads it, and a stale merge's generated views still pass the graph check. Two places refuse them (brain.markers):
 
 - the commit guard (check `markers`): a `git commit`, or `git merge|rebase|cherry-pick|revert|am --continue`, whose
-  added lines hold one, in the staged diff, in commit `-a`'s changes or in the files an earlier `git add` of the same
-  command stages. The reason names the file and line.
+  added lines hold one, in the staged diff, in commit `-a`'s changes, in the working tree of the paths the commit
+  names (`git commit -m x PATH`, `--only`, `-i`) or in the files an earlier `git add` of the same command stages.
+  `git add -A`, `-u` or `-p` with no path stage the whole worktree, from any folder (git 2.0), and `:/` too; an
+  exclusion (`':!x'`) is dropped, so more is read, never less; `-u` and `-p` stage no untracked file, so none is
+  read. During a merge (`MERGE_HEAD`), a line counts only when it is new against every parent: content the merged
+  branch already holds (a documented conflict in its CONTRIBUTING.md) is not the session's. A moved file adds no line
+  (renames are found whatever `diff.renames` says), only the files whose changes hold a marker-like line are read
+  (`git diff -G`), so a big data file never cuts the diff, and an untracked file is read whole, whatever its size.
+  What git cannot show (it fails, times out, or prints over 20 MB) is an error in ledger/errors.log, never a silent
+  pass. The reason names the file and line.
 - `brain check` (and `brain refresh`): it fails first, before reading anything else, on a store file (its nodes,
   edges and generated views), a journal, a decision log or a record holding one.
 
-A Markdown or reStructuredText setext heading (`=======` under a line of text, in a file with no other marker) and a
-file under a `fixtures`, `fixture` or `testdata` folder pass. Override, the owner's: `BRAIN_GUARD_ALLOW=markers`.
+A setext heading (`=======` under a line of text, in a file with no other marker) in Markdown (`.md`, `.markdown`,
+`.mdx`, Quarto's `.qmd`, R Markdown's `.Rmd`) or reStructuredText (`.rst`, `.txt`), its path holding a space or not,
+and a file under a `fixtures`, `fixture` or `testdata` folder pass. Elsewhere (a Python docstring), underline a title
+with eight `=` or more. A conflict quoted in a fenced code block is a marker too. Override, the owner's:
+`BRAIN_GUARD_ALLOW=markers`.
 
 ## A public repo's commits, a chained push, heredocs
 
@@ -139,8 +154,9 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
   `public.repos` (its pushRemote, else its remote, else origin: a private fork's public upstream is not checked), a `git commit` whose added lines hold a denied term outside `public.allow` (the owner's name, a
   private repo's), an e-mail address, a home folder or a `public.patterns` match is refused with the file and the
   line, at the commit rather than at the push (les-brain-owner-name-in-fixtures). It reads what the commit records:
-  the staged diff, commit `-a`'s changes, the files an earlier `git add` of the same call stages (untracked ones too,
-  but not after `git add -u`), each by its path in the repo, so `public.allow` matches from a subfolder. Override, the
+  the staged diff, commit `-a`'s changes, the paths the commit names, the files an earlier `git add` of the same call
+  stages (untracked ones too, but not after `git add -u` or `-p`), each by its path in the repo, so `public.allow`
+  matches from a subfolder. Override, the
   owner's: `BRAIN_GUARD_ALLOW=public:commit`.
 - **The public and secrets checks fail closed** (`public:config`; COMPAT-4, wi-brain-guards-fail-closed; the
   2026-11-04 REVERSAL of the internal-error policy, for these checks only). They refuse every `git commit` and

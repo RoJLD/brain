@@ -50,25 +50,30 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   (guard-<sha1>): the reason names ``brain queue add --kind action --guard <ref>``, which writes it into their queue
   (the cockpit's Apply), and brain queue lists the ones not queued yet.
 - ``third-party`` (wi-brain-guard-third-party, EXT-6): a session never installs or runs a third-party kit. Refused: a
-  download fed to a shell or an interpreter (``download``: curl | sh, wget -qO- | bash, curl | python3 -, bash <(curl
-  ...), source <(curl ...), sh -c "$(curl ...)", eval "$(curl ...)", iwr | iex, irm | iex, iex (iwr ...), a
-  WebClient's DownloadString to iex), ``claude plugin install NAME@MARKETPLACE`` and ``claude plugin marketplace add
+  download fed to a shell or an interpreter (``download``: curl | sh, wget -qO- | bash, curl | python3 -, curl | bash
+  /dev/stdin, curl | source /dev/stdin, bash <(curl ...), source <(curl ...), sh -c "$(curl ...)", eval "$(curl
+  ...)" or unquoted, bash <<<"$(curl ...)", iwr | iex, irm | iex, iex (iwr ...), a WebClient's DownloadString to
+  iex), ``claude plugin install NAME@MARKETPLACE`` (and its --marketplace SOURCE) and ``claude plugin marketplace add
   SOURCE`` outside the owner's list (``plugin``: config.json's adapters.claude.sources, marketplace names and sources,
-  plus the brain's own marketplace, source repo and folder), and ``skills add`` (``skills``: npx, bunx, pnpm dlx).
-  It sees what the power guard sees (wrappers, launchers, nested shells, ssh, what a command feeds a shell); a
-  download to a file (curl -o) passes. A refusal is an action for the owner with the call's exact command, as the
-  owner guard's. The owner's own terminal is never seen: a hook judges a session's tool calls only.
+  plus the brain's own marketplace, source repo and folder; claude's global options before plugin read too), and
+  ``skills add`` (``skills``: npx, bunx, bun x, pnpm dlx; its --list passes). It sees what the power guard sees
+  (wrappers, launchers, nested shells, ssh, what a command feeds a shell); a download to a file (curl -o), or read
+  as data by a script named first (python3 analyze.py <(curl ...)), passes. A refusal is an action for the owner
+  with the call's exact command, as the owner guard's. The owner's own terminal is never seen: a hook judges a
+  session's tool calls only.
 - ``attribution``: no ``Co-Authored-By: Claude`` or ``Generated with Claude Code`` line in a git commit message or a
   gh pr create|edit title or body (arguments, heredocs, here-strings, -F and --body-file files), whatever precedes it
   on its line but letters (an emoji, a bullet). The hook's JSON is read as UTF-8 bytes (midsession.read_payload), so a
   Windows console codepage turns no non-ASCII text into letters.
-- ``secrets``: no key in what a git commit records: the staged diff, plus what commit -a or a git add earlier in the
-  same command stages. gitleaks scans the index when it is on the PATH, else the patterns of brain.secretscan (an
-  assignment counts when its value is quoted or ends the line). A line marked ``gitleaks:allow`` passes.
+- ``secrets``: no key in what a git commit records: the staged diff, plus what commit -a, the paths the commit names
+  or a git add earlier in the same command stages. gitleaks scans the index when it is on the PATH, else the
+  patterns of brain.secretscan (an assignment counts when its value is quoted or ends the line). A line marked ``gitleaks:allow`` passes.
 - ``markers`` (wi-brain-guard-conflict-markers): no conflict marker in what a git commit (or git merge, rebase,
-  cherry-pick, revert or am --continue) records: an added line of the staged diff, of commit -a's or of an earlier
-  git add's files, starting with <<<<<<< , ||||||| or >>>>>>> , or a bare ======= (brain.markers). A Markdown
-  setext heading (======= under a line of text) and a file under a fixtures folder pass.
+  cherry-pick, revert or am --continue) records: an added line of the staged diff, of commit -a's, of the paths the
+  commit names or of an earlier git add's files (git add -A or -u with no path: the whole worktree), starting with
+  <<<<<<< , ||||||| or >>>>>>> , or a bare ======= (brain.markers); during a merge, only a line new against every
+  parent. A Markdown or reST setext heading (======= under a line of text) and a file under a fixtures folder pass.
+  What git cannot show is an error (errors.log), never a silent pass.
 - ``public``: no ``git push`` to a repo of config.json's ``public.repos`` (the remote named or given as a URL, else
   the branch's upstream, else origin) until every commit it sends has the stamp of a green ``brain check --public
   --history`` (brain.public) made under the key it is checked with now: this engine's version, the hash of
@@ -120,6 +125,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 from . import config, markers, midsession, paths, projects, public, secretscan
 
@@ -198,14 +204,28 @@ def _subst_end(command: str, i: int) -> int:
     return -1
 
 
+def _command_subst(command: str, i: int, word: list[str], segs: list[list[str]]) -> int:
+    """Read the bash $( ... ) at ``i``, if one is there (not $(( )): its text joins ``word``, its commands join
+    ``segs`` between SUBSHELL[0] and SUBSHELL[1]. Returns the index past its ), or -1."""
+    if not command.startswith("$(", i) or command.startswith("$((", i):
+        return -1
+    j = _subst_end(command, i)
+    if j < 0:
+        return -1
+    word.append(command[i:j + 1])
+    segs.extend([[SUBSHELL[0]], *segments(command[i + 2:j]), [SUBSHELL[1]]])
+    return j + 1
+
+
 def segments(command: str, powershell: bool = False, links: dict[int, str] | None = None) -> list[list[str]]:
     """The simple commands in ``command``, each as its words: split on unquoted newlines, ;, &, |, (, ), { and },
     with the shell's quoting (bash: '...', "..." and backslash; PowerShell: '...', "...", backtick, here-strings).
     Comments are dropped, and so are bash heredoc bodies (message text, which the attribution guard reads whole).
     A redirection (>, >>, 2>, &>, >|, <>, *>, and bash's <) becomes a word ``REDIRECT + operator`` before its file; a
     descriptor copy (2>&1, >&-) is dropped, and so is ``>`` in bash's ((...)) and [[ ... ]], where it compares. A bash
-    ( or ) is a segment of its own, SUBSHELL[0] or SUBSHELL[1]; the commands of a $( ... ) inside double quotes come
-    before the command, between the two, and its word keeps the text. A path substitution ($(mktemp), $(cygpath -w
+    ( or ) is a segment of its own, SUBSHELL[0] or SUBSHELL[1]; the commands of a $( ... ), quoted or not, come
+    before the command, between the two, and its word keeps the text; a here-string's <<< is a word of its own. A
+    path substitution ($(mktemp), $(cygpath -w
     X), $(realpath X)) stays in its word, for _expand. Given ``links``, it maps a segment's index to what joins it to
     the one before: "|" for a pipe, ";" for ;, &, &&, || or a newline, "<(" for the ( of a bash process substitution;
     an index it lacks is joined otherwise (a bracket)."""
@@ -277,11 +297,8 @@ def segments(command: str, powershell: bool = False, links: dict[int, str] | Non
         elif c == '"':
             i += 1
             while i < n and command[i] != '"':
-                if not powershell and command.startswith("$(", i) and not command.startswith("$((", i) \
-                        and (j := _subst_end(command, i)) > 0:
-                    word.append(command[i:j + 1])
-                    segs.extend([[SUBSHELL[0]], *segments(command[i + 2:j]), [SUBSHELL[1]]])
-                    i = j + 1
+                if not powershell and (j := _command_subst(command, i, word, segs)) > 0:
+                    i = j
                     continue
                 if command[i] == esc and i + 1 < n and (powershell or command[i + 1] in '$`"\\\n'):
                     word.append(command[i + 1])
@@ -298,9 +315,10 @@ def segments(command: str, powershell: bool = False, links: dict[int, str] | Non
         elif c == "#" and not started:
             j = command.find("\n", i)
             i = n if j < 0 else j
-        elif not powershell and command.startswith("<<<", i):
-            word.append("<<<")
-            started, i = True, i + 3
+        elif not powershell and command.startswith("<<<", i):   # a word of its own: bash <<<"$(curl ...)" too
+            end_word()
+            seg.append("<<<")
+            i += 3
         elif not powershell and command.startswith("<<", i):
             m = re.match(r"<<-?\s*(['\"]?)([\w.\-]+)\1", command[i:])
             if m:
@@ -325,6 +343,8 @@ def segments(command: str, powershell: bool = False, links: dict[int, str] | Non
         elif not powershell and (m := PATH_SUBST.match(command, i)):
             word.append(m[0])
             started, i = True, m.end()
+        elif not powershell and (j := _command_subst(command, i, word, segs)) > 0:   # unquoted too: eval $(curl ...)
+            started, i = True, j
         elif c == "\n":
             continued = not seg and not started   # nothing since the operator: `curl URL |` <newline> `sh` is one pipe
             end_seg()
@@ -1100,25 +1120,22 @@ LAUNCHERS = {"chroot": ("", ("userspec", "groups"), 1), "nsenter": ("tmuinpUCSGr
              "uv": ("p", ("with", "python", "project", "directory", "env-file", "extra", "group", "package", "index",
                           "from"), 1),
              "poetry": ("C", ("directory",), 1), "pipx": ("", ("spec", "python"), 1), "pdm": ("p", ("project",), 1),
-             "hatch": ("e", ("env",), 1), "rye": ("", (), 1), "npm": ("", ("package", "call"), 1),
-             "pnpm": ("C", ("dir",), 1), "yarn": ("", (), 1)}
+             "hatch": ("e", ("env",), 1), "rye": ("", (), 1), "npm": ("", ("package", "call", "prefix"), 1),
+             "pnpm": ("CF", ("dir", "filter"), 1), "yarn": ("", ("cwd",), 1), "bun": ("", ("cwd",), 1)}
 LAUNCH_VERBS = {"uv": {"run", "tool"}, "poetry": {"run"}, "pipx": {"run"}, "pdm": {"run"}, "hatch": {"run"},
-                "rye": {"run"}, "npm": {"exec", "x"}, "pnpm": {"exec", "dlx"}, "yarn": {"dlx", "exec"}}
+                "rye": {"run"}, "npm": {"exec", "x"}, "pnpm": {"exec", "dlx"}, "yarn": {"dlx", "exec"},
+                "bun": {"x"}}   # its global options may come before the verb: pnpm --silent dlx, npm --yes exec
 STDIN_FEEDERS = {"echo", "printf", "write-output", "write-host", "echo.exe"}
 
 
-def _launcher(prog: str, args: list[str]) -> list[str] | None:
-    """The words of the program a launcher of LAUNCHERS runs (wsl -e cmd, uv run cmd, npx tool, chroot DIR cmd)."""
-    if prog not in LAUNCHERS or (prog in LAUNCH_VERBS and (not args or args[0] not in LAUNCH_VERBS[prog])):
-        return None
-    shorts, longs, skip = LAUNCHERS[prog]
-    i = 1 if prog in LAUNCH_VERBS else 0
-    i += 1 if prog == "uv" and args[:2] == ["tool", "run"] else 0
+def _past_options(prog: str, args: list[str], i: int) -> int:
+    """The index of the first operand of ``args`` from ``i``, past the launcher's options and their values (and a --,
+    or wsl's -e)."""
+    shorts, longs, _ = LAUNCHERS[prog]
     while i < len(args):
         a = args[i]
         if a == "--" or (prog == "wsl" and a in ("-e", "--exec")):
-            i += 1
-            break
+            return i + 1
         if a.startswith("--"):
             i += 2 if "=" not in a and a[2:] in longs else 1
         elif a.startswith("-") and len(a) > 1:
@@ -1126,7 +1143,21 @@ def _launcher(prog: str, args: list[str]) -> list[str] | None:
             i += 2 if k == len(a) - 1 else 1
         else:
             break
-    i += skip if prog in ("chroot",) else 0
+    return i
+
+
+def _launcher(prog: str, args: list[str]) -> list[str] | None:
+    """The words of the program a launcher of LAUNCHERS runs (wsl -e cmd, uv run cmd, npx tool, bun x tool, chroot DIR
+    cmd), a verb's launcher's global options read before its verb."""
+    if prog not in LAUNCHERS:
+        return None
+    i = 0
+    if prog in LAUNCH_VERBS:
+        i = _past_options(prog, args, 0)
+        if i >= len(args) or args[i] not in LAUNCH_VERBS[prog]:
+            return None
+        i += 2 if prog == "uv" and args[i:i + 2] == ["tool", "run"] else 1
+    i = _past_options(prog, args, i) + (LAUNCHERS[prog][2] if prog == "chroot" else 0)
     return args[i:] or None
 
 
@@ -1147,9 +1178,22 @@ def _launched_text(prog: str, args: list[str]) -> tuple[str, str] | None:
     return None
 
 
+STDIN_PATHS = ("-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0")   # a script "named" that is stdin
+
+
+def _bash_reads_stdin(prog: str, args: list[str]) -> bool:
+    """Whether a bash-family shell, or source and . (bash 3.2's way to run a here-string: source /dev/stdin), reads
+    its commands from stdin: no script named, -, /dev/stdin or /dev/fd/0 named, or -s; never with -c."""
+    if prog in ("source", "."):
+        return bool(args[:1]) and args[0] in STDIN_PATHS
+    pos = [a for a in args if not a.startswith(("-", "+")) or a == "-"]
+    return (not pos or pos[0] in STDIN_PATHS or "-s" in args) and not any(
+        a.startswith("-") and not a.startswith("--") and "c" in a for a in args)
+
+
 def _reads_stdin(prog: str, args: list[str], shell: str) -> str | None:
-    """The shell that reads commands from stdin when ``prog`` is one with no command of its own (bash, bash -s, ssh
-    host, pwsh -Command -, cmd, iex with pipeline input), else None."""
+    """The shell that reads commands from stdin when ``prog`` is one with no command of its own (bash, bash -s, bash
+    /dev/stdin, source /dev/stdin, ssh host, pwsh -Command -, cmd, iex with pipeline input), else None."""
     if prog in ("ssh", "plink"):
         remote = _ssh_remote(args)
         if remote is None:
@@ -1160,10 +1204,8 @@ def _reads_stdin(prog: str, args: list[str], shell: str) -> str | None:
     if prog in ("iex", "invoke-expression") and shell == "ps":
         return "ps" if not [a for a in args if not a.lower().startswith("-c")] else None
     sub = SHELLS.get(prog)
-    if sub == "bash":
-        pos = [a for a in args if not a.startswith(("-", "+")) or a == "-"]
-        return "bash" if (not pos or pos[0] == "-" or "-s" in args) and not any(
-            a.startswith("-") and not a.startswith("--") and "c" in a for a in args) else None
+    if sub == "bash" or (prog in ("source", ".") and shell != "ps"):
+        return "bash" if _bash_reads_stdin(prog, args) else None
     if sub == "ps":
         low = [a.lower() for a in args]
         if any(a in ("-command", "-c", "-file", "-f") and low[i + 1:i + 2] == ["-"] for i, a in enumerate(low)):
@@ -2303,7 +2345,13 @@ SCRIPT_READERS = re.compile(r"^(?:python[\d.]*|py|node|perl|ruby)$")   # run the
 # A text a shell runs (sh -c, eval, a here-string) that is a download's output: "$(curl ...)", `wget -qO- ...`.
 EVALUATED = re.compile(r"(?i)^\s*(?:\$\(|`)\s*(?:[\w.~:-]*[\\/])?(?:curl|wget|https?|xh)(?:\.exe)?(?=[\s)`]|$)")
 EVALUATORS = re.compile(r"(?i)^(?:iex|invoke-expression|\[scriptblock\]::create)$")   # PowerShell runs its text
-PLUGIN_VALUES = ("-s", "--scope")
+# SCRIPT_READERS' short options: (those that give code of its own, those that take a value).
+SCRIPT_OPTS = {"python": ("cm", "WX"), "node": ("ep", "r"), "perl": ("eE", "IMm"), "ruby": ("e", "IrC")}
+# claude plugin install's options that take a value (the CLI 2.1.x), and marketplace add's list (--sparse a b).
+PLUGIN_VALUES = ("-s", "--scope", "--config", "--marketplace", "--accept-command", "--registry")
+PLUGIN_LISTS = ("--sparse",)
+KIT_HELP = ("--help", "-h")
+SKILLS_READS = ("--list", "-l")   # skills add REPO --list lists a repo's skills, installs none
 
 
 def _downloads(prog: str, words: list[str]) -> bool:
@@ -2313,24 +2361,53 @@ def _downloads(prog: str, words: list[str]) -> bool:
 
 def _reads_script(prog: str, args: list[str], shell: str) -> bool:
     """Whether ``prog`` runs as a script what stdin holds: a shell reading stdin (_reads_stdin), iex with no command
-    of its own, or python, node, perl and ruby with no script named (or -) and no -c, -m or -e."""
+    of its own, or python, node, perl and ruby with no script named (or -, /dev/stdin) and no -c, -m or -e."""
     if _reads_stdin(prog, args, shell):
         return True
-    if not SCRIPT_READERS.match(prog):
-        return False
+    return bool(SCRIPT_READERS.match(prog)) and _script_kind(prog, args) == "stdin"
+
+
+def _script_kind(prog: str, args: list[str]) -> str:
+    """What python, node, perl or ruby (``prog``) runs from ``args``: "stdin" (no script named, or -, /dev/stdin),
+    "file" (a script named) or "code" (its own: -c, -m, -e, --eval). Each one's own options that take a value
+    (SCRIPT_OPTS) skip it: python -I takes none, ruby -I does."""
+    code, values = SCRIPT_OPTS["python" if prog.startswith("py") else prog]
     i = 0
     while i < len(args):
         a = args[i]
-        if a == "-":
-            return True
-        if a in ("-W", "-X", "-r", "--require", "--import", "-I"):
+        if a in STDIN_PATHS:
+            return "stdin"
+        if a in ("--eval", "--print"):
+            return "code"
+        if a in ("--require", "--import"):
             i += 2
             continue
-        if not a.startswith("-") or a in ("--eval", "--print") or \
-                (not a.startswith("--") and set(a[1:]) & set("cmeEp")):
-            return False
+        if not a.startswith("-"):
+            return "file"
+        for k, ch in enumerate(a[1:] if not a.startswith("--") else "", 1):
+            if ch in code:
+                return "code"
+            if ch in values:   # a value option ends its cluster; at its end, the value is the next word
+                i += k == len(a) - 1
+                break
         i += 1
-    return True
+    return "stdin"
+
+
+def _runs_substitution(prog: str, args: list[str]) -> bool:
+    """Whether a <( ) after ``args`` is what ``prog`` runs: source's or .'s first operand, a shell's or an
+    interpreter's when it names no script before it (code of its own, sh -c, may read it: counted); a script named
+    first reads the download as data (python3 analyze.py <(curl ...))."""
+    if prog in ("source", "."):
+        return not [a for a in args if not a.startswith("-")]
+    if SHELLS.get(prog) == "bash":
+        pos, i = [], 0
+        while i < len(args):
+            a = args[i]
+            i += 2 if a in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file") else 1
+            pos += [] if a.startswith(("-", "+")) else [a]
+        return not pos or any(a.startswith("-") and not a.startswith("--") and "c" in a for a in args)
+    return bool(SCRIPT_READERS.match(prog)) and _script_kind(prog, args) != "file"
 
 
 def plugin_sources() -> tuple[set[str], set[str]]:
@@ -2364,23 +2441,51 @@ def _source(text: str, cwd: str) -> str:
 
 def _kit_command(prog: str, args: list[str], d: str) -> tuple[str, str] | None:
     """(check, what) when the simple command adds a plugin, a marketplace or a skill from outside the owner's list:
-    claude plugin install NAME@MARKETPLACE, claude plugin marketplace add SOURCE, skills add (npx, bunx, pnpm dlx)."""
+    claude plugin install NAME@MARKETPLACE (and its --marketplace SOURCE), claude plugin marketplace add SOURCE, skills
+    add (npx, bunx, bun x, pnpm dlx); its --list only lists. claude's global options may come before plugin."""
     if re.sub(r"(?<=.)@[^/]*$", "", prog) == "skills" and _first(args)[:1] == ["add"]:
+        if any(a in SKILLS_READS for a in args):
+            return None
         return "skills", f"skills add {' '.join(_first(args)[1:2])}".rstrip()
     if prog != "claude":
         return None
-    pos = _first(args, PLUGIN_VALUES)
-    if pos[:1] not in (["plugin"], ["plugins"]):
-        return None
-    if pos[1:2] in (["install"], ["i"]) and len(pos) > 2:
-        spec = pos[2]
-        market = spec.rpartition("@")[2].lower() if "@" in spec else ""
-        if market not in plugin_sources()[0]:
-            return "plugin", f"claude plugin install {spec} (" + (f"marketplace {market}" if market else
-                                                                   "no marketplace named") + ")"
-    elif pos[1:3] == ["marketplace", "add"] and len(pos) > 3:
-        if _source(pos[3], d) not in plugin_sources()[1]:
-            return "plugin", f"claude plugin marketplace add {pos[3]}"
+    at = next((k for k, a in enumerate(args) if a in ("plugin", "plugins")), None)
+    return None if at is None else _plugin_command(args[at + 1:], d)
+
+
+def _drop_lists(args: list[str]) -> list[str]:
+    """``args`` without PLUGIN_LISTS' options and their values (the words up to the next option, or past a --)."""
+    out, listing = [], False
+    for a in args:
+        if a in PLUGIN_LISTS:
+            listing = True
+        elif listing and not a.startswith("-"):
+            continue
+        else:
+            listing = False
+            out.append(a)
+    return out
+
+
+def _plugin_command(args: list[str], d: str) -> tuple[str, str] | None:
+    """(check, what) for claude plugin's ``args`` (after the plugin word): every operand of install is a plugin it
+    checks, and every operand of marketplace add a source, so an option's value never shifts what is checked."""
+    pos = _first(_drop_lists(args), PLUGIN_VALUES)
+    names, sources = plugin_sources() if pos[:1] in (["install"], ["i"]) or pos[:2] == ["marketplace", "add"] \
+        else (set(), set())
+    if pos[:1] in (["install"], ["i"]):
+        for spec in pos[1:]:
+            market = spec.rpartition("@")[2].lower() if "@" in spec else ""
+            if market not in names:
+                return "plugin", f"claude plugin install {spec} (" + (f"marketplace {market}" if market else
+                                                                       "no marketplace named") + ")"
+        for source in _option_values(args, ("--marketplace",)):
+            if _source(source, d) not in sources:
+                return "plugin", f"claude plugin install --marketplace {source}"
+    elif pos[:2] == ["marketplace", "add"]:
+        for source in pos[2:]:
+            if _source(source, d) not in sources:
+                return "plugin", f"claude plugin marketplace add {source}"
     return None
 
 
@@ -2401,7 +2506,7 @@ def check_third_party(cmds, cwd: str, powershell: bool = False, command: str = "
         return (check, f"{what} refused: a session never installs or runs a third-party kit ({why}); {owner} reads "
                        "it first and runs it themself", _request(check, what, top, shell, cwd))
     for words, d, _, top in actions(cmds, sub, command=command):
-        hit = None if "--help" in words[1:] else _kit_command(_prog(words[0]), words[1:], d)
+        hit = None if any(a in KIT_HELP for a in words[1:]) else _kit_command(_prog(words[0]), words[1:], d)
         if hit:
             return refusal(*hit, top)
     what = _fed_download(command, sub)
@@ -2440,6 +2545,24 @@ def _ps_subexpression_download(args: list[str]) -> str:
     return ""
 
 
+def _substituted_download(segs: list[list[str]], k: int, shell: str) -> str | None:
+    """The download a process substitution opened at segment ``k`` (the <( of segs[k - 1]) feeds the program that
+    runs it as a script (_runs_substitution: bash <(curl ...), source <(curl ...)), else None."""
+    runner = _plain(segs[k - 1], shell)[0]
+    prog = _prog(runner[0]) if runner else ""
+    if not (SHELLS.get(prog) == "bash" or prog in ("source", ".") or SCRIPT_READERS.match(prog)) or \
+            not _runs_substitution(prog, runner[1:]):
+        return None
+    depth_in, j = 1, k + 1
+    while j < len(segs) and depth_in:
+        depth_in += {SUBSHELL[0]: 1, SUBSHELL[1]: -1}.get(segs[j][0], 0)
+        inner = _plain(segs[j], shell)[0]
+        if depth_in and inner and _downloads(_prog(inner[0]), inner):
+            return f"{_prog(inner[0])} run by {prog} through <( )"
+        j += 1
+    return None
+
+
 def _fed_download(text: str, shell: str = "bash", depth: int = 0) -> str | None:
     """What runs a download as a script in the command ``text`` read by ``shell`` (bash, ps, or ssh: a remote bash),
     else None: a download piped, through any filter, to a shell or an interpreter reading stdin (curl | sh, wget -qO- |
@@ -2459,17 +2582,9 @@ def _fed_download(text: str, shell: str = "bash", depth: int = 0) -> str | None:
             piped = stated = ""
             evaluator = False
         if raw[0] in SUBSHELL:
-            if links.get(k) == "<(" and k and segs[k - 1][0] not in SUBSHELL:
-                runner = _plain(segs[k - 1], shell)[0]
-                prog = _prog(runner[0]) if runner else ""
-                if SHELLS.get(prog) == "bash" or prog in ("source", ".") or SCRIPT_READERS.match(prog):
-                    depth_in, j = 1, k + 1
-                    while j < len(segs) and depth_in:
-                        depth_in += {SUBSHELL[0]: 1, SUBSHELL[1]: -1}.get(segs[j][0], 0)
-                        inner = _plain(segs[j], shell)[0]
-                        if depth_in and inner and _downloads(_prog(inner[0]), inner):
-                            return f"{_prog(inner[0])} run by {prog} through <( )"
-                        j += 1
+            if links.get(k) == "<(" and k and segs[k - 1][0] not in SUBSHELL and \
+                    (found := _substituted_download(segs, k, shell)):
+                return found
             continue
         words, own = _plain(raw, shell)
         if not words:
@@ -2571,8 +2686,7 @@ def scan_diff(diff: str) -> list[str]:
     hits, path, line = [], "", 0
     for raw in diff.splitlines():
         if raw.startswith("+++ "):
-            path = raw[4:].strip('"')
-            path = path[2:] if path.startswith("b/") else path
+            path = markers.diff_path(raw)
         elif raw.startswith("@@"):
             m = re.search(r"\+(\d+)", raw)
             line = int(m.group(1)) if m else 0
@@ -2612,37 +2726,114 @@ def gitleaks(repo: str) -> list[str] | None:
     return None
 
 
-def _git_out(repo: str, *args: str) -> str:
+class GuardError(RuntimeError):
+    """A check could not read what it judges (git failed, timed out, or printed more than it reads): the call goes
+    on and the error goes to ledger/errors.log, never a silent pass."""
+
+
+GIT_CAP = 20 * MAX_FILE   # the most of a git command's output a check reads
+
+
+def _git_out(repo: str, *args: str, strict: bool = False) -> str:
+    """git's output in ``repo``; '' when it fails, or, ``strict``, a GuardError then and when the output is cut."""
     try:
         r = _run(["git", *args], repo)
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as exc:
+        if strict:
+            raise GuardError(f"git {args[0]} in {repo}: {exc}") from exc
         return ""
-    return r.stdout[:20 * MAX_FILE].decode("utf-8", "replace") if r.returncode == 0 else ""
+    if strict and (r.returncode or len(r.stdout) > GIT_CAP):
+        why = f"exit {r.returncode}" if r.returncode else f"over {GIT_CAP} bytes, not read whole"
+        raise GuardError(f"git {' '.join(args[:3])} in {repo}: {why}")
+    return r.stdout[:GIT_CAP].decode("utf-8", "replace") if r.returncode == 0 else ""
 
 
-def commit_secrets(repo: str, specs: list[str], every_tracked: bool) -> list[str]:
-    """The secrets a commit in ``repo`` would record: the index, plus ``specs`` (paths a git add before it stages)
-    or every tracked change (commit -a)."""
+def commit_secrets(repo: str, specs: list[str], every_tracked: bool, untracked: list[str] | None = None) -> list[str]:
+    """The secrets a commit in ``repo`` would record: the index, plus ``specs`` (paths a git add before it stages,
+    or the commit names) or every tracked change (commit -a), and the untracked files a git add stages
+    (``untracked``: its paths; default ``specs``)."""
+    untracked = specs if untracked is None else untracked
     staged = gitleaks(repo)
     if staged is None:
         staged = scan_diff(_git_out(repo, "diff", "--cached", "-U0", "--no-color", "--no-ext-diff"))
     hits = list(staged)
     if specs or every_tracked:
         hits += scan_diff(_git_out(repo, "diff", "HEAD", "-U0", "--no-color", "--no-ext-diff", "--", *specs))
-    if specs:
-        for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *specs).split("\0"):
+    if untracked:
+        for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *untracked).split("\0"):
             if name:
                 hits += scan_text(name, _read_file(name, repo))
     return list(dict.fromkeys(hits))
 
 
 CONTINUES = {"merge", "rebase", "cherry-pick", "revert", "am"}   # git SUB --continue commits what the index holds
+COMMIT_VALUES = "mFCct"   # git commit's short options that take a value; its long ones:
+COMMIT_LONGS = {"--message", "--file", "--reuse-message", "--reedit-message", "--fixup", "--squash", "--author",
+                "--date", "--template", "--cleanup", "--trailer"}
+WHOLE_TREE = ":/"   # the pathspec of the whole worktree, from any of its folders
+
+
+class Commit(NamedTuple):
+    """A git commit (or SUB --continue) of a call: its folder, what it is, the pathspecs it records from the working
+    tree (a git add's before it, its own), commit -a, the pathspecs whose untracked files a git add stages."""
+    repo: str
+    what: str
+    specs: list[str]
+    every: bool
+    untracked: list[str]
+
+
+def _pathspec(spec: str, d: str) -> str | None:
+    """A pathspec as the guard's git commands read it from any folder: a path, from ``d``; :/x as is; an exclusion
+    (:!x, :^x, :(exclude)x) None (dropped: more is read, never less); any other magic the whole worktree."""
+    if not spec.startswith(":"):
+        return _path(spec, d)
+    if re.match(r"^:(?:[!^]|\([^)]*\bexclude\b)", spec):
+        return None
+    return spec if spec.startswith(":/") else WHOLE_TREE
+
+
+def _operands(args: list[str], shorts: str = "", longs=()) -> tuple[list[str], list[str]]:
+    """(operands, options) of git SUB's ``args``: a short option of ``shorts`` takes the rest of its cluster or the
+    next word, a long one of ``longs`` its =value or the next word; -- ends the options."""
+    pos, opts, i = [], [], 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            return pos + args[i + 1:], opts
+        if a.startswith("-") and len(a) > 1:
+            opts.append(a)
+            k = next((j for j in range(1, len(a)) if a[j] in shorts), None) if not a.startswith("--") else None
+            i += 2 if (k is not None and k == len(a) - 1) or ("=" not in a and a in longs) else 1
+        else:
+            pos.append(a)
+            i += 1
+    return pos, opts
+
+
+def _named_specs(pos: list[str], opts: list[str], d: str) -> list[str]:
+    """The pathspecs of ``pos``, read by _pathspec; the whole worktree when only exclusions remain or the list comes
+    from a file (--pathspec-from-file)."""
+    specs = [s for s in (_pathspec(p, d) for p in pos) if s]
+    from_file = any(o.startswith("--pathspec-from-file") for o in opts)
+    return [WHOLE_TREE] if from_file or (pos and not specs) else specs
+
+
+def _add_specs(args: list[str], d: str) -> tuple[list[str], list[str]]:
+    """(the pathspecs a git add stages, those whose untracked files it stages too). With no pathspec, git add -A, -u
+    and -p take the whole worktree from any folder (git 2.0); -u and -p stage no untracked file."""
+    pos, opts = _operands(args)
+    specs = _named_specs(pos, opts, d) or [WHOLE_TREE]
+    tracked = any(o in ("--update", "--patch") or re.match(r"^-[A-Za-z]*[up]", o) for o in opts)
+    return specs, [] if tracked else specs
 
 
 def _commits(cmds: list[tuple[list[str], str]], continues: bool = False):
-    """(repo, what, the paths a git add earlier in the call stages, commit -a) for each git commit of ``cmds``, and,
-    with ``continues``, each git merge|rebase|cherry-pick|revert|am --continue."""
+    """A Commit for each git commit of ``cmds``, and, with ``continues``, each git merge|rebase|cherry-pick|revert|am
+    --continue: what a git add earlier in the call stages, the commit's own pathspecs (git commit -m x path records
+    that path's working tree), commit -a."""
     added: list[str] = []
+    untracked: list[str] = []
     for words, d in cmds:
         if _prog(words[0]) != "git":
             continue
@@ -2651,13 +2842,14 @@ def _commits(cmds: list[tuple[list[str], str]], continues: bool = False):
             continue
         d, sub, args = parts
         if sub == "add":
-            specs = [a for a in args if not a.startswith("-")]
-            added += [_path(s, d) for s in specs] or [d]
+            specs, new = _add_specs(args, d)
+            added, untracked = added + specs, untracked + new
         elif sub == "commit" and "--help" not in args:
-            every = any(re.match(r"^-[A-Za-z]*a[A-Za-z]*$", a) or a == "--all" for a in args)
-            yield d, "git commit", added, every
+            pos, opts = _operands(args, COMMIT_VALUES, COMMIT_LONGS)
+            every = any(re.match(r"^-[A-Za-z]*a[A-Za-z]*$", a) or a == "--all" for a in opts)
+            yield Commit(d, "git commit", added + _named_specs(pos, opts, d), every, list(untracked))
         elif continues and sub in CONTINUES and "--continue" in args:
-            yield d, f"git {sub} --continue", added, False
+            yield Commit(d, f"git {sub} --continue", list(added), False, list(untracked))
 
 
 def _pushes(cmds: list[tuple[list[str], str]]):
@@ -2685,8 +2877,8 @@ def check_config(cmds: list[tuple[list[str], str]]) -> str | None:
 
 
 def check_secrets(cmds: list[tuple[list[str], str]]) -> str | None:
-    for d, _, added, every in _commits(cmds):
-        hits = commit_secrets(d, added, every)
+    for c in _commits(cmds):
+        hits = commit_secrets(c.repo, c.specs, c.every, c.untracked)
         if hits:
             more = f" and {len(hits) - 1} more" if len(hits) > 1 else ""
             return (f"git commit refused: {hits[0]}{more} looks like a secret; take it out of the commit "
@@ -2697,23 +2889,77 @@ def check_secrets(cmds: list[tuple[list[str], str]]) -> str | None:
 
 # --- conflict markers in what a commit records (wi-brain-guard-conflict-markers) ------------------------------------
 
-def commit_markers(repo: str, specs: list[str], every_tracked: bool) -> list[str]:
+# The diff the markers check reads: one line of context (a heading's line above), renames found whatever diff.renames
+# says (a moved file adds no line), and only the files whose changes hold a line that starts like a marker (-G, the
+# same in basic and extended regex), so a big data file never fills the output.
+MARKER_DIFF = ("-U1", "--no-color", "--no-ext-diff", "-M", "-G^[<=>|][<=>|][<=>|][<=>|][<=>|][<=>|][<=>|]")
+
+
+def _head(repo: str) -> str:
+    """HEAD, or before the first commit the empty tree."""
+    if _git_out(repo, "rev-parse", "--verify", "--quiet", "HEAD").strip():
+        return "HEAD"
+    return _git_out(repo, "hash-object", "-t", "tree", "--stdin", strict=True).strip()
+
+
+def _merge_heads(repo: str) -> list[str]:
+    """The commits a merge in progress in ``repo`` merges (.git/MERGE_HEAD), else []."""
+    name = _git_out(repo, "rev-parse", "--git-path", "MERGE_HEAD").strip()
+    try:
+        with open(_path(name, repo), encoding="utf-8") as fh:
+            return [line.strip() for line in fh if line.strip()]
+    except OSError:   # no merge in progress (or no repo: name is '', the folder itself)
+        return []
+
+
+def _added_markers(repo: str, cached: bool, specs: list[str]) -> list[str]:
+    """The markers the added lines of the index (``cached``) or of ``specs``' working tree bring against HEAD, and,
+    during a merge, against every commit it merges too: a line the merged branch already holds is not the session's
+    (a combined diff's rule)."""
+    hits: list[str] | None = None
+    for base in (_head(repo), *_merge_heads(repo)):
+        diff = _git_out(repo, "diff", *(["--cached"] if cached else []), *MARKER_DIFF, base, "--", *specs,
+                        strict=True)
+        found = markers.scan_diff(diff)
+        hits = found if hits is None else [h for h in hits if h in set(found)]
+    return hits or []
+
+
+def _file_markers(name: str, repo: str) -> list[str]:
+    """The markers of the untracked file ``name`` (from ``repo``), read as it goes whatever its size; a binary file
+    (a NUL in its first 8000 bytes) has none, as in a diff."""
+    p = _path(name, repo)
+    try:
+        with open(p, "rb") as fh:
+            if b"\0" in fh.read(8000):
+                return []
+        with open(p, encoding="utf-8", errors="replace") as fh:
+            return markers.scan_lines(name, fh)
+    except OSError:
+        return []
+
+
+def commit_markers(repo: str, specs: list[str], every_tracked: bool, untracked: list[str] | None = None) -> list[str]:
     """The conflict markers (brain.markers) a commit in ``repo`` would record: the added lines of the index, plus
-    ``specs`` (paths a git add before it stages) or every tracked change (commit -a), and the untracked files added."""
-    diff = ["diff", "-U1", "--no-color", "--no-ext-diff", "--no-renames"]
-    hits = markers.scan_diff(_git_out(repo, *diff[:1], "--cached", *diff[1:]))
+    ``specs`` (paths a git add before it stages, or the commit names) or every tracked change (commit -a), and the
+    untracked files a git add stages (``untracked``: its paths; default ``specs``). During a merge, a line counts only
+    when it is new against every parent. What git cannot show is a GuardError (logged), never a silent pass."""
+    untracked = specs if untracked is None else untracked
+    hits = _added_markers(repo, True, [])
     if specs or every_tracked:
-        hits += markers.scan_diff(_git_out(repo, *diff, "HEAD", "--", *specs))
-    if specs:
-        for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *specs).split("\0"):
+        hits += _added_markers(repo, False, specs)
+    if untracked:
+        for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *untracked,
+                             strict=True).split("\0"):
             if name:
-                hits += markers.scan_text(name, _read_file(name, repo))
+                hits += _file_markers(name, repo)
     return list(dict.fromkeys(hits))
 
 
 def check_markers(cmds: list[tuple[list[str], str]]) -> str | None:
-    for d, what, added, every in _commits(cmds, continues=True):
-        hits = commit_markers(d, added, every)
+    for c in _commits(cmds, continues=True):
+        d, what = c.repo, c.what
+        hits = commit_markers(d, c.specs, c.every, c.untracked)
         if hits:
             more = f" and {len(hits) - 1} more" if len(hits) > 1 else ""
             return (f"{what} refused: {hits[0]}{more} adds a conflict marker (<<<<<<<, ======= or >>>>>>>); finish "
@@ -2847,16 +3093,6 @@ def push_slug(repo: str) -> str:
     return public.repo_slug(_git_out(repo, "remote", "get-url", "--push", remote).strip())
 
 
-def _untracked_specs(cmds: list[tuple[list[str], str]]) -> list[str]:
-    """The paths whose untracked files a git add of the call stages: not git add -u or --update (tracked only)."""
-    out: list[str] = []
-    for words, d in cmds:
-        parts = git_parts(words, d) if _prog(words[0]) == "git" else None
-        if parts and parts[1] == "add" and not {"-u", "--update"} & set(parts[2]):
-            out += [_path(s, parts[0]) for s in parts[2] if not s.startswith("-")] or [parts[0]]
-    return out
-
-
 def commit_public(repo: str, specs: list[str], every_tracked: bool,
                   untracked: list[str] | None = None) -> tuple[str, list[str]]:
     """(the public repo, the findings) of what a commit in ``repo`` would record when the remote its branch pushes to
@@ -2897,9 +3133,9 @@ def _untracked_findings(repo: str, specs: list[str], r) -> list:
 
 
 def check_public_commit(cmds: list[tuple[list[str], str]]) -> str | None:
-    untracked = _untracked_specs(cmds)
-    for d, what, added, every in _commits(cmds):
-        slug, hits = commit_public(d, added, every, untracked)
+    for c in _commits(cmds):
+        d, what = c.repo, c.what
+        slug, hits = commit_public(d, c.specs, c.every, c.untracked)
         if hits:
             more = f" and {len(hits) - 1} more" if len(hits) > 1 else ""
             return (f"{what} refused: {hits[0]}{more}; {slug} is a public repo (config.json public.repos): take it "

@@ -11,6 +11,26 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 - An exec event's end is never before its start (`wi-brain-selftime-end-before-start`): both come from one clock,
   the end clamped to the start; `datetime.now()` against a start rounded up across a millisecond put it 1 ms before,
   now and then, and the schema refused the event (a test failed on CI with `event.end: before start`).
+- The third-party and conflict-marker guards after the review of #26 (`wi-brain-guards-kits-review-fixes`):
+  - `guard.sh` starts Python for `claude` then `plugin`, or `skills` then `add`, whatever comes between: a quoted
+    `claude.exe` (the desktop app's, by its full path), global options (`claude --model opus plugin ...`) and a line
+    continuation no longer skip the guard.
+  - Refused now: a here-string glued to its `<<<` (`bash <<<"$(curl ...)"`, `sh<<<...`), an unquoted `eval $(curl
+    ...)` or `sh -c $(curl ...)`, a shell, `source`, `.` or python reading the download through `/dev/stdin` or
+    `/dev/fd/0` (`curl ... | bash /dev/stdin`, `source /dev/stdin <<< "$(curl ...)"`), `curl ... | python3 -E`.
+  - `claude plugin`: global options before `plugin` and the values of `--config`, `--scope`, `--marketplace`,
+    `--sparse a b` no longer shift the plugin or source checked; every operand is checked, and `plugin install
+    --marketplace SOURCE` is checked as a source. `skills add` through `bun x` and after a launcher's global option
+    (`pnpm --silent dlx`, `npm --yes exec`) is refused; `skills add REPO --list` and `-h` pass.
+  - Pass now: a process substitution a named script reads as data (`python3 analyze.py <(curl ...)`, `bash
+    ./compare.sh <(curl ...)`), and `curl ... | python -I parse.py` (python's `-I` takes no value).
+  - Markers: a merge's resolution commits over content the merged branch already holds (a line counts only when new
+    against every parent); `git add -A`, `-u` or `-p` with no path read the whole worktree from a subfolder, `:/` and
+    exclusions are read as pathspecs, and `-u`/`-p` read no untracked file; `git commit PATH` (`--only`, `-i`) reads
+    PATH's working tree (the secrets and public checks too); a pure `git mv` adds no line; a path with a space (git's
+    TAB) or C-quoted keeps its setext heading; `.qmd`, `.Rmd` and `.txt` headings pass; only the files whose changes
+    hold a marker-like line are read (`git diff -G`), an untracked file is read whole, and a diff git cannot show
+    whole is an error in `errors.log`, never a silent pass.
 
 ## 0.2.7 — 2026-11-09
 
