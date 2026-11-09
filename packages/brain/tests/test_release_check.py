@@ -535,6 +535,21 @@ def test_the_policy_examples_say_they_were_patches_before_it():
     assert "Every release up to 0.2.7 predates this policy" in policy
 
 
+def test_the_page_says_which_releases_were_cut_as_patches():
+    """Not every release before the policy was a patch: the last minor one, read from the CHANGELOG, is named as the
+    one after which every release was (the root CHANGELOG, which goes back to 0.1.0)."""
+    log = (ROOT / ROOT_LOG).read_text(encoding="utf-8")
+    released = [line.split()[1] for line in log.splitlines() if release_check.HEADING_RE.match(line)]
+    released.sort(key=lambda version: tuple(map(int, version.split("."))))
+    released = released[:released.index("0.2.7") + 1]
+    minors = [now for before, now in zip(released, released[1:]) if not release_check.is_patch(f"v{before}", now)]
+    assert minors and minors[-1] == "0.2.0"
+    page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    policy = " ".join(page.split("## The version policy", 1)[1].split("\n## ", 1)[0].split())
+    assert f"every one after {minors[-1]} was cut as a patch" in policy
+    assert "predates this policy and was cut as a patch" not in policy
+
+
 def test_the_release_page_says_one_thing_of_a_release_with_nothing_else_to_do():
     """Every Upgrade numbers the standard steps, so no release has nothing to do: « The standard steps » and section 2
     both say « Nothing to run for the rest », and neither says a bare « Nothing to run »."""

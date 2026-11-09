@@ -37,8 +37,8 @@ From 1.0 on, the first number takes the middle one's place for a change that bre
   that cannot wait, left in `## Unreleased` by the merge back). It reads files and titles, not meanings: a step written as prose, or a
   change that newly refuses with no step for it, is the version PR's author to catch, with « Read what changed » below.
 
-Every release up to 0.2.7 predates this policy and was cut as a patch, the ones that would now be minor versions
-included (0.2.5 and 0.2.6 above). 0.2.7 is the last release before this policy: its `### Upgrade` had a step beyond
+Every release up to 0.2.7 predates this policy, and every one after 0.2.0 was cut as a patch, the ones that would now
+be minor versions included (0.2.5 and 0.2.6 above). 0.2.7 is the last release before this policy: its `### Upgrade` had a step beyond
 the standard ones (step 4, a script that runs `brain --project P` from a worktree), and it stayed a patch (the
 maintainer's decision, 2026-11-09). The
 check would refuse its steps 2 and 3 as well: they are standard steps, but under the titles they had before this policy
