@@ -244,7 +244,8 @@ def _holds(root: Path, ddr_id: str) -> bool:
 def _seen_plan(args, scope: list) -> list[tuple]:
     """(project, the ids --seen names there): with no id, every project (each default not reviewed yet); with --all,
     each id in the one project that holds a DDR of that exact id (a DDR id is its project's own: the part of an id
-    one project takes would name another DDR in each). Every id is found and checked before anything is written."""
+    one project takes would name another DDR in each). Every id is found and checked before any is marked (what
+--apply took before stays taken)."""
     if not args.seen or not args.all:
         plan = [(p, list(args.seen or [])) for p in scope]
     else:

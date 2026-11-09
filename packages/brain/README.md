@@ -304,7 +304,8 @@ rules or scheduled tasks (`brain.defaults.REFUSED`, by words, inside `-`/`_` com
 or `$50`: a false alarm only keeps the decision with the owner; `brain check` applies it to pending DDRs, never to one already answered). A stamp without a zone is read as UTC. `brain
 decision defaulted` is the owner's review list (the defaults to review, the provisional ones, the reversed ones:
 answered otherwise than the default after the deadline; `--seen` marks them read, from the owner's terminal only,
-and checks every id before it writes; with `--all` it takes full ids, each marked in the one project that holds it;
+and checks every id it names before it marks any (with `--apply`, the defaults due are taken first and stay taken
+when an id is refused); with `--all` it takes full ids, each marked in the one project that holds it;
 `--apply` and `--seen` never write a main checkout on main or master unless `--on-main`, as `brain refresh`), with a
 line in the morning batch (`brain decision batch --zen`) and in the cockpit's queue panel (`brain tui`); any default is reversed with `brain decision answer ID
 <option> --again`.

@@ -67,12 +67,16 @@ def _sync_store(args, root: Path, store: Path) -> int:
     if _activate_specs(args, root, store):
         return 1
     ddrs = _take_defaults(root)
-    featured = features.has_type(graph.load_schema(store))
-    if featured and not getattr(args, "offline", False):   # before the graph sync: it reads the statuses
-        features.sync_prs(store, [(c.name, c.path) for c in _repos(args, root) if c.path.is_dir()])
-    rc = graph.research_graph(root, store, "sync", "--write")
-    if rc:
-        return rc
+    queued = []
+    try:
+        return _sync_views(args, root, store, ddrs, queued)
+    finally:
+        if ddrs and not queued:   # a view step failed after the defaults were taken: the queue view still shows them
+            _queue_changed(root, args)
+
+
+def _graph_views(args, root: Path, store: Path) -> int:
+    """The records' graph and the links graph, after the graph sync; 1 when the links graph cannot be written."""
     if _records_view(root, store):
         n, e, left = records.write_graph(root, store)
         print(f"records graph: {n} node(s), {e} edge(s)" + (f", {left} link(s) to nodes not in the store"
@@ -85,12 +89,26 @@ def _sync_store(args, root: Path, store: Path) -> int:
         except AuditError as exc:
             print(f"brain: links graph not written: {exc}", file=sys.stderr)
             return 1
+    return 0
+
+
+def _sync_views(args, root: Path, store: Path, ddrs: bool, queued: list) -> int:
+    """The views _sync_store writes after the defaults are taken; ``queued`` is set once the queue view is."""
+    featured = features.has_type(graph.load_schema(store))
+    if featured and not getattr(args, "offline", False):   # before the graph sync: it reads the statuses
+        features.sync_prs(store, [(c.name, c.path) for c in _repos(args, root) if c.path.is_dir()])
+    rc = graph.research_graph(root, store, "sync", "--write")
+    if rc:
+        return rc
+    if _graph_views(args, root, store):
+        return 1
     if featured and _features_view(args, root, store, write=True):   # after the links: FEATURES.md shows them
         return 1
     if modules.applies(store) and modules.write(root, store, _store_label(root, store)):
         print(f"view: {modules.VIEW} written")
     if ddrs:
         _queue_changed(root, args)
+        queued.append(True)
     if neutral.applies(root) and render.main(root, "claude", do_write=True):   # the marketplace from the source
         return 1
     for line in render.keep_current(root, _project(args, root).name, fix=True):   # AGENTS.md and the like, here

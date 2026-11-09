@@ -344,6 +344,22 @@ def test_33_all_seen_marks_each_full_id_in_the_project_that_holds_it(two, capsys
     assert (alpha / "notes" / "decision_queue.md").is_file() and (beta / "notes" / "decision_queue.md").is_file()
 
 
+def test_33_apply_then_a_refused_seen_id_keeps_the_defaults_taken_and_marks_none(registry, capsys):
+    """The check covers the --seen ids only (as the README and the CHANGELOG say): --apply has taken the defaults
+    due before an id is refused, and they stay taken; no id is marked."""
+    root = registry
+    _ask(root, "Label wording", low_stakes=True)
+    _ask(root, "Plain wording")
+    argv = ["--project", "demo", "decision", "defaulted", "--at", AFTER, "--apply", "--seen", "label-wording",
+            "plain-wording"]
+    assert cli.main(argv) == 1
+    assert "plain-wording: not decided by default" in capsys.readouterr().err
+    ddr = decisions.find(root, "label-wording")[1]
+    assert ddr["status"] == "answered" and ddr["answer"]["by"] == "default"   # taken by --apply, kept
+    assert "reviewed" not in ddr["default"]   # but not marked
+    assert "## Answered, to integrate (1)" in (root / "notes" / "decision_queue.md").read_text(encoding="utf-8")
+
+
 def test_35_the_refresh_that_takes_a_default_writes_the_records_graph_after_it(registry, monkeypatch, capsys):
     root = registry
     ddr = _ask(root, "Label wording", low_stakes=True)   # asked 2026-11-01: its deadline has passed
@@ -353,3 +369,16 @@ def test_35_the_refresh_that_takes_a_default_writes_the_records_graph_after_it(r
     nodes = yaml.safe_load((root / "notes" / "graph" / "nodes" / "_generated_records.yaml").read_text(encoding="utf-8"))
     node = next(n for n in nodes if n["id"] == ddr["id"])
     assert node["status"] == "answered"   # not the pending of the state before the default
+
+
+def test_35_a_sync_that_fails_after_taking_a_default_still_rewrites_the_queue_view(registry, monkeypatch, capsys):
+    """The defaults are taken before the graph sync: when that sync fails, the DDRs are already answered by default,
+    so the queue view is rewritten anyway rather than left showing them pending until the next refresh."""
+    root = registry
+    ddr = _ask(root, "Label wording", low_stakes=True)
+    monkeypatch.setattr(graph, "research_graph", lambda *a: 1)   # research_graph sync --write fails
+    assert cli.main(["--project", "demo", "sync", "--offline"]) == 1
+    assert f"{ddr['id']}: taken by default" in capsys.readouterr().out
+    assert decisions.find(root, "label-wording")[1]["status"] == "answered"
+    view = (root / "notes" / "decision_queue.md").read_text(encoding="utf-8")
+    assert "## Answered, to integrate (1)" in view
