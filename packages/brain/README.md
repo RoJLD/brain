@@ -380,16 +380,18 @@ hand-over note listing the live children with both ids, items and their state no
 expired; a subagent's tool call never uses a step up, the main thread's next call gives it. The master's row in the
 cockpit turns yellow, orange and red at each step; `brain alerts` (`brain.alerts`) raises a master past 80 % with live
 children, both read from the session tree at each pass (an archived master, or all of its children archived, close the
-alert at once; the state of a transcript the app's master has left, after a `/clear`, raises nothing, its current
-transcript's own state decides, assuming the app moves its file's `cliSessionId` to the new transcript after a `/clear`,
-as `brain.sessions.host_for` assumes too: not yet checked against a real `/clear` in the desktop app, and were the app
-to keep the old id, both would go wrong: the current transcript's state, which then has no app id, would count no live
-child, so the master past 80 % now would raise no alert of its own, while the earlier transcript's state, still matched
-to the app's master, would keep its stale alert at the pct it had before the `/clear` until the master or all of its
-children are archived or that state is pruned (14 days); a master the tree does not know counts while its watch
-state is under 6 h old). An unarchived master left past 80 % with unarchived children keeps its alert until the master
-or all of its children are archived (archiving one child of several keeps it, with one live child fewer) or its watch
-state is pruned (14 days), by design: those children still spend; the governor reminds a master past 80 % that calls
+alert at once; a session the app does not know, master or child, also ends with its recorded `SessionEnd`, while one
+the app knows lives until archived, since the app resumes it on a message; the state of a transcript the app's master
+has left, after a `/clear`, raises nothing, its current transcript's own state decides, assuming the app moves its
+file's `cliSessionId` to the new transcript after a `/clear`, as `brain.sessions.host_for` assumes too: not yet checked
+against a real `/clear` in the desktop app, and were the app to keep the old id, both would go wrong: the current
+transcript's state, which then has no app id, would count no live child, so the master past 80 % now would raise no
+alert of its own, while the earlier transcript's state, still matched to the app's master, would keep its stale alert
+at the pct it had before the `/clear` until the master or all of its children are archived or that state is pruned
+(14 days); a master the tree does not know counts while its watch state is under 6 h old). An unarchived master left
+past 80 % with unarchived children keeps its alert until the master or all of its children are archived (or, for one
+the app does not know, ended; archiving one child of several keeps it, with one live child fewer) or its watch state
+is pruned (14 days), by design: those children still spend; the governor reminds a master past 80 % that calls
 `start_session`, and lets the call through: nothing blocks a new session.
 
 ## Lessons

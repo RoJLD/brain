@@ -575,6 +575,29 @@ def test_the_masters_alert_stays_until_the_master_or_all_its_children_are_archiv
     assert alert() == {}  # all of them archived
 
 
+def test_a_child_the_app_does_not_know_ends_the_masters_alert_by_its_session_end(app, brain_home):
+    """The README's wording after the second skeptic of #78: a child only the ledger knows counts as ended once its
+    SessionEnd is recorded, not only once archived; an ended child the app knows still counts (finding 24)."""
+    app(MASTER, M_CLI, title="Ada's coordinator")
+    app(CHILD, C_CLI, parent=MASTER, name="f1-tree", title="F1 tree")
+    kid = "eeeeeeee-0000-4000-8000-000000000005"
+    _events(brain_home, {"at": _iso_ago(600), "event": "session_start", "session_id": kid, "parent": MASTER,
+                         "name": "f4-cli"})
+    d = brain_home / "budget"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{M_CLI}.json").write_text(json.dumps({"v": 1, "session": M_CLI, "master": {
+        "pct": 85.0, "step": 80, "live": 2, "started": 2, "budget": 1_000_000, "host_id": MASTER,
+        "at": time.time() - 60}}), encoding="utf-8")
+
+    def alert():
+        return {a.key: a.message for a in alerts.master_alerts(alerts.Config("brain"), datetime.now(timezone.utc))}
+
+    assert "with 2 live child(ren)" in alert()[f"session:master:{MASTER}"]
+    _events(brain_home, {"at": _iso_ago(60), "event": "session_end", "session_id": kid, "reason": "other"},
+            {"at": _iso_ago(60), "event": "session_end", "session_id": C_CLI, "reason": "other"})
+    assert "with 1 live child(ren)" in alert()[f"session:master:{MASTER}"]  # f1-tree: the app resumes it
+
+
 def test_a_detached_session_is_no_longer_its_old_masters_child(app, brain_home):
     """Finding 27: lineageDetached takes a session out of its old master's family; a parent the app's file no longer
     names does not come back from the SessionStart event."""
