@@ -67,7 +67,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from . import graph, notify, paths, projects, stateio, timing
+from . import graph, notify, paths, projects, quiet, stateio, timing
 
 LEVELS = notify.LEVELS
 RANK = {lvl: i for i, lvl in enumerate(LEVELS)}
@@ -933,7 +933,7 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
     if not dry_run and not loaded.writable:   # sent without a record, every pass would send them again
         return [f"nothing sent: {loaded.refusal()}"]
     st = loaded.data
-    lines = []
+    lines = quiet.release(registry, now=now, dry_run=dry_run, env=env)   # the sum-up of a quiet that has ended
     unset: set[str] = set()
     for d in data["projects"]:
         if not d.get("found") or "error" in d:

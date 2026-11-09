@@ -16,6 +16,7 @@ global, like stack names: a project may route to a channel another project decla
         critical: {channels: [ntfy, telegram, email], mode: all}   # all: every one of them
         error: [ntfy, telegram, email]                             # a list: the first that delivers (a fallback)
       decisions: error            # the level a blocking DDR is sent at (brain decision ask --blocking; default error)
+      quiet_hours: "22:00-07:00"  # local time: nothing below critical is sent, one sum-up after (brain.quiet)
       throttle: 60                # minutes before the same --key is sent again at its level (0: never held back)
   quant:
     notify: {levels: {critical: [ntfy, telegram]}}
@@ -48,7 +49,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from . import graph, paths, projects, secretscan
+from . import graph, paths, projects, quiet, secretscan
 from .config import owner_of   # brain.config's: this module's own config() reads the notify configuration
 
 LEVELS = ("info", "warn", "error", "critical")
@@ -62,7 +63,7 @@ THROTTLE = 60
 MAX_TEXT = 3800  # ntfy keeps 4,096 bytes as a message, Telegram 4,096 characters
 PRIORITY = {"info": 2, "warn": 3, "error": 4, "critical": 5}
 TAG = {"info": "information_source", "warn": "warning", "error": "x", "critical": "rotating_light"}
-TOP_KEYS = {"channels", "levels", "decisions", "throttle"}
+TOP_KEYS = {"channels", "levels", "decisions", "throttle", "quiet_hours"}
 KEYS = {
     "ntfy": {"type", "server", "topic", "topic_env", "token_env", "timeout"},
     "telegram": {"type", "api", "token_env", "chat_id", "chat_id_env", "timeout"},
@@ -117,6 +118,7 @@ class Config:
     decisions: str = "error"
     throttle: int = THROTTLE
     declared: bool = False
+    quiet_hours: str = ""   # HH:MM-HH:MM, local time: below critical is held (brain.quiet)
 
 
 @dataclass
@@ -151,7 +153,7 @@ class Attempt:
 class Result:
     project: str
     level: str
-    status: str  # delivered, failed, no-route, throttled, off, dry-run
+    status: str  # delivered, failed, no-route, throttled, held, off, dry-run
     mode: str = "first"
     route: list[str] = field(default_factory=list)
     attempts: list[Attempt] = field(default_factory=list)
@@ -163,7 +165,8 @@ class Result:
     def lines(self) -> list[str]:
         head = {"delivered": "delivered", "failed": "NOT delivered", "no-route": "nothing to send (no channel at "
                 "this level)", "throttled": "held back (sent less than the throttle ago; --force sends it)",
-                "off": f"off (${SWITCH}=off): nothing sent", "dry-run": "dry run: nothing sent"}[self.status]
+                "off": f"off (${SWITCH}=off): nothing sent", "held": "held until the quiet ends "
+                "(brain quiet; critical goes through), then summed up", "dry-run": "dry run: nothing sent"}[self.status]
         out = [f"notify {self.project} {self.level}: {head}"]
         for a in self.attempts:
             out.append(f"  {a.channel}: {a.outcome}" + (f" ({a.detail})" if a.detail else ""))
@@ -284,7 +287,13 @@ def config(project: projects.Project, registry: Mapping[str, projects.Project] |
     throttle = e.get("throttle", THROTTLE)
     if not isinstance(throttle, int) or throttle < 0:
         raise NotifyError(f"{project.name}: notify: throttle is a number of minutes (0: never held back)")
-    return Config(project.name, chans, levels, decisions, throttle, declared=bool(e))
+    window = e.get("quiet_hours") or ""
+    try:
+        if window:
+            quiet.hours(window)
+    except quiet.QuietError as exc:
+        raise NotifyError(f"{project.name}: notify: {exc}") from None
+    return Config(project.name, chans, levels, decisions, throttle, declared=bool(e), quiet_hours=str(window))
 
 
 # --- transports (standard library, imported when they send) ---
@@ -498,6 +507,12 @@ def send(cfg: Config, msg: Message, *, only: list[str] | None = None, dry_run: b
         return res
     base = {"at": _iso(now), "host": msg.host, "project": msg.project, "level": msg.level, "source": msg.source,
             "key": msg.key, "title": _mask(msg.heading(), [])}
+    why = "" if dry_run else quiet.active(cfg.quiet_hours, now)
+    if why and msg.level != quiet.PASS:
+        quiet.hold(msg, now)
+        res.status = "held"
+        _audit([{**base, "channel": "", "outcome": "held", "detail": why}], now)
+        return res
     if not dry_run and not force and _held(cfg, msg, now):
         res.status = "throttled"
         _audit([{**base, "channel": "", "outcome": "throttled"}], now)
