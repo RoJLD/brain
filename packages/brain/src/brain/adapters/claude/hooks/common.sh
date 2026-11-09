@@ -8,7 +8,7 @@
 # it against brain.__version__).
 
 brain_t0=$EPOCHREALTIME
-brain_version=0.2.6
+brain_version=0.2.7
 
 # selftime_bash TASK [EXIT]: the exec event of this hook's bash run (project brain, the task, the engine's version).
 selftime_bash() {
