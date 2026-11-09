@@ -26,7 +26,29 @@ def test_help_with_sigma_survives_a_cp1252_pipe():
     assert "Σ-".encode() in _run(["--help"], encoding="cp1252").stdout
 
 
-def test_help_survives_a_missing_stdout():
-    code = "import sys; sys.stdout = sys.stderr = None; from brain.cli import main; sys.exit(main(['lesson','--help']))"
+def test_help_survives_a_missing_stdout(tmp_path):
+    log = tmp_path / "tb.txt"
+    code = (
+        "import sys, traceback
+"
+        "sys.stdout = sys.stderr = None
+"
+        "from brain.cli import main
+"
+        "try:
+"
+        "    main(['lesson', '--help'])
+"
+        "except SystemExit as e:
+"
+        "    sys.exit(e.code)
+"
+        "except BaseException:
+"
+        f"    open({str(log)!r}, 'w').write(traceback.format_exc())
+"
+        "    sys.exit(3)
+"
+    )
     r = _run(code, inline=True)
-    assert r.returncode == 0, r.stderr.decode("utf-8", "replace")
+    assert r.returncode == 0, log.read_text() if log.exists() else r.stderr.decode("utf-8", "replace")
