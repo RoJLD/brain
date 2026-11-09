@@ -57,6 +57,80 @@ truncated write, a byte that is not UTF-8) or that its schema refuses is an erro
 `v`, a kind this engine does not know) is skipped and counted. Neither stops `brain sync`: the graph is built from the
 other lines, and a note says how many were left out. Their ids still count as recorded, so no AR is appended twice.
 
+## Machine-local state: `brain.stateio`
+
+A **truth-local** file lives under `$BRAIN_HOME` on one machine, with no git behind it: losing it loses a record
+nothing else keeps. Such a file is read and written through `brain.stateio` (`load`, `save`), which:
+
+- reads a missing file as an empty record;
+- **sets aside** a file that is not JSON, not an object, or not the shape its owner expects: it is moved beside
+  itself as `<name>.unreadable-<UTC stamp>` (a line on stderr names it) and the record starts afresh. It is never
+  replaced by `{}` and saved over. Only a command that writes the file sets it aside: a read-only one (`brain
+  status`, the cockpit, a plan, a dry run) reads it as empty and moves nothing. A byte that is not UTF-8 counts as
+  not JSON, and a file a writer replaced between the read and the move is read again;
+- reads a file whose `v` is above the engine's (or is not an integer) as it is, but treats it as **read-only**: the
+  command that would write it refuses up front, « written by a newer brain (v N, this engine knows v M): brain
+  update »; an OSError other than a missing file (a lock, a permission) is read-only too, and nothing is moved;
+- **writes** a backup first, `<name>.bak` beside the file (the same folder, so the same store and data class; a file
+  under `$BRAIN_HOME/secrets` is never copied), then a temporary file, synced and moved over the file
+  (`os.replace`). The `v` on disk is checked again just before: a newer brain that wrote since the load wins;
+- keeps the keys it does not know (a newer brain's additive ones) through the round trip.
+
+`v` is the top-level integer `v`; a file without one is read as version 1. A record keyed by names (schedules,
+projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key as a name, still reads it.
+
+| File | Version | What the engine does when it cannot write it |
+|---|---|---|
+| `schedules/installed.json` | `v` 1, unwritten | `brain schedule install --apply` prints the plan and refuses (exit 2) |
+| `alerts/state.json` | `v` 1, unwritten | the notify pass sends nothing (« nothing sent: ... »), since sending without a record would send again each pass |
+| `vault/state.json` | `v` 1, written from 0.2.6 | `brain vault seal`, `canary` and `drill` refuse before any work; `status` and the health still read it |
+| `usage/sessions.json` | `v` 2 (`LEDGER_V`, apart from the scanner's `SCAN_V`, which only rescans rows) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
+
+### The `return {}` sites, classified
+
+Before this helper, 17 readers caught `(OSError, ValueError)` and returned `{}`. Each has a class
+(spec-brain-data-compat §1); only a truth-local file needs the helper, since a derived file is rebuilt and a
+foreign one is never written here.
+
+| Site | File | Class | Status |
+|---|---|---|---|
+| `alerts.state_load` | `alerts/state.json` | truth-local | through `brain.stateio` |
+| `schedule.installed` | `schedules/installed.json` | truth-local | through `brain.stateio` |
+| `schedule.last_pass` | `alerts/state.json` (`_pass`) | truth-local | through `alerts.state_load` |
+| `usage.load` | `usage/sessions.json` | truth-local | through `brain.stateio` |
+| `vault.device` | `vault/device.json` | truth-local | next (read-only here; `device init` and the rotation write it atomically) |
+| `cockpit.load_state` | `tui.json` | truth-local | next: it also drops the keys it does not know |
+| `memory.load_state` | `memory-sync/state.json` | truth-local | next (the 3-way base; off on the pilot, `BRAIN_MEMORY_SYNC=0`) |
+| `cockpit.snapshot_of`, `sessions.snapshot` | `sessions/<id>.json` | truth-local | next (the Stop hook's snapshot; read-only at these sites) |
+| `sessions.read_report` | `sessions/<id>.report.json` | truth-local | next (read-only here) |
+| `sessions.watch_state` | `budget/<session>.json` | truth-local, one session's life | next (written by the bash budget hooks) |
+| `sessions.app_meta` | the desktop app's session file | foreign, read only | `{}` is right: never written |
+| `codemap.read` | `code-map/<project>.json` | derived (local) | `{}` is right: rebuilt |
+| `codeindex.read_record` | `code-index.json` | derived (local) | `{}` is right: rebuilt |
+| `forecast.load_latest` | `forecast/<project>/latest.json` | derived (local) | `{}` is right: rebuilt |
+| `quota.load_status` | the quota forecast | derived (local) | `{}` is right: rebuilt |
+| `update._read_cache` | `update.json` | derived (local) | `{}` is right: the tags are asked again |
+
+## Public-check stamps: a derived file with its whole key
+
+A green `brain check --public --history` on a public repo writes `$BRAIN_HOME/public-check/<owner>/<repo>/<sha>`
+(atomically), which the `public` guard reads before a `git push` (wi-brain-public-stamp-binding, spec-brain-data-compat
+N2). It is a cache, so it carries every input it depends on:
+
+| Field | What |
+|---|---|
+| `v` | 2 (0.2.5 and older wrote none) |
+| `key.engine` | the engine version that checked |
+| `key.rules` | sha256 of config.json's `public.deny` (as brain.config reads it), `allow`, `patterns` and `refuse`, in a canonical form: key order and spacing do not count |
+| `key.gitleaks` | whether gitleaks read the history (with no commit to read: whether it was on the PATH) |
+| `at`, `repo`, `remote`, `files`, `commits`, `gitleaks` | what the check read, for the owner |
+
+The guard computes the key now and refuses the push when the stamp's differs: another engine version, other rules,
+gitleaks then and not now or the other way round. A stamp without `v` 2 and a `key` (0.2.5's), an unreadable one,
+and one a newer brain wrote are refused the same way, never a crash; each refusal ends with the fix, « rerun brain
+check --public --history ». A stamp is never upgraded in place: the check writes a new one. A gitleaks that is on
+the PATH but fails stamps nothing (the check exits 1 and says so): its stamp would be refused at every push.
+
 ## The validator's keywords
 
 `brain.schema` validates with the standard library only, so the capture hooks can validate what they write. It
@@ -72,3 +146,43 @@ jsonschema) enforces the same contract, never a stricter one.
 one (a newer brain's additive keys under the same `v`). `tests/test_formats_compat.py` reads both, writes the records
 back through the engine and compares them, field for field (AR lines byte for byte), then checks the strict mode and
 the refusal of a higher `v`. A new format, or a new version of one, adds its pair.
+
+## At a release
+
+[`docs/release.md`](../../../docs/release.md) says when these are frozen. Its `release-check` job holds the list of each
+format's schema files (`SCHEMAS` in `installer/release_check.py`): a version PR that changed one since the last tag and
+has no `### Upgrade` in its CHANGELOG section fails. A new folder here adds its entry there, or a test fails.
+
+## The upgrade test (`compat-prev`)
+
+The fixtures prove each reader on its own; the upgrade test proves an engine on a real brain, in both directions
+(wi-brain-upgrade-test; spec-brain-data-compat N8, COMPAT-2 and COMPAT-3). CI's `compat-prev` job runs it on every
+pull request, from the last tag before the commit (`git describe --tags --abbrev=0 --match 'v*' HEAD`; no tag
+fails the job), before any tag is cut:
+
+```bash
+python packages/brain/installer/stranger_test.py --source . --upgrade-from v0.2.5     # or --upgrade-from <a checkout>
+```
+
+1. **The previous engine writes** every registered format into a new brain: brain init, a decision, an AR, an SR,
+   the older `permissions.yaml`, its own exec events. A format registered here (a `<format>/v<N>/` folder) that the
+   test does not place fails it, so the test grows with the registry.
+2. **This checkout is installed over it**, the pin moved if the version changed, and runs strict (`BRAIN_STRICT=1`):
+   the store plan (`brain init` on the existing brain), `brain sync` (the documented step after an upgrade: the
+   plugin rendered again), `brain check`, `brain record check` and the stranger test's Lite scenario.
+3. **The rollback.** Each `newer` fixture's additive keys are laid over the brain's files (a format they reach no
+   file of fails the step), a canary and a drill are put on record (their entries as `vault.canary` and `vault.drill`
+   write them; no real seal), and the previous engine is installed back over this one, as the installer does until
+   the pin moves. In read mode it runs `brain check`, `brain record check`, `brain permissions check`,
+   `brain vault status` (which must show the drill), `brain perf` (the ledger's events) and a newer template's plan.
+   An engine with the read mode must pass them, its `brain check` exiting 0, or 1 when its one failure is the plugin
+   this checkout's `brain sync` rendered (files under `plugins/`: the hooks carry the engine's `brain_version`, so
+   every version is not current under the one before; the rollback renders nothing again, as it writes nothing). One
+   before the read mode (0.2.5) may only refuse the newer keys (every `error:`
+   line an unknown key or field, no traceback). No file of the brain or of `$BRAIN_HOME/vault` is changed or removed,
+   and the ledger's files only grow.
+4. **And back.** This checkout is installed again and makes the same reads, all passing, the drill shown; nothing is
+   lost over the round trip.
+
+After each install the harness checks that brain's `direct_url.json` names the engine meant: the tag and HEAD can
+share a version. The job uploads its report (`compat-prev-report`, every step's command, exit code and output).

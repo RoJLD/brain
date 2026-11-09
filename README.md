@@ -20,13 +20,15 @@ It holds two distributions, released together under one tag series (`vX.Y.Z` is 
 Python 3.10 or later; `research-graph` depends on networkx and PyYAML.
 
 ```bash
-pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.2.5"
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.5#subdirectory=packages/brain"   # the brain command
+pip install "research-graph @ git+https://github.com/RoJLD/brain.git@v0.2.7"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.7#subdirectory=packages/brain"   # the brain command
 ```
 
 From an empty machine to a brain of your own (Windows first, Linux and macOS): [`docs/install.md`](docs/install.md).
-Trying it in the pilot: [`docs/pilot.md`](docs/pilot.md). `packages/brain/installer/stranger_test.py` installs a tag
-into a fresh venv, isolated from its caller, and runs that first hour's scenario (the stranger test).
+Cutting a release: [`docs/release.md`](docs/release.md). Trying it in the pilot: [`docs/pilot.md`](docs/pilot.md). `packages/brain/installer/stranger_test.py` installs a tag
+into a fresh venv, isolated from its caller, and runs that first hour's scenario (the stranger test); with
+`--upgrade-from <tag>` it upgrades a brain the tag wrote, then rolls back to the tag on what this engine wrote (the
+upgrade test, CI's `compat-prev` job: [`packages/brain/docs/formats.md`](packages/brain/docs/formats.md)).
 
 ## Start your own graphs
 

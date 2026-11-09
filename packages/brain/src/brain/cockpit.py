@@ -15,7 +15,8 @@ Eight panels, each read through the function its command already uses:
               by brain.usage; the costliest first: ``--sort sessions:cost``), last write;
   queue       the owner's queue (brain.queue.collect, as brain queue calls it): decisions, actions, permissions, in
               three bands (now, this week, when you can), ranked by what each holds up (its score; brain queue
-              --explain), with the recommended option and how to answer; titled with the owner's display name;
+              --explain; ``--sort queue:score``: the score alone, across the bands), with the recommended option and
+              how to answer; titled with the owner's display name;
   alerts      each project's open alerts by level (brain.status.alerts_of, as brain status and brain alerts: the
               scheduler, the exec ledger, the stacks, the code index, the audit, the alert events and files);
   milestones  each pending milestone's items done out of its live items, and how many are reached (brain.status);
@@ -56,9 +57,28 @@ frontier by priority. ``HELP`` says what each panel shows, where it comes from a
 (the TUI's i);
 ``when`` shows a time in the cockpit's timezone (``TZS``: this machine's, by default, or UTC).
 
+The states (wi-brain-tui-states, spec 2026-11-02 cockpit-ux §4.10): an empty table says why (``why_empty``: a filter
+or the search hides N rows, with the key that changes it; a project not on this machine; nothing in the scope, the
+owner named); a panel not probed yet says what it waits for (``probe_wait``: the probe's countdown, then its progress
+per project); a read that fails keeps its panels' last content, its error and the time of the data shown in the
+snapshot (``errors``, ``panel_at``), and is read again at the next tick (a probed panel: at the next probe); a stack
+or a code index repo that is not OK names its last OK measure this cockpit saw; a project the registry names but this machine lacks is greyed in the
+project selector (``scope_choices``).
+
+The tabs (wi-brain-tui-layout, spec 2026-11-03 cockpit-ux-round2 §4.0, UX-18): ``TABS`` holds one tab per question the
+owner asks, each with its key (0 to 9, a comma), its label, its question, its count (``tab_count``, in digits and signs)
+and its views, each a list of panels (``tab_panels``). A tab without a view is not built yet: it arrives with its item,
+its key waiting for it (``built_tabs``, ``not_built``). Under 120 columns or 30 rows (``narrow``) the bar is reduced to
+its numbers, the active tab named (``tab_labels``), and the grid is not offered (``tab_views``); the text view and
+``--tab`` print one tab's panels (``render``). The overview's default view is one card per tab (``cards``, UX-19): what
+counts in that tab in a few lines, and the filters it opens with; the text view prints them with ``--tab overview``.
+From 140 columns, on a tab that is one list, a row's detail sits beside it (``detail_beside``, UX-20, brain.tui_side).
+Each table's columns can be chosen (``columns``, ``cells``: shown or hidden, their order, the longest a title may be;
+``EXTRA_COLUMNS``, hidden by default) and are kept in ``tui.json``; ``palette`` is the command palette's entries, in data.
+
 Read-only: nothing here writes a record or a ledger, and nothing calls a model. The one file written is the screen's
-own state, ``<BRAIN_HOME>/tui.json`` (the scope, each panel's view and the settings: theme, timezone; ``save_state``),
-by the interactive views. Its settings also hold, set by hand: ``lang`` (en, fr: the queue's title, « File d'Ada »;
+own state, ``<BRAIN_HOME>/tui.json`` (the scope, each panel's view, the last tab and each tab's view, and the settings:
+theme, timezone, each table's columns; ``save_state``), by the interactive views. Its settings also hold, set by hand: ``lang`` (en, fr: the queue's title, « File d'Ada »;
 $BRAIN_LANG wins) and ``titles`` (a free title per panel, ``{"queue": "Ma file"}``), read by every view (``title``).
 """
 
@@ -74,9 +94,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (__version__, alerts, audit, config, decisions, defaults, digest, paths, perf, plan, projects, queue,
-               resume, sessions, status, transcript, usage)
+               quiet, resume, sessions, status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
+FRAMES = {"exec": "health"}  # a frame drawn from another panel's data, not a read of its own: the health tab's fourth
 FILE_PANELS = {"graph": ("queue", "milestones", "frontier")}
 PROBE_PANELS = ("alerts", "audit", "health", "digest")
 HOURS = 24.0
@@ -474,6 +495,7 @@ class Cockpit:
         # the project selector's choices: the registry, the command's own projects first (a worktree keeps its root)
         self.choices = {p.name: p for p in registry + self.projs}
         self.choices.update({p.name: p for p in self.projs})
+        self.registry = bool(registry)  # False: no projects.yaml, the selector holds this folder's project only
         self.sessions = Sessions(queue.Placer(registry + self.projs), hours)
         self.scanned: dict | None = None  # queue.scan, from the last probe
         self.probes: dict[str, dict] = {}  # project -> what its last probe measured, and when
@@ -483,6 +505,10 @@ class Cockpit:
         self.dirty: set[str] = set()  # panels to draw again at the next refresh (a new scope)
         self.read_at: str | None = None
         self.probed_at: str | None = None
+        self.errors: dict[str, dict] = {}  # panel -> {at, error}: its last read failed, its last content kept
+        self.panel_at: dict[str, str] = {}  # panel -> when its content was last read
+        self.progress: dict | None = None  # the probe running: {what, n, total}
+        self.last_ok: dict[tuple, str] = {}  # (project, stacks|code_index, name) -> its last OK measure
         self.lock = threading.Lock()
 
     @property
@@ -511,6 +537,9 @@ class Cockpit:
         self.projs, self.every, self.sigs = projs, every, {}
         with self.lock:
             self.panels = {k: v for k, v in self.panels.items() if k == "sessions"}
+        # the errors and data times were the old scope's
+        self.errors = {k: v for k, v in self.errors.items() if k == "sessions"}
+        self.panel_at = {k: v for k, v in self.panel_at.items() if k == "sessions"}
         self._probed_panels()
         self.dirty = set(PANELS)
 
@@ -567,13 +596,18 @@ class Cockpit:
         The alerts come from what the probe measured (as brain status and brain alerts compute them) and the
         scheduler, read once."""
         now = now or datetime.now(timezone.utc)
+        at = transcript.iso(now)
+        found = self.found
+        self.progress = {"what": "the denied calls", "n": 0, "total": len(found)}
         self.scanned = queue.scan(queue.DAYS)
         stack_reg, index = status._probes(self.root, False)
-        found = self.found
-        measured = {p.name: {"audit": status.audit_of(p, detail=AUDIT_TOP), **status.probed(p, stack_reg, index)}
-                    for p in found}
+        measured = {}
+        for i, p in enumerate(found, 1):
+            self.progress = {"what": p.name, "n": i, "total": len(found)}
+            measured[p.name] = m = {"audit": status.audit_of(p, detail=AUDIT_TOP), **status.probed(p, stack_reg, index)}
+            self._last_ok(p.name, m, at)
+        self.progress = {"what": "the alerts and digests", "n": 0, "total": len(found)}
         sched, last = alerts.read_scheduler(status._alert_configs(found)), alerts.state_load()
-        at = transcript.iso(now)
         for p in found:
             m = measured[p.name]
             self.probes[p.name] = {
@@ -584,58 +618,113 @@ class Cockpit:
         self._probed_panels(now)
         self._set(queue=self._queue())
 
+    def _last_ok(self, project: str, measured: dict, at: str) -> None:
+        """Each stack and code index repo OK now is remembered at ``at``; one that is not carries ``last_ok``, its
+        last OK measure this cockpit saw (none: never seen OK since it started)."""
+        for kind in ("stacks", "code_index"):
+            rows = measured.get(kind)
+            for r in rows if isinstance(rows, list) else []:
+                key = (project, kind, r.get("name") or r.get("repo"))
+                if r.get("state") == "OK":
+                    self.last_ok[key] = at
+                elif key in self.last_ok:
+                    r["last_ok"] = self.last_ok[key]
+
     def _probed_panels(self, now: datetime | None = None) -> None:
         """The probed panels of the scope, from what each project's last probe measured (none: not probed yet)."""
         got = [self.probes[p.name] for p in self.found if p.name in self.probes]
+        new = self._probed_content(got, now) if got else {}  # built first, then swapped in: a draw never sees them gone
+        oldest = min(g["at"] for g in got) if got else None
+        self.panel_at.update(dict.fromkeys(new, oldest))  # the time of the data shown
         with self.lock:
             for name in PROBE_PANELS:
                 self.panels.pop(name, None)
-        if got:
-            now = now or datetime.now(timezone.utc)
-            self._set(alerts={"projects": [g["alerts"] for g in got]},
-                      audit={"projects": [g["audit"] for g in got]},
-                      health={"projects": [g["health"] for g in got],
-                              "exec": perf_summary(None if self.every else {p.name for p in self.projs}, now)},
-                      digest={"projects": [g["digest"] for g in got]})
-        self.probed_at = min(g["at"] for g in got) if got and not self.needs_probe() else None
+            self.panels.update(new)
+        self.probed_at = oldest if got and not self.needs_probe() else None
+
+    def _probed_content(self, got: list[dict], now: datetime | None) -> dict[str, dict]:
+        now = now or datetime.now(timezone.utc)
+        only = None if self.every else {p.name for p in self.projs}
+        return {"alerts": {"projects": [g["alerts"] for g in got]}, "audit": {"projects": [g["audit"] for g in got]},
+                "health": {"projects": [g["health"] for g in got], "exec": perf_summary(only, now)},
+                "digest": {"projects": [g["digest"] for g in got]}}
 
     def refresh(self, probe: bool = False) -> set[str]:
         """One tick: the sessions (a transcript only when it changed), the file panels whose files changed (all of
-        them the first time), then the probes when asked; the panels whose content changed."""
-        groups = self.changed()
-        if "graph" in groups:
-            self.read_graph()
-        updated = {p for g in groups for p in FILE_PANELS[g]} | self.dirty
-        self.dirty = set()
-        if self.read_sessions():
-            updated.add("sessions")
+        them the first time), then the probes when asked; the panels whose content changed, or whose read failed
+        with a new error. A read that fails is never raised: its panels keep their last content, its error goes to
+        ``errors`` (``snapshot``), and it is read again at the next tick (the probe, at the next probe)."""
+        read, failed, self.dirty = set(self.dirty), set(), set()
+        try:
+            groups = self.changed()
+            if "graph" in groups:
+                self.read_graph()
+            read |= self._read_ok({p for g in groups for p in FILE_PANELS[g]})
+        except Exception as exc:  # shown in the panels, never fatal
+            self.sigs.pop("graph", None)  # read again at the next tick
+            failed |= self._failed(FILE_PANELS["graph"], exc)
+        try:
+            changed, had_error = self.read_sessions(), "sessions" in self.errors
+            self._read_ok({"sessions"})
+            if changed or had_error:
+                read.add("sessions")
+        except Exception as exc:  # the same
+            failed |= self._failed(("sessions",), exc)
         if probe:
-            self.probe()
-            updated |= {*PROBE_PANELS, "queue"}
-        if updated:
+            try:
+                self.probe()
+                read |= self._read_ok({*PROBE_PANELS, "queue"})
+            except Exception as exc:  # the same: probed again at the next probe
+                failed |= self._failed(PROBE_PANELS, exc)
+            finally:
+                self.progress = None
+        if read:
             self.read_at = transcript.iso(datetime.now(timezone.utc))
-        return updated
+        return read | failed
+
+    def _read_ok(self, panels) -> set[str]:
+        at = transcript.iso(datetime.now(timezone.utc))
+        for p in panels:
+            self.panel_at[p] = at
+            self.errors.pop(p, None)
+        return set(panels)
+
+    def _failed(self, panels, exc: Exception) -> set[str]:
+        """The panels' read failed: its error and time (the first failure's while the same error goes on); the
+        panels whose error is new, to draw again (the same error again changes nothing on screen)."""
+        error = {"at": transcript.iso(datetime.now(timezone.utc)), "error": f"{type(exc).__name__}: {exc}"}
+        new = set()
+        for p in panels:
+            old = self.errors.get(p)
+            if old and old["error"] == error["error"]:
+                continue
+            self.errors[p] = error
+            new.add(p)
+        return new
 
     def snapshot(self) -> dict:
         with self.lock:
             panels = dict(self.panels)
         return {"cockpit": 1, "scope": self.scope,
                 "projects": [{"name": p.name, "root": str(p.root), "found": p.root.is_dir()} for p in self.projs],
-                "read_at": self.read_at, "probed_at": self.probed_at, "panels": panels}
+                "read_at": self.read_at, "probed_at": self.probed_at, "panels": panels, "registry": self.registry,
+                "errors": dict(self.errors), "panel_at": dict(self.panel_at),
+                "probing": dict(self.progress) if self.progress else None}
 
 
 # --- the view: filters, sort and search over the table panels ---
 
 SORTS = {"sessions": ("state", "age", "project", "context", "cost", "ctx", "role"),
-         "queue": ("band", "unblocks", "age", "kind", "project"),
+         "queue": ("band", "score", "unblocks", "age", "kind", "project"),
          "frontier": ("priority", "unblocks", "milestone", "age", "project")}
 FILTERS = {"sessions": {"state": ("open", ALL, *STATES)},  # open: not ended
            "queue": {"kind": (ALL, *queue.KINDS), "band": (ALL, *queue.BANDS)},
            "frontier": {"priority": (ALL, "P0-P1", "P0-P2", "none"), "milestone": (ALL, "none")}}
 OPEN_VALUES = {("frontier", "milestone")}  # any milestone id too: the panel's own (choices)
 SORT_COLUMNS = {"sessions": {"State": "state", "Last": "age", "Project": "project", "Context": "context", "Ctx": "ctx",
-                             "Role": "role"},
-                "queue": {"Band": "band", "Unblocks": "unblocks", "Age": "age", "Kind": "kind", "Project": "project"},
+                             "Role": "role", "Cost": "cost"},
+                "queue": {"Band": "band", "Score": "score", "Unblocks": "unblocks", "Age": "age", "Kind": "kind",
+                          "Project": "project"},
                 "frontier": {"P": "priority", "Unblocks": "unblocks", "Milestone": "milestone", "Age": "age",
                              "Project": "project"}}
 
@@ -652,7 +741,10 @@ SORT_KEYS = {
                  "role": lambda r: (("master", "relay", "sub", "solo").index(r.get("role") or "solo"), r["age_s"]),
                  "cost": lambda r: (r.get("cost_usd") is None, -(r.get("cost_usd") or 0), r["age_s"])},
     "queue": {"band": lambda e: (queue.BANDS.index(e.get("band") or "later"), e.get("order") is None,
-                                 e.get("order") or 0, -e.get("score", 0), -e.get("unblocks", 0)),
+                                 e.get("order") or 0, -(e.get("score") or 0), -e.get("unblocks", 0)),
+              # the highest score first (one without a score last), then what it unblocks, then the oldest
+              "score": lambda e: (e.get("score") is None, -(e.get("score") or 0), -e.get("unblocks", 0),
+                                  e.get("since") or "9999"),
               "unblocks": lambda e: (-e.get("unblocks", 0), not e.get("blocking"), e.get("since") or "9999"),
               "age": lambda e: (_age_first(e.get("age_days")), -e.get("unblocks", 0)),
               "kind": lambda e: (e.get("kind") or "", e.get("category") or "", -e.get("unblocks", 0)),
@@ -753,6 +845,92 @@ def _noted(line: str, name: str, panel: dict | None, view: dict | None, search: 
     return f"{line} [{text}]" if text else line
 
 
+# --- the states: why a panel is empty, what a panel not probed waits for (wi-brain-tui-states) ---
+
+NOTHING = {"sessions": "No session wrote its transcript in the last {hours:g} h",
+           "queue": "Nothing waits on {owner} in {scope}",
+           "alerts": "No open alert in {scope}",
+           "milestones": "No pending milestone in {scope}",
+           "frontier": "No startable item in {scope}"}
+EMPTY_COLUMN = {"sessions": "Title", "queue": "What", "alerts": "Message", "milestones": "Title", "frontier": "Title"}
+
+
+def span(seconds: float) -> str:
+    """A countdown: 45 s, 1 min 40, 2 h 05."""
+    s = max(0, round(seconds))
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} min" + (f" {s % 60:02d}" if s % 60 else "")
+    return f"{s // 3600} h {s % 3600 // 60:02d}"
+
+
+def probe_wait(progress: dict | None, seconds: float | None = None, paused: bool = False) -> str:
+    """What a panel not probed yet waits for: the probe running (``progress``: what it reads, project n of total),
+    paused, or due in ``seconds`` (None: at the next tick)."""
+    if progress:
+        n = f" {progress['n']}/{progress['total']}" if progress.get("n") else ""
+        return f"probing: {progress['what']}{n}"
+    if paused:
+        return "not probed yet: paused (space resumes, r probes now)"
+    if seconds is None or seconds < 1:
+        return "not probed yet: the probe starts at the next tick"
+    return f"not probed yet: probe in {span(seconds)} (r for now)"
+
+
+def _scope_text(scope: str) -> str:
+    return "every project" if scope == ALL else scope
+
+
+def why_empty(name: str, snap: dict, view: dict | None = None, search: str = "", wait: str = "") -> str:
+    """Why a table panel of ``snap`` shows no row ('' when it shows one): not read or not probed yet (``wait``, as
+    ``probe_wait`` says it), its first read failed, a filter or the search hides its rows (and the key that changes
+    it), or nothing in the scope (and the projects of the scope this machine lacks)."""
+    panel = (snap.get("panels") or {}).get(name)
+    if panel is None:
+        return _why_no_panel(name, snap, wait)
+    if shown(name, panel, view, search):
+        return ""
+    every = entries(name, panel)
+    return _why_hidden(name, len(every), view, search) if every else _why_nothing(name, panel, snap)
+
+
+def _why_no_panel(name: str, snap: dict, wait: str) -> str:
+    error = (snap.get("errors") or {}).get(name)
+    if error:
+        return f"read failed: {error['error']}"
+    return (wait or "not probed yet") if name in PROBE_PANELS else "not read yet"
+
+
+def _why_hidden(name: str, total: int, view: dict | None, search: str) -> str:
+    """All ``total`` rows hidden: by which filters and search, and the key that changes each."""
+    v = view_of(name, view) if view is not None and name in SORTS else None
+    hides = [f"{f} {v[f]}" for f in FILTERS[name] if v[f] != ALL] if v else []
+    keys = ["f changes the filters"] if hides else []
+    if search.strip():
+        hides.append(f"search '{search.strip()}'")
+        keys.append("Escape clears the search")
+    return f"{total} hidden by {', '.join(hides)}: {', '.join(keys)}"
+
+
+def _why_nothing(name: str, panel: dict, snap: dict) -> str:
+    """No row at all: nothing in the scope, and the projects of the scope this machine lacks."""
+    missing = [p for p in snap.get("projects") or [] if not p.get("found", True)]
+    text = NOTHING[name].format(owner=config.name_of(), scope=_scope_text(snap.get("scope", "")),
+                                hours=panel.get("hours", HOURS))
+    return text + "".join(f"; {p['name']} is not on this machine ({p['root']})" for p in missing)
+
+
+def scope_choices(choices: dict) -> list[tuple[str, str, bool]]:
+    """The project selector's options: (label, value, on this machine), global first; a project the registry names
+    but this machine lacks keeps its place, labelled so (the TUI greys it)."""
+    out = [("global: every project", ALL, True)]
+    for name, p in choices.items():
+        found = p is not None and Path(p.root).is_dir()
+        out.append((name if found else f"{name} (not on this machine)", name, found))
+    return out
+
+
 def parse_view(sorts: list[str] | None = None, filters: list[str] | None = None) -> dict[str, dict]:
     """``--sort PANEL:KEY`` (``PANEL:-KEY`` reversed) and ``--filter PANEL:FIELD=VALUE`` as each panel's view;
     ValueError on a panel, key, field or value it does not know."""
@@ -851,6 +1029,18 @@ HELP = {
                "from": "brain.status.records_of, brain.digest",
                "read": "at each probe",
                "detail": "brain digest; brain resume"},
+    "exec": {"what": "The execution-time ledger's last 7 days: runs and failures, the slowest steps by their median, the "
+                     "regressions.",
+             "from": "brain.perf, as brain perf",
+             "read": "at each probe",
+             "detail": "brain perf"},
+    "overview": {"what": "One card per tab: what counts in it, at a glance. Enter or a click opens that tab, already "
+                         "filtered as its card says (band now, the sessions asking), whatever the owner's filters and "
+                         "search; a filter that is never saved and goes when the tab is left. v shows the grid of every "
+                         "panel (not on a narrow terminal), then the digest.",
+                 "from": "the panels already read, nothing more",
+                 "read": "as its panels are",
+                 "detail": "brain tui --once --tab overview"},
 }
 
 
@@ -859,8 +1049,14 @@ def help_lines(name: str) -> list[str]:
     its keys. ``{owner}`` in a text is config.json's owner."""
     h = {k: v.replace("{owner}", config.name_of()) for k, v in HELP[name].items()}
     keys = ("s next sort, o reverse, f filters and sort, a column title sorts; " if name in SORTS else "")
+    keys += "C its columns; " if name in COLUMNS else ""
+    if name == "overview":
+        return [h["what"], "", f"From: {h['from']}.", f"Read: {h['read']}.", f"Detail: {h['detail']}.", "",
+                "Keys: Enter or a click opens a card's tab, the arrows move between the cards, v the next view, a tab's "
+                "key goes straight to it."]
     return [h["what"], "", f"From: {h['from']}.", f"Read: {h['read']}.", f"Detail: {h['detail']}.", "",
-            f"Keys: {keys}/ search, m full view (Escape back), {PANELS.index(name) + 1} to come back here."]
+            f"Keys: {keys}/ search, {TABS[panel_tab(name)]['key']} opens its tab, m full view where a tab shows several "
+            "panels, Escape back to the overview."]
 
 
 # --- the screen's remembered state: <BRAIN_HOME>/tui.json ---
@@ -870,8 +1066,9 @@ def state_path() -> Path:
 
 
 def load_state(path: Path | None = None) -> dict:
-    """The scope, the panels' views and the settings (``theme``, ``tz``) the interactive cockpit last showed; {}
-    without them (the file missing, unreadable or not this shape)."""
+    """The scope, the panels' views, the last tab and each tab's view, each table's columns and the settings (``theme``,
+    ``tz``) the interactive cockpit last showed; {} without them (the file missing, unreadable or not this shape). A tab,
+    a view or a column this engine does not have is left out."""
     try:
         data = json.loads((path or state_path()).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -883,15 +1080,42 @@ def load_state(path: Path | None = None) -> dict:
         out["scope"] = data["scope"]
     if isinstance(data.get("panels"), dict):
         out["panels"] = {n: view_of(n, v) for n, v in data["panels"].items() if n in SORTS and isinstance(v, dict)}
+    out.update(_saved_tabs(data))
+    out.update(_saved_columns(data))
     if isinstance(data.get("settings"), dict):
         got = data["settings"]
         out["settings"] = {k: got[k] for k in ("theme", "tz", "lang") if isinstance(got.get(k), str) and got[k]
                            and (k != "tz" or got[k] in TZS) and (k != "lang" or got[k] in LANGS)}
         if isinstance(got.get("titles"), dict):
             titles = {k: v.strip() for k, v in got["titles"].items()
-                      if k in PANELS and isinstance(v, str) and v.strip()}
+                      if k in (*PANELS, *FRAMES) and isinstance(v, str) and v.strip()}
             if titles:
                 out["settings"]["titles"] = titles
+    return out
+
+
+def _saved_columns(data: dict) -> dict:
+    """Each table's chosen columns in a saved state: those it has, and a title width it offers."""
+    saved = data.get("columns")
+    out = {}
+    for name, c in (saved if isinstance(saved, dict) else {}).items():
+        if name not in COLUMNS or not isinstance(c, dict):
+            continue
+        given = c.get("shown") if isinstance(c.get("shown"), list) else []
+        shown = list(dict.fromkeys(x for x in given if isinstance(x, str) and x in every_column(name)))
+        width = c.get("width") if type(c.get("width")) is int and c.get("width") in TITLE_WIDTHS else 0
+        if shown or width:
+            out[name] = {"shown": shown, "width": width}
+    return {"columns": out} if out else {}
+
+
+def _saved_tabs(data: dict) -> dict:
+    """The last tab and each tab's view of a saved state, those this engine has."""
+    out: dict = {"tab": data["tab"]} if data.get("tab") in built_tabs() else {}
+    if isinstance(data.get("tabs"), dict):
+        out["tabs"] = {t: {"view": v["view"]} for t, v in data["tabs"].items()
+                       if t in TABS and isinstance(v, dict) and isinstance(v.get("view"), str)
+                       and v["view"] in TABS[t]["views"]}
     return out
 
 
@@ -899,7 +1123,7 @@ def load_state(path: Path | None = None) -> dict:
 
 LANGS = ("en", "fr")
 TITLES = {"sessions": "Sessions", "alerts": "Alerts", "milestones": "Milestones", "frontier": "Frontier",
-          "audit": "Audit debt", "health": "Stacks and index", "digest": "Digest"}
+          "audit": "Audit debt", "health": "Stacks and index", "digest": "Digest", "exec": "Exec times"}
 QUEUE_TITLES = {"en": ("{name}'s queue", "My queue"), "fr": ("File de {name}", "Ma file")}  # (named, unnamed)
 _VOWELS = "aeiouyàâäéèêëîïôöûùü"
 _settings_cache: dict = {}
@@ -1124,23 +1348,38 @@ def audit_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
     return lines
 
 
-def _states(rows, what: str) -> str:
+def _last_ok_text(iso: str | None, now: datetime) -> str:
+    if not iso:
+        return ""
+    try:
+        t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return f"last OK {ago((now - t).total_seconds())}" + (" ago" if (now - t).total_seconds() >= 60 else "")
+
+
+def _states(rows, what: str, now: datetime | None = None) -> str:
     if isinstance(rows, dict):
         return f"error: {rows.get('error')}"
     if not rows:
         return f"no {what} declared"
+    now = now or datetime.now(timezone.utc)
     bad = [r for r in rows if r.get("state") != "OK"]
+
+    def why(r):
+        parts = [p for p in (r.get("why"), _last_ok_text(r.get("last_ok"), now)) if p]
+        return f" ({'; '.join(parts)})" if parts else ""
     return f"{len(rows) - len(bad)} of {len(rows)} OK" + "".join(
-        f"; {r.get('name') or r.get('repo')} {r['state']}" + (f" ({r['why']})" if r.get("why") else "") for r in bad)
+        f"; {r.get('name') or r.get('repo')} {r['state']}{why(r)}" for r in bad)
 
 
-def health_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
+def health_lines(panel: dict | None, width: int = WIDTH, now: datetime | None = None) -> list[str]:
     if not panel:
         return [f"{title('health')}: not probed yet"]
     lines = [title("health")]
     for g in panel.get("projects") or []:
-        lines.append(_line("  ", f"{g['project']}: stacks {_states(g['stacks'], 'stack')}; code index "
-                                 f"{_states(g['code_index'], 'repo')}", width))
+        lines.append(_line("  ", f"{g['project']}: stacks {_states(g['stacks'], 'stack', now)}; code index "
+                                 f"{_states(g['code_index'], 'repo', now)}", width))
     ex = panel.get("exec") or {}
     if ex:
         reg = "; ".join(f"{r['task']} +{r['change']:.0%}" for r in ex.get("regressions") or [])
@@ -1150,8 +1389,26 @@ def health_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
     return lines
 
 
-def digest_lines(panel: dict | None, width: int = WIDTH, lines_max: int = 12) -> list[str]:
-    """The digest panel's text: its first ``lines_max`` lines per project (0: all of them)."""
+def exec_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
+    """The health tab's exec frame, from the health panel: its runs and failures, the slowest steps by their median
+    (each one's runs, failures and longest), the regressions."""
+    if not panel:
+        return [f"{title('exec')}: not probed yet"]
+    ex = panel.get("exec") or {}
+    if not ex:
+        return [title("exec"), "  no run read"]
+    lines = [f"{title('exec')} ({ex['runs']} run(s) in {ex['days']} d, {ex['failed']} failed)"]
+    for r in ex.get("slowest") or []:
+        failed = f", {r['failed']} failed" if r.get("failed") else ""
+        lines.append(_line("  ", f"{r['median_s']:g} s (max {r['max_s']:g} s, {r['runs']} run(s){failed}) "
+                                 f"{r['project']}: {r['task']}", width))
+    lines += [_line("  ", f"regression: {r['task']} +{r['change']:.0%}", width) for r in ex.get("regressions") or []]
+    return lines
+
+
+def digest_lines(panel: dict | None, width: int = WIDTH, lines_max: int = 12, titled: bool = True) -> list[str]:
+    """The digest panel's text: its first ``lines_max`` lines per project (0: all of them). ``titled`` False: under a
+    frame that says Digest already, no « Digest » on each project's line and no first heading of the digest itself."""
     if not panel:
         return [f"{title('digest')}: not probed yet"]
     lines = []
@@ -1159,9 +1416,12 @@ def digest_lines(panel: dict | None, width: int = WIDTH, lines_max: int = 12) ->
         rec = g["records"]
         journal = "; ".join(f"{Path(j['path']).name} {j['last'] or 'no entry'}" for j in rec.get("journals") or [])
         r = rec.get("records") or {}
-        lines.append(f"Digest {g['project']} ({g['digest']}{', written' if g['written'] else ', built offline'}); "
+        lines.append(f"{'Digest ' if titled else ''}{g['project']} "
+                     f"({g['digest']}{', written' if g['written'] else ', built offline'}); "
                      f"journal {journal or '-'}" + (f"; {r['ddr']} DDR, {r['sr']} SR, {r['ar']} AR" if r else ""))
         body = [x for x in g["text"].splitlines() if x.strip()]
+        if not titled and body and body[0].startswith("# Digest"):
+            body = body[1:]
         lines += [_line("  ", x, width) for x in body[:lines_max or None]]
         if lines_max and len(body) > lines_max:
             lines.append(f"  ... {len(body) - lines_max} more line(s) (brain digest)")
@@ -1178,20 +1438,34 @@ COLUMNS = {
     "milestones": ("Project", "Done", "Progress", "Milestone", "Title"),
     "frontier": ("P", "Project", "Unblocks", "Milestone", "Age", "Id", "Title"),
 }
+EXTRA_COLUMNS = {"sessions": ("Cost", "App id", "Id", "Branch")}  # offered by the column chooser, hidden by default
+TITLE_WIDTHS = (0, 40, 60, 80, 100)  # the longest a table's title may be, the rest in the detail; 0: no limit
 
 
 def _days_text(days) -> str:
     return f"{days} d" if days is not None else "-"
 
 
-def cells(name: str, r: dict, project: bool = True, tz: str | None = None) -> tuple[str, ...]:
-    """One record of a table panel (an item of ``entries``) as its row, ``columns(name, project)``; its times in
-    ``tz`` (None: as recorded, UTC)."""
-    row = _cells(name, r, tz)
-    if project:
-        return row
-    i = COLUMNS[name].index("Project")
-    return row[:i] + row[i + 1:]
+def every_column(name: str) -> tuple[str, ...]:
+    """All a table can show: its default columns, then those the column chooser offers."""
+    return COLUMNS[name] + EXTRA_COLUMNS.get(name, ())
+
+
+def cells(name: str, r: dict, project: bool = True, tz: str | None = None, chosen: dict | None = None) -> tuple[str, ...]:
+    """One record of a table panel (an item of ``entries``) as its row, ``columns(name, project, chosen)``; its times in
+    ``tz`` (None: as recorded, UTC); its title cut to ``chosen``'s width."""
+    row = dict(zip(every_column(name), (*_cells(name, r, tz), *_extra_cells(name, r))))
+    width = (chosen or {}).get("width")
+    if width:
+        row[EMPTY_COLUMN[name]] = _cut(row[EMPTY_COLUMN[name]], width)
+    return tuple(row[c] for c in columns(name, project, chosen))
+
+
+def _extra_cells(name: str, r: dict) -> tuple[str, ...]:
+    if name == "sessions":
+        return (usage.usd(r.get("cost_usd")), sessions.short(r.get("host_id") or "") or "-", r["session_id"][:8],
+                r.get("branch") or "-")
+    return ()
 
 
 def _cells(name: str, r: dict, tz: str | None = None) -> tuple[str, ...]:
@@ -1222,9 +1496,11 @@ def row_key(name: str, r: dict) -> str:
     return r["session_id"] if name == "sessions" else f"{r['project']}/{r.get('id') or r.get('key')}"
 
 
-def columns(name: str, project: bool = True) -> tuple[str, ...]:
-    """A table's columns; without the project column when the scope holds one project."""
-    return tuple(c for c in COLUMNS[name] if project or c != "Project")
+def columns(name: str, project: bool = True, chosen: dict | None = None) -> tuple[str, ...]:
+    """A table's columns, as ``chosen`` orders them (``{"shown": [...], "width": n}``; none, or none left: the default);
+    without the project column when the scope holds one project."""
+    shown = [c for c in (chosen or {}).get("shown") or () if c in every_column(name) and (project or c != "Project")]
+    return tuple(shown) or tuple(c for c in COLUMNS[name] if project or c != "Project")
 
 
 def table(name: str, panel: dict | None, view: dict | None = None, search: str = "", project: bool = True,
@@ -1239,17 +1515,288 @@ def table(name: str, panel: dict | None, view: dict | None = None, search: str =
 def heading(name: str, panel: dict | None) -> str:
     """A panel's one-line title with its counts (the first line of its text)."""
     lines = {"sessions": session_lines, "queue": queue_lines, "alerts": alert_lines, "milestones": milestone_lines,
-             "frontier": frontier_lines, "audit": audit_lines, "health": health_lines}
+             "frontier": frontier_lines, "audit": audit_lines, "health": health_lines, "exec": exec_lines}
     if name == "digest":
         return title("digest") if panel else f"{title('digest')}: not probed yet"
+    if name in TABS and name not in lines:  # a tab's own help (the overview's cards)
+        return tab_title(name)
     return lines[name](panel if name in PROBE_PANELS else panel or {})[0]
 
 
+# --- the tabs: one per question the owner asks (wi-brain-tui-layout, spec cockpit-ux-round2 §4.0, UX-18) ---
+
+NARROW_COLUMNS, NARROW_ROWS = 120, 30  # under either: the tabs alone, the grid not offered, the bar's numbers (UX-2)
+DETAIL_COLUMNS = 140  # from here the detail sits right of the list (UX-20)
+TAB_PADDING = 2  # a tab's padding in the bar, in columns
+CARD_LINES = 4  # a card's lines at most (UX-19: 3 to 5, with its frame)
+CARD_ORDER = ("queue", "sessions", "milestones", "frontier", "health", "resources", "lessons", "ideas", "features")
+VIEW_LABELS = {"cards": {"en": "Cards", "fr": "Cartes"}, "grid": {"en": "Grid", "fr": "Grille"},
+               "digest": {"en": "Digest", "fr": "Digest"},
+               "list": {"en": "List", "fr": "Liste"}, "frames": {"en": "Frames", "fr": "Cadres"}}
+
+
+def _alerts_open(panels: dict) -> str:
+    n = len(entries("alerts", panels.get("alerts")))
+    return str(n) if n else ""
+
+
+def _queue_now(panels: dict) -> str:
+    n = sum(1 for e in entries("queue", panels.get("queue")) if e.get("band") == "now")
+    return str(n) if n else ""
+
+
+def _sessions_asking(panels: dict) -> str:
+    n = sum(1 for r in entries("sessions", panels.get("sessions")) if r["state"] == "asking")
+    return f"{n}!" if n else ""
+
+
+def _card(tab: str, head: str, lines: list[str], foot: str = "", filters: dict | None = None) -> dict:
+    """A tab's card: ``{tab, title, lines, foot, filters}``; ``filters``: {panel: {field: value}}, what it opens with."""
+    return {"tab": tab, "title": f"{TABS[tab]['key']} {head}", "lines": [" ".join(x.split()) for x in lines][:CARD_LINES],
+            "foot": foot, "filters": filters or {}}
+
+
+def _counted(head: str, n: int, word: str) -> str:
+    return f"{head} · {n} {word}" if n else head
+
+
+def _summary(counts: dict[str, int]) -> list[str]:
+    """One line: « 1 this week · 2 when you can », what has a count; none without one."""
+    words = [f"{n} {word}" for word, n in counts.items() if n]
+    return [" · ".join(words)] if words else []
+
+
+def _queue_card(snap: dict, wait: str = "") -> dict:
+    rows = shown("queue", (snap.get("panels") or {}).get("queue"), view_of("queue"))
+    now = [e for e in rows if e.get("band") == "now"]
+    bands = {queue.BAND_NAMES[b]: sum(e.get("band") == b for e in rows) for b in queue.BANDS if b != "now"}
+    lines = [e["title"] for e in (now or rows)[:CARD_LINES - 1]] + _summary(bands)
+    opens = ("Enter: the queue, band now", {"queue": {"kind": ALL, "band": "now"}}) if now else ("Enter: the queue", {})
+    return _card("queue", _counted(title("queue"), len(now), "now"), lines or [why_empty("queue", snap)], *opens)
+
+
+def _session_line(r: dict) -> str:
+    what = r["title"] or r["step"] or r["branch"]
+    return ("! " if r["state"] == "asking" else "") + session_text(r) + (f": {what}" if what else "")
+
+
+def _sessions_card(snap: dict, wait: str = "") -> dict:
+    rows = entries("sessions", (snap.get("panels") or {}).get("sessions"))
+    asking = [r for r in rows if r["state"] == "asking"]
+    states = {s: sum(r["state"] == s for r in rows) for s in STATES if s not in ("asking", "ended")}
+    top = asking or [r for r in rows if r["state"] == "running"]
+    lines = [_session_line(r) for r in top[:CARD_LINES - 1]] + _summary(states)
+    opens = ("Enter: the sessions asking", {"sessions": {"state": "asking"}}) if asking else ("Enter: the sessions", {})
+    return _card("sessions", _counted(title("sessions"), len(asking), "asking"),
+                 lines or ([f"{len(rows)} ended"] if rows else [why_empty("sessions", snap)]), *opens)
+
+
+def _milestones_card(snap: dict, wait: str = "") -> dict:
+    panel = (snap.get("panels") or {}).get("milestones") or {}
+    rows = sorted(entries("milestones", panel), key=lambda m: -(m["done"] / m["items"] if m["items"] else 0))
+    lines = [f"{short_milestone(m['id'], m['project'])} {m['done']}/{m['items']} {bar(m['done'], m['items'])}"
+             for m in rows[:CARD_LINES - 1]]
+    reached = sum(g.get("reached", 0) for g in panel.get("projects") or [])
+    lines += [f"{reached} reached"] if reached else []
+    return _card("milestones", _counted(title("milestones"), len(rows), "pending"),
+                 lines or [why_empty("milestones", snap)], "Enter: the milestones")
+
+
+def _frontier_card(snap: dict, wait: str = "") -> dict:
+    rows = shown("frontier", (snap.get("panels") or {}).get("frontier"), view_of("frontier"))
+    lines = [f"{r['priority'] or '-'} {r['id'].removeprefix('wi-').removeprefix(r['project'] + '-')}: unblocks "
+             f"{r.get('unblocks', 0)}" for r in rows[:CARD_LINES]]
+    return _card("frontier", _counted(title("frontier"), len(rows), "startable"),
+                 lines or [why_empty("frontier", snap, view_of("frontier"))], "Enter: the frontier")
+
+
+def _health_card(snap: dict, wait: str = "") -> dict:
+    panels = snap.get("panels") or {}
+    alerts_ = sorted(entries("alerts", panels.get("alerts")), key=lambda a: -alerts.RANK.get(a["level"], 0))  # the worst
+    unread = [f"{g['project']}: error: {g['error']}" for g in (panels.get("alerts") or {}).get("projects") or []
+              if "error" in g]
+    lines = (unread + [f"{a['level']} {a['message']}" for a in alerts_])[:CARD_LINES - 1] or [
+        why_empty("alerts", snap, wait=wait)]
+    quiet_ = quiet.line(quiet.summary())   # brain quiet: held, not paused (brain.quiet)
+    if quiet_:
+        lines = [quiet_] + lines[:CARD_LINES - 2]
+    audit_ = [f"audit {g['project']}: {_counts(g['counts'])}" for g in (panels.get("audit") or {}).get("projects") or []
+              if "counts" in g]
+    return _card("health", _counted(tab_title("health"), len(alerts_), "alert(s)"), lines + audit_[:1], "Enter: health")
+
+
+# key: 0 to 9 or a comma. views: {view: its panels, in the order they show}, the default first; none: not built yet, its
+# key waits for it (arrives: what brings it). count: what the bar says of the tab, from the panels. card: its card in the
+# overview.
+TABS = {
+    "overview": {"key": "0", "label": {"en": "Overview", "fr": "Vue d'ensemble"},
+                 "question": {"en": "What waits on me, at a glance?", "fr": "Qu'est-ce qui m'attend, d'un coup d'œil ?"},
+                 "views": {"cards": (), "grid": PANELS, "digest": ("digest",)}},
+    "queue": {"key": "1", "label": {"en": "Queue", "fr": "File"},
+              "question": {"en": "What must I decide or do?", "fr": "Que dois-je décider ou faire ?"},
+              "views": {"list": ("queue",)}, "count": _queue_now, "card": _queue_card},
+    "sessions": {"key": "2", "label": {"en": "Sessions", "fr": "Sessions"},
+                 "question": {"en": "Who is working, who waits on me?", "fr": "Qui travaille, qui m'attend ?"},
+                 "views": {"list": ("sessions",)}, "count": _sessions_asking, "card": _sessions_card},
+    "frontier": {"key": "3", "label": {"en": "Frontier", "fr": "Frontier"},
+                 "question": {"en": "What can start?", "fr": "Que peut-on démarrer ?"},
+                 "views": {"list": ("frontier",)}, "card": _frontier_card},
+    "milestones": {"key": "4", "label": {"en": "Milestones", "fr": "Jalons"},
+                   "question": {"en": "Where are we going, and when?", "fr": "Où va-t-on, et quand ?"},
+                   "views": {"list": ("milestones",)}, "card": _milestones_card},
+    "ideas": {"key": "5", "label": {"en": "Ideas", "fr": "Idées"},
+              "question": {"en": "What waits upstream?", "fr": "Qu'est-ce qui attend en amont ?"},
+              "views": {}, "arrives": "the ideas board"},
+    "lessons": {"key": "6", "label": {"en": "Lessons", "fr": "Leçons"},
+                "question": {"en": "What did we learn, what came of it?", "fr": "Qu'a-t-on appris, qu'en a-t-on fait ?"},
+                "views": {}, "arrives": "the lessons registry"},
+    "features": {"key": "7", "label": {"en": "Features", "fr": "Features"},
+                 "question": {"en": "What can the brain do, where are the gaps?",
+                              "fr": "Que sait faire le Brain, où sont les trous ?"},
+                 "views": {}, "arrives": "the capability graph"},
+    "health": {"key": "8", "label": {"en": "Health", "fr": "Santé"},
+               "question": {"en": "What is breaking or getting worse?", "fr": "Qu'est-ce qui casse ou se dégrade ?"},
+               "views": {"frames": ("alerts", "audit", "health", "exec")}, "count": _alerts_open, "card": _health_card},
+    "resources": {"key": "9", "label": {"en": "Resources", "fr": "Ressources"},
+                  "question": {"en": "What does what runs cost?", "fr": "Que coûte ce qui tourne ?"},
+                  "views": {}, "arrives": "the resources view"},
+    "settings": {"key": ",", "label": {"en": "Settings", "fr": "Réglages"},
+                 "question": {"en": "How are the cockpit and the brain set?",
+                              "fr": "Comment le cockpit et le Brain sont-ils réglés ?"},
+                 "views": {}, "arrives": "the settings pages"},
+}
+
+
+def built_tabs() -> tuple[str, ...]:
+    """The tabs the bar shows: those that have a view."""
+    return tuple(n for n, t in TABS.items() if t["views"])
+
+
+def not_built(name: str) -> str:
+    """What a key says of a tab not built yet."""
+    return f"{tab_title(name)} is not here yet: it arrives with {TABS[name]['arrives']}"
+
+
+def narrow(columns: int, rows: int) -> bool:
+    return columns < NARROW_COLUMNS or rows < NARROW_ROWS
+
+
+def tab_title(name: str) -> str:
+    """A tab's name: the queue's title (the owner's display name); a tab that is one panel of its name takes that panel's
+    free title (tui.json settings.titles.<panel>); else its label in the cockpit's language."""
+    if name == "queue":
+        return title("queue")
+    free = (settings().get("titles") or {}).get(name) if tab_panels(name) == (name,) else None
+    return free or TABS[name]["label"][lang()]
+
+
+def tab_question(name: str) -> str:
+    return TABS[name]["question"][lang()]
+
+
+def tab_count(name: str, snap: dict) -> str:
+    """What the bar says of a tab, in digits and signs: the queue's band now, the sessions asking (``!``), the open
+    alerts; '' when there is nothing to say."""
+    count = TABS[name].get("count")
+    return count(snap.get("panels") or {}) if count else ""
+
+
+def tab_label(name: str, snap: dict) -> str:
+    """A tab's entry in the bar: its key, its name and its count."""
+    count = tab_count(name, snap)
+    return f"{TABS[name]['key']} {tab_title(name)}" + (f" {count}" if count else "")
+
+
+def tab_labels(snap: dict, active: str, columns: int, rows: int) -> dict[str, str]:
+    """The bar: each built tab's entry; when the terminal is narrow or they do not fit, each tab's key alone, the active
+    tab keeping its name and its count (``0  1 Queue 3  2  3  4  8``)."""
+    full = {n: tab_label(n, snap) for n in built_tabs()}
+    if not narrow(columns, rows) and sum(len(x) + TAB_PADDING for x in full.values()) <= columns:
+        return full
+    return {n: x if n == active else TABS[n]["key"] for n, x in full.items()}
+
+
+def tab_views(name: str, is_narrow: bool = False) -> tuple[str, ...]:
+    """A tab's views, the default first; the grid is not offered on a narrow terminal (UX-2)."""
+    return tuple(v for v in TABS[name]["views"] if not (is_narrow and v == "grid"))
+
+
+def tab_view(name: str, saved: str | None = None, is_narrow: bool = False) -> str:
+    """The view a tab shows: ``saved`` when it is still offered, else its first."""
+    views = tab_views(name, is_narrow)
+    return saved if saved in views else views[0]
+
+
+def tab_panels(name: str, view: str | None = None) -> tuple[str, ...]:
+    """The panels and frames a tab's view shows, in order; those of all its views when ``view`` is None."""
+    if view is not None:
+        return TABS[name]["views"][view]
+    return tuple(dict.fromkeys(p for panels in TABS[name]["views"].values() for p in panels))
+
+
+def panel_tab(panel: str) -> str:
+    """The tab that opens a panel or a frame: the one that holds it, the overview for the digest."""
+    return next((n for n, t in TABS.items() if n != "overview" and any(panel in ps for ps in t["views"].values())),
+                "overview")
+
+
+def detail_beside(tab: str, view: str, columns: int) -> bool:
+    """Whether a row's detail sits beside the list (UX-20): wide enough, on a view that is one table; else it opens over
+    it."""
+    panels = tab_panels(tab, view)
+    return columns >= DETAIL_COLUMNS and len(panels) == 1 and panels[0] in COLUMNS
+
+
+def card_tabs() -> tuple[str, ...]:
+    """The tabs that have a card, in the overview's order: what waits on the owner first."""
+    return tuple(n for n in CARD_ORDER if TABS[n]["views"] and TABS[n].get("card"))
+
+
+def cards(snap: dict, wait: str = "") -> list[dict]:
+    """The overview's cards (UX-19): each tab's title, lines, foot and the filters it opens with; ``wait``: what a panel
+    not probed yet waits for, as ``probe_wait`` says it."""
+    return [TABS[n]["card"](snap, wait) for n in card_tabs()]
+
+
+def palette(choices: dict, is_narrow: bool = False) -> list[dict]:
+    """The command palette's entries (spec cockpit-ux §4.4): every tab and view offered at this size, project, sort, filter
+    and table's columns, each ``{title, help, do}``; ``do``: what brain.tui_palette runs, a tuple."""
+    out = []
+    for n in built_tabs():
+        name = tab_title(n)
+        out.append({"title": f"Go to {name}", "help": f"key {TABS[n]['key']}: {tab_question(n)}", "do": ("tab", n)})
+        views = tab_views(n, is_narrow)
+        out += [{"title": f"{name}: the {VIEW_LABELS[v][lang()]} view", "help": "v changes it", "do": ("view", n, v)}
+                for v in views if len(views) > 1]
+    out += [{"title": f"Project: {label}", "help": "p opens the selector", "do": ("scope", value)}
+            for label, value, _ in scope_choices(choices)]
+    for name in SORTS:
+        out += [{"title": f"{title(name)}: sort by {key}", "help": "s changes it, o reverses it", "do": ("sort", name, key)}
+                for key in SORTS[name]]
+        out += [{"title": f"{title(name)}: {field} {value}", "help": "f holds its filters",
+                 "do": ("filter", name, field, value)} for field, values in FILTERS[name].items() for value in values]
+    out += [{"title": f"{title(name)}: choose its columns", "help": "C on its table", "do": ("columns", name)}
+            for name in COLUMNS]
+    out.append({"title": "Reset the views", "help": "every sort, filter, column and tab's view back to its default; the "
+                                                    "project, the theme and the timezone stay", "do": ("reset",)})
+    return out
+
+
+def bar_status(changed: str | None, probe_in: float | None, probing: bool = False, paused: bool = False,
+               tz: str | None = "local") -> str:
+    """The global bar's right end: the last change and the next probe (``probe_in``: the seconds it is due in; None: at
+    the next tick)."""
+    probe = "probing" if probing else "paused" if paused else ("probe now" if probe_in is None or probe_in < 1
+                                                               else f"probe in {span(probe_in)}")
+    return f"changed {when(changed, tz, '%H:%M')} · {probe}"
+
+
 def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None, search: str = "",
-           tz: str | None = None) -> list[str]:
+           tz: str | None = None, tab: str | None = None) -> list[str]:
     """The text view: every panel, one after the other; ``views`` (each table panel's view, {} its defaults) and
     ``search`` narrow the sessions, the queue and the frontier (None: everything, in the panels' order); ``tz``
-    shows the header's times in that timezone (None: as recorded, UTC). The header names the installed version."""
+    shows the header's times in that timezone (None: as recorded, UTC); ``tab`` prints that tab's panels and frames
+    alone, the overview's cards for the overview. The header names the installed version."""
     p = snap["panels"]
 
     def stamp(iso):
@@ -1257,24 +1804,45 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
     head = (f"brain {__version__} cockpit: {snap['scope']}; files read {stamp(snap.get('read_at')) or '-'}, probes "
             f"{stamp(snap.get('probed_at')) or 'not run'}")
     out = [head]
+    if tab == "overview":
+        for card in cards(snap, wait="not probed yet"):
+            out += ["", card["title"], *(_line("  ", x, width) for x in card["lines"])]
+        return out
 
     def v(name):
         return None if views is None else views.get(name, {})
-    for lines in (session_lines(p.get("sessions") or {}, width, v("sessions"), search),
-                  queue_lines(p.get("queue") or {}, width, v("queue"), search),
-                  alert_lines(p.get("alerts"), width),
-                  milestone_lines(p.get("milestones") or {}, width),
-                  frontier_lines(p.get("frontier") or {}, width, view=v("frontier"), search=search),
-                  audit_lines(p.get("audit"), width), health_lines(p.get("health"), width),
-                  digest_lines(p.get("digest"), width)):
-        out += ["", *lines]
+    for name, lines in (("sessions", session_lines(p.get("sessions") or {}, width, v("sessions"), search)),
+                        ("queue", queue_lines(p.get("queue") or {}, width, v("queue"), search)),
+                        ("alerts", alert_lines(p.get("alerts"), width)),
+                        ("milestones", milestone_lines(p.get("milestones") or {}, width)),
+                        ("frontier", frontier_lines(p.get("frontier") or {}, width, view=v("frontier"), search=search)),
+                        ("audit", audit_lines(p.get("audit"), width)), ("health", health_lines(p.get("health"), width)),
+                        ("exec", exec_lines(p.get("health"), width)),
+                        ("digest", digest_lines(p.get("digest"), width))):
+        if name in (tab_panels(tab) if tab else PANELS):
+            out += ["", *lines, *(_line("  ", s, width) for s in states(name, snap, v(name), search, tz))]
+    return out
+
+
+def states(name: str, snap: dict, view: dict | None = None, search: str = "", tz: str | None = None) -> list[str]:
+    """What the text view adds under a panel: its failed read (the error, and the time of the data still shown), and
+    for a table panel that shows no row, why (``why_empty``; a panel not probed yet says so in its heading)."""
+    panel, error = (snap.get("panels") or {}).get(name), (snap.get("errors") or {}).get(name)
+    out = []
+    if error and panel is not None:
+        data_at = (snap.get("panel_at") or {}).get(name)
+        out.append(f"read failed at {when(error['at'], tz)}: {error['error']}; data of {when(data_at, tz)}")
+    if name in COLUMNS and (panel is not None or error or name not in PROBE_PANELS):
+        why = why_empty(name, snap, view, search)
+        out += [f"({why})"] if why else []
     return out
 
 
 def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, out=None, ticks: int = 0,
-          views: dict[str, dict] | None = None, search: str = "", tz: str | None = None) -> int:
+          views: dict[str, dict] | None = None, search: str = "", tz: str | None = None,
+          tab: str | None = None) -> int:
     """The text view redrawn in place when a panel changed (``brain tui --plain``, or no tui extra); Ctrl-C quits.
-    ``views``, ``search`` and ``tz`` as ``render``'s. ``ticks``: stop after that many (tests)."""
+    ``views``, ``search``, ``tz`` and ``tab`` as ``render``'s. ``ticks``: stop after that many (tests)."""
     out = out or sys.stdout
     next_probe, n = 0.0, 0
     try:
@@ -1285,7 +1853,7 @@ def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, o
             if cp.refresh(probe=probe):
                 width = max(min(os.get_terminal_size(out.fileno()).columns, 160), 60) if out.isatty() else WIDTH
                 out.write(("\x1b[2J\x1b[H" if out.isatty() else "")
-                          + "\n".join(render(cp.snapshot(), width, views, search, tz)) + "\n")
+                          + "\n".join(render(cp.snapshot(), width, views, search, tz, tab)) + "\n")
                 out.flush()
             n += 1
             if ticks and n >= ticks:

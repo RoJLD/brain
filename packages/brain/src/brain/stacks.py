@@ -558,6 +558,13 @@ def hook_main(argv: list[str], stdin=None) -> int:
                 parts.append(silent)
         except Exception as exc:  # noqa: BLE001
             _log_error("alerts-dead-man", exc)
+        try:   # COMPAT-4: the public and secrets guards fail closed on an unexpected configuration
+            from . import config
+            why = config.unexpected()
+            if why:
+                parts.append(f"The public and secrets guards refuse every git commit and git push: {why}")
+        except Exception as exc:  # noqa: BLE001
+            _log_error("guards-health", exc)
         if parts:
             text = "\n".join(parts)
             event = argv[0] if argv else "SessionStart"

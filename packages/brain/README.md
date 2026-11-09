@@ -27,14 +27,15 @@ What it does, every command reading files and git, never a model:
   workflow; a command a session types into the owner's Terminal panel, `run_in_terminal`, meets the same shell
   guards), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
-  shapes, data files) before a push to a public repo, and its guard holds the push until the check is green.
+  shapes, data files) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
+  deny rules and gitleaks as now.
 
 ## Install
 
 Python 3.10 or later. The command depends on PyYAML and on `research-graph` at the same tag.
 
 ```bash
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.5#subdirectory=packages/brain"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.7#subdirectory=packages/brain"
 ```
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
@@ -54,10 +55,49 @@ Linux). It prints a plan; `-Apply` does it. The launcher is replaced even while 
 `brain update` (since 0.2.4) reads the latest release tag of the engine's public repo (`config.json` `engine.repo`,
 else RoJLD/brain) with `git ls-remote`, no token, and prints the plan: the version and its CHANGELOG sections, the
 tag installed into the brain's venv (pip, the `tui` extra kept), the launcher swapped in on Windows (as the installer
-does, even while a brain runs), and, for a brain that pins its engine (`config.json` `engine.pin`), the pin to move by
-a reviewed PR, shown and never done. It installs only on the owner's yes: `y` at its prompt, or `--yes`; never from a
-Claude Code session's shell. `brain update --check` prints the plan and installs nothing; `--json` gives its data. A
-checkout installed editable is not updated by pip (`git pull` there).
+does, even while a brain runs), and, for a brain that pins its engine (`config.json` `engine.pin`), the pin to move.
+How it moves depends on the brain (COMPAT-5):
+
+- **A brain without an installer of its own** (no `engine.installer`, such as one from `brain init`) has no review
+  step, so the plan moves the pin itself: it writes the new tag into `engine.pin` (the file's other keys, their order
+  and its indent kept), commits `config.json` alone in the brain's repo (« brain update: engine.pin vX -> vY »), then
+  runs `brain sync` with the new engine. When the brain's venv already holds the latest tag and the pin lags it (an
+  update made before this), the plan moves the pin alone. It never moves the pin backwards, nor to or from a pin that
+  is not a release tag, nor for an editable install; a `config.json` with changes not committed or not tracked, a
+  brain that is not a git repo or is on a detached HEAD, is left as it is and the plan says what to do by hand. The
+  commit lands on the brain's current branch, never pushed. The plan's `--json` says so in
+  `pin.move`: `"write"`.
+- **A brain that declares its installer** keeps the reviewed PR: the pin to move is shown, never done
+  (`pin.move`: `"pr"`).
+
+It runs only on the owner's yes: `y` at its prompt, or `--yes`; never from a Claude Code session's shell, which is
+told to run it in the owner's own terminal. `brain update --check` prints the plan and changes nothing; `--json`
+gives its data. A checkout installed editable is not updated by pip (`git pull` there).
+
+The cockpit (`brain tui`) has one tab per question, each on its key: `0` the overview, `1` the queue, `2` the sessions,
+`3` the frontier, `4` the milestones, `8` health (alerts on top; audit debt, stacks and index, and the exec times).
+The overview shows one card per tab, what counts in it in a few lines: the band now, the sessions asking, the nearest
+milestones, what can start, the open alerts. Enter or a click opens its tab, already filtered as the card says, whatever your
+filters and search (a filter that is not saved and goes when you leave the tab); the arrows move between the cards.
+Ideas (`5`), lessons (`6`), features (`7`), resources (`9`) and settings (the comma) arrive with their items, and until
+then their key says so. The bar shows what waits in each tab, in digits and signs: « 1 Ada's queue 3 » the band now, « 2
+Sessions 1! » the sessions asking, « 8 Health 2 » the open alerts. A click on it, `ctrl+pageup` and
+`ctrl+pagedown` also change tab, and Escape goes back one step at a time: the search, a full view, then the overview. A tab with several views says so in its toolbar:
+`v` or a click changes it, and the overview's other views are the grid of every panel, where open alerts take a whole
+row, and the digest. `--tab NAME` starts on a tab, and with `--once` or `--plain` prints its panels alone (the overview:
+its cards). Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
+one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
+in `<BRAIN_HOME>/tui.json`.
+
+From 140 columns, on a tab that is one list, a row's detail sits right of the list and follows the cursor: it reads
+once the cursor rests, and remembers each row until its panel changes. Enter gives it the focus, where it scrolls and `o`
+opens a link, and Escape gives the focus back; `a`, `d` and `A` work from the list too, each after its confirmation.
+Narrower, or on a tab of several panels, Enter opens it over them.
+
+`C` chooses the columns of the focused table: shown or hidden (space), their order (Up, Down, or `shift+up`, `shift+down`),
+and the longest its title may be, the rest in the detail; the sessions also offer Cost, App id, Id and Branch. The palette
+(`ctrl+p`) reaches every tab, view, project, sort, filter and table's columns without learning a key, and resets the views.
+The chosen columns are kept in `<BRAIN_HOME>/tui.json`.
 
 The cockpit's title bar always shows the installed version. Once the screen is drawn, it checks the tags in the
 background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.3 · 0.2.4 available »
@@ -72,12 +112,23 @@ must replace on Windows: on `y` the cockpit exits, a new window waits for it, ru
 view (a failure says so and waits for Enter), then relaunches `brain tui` with the same arguments. A queue
 action's `install.ps1 -Apply`, applied with `A` in its detail, goes the same way.
 
+A cockpit panel never stays blank without saying why. An empty table shows one line: « 7 hidden by kind action: f
+changes the filters », « Nothing waits on Ada in every project », « far is not on this machine (../nowhere) ». A panel
+not probed yet shows the probe's countdown (« probe in 1 min 40 (r for now) »), then its progress (« probing: quant
+2/3 »). A read that fails keeps the panel's last content, with the error and the time of the data in its frame; it is
+notified once and read again at the next tick (a probed panel: at the next probe). `--once` and `--json` print a
+failed read on stderr and exit 1; `--detail` names it when it finds no row. A stack or a code index repo that is not
+OK names its last OK measure this cockpit saw (« gitnexus DOWN (last OK 2 h ago) »). The project selector greys a
+registered project this machine lacks, and `brain tui --all` without a project registry shows the folder's project
+and says so.
+
 A pinned brain runs its pinned engine. `brain check` warns when the running brain or research-graph is not
 `config.json` `engine.pin`: a newer or an older version, or the pin's version from other code (another git revision,
 an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh` and
 `brain render --write` then refuse to write, since they would render the plugin's hooks and generate the links with
-another engine. After `brain update`, set `engine.pin` to the new tag in `config.json` and commit it (by a
-reviewed PR where the brain's main is protected); the refusal names the file and the tag. Otherwise run the pinned
+another engine. `brain update` moves the pin of a brain without an installer of its own; in a brain that declares
+one, set `engine.pin` to the new tag in `config.json` and commit it by a reviewed PR; the refusal names the file and
+the tag. Otherwise run the pinned
 engine, or pass `--force`. A brain with no pin, or a
 pin that is not a release tag, is not compared.
 
@@ -192,8 +243,9 @@ days) and **when you can**. Within a band, the owner's own order first (`brain q
 | effort | the owner's minutes (`--minutes`; a decision's reading time), a quick one a little higher |
 | age, blocking | the days it has waited (at most 2), and 4 for a blocking one |
 
-The same bands show in `brain status`, the cockpit's queue panel (a Band and a Score column, sorted and filtered by
-band) and the morning batches (`brain decision batch --zen`: the band now always in the session). A denied tool call
+The same bands show in `brain status`, the cockpit's queue panel (a Band and a Score column, filtered by band, sorted
+by band, then the owner's order and the score; or by the score alone across the bands: s, a click on Score, or
+`brain tui --sort queue:score`) and the morning batches (`brain decision batch --zen`: the band now always in the session). A denied tool call
 expires once every session it was refused in is archived or gone in the Claude desktop app.
 
 The views name the owner by `identity.display_name` (else `identity.owner`): the queue's title is « Ada's queue », or
@@ -262,7 +314,8 @@ Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md
   are unioned in date order, the graph's edges and a CHANGELOG's Unreleased section are unioned, the other graph YAML
   is merged by id, anything else as git would. The installer defines it in the personal brain's git config
   (`brain merge-driver install --apply`); `brain merge-driver replay` merges a repo's past merges again with and
-  without it.
+  without it. A driver that cannot run falls back to git's own `merge-file`, so ours is never left without its
+  conflict markers (`brain.mergedriver`).
 - **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
@@ -332,7 +385,8 @@ What each finished item teaches is a node of the graph, so it can be found, coun
 ## Schedules and the alerts pass
 
 A project's `schedules:` entry in the registry declares the brain commands a machine's scheduler runs, `{name:
-{command, every, at, at_logon, machines, timeout, enabled}}`; the alerts pass, say:
+{command, every, at, days, at_logon, machines, timeout, enabled}}`, with `days` the days `at` runs on (`days: [mon]`
+is weekly, none is every day); the alerts pass, say:
 
 ```yaml
 brain:
@@ -342,8 +396,9 @@ brain:
 
 `brain schedule install` prints the plan for this machine and `--apply` installs it (`brain.schedule`): on Windows a
 Task Scheduler task `\Brain\<name>`, as the user, in their session, through the venv's `pythonw.exe` (no console
-window), never two runs at once; on Linux a systemd user timer `brain-<name>.timer` (else the user's crontab), through
-`bash -lc` so that the login profile's variables reach the command. What this machine installed
+window, for it or for the programs it starts: `brain.nowindow`), never two runs at once; on Linux a systemd user timer
+`brain-<name>.timer` (else the user's crontab), through `bash -lc` so that the login profile's variables reach the
+command. What this machine installed
 (`<BRAIN_HOME>/schedules/installed.json`) and no longer declares is removed; a task registered by hand is never
 touched. The installer's schedule step runs it, so a schedule is a plan line that `-Apply` applies; creating a
 scheduled task stays the owner's decision: from a Claude Code session `--apply` is refused after the plan, and the
@@ -355,13 +410,33 @@ no pass); the SessionStart health hook says so in one line and `brain status`'s 
 it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and says so in one line; the alerts go
 at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped.
 
+## Quiet mode
+
+`brain quiet --for 2h` silences the notifications below `critical` for that long (90m, 2h, 1d; at most 7d); a
+`critical` one still goes through. What was held (`<BRAIN_HOME>/notify/held.jsonl`) is summed up in one message per
+project, through that project's routes, when the quiet ends: `brain quiet --off`, or the first alerts pass after the
+end. A project may also declare hours, in local time and across midnight if need be:
+
+```yaml
+brain:
+  notify:
+    quiet_hours: "22:00-07:00"
+```
+
+Quiet silences notifications and nothing else: no task is paused, no scheduled task is disabled, no window opens or
+closes, so a collector, whose data cannot be recovered, runs on and the alerts pass keeps recording what it finds.
+`brain quiet` alone, `brain status` and the cockpit's health card show the state: until when, the declared hours, how
+many are held. A summary that fails to send stays held for the next pass.
+
 ## Where the brain is found
 
 `config.json` and `projects.yaml` are found at `$BRAIN_CONFIG` / `$BRAIN_PROJECTS`, else in the first of:
 `$CLAUDE_BRAIN_DIR`, `$BRAIN_PERSONAL`, the repo acted on (a worktree of the brain reads its own files), then the
 machine's pointer `<BRAIN_HOME>/personal.json` (`{"root": ...}`, written by the installer and by `brain init`). The
 repo acted on is `--root`, else `$BRAIN_ROOT`, else the nearest folder above with `notes/graph/schema.yaml`, else the
-personal brain. Machine-local state (ledgers, sessions, the resume pack, the vault) lives in `BRAIN_HOME`
+personal brain. `--project P` alone resolves to the git worktree the cwd is in when that is a linked worktree of the
+repo P's root is in (so a sub-session in a worktree never writes to the main checkout); an explicit `--root` wins, and
+a cwd in another repo (a code repo of P, say) or a plain folder keeps the registry's root. Machine-local state (ledgers, sessions, the resume pack, the vault) lives in `BRAIN_HOME`
 (`~/.brain`), never in a repo.
 
 ### Projects the brain only reads, projects that share a root
@@ -420,6 +495,10 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
   now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
   (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
+
+The quota conversion (`brain usage quota`) is per plan: only the readings of the plan in force (config.json
+`usage.plans`) count, and until the plan has 3 converted readings it says "uncalibrated", does not convert the week and
+estimates the 5-hour window from its latest reading and the ledger's cost since.
 
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture

@@ -14,6 +14,11 @@ which appends the reading to ``<BRAIN_HOME>/usage/quota.jsonl`` (time, window, p
   conversion  each reading's percent over the ledger's cost since its window started (its reset minus the window's
               length): the percent of the window per dollar at API prices, the median of the readings of the last
               ``FACTOR_DAYS`` days (each with ``MIN_USD`` of cost at least); 100 / it: the window at API prices.
+              Only the readings of the plan in force count (a reading's own ``plan``, else the plan of its day in
+              config.json ``usage.plans``): a plan's quota in dollars is its own, so a median across an Ultra and
+              a Pro week would be neither. Until the plan has ``CAL_MIN`` converted readings the conversion is
+              uncalibrated and the weekly window is not converted; the 5-hour window's latest reading, with the
+              ledger's cost since, gives an estimate of that window instead.
   now         the latest reading of the window in force plus the ledger's cost since, converted; without one, the
               cost since the window started, converted (an estimate, said so).
   pace        the cost of the last ``PACE_HOURS`` hours per hour, converted: the percent at the reset if it goes on,
@@ -47,11 +52,12 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import cost, paths, projects, resume, usage
+from . import config, cost, paths, projects, resume, usage
 
 WINDOWS = {"week": timedelta(days=7), "5h": timedelta(hours=5)}
 FACTOR_DAYS = 28
 MIN_USD = 5.0  # a reading over less cost since its window started gives no conversion
+CAL_MIN = 3  # converted readings of the plan in force before its conversion counts as calibrated
 PACE_HOURS = 24
 LIVE_MIN = 15
 SKEW = timedelta(minutes=5)  # a reading this far after now is a clock's skew, not the future; two resets this close
@@ -169,14 +175,22 @@ def observe(pct: float, window: str = "week", at: datetime | None = None, resets
 
 # --- conversion ---
 
-def calibrate(rows: list[dict], readings: list[dict], window: str, now: datetime) -> dict | None:
-    """{pct_per_usd, usd_per_pct, quota_usd, n, readings: [...]}: the readings of the last ``FACTOR_DAYS`` days with
-    ``MIN_USD`` of cost since their window started, each its percent over that cost, and their median; None
-    without one."""
+def plan_of_reading(r: dict, plans=None) -> str:
+    """The plan a reading was taken under: its own ``plan``, else the plan of its day in ``plans``."""
+    return str(r.get("plan") or "") or usage.plan_of(str(r.get("at") or "")[:10], plans)
+
+
+def calibrate(rows: list[dict], readings: list[dict], window: str, now: datetime, plan: str | None = None,
+              plans=None) -> dict | None:
+    """{pct_per_usd, usd_per_pct, quota_usd, n, plan, readings: [...]}: the readings of ``plan`` (every plan when
+    None) in the last ``FACTOR_DAYS`` days with ``MIN_USD`` of cost since their window started, each its percent
+    over that cost, and their median; None without one. Whether ``n`` is enough is the caller's (``CAL_MIN``)."""
     out = []
     for r in readings:
         at, resets = _dt(r.get("at")), _dt(r.get("resets"))
         if r["window"] != window or not at or not resets or at < now - timedelta(days=FACTOR_DAYS):
+            continue
+        if plan and plan_of_reading(r, plans) != plan:
             continue
         spent = usage.cost_between(rows, resets - WINDOWS[window], at)
         if spent >= MIN_USD and r["pct"] > 0:
@@ -184,7 +198,33 @@ def calibrate(rows: list[dict], readings: list[dict], window: str, now: datetime
     if not out:
         return None
     f = statistics.median(x["pct_per_usd"] for x in out)
-    return {"pct_per_usd": f, "usd_per_pct": 1 / f, "quota_usd": 100 / f, "n": len(out), "readings": out}
+    return {"pct_per_usd": f, "usd_per_pct": 1 / f, "quota_usd": 100 / f, "n": len(out), "plan": plan or "",
+            "readings": out}
+
+
+def estimate_5h(rows: list[dict], readings: list[dict], now: datetime, plan: str | None = None,
+                plans=None) -> dict | None:
+    """The 5-hour window in force estimated from its latest reading of ``plan``: the reading's percent plus the
+    ledger's cost since, at the percent per dollar that reading itself gave (its percent over the cost since the
+    window started; without ``MIN_USD`` of it, the reading alone). None without a reading in force."""
+    span = WINDOWS["5h"]
+    best = None
+    for r in readings:
+        at, resets = _dt(r.get("at")), _dt(r.get("resets"))
+        if r["window"] != "5h" or not at or not resets or not now < resets <= now + span + SKEW or at > now + SKEW:
+            continue
+        if plan and plan_of_reading(r, plans) != plan:
+            continue
+        if best is None or r["at"] > best[0]["at"]:
+            best = (r, at, resets)
+    if best is None:
+        return None
+    r, at, resets = best
+    spent = usage.cost_between(rows, resets - span, at)
+    since = usage.cost_between(rows, min(at, now), now)
+    f = r["pct"] / spent if spent >= MIN_USD and r["pct"] > 0 else None
+    return {"pct_now": round(min(100.0, r["pct"] + (since * f if f else 0.0)), 1), "read_pct": r["pct"],
+            "at": r["at"], "resets": iso(resets), "since_usd": round(since, 2), "converted": f is not None}
 
 
 # --- the estimates of items ---
@@ -256,19 +296,30 @@ def queue_of(led: cost.Ledger, projs: list[projects.Project], skip: list[str], e
 # --- the forecast ---
 
 def forecast(rows: list[dict], readings: list[dict], now: datetime, window: str = "week", live: dict | None = None,
-             queue: list[dict] | None = None) -> dict:
+             queue: list[dict] | None = None, plans=None) -> dict:
     """The window's percent now, at the reset at the last ``PACE_HOURS`` hours' pace, the live sessions' and the
-    queue's share, and the advice (``LEVELS``)."""
-    fc: dict = {"window": window, "now": iso(now), "plan": usage.plan_of(iso(now)[:10]), "readings": len(
+    queue's share, and the advice (``LEVELS``). Only the readings of the plan in force (``plans``: config.json
+    ``usage.plans``) are used; below ``CAL_MIN`` converted ones the conversion is uncalibrated (``uncalibrated``)
+    and a weekly forecast gives the 5-hour window's estimate (``window_5h``) instead."""
+    plan = usage.plan_of(iso(now)[:10], plans)
+    every = readings  # the weekly reset is the account's, whatever the plan: only the conversion is the plan's
+    readings = [r for r in readings if not plan or plan_of_reading(r, plans) == plan]
+    fc: dict = {"window": window, "now": iso(now), "plan": plan, "readings": len(
         [r for r in readings if r["window"] == window])}
-    cal = calibrate(rows, readings, window, now)
+    cal = calibrate(rows, readings, window, now, plan, plans)
+    n_cal = cal["n"] if cal else 0
+    if n_cal < CAL_MIN:
+        cal = None
+    fc["uncalibrated"] = None if cal else {"plan": plan, "n": n_cal, "needed": CAL_MIN}
+    if fc["uncalibrated"] and window == "week":
+        fc["window_5h"] = estimate_5h(rows, readings, now, plan, plans)
     fc["conversion"] = cal and {k: (round(v, 6) if isinstance(v, float) else v) for k, v in cal.items()
                                 if k != "readings"} | {"readings": [
                                     {k: r[k] for k in ("at", "pct", "resets", "usd", "host") if k in r}
                                     | {"pct_per_usd": round(r["pct_per_usd"], 6)} for r in cal["readings"]]}
     f = cal["pct_per_usd"] if cal else None
-    resets = infer_resets(readings, window, now) if window == "week" else next(
-        (_dt(r["resets"]) for r in reversed(readings) if r["window"] == window and (_dt(r.get("resets")) or now) > now),
+    resets = infer_resets(every, window, now) if window == "week" else next(
+        (_dt(r["resets"]) for r in reversed(every) if r["window"] == window and (_dt(r.get("resets")) or now) > now),
         None)
     current = [r for r in readings if r["window"] == window and resets
                and abs((_dt(r.get("resets")) or now) - resets) <= SKEW
@@ -322,6 +373,14 @@ def forecast(rows: list[dict], readings: list[dict], now: datetime, window: str 
 
 def advice(fc: dict) -> tuple[str, str]:
     pace, pct = fc.get("pace") or {}, fc.get("pct_now")
+    un = fc.get("uncalibrated")
+    if un and "at_reset" not in pace:
+        w5 = fc.get("window_5h")
+        est = (f"; the 5h window is about {w5['pct_now']:.0f} % (estimated from its {w5['read_pct']:.0f} % reading)"
+               if w5 else "; read get_usage, then brain usage quota --observe N --resets T")
+        return "unknown", (f"uncalibrated: {un['plan'] or 'this plan'} has {un['n']} of {un['needed']} converted "
+                           f"readings, the {fc['window']} window is not converted (a reading needs "
+                           f"${MIN_USD:g} of ledger cost since its window started to convert){est}")
     if pct is None or "at_reset" not in pace:
         return "unknown", ("read get_usage, then brain usage quota --observe N --resets T" if not fc["readings"]
                            else "a reading needs $%g of ledger cost since its window started to convert" % MIN_USD
@@ -362,6 +421,15 @@ def render(fc: dict) -> list[str]:
         h = fc["hours_left"] or 0
         out.append(f"  reset     {when(_dt(fc['resets']))}, in {int(h // 24)} d {h % 24:.0f} h")
     c = fc.get("conversion")
+    u = fc.get("uncalibrated")
+    if u:
+        out.append(f"  convert   uncalibrated: {u['plan'] or 'the plan in force'} has {u['n']} of {u['needed']} "
+                   f"converted reading(s) (readings of other plans are not used)")
+    w5 = fc.get("window_5h")
+    if w5:
+        out.append(f"  5h window about {w5['pct_now']:.0f} % (read {w5['read_pct']:.0f} % at "
+                   f"{w5['at'].replace('T', ' ')[:16]} UTC, {usage.usd(w5['since_usd'])} spent since), resets "
+                   f"{w5['resets'].replace('T', ' ')[:16]} UTC")
     if c:
         out.append(f"  convert   {c['pct_per_usd']:.4f} % per $ at API prices ({usage.usd(c['usd_per_pct'])} per 1 %; "
                    f"the {fc['window']} window is about {usage.usd(c['quota_usd'])}), median of {c['n']} reading(s) "
@@ -415,7 +483,7 @@ def load_status() -> dict:
 
 
 def run(led: cost.Ledger, projs: list[projects.Project], now: datetime, window: str = "week",
-        plan: bool = True) -> dict:
+        plan: bool = True, plans=None) -> dict:
     """The forecast for ``led`` (every row: the quota is the account's) with the live sessions and ``projs``' queue
     when ``plan``, written to ``quota.json``."""
     readings = load_readings()
@@ -424,7 +492,7 @@ def run(led: cost.Ledger, projs: list[projects.Project], now: datetime, window: 
         est = estimator(led)
         live = live_of(led, now, est)
         queue = queue_of(led, projs, live["items"], est)
-    fc = forecast(led.rows, readings, now, window, live, queue)
+    fc = forecast(led.rows, readings, now, window, live, queue, plans)
     try:
         save_status(fc)
     except OSError:
@@ -436,10 +504,11 @@ def status_of(projs: list[projects.Project], root: Path | None, now: datetime, q
     """brain status's quota row: the ledger as it is (brain status scanned it for the tokens row) joined to
     ``projs``; ``quick``: its rows only, without the live sessions or the queue (no graph read)."""
     try:
+        plans = usage.plans_from(config.load(root).get("usage")) if root else None
         if quick:
-            fc = forecast(list(usage.load().values()), load_readings(), now)
+            fc = forecast(list(usage.load().values()), load_readings(), now, plans=plans)
             save_status(fc)
             return fc
-        return run(cost.load(projs, root, refresh=False), projs, now)
+        return run(cost.load(projs, root, refresh=False), projs, now, plans=plans)
     except (OSError, ValueError) as exc:
         return {"error": str(exc)}

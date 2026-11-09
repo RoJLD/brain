@@ -16,19 +16,36 @@ ORDER = 140   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 540   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain tui [--project P | --all] [--refresh 2s] [--probe 5m] [--hours 24] [--plain] [--sort PANEL:KEY]...
-            [--filter PANEL:FIELD=VALUE]... [--search TEXT] [--tz local|utc] [--reset] [--once [--quick]] [--json]
+            [--filter PANEL:FIELD=VALUE]... [--search TEXT] [--tab NAME] [--tz local|utc] [--reset]
+            [--once [--quick]] [--json]
                  the cockpit, read-only and at zero token: sessions (project, task, step n/m of its plan, state,
                  model, effort, context and tokens), {owner}'s queue, alerts, milestones, the frontier by priority,
                  audit debt, stacks and code index, the digest; the panels re-read when their files change (checked
                  every --refresh, default 2 s; + and - change it), the probes (alerts, audit, health, digest, denied
                  calls) every --probe and on the r key; the Textual app with the tui extra (pip install brain[tui]),
                  else (--plain) the same text redrawn in place; --once prints it once (--quick: no probe), --json its
-                 data (unfiltered). The project selector (p: global or one project), the sessions', queue's and
-                 frontier's filters and sorts (f, s, o), the search (/), a panel's help (i) and full view (m, Escape
-                 back), the pause (space) and ? for every key; a refresh keeps the scroll and the cursor; the
-                 interactive views remember the scope, views, theme and timezone (--tz, t; default local) in
-                 $BRAIN_HOME/tui.json (--reset forgets them; --project, --all, --sort, --filter and --tz win).
-                 Enter: the row's detail (a DDR's options, an item's spec, ADRs and PR, a session's plan); in it, o
+                 data (unfiltered). One tab per question, each on its key: 0 overview (its views, v: one card per tab,
+                 which Enter or a click opens already filtered, the grid, the digest), 1 {owner}'s queue, 2 sessions,
+                 3 frontier, 4 milestones, 8 health (alerts, audit, stacks and index, exec times), ctrl+pageup and ctrl+pagedown the previous and next, Escape back to the overview;
+                 Escape first clears the search and closes a full view; the bar shows the queue's band now, the
+                 sessions asking and the open alerts, and is reduced to its
+                 numbers under 120 columns or 30 rows, where the cards take one column and the grid is not offered;
+                 --tab NAME starts there, and with --once or --plain prints that tab's panels alone (the overview:
+                 its cards). The project selector (p: global or one
+                 project), the sessions', queue's and frontier's filters and sorts (f, s, o), a table's columns (C:
+                 shown or hidden, their order, the longest a title may be; the sessions also offer Cost, App id, Id and
+                 Branch), the palette (ctrl+p: every tab, view, project, sort, filter and table's columns, and reset
+                 the views), the search (/), a panel's
+                 help (i), a full view where a tab shows several panels (m, Escape back), the pause (space) and ? for
+                 every key; a refresh keeps the scroll and the cursor; an empty
+                 table says why (a filter, nothing in the scope, a project not on this machine), a panel not probed
+                 yet its countdown then its progress, a failed read keeps the last content and its time (--all
+                 without a registry: this folder's project); the
+                 interactive views remember the scope, views, last tab, columns, theme and timezone (--tz, t; default local) in
+                 $BRAIN_HOME/tui.json (--reset forgets them; --project, --all, --sort, --filter, --tab and --tz win).
+                 Enter: the row's detail (a DDR's options, an item's spec, ADRs and PR, a session's plan): from 140
+                 columns, on a tab of one list, it sits right of the list and follows the cursor (Enter gives it the
+                 focus, Escape gives it back; a, d and A work from the list too), else it opens over the panels; in it, o
                  opens a link in the editor or the browser, a answers a decision, d marks an action or a permission
                  done, A applies an action's command, each run as {owner}'s after a confirmation of the exact brain
                  command and logged in $BRAIN_HOME/ledger/cockpit-<month>.jsonl (refused in a Claude Code session).
@@ -43,8 +60,9 @@ USAGE = """\
 
 def cmd_tui(args, root: Path) -> int:
     """The cockpit (brain.cockpit): the Textual app with the tui extra, else its text redrawn in place; --once or
-    --json: one read. The interactive views start from the scope and the views they last showed
-    (<BRAIN_HOME>/tui.json; --project or --all, --sort and --filter win, --reset forgets them) and remember them."""
+    --json: one read. The interactive views start from the scope, the views, the tab and the columns they last showed
+    (<BRAIN_HOME>/tui.json; --project or --all, --sort, --filter and --tab win, --reset forgets them) and remember
+    them."""
     try:
         flags = cockpit.parse_view(args.sort, args.filter)
     except ValueError as exc:
@@ -53,7 +71,8 @@ def cmd_tui(args, root: Path) -> int:
     saved = cockpit.load_state() if interactive and not args.reset else {}
     views = {n: {**(saved.get("panels") or {}).get(n, {}), **flags.get(n, {})} for n in cockpit.SORTS}
     settings = {"tz": "local", **(saved.get("settings") or {}), **({"tz": args.tz} if args.tz else {})}
-    cp = cockpit.Cockpit(_scope(args, root), every=args.all, root=root, hours=args.hours)
+    projs = _projects(args, root)
+    cp = cockpit.Cockpit(projs, every=args.all, root=root, hours=args.hours)
     if not (args.all or getattr(args, "project", None)) and saved.get("scope") in (cockpit.ALL, *cp.choices):
         cp.select(saved["scope"])  # the last scope shown, when it is still registered
     if args.detail:  # the files first; the probes only when the row is not found in them (an alert, a denial)
@@ -65,6 +84,7 @@ def cmd_tui(args, root: Path) -> int:
         if d is None:
             print(f"brain tui: {args.detail}: no row, DDR, item or milestone of that id in {cp.scope}",
                   file=sys.stderr)
+            _failed_reads(cp.snapshot())
             return 1
         print(detail.as_json(d) if args.json else "\n".join(detail.lines(d)))
         return 0
@@ -72,9 +92,11 @@ def cmd_tui(args, root: Path) -> int:
         cp.refresh(probe=not args.quick)
         snap = cp.snapshot()
         print(json.dumps(snap, ensure_ascii=False, indent=1, sort_keys=True) if args.json
-              else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz)))
-        return 0
-    cockpit.save_state({"scope": cp.scope, "panels": views, "settings": settings})
+              else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz, tab=args.tab)))
+        return 1 if _failed_reads(snap) else 0
+    tab, tabs, columns = args.tab or saved.get("tab"), saved.get("tabs") or {}, saved.get("columns") or {}
+    cockpit.save_state({"scope": cp.scope, "panels": views, "settings": settings, "tab": tab, "tabs": tabs,
+                        "columns": columns})
     if not args.plain:
         try:
             from .. import tui
@@ -85,8 +107,30 @@ def cmd_tui(args, root: Path) -> int:
                   "venv); the text view meanwhile (Ctrl-C quits)", file=sys.stderr)
         else:
             return tui.run(cp, refresh=args.refresh, probe=args.probe, views=views, search=args.search,
-                           settings=settings)
-    return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"])
+                           settings=settings, tab=tab, tabs=tabs, columns=columns)
+    return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"], tab=args.tab)
+
+
+def _projects(args, root: Path) -> list:
+    """The scope's projects; --all without a registry: this folder's project, which stderr says (args.all goes off)."""
+    try:
+        return _scope(args, root)
+    except SystemExit as exc:
+        if not args.all or getattr(args, "project", None):
+            raise
+        print(f"{exc}; brain tui shows this folder's project", file=sys.stderr)
+        args.all = False
+        return _scope(args, root)
+
+
+def _failed_reads(snap: dict) -> bool:
+    """A one-shot read (--once, --json, --detail) that failed: each error on stderr, once per error; True if any."""
+    by_error: dict[str, list[str]] = {}
+    for name, e in (snap.get("errors") or {}).items():
+        by_error.setdefault(e["error"], []).append(name)
+    for error, names in by_error.items():
+        print(f"brain tui: reading {', '.join(names)} failed: {error}", file=sys.stderr)
+    return bool(by_error)
 
 
 def _duration(text: str) -> float:
@@ -115,20 +159,24 @@ def register(sub, ctx) -> None:
                     help=f"the sessions whose transcript was written in the last N hours (default {cockpit.HOURS:g})")
     tu.add_argument("--plain", action="store_true", help="the text view redrawn in place, even with the tui extra")
     tu.add_argument("--sort", action="append", default=[], metavar="PANEL:KEY",
-                    help="a panel's sort, -KEY reversed: sessions:state|age|project|context|cost, "
-                         "queue:unblocks|age|kind|project, frontier:priority|unblocks|milestone|age|project "
-                         "(repeatable)")
+                    help="a panel's sort, -KEY reversed: "
+                         + ", ".join(f"{n}:{'|'.join(keys)}" for n, keys in cockpit.SORTS.items())
+                         + " (the first: the default; repeatable)")
     tu.add_argument("--filter", action="append", default=[], metavar="PANEL:FIELD=VALUE",
                     help="a panel's filter: sessions:state=open|all|asking|running|stale|idle|ended, "
                          "queue:kind=all|decision|action|permission, frontier:priority=all|P0-P1|P0-P2|none, "
                          "frontier:milestone=all|none|<id> (repeatable)")
     tu.add_argument("--search", default="", metavar="TEXT",
                     help="the rows holding every word of TEXT (ids, titles, projects; case ignored)")
+    tu.add_argument("--tab", choices=cockpit.built_tabs(),
+                    help="start on that tab (default: the last one shown, else the overview); with --once or --plain, "
+                         "print its panels alone (the overview: its cards)")
     tu.add_argument("--tz", choices=cockpit.TZS,
                     help="the times shown: this machine's timezone (local, the interactive default) or UTC; --once "
                          "and --json keep the recorded UTC times unless it is given")
     tu.add_argument("--reset", action="store_true",
-                    help="start from the defaults: forget the scope and views remembered in <BRAIN_HOME>/tui.json")
+                    help="start from the defaults: forget the scope, views, tab and columns remembered in "
+                         "<BRAIN_HOME>/tui.json")
     tu.add_argument("--detail", metavar="ID",
                     help="print a row's detail and exit, as Enter shows it: a DDR (its options, its answer), an item "
                          "(props, spec sections, ADRs, PR, code), a milestone, a session (its plan; the start of its "

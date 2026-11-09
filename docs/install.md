@@ -9,7 +9,7 @@ Your brain is yours: it lives in a folder and a git repo of your own, in your ow
 sends nothing anywhere (no telemetry, no account); its machine-local state lives in `~/.brain`. You hold your own keys.
 
 Read this page at the tag you install, `https://github.com/RoJLD/brain/blob/<tag>/docs/install.md` (for instance
-[`blob/v0.2.5`](https://github.com/RoJLD/brain/blob/v0.2.5/docs/install.md)): `main` may already describe commands
+[`blob/v0.2.7`](https://github.com/RoJLD/brain/blob/v0.2.7/docs/install.md)): `main` may already describe commands
 that your tag does not have.
 
 ## Windows
@@ -33,10 +33,10 @@ git --version
 
 The installer makes a venv of its own in `~/.brain\venv` (where the hooks look for it), copies the `brain` launcher
 into `~/.brain\bin` and adds that folder alone to your user PATH. It prints a plan first; `-Apply` does it. Take it
-from the tag you were given (here v0.2.5):
+from the tag you were given (here v0.2.7):
 
 ```powershell
-git clone --depth 1 --branch v0.2.5 https://github.com/RoJLD/brain.git "$HOME\brain-engine"
+git clone --depth 1 --branch v0.2.7 https://github.com/RoJLD/brain.git "$HOME\brain-engine"
 powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages\brain\installer\install.ps1"
 powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages\brain\installer\install.ps1" -Apply
 ```
@@ -44,14 +44,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages
 `-ExecutionPolicy Bypass` applies to that one run only; it changes no setting. Open a new PowerShell window, then:
 
 ```powershell
-brain --version        # brain 0.2.5
+brain --version        # brain 0.2.7
 ```
 
 Without the installer, the same by hand (the venv must be `~/.brain\venv` for the hooks to find it):
 
 ```powershell
 py -3 -m venv "$HOME\.brain\venv"
-& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.5#subdirectory=packages/brain"
+& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.7#subdirectory=packages/brain"
 & "$HOME\.brain\venv\Scripts\brain.exe" --version
 ```
 
@@ -184,7 +184,7 @@ With the installer (a plan, then `-Apply`): its venv in `~/.brain/venv`, the `br
 `~/.local/bin`, which Ubuntu's `~/.profile` puts on the PATH at the next login once the folder exists:
 
 ```bash
-git clone --depth 1 --branch v0.2.5 https://github.com/RoJLD/brain.git ~/brain-engine
+git clone --depth 1 --branch v0.2.7 https://github.com/RoJLD/brain.git ~/brain-engine
 pwsh -NoProfile -File ~/brain-engine/packages/brain/installer/install.ps1
 pwsh -NoProfile -File ~/brain-engine/packages/brain/installer/install.ps1 -Apply
 exec bash -l               # a login shell again: ~/.local/bin, created by -Apply, is now on the PATH
@@ -195,7 +195,7 @@ By hand, without `pwsh`:
 
 ```bash
 python3 -m venv ~/.brain/venv
-~/.brain/venv/bin/pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.5#subdirectory=packages/brain"
+~/.brain/venv/bin/pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.2.7#subdirectory=packages/brain"
 mkdir -p ~/.local/bin && ln -sf ~/.brain/venv/bin/brain ~/.local/bin/brain
 exec bash -l               # Ubuntu's ~/.profile puts ~/.local/bin on the PATH once it exists
 brain --version
@@ -253,9 +253,14 @@ Python 3.10+ and git; then section 2 by hand (or `pwsh` from Homebrew) and secti
 - **Upgrade with `brain update`** (a version that has it: `brain update --help` answers): it prints the plan (the
   new version, what its CHANGELOG says, the install into `~/.brain\venv`, the launcher swap) and installs it when you
   answer `y`; `brain update --check` only prints it. The cockpit's title bar shows the installed version and, when a
-  newer one is out, « brain X · Y available »; `u` opens the same plan. Then, in your brain, move `engine.pin` in
-  `config.json` to the new tag and commit it (the plan reminds you; otherwise the installer's next `-Apply` puts the
-  pinned tag back), then `brain sync` (the plugin's hooks). Until the pin moves, `brain sync` refuses to write with an
+  newer one is out, « brain X · Y available »; `u` opens the same plan. In a brain without an installer of its own
+  (one from `brain init`: no `engine.installer` in `config.json`), the same `y` also moves `engine.pin` to the new
+  tag, commits `config.json` and runs `brain sync` (the plugin's hooks); the plan shows it first. Run it in your own
+  terminal: from a Claude Code session it refuses and says so. If your `config.json` has changes not committed, it
+  leaves the pin and says so: commit them, then `brain update` again (it then moves the pin alone; so does the first
+  `brain update` after an update to 0.2.6, which an older engine ran and which left the pin behind). In a brain that
+  declares its installer, move `engine.pin` by a reviewed PR (the plan reminds you; otherwise the installer's next
+  `-Apply` puts the pinned tag back), then `brain sync`. Until the pin moves, `brain sync` refuses to write with an
   engine other than the pinned one and says which line to change.
 - **Upgrade through your brain's installer**, when your brain has one and declares it (`config.json` `engine`
   `installer`, say `"install.ps1"`): after the PR that moves `engine.pin`, the cockpit's title bar reads « brain X ·
@@ -263,7 +268,7 @@ Python 3.10+ and git; then section 2 by hand (or `pwsh` from Homebrew) and secti
   has closed, and opens the cockpit again.
 - **Upgrade by hand** (0.2.2, and any version where `brain update --help` fails): the same `pip install` with the new
   tag, in the venv, for instance
-  `& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain[tui] @ git+https://github.com/RoJLD/brain.git@v0.2.5#subdirectory=packages/brain"`
+  `& "$HOME\.brain\venv\Scripts\python.exe" -m pip install "brain[tui] @ git+https://github.com/RoJLD/brain.git@v0.2.7#subdirectory=packages/brain"`
   (or `install.ps1 -Apply` from a clone of that tag, which also swaps the launcher), then `brain --version`,
   `engine.pin` moved and committed as above, then `brain sync` in your brain.
 - **Uninstall**: `claude plugin uninstall brain-core@brain` and `claude plugin marketplace remove brain`, delete

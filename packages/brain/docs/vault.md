@@ -247,7 +247,7 @@ as `/c/...` and needs a short path for its agent's sockets: the vault handles bo
 | `config.json` `classes` | the stores, their class, paths, exits and waivers |
 | `config.json` `vault` | the recipients (public keys), `min_recipients` (2), `canary_hours` (26), `adapter`, `tenants` |
 | `$BRAIN_HOME/vault/device.json` | this machine's device key: name, adapter, public key, keystore, date |
-| `$BRAIN_HOME/vault/state.json` | the canaries (sealed, opened, digest, error), the drills, the last seal of each store |
+| `$BRAIN_HOME/vault/state.json` | the canaries (sealed, opened, digest, error), the drills, the last seal of each store; `v` 1, read and written through `brain.stateio` (a backup in `state.json.bak` before each write; an unreadable file set aside, never reset; a newer brain's state read-only: [formats.md](formats.md)) |
 | `$BRAIN_HOME/vault/canary/` | one sealed nonce per recipient |
 | `$BRAIN_HOME/vault/sealed/<store>/` | the sealed copies and their manifests (`resealed` once sealed again) |
 | the OS keystore, `brain-vault/device` | the device key itself: never on disk in clear, never printed |

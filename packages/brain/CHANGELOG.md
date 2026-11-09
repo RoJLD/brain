@@ -4,7 +4,114 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ## Unreleased
 
+### Fixes
+
+- `brain.nowindow` also gives no window to a child whose `creationflags` is passed positionally or as `None` (the
+  wrapper skipped the first and raised `TypeError` on the second); its review, which #70 never had.
+- The merge driver after the review of #21 (`wi-brain-mergedriver-review-fixes`): a driver that cannot run (its
+  launcher gone, an engine without it) no longer leaves ours alone with no conflict marker: its command falls back to
+  `git merge-file` when it wrote nothing (exit 2 or more); `brain merge-driver install --apply` rewrites an older
+  config. A log entry both sides hold (a squash-merged or cherry-picked one, an add/add) is written once, not twice.
+  The CHANGELOG union keeps a bullet both added once, with its continuation lines, and never drops a line of a
+  released section.
+- An exec event's end is never before its start (`wi-brain-selftime-end-before-start`): both come from one clock,
+  the end clamped to the start; `datetime.now()` against a start rounded up across a millisecond put it 1 ms before,
+  now and then, and the schema refused the event (a test failed on CI with `event.end: before start`).
+
+## 0.2.7 — 2026-11-09
+
 ### Upgrade
+
+From 0.2.6, in this order. No schema, store or hook changes, and no hand edit of a brain's data is needed.
+
+1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
+2. **Restart Claude Code's sessions**, so that they run the hooks `brain sync` rendered.
+3. **In each public repo's checkout**, run `brain check --public --history` before the next push: a stamp is valid only
+   under the engine that made it, so the push guard refuses the old one until then.
+4. **Read this if a script of yours runs `brain --project P` from a linked worktree of P's repo:** it now acts on that
+   worktree, not on the registry's root. Pass `--root` to choose another.
+
+Nothing to do for the rest: a scheduled task opens no window for its children from its next run, with no reinstall;
+`days` and `quiet_hours` are optional; quiet mode creates its two files in `<BRAIN_HOME>/notify` when first used.
+Optional: declare `usage.plans` in `config.json` so that `brain usage quota` knows the plan in force; until a plan has 3
+converted readings it reports `uncalibrated`.
+
+### Fixes
+
+- A scheduled brain opens no window for its children (`brain.nowindow`): under `pythonw.exe` every `git` or `gh` of an
+  alerts pass got a console of its own, in Windows Terminal where it is the default terminal, and took the focus,
+  dozens of times per pass. A brain with no console now starts each child with `CREATE_NO_WINDOW`.
+- `brain status` reads the quota's clock from `usage.now_utc`, like the rest of the quota: a test that froze that clock
+  saw the real time in the status row, and failed on every commit once its fixed reset (2026-11-09 12:00 UTC) had passed.
+- `brain <cmd> --help` no longer crashes without a stdout (pythonw.exe, Python 3.10: argparse wrote to None); it
+  survives a cp1252 pipe too, the CLI already writing UTF-8 with `errors=replace` (`wi-brain-help-encoding`).
+
+### Changes
+
+- `brain usage quota` converts dollars to percent with the readings of the plan in force only
+  (wi-brain-quota-per-plan; config.json `usage.plans`, a reading's own `plan` first): a median across an Ultra and a
+  Pro week was neither plan's quota. Until the plan has 3 converted readings (`quota.CAL_MIN`) the conversion is
+  reported `uncalibrated` (in the text, the JSON's `uncalibrated` and the `brain status` line), the weekly window is
+  not converted, and the 5-hour window is estimated from its latest reading plus the ledger's cost since
+  (`window_5h`). The weekly reset is still read from every reading: it is the account's.
+- `brain --project P` run from a linked git worktree of P's repo acts on that worktree, not on the registry's root
+  (wi-brain-root-from-cwd). An explicit `--root` still wins; a cwd in another repo or a plain folder keeps the
+  registry's root.
+
+### Added
+
+- `schedules:` entries take `days` (mon to sun), the days `at` runs on, so that a weekly command can be declared and
+  installed like any other (`days: [mon]`): a `ScheduleByWeek` trigger on Windows, `OnCalendar=Mon ...` under systemd,
+  the day-of-week field in a crontab. A task whose days changed is planned as an update (wi-brain-schedule-hidden-all).
+- **Quiet mode** (wi-brain-quiet-mode): `brain quiet --for 2h` or a project's `notify: quiet_hours: "22:00-07:00"`
+  (local time) holds every notification below `critical`; a critical one still goes through. The held ones are summed
+  up in one message per project when the quiet ends (`brain quiet --off`, or the next alerts pass). No task is
+  paused and no scheduled task is touched: collection and the alerts pass run on. The state is in `brain quiet`,
+  `brain status` and the cockpit's health card. A send during a quiet reports `held` (`brain notify send` exit 0).
+
+## 0.2.6 — 2026-11-09
+
+### Upgrade
+
+From 0.2.5, in this order. No hand edit of a brain's data is needed: the upgrade test (`compat-prev`,
+`docs/release.md`) installs this engine over a brain 0.2.5 wrote, moves the pin and runs `brain sync`, `brain check`
+and `brain record check`.
+
+1. **Check the configuration first**, with 0.2.5 still installed: `brain config --check` and `brain config` (its `file`
+   and `personal`). The public and secrets checks now fail closed (wi-brain-guards-fail-closed, COMPAT-4): from
+   the install on, every `git commit` and `git push` is refused on a machine whose `config.json` is unreadable or not
+   an object, has a `public` (or one of its keys) of another type or a `v` above 1, whose `$BRAIN_CONFIG` names no
+   file, or whose `personal.json` names a folder without `config.json` (a renamed personal brain); so too when the
+   hooks find no Python that imports brain. An unknown key never refuses. The override is
+   `BRAIN_GUARD_ALLOW=public:config`.
+2. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. 0.2.5 runs
+   this update and only reminds you of the pin. A brain whose `config.json` declares `engine.installer`: merge the PR
+   that moves `engine.pin`, then run the installer's `-Apply` instead.
+3. **Move the pin and render the hooks.** Run `brain update` again and answer `y`: 0.2.6 now does what 0.2.5 left to
+   you (wi-brain-update-moves-pin, COMPAT-5): it writes `engine.pin`, commits `config.json` alone (never pushed) and
+   runs `brain sync`, which rewrites `guard.sh` and `health.sh`. With changes in `config.json` not committed, it leaves
+   the pin and says so. A brain that declares its installer: run `brain sync` after `-Apply`; its pin never moves
+   except by the reviewed PR.
+4. **Restart the Claude Code sessions**, so that no older bash hook from the plugin cache keeps running.
+5. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
+   push (wi-brain-public-stamp-binding). A stamp written by brain 0.2.5 or older has no key, and the push guard
+   refuses it, as it refuses any stamp made under another engine, other public rules or with gitleaks gained or lost.
+   So this step comes back after every engine upgrade.
+
+Nothing to run for these:
+
+- **The cockpit's number keys now go to tabs** (wi-brain-tui-layout). Nothing to run: 1 is the queue, 2 the sessions, 3
+  the frontier, 4 the milestones, 8 health and 0 the overview, where 1 to 8 used to focus a panel of the grid. `m` is
+  offered only where a tab shows several panels, and Escape goes back one step at a time: the search, a full view, then
+  the overview. `tui.json` gains `tab` and `tabs`;
+  an older engine ignores them and forgets them at its next save.
+
+- Nothing to run for the machine-local state (wi-brain-state-safe-io). `vault/state.json` gains `"v": 1` at its
+  next write, which brain 0.2.5 reads unchanged; `schedules/installed.json` and `alerts/state.json` keep their v 1
+  unwritten. Each of the four files may now have a `<name>.bak` beside it, and a file that was unreadable a
+  `<name>.unreadable-<stamp>`: both are safe to delete once you have looked.
 
 - Nothing to run. Outside CI, a check that used to fail on an unknown key in `config.json`, `permissions.yaml`,
   `packs.yaml`, `projects.yaml` or a record now prints a note instead; CI (`CI` set) still fails on it. A `v` above 1
@@ -68,6 +175,130 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   scope with no rule of its own yet. It renders nothing and locks nothing: `lock:` in it is refused. A file outside
   `rules/scopes/` still needs a rule.
 
+### Changes
+
+- **The release checklist** (wi-brain-release-checklist; spec-brain-data-compat, gate item 6). `docs/release.md` says
+  every step of a release, from the version PR to the pin. CI's new `release-check` job (`installer/release_check.py`,
+  standard library only) reads the last tag on every pull request. On a version PR, it fails when a registered schema
+  changed since that tag and this version's CHANGELOG section has no `### Upgrade` with something in it, and when
+  the two `__version__`, the research-graph pin, the hooks' `brain_version` and both CHANGELOGs' dated sections do not
+  agree: what `release-tag` used to find out only after the tag. Any other pull request passes it at once. An Unreleased
+  section now keeps its `### Upgrade` apart from its `### Changes`.
+
+- **The cockpit's tabs** (wi-brain-tui-layout, UX-2, UX-18; spec 2026-11-03 cockpit-ux-round2 §4.0). One tab per
+  question, in data (`cockpit.TABS`: key, label in English and French, question, views and their panels, count): 0
+  overview, 1 queue, 2 sessions, 3 frontier, 4 milestones, 8 health (alerts on top;
+  audit debt, stacks and index, and a new frame of exec times with the slowest steps). Ideas (5), lessons (6), features
+  (7), resources (9) and settings (the comma) arrive with their items, and until then their key says so. The bar shows
+  each tab's state in digits and signs (the queue's band now, the sessions asking `!`, the open alerts), a click on it,
+  ctrl+pageup and ctrl+pagedown change tab, and its tooltips name each tab with its key and question. Under 120 columns or 30 rows the bar is reduced to its
+  numbers, the active tab named, the grid is not offered and the health frames stack. A tab keeps its panels' cursor and
+  scroll: they are the same widgets, laid out again. `v` or a click in the toolbar changes the view; the toolbar says
+  the tab's question and holds an `[i]`; the global bar says the last change and the next probe. The last tab and each
+  tab's view are kept in `tui.json`. `brain tui --tab NAME` starts there, and with `--once` or `--plain` prints that
+  tab's panels alone.
+
+- **The cockpit's column chooser and palette** (wi-brain-tui-layout; spec cockpit-ux §4.4). `C` chooses a table's columns
+  (`cockpit.columns`, `brain.tui_palette`): shown or hidden, their order, and the longest its title may be, the rest in
+  the detail; the sessions also offer Cost, App id, Id and Branch (`EXTRA_COLUMNS`), the Cost column sorting by cost. They
+  are kept in `tui.json`'s `columns`, which an older engine ignores and forgets at its next save. A state's colour follows its word wherever it is
+  placed. The palette (`ctrl+p`, `cockpit.palette`) gains an entry for each tab and view, project, sort, filter and table's
+  columns, and « Reset the views », which keeps the project, the theme and the timezone.
+
+- **The cockpit's detail beside the list** (wi-brain-tui-layout, UX-20; spec cockpit-ux-round2 §4.0.2). From 140 columns,
+  on a tab that is one list (`cockpit.detail_beside`), a row's detail sits right of the list and follows the cursor
+  (`brain.tui_side`): it is read once the cursor rests, in a worker thread, and remembered per row until its panel changes,
+  so an arrow held down reads nothing. Enter gives it the focus, Escape gives it back, `o` opens a link from it, and `a`, `d`
+  and `A` work from the list too, after the same confirmation. Narrower, or on a tab of several panels, Enter opens it
+  over them as before.
+
+- **The cockpit's overview: one card per tab** (wi-brain-tui-layout, UX-19; spec cockpit-ux-round2 §4.0.3). The overview
+  opens on its cards (`cockpit.cards`, each tab declaring its own): the queue's band now, the sessions asking, the nearest
+  milestones, what can start, the open alerts, worst first across the projects, and the audit. Enter or a click opens
+  the tab, already filtered as the card says, its search cleared, by a filter that is never saved and goes when the tab
+  is left (the filters dialog makes it the owner's); the arrows move between them, and they take one column on a narrow terminal. The grid and the digest are its other views
+  (`v`). `brain tui --once --tab overview` prints the cards. In the digest view the frame no longer repeats its title on
+  each project and above the digest (L9); in the grid, open alerts take a whole row (L11). A key now moves the focus at
+  once, so `1` then Enter opens the queue's row, not the previous tab's. A table's cell is text, never markup: a title
+  like « Move [/docs] out » crashed the cockpit, and « [blocking] » vanished from the queue's Id column.
+
+- **A public-check stamp is valid only under the key it was made with** (wi-brain-public-stamp-binding,
+  spec-brain-data-compat N2 and finding 11; `docs/formats.md`, « Public-check stamps »). The stamp of a green `brain
+  check --public --history` now carries `v` 2 and a `key`: the engine version, the sha256 of config.json's public
+  deny, allow, patterns and refuse, and whether gitleaks read the history. The push guard refuses a stamp whose key
+  differs from now's (another engine, rules changed since, gitleaks gained or lost), an old-format or unreadable one,
+  naming why and the fix, « rerun brain check --public --history ». A check with no commit to read keys gitleaks by
+  its presence on the PATH; a gitleaks on the PATH that fails stamps nothing (exit 1, « fix gitleaks or take it off
+  the PATH »), since the guard would refuse that stamp; a stamp is written atomically; a newer brain's stamp, a
+  nested or unreadable one, or any surprise while reading it refuses the push instead of letting it through.
+
+- **`brain update` moves the pin where no review step exists** (wi-brain-update-moves-pin, spec-brain-data-compat
+  COMPAT-5). For a brain whose `config.json` declares no `engine.installer` (one from `brain init`), the plan's last
+  steps write the new tag into `engine.pin` (the file's other keys, their order and its indent kept; written
+  atomically), commit `config.json` alone (« brain update: engine.pin vX -> vY »), then run `brain sync` with the new
+  engine, on the owner's `y` or `--yes`. With the latest engine already in the brain's venv and the pin behind it, the
+  plan moves the pin alone. The pin never moves backwards, nor to or from a pin that is not a release tag, nor for an
+  editable install; a `config.json` with changes not committed or not tracked, or a brain that is not a git repo or
+  is on a detached HEAD, is left as it is (exit 1, with what to do by hand); the commit lands on the current branch,
+  never pushed. From a Claude Code session the command refuses, as before, and says to run it in
+  the owner's terminal. A brain that declares its installer keeps the reviewed pin PR, shown and never done. The plan's
+  `--json` gains `pin.move` (`"write"` or `"pr"`).
+
+- **The cockpit's empty, error and offline states** (wi-brain-tui-states; spec 2026-11-02 cockpit-ux §4.10). An
+  empty table shows one line that says why (`cockpit.why_empty`): a filter or the search hides N rows, and the key
+  that changes it; nothing in the scope, the owner named; a project not on this machine. A panel not probed yet shows
+  the probe's countdown, then its progress project by project (`probe_wait`). `Cockpit.refresh` no longer raises: a
+  failed read keeps its panels' content, its error and the data's time go to the snapshot (`errors`, `panel_at`) and
+  the panel's frame, the TUI notifies it once, and it is read again at the next tick, a probed panel at the next
+  probe (before, a failed graph read waited for the next file change). `--once` and `--json` print a failed read on
+  stderr and exit 1 (they used to raise); `--detail` names it when it finds no row. A stack or code index repo not OK
+  names its last OK measure. The project selector greys a registered project this machine lacks; `brain tui --all` without a
+  registry shows the folder's project instead of exiting. `brain tui --json` gains `errors`, `panel_at`, `probing`
+  and `registry`.
+
+- **The cockpit's queue sorts by score** (wi-brain-tui-queue-sort-score). The queue panel's `score` sort ranks by
+  the score alone, across the bands: the highest first (an entry without a score last), then what it unblocks, then
+  the oldest. It is the second sort of `s`, a click on the Score column, `brain tui --sort queue:score`, and a view
+  `tui.json` remembers (a saved sort a panel does not know still falls back to its default). The default stays by
+  band, the owner's order, then the score. `brain tui --help` now lists every panel's sorts from the code.
+
+- **Machine-local state is never reset and saved over** (wi-brain-state-safe-io, spec-brain-data-compat N4;
+  `docs/formats.md`, « Machine-local state »). `brain.stateio` loads and saves a truth-local file: a file that is not
+  JSON, not an object or not its expected shape is set aside as `<name>.unreadable-<stamp>`, never replaced by `{}`
+  and saved; a `v` above the engine's makes it read-only (« written by a newer brain: brain update »); every write
+  backs up to `<name>.bak` beside the file (a secret is never copied), then writes atomically, synced. It now carries
+  `schedules/installed.json` (`brain schedule install --apply` refuses a newer record), `alerts/state.json` (the
+  notify pass sends nothing rather than send again each pass), `vault/state.json` (gains a `v`; a non-object no
+  longer crashes `brain vault`; `seal`, `canary` and `drill` refuse a newer state before any work; the one-way drill
+  migration backs up first) and `usage/sessions.json` (a newer ledger is updated in memory, never saved). The 17
+  `return {}` readers are classified in the same page; the rest of the truth-local ones follow. Only a command that
+  writes a file sets it aside (`brain status` and the cockpit move nothing); `brain vault reseal --apply` refuses a
+  newer state before resealing; a backup that fails (a locked `.bak`) is said and the write goes on.
+
+- **The upgrade test, on every pull request** (wi-brain-upgrade-test; spec-brain-data-compat N8, COMPAT-2 and
+  COMPAT-3). `installer/stranger_test.py --upgrade-from TAG|DIR`: the tag writes every registered format into a new
+  brain (a decision, an AR, an SR, `permissions.yaml`, its exec events; a format with fixtures and no place in the
+  test fails it), then this engine is installed over it and runs strict: the store plan, `brain sync`, `brain check`,
+  `brain record check` and the Lite scenario. Then the rollback: the `newer` fixtures' additive keys laid over the
+  brain, a canary and a drill on record, the tag installed back, and its check, record check, permissions check,
+  vault status (the drill shown), `brain perf` and a newer template's plan run in read mode; a tag with the read mode
+  must pass them, 0.2.5 may only refuse the newer keys. Then this engine again makes the same reads, all passing. No
+  file of the brain or of the vault may change and the ledgers may only grow, over the whole round trip; after each
+  install, `direct_url.json` must name the engine meant. CI's new `compat-prev` job (Windows, pull requests) runs it
+  from the last tag (none found fails it) and uploads its report. The stranger test's exit code is 1, not 2, when a
+  step fails after a good first install. `docs/formats.md`.
+- **The public and secrets checks fail closed** (wi-brain-guards-fail-closed, COMPAT-4; the 2026-11-04 REVERSAL of
+  the guards' internal-error policy, for these checks only). A new check, `public:config`, refuses every `git commit`
+  and `git push` while `brain.config.unexpected` finds the configuration unexpected: `config.json` unreadable or not
+  an object, `public` or one of its keys (`repos`, `deny`, `allow`, `patterns`, `refuse`) of another type, a `v` that
+  is not a whole number or is above the engine's, `$BRAIN_CONFIG` naming no file, or no `config.json` found although `$BRAIN_PERSONAL` or `personal.json` names a personal brain. An unknown key never refuses. Each
+  reason names its fix (`brain config --check`, `brain update`, `install.ps1 -Apply`). `guard.sh` refuses a shell
+  command naming git and commit or push when it finds no Python, or the one it finds cannot import brain (« the
+  guards cannot run »); before, it let every call through in silence. The SessionStart health says both (`health.py`
+  through `brain.stacks.hook_main`, `health.sh` when no Python can run it). `BRAIN_GUARD_ALLOW=public:config` lifts
+  the Python check. `config.json` is now read with or without a UTF-8 BOM (Windows PowerShell 5.1 writes one), as
+  the installer reads it. `health.sh` now tries guard.sh's interpreters in guard.sh's order (`$BRAIN_PYTHON` first),
+  so what it says of the guards is what they run on. `docs/guards.md`.
 - **Remote Control's three exceptions** (wi-brain-guard-rc-archive; the owner's ADRs of 2026-11-04). The
   session-settings guard lets the desktop app's `set_remote_control` through in exactly three cases, each checked
   from the app's own session files and the hand-over notes: off on a finished (idle) session the caller started,

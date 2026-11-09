@@ -22,9 +22,10 @@ levels) is declared under alerts: (brain.alerts).
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
-from . import __version__, config, paths, projects, selftime
+from . import __version__, config, nowindow, paths, projects, selftime
 from .commands import _registry as registry
 from .commands._common import root_of
 
@@ -69,6 +70,11 @@ def _project_after(parser: argparse.ArgumentParser, skip: set[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    nowindow.install()  # under pythonw.exe, a scheduled task's: each git or gh would otherwise open a window
+    if sys.stdout is None:  # pythonw.exe has no console: argparse's help writes to a stream, so give it one
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
     for stream in (sys.stdout, sys.stderr):  # records and logs are UTF-8; a pipe on Windows defaults to cp1252
         if hasattr(stream, "reconfigure") and not stream.isatty():
             stream.reconfigure(encoding="utf-8", errors="replace")
@@ -90,6 +96,11 @@ def _dispatch(args) -> int:
     if args.project:
         args.project_obj = projects.get(args.project, root)
         root = args.project_obj.root
+        if not args.root:  # run from a worktree of the project's repo: that worktree is the root (wi-brain-root-from-cwd)
+            wt = projects.cwd_worktree(args.project_obj)
+            if wt is not None:
+                args.project_obj = projects.get(args.project, wt)
+                root = wt
     root = root or paths.find_root()
     return command.run(args, root)
 

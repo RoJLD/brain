@@ -8,9 +8,12 @@ import pytest
 pytest.importorskip("textual")
 
 from textual.markup import escape  # noqa: E402
-from textual.widgets import DataTable, Select  # noqa: E402
+from textual.widgets import Button, DataTable, RadioButton, Select, Static  # noqa: E402
 
-from brain import cockpit, tui  # noqa: E402
+from brain import cockpit, tui, tui_screens  # noqa: E402
+
+
+GRID = {"overview": {"view": "grid"}}
 
 
 def _session(sid, state, project="demo", age_s=30):
@@ -42,7 +45,7 @@ class FakeCockpit:
     def __init__(self):
         self.calls, self.selected = [], []
         self.scope, self.every = "demo", False
-        self.choices = {"demo": None, "quant": None}
+        self.choices = {"demo": None, "quant": None}  # no project behind them: as if not on this machine
 
     @property
     def multi(self):
@@ -63,11 +66,14 @@ class FakeCockpit:
         return {"scope": self.scope, "read_at": "2026-11-02T10:00:00Z", "probed_at": None, "panels": PANELS}
 
 
-def _run(test, **kw):
+OVER = (130, 48)  # under 140 columns: the detail opens over the list
+
+
+def _run(test, size=(160, 48), **kw):
     async def main():
         fake = FakeCockpit()
         app = tui.CockpitApp(fake, refresh=2.0, probe=300, **kw)
-        async with app.run_test(size=(160, 48)) as pilot:
+        async with app.run_test(size=size) as pilot:
             await pilot.pause(0.2)
             await app.workers.wait_for_complete()
             await pilot.pause(0.1)
@@ -77,9 +83,17 @@ def _run(test, **kw):
 
 def _ids(app, name):
     table = app.query_one(f"#{name}", DataTable)
-    return [table.get_row_at(i)[table.ordered_columns.index(next(c for c in table.ordered_columns
-                                                                 if str(c.label) == "Id"))]
+    return [str(table.get_row_at(i)[table.ordered_columns.index(next(c for c in table.ordered_columns
+                                                                     if str(c.label) == "Id"))])
             for i in range(table.row_count)]
+
+
+def _why(app, name):
+    """The one line an empty table shows (wi-brain-tui-states), '' when it shows rows."""
+    table = app.query_one(f"#{name}", DataTable)
+    if table.row_count != 1 or "~empty" not in [k.value for k in table.rows]:
+        return ""
+    return "".join(str(c) for c in table.get_row("~empty"))
 
 
 def test_the_app_draws_the_panels_and_answers_its_keys():
@@ -87,10 +101,10 @@ def test_the_app_draws_the_panels_and_answers_its_keys():
         assert fake.calls == [False]  # the files first, the probes at the next tick
         sessions = app.query_one("#sessions")
         assert sessions.row_count == 1  # the ended session hidden by default
-        assert sessions.border_title.startswith("1 Sessions (2 in the last 24 h, 1 asking")
+        assert sessions.border_title.startswith("2 Sessions (2 in the last 24 h, 1 asking")
         assert sessions.border_subtitle == "1 of 2 shown; state open; sort state"
         assert app.query_one("#queue").row_count == 2 and app.query_one("#milestones").row_count == 1
-        assert app.query_one("#audit").border_title == escape("6 Audit debt [i]")
+        assert app.query_one("#audit").border_title == escape("8 Audit debt [i]")
         assert "demo | files every 2 s, checked " in app.sub_title and app.sub_title.endswith("| local")
         assert [str(c.label) for c in sessions.ordered_columns][:6] == ["State", "Session", "Role", "Parent", "Kids",
                                                                      "Step"]  # one project: no Project column
@@ -104,24 +118,24 @@ def test_the_app_draws_the_panels_and_answers_its_keys():
         app.query_one("#sessions").focus()
         await pilot.press("m")
         assert app.screen.maximized is app.query_one("#sessions")
-        assert sessions.border_title.startswith(escape("demo > 1 Sessions"))  # the full view's breadcrumb
-        await pilot.press("5")  # another panel while one is maximized: that one, maximized
-        assert app.screen.maximized is app.query_one("#frontier") and app.focused is app.query_one("#frontier")
-        assert app.query_one("#frontier").border_title.startswith(escape("demo > 5 Frontier"))
+        assert sessions.border_title.startswith(escape("demo > 2 Sessions"))  # the full view's breadcrumb
+        await pilot.press("3")  # another tab: the full view closes, the frontier alone on the screen
+        assert app.screen.maximized is None and app.focused is app.query_one("#frontier")
+        assert app.query_one("#frontier").border_title.startswith(escape("demo > 3 Frontier"))
         assert not sessions.border_title.startswith("demo")
-        await pilot.press("escape")  # back to the main view
-        assert app.screen.maximized is None and app.query_one("#frontier").border_title.startswith("5 Frontier")
+        await pilot.press("escape")  # back to the overview
+        assert app.tab == "overview" and app.query_one("#frontier").border_title.startswith("3 Frontier")
         await pilot.press("question_mark")
         assert app.screen.query("HelpPanel")
         await pilot.press("question_mark")
         await pilot.pause(0.1)
         assert not app.screen.query("HelpPanel")
-    _run(check)
+    _run(check, tabs=GRID)
 
 
 def test_sort_filter_and_search_change_the_tables_and_are_remembered():
     async def check(app, pilot, fake):
-        await pilot.press("5")
+        await pilot.press("3")
         assert _ids(app, "frontier") == ["wi-one", "wi-three", "wi-two"]  # by priority
         table = app.query_one("#frontier", DataTable)
         table.move_cursor(row=2)  # on wi-two
@@ -153,12 +167,15 @@ def test_sort_filter_and_search_change_the_tables_and_are_remembered():
         await pilot.press("slash")
         assert app.focused is app.query_one("#search")
         await pilot.press(*"tui")
-        assert _ids(app, "frontier") == ["wi-two"] and app.query_one("#queue").row_count == 0
+        assert _ids(app, "frontier") == ["wi-two"]
+        assert _why(app, "queue") == "2 hidden by search 'tui': Escape clears the search"  # its one line says why
         assert "q" not in [b for b in "tui"] and app.is_running  # the letters went to the search, not the keys
         await pilot.press("escape")  # cleared, back to the panel
         assert app.search == "" and app.focused is app.query_one("#frontier") and len(_ids(app, "frontier")) == 3
-        await pilot.press("2")
-        await pilot.press("s", "s", "s")  # the queue: band, unblocks, age, kind
+        await pilot.press("1")
+        await pilot.press("s")  # the queue: band, then score
+        assert app.views["queue"]["sort"] == "score"
+        await pilot.press("s", "s", "s")  # unblocks, age, kind
         assert app.views["queue"]["sort"] == "kind"
         await pilot.press("8", "s")  # a panel without a view: s does nothing
         assert app.is_running
@@ -172,6 +189,11 @@ def test_a_column_title_sorts_and_the_project_selector_changes_the_scope():
         table.post_message(DataTable.HeaderSelected(table, band.key, 0, band.label))
         await pilot.pause(0.1)
         assert app.views["queue"] == {**cockpit.view_of("queue"), "reverse": True}  # its sort already: reversed
+        score = next(c for c in table.ordered_columns if str(c.label) == "Score")
+        table.post_message(DataTable.HeaderSelected(table, score.key, 1, score.label))
+        await pilot.pause(0.1)
+        assert app.views["queue"]["sort"] == "score" and not app.views["queue"]["reverse"]  # the highest first
+        assert _ids(app, "queue") == ["ddr-b", "ddr-a"]  # no score: what each unblocks
         age = next(c for c in table.ordered_columns if str(c.label) == "Age")
         table.post_message(DataTable.HeaderSelected(table, age.key, 5, age.label))
         await pilot.pause(0.1)
@@ -193,9 +215,47 @@ def test_the_app_starts_from_the_views_it_is_given():
     async def check(app, pilot, fake):
         assert _ids(app, "frontier") == ["wi-two", "wi-three", "wi-one"] and app.query_one("#sessions").row_count == 2
         await pilot.press("slash", *"task end")  # every table: the sessions' titles too
-        assert app.query_one("#sessions").row_count == 1 and app.query_one("#frontier").row_count == 0
+        assert app.query_one("#sessions").row_count == 1
+        assert _why(app, "frontier") == "3 hidden by search 'task end': Escape clears the search"
         assert app.query_one("#sessions").border_subtitle == "1 of 2 shown; state all; search 'task end'; sort state"
     _run(check, views={"sessions": {"state": "all"}, "frontier": {"sort": "unblocks"}})
+
+
+def test_the_panels_say_why_they_are_empty_and_what_a_probe_waits_for():
+    """wi-brain-tui-states: an empty table's one line, a panel not probed yet (its countdown, then the probe's
+    progress), a failed read (the last content kept, its error and its time in the frame, notified once), and a
+    project not on this machine greyed in the selector."""
+    async def check(app, pilot, fake):
+        snap = {"scope": "demo", "read_at": None, "probed_at": None,
+                "projects": [{"name": "demo", "root": "E:/nowhere", "found": False}],
+                "panels": {**PANELS, "queue": {"projects": []}, "audit": None}, "probing": None,
+                "errors": {"frontier": {"at": "2026-11-06T10:00:00Z", "error": "OSError: disk gone"}},
+                "panel_at": {"frontier": "2026-11-06T09:58:00Z"}}
+        fake.snapshot = lambda: snap
+        app.settings["tz"] = "utc"
+        app.want_probe, app.next_probe = False, tui.time.monotonic() + 100
+        notified, notify = [], app.notify
+        app.notify = lambda message, **kw: notified.append(message) or notify(message, **kw)
+        app._done(set(cockpit.PANELS), "")
+        assert _why(app, "queue") == "Nothing waits on Ada in demo; demo is not on this machine (E:/nowhere)"
+        assert _why(app, "alerts").startswith("not probed yet: probe in 1 min ")  # its countdown
+        assert app.query_one("#frontier").border_subtitle.startswith(
+            "read failed 10:00:00: OSError: disk gone; data of 09:58:00")
+        assert _ids(app, "frontier") == ["wi-one", "wi-three", "wi-two"]  # the last content, kept
+        app._done(set(), "")
+        assert notified == ["OSError: disk gone (frontier: the last content kept)"]  # notified once
+        snap["probing"], app.busy, app.probing = {"what": "quant", "n": 2, "total": 3}, True, True
+        app.tick()  # busy: the probe's progress drawn, nothing read
+        assert _why(app, "alerts") == "probing: quant 2/3" and app.sub_title.endswith("| probing: quant 2/3")
+        audit = app.query_one("#audit-text")
+        assert "probing: quant 2/3" in str(getattr(audit, "content", None) or audit.renderable)
+        app.busy = app.probing = False
+        await pilot.press("1", "enter")  # the line that says why opens nothing
+        await pilot.pause(0.1)
+        assert app.screen is app.screen_stack[0]
+        assert [(str(label), getattr(label, "style", "")) for label, _ in app._scopes()][1:] == [
+            ("demo (not on this machine)", "dim"), ("quant (not on this machine)", "dim")]  # greyed
+    _run(check)
 
 
 def test_an_error_in_a_read_is_shown_not_fatal():
@@ -233,7 +293,7 @@ def test_a_refresh_keeps_the_scroll_and_the_cursor():
         app.draw({"sessions"})
         await pilot.pause(0.2)
         assert (table.scroll_y, table.cursor_row) == (y, 25)
-        assert table.get_row("s00xxxxxxx")[-2] == "1 min"  # its Last column
+        assert str(table.get_row("s00xxxxxxx")[-2]) == "1 min"  # its Last column
         rows = _many(40)["sessions"]["rows"]
         rows.insert(0, rows.pop(30))  # a new order: rebuilt, the cursor on its record, the scroll where it was
         rows[0]["age_s"] = 0
@@ -243,7 +303,7 @@ def test_a_refresh_keeps_the_scroll_and_the_cursor():
         await pilot.pause(0.2)
         assert table.scroll_y == y and table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value == (
             "s25xxxxxxx")
-    _run(check)
+    _run(check, tabs=GRID)
 
 
 def test_pause_help_timezone_and_theme():
@@ -259,13 +319,15 @@ def test_pause_help_timezone_and_theme():
         assert len(fake.calls) == n + 1 and fake.calls[-1] is True
         await pilot.press("space")
         assert not app.paused
-        await pilot.press("5", "i")  # the focused panel's help
+        await pilot.press("3", "i")  # the focused panel's help
         await pilot.pause(0.1)
         assert isinstance(app.screen, tui.PanelHelp) and app.screen.panel_name == "frontier"
         await pilot.press("escape")
         await pilot.pause(0.1)
         assert not isinstance(app.screen, tui.PanelHelp)
         queue = app.query_one("#queue")
+        await pilot.press("1")
+        await pilot.pause(0.2)  # laid out: a click before it lands where the frame is not yet
         await pilot.click("#queue", offset=(4, 0))  # the top of its frame: the [i] of its title
         await pilot.pause(0.1)
         assert isinstance(app.screen, tui.PanelHelp) and app.screen.panel_name == "queue"
@@ -274,7 +336,7 @@ def test_pause_help_timezone_and_theme():
         await pilot.click("#queue", offset=(4, 3))  # a row: no help
         await pilot.pause(0.1)
         assert not isinstance(app.screen, tui.PanelHelp) and queue.row_count == 2
-        await pilot.press("5", "t")
+        await pilot.press("3", "t")
         assert app.settings["tz"] == "utc" and app.sub_title.endswith("| UTC")
         assert cockpit.load_state()["settings"]["tz"] == "utc"
         app.theme = "nord"  # picked in the command palette: the default one from now on
@@ -294,17 +356,17 @@ def test_enter_opens_a_rows_detail_and_o_its_links(monkeypatch):
     monkeypatch.setattr(tui.detail, "open_link", lambda x: opened.append(x) or f"opened {x.get('url')}")
 
     async def check(app, pilot, fake):
-        await pilot.press("5", "enter")  # the frontier's first row: wi-one
+        await pilot.press("3", "enter")  # the frontier's first row: wi-one
         await pilot.pause(0.1)
         screen = app.screen
         assert isinstance(screen, tui.DetailScreen) and screen.d["id"] == "wi-one" and screen.d["title"] == "First"
         screen.d["links"] = [{"label": "PR demo #1", "kind": "url", "url": "https://x/pull/1"},
                              {"label": "the item wi-two", "kind": "item", "id": "wi-two", "project": "demo"}]
-        await pilot.press("5")  # the panels' keys are off under a detail
-        assert app.screen is screen
+        await pilot.press("4")  # the panels' keys are off under a detail
+        assert app.screen is screen and app.tab == "frontier"
         await pilot.press("o")  # two links: a list to pick from
         await pilot.pause(0.1)
-        assert isinstance(app.screen, tui.LinkScreen)
+        assert isinstance(app.screen, tui_screens.LinkScreen)
         await pilot.press("enter")
         await pilot.pause(0.1)
         assert opened == [screen.d["links"][0]] and app.screen is screen
@@ -314,11 +376,11 @@ def test_enter_opens_a_rows_detail_and_o_its_links(monkeypatch):
         await pilot.press("escape", "escape")
         await pilot.pause(0.1)
         assert app.screen is app.screen_stack[0] and app.is_running
-        await pilot.press("2", "enter")  # a queue entry without a project on this machine: its own fields
+        await pilot.press("1", "enter")  # a queue entry without a project on this machine: its own fields
         await pilot.pause(0.1)
         assert isinstance(app.screen, tui.DetailScreen) and app.screen.d["id"] == "ddr-b"
         assert app.screen.d["actions"] == [] and not app.screen.check_action("act", ("answer",))
-    _run(check)
+    _run(check, size=OVER)
 
 
 def _ddr_panels(root, ref):
@@ -342,7 +404,7 @@ def test_answering_a_decision_confirms_the_command_then_runs_it(tmp_path, monkey
         panels = _ddr_panels(root, ddr["id"])
         fake.snapshot = lambda: {"scope": "demo", "read_at": None, "probed_at": None, "panels": panels}
         app.draw({"queue"})
-        await pilot.press("2", "enter")
+        await pilot.press("1", "enter")
         await pilot.pause(0.1)
         assert isinstance(app.screen, tui.DetailScreen) and [a.kind for a in app.screen.d["actions"]] == ["answer"]
         await pilot.press("a")
@@ -352,7 +414,7 @@ def test_answering_a_decision_confirms_the_command_then_runs_it(tmp_path, monkey
         await pilot.click("#ok")  # nothing picked: a warning, the dialog stays
         await pilot.pause(0.1)
         assert app.screen is answer
-        answer.query(tui.RadioButton).last().value = True
+        answer.query(RadioButton).last().value = True
         await pilot.pause(0.1)
         await pilot.click("#ok")
         await pilot.pause(0.1)
@@ -365,7 +427,7 @@ def test_answering_a_decision_confirms_the_command_then_runs_it(tmp_path, monkey
         assert not ran and isinstance(app.screen, tui.DetailScreen)
         await pilot.press("a")
         await pilot.pause(0.1)
-        app.screen.query(tui.RadioButton).first().value = True
+        app.screen.query(RadioButton).first().value = True
         await pilot.pause(0.1)
         await pilot.click("#ok")
         await pilot.pause(0.1)
@@ -375,7 +437,7 @@ def test_answering_a_decision_confirms_the_command_then_runs_it(tmp_path, monkey
         assert ran == [("answer", [["brain", "--root", str(root), "decision", "answer", ddr["id"], "Grid and tabs",
                                     "--via", "tui", "--by", "Ada"]])]
         assert app.screen is app.screen_stack[0]  # done: back to the panels, read again
-    _run(check)
+    _run(check, size=OVER)
 
 
 def test_apply_shows_the_plan_then_runs_the_command_and_marks_it_done(tmp_path, monkeypatch):
@@ -397,15 +459,15 @@ def test_apply_shows_the_plan_then_runs_the_command_and_marks_it_done(tmp_path, 
         panels = {**PANELS, "queue": {"projects": [{"project": "demo", "entries": [entry]}]}}
         fake.snapshot = lambda: {"scope": "demo", "read_at": None, "probed_at": None, "panels": panels}
         app.draw({"queue"})
-        await pilot.press("2", "enter")
+        await pilot.press("1", "enter")
         await pilot.pause(0.1)
         assert [a.kind for a in app.screen.d["actions"]] == ["done", "apply"]
         await pilot.press("A")
         await pilot.pause(0.3)
         confirm = app.screen
         assert isinstance(confirm, tui.ConfirmScreen) and ran == [("plan", [[r".\install.ps1"]])]  # the plan first
-        assert "plan output" in str(confirm.query_one("#plan", tui.Static).render())
-        assert not confirm.query_one("#run", tui.Button).disabled
+        assert "plan output" in str(confirm.query_one("#plan", Static).render())
+        assert not confirm.query_one("#run", Button).disabled
         await pilot.press("y")
         await pilot.pause(0.2)
         # an install.ps1 -Apply runs in the window once the cockpit has closed (INST-2), then the entry marked done
@@ -413,7 +475,7 @@ def test_apply_shows_the_plan_then_runs_the_command_and_marks_it_done(tmp_path, 
                                                        ["brain", "--root", str(root), "queue", "done", ddr["id"],
                                                         "--note", r"applied in brain tui: .\install.ps1 -Apply"]])]
         assert app.handover == {"script": "h"}
-    _run(check)
+    _run(check, size=OVER)
 
 
 def test_the_actions_are_refused_in_a_session_shell(tmp_path, monkeypatch):
@@ -428,14 +490,14 @@ def test_the_actions_are_refused_in_a_session_shell(tmp_path, monkeypatch):
         panels = _ddr_panels(root, ddr["id"])
         fake.snapshot = lambda: {"scope": "demo", "read_at": None, "probed_at": None, "panels": panels}
         app.draw({"queue"})
-        await pilot.press("2", "enter")
+        await pilot.press("1", "enter")
         await pilot.pause(0.1)
         detail_screen = app.screen
         assert detail_screen.d["refused"] and "refused here" in str(detail_screen.query_one("#detail-foot").render())
         await pilot.press("a")
         await pilot.pause(0.1)
         assert app.screen is detail_screen  # refused: no answer dialog
-    _run(check)
+    _run(check, size=OVER)
 
 
 def test_the_title_shows_the_version_and_the_check_never_delays_the_first_paint(monkeypatch):
