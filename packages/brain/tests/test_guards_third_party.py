@@ -142,6 +142,16 @@ BASH_REFUSED = [
     ("plugin", "claude.cmd plugin marketplace add cursor/plugins"),
     ("plugin", "claude.ps1 plugin install pstack@cursor-plugins"),
     ("skills", "skills.cmd add acme/skills"),
+    # review of #79's skeptic: the launchers' own Windows shims (npx.cmd, pnpm.cmd, ...) unwrap too
+    ("skills", "npx.cmd skills add acme/skills"),
+    ("skills", "npx.ps1 -y skills add acme/skills"),
+    ("skills", "pnpm.cmd dlx skills add acme/skills"),
+    ("skills", "PNPM.CMD --silent dlx skills add acme/skills"),
+    ("skills", "npm.cmd exec skills add acme/skills"),
+    ("skills", "yarn.cmd dlx skills add acme/skills"),
+    ("skills", "bunx.cmd skills add acme/skills"),
+    ("skills", "pnpx.bat skills add acme/skills"),
+    ("skills", "D:/tools/npm/npx.cmd skills.cmd add acme/skills"),
 ]
 
 PS_REFUSED = [
@@ -162,6 +172,9 @@ PS_REFUSED = [
     ("skills", "npx skills add vercel-labs/agent-skills"),
     # review of #26, finding 13: the desktop app's claude.exe, called by its quoted full path
     ("plugin", '& "$env:USERPROFILE\\.local\\bin\\claude.exe" plugin marketplace add cursor/plugins'),
+    # review of #79's skeptic: npm's PowerShell shims of the launchers
+    ("skills", "npx.ps1 skills add acme/skills"),
+    ("skills", "pnpm.cmd dlx skills add acme/skills"),
 ]
 
 # What only looks like a third-party install: a download to a file, a download read as data, a pip or npm install
@@ -220,6 +233,10 @@ ALLOWED = [
     ("Bash", "npm --silent run build"),
     ("Bash", "npm -w pkg run test"),
     ("Bash", "claude.cmd plugin install ada-core@ada-brain"),
+    ("Bash", "npx.cmd skills add acme/skills --list"),
+    ("Bash", "npx.cmd vitest run"),
+    # a script of the project named like a Unix tool keeps its own name (install.ps1 is no coreutils install)
+    ("PowerShell", "./install.ps1 C:/Windows/System32/drivers/etc/hosts"),
 ]
 
 

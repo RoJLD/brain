@@ -45,7 +45,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
     bash -O extglob`, `| bash -eo pipefail`, and an `o` or `O` anywhere in a cluster, one value each: `| bash -oe
     pipefail`, `| bash -Ox extglob`, refused; a script's own `-s` no longer reads as bash's); a launcher's
     global option with a value is skipped before its verb (`npm -w pkg exec`, `npm --loglevel silent exec`); npm's
-    Windows shims `claude.cmd`, `claude.ps1` and `skills.cmd` are claude and skills.
+    Windows shims `claude.cmd`, `claude.ps1` and `skills.cmd` are claude and skills, and the launchers' own
+    (`npx.cmd`, `pnpm.cmd`, `npx.ps1`, `bunx.cmd`) unwrap too: `npx.cmd skills add` and `pnpm.cmd dlx skills
+    add` are refused (`_prog` reads a shim of a launcher, claude or skills; another script keeps its name).
 - **The answers' lane, the rest of the review of #19** (wi-brain-answers-fixes). `brain record ddr` applies the
   one-writer rule to an answer it writes (`--id ID --answer/--other`, or a `--file` that adds or changes one): in an
   agent's session only an answer its own question tool captured (finding 9). `brain decision defaulted --apply` and

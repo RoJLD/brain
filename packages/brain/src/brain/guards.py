@@ -417,8 +417,14 @@ def _path(arg: str, cwd: str) -> str:
 
 
 def _prog(word: str) -> str:
+    """The program a command word names: its last path part, lowercased, without .exe; npm's Windows shims of a
+    launcher, claude or skills (npx.cmd, pnpm.ps1, claude.cmd, skills.bat) are the program they start. Another
+    script keeps its extension (install.ps1 is no coreutils install)."""
     name = re.split(r"[\\/]", word)[-1].lower()
-    return name[:-4] if name.endswith(".exe") else name
+    if name.endswith(".exe"):
+        return name[:-4]
+    stem, ext = os.path.splitext(name)
+    return stem if ext in (".cmd", ".ps1", ".bat") and (stem in LAUNCHERS or stem in SHIMMED) else name
 
 
 def calls(command: str, cwd: str, powershell: bool = False) -> list[tuple[list[str], str]]:
@@ -1126,6 +1132,7 @@ LAUNCHERS = {"chroot": ("", ("userspec", "groups"), 1), "nsenter": ("tmuinpUCSGr
 LAUNCH_VERBS = {"uv": {"run", "tool"}, "poetry": {"run"}, "pipx": {"run"}, "pdm": {"run"}, "hatch": {"run"},
                 "rye": {"run"}, "npm": {"exec", "x"}, "pnpm": {"exec", "dlx"}, "yarn": {"dlx", "exec"},
                 "bun": {"x"}}   # its global options may come before the verb: pnpm --silent dlx, npm --yes exec
+SHIMMED = {"claude", "skills"}   # with LAUNCHERS, the programs whose npm Windows shims (.cmd, .ps1, .bat) _prog unwraps
 STDIN_FEEDERS = {"echo", "printf", "write-output", "write-host", "echo.exe"}
 
 
@@ -2467,8 +2474,7 @@ def _kit_command(prog: str, args: list[str], d: str) -> tuple[str, str] | None:
     """(check, what) when the simple command adds a plugin, a marketplace or a skill from outside the owner's list:
     claude plugin install NAME@MARKETPLACE (and its --marketplace SOURCE), claude plugin marketplace add SOURCE, skills
     add (npx, bunx, bun x, pnpm dlx); its --list only lists. claude's global options may come before plugin. npm's
-    Windows shims (claude.cmd, claude.ps1, skills.cmd) are the programs they start."""
-    prog = re.sub(r"\.(?:cmd|ps1|bat)$", "", prog)
+    Windows shims (claude.cmd, claude.ps1, skills.cmd, npx.cmd) are the programs they start (_prog)."""
     if re.sub(r"(?<=.)@[^/]*$", "", prog) == "skills" and _first(args)[:1] == ["add"]:
         if any(a in SKILLS_READS for a in args):
             return None
