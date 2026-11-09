@@ -316,3 +316,57 @@ def test_a_store_listed_twice_is_refused_and_keeps_its_place(tmp_path, monkeypat
     lab = projects.load()["lab"]
     assert projects.layout(lab, root / "notes" / "graph") == []  # the first store keeps the defaults
     assert projects.check() == ["project lab: its store notes/graph is listed twice"]
+
+
+def test_a_project_not_loaded_keeps_its_usage_caps(tmp_path, monkeypatch, brain_home):
+    """governor.settings walks projects.guarded(), not load(): prog, at lab's root with no journal nor decision log of
+    its own, is not loaded, and its sessions cap still holds in its production checkout (fail closed)."""
+    from brain import governor
+    root = _root(tmp_path)
+    prod = tmp_path / "prog-prod"
+    prod.mkdir()
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"v": 1, "identity": {"owner": "Ada", "kind": "person"}}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    _registry(tmp_path, monkeypatch, root,
+              prog=f"  stores: [prog/graph]\n  production: [{prod.as_posix()}]\n  usage: {{sessions: 1}}\n")
+    assert "prog" not in projects.load()
+    st = governor.settings(str(prod))
+    assert st["projects"]["prog"]["limits"] == {"sessions": 1}
+    assert os.path.normcase(os.path.abspath(prod)) in st["projects"]["prog"]["roots"]
+    assert governor.project_of(str(prod), st) == "prog"
+    assert governor.caps(st, "prog")["sessions"] == 1 and not st["errors"]
+
+
+def test_a_sharers_features_read_the_roots_merged_prs(tmp_path, monkeypatch, capsys):
+    """prog spans no repo: brain sync reads its features' statuses from the merged PRs of the root's repo (an injected
+    fetch, no gh), as lab's would be."""
+    from brain import features, graph
+    root = _root(tmp_path)
+    store = root / "prog" / "graph"
+    schema = (store / "schema.yaml").read_text(encoding="utf-8")
+    schema = schema.replace("node_types: [WorkItem, Milestone, Spec, ADR, Lesson]",
+                            "node_types: [WorkItem, Milestone, Spec, ADR, Lesson, Feature]")
+    schema = schema.replace("           resolved, regressed, archived]",
+                            "           resolved, regressed, archived, have, partial, planned, \"no\"]")
+    schema = schema.replace("  lessons: [Lesson]\n", "  lessons: [Lesson]\n  features: [Feature]\n")
+    schema = schema.replace("status_by_type:\n", "status_by_type:\n  Feature: [have, partial, planned, \"no\"]\n")
+    (store / "schema.yaml").write_text(schema, encoding="utf-8")
+    assert features.has_type(graph.load_schema(store))
+    (store / "nodes" / "features.yaml").write_text(
+        "- {id: feat-prog-plan, type: Feature, status: planned, title: \"The plan\", props: {domain: tools}}\n",
+        encoding="utf-8")
+    _registry(tmp_path, monkeypatch, root)
+    asked = []
+    prs = [{"number": 3, "title": "The plan", "body": "feat-prog-plan: have", "mergedAt": "2026-11-06T10:00:00Z"}]
+    real = features.sync_prs
+
+    def sync_prs(store_, repos, **kw):
+        asked.append((store_, [(n, os.path.normcase(str(f))) for n, f in repos]))
+        return real(store_, repos, fetch=lambda folder: prs if folder == root else None)
+
+    monkeypatch.setattr(features, "sync_prs", sync_prs)
+    assert cli.main(["--project", "prog", "sync"]) == 0
+    assert asked == [(store, [("lab", os.path.normcase(str(root)))])]
+    assert "features: feat-prog-plan planned -> have (lab #3)" in capsys.readouterr().out
+    assert graph.node_index(store)["feat-prog-plan"][1]["status"] == "have"
