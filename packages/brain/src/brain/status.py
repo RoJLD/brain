@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import (alerts, audit, codeindex, config, cost, forecast, graph, notes, projects, quiet, quota, records,
-               resume, stacks)
+               resume, stacks, usage)
 
 STATUS_ORDER = ("todo", "doing", "blocked", "done", "dropped")
 QUICK = "skipped (--quick)"
@@ -342,7 +342,7 @@ def run(projs: list[projects.Project], *, every: bool = False, quick: bool = Fal
         data["ids"] = projects.collisions([p for p in projs if p.root.is_dir()])
         data["tenants"] = tenants_of(root)
         data["total"]["tenants"] = len(data["tenants"])
-    fc = quota.status_of(projs, root, datetime.now(timezone.utc), quick=quick)
+    fc = quota.status_of(projs, root, usage.now_utc(), quick=quick)
     data["quota"] = {k: v for k, v in fc.items() if k != "now"}
     data["quiet"] = quiet.summary(projs)
     return data
