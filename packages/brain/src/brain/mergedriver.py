@@ -755,8 +755,36 @@ def command(launcher: str | None = None) -> str:
     no marker. 0 and 1 are the driver's own result, %A written."""
     exe = launcher or shutil.which("brain")
     head = f'"{Path(exe).as_posix()}"' if exe else f'"{Path(sys.executable).as_posix()}" -m brain'
+    return _line(head)
+
+
+def _line(head: str) -> str:
+    """The driver's command line around its launcher ``head`` (a quoted path, with `` -m brain`` for a Python)."""
     return (f"{head} merge-driver run %O %A %B %P %L; rc=$?; "
             f"if [ $rc -ge 2 ]; then git merge-file --marker-size=%L %A %O %B; else exit $rc; fi")
+
+
+# A command line an earlier engine wrote: its launcher, then brain's own driver call (with or without what follows).
+OWN = re.compile(r'^(?P<head>"[^"]+"(?: -m brain)?) merge-driver run %O %A %B %P %L(?:;.*)?$')
+
+
+def upgrade(repo: Path) -> str:
+    """Rewrite a driver an earlier engine defined to this engine's command line, keeping its launcher: nothing in a
+    repo where the owner never installed it, nothing for a driver that is not brain's, nothing when it is current, so
+    a release that changes the line needs no step (brain sync runs it; the installer's merge step rewrites it too).
+    Returns the line to report, or ''."""
+    try:
+        r = _git("config", "--local", f"merge.{NAME}.driver", cwd=repo)
+        cur = _decode(r.stdout).strip() if r.returncode == 0 else ""
+        m = OWN.match(cur)
+        if not m or _line(m["head"]) == cur:
+            return ""
+        w = _git("config", "--local", f"merge.{NAME}.driver", _line(m["head"]), cwd=repo)
+    except (OSError, subprocess.TimeoutExpired) as exc:   # no git here: sync goes on, the driver stays as it was
+        return f"merge    merge.{NAME}.driver not checked: {exc}"
+    if w.returncode:
+        return f"merge    merge.{NAME}.driver not rewritten: {_decode(w.stderr).strip() or w.returncode}"
+    return f"merge    merge.{NAME}.driver rewritten to this engine's command line (its launcher kept)"
 
 
 def attribute_lines(repo: Path) -> list[str]:

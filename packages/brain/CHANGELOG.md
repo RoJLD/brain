@@ -40,8 +40,10 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
     before `tree` or `show` are no longer reset (finding 56).
 - The merge driver after the review of #21 (`wi-brain-mergedriver-review-fixes`): a driver that cannot run (its
   launcher gone, an engine without it) no longer leaves ours alone with no conflict marker: its command falls back to
-  `git merge-file` when it wrote nothing (exit 2 or more); `brain merge-driver install --apply` rewrites an older
-  config. A log entry both sides hold (a squash-merged or cherry-picked one, an add/add) is written once, not twice.
+  `git merge-file` when it wrote nothing (exit 2 or more). An older config is rewritten with no step of yours:
+  `brain sync` (which `brain update` runs) and the installer's `merge` step bring an earlier engine's line to this
+  one, keeping its launcher, and leave a repo with no driver or another driver alone
+  (`wi-brain-mergedriver-auto-apply`). A log entry both sides hold (a squash-merged or cherry-picked one, an add/add) is written once, not twice.
   The CHANGELOG union keeps a bullet both added once, with its continuation lines, and never drops a line of a
   released section.
 - An exec event's end is never before its start (`wi-brain-selftime-end-before-start`): both come from one clock,
