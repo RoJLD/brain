@@ -395,7 +395,7 @@ brain:
 
 `brain schedule install` prints the plan for this machine and `--apply` installs it (`brain.schedule`): on Windows a
 Task Scheduler task `\Brain\<name>`, as the user, in their session, through the venv's `pythonw.exe` (no console
-window), never two runs at once; on Linux a systemd user timer `brain-<name>.timer` (else the user's crontab), through
+window, for it or for the programs it starts: `brain.nowindow`), never two runs at once; on Linux a systemd user timer `brain-<name>.timer` (else the user's crontab), through
 `bash -lc` so that the login profile's variables reach the command. What this machine installed
 (`<BRAIN_HOME>/schedules/installed.json`) and no longer declares is removed; a task registered by hand is never
 touched. The installer's schedule step runs it, so a schedule is a plan line that `-Apply` applies; creating a

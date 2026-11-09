@@ -6,6 +6,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 ### Fixes
 
+- A scheduled brain opens no window for its children (`brain.nowindow`): under `pythonw.exe` every `git` or `gh` of an
+  alerts pass got a console of its own, in Windows Terminal where it is the default terminal, and took the focus,
+  dozens of times per pass. A brain with no console now starts each child with `CREATE_NO_WINDOW`.
 - `brain status` reads the quota's clock from `usage.now_utc`, like the rest of the quota: a test that froze that clock
   saw the real time in the status row, and failed on every commit once its fixed reset (2026-11-09 12:00 UTC) had passed.
 
