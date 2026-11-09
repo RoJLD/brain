@@ -384,7 +384,8 @@ What each finished item teaches is a node of the graph, so it can be found, coun
 ## Schedules and the alerts pass
 
 A project's `schedules:` entry in the registry declares the brain commands a machine's scheduler runs, `{name:
-{command, every, at, at_logon, machines, timeout, enabled}}`; the alerts pass, say:
+{command, every, at, days, at_logon, machines, timeout, enabled}}`, with `days` the days `at` runs on (`days: [mon]`
+is weekly, none is every day); the alerts pass, say:
 
 ```yaml
 brain:
@@ -407,13 +408,33 @@ no pass); the SessionStart health hook says so in one line and `brain status`'s 
 it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and says so in one line; the alerts go
 at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped.
 
+## Quiet mode
+
+`brain quiet --for 2h` silences the notifications below `critical` for that long (90m, 2h, 1d; at most 7d); a
+`critical` one still goes through. What was held (`<BRAIN_HOME>/notify/held.jsonl`) is summed up in one message per
+project, through that project's routes, when the quiet ends: `brain quiet --off`, or the first alerts pass after the
+end. A project may also declare hours, in local time and across midnight if need be:
+
+```yaml
+brain:
+  notify:
+    quiet_hours: "22:00-07:00"
+```
+
+Quiet silences notifications and nothing else: no task is paused, no scheduled task is disabled, no window opens or
+closes, so a collector, whose data cannot be recovered, runs on and the alerts pass keeps recording what it finds.
+`brain quiet` alone, `brain status` and the cockpit's health card show the state: until when, the declared hours, how
+many are held. A summary that fails to send stays held for the next pass.
+
 ## Where the brain is found
 
 `config.json` and `projects.yaml` are found at `$BRAIN_CONFIG` / `$BRAIN_PROJECTS`, else in the first of:
 `$CLAUDE_BRAIN_DIR`, `$BRAIN_PERSONAL`, the repo acted on (a worktree of the brain reads its own files), then the
 machine's pointer `<BRAIN_HOME>/personal.json` (`{"root": ...}`, written by the installer and by `brain init`). The
 repo acted on is `--root`, else `$BRAIN_ROOT`, else the nearest folder above with `notes/graph/schema.yaml`, else the
-personal brain. Machine-local state (ledgers, sessions, the resume pack, the vault) lives in `BRAIN_HOME`
+personal brain. `--project P` alone resolves to the git worktree the cwd is in when that is a linked worktree of the
+repo P's root is in (so a sub-session in a worktree never writes to the main checkout); an explicit `--root` wins, and
+a cwd in another repo (a code repo of P, say) or a plain folder keeps the registry's root. Machine-local state (ledgers, sessions, the resume pack, the vault) lives in `BRAIN_HOME`
 (`~/.brain`), never in a repo.
 
 ## The Claude Code hooks
@@ -460,6 +481,10 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
   now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
   (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
+
+The quota conversion (`brain usage quota`) is per plan: only the readings of the plan in force (config.json
+`usage.plans`) count, and until the plan has 3 converted readings it says "uncalibrated", does not convert the week and
+estimates the 5-hour window from its latest reading and the ledger's cost since.
 
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture

@@ -94,7 +94,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (__version__, alerts, audit, config, decisions, defaults, digest, paths, perf, plan, projects, queue,
-               resume, sessions, status, transcript, usage)
+               quiet, resume, sessions, status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
 FRAMES = {"exec": "health"}  # a frame drawn from another panel's data, not a read of its own: the health tab's fourth
@@ -1617,6 +1617,9 @@ def _health_card(snap: dict, wait: str = "") -> dict:
               if "error" in g]
     lines = (unread + [f"{a['level']} {a['message']}" for a in alerts_])[:CARD_LINES - 1] or [
         why_empty("alerts", snap, wait=wait)]
+    quiet_ = quiet.line(quiet.summary())   # brain quiet: held, not paused (brain.quiet)
+    if quiet_:
+        lines = [quiet_] + lines[:CARD_LINES - 2]
     audit_ = [f"audit {g['project']}: {_counts(g['counts'])}" for g in (panels.get("audit") or {}).get("projects") or []
               if "counts" in g]
     return _card("health", _counted(tab_title("health"), len(alerts_), "alert(s)"), lines + audit_[:1], "Enter: health")

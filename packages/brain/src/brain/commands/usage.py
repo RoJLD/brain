@@ -25,7 +25,9 @@ USAGE = """\
                  by whole weeks) in $BRAIN_HOME/usage/quota.jsonl; then the conversion of the ledger's API-price cost
                  into a share of the window, the percent now, at the reset at the last 24 h's pace, what the live
                  sessions have left, how many startable P0/P1 items fit, and the advice (open waves, only P0/P1,
-                 none); written to $BRAIN_HOME/usage/quota.json for the cockpit
+                 none); written to $BRAIN_HOME/usage/quota.json for the cockpit. The conversion uses the readings of
+                 the plan in force only (config.json usage.plans); until it has 3 converted readings it says
+                 "uncalibrated", leaves the week unconverted and estimates the 5h window from its latest reading
   brain usage guard [--json]   the usage governor (brain.governor, the PreToolUse hook on start_session, Agent and
                  Workflow): the quota windows it reads, the sessions running and the brainstorms open on this
                  machine, the committed memory, the caps (config.json usage.guard, lowered by the project's usage:)
@@ -66,7 +68,8 @@ def _quota(args, root: Path, projs: list[projects.Project]) -> int:
                       f"({quota.readings_file()})")
         elif args.at or args.resets:
             raise quota.QuotaError("--at and --resets go with --observe")
-        fc = quota.run(cost.load(projs, root, refresh=not (args.no_scan or args.rescan)), projs, now, args.window)
+        fc = quota.run(cost.load(projs, root, refresh=not (args.no_scan or args.rescan)), projs, now, args.window,
+                       plans=usage.plans_from(config.load(root).get("usage")))
     except quota.QuotaError as exc:
         raise SystemExit(f"brain: {exc}") from None
     print(cost.as_json(fc) if args.json else "\n".join(quota.render(fc)))
