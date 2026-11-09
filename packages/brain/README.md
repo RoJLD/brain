@@ -601,8 +601,9 @@ A release moves `brain_version` in `src/brain/adapters/claude/hooks/common.sh` w
 fast paths stamp it on their events; `tests/test_selftime.py` checks the two agree). Which number moves is
 [`docs/release.md`](../../docs/release.md)'s version policy: before 1.0 the middle one for a change an owner must act
 on or a format that moves, the last for what needs nothing; `installer/release_check.py` (CI's `release-check`)
-refuses a patch with a schema change or an `### Upgrade` step beyond the standard ones, a section with no theme, and
-a section of either CHANGELOG that repeats an entry an earlier one released.
+refuses a patch with a schema change or an `### Upgrade` step beyond the standard ones, an `### Upgrade` that leaves
+out a standard step, a section with no theme, and a section of either CHANGELOG that repeats an entry an earlier one
+released.
 
 ## License
 

@@ -47,12 +47,6 @@ def versions(repo: Path, version: str) -> None:
     write(repo, COMMON, f"#!/usr/bin/env bash\nbrain_version={version}\nnext=1\n")
 
 
-def changelogs(repo: Path, version: str, brain_body: str = "- A change.\n", theme: str = " — A theme") -> None:
-    write(repo, ROOT_LOG, f"# Changelog\n\n## {version} — 2026-11-09\n\n- Nothing new.\n\n## 0.2.5 — 2026-11-04\n\n- Old.\n")
-    write(repo, BRAIN_LOG, f"# Changelog\n\n## {version} — 2026-11-09{theme}\n\n{brain_body}\n"
-                           "## 0.2.5 — 2026-11-04\n\n### Upgrade\n\n1. An old step.\n")
-
-
 # The standard steps as an owner reads them (docs/release.md), continuation lines, a sub-step and prose included
 STANDARD_UPGRADE = (
     "### Upgrade\n\nFrom 0.2.5, in this order.\n\n"
@@ -62,6 +56,14 @@ STANDARD_UPGRADE = (
     "   1. a nested line is part of its step.\n"
     "3. **Refresh the public stamp:** `brain check --public --history` in each public repo's checkout.\n\n"
     "Nothing to run for the rest.\n\n- A note.\n\n### Fixes\n\n- A fix.\n")
+# A section with no ### Upgrade at all
+NO_UPGRADE = "### Changes\n\n- A change.\n"
+
+
+def changelogs(repo: Path, version: str, brain_body: str = STANDARD_UPGRADE, theme: str = " — A theme") -> None:
+    write(repo, ROOT_LOG, f"# Changelog\n\n## {version} — 2026-11-09\n\n- Nothing new.\n\n## 0.2.5 — 2026-11-04\n\n- Old.\n")
+    write(repo, BRAIN_LOG, f"# Changelog\n\n## {version} — 2026-11-09{theme}\n\n{brain_body}\n"
+                           "## 0.2.5 — 2026-11-04\n\n### Upgrade\n\n1. An old step.\n")
 
 
 @pytest.fixture
@@ -98,7 +100,7 @@ def run(repo: Path, capsys) -> tuple[int, str]:
 
 def test_schema_changed_without_an_upgrade_section_fails(repo, capsys):
     versions(repo, "0.3.0")
-    changelogs(repo, "0.3.0")
+    changelogs(repo, "0.3.0", NO_UPGRADE)
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
     rc, text = run(repo, capsys)
@@ -109,7 +111,7 @@ def test_schema_changed_without_an_upgrade_section_fails(repo, capsys):
 
 def test_schema_changed_with_an_upgrade_section_passes(repo, capsys):
     versions(repo, "0.3.0")
-    changelogs(repo, "0.3.0", "### Upgrade\n\n1. Run brain sync.\n\n### Changes\n\n- A change.\n")
+    changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run", "4. **Run brain sync**.\n\nNothing to run"))
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
     rc, text = run(repo, capsys)
@@ -120,7 +122,7 @@ def test_schema_changed_with_an_upgrade_section_passes(repo, capsys):
 # Around them
 
 
-def test_a_version_pr_without_a_schema_change_needs_no_upgrade_section(repo, capsys):
+def test_a_version_pr_without_a_schema_change_needs_only_the_standard_steps(repo, capsys):
     versions(repo, "0.2.6")
     changelogs(repo, "0.2.6")
     write(repo, OTHER, "x = 2\n")
@@ -132,7 +134,7 @@ def test_a_version_pr_without_a_schema_change_needs_no_upgrade_section(repo, cap
 
 def test_a_store_schema_counts_too(repo, capsys):
     versions(repo, "0.3.0")
-    changelogs(repo, "0.3.0")
+    changelogs(repo, "0.3.0", NO_UPGRADE)
     write(repo, STORE_SCHEMA, "node_types: [Lesson]\n")
     commit(repo)
     rc, text = run(repo, capsys)
@@ -142,7 +144,7 @@ def test_a_store_schema_counts_too(repo, capsys):
 
 def test_a_removed_schema_counts_too(repo, capsys):
     versions(repo, "0.3.0")
-    changelogs(repo, "0.3.0")
+    changelogs(repo, "0.3.0", NO_UPGRADE)
     (repo / CONFIG_SCHEMA).unlink()
     commit(repo)
     assert run(repo, capsys)[0] == 1
@@ -152,7 +154,7 @@ def test_a_schema_changed_in_an_earlier_pr_since_the_tag_still_counts(repo, caps
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
     versions(repo, "0.3.0")
-    changelogs(repo, "0.3.0")
+    changelogs(repo, "0.3.0", NO_UPGRADE)
     commit(repo)
     assert run(repo, capsys)[0] == 1
 
@@ -318,7 +320,7 @@ def test_a_patch_with_a_schema_change_fails_even_with_its_upgrade_section(repo, 
 
 def test_the_same_change_as_a_minor_version_passes(repo, capsys):
     versions(repo, "0.3.0")
-    changelogs(repo, "0.3.0", "### Upgrade\n\n1. **Edit config.json** by hand.\n\n### Changes\n\n- A change.\n")
+    changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run", "4. **Edit config.json** by hand.\n\nNothing to run"))
     write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
     commit(repo)
     rc, text = run(repo, capsys)
@@ -336,11 +338,44 @@ def test_a_patch_with_only_the_standard_steps_passes(repo, capsys):
     assert "a patch of v0.2.5" in text
 
 
-def test_a_patch_without_an_upgrade_section_passes(repo, capsys):
-    versions(repo, "0.2.6")
-    changelogs(repo, "0.2.6", "### Fixes\n\n- A fix.\n")
+@pytest.mark.parametrize("version", ["0.2.6", "0.3.0"])
+def test_a_version_without_an_upgrade_section_fails(repo, capsys, version):
+    """Every release asks the standard steps of an owner (« The standard steps »): a patch with nothing else to do
+    still numbers them, so that `brain update` prints them."""
+    versions(repo, version)
+    changelogs(repo, version, "### Fixes\n\n- A fix.\n")
     commit(repo)
-    assert run(repo, capsys)[0] == 0
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert f"the section ## {version} does not number the standard steps" in text
+    for title in release_check.STANDARD_STEPS:
+        assert f"**{title}**" in text, title
+
+
+@pytest.mark.parametrize("version", ["0.2.6", "0.3.0"])
+@pytest.mark.parametrize("left_out", [0, 1, 2])
+def test_an_upgrade_section_without_one_of_the_standard_steps_fails(repo, capsys, version, left_out):
+    lines = STANDARD_UPGRADE.splitlines(keepends=True)
+    steps = [i for i, line in enumerate(lines) if release_check.STEP_RE.match(line)]
+    title = release_check.STANDARD_STEPS[left_out]
+    body = "".join(line for i, line in enumerate(lines) if i != steps[left_out])
+    versions(repo, version)
+    changelogs(repo, version, body)
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    missing = text.split("does not number the standard steps", 1)[1].splitlines()[0]
+    assert f"**{title}**" in missing
+    assert [other for other in release_check.STANDARD_STEPS if f"**{other}**" in missing] == [title]
+
+
+def test_the_standard_steps_are_found_by_their_title():
+    assert release_check.standard_steps_missing(STANDARD_UPGRADE) == []
+    assert release_check.standard_steps_missing("") == list(release_check.STANDARD_STEPS)
+    # a sub-step, a bullet or a step with no bold title is not one
+    assert release_check.standard_steps_missing("   1. **Install the engine**\n- 2. **Refresh the public stamp**\n"
+                                                "3. Restart the Claude Code sessions\n") == list(
+        release_check.STANDARD_STEPS)
 
 
 @pytest.mark.parametrize("step", [

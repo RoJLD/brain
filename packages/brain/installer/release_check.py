@@ -10,6 +10,8 @@ is checked. On a version PR, it fails when:
 - the version is not coherent: both ``__version__``, the research-graph pin, the hooks' ``brain_version``, a dated
   section in both CHANGELOGs. CI's ``release-tag`` job checks part of this too, but only once the tag exists;
 - the brain's section heading names no theme after its date (``## X.Y.Z — YYYY-MM-DD — theme``);
+- its ``### Upgrade`` does not number each of the standard steps (:data:`STANDARD_STEPS`), which every release asks
+  of an owner and ``brain update`` prints;
 - the version policy (docs/release.md, « The version policy ») is broken by a patch, a version whose X.Y is the last
   tag's: a registered schema changed since that tag, or its ``### Upgrade`` numbers a step that is not one of the
   standard steps (:data:`STANDARD_STEPS`, by the bold title that opens the step). Such a release is a minor one;
@@ -187,6 +189,23 @@ def _title(text: str) -> str:
     return text.strip().rstrip(".:").strip().casefold()
 
 
+def _step_titles(upgrade: str) -> list[str]:
+    """The bold titles of an ``### Upgrade``'s numbered steps, compared form; '' for a step without one."""
+    titles = []
+    for line in upgrade.splitlines():
+        step = STEP_RE.match(line)
+        if step:
+            title = TITLE_RE.match(step.group(1))
+            titles.append(_title(title.group(1)) if title else "")
+    return titles
+
+
+def standard_steps_missing(upgrade: str) -> list[str]:
+    """The standard steps an ``### Upgrade`` does not number, in their order; [] when it numbers each."""
+    found = set(_step_titles(upgrade))
+    return [step for step in STANDARD_STEPS if _title(step) not in found]
+
+
 def steps_beyond_standard(upgrade: str) -> list[str]:
     """The numbered steps of an ``### Upgrade`` that are not standard steps, as their lines; [] when there are none."""
     standard = {_title(step) for step in STANDARD_STEPS}
@@ -279,6 +298,11 @@ def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
             problems.append(f"{changelog}: registered schemas changed since {tag} ({', '.join(changed)}) and the "
                             f"section ## {version} has no ### Upgrade with something in it: number the standard steps and "
                             f"what an owner does beyond them (docs/release.md, « The standard steps »)")
+    missing = standard_steps_missing(upgrade or "")
+    if missing:
+        problems.append(f"{changelog}: the section ## {version} does not number the standard steps "
+                        f"{', '.join(f'**{step}**' for step in missing)} in its ### Upgrade: every release asks them "
+                        f"of an owner, each opening with its title in bold (docs/release.md, « The standard steps »)")
     for log in ("CHANGELOG.md", changelog):
         for entry, other in entries_already_released(read(repo, log), version):
             problems.append(f"{log}: the section ## {version} repeats an entry that {other} released: "

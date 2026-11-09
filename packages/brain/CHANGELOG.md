@@ -37,7 +37,8 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   release has a theme; a fix that cannot wait is a patch cut from the last tag; a release a week, the review fixes on
   it. CI's `release-check` now refuses a patch whose registered schemas changed since the last tag or whose
   `### Upgrade` numbers a step beyond the three standard ones (by their bold titles: **Install the engine**,
-  **Restart the Claude Code sessions**, **Refresh the public stamp**), a brain section heading with no theme
+  **Restart the Claude Code sessions**, **Refresh the public stamp**), any version whose `### Upgrade` leaves
+  out one of these three (a version PR's section numbers them, so `brain update` prints them), a brain section heading with no theme
   (`## X.Y.Z — YYYY-MM-DD — theme`; punctuation alone after the date, `## 0.3.0 (2026-11-16)`, is none), and a section of either CHANGELOG that repeats an entry an earlier section
   released (a fix that cannot wait, left in main's `## Unreleased` when `release/X.Y` merged back; by its text, a
   « No change » line and the `### Upgrade` steps aside). It writes its messages in UTF-8

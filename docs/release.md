@@ -32,8 +32,9 @@ From 1.0 on, the first number takes the middle one's place for a change that bre
   review fixes of a wave's PRs are released on the cadence, in the next wave, never as a patch of their own unless
   they are a fix that cannot wait.
 - **`release-check` refuses** a patch (X.Y the last tag's, Z after it) when a registered schema changed since `vP`, or
-  when its `### Upgrade` numbers a step whose bold title is not a standard step's; and any version whose brain section
-  heading names no theme after its date (punctuation alone is none), or whose section in either CHANGELOG repeats an
+  when its `### Upgrade` numbers a step whose bold title is not a standard step's; and any version whose `### Upgrade`
+  does not number each standard step under its title, whose brain section heading names no theme after its date
+  (punctuation alone is none), or whose section in either CHANGELOG repeats an
   entry an earlier section released (a fix that cannot wait, left in `## Unreleased` by the merge back; compared by
   text, a « No change » line and the `### Upgrade` steps aside). It reads files and titles, not meanings: a step written
   as prose, a change that newly refuses with no step for it, or a repeated entry reworded on the way, is the version
@@ -51,7 +52,7 @@ before a version, so it never judges 0.2.7.
 
 What every release asks of an owner, whatever it changed. A patch's `### Upgrade` numbers these and nothing else, each
 opening with its title in bold as here (a title is compared without its case or a closing `.` or `:`); a minor one
-numbers them too, in their place among its own steps. With nothing else to do, the section says
+numbers them too, in their place among its own steps. `release-check` refuses a version that leaves one out. With nothing else to do, the section says
 « Nothing to run for the rest » after them.
 
 ```markdown
@@ -117,9 +118,10 @@ wi-brain-old-store-fixture):
 - **`release-check`** (`packages/brain/installer/release_check.py`) sees that this is a version PR because `__version__`
   is not the last tag's. It fails when a registered schema changed since the last tag and this version's section has no
   `### Upgrade` with something in it, when the two `__version__`, the pin, `brain_version` and the two dated sections
-  do not agree, when the brain's section names no theme, or when a patch breaks the version policy (a schema change, a
-  step beyond the standard ones), or when a section of either CHANGELOG repeats an entry an earlier one released. Run it
-  before pushing: `python packages/brain/installer/release_check.py`.
+  do not agree, when the brain's section names no theme, when its `### Upgrade` leaves out a standard step, when a
+  patch breaks the version policy (a schema change, a step beyond the standard ones), or when a section of either
+  CHANGELOG repeats an entry an earlier one released. Run it before pushing:
+  `python packages/brain/installer/release_check.py`.
   It reads files, not meanings: a section can be there and wrong, and `permissions.yaml`, whose keys are constants in
   `brain.permissions`, has no file for it to compare (wi-brain-schema-diff compares keys). This list still applies.
 - **`compat-prev`** installs `vP`, writes every registered format, installs this checkout over it, runs the store plan,
