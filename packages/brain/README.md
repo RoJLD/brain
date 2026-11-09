@@ -466,8 +466,8 @@ Two guards keep what a session brings in and what it records clean (the runbook:
   -c "$(curl ...)"`, `eval $(curl ...)`, `bash <<<"$(curl ...)"`, `iwr ... | iex`, `iex (irm ...)`), `claude plugin
   install` (and its `--marketplace`) and `claude plugin marketplace add` from a source outside the owner's list
   (config.json `adapters.claude.sources`; the brain's own marketplace always passes) and `skills add` (`npx`, `bunx`,
-  `bun x`, `pnpm dlx`, `npm -w pkg exec`; npm's Windows shims too: `claude.cmd`, `skills.cmd`, `npx.cmd`,
-  `pnpm.cmd`, their `.ps1` and `.bat`) are refused, each an action for the owner's queue with its exact command
+  `bun x`, `pnpm dlx`, `npm -w pkg exec`, `corepack pnpm dlx`; npm's Windows shims too: `claude.cmd`, `skills.cmd`,
+  `npx.cmd`, `pnpm.cmd`, their `.ps1` and `.bat`) are refused, each an action for the owner's queue with its exact command
   (`brain queue add --kind action --guard <ref>`). A download to a file (`curl -o`) or read as data (`python3 analyze.py <(curl ...)`)
   passes; what the owner types in their own terminal is never seen. (`brain.guards`)
 - **Conflict markers** (check `markers`): a git commit, or a merge, rebase or cherry-pick `--continue`, that adds

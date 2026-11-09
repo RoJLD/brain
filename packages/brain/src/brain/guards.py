@@ -1127,7 +1127,9 @@ LAUNCHERS = {"chroot": ("", ("userspec", "groups"), 1), "nsenter": ("tmuinpUCSGr
              "poetry": ("C", ("directory",), 1), "pipx": ("", ("spec", "python"), 1), "pdm": ("p", ("project",), 1),
              "hatch": ("e", ("env",), 1), "rye": ("", (), 1),
              "npm": ("w", ("package", "call", "prefix", "workspace"), 1),
-             "pnpm": ("CF", ("dir", "filter"), 1), "yarn": ("", ("cwd",), 1), "bun": ("", ("cwd",), 1)}
+             "pnpm": ("CF", ("dir", "filter"), 1), "yarn": ("", ("cwd",), 1), "bun": ("", ("cwd",), 1),
+             "corepack": ("", (), 0)}
+COREPACK_RUNS = {"npm": "npm", "npx": "npx", "pnpm": "pnpm", "pnpx": "pnpx", "yarn": "yarn", "yarnpkg": "yarn"}
 LAUNCH_VERBS = {"uv": {"run", "tool"}, "poetry": {"run"}, "pipx": {"run"}, "pdm": {"run"}, "hatch": {"run"},
                 "rye": {"run"}, "npm": {"exec", "x"}, "pnpm": {"exec", "dlx"}, "yarn": {"dlx", "exec"},
                 "bun": {"x"}}   # its global options may come before the verb: pnpm --silent dlx, npm --yes exec
@@ -1155,7 +1157,7 @@ def _past_options(prog: str, args: list[str], i: int) -> int:
 
 def _launcher(prog: str, args: list[str]) -> list[str] | None:
     """The words of the program a launcher of LAUNCHERS runs (wsl -e cmd, uv run cmd, npx tool, bun x tool, chroot DIR
-    cmd), a verb's launcher's global options read before its verb. A global option LAUNCHERS does not list may take a
+    cmd, corepack pnpm@9 args), a verb's launcher's global options read before its verb. A global option LAUNCHERS does not list may take a
     value (npm --loglevel silent exec): a word that follows an option and is not the verb is read as its value."""
     if prog not in LAUNCHERS:
         return None
@@ -1169,6 +1171,9 @@ def _launcher(prog: str, args: list[str]) -> list[str] | None:
             return None
         i += 2 if prog == "uv" and args[i:i + 2] == ["tool", "run"] else 1
     i = _past_options(prog, args, i) + (LAUNCHERS[prog][2] if prog == "chroot" else 0)
+    if prog == "corepack":   # corepack pnpm@9 dlx ...: the package manager it names, never its own verbs (enable, up)
+        run = COREPACK_RUNS.get(args[i].split("@", 1)[0].lower()) if i < len(args) else None
+        return [run, *args[i + 1:]] if run else None
     return args[i:] or None
 
 

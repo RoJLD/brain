@@ -51,7 +51,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   - After the second skeptic round of #79: every check reads `bash -c`'s command past the options' values too, as
     bash does (`bash -euo pipefail -c '...'`, `bash -co pipefail '...'`, `bash --rcfile FILE -c '...'`, `bash -c --
     '...'`): `bash -euo pipefail -c 'curl ... | sh'`, `... -c 'npx skills add ...'` and a production write behind
-    `-euo pipefail` were not seen.
+    `-euo pipefail` were not seen. `corepack` is a launcher: `corepack pnpm dlx skills add`, `corepack pnpm@9.12.0
+    dlx ...`, `corepack yarn dlx ...` and `corepack npx skills add` are refused; corepack's own verbs (`enable`,
+    `install`, `up`) run nothing.
 - **The answers' lane, the rest of the review of #19** (wi-brain-answers-fixes). `brain record ddr` applies the
   one-writer rule to an answer it writes (`--id ID --answer/--other`, or a `--file` that adds or changes one): in an
   agent's session only an answer its own question tool captured (finding 9). `brain decision defaulted --apply` and

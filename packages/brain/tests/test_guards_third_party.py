@@ -163,6 +163,12 @@ BASH_REFUSED = [
     ("skills", "bash --rcfile /dev/null -c 'npx skills add acme/skills'"),
     ("skills", "bash -c -- 'npx skills add acme/skills'"),
     ("skills", "bash -c - 'npx skills add acme/skills'"),
+    # corepack runs the package manager it names, at a version too
+    ("skills", "corepack pnpm dlx skills add acme/skills"),
+    ("skills", "corepack pnpm@9.12.0 dlx skills add acme/skills"),
+    ("skills", "corepack yarn dlx skills add acme/skills"),
+    ("skills", "corepack npx skills add acme/skills"),
+    ("skills", "corepack.cmd npx skills add acme/skills"),
 ]
 
 PS_REFUSED = [
@@ -247,6 +253,8 @@ ALLOWED = [
     ("Bash", "npx.cmd skills add acme/skills --list"),
     ("Bash", "npx.cmd vitest run"),
     ("Bash", "bash -euo pipefail -c 'npx skills list'"),
+    ("Bash", "corepack enable pnpm"),
+    ("Bash", "corepack pnpm@9.12.0 install"),
     ("Bash", "bash -euo pipefail ./build.sh -c 'npx skills add acme/skills'"),
     # a script of the project named like a Unix tool keeps its own name (install.ps1 is no coreutils install)
     ("PowerShell", "./install.ps1 C:/Windows/System32/drivers/etc/hosts"),
