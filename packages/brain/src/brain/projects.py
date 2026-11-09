@@ -383,6 +383,8 @@ def unloaded(name: str, root: Path | None = None) -> str:
         return (f"{name!r} is a tenant mount: another brain, opaque, that the operator does not read into (its state "
                 "comes from its contract export)")
     if is_read_only(entry):
+        if entry["access"] != "read":   # a typo, named as one: brain check --all refuses it the same way
+            return f"{name!r} is not loaded: access is read or write, not {entry['access']!r}"
         return f"{name!r} is read only: the brain reads it and never writes it"
     refused = _load(root)[1].get(name)
     return f"{name!r} is not loaded: {'; '.join(refused[1])}" if refused else ""
@@ -421,9 +423,26 @@ def at_root(root: Path) -> list[Project]:
 
 def lister(store: Path, root: Path) -> Project | None:
     """The project registered at ``root`` (at its main checkout, for a worktree) that lists ``store``, else None:
-    ``--store`` naming the store of a project that shares the root runs as that project, with its layout."""
+    ``--store`` naming the store of a project that shares the root runs as that project, with its layout. Fail
+    closed at a root several projects share: the store of one that is not loaded is refused with the reason
+    (:func:`unloaded`), and a store none lists is refused too, never run as the owner with its defaults (the board,
+    roadmap and decision stubs of the owner would be written with another store's items)."""
     key = _norm(store)
-    return next((p for p in at_root(root) if any(_norm(s) == key for s in p.stores)), None)
+    here = at_root(root)
+    hit = next((p for p in here if any(_norm(s) == key for s in stores_of(p))), None)
+    if hit:
+        return hit
+    base = root.resolve()
+    main = paths.main_checkout(base)
+    homes = {_norm(base)} | ({_norm(main.resolve())} if main else set())
+    refused = [p for p, _ in _load(root)[1].values() if _norm(p.root) in homes]
+    for p in refused:
+        if any(_norm(s) == key for s in stores_of(p)):
+            raise SystemExit(f"brain: {unloaded(p.name, root)}")
+    if len(here) + len(refused) > 1:
+        raise SystemExit(f"brain: --store {store}: no registered project lists it, at a root {len(here) + len(refused)} "
+                         "projects share; name one with --project")
+    return None
 
 
 def cwd_worktree(project: Project, cwd: str | Path | None = None) -> Path | None:

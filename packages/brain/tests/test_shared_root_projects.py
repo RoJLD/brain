@@ -249,6 +249,23 @@ def test_a_store_named_by_store_runs_as_the_project_that_lists_it(tmp_path, monk
     assert "prog shares its root" not in capsys.readouterr().out
 
 
+def test_store_at_a_shared_root_fails_closed_when_its_project_is_not_loaded_or_none_lists_it(tmp_path, monkeypatch):
+    """Without --project, --store never runs as the owner with its defaults at a root several projects share: the
+    store of a project not loaded is refused with the reason, and a store no project lists is refused too."""
+    root = _root(tmp_path)
+    _registry(tmp_path, monkeypatch, root, prog="  stores: [prog/graph]\n")  # prog not loaded: no journal, no log
+    monkeypatch.chdir(root)
+    before = {rel: (root / rel).read_bytes() if (root / rel).exists() else None for rel in OWNER_VIEWS}
+    with pytest.raises(SystemExit, match="'prog' is not loaded: project prog: shares its root with lab"):
+        cli.main(["--store", "prog/graph", "sync", "--offline"])
+    assert {rel: (root / rel).read_bytes() if (root / rel).exists() else None for rel in OWNER_VIEWS} == before
+    _registry(tmp_path, monkeypatch, root)  # prog loaded; ops/graph is neither's
+    with pytest.raises(SystemExit, match="no registered project lists it, at a root 2 projects share"):
+        cli.main(["--store", "ops/graph", "check"])
+    _registry(tmp_path, monkeypatch, root, prog=None)  # lab alone: a store it does not list keeps the defaults
+    assert projects.lister((root / "ops" / "graph").resolve(), root) is None
+
+
 def test_an_edge_of_a_later_store_to_a_stub_the_first_store_derives_says_why(tmp_path, monkeypatch, capsys):
     """Before wi-brain-shared-root-projects every store ran with research_graph's defaults, so a second store derived
     the stubs of notes/decisions.md too and an item of it could be decided_by one; it now covers no decision log."""
