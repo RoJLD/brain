@@ -370,6 +370,49 @@ def test_status_lists_the_marks(repo, capsys):
     assert "notes/audit.md" in capsys.readouterr().out
 
 
+def test_upgrade_rewrites_an_earlier_engine_s_line_and_keeps_its_launcher(repo):
+    old = run_git(repo, "config", "merge.brain.driver").strip()   # the fixture's line, before the fallback (#74)
+    assert "merge-file" not in old
+    assert "rewritten" in md.upgrade(repo)
+    new = run_git(repo, "config", "merge.brain.driver").strip()
+    assert new == md._line(f'"{Path(sys.executable).as_posix()}" -m brain') and "git merge-file" in new
+    assert md.upgrade(repo) == "" and run_git(repo, "config", "merge.brain.driver").strip() == new   # idempotent
+
+
+def test_upgrade_keeps_a_launcher_path_and_never_flaps(repo):
+    run_git(repo, "config", "merge.brain.driver", '"C:/Users/x/.brain/bin/brain.exe" merge-driver run %O %A %B %P %L')
+    md.upgrade(repo)
+    line = run_git(repo, "config", "merge.brain.driver").strip()
+    assert line == md._line('"C:/Users/x/.brain/bin/brain.exe"')
+    assert md.upgrade(repo) == ""   # whatever brain resolves to on PATH, the launcher the owner installed stays
+
+
+def test_upgrade_leaves_an_unconfigured_repo_and_a_foreign_driver_alone(repo):
+    run_git(repo, "config", "--unset", "merge.brain.driver")
+    assert md.upgrade(repo) == ""
+    assert subprocess.run(["git", "config", "--local", "merge.brain.driver"], cwd=repo, capture_output=True).returncode
+    run_git(repo, "config", "merge.brain.driver", "my-own-merger %O %A %B")
+    assert md.upgrade(repo) == ""
+    assert run_git(repo, "config", "merge.brain.driver").strip() == "my-own-merger %O %A %B"
+
+
+def test_upgrade_outside_a_repo_or_without_git_says_nothing_is_changed(tmp_path, monkeypatch):
+    assert md.upgrade(tmp_path) == ""
+    monkeypatch.setattr(md, "_git", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("git")))
+    assert "not checked" in md.upgrade(tmp_path)
+
+
+def test_sync_upgrades_the_driver_so_a_release_needs_no_step(repo, monkeypatch, capsys):
+    from brain.commands import sync
+    monkeypatch.setattr(sync.skew, "refuse", lambda *a: False)
+    monkeypatch.setattr(sync, "_store", lambda args, root: None)
+    monkeypatch.setattr(sync, "_sync_store", lambda args, root, store: 0)
+    args = type("A", (), {"all": False, "force": False, "offline": True})()
+    assert sync.cmd_sync(args, repo) == 0
+    assert "rewritten" in capsys.readouterr().out
+    assert "git merge-file" in run_git(repo, "config", "merge.brain.driver")
+
+
 def test_the_init_template_carries_the_attributes():
     template = Path(cli.__file__).parent / "templates" / "generic" / "gitattributes"
     text = template.read_text(encoding="utf-8")

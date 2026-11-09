@@ -45,7 +45,9 @@ branch into a branch, in each worktree; the PR GitHub merges is then clean.
    paths as text, as before: the attributes alone change nothing. An exit of 2 or more means the driver wrote
    nothing (a launcher gone, an engine without the driver, a file it could not read): git's own `merge-file` then
    writes its conflict markers, so ours is never left alone without a marker. A config written by an earlier engine
-   lacks that fallback: `brain merge-driver install --apply` (the installer's `merge` step) rewrites it.
+   lacks that fallback: `brain sync` (which `brain update` runs) rewrites it to this engine's line, keeping the
+   launcher it names, and the installer's `merge` step (`brain merge-driver install --apply`) rewrites it too. Neither
+   defines a driver in a repo that has none, nor touches a `merge.brain.driver` that is not brain's own line.
 
 ### What it does, by kind of file
 
