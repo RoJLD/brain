@@ -15,9 +15,27 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   `### Upgrade` numbers a step beyond the three standard ones (by their bold titles: **Install the engine**,
   **Restart the Claude Code sessions**, **Refresh the public stamp**), and a brain section heading with no theme
   (`## X.Y.Z — YYYY-MM-DD — theme`). 0.2.7 is the last release before the policy.
+- The merge driver after the review of #21 (`wi-brain-mergedriver-review-fixes`): a driver that cannot run (its
+  launcher gone, an engine without it) no longer leaves ours alone with no conflict marker: its command falls back to
+  `git merge-file` when it wrote nothing (exit 2 or more); `brain merge-driver install --apply` rewrites an older
+  config. A log entry both sides hold (a squash-merged or cherry-picked one, an add/add) is written once, not twice.
+  The CHANGELOG union keeps a bullet both added once, with its continuation lines, and never drops a line of a
+  released section.
 - An exec event's end is never before its start (`wi-brain-selftime-end-before-start`): both come from one clock,
   the end clamped to the start; `datetime.now()` against a start rounded up across a millisecond put it 1 ms before,
   now and then, and the schema refused the event (a test failed on CI with `event.end: before start`).
+- **The answers' lane, the rest of the review of #19** (wi-brain-answers-fixes). `brain record ddr` applies the
+  one-writer rule to an answer it writes (`--id ID --answer/--other`, or a `--file` that adds or changes one): in an
+  agent's session only an answer its own question tool captured (finding 9). `brain decision defaulted --apply` and
+  `--seen` no longer write a main checkout on main or master unless `--on-main`, as `brain refresh` (finding 32).
+  `--all --seen ID...` takes full ids, each marked in the one project that holds it, every --seen id found and
+  checked in every project before any is marked (with `--apply`, the defaults due are taken first and stay taken when
+  an id is refused); the queue views are rewritten even when a check refuses (finding 33). `brain refresh` and
+  `brain sync` take the low-stakes defaults due before they write the records' graph and the kanban, which showed
+  those DDRs pending until the next refresh (finding 35); when a later step of the sync fails, the queue view is
+  rewritten all the same, so it never shows a DDR pending that the records hold answered by default. `--captured`
+  prints the captures it retired (« retired, never recorded », with each reason; `--dry-run` marks the refused ones)
+  apart from the decisions left because they are no longer pending, the only ones `--again` replaces.
 
 ## 0.2.7 — 2026-11-09
 
