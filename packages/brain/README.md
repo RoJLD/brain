@@ -461,6 +461,10 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
   (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
 
+The quota conversion (`brain usage quota`) is per plan: only the readings of the plan in force (config.json
+`usage.plans`) count, and until the plan has 3 converted readings it says "uncalibrated", does not convert the week and
+estimates the 5-hour window from its latest reading and the ledger's cost since.
+
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture
 hooks run `brain.capture` (`capture.sh <event>` runs `hooks/capture.py`, which calls it with the brain command's

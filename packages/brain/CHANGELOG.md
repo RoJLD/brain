@@ -2,6 +2,17 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## Unreleased
+
+### Changes
+
+- `brain usage quota` converts dollars to percent with the readings of the plan in force only
+  (wi-brain-quota-per-plan; config.json `usage.plans`, a reading's own `plan` first): a median across an Ultra and a
+  Pro week was neither plan's quota. Until the plan has 3 converted readings (`quota.CAL_MIN`) the conversion is
+  reported `uncalibrated` (in the text, the JSON's `uncalibrated` and the `brain status` line), the weekly window is
+  not converted, and the 5-hour window is estimated from its latest reading plus the ledger's cost since
+  (`window_5h`). The weekly reset is still read from every reading: it is the account's.
+
 ## 0.2.6 — 2026-11-09
 
 ### Upgrade
