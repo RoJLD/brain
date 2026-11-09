@@ -147,6 +147,12 @@ one (a newer brain's additive keys under the same `v`). `tests/test_formats_comp
 back through the engine and compares them, field for field (AR lines byte for byte), then checks the strict mode and
 the refusal of a higher `v`. A new format, or a new version of one, adds its pair.
 
+## At a release
+
+[`docs/release.md`](../../../docs/release.md) says when these are frozen. Its `release-check` job holds the list of each
+format's schema files (`SCHEMAS` in `installer/release_check.py`): a version PR that changed one since the last tag and
+has no `### Upgrade` in its CHANGELOG section fails. A new folder here adds its entry there, or a test fails.
+
 ## The upgrade test (`compat-prev`)
 
 The fixtures prove each reader on its own; the upgrade test proves an engine on a real brain, in both directions

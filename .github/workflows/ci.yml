@@ -116,6 +116,22 @@ jobs:
           path: ${{ runner.temp }}/compat-prev/report.json
           retention-days: 14
 
+  release-check:
+    # The version PR's check (docs/release.md; spec-brain-data-compat, gate item 6), before any tag: a registered schema
+    # changed since the last tag with no ### Upgrade in this version's CHANGELOG section, or a place left at the old
+    # version. Any other pull request passes at once. Standard library only: nothing to install.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The version PR's Upgrade section and version
+        run: python packages/brain/installer/release_check.py
+
   release-tag:
     # pip reinstalls a git-pinned dependency only when its version changes: a tag vX.Y.Z must carry __version__ X.Y.Z in
     # both distributions, and brain must pin research-graph at that tag.
