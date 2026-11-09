@@ -340,27 +340,41 @@ and its recap.
 
 - **`brain sessions [--hours H] [--all] [--json]`**: the sessions active in the last 24 h with both ids, role
   (`master`, `sub`, `relay`, `solo`), parent, children live/started, state and context against its budget (the
-  brief's; a master's without one: config.json `usage.master_budget`, else the model's window, 1M).
-- **`brain sessions tree [ID]`**: the families with a live member, or ID's, each child with its report: a master
-  learns what its children did without paging their transcripts (archived branches counted, `--all` draws them).
+  brief's; a master's without one: config.json `usage.master_budget`, else the model's window, 1M). The options may
+  come before or after `tree` and `show`.
+- **`brain sessions tree [ID]`**: the families with a member active in the last `--hours` (the app's last activity,
+  else its SessionStart), or ID's, each child with its report: a master learns what its children did without paging
+  their transcripts (archived branches counted, `--all` draws them). A session detached to the top level
+  (`lineageDetached`, a hand-over's session living on) heads its own family; a parent the app's file no longer names
+  does not come back from the ledger. A report's wait and recap come from the wrap-up of its last turn only.
 - **`brain sessions show ID [--report]`**: one session by either id (a prefix of 8 or more) or its short name, its
   family, and what a message would meet: live and working (it waits in the queue), idle (it starts a turn), archived
   (lost). `--report` prints its last final message in full, read from its transcript, never stored.
 
 `brain decision ask`, `answer`, `ack` and `archive` (and the question-tool capture) stamp the session's transcript id
-and its app id with the machine (`host_id`, `machine`); `brain check` refuses a DDR stamped on this machine whose
-`local_` id matches no session the app or the ledger knows, and warns for one stamped elsewhere or before the stamps.
+and its app id with the machine (`host_id`, `machine`), the app id only when the app's own file of it names this
+session's transcript (a `claude` started from a desktop session's shell inherits that session's id); `brain check`
+(`brain.sessions`) refuses a DDR stamped on this machine in the last 7 days whose `local_` id matches no session the
+app or the ledger knows, and warns for an older one (its session may have left the app and the ledger's two months
+since), one stamped elsewhere or before the stamps.
 The resume pack prints both ids. The cockpit's sessions panel shows the short name (else the app id) in Session, then
 Role, Parent, Kids (live/started) and Ctx (% of the budget), and the ids in a session's detail.
 
-**The master's watch** (the budget watch, `budget.sh`): a session that called `start_session` is a master, its
-children read from the app's files and the SessionStart events. At 70 % of its budget it says how many more children
+**The master's watch** (the budget watch, `budget.sh`, `brain.budget`): a session that started a session is a master
+(a `start_session` call the owner asked for, or one that starts a proposal by its `proposal_id`, whose result is not
+an error, or a child the app's files name; a proposal card, `offer` or `own_initiative`, starts nothing until the
+owner starts it), its children read from the app's files
+and the SessionStart events. A child is live until the app archives it (its recorded end counts only for a session
+the app does not know: the app resumes its own on a message). At 70 % of its budget it says how many more children
 fit before 80 % (the context a child costs, measured on the family, else 22k); at 80 %: start no new child, hand over
 to a fresh master and drain yours (ask the owner nothing new, touch no other master's children), with a draft
-hand-over note listing the live children with both ids, items and state; at 90 %: drain only, compact only once no
-child is alive. Each step gives the cost of one wake after the prompt cache expired. The master's row in the cockpit
-turns yellow, orange and red at each step; `brain alerts` raises a master past 80 % with live children; the governor
-reminds a master past 80 % that calls `start_session`, and lets the call through: nothing blocks a new session.
+hand-over note listing the live children with both ids, items and their state now (read from their transcripts); at
+90 %: drain only, compact only once no child is alive. Each step gives the cost of one wake after the prompt cache
+expired; a subagent's tool call never uses a step up, the main thread's next call gives it. The master's row in the
+cockpit turns yellow, orange and red at each step; `brain alerts` (`brain.alerts`) raises a master past 80 % with
+live children, both read from the session tree at each pass (an archived master or its archived children close the
+alert at once; a master the tree does not know counts while its watch state is under 6 h old); the governor reminds
+a master past 80 % that calls `start_session`, and lets the call through: nothing blocks a new session.
 
 ## Lessons
 

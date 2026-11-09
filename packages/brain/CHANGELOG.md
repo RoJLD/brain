@@ -8,6 +8,28 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 - `brain.nowindow` also gives no window to a child whose `creationflags` is passed positionally or as `None` (the
   wrapper skipped the first and raised `TypeError` on the second); its review, which #70 never had.
+- The session tree and the master's watch after the review of #34 (its medium and low findings):
+  - a proposal card (`start_session` with `initiation` `offer` or `own_initiative`) and a call whose result is an
+    error no longer make a session a master: a worker keeps its COST-1 checkpoint at 80 %; the app is asked at each
+    check whether the owner started a session from the card, and a call that starts it by `proposal_id` counts
+    (finding 22);
+  - a budget state kept from before the master's watch asks the app at its next check, as meant (finding 53);
+  - a subagent's tool call no longer uses up a step's notice: the main thread's next call gives it (finding 25);
+  - an unarchived app child with a recorded SessionEnd stays live for the master's watch, its hand-over draft and the
+    cockpit's Kids, as `brain sessions` reads it (`brain.sessions.alive`; finding 24);
+  - `brain alerts` reads a master's liveness and live children from the session tree at each pass: an archived master
+    or archived children close the alert at once, a master waiting on its children for hours keeps it (finding 26);
+  - a session detached to the top level (`lineageDetached`) is no longer its old master's child, and a parent the
+    app's file no longer names does not come back from the SessionStart event (finding 27);
+  - `brain check` refuses an unknown `local_` stamp only when it is under 7 days old; an older one is a warning (its
+    session may have left the app and the ledger's two months), so a valid DDR no longer keeps the check red (finding
+    23);
+  - a `claude` started from a desktop session's shell no longer takes that session's app id in its SessionStart
+    event, its session record, the master's watch or its DDR stamps (`brain.sessions.host_for`; finding 50);
+  - a child's report takes its wait and recap from the wrap-up of its last turn only (finding 51), and the 80 %
+    hand-over draft shows each child's state now, read from its transcript (finding 52);
+  - `brain sessions tree` keeps `--hours` for sessions the app does not know (finding 55), and the options given
+    before `tree` or `show` are no longer reset (finding 56).
 
 ## 0.2.7 — 2026-11-09
 

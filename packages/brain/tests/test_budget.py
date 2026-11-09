@@ -128,9 +128,14 @@ def test_item_cost_against_its_recorded_estimate(git_repo, tmp_path, brain_home)
 
 
 def test_a_subagents_tool_call_counts_but_is_not_told(session):
-    _append(session, _asst("m1", 390_000))
+    """A subagent's call (the master's session_id, its agent_id) feeds the state but leaves the step due to the main
+    thread: marked given there, it would never be shown (review of #34, finding 25)."""
+    _append(session, _asst("m1", 380_000))
     assert _run(session, agent_id="a-1") == ""
-    assert json.loads((budget.state_dir() / "s-1.json").read_text(encoding="utf-8"))["warned"]["context"] == [80]
+    state = json.loads((budget.state_dir() / "s-1.json").read_text(encoding="utf-8"))
+    assert state["ctx"] == 380_000 and state["warned"]["context"] == []
+    note = _run(session)
+    assert "95 % of its brief's context budget" in note and "checkpoint now" in note
 
 
 def test_no_budget_no_items_stops_watching_after_the_brief(tmp_path):
