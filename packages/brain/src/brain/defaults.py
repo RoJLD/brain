@@ -5,14 +5,16 @@ A session may mark a decision low-stakes when it asks it (``brain decision ask -
 
 - the asking session applies the recommendation at once, provisionally; the DDR stays pending, the owner may answer
   it as any other;
-- 24 h without an answer make it final (:func:`finalize`, run by ``brain refresh`` and ``brain decision defaulted
-  --apply``): the recommendation is recorded as its answer, ``by: default``, ``via: default``, at the deadline (the
+- 24 h without an answer make it final (:func:`finalize`, run by ``brain refresh`` before it writes any view, and
+  ``brain decision defaulted --apply``): the recommendation is recorded as its answer, ``by: default``, ``via: default``, at the deadline (the
   same record on every branch that writes it), and the hooks announce it like any answer not integrated yet; a DDR
   whose answer the question tool captured before the deadline (the machine's answer ledger, brain.answers) is left
   pending for ``brain decision answer --captured``, and that command replaces a default taken meanwhile by such an
   answer;
 - every default lands in the review list the owner reads later to take note of it (``brain decision defaulted``, a
-  line in the morning batch and in the cockpit); ``--seen`` marks it reviewed, from the owner's own terminal only;
+  line in the morning batch and in the cockpit); ``--seen`` marks it reviewed, from the owner's own terminal only
+  (with ``--all``, by full ids, each in the one project that holds it; ``--apply`` and ``--seen`` write a main
+  checkout on main or master only with ``--on-main``, as ``brain refresh``);
   a low-stakes DDR answered otherwise than its default after the deadline is listed ``reversed`` until ``--seen``
   marks it reviewed after that answer;
 - any default stays reversible: ``brain decision answer ID <option> --again``.
@@ -237,24 +239,36 @@ def reversed_(ddr: dict) -> bool:
     return not (seen_at and ans.get("at") and not before(seen_at, ans["at"]))
 
 
-def seen(root: Path, ids: list[str], *, at: str, session: str = "") -> list[str]:
-    """Mark defaults reviewed (the ones named, else every one not reviewed yet), and the reversed ones; their ids.
-    Every id named is checked before anything is written."""
-    from . import decisions, records
+def _pending_review(d: dict) -> bool:
+    return isinstance(d.get("default"), dict) and ((by_default(d) and not d["default"].get("reviewed"))
+                                                   or reversed_(d))
 
-    def pending_review(d: dict) -> bool:
-        return isinstance(d.get("default"), dict) and ((by_default(d) and not d["default"].get("reviewed"))
-                                                       or reversed_(d))
 
-    targets = [decisions.find(root, i)[1] for i in ids] if ids else \
-        [d for _, d in decisions.load(root) if pending_review(d)]
-    def reviewable(d: dict) -> bool:   # a default, a reversed one, or one reviewed already (marked again)
-        return isinstance(d.get("default"), dict) and (by_default(d) or reversed_(d) or (
-            d.get("status") != "pending" and bool(d["default"].get("reviewed"))))
+def _reviewable(d: dict) -> bool:
+    """A default, a reversed one, or one reviewed already (marked again)."""
+    return isinstance(d.get("default"), dict) and (by_default(d) or reversed_(d) or (
+        d.get("status") != "pending" and bool(d["default"].get("reviewed"))))
 
-    wrong = [d["id"] for d in targets if not reviewable(d)]
+
+def seen_targets(root: Path, ids: list[str], exact: bool = False) -> list[dict]:
+    """The DDRs :func:`seen` would mark (the ones named, by their id or, unless ``exact``, a part of it only one DDR
+    has; else every one not reviewed yet), or a QueueError naming every id refused; nothing is written."""
+    from . import decisions
+
+    targets = [decisions.find(root, i, exact=exact)[1] for i in ids] if ids else \
+        [d for _, d in decisions.load(root) if _pending_review(d)]
+    wrong = [d["id"] for d in targets if not _reviewable(d)]
     if wrong:
         raise decisions.QueueError(f"{', '.join(wrong)}: not decided by default (nor reversed): nothing marked")
+    return targets
+
+
+def seen(root: Path, ids: list[str], *, at: str, session: str = "", exact: bool = False) -> list[str]:
+    """Mark defaults reviewed (the ones named, else every one not reviewed yet), and the reversed ones; their ids.
+    Every id named is checked before anything is written (:func:`seen_targets`)."""
+    from . import records
+
+    targets = seen_targets(root, ids, exact)
     done = []
     for ddr in targets:
         ddr["default"]["reviewed"] = {"at": at, **({"session": session} if session else {})}

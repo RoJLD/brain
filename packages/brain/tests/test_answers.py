@@ -503,6 +503,25 @@ def test_8_a_shortened_label_is_kept_unmapped_and_refused(origin, monkeypatch, b
     assert "answer" not in yaml.safe_load(_main(bare, "records/ddr/ddr-2026-11-01-plat-5-what-is-public.yaml"))
 
 
+def test_retired_captures_are_printed_apart_from_the_ones_left(origin, monkeypatch, capsys, brain_home):
+    """A refused capture was listed as « not pending, left: ... (--again replaces an answer) », which --again never
+    does for it."""
+    root, bare = origin
+    _cap(LONE, "2026-11-04T03:16:21Z", answer=PLACEHOLDER, other=PLACEHOLDER)
+    _cap("ddr-2026-11-01-plat-5-what-is-public", "2026-11-04T03:20:00Z", choices=[LONG])
+    monkeypatch.setattr(answers, "gh", _fake_gh([], [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+    base = ["--project", "demo", "decision", "answer", "--captured"]
+    assert cli.main(base + ["--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert f"{LONE} (H): {PLACEHOLDER} — refused: not answered" in out
+    assert "plat-5-what-is-public (H): " in out and out.count("refused:") == 1
+    assert cli.main(base) == 0
+    out = capsys.readouterr().out
+    assert f"retired, never recorded: {LONE} (not answered: the owner sent a message instead" in out
+    assert "not pending, left" not in out and "recorded 1 answer(s)" in out
+
+
 def test_34_both_ledgers_are_read_over_the_same_months(brain_home):
     sep = _cap("ddr-a", "2026-09-10T09:00:00Z", choices=["A"])
     octo = _cap("ddr-b", "2026-10-31T23:50:00Z", choices=["B"])
