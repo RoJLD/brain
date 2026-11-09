@@ -163,6 +163,44 @@ def test_an_older_engine_may_only_refuse_the_newer_keys(st):
         assert bool(st.NEWER.search(line)) is ok
 
 
+# brain check's output under v0.2.6 after HEAD's sync (compat-prev on RoJLD/brain#71, run 42619784680), shortened
+ROLLBACK_CHECK = """\
+warning: records/ddr/ddr-2026-11-09-pick-a-colour.yaml: ddr: unknown field 'confidence' (kept: a newer brain's field?)
+records: 2 DDR, 1 SR, 2 AR; 0 error(s), 10 warning(s)
+warning: the running engine is not config.json engine.pin v0.2.7: brain 0.2.6 is behind the pin v0.2.7
+render claude: 1 differs, 22 same
+  differs  plugins/brain-core/hooks/common.sh
+brain render: 1 file(s) not current: brain render --target claude --write
+boundary: 51 tracked file(s) classified; engine side 1 file(s), readiness 0 (max 0), public scan green
+$ research_graph check
+graph-check OK
+== registry
+registry: 1 project(s), 1 store(s), ids unique
+"""
+
+
+def test_an_older_engines_check_may_only_find_heads_plugin_render_not_current(st):
+    """HEAD's sync renders the plugin with its own hooks (common.sh carries the engine's version): an older engine
+    with the read mode finds it not current, exit 1. That alone is allowed; anything else stays a no-go."""
+    assert st.stale_render_only(0, "") and st.stale_render_only(1, ROLLBACK_CHECK)
+    assert not st.stale_render_only(2, ROLLBACK_CHECK)
+    assert not st.stale_render_only(1, "records: 1 DDR; 0 error(s), 0 warning(s)\ngraph-check OK\n")  # another cause
+    for before, after in (("plugins/brain-core/hooks/common.sh", "CLAUDE.md"),          # a file of the brain's own
+                          ("0 error(s), 10", "2 error(s), 10"),                          # a record refused
+                          ("graph-check OK", "graph-check FAILED"),
+                          ("public scan green", "public scan red"),
+                          ("== registry", "error: a session id matches no session\n== registry")):
+        assert not st.stale_render_only(1, ROLLBACK_CHECK.replace(before, after)), after
+
+
+def test_the_exit_codes_may_be_a_function_of_the_output(st, monkeypatch):
+    monkeypatch.setattr(st, "run", lambda cmd, env, root, stdin=None: (1, cmd[1]))
+    steps = [("a", ["x", "fine"], None, None, lambda rc, o: o == "fine"),
+             ("b", ["x", "bad"], None, None, lambda rc, o: o == "fine"), ("c", ["x", "y"], None, None, (0, 1)),
+             ("d", ["x", "y"], None, None)]
+    assert [s["ok"] for s in st.run_steps(steps, {}, Path("."))] == [True, False, True, False]
+
+
 def test_a_new_key_takes_its_place_in_the_newer_fixture(st):
     """permissions.yaml's rules stay its last key (brain permissions grant appends to it): a newer section lands before
     them, where the newer fixture has it."""

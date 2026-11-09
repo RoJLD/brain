@@ -41,7 +41,9 @@ COMPAT-3; CI's ``compat-prev`` job on every pull request, from the last tag), in
    age here, so no real seal or drill). TAG is installed back over HEAD (as ``install.ps1 -Apply`` does until the pin
    PR merges) and runs, in read mode (``BRAIN_STRICT=0``), brain check, brain record check, brain permissions check,
    brain vault status (which must show the drill), brain perf (the ledger's events) and a newer template's init plan.
-   A TAG with the read mode must pass them; one before it (0.2.5) may only refuse HEAD's newer keys (exit 1 or 2,
+   A TAG with the read mode must pass them, its brain check exiting 0, or 1 when its one failure is the plugin
+   HEAD's sync rendered (files under ``plugins/``, whose hooks carry the engine's version: not redone, the rollback
+   writes nothing); one before it (0.2.5) may only refuse HEAD's newer keys (exit 1 or 2,
    every ``error:`` line an unknown key or field, no traceback, no usage error). No file of the brain and of
    ``$BRAIN_HOME/vault`` is changed or removed, and the ledger's files only grow (sha-256 before and after).
 4. **And back.** HEAD is installed again and makes the same reads in read mode, all exiting 0, with the drill shown;
@@ -167,11 +169,14 @@ def _exe(scripts: Path, name: str) -> str:
 
 def run_steps(steps: list[tuple], env: dict, root: Path, hook_env: dict | None = None) -> list[dict]:
     """Each (name, cmd, stdin, check[, exit codes]) run in ``root``: (step, cmd, rc, ok, out). A step is ok when its
-    exit code is one it allows (0 by default), no traceback is printed and its check, when it has one, holds."""
+    exit code is one it allows (0 by default; the codes may be a function of the exit code and the output), no
+    traceback is printed and its check, when it has one, holds."""
     out = []
     for name, cmd, stdin, ok, *codes in steps:
         rc, text = run(cmd, hook_env if hook_env and name.startswith("hook") else env, root, stdin)
-        good = rc in (codes[0] if codes else (0,)) and "Traceback" not in text and (ok is None or bool(ok(text)))
+        allowed = codes[0] if codes else (0,)
+        code_ok = allowed(rc, text) if callable(allowed) else rc in allowed
+        good = code_ok and "Traceback" not in text and (ok is None or bool(ok(text)))
         out.append({"step": name, "cmd": " ".join(Path(cmd[0]).name if i == 0 else c for i, c in enumerate(cmd)),
                     "rc": rc, "ok": good, "out": text[-4000:]})
     return out
@@ -242,6 +247,24 @@ SEALED, DRILLED = "2026-11-01T08:00:00Z", "2026-11-01T09:00:00Z"
 DIGEST = "0" * 64                                     # a canary's sha-256 (no canary file: nothing is opened here)
 # what an engine before the read mode may say of HEAD's additive data: its refusal, never another error
 NEWER = re.compile(r"unknown key|unknown field|unexpected field|brain update|written by brain >")
+STALE_ROW = re.compile(r"^\s+(differs|new|stray)\s+(\S+)")
+RENDER_STALE = re.compile(r"^brain render: \d+ file\(s\) not current", re.M)
+
+
+def stale_render_only(rc: int, out: str) -> bool:
+    """The rollback's brain check under an older engine with the read mode: 0, or 1 when its one failure is the
+    plugin HEAD's brain sync rendered (``plugins/``: the engine's own hooks, ``brain_version`` in common.sh at the
+    least), which the older engine finds not current. Every other part of the check must be green; an output it does
+    not recognise fails closed. The render is not redone: the rollback writes nothing (no loss)."""
+    if rc == 0:
+        return True
+    if rc != 1 or not RENDER_STALE.search(out):
+        return False
+    rows = [m.group(2) for m in map(STALE_ROW.match, out.splitlines()) if m]
+    records = re.search(r"^records: .*; (\d+) error\(s\)", out, re.M)
+    return (bool(rows) and all(r.startswith("plugins/") for r in rows) and bool(records)
+            and records.group(1) == "0" and not re.search(r"^\s*error:", out, re.M)
+            and "graph-check OK" in out and "public scan green" in out)
 
 
 def where(root: Path, home: Path) -> dict[str, list[Path]]:
@@ -416,12 +439,12 @@ def engine_is(scripts: Path, env: dict, root: Path, ref: str, source: str) -> di
     return {"step": "engine", "cmd": f"the venv runs {want}", "rc": rc, "ok": rc == 0 and ok, "out": text}
 
 
-def read_steps(brain: str, check, codes: tuple) -> list[tuple]:
+def read_steps(brain: str, check, codes: tuple, check_codes=None) -> list[tuple]:
     """The reads an engine makes of a brain another engine wrote: its checks, the vault (which must show the drill)
-    and the ledger's events (brain perf)."""
+    and the ledger's events (brain perf). ``check_codes``, when given, replaces ``codes`` for brain check alone."""
     return [
         ("version", [brain, "--version"], None, lambda o: o.startswith("brain ")),
-        ("check", [brain, "check"], None, check, codes),
+        ("check", [brain, "check"], None, check, check_codes or codes),
         ("record check", [brain, "record", "check"], None, check, codes),
         ("permissions", [brain, "permissions", "check"], None, check, codes),
         ("vault status", [brain, "vault", "status"], None, lambda o: f"drilled {DRILLED}" in o),
@@ -457,7 +480,8 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
     3. the rollback: HEAD's additive fixtures laid over the brain and a vault drill on record (written by HEAD's
        vault), the previous engine installed over HEAD as the installer does until the pin moves, then its check,
        record check, vault status, permissions check and a newer template's plan, in read mode (BRAIN_STRICT=0). An
-       engine that has the read mode must pass them; one before it (0.2.5) may refuse, cleanly. Either way no file
+       engine that has the read mode must pass them (its check may only find HEAD's plugin render not current:
+       stale_render_only); one before it (0.2.5) may refuse, cleanly. Either way no file
        of the brain, the vault drill included, is changed or removed."""
     root = work / "ada-brain"
     root.mkdir(exist_ok=True)
@@ -548,7 +572,9 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
     reads = dict(env, BRAIN_STRICT="0")
     empty = work / "template-plan"
     empty.mkdir(exist_ok=True)
-    phase("rollback", run_steps(read_steps(brain, clean, codes), reads, root) + run_steps([
+    # HEAD's sync rendered the plugin with its own hooks: an older engine with the read mode finds it not current
+    phase("rollback", run_steps(read_steps(brain, clean, codes, stale_render_only if tolerant else None), reads,
+                                root) + run_steps([
         ("template plan", [brain, "init", "--owner", OWNER, "--template", str(template)], None,
          lambda o: clean(o) and ("plan only" in o or bool(NEWER.search(o))), codes),
     ], reads, empty))

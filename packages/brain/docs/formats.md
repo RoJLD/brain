@@ -175,7 +175,10 @@ python packages/brain/installer/stranger_test.py --source . --upgrade-from v0.2.
    write them; no real seal), and the previous engine is installed back over this one, as the installer does until
    the pin moves. In read mode it runs `brain check`, `brain record check`, `brain permissions check`,
    `brain vault status` (which must show the drill), `brain perf` (the ledger's events) and a newer template's plan.
-   An engine with the read mode must pass them; one before it (0.2.5) may only refuse the newer keys (every `error:`
+   An engine with the read mode must pass them, its `brain check` exiting 0, or 1 when its one failure is the plugin
+   this checkout's `brain sync` rendered (files under `plugins/`: the hooks carry the engine's `brain_version`, so
+   every version is not current under the one before; the rollback renders nothing again, as it writes nothing). One
+   before the read mode (0.2.5) may only refuse the newer keys (every `error:`
    line an unknown key or field, no traceback). No file of the brain or of `$BRAIN_HOME/vault` is changed or removed,
    and the ledger's files only grow.
 4. **And back.** This checkout is installed again and makes the same reads, all passing, the drill shown; nothing is
