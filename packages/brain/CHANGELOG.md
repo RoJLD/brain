@@ -2,7 +2,23 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
-## Unreleased
+## 0.2.8 — 2026-11-09 — the review fixes
+
+### Upgrade
+
+From 0.2.7, in this order. No schema, store or format changes, and no hand edit of a brain's data is needed.
+
+1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
+2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
+3. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
+   push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
+
+Nothing to run for the rest: `brain sync` (or the installer's `merge` step) rewrites the merge driver's line an
+earlier engine wrote, keeping its launcher. The guards refuse more shapes of a third-party install or a piped download
+(bash option clusters, launchers' options, Windows shims, corepack) and read `git add -A` and `git commit <path>` for
+conflict markers and secrets: a command they now refuse says why.
 
 ### Fixes
 
