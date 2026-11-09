@@ -676,7 +676,12 @@ def _live_now(tree, session: str, m: dict, mtime: float, floor: float) -> int:
     """The live children of the master ``session`` now: read from the session tree when it knows the master (0 once
     the master itself is archived or ended, whatever its state file's age, and 0 for the state of a transcript the
     app's master has left, e.g. after a /clear: its current transcript has its own state); else the count its last
-    check kept, while that state is under MASTER_HOURS old (review of #34, finding 26)."""
+    check kept, while that state is under MASTER_HOURS old (review of #34, finding 26).
+
+    Assumption, not yet checked against a real /clear in the desktop app: after a /clear the app moves its file's
+    ``cliSessionId`` to the new transcript (``sessions.host_for`` assumes the same). Were the app to keep the old id,
+    the current transcript's state would be the one counted as 0 here, and a live master past 80 % would raise no
+    alert."""
     from . import sessions
 
     key = tree.key_of(m.get("host_id") or "") or tree.key_of(session)
