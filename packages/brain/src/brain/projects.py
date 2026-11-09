@@ -350,6 +350,15 @@ def _withheld(root: Path | None = None) -> list[Project]:
     return [p for p in (_claimant(n, e, f.parent) for n, e in found) if p is not None]
 
 
+def holders(root: Path | None = None) -> list[Project]:
+    """Every project that holds files at its root, in the registry's order: those loaded and the entries the walk
+    skips for their access value that still hold their root (:func:`_withheld`), so that a typo in an owner's access
+    never frees its views folder for the next project (:func:`view_clashes`)."""
+    loaded = load(root)
+    withheld = {p.name: p for p in _withheld(root)}
+    return [loaded.get(n) or withheld[n] for n in map(str, raw(root)) if n in loaded or n in withheld]
+
+
 def stores_of(p: Project) -> list[Path]:
     """The stores brain sync and check run for ``p``: those it lists, else its root's notes/graph (``stores: []``)."""
     return list(p.stores) or [p.root / "notes" / "graph"]
@@ -727,7 +736,7 @@ def check(root: Path | None = None) -> list[str]:
             repos_of(p)
         except RepoError as exc:
             errors.append(str(exc))
-    return errors + list(view_clashes(list(loaded.values())).values())
+    return errors + list(view_clashes(holders(root)).values())
 
 
 def node_ids(store: Path) -> dict[str, str]:

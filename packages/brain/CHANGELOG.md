@@ -64,8 +64,9 @@ Nothing to run for the rest.
   decision log too), while the guards and the usage governor keep protecting it (`projects.guarded`: its production
   checkouts stay refused to edits). An owner skipped for its access value (a typo, or `access: read` on an entry that
   still names its root) keeps its root and its files: the next project there stays a sharer and never becomes its
-  owner, and `--store` naming the owner's store is refused with the reason (`projects._claimant`). A store whose views folder an earlier store at its root uses is refused by
-  `brain sync` (`projects.view_clashes`) and by the checks. The permissions of a project that spans no repo are its
+  owner, and `--store` naming the owner's store is refused with the reason (`projects._claimant`). A store whose
+  views folder an earlier store at its root uses is refused by `brain sync` (`projects.view_clashes`) and by the
+  checks, an owner skipped for its access value included (`projects.holders`). The permissions of a project that spans no repo are its
   root's settings, and its features' statuses come from the root's merged PRs. `brain audit --write` from it is
   refused: `notes/audit.md` is the owner's. Without `--all` or `--project`, `brain sync`, `check` and `refresh` at
   such a root cover every project registered there. Every store but a project's first at a root it owns gets

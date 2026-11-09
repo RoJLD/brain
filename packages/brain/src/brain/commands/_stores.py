@@ -48,7 +48,7 @@ def _view_clash(args, project: projects.Project, root: Path, store: Path) -> str
     per command)."""
     clashes = getattr(args, "_view_clashes", None)
     if clashes is None:
-        clashes = args._view_clashes = projects.view_clashes(list(projects.load(root).values()))
+        clashes = args._view_clashes = projects.view_clashes(projects.holders(root))
     return clashes.get((project.name, _store_label(project.root, store)), "")
 
 

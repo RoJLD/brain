@@ -296,6 +296,27 @@ def test_an_owner_skipped_for_its_access_keeps_its_root(tmp_path, monkeypatch, a
     assert any("its store notes/graph is lab's too" in e for e in projects.check())
 
 
+@pytest.mark.parametrize("access", ["wirte", "read"])
+def test_an_owner_skipped_for_its_access_still_claims_its_views_folder(tmp_path, monkeypatch, access):
+    """The views-folder guard counts an owner the walk skips for its access value: a sharer whose store writes its
+    views where the owner's store does is refused, as it is when the owner is loaded, never synced over its board."""
+    root = _root(tmp_path)
+    assert research_graph(["--store", str(root / "notes" / "pgraph"), "--repo-root", str(root), "--decisions",
+                           "prog/decisions.md", "init", "--owner", "Ada"]) == 0
+    reg = tmp_path / "brain" / "projects.yaml"
+    reg.parent.mkdir(exist_ok=True)
+    reg.write_text(f"lab:\n  root: {root.as_posix()}\n  access: {access}\nprog:\n  root: {root.as_posix()}\n"
+                   + PROG.replace("prog/graph", "notes/pgraph"), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    monkeypatch.chdir(root)
+    before = {rel: (root / rel).read_bytes() if (root / rel).exists() else None for rel in OWNER_VIEWS}
+    assert cli.main(["--project", "prog", "sync", "--offline"]) == 1
+    assert {rel: (root / rel).read_bytes() if (root / rel).exists() else None for rel in OWNER_VIEWS} == before
+    assert any("its store notes/pgraph writes its views in notes, as lab's store notes/graph does" in e
+               for e in projects.check())
+    assert [p.name for p in projects.holders()] == ["lab", "prog"]
+
+
 def test_a_scope_or_pack_naming_a_sharer_not_loaded_gives_the_reason(tmp_path, monkeypatch):
     from brain import neutral
     root = _root(tmp_path)
