@@ -411,7 +411,7 @@ def test_the_brain_changelog_repeats_no_released_entry():
         assert release_check.entries_already_released(log, version) == [], version
 
 
-@pytest.mark.parametrize("after_the_date",["", " ", " —", " — :", " - "])
+@pytest.mark.parametrize("after_the_date", ["", " ", " —", " — :", " - "])
 def test_a_section_heading_without_a_theme_fails(repo, capsys, after_the_date):
     versions(repo, "0.2.6")
     changelogs(repo, "0.2.6", theme=after_the_date)
@@ -426,6 +426,21 @@ def test_the_theme_is_what_follows_the_date():
     assert release_check.theme(" — 2026-11-10: guards") == "guards"
     assert release_check.theme(" — 2026-11-10") == ""
     assert release_check.theme(" — no date — a theme") == ""
+    assert release_check.theme(" (2026-11-10) — guards") == "guards"
+
+
+@pytest.mark.parametrize("heading", ["## 0.2.6 (2026-11-09)", "## 0.2.6 — 2026-11-09 — )", "## 0.2.6 [2026-11-09] — …",
+                                     "## 0.2.6 — 2026-11-09 — « »"])
+def test_punctuation_after_the_date_is_no_theme(repo, capsys, heading):
+    """A theme says what the release is about: what is left after the date has a letter or a digit in it."""
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    log = (repo / BRAIN_LOG).read_text(encoding="utf-8").replace("## 0.2.6 — 2026-11-09 — A theme", heading)
+    write(repo, BRAIN_LOG, log)
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1
+    assert "names no theme" in text
 
 
 def test_the_root_changelog_needs_no_theme(repo, capsys):

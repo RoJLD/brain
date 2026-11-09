@@ -166,9 +166,11 @@ def entries_already_released(changelog: str, version: str) -> list[tuple[str, st
 
 
 def theme(rest: str) -> str:
-    """The theme a section heading names after its date (``## X.Y.Z — YYYY-MM-DD — theme``), or ''."""
+    """The theme a section heading names after its date (``## X.Y.Z — YYYY-MM-DD — theme``), or '': what follows the
+    date, the punctuation around it left out, and only when it has a letter or a digit (``(2026-11-16)`` names none)."""
     match = DATE_RE.search(rest)
-    return rest[match.end():].strip(" \t—–-:,") if match else ""
+    said = rest[match.end():].strip(" \t—–-:,;.…()[]«»\"'") if match else ""
+    return said if re.search(r"\w", said) else ""
 
 
 def _title(text: str) -> str:

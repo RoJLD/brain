@@ -38,7 +38,7 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   it. CI's `release-check` now refuses a patch whose registered schemas changed since the last tag or whose
   `### Upgrade` numbers a step beyond the three standard ones (by their bold titles: **Install the engine**,
   **Restart the Claude Code sessions**, **Refresh the public stamp**), a brain section heading with no theme
-  (`## X.Y.Z — YYYY-MM-DD — theme`), and a brain section that repeats an entry an earlier section released (a fix
+  (`## X.Y.Z — YYYY-MM-DD — theme`; punctuation alone after the date, `## 0.3.0 (2026-11-16)`, is none), and a brain section that repeats an entry an earlier section released (a fix
   that cannot wait, left in main's `## Unreleased` when `release/X.Y` merged back). It writes its messages in UTF-8
   to a pipe. Every release up to 0.2.7 predates the policy, and 0.2.7 is the last.
 

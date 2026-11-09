@@ -33,7 +33,7 @@ From 1.0 on, the first number takes the middle one's place for a change that bre
   they are a fix that cannot wait.
 - **`release-check` refuses** a patch (X.Y the last tag's, Z after it) when a registered schema changed since `vP`, or
   when its `### Upgrade` numbers a step whose bold title is not a standard step's; and any version whose brain section
-  heading names no theme after its date, or whose brain section repeats an entry an earlier section released (a fix
+  heading names no theme after its date (punctuation alone is none), or whose brain section repeats an entry an earlier section released (a fix
   that cannot wait, left in `## Unreleased` by the merge back). It reads files and titles, not meanings: a step written as prose, or a
   change that newly refuses with no step for it, is the version PR's author to catch, with « Read what changed » below.
 
