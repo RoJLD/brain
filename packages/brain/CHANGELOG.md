@@ -41,13 +41,14 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
     init` later in the call, git's "not a git repository") passes with no `errors.log` entry, as on main, while
     any other failure of that check (git missing from PATH, a timeout, dubious ownership) is a logged error; a
     `.txt` heading passes only under a title no longer than its underline (reST's rule), so a bare `=======` left
-    in `requirements.txt` is still refused; bash's option values are no script (`curl ... | bash -o pipefail /dev/stdin`, `| bash -o pipefail`, `|
-    bash -O extglob`, `| bash -eo pipefail`, and an `o` or `O` anywhere in a cluster, one value each: `| bash -oe
-    pipefail`, `| bash -Ox extglob`, refused; a script's own `-s` no longer reads as bash's); a launcher's
-    global option with a value is skipped before its verb (`npm -w pkg exec`, `npm --loglevel silent exec`); npm's
-    Windows shims `claude.cmd`, `claude.ps1` and `skills.cmd` are claude and skills, and the launchers' own
-    (`npx.cmd`, `pnpm.cmd`, `npx.ps1`, `bunx.cmd`) unwrap too: `npx.cmd skills add` and `pnpm.cmd dlx skills
-    add` are refused (`_prog` reads a shim of a launcher, claude or skills; another script keeps its name).
+    in `requirements.txt` is still refused; bash's option values are no script (`curl ... | bash -o pipefail
+    /dev/stdin`, `| bash -o pipefail`, `| bash -O extglob`, `| bash -eo pipefail`, and an `o` or `O` anywhere in a
+    cluster, one value each: `| bash -oe pipefail`, `| bash -Ox extglob`, refused; a script's own `-s` no longer
+    reads as bash's); a launcher's global option with a value is skipped before its verb (`npm -w pkg exec`, `npm
+    --loglevel silent exec`); npm's Windows shims `claude.cmd`, `claude.ps1` and `skills.cmd` are claude and skills,
+    and the launchers' own (`npx.cmd`, `pnpm.cmd`, `npx.ps1`, `bunx.cmd`) unwrap too: `npx.cmd skills add` and
+    `pnpm.cmd dlx skills add` are refused (`_prog` reads a shim of a launcher, claude or skills; another script keeps
+    its name).
   - After the second skeptic round of #79: every check reads `bash -c`'s command past the options' values too, as
     bash does (`bash -euo pipefail -c '...'`, `bash -co pipefail '...'`, `bash --rcfile FILE -c '...'`, `bash -c --
     '...'`): `bash -euo pipefail -c 'curl ... | sh'`, `... -c 'npx skills add ...'` and a production write behind
