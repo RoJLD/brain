@@ -240,6 +240,9 @@ def test_projects_yaml_keys(tmp_path, monkeypatch, read_mode):
     assert projects.raw(root)["mine"]["formats"] == {"alloc": {"glob": "*.json"}}
     p = projects.load(root)["mine"]
     assert [r.lang for r in projects.repos_of(p)] == ["py"]
+    # access: read and a second project at a shared root (0.2.9): additive, read by this engine as their own
+    assert list(projects.load(root)) == ["mine", "prog"] and projects.load(root)["prog"].shares_root_with == "mine"
+    assert list(projects.readonly(root)) == ["upstream"]
     monkeypatch.setenv("BRAIN_STRICT", "1")
     assert projects.check(root) == older + [
         "project mine: unknown key(s) formats (brain projects --keys lists them)",
