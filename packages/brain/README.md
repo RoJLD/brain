@@ -432,7 +432,9 @@ many are held. A summary that fails to send stays held for the next pass.
 `$CLAUDE_BRAIN_DIR`, `$BRAIN_PERSONAL`, the repo acted on (a worktree of the brain reads its own files), then the
 machine's pointer `<BRAIN_HOME>/personal.json` (`{"root": ...}`, written by the installer and by `brain init`). The
 repo acted on is `--root`, else `$BRAIN_ROOT`, else the nearest folder above with `notes/graph/schema.yaml`, else the
-personal brain. Machine-local state (ledgers, sessions, the resume pack, the vault) lives in `BRAIN_HOME`
+personal brain. `--project P` alone resolves to the git worktree the cwd is in when that is a linked worktree of the
+repo P's root is in (so a sub-session in a worktree never writes to the main checkout); an explicit `--root` wins, and
+a cwd in another repo (a code repo of P, say) or a plain folder keeps the registry's root. Machine-local state (ledgers, sessions, the resume pack, the vault) lives in `BRAIN_HOME`
 (`~/.brain`), never in a repo.
 
 ## The Claude Code hooks

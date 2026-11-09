@@ -90,6 +90,11 @@ def _dispatch(args) -> int:
     if args.project:
         args.project_obj = projects.get(args.project, root)
         root = args.project_obj.root
+        if not args.root:  # run from a worktree of the project's repo: that worktree is the root (wi-brain-root-from-cwd)
+            wt = projects.cwd_worktree(args.project_obj)
+            if wt is not None:
+                args.project_obj = projects.get(args.project, wt)
+                root = wt
     root = root or paths.find_root()
     return command.run(args, root)
 

@@ -12,6 +12,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   reported `uncalibrated` (in the text, the JSON's `uncalibrated` and the `brain status` line), the weekly window is
   not converted, and the 5-hour window is estimated from its latest reading plus the ledger's cost since
   (`window_5h`). The weekly reset is still read from every reading: it is the account's.
+- `brain --project P` run from a linked git worktree of P's repo acts on that worktree, not on the registry's root
+  (wi-brain-root-from-cwd). An explicit `--root` still wins; a cwd in another repo or a plain folder keeps the
+  registry's root.
 
 ### Added
 

@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -247,6 +248,27 @@ def get(name: str, root: Path | None = None) -> Project:
     if root is None:
         return reg[name]
     return _project(name, raw(root).get(name) or {}, root)
+
+
+def cwd_worktree(project: Project, cwd: str | Path | None = None) -> Path | None:
+    """The git worktree ``cwd`` is in, when it is a linked worktree of the repo ``project``'s root is in (same git
+    common dir, not the project's own checkout), else None: a worktree of another repo (a code repo of the project,
+    say) or a plain folder is never the project's root."""
+    cwd = Path(cwd or os.getcwd())
+    try:
+        top = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                             timeout=5, stdin=subprocess.DEVNULL).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not top:
+        return None
+    top = Path(top).resolve()
+    if top == project.root.resolve():
+        return None
+    a, b = paths.main_checkout(top), paths.main_checkout(project.root)
+    if a is None or b is None or os.path.normcase(str(a.resolve())) != os.path.normcase(str(b.resolve())):
+        return None
+    return top
 
 
 def for_root(root: Path) -> Project:
