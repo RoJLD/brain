@@ -216,6 +216,36 @@ def test_a_big_staged_file_never_hides_a_marker(repo, monkeypatch):
     assert guards.commit_markers(str(repo), [str(repo)], False, [str(repo)])[-1] == "big.yaml:300001"
 
 
+def test_a_folder_that_is_not_yet_a_repo_logs_no_error(repo, tmp_path, monkeypatch):
+    """Review of #79: a commit whose folder does not exist yet when the guard runs (mkdir and git init in the same
+    call), or is no repo, has nothing to read, as for git: no GuardError in errors.log, no engine error event."""
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    whole = [guards.WHOLE_TREE]
+    assert guards.commit_markers(str(tmp_path / "newproj"), whole, True) == []
+    assert guards.commit_markers(str(plain), whole, True, whole) == []
+    for d, command in ((tmp_path, "mkdir newproj && cd newproj && git init && git add . && git commit -m init"),
+                       (plain, 'git commit -m "x"')):
+        assert bash(d, command) is None, command
+    log = paths.ledger_dir() / "errors.log"
+    assert not log.is_file() or "GuardError" not in log.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("name,text,hits", [
+    ("requirements.txt", f"numpy==1.26\n{MID}\nnumpy==2.0\n", ["requirements.txt:2"]),
+    ("constraints.txt", f"pandas>=2.2,<3\n{MID}\n", ["constraints.txt:2"]),
+    ("CHANGES.txt", f"Changes\n{MID}\n", []),        # reST: the title no longer than its underline
+    ("README.md", f"A longer title\n{MID}\n", []),   # Markdown has no such rule
+])
+def test_a_txt_heading_needs_reSTs_shape(name, text, hits):
+    """Review of #79 (finding 43's cost): a .txt file is a data file too, so a bare ======= left under a line longer
+    than it (a half-resolved requirements.txt) is still a marker."""
+    assert markers.scan_text(name, text) == hits
+    diff = f"+++ b/{name}\n@@ -0,0 +1,3 @@\n" + "".join(f"+{line}\n" for line in text.splitlines())
+    assert markers.scan_diff(diff) == hits
+
+
 def test_removing_a_marker_commits(repo):
     (repo / "work.yaml").write_text(CONFLICT, encoding="utf-8")
     run_git(repo, "add", "work.yaml")

@@ -1120,7 +1120,8 @@ LAUNCHERS = {"chroot": ("", ("userspec", "groups"), 1), "nsenter": ("tmuinpUCSGr
              "uv": ("p", ("with", "python", "project", "directory", "env-file", "extra", "group", "package", "index",
                           "from"), 1),
              "poetry": ("C", ("directory",), 1), "pipx": ("", ("spec", "python"), 1), "pdm": ("p", ("project",), 1),
-             "hatch": ("e", ("env",), 1), "rye": ("", (), 1), "npm": ("", ("package", "call", "prefix"), 1),
+             "hatch": ("e", ("env",), 1), "rye": ("", (), 1),
+             "npm": ("w", ("package", "call", "prefix", "workspace"), 1),
              "pnpm": ("CF", ("dir", "filter"), 1), "yarn": ("", ("cwd",), 1), "bun": ("", ("cwd",), 1)}
 LAUNCH_VERBS = {"uv": {"run", "tool"}, "poetry": {"run"}, "pipx": {"run"}, "pdm": {"run"}, "hatch": {"run"},
                 "rye": {"run"}, "npm": {"exec", "x"}, "pnpm": {"exec", "dlx"}, "yarn": {"dlx", "exec"},
@@ -1148,12 +1149,16 @@ def _past_options(prog: str, args: list[str], i: int) -> int:
 
 def _launcher(prog: str, args: list[str]) -> list[str] | None:
     """The words of the program a launcher of LAUNCHERS runs (wsl -e cmd, uv run cmd, npx tool, bun x tool, chroot DIR
-    cmd), a verb's launcher's global options read before its verb."""
+    cmd), a verb's launcher's global options read before its verb. A global option LAUNCHERS does not list may take a
+    value (npm --loglevel silent exec): a word that follows an option and is not the verb is read as its value."""
     if prog not in LAUNCHERS:
         return None
     i = 0
     if prog in LAUNCH_VERBS:
         i = _past_options(prog, args, 0)
+        while 0 < i < len(args) and args[i] not in LAUNCH_VERBS[prog] and args[i - 1].startswith("-") \
+                and "=" not in args[i - 1] and args[i - 1] != "--":
+            i = _past_options(prog, args, i + 1)
         if i >= len(args) or args[i] not in LAUNCH_VERBS[prog]:
             return None
         i += 2 if prog == "uv" and args[i:i + 2] == ["tool", "run"] else 1
@@ -1179,16 +1184,37 @@ def _launched_text(prog: str, args: list[str]) -> tuple[str, str] | None:
 
 
 STDIN_PATHS = ("-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0")   # a script "named" that is stdin
+BASH_VALUES = ("--rcfile", "--init-file")   # bash's long options that take the next word (its short ones: o, O)
+
+
+def _bash_words(args: list[str]) -> tuple[list[str], list[str]]:
+    """(options, operands) of a bash-family shell's ``args``: its options up to the first operand (the script, or -),
+    the values of -o, +o, -O, +O (a cluster ending in one: -eo pipefail), --rcfile and --init-file skipped; what
+    follows the script is the script's."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            return args[:i], args[i + 1:]
+        if a == "-" or not a.startswith(("-", "+")):
+            break
+        i += 2 if a in BASH_VALUES or (not a.startswith("--") and a[-1] in "oO") else 1
+    return args[:i], args[i:]
+
+
+def _bash_short(opts: list[str], letter: str) -> bool:
+    """Whether bash's short option ``letter`` (c, s) is among ``opts``, alone or in a cluster (-ec, -xs)."""
+    return any(o.startswith("-") and not o.startswith("--") and letter in o[1:] for o in opts)
 
 
 def _bash_reads_stdin(prog: str, args: list[str]) -> bool:
     """Whether a bash-family shell, or source and . (bash 3.2's way to run a here-string: source /dev/stdin), reads
-    its commands from stdin: no script named, -, /dev/stdin or /dev/fd/0 named, or -s; never with -c."""
+    its commands from stdin: no script named, -, /dev/stdin or /dev/fd/0 named, or -s; never with -c. An option's
+    value (bash -o pipefail, --rcfile FILE) is no script."""
     if prog in ("source", "."):
         return bool(args[:1]) and args[0] in STDIN_PATHS
-    pos = [a for a in args if not a.startswith(("-", "+")) or a == "-"]
-    return (not pos or pos[0] in STDIN_PATHS or "-s" in args) and not any(
-        a.startswith("-") and not a.startswith("--") and "c" in a for a in args)
+    opts, pos = _bash_words(args)
+    return (not pos or pos[0] in STDIN_PATHS or _bash_short(opts, "s")) and not _bash_short(opts, "c")
 
 
 def _reads_stdin(prog: str, args: list[str], shell: str) -> str | None:
@@ -2401,12 +2427,8 @@ def _runs_substitution(prog: str, args: list[str]) -> bool:
     if prog in ("source", "."):
         return not [a for a in args if not a.startswith("-")]
     if SHELLS.get(prog) == "bash":
-        pos, i = [], 0
-        while i < len(args):
-            a = args[i]
-            i += 2 if a in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file") else 1
-            pos += [] if a.startswith(("-", "+")) else [a]
-        return not pos or any(a.startswith("-") and not a.startswith("--") and "c" in a for a in args)
+        opts, pos = _bash_words(args)   # the same reading as _bash_reads_stdin's
+        return not pos or _bash_short(opts, "c")
     return bool(SCRIPT_READERS.match(prog)) and _script_kind(prog, args) != "file"
 
 
@@ -2442,7 +2464,9 @@ def _source(text: str, cwd: str) -> str:
 def _kit_command(prog: str, args: list[str], d: str) -> tuple[str, str] | None:
     """(check, what) when the simple command adds a plugin, a marketplace or a skill from outside the owner's list:
     claude plugin install NAME@MARKETPLACE (and its --marketplace SOURCE), claude plugin marketplace add SOURCE, skills
-    add (npx, bunx, bun x, pnpm dlx); its --list only lists. claude's global options may come before plugin."""
+    add (npx, bunx, bun x, pnpm dlx); its --list only lists. claude's global options may come before plugin. npm's
+    Windows shims (claude.cmd, claude.ps1, skills.cmd) are the programs they start."""
+    prog = re.sub(r"\.(?:cmd|ps1|bat)$", "", prog)
     if re.sub(r"(?<=.)@[^/]*$", "", prog) == "skills" and _first(args)[:1] == ["add"]:
         if any(a in SKILLS_READS for a in args):
             return None
@@ -2943,8 +2967,12 @@ def commit_markers(repo: str, specs: list[str], every_tracked: bool, untracked: 
     """The conflict markers (brain.markers) a commit in ``repo`` would record: the added lines of the index, plus
     ``specs`` (paths a git add before it stages, or the commit names) or every tracked change (commit -a), and the
     untracked files a git add stages (``untracked``: its paths; default ``specs``). During a merge, a line counts only
-    when it is new against every parent. What git cannot show is a GuardError (logged), never a silent pass."""
+    when it is new against every parent. What git cannot show is a GuardError (logged), never a silent pass; a folder
+    that is not yet a repo when the guard runs (missing, or its git init later in the call) has nothing to read, as
+    for git itself."""
     untracked = specs if untracked is None else untracked
+    if not os.path.isdir(repo) or _git_out(repo, "rev-parse", "--is-inside-work-tree").strip() != "true":
+        return []
     hits = _added_markers(repo, True, [])
     if specs or every_tracked:
         hits += _added_markers(repo, False, specs)

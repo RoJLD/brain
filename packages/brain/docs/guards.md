@@ -96,10 +96,10 @@ shell` refuses, in a Bash, PowerShell or Terminal panel call, through wrappers, 
 
 | Check | Shapes |
 |---|---|
-| `download` | a download piped, through any filter, to a shell or an interpreter reading stdin (`curl ... \| sh`, `wget -qO- ... \| bash`, `curl ... \| python3 -`, `curl ... \| bash /dev/stdin`, `curl ... \| source /dev/stdin`, `curl ... \| ssh host`, `iwr ... \| iex`, `irm ... \| iex`, the pipe continued on the next line too); a download in a process substitution a shell or `source` runs as its script (`bash <(curl ...)`, `. <(wget -qO- ...)`); a PowerShell statement where `iex` meets a download (`iex (iwr ...)`, a WebClient's `DownloadString`, a `$( )` in
+| `download` | a download piped, through any filter, to a shell or an interpreter reading stdin (`curl ... \| sh`, `wget -qO- ... \| bash`, `curl ... \| python3 -`, `curl ... \| bash /dev/stdin`, `curl ... \| bash -o pipefail` (an option's value, `-o`, `-O`, `--rcfile`, is no script), `curl ... \| source /dev/stdin`, `curl ... \| ssh host`, `iwr ... \| iex`, `irm ... \| iex`, the pipe continued on the next line too); a download in a process substitution a shell or `source` runs as its script (`bash <(curl ...)`, `. <(wget -qO- ...)`); a PowerShell statement where `iex` meets a download (`iex (iwr ...)`, a WebClient's `DownloadString`, a `$( )` in
 its string, which PowerShell expands first: `iex "& { $(irm ...) }"`); `sh -c`, `eval` or a here-string whose text is a download's output, quoted or not (`sh -c "$(curl ...)"`, `eval $(curl ...)`, `bash <<<"$(curl ...)"`, `source /dev/stdin <<< "$(curl ...)"`) |
-| `plugin` | `claude plugin install NAME@MARKETPLACE` whose marketplace is not in the owner's list, or with no marketplace named, and its `--marketplace SOURCE` whose source is not; `claude plugin marketplace add SOURCE` whose source is not; claude's global options before `plugin` (`claude --model opus plugin ...`) and the options' values (`--config`, `--scope`, `--sparse a b`) never shift what is checked |
-| `skills` | `skills add`, through `npx`, `bunx`, `bun x`, `pnpm dlx`, `yarn dlx` or `npm exec`, a launcher's global options before its verb too (`pnpm --silent dlx`) |
+| `plugin` | `claude plugin install NAME@MARKETPLACE` (`claude.exe`, and npm's Windows shims `claude.cmd`, `claude.ps1`, too) whose marketplace is not in the owner's list, or with no marketplace named, and its `--marketplace SOURCE` whose source is not; `claude plugin marketplace add SOURCE` whose source is not; claude's global options before `plugin` (`claude --model opus plugin ...`) and the options' values (`--config`, `--scope`, `--sparse a b`) never shift what is checked |
+| `skills` | `skills add`, through `npx`, `bunx`, `bun x`, `pnpm dlx`, `yarn dlx` or `npm exec`, a launcher's global options before its verb too (`pnpm --silent dlx`, `npm -w pkg exec`; a word after an option the guard does not know, before the verb, is read as its value: `npm --loglevel silent exec`); `skills.cmd add` too |
 
 The owner's list is config.json `adapters.claude.sources`: a marketplace name (no slash) for `plugin install`, a
 source (`owner/repo`, a git URL, a folder from the brain's root) for `marketplace add`. The brain's own marketplace,
@@ -136,13 +136,17 @@ loads it, and a stale merge's generated views still pass the graph check. Two pl
   (renames are found whatever `diff.renames` says), only the files whose changes hold a marker-like line are read
   (`git diff -G`), so a big data file never cuts the diff, and an untracked file is read whole, whatever its size.
   What git cannot show (it fails, times out, or prints over 20 MB) is an error in ledger/errors.log, never a silent
-  pass. The reason names the file and line.
+  pass; a folder that is no git worktree when the guard runs (missing, or its `git init` later in the same call:
+  `mkdir p && cd p && git init && git add . && git commit`) has nothing to read and passes, as for git. The reason
+  names the file and line.
 - `brain check` (and `brain refresh`): it fails first, before reading anything else, on a store file (its nodes,
   edges and generated views), a journal, a decision log or a record holding one.
 
 A setext heading (`=======` under a line of text, in a file with no other marker) in Markdown (`.md`, `.markdown`,
 `.mdx`, Quarto's `.qmd`, R Markdown's `.Rmd`) or reStructuredText (`.rst`, `.txt`), its path holding a space or not,
-and a file under a `fixtures`, `fixture` or `testdata` folder pass. Elsewhere (a Python docstring), underline a title
+and a file under a `fixtures`, `fixture` or `testdata` folder pass. A `.txt` file is often data (`requirements.txt`,
+`constraints.txt`), so there only reStructuredText's shape passes: a title no longer than its underline (seven
+characters at most); a bare `=======` left under `numpy==1.26` is still a marker, one under `six` is not. Elsewhere (a Python docstring), underline a title
 with eight `=` or more. A conflict quoted in a fenced code block is a marker too. Override, the owner's:
 `BRAIN_GUARD_ALLOW=markers`.
 

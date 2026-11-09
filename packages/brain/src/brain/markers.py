@@ -5,7 +5,8 @@ places look for them: the commit guard (brain.guards, check markers) in the adde
 ``brain check`` in a store's files, its journals, its decision logs and its records, which every brain command loads
 (a YAML file with a marker breaks them all, and the generated views of a stale merge pass the graph check). Two shapes
 pass: a Markdown or reStructuredText setext heading (``=======`` under a line of text, in a file with no other
-marker; .md, .markdown, .mdx, .qmd, .Rmd, .rst and .txt) and a file under a test fixtures folder (``fixtures``, ``fixture``, ``testdata``), where a marker is the data a test reads.
+marker; .md, .markdown, .mdx, .qmd, .Rmd, .rst, and .txt when the text is no longer than the underline, reST's rule)
+and a file under a test fixtures folder (``fixtures``, ``fixture``, ``testdata``), where a marker is the data a test reads.
 """
 
 from __future__ import annotations
@@ -29,9 +30,13 @@ def exempt(path: str) -> bool:
 
 def heading(line: str, previous: str | None, path: str) -> bool:
     """Whether the bare ``=======`` ``line`` is a setext heading's underline: in a Markdown or reStructuredText file,
-    under a line of text (``previous``; None at the file's top) that is no marker."""
-    return path.lower().endswith(SETEXT) and previous is not None and bool(previous.strip()) \
-        and not MARKER.match(previous)
+    under a line of text (``previous``; None at the file's top) that is no marker. In a .txt file, where data files
+    live too (requirements.txt, constraints.txt), only reStructuredText's shape counts: a title no longer than its
+    underline, so a bare ======= left under ``numpy==1.26`` is still a marker."""
+    if not (path.lower().endswith(SETEXT) and previous is not None and previous.strip()
+            and not MARKER.match(previous)):
+        return False
+    return not path.lower().endswith(".txt") or len(previous.strip()) <= len(line.strip())
 
 
 def _kept(found: list[tuple[str, int, bool]], sided: set[str]) -> list[str]:

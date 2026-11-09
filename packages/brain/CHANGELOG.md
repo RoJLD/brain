@@ -31,6 +31,13 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
     TAB) or C-quoted keeps its setext heading; `.qmd`, `.Rmd` and `.txt` headings pass; only the files whose changes
     hold a marker-like line are read (`git diff -G`), an untracked file is read whole, and a diff git cannot show
     whole is an error in `errors.log`, never a silent pass.
+  - After the review of #79: a commit in a folder that is no git worktree when the guard runs (missing, or its `git
+    init` later in the call) passes with no `errors.log` entry, as on main; a `.txt` heading passes only under a
+    title no longer than its underline (reST's rule), so a bare `=======` left in `requirements.txt` is still
+    refused; bash's option values are no script (`curl ... | bash -o pipefail /dev/stdin`, `| bash -o pipefail`, `|
+    bash -O extglob`, `| bash -eo pipefail` refused; a script's own `-s` no longer reads as bash's); a launcher's
+    global option with a value is skipped before its verb (`npm -w pkg exec`, `npm --loglevel silent exec`); npm's
+    Windows shims `claude.cmd`, `claude.ps1` and `skills.cmd` are claude and skills.
 
 ## 0.2.7 — 2026-11-09
 

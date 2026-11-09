@@ -460,7 +460,7 @@ Two guards keep what a session brings in and what it records clean (the runbook:
   -c "$(curl ...)"`, `eval $(curl ...)`, `bash <<<"$(curl ...)"`, `iwr ... | iex`, `iex (irm ...)`), `claude plugin
   install` (and its `--marketplace`) and `claude plugin marketplace add` from a source outside the owner's list
   (config.json `adapters.claude.sources`; the brain's own marketplace always passes) and `skills add` (`npx`, `bunx`,
-  `bun x`, `pnpm dlx`) are refused, each an action for the owner's queue with its exact command (`brain queue add
+  `bun x`, `pnpm dlx`, `npm -w pkg exec`; npm's `claude.cmd` and `skills.cmd` shims too) are refused, each an action for the owner's queue with its exact command (`brain queue add
   --kind action --guard <ref>`). A download to a file (`curl -o`) or read as data (`python3 analyze.py <(curl ...)`)
   passes; what the owner types in their own terminal is never seen. (`brain.guards`)
 - **Conflict markers** (check `markers`): a git commit, or a merge, rebase or cherry-pick `--continue`, that adds
@@ -468,7 +468,9 @@ Two guards keep what a session brings in and what it records clean (the runbook:
   `-a`'s, the paths the commit names, an earlier `git add`'s (`-A` or `-u` with no path: the whole worktree), and,
   during a merge, only the lines new against every parent; `brain check` fails on a store, journal, decision log or
   record file that holds one. A Markdown or reST setext heading (`=======` under a line of text; `.md`, `.qmd`, `.Rmd`,
-  `.rst`, `.txt`) and a file under a `fixtures` folder pass. (`brain.markers`)
+  `.rst`, and `.txt` under a title no longer than the underline, so a half-resolved `requirements.txt` is still
+  refused) and a file under a `fixtures` folder pass; a commit in a folder that is not yet a repo passes, as for git.
+  (`brain.markers`)
 
 Two of the PreToolUse hooks keep the owner's say over how sessions run (the runbook: [`docs/guards.md`](docs/guards.md)):
 
