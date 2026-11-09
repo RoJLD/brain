@@ -14,6 +14,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
   config. A log entry both sides hold (a squash-merged or cherry-picked one, an add/add) is written once, not twice.
   The CHANGELOG union keeps a bullet both added once, with its continuation lines, and never drops a line of a
   released section.
+- An exec event's end is never before its start (`wi-brain-selftime-end-before-start`): both come from one clock,
+  the end clamped to the start; `datetime.now()` against a start rounded up across a millisecond put it 1 ms before,
+  now and then, and the schema refused the event (a test failed on CI with `event.end: before start`).
 
 ## 0.2.7 — 2026-11-09
 

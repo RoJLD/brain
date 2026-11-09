@@ -412,7 +412,7 @@ def test_installer_step(repo, tmp_path, python, apply):
         assert "(to set (--apply))" in res.stdout and driver.returncode == 1
     else:
         assert "(set)" in res.stdout
-        assert driver.stdout.strip() == f'"{(bin_ / "brain.exe").as_posix()}" merge-driver run %O %A %B %P %L'
+        assert driver.stdout.strip() == md.command(str(bin_ / "brain.exe"))   # with its git merge-file fallback
 
 
 def test_yaml_by_id_both_add_props_to_one_entry():
