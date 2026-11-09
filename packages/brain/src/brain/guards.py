@@ -1009,16 +1009,15 @@ def writes(words: list[str], cwd: str, shell: str = "bash"):
 def _nested(prog: str, args: list[str], cwd: str, shell: str):
     """(the command a shell runs from its arguments, the shell that reads it: bash, ps or cmd, its folder) for bash -c,
     pwsh -Command and -EncodedCommand ("" when it cannot be read), cmd /c and iex; None for another program, a script
-    (-File) or no command."""
+    (-File) or no command. bash -c's command is its first operand, read past the options' values by _bash_words (bash
+    -euo pipefail -c CMD, bash -co pipefail CMD, bash --rcfile FILE -c CMD)."""
     if not (prog in SHELLS or (shell == "ps" and prog in ("iex", "invoke-expression"))):
         return None
     inner, sub = None, SHELLS.get(prog, "ps")
     if sub == "bash":
-        i = 0
-        while i < len(args) and args[i][:1] in "-+" and args[i] not in ("-", "--"):
-            inner = "" if not args[i].startswith("--") and "c" in args[i] else inner
-            i += 2 if args[i] in ("-o", "+o", "-O", "+O") else 1
-        inner = (args[i] or None) if inner == "" and i < len(args) else None
+        opts, pos = _bash_words(args)   # the option values skipped as bash reads them: -euo pipefail, --rcfile FILE
+        pos = pos[1:] if pos[:1] == ["-"] else pos   # bash -c - CMD: a lone - ends the options, like --
+        inner = (pos[0] or None) if pos and _bash_short(opts, "c") else None
     elif sub == "cmd":
         k = next((i for i, a in enumerate(args) if a.lower().lstrip("/") in ("c", "k")), None)
         inner = None if k is None else " ".join(args[k + 1:]) or None

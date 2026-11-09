@@ -48,6 +48,10 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
     Windows shims `claude.cmd`, `claude.ps1` and `skills.cmd` are claude and skills, and the launchers' own
     (`npx.cmd`, `pnpm.cmd`, `npx.ps1`, `bunx.cmd`) unwrap too: `npx.cmd skills add` and `pnpm.cmd dlx skills
     add` are refused (`_prog` reads a shim of a launcher, claude or skills; another script keeps its name).
+  - After the second skeptic round of #79: every check reads `bash -c`'s command past the options' values too, as
+    bash does (`bash -euo pipefail -c '...'`, `bash -co pipefail '...'`, `bash --rcfile FILE -c '...'`, `bash -c --
+    '...'`): `bash -euo pipefail -c 'curl ... | sh'`, `... -c 'npx skills add ...'` and a production write behind
+    `-euo pipefail` were not seen.
 - **The answers' lane, the rest of the review of #19** (wi-brain-answers-fixes). `brain record ddr` applies the
   one-writer rule to an answer it writes (`--id ID --answer/--other`, or a `--file` that adds or changes one): in an
   agent's session only an answer its own question tool captured (finding 9). `brain decision defaulted --apply` and

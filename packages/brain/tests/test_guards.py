@@ -284,6 +284,7 @@ SHELL_WRITES_REFUSED = [
     ("lab", "python -c \"import os; [os.remove(f) for f in os.listdir('.')]\""),
     ("plat", "node -e \"require('fs').writeFileSync('{lab}/n.json', '{{}}')\""),
     ("plat", "bash -c 'rm -f {lab}/x'"), ("lab", "bash -lc \"echo x > b\""), ("plat", "sh -c 'cd {lab} && touch x'"),
+    ("plat", "bash -euo pipefail -c 'rm -f {lab}/x'"), ("lab", "bash -co pipefail \"echo x > b\""),
     ("plat", "pwsh -NoProfile -Command \"Set-Content -Path {lab_win}\\x -Value y\""),
     ("lab", "powershell -EncodedCommand {enc}"), ("lab", "cmd //c \"del /q x && echo y > z\""),
 ]
