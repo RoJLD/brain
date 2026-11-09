@@ -314,7 +314,8 @@ Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md
   are unioned in date order, the graph's edges and a CHANGELOG's Unreleased section are unioned, the other graph YAML
   is merged by id, anything else as git would. The installer defines it in the personal brain's git config
   (`brain merge-driver install --apply`); `brain merge-driver replay` merges a repo's past merges again with and
-  without it.
+  without it. A driver that cannot run falls back to git's own `merge-file`, so ours is never left without its
+  conflict markers (`brain.mergedriver`).
 - **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1

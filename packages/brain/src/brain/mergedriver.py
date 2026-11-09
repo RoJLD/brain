@@ -314,6 +314,13 @@ def _text(lines: list[str]) -> str:
     return "\n".join(x.rstrip("\r\n") for x in lines).strip()
 
 
+def _unshared(lo: list[str], so: list[list[str]], lt: list[str], st: list[list[str]]) -> tuple:
+    """Theirs' lead lines and dated sections without what ours holds already: diff3 keeps what both sides added
+    alike inside the hunk (an add/add, a squash-merged or cherry-picked entry), which is not written twice."""
+    mine = {_text(s) for s in so}
+    return ([] if _text(lt) == _text(lo) else lt), [s for s in st if _text(s) not in mine]
+
+
 def _blocks(lines: list[str]) -> list[list[str]]:
     """Lines cut into blocks: an entry line with the lines that continue it (indented or not an entry, not blank);
     every other line a block of its own."""
@@ -362,11 +369,7 @@ def log(base: str, ours: str, theirs: str, size: int = 7, style: str = "merge") 
             continue
         united = True
         (lo, so), (lt, st) = _sections(seg.ours), _sections(seg.theirs)
-        # diff3 keeps what both sides added alike inside the hunk (an add/add, a squash-merged or cherry-picked
-        # entry): theirs' copy of a section or of the lead lines ours has already is not written twice
-        mine = {_text(s) for s in so}
-        st = [s for s in st if _text(s) not in mine]
-        lt = [] if _text(lt) == _text(lo) else lt
+        lt, st = _unshared(lo, so, lt, st)
         # stable both ways: ours first on a tie
         secs = sorted(so + st, key=lambda s: DATED.match(s[0]).group(1), reverse=newest_first)
         if not newest_first:
