@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from .. import answers, batch, config, decisions, defaults, notify, records
-from ._common import _notify_project, _now, _project, _queue_changed, _scope, _store, _text, _whole
+from ._common import _notify_project, _now, _on_main, _project, _queue_changed, _scope, _store, _text, _whole
 
 ORDER = 90   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 90   # its usage lines' place in brain --help's epilog
@@ -25,8 +25,9 @@ USAGE = """\
                  session's question tool captured (each tied to the DDR brain decision batch printed), recorded in a
                  worktree, one PR, merged with its retries; in an agent's session an answer relayed by a message is
                  never recorded (apply it, then ack)
-  brain decision defaulted [--all] [--apply] [--seen [ID...]] [--json]   the review list: the decisions taken by
-                 default, the provisional ones, the reversed ones (reverse one: answer ID <option> --again)
+  brain decision defaulted [--all] [--apply] [--seen [ID...]] [--on-main] [--json]   the review list: the decisions
+                 taken by default, the provisional ones, the reversed ones (reverse one: answer ID <option> --again);
+                 --apply and --seen never write a main checkout on main unless --on-main
   brain decision batch [--project P | --all] [--size 4] [--zen [--minutes 5]] [--json]   the zen mode: the pending
                  decisions in batches for the question tool (AskUserQuestion: up to 4 questions, a header of 12
                  characters, 2 to 4 options, the recommended one first and marked "(Recommandé)"), the blocking ones
@@ -133,6 +134,25 @@ def _answers(value: str) -> str:
     return value
 
 
+def _capture_line(c: dict) -> str:
+    """A captured answer as --captured lists it, the refused ones marked (never recorded, --again included)."""
+    why = answers.refused(c)
+    return (f"  {c['ddr']} ({c.get('header')}): {c['answer']}" + (f" — notes: {c['notes']}" if c.get("notes") else "")
+            + (f" — refused: {why}" if why else ""))
+
+
+def _left_lines(out: dict) -> list[str]:
+    """What --captured did not write, each kind apart (the retired ones are never recorded, --again included; only
+    the ones no longer pending are --again's), then the merge's log."""
+    lines = [f"retired, never recorded: {'; '.join(out['refused'])}"] if out["refused"] else []
+    if out["skipped"]:
+        lines.append(f"not pending, left: {', '.join(out['skipped'])} (--again replaces an answer)")
+    if out["missing"]:
+        lines.append(f"not on the default branch yet, left captured: {', '.join(out['missing'])} (record them once "
+                     "the branch that asked them is merged)")
+    return lines + [f"  {line}" for line in out["log"]]
+
+
 def cmd_answer_captured(args, root: Path) -> int:
     """``brain decision answer --captured``: this session's captured answers, recorded in one PR (brain.answers)."""
     if args.id or args.choice or args.other or args.notes or args.batch:
@@ -149,8 +169,7 @@ def cmd_answer_captured(args, root: Path) -> int:
         print(f"no captured answer to record for {project.name}" + (f" (session {session})" if session else ""))
         return 0
     for c in caps:
-        print(f"  {c['ddr']} ({c.get('header')}): {c['answer']}" + (f" — notes: {c['notes']}" if c.get("notes")
-                                                                     else ""))
+        print(_capture_line(c))
     if args.dry_run:
         print(f"dry run: {len(caps)} answer(s) to record in one PR")
         return 0
@@ -161,13 +180,8 @@ def cmd_answer_captured(args, root: Path) -> int:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
     print(f"recorded {len(out['recorded'])} answer(s) on {out['branch']}: {out['pr']}")
-    if out["skipped"]:
-        print(f"not pending, left: {', '.join(out['skipped'])} (--again replaces an answer)")
-    if out["missing"]:
-        print(f"not on the default branch yet, left captured: {', '.join(out['missing'])} (record them once the "
-              "branch that asked them is merged)")
-    for line in out["log"]:
-        print(f"  {line}")
+    for line in _left_lines(out):
+        print(line)
     if not out["merged"]:
         print(f"not merged yet: {out['pr']} (worktree {out['worktree']})")
     else:   # the hooks read the main checkout's queue: the other sessions see the answers once it is pulled
@@ -183,23 +197,72 @@ def cmd_defaulted(args, root: Path) -> int:
     if args.seen is not None and answers.agent_session():
         raise decisions.QueueError(f"--seen is {config.name_of()}'s own note that they read the defaults: from their "
                                    "terminal or the cockpit, not an agent's session")
-    out = []
-    for p in scope:
-        if args.apply:
-            for ddr_id in defaults.finalize(p.root, now):
-                print(f"{p.name}: {ddr_id} taken by default")
-        if args.seen is not None:
-            done = defaults.seen(p.root, args.seen, at=now, session=args.session or "")
-            print(f"{p.name}: reviewed {len(done)}: {', '.join(done) or 'none'}")
-        if args.apply or args.seen is not None:
-            decisions.write_view(p.root, p.name)
-        out.append({"project": p.name, **defaults.review(p.root, now)})
+    if args.apply or args.seen is not None:
+        _defaulted_writes(args, [p for p in scope if _writable(args, p)], now)
+    out = [{"project": p.name, **defaults.review(p.root, now)} for p in scope]
     if args.json:
         print(json.dumps(out if args.all else (out[0] if out else {}), ensure_ascii=False, indent=1))
         return 0
     for d in out:
         print("\n".join(defaults.render(d["project"], d)))
     return 0
+
+
+def _writable(args, p) -> bool:
+    """--apply and --seen write a project's records and queue view: never a main checkout on main or master unless
+    --on-main (brain refresh's rule; a later pull there would abort over the records changed in place)."""
+    branch = "" if args.on_main else _on_main(p.root)
+    if branch:
+        print(f"{p.name}: main checkout on {branch}: not written (run it from a worktree, or --on-main)")
+    return not branch
+
+
+def _defaulted_writes(args, scope: list, now: str) -> None:
+    """--apply, then --seen, in each project of ``scope``; every --seen id is found and checked in every project
+    before any is marked; the queue views are rewritten even when a check refuses (the defaults taken stay)."""
+    try:
+        for p in scope if args.apply else []:
+            for ddr_id in defaults.finalize(p.root, now):
+                print(f"{p.name}: {ddr_id} taken by default")
+        if args.seen is not None:
+            for p, ids in _seen_plan(args, scope):
+                done = defaults.seen(p.root, ids, at=now, session=args.session or "", exact=args.all)
+                print(f"{p.name}: reviewed {len(done)}: {', '.join(done) or 'none'}")
+    finally:
+        for p in scope:
+            decisions.write_view(p.root, p.name)
+
+
+def _holds(root: Path, ddr_id: str) -> bool:
+    try:
+        decisions.find(root, ddr_id, exact=True)
+    except decisions.QueueError:
+        return False
+    return True
+
+
+def _seen_plan(args, scope: list) -> list[tuple]:
+    """(project, the ids --seen names there): with no id, every project (each default not reviewed yet); with --all,
+    each id in the one project that holds a DDR of that exact id (a DDR id is its project's own: the part of an id
+    one project takes would name another DDR in each). Every id is found and checked before any is marked (what
+--apply took before stays taken)."""
+    if not args.seen or not args.all:
+        plan = [(p, list(args.seen or [])) for p in scope]
+    else:
+        where: dict[str, tuple] = {}
+        for ddr_id in args.seen:
+            hits = [p for p in scope if _holds(p.root, ddr_id)]
+            if len(hits) != 1:
+                raise decisions.QueueError(f"{ddr_id}: " + (
+                    f"in several projects ({', '.join(p.name for p in hits)}): --project P --seen ID" if hits else
+                    "no project written here holds a DDR of that id (--all takes full ids; a main checkout is not "
+                    "written without --on-main)") + ": nothing marked")
+            where.setdefault(hits[0].name, (hits[0], []))[1].append(ddr_id)
+        plan = list(where.values())
+    for p, ids in plan:
+        if ids:
+            defaults.seen_targets(p.root, ids, exact=args.all)
+    return plan
 
 
 def cmd_batch(args, root: Path) -> int:
@@ -302,7 +365,10 @@ def register(sub, ctx) -> None:
     dd = de.add_parser("defaulted", help=f"the review list: the decisions taken by default, for {who} to take note")
     dd.add_argument("--all", action="store_true", help="every registered project")
     dd.add_argument("--apply", action="store_true", help="record the defaults due now (brain refresh does it too)")
-    dd.add_argument("--seen", nargs="*", metavar="ID", help=f"{who} reviewed them (every one listed when no id)")
+    dd.add_argument("--seen", nargs="*", metavar="ID", help=f"{who} reviewed them (every one listed when no id; "
+                                                            "with --all, full ids, each in the project that holds it)")
+    dd.add_argument("--on-main", action="store_true", help="--apply and --seen write a main checkout on main or "
+                                                           "master too (as brain refresh --on-main)")
     dd.add_argument("--session")
     dd.add_argument("--at")
     dd.add_argument("--json", action="store_true")

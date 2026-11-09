@@ -274,3 +274,111 @@ def test_review_seen_twice_on_a_reversed_default_is_a_no_op(store):
     decisions.answer(root, "label-wording", ["Long"], at="2026-11-03T10:00:00Z", by="Ada", again=True)
     assert defaults.seen(root, ["label-wording"], at="2026-11-03T12:00:00Z")
     assert defaults.seen(root, ["label-wording"], at="2026-11-03T13:00:00Z") == ["ddr-2026-11-01-label-wording"]
+
+
+# --- review of #19, the findings left for after the command registry ---
+
+def test_32_apply_and_seen_never_write_a_main_checkout_unless_on_main(registry, monkeypatch, capsys):
+    """A main checkout on main is check-only for brain refresh: defaulted --apply and --seen wrote its records and
+    queue view in place, and a later pull there aborted over them."""
+    import shutil
+
+    from conftest import GIT_ENV, git_init, run_git
+    if not shutil.which("git"):
+        pytest.skip("git not available")
+    for k, v in GIT_ENV.items():
+        monkeypatch.setenv(k, v)
+    root = registry
+    _ask(root, "Label wording", low_stakes=True)
+    git_init(root)
+    run_git(root, "add", "-A")
+    run_git(root, "commit", "-qm", "init")
+    base = ["--project", "demo", "decision", "defaulted", "--at", AFTER]
+    for argv in (base + ["--apply"], ["decision", "defaulted", "--all", "--apply", "--at", AFTER], base + ["--seen"]):
+        assert cli.main(argv) == 0
+        assert "demo: main checkout on main: not written (run it from a worktree, or --on-main)" in \
+            capsys.readouterr().out
+        assert run_git(root, "status", "--porcelain") == ""   # nothing changed in place
+    assert decisions.find(root, "label-wording")[1]["status"] == "pending"
+    assert cli.main(base + ["--apply", "--on-main"]) == 0
+    assert "demo: ddr-2026-11-01-label-wording taken by default" in capsys.readouterr().out
+    assert cli.main(base + ["--seen", "--on-main"]) == 0
+    assert decisions.find(root, "label-wording")[1]["default"]["reviewed"] == {"at": AFTER}
+
+
+@pytest.fixture
+def two(tmp_path, monkeypatch):
+    """Two registered projects, alpha then beta, each with its own DDRs."""
+    roots = {}
+    for name in ("alpha", "beta"):
+        roots[name] = tmp_path / name
+        (roots[name] / "records" / "ddr").mkdir(parents=True)
+        (roots[name] / "notes").mkdir()
+    reg = tmp_path / "brain" / "projects.yaml"
+    reg.parent.mkdir()
+    reg.write_text("".join(f"{n}: {{root: {r.as_posix()}}}\n" for n, r in roots.items()), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    monkeypatch.setattr(graph, "research_graph_json", lambda *a: None)
+    return roots
+
+
+def test_33_all_seen_marks_each_full_id_in_the_project_that_holds_it(two, capsys):
+    alpha, beta = two["alpha"], two["beta"]
+    _ask(alpha, "Label wording extra", low_stakes=True)   # its id contains beta's
+    _ask(alpha, "Plain wording")
+    _ask(beta, "Label wording", low_stakes=True)
+    for root in (alpha, beta):
+        defaults.finalize(root, AFTER)
+    base = ["decision", "defaulted", "--all", "--at", AFTER, "--seen"]
+    assert cli.main(base + ["label-wording"]) == 1   # a part of an id: it would name a different DDR in each
+    assert "label-wording: no project written here holds a DDR of that id" in capsys.readouterr().err
+    assert cli.main(base + ["ddr-2026-11-01-label-wording", "ddr-2026-11-01-plain-wording"]) == 1
+    assert "plain-wording: not decided by default" in capsys.readouterr().err
+    for root in (alpha, beta):   # nothing marked in any project
+        assert all("reviewed" not in d["default"] for _, d in decisions.load(root) if d.get("default"))
+    assert cli.main(base + ["ddr-2026-11-01-label-wording"]) == 0   # beta's, although alpha comes first
+    out = capsys.readouterr().out
+    assert "beta: reviewed 1: ddr-2026-11-01-label-wording" in out and "alpha: reviewed" not in out
+    assert decisions.find(beta, "ddr-2026-11-01-label-wording")[1]["default"]["reviewed"] == {"at": AFTER}
+    assert "reviewed" not in decisions.find(alpha, "label-wording-extra")[1]["default"]
+    assert (alpha / "notes" / "decision_queue.md").is_file() and (beta / "notes" / "decision_queue.md").is_file()
+
+
+def test_33_apply_then_a_refused_seen_id_keeps_the_defaults_taken_and_marks_none(registry, capsys):
+    """The check covers the --seen ids only (as the README and the CHANGELOG say): --apply has taken the defaults
+    due before an id is refused, and they stay taken; no id is marked."""
+    root = registry
+    _ask(root, "Label wording", low_stakes=True)
+    _ask(root, "Plain wording")
+    argv = ["--project", "demo", "decision", "defaulted", "--at", AFTER, "--apply", "--seen", "label-wording",
+            "plain-wording"]
+    assert cli.main(argv) == 1
+    assert "plain-wording: not decided by default" in capsys.readouterr().err
+    ddr = decisions.find(root, "label-wording")[1]
+    assert ddr["status"] == "answered" and ddr["answer"]["by"] == "default"   # taken by --apply, kept
+    assert "reviewed" not in ddr["default"]   # but not marked
+    assert "## Answered, to integrate (1)" in (root / "notes" / "decision_queue.md").read_text(encoding="utf-8")
+
+
+def test_35_the_refresh_that_takes_a_default_writes_the_records_graph_after_it(registry, monkeypatch, capsys):
+    root = registry
+    ddr = _ask(root, "Label wording", low_stakes=True)   # asked 2026-11-01: its deadline has passed
+    monkeypatch.setattr(graph, "research_graph", lambda *a: 0)
+    assert cli.main(["--project", "demo", "sync", "--offline"]) == 0
+    assert f"{ddr['id']}: taken by default" in capsys.readouterr().out
+    nodes = yaml.safe_load((root / "notes" / "graph" / "nodes" / "_generated_records.yaml").read_text(encoding="utf-8"))
+    node = next(n for n in nodes if n["id"] == ddr["id"])
+    assert node["status"] == "answered"   # not the pending of the state before the default
+
+
+def test_35_a_sync_that_fails_after_taking_a_default_still_rewrites_the_queue_view(registry, monkeypatch, capsys):
+    """The defaults are taken before the graph sync: when that sync fails, the DDRs are already answered by default,
+    so the queue view is rewritten anyway rather than left showing them pending until the next refresh."""
+    root = registry
+    ddr = _ask(root, "Label wording", low_stakes=True)
+    monkeypatch.setattr(graph, "research_graph", lambda *a: 1)   # research_graph sync --write fails
+    assert cli.main(["--project", "demo", "sync", "--offline"]) == 1
+    assert f"{ddr['id']}: taken by default" in capsys.readouterr().out
+    assert decisions.find(root, "label-wording")[1]["status"] == "answered"
+    view = (root / "notes" / "decision_queue.md").read_text(encoding="utf-8")
+    assert "## Answered, to integrate (1)" in view

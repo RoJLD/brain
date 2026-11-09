@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .. import actions, backfill, decisions, graph, paths, records, transcript
+from .. import actions, answers, backfill, decisions, graph, paths, records, transcript
 from ._common import _now, _store
 
 ORDER = 10   # its place in brain --help's list of commands (brain.commands)
@@ -15,6 +15,7 @@ USAGE = """\
   brain record ar   --import [--session ID] [--since DATE] | --from-transcript PATH | --session ID --kind K ...
   brain record ddr  --file DDR.yaml | --title T --question Q --option "label: consequences"... --why W ...
                     | --id ID [--answer LABEL]... [--other TEXT] [--read] [--applied WHERE]... | --import
+                    (an answer, by --id or in a --file: in an agent's session only one its question tool captured)
   brain record backfill [--since DATE] [--until DATE] [--quiet-hours N] [--update] [--no-subagents] [--no-ledger]
                     [--dry-run]   the SRs and ARs of every transcript on this machine (pushes, PRs, the commits
                     the repos' history confirms, the ledger's live captures); a rerun writes nothing new
@@ -105,6 +106,24 @@ def cmd_record_backfill(args, root: Path) -> int:
 _parse_option = decisions.parse_option
 
 
+def _one_writer(ddr: dict, before: dict | None) -> None:
+    """The answers' one-writer rule (brain.answers.refusal) on an answer this command writes: in an agent's session,
+    only one this session's question tool captured; an answer the record already held passes as it is."""
+    ans = ddr.get("answer") if isinstance(ddr, dict) and isinstance(ddr.get("answer"), dict) else None
+    if not ans or ans == (before or {}).get("answer"):
+        return   # no answer written (a record that is no mapping fails its schema later)
+    why = answers.refusal(str(ddr.get("id") or ""), list(ans.get("choices") or []), str(ans.get("other") or ""))
+    if why:
+        raise SystemExit(f"brain: {why}")
+
+
+def _existing(root: Path, ddr) -> dict | None:
+    """The record a DDR read from --file replaces, None when there is none."""
+    ddr_id = ddr.get("id") if isinstance(ddr, dict) else None
+    f = root / records.RECORDS_DIR / "ddr" / f"{ddr_id}.yaml"
+    return graph._yaml().safe_load(f.read_text(encoding="utf-8")) if ddr_id and f.is_file() else None
+
+
 def cmd_record_ddr(args, root: Path) -> int:
     yaml = graph._yaml()
     if args.import_:
@@ -124,6 +143,7 @@ def cmd_record_ddr(args, root: Path) -> int:
             if args.other:
                 ddr["answer"]["other"] = args.other
             ddr["status"] = "answered"
+            _one_writer(ddr, None)
         if args.read:
             ddr["read"] = {"at": now, "session": args.session or "unknown"}
         if args.applied:
@@ -154,6 +174,7 @@ def cmd_record_ddr(args, root: Path) -> int:
         links = {k: v for k, v in {"adrs": args.adr, "items": args.about_item, "specs": args.spec}.items() if v}
         if links:
             ddr["links"] = links
+    _one_writer(ddr, _existing(root, ddr))
     if args.dry_run:
         print(records._dump_yaml(records.validate("ddr", ddr)))
         return 0
@@ -224,8 +245,10 @@ def register(sub, ctx) -> None:
     dd.add_argument("--adr", action="append", help="ADR id the answer went to (repeatable)")
     dd.add_argument("--about-item", action="append", help="WorkItem or Milestone id (repeatable)")
     dd.add_argument("--spec", action="append", help="spec node id or section (repeatable)")
-    dd.add_argument("--answer", action="append", help="chosen option label (repeatable)")
-    dd.add_argument("--other", help="free-text answer")
+    dd.add_argument("--answer", action="append", help="chosen option label (repeatable); in an agent's session only "
+                                                      "an answer its own question tool captured, never one relayed "
+                                                      "by a message (as brain decision answer)")
+    dd.add_argument("--other", help="free-text answer (the same rule)")
     dd.add_argument("--by", default=by_)
     dd.add_argument("--via", default="chat", choices=["ask-tool", "cli", "spec", "chat", "tui"])
     dd.add_argument("--read", action="store_true", help="stamp: the model in charge read the answer")

@@ -75,6 +75,22 @@ def test_log_a_new_entry_dated_before_an_old_one_stays_a_conflict():
     assert res.conflicts == 1 and "dated before" in res.note
 
 
+def test_log_an_entry_both_sides_hold_is_written_once():
+    """diff3 keeps what both added alike inside the hunk (review of brain #21, finding 11): a squash-merged entry, an
+    add/add with an empty base, a shared first entry."""
+    m = "\n## 2026-11-04 — M\n- m\n"
+    ours, theirs = JOURNAL + m + "\n## 2026-11-05 — P\n- p\n", JOURNAL + m + "\n## 2026-11-05 — N\n- n\n"
+    text, res, _ = merge("notes/decisions.md", JOURNAL, ours, theirs)
+    assert res.conflicts == 0 and text.count("2026-11-04 — M") == 1 and "— P" in text and "— N" in text
+    text, res, _ = merge("notes/journal.md", "", JOURNAL + "\n## 2026-10-02 — P\n- p\n",
+                         JOURNAL + "\n## 2026-10-02 — N\n- n\n")   # add/add: git passes an empty %O
+    assert res.conflicts == 0 and text.count("# Journal") == 1 and text.count("— Start") == 1, text
+    e1 = "\n## 2026-10-02 — E1\n- e1\n"
+    text, res, _ = merge("notes/journal.md", JOURNAL, JOURNAL + e1 + "\n## 2026-10-03 — E2\n- e2\n",
+                         JOURNAL + e1 + "\n## 2026-10-03 — E3\n- e3\n")
+    assert res.conflicts == 0 and text.count("— E1") == 1 and "— E2" in text and "— E3" in text
+
+
 def test_edges_union_keeps_both_and_a_common_edge_once():
     base = "# Work edges\n- {from: wi-a, to: spec-x, type: specified_by}\n"
     ours = base + "\n# 2026-10-02: wi-b\n- {from: wi-b, to: spec-x, type: specified_by}\n" \
@@ -130,6 +146,23 @@ def test_changelog_both_sides_open_an_unreleased_section():
     assert res.conflicts == 0, text
     assert text.count("## [Unreleased]") == 1
     assert "## [Unreleased]\n\n- ours\n  wrapped\n\n- theirs\n\n## [0.1.0]" in text
+
+
+def test_changelog_a_bullet_both_added_is_kept_once_and_released_sections_are_untouched():
+    """Review of brain #21, finding 12: the union deduplicates in the hunk it merges, a bullet with its continuation
+    lines, never a line of a released section."""
+    base = "# Changelog\n\n## Unreleased\n- old one\n\n## v0.1.0\n- Docs.\n- the start\n"
+    ours = base.replace("- old one\n", "- old one\n- Ours feature\n- Docs.\n")
+    theirs = base.replace("- old one\n", "- old one\n- Theirs feature\n- Docs.\n")
+    text, res, _ = merge("CHANGELOG.md", base, ours, theirs)
+    unreleased, released = text.split("## v0.1.0")
+    assert res.conflicts == 0 and unreleased.count("- Docs.") == 1 and released == "\n- Docs.\n- the start\n", text
+    shared = "- **Shared fix** something long\n  wrapped onto a second line.\n"
+    ours = base.replace("- old one\n", "- old one\n" + shared + "- **Ours** feature\n")
+    theirs = base.replace("- old one\n", "- old one\n" + shared + "- **Theirs** feature\n")
+    text, res, _ = merge("CHANGELOG.md", base, ours, theirs)
+    assert res.conflicts == 0 and text.count("- **Shared fix**") == 1 and text.count("wrapped onto") == 1, text
+    assert "- **Ours** feature\n- **Theirs** feature\n" in text
 
 
 def test_changelog_a_conflict_in_a_released_section_stays():
@@ -265,6 +298,37 @@ def test_without_the_driver_the_same_merge_conflicts(repo):
     assert r.returncode == 1 and "CONFLICT" in r.stdout
 
 
+def _conflicting_journal(r):
+    """The same old journal line edited both ways: a real conflict whatever merges it."""
+    run_git(r, "checkout", "-q", "-b", "feature")
+    j = r / "notes" / "journal.md"
+    j.write_text(JOURNAL.replace("the first line", "the first line, ada"), encoding="utf-8")
+    run_git(r, "commit", "-q", "-am", "ada")
+    run_git(r, "checkout", "-q", "main")
+    j.write_text(JOURNAL.replace("the first line", "the first line, bob"), encoding="utf-8")
+    run_git(r, "commit", "-q", "-am", "bob")
+    run_git(r, "checkout", "-q", "feature")
+    return subprocess.run(["git", "-C", str(r), "merge", "--no-edit", "main"], capture_output=True, text=True)
+
+
+def test_a_driver_that_cannot_run_leaves_git_s_markers(repo, tmp_path):
+    """Review of brain #21, finding 10: a launcher gone (or an engine without the driver) used to leave ours alone,
+    with no marker, so theirs' records could be committed away."""
+    run_git(repo, "config", "merge.brain.driver", md.command(str(tmp_path / "gone" / "brain.exe")))
+    r = _conflicting_journal(repo)
+    text = (repo / "notes" / "journal.md").read_text(encoding="utf-8")
+    assert r.returncode == 1 and "<<<<<<<" in text and "the first line, bob" in text, (r.stdout, r.stderr, text)
+
+
+def test_the_driver_s_own_conflict_is_not_merged_again(repo, monkeypatch):
+    """Exit 1 is the driver's result with its markers in %A: the fallback leaves it alone."""
+    monkeypatch.setattr(md.shutil, "which", lambda name: None)    # the command runs this Python: -m brain
+    run_git(repo, "config", "merge.brain.driver", md.command())
+    r = _conflicting_journal(repo)
+    text = (repo / "notes" / "journal.md").read_text(encoding="utf-8")
+    assert r.returncode == 1 and text.count("<<<<<<<") == 1 and text.count(">>>>>>>") == 1, text
+
+
 def test_replay_counts_before_and_after(repo, capsys):
     run_git(repo, "config", "--unset", "merge.brain.driver")
     change(repo, "feature", "ada", new=True)
@@ -348,7 +412,7 @@ def test_installer_step(repo, tmp_path, python, apply):
         assert "(to set (--apply))" in res.stdout and driver.returncode == 1
     else:
         assert "(set)" in res.stdout
-        assert driver.stdout.strip() == f'"{(bin_ / "brain.exe").as_posix()}" merge-driver run %O %A %B %P %L'
+        assert driver.stdout.strip() == md.command(str(bin_ / "brain.exe"))   # with its git merge-file fallback
 
 
 def test_yaml_by_id_both_add_props_to_one_entry():
