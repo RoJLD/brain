@@ -2699,8 +2699,9 @@ def check_attribution(command: str, cmds: list[tuple[list[str], str]]) -> str | 
 
 # --- secrets in what a commit records ----------------------------------------------------------------------------
 
-def _run(args: list[str], cwd: str, timeout: float = 10) -> subprocess.CompletedProcess:
-    return subprocess.run(args, cwd=cwd, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL)
+def _run(args: list[str], cwd: str, timeout: float = 10, env: dict[str, str] | None = None) \
+        -> subprocess.CompletedProcess:
+    return subprocess.run(args, cwd=cwd, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
 
 
 def _secret_names(line: str) -> list[str]:
@@ -2772,6 +2773,26 @@ def _git_out(repo: str, *args: str, strict: bool = False) -> str:
         why = f"exit {r.returncode}" if r.returncode else f"over {GIT_CAP} bytes, not read whole"
         raise GuardError(f"git {' '.join(args[:3])} in {repo}: {why}")
     return r.stdout[:GIT_CAP].decode("utf-8", "replace") if r.returncode == 0 else ""
+
+
+def _is_worktree(repo: str) -> bool:
+    """Whether ``repo`` is inside a git worktree. False, quietly, for a missing folder, git's 'not a git repository'
+    (a folder whose git init comes later in the call) and a .git folder (rev-parse says false); any other failure
+    (git missing from PATH, a timeout, dubious ownership) is a GuardError, never a silent pass. git's messages are
+    read in English (LC_ALL=C)."""
+    if not os.path.isdir(repo):
+        return False
+    try:
+        r = _run(["git", "rev-parse", "--is-inside-work-tree"], repo,
+                 env={**os.environ, "LC_ALL": "C", "LANGUAGE": "C"})
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GuardError(f"git rev-parse in {repo}: {exc}") from exc
+    if r.returncode == 0:
+        return r.stdout.strip() == b"true"
+    if b"not a git repository" in r.stderr.lower():
+        return False
+    why = r.stderr.decode("utf-8", "replace").strip().splitlines()[:1]
+    raise GuardError(f"git rev-parse in {repo}: exit {r.returncode}{': ' + why[0] if why else ''}")
 
 
 def commit_secrets(repo: str, specs: list[str], every_tracked: bool, untracked: list[str] | None = None) -> list[str]:
@@ -2971,9 +2992,9 @@ def commit_markers(repo: str, specs: list[str], every_tracked: bool, untracked: 
     untracked files a git add stages (``untracked``: its paths; default ``specs``). During a merge, a line counts only
     when it is new against every parent. What git cannot show is a GuardError (logged), never a silent pass; a folder
     that is not yet a repo when the guard runs (missing, or its git init later in the call) has nothing to read, as
-    for git itself."""
+    for git itself (_is_worktree)."""
     untracked = specs if untracked is None else untracked
-    if not os.path.isdir(repo) or _git_out(repo, "rev-parse", "--is-inside-work-tree").strip() != "true":
+    if not _is_worktree(repo):
         return []
     hits = _added_markers(repo, True, [])
     if specs or every_tracked:

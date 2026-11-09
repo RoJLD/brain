@@ -475,7 +475,8 @@ Two guards keep what a session brings in and what it records clean (the runbook:
   during a merge, only the lines new against every parent; `brain check` fails on a store, journal, decision log or
   record file that holds one. A Markdown or reST setext heading (`=======` under a line of text; `.md`, `.qmd`, `.Rmd`,
   `.rst`, and `.txt` under a title no longer than the underline, so a half-resolved `requirements.txt` is still
-  refused) and a file under a `fixtures` folder pass; a commit in a folder that is not yet a repo passes, as for git.
+  refused) and a file under a `fixtures` folder pass; a commit in a folder that is not yet a repo passes, as for git
+  (any other git failure is logged in errors.log).
   (`brain.markers`)
 
 Two of the PreToolUse hooks keep the owner's say over how sessions run (the runbook: [`docs/guards.md`](docs/guards.md)):

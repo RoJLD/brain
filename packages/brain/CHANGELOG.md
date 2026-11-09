@@ -38,9 +38,10 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
     hold a marker-like line are read (`git diff -G`), an untracked file is read whole, and a diff git cannot show
     whole is an error in `errors.log`, never a silent pass.
   - After the review of #79: a commit in a folder that is no git worktree when the guard runs (missing, or its `git
-    init` later in the call) passes with no `errors.log` entry, as on main; a `.txt` heading passes only under a
-    title no longer than its underline (reST's rule), so a bare `=======` left in `requirements.txt` is still
-    refused; bash's option values are no script (`curl ... | bash -o pipefail /dev/stdin`, `| bash -o pipefail`, `|
+    init` later in the call, git's "not a git repository") passes with no `errors.log` entry, as on main, while
+    any other failure of that check (git missing from PATH, a timeout, dubious ownership) is a logged error; a
+    `.txt` heading passes only under a title no longer than its underline (reST's rule), so a bare `=======` left
+    in `requirements.txt` is still refused; bash's option values are no script (`curl ... | bash -o pipefail /dev/stdin`, `| bash -o pipefail`, `|
     bash -O extglob`, `| bash -eo pipefail`, and an `o` or `O` anywhere in a cluster, one value each: `| bash -oe
     pipefail`, `| bash -Ox extglob`, refused; a script's own `-s` no longer reads as bash's); a launcher's
     global option with a value is skipped before its verb (`npm -w pkg exec`, `npm --loglevel silent exec`); npm's

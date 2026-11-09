@@ -232,6 +232,36 @@ def test_a_folder_that_is_not_yet_a_repo_logs_no_error(repo, tmp_path, monkeypat
     assert not log.is_file() or "GuardError" not in log.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("failure", ["git missing", "timeout", "dubious ownership"])
+def test_a_git_that_cannot_tell_a_worktree_is_a_logged_error(repo, monkeypatch, failure):
+    """Review of #79's skeptic (finding 48): only a missing folder or git's 'not a git repository' pass quietly; git
+    missing from the hook's PATH, a timeout or any other failure of the worktree check is a GuardError in errors.log,
+    never a silent pass."""
+    (repo / "work.yaml").write_text(CONFLICT, encoding="utf-8")
+    run_git(repo, "add", "work.yaml")
+    real = guards._run
+
+    def run(args, cwd, timeout=10, **kw):
+        if args[:2] == ["git", "rev-parse"]:
+            if failure == "git missing":
+                raise FileNotFoundError(2, "The system cannot find the file specified")
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired(args, timeout)
+            return subprocess.CompletedProcess(args, 128, b"", b"fatal: detected dubious ownership in repository\n")
+        return real(args, cwd, timeout, **kw)
+
+    monkeypatch.setattr(guards, "_run", run)
+    with pytest.raises(guards.GuardError, match="rev-parse"):
+        guards.commit_markers(str(repo), [], False)
+    assert bash(repo, 'git commit -m "x"') is None   # an error lets the call through, logged
+    assert "GuardError" in (paths.ledger_dir() / "errors.log").read_text(encoding="utf-8")
+
+
+def test_a_git_dir_is_no_worktree(repo):
+    """Inside .git, rev-parse says false (exit 0): no worktree, nothing a commit records, no error."""
+    assert guards.commit_markers(str(repo / ".git"), [guards.WHOLE_TREE], True) == []
+
+
 @pytest.mark.parametrize("name,text,hits", [
     ("requirements.txt", f"numpy==1.26\n{MID}\nnumpy==2.0\n", ["requirements.txt:2"]),
     ("constraints.txt", f"pandas>=2.2,<3\n{MID}\n", ["constraints.txt:2"]),

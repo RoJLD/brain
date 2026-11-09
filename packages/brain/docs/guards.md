@@ -137,8 +137,9 @@ loads it, and a stale merge's generated views still pass the graph check. Two pl
   (`git diff -G`), so a big data file never cuts the diff, and an untracked file is read whole, whatever its size.
   What git cannot show (it fails, times out, or prints over 20 MB) is an error in ledger/errors.log, never a silent
   pass; a folder that is no git worktree when the guard runs (missing, or its `git init` later in the same call:
-  `mkdir p && cd p && git init && git add . && git commit`) has nothing to read and passes, as for git. The reason
-  names the file and line.
+  `mkdir p && cd p && git init && git add . && git commit`), git saying "not a git repository", has nothing to read
+  and passes, as for git; any other failure of that worktree check (git missing from the hook's PATH, a timeout,
+  dubious ownership) is an error in errors.log too. The reason names the file and line.
 - `brain check` (and `brain refresh`): it fails first, before reading anything else, on a store file (its nodes,
   edges and generated views), a journal, a decision log or a record holding one.
 
