@@ -384,12 +384,15 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
     if not src.data:
         return errors
     readonly: set[str] = set()
-    invalid: dict[str, object] = {}
+    invalid: dict[str, str] = {}   # a project not loaded -> why
     if nodes is None:
         from . import projects
         nodes = [GLOBAL, *(p.name for p in projects.load(src.root).values())]
         readonly = set(projects.readonly(src.root))
-        invalid = projects.invalid_access(src.root)   # a typo in access: named as one, never as read only
+        # a typo in access, named as one (never as read only), and a project at a shared root not loaded, with why
+        invalid = {name: f"access is read or write, not {value!r}"
+                   for name, value in projects.invalid_access(src.root).items()}
+        invalid.update({name: "; ".join(why) for name, why in projects.refused(src.root).items()})
     known = set(nodes) | {GLOBAL}
     from . import schema
     refused = schema.newer(PACKS, src.data.get("v"))
@@ -417,8 +420,7 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
             errors.append(f"{where}: scope {rf.scope!r} is a read-only project: the brain never writes its rules (its "
                           "own sessions do)")
         elif rf.scope in invalid:
-            errors.append(f"{where}: scope {rf.scope!r} is not loaded: access is read or write, not "
-                          f"{invalid[rf.scope]!r}")
+            errors.append(f"{where}: scope {rf.scope!r} is not loaded: {invalid[rf.scope]}")
         elif rf.scope not in known:
             errors.append(f"{where}: scope {rf.scope!r} is not a node of the scope tree ({', '.join(sorted(known))})")
         if rf.preamble.strip():
@@ -466,8 +468,7 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
             if proj in readonly:
                 errors.append(f"{PACKS}: pack {p.id}: project {proj!r} is read only: the brain renders nothing for it")
             elif proj in invalid:
-                errors.append(f"{PACKS}: pack {p.id}: project {proj!r} is not loaded: access is read or write, not "
-                              f"{invalid[proj]!r}")
+                errors.append(f"{PACKS}: pack {p.id}: project {proj!r} is not loaded: {invalid[proj]}")
             elif proj not in known:
                 errors.append(f"{PACKS}: pack {p.id}: project {proj!r} is not registered")
     for name, proc in src.procedures.items():

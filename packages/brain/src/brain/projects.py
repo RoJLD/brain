@@ -268,8 +268,13 @@ def load(root: Path | None = None) -> dict[str, Project]:
     """The registered projects; a tenant mount and a read-only project are not, so no command that walks them reads
     into the one or writes into the other. A project registered at a root another one holds (registered before it)
     shares it: ``shares_root_with`` names that owner; it is loaded only once it declares its own files
-    (:func:`_claims`)."""
+    (:func:`_claims`). An owner skipped for its access value still holds its root (:func:`_claimant`)."""
     return _load(root)[0]
+
+
+def refused(root: Path | None = None) -> dict[str, list[str]]:
+    """{a project at a shared root that is not loaded: why (:func:`_claims`)}, in the registry's order."""
+    return {name: why for name, (_, why) in _load(root)[1].items()}
 
 
 #: The keys of an entry that name a local path a guard protects (its root, production checkouts and repos).
@@ -303,22 +308,46 @@ def _load(root: Path | None = None) -> tuple[dict[str, Project], dict[str, tuple
     owners: dict[str, str] = {}
     held: dict[str, dict[str, tuple[str, str]]] = {}   # root -> normalised path -> (the project that holds it, kind)
     for name, entry in raw(root).items():
-        if _skipped(entry):
+        skipped = _skipped(entry)
+        p = _claimant(str(name), entry, f.parent) if skipped else None
+        if skipped and p is None:
             continue
         entry = entry if isinstance(entry, dict) else {}
-        p = _project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent))
+        p = p or _project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent))
         owner = owners.setdefault(_norm(p.root), p.name)
         p.shares_root_with = "" if owner == p.name else owner
         files = held.setdefault(_norm(p.root), {})
-        why = _claims(p, entry, files) if p.shares_root_with else []
+        why = _claims(p, entry, files) if p.shares_root_with and not skipped else []
         if why:
             refused[p.name] = (p, why)
             continue
         for kind, paths_ in _files(p).items():
             for x in paths_:
                 files.setdefault(_norm(x), (p.name, kind))
-        out[p.name] = p
+        if not skipped:
+            out[p.name] = p
     return out, refused
+
+
+def _claimant(name: str, entry, base: Path) -> Project | None:
+    """An entry the walk skips for its access value that still holds its root: an invalid access (a typo), or
+    ``access: read`` on an entry that still names its ``root`` (both refused by check()). It is never loaded, yet it
+    keeps the root it was registered at and the files it would write there, so the next project at that root stays a
+    sharer and never becomes its owner (fail closed: a typo never hands another project the owner's views, records or
+    rendered files). None for a tenant mount, a valid read-only entry (no root of its own) or a malformed path."""
+    if not isinstance(entry, dict) or is_mount(entry) or not (bad_access(entry) or "root" in entry):
+        return None
+    try:
+        return _project(name, entry, _resolve_root(str(entry.get("root") or "."), base))
+    except (TypeError, ValueError):   # a malformed path value: check() names it
+        return None
+
+
+def _withheld(root: Path | None = None) -> list[Project]:
+    """The entries the walk skips that still hold a root (:func:`_claimant`), in the registry's order."""
+    f = registry_file(root)
+    found = ((str(n), e) for n, e in raw(root).items() if _skipped(e))
+    return [p for p in (_claimant(n, e, f.parent) for n, e in found) if p is not None]
 
 
 def stores_of(p: Project) -> list[Path]:
@@ -443,7 +472,8 @@ def at_root(root: Path) -> list[Project]:
 def lister(store: Path, root: Path) -> Project | None:
     """The project registered at ``root`` (at its main checkout, for a worktree) that lists ``store``, else None:
     ``--store`` naming the store of a project that shares the root runs as that project, with its layout. Fail
-    closed at a root several projects share: the store of one that is not loaded is refused with the reason
+    closed at a root several projects share: the store of one that is not loaded (one at a shared root without its
+    own files, or an owner skipped for its access value, :func:`_claimant`) is refused with the reason
     (:func:`unloaded`), and a store none lists is refused too, never run as the owner with its defaults (the board,
     roadmap and decision stubs of the owner would be written with another store's items)."""
     key = _norm(store)
@@ -454,7 +484,7 @@ def lister(store: Path, root: Path) -> Project | None:
     base = root.resolve()
     main = paths.main_checkout(base)
     homes = {_norm(base)} | ({_norm(main.resolve())} if main else set())
-    refused = [p for p, _ in _load(root)[1].values() if _norm(p.root) in homes]
+    refused = [p for p in [p for p, _ in _load(root)[1].values()] + _withheld(root) if _norm(p.root) in homes]
     for p in refused:
         if any(_norm(s) == key for s in stores_of(p)):
             raise SystemExit(f"brain: {unloaded(p.name, root)}")

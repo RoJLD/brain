@@ -266,6 +266,54 @@ def test_store_at_a_shared_root_fails_closed_when_its_project_is_not_loaded_or_n
     assert projects.lister((root / "ops" / "graph").resolve(), root) is None
 
 
+@pytest.mark.parametrize("access", ["wirte", "read"])
+def test_an_owner_skipped_for_its_access_keeps_its_root(tmp_path, monkeypatch, access):
+    """An owner the walk skips for its access value (a typo, or access: read on an entry that still names its root)
+    keeps the root: the next project there stays a sharer, never its owner, so its passes never write the owner's
+    views, it never takes the owner's files, and --store naming the owner's store is refused with the reason."""
+    root = _root(tmp_path)
+    reg = tmp_path / "brain" / "projects.yaml"
+    reg.parent.mkdir(exist_ok=True)
+    lab = f"lab:\n  root: {root.as_posix()}\n  access: {access}\n"
+    reg.write_text(lab + f"prog:\n  root: {root.as_posix()}\n{PROG}", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    monkeypatch.chdir(root)
+    loaded = projects.load()
+    assert "lab" not in loaded and loaded["prog"].shares_root_with == "lab"
+    assert projects.for_root(root).shares_root_with == "lab"
+    before = {rel: (root / rel).read_bytes() if (root / rel).exists() else None for rel in OWNER_VIEWS}
+    assert cli.main(["--project", "prog", "sync", "--offline"]) == 0
+    assert cli.main(["sync", "--offline"]) == 0
+    assert {rel: (root / rel).read_bytes() if (root / rel).exists() else None for rel in OWNER_VIEWS} == before
+    assert "wi-prog-first" in (root / "prog" / "kanban_graph.md").read_text(encoding="utf-8")
+    why = "access is read or write" if access != "read" else "is read only"
+    with pytest.raises(SystemExit, match=f"'lab' {'is not loaded: ' if access != 'read' else ''}{why}"):
+        cli.main(["--store", "notes/graph", "sync", "--offline"])
+    assert {rel: (root / rel).read_bytes() if (root / rel).exists() else None for rel in OWNER_VIEWS} == before
+    reg.write_text(lab + f"prog:\n  root: {root.as_posix()}\n{PROG.replace('prog/graph', 'notes/graph')}",
+                   encoding="utf-8")
+    assert "prog" not in projects.load()  # the skipped owner's store is still its own
+    assert any("its store notes/graph is lab's too" in e for e in projects.check())
+
+
+def test_a_scope_or_pack_naming_a_sharer_not_loaded_gives_the_reason(tmp_path, monkeypatch):
+    from brain import neutral
+    root = _root(tmp_path)
+    _registry(tmp_path, monkeypatch, root, prog="  stores: [prog/graph]\n")  # no journal nor decision log of its own
+    source = tmp_path / "brain" / "source"
+    (source / "rules" / "scopes").mkdir(parents=True)
+    (source / "packs.yaml").write_text("v: 1\npacks:\n  core: {core: true, rules: [rules/global.md]}\n"
+                                       "  side: {projects: [prog]}\n", encoding="utf-8")
+    (source / "rules" / "global.md").write_text("---\nscope: global\n---\n\n## One\n<!-- id: rule-one -->\n\nText.\n",
+                                                encoding="utf-8")
+    (source / "rules" / "scopes" / "prog.md").write_text("---\ntitle: Prog\n---\n", encoding="utf-8")
+    errors = neutral.check(neutral.load(tmp_path / "brain"))
+    why = "is not loaded: project prog: shares its root with lab: it declares no journal of its own"
+    assert any(e.startswith(f"rules/scopes/prog.md: scope 'prog' {why}") for e in errors), errors
+    assert any(e.startswith(f"packs.yaml: pack side: project 'prog' {why}") for e in errors), errors
+    assert not any("not a node of the scope tree" in e or "is not registered" in e for e in errors)
+
+
 def test_an_edge_of_a_later_store_to_a_stub_the_first_store_derives_says_why(tmp_path, monkeypatch, capsys):
     """Before wi-brain-shared-root-projects every store ran with research_graph's defaults, so a second store derived
     the stubs of notes/decisions.md too and an item of it could be decided_by one; it now covers no decision log."""
