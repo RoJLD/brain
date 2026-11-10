@@ -96,13 +96,29 @@ With the `brain` command: `brain [--project P] journal add --title "..." "line".
 
 ## 5. Session archived, worktree removed
 
-- Archive the session that did the work once its PR is merged and verified: the owner's standing authorization covers
-  it. A side session is archived by the session that started it, after that one has verified and merged the branch.
-  Never archive a session with unmerged or unverified work. In the Claude desktop app, use its session-management
-  archive tool; elsewhere, tell the owner which session to archive.
+A finished session archives itself or is archived at once: nothing else closes it (a session left open after its
+merge holds a worktree, a lease and the owner's attention). The owner's standing authorization stands for their yes:
+nobody asks it again.
+
+- **The session that merges its own PR archives itself** once its after-merge steps are done: the main checkout
+  pulled (step 2), the backlog ticked and the journal note written (steps 3 and 4), memory (step 6) and its report
+  given. The archive is its last act, after the report.
+- **A coordinator archives its children** as soon as a child's report says its PR is merged and verified, or once
+  the coordinator itself has verified and merged the child's branch, without asking the owner again.
+- **Never** a session with uncommitted changes or with unmerged or unverified work, the merging session itself
+  included: it is finished first, or its report says what is left. **Never another session that is running
+  (mid-turn)**: a coordinator waits for its child's turn to end. The self-archive is the one mid-turn archive allowed:
+  the merging session makes it as the final tool call of its turn, nothing after it.
+- **The tools**: in the Claude desktop app, its session-management archive tool; elsewhere, tell the owner which
+  session to archive.
+- **The token-free net**: the owner's app setting `auto_archive_inactive_days = 7` (Claude desktop app, Settings,
+  Claude Code) archives a session inactive for 7 days, never a running one or one with uncommitted changes. The owner
+  sets it; no session changes the app's settings. It catches what this step forgets; it is no reason to skip it.
 - Remove the item's git worktree and local branch: `git worktree list`, then `git worktree remove <path>` without
   `--force` (first remove links such as junctions that point into a production checkout), then
-  `git branch -d <branch>` once it is merged. If git refuses, report why instead of forcing.
+  `git branch -d <branch>` once it is merged. If git refuses, report why instead of forcing. A session cannot remove
+  the worktree it runs in: the coordinator removes it after archiving the child, or `brain tidy` once its sessions are
+  archived.
 
 ## 6. Memory
 
@@ -113,4 +129,5 @@ what the repository or its history already records.
 
 End with one line per step - done, already done, not applicable (why) or blocked (what is missing) - a line
 `Scout: audit --diff exit N, M fixed, K deferred`, a line `Retro: friction N, lessons added or seen`
-(or `Retro: skipped (<why>)`), and the links: PR, journal entry, backlog item.
+(or `Retro: skipped (<why>)`), and the links: PR, journal entry, backlog item. Then, when this session merged its own
+PR, it archives itself (step 5): the report is its last message.
