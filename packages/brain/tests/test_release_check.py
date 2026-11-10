@@ -124,6 +124,27 @@ def test_schema_changed_with_an_upgrade_section_passes(repo, capsys):
 # Around them
 
 
+def test_any_pr_with_an_unreleased_section_or_a_bad_fragment_fails(repo, capsys):
+    """The fragments (wi-brain-changelog-unreleased-collisions): a PR writes packages/brain/changes/<item>.md, never
+    the CHANGELOG's ## Unreleased, which made every parallel PR collide."""
+    write(repo, BRAIN_LOG, "# Changelog\n\n## Unreleased\n\n- a bullet\n\n## 0.2.5 — 2026-11-04\n\n- Old.\n")
+    write(repo, "packages/brain/changes/wi-x.md", "- no section line\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1 and "not a version PR" in text
+    assert "a '## Unreleased' section: write the entry as a fragment" in text
+    assert "wi-x.md: its first line is 'section:" in text
+
+
+def test_a_version_pr_with_a_fragment_left_fails(repo, capsys):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    write(repo, "packages/brain/changes/wi-left.md", "section: Fixes\n\n- not compiled\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1 and "wi-left.md: a fragment not compiled into ## 0.2.6" in text
+
+
 def test_a_version_pr_without_a_schema_change_needs_only_the_standard_steps(repo, capsys):
     versions(repo, "0.2.6")
     changelogs(repo, "0.2.6")

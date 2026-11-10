@@ -32,6 +32,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # changelog.py beside it, whoever loads this file
+import changelog as frag  # noqa: E402
+
 BRAIN = "packages/brain"
 SRC = f"{BRAIN}/src/brain"
 FIXTURES = f"{BRAIN}/tests/fixtures/formats"
@@ -300,13 +303,16 @@ def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
     for name, version in versions.items():
         if not version:
             return [], [f"{VERSIONS[name]}: no __version__ ({name})"]
+    fragments = frag.check(repo)   # every PR: a malformed fragment, or a '## Unreleased' section again
     if all(version == tag.removeprefix("v") for version in versions.values()):
-        return [f"not a version PR: both distributions are at {tag}; nothing to check"], []
+        return [f"not a version PR: both distributions are at {tag}; the changelog fragments checked"], fragments
     if len(set(versions.values())) > 1:
         return [], [f"the versions differ: {versions}; a tag is both distributions at one version"]
     version = versions["brain"]
     said = [f"version PR: {tag} -> {version}"]
-    problems = coherence(repo, tag, version)
+    problems = fragments + coherence(repo, tag, version)
+    problems += [f"{p}: a fragment not compiled into ## {version} (python {BRAIN}/installer/changelog.py compile "
+                 f"{version} --theme T --write)" for p in frag.pending(repo)]
     changed = changed_schemas(repo, tag)
     changelog = f"{BRAIN}/CHANGELOG.md"
     upgrade = upgrade_section(read(repo, changelog), version)
