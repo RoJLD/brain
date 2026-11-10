@@ -12,10 +12,13 @@ USAGE_ORDER = 410   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain audit [--all] [--repo R]... [-v] [--json] [--trend [N]] [--fail-on P] [--write [--force]] [--items]
                  what misses the standard per repo and module (zero token): P0 false statements, P1 gaps on
-                 production paths; --write: under config.json views.strict, another engine than engine.pin writes
+                 production paths; a section per repo lists the commands and modules no feature names (feature
+                 coverage, info); --write: under config.json views.strict, another engine than engine.pin writes
                  nothing
   brain audit --diff [BASE|A..B] [--repo-dir D] [--store DIR] [--limit N]   the scout: what the modules a change
-                 touches miss (NEW, LEFT, DEFER); exit 1 when something is to fix in the PR
+                 touches miss (NEW, LEFT, DEFER); exit 1 when something is to fix in the PR; a command or module
+                 no feature names: NEW when added, DEFER when touched (LEFT under config.json
+                 audit.feature_coverage_strict)
 """
 
 
