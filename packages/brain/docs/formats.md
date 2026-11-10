@@ -64,18 +64,24 @@ A graph store's `schema.yaml` is a registered format (`store` in `SCHEMAS`, with
 `Milestone` (brain.waves), so the store's `schema.yaml` does not change. What `brain init` writes once gains two lines
 for the new generated view `notes/plan_graph.md` (its `merge=brain` line and its `generated` side), which makes the
 release that brings them a minor one (`docs/release.md`, « The version policy »); 0.3.0 is one already. A brain made
-before keeps its own files: the view falls under `notes/**` there, and `brain check` passes as before.
+before keeps its own files, and its owner adds the two lines by hand (CHANGELOG, 0.3.0 « Upgrade », step 4): until
+then the view merges as plain text and `boundary.yaml` reads it as `notes/**`; `brain check` passes either way.
 
 | `props.kind` | Its members (`part_of` it) | Its props | brain check refuses |
 |---|---|---|---|
 | none | items and milestones, as before | `trigger`, `reached` | - |
-| `wave` | work items; it is itself `part_of` a milestone or an era (a warning without one) | `release: X.Y.Z` (its name), `week` (optional) | a `release` that is not `X.Y.Z`, two waves of one release, a member that is not a work item, an item `part_of` two waves, a `carried_to` that names no later wave, a reached wave that still holds an open item |
+| `wave` | work items; it is itself `part_of` a milestone or an era (a warning without one) | `release: X.Y.Z` (its name), `week` (optional) | a `release` that is not `X.Y.Z`, two waves of one release, a member that is not a work item, an item `part_of` two waves, a `carried_to` that names no later wave, a `carried_via` that names no wave, a reached or dropped wave that still holds an open item |
 | `era` | milestones | `exit` (the Go/NoGo question, a DDR once its milestones are reached), `stage_to` and `serves` (optional, free labels) | a member that is not a milestone (a warning without `exit`, and once its exit is due) |
 
 An item's wave is the one it is `part_of`, or, once that wave closed without it, the later one its `props.carried_to`
 names (a wave's id or its release; `brain wave close` writes the id): the edge to its first wave stays, as where it was
-planned. Any other `props.kind` is refused. An engine that does not know the kinds (0.2.8 and before) reads a wave or
-an era as a plain milestone, and `props.carried_to` as an unknown prop it keeps.
+planned. `brain wave close` carries only to a pending wave. An item carried again keeps the waves it went through
+after its first, in order, in `props.carried_via` (wave ids, comma-separated): the view says it came from the last of
+them, and lists it under each one's « Carried out ». In a store that holds a wave or an era, any other `props.kind`
+on a milestone is refused; a store with neither is not read for kinds at all, so a store that never used them is
+refused nothing new. An engine that does not know the kinds (0.2.8 and before) reads a wave or an era as a plain
+milestone, and `props.carried_to` and `props.carried_via` as unknown props it keeps; no fixture guards that yet (a
+manual run of 0.2.8 on such a store passed).
 
 ## Machine-local state: `brain.stateio`
 

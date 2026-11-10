@@ -182,8 +182,9 @@ A wave is a release's batch of work: a milestone of kind wave named by its relea
 or an era. An era is a milestone of milestones (`props.kind: era`), whose exit is a Go/NoGo question put to the owner
 once its milestones are reached (`props.exit`; `props.stage_to` and `props.serves` optional). `brain check` refuses a
 wave whose release is not `X.Y.Z`, two waves of one release, an item in two waves, a wave holding a milestone, an era
-holding an item, a `carried_to` that names no later wave, and a reached wave that still holds an open item; it warns
-about a wave in no milestone or era and an era whose exit is due. The kinds are in
+holding an item, a `carried_to` that names no later wave, and a reached or dropped wave that still holds an open item;
+it warns about a wave in no milestone or era, an era without its exit and an era whose exit is due. Those rules run
+in a store that holds a wave or an era; any other `props.kind` on a milestone is refused there. The kinds are in
 [docs/formats.md](docs/formats.md) (« Milestone kinds »).
 
 `brain sync` writes `notes/plan_graph.md` (beside the store's other views; only for a store with a wave or an era,
@@ -194,11 +195,14 @@ release not closed), its items carried from an earlier wave, its startable items
 open ones, then the next wave.
 
 The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
-X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`) or drops it,
-then reaches the wave; it refuses while an item is neither. `brain wave check X.Y.Z` is the rule alone, and
-`release_check.py --store DIR` applies it to a version PR. `brain wave add X.Y.Z --parent MS [--week W]` adds a wave,
-and `brain wave import [--write]` turns the items' free-text `props.wave` into waves: one per release a value names
-(`0.2.9 (decided ...)` is 0.2.9), the other values (letters, free text) listed for the owner to place.
+X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending
+wave only) or drops it, then reaches the wave; it refuses while an item is neither. An item carried again keeps the
+waves it went through (`props.carried_via`). `brain wave check X.Y.Z` is the rule alone, and `release_check.py --store
+DIR` applies it to a version PR, which also wants the wave reached. `brain wave add X.Y.Z --parent MS [--week W]`
+adds a wave at once (no DDR, unlike `brain milestone add`: a wave is named by its release, which the version PR
+closes), and `brain wave import [--from X.Y.Z] [--write]` turns the items' free-text `props.wave` into waves: one per
+release a value names (`0.2.9 (decided ...)` is 0.2.9) from `--from` on, the earlier releases (already tagged) listed
+and left out, the other values (letters, free text) listed for the owner to place.
 
 ## Start your own brain
 

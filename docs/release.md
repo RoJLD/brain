@@ -71,10 +71,11 @@ nothing else to do, the section says « Nothing to run for the rest » after the
   version may hold no open item that is neither carried by name to a later wave nor dropped: in the brain that holds
   that store, `brain wave close X.Y.Z --carry-to X.Y.Z+1 [--drop ID]... --write` writes each open item's
   `props.carried_to` (or drops it), reaches the wave with what it did, then `brain sync` (a PR there, like any
-  backlog change). `release_check.py --store <that store>` refuses the version PR until then, naming the items, and
-  `brain wave check X.Y.Z` says the same from the brain; CI holds no owner's store and does not run it, so the
-  maintainer runs it by hand before opening the version PR. A store with no wave of this version passes. `brain next`
-  then shows the next wave, the carried items first.
+  backlog change). `--carry-to` names a pending wave: a reached or dropped one is refused, since no live wave would
+  show the item. `release_check.py --store <that store>` refuses the version PR until then (an open item left, or
+  the wave not reached yet), naming the items, and `brain wave check X.Y.Z` says the same from the brain; CI holds
+  no owner's store and does not run it, so the maintainer runs it by hand before opening the version PR. A store
+  with no wave of this version passes. `brain next` then shows the next wave, the carried items first.
 - `compat-prev` is green on main's latest PR: the upgrade test goes from the last tag to HEAD and back
   ([`packages/brain/docs/formats.md`](../packages/brain/docs/formats.md), « The upgrade test »).
 - **Read what changed**: `git log vP..origin/main` and `git diff --stat vP origin/main`. Look for what a brain that
@@ -129,7 +130,9 @@ wi-brain-old-store-fixture):
   do not agree, when the brain's section names no theme, when its `### Upgrade` leaves out a standard step, when a
   patch breaks the version policy (a schema change, a step beyond the standard ones), or when a section of either
   CHANGELOG repeats an entry an earlier one released. Run it before pushing:
-  `python packages/brain/installer/release_check.py`.
+  `python packages/brain/installer/release_check.py`, with `--store <the store that plans the releases>` where
+  one does (section 1, the closure rule: CI runs it without, as it holds no owner's store; a `--store` it cannot
+  read is exit 2).
   It reads files, not meanings: a section can be there and wrong, and `permissions.yaml`, whose keys are constants in
   `brain.permissions`, has no file for it to compare (wi-brain-schema-diff compares keys). This list still applies.
 - **`compat-prev`** installs `vP`, writes every registered format, installs this checkout over it, runs the store plan,

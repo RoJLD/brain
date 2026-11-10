@@ -8,14 +8,14 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
 
 From 0.2.8, in this order. This release newly refuses what passed (a project's second store beside its first, a
 project at a shared root without its own files, an edge of a second store to a root ADR stub, an `access` value other
-than read or write), so it is a minor version, 0.3.0 (`docs/release.md`, « The version policy »). No registered schema
-changes (`access` is an additive key of `projects.yaml`, a milestone's `kind` an additive prop of the store, whose
-`schema.yaml` stays as it is); what `brain init` writes once (`store` in `SCHEMAS`) gains two lines for the new view
-`notes/plan_graph.md` (`gitattributes`, `boundary.yaml`), which alone would make it a minor version, and 0.3.0 is one
-already. A brain made before keeps its own files and needs nothing for it: the view falls under `notes/**` there.
-`brain sync` (run by `brain update`) writes that view in a store that holds a wave or an era, and nowhere else. Steps 1
-to 3 apply only where the registry has what they name; do them before installing, since `brain update` runs `brain
-sync`.
+than read or write), so it is a minor version, 0.3.0 (`docs/release.md`, « The version policy »). The formats' schemas
+do not change (`access` is an additive key of `projects.yaml`, a milestone's `kind` an additive prop of the store, whose
+`schema.yaml` stays as it is), but two registered files of what `brain init` writes once (`store` in `SCHEMAS`) do:
+`gitattributes` and `boundary.yaml` gain a line each for the new view `notes/plan_graph.md`, which alone would make it
+a minor version, and 0.3.0 is one already; `release_check.py` names them. A brain made before keeps its own files:
+step 4 adds the two lines. `brain sync` (run by `brain update`) writes that view in a store that holds a wave or an
+era, and nowhere else. Steps 1 to 4 apply only where the brain has what they name; do them before installing, since
+`brain update` runs `brain sync`.
 
 1. **Move an edge of a later store to a root ADR stub**, where a project lists more than one store. A store after its
    first derived the ADR and SDR stubs of the root's decision logs, as its first store does (every store ran with
@@ -30,17 +30,28 @@ sync`.
    not loaded.
 3. **Give a store beside the first a folder of its own**, where a project's second store sits beside its first (both
    under `notes/`): `brain sync` refuses that store until it has one, since its board was written over the first's.
-4. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+4. **Add the plan view to `.gitattributes` and `boundary.yaml`**, in a brain that 0.2.8 or older initialised, by hand
+   (`brain init` keeps the files it made earlier): `notes/plan_graph.md merge=brain` to `.gitattributes`, and
+   `- {glob: "notes/plan_graph.md", side: generated, why: "brain sync (brain.waves: eras, milestones, waves)"}` to
+   `boundary.yaml` (a store's view beside its other views elsewhere: the same lines at that path). Until then the view,
+   which `brain sync` writes again whenever an item of a wave changes, merges as plain text, and two sessions in
+   worktrees conflict on it, as the merge driver exists to prevent; `boundary.yaml` reads it as `notes/**`.
+5. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
    the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
    `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
-5. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
-6. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
+6. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
+7. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
    push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
-7. **Wait for every machine before an `access: read` entry or a shared root**: such an entry lands in a registry only
+8. **Wait for every machine before an `access: read` entry or a shared root**: such an entry lands in a registry only
    once every machine that reads it runs brain 0.3.0 or later. An older brain (0.2.8 and before) notes the unknown key
    `access` (in CI, under `BRAIN_STRICT`, refuses it) and reads the entry as a full project, at the registry's root
    with the default store, journal and decision log (`docs/formats.md`); a project that shares its root with another
    gets its board written over its owner's by an older brain.
+9. **Wait for every machine before the first wave or era**: a store gains one only once every machine that writes it
+   runs brain 0.3.0 or later. An older brain reads a wave or an era as a plain milestone: its `brain milestone
+   suggest` may propose putting an item under an era (which the new `brain check` refuses), and its `brain sync`
+   leaves `plan_graph.md` stale (a warning on the newer machines). `brain wave import --from X.Y.Z` (the next
+   release) makes the waves from the items' `props.wave` without turning a release already tagged into a pending wave.
 
 Nothing to run for the rest.
 
@@ -51,7 +62,8 @@ Nothing to run for the rest.
   members work items by `part_of`, itself part of a milestone or an era; `era`, its members milestones, its exit the
   Go/NoGo question asked as a DDR once they are reached (`props.exit`, `props.stage_to` and `props.serves` optional).
   `brain check` refuses a malformed or repeated release, a wave holding a milestone, an era holding an item, an item
-  in two waves, a `props.carried_to` that names no later wave and a reached wave that still holds an open item; it
+  in two waves, a `props.carried_to` that names no later wave, a `props.carried_via` that names no wave, and a reached
+  or dropped wave that still holds an open item (planned there or carried into it: no live wave would show it); it
   warns about a wave in no milestone or era, an era without its exit and one whose exit is due
   (`docs/formats.md`, « Milestone kinds »). `brain sync`, its one writer, writes `notes/plan_graph.md` beside the
   store's other views: era > milestone > wave > items, each item with its status and what waits on the owner (its
@@ -59,11 +71,15 @@ Nothing to run for the rest.
   ones; `brain check` says when it is stale. `brain next [--json]` prints the current wave (the lowest release not
   closed): its carried items first, its startable items, what waits on the owner, the other open ones, then the next
   wave, at zero token. The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave
-  close X.Y.Z [--carry-to X.Y.Z] [--drop ID]... [--write]` carries each open item by name (`props.carried_to`) or
-  drops it, then reaches the wave, and refuses while one is neither; `brain wave check X.Y.Z` is the rule alone, and
-  `release_check.py --store DIR` refuses a version PR whose wave breaks it. `brain wave add X.Y.Z [--parent MS]`
-  adds a wave; `brain wave import [--write]` proposes a wave per release the items' free-text `props.wave` names and
-  lists the other values for the owner to place. `brain milestone suggest` never proposes a wave or an era. No era is
+  close X.Y.Z [--carry-to X.Y.Z] [--drop ID]... [--write]` carries each open item by name (`props.carried_to`, to a
+  pending wave only; an item carried again keeps the waves it went through in `props.carried_via`) or drops it, then
+  reaches the wave, and refuses while one is neither; `brain wave check X.Y.Z` is the rule alone, and
+  `release_check.py --store DIR` refuses a version PR whose wave breaks it or is not reached yet (exit 2 for a
+  `--store` it cannot read; it imports brain and research_graph from the checkout). `brain wave add X.Y.Z [--parent
+  MS]` adds a wave at once, with no DDR (unlike `brain milestone add`: a wave is named by a release, which the owner's
+  version PR closes); `brain wave import [--from X.Y.Z] [--write]` proposes a wave per release the items' free-text
+  `props.wave` names, from `--from` on (the earlier ones, already tagged, listed and left out), and lists the other
+  values for the owner to place. `brain milestone suggest` never proposes a wave or an era. No era is
   created by the engine: an era is the owner's.
 - **Projects the brain reads and never writes** (wi-brain-read-only-projects). A registry entry may say `access: read`
   (`write`, the default, is today's: the brain writes the project by PR; any other value is an error, « access is
