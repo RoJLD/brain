@@ -31,7 +31,6 @@ rules:
   # --- {owner}'s own ---
   - {glob: "config.json", side: personal, init: "brain init", why: "the brain's contract with the engine"}
   - {glob: "projects.yaml", side: personal, init: "brain init", why: "the registry"}
-  - {glob: "members.yaml", side: personal, why: "who belongs to the brain and their public keys (brain identity)"}
   - {glob: "boundary.yaml", side: personal, init: "brain init", why: "this file"}
   - {glob: "source/**", side: personal, init: "brain init", why: "the neutral source of the agent files"}
   - {glob: "rules/**", side: personal, init: "brain init", why: "the rules for every project"}
