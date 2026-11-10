@@ -14,7 +14,9 @@ USAGE_ORDER = 130   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain refresh [--all] [--offline]   sync, then check, for this project's stores or every registered project's (--all: and the
                         registry and the ids, as check --all); check and refresh end with brain tidy's line when its
-                        repos hold stale worktrees or merged branches
+                        repos hold stale worktrees or merged branches; a main checkout on main or master is only
+                        checked (--on-main: written), where a stale view fails (brain views --write, from a worktree
+                        at its tip, is the one writer)
 """
 
 

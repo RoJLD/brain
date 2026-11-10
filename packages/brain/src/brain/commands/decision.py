@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import answers, batch, config, decisions, defaults, notify, records
+from .. import answers, batch, config, decisions, defaults, notify, records, skew
 from ._common import _notify_project, _now, _on_main, _project, _queue_changed, _scope, _store, _text, _whole
 
 ORDER = 90   # its place in brain --help's list of commands (brain.commands)
@@ -35,7 +35,7 @@ USAGE = """\
                  together, else one item's or one spec's; --json: each batch's questions, the tool's input as is, and
                  its DDR ids; --zen: the morning digest, the batches that fit in --minutes (0: all), then the rest
   brain decision ack ID --applied WHERE...    read and applied (ADR, item, spec), then archived (--keep: not yet)
-  brain decision archive [ID]... | view [--all] [--write] | announce
+  brain decision archive [ID]... | view [--all] [--write [--force]] | announce
                  a --blocking ask is also sent through the notification channels (brain notify; --no-notify: not)
 """
 NO_PROJECT = {"announce"}   # its parsers that take no --project after them
@@ -62,6 +62,8 @@ def cmd_decision(args, root: Path) -> int:
             here = _project(args, root)
             name = here.shares_root_with or here.name
             if args.write:
+                if skew.refuse(root, "decision view --write", args.force, f"the committed {decisions.VIEW}"):
+                    return 1
                 _queue_changed(root, args)
             else:
                 print(decisions.view(root, name), end="")
@@ -405,6 +407,8 @@ def register(sub, ctx) -> None:
     dr.add_argument("--at")
     dv = de.add_parser("view", help="the generated board notes/decision_queue.md (printed, or --write)")
     dv.add_argument("--write", action="store_true")
+    dv.add_argument("--force", action="store_true", help="--write even when the running engine is not config.json "
+                                                         "engine.pin")
     dv.add_argument("--all", action="store_true", help="every registered project's board, printed")
     dn = de.add_parser("announce", help="SessionStart hook: answers not integrated yet (hook JSON on stdin)")
     dn.add_argument("event", nargs="?", default="SessionStart")

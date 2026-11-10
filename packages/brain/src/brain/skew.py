@@ -147,9 +147,13 @@ def check_lines(root: Path | None) -> list[str]:
             f"brain render refuse to write until it is: {how(root, pin, engines)})"] if diff else []
 
 
-def refuse(root: Path | None, what: str, force: bool) -> int:
-    """1 (after saying why and the way out) when ``what`` (sync, refresh, render) would write with an engine other
-    than the pin; 0 when it is the pin, or with ``force`` (said too)."""
+WRITES = "the rendered hooks and the generated links"
+
+
+def refuse(root: Path | None, what: str, force: bool, writes: str = WRITES) -> int:
+    """1 (after saying why and the way out) when ``what`` (sync, refresh, render, views --write, or a command that
+    writes one committed view: ``writes`` names it) would write with an engine other than the pin; 0 when it is the
+    pin, or with ``force`` (said too). Committed views are written by the pinned engine only (COMPAT-1, N10)."""
     pin, diff, engines = of(root)
     if not diff:
         return 0
@@ -157,6 +161,6 @@ def refuse(root: Path | None, what: str, force: bool) -> int:
     if force:
         print(f"warning: {head} (--force: written anyway)", file=sys.stderr)
         return 0
-    print(f"{head}. It would rewrite the rendered hooks and the generated links with another engine.\n"
+    print(f"{head}. It would rewrite {writes} with another engine.\n"
           f"brain {what}: {how(root, pin, engines)}", file=sys.stderr)
     return 1

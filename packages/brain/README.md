@@ -14,7 +14,9 @@ What it does, every command reading files and git, never a model:
   views regenerated and checked (`brain sync`, `brain check`,
   `brain refresh`; in a brain's own root, check and refresh also run `brain check --all`'s registry check: the
   registry, `config.json`, the classes, the permissions, the stacks and the bundles they declare, the ids of every
-  registered project);
+  registered project), and written once on the default branch after each merge by one writer (`brain views --write`;
+  a branch need not commit them, the default branch's check fails on a stale one:
+  [`docs/views.md`](docs/views.md));
 - **history**: the journal (`brain journal add`) and the decision log (`brain adr new`), append-only;
 - **views**: the owner's queue (`brain queue`), the status of every project (`brain status`), a cockpit (`brain tui`,
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
@@ -125,9 +127,11 @@ and says so.
 
 A pinned brain runs its pinned engine. `brain check` warns when the running brain or research-graph is not
 `config.json` `engine.pin`: a newer or an older version, or the pin's version from other code (another git revision,
-an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh` and
-`brain render --write` then refuse to write, since they would render the plugin's hooks and generate the links with
-another engine. `brain update` moves the pin of a brain without an installer of its own; in a brain that declares
+an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh`,
+`brain render --write`, `brain views --write` and every command that writes one committed view (`brain audit --write`,
+`brain coverage --write`, `brain features render --write`, `brain decision view --write`, `brain modules --write`)
+then refuse to write, since they would render the plugin's hooks, generate the links or write a view with another
+engine. `brain update` moves the pin of a brain without an installer of its own; in a brain that declares
 one, set `engine.pin` to the new tag in `config.json` and commit it by a reviewed PR; the refusal names the file and
 the tag. Otherwise run the pinned
 engine, or pass `--force`. A brain with no pin, or a
@@ -345,7 +349,7 @@ line in the morning batch (`brain decision batch --zen`) and in the cockpit's qu
 
 ## Parallel sessions
 
-Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](docs/merge-driver.md)):
+Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](docs/merge-driver.md)):
 
 - **`brain merge-driver`**: a local git merge driver for the paths `.gitattributes` gives `merge=brain` (`brain init`
   writes them): a generated view keeps one side and is marked for `brain refresh`, the journal and the decision log
@@ -354,6 +358,10 @@ Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md
   (`brain merge-driver install --apply`); `brain merge-driver replay` merges a repo's past merges again with and
   without it. A driver that cannot run falls back to git's own `merge-file`, so ours is never left without its
   conflict markers, and `brain sync` brings an earlier engine's driver line to this one (`brain.mergedriver`).
+- **`brain views`**: one writer of the generated views ([`docs/views.md`](docs/views.md)): a branch need not commit
+  them (`brain views --unstage` after `git add`, `--reset` before merging the default branch), `brain check` fails on
+  a stale one on the default branch only (a `views:` line elsewhere), and `brain views --write --commit`, in a
+  worktree at the default branch's tip after each merge, regenerates and commits them (`brain.views`).
 - **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1

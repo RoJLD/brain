@@ -176,10 +176,15 @@ def test_sync_writes_the_links_and_check_warns_when_stale(tmp_path, monkeypatch,
     assert cli.main(["--project", "demo", "check"]) == 0
     assert "stale" not in capsys.readouterr().out
     (repo / "README.md").write_text("# demo\n\n## New\n\nwi-b.\n", encoding="utf-8")
+    assert cli.main(["--project", "demo", "check"]) == 1   # on main, the default branch: its views must be fresh
+    out = capsys.readouterr().out
+    assert "error: notes/graph/nodes/_generated_links.yaml is stale on main, the default branch" in out
+    assert "error: notes/graph/edges/_generated_links.yaml is stale on main, the default branch" in out
+    run_git(repo, "checkout", "-q", "-b", "feat")   # a branch need not hold them fresh (brain.views)
     assert cli.main(["--project", "demo", "check"]) == 0
     out = capsys.readouterr().out
-    assert "warning: nodes/_generated_links.yaml is stale: brain sync" in out
-    assert "warning: edges/_generated_links.yaml is stale: brain sync" in out
+    assert "views: 2 stale here (notes/graph/nodes/_generated_links.yaml, notes/graph/edges/_generated_links.yaml)" \
+        in out and "error:" not in out
 
 
 ENGINE = {   # another repo of the project, with no store: its code is described by the store of the repo "demo"

@@ -52,4 +52,6 @@ The view holds no date of its own, so it changes only when the registry or the i
 
 The view is a generated file, like the kanban: `.gitattributes` sends it to the brain's merge driver
 (`notes/modules_graph.md merge=brain`, a line `brain init` writes), which keeps one side of a merge and marks it
-for `brain refresh`.
+for `brain refresh`. Stale, it fails `brain check` on the default branch and is one `views:` line on another branch;
+`brain views --write` writes it there after each merge, and `brain modules --write` refuses an engine other than the
+pin ([views.md](views.md)).

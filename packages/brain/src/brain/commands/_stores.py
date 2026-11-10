@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, decisions, defaults, features, graph, links, lint, markers,
                 milestones, modules, neutral, permissions, projects, public, records, render, skew, specs, stacks, tidy,
-                tiers, vault, waves)
+                tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -27,14 +27,15 @@ def _module_view(project: projects.Project, root: Path, store: Path) -> str:
     return _store_label(root, folder / modules.FILE)
 
 
-def _module_warnings(project: projects.Project, root: Path, store: Path) -> list[str]:
-    """brain check's lines on the module map: its view stale, an open item it does not place."""
+def _module_warnings(project: projects.Project, root: Path, store: Path, stale: views.Stale) -> list[str]:
+    """brain check's lines on the module map: an open item it does not place; its view, when stale, joins
+    ``stale``."""
     if not modules.applies(store):
         return []
     view = _module_view(project, root, store)
-    stale = [f"{view} is stale: brain sync (or brain modules --write)"] \
-        if modules.stale(root, store, _store_label(root, store), view) else []
-    return stale + [f"module map: {line}" for line in modules.problems(store)]
+    if modules.stale(root, store, _store_label(root, store), view):
+        stale.add(view, "brain sync (or brain modules --write)")
+    return [f"module map: {line}" for line in modules.problems(store)]
 
 
 def _write_module_view(project: projects.Project, root: Path, store: Path) -> None:
@@ -55,8 +56,8 @@ def _write_plan_view(project: projects.Project, root: Path, store: Path) -> None
         print(f"view: {view} written")
 
 
-def _plan_checks(project: projects.Project, root: Path, store: Path) -> int:
-    """brain check's lines on the waves and eras: errors (1), warnings and a stale view."""
+def _plan_checks(project: projects.Project, root: Path, store: Path, stale: views.Stale) -> int:
+    """brain check's lines on the waves and eras: errors (1) and warnings; the view, when stale, joins ``stale``."""
     if not waves.applies(store):
         return 0
     plan = waves.load(store, root)
@@ -67,7 +68,7 @@ def _plan_checks(project: projects.Project, root: Path, store: Path) -> int:
         print(f"warning: plan: {line}")
     view = _plan_view(project, root, store)
     if waves.stale(root, store, view):
-        print(f"warning: {view} is stale: brain sync")
+        stale.add(view)
     return 1 if errors else 0
 
 
@@ -80,13 +81,14 @@ def _view_clash(args, project: projects.Project, root: Path, store: Path) -> str
     return clashes.get((project.name, _store_label(project.root, store)), "")
 
 
-def _store_checks(project: projects.Project, root: Path, store: Path) -> int:
+def _store_checks(project: projects.Project, root: Path, store: Path, stale: views.Stale) -> int:
     """The checks of the store itself, whichever project at the root it belongs to: milestones, the waves and eras
-    (1 on an error), the module map, the specs ready to turn active, the hard-rule ratio."""
+    (1 on an error), the module map, the specs ready to turn active, the hard-rule ratio; its stale views join
+    ``stale``."""
     for line in milestones.orphan_lines(store, root):
         print(line)
-    rc = _plan_checks(project, root, store)
-    for line in _module_warnings(project, root, store):   # every open item has its module (wi-brain-module-map)
+    rc = _plan_checks(project, root, store, stale)
+    for line in _module_warnings(project, root, store, stale):   # every open item has its module (wi-brain-module-map)
         print(f"warning: {line}")
     for r in specs.readiness(root, store):
         if r.ready:
@@ -283,23 +285,34 @@ def _check_store(args, root: Path, store: Path) -> int:
     for line in stubs:
         print(f"error: {line}")
     rc = 1 if clash or stubs else 0
+    where, stale, legacy = views.place(root), views.Stale(), {}
     if project.shares_root_with:   # its store's checks only: the root's are its owner's
         print(_shared_line(project))
-        rc = _store_checks(project, root, store) or rc
+        rc = _store_checks(project, root, store, stale) or rc
+        rc = _views_verdict(project, root, store, where, stale, legacy) or rc
         return graph.research_graph(root, store, *layout, "check") or rc
     rc = (cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0) or rc
     if decisions.view_stale(root, _project(args, root).name):
-        print(f"warning: {decisions.VIEW} is stale: brain sync (or brain decision view --write)")
+        stale.add(decisions.VIEW, "brain sync (or brain decision view --write)")
     roots: dict[str, Path] = {}   # the other repos' checkouts, where research_graph reads their nodes' anchors
     if links.applies(store):
         name, cfg, cfgs = _links_repo(args, root)
         roots = links.anchor_roots(cfgs, name)
         try:
             for f in links.stale(root, store, name, cfg, cfgs):
-                print(f"warning: {f} is stale: brain sync")
+                path = _store_label(root, store / f)
+                legacy[path] = f   # an earlier engine's warning named it from the store
+                stale.add(path)
         except AuditError as exc:
             print(f"warning: the links graph could not be checked: {exc}")
-    rc = _store_checks(project, root, store) or rc
+    rc = _store_checks(project, root, store, stale) or rc
+    if where.where == "default":   # the views only the default branch must hold fresh (brain.views)
+        if _records_view(root, store):
+            for f in records.graph_stale(root, store):
+                stale.add(_store_label(root, store / f))
+        if features.has_type(graph.load_schema(store)) and _features_stale(args, root, store):
+            stale.add(features.VIEW, "brain features render --write")
+    rc = _views_verdict(project, root, store, where, stale, legacy) or rc
     for line in skew.check_lines(root):   # the running engine against config.json engine.pin
         print(line)
     rc = _check_session_ids(root) or rc   # a DDR's local_ id that matches no session (scale study gap 19)
@@ -316,6 +329,32 @@ def _check_store(args, root: Path, store: Path) -> int:
         print(line)
     given = [a for n, p in sorted(roots.items()) for a in ("--repo-path", f"{n}={p}")]
     return graph.research_graph(root, store, *layout, "check", *given) or rc
+
+
+def _features_stale(args, root: Path, store: Path) -> bool:
+    """Whether the root's FEATURES.md exists and is not the render of the store's Feature nodes."""
+    from ._common import _root_repo
+    target = root / features.VIEW
+    if not target.is_file():
+        return False
+    repo = _root_repo(args, root).lower()
+    want = features.render(features.load_store(store, _root_repo(args, root)), repo, _store_label(root, store))
+    return bool(features.check_view(target.read_text(encoding="utf-8"), want))
+
+
+def _views_verdict(project: projects.Project, root: Path, store: Path, where: views.Place, stale: views.Stale,
+                   legacy: dict[str, str]) -> int:
+    """The stale views of a store's check said by where the checkout stands (brain.views): an error on the default
+    branch (with the board and the roadmap, measured there only), a ``views:`` line on another branch, the warnings
+    outside git; 1 on the default branch when one is stale."""
+    if where.where == "default":
+        folder = _store_label(root, projects.views_dir(project, store))
+        for path in graph.board_stale(root, store, folder):
+            stale.add(path, "brain sync (research_graph kanban --write)")
+    rc, lines = views.verdict(stale, where, legacy)
+    for line in lines:
+        print(line)
+    return rc
 
 
 def _check_session_ids(root: Path) -> int:

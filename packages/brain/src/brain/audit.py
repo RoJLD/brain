@@ -89,8 +89,9 @@ CHECKS = {c.id: c for c in (
           "store's coverage summary (brain coverage)"),
     Check("feature.tests", "P2", "never", "a have or partial feature with code that no test module is tested_by "
           "(no test imports, names or runs its code)"),
-    Check("features.md", "P0", "new+left", "FEATURES.md is not the render of the graph (P0), or is missing (P1 on a "
-                                           "production repo, P2 elsewhere)"),
+    # a generated view: the default branch's to hold fresh (brain check there, brain.views), never a branch's to fix
+    Check("features.md", "P0", "never", "FEATURES.md is not the render of the graph (P0), or is missing (P1 on a "
+                                        "production repo, P2 elsewhere)"),
     Check("feature.links", "class", "new+left", "a module or script no feature is implemented by, or a have or "
                                                 "partial feature with no implemented_by"),
 )}

@@ -44,6 +44,14 @@ a `Root cause:` line for a symptom fix, a `Justified: <unit>: <reason>` line for
 - The PR is merged with `gh` after local verification (tests, linters), in dependency order for stacked branches,
   with no AI attribution in its commits or body. After merging the base into the branch, `brain merge-check` (where
   the `brain` command serves the project) says whether the resolution lost a line or a node of a fresh base. Check: `gh pr view <n> --json state,mergedAt,mergeCommit`.
+- The generated views (the kanban, the roadmap, the decision queue, the audit, `FEATURES.md`, the graph's
+  `_generated_*.yaml`) have one writer where the `brain` command serves the project: the branch need not commit them
+  (`brain views --unstage` after `git add`; `brain views --reset` before merging the base into the branch, then
+  `brain refresh`), and after the merge, in a worktree at the default branch's tip (`git worktree add -b
+  chore/views-<date> <path> origin/<default>`), `brain --root <path> views --write --commit`, then that commit
+  pushed and merged the project's way. Until it runs, `brain check` on the default branch fails on the stale views;
+  a branch that still commits its views passes, the merge driver keeping one side. The runbook: the engine's
+  `docs/views.md`.
 - Applied: where the change runs somewhere (a production checkout, a scheduled task, an installed copy), that place
   is updated the project's way (for example `git pull --ff-only` in the production checkout, then the project's setup
   command) and checked on its next real run when there is one.
