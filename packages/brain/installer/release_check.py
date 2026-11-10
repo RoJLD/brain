@@ -35,6 +35,7 @@ PyYAML; on any PR, a version PR or not).
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -144,13 +145,55 @@ def _key_additive(key: str, old, new, schema: dict) -> bool:
             and all(additive(old[k], new[k]) for k in old))
 
 
+def _at_tag(repo: Path, tag: str, path: str) -> bool:
+    """Whether ``path`` exists in ``tag``'s tree."""
+    try:
+        git(repo, "cat-file", "-e", f"{tag}:{path}")
+        return True
+    except CannotTell:
+        return False
+
+
+REGISTRY = f"{BRAIN}/installer/release_check.py"
+
+
+def formats_at(repo: Path, tag: str) -> set[str] | None:
+    """The format names ``tag`` registered: the keys of :data:`SCHEMAS` in that tag's own copy of this file; None
+    when it cannot tell (no such file, or no literal SCHEMAS in it)."""
+    try:
+        tree = ast.parse(git(repo, "show", f"{tag}:{REGISTRY}"))
+    except (CannotTell, SyntaxError, ValueError):
+        return None
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
+                and any(isinstance(t, ast.Name) and t.id == "SCHEMAS" for t in node.targets)):
+            return {k.value for k in node.value.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+    return None
+
+
+def new_formats(repo: Path, tag: str) -> set[str]:
+    """The formats this version adds: a name ``tag`` did not register (:func:`formats_at`) none of whose files exists
+    at ``tag``. No brain holds a file of one yet and an older engine never reads it, so adding one asks nothing of an
+    owner (the owner's decision of 2026-11-10, wi-brain-release-schema-additive). A format the tag registered whose
+    files are renamed is not new: it moves. When the tag's registry cannot be read, no format is new."""
+    known = formats_at(repo, tag)
+    if known is None:
+        return set()
+    return {name for name, group in SCHEMAS.items() if group and name not in known
+            and all((repo / p).exists() and not _at_tag(repo, tag, p) for p in group)}
+
+
 def moved_schemas(repo: Path, tag: str, changed: list[str]) -> tuple[list[str], list[str]]:
-    """(moved, additive): the changed schema files split into those whose format moves and those that only grew by
-    optional keys (:data:`ADDITIVE`, :func:`additive`); a file new or gone since ``tag``, or unreadable as JSON,
-    moves."""
+    """(moved, additive): the changed schema files split into those whose format moves and those that only grew:
+    by optional keys (:data:`ADDITIVE`, :func:`additive`), or as a whole new format (:func:`new_formats`). Any other
+    file new or gone since ``tag``, or unreadable as JSON, moves."""
     grows = {path for name in ADDITIVE for path in SCHEMAS[name] if path.endswith(".json")}
+    added = {path for name in new_formats(repo, tag) for path in SCHEMAS[name]}
     moved, grown = [], []
     for path in changed:
+        if path in added:
+            grown.append(path)
+            continue
         if path in grows:
             try:
                 if additive(json.loads(git(repo, "show", f"{tag}:{path}")), json.loads(read(repo, path))):
@@ -395,6 +438,21 @@ def readable_store(store: Path) -> None:
         raise CannotTell(f"--store {store}: not a graph store (no nodes/)")
 
 
+def grown_lines(repo: Path, tag: str, grown: list[str]) -> list[str]:
+    """What check says of the schema files that did not move: a new format's files on their own line, then the
+    schemas grown by optional keys only (both compatible with a patch)."""
+    added = {path for name in new_formats(repo, tag) for path in SCHEMAS[name]}
+    new, optional = [p for p in grown if p in added], [p for p in grown if p not in added]
+    lines = []
+    if new:
+        lines.append(f"new registered formats since {tag}, held by no brain yet (compatible with a patch): "
+                     f"{', '.join(new)}")
+    if optional:
+        lines.append(f"registered schemas grown by optional keys only since {tag} (compatible with a patch): "
+                     f"{', '.join(optional)}")
+    return lines
+
+
 def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], list[str]]:
     """(what it says, what fails) for the checkout ``repo`` against the tag ``tag``; ``store``: the graph store whose
     wave of this version must be closed."""
@@ -414,9 +472,7 @@ def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], l
     problems += [f"{p}: a fragment not compiled into ## {version} (python {BRAIN}/installer/changelog.py compile "
                  f"{version} --theme T --write)" for p in frag.pending(repo)]
     changed, grown = moved_schemas(repo, tag, changed_schemas(repo, tag))
-    if grown:
-        said.append(f"registered schemas grown by optional keys only since {tag} (compatible with a patch): "
-                    f"{', '.join(grown)}")
+    said += grown_lines(repo, tag, grown)
     changelog = f"{BRAIN}/CHANGELOG.md"
     upgrade = upgrade_section(read(repo, changelog), version)
     if not changed:
