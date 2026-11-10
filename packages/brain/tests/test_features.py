@@ -5,6 +5,7 @@ import pytest
 
 from brain import audit, cli, features, graph
 
+from conftest import git_init, run_git
 from test_audit import README, _found, _measure
 
 SCHEMA = ("node_types: [WorkItem, Spec, ADR, Feature, CodeRef, Repo]\n"
@@ -243,6 +244,142 @@ def test_audit_features_md_and_links(fstore):
     res = _measure({"lab": {**store, **code, "FEATURES.md": view.replace("partial", "have", 1)}})
     assert _found(res)[("features.md", "FEATURES.md")] == "P0"              # stale: states something false
     assert "features.md" not in [x["check"] for x in res["repos"][0]["not_measured"]]
+
+
+# --- the matrix split by repo, and the public render (wi-brain-features-repo-split) ---
+
+PUBLIC_CFG = {"v": 1, "identity": {"owner": "Ada"},
+              "public": {"repos": ["acme/engine"], "deny": {"people": ["Ada"], "repos": ["ada-private"]}}}
+OWNER_TITLE = "Owner-alone guard: refuses what only the owner does"
+
+
+@pytest.fixture
+def public_clone(tmp_path, monkeypatch):
+    """Ada's config.json naming acme/engine public, and a checkout of the engine (repo sib) whose origin is it."""
+    cfg = tmp_path / "ada-brain" / "config.json"
+    cfg.parent.mkdir()
+    cfg.write_text(json.dumps(PUBLIC_CFG), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    clone = git_init(tmp_path / "engine")
+    run_git(clone, "remote", "add", "origin", "https://github.com/acme/engine.git")
+    return clone
+
+
+def _seed_split(s):
+    """lab's features, and the engine's (repo sib): one titled and named after its owner, its code, tests and docs
+    in both repos, linked to lab's spec, ADR and item; a part of it in another domain."""
+    _seed(s)
+    for nid in ("test:sib:tests/test_guard.py", "test:lab:tests/test_hook.py", "doc:sib:README.md::guards",
+                "doc:lab:docs/private.md::guard"):
+        graph.add_item(s, nid, nid, node_type="WorkItem")   # any node: Test and Doc are the links layer's
+    features.add(s, "feat-sib-ada-guard", "Ada-alone guard: refuses what only Ada does", "guards", "sib",
+                 status="have", code=["code:sib:sib/guard.py", "code:lab:src/lab/hook.py"],
+                 tests=["test:sib:tests/test_guard.py", "test:lab:tests/test_hook.py"],
+                 docs=["doc:sib:README.md::guards", "doc:lab:docs/private.md::guard"], specs=["spec-x"],
+                 adrs=["adr-2026-11-02-x"], items=["wi-x"])
+    features.add(s, "feat-sib-ssh", "Over ssh too", "remote", "sib", status="partial", parent="feat-sib-ada-guard",
+                 code=["code:sib:sib/ssh.py"])
+    features.set_feature(s, "feat-sib-ada-guard", [f"public_title={OWNER_TITLE}", "public_id=feat-sib-owner-guard"])
+
+
+def test_public_render_is_neutral_stable_and_loses_nothing_in_the_brain(fstore, public_clone):
+    _seed_split(fstore)
+    m = features.load_store(fstore)
+    text = features.render(m, "sib", public=True)
+    assert features.MARKER in text and "**2 features: 1 have, 1 partial, 0 planned, 0 no.**" in text
+    assert f"**{OWNER_TITLE}** `feat-sib-owner-guard`" in text and "part of `feat-sib-owner-guard`" in text
+    assert "[guard.py](sib/guard.py)" in text and "hook.py" not in text            # only the repo's own code
+    assert "`test:sib:tests/test_guard.py`" in text and "test:lab" not in text
+    assert "`doc:sib:README.md::guards`" in text and "doc:lab" not in text
+    for private in ("Ada", "ada-guard", "spec-x", "adr-2026-11-02-x", "wi-x", "notes/graph", "feat-lab"):
+        assert private not in text
+    assert features.denied_lines(text) == []                                       # brain check --public passes it
+    # deterministic: the same graph, nodes in any order, the same file
+    nodes = [graph.load_yaml_list(f) for f in sorted((fstore / "nodes").glob("*.yaml"))]
+    edges = [graph.load_yaml_list(f) for f in sorted((fstore / "edges").glob("*.yaml"))]
+    shuffled = features.build([list(reversed(n)) for n in reversed(nodes)], edges)
+    shuffled.coverage = m.coverage
+    assert features.render(shuffled, "sib", public=True) == text == features.render(m, "sib", public=True)
+    # the brain's own render keeps everything: the title, the id, the other repo's code and the records
+    full = features.render(m, "sib")
+    assert "**Ada-alone guard: refuses what only Ada does** `feat-sib-ada-guard`" in full
+    assert "`lab:hook.py`" in full and "`spec-x`, `adr-2026-11-02-x`, `wi-x`" in full
+    assert any("people term 'Ada'" in x for x in features.denied_lines(full))
+    assert features.render(m, "lab", public=True).count("feat-sib") == 0         # each repo its own features
+    assert "feat-sib" not in features.render(m, "lab")
+
+
+def test_public_id_is_a_feature_id_no_other_node_has(fstore):
+    _seed_split(fstore)
+    for bad, why in (("public_id=Owner Guard", "is a feature id"), ("public_id=feat-lab-core", "already a node's id"),
+                     ("public_id=feat-sib-owner-guard", "another feature's public_id")):
+        with pytest.raises(features.FeatureError, match=why):
+            features.set_feature(fstore, "feat-sib-ssh", [bad])
+    assert features.set_feature(fstore, "feat-sib-ada-guard", ["public_id=feat-sib-owner-guard"])   # its own
+
+
+def test_public_checkout_reads_the_remotes_against_public_repos(public_clone, tmp_path, monkeypatch):
+    assert features.public_checkout(public_clone)
+    other = git_init(tmp_path / "fork")
+    run_git(other, "remote", "add", "origin", "https://github.com/acme/private-thing.git")
+    assert not features.public_checkout(other)
+    assert not features.public_checkout(tmp_path / "missing")
+    run_git(other, "remote", "add", "upstream", "git@github.com:acme/engine.git")   # any remote of the list
+    assert features.public_checkout(other)
+    monkeypatch.setenv("BRAIN_CONFIG", str(tmp_path / "none.json"))                # no public.repos: never public
+    assert not features.public_checkout(public_clone)
+
+
+def test_cli_renders_the_public_matrix_into_the_engine_checkout(fstore, public_clone, tmp_path, monkeypatch,
+                                                                  capsys):
+    _seed_split(fstore)
+    features.add(fstore, "feat-sib-notes", "Ada's notes", "notes", "sib")         # no public_title yet
+    root = _cli_project(tmp_path, monkeypatch, fstore)
+    out = public_clone / "FEATURES.md"
+    base = ["--project", "lab", "--root", str(root), "features", "render", "--repo", "sib", "--out", str(out)]
+    assert cli.main(base) == 1
+    got = capsys.readouterr()
+    assert "FEATURES.md of sib (public): missing" in got.out
+    assert "warning: the public FEATURES.md of sib" in got.err and "people term 'Ada'" in got.err
+    assert "public_title=" in got.err
+    assert cli.main(base + ["--write"]) == 0 and "written (sib, public render)" in capsys.readouterr().out
+    assert out.read_text(encoding="utf-8") == features.render(features.load_store(fstore, "lab"), "sib",
+                                                              "notes/graph", public=True)
+    assert cli.main(base) == 0
+    features.set_feature(fstore, "feat-sib-notes", ["public_title=The owner's notes"])
+    assert cli.main(base) == 1                                                   # the neutral title: re-rendered
+    capsys.readouterr()
+    assert cli.main(base + ["--write"]) == 0 and capsys.readouterr().err == ""   # nothing denied left
+    assert cli.main(["--project", "lab", "--root", str(root), "features", "render", "--write"]) == 0
+    assert "feat-sib" not in (root / "FEATURES.md").read_text(encoding="utf-8")  # the brain's: its own features
+
+
+def test_audit_compares_each_repo_with_its_own_render(fstore, public_clone):
+    _seed_split(fstore)
+    store = {f"notes/graph/{p.relative_to(fstore).as_posix()}": p.read_text(encoding="utf-8")
+             for p in fstore.rglob("*.yaml")}
+    m = features.load_store(fstore, "lab")
+    lab = {**store, "README.md": README, "src/lab/__init__.py": "", "src/lab/core.py": "def run():\n    pass\n",
+           "src/lab/cli.py": "def main():\n    pass\n", "FEATURES.md": features.render(m, "lab")}
+    sib = {"README.md": README, "sib/__init__.py": "", "sib/guard.py": "def g():\n    pass\n",
+           "sib/ssh.py": "def s():\n    pass\n"}
+    root = Path("/m/lab")
+    p = audit.projects.Project("demo", root, [root / "notes" / "graph"])
+    cfgs = [audit.projects.Repo("lab", root), audit.projects.Repo("sib", public_clone)]
+    from test_inventory import mem
+
+    def measure(view):
+        files = {**sib, **({"FEATURES.md": view} if view is not None else {})}
+        return audit.measure(p, cfgs, {"lab": mem(lab, "lab"), "sib": mem(files, "sib")})
+
+    assert ("features.md", "FEATURES.md") not in _found(measure(features.render(m, "sib", public=True)), "sib")
+    assert ("features.md", "FEATURES.md") not in _found(measure(None), "lab")     # lab's own: its render
+    res = measure(features.render(m, "sib"))                                         # the brain's render: stale
+    assert _found(res, "sib")[("features.md", "FEATURES.md")] == "P0"
+    fix = next(f["fix"] for r in res["repos"] if r["name"] == "sib" for f in r["findings"]
+               if f["check"] == "features.md")
+    assert "--repo sib --out <a worktree of sib>/FEATURES.md --write (the public render)" in fix
+    assert _found(measure(None), "sib")[("features.md", "FEATURES.md")] == "P2"     # missing, not production
 
 
 def test_audit_without_the_feature_type_pending_per_repo_unless_featured_today():

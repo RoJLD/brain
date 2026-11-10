@@ -172,6 +172,20 @@ DEFER line to the repo's debt item; `config.json` `audit.feature_coverage_strict
 false) makes that one a LEFT line to fix in the PR.
 `--store DIR` gives the scout a worktree of the store where the change's features are linked.
 
+### The feature matrix of each repo
+
+Each repo of a project has its own `FEATURES.md` at its root: the features whose `repo` prop names it (`brain features
+set <id> repo=<repo>` moves one), from the Feature nodes of the brain's store. `brain sync` renders the store's own
+repo's; another repo's is rendered into a checkout of it, then committed there by its own PR (`brain features render
+--repo <repo> --out <checkout>/FEATURES.md --write`), and `brain audit` (check `features.md`) compares each repo's
+file with its own render, its fix naming the command for that repo. A checkout that is a clone of a public repo (one
+of its git remotes is in `config.json` `public.repos`) gets the public render: a feature's `public_title` and
+`public_id` props stand for a title or an id that names the owner or a private project (`brain features set <id>
+public_title="..." public_id=feat-...`; the graph keeps both, `brain features show` prints them), and only the repo's
+own code, tests and docs are shown, no spec, ADR or work item of the private brain. The render warns, line by line,
+about what `brain check --public` would still refuse in it. The render has no date and sorts what it lists: the same
+graph gives the same file.
+
 ### The impact of a change
 
 `brain impact [--diff BASE|A..B]` says, before merge, what a change's code carries in the graph

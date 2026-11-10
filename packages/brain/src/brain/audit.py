@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, feature_coverage, features, graph, inventory, links, paths, projects, testcov
+from . import config, feature_coverage, features, graph, inventory, links, paths, projects, public, testcov
 from .inventory import AuditError
 
 RULESET = 6   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
@@ -225,14 +225,18 @@ NO_FEATURES = "no Feature type in the project's store"
 
 
 def features_md(ctx: dict) -> list[dict] | str:
-    """features.md: the repo's root FEATURES.md is the render of the committed graph's Feature nodes."""
+    """features.md: the repo's root FEATURES.md is the render of the committed graph's Feature nodes whose repo it is:
+    the public render when the repo's checkout is a clone of a public repo (brain.features.public_checkout)."""
     fm, c = ctx.get("features"), ctx["cfg"]
     if fm is None:
         return NO_FEATURES
     t, name = ctx["rf"].tree, c.name
+    pub = name in ctx.get("fpublic", set())
     why = features.check_view(t.text(features.VIEW) if t.has(features.VIEW) else None,
-                              features.render(fm, name, ctx["flabel"]))
-    fix = "brain features render --write (run by brain sync), then commit it"
+                              features.render(fm, name, ctx["flabel"], public=pub))
+    fix = ("brain features render --write (run by brain sync), then commit it" if name in ctx.get("fhome", {name})
+           else f"from the brain's worktree, brain features render --repo {name} --out <a worktree of {name}>/"
+                f"{features.VIEW} --write{' (the public render)' if pub else ''}, then commit it there")
     if why == "missing":
         return [finding(name, "features.md", features.VIEW, "no FEATURES.md (the repo's feature matrix)", fix,
                         sev="P1" if c.production or c.entry is not None else "P2")]
@@ -485,7 +489,8 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
     ``extra_dirs``: more top-level folders whose paths a doc names are checked (the scout passes the base tree's, so
     a folder a change empties still has its dead references)."""
     cfgs = [c for c in cfgs if c.name in trees]
-    fm, flabel = _feature_model(p, cfgs, trees)
+    fm, flabel, fhome = _feature_model(p, cfgs, trees)
+    fpublic = _public_repos(p, cfgs) if fm is not None else set()
     if featured is None:
         featured = fm is not None
     fm = (fm or features.Model()) if featured else None
@@ -559,7 +564,7 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
         if only is not None and c.name not in only:
             continue
         ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm, "trees": trees,
-               "flabel": flabel, "coverage": coverage.get(c.name),
+               "flabel": flabel, "fhome": fhome, "fpublic": fpublic, "coverage": coverage.get(c.name),
                "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
         out_repos.append(_repo_result(c, rf, idx, tops, mod_evidence, facts, dangling.get(c.name, []),
                                       sorted(set(unregistered.get(c.name, []))), covered, layered,
@@ -570,10 +575,11 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
 
 
 def _feature_model(p: projects.Project, cfgs: list[projects.Repo],
-                   trees: dict[str, inventory.Tree]) -> tuple[features.Model | None, str]:
-    """The Feature nodes of the project's stores with the Feature type, read from the trees (committed state), and
-    the first such store's folder (FEATURES.md names it); None when no store has the type."""
-    models, label = [], ""
+                   trees: dict[str, inventory.Tree]) -> tuple[features.Model | None, str, set[str]]:
+    """The Feature nodes of the project's stores with the Feature type, read from the trees (committed state), the
+    first such store's folder (FEATURES.md names it) and the repos that hold them (brain sync renders their
+    FEATURES.md; another repo's is rendered into its checkout); None when no store has the type."""
+    models, label, home = [], "", set()
     for repo, rel in _store_refs(p, cfgs):
         if repo not in trees:
             continue
@@ -584,7 +590,15 @@ def _feature_model(p: projects.Project, cfgs: list[projects.Repo],
         if m is not None:
             models.append(m)
             label = label or rel
-    return (features.merge(models) if models else None), label or "notes/graph"
+            home.add(repo)
+    return (features.merge(models) if models else None), label or "notes/graph", home
+
+
+def _public_repos(p: projects.Project, cfgs: list[projects.Repo]) -> set[str]:
+    """The project's repos whose checkout is a clone of a public repo (config.json public.repos): their FEATURES.md
+    is the public render."""
+    cfg = config.load(p.root)
+    return {c.name for c in cfgs if features.public_checkout(c.path, cfg)} if public.public_repos(cfg) else set()
 
 
 def _store_types(t: inventory.Tree, rel: str) -> list[str]:
