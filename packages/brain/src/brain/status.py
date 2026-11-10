@@ -22,8 +22,10 @@ Per project, from what the Brain already reads:
 
 Once for all the projects shown, ``quota``: the plan's weekly window from the readings the sessions noted, the percent
 at the reset at the last 24 h's pace and the advice (brain.quota; ``--quick``: without the live sessions and queue);
-and ``probes``: this machine's dependency probes (brain.depprobes), run first so that the brain's alerts row counts
-them (``--quick``: their last run), the row shown once one is declared here.
+``memory``: the machine's committed memory and available RAM against the usage guard's thresholds (brain.governor),
+naming the measure that would refuse a new session; and ``probes``: this machine's dependency probes
+(brain.depprobes), run first so that the brain's alerts row counts them (``--quick``: their last run), the row shown
+once one is declared here.
 
 ``--all`` adds the totals, the ids found in more than one store (``brain check --all`` fails on them), the projects
 the brain reads and never writes (``access: read``, counted by name) and the tenant
@@ -352,9 +354,26 @@ def run(projs: list[projects.Project], *, every: bool = False, quick: bool = Fal
         data["total"]["read_only"] = len(data["read_only"])
     fc = quota.status_of(projs, root, usage.now_utc(), quick=quick)
     data["quota"] = {k: v for k, v in fc.items() if k != "now"}
+    data["memory"] = memory_of(root)
     data["quiet"] = quiet.summary(projs)
     data["probes"] = {k: probes_[k] for k in ("host", "at", "probes", "errors")}
     return data
+
+
+def memory_of(root: Path | None) -> dict:
+    """The machine's two memory measures and the usage guard's thresholds (brain.governor): {committed,
+    available_gb, refused, line}; refused names the measure that would refuse a new session ('' none, 'both')."""
+    from . import governor
+
+    try:
+        lim = governor.settings(str(root) if root else "")["limits"]
+    except Exception:   # a config that does not load: the defaults
+        lim = dict(governor.DEFAULTS)
+    mem = governor.memory_info()
+    c, a = mem.get("committed"), mem.get("available_gb")
+    refused = governor.memory_refusal(c, a, lim)
+    line = governor.memory_text(c, a, lim) + (f": a new session or workflow is refused ({refused})" if refused else "")
+    return {"committed": c, "available_gb": a, "refused": refused, "line": line}
 
 
 # --- text ---
@@ -487,6 +506,8 @@ def render(data: dict) -> list[str]:
     if "quota" in data:
         q = data["quota"]
         lines += _row("quota", f"error: {q['error']}" if "error" in q else q["line"])
+    if "memory" in data:
+        lines += _row("memory", data["memory"]["line"])
     if (data.get("probes") or {}).get("probes") or (data.get("probes") or {}).get("errors"):
         from . import depprobes
         lines += _row("probes", depprobes.status_line(data["probes"]))
