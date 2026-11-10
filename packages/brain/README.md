@@ -160,13 +160,15 @@ The scout also reads four cheap norms in the AST of each Python file a change to
 `norm.timeout` (a `subprocess.run`, `call`, `check_call`, `check_output` or `urlopen` without `timeout=`, a
 `Popen`'s `communicate()` or `wait()` without one), `norm.encoding` (an `open()` in text mode, a `read_text()` or a
 `write_text()` without `encoding=`), `norm.naive-time` (a `datetime.now()` or `today()` without a tz, or a
-`utcnow()`, stored: made text by `isoformat()`, `str()` or an f-string, put in a dict or given to `json.dump`) and
-`norm.secret-argv` (a token, password, secret or API key variable in a subprocess call's command or its `env`, or
-assigned to `os.environ[...]`: a secret travels by stdin or the keystore). A call that unpacks `**kwargs`, or whose
-mode is not a literal, is not judged. What the change adds is an `info` line by default (shown, never blocking), a
-NEW line under `config.json` `audit.norm_lints_strict: true` (the owner's opt-in), which a `Justified: <path>: ...`
-line clears; the occurrences already in a touched file, or moved into it, make one DEFER line per file and norm to the
-repo's debt item, fixed by batches.
+`utcnow()`, stored: made text by `isoformat()`, `str()` or an f-string, put in a dict or given to `json.dump`; not
+once `astimezone()` or `replace(tzinfo=...)` made it aware) and `norm.secret-argv` (a token, password, secret or API
+key variable, or a constant subscript such as `os.environ["GH_TOKEN"]`, in a subprocess call's command or its `env`,
+or assigned to `os.environ[...]`: a secret travels by stdin or the keystore). A call that unpacks `**kwargs`, or
+whose mode is not a literal, is not judged; `timeout=None` or `encoding=None` counts as none. What the change adds is
+an `info` line by default (shown, never blocking), a NEW line under `config.json` `audit.norm_lints_strict: true`
+(the owner's opt-in), which a `Justified: <path>: ...` line clears; the occurrences already in a touched file, or
+moved into it from a file that no longer defines their function, make one DEFER line per file and norm to the repo's
+debt item, fixed by batches (never blocking).
 
 ### Feature coverage
 

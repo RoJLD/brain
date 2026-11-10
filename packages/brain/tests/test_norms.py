@@ -31,6 +31,10 @@ def _found(text):
     "from urllib.request import urlopen\nurlopen('https://example.org', None)\n",
     "import subprocess\np = subprocess.Popen(['x'])\np.wait()\n",
     "import subprocess\nwith subprocess.Popen(['x']) as proc:\n    out, err = proc.communicate(b'in')\n",
+    "import subprocess\nsubprocess.run(['x'], timeout=None)\n",                  # an explicit no-timeout
+    "from urllib.request import urlopen\nurlopen('https://example.org', timeout=None)\n",
+    "from urllib.request import urlopen\nurlopen('https://example.org', None, None)\n",
+    "import subprocess\np = subprocess.Popen(['x'])\np.wait(None)\n",
 ])
 def test_a_call_without_a_timeout(text):
     assert _found(text)[-1][0] == "norm.timeout"
@@ -57,6 +61,7 @@ def test_a_call_with_a_timeout_or_another_function(text):
     "from pathlib import Path\nPath('x').read_text()\n",
     "p.write_text(data)\n",
     "p.read_text(errors='replace')\n",
+    "open('x', encoding=None)\n",                       # the locale's
 ])
 def test_a_text_file_without_an_encoding(text):
     assert [c for c, _ in _found(text)] == ["norm.encoding"]
@@ -86,6 +91,7 @@ def test_a_binary_file_or_an_encoding(text):
     "    return stamp.isoformat()\n",
     "from datetime import datetime\nimport json\ndef f(out):\n    now = datetime.now()\n    json.dump(now, out)\n",
     "from datetime import datetime\nrec = dict(at=datetime.now(tz=None))\n",
+    "from datetime import datetime\ns = datetime.utcnow().replace(tzinfo=None).isoformat()\n",   # still naive
 ])
 def test_a_naive_datetime_stored(text):
     assert [c for c, _ in _found(text)] == ["norm.naive-time"]
@@ -98,6 +104,10 @@ def test_a_naive_datetime_stored(text):
     "from datetime import datetime\nprint(datetime.now().strftime('%H:%M'))\n",        # a display
     "from datetime import datetime\ndef f(t0):\n    now = datetime.now()\n    return (now - t0).seconds\n",
     "from datetime import date\nrow = {'on': date.today().isoformat()}\n",              # a date, not a time
+    "from datetime import datetime, timezone\nrow = {'t': datetime.utcnow().replace(tzinfo=timezone.utc)}\n",
+    "from datetime import datetime, timezone\ns = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()\n",
+    "from datetime import datetime, timezone\ndef f():\n"
+    "    t = datetime.now().replace(microsecond=0).replace(tzinfo=timezone.utc)\n    return t.isoformat()\n",
 ])
 def test_an_aware_datetime_or_one_not_stored(text):
     assert _found(text) == []
@@ -115,6 +125,8 @@ def test_an_aware_datetime_or_one_not_stored(text):
     "import os\nos.environ['OPENAI_API_KEY'] = key\n",
     "def f(tok):\n    env = {}\n    env['GH_TOKEN'] = tok\n",
     "import subprocess\nsubprocess.check_output(['x', get_token()], timeout=9)\n",
+    "import os, subprocess\nsubprocess.run(['x'], env={'A': os.environ['GH_TOKEN']}, timeout=1)\n",
+    "import subprocess\nsubprocess.run(['x', cfg['api_key']], timeout=1)\n",
 ])
 def test_a_secret_in_argv_or_env(text):
     assert [c for c, _ in _found(text)] == ["norm.secret-argv"]
@@ -129,6 +141,7 @@ def test_a_secret_in_argv_or_env(text):
     "import os\nos.environ['TOKEN_ENV'] = name\n",
     "import secrets\nheaders = {'Authorization': token}\n",                                 # not a child's
     "def run(cmd):\n    pass\nrun(['x', token])\n",
+    "import os, subprocess\nsubprocess.run(['x', cfg['token_path']], env={'H': os.environ['HOME']}, timeout=1)\n",
 ])
 def test_no_secret_given_to_a_child(text):
     assert _found(text) == []
@@ -220,3 +233,21 @@ def test_old_ones_are_deferred_by_batch_and_a_moved_one_is_not_new(make_repo, tm
     _write(lab, "src/lab/core.py", "def fresh(p):\n    return open(p).read()\n")   # not moved: added
     _, found, _ = _norms(capsys, lab)
     assert ("norm.encoding", "src/lab/core.py::fresh", "NEW") in found
+
+
+def test_a_fix_in_one_file_does_not_excuse_the_same_text_added_in_another(make_repo, tmp_path, monkeypatch, capsys):
+    _strict(tmp_path, monkeypatch)
+    lab = _setup(make_repo, tmp_path, monkeypatch, {**LAB, "src/lab/old.py": BAD})
+    _write(lab, "src/lab/old.py", BAD.replace("open(p)", "open(p, encoding='utf-8')"))   # read() fixed, still there
+    _write(lab, "src/lab/core.py", "def read(p):\n    return open(p).read()\n")          # the same text, added
+    _, found, _ = _norms(capsys, lab)
+    assert found == [("norm.encoding", "src/lab/core.py::read", "NEW"), ("norm.timeout", "src/lab/old.py", "DEFER")]
+
+
+def test_old_ones_are_deferred_without_blocking_by_default(make_repo, tmp_path, monkeypatch, capsys):
+    lab = _setup(make_repo, tmp_path, monkeypatch, {**LAB, "src/lab/old.py": BAD,
+                                                    "tests/test_old.py": "from lab.old import go, read\n"})
+    _write(lab, "src/lab/old.py", BAD + "\n\nX = 1\n")
+    rc, found, data = _norms(capsys, lab)
+    assert found == [("norm.encoding", "src/lab/old.py", "DEFER"), ("norm.timeout", "src/lab/old.py", "DEFER")]
+    assert data["new_findings"] == 0 and data["left"] == 0 and rc == 0   # the release rule: DEFER never blocks

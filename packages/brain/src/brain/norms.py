@@ -8,18 +8,20 @@ norm.encoding     an ``open()`` (or ``io.open``) in text mode, a ``read_text()``
                   ``encoding=``
 norm.naive-time   a naive datetime stored: ``datetime.now()`` or ``today()`` without a tz, or ``utcnow()``, made
                   text (``isoformat()``, ``str()``, an f-string), put in a dict (a record, ``dict(...)``) or given to
-                  ``json.dump(s)``, directly or through a local name; ``strftime()`` (a display) and
-                  ``astimezone()`` (aware) are not
+                  ``json.dump(s)``, directly or through a local name; ``strftime()`` (a display),
+                  ``astimezone()`` and ``replace(tzinfo=...)`` (aware) are not
 norm.secret-argv  a secret passed to a child in its argv or its env: a token, password, secret or API key variable
                   (by its name: ``token``, ``gh_token``, ``password``, ``api_key``, ``self.secret``...; not a
                   ``token_path`` or a ``max_tokens``) in a subprocess call's command (a list literal, or the list a
                   local name holds), or in its ``env=`` (a dict literal, ``dict(...)``, the dict a local name holds,
                   a secret key such as ``"GH_TOKEN"`` given a value), or assigned to ``os.environ[...]`` or an
-                  ``env[...]``. A secret travels by stdin or the keystore.
+                  ``env[...]``; a constant subscript is read by its key (``os.environ["GH_TOKEN"]``,
+                  ``cfg["api_key"]``). A secret travels by stdin or the keystore.
 
-A call that unpacks ``**kwargs`` is not judged (the keyword may be in it), nor a mode that is not a literal. An
-occurrence is told by its function and its source: one the change adds (that the file did not have, and that the
-change did not move from another file) is a NEW line under config.json ``audit.norm_lints_strict`` (the owner's
+A call that unpacks ``**kwargs`` is not judged (the keyword may be in it), nor a mode that is not a literal; a
+literal None (``timeout=None``, ``encoding=None``) is no value. An occurrence is told by its function and its
+source: one the change adds (that the file did not have, and that the change did not move from another file, which
+no longer defines that function) is a NEW line under config.json ``audit.norm_lints_strict`` (the owner's
 opt-in), an info line otherwise (shown, never blocking: nothing that passed is newly refused). Those already in a
 file the change touches, or moved there, make one DEFER line per file and norm, to the repo's debt item (fixed by
 batches). A line
@@ -105,8 +107,12 @@ def _unpacks(call: ast.Call) -> bool:
 
 
 def _has(call: ast.Call, name: str, position: int) -> bool:
-    """Whether ``call`` gives ``name`` (by keyword, or positionally at ``position``), or may (``**kwargs``)."""
-    return _kw(call, name) is not None or len(call.args) > position or _unpacks(call)
+    """Whether ``call`` gives ``name`` (by keyword, or positionally at ``position``) a value other than a literal
+    None (``timeout=None`` is no timeout, ``encoding=None`` the locale's), or may (``**kwargs``)."""
+    kw = _kw(call, name)
+    value = kw.value if kw else (call.args[position] if len(call.args) > position else None)
+    given = value is not None and not (isinstance(value, ast.Constant) and value.value is None)
+    return given or _unpacks(call)
 
 
 # --- the context of a module ---
@@ -205,13 +211,14 @@ def _naive(m: Module, n: ast.Call) -> bool:
 
 
 def _chained(m: Module, e: ast.AST) -> tuple[ast.AST, str]:
-    """(the outermost expression of ``e``'s chain of replace() calls, the next method called on it or '')."""
+    """(the outermost expression of ``e``'s chain of replace() calls, the next method called on it or ''); a
+    ``replace(tzinfo=...)`` ends the chain (its method 'replace': the value is aware, not stored naive)."""
     while True:
         p = m.parent.get(e)
         call = m.parent.get(p) if isinstance(p, ast.Attribute) else None
         if not (isinstance(call, ast.Call) and call.func is p):
             return e, ""
-        if p.attr != "replace":
+        if p.attr != "replace" or _has(call, "tzinfo", 7):   # replace(year, ..., microsecond, tzinfo)
             return e, p.attr
         e = call
 
@@ -260,11 +267,18 @@ def _naive_time(m: Module, n: ast.Call, q: str) -> list[Hit]:
                 f"a naive {ast.unparse(n)} stored by {how}{via}")]
 
 
+def _const_key(x: ast.AST) -> str:
+    """The string key of a constant subscript (``os.environ['GH_TOKEN']``, ``cfg['api_key']``), '' else."""
+    ok = isinstance(x, ast.Subscript) and isinstance(x.slice, ast.Constant) and isinstance(x.slice.value, str)
+    return x.slice.value if ok else ""
+
+
 def _secrets_in(node: ast.AST) -> list[str]:
-    """The secret names (variables, attributes, calls such as get_token()) an expression reads."""
+    """The secret names (variables, attributes, constant subscripts, calls such as get_token()) an expression
+    reads."""
     out = []
     for x in ast.walk(node):
-        name = x.id if isinstance(x, ast.Name) else x.attr if isinstance(x, ast.Attribute) else ""
+        name = x.id if isinstance(x, ast.Name) else x.attr if isinstance(x, ast.Attribute) else _const_key(x)
         if name and secret_name(name):
             out.append(ast.unparse(x))
     return out
@@ -311,18 +325,24 @@ def _environ_set(m: Module, n: ast.Assign, q: str) -> list[Hit]:
     return out
 
 
-def hits(text: str | None) -> list[Hit]:
-    """Every norm occurrence of a Python text ([] when it does not parse)."""
+def scan(text: str | None) -> tuple[list[Hit], set[str]]:
+    """(every norm occurrence of a Python text, the scopes it defines: '' and each function's or class's qualified
+    name); ([], set()) when it does not parse."""
     tree = structure._parse(text)
     if tree is None:
-        return []
+        return [], set()
     m, out = Module(tree), []
     for n, q in m.scope.items():
         if isinstance(n, ast.Call):
             out += _timeout(m, n, q) + _encoding(m, n, q) + _naive_time(m, n, q) + _argv_env(m, n, q)
         elif isinstance(n, ast.Assign):
             out += _environ_set(m, n, q)
-    return sorted(out, key=lambda h: (h.line, h.check, h.sig))
+    return sorted(out, key=lambda h: (h.line, h.check, h.sig)), set(m.scope.values())
+
+
+def hits(text: str | None) -> list[Hit]:
+    """Every norm occurrence of a Python text ([] when it does not parse)."""
+    return scan(text)[0]
 
 
 # --- the findings of a change ---
@@ -336,6 +356,14 @@ def strict(root) -> bool:
 
 def _key(h: Hit) -> tuple[str, str, str]:
     return h.check, h.scope, h.sig
+
+
+def _moved_out(before: list[Hit], after: list[Hit], scopes: set[str]) -> Counter:
+    """The occurrences a file lost with their function: the file no longer defines their scope (the function, or
+    the file, is gone), so the same occurrence in another file may be it moved. One a function still there lost is a
+    fix, not a move: it does not excuse the same text added elsewhere."""
+    lost = Counter(map(_key, before)) - Counter(map(_key, after))
+    return Counter({k: n for k, n in lost.items() if k[1] not in scopes})
 
 
 def _split(before: list[Hit], after: list[Hit], moved: Counter) -> tuple[list[Hit], list[Hit]]:
@@ -382,13 +410,13 @@ def signals(repo: str, rows: list[tuple[str, str, str]], base: inventory.Tree, n
             strict_: bool = False) -> list[dict]:
     """The norm findings of a change: ``rows`` the scout's (status, old path, new path), ``body`` the PR body and
     commit messages (its Justified: lines), ``strict_`` the owner's opt-in (:func:`strict`)."""
-    files = []
+    files, moved = [], Counter()
     for _, old, path in rows:
         was = old or path
         before = hits(base.text(was)) if was.endswith(".py") and base.has(was) else []
-        after = hits(new.text(path)) if path.endswith(".py") and new.text(path) is not None else []
+        after, scopes = scan(new.text(path)) if path.endswith(".py") and new.text(path) is not None else ([], set())
         files.append((path, before, after))
-    moved = sum((Counter(map(_key, b)) - Counter(map(_key, a)) for _, b, a in files), Counter())
+        moved += _moved_out(before, after, scopes)
     out = []
     for path, before, after in files:
         added, old = _split(before, after, moved)
