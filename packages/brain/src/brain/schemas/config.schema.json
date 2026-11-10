@@ -150,7 +150,7 @@
             "sessions": {"type": "integer", "minimum": 0, "description": "the sessions running in parallel on this machine, at most (default 8); lowered to what the week's room pays for"},
             "brainstorms": {"type": "integer", "minimum": 0, "description": "the brainstorms open at once on this machine, every project counted (default 2)"},
             "memory": {"type": "number", "minimum": 0, "maximum": 100, "description": "% of committed memory (Windows: RAM plus page file promised, of the commit limit; elsewhere the memory in use) from which a new session or workflow is refused (default 97)"},
-            "memory_available_gb": {"type": "number", "minimum": 0, "description": "GB of available RAM under which a new session or workflow is refused (default 4; 0: never)"},
+            "memory_available_gb": {"type": "number", "minimum": 0, "description": "GB of available RAM under which a new session or workflow is refused (default 0: no floor; the owner opts in, e.g. 4)"},
             "wave_hours": {"type": "number", "minimum": 0, "description": "the hours a wave is planned for, in the quota cap (default 4)"},
             "session_hour_usd": {"type": "number", "minimum": 0, "description": "the API-price cost of one session-hour, in the quota cap (default 14)"},
             "fresh_minutes": {"type": "number", "minimum": 0, "description": "a new session or workflow is refused while the newest quota reading is older (default 60; 0: never)"},
