@@ -574,7 +574,7 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   from `warn` % of a quota window, refuses from `critical` %, refuses a new session past the parallel sessions cap
   (the smaller of `sessions` and what the week's room pays for), a new brainstorm past `brainstorms` (every project
   counted; a project's `usage: {brainstorms: N}` in `projects.yaml` lowers it for itself, never raises it), a new
-  session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (both
+  session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (an opt-in floor, 0 by default; both
   shown by `brain usage guard` and `brain status`, the refusal naming the one), or while the newest quota reading is older than
   `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
   now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal

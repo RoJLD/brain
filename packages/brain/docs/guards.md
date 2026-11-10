@@ -208,7 +208,7 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
 |---|---|---|
 | `critical`: a window in force at `critical` % or more | all | deny |
 | `stale`: the newest reading older than `fresh_minutes`, on a machine with a reading in the last 7 days | session, workflow | deny, with the commands that note both windows |
-| `memory`: committed memory at `memory` % or more, or available RAM under `memory_available_gb` GB | session, workflow | deny, naming both measures and the one that refused |
+| `memory`: committed memory at `memory` % or more, or available RAM under `memory_available_gb` GB (default 0: no floor) | session, workflow | deny, naming both measures and the one that refused |
 | `sessions`: the sessions running reach the cap | session | deny |
 | `brainstorms`: the open brainstorms reach the cap, for a brainstorm | session | deny |
 | `warn`: a window at `warn` % or more | all | ask the owner |
