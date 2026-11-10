@@ -96,6 +96,12 @@ def _write(args, root: Path) -> int:
           + "".join(f"\n  {p}" for p in written))
     if not args.commit or not written:
         return rc
+    return _commit_written(root, where, written, rc, lacks)
+
+
+def _commit_written(root: Path, where, written: list[str], rc: int, lacks: str) -> int:
+    """--write --commit: the files the writer changed, committed alone, unless its check failed or HEAD lacks the
+    default branch's tip."""
     if rc:
         print("views --write: not committed: the check failed (fix it, then brain views --write --commit again)")
         return rc
