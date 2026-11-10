@@ -140,6 +140,7 @@ def test_apply_renders_a_local_claude_marketplace(fresh, capsys):
     assert json.loads((plugin / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")) == {"name": "brain-core"}
     hooks = json.loads((plugin / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     assert "SessionStart" in hooks["hooks"] and "PreToolUse" in hooks["hooks"]
+    assert "readhint.sh" not in json.dumps(hooks["hooks"])   # opt-in (config.json hints.read): off in a new brain
     engine = render.claude_hooks()
     shipped = {f.relative_to(engine).as_posix() for f in engine.rglob("*") if f.is_file() and "__pycache__" not in f.parts}
     assert {f.relative_to(plugin / "hooks").as_posix() for f in (plugin / "hooks").rglob("*") if f.is_file()} == shipped

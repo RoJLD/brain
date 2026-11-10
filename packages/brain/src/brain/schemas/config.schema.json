@@ -222,6 +222,13 @@
         "strict": {"type": "boolean", "description": "The owner's opt-in to the one writer's rules: true, brain check and brain refresh fail (exit 1) on a stale view on the default branch, and brain audit --write, coverage --write, features render --write, decision view --write and modules --write refuse an engine other than engine.pin (unless --force); default false: a stale view on the default branch is a warning, and those writers write with any engine. brain views --write holds its own output to the strict rules either way."}
       }
     },
+    "hints": {
+      "type": "object", "additionalProperties": false,
+      "description": "The opt-in hooks that hint, never refuse: brain render --target claude (brain sync) registers each only when it is true.",
+      "properties": {
+        "read": {"type": "boolean", "description": "The read hint (readhint.sh, brain.readhint, PreToolUse on Read, Grep, Bash and PowerShell, about 0.2 s per call): true, brain render --target claude (brain sync) registers it in the core plugin's hooks.json; default false: not registered, no call pays its cost. BRAIN_READ_HINT=0 turns it off in a session while it is on."}
+      }
+    },
     "vault": {
       "type": "object", "additionalProperties": false,
       "description": "brain vault: the public keys stores are sealed to, never a private key (brain vault recipient add and brain check --all refuse one). docs/runbooks/vault.md.",

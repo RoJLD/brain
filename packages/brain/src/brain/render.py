@@ -6,7 +6,8 @@ Antigravity, Grok / Hermes decided 2026-10-30; formats checked in each tool's do
   pack ``plugins/<plugin>/`` with ``.claude-plugin/plugin.json``, ``rules/<file>.md`` (the core plugin's hook injects
   them), ``skills/<procedure>/``, ``.mcp.json`` and the engine's Claude hooks (package data, copied when they live
   elsewhere). It reproduces the hand-written step 1 byte for byte, so its files carry no marker: ``brain check``
-  re-renders and refuses a hand edit.
+  re-renders and refuses a hand edit. An opt-in hook (:data:`OPTIONAL_HOOKS`: the read hint, config.json
+  ``hints.read``) is registered in the rendered hooks.json only when the brain's config.json turns it on.
 - **agents**: the common base, in the project's repo: ``AGENTS.md``, the project's chain flattened (the global rules,
   each ancestor's, then the project's own CLAUDE.md, nearest last: AGENTS.md readers take the nearest file), the
   memory and decisions pointers; ``.agents/skills/<procedure>/`` for the packs that apply to the project. Claude Code
@@ -115,6 +116,45 @@ def claude_hooks() -> Path:
     return own if own.is_dir() else pkg.parent / "hooks"
 
 
+# The engine's opt-in hooks: {script: the config.json key path that turns it on}. Off (the default), hooks.json is
+# rendered without the groups that run the script, so no session pays its cost; the script itself is still copied.
+OPTIONAL_HOOKS = {"readhint.sh": ("hints", "read")}
+
+
+def _own_config(src: neutral.Source) -> dict:
+    """This brain's config.json (not another brain's found above it), {} when it has none."""
+    from . import config
+    cfg = config.load(src.root)
+    return cfg.data if cfg.file is not None and cfg.root.resolve() == src.root.resolve() else {}
+
+
+def _opted_in(data: dict, keys: tuple[str, ...]) -> bool:
+    for key in keys:
+        data = data.get(key) if isinstance(data, dict) else None
+    return data is True
+
+
+def claude_hooks_json(text: str, src: neutral.Source) -> str:
+    """The engine's hooks.json for this brain: the groups of an :data:`OPTIONAL_HOOKS` script its config.json does not
+    turn on are dropped (an event left empty with them); the text as it is when none is dropped."""
+    data = json.loads(text)
+    events = data.get("hooks") if isinstance(data, dict) else None
+    off = [s for s, keys in OPTIONAL_HOOKS.items() if not _opted_in(_own_config(src), keys)]
+    if not isinstance(events, dict) or not off:
+        return text
+
+    def runs_off(group) -> bool:
+        cmds = [str(h.get("command") or "") for h in group.get("hooks") or [] if isinstance(h, dict)] \
+            if isinstance(group, dict) else []
+        return bool(cmds) and all(any(f"/hooks/{s}" in c for s in off) for c in cmds)
+
+    kept = {ev: [g for g in groups if not runs_off(g)] if isinstance(groups, list) else groups
+            for ev, groups in events.items()}
+    data["hooks"] = {ev: groups for ev, groups in kept.items() if groups != []}
+    out = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    return text if json.loads(out) == json.loads(text) else out
+
+
 def _claude_names(src: neutral.Source) -> tuple[str, dict[str, str]]:
     """(the marketplace's name, {pack id: plugin name}): config.json adapters.claude names the marketplace and the core
     plugin, packs.yaml the others (its own names when config.json has none)."""
@@ -183,16 +223,22 @@ def render_claude(src: neutral.Source, project: str | None = None, project_root:
             r.outputs.append(Output(f"{base}/.mcp.json", to_json({"mcpServers": servers}) + "\n", "brain",
                                     f"pack {p.id}: MCP servers"))
         if p.spec.get("hooks"):
-            hooks = claude_hooks()
-            for f in sorted(hooks.rglob("*")) if hooks.is_dir() else []:
-                if f.is_file() and "__pycache__" not in f.parts:
-                    r.outputs.append(Output(f"{base}/hooks/{f.relative_to(hooks).as_posix()}",
-                                            neutral.lf(f.read_text(encoding="utf-8")), "brain",
-                                            f"pack {p.id}: the engine's Claude hooks"))
+            r.outputs.extend(_claude_hook_outputs(src, p, base))
     listing["plugins"] = entries
     r.outputs.insert(0, Output(".claude-plugin/marketplace.json", to_json(listing) + "\n", "brain",
                                "the marketplace"))
     return r
+
+
+def _claude_hook_outputs(src: neutral.Source, p: neutral.Pack, base: str) -> list[Output]:
+    """The engine's Claude hooks copied into a pack's plugin, hooks.json with this brain's opt-in hooks only."""
+    hooks, out = claude_hooks(), []
+    for f in sorted(hooks.rglob("*")) if hooks.is_dir() else []:
+        if f.is_file() and "__pycache__" not in f.parts:
+            rel, text = f.relative_to(hooks).as_posix(), neutral.lf(f.read_text(encoding="utf-8"))
+            out.append(Output(f"{base}/hooks/{rel}", claude_hooks_json(text, src) if rel == "hooks.json" else text,
+                              "brain", f"pack {p.id}: the engine's Claude hooks"))
+    return out
 
 
 def _claude_server(s: neutral.Server) -> dict:

@@ -10,14 +10,16 @@ What it does, every command reading files and git, never a model:
 - **records**: decisions put to the owner (DDR, `brain decision ask|answer|ack`), session and action records (SR, AR),
   captured by the hooks at zero token (`brain record`, `brain capture`);
 - **backlog**: work items, milestones and specs in a `research-graph` store (`brain item add|set|close|link`,
-  `brain milestone`, `brain spec`), the plan as eras, milestones and waves (`brain wave`, `brain next`), with the
+  `brain milestone`, `brain spec`), read back without opening its files (`brain item show`, `brain items`, `brain spec
+  show`: « Reading a brain » below), the plan as eras, milestones and waves (`brain wave`, `brain next`), with the
   views regenerated and checked (`brain sync`, `brain check`,
   `brain refresh`; in a brain's own root, check and refresh also run `brain check --all`'s registry check: the
   registry, `config.json`, the classes, the permissions, the stacks and the bundles they declare, the ids of every
   registered project), and written once on the default branch after each merge by one writer (`brain views --write`;
   a branch need not commit them, the default branch's check warns of a stale one, fails under `config.json`
   `views.strict`: [`docs/views.md`](docs/views.md));
-- **history**: the journal (`brain journal add`) and the decision log (`brain adr new`), append-only;
+- **history**: the journal (`brain journal add`, `brain journal last`) and the decision log (`brain adr new`, `brain
+  adr show`), append-only;
 - **views**: the owner's queue (`brain queue`), the status of every project (`brain status`), a cockpit (`brain tui`,
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
   usage and cost ledgers, forecasts;
@@ -241,6 +243,31 @@ adds a wave at once (no DDR, unlike `brain milestone add`: a wave is named by it
 closes), and `brain wave import [--from X.Y.Z] [--write]` turns the items' free-text `props.wave` into waves: one per
 release a value names (`0.2.9 (decided ...)` is 0.2.9) from `--from` on, the earlier releases (already tagged) listed
 and left out, the other values (letters, free text) listed for the owner to place.
+
+### Reading a brain
+
+Sessions read a brain through its commands, not its files: the graph's YAML, the decision log, the journal and the
+generated views are long, and a hand read returns far more than the question needs. Each read command takes `--json`
+and needs no `research_graph` on the PATH (the graph is loaded in brain's own process, with the other stores its edges
+name):
+
+```
+brain item show ID [--history] [--json]        # props in full, edges both ways, the ids its props name, its blockers,
+                                               # the ADRs behind it (direct, inherited, superseded) and its specs, the
+                                               # DDRs that name it; --history: its changes from git (slow on a large store)
+brain items [--status S]... [--all] [--priority P]... [--wave X.Y.Z|ID] [--milestone M]... [--prop K[=TEXT]]...
+            [--text WORDS] [--type T]... [--repo R] [--limit N] [--json]
+brain adr show REF [--titles] [--json]         # the ADR REF names (id, title, or the start of its id), else the ADRs
+                                               # that decide the node REF (a rule, an item, a spec), with their text
+brain spec show REF [--section N | --toc] [--json]   # a Spec node, a Doc id (doc:<repo>:<path>::<key>) or a path
+brain journal last [N] [--titles] [--json]     # the last N dated entries (default 1; 0: all)
+```
+
+`brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
+no wave whose free-text `props.wave` names that release. `brain spec show --section` takes a heading's number (`2.1`),
+its key (the last part of a Doc id) or the start of its title, and prints it down to the next heading of its level.
+When a session reads one of those files by hand anyway, a PreToolUse hint names the command that answers (below,
+« The Claude Code hooks »).
 
 ## Start your own brain
 
@@ -641,6 +668,22 @@ may write, names `gh`, a program of the owner and power guards, `claude` then `p
 comes between: a quoted `claude.exe`, global options, a line continuation), or git other than to
 read (`git [-C DIR] status`, `log`, `diff`, `show`, `rev-parse`... without `--output`: `brain.guards.GIT_READS`,
 checked against the guards' tables). In Python a guard reads the registry through libyaml and does not import `urllib.request`.
+
+**The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
+a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its
+journal or a generated view (`*_graph.md`, `decision_queue.md`, `FEATURES.md`) by hand, it adds one line of hook
+context naming the command that answers, with the id the call looked for when it names one (`brain --project P item
+show wi-x`, `brain adr show`, `brain journal last`, `brain items`, `brain next`, `brain decision pending`, `brain
+features`). A shell command counts only when it reads (`grep`, `rg`, `cat`, `head`, `tail`, `sed`, `awk`,
+`Select-String`, `Get-Content`...); "registered" is a project of the registry or a worktree of its checkout (read from
+the worktree's `.git` file, no git started). A call whose JSON names none of those files stops in bash builtins:
+measured on Windows, the launcher then costs what starting bash costs (about 0.2 s, as `budget.sh` on every call), the
+Python path about 0.6 s, taken only on a hand read of a brain file; on a shell call it runs beside `guard.sh`.
+Read and Grep had no hook before it, so it is **opt-in**: `brain render --target claude` (`brain sync`) registers it
+in the core plugin's `hooks.json` only when the brain's `config.json` says `"hints": {"read": true}`; by default it is
+not registered and no call pays its cost (the script ships either way, `brain.render.OPTIONAL_HOOKS`). To turn it on,
+set the key, run `brain sync` and restart the sessions; while it is on, `BRAIN_READ_HINT=0` turns it off in a
+session.
 
 Two guards keep what a session brings in and what it records clean (the runbook: [`docs/guards.md`](docs/guards.md)):
 
