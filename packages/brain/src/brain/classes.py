@@ -677,6 +677,23 @@ def as_dict(rep: Report) -> dict:
                     for n, src in SOURCES.items()}}
 
 
+def _show_paths(cfg, which: list[str]) -> int:
+    """``brain classes PATH...``: the store of each path and its class, a store the brain does not declare shown at
+    its default; exit 1 when the declared stores have an error."""
+    declared, errs = stores(cfg)
+    for e in errs:
+        print(f"error: {e}")
+    every = effective(declared)
+    for p in which:
+        s = store_of(every, p)
+        if s is None:
+            print(f"{p}: no store: no class")
+        else:
+            own = any(s is d for d in declared)
+            print(f"{p}: {s.name} ({s.cls}" + (")" if own else ", by default: undeclared)"))
+    return 1 if errs else 0
+
+
 def main(root: Path | None, *, check_only: bool = False, as_json: bool = False, which: list[str] | None = None,
          suggest_: bool = False, matrix_: bool = False) -> int:
     """``brain classes``: the stores and their classes (exit 1 on an error), ``PATH...`` the store of each path,
@@ -689,18 +706,7 @@ def main(root: Path | None, *, check_only: bool = False, as_json: bool = False, 
         print(json.dumps({"classes": suggest(cfg)}, indent=2))
         return 0
     if which:
-        declared, errs = stores(cfg)
-        for e in errs:
-            print(f"error: {e}")
-        every = effective(declared)
-        for p in which:
-            s = store_of(every, p)
-            if s is None:
-                print(f"{p}: no store: no class")
-            else:
-                own = any(s is d for d in declared)
-                print(f"{p}: {s.name} ({s.cls}" + (")" if own else ", by default: undeclared)"))
-        return 1 if errs else 0
+        return _show_paths(cfg, which)
     rep = check(root, cfg)
     if as_json:
         print(json.dumps(as_dict(rep), indent=2))
