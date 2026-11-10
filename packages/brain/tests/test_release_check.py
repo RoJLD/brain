@@ -83,6 +83,7 @@ def repo(tmp_path):
     write(here, CONFIG_SCHEMA, '{"properties": {}}\n')
     write(here, STORE_SCHEMA, "node_types: []\n")
     write(here, OTHER, "x = 1\n")
+    write(here, release_check.REGISTRY, Path(release_check.__file__).read_text(encoding="utf-8"))  # the tag's SCHEMAS
     git(here, "add", "-A")
     git(here, "commit", "-qm", "first")
     git(here, "tag", "v0.2.5")
@@ -894,6 +895,68 @@ def test_moved_schemas_errs_towards_a_minor(repo):
     git(repo, "rm", "-q", "--cached", CONFIG_SCHEMA)
     commit(repo)
     git(repo, "tag", "-f", "v0.2.5")
-    write(repo, CONFIG_SCHEMA, '{"properties": {}}\n')   # new since the tag
+    write(repo, CONFIG_SCHEMA, '{"properties": {}}\n')   # new since the tag, of a format the tag registered
     assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
     write(repo, CONFIG_SCHEMA, '{"properties": {}, "required": ["a", "b"], "additionalProperties": false}\n')
+    store_extra = "packages/brain/src/brain/templates/generic/boundary.yaml"   # a format that exists: a new file moves
+    write(repo, store_extra, "rules: []\n")
+    assert release_check.moved_schemas(repo, "v0.2.5", [store_extra]) == ([store_extra], [])
+
+
+def test_a_whole_new_format_is_a_patchs(repo, capsys):
+    """A registered format none of whose files exists at the tag (the owner's decision of 2026-11-10): no brain holds
+    one and older engines never read it, so a patch may add it; a file new to a format that exists still moves."""
+    members = "packages/brain/src/brain/schemas/members.schema.json"
+    old = dict(release_check.SCHEMAS)
+    release_check.SCHEMAS["members"] = (members,)
+    try:
+        versions(repo, "0.2.6")
+        changelogs(repo, "0.2.6")
+        write(repo, members, '{"properties": {"v": {"const": 1}}, "required": ["v"]}\n')
+        commit(repo)
+        assert release_check.new_formats(repo, "v0.2.5") == {"members"}
+        rc, text = run(repo, capsys)
+        assert rc == 0, text
+        assert f"new registered formats since v0.2.5, held by no brain yet (compatible with a patch): {members}" in text
+        assert "grown by optional keys" not in text
+    finally:
+        release_check.SCHEMAS.clear()
+        release_check.SCHEMAS.update(old)
+
+
+def test_a_format_whose_files_are_renamed_moves(repo, capsys):
+    """A format the tag registered keeps its name when its file moves: its new path is not a new format, so a
+    narrowed schema under it is refused in a patch (it would let every existing config.json fail)."""
+    renamed = "packages/brain/src/brain/schemas/config/config.schema.json"
+    old = dict(release_check.SCHEMAS)
+    release_check.SCHEMAS["config"] = (renamed,)
+    try:
+        versions(repo, "0.2.6")
+        changelogs(repo, "0.2.6")
+        git(repo, "rm", "-q", CONFIG_SCHEMA)
+        write(repo, renamed, '{"properties": {"x": {}}, "required": ["x"]}\n')
+        commit(repo)
+        assert release_check.new_formats(repo, "v0.2.5") == set()
+        assert release_check.moved_schemas(repo, "v0.2.5", [renamed]) == ([renamed], [])
+        rc, text = run(repo, capsys)
+        assert rc == 1 and renamed in text, text
+    finally:
+        release_check.SCHEMAS.clear()
+        release_check.SCHEMAS.update(old)
+
+
+def test_no_format_is_new_when_the_tags_registry_cannot_be_read(repo):
+    members = "packages/brain/src/brain/schemas/members.schema.json"
+    git(repo, "rm", "-q", release_check.REGISTRY)
+    commit(repo)
+    git(repo, "tag", "-f", "v0.2.5")
+    assert release_check.formats_at(repo, "v0.2.5") is None
+    old = dict(release_check.SCHEMAS)
+    release_check.SCHEMAS["members"] = (members,)
+    try:
+        write(repo, members, '{"properties": {}}\n')
+        assert release_check.new_formats(repo, "v0.2.5") == set()
+        assert release_check.moved_schemas(repo, "v0.2.5", [members]) == ([members], [])
+    finally:
+        release_check.SCHEMAS.clear()
+        release_check.SCHEMAS.update(old)
