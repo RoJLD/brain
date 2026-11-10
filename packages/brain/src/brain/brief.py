@@ -247,6 +247,12 @@ def _start(p: projects.Project, node: dict) -> list[str]:
     return lines
 
 
+def after_merge(opts: dict) -> list[str]:
+    """The brief's after-the-merge lines: config.json ``brief.after_merge`` when it is a list, else AFTER_MERGE."""
+    lines = opts.get("after_merge")
+    return [str(x) for x in lines] if isinstance(lines, list) else list(AFTER_MERGE)
+
+
 def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget: str = "", coordinator: str = "",
           notes: str = "", collisions_report=None) -> Brief:
     """The brief of item ``nid`` of project ``p``."""
@@ -276,14 +282,12 @@ def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget
     from . import collisions
     rep = collisions_report if collisions_report is not None else collisions.report([p], frontier=True)
     done, never, sources = owner_rules(p, cfg)
-    after = opts.get("after_merge")
-    after_merge = [str(x) for x in after] if isinstance(after, list) else list(AFTER_MERGE)
     if not done:
         warnings.append(f"no '{opts.get('done') or DONE}' section in the rules read")
     return Brief(item=node, project=p.name, task_class=task_class, model=cls.get("model") or "",
                  effort=cls.get("effort") or "", budget=budget, coordinator=coordinator, notes=notes,
                  estimate=_estimate(p, nid, task_class), subgraph=subgraph(st, nid),
-                 collisions=collisions.item_line(rep, nid), start=_start(p, node), after_merge=after_merge,
+                 collisions=collisions.item_line(rep, nid), start=_start(p, node), after_merge=after_merge(opts),
                  done=done, never=never,
                  sources=sources, warnings=warnings,
                  generated=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
