@@ -62,9 +62,15 @@ brain --root <path> views --write --commit   # brain sync's writes, the audit vi
 `brain audit --write` when the root keeps `notes/audit.md` (`--no-audit`: not), clears the merge driver's marks once
 it passes, and lists every file it changed: the views and what sync derives with them (the features' statuses from
 merged PRs, a spec turned active, a default taken). `--commit` commits those files alone (`git commit --only`): a file
-that was already changed before it ran stays out, and nothing is committed when the check failed. It says so when
-HEAD is not the default branch's tip (the views written are then that branch's). `--offline` skips gh; `--force`
-writes with an engine other than `config.json` `engine.pin`, which otherwise refuses (below).
+that was already changed before it ran stays out, and nothing is committed when the check failed. Its check holds the
+views to the default branch's rules even on its `chore/views-<date>` branch: a view its sync left stale is an error
+there, as it would be on the default branch once the commit is merged. It says so when HEAD is not the default
+branch's tip (the views written are then that branch's), and `--commit` commits nothing when HEAD lacks that tip
+(`origin/<default>`, fetched first unless `--offline`, else `<default>`; or no default branch is found): views of a
+stale base would undo the later merges' views (`git merge --ff-only origin/<default>`, then again). A views PR that
+a later merge overtakes before it lands is regenerated the same way: one run covers any number of merges.
+`--offline` skips gh and the fetch; `--force` writes with an engine other than `config.json` `engine.pin`, which
+otherwise refuses (below). `--commit`, `--no-audit`, `--offline` and `--force` go with `--write` (refused without it).
 
 Who runs it is the project's choice: the coordinator's merge step after a batch of merges, the owner, or later the
 merger of `brain ship` (a merge queue). Until it runs, the default branch's `brain check` fails, which is the signal.

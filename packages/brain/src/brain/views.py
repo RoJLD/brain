@@ -59,9 +59,18 @@ def _git(root: Path, *args: str) -> str:
     return actions.git(root, *args, timeout=30)
 
 
+def head_at(root: Path, path: str) -> str:
+    """The first lines of ``path`` (relative to ``root``): in the working tree, or as HEAD has them when it is deleted
+    here (a deleted view is still one)."""
+    f = root / path
+    if f.exists():
+        return head_of(f)
+    return "".join(_git(root, "show", f"HEAD:./{path}").splitlines(keepends=True)[:HEAD_LINES])
+
+
 def _views_of(root: Path, paths: list[str]) -> list[str]:
-    """Those of ``paths`` (relative to ``root``) that are views, read in the working tree."""
-    return [p for p in paths if p.lower().endswith(SUFFIXES) and is_view(p, head_of(root / p))]
+    """Those of ``paths`` (relative to ``root``) that are views, read in the working tree (HEAD for a deleted one)."""
+    return [p for p in paths if p.lower().endswith(SUFFIXES) and is_view(p, head_at(root, p))]
 
 
 def tracked(root: Path) -> list[str]:
@@ -105,6 +114,29 @@ def place(root: Path) -> Place:
         return Place("")
     default, _ = tidy.default_branch(root)
     return Place("default" if default and branch == default else "branch", branch, default)
+
+
+def as_default(where: Place) -> Place:
+    """``where`` held to the default branch's rules: the one writer's own check, in its worktree on a chore branch,
+    fails on a view its sync left stale, as the default branch's check would once its commit is merged."""
+    if where.where == "branch" and where.default:
+        return Place("default", where.default, where.default)
+    return where
+
+
+def lacks_tip(root: Path, where: Place, fetch: bool = False) -> str:
+    """The default branch's tip that HEAD does not hold (origin/<default>, else <default>; fetched first with
+    ``fetch``), '' when HEAD holds it: a writer behind it would commit views of a stale base. 'the default branch'
+    when none is found."""
+    if not where.default:
+        return "the default branch"
+    if fetch and _git(root, "remote", "get-url", "origin"):
+        actions.git(root, "fetch", "-q", "origin", where.default, timeout=120)
+    for ref in (f"origin/{where.default}", where.default):
+        tip = _git(root, "rev-parse", "--verify", "-q", ref)
+        if tip:
+            return "" if _git(root, "merge-base", tip, "HEAD") == tip else ref
+    return "the default branch"
 
 
 @dataclass

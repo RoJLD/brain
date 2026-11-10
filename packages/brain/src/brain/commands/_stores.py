@@ -286,6 +286,8 @@ def _check_store(args, root: Path, store: Path) -> int:
         print(f"error: {line}")
     rc = 1 if clash or stubs else 0
     where, stale, legacy = views.place(root), views.Stale(), {}
+    if getattr(args, "views_as_default", False):   # brain views --write: its check is the default branch's
+        where = views.as_default(where)
     if project.shares_root_with:   # its store's checks only: the root's are its owner's
         print(_shared_line(project))
         rc = _store_checks(project, root, store, stale) or rc

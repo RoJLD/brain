@@ -361,7 +361,8 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
 - **`brain views`**: one writer of the generated views ([`docs/views.md`](docs/views.md)): a branch need not commit
   them (`brain views --unstage` after `git add`, `--reset` before merging the default branch), `brain check` fails on
   a stale one on the default branch only (a `views:` line elsewhere), and `brain views --write --commit`, in a
-  worktree at the default branch's tip after each merge, regenerates and commits them (`brain.views`).
+  worktree at the default branch's tip after each merge, regenerates them, checks them by the default branch's rules
+  and commits them, never from a HEAD that lacks that tip (`brain.views`).
 - **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
