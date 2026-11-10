@@ -2,6 +2,170 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## 0.3.0 — 2026-11-10 — Sigma's home, waves and eras
+
+### Upgrade
+
+From 0.2.8, in this order. This release newly refuses what passed (a project's second store beside its first, a
+project at a shared root without its own files, an edge of a second store to a root ADR stub, an `access` value other
+than read or write), so it is a minor version, 0.3.0 (`docs/release.md`, « The version policy »). The formats' schemas
+do not change (`access` is an additive key of `projects.yaml`, a milestone's `kind` an additive prop of the store, whose
+`schema.yaml` stays as it is), but two registered files of what `brain init` writes once (`store` in `SCHEMAS`) do:
+`gitattributes` and `boundary.yaml` gain a line each for the new view `notes/plan_graph.md`, which alone would make it
+a minor version, and 0.3.0 is one already; `release_check.py` names them. A brain made before keeps its own files:
+step 4 adds the two lines. `brain sync` (run by `brain update`) writes that view in a store that holds a wave or an
+era, and nowhere else. Steps 1 to 4 apply only where the brain has what they name; do them before installing, since
+`brain update` runs `brain sync`.
+
+1. **Move an edge of a later store to a root ADR stub**, where a project lists more than one store. A store after its
+   first derived the ADR and SDR stubs of the root's decision logs, as its first store does (every store ran with
+   research_graph's defaults); it now covers no decision log (`--no-decisions`), and `brain sync` empties its
+   `_generated_decisions.yaml`. An edge of it to one of those stubs (an item of it `decided_by` an ADR of
+   `notes/decisions.md`) no longer resolves and fails `brain sync` and `brain check`, each naming it (« that ADR stub
+   is notes/graph's only »): move such an edge to the first store or remove it, and drop the `shared_ids` waiver of
+   the stub, which turns stale.
+2. **Give a project at a shared root its own files**, where the registry lists two projects at one root. The second is
+   loaded only once it declares its own `stores`, `journal` and `decisions` (the defaults are the first's files);
+   until then no command runs it. `brain check --all` says what to declare, and `brain --project <it>` says why it is
+   not loaded.
+3. **Give a store beside the first a folder of its own**, where a project's second store sits beside its first (both
+   under `notes/`): `brain sync` refuses that store until it has one, since its board was written over the first's.
+4. **Add the plan view to `.gitattributes` and `boundary.yaml`**, in a brain that 0.2.8 or older initialised, by hand
+   (`brain init` keeps the files it made earlier): `notes/plan_graph.md merge=brain` to `.gitattributes`, and
+   `- {glob: "notes/plan_graph.md", side: generated, why: "brain sync (brain.waves: eras, milestones, waves)"}` to
+   `boundary.yaml` (a store's view beside its other views elsewhere: the same lines at that path). Until then the view,
+   which `brain sync` writes again whenever an item of a wave changes, merges as plain text, and two sessions in
+   worktrees conflict on it, as the merge driver exists to prevent; `boundary.yaml` reads it as `notes/**`.
+5. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
+6. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
+7. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
+   push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
+8. **Wait for every machine before an `access: read` entry or a shared root**: such an entry lands in a registry only
+   once every machine that reads it runs brain 0.3.0 or later. An older brain (0.2.8 and before) notes the unknown key
+   `access` (in CI, under `BRAIN_STRICT`, refuses it) and reads the entry as a full project, at the registry's root
+   with the default store, journal and decision log (`docs/formats.md`); a project that shares its root with another
+   gets its board written over its owner's by an older brain.
+9. **Wait for every machine before the first wave or era**: a store gains one only once every machine that writes it
+   runs brain 0.3.0 or later. An older brain reads a wave or an era as a plain milestone: its `brain milestone
+   suggest` may propose putting an item under an era (which the new `brain check` refuses), and its `brain sync`
+   leaves `plan_graph.md` stale (a warning on the newer machines). `brain wave import --from X.Y.Z` (the next
+   release) makes the waves from the items' `props.wave` without turning a release already tagged into a pending wave.
+
+Nothing to run for the rest.
+
+### Added
+
+- **Waves and eras: the plan as one generated tree** (wi-brain-waves-as-releases, wi-brain-eras; brain.waves). A
+  Milestone may carry `props.kind`: `wave`, named by its release (`props.release: X.Y.Z`, `props.week` optional), its
+  members work items by `part_of`, itself part of a milestone or an era; `era`, its members milestones, its exit the
+  Go/NoGo question asked as a DDR once they are reached (`props.exit`, `props.stage_to` and `props.serves` optional).
+  `brain check` refuses a malformed or repeated release, a wave holding a milestone, an era holding an item, an item
+  in two waves, a `props.carried_to` that names no later wave, a `props.carried_via` that names no wave, and a dropped
+  wave that still holds an open item (planned there or carried into it: no live wave would show it); it warns about
+  a reached wave that still holds one (the version PR's closure check still refuses it), a wave in no milestone or era, an era without its exit and one whose exit is due
+  (`docs/formats.md`, « Milestone kinds »). `brain sync`, its one writer, writes `notes/plan_graph.md` beside the
+  store's other views: era > milestone > wave > items, each item with its status and what waits on the owner (its
+  `props.open`, its `external_blocker`, the pending DDRs on it), each wave's carried items first, then the startable
+  ones; `brain check` says when it is stale. `brain next [--json]` prints the current wave (the lowest release not
+  closed): its carried items first, its startable items, what waits on the owner, the other open ones, then the next
+  wave, at zero token. The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave
+  close X.Y.Z [--carry-to X.Y.Z] [--drop ID]... [--write]` carries each open item by name (`props.carried_to`, to a
+  pending wave only, created beside the closed one when that release has none yet; an item carried again keeps the waves it went through in `props.carried_via`) or drops it, then
+  reaches the wave, and refuses while one is neither; `brain wave check X.Y.Z` is the rule alone, and
+  `release_check.py --store DIR` refuses a version PR whose wave breaks it or is not reached yet (exit 2 for a
+  `--store` it cannot read; it imports brain and research_graph from the checkout). `brain wave add X.Y.Z [--parent
+  MS]` adds a wave at once, with no DDR (unlike `brain milestone add`: a wave is named by a release, which the owner's
+  version PR closes); `brain wave import [--from X.Y.Z] [--write]` proposes a wave per release the items' free-text
+  `props.wave` names, from `--from` on (the earlier ones, already tagged, listed and left out), and lists the other
+  values for the owner to place. `brain milestone suggest` never proposes a wave or an era. No era is
+  created by the engine: an era is the owner's.
+- **Projects the brain reads and never writes** (wi-brain-read-only-projects). A registry entry may say `access: read`
+  (`write`, the default, is today's: the brain writes the project by PR; any other value is an error, « access is
+  read or write », and the entry is not loaded until it is one). Such an entry holds `title` and `access` only, the
+  shape of a tenant mount: `brain check --all` names every other key it holds (a root, a store, a ledger, a
+  production list, repos...), each a way to write or read into it. `projects.load` never returns one, so sync, check,
+  refresh, status, resume, audit, the queue, the cockpit and the guards (the registered repos, the production
+  checkouts) pass it by; `projects.get` refuses it (« `<name>` is read only: the brain reads it and never writes
+  it »), so does every `--project`; the neutral source refuses it as a rule file's `scope:` or a pack's `projects:`.
+  `projects.readonly` lists them; `brain projects` (and `--json`, key `access`) shows them, `brain status --all` and
+  the registry's check count them (« registry: 2 project(s), 2 store(s), ids unique; 2 read only »).
+- **Projects that share a root** (wi-brain-shared-root-projects). The first project registered at a root owns it
+  (`projects.for_root`, `classes.own_project` already read it so; now tested); each next one gets
+  `Project.shares_root_with`, spans no repo by default (`repos_of`), and gets its stores' passes only: research_graph
+  with its views beside its store and its own decision logs, its specs, its features' statuses, its module map. The
+  root's own passes stay the owner's: the records and their view, the decision queue and the defaults, the rendered
+  marketplace and AGENTS.md, the links graph and FEATURES.md, the public gate, the engine's skew, the session ids, the
+  hygiene line (the queue keeps the owner's name, whichever project asks). Such a project declares its own stores,
+  journal and decision log (the defaults are the owner's), none held by a project registered before it, its decision
+  logs inside the root; until it does it is not loaded, and `brain check --all` and `--project` say why (fail
+  closed: no command writes the owner's files through it; a file of any kind counts, a journal that is the owner's
+  decision log too), while the guards and the usage governor keep protecting it (`projects.guarded`: its production
+  checkouts stay refused to edits). An owner skipped for its access value (a typo, or `access: read` on an entry that
+  still names its root) keeps its root and its files: the next project there stays a sharer and never becomes its
+  owner, and `--store` naming the owner's store is refused with the reason (`projects._claimant`). A store whose
+  views folder an earlier store at its root uses is refused by `brain sync` (`projects.view_clashes`) and by the
+  checks, an owner skipped for its access value included (`projects.holders`). The permissions of a project that spans no repo are its
+  root's settings, and its features' statuses come from the root's merged PRs. `brain audit --write` from it is
+  refused: `notes/audit.md` is the owner's. Without `--all` or `--project`, `brain sync`, `check` and `refresh` at
+  such a root cover every project registered there. Every store but a project's first at a root it owns gets
+  research_graph's new `--views` (its parent folder: `ops/graph` writes `ops/kanban_graph.md`) and its decision logs
+  (`--decisions`, the project's own from its first store, `--no-decisions` from another store): a project's second
+  store no longer writes its board over the first's, nor derives its ADR stubs (an edge of it to one of them is
+  named by `brain sync` and `brain check`). `--store` without `--project` runs as the project registered at the root
+  that lists that store, with its layout and its passes only (`projects.lister`): the store of a project that shares
+  the root never gets the owner's defaults. At a root one project holds, a store it does not list keeps
+  research_graph's defaults, as before; at a root several share, `--store` without `--project` fails closed: the store
+  of a project not loaded is refused with the reason, and a store none lists is refused too (never run as the owner
+  with its defaults). Only `access: read` is read only (`projects.is_read_only`); any other value than read or write
+  is invalid wherever the registry is read (`projects.bad_access`): `brain check --all`, `--project` and the neutral
+  source's scopes and packs name it (« access is read or write, not 'maybe' »), and it is never loaded, listed or
+  counted as read only. And `brain init` starts a template's later graphs beside their store, a later graph being
+  known by its place in the template's graphs (also when the first one exists already and is kept). A project's
+  `stores: []` holds its root's `notes/graph`, which sync and check run for it (`projects.stores_of`), and a store
+  listed twice is refused by `brain check --all`. `brain audit --project` (and `--diff`) refuses a read-only, mounted
+  or unloaded project with the reason `--project` gives (`projects.unloaded`). The module map's view sits beside its
+  store's board the same way (`notes/modules_graph.md` for the first store, as before), and the resume pack names the
+  project's own views. Nothing changes for a project's first store at a root it owns.
+- **A scope's rules file may hold its front matter only** (`source/rules/scopes/<id>.md`: scope, title, intro), a
+  scope with no rule of its own yet. It renders nothing and locks nothing: `lock:` in it is refused. A file outside
+  `rules/scopes/` still needs a rule.
+- The upgrade test (`compat-prev`) lays an `access: read` entry and a second project at the brain's root over the
+  previous tag's brain, then rolls back over them (`tests/fixtures/formats/projects/v1/newer.yaml`).
+- A conflict example in Markdown passes the marker guard and `brain check` when its fence is tagged
+  `conflict-example` (`wi-brain-guards-fence-tag`, the owner's choice of 2026-11-10); every other fence is read as
+  before, and a diff hunk that starts inside a fence whose opener it does not show is read as unfenced.
+- `brain review prep [PR | BASE..HEAD]`, `brain review stamp HEAD` and `brain review check HEAD`: the review before
+  the report, its zero-token part (`wi-brain-review-step`, `docs/review.md`). The packet holds the diff, the touched
+  files at the head, `brain audit --diff`'s output and the lenses the touched surfaces call for (correctness always;
+  security, compatibility, install and upgrade, procedure, tests, docs); the session's lens agents and two skeptics
+  per distinct finding read it; the stamp, keyed by the head's full sha, records the counts for the error score and
+  is what the merge gate checks.
+
+### Fixes
+
+- `brain adr new` no longer leaves an ADR appended without its edge. A layer file (`--edges-file`, `item add --file`)
+  is `nodes/<name>.yaml` or `edges/<name>.yaml` relative to the store, checked before anything is written: the store's
+  path given twice (`notes/graph/edges/rules.yaml`, which raised `FileNotFoundError` from `brain.notes.write` after
+  the log was written) is refused and makes no folder, and a store with no `edges/` folder yet gets it. A root with
+  no graph store is said before anything is written, and a file it cannot write is reported in one line.
+- An engine error that only passes through `brain.nowindow`'s wrapper of `subprocess.Popen` is located at its caller
+  (`selftime.where`): a child's missing cwd read `brain.nowindow:__init__`.
+- `test_mergedriver.py::test_installer_step` expects the driver line of the brain the installer's Python imports
+  under `-I`: on a machine whose venv holds a released brain, it no longer fails on every run.
+
+### Changes
+
+- The engine's CHANGELOGs are written from fragments (`wi-brain-changelog-unreleased-collisions`, the owner's choice
+  of 2026-11-10): a PR adds `packages/brain/changes/<item>.md` (or `changes/<item>.md` for research-graph), a first
+  line `section: Upgrade|Added|Fixes|Changes` then its entry, and never edits a CHANGELOG, so parallel PRs no longer
+  collide in one `## Unreleased`. The version PR compiles them with `installer/changelog.py compile X.Y.Z --theme T
+  --write`; `release-check` refuses a malformed fragment and a `## Unreleased` section on every PR, and a fragment
+  left uncompiled on a version PR. The CHANGELOGs are `merge=brain` in `.gitattributes`, a net for a merge back from
+  `release/X.Y` (`wi-brain-engine-changelog-driver`); a clone gets the driver with `brain merge-driver install
+  --apply`.
+
 ## 0.2.8 — 2026-11-09 — the review fixes
 
 ### Upgrade
