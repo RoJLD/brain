@@ -30,6 +30,13 @@ Per session, from every API message (one per message id, as ``brain.transcript``
               messages), merge commands and conflicts, failing command streaks (thrash: failures with no edit in
               between), files edited, the plan's steps at its first and last version, questions to the owner and
               the time waiting on a message, the first ``START_MESSAGES`` messages' cost (the cost of a resume);
+  agents      the subagents' and the workflow agents' transcripts (``<session>/subagents/agent-<id>.jsonl``, and
+              ``<session>/subagents/workflows/<run>/agent-<id>.jsonl``) read with the session that launched them: their
+              tokens and cost are in its ``cost`` and its hours (what brain.quota and the governor read), not in its
+              ``main_cost``; ``agents`` says whose they are: the plain subagents by label (the ``description`` of
+              their ``.meta.json``), each workflow run by its id with its agents' count, days, phases and labels (the
+              meta's, else the run's ``journal.jsonl``). A message a subagent's transcript holds is counted once, as
+              the subagent's, should the parent's transcript carry a copy of it;
   brief       from the first prompt: a sub-session (started by another session), its task class and context budget
               (the owner's sub-session rule), the item ids it names, its size; the hash that links it to the
               session that started it (``start_session``).
@@ -51,7 +58,8 @@ from pathlib import Path
 
 from . import paths, secretscan, stateio, transcript
 
-SCAN_V = 2  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours)
+SCAN_V = 3  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
+#            subagents and workflow runs apart, ``agents``)
 START_MESSAGES = 10
 RELOAD_MIN = 20_000  # a context below this is not a reload
 NGRAM = 3
@@ -292,8 +300,9 @@ def _add_to(d: dict, key: str, **vals) -> None:
 class Scan:
     """One transcript's records into a ledger row; a subagent's transcript is scanned apart and merged."""
 
-    def __init__(self, prices: dict | None = None) -> None:
+    def __init__(self, prices: dict | None = None, skip: set | None = None) -> None:
         self.prices = prices
+        self.skip = skip or set()  # the message ids a subagent's transcript holds: its, not this one's
         self.st = transcript.SessionStats()
         self.cost = 0.0
         self.unpriced = 0
@@ -331,8 +340,10 @@ class Scan:
         self._flush()
 
     def feed(self, rec: dict) -> None:
-        self.st.feed(rec)
         t, ts = rec.get("type"), rec.get("timestamp") or ""
+        if t == "assistant" and self.skip and (rec.get("message") or {}).get("id") in self.skip:
+            return  # a subagent's message copied into its parent's transcript: counted once, as the subagent's
+        self.st.feed(rec)
         if t == "assistant":
             self._assistant(rec, ts)
         elif t == "user":
@@ -524,7 +535,7 @@ class Scan:
         self.edited |= sub.edited
         self.max_streak = max(self.max_streak, sub.max_streak)
 
-    def row(self, path: Path, sig: list, subs: list[tuple[str, "Scan"]]) -> dict:
+    def row(self, path: Path, sig: list, subs: list[tuple[dict, "Scan"]]) -> dict:
         st = self.st
         first = self.first_prompt
         title = st.title or ""
@@ -535,8 +546,8 @@ class Scan:
                   if m_budget else st.budget)
         main_cost = self.cost - sum(s.cost for _, s in subs)
         sub_types: dict[str, dict] = {}
-        for t, s in subs:
-            _add_to(sub_types, t or "?", count=1, cost=s.cost)
+        for info, s in subs:
+            _add_to(sub_types, info.get("type") or "?", count=1, cost=s.cost)
         signals = dict(self.sig)
         signals.update(compactions=st.compactions, files_edited=len(self.edited), max_fail_streak=self.max_streak,
                        wait_s=int(self.wait_s), plan_first=self.plan_steps[0] if self.plan_steps else 0,
@@ -560,6 +571,7 @@ class Scan:
             "cost": round(self.cost, 4), "main_cost": round(main_cost, 4), "unpriced": self.unpriced,
             "tokens": {k: st.tokens.get(k, 0) for k in transcript.TOKEN_KEYS},
             "sub_tokens": _sum_tokens(s.st for _, s in subs), "subagents": _rounded(sub_types),
+            "agents": agents_of(subs),
             "by_model": _rounded(self.by_model), "days": _rounded(self.days), "hours": _rounded(self.hours),
             "phases": _rounded(self.phases),
             "tools": _rounded(self.tools), "commands": _rounded(self.cmds), "skills": _rounded(self.skills),
@@ -576,6 +588,44 @@ def _rounded(d: dict) -> dict:
     return {k: {kk: round(vv, 4) if isinstance(vv, float) else vv for kk, vv in v.items()} for k, v in d.items()}
 
 
+NO_LABEL = "(no label)"
+
+
+def agents_of(subs: list[tuple[dict, "Scan"]]) -> dict:
+    """A session's subagents apart (wi-brain-usage-workflow-agents): ``subagents``, the plain ones by label
+    ({count, cost, output, tokens}); ``workflows``, each run by its id ({cost, agents, output, tokens, start, end,
+    days: {day: cost}, phases: {phase: {count, cost}}, labels: {label: {count, cost}}}). Their cost is already in the
+    session's ``cost`` (not in its ``main_cost``): this says whose it is."""
+    plain: dict[str, dict] = {}
+    runs: dict[str, dict] = {}
+    for info, s in subs:
+        tokens = sum(s.st.tokens.get(k, 0) for k in ("input", "output", "cache_read", "cache_write"))
+        out = s.st.tokens.get("output", 0)
+        label = info.get("label") or NO_LABEL
+        if not info.get("run"):
+            _add_to(plain, label, count=1, cost=s.cost, output=out, tokens=tokens)
+            continue
+        r = runs.setdefault(info["run"], {"cost": 0.0, "agents": 0, "output": 0, "tokens": 0, "start": "", "end": "",
+                                          "days": {}, "phases": {}, "labels": {}})
+        r["cost"] += s.cost
+        r["agents"] += 1
+        r["output"] += out
+        r["tokens"] += tokens
+        if s.st.first_ts and (not r["start"] or s.st.first_ts < r["start"]):
+            r["start"] = s.st.first_ts
+        if s.st.last_ts > r["end"]:
+            r["end"] = s.st.last_ts
+        for day, b in s.days.items():
+            r["days"][day] = r["days"].get(day, 0.0) + (b.get("cost") or 0.0)
+        _add_to(r["phases"], info.get("phase") or "-", count=1, cost=s.cost)
+        _add_to(r["labels"], label, count=1, cost=s.cost)
+    for r in runs.values():
+        r["cost"] = round(r["cost"], 4)
+        r["days"] = {d: round(c, 4) for d, c in r["days"].items()}
+        r["phases"], r["labels"] = _rounded(r["phases"]), _rounded(r["labels"])
+    return {"subagents": _rounded(plain), "workflows": runs}
+
+
 def _sum_tokens(stats) -> dict:
     out = {k: 0 for k in transcript.TOKEN_KEYS}
     for s in stats:
@@ -585,10 +635,23 @@ def _sum_tokens(stats) -> dict:
 
 
 def sig_of(path: Path) -> tuple:
-    """What tells that a session's files changed: the transcript's size and time, its subagents' count and sizes."""
+    """What tells that a session's files changed: the transcript's size and time, its subagents' count and sizes, and
+    the size and time of the files their labels come from (each ``agent-<id>.meta.json``, each run's
+    ``journal.jsonl``), which may be written once a transcript stopped growing."""
     st = path.stat()
     subs = transcript.subagent_files(path)
-    return st.st_size, st.st_mtime_ns, len(subs), sum(f.stat().st_size for f in subs)
+    labels = [f.with_name(f"{f.stem}.meta.json") for f in subs]
+    labels += sorted({f.parent / "journal.jsonl" for f in subs if f.parent.parent.name == "workflows"})
+    marks = [(m.st_size, m.st_mtime_ns) for m in (_stat(f) for f in labels) if m]
+    return (st.st_size, st.st_mtime_ns, len(subs), sum(f.stat().st_size for f in subs),
+            len(marks), sum(s for s, _ in marks), max((t for _, t in marks), default=0))
+
+
+def _stat(path: Path):
+    try:
+        return path.stat()
+    except OSError:
+        return None
 
 
 def sig_list(sig: tuple) -> list:
@@ -596,16 +659,20 @@ def sig_list(sig: tuple) -> list:
 
 
 def scan(path: str | Path, prices: dict | None = None) -> dict:
-    """The ledger row of one main transcript and its subagents'."""
+    """The ledger row of one main transcript and its subagents' (plain ones and workflow agents, each with its
+    ``transcript.agent_info``). The subagents are read first: a message one of them holds is theirs, never also its
+    parent's, should the main transcript carry a copy of it (a sidechain record)."""
     p = Path(path)
     sig = sig_list(sig_of(p))
-    main = Scan(prices)
-    main.feed_file(p)
-    subs = []
+    subs, owned, journals = [], set(), {}
     for f in transcript.subagent_files(p):
-        s = Scan(prices)
+        s = Scan(prices, skip=owned)
         s.feed_file(f)
-        subs.append((transcript.agent_type(f), s))
+        owned |= s.seen
+        subs.append((transcript.agent_info(f, journals), s))
+    main = Scan(prices, skip=owned)
+    main.feed_file(p)
+    for _, s in subs:
         main.merge(s)
     return main.row(p, sig, subs)
 

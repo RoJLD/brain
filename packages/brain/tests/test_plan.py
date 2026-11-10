@@ -66,7 +66,9 @@ def test_the_hook_keeps_one_plan_file_per_session(brain_home):
     one = plan.read("s-1")
     assert one["tool"] == UPDATE and plan.label(one["steps"]) == "2/3 Write the code"
     assert plan.label(plan.read("s-2")["steps"]) == "1/1 x"
-    assert sorted(f.name for f in paths.sessions_dir().iterdir()) == ["s-1.plan.json", "s-2.plan.json"]
+    # brain.stateio: the second write of s-1 backed up the first beside it
+    assert sorted(f.name for f in paths.sessions_dir().iterdir()) == ["s-1.plan.json", "s-1.plan.json.bak",
+                                                                     "s-2.plan.json"]
     assert not (brain_home / "ledger" / "errors.log").exists()
     assert plan.read("s-3") is None
 

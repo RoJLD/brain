@@ -193,3 +193,43 @@ def test_hooks_json_runs_the_watch_after_every_tool():
     (entry,) = [(m, h) for m in hooks["PostToolUse"] for h in m["hooks"] if "budget.sh" in h["command"]]
     matcher, hook = entry
     assert "matcher" not in matcher and not hook.get("async") and hook["timeout"] <= 10
+
+
+# --- the state through brain.stateio (wi-brain-state-safe-io-rest) ---
+
+def test_a_newer_brains_watch_state_is_left_to_it(session, brain_home):
+    f = budget.state_dir() / "s-1.json"
+    f.parent.mkdir(parents=True)
+    f.write_text('{"v": 2, "session": "s-1"}', encoding="utf-8")
+    _append(session, _asst("m1", 350_000))
+    assert _run(session) == ""  # no notice from a state this engine cannot keep
+    assert f.read_text(encoding="utf-8") == '{"v": 2, "session": "s-1"}'
+    assert (budget.state_dir() / "s-1.mark").stat().st_mtime > time.time() + budget.IDLE_S - 60  # bash waits
+
+
+def test_the_watch_state_is_backed_up_and_an_unreadable_one_set_aside(session, brain_home):
+    f = budget.state_dir() / "s-1.json"
+    _append(session, _asst("m1", 100_000))
+    _run(session)
+    _append(session, _asst("m2", 120_000))
+    _run(session)
+    assert json.loads(f.read_text(encoding="utf-8"))["v"] == budget.STATE_V
+    assert json.loads((budget.state_dir() / "s-1.json.bak").read_text(encoding="utf-8"))["ctx"] == 100_000
+    f.write_text("{bad", encoding="utf-8")
+    _run(session)
+    assert len(list(budget.state_dir().glob("s-1.json.unreadable-*"))) == 1
+    assert json.loads(f.read_text(encoding="utf-8"))["ctx"] == 120_000  # the transcript read again from its start
+
+
+def test_prune_takes_the_old_states_backups_and_set_aside_copies(brain_home):
+    d = budget.state_dir()
+    d.mkdir(parents=True)
+    old = [d / n for n in ("a.json", "a.json.bak", "a.json.unreadable-20261001T000000Z", "a.mark")]
+    new = [d / n for n in ("b.json", "b.json.bak", "b.mark")]
+    for f in old + new:
+        f.write_text("{}", encoding="utf-8")
+    then = time.time() - 20 * 86400
+    for f in old:
+        os.utime(f, (then, then))
+    budget._prune()
+    assert not any(f.exists() for f in old) and all(f.exists() for f in new)

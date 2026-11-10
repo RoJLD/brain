@@ -57,3 +57,28 @@ def test_actions_recovered_from_a_transcript(fixture_transcript):
                              "permission_mode": "auto", "surface": "cli"}
     for a in ars:
         assert schema.check("ar", a) == ([], [])
+
+
+def test_agent_info_reads_the_meta_then_the_workflow_journal(tmp_path):
+    """wi-brain-usage-workflow-agents: who a subagent's transcript is, on an invented session."""
+    subs = tmp_path / "proj" / "sess" / "subagents"
+    run = subs / "workflows" / "wf_r1"
+    run.mkdir(parents=True)
+    plain, labelled, bare = subs / "agent-a1.jsonl", run / "agent-b1.jsonl", run / "agent-b2.jsonl"
+    for f in (plain, labelled, bare):
+        f.write_text("", encoding="utf-8")
+    (subs / "agent-a1.meta.json").write_text(json.dumps({"agentType": "Explore", "description": "find the hooks",
+                                                         "model": "haiku"}), encoding="utf-8")
+    (run / "agent-b1.meta.json").write_text(json.dumps({"agentType": "workflow-subagent", "description": "impl:x",
+                                                        "workflowPhase": "Implement"}), encoding="utf-8")
+    (run / "journal.jsonl").write_text(
+        json.dumps({"type": "started", "agentId": "b2", "label": "review:x", "phase": "Review"}) + "\nnot json\n",
+        encoding="utf-8")
+    assert transcript.agent_info(plain) == {"id": "a1", "type": "Explore", "label": "find the hooks", "phase": "",
+                                            "run": "", "model": "haiku"}
+    assert transcript.agent_info(labelled)["label"] == "impl:x" and transcript.agent_info(labelled)["run"] == "wf_r1"
+    cache = {}
+    assert transcript.agent_info(bare, cache) == {"id": "b2", "type": "", "label": "review:x", "phase": "Review",
+                                                  "run": "wf_r1", "model": ""}
+    assert list(cache) == [str(run)]   # the run's journal read once
+    assert transcript.subagent_files(tmp_path / "proj" / "sess.jsonl") == sorted([plain, labelled, bare])

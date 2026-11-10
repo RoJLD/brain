@@ -362,6 +362,54 @@ def agent_type(subagent: str | Path) -> str:
     return str(meta.get("agentType") or "") if isinstance(meta, dict) else ""
 
 
+def _journal_agents(run_dir: Path, cache: dict | None = None) -> dict[str, dict]:
+    """{agent id: {label, phase}} from a workflow run's ``journal.jsonl`` (its ``started`` records); {} without one."""
+    key = str(run_dir)
+    if cache is not None and key in cache:
+        return cache[key]
+    out: dict[str, dict] = {}
+    try:
+        with open(run_dir / "journal.jsonl", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and rec.get("type") == "started" and rec.get("agentId"):
+                    out[str(rec["agentId"])] = {"label": str(rec.get("label") or ""),
+                                                "phase": str(rec.get("phase") or "")}
+    except OSError:
+        pass
+    if cache is not None:
+        cache[key] = out
+    return out
+
+
+def agent_info(subagent: str | Path, cache: dict | None = None) -> dict:
+    """Who a subagent's transcript is (wi-brain-usage-workflow-agents): {id, type, label, phase, run, model}.
+
+    ``id`` is the ``<id>`` of ``agent-<id>.jsonl``; ``type``, ``label`` (the ``description`` its launcher gave),
+    ``phase`` (``workflowPhase``) and ``model`` come from the ``agent-<id>.meta.json`` beside it; ``run`` is the
+    workflow run's id when the transcript lies under ``subagents/workflows/<run>/`` ('' for a plain subagent), and the
+    run's ``journal.jsonl`` (its ``started`` records: agentId, label, phase) fills a label or phase the meta lacks.
+    ``cache`` keeps each run's journal read once."""
+    p = Path(subagent)
+    aid = p.stem[len("agent-"):] if p.stem.startswith("agent-") else p.stem
+    try:
+        meta = json.loads(p.with_name(f"{p.stem}.meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        meta = {}
+    meta = meta if isinstance(meta, dict) else {}
+    run = p.parent.name if p.parent.parent.name == "workflows" else ""
+    info = {"id": aid, "type": str(meta.get("agentType") or ""), "label": str(meta.get("description") or ""),
+            "phase": str(meta.get("workflowPhase") or ""), "run": run, "model": str(meta.get("model") or "")}
+    if run and not (info["label"] and info["phase"]):
+        j = _journal_agents(p.parent, cache).get(aid) or {}
+        info["label"] = info["label"] or j.get("label", "")
+        info["phase"] = info["phase"] or j.get("phase", "")
+    return info
+
+
 def session_stats(transcript: str | Path) -> tuple[SessionStats, SessionStats, int]:
     """(main stats, subagents' stats, number of subagent transcripts) from a full read."""
     main = SessionStats()

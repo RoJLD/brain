@@ -47,7 +47,9 @@ starts no Python while the mark is newer. Python sets the mark's mtime in the fu
 ``CHECK_S`` seconds (sooner as the budget nears), never again once every notice is given, every ``IDLE_S`` when
 there is nothing to watch (an estimate recorded later is then found). Each run reads only the transcript's new bytes
 (``<session>.json`` keeps the offsets, the context, the cost and the notices given); marks older than ``KEEP_DAYS``
-are pruned.
+are pruned. ``<session>.json`` is written by this Python only (bash reads the mark), through brain.stateio: a backup
+beside it, an atomic write (~10 ms, once per check, not per tool call); one a newer brain wrote is left to it and its
+mark set ``IDLE_S`` ahead, and an unreadable one is set aside and the watch starts afresh.
 """
 
 from __future__ import annotations
@@ -59,9 +61,10 @@ import sys
 import time
 from pathlib import Path
 
-from . import paths, transcript, usage
+from . import paths, stateio, transcript, usage
 
 DIR = "budget"
+STATE_V = 1  # <session>.json's v (brain.stateio: truth-local, one session's life)
 STEPS = (80, 100)
 MASTER_STEPS = (70, 80, 90, 100)  # a master's (ST-3)
 CHILD_K = 22_000  # the context a child costs its master when the family gives too few starts to measure (16k-28k)
@@ -93,35 +96,48 @@ def _new(sid: str, path: str) -> dict:
             "warned": {"context": [], "cost": []}, "starts": 0, "model": "", "kids": {}}
 
 
+def _file(sid: str) -> Path:
+    return state_dir() / f"{sid}.json"
+
+
 def _load(sid: str) -> dict | None:
+    """A session's state, read-only (nothing moved): a newer brain's read as it is; None without one."""
+    st = stateio.load(_file(sid), known=STATE_V, aside=False)
+    return st.data if st.status in ("ok", "newer") else None
+
+
+def _save(st: stateio.State, state: dict, next_s: float) -> None:
+    """The state (brain.stateio: a backup, then an atomic write), then the mark: line 1 the transcript bash compares
+    it with; its mtime ``next_s`` from now. A newer brain that wrote the state since the load keeps it: the mark
+    then waits :data:`IDLE_S`."""
     try:
-        state = json.loads((state_dir() / f"{sid}.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return state if isinstance(state, dict) and state.get("v") == 1 else None
+        stateio.save(st, state, indent=None, sort_keys=False)
+    except stateio.StateError:
+        next_s = IDLE_S
+    _mark(state["session"], state["transcript"], next_s)
 
 
-def _save(state: dict, next_s: float) -> None:
-    """The state, then the mark: line 1 the transcript bash compares it with; its mtime ``next_s`` from now."""
+def _mark(sid: str, transcript_path: str, next_s: float) -> None:
     d = state_dir()
     d.mkdir(parents=True, exist_ok=True)
-    sid = state["session"]
-    (d / f"{sid}.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
     mark = d / f"{sid}.mark"
-    mark.write_text(Path(state["transcript"]).as_posix() + "\n", encoding="utf-8", newline="\n")
+    mark.write_text(Path(transcript_path).as_posix() + "\n", encoding="utf-8", newline="\n")
     t = time.time() + next_s
     os.utime(mark, (t, t))
 
 
 def _prune(keep_days: int = KEEP_DAYS) -> None:
+    """The states older than ``keep_days``, with their mark, backup and set-aside copies."""
     limit = time.time() - keep_days * 86400
     try:
         with os.scandir(state_dir()) as it:
             for e in it:
-                if e.name.endswith(".json") and e.stat().st_mtime < limit:
+                own = e.name.endswith(".json")
+                if (own or e.name.endswith(".json" + stateio.BACKUP) or ".json" + stateio.ASIDE in e.name) \
+                        and e.stat().st_mtime < limit:
                     os.remove(e.path)
                     mark = Path(e.path).with_suffix(".mark")
-                    if mark.exists():
+                    if own and mark.exists():
                         os.remove(mark)
     except OSError:
         pass
@@ -489,7 +505,11 @@ def check(data: dict) -> str:
     path = str(data.get("transcript_path") or "")
     if not _SID_RE.match(sid) or not path:
         return ""
-    state = _load(sid)
+    st = stateio.load(_file(sid), known=STATE_V)
+    if not st.writable:   # a newer brain's watch (or a locked file): left to it; bash skips Python until the mark
+        _mark(sid, path, IDLE_S)
+        return ""
+    state = st.data if st.status == "ok" and st.data else None
     if state is None:
         state = _new(sid, path)
         _prune()
@@ -509,7 +529,7 @@ def check(data: dict) -> str:
     out = [] if data.get("agent_id") else notices(state)
     state["master"] = master_summary(state)
     state.pop("_children", None)
-    _save(state, next_check(state))
+    _save(st, state, next_check(state))
     return "\n".join(out)
 
 
