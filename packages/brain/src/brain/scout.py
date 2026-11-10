@@ -15,7 +15,9 @@ the files a CodeRef names); a test's edit touches no module. A light touch (Pyth
 are dropped, whitespace only elsewhere, a pure rename) never makes a LEFT finding block. Blocking: every NEW finding,
 and the LEFT findings of at most --limit units (the repo's scout_limit, default 3; a doc counts once for all its dead
 references), the most severe first, then entry, then prod, then path; the other LEFT findings are DEFERred to the
-repo's debt item. PENDING, N/A, info and light never block. The structure signals (brain.structure: a file past
+repo's debt item. PENDING, N/A, info and light never block, but for feature.coverage (an info of the full audit:
+a command or module of a command registry that no feature names, brain.feature_coverage): NEW on a unit the change
+adds, DEFER on a touched one, LEFT there only under config.json audit.feature_coverage_strict. The structure signals (brain.structure: a file past
 max_lines, a function past the complexity threshold, a dependency no decision log names, an incomplete shortcut:
 marker, a symptom fix with no Root cause: line) join them: NEW, DEFER to the debt item for a file or function already
 past its threshold that grows, or justified (a Justified: or Root cause: line in --pr-body or a commit message: shown,
@@ -30,7 +32,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import audit, graph, inventory, paths, projects, structure
+from . import audit, feature_coverage, graph, inventory, paths, projects, structure
 from .inventory import AuditError, git
 
 ORDER = {"entry": 0, "prod": 1, "other": 2, "": 3}
@@ -149,14 +151,34 @@ def _old_unit(check: str, unit: str, renamed: dict[str, str]) -> str:
     return renamed.get(unit, unit)
 
 
+def _new_defer(f: dict, fresh: bool, here: bool, added: set[str], touched: dict[str, bool], strict: bool) -> list:
+    """A 'new+defer' finding (feature.coverage) tagged, in the changed repo (``here``) only: NEW on a unit the change
+    adds; on a touched unit that had it, DEFER to the debt item, or LEFT (light for a light touch) under the owner's
+    opt-in (config.json audit.feature_coverage_strict); nothing for another unit."""
+    unit = f["unit"]
+    if not here or (unit not in touched and not (fresh and unit in added)):
+        return []
+    if fresh and unit in added:
+        return [{**f, "tag": "NEW"}]
+    return [{**f, "tag": ("light" if touched[unit] else "LEFT") if strict else "DEFER"}]
+
+
+def _base_keys(base: dict) -> set[str]:
+    """The keys of the base's findings a fresh one is told from: every one but an info, a 'new+defer' info kept."""
+    return {f["key"] for r in base["repos"] for f in r.get("findings", [])
+            if f["severity"] != "info" or audit.CHECKS[f["check"]].scout == "new+defer"}
+
+
 def classify(touched: dict[str, bool], deleted: set[str], added: set[str], target: str, new: dict, base: dict,
-             renamed: dict[str, str], limit: int, script_exts: set[str]) -> list[dict]:
+             renamed: dict[str, str], limit: int, script_exts: set[str], strict: bool = False) -> list[dict]:
     """Tag each relevant finding NEW, LEFT, DEFER, light or info (advisory); ``touched`` maps a unit to whether its
     touch is light. A finding the base did not have, in any repo, can only come from this change: NEW (a module or
     doc the change deletes or renames, a test it deletes, a CodeRef it adds, a console script it declares...). One
     the base had is LEFT when the change touches its unit (in the changed repo; another repo's CodeRef to a touched
-    file); the LEFT units past the limit, most severe and production first, are DEFERred."""
-    base_keys = {f["key"] for r in base["repos"] for f in r.get("findings", []) if f["severity"] != "info"}
+    file); the LEFT units past the limit, most severe and production first, are DEFERred. A 'new+defer' check
+    (feature.coverage, info in the full audit) is NEW on an added unit and DEFER on a touched one (LEFT under
+    ``strict``: _new_defer)."""
+    base_keys = _base_keys(base)
     out = []
     for r in new["repos"]:
         for f in r.get("findings", []):
@@ -167,6 +189,9 @@ def classify(touched: dict[str, bool], deleted: set[str], added: set[str], targe
             fresh = f["key"] not in base_keys and f"{r['name']}:{check}:{_old_unit(check, unit, renamed)}" \
                 not in base_keys
             if mode == "new" and (not fresh or unit not in added):   # coderef.module: an added module only
+                continue
+            if mode == "new+defer":
+                out += _new_defer(f, fresh, r["name"] == target, added, touched, strict)
                 continue
             light = False
             if r["name"] != target:   # another repo: its CodeRefs to what this change touches
@@ -307,7 +332,8 @@ def main(args, root: Path | None) -> int:
     script_exts = {Path(u.path).suffix for u in base["facts"][c.name].units
                    if u.kind == "script" and inventory.script_evidence(u, ev)[0]}
     limit = args.limit if args.limit is not None else c.scout_limit
-    out = classify(touched, deleted, added, c.name, new, base, renamed, limit, script_exts)
+    out = classify(touched, deleted, added, c.name, new, base, renamed, limit, script_exts,
+                   feature_coverage.strict(root))
     out = sorted(out + _structure(args, p, c, top, rows, base_tree, new_tree, base_rev, new_rev), key=_rank)
     n_new = sum(1 for f in out if f["tag"] == "NEW")
     n_left = sum(1 for f in out if f["tag"] == "LEFT")

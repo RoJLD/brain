@@ -156,6 +156,21 @@ retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root
 messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
 `audit: {max_lines: 1000, complexity: 15}`.
 
+### Feature coverage
+
+A shipped capability cannot miss the feature matrix (`FEATURES.md`): in a package whose `commands/` lists its own
+modules (a command registry, as `brain.commands` is), each command module (not the `_` helpers) and each module
+beside its `cli.py` must be named by a feature of the project's stores (check `feature.coverage`,
+`brain.feature_coverage`). A feature names one when an active `implemented_by` CodeRef of it points at its file (a
+symbol's CodeRef names its file), or when its title says it: `brain quiet` for a command module (each command its
+`register` adds, after each console script that runs the package), `brain.stateio` for a module. `brain audit` lists
+them per repo as info, never counted, in a section of their own (`feature coverage: N of M commands and modules named
+by a feature; no feature names: ...`, the JSON key `feature_coverage`, a section of `notes/audit.md`). The scout makes
+one the change adds a NEW line (link it, `brain features link <feature> --code <path>`, or say it in a feature's
+title), and one already there that the change touches a DEFER line to the repo's debt item; `config.json`
+`audit.feature_coverage_strict: true` (the owner's opt-in, default false) makes that one a LEFT line to fix in the PR.
+`--store DIR` gives the scout a worktree of the store where the change's features are linked.
+
 ### The impact of a change
 
 `brain impact [--diff BASE|A..B]` says, before merge, what a change's code carries in the graph
