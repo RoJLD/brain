@@ -2,6 +2,214 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## 0.3.1 — 2026-11-10 — Opt-in guards, read commands and identity
+
+### Upgrade
+
+1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
+2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
+3. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
+   push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
+
+Nothing to run for the rest. What this release could newly refuse is off until the owner turns it on in
+`config.json`, each an optional key, default off: `usage.guard.memory_available_gb` (the RAM floor),
+`usage.guard.session_hour_measured`, `views.strict`, `hints.read` (the read hint), `audit.norm_lints_strict`,
+`audit.feature_coverage_strict`, `features.public_strict` and `identity.require_signed`. A brain that writes
+`members.yaml` adds its `boundary.yaml` rule (docs/identity.md).
+
+### Added
+
+- `brain audit` checks the feature coverage, at zero token (check `feature.coverage`, `brain.feature_coverage`,
+  ruleset 6): in a package whose `commands/` lists its own modules (a command registry), each command module (not the
+  `_` helpers) and each module beside its `cli.py` must be named by a feature, by an active `implemented_by` CodeRef
+  of its file or by a title that says it (`brain quiet`, `brain.stateio`). The full audit lists the ones no feature
+  names as info, never counted, in a section per repo (`feature coverage: N of M ...`, the JSON key
+  `feature_coverage`, a section of `notes/audit.md`). The scout (`brain audit --diff`) makes one the change adds a NEW
+  line and one already there that it touches a DEFER line to the repo's debt item; nothing that passed is newly
+  refused (`feature.links` already makes an added unit no feature names NEW). `config.json`
+  `audit.feature_coverage_strict` (a boolean, default false) is the owner's opt-in: true, the touched one is a LEFT
+  line to fix in the PR (`wi-brain-audit-feature-coverage`).
+- Edges between the stores of one registry (`brain.crossstore`): an edge may name a node another registered store
+  holds. brain gives research_graph the stores that hold the ids a store's edges name (`--foreign-store`, on every
+  run and in-process load: sync, check, the views, the pending questions, `brain impact`), so the store loads and its
+  board and roadmap show the other store's node by its id and store (`wi-x (parent:notes/graph)`); `brain item link`
+  and `brain item add` accept another store's id as one end. `brain check --all` counts the edges between stores and
+  refuses one whose end is in no store of the registry on this machine, as the store's own check already did; without
+  `--all` a brain's own root warns of it. A store whose edges name only its own ids runs as before
+  (`wi-brain-cross-store-edges`).
+- Dependency probes, loud fallbacks (`wi-brain-dependency-probes`, `brain.depprobes`): `config.json` `probes`
+  declares a token-free probe per external dependency of a capability, with the machines it runs on, of four kinds
+  (`file-age`, `json-age`, `command` with no shell and its output never shown, `http` with no header and its URL
+  never shown), each with its own timeout (a command past it is killed with every process it started, and a probe
+  still running never holds the process at its exit). The alerts pass runs this machine's probes when the brain's own project is
+  in scope and raises `probe:<name>` at the probe's level for each one that is not OK (sent once, resolved once, by
+  the pass's notify path); each run is recorded in `<BRAIN_HOME>/probes/state.json` (state, last OK, since).
+  `brain status` shows a probes row once one runs here, the cockpit's health panel a line; `brain probes [--last |
+  --list | --kinds] [--json]` runs or lists them; `brain config --check` checks the declarations.
+- The feature matrix split by repo: each repo's `FEATURES.md` lists the features whose `repo` it is, and a checkout
+  that is a clone of a public repo (one of its git remotes is in `config.json` `public.repos`) gets the public render
+  (`brain features render --repo R --out <checkout>/FEATURES.md --write`): a feature's new optional props
+  `public_title` and `public_id` stand for a title or an id that names the owner or a private project (the graph
+  keeps both), only the repo's own code, tests and docs are shown, and no spec, ADR or work item of the private
+  brain; the render warns about what `brain check --public` would still refuse in it. `brain audit` (check
+  `features.md`) compares each repo's file with its own render, public or not, and its fix names the `--repo`/`--out`
+  command for a repo other than the store's; in a public clone that check accepts the full render too, unless the new
+  optional `config.json` key `features.public_strict` is true (the owner's opt-in, default false: nothing that passed
+  is newly refused). `brain features set` checks a `public_id` is a feature id no other node
+  or feature has (`wi-brain-features-repo-split`).
+- Identity, standalone (`wi-brain-identity`): `members.yaml` beside `config.json` declares a brain's people (their
+  `person_id`, public SSH ed25519 signing keys and age recipients), accounts, organizations and tenants, and their
+  roles per project or tenant (`schemas/members.schema.json`). An answer of the owner-decides class (money, keys,
+  accounts, visibility, heirs, scheduled tasks) may carry a detached signature, `records/ddr/<id>.sig`, made in the
+  owner's own terminal with `ssh-keygen -Y sign` (namespace `brain-decision`) and verified by `brain check` with a
+  decider's public key; the engine never signs nor reads a private key. New command `brain identity check | unsigned
+  [--write DIR] | payload ID | attach SIG|DIR`. The board marks an owner-decides answer `(signed)` when its signature
+  verifies, `(signature not verified: brain identity check)` when it does not, else `(unsigned, relayed by session
+  S)`, and `asked.by` names the asking session, else the owner: never `unknown`. Nothing is
+  refused by default: without `members.yaml` nothing is checked, and with it the findings are warnings until the
+  optional `config.json` `identity.require_signed: true` makes them errors (docs/identity.md). Writing `members.yaml`, add its
+  rule to `boundary.yaml` (personal side, docs/identity.md).
+- `brain audit --diff` reads four cheap norms in the AST of each Python file a change touches (`brain.norms`, ruleset
+  7): `norm.timeout` (a subprocess call or `urlopen` without `timeout=`, a `Popen`'s `communicate()` or `wait()`
+  without one), `norm.encoding` (a text `open()`, `read_text()` or `write_text()` without `encoding=`),
+  `norm.naive-time` (a naive `datetime.now()`, `today()` or `utcnow()` stored as text, in a dict or a JSON dump) and
+  `norm.secret-argv` (a token, password, secret or API key variable in a child's command or env). What a change adds
+  is an info line, never blocking, and a NEW line under the optional `config.json` key `audit.norm_lints_strict:
+  true`; the occurrences already in a touched file are DEFER lines to the repo's debt item, one per file and norm
+  (`wi-brain-norm-lints`).
+- Read commands, so sessions stop reading a brain's files by hand (`brain.reads`): `brain item show ID [--history]`
+  (the item's props in full, its edges both ways, the ids its props name, its blockers, the ADRs behind it (direct,
+  inherited, superseded) and its specs, the DDRs that name it; `--history` its changes from git), `brain items` with
+  filters (`--status`, `--all`, `--priority`, `--wave X.Y.Z|ID`, `--milestone`, `--prop K[=TEXT]`, `--text`,
+  `--type`, `--repo`, `--limit`), `brain adr show REF [--titles]` (an ADR's text by id, title or the start of its id,
+  else the ADRs that decide a node such as a rule), `brain spec show REF [--section N | --toc]` (a Spec node, a Doc id
+  or a path) and `brain journal last [N] [--titles]`; each takes `--json` and loads the graph in brain's own process
+  (no `research_graph` on the PATH). A PreToolUse hint (`readhint.sh`, `brain.readhint`), never a refusal: when Read,
+  Grep or a shell command that reads targets a registered brain's graph YAML, decision log, journal or generated
+  views, one line of hook context names the command that answers; bash builtins until the call names one of those
+  files. The hint is opt-in (about 0.2 s per Read and Grep call, which had no hook before): `brain render --target
+  claude` (`brain sync`) registers it in the core plugin's `hooks.json` only when `config.json` says
+  `"hints": {"read": true}` (a new optional key, default false: not registered, no call pays its cost); while it is
+  on, `BRAIN_READ_HINT=0` turns it off in a session. The close-item procedure, the brief (`brain brief`, « How to start ») and
+  the generic `CLAUDE.md` template name the commands (`wi-brain-read-commands`).
+- `brain usage` shows the subagents and the workflow agents apart (`wi-brain-usage-workflow-agents`). Their
+  transcripts (`<session>/subagents/agent-<id>.jsonl`, `<session>/subagents/workflows/<run>/agent-<id>.jsonl`) were
+  already read with the session that launched them and counted in its cost. Each ledger row now also says whose that
+  cost is (`agents`): the plain subagents by label (the `description` of their `.meta.json`), and each workflow run by
+  its id, with its agents, days, phases and labels (the meta's, else the run's `journal.jsonl`; a label written once
+  the agent's transcript stopped growing is read at the next scan). `brain usage` prints
+  the split between main threads, subagents and workflows; `--by workflow` lists each run with the session that
+  launched it, `--by agent` each agent's label, and the summary adds the workflow runs when there are any. A message
+  that a subagent's transcript holds is counted once, as the subagent's, even when the parent's transcript copies it.
+  `brain usage quota` adds the cost of a session-hour over the last 7 days, the agents' cost included (`session-h`,
+  kept in `quota.json`), as information. The usage guard's parallel-sessions cap uses it only when you opt in with
+  config.json `usage.guard.session_hour_measured: true` (default false), and then when it is above
+  `usage.guard.session_hour_usd`: on a machine whose sessions run workflows, that cap is lower and a new session can be
+  refused where it used to pass. By default the cap keeps the configured `session_hour_usd`, so nothing that passed is
+  newly refused. `brain usage guard` shows the measured value and whether it is applied (its `session-h` line), and a
+  `sessions` refusal names the session-hour it used. The ledger's scanner is now `SCAN_V` 3, so the next
+  `brain usage` scans every transcript still on the machine again.
+- `brain views`: one writer of the generated views (`brain.views`, `docs/views.md`). Without a flag it lists the
+  views git tracks (a `GENERATED by` marker in their first lines or a `_generated_` name, as the merge driver knows
+  them), where the checkout stands, those changed or staged here and those the merge driver kept from one side
+  (`--json`). On a branch, `--unstage` takes the staged views out of the index after `git add` (the working tree keeps
+  them for the branch's checks) and `--reset` puts every view back at HEAD before a merge of the default branch (a
+  deleted view included). `--write`, in a worktree at the default branch's tip (refused in a main checkout), runs brain
+  sync's writes, the audit view (`--no-audit`: not) and brain check by the default branch's strict rules (whatever
+  `views.strict`), lists the files it changed and, with `--commit`, commits those alone, never when its check fails
+  nor when HEAD lacks `origin/<default>`'s tip (fetched first unless `--offline`); it refuses another engine than the
+  pin unless `--force`, and its flags without `--write`. To use it, after each merge: from a worktree at the default
+  branch's tip (`git worktree add -b chore/views-<date> <path> origin/main`), `brain --root <path> views --write
+  --commit`, then push and merge that commit; a branch may then leave its views uncommitted. A brain worked on its
+  default branch itself regenerates there with `brain sync`, as before. A branch that still commits its views keeps
+  working: the merge driver's view kind stays the fallback. The scout (`brain audit --diff`) no longer asks a branch
+  for a fresh `FEATURES.md` (its check `features.md` is `never` in the scout): the full audit and the default
+  branch's check do (`wi-brain-views-one-writer`).
+- `brain check` (and `brain refresh`, which checks) say the stale generated views by where the checkout stands: on
+  the default branch (HEAD on origin/HEAD's target, else main, else master) a warning naming `brain views --write`, for
+  the decision queue, the links graph, the plan and module maps, and now the records' graph, `FEATURES.md`, the kanban
+  and the roadmap; on any other branch one `views:` line, no longer a warning; outside git the warnings as before.
+  Nothing newly refuses by default (`wi-brain-views-one-writer`).
+- `config.json` `views.strict` (a boolean, default false): how an owner opts in to the one writer's rules. True,
+  `brain check` and `brain refresh` exit 1 on a stale view on the default branch, and `brain audit --write`,
+  `brain coverage --write`, `brain features render --write`, `brain decision view --write` and `brain modules --write`
+  refuse another engine than `config.json` `engine.pin`, as `brain sync` does (`--force` writes anyway). Before
+  setting it, check the main checkout (`brain check`) and, where it names a stale view, regenerate from a worktree at
+  its tip with `brain views --write --commit`, then merge that commit (`docs/views.md`; `wi-brain-views-one-writer`).
+
+### Changes
+
+- Finished sessions archive themselves (`wi-brain-archive-after-merge`). The close-item procedure's step 5 says the
+  session that merges its own PR archives itself once its after-merge steps are done (the main checkout pulled, the
+  backlog ticked, the journal note written, its report given: the archive is its last act), the owner's standing
+  authorization standing for their yes; a coordinator archives its children as soon as a report says merged and
+  verified, without asking again; never another running session (the self-archive is the one mid-turn archive
+  allowed, the final tool call of the merging session's turn) or one with uncommitted, unmerged or unverified work;
+  and the owner's app setting `auto_archive_inactive_days = 7` is the token-free net, which the owner sets and no session
+  changes. `brain brief` gains an « After the merge » section with the same clauses (`brain.brief.AFTER_MERGE`;
+  config.json `brief.after_merge` replaces them, `[]` drops the section), and the generic rules template counts the
+  archived session in its definition of done. Tests check that the procedure, the brief and the template keep saying
+  it.
+- Every store the engine writes under `$BRAIN_HOME` has a class (`wi-brain-classes-home-stores`, COMPAT-6):
+  `brain.classes.ENGINE_STORES` grows from 6 to 35 (usage, budget, forecast, announce, handover, inbox, features,
+  cache, memory-sync, schedules, alerts, notify, secrets (secret), the telemetry collector's data, stacks, telemetry,
+  code-index, code-map, public-check, reviews, backup, tui.json, update.json, personal.json, profile.json,
+  code-index.json, venv, bin, the engine's tag clones), each with a suggested data class and a format class
+  (truth-local, log, derived, install, external). An engine store a brain does not declare is no longer an error of
+  `brain check --all` and `brain classes --check`: it takes its suggested class (never looser than sealed), the check
+  notes it, and `brain classes PATH` and `classes.decide` use that default. A name at the top of `$BRAIN_HOME` that no
+  store covers is noted, sealed by default. `brain classes --suggest`, for a brain that already declares classes,
+  prints only the engine stores it misses; `brain init` declares them all. `brain classes` lists the sources the
+  engine reads and never writes: the desktop app's session metadata, read through a closed list of keys (never
+  `lastTurnReport`, `pendingSystemReminder`, `promptAppendSnapshot`, `remoteMcpServersConfig`, `spawnSeed`), its
+  worktrees and its shared notes. A test fails on a name the engine's code writes under `$BRAIN_HOME` that the list
+  does not hold, and another on a text key of the app's metadata reaching a store.
+- The usage guard's memory check reads two measures (`wi-brain-memory-guard-two-measures`): it refuses a new session
+  or a workflow when committed memory reaches `usage.guard.memory` % (default now 97, was 90) or, once the owner sets
+  a floor, when the available RAM falls under `usage.guard.memory_available_gb` GB (new; default 0, no floor, so
+  nothing that passed is refused; 4 is a sensible floor). Its refusal, `brain usage guard` and
+  `brain status` (a new `memory` row) show both measures and name the one that refuses. Committed memory alone (what
+  Windows promised, RAM plus page file) refused every start at 93-96 % while a third of the RAM was free. The
+  governor's settings cache now keys on the defaults, so an upgrade never keeps the old cap.
+- `release_check.py`: a format the last tag did not register (its own `SCHEMAS`) none of whose files exists there
+  (a format this version adds, `new_formats`) is reported on its own line and is a patch's; a file new to a format
+  that exists, or a format whose files are renamed, still moves it (`wi-brain-release-schema-additive`).
+- `release_check.py` reads config.json's schema structurally (`wi-brain-release-schema-additive`): optional keys
+  added to `config.schema.json` (none of them `required`) and prose changes no longer make a format move, so a patch
+  may hold them; it reports them as grown. Any other change of it, and any change of a record schema (ar, ddr, sr,
+  event), still makes the release a minor one (docs/release.md, « The version policy »).
+- **Nothing to run for the machine-local state** (`wi-brain-state-safe-io-rest`): `tui.json`,
+  `memory-sync/state.json`, `vault/device.json`, the session files under `sessions/` and the budget watch's states
+  gain `"v": 1` at their next write, which an older engine reads unchanged. Each may now have a `<name>.bak` beside
+  it, and one that was unreadable a `<name>.unreadable-<stamp>`: both are safe to delete once looked at.
+  `ledger/errors.log` now moves aside each month as `errors-YYYY-MM.log` (kept six months); an `errors.log.1` left by
+  the old 1 MB cut can be deleted. `install.ps1 -Apply` stops on a `~/.claude/settings.json` that is not a JSON object
+  (« fix it by hand first ») instead of failing in the middle of its writes, and leaves `settings.json.bak` beside it
+  at each write.
+- **The rest of the machine-local state goes through `brain.stateio`** (`wi-brain-state-safe-io-rest`,
+  spec-brain-data-compat N4; `docs/formats.md`, « Machine-local state »): a backup beside the file, an atomic synced
+  write, an unreadable file set aside by the next write, a newer brain's file read but never written. It now carries
+  the cockpit's `tui.json` (the keys this engine does not know are kept through a save; `brain tui` says when a newer
+  brain's file keeps it from remembering the views), `memory-sync/state.json` (a newer record stops the sync before
+  any fetch, in `last.json` and the alert), `vault/device.json` (`device init` and `forget-previous` refuse a newer
+  file before the keystore is touched; `device init --rotate` keeps the keys a newer brain added with the same `v`),
+  the Stop hook's session snapshot and state, the end-of-turn report, the plan file and the budget watch's
+  `budget/<session>.json` (a newer one is left to its brain, the mark set ahead so bash starts no Python meanwhile;
+  the prune takes the backups too). A symbolic link is written through: the file it points to changes, the link
+  stays.
+- **A foreign file is edited in its own keys only**: `brain.stateio.read_foreign` / `write_foreign`, and through them
+  `permissions.ClaudeCode.write` (`brain permissions render --write`, `--level session --out`), refuse a settings file
+  that cannot be read or is not a JSON object (never replaced) and one Claude Code wrote meanwhile (run again), back it
+  up beside itself unless git keeps it as it is (`permissions.kept_by_git`: tracked and unchanged; a gitignored
+  `settings.local.json` is backed up), then write atomically. `install.ps1` writes `~/.claude/settings.json` with the
+  same policy (`Read-ForeignJson`, `Write-ForeignJson`; an empty file is read as a missing one).
+- **The log class**: `ledger/errors.log` moves aside each month, or past 1 MB, as `errors-YYYY-MM[-n].log`, kept six
+  months (`brain.stateio.rotate_log`, which never moves a log over a rotated one when hooks rotate at once);
+  `stateio.LOG_RETENTION` holds each log class's retention (errors 6 months, the engine's timing 3, the ledgers of
+  records kept), and `brain.selftime` prunes through it.
+
 ## 0.3.0 — 2026-11-10 — Sigma's home, waves and eras
 
 ### Upgrade
