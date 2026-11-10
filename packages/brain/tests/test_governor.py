@@ -310,6 +310,44 @@ def test_by_default_the_measured_session_hour_does_not_lower_the_cap(ada, brain_
     assert decision == "deny" and "4 h at $14 per session-hour, the master's share kept" in reason
 
 
+@pytest.mark.parametrize("mistyped", ["true", 1])
+def test_a_mistyped_session_hour_measured_stays_false(ada, brain_home, mistyped):
+    """usage.guard.session_hour_measured of the wrong type is reported and left at its default false: the measured
+    session-hour is not applied."""
+    lim, errors = governor.limits_of({"session_hour_measured": mistyped})
+    assert lim["session_hour_measured"] is False
+    assert errors == ["usage.guard.session_hour_measured: true or false"]
+    ada({"warn": 99, "critical": 99.5, "session_hour_measured": mistyped})
+    reading(brain_home, 90)
+    forecast(brain_home, 90, usd_per_pct=30.0)
+    status = json.loads((brain_home / "usage" / "quota.json").read_text(encoding="utf-8"))
+    status["session_hour"] = {"usd": 37.5, "hours": 30, "total_usd": 1125.0, "days": 7}
+    (brain_home / "usage" / "quota.json").write_text(json.dumps(status), encoding="utf-8")
+    s = governor.state({"tool_name": START, "tool_input": {"title": "x"}, "cwd": str(ada.lab)}, NOW)
+    assert "usage.guard.session_hour_measured: true or false" in s["errors"]
+    assert s["caps"]["session_hour_measured"] is False
+    assert s["quota_cap"] == 4 and s["session_hour_usd"] == 14.0 and s["session_hour_applied"] is False
+    out = "\n".join(governor.render(governor.report(str(ada.lab), NOW)))
+    assert "  session-h $14 configured; measured $37.5, not applied (usage.guard.session_hour_measured false)" in out
+
+
+@pytest.mark.parametrize("usd", [14.0, 5.0])
+def test_a_measured_session_hour_not_above_the_configured_one_is_not_applied(ada, brain_home, usd):
+    """With session_hour_measured true, a measured session-hour at or below usage.guard.session_hour_usd leaves the
+    cap at the configured value, and brain usage guard says why."""
+    ada({"warn": 99, "critical": 99.5, "session_hour_measured": True})
+    reading(brain_home, 90)
+    forecast(brain_home, 90, usd_per_pct=30.0)
+    status = json.loads((brain_home / "usage" / "quota.json").read_text(encoding="utf-8"))
+    status["session_hour"] = {"usd": usd, "hours": 30, "total_usd": usd * 30, "days": 7}
+    (brain_home / "usage" / "quota.json").write_text(json.dumps(status), encoding="utf-8")
+    s = governor.state({"tool_name": START, "tool_input": {"title": "x"}, "cwd": str(ada.lab)}, NOW)
+    assert s["quota_cap"] == 4 and s["session_hour_usd"] == 14.0 and s["session_hour_applied"] is False
+    out = "\n".join(governor.render(governor.report(str(ada.lab), NOW)))
+    assert "the week's room pays for 4 at $14 per session-hour" in out and "per session-hour measured" not in out
+    assert f"  session-h $14 configured; measured ${usd:g}, not applied (not above the configured)" in out
+
+
 @pytest.mark.parametrize("inp,expected", [
     ({"title": "Brainstorm: the cockpit, round 3"}, True),
     ({"title": "Ideas", "prompt": "**Task class:** brainstorm. **Context budget:** 400k."}, True),

@@ -166,6 +166,15 @@ def _meta(path, **meta):
     path.with_name(f"{path.stem}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
 
+def _one(out):
+    """The cost of one Opus message of 10 input tokens and ``out`` output tokens."""
+    return usage.message_cost({"input": 10, "output": out, "cache_write_1h": 0}, OPUS)
+
+
+def _near(x):
+    return pytest.approx(x, abs=1e-4)
+
+
 def _launcher(projects_dir):
     """wi-brain-usage-workflow-agents: a session that ran one plain subagent and a workflow of three agents (one
     labelled only in the run's journal), its transcript carrying a copy of the subagent's message (a sidechain)."""
@@ -193,12 +202,11 @@ def _launcher(projects_dir):
 
 def test_scan_reads_subagents_and_workflow_agents_apart(projects_dir):
     row = usage.scan(_launcher(projects_dir))
-    one = lambda out: usage.message_cost({"input": 10, "output": out, "cache_write_1h": 0}, OPUS)  # noqa: E731
+    one, near = _one, _near
     main, plain = one(100) * 2, one(1000)
     wf = one(2000) * 2 + one(500) * 2
     # the subagent's message is its own, never also its parent's
     assert row["tokens"]["output"] == 200 and row["sub_tokens"]["output"] == 1000 + 5000
-    near = lambda x: pytest.approx(x, abs=1e-4)  # noqa: E731
     assert row["main_cost"] == near(main) and row["cost"] == near(main + plain + wf)
     assert row["subagents"] == {"general-purpose": {"count": 1, "cost": near(plain)},
                                 "workflow-subagent": {"count": 2, "cost": near(one(2000) * 2 + one(500))},
@@ -259,7 +267,7 @@ def test_a_message_two_subagents_hold_is_counted_once(projects_dir):
                                          _asst("2026-11-09T10:02:00Z", "z2", [], out=500)]),
           agentType="general-purpose", description="fork")
     row = usage.scan(main)
-    one = lambda out: usage.message_cost({"input": 10, "output": out, "cache_write_1h": 0}, OPUS)  # noqa: E731
+    one = _one
     assert row["tokens"]["output"] == 100 and row["sub_tokens"]["output"] == 1000 + 500
     subs = row["agents"]["subagents"]
     assert subs["first"]["output"] == 1000 and subs["fork"]["output"] == 500

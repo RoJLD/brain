@@ -506,6 +506,15 @@ def _env_allowed() -> bool:
 
 # --- the decision --------------------------------------------------------------------------------------------------
 
+def _session_hour(lim: dict, q: dict) -> tuple[float, bool]:
+    """The session-hour the sessions cap divides by, and whether it is the measured one. The measured session-hour
+    (its agents' included, brain.quota) counts only when usage.guard.session_hour_measured is true, and then only
+    above the configured one: by default the cap is the configured session_hour_usd's."""
+    measured = q.get("session_hour_usd")
+    applied = bool(lim["session_hour_measured"] and measured and measured > lim["session_hour_usd"])
+    return (measured if applied else lim["session_hour_usd"]), applied
+
+
 def state(payload: dict, now: datetime | None = None) -> dict:
     """What the governor sees for ``payload``: the tool's kind, the project, the caps, the quota, the sessions, the
     memory, the override."""
@@ -528,12 +537,7 @@ def state(payload: dict, now: datetime | None = None) -> dict:
         out["memory"], out["ram_available_gb"] = mem.get("committed"), mem.get("available_gb")
     q = out["quota"]
     week = q["windows"].get("week")
-    # the measured session-hour (its agents' included, brain.quota) counts only when usage.guard.session_hour_measured
-    # is true, and then only above the configured one: by default the cap is the configured session_hour_usd's
-    measured = q.get("session_hour_usd")
-    applied = bool(lim["session_hour_measured"] and measured and measured > lim["session_hour_usd"])
-    out["session_hour_usd"] = measured if applied else lim["session_hour_usd"]
-    out["session_hour_applied"] = applied
+    out["session_hour_usd"], out["session_hour_applied"] = _session_hour(lim, q)
     if week and q["usd_per_pct"]:
         room = (100 - week["pct"]) * q["usd_per_pct"]
         out["quota_cap"] = max(0, math.floor(room / max(1e-9, lim["wave_hours"] * out["session_hour_usd"])) - 1)
@@ -694,6 +698,22 @@ def report(cwd: str, now: datetime | None = None) -> dict:
     return out
 
 
+def _session_lines(s: dict, lim: dict, q: dict) -> list[str]:
+    """``brain usage guard``'s sessions line (and what the week's room pays for) and its session-hour line."""
+    ss = s.get("sessions") or {}
+    sessions = (f"  sessions  {ss.get('running', 0)} running, {ss.get('brainstorms', 0)} brainstorm(s) open "
+                f"(from {ss.get('source', '-')})"
+                + (f"; the week's room pays for {s['quota_cap']} at ${s['session_hour_usd']:g} per session-hour"
+                   + (" measured" if s.get("session_hour_applied") else "") if s.get("quota_cap") is not None else ""))
+    measured = q.get("session_hour_usd")
+    how = ("" if not measured else ", applied" if s.get("session_hour_applied") else
+           ", not applied (not above the configured)" if lim["session_hour_measured"] else
+           ", not applied (usage.guard.session_hour_measured false)")
+    hour = (f"  session-h ${lim['session_hour_usd']:g} configured; measured "
+            + (f"${measured:g}" if measured else "none") + how)
+    return [sessions, hour]
+
+
 def render(rep: dict) -> list[str]:
     s = rep["state"]
     lim, q = s["caps"], s["quota"]
@@ -706,17 +726,7 @@ def render(rep: dict) -> list[str]:
     if not q["windows"]:
         out.append(f"  quota     no reading in force; {_how_to_note()}")
     out.append(f"  newest    {q['newest'] or 'none'}" + ("" if q["opted_in"] else " (not checked: no reading in 7 d)"))
-    ss = s.get("sessions") or {}
-    out.append(f"  sessions  {ss.get('running', 0)} running, {ss.get('brainstorms', 0)} brainstorm(s) open "
-               f"(from {ss.get('source', '-')})"
-               + (f"; the week's room pays for {s['quota_cap']} at ${s['session_hour_usd']:g} per session-hour"
-                  + (" measured" if s.get("session_hour_applied") else "") if s.get("quota_cap") is not None else ""))
-    measured = q.get("session_hour_usd")
-    how = ("" if not measured else ", applied" if s.get("session_hour_applied") else
-           ", not applied (not above the configured)" if lim["session_hour_measured"] else
-           ", not applied (usage.guard.session_hour_measured false)")
-    out.append(f"  session-h ${lim['session_hour_usd']:g} configured; measured "
-               + (f"${measured:g}" if measured else "none") + how)
+    out += _session_lines(s, lim, q)
     out.append(f"  memory    {memory_text(s.get('memory'), s.get('ram_available_gb'), lim)}")
     ov = s.get("override")
     out.append(f"  override  until {ov['until']}" + (f" ({ov['reason']})" if ov.get("reason") else "") if ov
