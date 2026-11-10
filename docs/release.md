@@ -23,10 +23,11 @@ From 1.0 on, the first number takes the middle one's place for a change that bre
   waits for the next release, unless it is a fix that cannot wait.
 - **A fix that cannot wait** (a brain that no longer starts, a guard that refuses every commit, data lost) is a patch
   cut from the last tag, not a release of whatever main holds: its PR merges on main first, then a branch `release/X.Y`
-  from `vX.Y.Z` (made once per minor) takes it by cherry-pick with its CHANGELOG entry, and the version PR of
+  from `vX.Y.Z` (made once per minor) takes it by cherry-pick with its fragment, and the version PR of
   `X.Y.Z+1` targets that branch. The tag is cut there (« 3. The tag », from `release/X.Y` instead of main), then
   `release/X.Y` merges back into main by a PR, so that the tag is in main's history and the next `compat-prev`
-  upgrades from it; that PR takes the fix's entry out of main's `## Unreleased`, since `## X.Y.Z+1` now holds it. It
+  upgrades from it; that PR deletes the fix's fragment from main (its `changes/` file), since `## X.Y.Z+1` now holds
+  it, and the CHANGELOGs' `merge=brain` (`.gitattributes`) unions the released section into main's. It
   holds the fix and nothing else, so it needs nothing beyond the standard steps.
 - **The cadence**: a release a week, the wave planned for it with its theme; a week with nothing merged has none. The
   review fixes of a wave's PRs are released on the cadence, in the next wave, never as a patch of their own unless
@@ -101,7 +102,7 @@ One branch, `chore/release-X.Y.Z`, one PR that moves the version and nothing els
 | `packages/brain/src/brain/adapters/claude/hooks/common.sh` | `brain_version` |
 | `README.md`, `packages/brain/README.md`, `docs/install.md`, `docs/pilot.md` | the install lines and what the new tag brings |
 | `packages/brain/installer/stranger_test.py` | the default `--ref`, and the usage line |
-| `CHANGELOG.md`, `packages/brain/CHANGELOG.md` | `## Unreleased` becomes `## X.Y.Z — YYYY-MM-DD`, and `## X.Y.Z — YYYY-MM-DD — theme` in the brain's; a distribution with no change still gets its section, in one line opening « No change » |
+| `CHANGELOG.md`, `packages/brain/CHANGELOG.md` | the fragments compiled into `## X.Y.Z — YYYY-MM-DD`, and `## X.Y.Z — YYYY-MM-DD — theme` in the brain's (`python packages/brain/installer/changelog.py compile X.Y.Z --theme "..." --write`, which deletes them); a distribution with no fragment still gets its section, in one line opening « No change » |
 | the `### Upgrade` section, `packages/brain/CHANGELOG.md` | see below |
 
 **The `### Upgrade` section** is the first thing in the brain's section, and `brain update` prints it. Numbered steps
@@ -109,9 +110,11 @@ for what an owner must do from `vP`, in the order that works, each opening with 
 and what fails until it is done, the standard steps under their own titles; then what needs nothing, said so.
 Everything else is under `### Changes`. Check it against the `compat-prev` report of the PR: what the test had to run,
 the section says. Every release numbers at least the standard steps (« The standard steps »), so none has nothing to
-do: a release that asks nothing more says « Nothing to run for the rest » after them. Each PR on the way adds its step
-to Unreleased's `### Upgrade` and its entry to `### Changes`, so this is a matter of reading them in order and
-numbering them.
+do: a release that asks nothing more says « Nothing to run for the rest » after them. Each PR on the way writes its
+entry as a fragment, never in the CHANGELOG (`packages/brain/changes/<item>.md` for the brain, `changes/<item>.md` for
+research-graph: a first line `section: Upgrade|Added|Fixes|Changes`, a blank line, the entry; the folders' READMEs),
+so that parallel PRs never collide in one `## Unreleased`; `changelog.py compile` puts them in the section order
+Upgrade, Added, Fixes, Changes, and the version PR then numbers the Upgrade steps.
 
 **The fixture freeze.** `packages/brain/tests/fixtures/formats/<format>/v<N>/` holds what the readers are tested on, and
 it only grows: an `older` file is what a released engine wrote, and is never edited. By hand for now (a `brain fixtures freeze` command is planned,
@@ -159,9 +162,9 @@ git push origin vX.Y.Z
 
 **A fix that cannot wait** (« The version policy ») is tagged the same way from `release/X.Y`, at the merge of its
 version PR, instead of main: `git switch release/X.Y`, then `git pull --ff-only` and the lines after it. Then
-`release/X.Y` merges back into main by a PR, which takes out of main's `## Unreleased` every entry that `## X.Y.Z+1`
-now holds, in both CHANGELOGs: the next version PR's `release-check` refuses a section that repeats an entry already
-released, word for word; one reworded during the cherry-pick is yours to see.
+`release/X.Y` merges back into main by a PR, which deletes from main every fragment that `## X.Y.Z+1` now holds:
+the next version PR's `release-check` refuses a section that repeats an entry already released, word for word; one
+reworded during the cherry-pick is yours to see.
 
 CI's `release-tag` job then checks that the tag, both `__version__` and the pin agree. It does not check the theme of
 the tag message: `release-check` checked it in the section heading, and the owner copies it. Once it is green,

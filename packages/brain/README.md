@@ -692,7 +692,11 @@ fast paths stamp it on their events; `tests/test_selftime.py` checks the two agr
 on or a format that moves, the last for what needs nothing; `installer/release_check.py` (CI's `release-check`)
 refuses a patch with a schema change or an `### Upgrade` step beyond the standard ones, an `### Upgrade` that leaves
 out a standard step, a section with no theme, and a section of either CHANGELOG that repeats an entry an earlier one
-released.
+released. A PR never edits a CHANGELOG: it writes its entry as a fragment, `changes/<item>.md` here (`changes/` at
+the root for research-graph; the folders' READMEs), and the version PR compiles them with `installer/changelog.py
+compile X.Y.Z --theme T --write`; `release-check` refuses a malformed fragment and a `## Unreleased` section on every
+PR, and a fragment left uncompiled on a version PR. The CHANGELOGs are `merge=brain` in `.gitattributes`, a net for a
+merge back from `release/X.Y`.
 
 ## License
 

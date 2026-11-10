@@ -124,6 +124,27 @@ def test_schema_changed_with_an_upgrade_section_passes(repo, capsys):
 # Around them
 
 
+def test_any_pr_with_an_unreleased_section_or_a_bad_fragment_fails(repo, capsys):
+    """The fragments (wi-brain-changelog-unreleased-collisions): a PR writes packages/brain/changes/<item>.md, never
+    the CHANGELOG's ## Unreleased, which made every parallel PR collide."""
+    write(repo, BRAIN_LOG, "# Changelog\n\n## Unreleased\n\n- a bullet\n\n## 0.2.5 — 2026-11-04\n\n- Old.\n")
+    write(repo, "packages/brain/changes/wi-x.md", "- no section line\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1 and "not a version PR" in text
+    assert "a '## Unreleased' section: write the entry as a fragment" in text
+    assert "wi-x.md: its first line is 'section:" in text
+
+
+def test_a_version_pr_with_a_fragment_left_fails(repo, capsys):
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    write(repo, "packages/brain/changes/wi-left.md", "section: Fixes\n\n- not compiled\n")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1 and "wi-left.md: a fragment not compiled into ## 0.2.6" in text
+
+
 def test_a_version_pr_without_a_schema_change_needs_only_the_standard_steps(repo, capsys):
     versions(repo, "0.2.6")
     changelogs(repo, "0.2.6")
@@ -342,14 +363,15 @@ def test_a_patch_with_only_the_standard_steps_passes(repo, capsys):
 
 
 def test_unreleased_numbers_each_owner_action_as_a_step():
-    """docs/release.md: each PR on the way adds its step to Unreleased's ### Upgrade, numbered, beside the standard
-    steps. An owner action written as a bullet is invisible to release_check, which then lets a patch through (#50's
-    review): so Unreleased's ### Upgrade, when it has one, holds no bullet and numbers every standard step."""
-    text = (PACKAGE / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0] if "## Unreleased" in text else ""
-    if "### Upgrade" not in unreleased:
+    """docs/release.md: the next release's Upgrade, now in its fragments (packages/brain/changes, section Upgrade),
+    numbers its steps beside the standard ones. An owner action written as a bullet is invisible to release_check,
+    which then lets a patch through (#50's review): so the Upgrade fragments, when there are any, hold no bullet and
+    number every standard step."""
+    import changelog
+    frags = [f for f in changelog.load(PACKAGE.parents[1], "brain")[0] if f.section == "Upgrade"]
+    if not frags:
         return
-    upgrade = unreleased.split("### Upgrade", 1)[1].split("\n### ", 1)[0]
+    upgrade = "\n".join(f.body for f in frags)
     assert not [line for line in upgrade.splitlines() if line.startswith(("- ", "* "))], upgrade
     assert release_check.standard_steps_missing(upgrade) == []
 
@@ -664,7 +686,7 @@ def test_the_tag_section_names_the_theme_and_the_patch_that_cannot_wait():
     assert 'git tag -a vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z — theme: what it brings"' in tag
     assert "git switch release/X.Y" in tag and "release/X.Y` merges back into main" in tag
     assert "does not check the theme" in tag
-    assert "takes out of main's `## Unreleased` every entry that `## X.Y.Z+1`" in tag
+    assert "deletes from main every fragment that `## X.Y.Z+1` now holds" in tag
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "theme" not in ci.split("  release-tag:", 1)[1]   # what the page says of the job stays true
 

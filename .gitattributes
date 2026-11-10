@@ -1,1 +1,5 @@
 * text=auto eol=lf
+# brain merge-driver (packages/brain/docs/merge-driver.md): the CHANGELOGs union their sections, a net for a merge
+# back from release/X.Y; a PR writes a fragment (packages/brain/changes/, changes/), never the CHANGELOG itself.
+CHANGELOG.md merge=brain
+packages/brain/CHANGELOG.md merge=brain
