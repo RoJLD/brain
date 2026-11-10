@@ -148,8 +148,11 @@ A setext heading (`=======` under a line of text, in a file with no other marker
 and a file under a `fixtures`, `fixture` or `testdata` folder pass. A `.txt` file is often data (`requirements.txt`,
 `constraints.txt`), so there only reStructuredText's shape passes: a title no longer than its underline (seven
 characters at most); a bare `=======` left under `numpy==1.26` is still a marker, one under `six` is not. Elsewhere (a Python docstring), underline a title
-with eight `=` or more. A conflict quoted in a fenced code block is a marker too. Override, the owner's:
-`BRAIN_GUARD_ALLOW=markers`.
+with eight `=` or more. A conflict quoted in a fenced code block is a marker too, unless the fence is tagged as an
+example: in a Markdown file, a fence whose info string holds `conflict-example` (three backticks, then `text
+conflict-example`) lets its markers pass, for the commit guard and for `brain check` alike; the tag ends with its
+fence. In a commit's diff, a hunk that starts inside a fence whose opening line it does not show is read as unfenced,
+so the guard fails closed. Override, the owner's: `BRAIN_GUARD_ALLOW=markers`.
 
 ## A public repo's commits, a chained push, heredocs
 

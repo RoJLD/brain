@@ -309,6 +309,43 @@ def test_brain_check_fails_on_a_marker(checked, rel, capsys):
     assert f"{f.as_posix()}:" in out and "holds a conflict marker: finish the merge in that file" in out
 
 
+TICKS = "`" * 3
+
+
+def _fenced(info: str) -> str:
+    return f"# Merge driver\n\nA conflict looks like this:\n\n{TICKS}{info}\n{OURS}\nours\n{MID}\ntheirs\n{THEIRS}\n{TICKS}\n"
+
+
+@pytest.mark.parametrize("info, hits", [("text conflict-example", []), (" conflict-example", []),
+                                        ("text", ["docs/x.md:6", "docs/x.md:8", "docs/x.md:10"]),
+                                        ("", ["docs/x.md:6", "docs/x.md:8", "docs/x.md:10"])])
+def test_a_fence_tagged_conflict_example_is_an_example(info, hits):
+    """The owner's choice of 2026-11-10 (finding 19 of the review of #26): only a fence whose info string holds the
+    tag conflict-example passes; an untagged fence, or no fence, is read like the rest of the file."""
+    text = _fenced(info)
+    assert markers.scan_text("docs/x.md", text) == hits
+    added = "".join(f"+{x}\n" for x in text.splitlines())
+    assert markers.scan_diff(f"+++ b/docs/x.md\n@@ -0,0 +1,{len(text.splitlines())} @@\n{added}") == hits
+
+
+def test_the_example_tag_ends_with_its_fence_and_needs_its_opener_in_the_diff():
+    after = _fenced("text conflict-example") + f"\n{OURS}\nleft over\n{THEIRS}\n"
+    assert markers.scan_text("docs/x.md", after) == ["docs/x.md:13", "docs/x.md:15"]
+    assert markers.scan_text("docs/x.txt", _fenced("text conflict-example")) != []   # Markdown files only
+    # a hunk that starts inside the fence, its opener out of the context: read as unfenced (fail closed)
+    assert markers.scan_diff(f"+++ b/docs/x.md\n@@ -0,0 +6,2 @@\n+{OURS}\n+{THEIRS}\n") == ["docs/x.md:6", "docs/x.md:7"]
+
+
+def test_a_tagged_example_commits_and_passes_brain_check(repo, checked, capsys):
+    (repo / "docs").mkdir(exist_ok=True)
+    (repo / "docs" / "merge.md").write_text(_fenced("text conflict-example"), encoding="utf-8")
+    run_git(repo, "add", "-A")
+    assert bash(repo, 'git commit -m "docs: a conflict example"') is None
+    (checked / "notes" / "journal.md").write_text("# Journal\n\n" + _fenced("text conflict-example"), encoding="utf-8")
+    assert _check(checked) == 0
+    assert "conflict marker" not in capsys.readouterr().out
+
+
 def test_brain_check_passes_a_setext_heading_in_the_journal(checked, capsys):
     (checked / "notes" / "journal.md").write_text(f"Journal\n{MID}\n\n## 2026-11-03\n- a\n", encoding="utf-8")
     assert _check(checked) == 0
