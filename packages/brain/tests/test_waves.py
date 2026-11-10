@@ -151,7 +151,7 @@ def test_check_refuses_what_breaks_the_rules(tmp_path):
     assert "wi-back: carried_to 1.0.0 is not after its wave 1.1.0" in got
     assert "wi-nowhere: props.carried_to '9.9.9' names no wave" in got
     # wi-back's carried_to makes 1.0.0 its wave again
-    assert "wave-1.0.0: reached, and 2 open item(s) still in it: wi-back, wi-left" in got
+    assert "wave-1.0.0: reached" not in got   # a warning since 2026-11-10 (the owner), not an error
 
 
 def test_warnings_a_loose_wave_and_an_era_whose_exit_is_due(tmp_path):
@@ -265,8 +265,8 @@ def test_close_refuses_while_an_item_is_neither_carried_nor_dropped(plan_root, c
     assert _nodes(_store(plan_root))["wave-1.1.0"]["status"] == "pending"   # nothing written
     assert cli.main(base + ["close", "1.1.0", "--carry-to", "1.0.0"]) == 1
     assert "not after 1.1.0" in capsys.readouterr().err
-    assert cli.main(base + ["close", "1.1.0", "--carry-to", "3.0.0"]) == 1
-    assert "no wave of that release" in capsys.readouterr().err
+    assert cli.main(base + ["close", "1.1.0", "--carry-to", "next"]) == 1
+    assert "not a release X.Y.Z to create" in capsys.readouterr().err
     assert cli.main(base + ["close", "1.1.0", "--carry-to", "1.2.0", "--drop", "wi-done"]) == 1
     assert "not an open item of wave-1.1.0" in capsys.readouterr().err
     assert cli.main(base + ["close", "1.0.0"]) == 1
@@ -392,7 +392,7 @@ def test_close_refuses_to_carry_into_a_reached_wave(tmp_path, capsys):
     assert "--carry-to 1.2.0: wave-1.2.0 is reached, not pending" in capsys.readouterr().err
 
 
-def test_check_refuses_a_dropped_or_reached_wave_that_holds_an_open_item(tmp_path):
+def test_check_refuses_a_dropped_wave_and_warns_of_a_reached_one_that_holds_an_open_item(tmp_path):
     nodes = _status(NODES, "wave-1.2.0", "dropped").replace(
         "title: \"Carried from 1.0.0\", props: {carried_to: 1.1.0}",
         "title: \"Into a dropped wave\", props: {carried_to: 1.2.0}")
@@ -400,8 +400,25 @@ def test_check_refuses_a_dropped_or_reached_wave_that_holds_an_open_item(tmp_pat
     # wi-next and wi-next-after are part_of it, wi-carried was carried into it: no live wave shows them
     assert ("wave-1.2.0: dropped, and 3 open item(s) still in it: wi-carried, wi-next, wi-next-after (carry each to "
             "a pending wave, brain item set ID props.carried_to=X.Y.Z, or drop it)") in got
-    got = "\n".join(waves.problems(waves.load(_write(tmp_path / "other", _status(NODES, "wave-1.2.0", "reached")))))
-    assert "wave-1.2.0: reached, and 2 open item(s) still in it: wi-next, wi-next-after" in got
+    reached = waves.load(_write(tmp_path / "other", _status(NODES, "wave-1.2.0", "reached")))
+    assert "wave-1.2.0: reached" not in "\n".join(waves.problems(reached))   # a warning, not an error (2026-11-10)
+    assert "wave-1.2.0: reached, and 2 open item(s) still in it: wi-next, wi-next-after" in \
+        "\n".join(waves.warnings(reached))
+
+
+def test_close_creates_the_wave_it_carries_to_when_there_is_none(tmp_path, capsys):
+    """--carry-to a release with no wave yet creates it, part of what the closed wave is part of (the owner,
+    2026-11-10), instead of refusing."""
+    store = _write(tmp_path / "graph", NODES)
+    plan = waves.load(store)
+    c = waves.close(store, "1.1.0", "3.0.0", write=True, today="2026-11-10")
+    assert c.created and c.carry_to == "wave-3.0.0" and not c.left
+    after = waves.load(store)
+    assert after.resolve("3.0.0") == "wave-3.0.0" and after.status("wave-3.0.0") == "pending"
+    assert after.parents.get("wave-3.0.0") == plan.parents.get("wave-1.1.0")
+    assert after.status("wave-1.1.0") == "reached"
+    assert all(after.wave_of(i) == "wave-3.0.0" for i in c.carried)
+    assert waves.problems(after) == []
 
 
 def test_an_item_carried_twice_keeps_the_wave_it_went_through(plan_root, capsys):

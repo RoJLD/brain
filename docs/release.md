@@ -71,8 +71,8 @@ nothing else to do, the section says « Nothing to run for the rest » after the
   version may hold no open item that is neither carried by name to a later wave nor dropped: in the brain that holds
   that store, `brain wave close X.Y.Z --carry-to X.Y.Z+1 [--drop ID]... --write` writes each open item's
   `props.carried_to` (or drops it), reaches the wave with what it did, then `brain sync` (a PR there, like any
-  backlog change). `--carry-to` names a pending wave: a reached or dropped one is refused, since no live wave would
-  show the item. `release_check.py --store <that store>` refuses the version PR until then (an open item left, or
+  backlog change). `--carry-to` names a pending wave, created beside the closed one when its release has none yet: a
+  reached or dropped one is refused, since no live wave would show the item. `release_check.py --store <that store>` refuses the version PR until then (an open item left, or
   the wave not reached yet), naming the items, and `brain wave check X.Y.Z` says the same from the brain; CI holds
   no owner's store and does not run it, so the maintainer runs it by hand before opening the version PR. A store
   with no wave of this version passes. `brain next` then shows the next wave, the carried items first.

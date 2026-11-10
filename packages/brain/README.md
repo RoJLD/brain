@@ -182,8 +182,9 @@ A wave is a release's batch of work: a milestone of kind wave named by its relea
 or an era. An era is a milestone of milestones (`props.kind: era`), whose exit is a Go/NoGo question put to the owner
 once its milestones are reached (`props.exit`; `props.stage_to` and `props.serves` optional). `brain check` refuses a
 wave whose release is not `X.Y.Z`, two waves of one release, an item in two waves, a wave holding a milestone, an era
-holding an item, a `carried_to` that names no later wave, and a reached or dropped wave that still holds an open item;
-it warns about a wave in no milestone or era, an era without its exit and an era whose exit is due. Those rules run
+holding an item, a `carried_to` that names no later wave, and a dropped wave that still holds an open item; it warns
+about a reached wave that still holds one, a wave in no milestone or era, an era without its exit and an era whose
+exit is due. Those rules run
 in a store that holds a wave or an era; any other `props.kind` on a milestone is refused there. The kinds are in
 [docs/formats.md](docs/formats.md) (« Milestone kinds »).
 
@@ -196,7 +197,8 @@ open ones, then the next wave.
 
 The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
 X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending
-wave only) or drops it, then reaches the wave; it refuses while an item is neither. An item carried again keeps the
+wave, created beside the closed one when that release has none yet) or drops it, then reaches the wave; it refuses
+while an item is neither. An item carried again keeps the
 waves it went through (`props.carried_via`). `brain wave check X.Y.Z` is the rule alone, and `release_check.py --store
 DIR` applies it to a version PR, which also wants the wave reached. `brain wave add X.Y.Z --parent MS [--week W]`
 adds a wave at once (no DDR, unlike `brain milestone add`: a wave is named by its release, which the version PR

@@ -40,6 +40,8 @@ def _close(args, root: Path, store: Path) -> int:
         print(f"wave {c.release}: not closed, {len(c.left)} open item(s) neither carried nor dropped: "
               f"{', '.join(c.left)} (--carry-to X.Y.Z, or --drop ID)", file=sys.stderr)
         return 1
+    if c.created:
+        print(f"{c.carry_to}: {'created' if args.write else 'to create'}, beside {c.wave}")
     tail = "written; then brain sync and brain check" if args.write else "not written: --write"
     print(f"wave {c.release} ({c.wave}): closes with {c.done} done, {len(c.carried)} carried, {len(c.dropped)} "
           f"dropped; {tail}")

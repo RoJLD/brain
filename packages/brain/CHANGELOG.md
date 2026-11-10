@@ -62,9 +62,9 @@ Nothing to run for the rest.
   members work items by `part_of`, itself part of a milestone or an era; `era`, its members milestones, its exit the
   Go/NoGo question asked as a DDR once they are reached (`props.exit`, `props.stage_to` and `props.serves` optional).
   `brain check` refuses a malformed or repeated release, a wave holding a milestone, an era holding an item, an item
-  in two waves, a `props.carried_to` that names no later wave, a `props.carried_via` that names no wave, and a reached
-  or dropped wave that still holds an open item (planned there or carried into it: no live wave would show it); it
-  warns about a wave in no milestone or era, an era without its exit and one whose exit is due
+  in two waves, a `props.carried_to` that names no later wave, a `props.carried_via` that names no wave, and a dropped
+  wave that still holds an open item (planned there or carried into it: no live wave would show it); it warns about
+  a reached wave that still holds one (the version PR's closure check still refuses it), a wave in no milestone or era, an era without its exit and one whose exit is due
   (`docs/formats.md`, « Milestone kinds »). `brain sync`, its one writer, writes `notes/plan_graph.md` beside the
   store's other views: era > milestone > wave > items, each item with its status and what waits on the owner (its
   `props.open`, its `external_blocker`, the pending DDRs on it), each wave's carried items first, then the startable
@@ -72,7 +72,7 @@ Nothing to run for the rest.
   closed): its carried items first, its startable items, what waits on the owner, the other open ones, then the next
   wave, at zero token. The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave
   close X.Y.Z [--carry-to X.Y.Z] [--drop ID]... [--write]` carries each open item by name (`props.carried_to`, to a
-  pending wave only; an item carried again keeps the waves it went through in `props.carried_via`) or drops it, then
+  pending wave only, created beside the closed one when that release has none yet; an item carried again keeps the waves it went through in `props.carried_via`) or drops it, then
   reaches the wave, and refuses while one is neither; `brain wave check X.Y.Z` is the rule alone, and
   `release_check.py --store DIR` refuses a version PR whose wave breaks it or is not reached yet (exit 2 for a
   `--store` it cannot read; it imports brain and research_graph from the checkout). `brain wave add X.Y.Z [--parent

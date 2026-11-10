@@ -92,6 +92,8 @@ class Plan:
 
     def label(self, wid: str) -> str:
         """A wave's release as written (its id when it has none)."""
+        if wid not in self.nodes:   # a wave brain wave close is about to create: named by its release
+            return wid.removeprefix("wave-")
         return str(_props(self.nodes[wid]).get("release") or wid)
 
     def status(self, nid: str) -> str:
@@ -270,12 +272,11 @@ def _item_problems(plan: Plan) -> list[str]:
     return out
 
 
-def _closed_problems(plan: Plan) -> list[str]:
-    """A wave reached or dropped while an open item still has it as its wave (planned there, or carried into it): the
-    closure rule broken after the fact, and an item that no live wave shows."""
+def _closed_left(plan: Plan, statuses: tuple[str, ...]) -> list[str]:
+    """A wave of ``statuses`` while an open item still has it as its wave (planned there, or carried into it)."""
     out = []
     for w in plan.waves:
-        if plan.status(w) in CLOSED:
+        if plan.status(w) in statuses:
             left = [i for i in plan.items_of(w) if plan.status(i) in OPEN]
             if left:
                 out.append(f"{w}: {plan.status(w)}, and {len(left)} open item(s) still in it: {', '.join(left)} "
@@ -284,14 +285,17 @@ def _closed_problems(plan: Plan) -> list[str]:
 
 
 def problems(plan: Plan) -> list[str]:
-    """brain check's errors on the waves and eras."""
+    """brain check's errors on the waves and eras: a dropped wave that still holds an open item is one (that item is
+    in no live wave); a reached one is a warning (the owner, 2026-11-10), as a store adopting waves mid-flight has
+    them, and the version PR's closure check still refuses it (:func:`closure_problems`)."""
     return (_kind_problems(plan) + _wave_problems(plan) + _era_problems(plan) + _item_problems(plan)
-            + _closed_problems(plan))
+            + _closed_left(plan, ("dropped",)))
 
 
 def warnings(plan: Plan) -> list[str]:
-    """brain check's warnings: a wave in no milestone or era, an era without its exit or whose exit is due."""
-    out = []
+    """brain check's warnings: a reached wave that still holds an open item, a wave in no milestone or era, an era
+    without its exit or whose exit is due."""
+    out = list(_closed_left(plan, ("reached",)))
     for w in plan.waves:
         if not plan.parents.get(w):
             out.append(f"{w}: a wave in no milestone or era (brain item link {w} part_of MS)")
@@ -569,6 +573,7 @@ class Closing:
     dropped: list[str]
     left: list[str]        # open items neither carried nor dropped: the wave cannot close
     done: int
+    created: bool = False  # the carry-to wave does not exist yet: closing creates it beside the closed one
 
 
 def _wave_to_close(plan: Plan, version: str) -> str:
@@ -581,12 +586,18 @@ def _wave_to_close(plan: Plan, version: str) -> str:
 
 
 def _carry_target(plan: Plan, w: str, carry_to: str) -> str:
-    """The later wave ``carry_to`` names ('' when none is given)."""
+    """The later wave ``carry_to`` names ('' when none is given); a release with no wave yet names the wave that
+    closing creates (``wave-X.Y.Z``, beside the closed one: the owner, 2026-11-10)."""
     if not carry_to:
         return ""
     target = plan.resolve(carry_to)
     if not target:
-        raise WaveError(f"--carry-to {carry_to}: no wave of that release (brain wave add {carry_to} --parent MS)")
+        key = release_key(carry_to)
+        if key is None:
+            raise WaveError(f"--carry-to {carry_to}: no wave of that name, and not a release X.Y.Z to create")
+        if key <= (plan.release(w) or (0, 0, 0)):
+            raise WaveError(f"--carry-to {carry_to}: not after {plan.label(w)}")
+        return f"wave-{carry_to}"
     if (plan.release(target) or (0, 0, 0)) <= (plan.release(w) or (0, 0, 0)):
         raise WaveError(f"--carry-to {carry_to}: not after {plan.label(w)}")
     if plan.status(target) != "pending":
@@ -607,7 +618,8 @@ def plan_close(plan: Plan, version: str, carry_to: str = "", drop: list[str] | N
         raise WaveError(f"--drop {', '.join(unknown)}: not an open item of {w}")
     rest = [i for i in opened if i not in drop]
     done = sum(1 for i in items if plan.status(i) == "done")
-    return Closing(w, plan.label(w), target, rest if target else [], drop, [] if target else rest, done)
+    return Closing(w, plan.label(w), target, rest if target else [], drop, [] if target else rest, done,
+                   created=bool(target) and target not in plan.nodes)
 
 
 def close(store: Path, version: str, carry_to: str = "", drop: list[str] | None = None, *, write: bool = False,
@@ -619,6 +631,10 @@ def close(store: Path, version: str, carry_to: str = "", drop: list[str] | None 
     if not write or c.left:
         return c
     day = today or date.today().isoformat()
+    if c.created:   # the next wave, part of what the closed wave is part of
+        parents = plan.parents.get(c.wave) or []
+        add(store, c.carry_to.removeprefix("wave-"), parent=parents[0] if parents else "", today=day,
+            decided=f"created by brain wave close {c.release} --carry-to")
     for i in c.dropped:
         graph.close_item(store, i, "", f"at the close of wave {c.release}", today=day, status="dropped")
     for i in c.carried:   # carried again: the wave it leaves joins the ones it went through

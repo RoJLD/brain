@@ -75,7 +75,7 @@ then the view merges as plain text and `boundary.yaml` reads it as `notes/**`; `
 
 An item's wave is the one it is `part_of`, or, once that wave closed without it, the later one its `props.carried_to`
 names (a wave's id or its release; `brain wave close` writes the id): the edge to its first wave stays, as where it was
-planned. `brain wave close` carries only to a pending wave. An item carried again keeps the waves it went through
+planned. `brain wave close` carries only to a pending wave, which it creates when the release has none yet. An item carried again keeps the waves it went through
 after its first, in order, in `props.carried_via` (wave ids, comma-separated): the view says it came from the last of
 them, and lists it under each one's « Carried out ». In a store that holds a wave or an era, any other `props.kind`
 on a milestone is refused; a store with neither is not read for kinds at all, so a store that never used them is
