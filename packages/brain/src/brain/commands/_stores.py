@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, decisions, defaults, features, graph, links, lint, markers,
                 milestones, modules, neutral, permissions, projects, public, records, render, skew, specs, stacks, tidy,
-                tiers, vault)
+                tiers, vault, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -43,6 +43,34 @@ def _write_module_view(project: projects.Project, root: Path, store: Path) -> No
         print(f"view: {view} written")
 
 
+def _plan_view(project: projects.Project, root: Path, store: Path) -> str:
+    """The plan's view of ``store`` (eras, milestones, waves), relative to ``root``: beside the store's other views."""
+    return _store_label(root, projects.views_dir(project, store) / waves.FILE)
+
+
+def _write_plan_view(project: projects.Project, root: Path, store: Path) -> None:
+    """brain sync, its one writer: the plan view of a store that holds a wave or an era (brain.waves)."""
+    view = _plan_view(project, root, store)
+    if waves.applies(store) and waves.write(root, store, view):
+        print(f"view: {view} written")
+
+
+def _plan_checks(project: projects.Project, root: Path, store: Path) -> int:
+    """brain check's lines on the waves and eras: errors (1), warnings and a stale view."""
+    if not waves.applies(store):
+        return 0
+    plan = waves.load(store, root)
+    errors = waves.problems(plan)
+    for line in errors:
+        print(f"error: plan: {line}")
+    for line in waves.warnings(plan):
+        print(f"warning: plan: {line}")
+    view = _plan_view(project, root, store)
+    if waves.stale(root, store, view):
+        print(f"warning: {view} is stale: brain sync")
+    return 1 if errors else 0
+
+
 def _view_clash(args, project: projects.Project, root: Path, store: Path) -> str:
     """What to say when an earlier store at this root writes its views in this store's folder, else '' (computed once
     per command)."""
@@ -52,11 +80,12 @@ def _view_clash(args, project: projects.Project, root: Path, store: Path) -> str
     return clashes.get((project.name, _store_label(project.root, store)), "")
 
 
-def _store_checks(project: projects.Project, root: Path, store: Path) -> None:
-    """The checks of the store itself, whichever project at the root it belongs to: milestones, the module map, the
-    specs ready to turn active, the hard-rule ratio."""
+def _store_checks(project: projects.Project, root: Path, store: Path) -> int:
+    """The checks of the store itself, whichever project at the root it belongs to: milestones, the waves and eras
+    (1 on an error), the module map, the specs ready to turn active, the hard-rule ratio."""
     for line in milestones.orphan_lines(store, root):
         print(line)
+    rc = _plan_checks(project, root, store)
     for line in _module_warnings(project, root, store):   # every open item has its module (wi-brain-module-map)
         print(f"warning: {line}")
     for r in specs.readiness(root, store):
@@ -66,6 +95,7 @@ def _store_checks(project: projects.Project, root: Path, store: Path) -> None:
     hard = lint.hard_rules(store)
     if hard and hard["edge_type"]:  # the hard-rule ratio; a soft rule is a warning, never an error
         print("\n".join(lint.render_hard(hard)))
+    return rc
 
 
 def _shared_line(project: projects.Project) -> str:
@@ -164,6 +194,7 @@ def _sync_store(args, root: Path, store: Path) -> int:
             return rc
         print(_shared_line(project))
         _write_module_view(project, root, store)
+        _write_plan_view(project, root, store)
         return graph.research_graph(root, store, *layout, "kanban", "--write")
     ddrs = _take_defaults(root)
     queued = []
@@ -217,6 +248,7 @@ def _sync_views(args, project: projects.Project, root: Path, store: Path, layout
     if features.has_type(graph.load_schema(store)) and _features_view(args, root, store, write=True):
         return 1   # after the links: FEATURES.md shows them
     _write_module_view(project, root, store)
+    _write_plan_view(project, root, store)
     if ddrs:
         _queue_changed(root, args)
         queued.append(True)
@@ -250,11 +282,11 @@ def _check_store(args, root: Path, store: Path) -> int:
     stubs = _stub_edges(project, store)
     for line in stubs:
         print(f"error: {line}")
+    rc = 1 if clash or stubs else 0
     if project.shares_root_with:   # its store's checks only: the root's are its owner's
         print(_shared_line(project))
-        _store_checks(project, root, store)
-        return graph.research_graph(root, store, *layout, "check") or (1 if clash or stubs else 0)
-    rc = 1 if clash or stubs else 0
+        rc = _store_checks(project, root, store) or rc
+        return graph.research_graph(root, store, *layout, "check") or rc
     rc = (cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0) or rc
     if decisions.view_stale(root, _project(args, root).name):
         print(f"warning: {decisions.VIEW} is stale: brain sync (or brain decision view --write)")
@@ -267,7 +299,7 @@ def _check_store(args, root: Path, store: Path) -> int:
                 print(f"warning: {f} is stale: brain sync")
         except AuditError as exc:
             print(f"warning: the links graph could not be checked: {exc}")
-    _store_checks(project, root, store)
+    rc = _store_checks(project, root, store) or rc
     for line in skew.check_lines(root):   # the running engine against config.json engine.pin
         print(line)
     rc = _check_session_ids(root) or rc   # a DDR's local_ id that matches no session (scale study gap 19)

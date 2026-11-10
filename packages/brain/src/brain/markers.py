@@ -7,6 +7,10 @@ places look for them: the commit guard (brain.guards, check markers) in the adde
 pass: a Markdown or reStructuredText setext heading (``=======`` under a line of text, in a file with no other
 marker; .md, .markdown, .mdx, .qmd, .Rmd, .rst, and .txt when the text is no longer than the underline, reST's rule)
 and a file under a test fixtures folder (``fixtures``, ``fixture``, ``testdata``), where a marker is the data a test reads.
+In a Markdown file, a fenced block whose info string holds the tag ``conflict-example`` (a fence opened with
+three backticks then ``text conflict-example``) is an example and its markers pass; every other fence is read like the
+rest of the file. A diff hunk that starts inside a fence whose opening line it does not show is read as unfenced (fail
+closed).
 """
 
 from __future__ import annotations
@@ -20,6 +24,9 @@ SIDE = re.compile(r"^(?:<{7}|\|{7}|>{7}) ")   # the markers no text shares: a fi
 # whose sources are often .txt (Sphinx, CHANGES.txt).
 SETEXT = (".md", ".markdown", ".mdx", ".qmd", ".rmd", ".rst", ".txt")
 FIXTURES = {"fixtures", "fixture", "testdata"}   # a folder whose files are a test's data
+FENCED = (".md", ".markdown", ".mdx", ".qmd", ".rmd")   # Markdown: fenced code blocks
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+EXAMPLE = "conflict-example"   # the tag of a fence whose conflict markers are an example (the owner, 2026-11-10)
 MAX_FILE = 5_000_000
 
 
@@ -39,6 +46,19 @@ def heading(line: str, previous: str | None, path: str) -> bool:
     return not path.lower().endswith(".txt") or len(previous.strip()) <= len(line.strip())
 
 
+def fence_step(line: str, state: tuple | None, path: str) -> tuple[tuple | None, bool]:
+    """(the fence state after ``line``, whether ``line`` is inside a fence tagged as an example). ``state`` is None
+    outside a fence, else (its character, its length, tagged); only Markdown files have fences here."""
+    if not path.lower().endswith(FENCED):
+        return None, False
+    m = FENCE.match(line)
+    if state is None:
+        return ((m.group(1)[0], len(m.group(1)), EXAMPLE in m.group(2).split()) if m else None), False
+    if m and m.group(1)[0] == state[0] and len(m.group(1)) >= state[1] and not m.group(2).strip():
+        return None, False   # the closing fence
+    return state, state[2]
+
+
 def _kept(found: list[tuple[str, int, bool]], sided: set[str]) -> list[str]:
     """``path:line`` of the markers ``found`` (path, line, a heading's shape): a heading's shape counts only in a file
     that holds a <<<<<<<, ||||||| or >>>>>>> marker too (``sided``)."""
@@ -54,10 +74,11 @@ def scan_lines(path: str, lines) -> list[str]:
     """``path:line`` for each marker of a file's ``lines`` (any iterable, so a big file is read as it goes)."""
     if exempt(path):
         return []
-    found, sided, previous = [], set(), None
+    found, sided, previous, fence = [], set(), None, None
     for i, line in enumerate(lines, 1):
         line = line.rstrip("\n")
-        if MARKER.match(line):
+        fence, example = fence_step(line, fence, path)
+        if MARKER.match(line) and not example:
             found.append((path, i, line.startswith("=") and heading(line, previous, path)))
             sided |= {path} if SIDE.match(line) else set()
         previous = line
@@ -95,16 +116,17 @@ def diff_path(header: str) -> str:
 def scan_diff(diff: str) -> list[str]:
     """``path:line`` for each marker an added line of a unified diff brings (one line of context or more, so the line
     above a ``=======`` is known; a binary file shows no lines)."""
-    found, sided, path, line, previous = [], set(), "", 0, None
+    found, sided, path, line, previous, fence = [], set(), "", 0, None, None
     for raw in diff.splitlines():
         if raw.startswith("+++ "):
-            path = diff_path(raw)
+            path, fence = diff_path(raw), None
         elif raw.startswith("@@"):
             m = re.search(r"\+(\d+)", raw)
-            line, previous = (int(m.group(1)) if m else 0), None
+            line, previous, fence = (int(m.group(1)) if m else 0), None, None   # a fence opened above: unknown
         elif raw.startswith(("+", " ")) and not raw.startswith("+++"):
             text = raw[1:]
-            if raw[0] == "+" and MARKER.match(text) and not exempt(path):
+            fence, example = fence_step(text, fence, path)
+            if raw[0] == "+" and MARKER.match(text) and not exempt(path) and not example:
                 found.append((path, line, text.startswith("=") and heading(text, previous, path)))
                 sided |= {path} if SIDE.match(text) else set()
             previous, line = text, line + 1

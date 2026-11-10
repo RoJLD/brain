@@ -17,12 +17,19 @@ is checked. On a version PR, it fails when:
   standard steps (:data:`STANDARD_STEPS`, by the bold title that opens the step). Such a release is a minor one;
 - either CHANGELOG's section repeats an entry an earlier section of it released: a fix that cannot wait, released from
   ``release/X.Y``, and left in main's ``## Unreleased`` when that branch merged back (by its text; a « No change »
-  line and the ``### Upgrade`` steps repeat by design and are not compared).
+  line and the ``### Upgrade`` steps repeat by design and are not compared);
+- with ``--store DIR`` (the graph store that plans the releases, a brain's ``notes/graph``): the closure rule, the
+  wave this version names (a milestone of kind wave, ``props.release``) still holds an open item that is neither
+  carried to a later wave (``props.carried_to``) nor dropped, or is not reached yet (``brain wave close``,
+  brain.waves). That one check imports brain and research_graph from this checkout (``packages/brain/src``, ``src``)
+  and needs PyYAML; a store with no wave of this version passes it.
 
-Standard library only, and the working tree is what is read: the job runs before any install, and it can be run before
-committing. Exit 0 when it passes or there is nothing to check, 1 when it fails, 2 when it cannot tell (no tag, no git).
+Standard library only (``--store``'s check aside), and the working tree is what is read: the job runs before any
+install, and it can be run before committing. Exit 0 when it passes or there is nothing to check, 1 when it fails, 2
+when it cannot tell (no tag, no git, a --store that cannot be read: no ``nodes/``, YAML that does not parse, no
+PyYAML; on any PR, a version PR or not).
 
-    python packages/brain/installer/release_check.py [--repo DIR] [--against vX.Y.Z]
+    python packages/brain/installer/release_check.py [--repo DIR] [--against vX.Y.Z] [--store DIR]
 """
 from __future__ import annotations
 
@@ -296,8 +303,35 @@ def sections(repo: Path, version: str, upgrade: str | None) -> list[str]:
     return problems
 
 
-def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
-    """(what it says, what fails) for the checkout ``repo`` against the tag ``tag``."""
+def wave_closure(repo: Path, store: Path, version: str) -> list[str]:
+    """The closure rule (docs/release.md, « 1. Before the version PR »): what the wave named by ``version`` in
+    ``store`` still holds open, by brain.waves of this checkout. :class:`CannotTell` when it cannot be read."""
+    for src in (repo / "src", (repo / SRC).parent):   # research_graph, which brain.graph imports to read YAML; brain
+        src = str(src.resolve())
+        if src not in sys.path:
+            sys.path.insert(0, src)
+    readable_store(store)
+    try:
+        import yaml   # before brain.graph, which exits on its own without it
+        from brain import waves
+    except ImportError as exc:
+        raise CannotTell(f"--store needs PyYAML and this checkout's engine: {exc}") from exc
+    try:
+        plan = waves.load(store)
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:   # research_graph.yamlio.load's errors
+        raise CannotTell(f"--store {store}: cannot be read: {type(exc).__name__}: {exc}") from exc
+    return waves.closure_problems(plan, version)
+
+
+def readable_store(store: Path) -> None:
+    """:class:`CannotTell` unless ``store`` is a graph store (its ``nodes/``)."""
+    if not (store / "nodes").is_dir():
+        raise CannotTell(f"--store {store}: not a graph store (no nodes/)")
+
+
+def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], list[str]]:
+    """(what it says, what fails) for the checkout ``repo`` against the tag ``tag``; ``store``: the graph store whose
+    wave of this version must be closed."""
     versions = {name: version_in(repo, path) for name, path in VERSIONS.items()}
     for name, version in versions.items():
         if not version:
@@ -328,6 +362,10 @@ def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
     if is_patch(tag, version):
         said.append(f"a patch of {tag}: it may hold no schema change and no Upgrade step beyond the standard ones")
     problems += policy(tag, version, changed, upgrade)
+    if store is not None:
+        closure = wave_closure(repo, store, version)
+        said.append(f"the wave {version} in {store}: " + ("open items left" if closure else "closed or none"))
+        problems += closure
     return said, problems
 
 
@@ -335,6 +373,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="The version PR's check (docs/release.md).")
     ap.add_argument("--repo", default=".", help="the checkout (default: here)")
     ap.add_argument("--against", default="", help="the tag to compare with (default: the last tag before HEAD)")
+    ap.add_argument("--store", default="", help="the graph store that plans the releases: its wave of this version "
+                                                "must be closed (brain wave close)")
     args = ap.parse_args(argv)
     # Its messages quote docs/release.md's « » titles: a pipe on Windows is in the ANSI code page, and a reader of
     # UTF-8 (CI, a test) would fail on them. A console is written in UTF-16 whatever this says.
@@ -343,7 +383,9 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8")
     repo = Path(args.repo)
     try:
-        said, problems = check(repo, args.against or last_tag(repo))
+        if args.store:   # on any PR: a --store that is no store is said, not skipped with the rest
+            readable_store(Path(args.store))
+        said, problems = check(repo, args.against or last_tag(repo), Path(args.store) if args.store else None)
     except CannotTell as exc:
         print(f"release-check: cannot tell: {exc}", file=sys.stderr)
         return 2

@@ -10,7 +10,8 @@ What it does, every command reading files and git, never a model:
 - **records**: decisions put to the owner (DDR, `brain decision ask|answer|ack`), session and action records (SR, AR),
   captured by the hooks at zero token (`brain record`, `brain capture`);
 - **backlog**: work items, milestones and specs in a `research-graph` store (`brain item add|set|close|link`,
-  `brain milestone`, `brain spec`), with the views regenerated and checked (`brain sync`, `brain check`,
+  `brain milestone`, `brain spec`), the plan as eras, milestones and waves (`brain wave`, `brain next`), with the
+  views regenerated and checked (`brain sync`, `brain check`,
   `brain refresh`; in a brain's own root, check and refresh also run `brain check --all`'s registry check: the
   registry, `config.json`, the classes, the permissions, the stacks and the bundles they declare, the ids of every
   registered project);
@@ -173,6 +174,37 @@ coverage. The rules: [docs/tests-graph.md](docs/tests-graph.md).
 ### The module map
 
 A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place. See [docs/modules.md](docs/modules.md).
+
+### Waves and eras
+
+A wave is a release's batch of work: a milestone of kind wave named by its release (`props.kind: wave`,
+`props.release: X.Y.Z`, `props.week` optional), whose members are work items (`part_of`), itself part of a milestone
+or an era. An era is a milestone of milestones (`props.kind: era`), whose exit is a Go/NoGo question put to the owner
+once its milestones are reached (`props.exit`; `props.stage_to` and `props.serves` optional). `brain check` refuses a
+wave whose release is not `X.Y.Z`, two waves of one release, an item in two waves, a wave holding a milestone, an era
+holding an item, a `carried_to` that names no later wave, and a dropped wave that still holds an open item; it warns
+about a reached wave that still holds one, a wave in no milestone or era, an era without its exit and an era whose
+exit is due. Those rules run
+in a store that holds a wave or an era; any other `props.kind` on a milestone is refused there. The kinds are in
+[docs/formats.md](docs/formats.md) (« Milestone kinds »).
+
+`brain sync` writes `notes/plan_graph.md` (beside the store's other views; only for a store with a wave or an era,
+and `brain sync` is its one writer): the tree era > milestone > wave > items, each item with its status and what waits
+on the owner (its `props.open`, its `external_blocker`, the pending DDRs on it), each wave's carried items first,
+then the startable ones. `brain next [--json]` prints its first part at zero token: the current wave (the lowest
+release not closed), its items carried from an earlier wave, its startable items, what waits on the owner, the other
+open ones, then the next wave.
+
+The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
+X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending
+wave, created beside the closed one when that release has none yet) or drops it, then reaches the wave; it refuses
+while an item is neither. An item carried again keeps the
+waves it went through (`props.carried_via`). `brain wave check X.Y.Z` is the rule alone, and `release_check.py --store
+DIR` applies it to a version PR, which also wants the wave reached. `brain wave add X.Y.Z --parent MS [--week W]`
+adds a wave at once (no DDR, unlike `brain milestone add`: a wave is named by its release, which the version PR
+closes), and `brain wave import [--from X.Y.Z] [--write]` turns the items' free-text `props.wave` into waves: one per
+release a value names (`0.2.9 (decided ...)` is 0.2.9) from `--from` on, the earlier releases (already tagged) listed
+and left out, the other values (letters, free text) listed for the owner to place.
 
 ## Start your own brain
 

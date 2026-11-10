@@ -726,3 +726,98 @@ def test_0_2_7_is_the_last_release_before_the_policy():
     for old_title in titles[:2]:
         assert f"**{old_title}**" in note, old_title
     assert "`brain --project P`" in note
+
+
+# The closure rule (brain.waves): with --store, the wave the version names may hold no open item left behind
+
+WAVE_STORE = {
+    "schema.yaml": "node_types: [WorkItem, Milestone]\nedge_types: [part_of]\n"
+                   "statuses: [todo, doing, done, dropped, pending, reached]\n",
+    "nodes/work.yaml": (
+        "- {id: wave-0.2.6, type: Milestone, status: pending, title: W, props: {kind: wave, release: 0.2.6}}\n"
+        "- {id: wave-0.2.7, type: Milestone, status: pending, title: N, props: {kind: wave, release: 0.2.7}}\n"
+        "- {id: wi-open, type: WorkItem, status: todo, title: Open}\n"
+        "- {id: wi-done, type: WorkItem, status: done, title: Done}\n"),
+    "edges/work.yaml": ("- {from: wi-open, to: wave-0.2.6, type: part_of}\n"
+                        "- {from: wi-done, to: wave-0.2.6, type: part_of}\n"),
+}
+
+
+def test_a_version_pr_whose_wave_holds_an_open_item_fails_with_store(repo, tmp_path, capsys):
+    store = tmp_path / "plan"
+    for rel, text in WAVE_STORE.items():
+        write(store, rel, text)
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    commit(repo)
+    assert run(repo, capsys)[0] == 0   # without --store: the closure is not checked
+    rc = release_check.main(["--repo", str(repo), "--store", str(store)])
+    text = "".join(capsys.readouterr())
+    assert rc == 1
+    assert "FAILED: wave 0.2.6 (wave-0.2.6) holds 1 open item(s) neither carried nor dropped: wi-open" in text
+    write(store, "nodes/work.yaml", WAVE_STORE["nodes/work.yaml"].replace(
+        "title: Open}", "title: Open, props: {carried_to: 0.2.7}}"))
+    rc = release_check.main(["--repo", str(repo), "--store", str(store)])
+    text = "".join(capsys.readouterr())
+    assert rc == 1   # carried, but the wave was never closed: brain next would keep showing it
+    assert "wave 0.2.6 (wave-0.2.6) is still pending: brain wave close 0.2.6 --write" in text
+    write(store, "nodes/work.yaml", WAVE_STORE["nodes/work.yaml"].replace(
+        "title: Open}", "title: Open, props: {carried_to: 0.2.7}}").replace(
+        "status: pending, title: W", "status: reached, title: W"))
+    rc = release_check.main(["--repo", str(repo), "--store", str(store)])
+    text = "".join(capsys.readouterr())
+    assert rc == 0, text
+    assert "the wave 0.2.6 in" in text and "closed or none" in text
+    assert release_check.main(["--repo", str(repo), "--store", str(tmp_path / "nowhere")]) == 2
+
+
+def test_store_that_cannot_be_read_gives_exit_2_on_any_pr(repo, tmp_path, capsys):
+    """A --store that is no store, or whose YAML does not parse, is exit 2 with one line, never a traceback; a
+    non-version PR checks no wave but still refuses a --store it cannot read."""
+    assert release_check.main(["--repo", str(repo), "--store", str(tmp_path / "nowhere")]) == 2   # not a version PR
+    assert "cannot tell: --store" in capsys.readouterr().err
+    store = tmp_path / "plan"
+    for rel, text in WAVE_STORE.items():
+        write(store, rel, text)
+    write(store, "nodes/work.yaml", "- {id: wave-0.2.6, type: [unclosed\n")
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    commit(repo)
+    assert release_check.main(["--repo", str(repo), "--store", str(store)]) == 2
+    err = capsys.readouterr().err
+    assert "release-check: cannot tell: --store" in err and "Traceback" not in err
+
+
+def _isolated(code: str, deps: Path | None) -> subprocess.CompletedProcess:
+    """``code`` in a Python with no site-packages (-I -S): only the stdlib, ``deps`` and what release_check puts on
+    sys.path, so brain and research_graph can come from this checkout alone."""
+    head = (f"import sys; sys.path.insert(0, {str(SCRIPT.parent)!r})\n"
+            + (f"sys.path.insert(0, {str(deps)!r})\n" if deps else "")
+            + "import release_check\nfrom pathlib import Path\n")
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    return subprocess.run([sys.executable, "-I", "-S", "-c", head + code], capture_output=True, text=True, env=env,
+                          timeout=120)
+
+
+def test_store_imports_the_engine_and_research_graph_from_this_checkout(tmp_path):
+    """--store run with a plain python: brain and research_graph from this checkout (packages/brain/src and src),
+    only PyYAML from outside; without PyYAML, exit 2's CannotTell."""
+    import shutil
+
+    import yaml
+    deps = tmp_path / "deps"
+    shutil.copytree(Path(yaml.__file__).parent, deps / "yaml")
+    shim = Path(yaml.__file__).parents[1] / "_yaml"
+    if shim.is_dir():
+        shutil.copytree(shim, deps / "_yaml")
+    store = tmp_path / "plan"
+    for rel, text in WAVE_STORE.items():
+        write(store, rel, text)
+    code = (f"try:\n    print(release_check.wave_closure(Path({str(ROOT)!r}), Path({str(store)!r}), '0.2.6'))\n"
+            "except release_check.CannotTell as exc:\n    print('cannot tell:', exc)\n")
+    r = _isolated(code, deps)
+    assert r.returncode == 0, r.stderr
+    assert "wave 0.2.6 (wave-0.2.6) holds 1 open item(s) neither carried nor dropped: wi-open" in r.stdout
+    r = _isolated(code, None)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.startswith("cannot tell: --store needs PyYAML"), r.stdout
