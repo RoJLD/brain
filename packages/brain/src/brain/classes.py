@@ -173,7 +173,10 @@ ENGINE_STORES = {
 # The suggested class of each engine store: {name: (path, class)}.
 KNOWN = {name: (k.path, k.cls) for name, k in ENGINE_STORES.items()}
 TRANSCRIPTS = "~/.claude/projects"      # read under $CLAUDE_CONFIG_DIR when it is set (brain.paths.projects_dir)
-HOME_TRANSIENT = (".tmp", ".bak", ".lock", ".unreadable-")   # beside an engine store's file: the same store
+# A write's leftover beside an engine store's file, the same store: a name ending in .tmp, .bak or .lock, or set
+# aside with its stamp (``<name>.unreadable-<UTC stamp>``, brain.stateio). Told by the suffix, never by a substring:
+# export.tmpl or sync.lockfile is a name of its own.
+HOME_TRANSIENT = re.compile(r"\.(?:tmp|bak|lock)$|\.unreadable-\d")
 
 
 @dataclass(frozen=True)
@@ -388,7 +391,7 @@ def home_unknown(declared: list[Store]) -> list[str]:
     except OSError:
         return []
     every = effective(declared)
-    return [n for n in names if not any(t in n for t in HOME_TRANSIENT) and not store_of(every, f"$BRAIN_HOME/{n}")]
+    return [n for n in names if not HOME_TRANSIENT.search(n) and not store_of(every, f"$BRAIN_HOME/{n}")]
 
 
 def tracked(root: Path) -> list[str]:

@@ -154,6 +154,16 @@ def test_a_name_in_brain_home_no_store_covers_is_noted(brain, brain_home, capsys
     assert rep.unknown == [] and rep.defaulted == [s for s in rep.defaulted if s.name == "transcripts"]
 
 
+def test_a_leftover_is_told_by_its_suffix_not_by_a_substring(brain_home):
+    """A write's leftover ends in .tmp, .bak or .lock, or carries a set-aside stamp; a name that only holds one of
+    those marks inside it (export.tmpl, sync.lockfile) is still a name no store covers."""
+    brain_home.mkdir(parents=True, exist_ok=True)
+    for f in ("export.tmpl", "sync.lockfile", "notes.backup", "a.json.tmp", "b.123.tmp", "c.json.bak", "d.lock",
+              "e.json.unreadable-20261110T120000Z"):
+        (brain_home / f).write_text("{}", encoding="utf-8")
+    assert classes.home_unknown([]) == ["export.tmpl", "notes.backup", "sync.lockfile"]
+
+
 def test_suggest_prints_the_lines_a_brain_misses(brain, capsys):
     """A brain that declares classes gets only the engine stores it leaves at their default (a name it already
     uses gets home-); declaring them clears the note, with no error."""
