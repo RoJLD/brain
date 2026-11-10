@@ -1,5 +1,7 @@
 # Changelog fragments of the `brain` command
 
+(`wi-brain-changelog-unreleased-collisions`; the script is `installer/changelog.py`.)
+
 A PR does not edit `packages/brain/CHANGELOG.md`: it adds one file here, `<item-id>.md` (or a short slug), so that two
 PRs never write the same lines and none is left CONFLICTING on GitHub once another merges.
 

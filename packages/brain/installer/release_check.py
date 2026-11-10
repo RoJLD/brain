@@ -33,7 +33,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # changelog.py beside it, whoever loads this file
-import changelog as frag  # noqa: E402
 
 BRAIN = "packages/brain"
 SRC = f"{BRAIN}/src/brain"
@@ -303,6 +302,7 @@ def check(repo: Path, tag: str) -> tuple[list[str], list[str]]:
     for name, version in versions.items():
         if not version:
             return [], [f"{VERSIONS[name]}: no __version__ ({name})"]
+    import changelog as frag   # beside this file (sys.path above): the fragments, wi-brain-changelog-unreleased-collisions
     fragments = frag.check(repo)   # every PR: a malformed fragment, or a '## Unreleased' section again
     if all(version == tag.removeprefix("v") for version in versions.values()):
         return [f"not a version PR: both distributions are at {tag}; the changelog fragments checked"], fragments
