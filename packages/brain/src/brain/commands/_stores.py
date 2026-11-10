@@ -282,11 +282,11 @@ def _check_store(args, root: Path, store: Path) -> int:
     stubs = _stub_edges(project, store)
     for line in stubs:
         print(f"error: {line}")
+    rc = 1 if clash or stubs else 0
     if project.shares_root_with:   # its store's checks only: the root's are its owner's
         print(_shared_line(project))
-        plan_rc = _store_checks(project, root, store)
-        return graph.research_graph(root, store, *layout, "check") or (1 if clash or stubs or plan_rc else 0)
-    rc = 1 if clash or stubs else 0
+        rc = _store_checks(project, root, store) or rc
+        return graph.research_graph(root, store, *layout, "check") or rc
     rc = (cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0) or rc
     if decisions.view_stale(root, _project(args, root).name):
         print(f"warning: {decisions.VIEW} is stale: brain sync (or brain decision view --write)")

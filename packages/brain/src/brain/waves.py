@@ -5,7 +5,8 @@ A Milestone may carry ``props.kind``:
 - ``wave``: a release's batch of work, named by its release (``props.release: X.Y.Z``, ``props.week`` optional). Its
   members are work items (``part_of``); it is itself ``part_of`` a milestone or an era. An item is in one wave at
   most: the one it is ``part_of``, or, once that wave closed without it, the later wave its ``props.carried_to``
-  names (a wave id or its release). The edge to the first wave stays: it says where the item was planned.
+  names (a wave id or its release). The edge to the first wave stays: it says where the item was planned. An item
+  carried again keeps the waves it went through, in order, in ``props.carried_via`` (wave ids, comma-separated).
 - ``era``: a milestone of milestones (members ``part_of`` it are milestones), whose exit is the Go/NoGo question
   (``props.exit``) put to the owner as a DDR once its milestones are reached; ``props.stage_to`` the stage change
   that exit may carry, ``props.serves`` a free label (the phase or tier of a wider plan it serves).
@@ -15,8 +16,8 @@ the kinds reads a wave or an era as a plain milestone.
 
 The current wave is the lowest release whose milestone is still pending. A wave is closed by its version PR (``brain
 wave close X.Y.Z``): each open item of it is carried by name to a later wave or dropped, then the wave is reached;
-``release_check.py --store`` refuses a version PR whose wave still holds an open item that is neither (the closure
-rule, docs/release.md).
+``release_check.py --store`` refuses a version PR whose wave still holds an open item that is neither, or is not
+reached yet (the closure rule, docs/release.md).
 
 The generated view (``plan_graph.md`` beside the store's other views, written by ``brain sync`` alone) shows era >
 milestone > wave > items, and ``brain next`` prints its first section.
@@ -38,6 +39,7 @@ KINDS = (WAVE, ERA)
 FILE = "plan_graph.md"
 VIEW = f"notes/{FILE}"   # the view of a project's first store at a root it owns
 OPEN = ("todo", "doing", "blocked")
+CLOSED = ("reached", "dropped")   # a wave no longer current: it may hold no open item
 SATISFIED = ("done", "reached", "validated", "active", "live")   # research_graph's satisfied prerequisites
 RELEASE_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 RELEASE_IN_RE = re.compile(r"^\s*v?(\d+\.\d+\.\d+)(?![\d.])")   # a free-text props.wave that names a release
@@ -107,8 +109,18 @@ class Plan:
         return hits[0] if len(hits) == 1 else None
 
     def planned(self, nid: str) -> list[str]:
-        """The waves an item is part_of (one at most, brain check says)."""
-        return sorted(p for p in self.parents.get(nid, ()) if kind(self.nodes.get(p) or {}) == WAVE)
+        """The waves an item is part_of (one at most, brain check says), by release."""
+        order = {w: i for i, w in enumerate(self.waves)}
+        return sorted({p for p in self.parents.get(nid, ()) if p in order}, key=order.__getitem__)
+
+    def via(self, nid: str) -> list[str]:
+        """The waves an item was carried through after its first, in order (props.carried_via)."""
+        raw = _props(self.nodes.get(nid) or {}).get("carried_via") or ""
+        return [v.strip() for v in str(raw).split(",") if v.strip()]
+
+    def same_release(self, ref: str) -> list[str]:
+        """The waves of release ``ref`` (more than one: brain check refuses it)."""
+        return [w for w in self.waves if self.label(w) == str(ref or "").strip()]
 
     def wave_of(self, nid: str) -> str | None:
         """The item's wave now: the one its props.carried_to names, else the one it is part_of."""
@@ -119,9 +131,12 @@ class Plan:
         return planned[0] if planned else None
 
     def carried_in(self, nid: str) -> str | None:
-        """The earlier wave an item was carried from into its wave now, else None."""
+        """The earlier wave an item was carried from into its wave now (the last it went through), else None."""
         planned, now = self.planned(nid), self.wave_of(nid)
-        return planned[0] if planned and now and planned[0] != now else None
+        if not planned or not now or planned[0] == now:
+            return None
+        via = [self.resolve(v) for v in self.via(nid)]
+        return next((v for v in reversed(via) if v and v != now), planned[0])
 
     def items_of(self, wid: str) -> list[str]:
         """The items whose wave is ``wid`` now (carried in included, carried out left out)."""
@@ -130,8 +145,10 @@ class Plan:
         return sorted(i for i in cands if self.is_item(i) and self.wave_of(i) == wid)
 
     def carried_out(self, wid: str) -> list[str]:
-        """The items planned in ``wid`` and carried to another wave."""
-        return sorted(i for i in self.members.get(wid, ()) if self.is_item(i) and self.wave_of(i) != wid)
+        """The items planned in ``wid``, or carried through it, and carried to another wave."""
+        moved = {k for k, n in self.nodes.items() if self.is_item(k) and _props(n).get("carried_to")}
+        through = {i for i in moved if wid in (self.resolve(v) for v in self.via(i))}
+        return sorted(i for i in (moved & set(self.members.get(wid, ()))) | through if self.wave_of(i) != wid)
 
     def blockers(self, nid: str) -> list[str]:
         return [d for d in self.deps.get(nid, ()) if self.status(d) not in SATISFIED]
@@ -247,25 +264,29 @@ def _item_problems(plan: Plan) -> list[str]:
             out.append(f"{k}: props.carried_to {to!r} names no wave")
         elif planned and (plan.release(target) or (0, 0, 0)) <= (plan.release(planned[0]) or (0, 0, 0)):
             out.append(f"{k}: carried_to {plan.label(target)} is not after its wave {plan.label(planned[0])}")
+        bad = [v for v in plan.via(k) if plan.resolve(v) is None]
+        if bad:
+            out.append(f"{k}: props.carried_via names no wave: {', '.join(bad)}")
     return out
 
 
-def _reached_problems(plan: Plan) -> list[str]:
-    """A wave reached while an open item still has it as its wave: the closure rule broken after the fact."""
+def _closed_problems(plan: Plan) -> list[str]:
+    """A wave reached or dropped while an open item still has it as its wave (planned there, or carried into it): the
+    closure rule broken after the fact, and an item that no live wave shows."""
     out = []
     for w in plan.waves:
-        if plan.status(w) == "reached":
+        if plan.status(w) in CLOSED:
             left = [i for i in plan.items_of(w) if plan.status(i) in OPEN]
             if left:
-                out.append(f"{w}: reached, and {len(left)} open item(s) still in it: {', '.join(left)} (brain wave "
-                           f"close {plan.label(w)} --carry-to X.Y.Z, or --drop ID)")
+                out.append(f"{w}: {plan.status(w)}, and {len(left)} open item(s) still in it: {', '.join(left)} "
+                           f"(carry each to a pending wave, brain item set ID props.carried_to=X.Y.Z, or drop it)")
     return out
 
 
 def problems(plan: Plan) -> list[str]:
     """brain check's errors on the waves and eras."""
     return (_kind_problems(plan) + _wave_problems(plan) + _era_problems(plan) + _item_problems(plan)
-            + _reached_problems(plan))
+            + _closed_problems(plan))
 
 
 def warnings(plan: Plan) -> list[str]:
@@ -286,18 +307,31 @@ def warnings(plan: Plan) -> list[str]:
 
 def exit_due(plan: Plan, era: str) -> bool:
     ms = plan.members.get(era, ())
-    return plan.status(era) == "pending" and bool(ms) and all(plan.status(m) in ("reached", "dropped") for m in ms)
+    return plan.status(era) == "pending" and bool(ms) and all(plan.status(m) in CLOSED for m in ms)
 
 
 def closure_problems(plan: Plan, version: str) -> list[str]:
     """The closure rule on a version PR: the wave named by ``version`` may hold no open item that is neither carried
-    to a later wave (props.carried_to) nor dropped. [] when the store has no such wave."""
+    to a later wave (props.carried_to) nor dropped, and it is closed (reached by brain wave close). [] when the store
+    has no such wave. What brain check refuses about that wave (its release twice, an item of it in two waves) is
+    said too: the rule cannot be read through it."""
+    same = plan.same_release(version)
+    if len(same) > 1:
+        return [f"release {version} names {len(same)} waves ({', '.join(same)}): one wave per release (brain check)"]
     w = plan.resolve(version)
     if w is None:
         return []
+    out = [f"{i}: in {len(plan.planned(i))} waves ({', '.join(plan.planned(i))}), {w} among them: one wave per item "
+           f"(brain check)" for i in sorted(plan.members.get(w, ())) if len(plan.planned(i)) > 1]
     left = [i for i in plan.items_of(w) if plan.status(i) in OPEN]
-    return [f"wave {version} ({w}) holds {len(left)} open item(s) neither carried nor dropped: {', '.join(left)}; "
-            f"brain wave close {version} --carry-to X.Y.Z (or --drop ID), then brain sync"] if left else []
+    if left:
+        out.append(f"wave {version} ({w}) holds {len(left)} open item(s) neither carried nor dropped: "
+                   f"{', '.join(left)}; brain wave close {version} --carry-to X.Y.Z (or --drop ID) --write, then "
+                   f"brain sync")
+    elif plan.status(w) == "pending":
+        out.append(f"wave {version} ({w}) is still pending: brain wave close {version} --write reaches it, then "
+                   f"brain sync")
+    return out
 
 
 # --- brain next and the view ---
@@ -359,7 +393,8 @@ def pending_waves(plan: Plan) -> list[str]:
 def next_report(plan: Plan) -> dict:
     """brain next's data: the current wave (the lowest release not closed) and the next one."""
     pend = pending_waves(plan)
-    return {"owner": config.name_of(), "current": wave_report(plan, pend[0]) if pend else None,
+    return {"owner": config.name_of(), "waves": len(plan.waves),
+            "current": wave_report(plan, pend[0]) if pend else None,
             "next": wave_report(plan, pend[1]) if len(pend) > 1 else None}
 
 
@@ -391,6 +426,9 @@ GROUPS = (("carried", "carried from an earlier wave, first"), ("startable", "sta
 def render_next(rep: dict) -> list[str]:
     owner = rep["owner"]
     cur = rep["current"]
+    if cur is None and rep.get("waves"):
+        return [f"No open wave: all {rep['waves']} wave(s) are closed (reached or dropped); plan the next one: brain "
+                f"wave add X.Y.Z --parent MS"]
     if cur is None:
         return ["No open wave: a Milestone with props.kind wave and props.release X.Y.Z (brain wave import proposes "
                 "them from the items' props.wave)"]
@@ -454,9 +492,10 @@ def _era_milestones(plan: Plan, eid: str) -> list[str]:
 
 
 def _era_lines(plan: Plan, eid: str) -> list[str]:
-    """An era's exit, its stage change and what it serves."""
-    p, ms = _props(plan.nodes[eid]), _era_milestones(plan, eid)
-    reached = sum(1 for m in ms if plan.status(m) in ("reached", "dropped"))
+    """An era's exit (counted on the members exit_due waits for, its waves included), its stage change and what it
+    serves."""
+    p, ms = _props(plan.nodes[eid]), plan.members.get(eid, ())
+    reached = sum(1 for m in ms if plan.status(m) in CLOSED)
     due = "; due now" if exit_due(plan, eid) else ""
     out = [f"Exit (a Go/NoGo DDR once its {len(ms)} milestone(s) are reached, {reached} so far): "
            f"{_short(p.get('exit') or 'not set', 200)}{due}"]
@@ -550,6 +589,9 @@ def _carry_target(plan: Plan, w: str, carry_to: str) -> str:
         raise WaveError(f"--carry-to {carry_to}: no wave of that release (brain wave add {carry_to} --parent MS)")
     if (plan.release(target) or (0, 0, 0)) <= (plan.release(w) or (0, 0, 0)):
         raise WaveError(f"--carry-to {carry_to}: not after {plan.label(w)}")
+    if plan.status(target) != "pending":
+        raise WaveError(f"--carry-to {carry_to}: {target} is {plan.status(target) or 'without a status'}, not pending "
+                        "(an item carried there would be in no live wave)")
     return target
 
 
@@ -579,8 +621,10 @@ def close(store: Path, version: str, carry_to: str = "", drop: list[str] | None 
     day = today or date.today().isoformat()
     for i in c.dropped:
         graph.close_item(store, i, "", f"at the close of wave {c.release}", today=day, status="dropped")
-    for i in c.carried:
-        graph.set_item(store, i, [f"props.carried_to={c.carry_to}"])
+    for i in c.carried:   # carried again: the wave it leaves joins the ones it went through
+        via = plan.via(i) + [c.wave] if plan.carried_in(i) else []
+        graph.set_item(store, i, [f"props.carried_to={c.carry_to}"] + ([f"props.carried_via={', '.join(via)}"]
+                                                                        if via else []))
     to = f", {len(c.carried)} carried to {plan.label(c.carry_to)}" if c.carried else ""
     graph.set_item(store, c.wave, ["status=reached", f"props.reached={day}: closed by brain wave close ({c.done} "
                                    f"done{to}, {len(c.dropped)} dropped)"])
@@ -613,10 +657,26 @@ class Import:
     waves: dict[str, list[str]]       # release -> the items whose props.wave names it, not yet in a wave
     existing: dict[str, str]          # release -> the wave that holds it already
     to_place: dict[str, list[str]]    # a props.wave that names no release -> its items
+    before: dict[str, list[str]] = field(default_factory=dict)   # release before ``start`` -> its items, left as is
 
 
-def plan_import(store: Path) -> Import:
+def plan_import(store: Path, start: str = "") -> Import:
+    """The waves the items' props.wave names; ``start`` (X.Y.Z): the releases before it, already tagged, are listed
+    and left out, so that no past release becomes a pending wave that brain next would name."""
+    if start and release_key(start) is None:
+        raise WaveError(f"--from {start}: a release X.Y.Z (the first release to import)")
     plan = load(store)
+    waves, to_place = _wave_values(plan)
+    order = sorted(waves, key=lambda r: release_key(r) or (0, 0, 0))
+    floor = release_key(start) or (0, 0, 0)
+    kept = [r for r in order if (release_key(r) or (0, 0, 0)) >= floor]
+    return Import({r: waves[r] for r in kept}, {r: plan.resolve(r) for r in kept if plan.resolve(r)},
+                  dict(sorted(to_place.items())), {r: waves[r] for r in order if r not in kept})
+
+
+def _wave_values(plan: Plan) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """The items in no wave by their free-text props.wave: (the release it names -> its items, any other value -> its
+    items)."""
     waves: dict[str, list[str]] = defaultdict(list)
     to_place: dict[str, list[str]] = defaultdict(list)
     for k in sorted(k for k in plan.nodes if plan.is_item(k)):
@@ -628,15 +688,13 @@ def plan_import(store: Path) -> Import:
             waves[m.group(1)].append(k)
         else:
             to_place[" ".join(str(raw).split())].append(k)
-    order = sorted(waves, key=lambda r: release_key(r) or (0, 0, 0))
-    return Import({r: waves[r] for r in order}, {r: plan.resolve(r) for r in order if plan.resolve(r)},
-                  dict(sorted(to_place.items())))
+    return waves, to_place
 
 
-def do_import(store: Path, *, write: bool = False, today: str | None = None) -> Import:
-    """Propose (``write``: create) a wave per release the items' free-text props.wave names, and their part_of
-    edges; props.wave is kept as the record of when it was planned."""
-    imp = plan_import(store)
+def do_import(store: Path, *, write: bool = False, today: str | None = None, start: str = "") -> Import:
+    """Propose (``write``: create) a wave per release the items' free-text props.wave names, from ``start`` on, and
+    their part_of edges; props.wave is kept as the record of when it was planned."""
+    imp = plan_import(store, start)
     if not write:
         return imp
     day = today or date.today().isoformat()

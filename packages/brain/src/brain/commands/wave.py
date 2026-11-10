@@ -19,9 +19,10 @@ USAGE = """\
                  carried by name to a later wave (props.carried_to) or dropped, then the wave reached; without --write,
                  the plan; refused while an open item is neither
   brain wave check X.Y.Z   the closure rule alone (release_check.py --store runs it on a version PR): exit 1 while the
-                 wave holds an open item neither carried nor dropped
-  brain wave import [--write]   the items' free-text props.wave: a wave proposed per release it names (X.Y.Z), the
-                 other values listed to place by {owner}; --write creates the waves and their items' part_of edges
+                 wave holds an open item neither carried nor dropped, or is not reached yet
+  brain wave import [--from X.Y.Z] [--write]   the items' free-text props.wave: a wave proposed per release it names
+                 (X.Y.Z; --from: the first one, the earlier ones already tagged are listed and left out), the other
+                 values listed to place by {owner}; --write creates the waves and their items' part_of edges
 """
 
 
@@ -46,13 +47,15 @@ def _close(args, root: Path, store: Path) -> int:
 
 
 def _import(args, store: Path) -> int:
-    imp = waves.do_import(store, write=args.write)
+    imp = waves.do_import(store, write=args.write, start=args.start or "")
+    for rel, items in imp.before.items():
+        print(f"{rel}: before --from {args.start}, not imported: {', '.join(items)}")
     for rel, items in imp.waves.items():
         where = f"into {imp.existing[rel]}" if rel in imp.existing else f"new wave wave-{rel}"
         print(f"{rel}: {where}, {len(items)} item(s): {', '.join(items)}")
     for value, items in imp.to_place.items():
         print(f"to place by {config.name_of()} (names no release): {value!r}: {', '.join(items)}")
-    if not imp.waves and not imp.to_place:
+    if not imp.waves and not imp.to_place and not imp.before:
         print("import: no item with a free-text props.wave outside a wave")
         return 0
     if args.write:
@@ -79,7 +82,7 @@ def cmd_wave(args, root: Path) -> int:
             for line in found:
                 print(f"error: {line}")
             if not found:
-                print(f"wave {args.version}: closes (no open item left in it)")
+                print(f"wave {args.version}: closed, or no wave of that release (its version PR may go)")
             return 1 if found else 0
         return _import(args, store)
     except graph.GraphError as exc:
@@ -102,9 +105,11 @@ def register(sub, ctx) -> None:
     wc.add_argument("--drop", action="append", help="an open item dropped instead (repeatable, or comma-separated)")
     wc.add_argument("--write", action="store_true", help="write it (without: the plan)")
     wk = wv.add_parser("check", help="the closure rule: exit 1 while the wave holds an open item not carried or "
-                                     "dropped")
+                                     "dropped, or is not reached yet")
     wk.add_argument("version", help="the wave's release (or its id)")
     wi = wv.add_parser("import", help=f"waves from the items' free-text props.wave; the rest listed for {ctx.who}")
+    wi.add_argument("--from", dest="start", metavar="X.Y.Z", help="the first release to import: the earlier ones, "
+                                                                    "already tagged, are listed and left out")
     wi.add_argument("--write", action="store_true", help="create the waves and the part_of edges")
 
 
