@@ -283,7 +283,7 @@ def test_usage_ledger_v_is_its_format_not_the_scanner(brain_home, monkeypatch):
 
 def test_usage_ledger_newer_v_is_brought_up_to_date_in_memory_only(brain_home, tmp_path, monkeypatch, capsys):
     _fake_scan(monkeypatch, tmp_path)
-    f = _write(usage.ledger_file(), json.dumps({"v": usage.SCAN_V + 1, "rows": {"gone.jsonl": {"cost": 2}}}))
+    f = _write(usage.ledger_file(), json.dumps({"v": usage.LEDGER_V + 1, "rows": {"gone.jsonl": {"cost": 2}}}))
     rows, scanned = usage.update()
     assert scanned == 1 and set(rows) == {"gone.jsonl", "p/s.jsonl"}
     assert "newer brain" in capsys.readouterr().err
@@ -292,9 +292,9 @@ def test_usage_ledger_newer_v_is_brought_up_to_date_in_memory_only(brain_home, t
 
 def test_usage_ledger_is_saved_with_its_v_atomically_and_backed_up(brain_home, tmp_path, monkeypatch):
     _fake_scan(monkeypatch, tmp_path)
-    f = _write(usage.ledger_file(), json.dumps({"v": usage.SCAN_V, "rows": {"gone.jsonl": {"cost": 2}}}))
+    f = _write(usage.ledger_file(), json.dumps({"v": usage.LEDGER_V, "rows": {"gone.jsonl": {"cost": 2}}}))
     usage.update()
     data = json.loads(f.read_text(encoding="utf-8"))
-    assert data["v"] == usage.SCAN_V and set(data["rows"]) == {"gone.jsonl", "p/s.jsonl"}
+    assert data["v"] == usage.LEDGER_V and set(data["rows"]) == {"gone.jsonl", "p/s.jsonl"}
     assert json.loads(Path(str(f) + ".bak").read_text(encoding="utf-8"))["rows"] == {"gone.jsonl": {"cost": 2}}
     assert not [p for p in f.parent.iterdir() if p.name.endswith(".tmp")]

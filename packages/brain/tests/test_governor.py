@@ -193,6 +193,27 @@ def test_the_cap_follows_the_weeks_room(ada, brain_home):
     assert hook(START, ada.lab, title="x") is None   # $300 / $28 = 10, minus 1: 9, then the cap of 8
 
 
+def test_a_measured_session_hour_above_the_configured_one_lowers_the_cap(ada, brain_home):
+    """wi-brain-usage-workflow-agents: brain usage quota's session-hour (its workflow agents' cost included) counts
+    when it is above usage.guard.session_hour_usd, never below it."""
+    ada({"warn": 99, "critical": 99.5})
+    reading(brain_home, 90)
+    forecast(brain_home, 90, usd_per_pct=30.0)
+    status = json.loads((brain_home / "usage" / "quota.json").read_text(encoding="utf-8"))
+    for sid in "ab":
+        app_session(ada, sid, f"Lab {sid}")
+    for usd, cap in ((37.5, 1), (5.0, 4)):   # $300 / (4 h x $37.5) = 2, minus the master: 1; $5 < $14: the config's
+        status["session_hour"] = {"usd": usd, "hours": 30, "total_usd": usd * 30, "days": 7}
+        (brain_home / "usage" / "quota.json").write_text(json.dumps(status), encoding="utf-8")
+        s = governor.state({"tool_name": START, "tool_input": {"title": "x"}, "cwd": str(ada.lab)}, NOW)
+        assert s["quota_cap"] == cap and s["session_hour_usd"] == max(usd, 14.0)
+    status["session_hour"] = {"usd": 37.5}
+    (brain_home / "usage" / "quota.json").write_text(json.dumps(status), encoding="utf-8")
+    decision, reason = hook(START, ada.lab, title="x")
+    assert decision == "deny" and "the cap is 1 (what the week's room pays for: 10 % left, 4 h at $37.5 per " \
+                                  "session-hour" in reason
+
+
 @pytest.mark.parametrize("inp,expected", [
     ({"title": "Brainstorm: the cockpit, round 3"}, True),
     ({"title": "Ideas", "prompt": "**Task class:** brainstorm. **Context budget:** 400k."}, True),

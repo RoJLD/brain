@@ -214,7 +214,10 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
 
 The parallel sessions cap is the smaller of `sessions` and what the week's room pays for:
 `(100 - week %) x $ per % / (wave_hours x session_hour_usd)`, minus one for the master. A session runs when the app
-shows it not archived and active in the last `live_minutes`.
+shows it not archived and active in the last `live_minutes`. `session_hour_usd` is the configured one or, when higher,
+the one `brain usage quota` measured (its `session-h` line, kept in `quota.json`): the last 7 days' cost per
+session-hour, the subagents' and workflow agents' cost included, so that a wave whose sessions run workflows leaves
+room for fewer of them.
 
 A brainstorm is a session whose brief says `Task class: brainstorm` or carries `#brainstorm` (the session record's
 `task_class`), or whose title matches `brainstorm_title` (default: it starts with "Brainstorm"). It is open while not

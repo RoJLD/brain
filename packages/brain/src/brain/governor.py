@@ -253,6 +253,8 @@ def quota_now(now: datetime, lim: dict) -> dict:
     conv = status.get("conversion") if isinstance(status.get("conversion"), dict) else {}
     if isinstance(conv.get("usd_per_pct"), (int, float)) and conv["usd_per_pct"] > 0:
         out["usd_per_pct"] = float(conv["usd_per_pct"])
+    sh = status.get("session_hour") if isinstance(status.get("session_hour"), dict) else {}
+    out["session_hour_usd"] = float(sh["usd"]) if isinstance(sh.get("usd"), (int, float)) and sh["usd"] > 0 else None
     for w in WINDOWS:
         live = [r for r in readings if r["window"] == w and _dt(r["resets"]) > now >= _dt(r["at"]) - timedelta(minutes=5)]
         if not live:
@@ -491,9 +493,11 @@ def state(payload: dict, now: datetime | None = None) -> dict:
         out["memory"] = memory_pct()
     q = out["quota"]
     week = q["windows"].get("week")
+    # a session-hour at the measured cost (its agents' included, brain.quota) when above the configured one
+    out["session_hour_usd"] = max(lim["session_hour_usd"], q.get("session_hour_usd") or 0.0)
     if week and q["usd_per_pct"]:
         room = (100 - week["pct"]) * q["usd_per_pct"]
-        out["quota_cap"] = max(0, math.floor(room / max(1e-9, lim["wave_hours"] * lim["session_hour_usd"])) - 1)
+        out["quota_cap"] = max(0, math.floor(room / max(1e-9, lim["wave_hours"] * out["session_hour_usd"])) - 1)
     out["override"] = override_until(now)
     return out
 
@@ -530,7 +534,8 @@ def verdict(s: dict) -> tuple[str, str, str] | None:
         cap, why = int(lim["sessions"]), f"usage.guard.sessions {lim['sessions']:g}"
         if s.get("quota_cap") is not None and s["quota_cap"] < cap:
             cap, why = s["quota_cap"], (f"what the week's room pays for: {100 - q['windows']['week']['pct']:.0f} % "
-                                        f"left, {lim['wave_hours']:g} h at ${lim['session_hour_usd']:g} per "
+                                        f"left, {lim['wave_hours']:g} h at "
+                                        f"${s.get('session_hour_usd') or lim['session_hour_usd']:g} per "
                                         "session-hour, the master's share kept")
         if ss["running"] >= cap:
             return ("deny", "sessions", f"{what} refused: {ss['running']} session(s) running in parallel, the cap is "

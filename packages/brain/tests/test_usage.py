@@ -162,6 +162,75 @@ def test_scan_a_sub_session(projects_dir):
     assert "x | y" not in json.dumps(row)  # never a command's arguments
 
 
+def _meta(path, **meta):
+    path.with_name(f"{path.stem}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def _launcher(projects_dir):
+    """wi-brain-usage-workflow-agents: a session that ran one plain subagent and a workflow of three agents (one
+    labelled only in the run's journal), its transcript carrying a copy of the subagent's message (a sidechain)."""
+    main = _write(projects_dir / "proj" / "boss.jsonl", [
+        _prompt("2026-11-09T10:00:00Z", "run the wave"),
+        _asst("2026-11-09T10:00:05Z", "b1", [_tool("w1", "Workflow")], out=100),
+        _asst("2026-11-09T10:00:30Z", "x1", [{"type": "text", "text": "copy"}], out=1000),  # the subagent's copy
+        _asst("2026-11-09T12:00:05Z", "b2", [{"type": "text", "text": "done"}], out=100),
+    ])
+    d = main.with_suffix("") / "subagents"
+    plain = _write(d / "agent-aaa.jsonl", [_asst("2026-11-09T10:00:30Z", "x1", [], out=1000)])
+    _meta(plain, agentType="general-purpose", description="Review lens: tests", model="sonnet")
+    run = d / "workflows" / "wf_run1"
+    a1 = _write(run / "agent-w01.jsonl", [_asst("2026-11-09T10:01:00Z", "y1", [], out=2000),
+                                         _asst("2026-11-09T10:02:00Z", "y2", [], out=2000)])
+    _meta(a1, agentType="workflow-subagent", description="impl:views", workflowPhase="Implement")
+    a2 = _write(run / "agent-w02.jsonl", [_asst("2026-11-09T11:00:00Z", "y3", [], out=500)])
+    _meta(a2, agentType="workflow-subagent", description="lens:views:correctness", workflowPhase="Review")
+    _write(run / "agent-w03.jsonl", [_asst("2026-11-10T00:30:00Z", "y4", [], out=500)])  # no meta: the journal's
+    (run / "journal.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
+        {"type": "launched"}, {"type": "started", "agentId": "w03", "label": "fix:views", "phase": "Fix"},
+        {"type": "result", "agentId": "w03", "result": {"summary": "not read"}}]), encoding="utf-8")
+    return main
+
+
+def test_scan_reads_subagents_and_workflow_agents_apart(projects_dir):
+    row = usage.scan(_launcher(projects_dir))
+    one = lambda out: usage.message_cost({"input": 10, "output": out, "cache_write_1h": 0}, OPUS)  # noqa: E731
+    main, plain = one(100) * 2, one(1000)
+    wf = one(2000) * 2 + one(500) * 2
+    # the subagent's message is its own, never also its parent's
+    assert row["tokens"]["output"] == 200 and row["sub_tokens"]["output"] == 1000 + 5000
+    near = lambda x: pytest.approx(x, abs=1e-4)  # noqa: E731
+    assert row["main_cost"] == near(main) and row["cost"] == near(main + plain + wf)
+    assert row["subagents"] == {"general-purpose": {"count": 1, "cost": near(plain)},
+                                "workflow-subagent": {"count": 2, "cost": near(one(2000) * 2 + one(500))},
+                                "?": {"count": 1, "cost": near(one(500))}}
+    ag = row["agents"]
+    assert ag["subagents"] == {"Review lens: tests": {"count": 1, "cost": pytest.approx(plain, abs=1e-4),
+                                                      "output": 1000, "tokens": 1010}}
+    run = ag["workflows"]["wf_run1"]
+    assert run["agents"] == 3 and run["cost"] == pytest.approx(wf, abs=1e-4) and run["output"] == 5000
+    assert run["start"] == "2026-11-09T10:01:00Z" and run["end"] == "2026-11-10T00:30:00Z"
+    assert set(run["days"]) == {"2026-11-09", "2026-11-10"}
+    assert {k: v["count"] for k, v in run["phases"].items()} == {"Implement": 1, "Review": 1, "Fix": 1}
+    assert set(run["labels"]) == {"impl:views", "lens:views:correctness", "fix:views"}  # fix: from the journal
+    # the quota and the governor read the hours: the agents' cost is in them
+    assert sum(h["cost"] for h in row["hours"].values()) == pytest.approx(row["cost"], abs=1e-3)
+    assert row["hours"]["2026-11-10T00"]["cost"] == pytest.approx(one(500), abs=1e-4)
+    assert row["v"] == usage.SCAN_V == 3
+
+
+def test_a_new_workflow_agent_rescans_its_session(projects_dir):
+    main = _launcher(projects_dir)
+    rows, n = usage.update()
+    assert n == 1 and rows["proj/boss.jsonl"]["agents"]["workflows"]["wf_run1"]["agents"] == 3
+    _write(main.with_suffix("") / "subagents" / "workflows" / "wf_run2" / "agent-z01.jsonl",
+           [_asst("2026-11-10T09:00:00Z", "z1", [], out=10)])
+    rows, n = usage.update()
+    assert n == 1 and set(rows["proj/boss.jsonl"]["agents"]["workflows"]) == {"wf_run1", "wf_run2"}
+    assert rows["proj/boss.jsonl"]["agents"]["workflows"]["wf_run2"]["labels"] == {
+        usage.NO_LABEL: {"count": 1, "cost": pytest.approx(rows["proj/boss.jsonl"]["agents"]["workflows"]["wf_run2"]
+                                                            ["cost"])}}
+
+
 def test_families_link_a_sub_session_to_its_parent(projects_dir):
     child = _child(projects_dir)
     task = BRIEF.split("Task:\n", 1)[1]
