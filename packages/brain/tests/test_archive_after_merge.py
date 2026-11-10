@@ -34,8 +34,18 @@ def test_close_item_step_5_says_the_coordinator_archives_its_children_without_as
 
 def test_close_item_step_5_never_archives_live_or_unfinished_work():
     step = _step5()
-    assert "**Never** a session that is running (mid-turn), one with uncommitted changes, or one with unmerged or " \
-           "unverified work" in step
+    assert "**Never** a session with uncommitted changes or with unmerged or unverified work, the merging session " \
+           "itself included" in step
+    assert "**Never another session that is running (mid-turn)**" in step
+
+
+def test_close_item_step_5_scopes_the_mid_turn_clause_to_other_sessions():
+    """The self-archive runs inside the merging session's own turn: the never-running clause is about other sessions,
+    and the self-archive is named as the one mid-turn archive allowed, so the two clauses do not contradict."""
+    step = _step5()
+    assert "**Never** a session that is running" not in step
+    assert "The self-archive is the one mid-turn archive allowed: the merging session makes it as the final tool " \
+           "call of its turn, nothing after it." in step
 
 
 def test_close_item_step_5_names_the_owners_seven_day_net():
@@ -55,7 +65,10 @@ def test_the_brief_carries_the_same_clauses():
     assert "You merge your own PR" in text and "archive this session (close-item step 5)" in text
     assert "standing authorization stands for their yes" in text and "The archive is your last act." in text
     assert "archives you as soon as your report says merged and verified, without asking again" in text
-    assert "a running session, one with uncommitted changes, or one with unmerged or unverified work" in text
+    assert "a session with uncommitted changes or unmerged or unverified work (yours included)" in text
+    assert "another session that is running (mid-turn)" in text
+    assert "Your own archive is the one mid-turn archive allowed: make it the final tool call of your turn." in text
+    assert "Never archived: a running session" not in text
     assert "`auto_archive_inactive_days = 7`" in text and "no session changes the app's settings" in text
 
 
@@ -65,4 +78,4 @@ def test_the_generic_rules_template_counts_the_archive_in_done():
     assert "its session archived (the close-item procedure, step 5)" in done
     assert "the session that merges its own PR archives itself" in done
     assert "a coordinator archives a child whose report says merged and verified" in done
-    assert "never a running session or one with uncommitted or unmerged work" in done
+    assert "never another running session or one with uncommitted or unmerged work" in done

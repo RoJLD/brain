@@ -96,8 +96,10 @@ nobody asks it again.
   given. The archive is its last act, after the report.
 - **A coordinator archives its children** as soon as a child's report says its PR is merged and verified, or once
   the coordinator itself has verified and merged the child's branch, without asking the owner again.
-- **Never** a session that is running (mid-turn), one with uncommitted changes, or one with unmerged or unverified
-  work: it is finished first, or its report says what is left.
+- **Never** a session with uncommitted changes or with unmerged or unverified work, the merging session itself
+  included: it is finished first, or its report says what is left. **Never another session that is running
+  (mid-turn)**: a coordinator waits for its child's turn to end. The self-archive is the one mid-turn archive allowed:
+  the merging session makes it as the final tool call of its turn, nothing after it.
 - **The tools**: in the Claude desktop app, its session-management archive tool; elsewhere, tell the owner which
   session to archive.
 - **The token-free net**: the owner's app setting `auto_archive_inactive_days = 7` (Claude desktop app, Settings,

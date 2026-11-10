@@ -155,8 +155,8 @@ writes the brief a coordinator hands to a sub-session, so that it edits only wha
 - « After the merge », the close-item procedure's step 5 (wi-brain-archive-after-merge): the session that merges its
   own PR archives itself once its after-merge steps are done (the main checkout pulled, the backlog ticked, the
   journal note written, its report sent), the owner's standing authorization standing for their yes; the coordinator
-  archives a child as soon as its report says merged and verified, without asking again; never a running session or
-  one with uncommitted, unmerged or unverified work; the owner's app setting `auto_archive_inactive_days = 7` is the
+  archives a child as soon as its report says merged and verified, without asking again; never another running
+  session (its own archive is the one mid-turn archive allowed, the final call of its turn) or one with uncommitted, unmerged or unverified work; the owner's app setting `auto_archive_inactive_days = 7` is the
   token-free net, which the owner sets and no session changes. These lines are the engine's
   (`brain.brief.AFTER_MERGE`): config.json `brief.after_merge` replaces them, `[]` drops the section;
 - the definition of done and the never-list, copied from the owner's rules (config.json `rules`, then the project's

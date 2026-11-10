@@ -19,7 +19,7 @@ The brief holds, in this order:
 - a section the coordinator fills in (scope, order, what to read first);
 - after the merge (wi-brain-archive-after-merge, close-item step 5): the session that merges its own PR archives itself
   once its after-merge steps are done, the coordinator archives a child whose report says merged and verified without
-  asking again, never a running session or one with uncommitted or unmerged work, and the owner's app setting
+  asking again, never another running session or one with uncommitted or unmerged work, and the owner's app setting
   ``auto_archive_inactive_days = 7`` as the token-free net: :data:`AFTER_MERGE`, or config.json ``brief.after_merge``
   (a list of lines; ``[]`` drops the section);
 - the definition of done and the never-list, copied from the owner's rules (config.json ``rules``, then the
@@ -51,8 +51,9 @@ AFTER_MERGE = (
     "ask no one. The archive is your last act.",
     "- The coordinator merges it: it archives you as soon as your report says merged and verified, without asking "
     "again; write those words only when both are true.",
-    "- Never archived: a running session, one with uncommitted changes, or one with unmerged or unverified work. "
-    "Finish, or report what is left.",
+    "- Never archived: a session with uncommitted changes or unmerged or unverified work (yours included), or another "
+    "session that is running (mid-turn). Your own archive is the one mid-turn archive allowed: make it the final tool "
+    "call of your turn. Finish, or report what is left.",
     "- The token-free net: the owner's app setting `auto_archive_inactive_days = 7` archives a session left inactive "
     "for 7 days. The owner sets it; no session changes the app's settings.",
 )

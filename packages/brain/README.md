@@ -365,7 +365,7 @@ Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md
   and its subgraph, its collisions, the class's model and effort (config.json `brief.classes`), the budget, the cost
   estimate, the coordinator's id, what to do after the merge (the close-item procedure's step 5: the session that
   merges its own PR archives itself once the main checkout is pulled, the note written and its report sent; a
-  coordinator archives a child whose report says merged and verified without asking again; never a running session
+  coordinator archives a child whose report says merged and verified without asking again; never another running session
   or one with uncommitted or unmerged work; the owner's app setting `auto_archive_inactive_days = 7` as the
   token-free net; config.json `brief.after_merge` replaces these lines), and the definition of done and the
   never-list read from the owner's rules.
