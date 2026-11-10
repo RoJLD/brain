@@ -574,13 +574,15 @@ def _unmapped(refs: list[codemap.Ref], symbols: list[dict]) -> list[dict]:
     return [s for s in symbols if s["id"] not in named and s["label"] in codemap.SYMBOLS]
 
 
-def _graph(rep: Report, p: projects.Project, repo_match, hit: list[Touched], changes: list[Change]) -> None:
+def _graph(rep: Report, p: projects.Project, repo_match, hit: list[Touched], changes: list[Change],
+           root: Path | None) -> None:
     """Step 4 in each store of the project, then the test files the change adds or edits that no store names yet
-    (never a path it deletes or moves away: the pytest line must run)."""
+    (never a path it deletes or moves away: the pytest line must run). The other stores an edge names are read from
+    the registry of the brain at ``root``, the one that found the project (never ``p.root``: no projects.yaml)."""
     now = {ch.new for ch in changes if ch.new}
     changed = now | {ch.old for ch in changes if ch.old}
     for store in (s for s in p.stores if (s / "schema.yaml").is_file()):
-        g, problem = _load(store, p.root)
+        g, problem = _load(store, root)
         if g is None:
             rep.stores.append(problem)
             continue
@@ -613,7 +615,7 @@ def run(args, root: Path | None) -> Report:
         return not repo if own else str(repo or "").lower() in (c.name.lower(), folder.lower())
 
     if registered:
-        _graph(rep, p, repo_match, hit, changes)
+        _graph(rep, p, repo_match, hit, changes, root)
     return rep
 
 

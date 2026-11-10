@@ -3,12 +3,15 @@ merge, PR refs, moves between files, unparsable versions, the store on a given d
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 from datetime import date
 
 import pytest
 
 from research_graph import history
+from research_graph.cli import main as cli_main
 from research_graph.loader import ValidationError, read_foreign
 from tests.backlog_world import make_history
 from tests.two_stores import two_stores
@@ -99,15 +102,33 @@ def test_commit_dates_read_on_every_supported_python():
     assert history._when("2026-10-07T14:00:00+02:00") == datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
 
 
-def test_load_store_at_takes_the_other_stores_ids(tmp_path):
-    """wi-brain-cross-store-edges: asof loads a past version whose edges name another store's ids."""
+def _two_stores_committed(tmp_path) -> tuple:
+    """(home, parent, sha): the two stores committed on 2026-10-01 in a repo at ``tmp_path``."""
     home, parent = two_stores(tmp_path)
+    env = {**os.environ, "GIT_AUTHOR_DATE": "2026-10-01T12:00:00Z", "GIT_COMMITTER_DATE": "2026-10-01T12:00:00Z"}
     for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit",
                                                  "-qm", "two stores"]):
-        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True, env=env)
     sha = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True,
                          text=True).stdout.strip()
+    return home, parent, sha
+
+
+def test_load_store_at_takes_the_other_stores_ids(tmp_path):
+    """wi-brain-cross-store-edges: asof loads a past version whose edges name another store's ids."""
+    home, parent, sha = _two_stores_committed(tmp_path)
     with pytest.raises(ValidationError):
         history.load_store_at(home, sha)
     g = history.load_store_at(home, sha, read_foreign([("parent", parent)]))
     assert g.nodes["wi-s"]["foreign"] == "parent" and g["wi-a"]["wi-s"]["type"] == "depends_on"
+
+
+def test_asof_command_gives_the_past_version_the_foreign_stores(tmp_path, capsys):
+    """research_graph --foreign-store ... asof DAY: the option reaches the past version's load, as check's."""
+    home, parent, _ = _two_stores_committed(tmp_path)
+    base = ["--store", str(home), "--repo-root", str(tmp_path)]
+    assert cli_main([*base, "asof", "2026-10-02"]) == 1
+    assert "unknown target 'wi-s'" in capsys.readouterr().err
+    assert cli_main([*base, "--foreign-store", f"parent:graph={parent}", "asof", "2026-10-02", "--json"]) == 0
+    rows = {r["id"]: r for r in json.loads(capsys.readouterr().out)["items"]}
+    assert set(rows) == {"wi-a", "wi-b"}   # the work items; another store's wi-s is never listed as this store's

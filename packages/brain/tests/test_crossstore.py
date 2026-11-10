@@ -5,6 +5,9 @@ store's own check already did. Run with the real research_graph engine, nothing 
 
 from __future__ import annotations
 
+import json
+
+from conftest import run_git
 from research_graph.cli import main as research_graph
 
 from brain import cli, crossstore, graph, projects
@@ -103,3 +106,22 @@ def test_item_link_and_add_accept_another_stores_id_as_one_end(tmp_path, monkeyp
     assert cli.main([*root, "item", "link", "wi-s", "depends_on", "ms-parent"]) == 1
     assert "neither end is a node of this store" in capsys.readouterr().err
     assert cli.main(["check", "--all"]) == 0
+
+
+def test_impact_loads_a_store_whose_edges_name_another_stores_ids_from_the_brains_registry(
+        tmp_path, monkeypatch, make_repo, capsys):
+    """brain impact (and audit --diff) read the other stores from the registry of the brain they run in (--root), not
+    from the changed project's root, which holds no projects.yaml: the store loads as brain check loads it."""
+    hstore, _ = _two(tmp_path, monkeypatch)
+    brain_root = tmp_path / "brain"
+    monkeypatch.delenv("BRAIN_PROJECTS")   # the registry is found only at the brain's root
+    home = make_repo("home", {})
+    run_git(home, "checkout", "-q", "-b", "feature")
+    make_repo.write(home, {"notes/plan.md": "# Plan\n"})
+    capsys.readouterr()
+    assert cli.main(["--root", str(brain_root), "impact", "--repo-dir", str(home), "--json"]) == 0
+    rep = json.loads(capsys.readouterr().out)
+    assert rep["project"] == "home" and rep["stores"] == []
+    (hstore / "edges" / "work.yaml").write_text("- {from: wi-a, to: wi-ghost, type: depends_on}\n", encoding="utf-8")
+    assert cli.main(["--root", str(brain_root), "impact", "--repo-dir", str(home), "--json"]) == 0
+    assert "unknown target 'wi-ghost'" in json.loads(capsys.readouterr().out)["stores"][0]   # still refused
