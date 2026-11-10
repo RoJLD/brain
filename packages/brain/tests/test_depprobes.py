@@ -202,20 +202,23 @@ def test_a_plain_json_file_must_match_where_and_stay_under_its_size(tmp_path, mo
     assert depprobes.probe_json_age(p, now)[:2] == ("FAIL", "larger than 0 MB")
 
 
+SLOW_RUNNER = {"kind": "command", "timeout": "60s"}   # git on a busy CI runner has taken over the 10 s default
+
+
 def test_command_checks_the_exit_and_the_output_without_ever_showing_it():
     now = datetime.now(timezone.utc)
-    ok = depprobes.parse("git", {"kind": "command", "argv": ["git", "--version"], "expect": r"git version \d"})
+    ok = depprobes.parse("git", {**SLOW_RUNNER, "argv": ["git", "--version"], "expect": r"git version \d"})
     assert depprobes.probe_command(ok, now) == ("OK", "exit 0", None)
-    nomatch = depprobes.parse("git", {"kind": "command", "argv": ["git", "--version"], "expect": "^logged in$"})
+    nomatch = depprobes.parse("git", {**SLOW_RUNNER, "argv": ["git", "--version"], "expect": "^logged in$"})
     state, why, _ = depprobes.probe_command(nomatch, now)
     assert state == "FAIL" and "does not match" in why and "git version" not in why
-    bad = depprobes.parse("git", {"kind": "command", "argv": ["git", "no-such-subcommand-here"]})
+    bad = depprobes.parse("git", {**SLOW_RUNNER, "argv": ["git", "no-such-subcommand-here"]})
     state, why, _ = depprobes.probe_command(bad, now)
     assert state == "FAIL" and why.startswith("exit ") and "no-such" not in why
-    accepted = depprobes.parse("git", {"kind": "command", "argv": ["git", "no-such-subcommand-here"],
+    accepted = depprobes.parse("git", {**SLOW_RUNNER, "argv": ["git", "no-such-subcommand-here"],
                                        "ok_exit": [0, 1]})
     assert depprobes.probe_command(accepted, now)[0] == "OK"
-    missing = depprobes.parse("gone", {"kind": "command", "argv": ["no-such-program-anywhere"]})
+    missing = depprobes.parse("gone", {**SLOW_RUNNER, "argv": ["no-such-program-anywhere"]})
     assert depprobes.probe_command(missing, now)[:2] == ("FAIL", "no-such-program-anywhere not found")
 
 
