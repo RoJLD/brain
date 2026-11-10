@@ -500,6 +500,7 @@ def test_a_brains_refresh_reads_the_ids_of_every_registered_project(fresh, tmp_p
     another project fails, and a shared_ids waiver for it is no stale waiver."""
     assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
     assert cli.main(["--root", str(fresh), "item", "add", "wi-first", "--title", "First"]) == 0
+    assert cli.main(["--root", str(fresh), "sync", "--offline"]) == 0   # its views fresh: committed on main
     committed(fresh)
     lab = tmp_path / "lab" / "notes" / "graph"
     (lab / "nodes").mkdir(parents=True)
