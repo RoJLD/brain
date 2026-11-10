@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -54,6 +55,21 @@ def brain_home(tmp_path, monkeypatch):
 @pytest.fixture
 def fixture_transcript():
     return FIXTURES / "transcript.jsonl"
+
+
+@pytest.fixture
+def views_strict(tmp_path, monkeypatch):
+    """Ada's brain with config.json views.strict true (the owner's opt-in, brain.views.strict): a stale view fails
+    brain check on the default branch, and the writers of one committed view refuse an engine other than the pin."""
+    folder = tmp_path / "strict-brain"
+    folder.mkdir()
+    shutil.copy(BRAIN.parent / "rules.md", folder / "rules.md")
+    data = json.loads(BRAIN.read_text(encoding="utf-8"))
+    data["views"] = {"strict": True}
+    cfg = folder / "config.json"
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    return cfg
 
 
 def run_git(cwd, *args):
