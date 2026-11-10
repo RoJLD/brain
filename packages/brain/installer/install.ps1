@@ -52,7 +52,10 @@
                    when missing; it takes out only an expired rule permissions.yaml declares (until past, while an item
                    now closed), never another one. allow-rules.txt alone when the brain command cannot run (a first
                    plan, -SkipCommand without a venv, an installed command older than brain permissions); an error in
-                   permissions.yaml or any other failure of the command stops -Apply (brain permissions check)
+                   permissions.yaml or any other failure of the command stops -Apply (brain permissions check).
+                   settings.json is Claude Code's file: one that is not a JSON object stops the installer (fix it by
+                   hand first, never replaced), one Claude Code wrote meanwhile too (run it again); each write keeps
+                   the file as it was in settings.json.bak and replaces it through a temporary file
       retire       ~/.claude/CLAUDE.md when it is the copy an earlier installer put there (moved to a dated .bak), so
                    that the rules load once
       memory       memory\<project>\*.md -> ~/.claude/projects/<project>/memory/ (only files missing locally: the
@@ -190,15 +193,41 @@ function Get-ClaudeJson {
     $data   # returned element by element (Windows PowerShell keeps a parsed array whole in a pipeline)
 }
 
+# --- the foreign file helpers (tests/test_permissions.py runs them with the permissions step) ---
+# settings.json is Claude Code's (brain.stateio's foreign class): read whole or refused (fix it by hand first: never
+# replaced when unreadable; an empty one is read as missing); written only when unchanged since it was read, backed up beside itself
+# (settings.json.bak), through a temporary file that replaces it.
+$foreign_seen = @{}
+function Read-ForeignJson([string]$path) {
+    if (-not (Test-Path -LiteralPath $path)) { $script:foreign_seen[$path] = $null; return $null }
+    $raw = [IO.File]::ReadAllText($path)   # UTF-8, a BOM allowed
+    $script:foreign_seen[$path] = $raw
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }   # empty (an interrupted write): read as missing
+    try { $data = $raw | ConvertFrom-Json } catch { throw "${path}: not readable JSON: fix it by hand first; nothing written" }
+    if ($data -isnot [System.Management.Automation.PSCustomObject]) { throw "${path}: not a JSON object: fix it by hand first; nothing written" }
+    $data
+}
+function Write-ForeignJson([string]$path, $data) {
+    $now = if (Test-Path -LiteralPath $path) { [IO.File]::ReadAllText($path) } else { $null }
+    if ($script:foreign_seen.ContainsKey($path) -and $now -cne $script:foreign_seen[$path]) {
+        throw "${path}: changed while the installer edited it (Claude Code wrote it): run it again; nothing written"
+    }
+    $tmp = "$path.$PID.tmp"
+    # UTF-8 without BOM, as Claude Code writes it.
+    [IO.File]::WriteAllText($tmp, ($data | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding $false))
+    if ($null -ne $now) { [IO.File]::Replace($tmp, $path, "$path.bak") } else { [IO.File]::Move($tmp, $path) }
+    $script:foreign_seen[$path] = [IO.File]::ReadAllText($path)
+}
+# --- end of the foreign file helpers ---
+
 # Background auto-update is off for a third-party marketplace until a settings entry turns it on.
 $settings_path = Join-Path $home_claude 'settings.json'
 function Set-AutoUpdate {
-    $settings = Get-Content $settings_path -Raw -Encoding UTF8 | ConvertFrom-Json
-    $entry = $settings.extraKnownMarketplaces.$marketplace
+    $settings = Read-ForeignJson $settings_path
+    $entry = if ($settings -and $settings.extraKnownMarketplaces) { $settings.extraKnownMarketplaces.$marketplace }
     if (-not $entry) { throw "$settings_path declares no extraKnownMarketplaces.$marketplace after the add" }
     $entry | Add-Member -NotePropertyName autoUpdate -NotePropertyValue $true -Force
-    # UTF-8 without BOM, as Claude Code writes it.
-    [IO.File]::WriteAllText($settings_path, ($settings | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding $false))
+    Write-ForeignJson $settings_path $settings
 }
 
 if ($claude_steps) {
@@ -229,7 +258,7 @@ if ($claude_steps) {
         if ($Apply) { Invoke-Claude plugin marketplace update $marketplace }
     }
 
-    $settings = if (Test-Path $settings_path) { Get-Content $settings_path -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+    $settings = Read-ForeignJson $settings_path
     $entry = if ($settings -and $settings.extraKnownMarketplaces) { $settings.extraKnownMarketplaces.$marketplace } else { $null }
     if (-not $fresh -and $entry -and $entry.autoUpdate -eq $true) {
         "same     auto-update of $marketplace in $settings_path"
@@ -475,7 +504,7 @@ function Update-Permissions {
         $rules_txt = @(Get-Content $allow_file -Encoding UTF8 | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
         $wanted_rules = [pscustomobject]@{ allow = $rules_txt; ask = @(); deny = @() }
     }
-    $settings = if (Test-Path $settings_path) { Get-Content $settings_path -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+    $settings = Read-ForeignJson $settings_path
     $total = 0
     $added = 0
     foreach ($verdict in 'allow', 'ask', 'deny') {
@@ -501,7 +530,7 @@ function Update-Permissions {
     if (-not $added) {
         "same     $total rule(s) of $from in $settings_path"
     } elseif ($Apply) {
-        [IO.File]::WriteAllText($settings_path, ($settings | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding $false))
+        Write-ForeignJson $settings_path $settings
     }
 }
 # --- end of the permissions step ---

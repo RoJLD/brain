@@ -100,7 +100,9 @@ Narrower, or on a tab of several panels, Enter opens it over them.
 `C` chooses the columns of the focused table: shown or hidden (space), their order (Up, Down, or `shift+up`, `shift+down`),
 and the longest its title may be, the rest in the detail; the sessions also offer Cost, App id, Id and Branch. The palette
 (`ctrl+p`) reaches every tab, view, project, sort, filter and table's columns without learning a key, and resets the views.
-The chosen columns are kept in `<BRAIN_HOME>/tui.json`.
+The chosen columns are kept in `<BRAIN_HOME>/tui.json`, a file of its own (`v` 1, a backup `tui.json.bak` at each save,
+an atomic write): what a newer brain added to it is kept through a save, and one a newer brain wrote is shown but not
+written (`brain tui` says the views are not remembered; brain update). See [docs/formats.md](docs/formats.md).
 
 The cockpit's title bar always shows the installed version. Once the screen is drawn, it checks the tags in the
 background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.3 · 0.2.4 available »
@@ -655,12 +657,25 @@ The quota conversion (`brain usage quota`) is per plan: only the readings of the
 `usage.plans`) count, and until the plan has 3 converted readings it says "uncalibrated", does not convert the week and
 estimates the 5-hour window from its latest reading and the ledger's cost since.
 
+The token ledger (`brain usage`) reads each session's subagents and workflow agents with it
+(`<session>/subagents/agent-<id>.jsonl` and `<session>/subagents/workflows/<run>/agent-<id>.jsonl`): their cost is in
+the session's cost and hours, so the quota forecast and the governor count it, and a message is counted once, as the
+subagent's, should the parent's transcript copy it. `brain usage` says whose the cost is (main threads, subagents,
+workflows), `--by workflow` lists each run (its agents, phases and the session that launched it) and `--by agent` each
+agent's label (the `description` of its `.meta.json`, else the run's `journal.jsonl`). `brain usage quota` measures
+the cost of a session-hour, the agents' included, as information: the governor's parallel-sessions cap uses it only
+with `usage.guard.session_hour_measured` true (default false), and then when it is above `usage.guard.session_hour_usd`;
+`brain usage guard` shows the measured value and whether it is applied.
+
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture
 hooks run `brain.capture` (`capture.sh <event>` runs `hooks/capture.py`, which calls it with the brain command's
 venv): it reads the hook's JSON on stdin and appends the session events, the session-record snapshots and the action
 records to `<BRAIN_HOME>/ledger` at zero token; it prints nothing and never fails the session (its errors go to
-`ledger/errors.log`; `BRAIN_CAPTURE=0` turns it off).
+`ledger/errors.log`, moved aside each month, or past 1 MB, as `errors-YYYY-MM.log` and kept six months;
+`BRAIN_CAPTURE=0` turns it off). The session snapshots, states, reports and plans under `<BRAIN_HOME>/sessions` and the
+budget watch's states are written through `brain.stateio` (a backup beside each, an atomic write; a newer brain's left
+to it): [docs/formats.md](docs/formats.md) gives each file's policy and each log's retention.
 
 **The engine times itself** (`brain.selftime`, local only, zero token). Every `brain` command and every hook writes
 one exec event (task `brain <command> [<subcommand>]` or `hook <name>`, a bash-only run marked `[bash]`, the engine's
@@ -680,7 +695,10 @@ brain perf --engine [--since 7d] [--task guard] [--json]
 
 Every store of a brain declares a data class in `config.json` (`classes.stores`: public, private, confidential,
 sealed, resident, secret, `tenant:<id>`), and the class says where it may go and how; `brain check --all` refuses a
-store without a class and a destination its class forbids, and `brain init` writes a starting block. What leaves a
+store without a class and a destination its class forbids, and `brain init` writes a starting block. Each store the
+engine writes under `$BRAIN_HOME` has a suggested class and a format class: one a brain does not declare takes its
+suggested class (never looser than sealed) and is noted, never failed (`brain classes --suggest` prints the lines to
+declare), and the desktop app's session metadata is read through a closed list of keys, never its texts. What leaves a
 machine is sealed client-side to public keys (`brain vault`: age, gpg as the fallback), to a device key per machine,
 kept in the OS keystore, and an offline recovery key: two recipients at least, proven daily by a canary per recipient
 (`brain health vault`). When the recipients change (a lost machine, a revoked heir, a rotated key), `brain vault

@@ -505,6 +505,10 @@ def state_file() -> Path:
 
 
 STATE_V = 1   # truth-local (brain.stateio); written from 0.2.6, read as 1 when absent
+DEVICE_V = 1  # device.json (brain.stateio): public facts; written from 0.3.1, read as 1 when absent
+# the keys of device.json this engine writes; a rotation keeps the others (a newer brain's, same v) as they are
+DEVICE_KEYS = frozenset({"name", "adapter", "keystore", "created", "public", "declare", "key_file", "previous",
+                         "rotated"})
 
 
 def _state_shape(data: dict) -> str:
@@ -557,13 +561,33 @@ def device_file() -> Path:
     return vault_dir() / "device.json"
 
 
+def _device_state(write: bool = False) -> stateio.State:
+    return stateio.load(device_file(), known=DEVICE_V, aside=write)
+
+
 def device() -> dict:
-    """This machine's device key, public facts only ({} without one): name, adapter, public, keystore, created."""
+    """This machine's device key, public facts only ({} without one): name, adapter, public, keystore, created.
+    Read through brain.stateio: a newer brain's file is read as it is, an unreadable one as none (never moved here)."""
+    st = _device_state()
+    return st.data if st.status in ("ok", "newer") else {}
+
+
+def _refuse_newer_device() -> None:
+    """VaultError when a newer brain wrote device.json (or it cannot be read at all): before the keystore is touched.
+    An unreadable one is no refusal: the write sets it aside."""
+    st = _device_state()
+    if st.refused:
+        raise VaultError(st.refusal())
+
+
+def save_device(facts: dict, st: stateio.State | None = None) -> None:
+    """device.json written through brain.stateio (``v`` 1, a backup, an atomic write; the keys it does not know kept
+    when ``facts`` came from :func:`device`, or from a rotation, which carries them over); VaultError when a newer
+    brain wrote it."""
     try:
-        d = json.loads(device_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return d if isinstance(d, dict) else {}
+        stateio.save(st or _device_state(write=True), facts, indent=2, sort_keys=False)
+    except stateio.StateError as exc:
+        raise VaultError(str(exc)) from None
 
 
 def keystore_key(cfg: config.Config) -> str:
@@ -757,6 +781,7 @@ def device_init(cfg: config.Config, name: str | None = None, adapter: str | None
     """Create this machine's device key straight into the keystore; return its public facts only. ``rotate``
     replaces an existing key: the old one moves to ``previous_key`` (still opening what was sealed to it) until
     ``forget_previous``, once config.json declares the new key and ``reseal`` has run."""
+    _refuse_newer_device()
     ks, current = _device_slot(cfg, rotate)
     old = device() if rotate else {}
     if rotate and name and old.get("name") and name != old["name"]:
@@ -773,11 +798,12 @@ def device_init(cfg: config.Config, name: str | None = None, adapter: str | None
     if rotate:
         facts["previous"] = {k: old[k] for k in ("adapter", "public", "created", "key_file") if old.get(k)}
         facts["rotated"] = t
+        facts.update({k: v for k, v in old.items() if k not in DEVICE_KEYS})   # a newer brain's keys go on
     try:
         if rotate:
             _keep(ks, previous_key(cfg), current, "the previous key")
         _keep(ks, keystore_key(cfg), value, "the device key")
-        _write_atomic(device_file(), json.dumps(facts, indent=2) + "\n")
+        save_device(facts)   # an unreadable device.json is set aside here, once the keystore holds the new key
     except (OSError, VaultError, keystore.KeystoreError) as exc:
         _undo(ks, cfg, current)
         raise VaultError(f"device init stopped ({exc}): the keystore is as it was") from None
