@@ -3,6 +3,7 @@ feature names (an implemented_by of its file, or a title that says it) is an inf
 section of its own; in the scout, NEW on a unit the change adds, DEFER on a touched one, LEFT there only under
 config.json audit.feature_coverage_strict (the owner's opt-in)."""
 
+import dataclasses
 import json
 import shutil
 
@@ -112,6 +113,21 @@ def test_the_scout_news_an_added_command_and_defers_a_touched_module(make_repo, 
     feats.write_text(feats.read_text(encoding="utf-8").replace("lab two-words", "lab two-words, lab fresh"),
                      encoding="utf-8")
     assert _coverage_tags(capsys, lab)[1] == {"src/lab/old.py": "DEFER"}
+
+
+def test_an_added_unit_was_already_refused_by_feature_links(make_repo, tmp_path, monkeypatch, capsys):
+    """The release rule (nothing that passed is newly refused): feature.coverage's NEW on an added unit sits on a unit
+    feature.links already makes NEW (a unit no feature names has no implemented_by of its file either), so the exit
+    code is the one the scout gave without the check."""
+    lab = _setup(make_repo, tmp_path, monkeypatch)
+    rc, tags, data = _coverage_tags(capsys, lab)
+    links = {f["unit"] for f in data["findings"] if f["check"] == "feature.links" and f["tag"] == "NEW"}
+    news = {u for u, t in tags.items() if t == "NEW"}
+    assert rc == 1 and news == {"src/lab/commands/fresh.py"} and news <= links
+    monkeypatch.setitem(audit.CHECKS, "feature.coverage",
+                        dataclasses.replace(audit.CHECKS["feature.coverage"], scout="never"))
+    rc_without, tags_without, _ = _coverage_tags(capsys, lab)
+    assert tags_without == {} and rc_without == rc
 
 
 def test_the_owners_opt_in_makes_a_touched_module_left(make_repo, tmp_path, monkeypatch, capsys):

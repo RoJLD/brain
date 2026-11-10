@@ -187,7 +187,7 @@
       "type": "object", "additionalProperties": false,
       "description": "brain audit's opt-ins (README, The scout).",
       "properties": {
-        "feature_coverage_strict": {"type": "boolean", "description": "The owner's opt-in to fix the feature coverage of what a change touches: true, brain audit --diff makes a touched command or module of a command registry that no feature names a LEFT line (to fix in the PR, within --limit); default false: a DEFER line to the repo's debt item. An added one is a NEW line either way."}
+        "feature_coverage_strict": {"type": "boolean", "description": "The owner's opt-in to fix the feature coverage of what a change touches: true, brain audit --diff makes a touched command or module of a command registry that no feature names a LEFT line (to fix in the PR, within --limit); default false: a DEFER line to the repo's debt item. An added one is a NEW line either way, on a unit feature.links already makes NEW (no implemented_by of its file)."}
       }
     },
     "views": {

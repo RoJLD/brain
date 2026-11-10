@@ -7,5 +7,6 @@ section: Added
   names as info, never counted, in a section per repo (`feature coverage: N of M ...`, the JSON key
   `feature_coverage`, a section of `notes/audit.md`). The scout (`brain audit --diff`) makes one the change adds a NEW
   line and one already there that it touches a DEFER line to the repo's debt item; nothing that passed is newly
-  refused. `config.json` `audit.feature_coverage_strict` (a boolean, default false) is the owner's opt-in: true, the
-  touched one is a LEFT line to fix in the PR (`wi-brain-audit-feature-coverage`).
+  refused (`feature.links` already makes an added unit no feature names NEW). `config.json`
+  `audit.feature_coverage_strict` (a boolean, default false) is the owner's opt-in: true, the touched one is a LEFT
+  line to fix in the PR (`wi-brain-audit-feature-coverage`).
