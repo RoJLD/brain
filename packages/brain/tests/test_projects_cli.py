@@ -116,17 +116,35 @@ def test_adr_new_writes_nothing_when_an_edge_is_impossible(tmp_path, monkeypatch
     assert log.read_text(encoding="utf-8") == before
 
 
-def test_adr_new_writes_its_edge_into_a_layer_file_of_a_folder_not_made_yet(tmp_path, monkeypatch, store):
-    """The edge of --decides goes to --edges-file even when its folder is new: the ADR is never left appended without
-    its edge (it raised FileNotFoundError from notes.write after the log was written)."""
+def test_adr_new_makes_the_stores_edges_folder_and_refuses_a_stray_path(tmp_path, monkeypatch, store):
+    """The edge of --decides goes to the store's edges/ folder even when the store has none yet; a --edges-file that
+    leaves edges/ (the store's own path given twice, the 2026-11-09 incident: notes/graph/edges/rules.yaml, which
+    raised FileNotFoundError after the ADR was appended) is refused before the log is written, and makes no folder."""
+    import shutil
     root = store.parents[1]
     _registry(tmp_path, monkeypatch, root)
-    (root / "notes" / "decisions.md").write_text("# Decisions\n", encoding="utf-8")
+    log = root / "notes" / "decisions.md"
+    log.write_text("# Decisions\n", encoding="utf-8")
     assert cli.main(["--project", "demo", "item", "add", "wi-new", "--title", "New"]) == 0
+    before = log.read_text(encoding="utf-8")
+    assert cli.main(["--project", "demo", "adr", "new", "Stray", "--decision", "d", "--decides", "wi-new",
+                     "--edges-file", "notes/graph/edges/rules.yaml"]) == 1
+    assert log.read_text(encoding="utf-8") == before and not (store / "notes").exists()
+    shutil.rmtree(store / "edges")
+    (store / "nodes" / "work.yaml").write_text((store / "nodes" / "work.yaml").read_text(encoding="utf-8"),
+                                               encoding="utf-8")
     assert cli.main(["--project", "demo", "adr", "new", "Rule", "--context", "c", "--decision", "d", "--why", "w",
-                     "--revisit", "r", "--decides", "wi-new", "--edges-file", "decided/decisions.yaml",
+                     "--revisit", "r", "--decides", "wi-new", "--edges-file", "edges/decisions.yaml",
                      "--date", "2026-11-01"]) == 0
-    assert "decided_by" in (store / "decided" / "decisions.yaml").read_text(encoding="utf-8")
+    assert "decided_by" in (store / "edges" / "decisions.yaml").read_text(encoding="utf-8")
+
+
+def test_item_add_refuses_a_layer_file_outside_the_store_before_writing_the_node(tmp_path, monkeypatch, store):
+    root = store.parents[1]
+    _registry(tmp_path, monkeypatch, root)
+    nodes = (store / "nodes" / "work.yaml").read_text(encoding="utf-8")
+    assert cli.main(["--project", "demo", "item", "add", "wi-x", "--title", "X", "--edges-file", "../edges.yaml"]) == 1
+    assert (store / "nodes" / "work.yaml").read_text(encoding="utf-8") == nodes
 
 
 def test_adr_new_without_a_graph_store_says_so_and_writes_nothing(tmp_path, monkeypatch, capsys):
