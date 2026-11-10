@@ -130,18 +130,24 @@ A file another tool owns is edited in its own keys only (spec-brain-data-compat 
 `brain.stateio.read_foreign` refuses one that cannot be read (a lock, a permission), is not JSON or not an object
 (« fix it by hand first »): it is never set aside nor replaced. `write_foreign` refuses a file that changed since it
 was read (its owner wrote it meanwhile: « run the command again »), backs it up beside itself, then writes atomically.
-`permissions.ClaudeCode.write` (`brain permissions render --write`, `--level session --out`) goes through them; a file
-inside a git work tree (a project's `.claude/settings.json` and `settings.local.json`) is not backed up beside itself,
-since a `.bak` would show in git status. The user file, `~/.claude/settings.json`, is the owner's act: `install.ps1
--Apply` writes it, with the same policy in PowerShell (`Read-ForeignJson`, `Write-ForeignJson`: a file that is not a
-JSON object stops it, a backup `settings.json.bak`, a temporary file that replaces it).
+A symbolic link (a settings file kept in a dotfiles repo) is written through: the file it points to changes, the link
+stays. `permissions.ClaudeCode.write` (`brain permissions render --write`, `--level session --out`) goes through
+them; a file git keeps as it is (`permissions.kept_by_git`: tracked, with no change in `git status`, such as a
+project's committed `.claude/settings.json`) is not backed up beside itself, since a `.bak` would only show in git
+status; an untracked, ignored or changed one (a project's `.claude/settings.local.json`, which Claude Code
+gitignores) is backed up, git holding no copy of it. The user file, `~/.claude/settings.json`, is the owner's act:
+`install.ps1 -Apply` writes it, with the same policy in PowerShell (`Read-ForeignJson`, `Write-ForeignJson`: a file
+that is not a JSON object stops it, an empty one is read as missing, a backup `settings.json.bak`, a temporary file
+that replaces it).
 
 ### The log class: rotation and retention
 
 A log is appended to, never rewritten. `brain.stateio.rotate_log` runs before a line is appended: a log last written
 in an earlier month (UTC) moves aside as `<stem>-<YYYY-MM><suffix>`, one past 1 MB the same way under this month
-(`-<n>` when that name is taken), then the monthly files past the class's retention go (`prune_months`). Each class
-keeps (`stateio.LOG_RETENTION`, this month counted):
+(`-<n>` when that name is taken), then the monthly files past the class's retention go (`prune_months`). Hooks rotate
+at the same time without a lock: the move never replaces an existing file (a rename that refuses one on Windows, a
+hard link elsewhere), and a name taken meanwhile makes it look at the log again, so a rotated month is never written
+over. Each class keeps (`stateio.LOG_RETENTION`, this month counted):
 
 | Class | Files | Kept |
 |---|---|---|

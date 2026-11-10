@@ -5,6 +5,8 @@ the sessions' snapshots, states, reports and plans, Claude Code's settings.json 
 import io
 import json
 import os
+import shutil
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -460,14 +462,55 @@ def test_claude_settings_unreadable_or_changed_meanwhile_are_refused_untouched(t
     assert json.loads(f.read_text(encoding="utf-8")) == {"permissions": {"allow": ["Z"]}}
 
 
-def test_a_project_settings_file_in_a_git_tree_is_not_backed_up_beside_itself(tmp_path):
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                    "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git")
+def test_only_a_settings_file_git_keeps_as_it_is_goes_without_a_backup(tmp_path):
+    """A project's committed, unchanged settings.json: no .bak (git keeps it, a .bak would show in git status). Its
+    settings.local.json, gitignored as Claude Code does, and a changed or untracked file are backed up: git holds no
+    copy of them."""
     repo = tmp_path / "repo"
-    (repo / ".git").mkdir(parents=True)
-    f = _write(repo / ".claude" / "settings.local.json", '{"permissions": {}}')
-    permissions.ClaudeCode().write(f, {"allow": ["B"]})
-    assert json.loads(f.read_text(encoding="utf-8"))["permissions"]["allow"] == ["B"]
-    assert not Path(str(f) + ".bak").exists()   # it would show in git status; git keeps the shared one
-    assert permissions.in_work_tree(f) and not permissions.in_work_tree(permissions.claude_home() / "settings.json")
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    shared = _write(repo / ".claude" / "settings.json", '{"permissions": {}}')
+    _write(repo / ".gitignore", ".claude/settings.local.json\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "c")
+    local = _write(repo / ".claude" / "settings.local.json", '{"permissions": {"allow": ["mine"]}}')
+    assert permissions.kept_by_git(shared) and not permissions.kept_by_git(local)
+    assert permissions.in_work_tree(local) and not permissions.kept_by_git(permissions.claude_home() / "settings.json")
+
+    permissions.ClaudeCode().write(shared, {"allow": ["B"]})
+    assert json.loads(shared.read_text(encoding="utf-8"))["permissions"]["allow"] == ["B"]
+    assert not Path(str(shared) + ".bak").exists()   # git keeps the committed one
+    permissions.ClaudeCode().write(local, {"allow": ["B"]})
+    assert json.loads(Path(str(local) + ".bak").read_text(encoding="utf-8")) == {"permissions": {"allow": ["mine"]}}
+    assert not permissions.kept_by_git(shared)   # changed since the commit: the next write backs it up
+    permissions.ClaudeCode().write(shared, {"allow": ["C"]})
+    assert json.loads(Path(str(shared) + ".bak").read_text(encoding="utf-8"))["permissions"]["allow"] == ["B"]
+    untracked = _write(repo / "other" / "settings.json", "{}")
+    assert permissions.in_work_tree(untracked) and not permissions.kept_by_git(untracked)
+
+
+def test_a_symlinked_settings_file_is_written_through_its_link(tmp_path):
+    """A settings.json linked into a dotfiles repo: the file it points to is written, the link stays a link."""
+    real = _write(tmp_path / "dotfiles" / "settings.json", '{"theme": "dark"}')
+    home = _write(tmp_path / "home" / "x", "").parent
+    link = home / "settings.json"
+    try:
+        os.symlink(real, link)
+    except OSError:
+        pytest.skip("no symlinks here")
+    permissions.ClaudeCode().write(link, {"allow": ["B"]})
+    assert link.is_symlink() and Path(os.path.realpath(link)) == Path(os.path.realpath(real))
+    assert json.loads(real.read_text(encoding="utf-8")) == {"theme": "dark", "permissions": {"allow": ["B"]}}
+    assert Path(str(link) + ".bak").read_text(encoding="utf-8") == '{"theme": "dark"}'
+    assert not [p for p in (home, real.parent) for q in p.iterdir() if q.name.endswith(".tmp")]
+    stateio.write_atomic(link, "{}\n")   # every writer of the module goes through the link the same way
+    assert link.is_symlink() and real.read_text(encoding="utf-8") == "{}\n"
 
 
 # --- the log class ---
@@ -509,6 +552,34 @@ def test_rotate_log_moves_an_earlier_months_log_aside(tmp_path):
     _aged(_write(f, "y"), datetime(2026, 10, 1, tzinfo=timezone.utc))
     stateio.rotate_log(f, NOV, keep=6)
     assert not old.exists() and (tmp_path / "errors-2026-10-2.log").exists()  # past six months: gone
+
+
+def test_rotate_log_never_writes_over_a_month_another_hook_rotated(tmp_path, monkeypatch):
+    """Two hooks rotate at once: the name one checked as free is taken when it moves; the rotated month is kept."""
+    f = _aged(_write(tmp_path / "errors.log", "late october\n"), datetime(2026, 10, 31, tzinfo=timezone.utc))
+    archive = _write(tmp_path / "errors-2026-10.log", "october\n")   # the other hook's move, after this one looked
+    with monkeypatch.context() as m:
+        m.setattr(Path, "exists", lambda self: False)   # it looked before the other hook moved
+        assert stateio.rotate_log(f, NOV) == tmp_path / "errors-2026-10-2.log"
+    assert archive.read_text(encoding="utf-8") == "october\n" and not f.exists()
+    assert (tmp_path / "errors-2026-10-2.log").read_text(encoding="utf-8") == "late october\n"
+
+
+def test_rotate_log_looks_again_when_another_hook_rotated_meanwhile(tmp_path, monkeypatch):
+    """Hook B decided to rotate; A rotated first and C started a fresh log: B leaves the fresh one where it is."""
+    f = _aged(_write(tmp_path / "errors.log", "october\n"), datetime(2026, 10, 31, tzinfo=timezone.utc))
+    real, calls = stateio._move_new, []
+
+    def raced(src, dst):
+        if not calls:
+            os.replace(src, dst)   # hook A rotates
+            _aged(_write(src, "november\n"), NOV)   # hook C appends a line: a fresh errors.log
+        calls.append(dst)
+        return real(src, dst)
+    monkeypatch.setattr(stateio, "_move_new", raced)
+    assert stateio.rotate_log(f, NOV) is None and len(calls) == 1
+    assert (tmp_path / "errors-2026-10.log").read_text(encoding="utf-8") == "october\n"
+    assert f.read_text(encoding="utf-8") == "november\n" and not (tmp_path / "errors-2026-10-2.log").exists()
 
 
 def test_the_error_sink_rotates_errors_log_monthly(brain_home):

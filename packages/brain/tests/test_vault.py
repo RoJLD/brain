@@ -708,3 +708,20 @@ def test_device_json_goes_through_stateio_and_a_newer_one_stops_device_init(brai
     disk = json.loads(f.read_text(encoding="utf-8"))
     assert list(disk)[:2] == ["v", "name"] and disk["v"] == vault.DEVICE_V and disk["name"] == "box1"
     assert len(list(f.parent.glob("device.json.unreadable-*"))) == 1
+
+
+def test_device_rotation_keeps_the_keys_a_newer_brain_added(brain, brain_home):
+    """wi-brain-state-safe-io-rest: a newer minor brain's key in device.json (still v 1) survives --rotate; the keys
+    this engine writes are new."""
+    found = fake_age()
+    cfg = brain({})
+    old = vault.device_init(cfg, "box1", now=NOW, found=found)
+    f = vault.device_file()
+    disk = json.loads(f.read_text(encoding="utf-8"))
+    disk["later"] = {"kept": True}
+    f.write_text(json.dumps(disk), encoding="utf-8")
+    new = vault.device_init(cfg, found=found, rotate=True, now=NOW + timedelta(days=1))
+    disk = json.loads(f.read_text(encoding="utf-8"))
+    assert disk["later"] == {"kept": True} and new["later"] == {"kept": True}
+    assert disk["public"] == new["public"] != old["public"] and disk["previous"]["public"] == old["public"]
+    assert list(disk)[:2] == ["v", "name"]

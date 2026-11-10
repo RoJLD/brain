@@ -58,6 +58,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -946,8 +947,9 @@ class ClaudeCode(Adapter):
         """Add the missing rules; take out the expired ones (rules the hierarchy declared, and only those). The file
         is Claude Code's (a foreign file, brain.stateio): one that cannot be read, is not JSON or not an object is
         refused, never replaced; one Claude Code wrote meanwhile is refused (run again); its other keys are kept; it
-        is backed up beside itself (``settings.json.bak``) unless it lies in a git work tree (a project's file: git
-        keeps it, and a .bak would show in git status), then written atomically."""
+        is backed up beside itself (``settings.json.bak``) unless git keeps it as it is (:func:`kept_by_git`: a
+        project's tracked file with no change, where a .bak would only show in git status; an untracked, ignored or
+        changed one, such as ``settings.local.json``, is backed up), then written atomically."""
         try:
             data, seen = stateio.read_foreign(path)
         except stateio.StateError as exc:
@@ -965,7 +967,7 @@ class ClaudeCode(Adapter):
                 perms[v] = [x for x in perms[v] if x not in expired[v]]
         try:   # UTF-8 without BOM, as Claude Code writes it
             stateio.write_foreign(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", seen,
-                                  keep_backup=not in_work_tree(path))
+                                  keep_backup=not kept_by_git(path))
         except stateio.StateError as exc:
             raise PermissionsError(str(exc)) from None
 
@@ -973,6 +975,25 @@ class ClaudeCode(Adapter):
 def in_work_tree(path: Path) -> bool:
     """Whether ``path`` lies in a git work tree (a ``.git`` folder or file in one of its parents)."""
     return any((p / ".git").exists() for p in Path(path).resolve().parents)
+
+
+def kept_by_git(path: Path) -> bool:
+    """Whether git keeps ``path`` as it is now: a file of a git work tree, tracked, that ``git status`` shows no
+    change of. False for a missing, untracked, ignored or changed file, outside a work tree, or when git cannot
+    say (not installed, an error, a timeout): a backup is then made."""
+    path = Path(path).resolve()
+    if not path.is_file() or not in_work_tree(path):
+        return False
+    try:
+        tracked = subprocess.run(["git", "-C", str(path.parent), "ls-files", "--error-unmatch", "--", path.name],
+                                 capture_output=True, timeout=30)
+        if tracked.returncode != 0:
+            return False
+        status = subprocess.run(["git", "-C", str(path.parent), "status", "--porcelain", "--", path.name],
+                                capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return status.returncode == 0 and not status.stdout.strip()
 
 
 ADAPTERS: dict[str, Adapter] = {"claude": ClaudeCode()}

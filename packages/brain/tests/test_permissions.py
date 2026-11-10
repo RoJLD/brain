@@ -740,3 +740,25 @@ def test_install_refuses_an_unreadable_settings_file_and_leaves_it(tmp_path, tex
                          capture_output=True, text=True, timeout=60)
     assert res.returncode != 0 and "fix it by hand first" in res.stdout + res.stderr
     assert settings.read_text(encoding="utf-8") == text and not Path(str(settings) + ".bak").exists()
+
+
+@pytest.mark.skipif(os.name != "nt" or not shutil.which("powershell.exe"), reason="Windows PowerShell")
+@pytest.mark.parametrize("text", ["", "  \r\n"])
+def test_install_reads_an_empty_settings_file_as_a_missing_one(tmp_path, text):
+    """An empty settings.json (an interrupted write) is read as missing, as the installer did before the foreign
+    file helpers: the rules are written, the empty file kept beside it."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "allow-rules.txt").write_text("Bash(brain up)\n", encoding="utf-8")
+    settings = tmp_path / "settings.json"
+    settings.write_bytes(text.encode("utf-8"))
+    script = tmp_path / "install.ps1"
+    script.write_text("$ErrorActionPreference = 'Stop'\n"
+                      f"$repo = '{repo}'\n$settings_path = '{settings}'\n$allow_file = '{repo / 'allow-rules.txt'}'\n"
+                      f"$venv_python = '{tmp_path / 'absent.exe'}'\n$Apply = $true\n" + _install_block(),
+                      encoding="utf-8")
+    res = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                         capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert json.loads(settings.read_text(encoding="utf-8-sig")) == {"permissions": {"allow": ["Bash(brain up)"]}}
+    assert Path(str(settings) + ".bak").read_bytes() == text.encode("utf-8")

@@ -195,13 +195,14 @@ function Get-ClaudeJson {
 
 # --- the foreign file helpers (tests/test_permissions.py runs them with the permissions step) ---
 # settings.json is Claude Code's (brain.stateio's foreign class): read whole or refused (fix it by hand first: never
-# replaced when unreadable); written only when unchanged since it was read, backed up beside itself
+# replaced when unreadable; an empty one is read as missing); written only when unchanged since it was read, backed up beside itself
 # (settings.json.bak), through a temporary file that replaces it.
 $foreign_seen = @{}
 function Read-ForeignJson([string]$path) {
     if (-not (Test-Path -LiteralPath $path)) { $script:foreign_seen[$path] = $null; return $null }
     $raw = [IO.File]::ReadAllText($path)   # UTF-8, a BOM allowed
     $script:foreign_seen[$path] = $raw
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }   # empty (an interrupted write): read as missing
     try { $data = $raw | ConvertFrom-Json } catch { throw "${path}: not readable JSON: fix it by hand first; nothing written" }
     if ($data -isnot [System.Management.Automation.PSCustomObject]) { throw "${path}: not a JSON object: fix it by hand first; nothing written" }
     $data

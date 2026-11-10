@@ -216,7 +216,11 @@ def backup(path: Path) -> Path | None:
 
 
 def write_atomic(path: Path, text: str) -> None:
-    """``text`` into ``path`` through a temporary file beside it, synced, then moved over it."""
+    """``text`` into ``path`` through a temporary file beside it, synced, then moved over it. A symbolic link is
+    written through (the file it points to, a temporary file beside that one): the link stays a link."""
+    path = Path(path)
+    if path.is_symlink():
+        path = Path(os.path.realpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
@@ -335,26 +339,58 @@ def rotate_log(path: Path, now: datetime | None = None, *, keep: int | None = LO
     """Before a line is appended to ``path`` (a log whose lines carry their own time): a file last written in an
     earlier month (UTC) moves aside as ``<stem>-<its month><suffix>``, one past ``max_bytes`` the same way under
     this month (``-<n>`` added when that name is taken); then the monthly files older than ``keep`` months go. The
-    moved file's
-    path, None when nothing moved. Never raises: a log never fails its writer."""
+    moved file's path, None when nothing moved. Never raises: a log never fails its writer.
+
+    Hooks rotate concurrently and without a lock: the move never replaces a file (:func:`_move_new`), and when the
+    name was taken meanwhile the file is looked at again (another hook may have rotated it and a fresh one started),
+    so a rotated month is never written over."""
     path = Path(path)
     now = now or datetime.now(timezone.utc)
+    this, n = f"{now:%Y-%m}", 1
+    for _ in range(_ROTATE_TRIES):
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        month = time.strftime("%Y-%m", time.gmtime(st.st_mtime))
+        if month >= this and st.st_size <= max_bytes:
+            return None
+        month = min(month, this)
+
+        def name(k: int) -> Path:
+            return path.with_name(f"{path.stem}-{month}{'' if k == 1 else f'-{k}'}{path.suffix}")
+        while name(n).exists():
+            n += 1
+        target = name(n)
+        try:
+            _move_new(path, target)
+        except FileExistsError:
+            n += 1     # taken since it was looked at: the log is looked at again, the next name tried
+            continue
+        except OSError:
+            return None
+        prune_months(path.parent.glob(f"{path.stem}-*{path.suffix}"), keep, now)
+        return target
+    return None
+
+
+_ROTATE_TRIES = 8
+
+
+def _move_new(src: Path, dst: Path) -> None:
+    """Move ``src`` to ``dst``, which must not exist: FileExistsError when it does (``os.replace`` would overwrite
+    it). Windows' rename refuses an existing name; elsewhere a hard link does, then the old name goes (a file
+    system without hard links: a rename, the name checked just before)."""
+    if os.name == "nt":
+        os.rename(src, dst)
+        return
     try:
-        st = path.stat()
+        os.link(src, dst)
+    except FileExistsError:
+        raise
     except OSError:
-        return None
-    month = time.strftime("%Y-%m", time.gmtime(st.st_mtime))
-    this = f"{now:%Y-%m}"
-    if month >= this and st.st_size <= max_bytes:
-        return None
-    month = min(month, this)
-    target, n = path.with_name(f"{path.stem}-{month}{path.suffix}"), 1
-    while target.exists():
-        n += 1
-        target = path.with_name(f"{path.stem}-{month}-{n}{path.suffix}")
-    try:
-        os.replace(path, target)
-    except OSError:
-        return None
-    prune_months(path.parent.glob(f"{path.stem}-*{path.suffix}"), keep, now)
-    return target
+        if os.path.lexists(dst):
+            raise FileExistsError(dst) from None
+        os.rename(src, dst)
+        return
+    os.unlink(src)

@@ -506,6 +506,9 @@ def state_file() -> Path:
 
 STATE_V = 1   # truth-local (brain.stateio); written from 0.2.6, read as 1 when absent
 DEVICE_V = 1  # device.json (brain.stateio): public facts; written from 0.3.1, read as 1 when absent
+# the keys of device.json this engine writes; a rotation keeps the others (a newer brain's, same v) as they are
+DEVICE_KEYS = frozenset({"name", "adapter", "keystore", "created", "public", "declare", "key_file", "previous",
+                         "rotated"})
 
 
 def _state_shape(data: dict) -> str:
@@ -579,7 +582,8 @@ def _refuse_newer_device() -> None:
 
 def save_device(facts: dict, st: stateio.State | None = None) -> None:
     """device.json written through brain.stateio (``v`` 1, a backup, an atomic write; the keys it does not know kept
-    when ``facts`` came from :func:`device`); VaultError when a newer brain wrote it."""
+    when ``facts`` came from :func:`device`, or from a rotation, which carries them over); VaultError when a newer
+    brain wrote it."""
     try:
         stateio.save(st or _device_state(write=True), facts, indent=2, sort_keys=False)
     except stateio.StateError as exc:
@@ -794,6 +798,7 @@ def device_init(cfg: config.Config, name: str | None = None, adapter: str | None
     if rotate:
         facts["previous"] = {k: old[k] for k in ("adapter", "public", "created", "key_file") if old.get(k)}
         facts["rotated"] = t
+        facts.update({k: v for k, v in old.items() if k not in DEVICE_KEYS})   # a newer brain's keys go on
     try:
         if rotate:
             _keep(ks, previous_key(cfg), current, "the previous key")
