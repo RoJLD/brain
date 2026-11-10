@@ -185,6 +185,36 @@ def test_brief_classes_from_config(project, tmp_path, monkeypatch):
         brief.build(project, "wi-nope")
 
 
+def test_brief_says_what_to_do_after_the_merge(project):
+    """wi-brain-archive-after-merge: the brief carries close-item step 5, between the coordinator's section and the
+    owner's definition of done."""
+    b = brief.build(project, "wi-c")
+    text = brief.render(b)
+    assert b.after_merge == list(brief.AFTER_MERGE) and b.as_dict()["after_merge"] == list(brief.AFTER_MERGE)
+    head = "## After the merge (close-item step 5)"
+    assert text.index("## To decide (the coordinator)") < text.index(head) < text.index("## Definition of done")
+    for line in brief.AFTER_MERGE:
+        assert line in text
+
+
+def test_brief_after_merge_from_config(project, tmp_path, monkeypatch):
+    cfg = tmp_path / "brain3"
+    cfg.mkdir()
+    (cfg / "config.json").write_text('{"v": 1, "identity": {"owner": "Ada"}, "brief": {"after_merge": '
+                                     '["- Ada archives every session herself."]}}', encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg / "config.json"))
+    assert config.check() == []   # the schema knows brief.after_merge
+    text = brief.render(brief.build(project, "wi-c"))
+    assert "## After the merge (close-item step 5)\n\n- Ada archives every session herself." in text
+    assert brief.AFTER_MERGE[0] not in text
+    (cfg / "config.json").write_text('{"v": 1, "identity": {"owner": "Ada"}, "brief": {"after_merge": []}}',
+                                     encoding="utf-8")
+    assert "## After the merge" not in brief.render(brief.build(project, "wi-c"))
+    (cfg / "config.json").write_text('{"v": 1, "identity": {"owner": "Ada"}, "brief": {"after_merge": "x"}}',
+                                     encoding="utf-8")
+    assert config.check()   # a string is no list of lines
+
+
 def test_brief_cli_writes(project, tmp_path, capsys):
     out = tmp_path / "brief.md"
     assert cli.main(["--project", "demo", "brief", "wi-c", "--coordinator", "local_c", "--write", str(out)]) == 0
