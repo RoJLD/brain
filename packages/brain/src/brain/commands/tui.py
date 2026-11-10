@@ -42,7 +42,8 @@ USAGE = """\
                  yet its countdown then its progress, a failed read keeps the last content and its time (--all
                  without a registry: this folder's project); the
                  interactive views remember the scope, views, last tab, columns, theme and timezone (--tz, t; default local) in
-                 $BRAIN_HOME/tui.json (--reset forgets them; --project, --all, --sort, --filter, --tab and --tz win).
+                 $BRAIN_HOME/tui.json (--reset forgets them; --project, --all, --sort, --filter, --tab and --tz win;
+                 a newer brain's tui.json is shown, never written).
                  Enter: the row's detail (a DDR's options, an item's spec, ADRs and PR, a session's plan): from 140
                  columns, on a tab of one list, it sits right of the list and follows the cursor (Enter gives it the
                  focus, Escape gives it back; a, d and A work from the list too), else it opens over the panels; in it, o
@@ -95,8 +96,11 @@ def cmd_tui(args, root: Path) -> int:
               else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz, tab=args.tab)))
         return 1 if _failed_reads(snap) else 0
     tab, tabs, columns = args.tab or saved.get("tab"), saved.get("tabs") or {}, saved.get("columns") or {}
-    cockpit.save_state({"scope": cp.scope, "panels": views, "settings": settings, "tab": tab, "tabs": tabs,
-                        "columns": columns})
+    if not cockpit.save_state({"scope": cp.scope, "panels": views, "settings": settings, "tab": tab, "tabs": tabs,
+                               "columns": columns}):
+        why = cockpit.state_refusal()   # a newer brain's tui.json: shown, never written (before the screen draws)
+        if why:
+            print(f"brain tui: {why}; the views are not remembered", file=sys.stderr)
     if not args.plain:
         try:
             from .. import tui

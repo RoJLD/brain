@@ -28,24 +28,43 @@ is the record without it, and :func:`save` writes it back. A file without ``v`` 
 by names (installed schedules, alert projects) may keep its version 1 unwritten (``write_v=False``), so that an
 engine from before this helper, which reads every key as a name, keeps reading it; its first breaking change writes
 ``v: 2``, which this engine then refuses to overwrite.
+
+Two other classes go through this module (wi-brain-state-safe-io-rest):
+
+- **foreign** (a file another tool owns: Claude Code's ``settings.json``): :func:`read_foreign` refuses one that
+  cannot be read, is not JSON or not an object (« fix it by hand first »: never set aside, never replaced), and
+  :func:`write_foreign` refuses to write over a file that changed since it was read, backs it up beside itself
+  (unless the caller says git keeps it), then writes atomically;
+- **log** (append-only lines): :func:`rotate_log` moves a log of an earlier month (or one past
+  :data:`LOG_MAX_BYTES`) aside as ``<stem>-<YYYY-MM>[-n]<suffix>`` before a line is appended, and
+  :func:`prune_months` drops the monthly files older than their class's retention (:data:`LOG_RETENTION`; None:
+  kept, a record).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from . import paths
 
 VKEY = "v"
 BACKUP = ".bak"
 ASIDE = ".unreadable-"
+# The months a log class keeps, this one counted (None: kept, a record nothing else holds). The engine's errors
+# (ledger/errors.log and its monthly files), its self-timing (engine/*.jsonl), the ledgers of records
+# (ledger/<name>-YYYY-MM.jsonl: actions, decisions, events, guard decisions, the queue).
+LOG_RETENTION: dict[str, int | None] = {"errors": 6, "timing": 3, "ledger": None}
+LOG_MAX_BYTES = 1_000_000
+_MONTH_RE = re.compile(r"(?<!\d)\d{4}-\d{2}(?!\d)")
 
 
 class StateError(RuntimeError):
@@ -65,6 +84,12 @@ class State:
     @property
     def writable(self) -> bool:
         return self.status in ("ok", "missing", "aside")
+
+    @property
+    def refused(self) -> bool:
+        """Whether a writer will be refused, read without moving anything (``aside=False``): a newer brain's file, or
+        one it cannot read at all (a lock, a permission); a file of the wrong shape is not, its writer sets it aside."""
+        return self.status == "newer" or (self.status == "unreadable" and not self.why.startswith("is not"))
 
     def refusal(self) -> str:
         """Why this engine must not write the file ('' when it may)."""
@@ -191,7 +216,11 @@ def backup(path: Path) -> Path | None:
 
 
 def write_atomic(path: Path, text: str) -> None:
-    """``text`` into ``path`` through a temporary file beside it, synced, then moved over it."""
+    """``text`` into ``path`` through a temporary file beside it, synced, then moved over it. A symbolic link is
+    written through (the file it points to, a temporary file beside that one): the link stays a link."""
+    path = Path(path)
+    if path.is_symlink():
+        path = Path(os.path.realpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
@@ -228,3 +257,140 @@ def save(state: State, data: dict | None = None, *, write_v: bool = True, **dump
     state.data, state.status = data, "ok"
     if write_v:
         state.v = state.known
+
+
+# --- foreign files: another tool's, edited in their own keys only ---
+
+def read_foreign(path: Path) -> tuple[dict, bytes | None]:
+    """A foreign JSON object (a UTF-8 BOM allowed) and the bytes it was read from: ``({}, None)`` when it is missing.
+    :class:`StateError` when it cannot be read (a lock, a permission), is not JSON or is not an object: the owner
+    fixes it by hand; it is never set aside nor replaced."""
+    path = Path(path)
+    try:
+        blob = path.read_bytes()
+    except FileNotFoundError:
+        return {}, None
+    except OSError as exc:
+        raise StateError(f"{path}: cannot be read ({exc.__class__.__name__}): fix it by hand first; nothing written") \
+            from None
+    try:
+        data = json.loads(blob.decode("utf-8-sig"))
+    except ValueError as exc:
+        raise StateError(f"{path}: not readable JSON ({exc}): fix it by hand first; nothing written") from None
+    if not isinstance(data, dict):
+        raise StateError(f"{path}: not a JSON object: fix it by hand first; nothing written")
+    return data, blob
+
+
+def write_foreign(path: Path, text: str, seen: bytes | None, *, keep_backup: bool = True) -> Path | None:
+    """``text`` over a foreign file read as ``seen`` (its bytes then, None when it was missing): refused
+    (:class:`StateError`) when the file changed since, since its owner wrote it meanwhile; a backup beside it first
+    (``keep_backup``: False where git keeps the file), then the atomic write. The backup's path, None without one."""
+    path = Path(path)
+    try:
+        now = path.read_bytes()
+    except FileNotFoundError:
+        now = None
+    except OSError as exc:
+        raise StateError(f"{path}: cannot be read ({exc.__class__.__name__}): nothing written") from None
+    if now != seen:
+        raise StateError(f"{path}: changed while it was being edited (its owner wrote it): run the command again; "
+                         "nothing written")
+    bak = backup(path) if keep_backup else None
+    write_atomic(path, text)
+    return bak
+
+
+# --- the log class: monthly files, a retention per class ---
+
+def month_of(name: str) -> str:
+    """The ``YYYY-MM`` a log file's name carries ('' without one): its last one."""
+    found = _MONTH_RE.findall(name)
+    return found[-1] if found else ""
+
+
+def oldest_kept(now: datetime, keep: int) -> str:
+    """The oldest month a retention of ``keep`` months keeps, this one counted."""
+    y, m = now.year, now.month - (max(keep, 1) - 1)
+    while m < 1:
+        y, m = y - 1, m + 12
+    return f"{y:04d}-{m:02d}"
+
+
+def prune_months(files: Iterable[Path], keep: int | None, now: datetime | None = None) -> list[Path]:
+    """Remove the monthly log files older than ``keep`` months (this one counted; None keeps them all, a file whose
+    name has no month is kept); the removed."""
+    if keep is None:
+        return []
+    oldest, gone = oldest_kept(now or datetime.now(timezone.utc), keep), []
+    for f in files:
+        month = month_of(f.name)
+        if month and month < oldest:
+            try:
+                f.unlink()
+                gone.append(f)
+            except OSError:
+                pass
+    return gone
+
+
+def rotate_log(path: Path, now: datetime | None = None, *, keep: int | None = LOG_RETENTION["errors"],
+               max_bytes: int = LOG_MAX_BYTES) -> Path | None:
+    """Before a line is appended to ``path`` (a log whose lines carry their own time): a file last written in an
+    earlier month (UTC) moves aside as ``<stem>-<its month><suffix>``, one past ``max_bytes`` the same way under
+    this month (``-<n>`` added when that name is taken); then the monthly files older than ``keep`` months go. The
+    moved file's path, None when nothing moved. Never raises: a log never fails its writer.
+
+    Hooks rotate concurrently and without a lock: the move never replaces a file (:func:`_move_new`), and when the
+    name was taken meanwhile the file is looked at again (another hook may have rotated it and a fresh one started),
+    so a rotated month is never written over."""
+    path = Path(path)
+    now = now or datetime.now(timezone.utc)
+    this, n = f"{now:%Y-%m}", 1
+    for _ in range(_ROTATE_TRIES):
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        month = time.strftime("%Y-%m", time.gmtime(st.st_mtime))
+        if month >= this and st.st_size <= max_bytes:
+            return None
+        month = min(month, this)
+
+        def name(k: int) -> Path:
+            return path.with_name(f"{path.stem}-{month}{'' if k == 1 else f'-{k}'}{path.suffix}")
+        while name(n).exists():
+            n += 1
+        target = name(n)
+        try:
+            _move_new(path, target)
+        except FileExistsError:
+            n += 1     # taken since it was looked at: the log is looked at again, the next name tried
+            continue
+        except OSError:
+            return None
+        prune_months(path.parent.glob(f"{path.stem}-*{path.suffix}"), keep, now)
+        return target
+    return None
+
+
+_ROTATE_TRIES = 8
+
+
+def _move_new(src: Path, dst: Path) -> None:
+    """Move ``src`` to ``dst``, which must not exist: FileExistsError when it does (``os.replace`` would overwrite
+    it). Windows' rename refuses an existing name; elsewhere a hard link does, then the old name goes (a file
+    system without hard links: a rename, the name checked just before)."""
+    if os.name == "nt":
+        os.rename(src, dst)
+        return
+    try:
+        os.link(src, dst)
+    except FileExistsError:
+        raise
+    except OSError:
+        if os.path.lexists(dst):
+            raise FileExistsError(dst) from None
+        os.rename(src, dst)
+        return
+    os.unlink(src)

@@ -40,6 +40,11 @@ tolerant tests set `BRAIN_STRICT=0`.
 
 ## The formats
 
+Each store the engine writes under `$BRAIN_HOME` carries its format class (`truth-local`, `log`, `derived`,
+`install`, `external`) beside its data class in `brain.classes.ENGINE_STORES`: the list is in
+[vault.md](vault.md#the-engines-own-stores), and `brain classes --json` prints it for the stores a brain leaves at
+their default.
+
 | Format | Where | Version | Unknown field or key (read mode) | Higher `v` |
 |---|---|---|---|---|
 | DDR | `records/ddr/<id>.yaml` | `v` (`ddr.schema.json`) | a warning; `brain` rewrites keep it | refused; never overwritten |
@@ -111,6 +116,51 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 | `alerts/state.json` | `v` 1, unwritten | the notify pass sends nothing (« nothing sent: ... »), since sending without a record would send again each pass |
 | `vault/state.json` | `v` 1, written from 0.2.6 | `brain vault seal`, `canary` and `drill` refuse before any work; `status` and the health still read it |
 | `usage/sessions.json` | `v` 2 (`LEDGER_V`, apart from the scanner's `SCAN_V`, which only rescans rows) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
+| `tui.json` | `v` 1 (beside the older `cockpit: 1`, kept) | the cockpit shows the saved views but does not remember new ones (« brain tui: ... written by a newer brain ... the views are not remembered ») |
+| `memory-sync/state.json` | `v` 1 | the memory sync refuses before any fetch: `last.json` says « failed » and the alert names brain update |
+| `vault/device.json` | `v` 1 | `brain vault device init` (`--rotate` too) and `device forget-previous` refuse before the keystore is touched |
+| `sessions/<id>.json`, `<id>.state.json` | `v` 1 (the SR's schema, `capture.SR_V`; `STATS_V`) | the Stop hook writes neither (a newer brain's session) and logs nothing |
+| `sessions/<id>.report.json`, `<id>.plan.json` | `v` 1 | `sessions.write_report` returns None, the plan hook keeps the file |
+| `budget/<session>.json` | `v` 1 | the budget watch gives no notice and sets its mark `IDLE_S` ahead, so bash starts no Python meanwhile |
+
+`tui.json` keeps the keys this engine does not know at each level it names (the top level, `panels`, `tabs`,
+`columns`, `settings`, `settings.titles`): a newer brain's panel view, tab or setting survives a save of this one. A
+key it knows is its own: a title the owner removed is removed. `budget/<session>.json` is written by the hook's Python
+only (bash reads its `.mark`), once per check, never per tool call: the backup and the synced write cost about 10 ms
+there; the prune of states older than `KEEP_DAYS` takes their `.bak` and set-aside copies too.
+
+### Foreign files: Claude Code's settings
+
+A file another tool owns is edited in its own keys only (spec-brain-data-compat §1, class foreign).
+`brain.stateio.read_foreign` refuses one that cannot be read (a lock, a permission), is not JSON or not an object
+(« fix it by hand first »): it is never set aside nor replaced. `write_foreign` refuses a file that changed since it
+was read (its owner wrote it meanwhile: « run the command again »), backs it up beside itself, then writes atomically.
+A symbolic link (a settings file kept in a dotfiles repo) is written through: the file it points to changes, the link
+stays. `permissions.ClaudeCode.write` (`brain permissions render --write`, `--level session --out`) goes through
+them; a file git keeps as it is (`permissions.kept_by_git`: tracked, with no change in `git status`, such as a
+project's committed `.claude/settings.json`) is not backed up beside itself, since a `.bak` would only show in git
+status; an untracked, ignored or changed one (a project's `.claude/settings.local.json`, which Claude Code
+gitignores) is backed up, git holding no copy of it. The user file, `~/.claude/settings.json`, is the owner's act:
+`install.ps1 -Apply` writes it, with the same policy in PowerShell (`Read-ForeignJson`, `Write-ForeignJson`: a file
+that is not a JSON object stops it, an empty one is read as missing, a backup `settings.json.bak`, a temporary file
+that replaces it).
+
+### The log class: rotation and retention
+
+A log is appended to, never rewritten. `brain.stateio.rotate_log` runs before a line is appended: a log last written
+in an earlier month (UTC) moves aside as `<stem>-<YYYY-MM><suffix>`, one past 1 MB the same way under this month
+(`-<n>` when that name is taken), then the monthly files past the class's retention go (`prune_months`). Hooks rotate
+at the same time without a lock: the move never replaces an existing file (a rename that refuses one on Windows, a
+hard link elsewhere), and a name taken meanwhile makes it look at the log again, so a rotated month is never written
+over. Each class keeps (`stateio.LOG_RETENTION`, this month counted):
+
+| Class | Files | Kept |
+|---|---|---|
+| errors | `ledger/errors.log`, `ledger/errors-YYYY-MM[-n].log` | 6 months |
+| timing | `ledger/engine/*-YYYY-MM.jsonl` (brain.selftime, the hooks' `exec-bash-`) | 3 months |
+| ledger | `ledger/<name>-YYYY-MM.jsonl` (actions, decisions, events, guard decisions, the queue) | kept: records nothing else holds |
+
+An `errors.log.1` left by an older engine (which cut errors.log at 1 MB into that one file) stays as it is.
 
 ### The `return {}` sites, classified
 
@@ -124,12 +174,12 @@ foreign one is never written here.
 | `schedule.installed` | `schedules/installed.json` | truth-local | through `brain.stateio` |
 | `schedule.last_pass` | `alerts/state.json` (`_pass`) | truth-local | through `alerts.state_load` |
 | `usage.load` | `usage/sessions.json` | truth-local | through `brain.stateio` |
-| `vault.device` | `vault/device.json` | truth-local | next (read-only here; `device init` and the rotation write it atomically) |
-| `cockpit.load_state` | `tui.json` | truth-local | next: it also drops the keys it does not know |
-| `memory.load_state` | `memory-sync/state.json` | truth-local | next (the 3-way base; off on the pilot, `BRAIN_MEMORY_SYNC=0`) |
-| `cockpit.snapshot_of`, `sessions.snapshot` | `sessions/<id>.json` | truth-local | next (the Stop hook's snapshot; read-only at these sites) |
-| `sessions.read_report` | `sessions/<id>.report.json` | truth-local | next (read-only here) |
-| `sessions.watch_state` | `budget/<session>.json` | truth-local, one session's life | next (written by the bash budget hooks) |
+| `vault.device` | `vault/device.json` | truth-local | through `brain.stateio` (`device init`, the rotation's `forget-previous`) |
+| `cockpit.load_state` | `tui.json` | truth-local | through `brain.stateio`; the save keeps the keys it does not know |
+| `memory.load_state` | `memory-sync/state.json` | truth-local | through `brain.stateio` (the 3-way base) |
+| `cockpit.snapshot_of`, `sessions.snapshot` | `sessions/<id>.json` | truth-local | read-only here, `{}` is right; its writer, the Stop hook (`capture.stop`), through `brain.stateio` |
+| `sessions.read_report` | `sessions/<id>.report.json` | truth-local | read-only here; `sessions.write_report` through `brain.stateio` |
+| `sessions.watch_state` | `budget/<session>.json` | truth-local, one session's life | read-only here; its writer, the budget hook's Python (`budget.check`), through `brain.stateio` |
 | `sessions.app_meta` | the desktop app's session file | foreign, read only | `{}` is right: never written |
 | `codemap.read` | `code-map/<project>.json` | derived (local) | `{}` is right: rebuilt |
 | `codeindex.read_record` | `code-index.json` | derived (local) | `{}` is right: rebuilt |

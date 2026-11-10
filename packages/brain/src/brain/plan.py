@@ -24,12 +24,13 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import paths, secretscan, transcript
+from . import paths, secretscan, stateio, transcript
 
 PLAN_TOOLS = {"mcp__ccd_turn__update_plan": "update", "mcp__ccd_turn__wrap_up": "wrap_up", "TodoWrite": "todos"}
 _NEEDLES = tuple(f'"{name}"'.encode() for name in PLAN_TOOLS)
 STATUSES = ("pending", "in_progress", "completed")
 SUFFIX = ".plan.json"
+PLAN_V = 1  # the plan file's v (brain.stateio)
 TEXT_MAX = 200
 
 
@@ -120,17 +121,19 @@ def capture(payload: dict, now: str | None = None) -> bool:
     sid, tool = payload.get("session_id"), payload.get("tool_name") or ""
     if not sid or tool not in PLAN_TOOLS:
         return False
-    old = read(sid)
-    steps = apply(old["steps"] if old else [], tool, payload.get("tool_input"))
+    st = stateio.load(plan_file(sid), known=PLAN_V)   # a newer brain's plan file is its own: nothing written
+    if not st.writable:
+        return False
+    old = st.data.get("steps") if isinstance(st.data.get("steps"), list) else []
+    steps = apply(old, tool, payload.get("tool_input"))
     if steps is None:
         return False
     at = now or transcript.iso(datetime.now(timezone.utc))
-    rec, _ = secretscan.clean({"v": 1, "session_id": sid, "at": at, "tool": tool, "steps": steps})
-    d = paths.sessions_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    tmp = d / f"{sid}{SUFFIX}.tmp"
-    tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(plan_file(sid))
+    rec, _ = secretscan.clean({"v": PLAN_V, "session_id": sid, "at": at, "tool": tool, "steps": steps})
+    try:
+        stateio.save(st, rec, indent=1, sort_keys=False)
+    except stateio.StateError:
+        return False
     return True
 
 

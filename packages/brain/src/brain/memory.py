@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from . import config, paths, secretscan
+from . import config, paths, secretscan, stateio
 
 DEFAULT_TIMEOUT = 300.0
 DEFAULT_PULL_HOURS = 12.0
@@ -135,12 +135,21 @@ def snapshot(notes: dict[str, Path]) -> dict[str, list[int]]:
     return out
 
 
-def load_state() -> dict:
-    try:
-        data = json.loads((sync_dir() / "state.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+STATE_V = 1  # memory-sync/state.json's v (brain.stateio)
+
+
+def _state(write: bool = False) -> stateio.State:
+    return stateio.load(sync_dir() / "state.json", known=STATE_V, aside=write)
+
+
+def load_state(write: bool = False) -> dict:
+    """The sync's record (the 3-way base, the last snapshot, the pushes and PRs), through brain.stateio. ``write``:
+    the caller will save it, so a state this engine must not write (a newer brain's) is refused here, before any
+    work (SyncError), and an unreadable one is set aside; without it nothing is moved."""
+    st = _state(write)
+    if write and not st.writable:
+        raise SyncError(st.refusal())
+    return st.data if st.status in ("ok", "newer", "aside") else {}
 
 
 def _write(path: Path, data: str | bytes) -> None:
@@ -153,7 +162,12 @@ def _write(path: Path, data: str | bytes) -> None:
 
 
 def save_state(state: dict) -> None:
-    _write(sync_dir() / "state.json", json.dumps(state, indent=1, sort_keys=True, ensure_ascii=False))
+    """The record back to state.json: a backup, then an atomic write (brain.stateio); SyncError when a newer brain
+    wrote it meanwhile."""
+    try:
+        stateio.save(_state(write=True), state)
+    except stateio.StateError as exc:
+        raise SyncError(str(exc)) from None
 
 
 def needs_run(state: dict, now: float | None = None) -> bool:
@@ -688,13 +702,17 @@ def job_main(force: bool = False, out=None, do_import: bool | None = None, **kw)
     started = time.monotonic()
     try:
         (sync_dir() / "queued.json").unlink(missing_ok=True)
-        state = load_state()
-        if not force and not needs_run(state):
+        try:   # a newer brain's record is refused before any fetch: a sync it cannot record would run again
+            state, error = load_state(write=True), ""
+        except SyncError as exc:
+            state, error = load_state(), str(exc)
+        if not force and not error and not needs_run(state):
             return 0
-        report, error = None, ""
+        report = None
         try:
-            report = sync(do_import=mode() == "both" if do_import is None else do_import, state=state,
-                          timeout=timeout, **kw)
+            if not error:
+                report = sync(do_import=mode() == "both" if do_import is None else do_import, state=state,
+                              timeout=timeout, **kw)
         except SyncError as exc:
             error = str(exc)
         except Exception as exc:  # noqa: BLE001 - the job reports, it never raises
@@ -702,7 +720,10 @@ def job_main(force: bool = False, out=None, do_import: bool | None = None, **kw)
             _log_error("memory-sync", exc)
         if report or error:
             if not error:
-                save_state(state)
+                try:
+                    save_state(state)
+                except SyncError as exc:
+                    error = str(exc)
             last = {"at": _now(), "took": round(time.monotonic() - started, 2), "machine": machine(),
                     "result": "failed" if error else "refused" if report.hits else "ok", "error": error}
             if report:

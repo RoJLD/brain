@@ -11,7 +11,8 @@ measured, never counted, never in an exit code, but they keep the milestone ms-b
 generator turns its checks on by giving them a ``run`` (and a CHECKS entry): doc.links and test.links (brain.links)
 are measured where the repo's own store has the Doc and Test types, features.md and feature.links (brain.features)
 in a project whose store has the Feature type; else they are still listed as not measured, and still keep the
-milestone from being met when they would carry P0 or P1.
+milestone from being met when they would carry P0 or P1. feature.coverage (brain.feature_coverage) lists, as info and
+in a section of its own per repo, the commands and modules of a command registry that no feature names.
 
 Outputs: text (every P0 and P1, a count and three examples per P2 check; -v for all), --json (stable keys, no
 timestamp), --trend [N] (the last N completed ISO weeks re-measured at their end commit with today's rules),
@@ -34,12 +35,13 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, features, graph, inventory, links, paths, projects, testcov
+from . import config, feature_coverage, features, graph, inventory, links, paths, projects, testcov
 from .inventory import AuditError
 
-RULESET = 5   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+RULESET = 6   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
 #               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
-#               (wi-brain-test-links-auto); 5: cmd.registry (wi-brain-cli-registry)
+#               (wi-brain-test-links-auto); 5: cmd.registry (wi-brain-cli-registry); 6: feature.coverage, info in
+#               the full audit, NEW in the scout for an added command or module (wi-brain-audit-feature-coverage)
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "
@@ -65,8 +67,9 @@ EXTERNAL = re.compile(r"https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\
 @dataclass(frozen=True)
 class Check:
     id: str
-    severity: str     # P0 or P2; 'class': P1 on an entry or prod unit, P2 elsewhere
-    scout: str        # in --diff: 'new+left', 'new' (added units only) or 'never'
+    severity: str     # P0, P2 or info; 'class': P1 on an entry or prod unit, P2 elsewhere
+    scout: str        # in --diff: 'new+left', 'new' (added units only), 'new+defer' (NEW on an added unit, even an
+    #                   info; DEFER on a touched one, LEFT under the owner's opt-in: brain.scout) or 'never'
     what: str
 
 
@@ -94,6 +97,10 @@ CHECKS = {c.id: c for c in (
                                         "production repo, P2 elsewhere)"),
     Check("feature.links", "class", "new+left", "a module or script no feature is implemented by, or a have or "
                                                 "partial feature with no implemented_by"),
+    # info in the full audit (its own section lists them), never counted: a shipped capability is listed, not a debt
+    Check("feature.coverage", "info", "new+defer", "a command (a module of a command registry's commands/) or a "
+          "module beside the registry's cli.py that no feature names: no implemented_by of its file, no title that "
+          "says its command or its dotted name"),
 )}
 
 
@@ -239,15 +246,8 @@ def feature_links(ctx: dict) -> list[dict] | str:
     fm, rf = ctx.get("features"), ctx["rf"]
     if fm is None:
         return NO_FEATURES
-    name, linked, out = rf.name, set(), []
-    for fid in fm.features:
-        for cid in fm.code(fid):
-            try:
-                repo, path, _ = inventory.parse_code_ref(cid)
-            except ValueError:
-                continue   # coderef.dangling reports it
-            if repo.lower() == name:
-                linked.update({path, f"src/{path}"})
+    name, out = rf.name, []
+    linked = feature_coverage.feature_paths(fm, name)
     for u in rf.units:
         if u.kind in ("module", "script") and u.path not in linked:
             out.append(finding(name, "feature.links", u.path, "no feature is implemented by it",
@@ -260,6 +260,23 @@ def feature_links(ctx: dict) -> list[dict] | str:
     return out
 
 
+def feature_cover(ctx: dict) -> list[dict] | str:
+    """feature.coverage (brain.feature_coverage): a command or module of the repo's command registry that no feature
+    names; its section ({units, named, unnamed}) is kept in ctx's cache for the repo's result."""
+    fm, rf = ctx.get("features"), ctx["rf"]
+    if fm is None:
+        return NO_FEATURES
+    found = feature_coverage.targets(rf, _registries(rf.tree))
+    if not found:
+        return []
+    missing = feature_coverage.unnamed(fm, rf.name, found)
+    ctx["cache"]["feature.coverage"] = feature_coverage.summary(found, missing)
+    return [finding(rf.name, "feature.coverage", t.unit.path, f"no feature names this {t.kind} ({t.label}): no "
+                    f"implemented_by of its file, no title that says {t.phrases[0]}",
+                    f"brain features link <feature> --code {t.unit.path} (or brain features add)", t.unit)
+            for t in missing]
+
+
 PENDING = {
     "readme.yaml": Pending("wi-brain-readme-sync", True, "every"),
     "readme.generated": Pending("wi-brain-readme-sync", True, "every"),
@@ -270,6 +287,7 @@ PENDING = {
     "test.links": Pending("wi-brain-doc-test-links", False, "code", test_links),
     "test.coverage": Pending("wi-brain-test-coverage", False, "python", test_coverage),
     "feature.tests": Pending("wi-brain-test-links-auto", False, "code", feature_tests),
+    "feature.coverage": Pending("wi-brain-audit-feature-coverage", False, "commands", feature_cover),
     "module.ts": Pending("wi-brain-audit-ts", False, "ts"),
     "cmd.leaves": Pending("wi-brain-audit-commands", False, "commands"),
     "code.layer": Pending("wi-brain-brain-coderefs", False, "no-code-layer"),
@@ -737,11 +755,12 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
     found.sort(key=lambda f: (f["severity"] if f["severity"] != "info" else "P9", f["check"], f["unit"]))
     counts = {s: sum(1 for f in found if f["severity"] == s) for s in SEVERITIES + ("info",)}
     classes = {k: sum(1 for u in rf.units if u.cls == k) for k in ("entry", "prod", "other")}
+    cov = (ctx or {}).get("cache", {}).get("feature.coverage")   # feature.coverage's section (feature_cover)
     return {"name": name, "path": str(c.path), "production": c.production or c.entry is not None,
             "commit": t.label, "date": t.date, "counts": counts, "classes": classes,
             "no_entry": rf.no_entry, "missing_entries": missing, "findings": found,
             "not_measured": pending, "waived": [{"unit": u, "reason": r} for u, r in rf.waived],
-            "exempt": rf.exempt}
+            "exempt": rf.exempt, **({"feature_coverage": cov} if cov else {})}
 
 
 def _parallel(fn, items: list) -> list:
@@ -898,6 +917,8 @@ def render_text(data: dict, verbose: bool = False) -> list[str]:
             for check, units in p2.items():
                 more = f", e.g. {', '.join(units[:3])}" + (" (-v: all)" if len(units) > 3 else "")
                 out.append(f"  P2 {check:<16} {len(units)} unit(s){more}")
+            if r.get("feature_coverage"):
+                out.append(feature_coverage.text_line(r["feature_coverage"]))
             if r["not_measured"]:
                 out.append(_not_measured(r))
         c = p["counts"]
@@ -974,6 +995,8 @@ def render_view(p: dict) -> str:
             out += [f"### {sev} {check} ({len(fs)})", "", f"_{CHECKS[check].what}._", ""]                 + [f"- {_cell(f)}" for f in fs] + [""]
         if not by:
             out += ["No measured debt.", ""]
+        if r.get("feature_coverage"):
+            out += feature_coverage.view_lines(r["feature_coverage"])
         if r["waived"]:
             out += ["Waived: " + "; ".join(f"`{w['unit']}` ({w['reason']})" for w in r["waived"]), ""]
         if r["exempt"]:

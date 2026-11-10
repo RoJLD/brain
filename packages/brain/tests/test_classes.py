@@ -49,11 +49,16 @@ def test_a_brain_without_classes_is_refused(brain):
 
 
 def test_every_store_has_a_class(brain):
+    """A tracked file without a class fails; an engine store the brain does not declare takes its suggested class
+    and is noted, never failed (COMPAT-6)."""
     rep = classes.check(cfg=brain({"notes": {"class": "private", "paths": ["notes/**"]}}, machine=False))
     assert any(e.startswith("5 tracked file(s) have no class") for e in rep.errors)
-    assert any("the engine's store ledger ($BRAIN_HOME/ledger) has no class (declare it; suggested: sealed)" in e
-               for e in rep.errors)
-    assert any("transcripts (~/.claude/projects)" in e for e in rep.errors)
+    assert not any("engine" in e or "BRAIN_HOME" in e for e in rep.errors)
+    assert [s.name for s in rep.defaulted] == list(classes.ENGINE_STORES)
+    assert {s.name: s.cls for s in rep.defaulted}["ledger"] == "sealed"
+    assert rep.home_notes[0].startswith(f"{len(classes.ENGINE_STORES)} engine store(s) undeclared take their "
+                                        "suggested class by default: ledger (sealed), sessions (sealed)")
+    assert "transcripts (sealed)" in rep.home_notes[0] and "secrets (secret)" in rep.home_notes[0]
 
 
 def test_destinations_the_class_forbids_are_refused(brain):
@@ -116,6 +121,12 @@ def test_store_of_and_decide(brain, brain_home):
     assert classes.decide(cfg, "ledger", "offsite") == "sealed"
     assert classes.decide(cfg, "ledger", "git-private") == "never"
     assert classes.decide(cfg, "nope", "offsite") == "never"
+    # an engine store the brain leaves undeclared is decided at its suggested class (COMPAT-6)
+    cfg = brain({"repo": {"class": "private", "paths": ["**"]}}, machine=False)
+    assert classes.decide(cfg, "usage", "offsite") == "sealed"
+    assert classes.decide(cfg, "usage", "git-private") == "never"
+    assert classes.decide(cfg, "secrets", "offsite") == "never"
+    assert classes.decide(cfg, "secrets", "local-model") == "never"
 
 
 def test_a_store_under_its_scope_floor_is_refused(brain, monkeypatch, tmp_path):
