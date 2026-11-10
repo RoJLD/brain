@@ -100,7 +100,9 @@ Narrower, or on a tab of several panels, Enter opens it over them.
 `C` chooses the columns of the focused table: shown or hidden (space), their order (Up, Down, or `shift+up`, `shift+down`),
 and the longest its title may be, the rest in the detail; the sessions also offer Cost, App id, Id and Branch. The palette
 (`ctrl+p`) reaches every tab, view, project, sort, filter and table's columns without learning a key, and resets the views.
-The chosen columns are kept in `<BRAIN_HOME>/tui.json`.
+The chosen columns are kept in `<BRAIN_HOME>/tui.json`, a file of its own (`v` 1, a backup `tui.json.bak` at each save,
+an atomic write): what a newer brain added to it is kept through a save, and one a newer brain wrote is shown but not
+written (`brain tui` says the views are not remembered; brain update). See [docs/formats.md](docs/formats.md).
 
 The cockpit's title bar always shows the installed version. Once the screen is drawn, it checks the tags in the
 background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.3 · 0.2.4 available »
@@ -657,7 +659,10 @@ brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell
 hooks run `brain.capture` (`capture.sh <event>` runs `hooks/capture.py`, which calls it with the brain command's
 venv): it reads the hook's JSON on stdin and appends the session events, the session-record snapshots and the action
 records to `<BRAIN_HOME>/ledger` at zero token; it prints nothing and never fails the session (its errors go to
-`ledger/errors.log`; `BRAIN_CAPTURE=0` turns it off).
+`ledger/errors.log`, moved aside each month, or past 1 MB, as `errors-YYYY-MM.log` and kept six months;
+`BRAIN_CAPTURE=0` turns it off). The session snapshots, states, reports and plans under `<BRAIN_HOME>/sessions` and the
+budget watch's states are written through `brain.stateio` (a backup beside each, an atomic write; a newer brain's left
+to it): [docs/formats.md](docs/formats.md) gives each file's policy and each log's retention.
 
 **The engine times itself** (`brain.selftime`, local only, zero token). Every `brain` command and every hook writes
 one exec event (task `brain <command> [<subcommand>]` or `hook <name>`, a bash-only run marked `[bash]`, the engine's

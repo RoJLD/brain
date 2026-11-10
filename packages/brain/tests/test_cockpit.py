@@ -984,3 +984,17 @@ def test_brain_tui_gives_the_app_the_tab_it_is_told_or_the_one_it_last_showed(tm
     assert seen["tab"] == "health" and cockpit.load_state()["tabs"] == {"overview": {"view": "digest"}}
     assert cli.main(["tui", "--project", "demo", "--reset"]) == 0
     assert seen == {"tab": None, "tabs": {}}  # forgotten
+
+
+def test_a_newer_brains_tui_json_is_shown_never_written(tmp_path, monkeypatch, store, capsys):
+    """wi-brain-state-safe-io-rest: the interactive cockpit opens on a newer brain's tui.json, says it will not
+    remember the views, and leaves the file as it was."""
+    text = json.dumps({"v": 2, "scope": "demo", "settings": {"theme": "nord"}})
+    cockpit.state_path().parent.mkdir(parents=True, exist_ok=True)
+    cockpit.state_path().write_text(text, encoding="utf-8")
+    _cockpit(tmp_path, monkeypatch, store)
+    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None: 0)
+    assert cli.main(["tui", "--project", "demo", "--plain"]) == 0
+    err = capsys.readouterr().err
+    assert "newer brain" in err and "views are not remembered" in err
+    assert cockpit.state_path().read_text(encoding="utf-8") == text

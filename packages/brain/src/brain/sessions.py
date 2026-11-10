@@ -52,7 +52,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import paths, secretscan, transcript
+from . import paths, secretscan, stateio, transcript
 
 HOST_ENV = "CLAUDE_CODE_HOST_SESSION_ID"
 SESSION_ENV = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")
@@ -587,14 +587,20 @@ def build_report(session: str, records: list[dict], sr: dict, meta: dict, plan_s
            "plan": f"{done}/{len(plan_steps)}" if plan_steps else ""}
     return secretscan.clean({k: v for k, v in rep.items() if v or k in ("turn", "blocked")})[0]
 
-def write_report(session: str, report: dict) -> Path:
-    d = paths.sessions_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    f = report_file(session)
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(tmp, f)
-    return f
+REPORT_V = 1  # sessions/<id>.report.json's v (brain.stateio)
+
+
+def write_report(session: str, report: dict) -> Path | None:
+    """The report written through brain.stateio (a backup, an atomic write); None when a newer brain wrote the file
+    (it keeps it: nothing written)."""
+    st = stateio.load(report_file(session), known=REPORT_V)
+    if not st.writable:
+        return None
+    try:
+        stateio.save(st, report, indent=1, sort_keys=False)
+    except stateio.StateError:   # a newer brain wrote it since the load
+        return None
+    return st.path
 
 
 # --- the rows the commands and the cockpit show ---
