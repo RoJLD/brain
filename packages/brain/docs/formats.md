@@ -196,8 +196,9 @@ python packages/brain/installer/stranger_test.py --source . --upgrade-from v0.2.
 ```
 
 1. **The previous engine writes** every registered format into a new brain: brain init, a decision, an AR, an SR,
-   the older `permissions.yaml`, its own exec events. A format registered here (a `<format>/v<N>/` folder) that the
-   test does not place fails it, so the test grows with the registry.
+   the older `permissions.yaml` and `members.yaml` (no command writes them), its own exec events. A format
+   registered here (a `<format>/v<N>/` folder) that the test does not place fails it, so the test grows with the
+   registry.
 2. **This checkout is installed over it**, the pin moved if the version changed, and runs strict (`BRAIN_STRICT=1`):
    the store plan (`brain init` on the existing brain), `brain sync` (the documented step after an upgrade: the
    plugin rendered again), `brain check`, `brain record check` and the stranger test's Lite scenario.

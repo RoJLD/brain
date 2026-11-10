@@ -10,4 +10,5 @@ section: Added
   verifies, `(signature not verified: brain identity check)` when it does not, else `(unsigned, relayed by session
   S)`, and `asked.by` names the asking session, else the owner: never `unknown`. Nothing is
   refused by default: without `members.yaml` nothing is checked, and with it the findings are warnings until the
-  optional `config.json` `identity.require_signed: true` makes them errors (docs/identity.md).
+  optional `config.json` `identity.require_signed: true` makes them errors (docs/identity.md). `members.yaml` is on the
+  personal side of a new brain's `boundary.yaml`; a brain made before adds that rule (docs/identity.md).

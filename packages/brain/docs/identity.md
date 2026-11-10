@@ -52,6 +52,9 @@ memberships:
 - Its data class is confidential (names, accounts): declare it in `config.json` `classes.stores`, e.g.
   `"members": {"class": "confidential", "paths": ["members.yaml"], "waive": {"git-private": "public keys and names,
   read in clear by brain check"}}` ([vault.md](vault.md)).
+- Its side in `boundary.yaml` is personal: a brain made by `brain init` from now on has the rule; one made before
+  adds `- {glob: "members.yaml", side: personal, why: "who belongs to the brain"}` to its `boundary.yaml`, or
+  `brain check` reports the file as classified by no rule.
 
 `brain check` and `brain identity check` validate it: the schema, unique `person_id`s, every person, organization and
 tenant named exists, no private key.

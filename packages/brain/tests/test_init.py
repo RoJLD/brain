@@ -4,6 +4,7 @@ import json
 import re
 import shlex
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -269,6 +270,19 @@ def test_the_generic_template_writes_a_publishable_brain(fresh, capsys):
     assert re.search(r"boundary: \d+ tracked file\(s\) classified; engine side 1 file\(s\), readiness 0 \(max 0\), "
                      r"public scan green", out), out
     assert cli.main(["--root", str(fresh), "boundary", "--check"]) == 0
+
+
+def test_the_generic_template_classifies_members_yaml(fresh, capsys):
+    """members.yaml (docs/identity.md) is on the personal side of a new brain: brain check classifies it."""
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    committed(fresh)
+    members = Path(__file__).parent / "fixtures" / "formats" / "members" / "v1" / "older.yaml"
+    (fresh / "members.yaml").write_text(members.read_text(encoding="utf-8"), encoding="utf-8")
+    run_git(fresh, "add", "-A")
+    capsys.readouterr()
+    assert cli.main(["--root", str(fresh), "boundary", "--check"]) == 0, capsys.readouterr().out  # else: no rule
+    assert cli.main(["--root", str(fresh), "boundary"]) == 0
+    assert "rule 'members.yaml' classifies no tracked file" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("rel, text, why", [
