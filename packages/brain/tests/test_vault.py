@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from brain import config, keystore, rotation, vault
+from brain import config, keystore, rotation, stateio, vault
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_age.py"
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
@@ -371,7 +371,7 @@ def test_a_cut_rotation_leaves_the_keystore_as_it_was(brain, brain_home, monkeyp
     def full(path, text):
         raise OSError(28, "No space left on device")
     with monkeypatch.context() as m:   # never monkeypatch.undo(): it would drop the fixtures' BRAIN_HOME and keystore
-        m.setattr(vault, "_write_atomic", full)
+        m.setattr(stateio, "write_atomic", full)   # device.json goes through brain.stateio
         with pytest.raises(vault.VaultError, match="stopped.*as it was"):
             vault.device_init(cfg, found=found, rotate=True)
     assert keystore.Memory.data == {"device": before} and vault.device_file().read_text() == facts
@@ -688,3 +688,23 @@ def test_an_age_identity_is_a_secret_to_the_scan():
     ident = "AGE-SECRET-" + "KEY-1" + "QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L" + "Q" * 26
     assert secretscan.find(f"key: {ident}") == ["age-secret-key"]
     assert secretscan.find("age1" + "q" * 58) == []  # a public recipient is not a secret
+
+
+def test_device_json_goes_through_stateio_and_a_newer_one_stops_device_init(brain, brain_home):
+    """wi-brain-state-safe-io-rest: device.json is truth-local; a newer brain's stops device init before the keystore
+    is touched, an unreadable one is read as none and set aside by the next write."""
+    found = fake_age()
+    cfg = brain({})
+    f = vault.device_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"v": 2, "name": "box9"}', encoding="utf-8")
+    with pytest.raises(vault.VaultError, match="newer brain.*brain update"):
+        vault.device_init(cfg, "box1", now=NOW, found=found)
+    assert keystore.Memory.data == {} and f.read_text(encoding="utf-8") == '{"v": 2, "name": "box9"}'
+    assert vault.device() == {"name": "box9"}  # read as it is
+    f.write_text("{bad", encoding="utf-8")
+    assert vault.device() == {} and f.exists()  # a read moves nothing
+    vault.device_init(cfg, "box1", now=NOW, found=found)
+    disk = json.loads(f.read_text(encoding="utf-8"))
+    assert list(disk)[:2] == ["v", "name"] and disk["v"] == vault.DEVICE_V and disk["name"] == "box1"
+    assert len(list(f.parent.glob("device.json.unreadable-*"))) == 1

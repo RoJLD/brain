@@ -255,7 +255,9 @@ def register(sub, ctx) -> None:
     pr.add_argument("--repo", help="the folder to render the project or local level into (a worktree of a "
                                    "production repo, for a PR there)")
     pr.add_argument("--write", action="store_true", help="add the missing rules (not the user file, not a "
-                                                         "production checkout)")
+                                                         "production checkout); a settings file that is not a JSON "
+                                                         "object is refused, never replaced; one outside a git work "
+                                                         "tree is backed up beside itself (.bak) first")
     pr.add_argument("--out", help="session level: write the file for claude --settings there")
     pr.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
                     help="the plans; with --level user, the user scope's rules by verdict (install.ps1 reads it)")

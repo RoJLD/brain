@@ -63,7 +63,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, graph, paths, projects, schema
+from . import config, graph, paths, projects, schema, stateio
 
 FILE = "permissions.yaml"
 ENGINE_FILE = "allow-rules.txt"
@@ -943,13 +943,15 @@ class ClaudeCode(Adapter):
                 for v in VERDICTS}
 
     def write(self, path: Path, missing: dict[str, list[str]], expired: dict[str, list[str]] | None = None) -> None:
-        """Add the missing rules; take out the expired ones (rules the hierarchy declared, and only those)."""
+        """Add the missing rules; take out the expired ones (rules the hierarchy declared, and only those). The file
+        is Claude Code's (a foreign file, brain.stateio): one that cannot be read, is not JSON or not an object is
+        refused, never replaced; one Claude Code wrote meanwhile is refused (run again); its other keys are kept; it
+        is backed up beside itself (``settings.json.bak``) unless it lies in a git work tree (a project's file: git
+        keeps it, and a .bak would show in git status), then written atomically."""
         try:
-            data = json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else {}
-        except ValueError as exc:
-            raise PermissionsError(f"{path}: not readable JSON ({exc}): fix it by hand first") from exc
-        if not isinstance(data, dict):
-            raise PermissionsError(f"{path}: not a JSON object")
+            data, seen = stateio.read_foreign(path)
+        except stateio.StateError as exc:
+            raise PermissionsError(str(exc)) from None
         perms = data.setdefault("permissions", {})
         if not isinstance(perms, dict):
             raise PermissionsError(f"{path}: permissions is not an object: fix it by hand first")
@@ -961,9 +963,16 @@ class ClaudeCode(Adapter):
                 perms[v] = list(perms.get(v) or []) + missing[v]
             if (expired or {}).get(v) and perms.get(v):
                 perms[v] = [x for x in perms[v] if x not in expired[v]]
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8", newline="\n") as fh:   # UTF-8 without BOM, as Claude Code writes it
-            fh.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        try:   # UTF-8 without BOM, as Claude Code writes it
+            stateio.write_foreign(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", seen,
+                                  keep_backup=not in_work_tree(path))
+        except stateio.StateError as exc:
+            raise PermissionsError(str(exc)) from None
+
+
+def in_work_tree(path: Path) -> bool:
+    """Whether ``path`` lies in a git work tree (a ``.git`` folder or file in one of its parents)."""
+    return any((p / ".git").exists() for p in Path(path).resolve().parents)
 
 
 ADAPTERS: dict[str, Adapter] = {"claude": ClaudeCode()}

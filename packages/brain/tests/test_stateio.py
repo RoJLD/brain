@@ -1,12 +1,18 @@
 """brain.stateio and the truth-local files that go through it (wi-brain-state-safe-io, spec-brain-data-compat N4):
-installed.json, alerts/state.json, vault/state.json, usage/sessions.json."""
+installed.json, alerts/state.json, vault/state.json, usage/sessions.json; then (wi-brain-state-safe-io-rest) tui.json,
+the sessions' snapshots, states, reports and plans, Claude Code's settings.json (foreign) and the log class."""
 
+import io
 import json
+import os
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from brain import alerts, paths, schedule, stateio, usage, vault
+from brain import (alerts, capture, cockpit, paths, permissions, plan, schedule, selftime, sessions, stateio,
+                   usage, vault)
 
 
 def _asides(f: Path) -> list[Path]:
@@ -298,3 +304,228 @@ def test_usage_ledger_is_saved_with_its_v_atomically_and_backed_up(brain_home, t
     assert data["v"] == usage.SCAN_V and set(data["rows"]) == {"gone.jsonl", "p/s.jsonl"}
     assert json.loads(Path(str(f) + ".bak").read_text(encoding="utf-8"))["rows"] == {"gone.jsonl": {"cost": 2}}
     assert not [p for p in f.parent.iterdir() if p.name.endswith(".tmp")]
+
+
+# --- wi-brain-state-safe-io-rest: the cockpit's tui.json ---
+
+def test_tui_json_keeps_the_keys_this_engine_does_not_know(brain_home):
+    f = _write(cockpit.state_path(), json.dumps({
+        "v": 1, "cockpit": 1, "future": {"a": 1}, "scope": "old",
+        "panels": {"newpanel": {"sort": "x"}, "queue": {"kind": "idea"}},
+        "tabs": {"newtab": {"view": "grid"}}, "columns": {"newtable": {"shown": ["A"]}},
+        "settings": {"theme": "dark", "newsetting": 2, "titles": {"newpanel": "Mine", "queue": "Q"}}}))
+    assert cockpit.save_state({"scope": "s", "panels": {"queue": {"kind": "decision"}}, "settings": {"theme": "nord"}})
+    disk = json.loads(f.read_text(encoding="utf-8"))
+    assert disk["v"] == 1 and disk["cockpit"] == 1 and disk["future"] == {"a": 1} and disk["scope"] == "s"
+    assert disk["panels"] == {"newpanel": {"sort": "x"}, "queue": {"kind": "decision"}}  # a newer brain's panel kept
+    assert disk["tabs"] == {"newtab": {"view": "grid"}} and disk["columns"] == {"newtable": {"shown": ["A"]}}
+    # a known title the save does not carry is the owner's to drop; the newer brain's own keys stay
+    assert disk["settings"] == {"theme": "nord", "newsetting": 2, "titles": {"newpanel": "Mine"}}
+    assert json.loads(Path(str(f) + ".bak").read_text(encoding="utf-8"))["scope"] == "old"  # backed up first
+    assert cockpit.load_state()["settings"] == {"theme": "nord"}
+
+
+def test_tui_json_of_a_newer_brain_is_read_but_never_written(brain_home):
+    text = json.dumps({"v": 2, "scope": "theirs", "settings": {"theme": "nord"}})
+    f = _write(cockpit.state_path(), text)
+    assert cockpit.load_state() == {"scope": "theirs", "settings": {"theme": "nord"}}  # a tolerant reader
+    assert cockpit.save_state({"scope": "mine"}) is False and f.read_text(encoding="utf-8") == text
+    assert "newer brain" in cockpit.state_refusal() and "brain update" in cockpit.state_refusal()
+    _write(f, "{not json")
+    assert cockpit.state_refusal() == ""  # an unreadable one: the save sets it aside, then writes
+    assert cockpit.load_state() == {} and f.exists() and not _asides(f)  # a read moves nothing
+    assert cockpit.save_state({"scope": "mine"}) and len(_asides(f)) == 1
+    assert cockpit.load_state() == {"scope": "mine"}
+
+
+# --- the sessions' files: snapshot, state, report, plan ---
+
+def _stop(t: Path, sid: str) -> None:
+    capture.main(["stop"], stdin=io.StringIO(json.dumps({"session_id": sid, "transcript_path": str(t)})))
+
+
+def test_the_stop_snapshot_and_its_state_go_through_stateio(brain_home, fixture_transcript, tmp_path):
+    sid = "aaaabbbb-1111-2222-3333-444455556666"
+    t = tmp_path / "s.jsonl"
+    t.write_bytes(fixture_transcript.read_bytes())
+    _stop(t, sid)
+    _stop(t, sid)
+    d = paths.sessions_dir()
+    sr, state = (json.loads((d / f"{sid}{x}").read_text(encoding="utf-8")) for x in (".json", ".state.json"))
+    assert sr["v"] == capture.SR_V == 1 and state["v"] == capture.STATS_V and state["offset"] > 0
+    assert (d / f"{sid}.json.bak").is_file() and (d / f"{sid}.state.json.bak").is_file()
+    assert not [p for p in d.iterdir() if p.name.endswith(".tmp")]
+    assert not (brain_home / "ledger" / "errors.log").exists()
+
+
+def test_a_newer_brains_snapshot_is_left_to_it(brain_home, fixture_transcript, tmp_path):
+    sid = "aaaabbbb-1111-2222-3333-444455556666"
+    t = tmp_path / "s.jsonl"
+    t.write_bytes(fixture_transcript.read_bytes())
+    srf = _write(paths.sessions_dir() / f"{sid}.json", '{"v": 2, "id": "theirs"}')
+    _stop(t, sid)
+    assert srf.read_text(encoding="utf-8") == '{"v": 2, "id": "theirs"}'
+    assert not (paths.sessions_dir() / f"{sid}.state.json").exists()  # nothing written beside it either
+    assert not (brain_home / "ledger" / "errors.log").exists()  # not an error: each turn would log one
+
+
+def test_an_unreadable_snapshot_state_is_set_aside_and_the_count_starts_over(brain_home, fixture_transcript,
+                                                                              tmp_path):
+    sid = "aaaabbbb-1111-2222-3333-444455556666"
+    t = tmp_path / "s.jsonl"
+    t.write_bytes(fixture_transcript.read_bytes())
+    sf = _write(paths.sessions_dir() / f"{sid}.state.json", "[1, 2]")
+    _stop(t, sid)
+    assert len(_asides(sf)) == 1 and json.loads(sf.read_text(encoding="utf-8"))["offset"] > 0
+
+
+def test_the_report_is_written_through_stateio_and_a_newer_one_left(brain_home):
+    rep = {"v": 1, "session": "s-1", "at": "2026-11-10T10:00:00Z", "turn": "idle", "blocked": False}
+    f = sessions.write_report("s-1", rep)
+    assert f == sessions.report_file("s-1") and sessions.read_report("s-1") == rep
+    assert sessions.write_report("s-1", {**rep, "turn": "asking"}) == f
+    assert json.loads(Path(str(f) + ".bak").read_text(encoding="utf-8"))["turn"] == "idle"
+    assert list(json.loads(f.read_text(encoding="utf-8")))[:2] == ["v", "session"]  # its order kept
+    _write(f, '{"v": 3, "session": "s-1"}')
+    assert sessions.write_report("s-1", rep) is None and sessions.read_report("s-1") == {"v": 3, "session": "s-1"}
+
+
+def test_the_plan_file_of_a_newer_brain_is_left_to_it(brain_home):
+    f = _write(plan.plan_file("s-1"), '{"v": 2, "steps": []}')
+    call = {"session_id": "s-1", "tool_name": "TodoWrite", "tool_input": {"todos": [{"content": "x",
+                                                                                      "status": "pending"}]}}
+    assert plan.capture(call) is False and f.read_text(encoding="utf-8") == '{"v": 2, "steps": []}'
+    _write(f, "{bad")
+    assert plan.capture(call) and len(_asides(f)) == 1 and plan.read("s-1")["steps"][0]["status"] == "pending"
+
+
+# --- a foreign file: Claude Code's settings.json ---
+
+def test_read_foreign_refuses_what_it_cannot_read_and_never_moves_it(tmp_path):
+    assert stateio.read_foreign(tmp_path / "none.json") == ({}, None)
+    for text, why in (("{bad", "not readable JSON"), ("[1]", "not a JSON object")):
+        f = _write(tmp_path / "s.json", text)
+        with pytest.raises(stateio.StateError, match=f"{why}.*fix it by hand first"):
+            stateio.read_foreign(f)
+        assert f.read_text(encoding="utf-8") == text and not _asides(f)
+    (tmp_path / "dir.json").mkdir()   # a read that fails (here a folder; a lock or a permission alike)
+    with pytest.raises(stateio.StateError, match="cannot be read"):
+        stateio.read_foreign(tmp_path / "dir.json")
+    f = tmp_path / "bom.json"
+    f.write_bytes(b'\xef\xbb\xbf{"a": 1}')
+    assert stateio.read_foreign(f) == ({"a": 1}, b'\xef\xbb\xbf{"a": 1}')
+
+
+def test_write_foreign_refuses_a_file_its_owner_changed_meanwhile(tmp_path):
+    f = _write(tmp_path / "s.json", '{"a": 1}')
+    data, seen = stateio.read_foreign(f)
+    f.write_text('{"a": 2}', encoding="utf-8")   # the owner wrote it meanwhile
+    with pytest.raises(stateio.StateError, match="changed while it was being edited"):
+        stateio.write_foreign(f, '{"a": 3}\n', seen)
+    assert f.read_text(encoding="utf-8") == '{"a": 2}'
+    with pytest.raises(stateio.StateError, match="changed"):
+        stateio.write_foreign(tmp_path / "new.json", "{}\n", b"{}")  # it was there, now it is gone
+    assert stateio.write_foreign(tmp_path / "new.json", "{}\n", None) is None  # nothing to back up
+    data, seen = stateio.read_foreign(f)
+    assert stateio.write_foreign(f, '{"a": 3}\n', seen, keep_backup=False) is None and not Path(str(f) + ".bak").exists()
+
+
+def test_claude_settings_are_backed_up_kept_and_written_atomically(tmp_path):
+    home = permissions.claude_home()
+    assert str(home).startswith(str(tmp_path))   # never the owner's real ~/.claude
+    f = _write(home / "settings.json", json.dumps({"theme": "dark", "permissions": {"allow": ["A"], "x": 1}}))
+    before = f.read_text(encoding="utf-8")
+    permissions.ClaudeCode().write(f, {"allow": ["B"], "deny": ["C"]}, {"allow": ["A"]})
+    data = json.loads(f.read_text(encoding="utf-8"))
+    assert data == {"theme": "dark", "permissions": {"allow": ["B"], "x": 1, "deny": ["C"]}}  # other keys kept
+    assert Path(str(f) + ".bak").read_text(encoding="utf-8") == before
+    assert not [p for p in home.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_claude_settings_unreadable_or_changed_meanwhile_are_refused_untouched(tmp_path, monkeypatch):
+    f = _write(permissions.claude_home() / "settings.json", "{bad")
+    with pytest.raises(permissions.PermissionsError, match="fix it by hand first"):
+        permissions.ClaudeCode().write(f, {"allow": ["B"]})
+    assert f.read_text(encoding="utf-8") == "{bad" and not Path(str(f) + ".bak").exists() and not _asides(f)
+    _write(f, '{"permissions": {}}')
+    real = stateio.read_foreign
+
+    def racing(path):
+        got = real(path)
+        path.write_text('{"permissions": {"allow": ["Z"]}}', encoding="utf-8")   # Claude Code writes meanwhile
+        return got
+    monkeypatch.setattr(stateio, "read_foreign", racing)
+    with pytest.raises(permissions.PermissionsError, match="run the command again"):
+        permissions.ClaudeCode().write(f, {"allow": ["B"]})
+    assert json.loads(f.read_text(encoding="utf-8")) == {"permissions": {"allow": ["Z"]}}
+
+
+def test_a_project_settings_file_in_a_git_tree_is_not_backed_up_beside_itself(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    f = _write(repo / ".claude" / "settings.local.json", '{"permissions": {}}')
+    permissions.ClaudeCode().write(f, {"allow": ["B"]})
+    assert json.loads(f.read_text(encoding="utf-8"))["permissions"]["allow"] == ["B"]
+    assert not Path(str(f) + ".bak").exists()   # it would show in git status; git keeps the shared one
+    assert permissions.in_work_tree(f) and not permissions.in_work_tree(permissions.claude_home() / "settings.json")
+
+
+# --- the log class ---
+
+NOV = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+
+
+def _aged(f: Path, when: datetime) -> Path:
+    os.utime(f, (when.timestamp(), when.timestamp()))
+    return f
+
+
+def test_month_of_and_the_retention_window():
+    assert [stateio.month_of(n) for n in ("errors-2026-10.log", "errors-2026-10-2.log", "exec-bash-2026-09.jsonl",
+                                          "errors.log")] == ["2026-10", "2026-10", "2026-09", ""]
+    assert stateio.oldest_kept(NOV, 6) == "2026-06" and stateio.oldest_kept(datetime(2026, 2, 1), 3) == "2025-12"
+    assert selftime.KEEP_MONTHS == stateio.LOG_RETENTION["timing"]  # the engine's timing is a log class
+    assert stateio.LOG_RETENTION["ledger"] is None  # the records' ledgers are kept
+
+
+def test_prune_months_drops_only_the_months_past_the_retention(tmp_path):
+    files = [_write(tmp_path / n, "x") for n in ("e-2026-04.log", "e-2026-05.log", "e-2026-11.log", "notes.log")]
+    assert stateio.prune_months(files, None, NOV) == [] and all(f.exists() for f in files)  # kept: a record
+    assert stateio.prune_months(files, 6, NOV) == [files[0], files[1]]
+    assert [f.exists() for f in files] == [False, False, True, True]  # a name without a month is never pruned
+
+
+def test_rotate_log_moves_an_earlier_months_log_aside(tmp_path):
+    f = _aged(_write(tmp_path / "errors.log", "old\n"), datetime(2026, 10, 30, tzinfo=timezone.utc))
+    assert stateio.rotate_log(f, NOV) == tmp_path / "errors-2026-10.log" and not f.exists()
+    assert stateio.rotate_log(f, NOV) is None  # nothing to move
+    _write(f, "this month\n")
+    assert stateio.rotate_log(f, NOV) is None and f.exists()  # this month's: appended to
+    _write(f, "x" * 50)
+    assert stateio.rotate_log(f, NOV, max_bytes=10) == tmp_path / "errors-2026-11.log"  # past its size
+    _write(f, "x" * 50)
+    assert stateio.rotate_log(f, NOV, max_bytes=10) == tmp_path / "errors-2026-11-2.log"  # the name is taken
+    old = _write(tmp_path / "errors-2026-01.log", "x")
+    _aged(_write(f, "y"), datetime(2026, 10, 1, tzinfo=timezone.utc))
+    stateio.rotate_log(f, NOV, keep=6)
+    assert not old.exists() and (tmp_path / "errors-2026-10-2.log").exists()  # past six months: gone
+
+
+def test_the_error_sink_rotates_errors_log_monthly(brain_home):
+    d = brain_home / "ledger"
+    f = _write(d / "errors.log", "2026-01-01T00:00:00Z old: x\n")
+    then = time.time() - 40 * 86400   # last month or the one before: an earlier month in any case
+    os.utime(f, (then, then))
+    month = time.strftime("%Y-%m", time.gmtime(then))
+    capture._log_error("test", ValueError("boom"))
+    assert (d / f"errors-{month}.log").read_text(encoding="utf-8") == "2026-01-01T00:00:00Z old: x\n"
+    now = f.read_text(encoding="utf-8")
+    assert now.endswith("test: ValueError: boom\n") and "old" not in now and not (d / "errors.log.1").exists()
+
+
+def test_refused_tells_a_writers_refusal_from_a_file_it_will_set_aside(tmp_path):
+    assert not stateio.load(tmp_path / "none.json", aside=False).refused
+    assert not stateio.load(_write(tmp_path / "bad.json", "{bad"), aside=False).refused  # set aside by its writer
+    assert stateio.load(_write(tmp_path / "new.json", '{"v": 9}'), aside=False).refused
+    (tmp_path / "dir.json").mkdir()   # a read that fails: a lock, a permission
+    assert stateio.load(tmp_path / "dir.json", aside=False).refused
