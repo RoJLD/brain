@@ -20,7 +20,7 @@ The checks, in order; the first that holds decides:
   --observe): every start reads the quota first. A machine that never notes a reading is not checked.
 - ``memory``: a new session or a workflow while the machine's committed memory (Windows: what it promised, RAM plus
   page file, in % of its commit limit; elsewhere the memory in use) is at ``memory`` % or more, or its available RAM
-  (what is free now) is under ``memory_available_gb`` GB: deny, naming both measures and the one that refused
+  (what is free now) is under ``memory_available_gb`` GB (default 0: no floor; the owner opts in): deny, naming both measures and the one that refused
   (wi-brain-memory-guard-two-measures: committed memory alone sat at 93-96 % with 24 GB of RAM free).
 - ``sessions``: a new session while the sessions running in parallel (the app's sessions not archived and active in
   the last ``live_minutes``; without the app, the session records written in that time) reach the cap: the smaller of
@@ -58,7 +58,7 @@ from . import midsession, paths
 
 GUARD = "usage"
 DEFAULTS = {"enabled": True, "warn": 80.0, "critical": 95.0, "sessions": 8, "brainstorms": 2, "memory": 97.0,
-            "memory_available_gb": 4.0, "wave_hours": 4.0, "session_hour_usd": 14.0, "fresh_minutes": 60, "live_minutes": 30,
+            "memory_available_gb": 0.0, "wave_hours": 4.0, "session_hour_usd": 14.0, "fresh_minutes": 60, "live_minutes": 30,
             "brainstorm_hours": 12, "brainstorm_title": r"^\W*brainstorm\b"}
 LOWER_ONLY = ("sessions", "brainstorms")   # what a project's usage: may lower for itself, never raise
 SESSION_TOOL = re.compile(r"^mcp__.+__start_session$")
@@ -454,7 +454,8 @@ def memory_text(committed: float | None, available_gb: float | None, lim: dict) 
     """Both measures and their thresholds, in words: brain usage guard, a refusal, brain status."""
     c = f"{committed:.1f} % committed" if committed is not None else "committed unknown"
     a = f"{available_gb:.1f} GB of RAM available" if available_gb is not None else "available RAM unknown"
-    return (f"{c} (refused from {lim['memory']:g} %), {a} (refused under {lim['memory_available_gb']:g} GB)")
+    floor = lim["memory_available_gb"]
+    return f"{c} (refused from {lim['memory']:g} %), {a}" + (f" (refused under {floor:g} GB)" if floor else " (no floor)")
 
 
 def memory_refusal(committed: float | None, available_gb: float | None, lim: dict) -> str:
@@ -686,7 +687,8 @@ def render(rep: dict) -> list[str]:
     lim, q = s["caps"], s["quota"]
     out = [f"usage guard ({'on' if lim['enabled'] else 'off'}; project {s['project'] or '-'}): warn {lim['warn']:g} %, "
            f"critical {lim['critical']:g} %, sessions {lim['sessions']:g}, brainstorms {lim['brainstorms']:g}, "
-           f"memory {lim['memory']:g} % committed or under {lim['memory_available_gb']:g} GB of RAM, fresh {lim['fresh_minutes']:g} min"]
+           f"memory {lim['memory']:g} % committed" + (f" or under {lim['memory_available_gb']:g} GB of RAM"
+                                              if lim["memory_available_gb"] else "") + f", fresh {lim['fresh_minutes']:g} min"]
     for w, v in q["windows"].items():
         out.append(f"  {w:<9} {v['pct']:.0f} % ({v['how']} at {v['at'][11:16]} UTC, resets "
                    f"{v['resets'][:16].replace('T', ' ')} UTC)")
