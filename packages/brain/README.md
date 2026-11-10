@@ -156,6 +156,18 @@ retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root
 messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
 `audit: {max_lines: 1000, complexity: 15}`.
 
+The scout also reads four cheap norms in the AST of each Python file a change touches (`brain.norms`):
+`norm.timeout` (a `subprocess.run`, `call`, `check_call`, `check_output` or `urlopen` without `timeout=`, a
+`Popen`'s `communicate()` or `wait()` without one), `norm.encoding` (an `open()` in text mode, a `read_text()` or a
+`write_text()` without `encoding=`), `norm.naive-time` (a `datetime.now()` or `today()` without a tz, or a
+`utcnow()`, stored: made text by `isoformat()`, `str()` or an f-string, put in a dict or given to `json.dump`) and
+`norm.secret-argv` (a token, password, secret or API key variable in a subprocess call's command or its `env`, or
+assigned to `os.environ[...]`: a secret travels by stdin or the keystore). A call that unpacks `**kwargs`, or whose
+mode is not a literal, is not judged. What the change adds is an `info` line by default (shown, never blocking), a
+NEW line under `config.json` `audit.norm_lints_strict: true` (the owner's opt-in), which a `Justified: <path>: ...`
+line clears; the occurrences already in a touched file, or moved into it, make one DEFER line per file and norm to the
+repo's debt item, fixed by batches.
+
 ### Feature coverage
 
 A shipped capability cannot miss the feature matrix (`FEATURES.md`): in a package whose `commands/` lists its own
