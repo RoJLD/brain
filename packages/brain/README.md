@@ -183,7 +183,10 @@ of its git remotes is in `config.json` `public.repos`) gets the public render: a
 `public_id` props stand for a title or an id that names the owner or a private project (`brain features set <id>
 public_title="..." public_id=feat-...`; the graph keeps both, `brain features show` prints them), and only the repo's
 own code, tests and docs are shown, no spec, ADR or work item of the private brain. The render warns, line by line,
-about what `brain check --public` would still refuse in it. The render has no date and sorts what it lists: the same
+about what `brain check --public` would still refuse in it. In such a clone the check (`brain audit`'s `features.md`,
+`brain features render` without `--write`) accepts the full render too, which is what the file held before the
+public render existed; `config.json` `features.public_strict: true` (the owner's opt-in, default false) makes it
+accept the public render only. The render has no date and sorts what it lists: the same
 graph gives the same file.
 
 ### The impact of a change

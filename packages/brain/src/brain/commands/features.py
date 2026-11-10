@@ -23,22 +23,38 @@ USAGE = """\
                  repo's features (no --write: exit 1 when the file is not the render; under config.json views.strict,
                  another engine than engine.pin writes nothing); into a clone of a public repo (config.json
                  public.repos), the public render: props public_title and public_id, the repo's own code, tests and
-                 docs, no spec, ADR or item; sync [--offline]: statuses named by merged PRs
+                 docs, no spec, ADR or item (its check accepts the full render too unless config.json
+                 features.public_strict); sync [--offline]: statuses named by merged PRs
                  ("feat-brain-x: have"), then FEATURES.md
 """
 
 
-def _render_for(args, root: Path, store: Path, repo: str, target: Path) -> tuple[str, bool]:
-    """(the render of ``repo``'s FEATURES.md for ``target``, whether it is the public render): public when the
-    target's checkout is a clone of a public repo; then each line brain check --public would refuse is a warning."""
+def _render_for(args, root: Path, store: Path, repo: str, target: Path) -> tuple[str, bool, str | None]:
+    """(the render of ``repo``'s FEATURES.md for ``target``, whether it is the public render, the render the check
+    accepts too): public when the target's checkout is a clone of a public repo, then the full render passes the
+    check too unless config.json features.public_strict, and each line brain check --public would refuse is a
+    warning."""
     label = store.relative_to(root).as_posix() if store.is_relative_to(root) else store.as_posix()
     cfg = config.load(root)
     public = features.public_checkout(target.parent, cfg)
-    text = features.render(features.load_store(store, _root_repo(args, root)), repo, label, public=public)
+    m = features.load_store(store, _root_repo(args, root))
+    text = features.render(m, repo, label, public=public)
     for line in features.denied_lines(text, cfg) if public else []:
         print(f"brain: warning: the public {features.VIEW} of {repo}: {line} (brain features set <feature> "
               f"{features.PUBLIC_TITLE}=... or {features.PUBLIC_ID}=...)", file=sys.stderr)
-    return text, public
+    return text, public, features.also_accepted(m, repo, label, public, features.public_strict(cfg))
+
+
+def _check_view(repo: str, public: bool, old: str | None, text: str, also: str | None) -> int:
+    """brain features render without --write: 1 when ``old`` is neither ``text`` nor ``also`` (a public clone's full
+    render, accepted unless config.json features.public_strict), with why."""
+    why = features.check_view(old, text, also)
+    full = not why and old is not None and old.replace("\r\n", "\n") != text
+    print(f"{features.VIEW} of {repo}{' (public)' if public else ''}: "
+          + (f"{why}: brain features render --write" if why else "up to date")
+          + (f" (the full render: config.json features.{features.PUBLIC_STRICT} would ask for the public one)"
+             if full else ""))
+    return 1 if why else 0
 
 
 def _features_view(args, root: Path, store: Path, write: bool, repo: str = "", out: str = "") -> int:
@@ -50,13 +66,10 @@ def _features_view(args, root: Path, store: Path, write: bool, repo: str = "", o
               file=sys.stderr)
         return 1
     target = Path(out).resolve() if out else root / features.VIEW
-    text, public = _render_for(args, root, store, repo, target)
+    text, public, also = _render_for(args, root, store, repo, target)
     old = target.read_text(encoding="utf-8") if target.is_file() else None
     if not write:
-        why = features.check_view(old, text)
-        print(f"{features.VIEW} of {repo}{' (public)' if public else ''}: "
-              + (f"{why}: brain features render --write" if why else "up to date"))
-        return 1 if why else 0
+        return _check_view(repo, public, old, text, also)
     if old is not None and old.replace("\r\n", "\n") == text:
         print(f"view: {features.VIEW} unchanged")
         return 0

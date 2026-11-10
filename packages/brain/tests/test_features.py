@@ -354,6 +354,32 @@ def test_cli_renders_the_public_matrix_into_the_engine_checkout(fstore, public_c
     assert "feat-sib" not in (root / "FEATURES.md").read_text(encoding="utf-8")  # the brain's: its own features
 
 
+def test_cli_check_accepts_the_full_render_in_a_public_clone_unless_strict(fstore, public_clone, tmp_path,
+                                                                           monkeypatch, capsys):
+    _seed_split(fstore)
+    root = _cli_project(tmp_path, monkeypatch, fstore)
+    out = public_clone / "FEATURES.md"
+    out.write_text(features.render(features.load_store(fstore, "lab"), "sib", "notes/graph"), encoding="utf-8")
+    base = ["--project", "lab", "--root", str(root), "features", "render", "--repo", "sib", "--out", str(out)]
+    assert cli.main(base) == 0
+    assert "(public): up to date (the full render: config.json features.public_strict" in capsys.readouterr().out
+    conf = tmp_path / "ada-brain" / "config.json"
+    conf.write_text(json.dumps({**PUBLIC_CFG, "features": {"public_strict": True}}), encoding="utf-8")
+    assert features.public_strict()
+    assert cli.main(base) == 1 and "(public): stale" in capsys.readouterr().out
+    assert cli.main(base + ["--write"]) == 0 and cli.main(base) == 0              # the public render passes
+
+
+def test_check_view_accepts_a_second_render_and_public_strict_is_off_by_default(tmp_path, monkeypatch):
+    assert features.check_view("a\r\n", "b\n", "a\n") == "" and features.check_view("a\n", "b\n") == "not generated"
+    monkeypatch.setenv("BRAIN_CONFIG", str(tmp_path / "none.json"))
+    assert not features.public_strict()
+    for opts in ({}, {"public_strict": False}, {"public_strict": "yes"}, []):
+        (tmp_path / "c.json").write_text(json.dumps({"v": 1, "features": opts}), encoding="utf-8")
+        monkeypatch.setenv("BRAIN_CONFIG", str(tmp_path / "c.json"))
+        assert not features.public_strict()
+
+
 def test_audit_compares_each_repo_with_its_own_render(fstore, public_clone):
     _seed_split(fstore)
     store = {f"notes/graph/{p.relative_to(fstore).as_posix()}": p.read_text(encoding="utf-8")
@@ -368,18 +394,60 @@ def test_audit_compares_each_repo_with_its_own_render(fstore, public_clone):
     cfgs = [audit.projects.Repo("lab", root), audit.projects.Repo("sib", public_clone)]
     from test_inventory import mem
 
-    def measure(view):
+    def measure(view, lab_view=lab["FEATURES.md"]):
         files = {**sib, **({"FEATURES.md": view} if view is not None else {})}
-        return audit.measure(p, cfgs, {"lab": mem(lab, "lab"), "sib": mem(files, "sib")})
+        return audit.measure(p, cfgs, {"lab": mem({**lab, "FEATURES.md": lab_view}, "lab"), "sib": mem(files, "sib")})
 
-    assert ("features.md", "FEATURES.md") not in _found(measure(features.render(m, "sib", public=True)), "sib")
+    def fix_of(res, repo):
+        return next(f["fix"] for r in res["repos"] if r["name"] == repo for f in r["findings"]
+                    if f["check"] == "features.md")
+
+    public_view, full_view = features.render(m, "sib", public=True), features.render(m, "sib")
+    assert ("features.md", "FEATURES.md") not in _found(measure(public_view), "sib")
     assert ("features.md", "FEATURES.md") not in _found(measure(None), "lab")     # lab's own: its render
-    res = measure(features.render(m, "sib"))                                         # the brain's render: stale
+    # the full render, what a public clone's file held before the public render: still passes by default
+    assert ("features.md", "FEATURES.md") not in _found(measure(full_view), "sib")
+    res = measure(public_view + "x")                                                 # neither render: stale
     assert _found(res, "sib")[("features.md", "FEATURES.md")] == "P0"
-    fix = next(f["fix"] for r in res["repos"] if r["name"] == "sib" for f in r["findings"]
-               if f["check"] == "features.md")
-    assert "--repo sib --out <a worktree of sib>/FEATURES.md --write (the public render)" in fix
+    assert "--repo sib --out <a worktree of sib>/FEATURES.md --write (the public render)" in fix_of(res, "sib")
     assert _found(measure(None), "sib")[("features.md", "FEATURES.md")] == "P2"     # missing, not production
+    res = measure(public_view, lab_view=lab["FEATURES.md"] + "x")                    # the home repo's own fix
+    assert fix_of(res, "lab") == "brain features render --write (run by brain sync), then commit it"
+
+
+def test_audit_holds_a_public_clone_to_the_public_render_only_when_the_owner_opts_in(fstore, public_clone,
+                                                                                     tmp_path, monkeypatch):
+    _seed_split(fstore)
+    store = {f"notes/graph/{p.relative_to(fstore).as_posix()}": p.read_text(encoding="utf-8")
+             for p in fstore.rglob("*.yaml")}
+    m = features.load_store(fstore, "lab")
+    lab = {**store, "README.md": README, "src/lab/__init__.py": "", "FEATURES.md": features.render(m, "lab")}
+    root = Path("/m/lab")
+    p = audit.projects.Project("demo", root, [root / "notes" / "graph"])
+    cfgs = [audit.projects.Repo("lab", root), audit.projects.Repo("sib", public_clone)]
+    from test_inventory import mem
+
+    def found(view, cfg):
+        conf = tmp_path / "opt" / "config.json"
+        conf.parent.mkdir(exist_ok=True)
+        conf.write_text(json.dumps(cfg), encoding="utf-8")
+        monkeypatch.setenv("BRAIN_CONFIG", str(conf))
+        sib = {"README.md": README, "sib/__init__.py": "", "sib/guard.py": "def g():\n    pass\n", "FEATURES.md": view}
+        res = audit.measure(p, cfgs, {"lab": mem(lab, "lab"), "sib": mem(sib, "sib")})   # a repo with code
+        return [f for r in res["repos"] if r["name"] == "sib" for f in r["findings"] if f["check"] == "features.md"]
+
+    public_view, full_view = features.render(m, "sib", public=True), features.render(m, "sib")
+    strict = {**PUBLIC_CFG, "features": {"public_strict": True}}
+    assert [f["severity"] for f in found(full_view, strict)] == ["P0"]              # the opt-in: public only
+    assert "(the public render)" in found(full_view, strict)[0]["fix"]
+    assert found(public_view, strict) == []
+    # no public.repos: a sibling that is not a public clone is held to the full render, the plain fix
+    plain = {"v": 1, "identity": {"owner": "Ada"}}
+    assert found(full_view, plain) == []
+    [stale] = found(public_view, plain)
+    assert stale["severity"] == "P0" and "(the public render)" not in stale["fix"]
+    assert stale["fix"] == ("from the brain's worktree, brain features render --repo sib --out <a worktree of sib>/"
+                            "FEATURES.md --write, then commit it there")
 
 
 def test_audit_without_the_feature_type_pending_per_repo_unless_featured_today():

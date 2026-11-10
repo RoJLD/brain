@@ -15,7 +15,8 @@ from it and are never edited:
   committed graph (check ``features.md``). A repo whose checkout is a clone of a public repo (config.json
   ``public.repos``) gets the public render: a feature's ``public_title`` and ``public_id`` props stand for a title or
   an id that names the owner or a private project, and only the repo's own code, tests and docs are shown, no spec,
-  ADR or item of the private brain (wi-brain-features-repo-split);
+  ADR or item of the private brain (wi-brain-features-repo-split); its check accepts the full render too unless
+  config.json ``features.public_strict`` is true (the owner's opt-in: nothing that passed is newly refused);
 - a SQLite index with full-text search (FTS5, standard library), a cache under ``<BRAIN_HOME>/features`` rebuilt when
   the store's files change: ``brain features list|search|show``;
 - the status: ``brain sync`` reads the merged PRs that name a feature with a status (``feat-brain-x: have``) and sets
@@ -390,11 +391,29 @@ def _slug(text: str) -> str:
     return re.sub(r"[^\w\- ]", "", text.lower()).strip().replace(" ", "-")
 
 
-def check_view(text: str | None, want: str) -> str:
-    """'' when ``text`` (FEATURES.md as committed) is ``want``; else why not."""
+def check_view(text: str | None, want: str, also: str | None = None) -> str:
+    """'' when ``text`` (FEATURES.md as committed) is ``want`` (or ``also``, a render accepted too); else why not."""
     if text is None:
         return "missing"
-    return "" if text.replace("\r\n", "\n") == want else ("not generated" if MARKER not in text else "stale")
+    text = text.replace("\r\n", "\n")
+    return "" if text in (want, also) else ("not generated" if MARKER not in text else "stale")
+
+
+PUBLIC_STRICT = "public_strict"   # config.json features.public_strict: the owner's opt-in
+
+
+def public_strict(cfg=None) -> bool:
+    """Whether a public clone's FEATURES.md must be the public render (config.json ``features.public_strict`` true,
+    the owner's opt-in). Default false: the full render, which is what such a file held before the public render
+    existed, passes too (brain check --public still reads what it holds)."""
+    cfg = cfg if cfg is not None else config.load()
+    opts = cfg.data.get("features") if cfg.data else None
+    return isinstance(opts, dict) and opts.get(PUBLIC_STRICT) is True
+
+
+def also_accepted(m: Model, repo: str, store_label: str, public: bool, strict: bool) -> str | None:
+    """The render a check accepts besides the one it asks for: a public clone's full render, unless ``strict``."""
+    return render(m, repo, store_label) if public and not strict else None
 
 
 # --- writing features ---

@@ -226,14 +226,16 @@ NO_FEATURES = "no Feature type in the project's store"
 
 def features_md(ctx: dict) -> list[dict] | str:
     """features.md: the repo's root FEATURES.md is the render of the committed graph's Feature nodes whose repo it is:
-    the public render when the repo's checkout is a clone of a public repo (brain.features.public_checkout)."""
+    the public render when the repo's checkout is a clone of a public repo (brain.features.public_checkout), the full
+    render accepted too unless config.json features.public_strict (brain.features.also_accepted)."""
     fm, c = ctx.get("features"), ctx["cfg"]
     if fm is None:
         return NO_FEATURES
     t, name = ctx["rf"].tree, c.name
     pub = name in ctx.get("fpublic", set())
     why = features.check_view(t.text(features.VIEW) if t.has(features.VIEW) else None,
-                              features.render(fm, name, ctx["flabel"], public=pub))
+                              features.render(fm, name, ctx["flabel"], public=pub),
+                              features.also_accepted(fm, name, ctx["flabel"], pub, ctx.get("fstrict", False)))
     fix = ("brain features render --write (run by brain sync), then commit it" if name in ctx.get("fhome", {name})
            else f"from the brain's worktree, brain features render --repo {name} --out <a worktree of {name}>/"
                 f"{features.VIEW} --write{' (the public render)' if pub else ''}, then commit it there")
@@ -490,7 +492,7 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
     a folder a change empties still has its dead references)."""
     cfgs = [c for c in cfgs if c.name in trees]
     fm, flabel, fhome = _feature_model(p, cfgs, trees)
-    fpublic = _public_repos(p, cfgs) if fm is not None else set()
+    fpublic, fstrict = _public_repos(p, cfgs) if fm is not None else (set(), False)
     if featured is None:
         featured = fm is not None
     fm = (fm or features.Model()) if featured else None
@@ -564,7 +566,7 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
         if only is not None and c.name not in only:
             continue
         ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm, "trees": trees,
-               "flabel": flabel, "fhome": fhome, "fpublic": fpublic, "coverage": coverage.get(c.name),
+               "flabel": flabel, "fhome": fhome, "fpublic": fpublic, "fstrict": fstrict, "coverage": coverage.get(c.name),
                "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
         out_repos.append(_repo_result(c, rf, idx, tops, mod_evidence, facts, dangling.get(c.name, []),
                                       sorted(set(unregistered.get(c.name, []))), covered, layered,
@@ -594,11 +596,12 @@ def _feature_model(p: projects.Project, cfgs: list[projects.Repo],
     return (features.merge(models) if models else None), label or "notes/graph", home
 
 
-def _public_repos(p: projects.Project, cfgs: list[projects.Repo]) -> set[str]:
-    """The project's repos whose checkout is a clone of a public repo (config.json public.repos): their FEATURES.md
-    is the public render."""
+def _public_repos(p: projects.Project, cfgs: list[projects.Repo]) -> tuple[set[str], bool]:
+    """(the project's repos whose checkout is a clone of a public repo (config.json public.repos): their FEATURES.md
+    is the public render; whether only that render passes, config.json features.public_strict)."""
     cfg = config.load(p.root)
-    return {c.name for c in cfgs if features.public_checkout(c.path, cfg)} if public.public_repos(cfg) else set()
+    repos = {c.name for c in cfgs if features.public_checkout(c.path, cfg)} if public.public_repos(cfg) else set()
+    return repos, features.public_strict(cfg)
 
 
 def _store_types(t: inventory.Tree, rel: str) -> list[str]:
