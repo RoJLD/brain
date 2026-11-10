@@ -17,6 +17,11 @@ The brief holds, in this order:
 - how to start: the repo, a worktree from the default branch (a card cannot carry a source branch, so the brief says
   how to start from one);
 - a section the coordinator fills in (scope, order, what to read first);
+- after the merge (wi-brain-archive-after-merge, close-item step 5): the session that merges its own PR archives itself
+  once its after-merge steps are done, the coordinator archives a child whose report says merged and verified without
+  asking again, never another running session or one with uncommitted or unmerged work, and the owner's app setting
+  ``auto_archive_inactive_days = 7`` as the token-free net: :data:`AFTER_MERGE`, or config.json ``brief.after_merge``
+  (a list of lines; ``[]`` drops the section);
 - the definition of done and the never-list, copied from the owner's rules (config.json ``rules``, then the
   project's ``CLAUDE.md`` and ``AGENTS.md``): the section whose heading is ``brief.done`` (default "Definition of
   done"), and the ``brief.never`` section (default "Never") or, without one, the rules' sentences that start with
@@ -38,6 +43,20 @@ CLASSES = {"trivial": {"model": "haiku", "effort": "low", "budget": "400k"},
            "strategic": {"model": "opus", "effort": "high", "budget": "800k"}}
 BUDGETS = ("400k", "600k", "800k", "1M")
 DONE = "Definition of done"
+# What a session does once its PR is merged (close-item step 5, wi-brain-archive-after-merge); brief.after_merge
+# replaces it.
+AFTER_MERGE = (
+    "- You merge your own PR: once the main checkout is pulled, the backlog ticked, the journal note written and your "
+    "report sent, archive this session (close-item step 5). The owner's standing authorization stands for their yes: "
+    "ask no one. The archive is your last act.",
+    "- The coordinator merges it: it archives you as soon as your report says merged and verified, without asking "
+    "again; write those words only when both are true.",
+    "- Never archived: a session with uncommitted changes or unmerged or unverified work (yours included), or another "
+    "session that is running (mid-turn). Your own archive is the one mid-turn archive allowed: make it the final tool "
+    "call of your turn. Finish, or report what is left.",
+    "- The token-free net: the owner's app setting `auto_archive_inactive_days = 7` archives a session left inactive "
+    "for 7 days. The owner sets it; no session changes the app's settings.",
+)
 NEVER = "Never"
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 SENTENCE = re.compile(r"(?<=[.;!?])\s+(?=[A-Z])")
@@ -61,6 +80,7 @@ class Brief:
     subgraph: list[str] = field(default_factory=list)
     collisions: list[str] = field(default_factory=list)
     start: list[str] = field(default_factory=list)
+    after_merge: list[str] = field(default_factory=list)
     done: list[str] = field(default_factory=list)
     never: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
@@ -228,6 +248,12 @@ def _start(p: projects.Project, node: dict) -> list[str]:
     return lines
 
 
+def after_merge(opts: dict) -> list[str]:
+    """The brief's after-the-merge lines: config.json ``brief.after_merge`` when it is a list, else AFTER_MERGE."""
+    lines = opts.get("after_merge")
+    return [str(x) for x in lines] if isinstance(lines, list) else list(AFTER_MERGE)
+
+
 def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget: str = "", coordinator: str = "",
           notes: str = "", collisions_report=None) -> Brief:
     """The brief of item ``nid`` of project ``p``."""
@@ -262,7 +288,8 @@ def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget
     return Brief(item=node, project=p.name, task_class=task_class, model=cls.get("model") or "",
                  effort=cls.get("effort") or "", budget=budget, coordinator=coordinator, notes=notes,
                  estimate=_estimate(p, nid, task_class), subgraph=subgraph(st, nid),
-                 collisions=collisions.item_line(rep, nid), start=_start(p, node), done=done, never=never,
+                 collisions=collisions.item_line(rep, nid), start=_start(p, node), after_merge=after_merge(opts),
+                 done=done, never=never,
                  sources=sources, warnings=warnings,
                  generated=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
 
@@ -303,6 +330,8 @@ def render(b: Brief) -> str:
     lines += ["", "## How to start", ""] + b.start
     lines += ["", "## To decide (the coordinator)", "",
               "- Scope and order: <edit>", "- What is decided, and by which ADR: <edit>", "- Read first: <edit>"]
+    if b.after_merge:
+        lines += ["", "## After the merge (close-item step 5)", ""] + b.after_merge
     lines += ["", "## Definition of done (the owner's rules)", ""] + (b.done or ["- none found in the rules"])
     lines += ["", "## Never (the owner's rules)", ""] + (b.never or ["- none found in the rules"])
     if b.sources:
