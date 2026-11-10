@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from brain import __version__, cli, config, init, neutral, paths, projects, render, skew
+from brain import __version__, classes, cli, config, init, neutral, paths, projects, render, skew
 
 from conftest import git_init, run_git
 
@@ -44,7 +44,9 @@ def test_apply_writes_a_brain_that_checks_and_points_to_it(fresh, monkeypatch, c
     assert "brain sync renders the plugin again after an engine upgrade" in out
     data = json.loads((fresh / "config.json").read_text(encoding="utf-8"))
     stores = data.pop("classes")["stores"]
-    assert list(stores) == ["memory", "ddr", "ledger", "sessions", "resume", "digest", "vault", "transcripts", "repo"]
+    assert list(stores) == ["memory", "ddr", *classes.ENGINE_STORES, "repo"]   # every engine store declared
+    assert stores["usage"] == {"class": "sealed", "paths": ["$BRAIN_HOME/usage"]}
+    assert stores["secrets"] == {"class": "secret", "paths": ["$BRAIN_HOME/secrets"]}
     assert stores["memory"]["class"] == "confidential" and stores["repo"] == {
         "class": "private", "paths": ["**"], "why": "rules, graph, ADRs, journal, records"}
     # the runbook at the tag the owner installed, not main, which may be ahead of it (wi-brain-onboarding-tag-links)
@@ -138,6 +140,7 @@ def test_apply_renders_a_local_claude_marketplace(fresh, capsys):
     assert json.loads((plugin / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")) == {"name": "brain-core"}
     hooks = json.loads((plugin / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     assert "SessionStart" in hooks["hooks"] and "PreToolUse" in hooks["hooks"]
+    assert "readhint.sh" not in json.dumps(hooks["hooks"])   # opt-in (config.json hints.read): off in a new brain
     engine = render.claude_hooks()
     shipped = {f.relative_to(engine).as_posix() for f in engine.rglob("*") if f.is_file() and "__pycache__" not in f.parts}
     assert {f.relative_to(plugin / "hooks").as_posix() for f in (plugin / "hooks").rglob("*") if f.is_file()} == shipped
@@ -465,7 +468,8 @@ def test_a_fresh_brain_passes_check_all_with_a_private_remote(fresh, capsys):
     run_git(fresh, "remote", "add", "origin", "git@example.invalid:ada/ada-brain.git")
     capsys.readouterr()
     assert cli.main(["--root", str(fresh), "classes", "--check"]) == 0
-    assert "classes: 9 store(s), OK" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"classes: {len(classes.ENGINE_STORES) + 3} store(s), OK" in out and "note:" not in out  # none by default
     assert cli.main(["--root", str(fresh), "check", "--all"]) == 0, capsys.readouterr().out
 
 

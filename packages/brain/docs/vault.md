@@ -3,8 +3,8 @@
 What a brain may send where, and how what leaves a machine is protected. Two commands:
 
 - `brain classes`: every store of the brain declares a **data class** in `config.json` (`classes.stores`), and the
-  class says where the store may go and how. `brain check --all` refuses a store without a class and a destination
-  its class forbids.
+  class says where the store may go and how. `brain check --all` refuses a tracked file without a class and a
+  destination its class forbids; an engine store the brain leaves undeclared takes its suggested class, and is noted.
 - `brain vault`: what leaves a machine is **sealed client-side to public keys** (age, gpg as the fallback): a device
   key per machine and an offline recovery key, two recipients at least for every sealed store. Sealing needs no
   secret, so it runs unattended; opening is a human act in the owner's own terminal. A daily canary per recipient
@@ -36,18 +36,21 @@ Three rules hold everywhere:
 exit in its `to`) or `never`.
 
 ```
-brain classes                 every store: its class, tracked files, machine paths, exits; waivers; errors
+brain classes                 every store: its class, tracked files, machine paths, exits; the engine stores at their
+                              default class; the sources read through a closed list of keys; notes, waivers, errors
 brain classes --check         exit 1 on a store without a class or a destination its class forbids (brain check --all too)
 brain classes PATH...         the store and class of each path (a repo path, $BRAIN_HOME/..., ~/...)
-brain classes --suggest       a starting classes block for config.json, to edit
+brain classes --suggest       a starting classes block for config.json, to edit; a brain that declares classes gets
+                              only the engine stores it misses
 ```
 
 The check reads reality:
 
 - every tracked file has a class: the first store whose glob matches it, in the file's order (specific stores first,
   a catch-all `**` last);
-- every store the engine writes outside the repo is declared: `$BRAIN_HOME/ledger`, `sessions`, `resume`, `digest`,
-  `vault` and the transcripts (`~/.claude/projects`);
+- every store the engine writes outside the repo has a class (below): one the brain does not declare takes its
+  suggested class, and the check notes it without failing until it is declared; a name at the top of `$BRAIN_HOME`
+  that no store covers (a newer engine's store, one made by hand) is noted the same way, `sealed` by default;
 - tracked files whose class does not allow the repo's remote in clear are refused (`git-private`, or `git-public` when
   the remote is one of `public.repos`); a tracked `*.age` or `*.gpg` file is sealed, and an empty `.gitkeep` holds no
   data;
@@ -57,6 +60,71 @@ The check reads reality:
 
 A known gap is written as a waiver, `waive: {exit: reason}` on a store (a reason of 15 characters or more): it is
 printed by every check instead of failing. `brain init` writes a starting block; `brain classes --suggest` prints one.
+
+### The engine's own stores
+
+Every name the engine writes under `$BRAIN_HOME` is one of its stores (`brain.classes.ENGINE_STORES`), with a
+suggested data class and a format class, which says how it is read and written (`truth-local`: what nothing else
+keeps, backed up before a write-back; `log`: append-only; `derived`: rebuilt, never migrated; `install`: rebuilt by
+the installer; `external`: another tool's, read only; see [formats.md](formats.md)). A test of the engine fails on a
+name its code writes there that the list does not hold, so a new store comes with its class in the same change.
+
+| Store | Path | Class | Format | Holds |
+|---|---|---|---|---|
+| `ledger` | `$BRAIN_HOME/ledger` | sealed | log | the token ledger's events, the session records' lines, the engine's timings and errors |
+| `sessions` | `$BRAIN_HOME/sessions` | sealed | truth-local | the session records, the children's reports |
+| `resume` | `$BRAIN_HOME/resume` | sealed | derived | the resume packs |
+| `digest` | `$BRAIN_HOME/digest` | sealed | derived | the digests |
+| `vault` | `$BRAIN_HOME/vault` | sealed | truth-local | the sealed copies, the canaries, the device's public facts |
+| `transcripts` | `~/.claude/projects` | sealed | external | the agent's transcripts |
+| `usage` | `$BRAIN_HOME/usage` | sealed | log | the token ledger's views, `quota.json`, the session starts, the audits |
+| `budget` | `$BRAIN_HOME/budget` | sealed | truth-local | the context budget watch's marks |
+| `forecast` | `$BRAIN_HOME/forecast` | sealed | derived | the forecasts |
+| `announce` | `$BRAIN_HOME/announce` | sealed | truth-local | the decisions already announced to a session |
+| `handover` | `$BRAIN_HOME/handover` | sealed | truth-local | the hand-over notes and their mirror |
+| `inbox` | `$BRAIN_HOME/inbox` | sealed | log | the owner's messages to sessions |
+| `features` | `$BRAIN_HOME/features` | sealed | derived | the feature stores' indexes |
+| `cache` | `$BRAIN_HOME/cache` | sealed | derived | the app metadata's picked keys, the governor's and the guards' caches |
+| `memory-sync` | `$BRAIN_HOME/memory-sync` | sealed | truth-local | the memory export's state, alerts and backups |
+| `schedules` | `$BRAIN_HOME/schedules` | sealed | truth-local | the scheduled tasks this machine installed |
+| `alerts` | `$BRAIN_HOME/alerts` | sealed | truth-local | the alerts already raised |
+| `probes` | `$BRAIN_HOME/probes` | sealed | derived | the dependency probes' last run |
+| `notify` | `$BRAIN_HOME/notify` | sealed | truth-local | the notifications' state, the quiet hours |
+| `secrets` | `$BRAIN_HOME/secrets` | **secret** | truth-local | the stack bundles' secret files |
+| `collector` | `$BRAIN_HOME/stacks/sovereign/data/otel-collector` | sealed | log | the telemetry collector's data |
+| `stacks` | `$BRAIN_HOME/stacks` | sealed | truth-local | the rendered stack bundles and their data |
+| `telemetry` | `$BRAIN_HOME/telemetry` | sealed | truth-local | the telemetry consent record and the report outbox |
+| `code-index` | `$BRAIN_HOME/code-index` | sealed | derived | the code index's bundles |
+| `code-index-record` | `$BRAIN_HOME/code-index.json` | sealed | truth-local | the repos indexed |
+| `code-map` | `$BRAIN_HOME/code-map` | sealed | derived | the code maps |
+| `public-check` | `$BRAIN_HOME/public-check` | sealed | derived | the public check's stamps |
+| `reviews` | `$BRAIN_HOME/reviews` | sealed | truth-local | the reviews' findings and stamps |
+| `backup` | `$BRAIN_HOME/backup` | sealed | truth-local | copies taken before a write-back |
+| `cockpit` | `$BRAIN_HOME/tui.json` | sealed | truth-local | the cockpit's settings |
+| `update-check` | `$BRAIN_HOME/update.json` | sealed | derived | the last engine tags read |
+| `personal` | `$BRAIN_HOME/personal.json` | sealed | truth-local | the pointer to the personal brain |
+| `profile` | `$BRAIN_HOME/profile.json` | sealed | truth-local | the machine's frozen tier profile |
+| `venv`, `bin`, `engine-clones` | `$BRAIN_HOME/venv`, `bin`, `engine` | sealed | install | the command's environment, its launcher, the tags' clones |
+
+An undeclared store's default is never looser than `sealed` (`secret` for the secrets): no store is ever without a
+class. A store meant to be looser (the telemetry outbox, meant to be shared) is declared so by the owner. To declare
+the missing ones, paste what `brain classes --suggest` prints into `classes.stores` (a name the brain already uses
+for another store gets `home-`).
+
+### What the engine reads and never writes
+
+Some data the engine reads belongs to another tool (`brain.classes.SOURCES`). It is never written, and a file of it
+is read through a closed list of keys:
+
+- **the desktop app's session metadata** (`$LOCALAPPDATA/Claude-Data/*/claude-code-sessions`, read by the session
+  tree, the governor, `brain tidy` and the SessionStart capture): `sessionId`, `cliSessionId`, `title`, `createdAt`,
+  `lastActivityAt`, `isArchived`, `completedTurns`, `model`, `effort`, `branch`, `lineageDetached`, `prs` (counted),
+  `cwd`, and in `spawnedFrom` its `sessionId`, `taskId`, `name` and `sideSession`. The keys that hold texts
+  (`lastTurnReport`, `pendingSystemReminder`, `promptAppendSnapshot`, `remoteMcpServersConfig`, `spawnSeed`, and an
+  e-mail address in most files) are never read and never reach a store: a test of the engine holds every reader to
+  the list and scans what they write;
+- **the app's worktrees** (`git-worktrees.json`): each worktree's `path` and `leasedBy`;
+- **the notes a family of sessions shares** (`side-session-notes`): read whole by `brain resume` and the briefs.
 
 ## The vault: the owner's steps, once per machine
 
@@ -246,7 +314,7 @@ as `/c/...` and needs a short path for its agent's sockets: the vault handles bo
 |---|---|
 | `config.json` `classes` | the stores, their class, paths, exits and waivers |
 | `config.json` `vault` | the recipients (public keys), `min_recipients` (2), `canary_hours` (26), `adapter`, `tenants` |
-| `$BRAIN_HOME/vault/device.json` | this machine's device key: name, adapter, public key, keystore, date |
+| `$BRAIN_HOME/vault/device.json` | this machine's device key: name, adapter, public key, keystore, date; `v` 1 through `brain.stateio` (a backup in `device.json.bak`; a newer brain's file stops `device init` and `forget-previous` before the keystore is touched) |
 | `$BRAIN_HOME/vault/state.json` | the canaries (sealed, opened, digest, error), the drills, the last seal of each store; `v` 1, read and written through `brain.stateio` (a backup in `state.json.bak` before each write; an unreadable file set aside, never reset; a newer brain's state read-only: [formats.md](formats.md)) |
 | `$BRAIN_HOME/vault/canary/` | one sealed nonce per recipient |
 | `$BRAIN_HOME/vault/sealed/<store>/` | the sealed copies and their manifests (`resealed` once sealed again) |

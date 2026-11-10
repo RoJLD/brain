@@ -38,10 +38,13 @@ from pathlib import Path
 from . import config, feature_coverage, features, graph, inventory, links, paths, projects, public, testcov
 from .inventory import AuditError
 
-RULESET = 6   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+RULESET = 7   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
 #               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
 #               (wi-brain-test-links-auto); 5: cmd.registry (wi-brain-cli-registry); 6: feature.coverage, info in
-#               the full audit, NEW in the scout for an added command or module (wi-brain-audit-feature-coverage)
+#               the full audit, NEW in the scout for an added command or module (wi-brain-audit-feature-coverage); 7: the scout's norm lints
+#               (brain.norms: norm.timeout, norm.encoding, norm.naive-time, norm.secret-argv), info on what a change
+#               adds, NEW under config.json audit.norm_lints_strict, DEFER for a touched file's old ones
+#               (wi-brain-norm-lints)
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "

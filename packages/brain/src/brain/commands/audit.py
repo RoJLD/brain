@@ -18,7 +18,10 @@ USAGE = """\
   brain audit --diff [BASE|A..B] [--repo-dir D] [--store DIR] [--limit N]   the scout: what the modules a change
                  touches miss (NEW, LEFT, DEFER); exit 1 when something is to fix in the PR; a command or module
                  no feature names: NEW when added, DEFER when touched (LEFT under config.json
-                 audit.feature_coverage_strict)
+                 audit.feature_coverage_strict); the norm lints of a touched Python file (a subprocess or urlopen
+                 without a timeout, a text open() without an encoding, a naive datetime stored, a secret in a
+                 child's argv or env): info when added (NEW under config.json audit.norm_lints_strict), DEFER
+                 when already there
 """
 
 
@@ -46,8 +49,8 @@ def register(sub, ctx) -> None:
     au.add_argument("--limit", type=_whole, metavar="N",
                     help="--diff: LEFT units to fix in this PR (default: scout_limit, 3)")
     au.add_argument("--pr-body", metavar="FILE", help="--diff: the PR body ('-' for stdin), where the structure "
-                                                      "signals read Root cause: and Justified: lines (the range's "
-                                                      "commit messages are read too)")
+                                                      "signals and the norm lints read Root cause: and Justified: "
+                                                      "lines (the range's commit messages are read too)")
 
 
 def early(args) -> int:

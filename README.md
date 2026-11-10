@@ -78,9 +78,18 @@ The schema belongs to the store: each store (a project, a person's brain, a team
 layers, and its `owner`, the person or team who decides for it. Every path is given on the command line; nothing is
 written outside the store, the repo root and `--out`, and the engine keeps no state between calls.
 
+An edge names two nodes of its store, or one of its store and one another store holds: `--foreign-store LABEL=PATH`
+(repeatable) gives the stores whose ids the edges may name. Such an edge loads, with one end in the store at least; the
+other store's node is shown by its id and its label (`wi-x (parent:graph)`) where it is linked (a blocker, an item or a
+sub-milestone of a milestone, counted in its progress, a decision behind a node) and never listed among the store's own
+nodes; its title, status and type are read from that store, not validated (its own check does that). Without the
+option an edge to an id the store does not hold is refused, as it always was; an id held by no store given is refused
+with it.
+
 ## Commands
 
-`research_graph [--store notes/graph] [--repo-root .] [--overlay <store> ...] <command>`, or `python -m research_graph`.
+`research_graph [--store notes/graph] [--repo-root .] [--overlay <store> ...] [--foreign-store LABEL=PATH ...]
+<command>`, or `python -m research_graph`.
 
 | Command | What it does |
 |---|---|
@@ -111,7 +120,13 @@ from research_graph import query
 g = load_store("notes/graph")          # a networkx.DiGraph, typed and validated; g.graph["owner"] from schema.yaml
 LayeredGraph(g).work_frontier()
 query.list_items(g, statuses=["todo", "doing"])
+
+from research_graph.loader import read_foreign
+g = load_store("notes/graph", foreign=read_foreign([("parent:graph", "../parent/graph")]))  # edges to its ids load
 ```
+
+Another store's node carries `foreign` (its store's label) and `foreign_type`, and no `type`:
+`research_graph.model.kind(g, id)` gives the type of either, `label(g, id)` the name a view shows.
 
 ## Tests
 

@@ -10,14 +10,16 @@ What it does, every command reading files and git, never a model:
 - **records**: decisions put to the owner (DDR, `brain decision ask|answer|ack`), session and action records (SR, AR),
   captured by the hooks at zero token (`brain record`, `brain capture`);
 - **backlog**: work items, milestones and specs in a `research-graph` store (`brain item add|set|close|link`,
-  `brain milestone`, `brain spec`), the plan as eras, milestones and waves (`brain wave`, `brain next`), with the
+  `brain milestone`, `brain spec`), read back without opening its files (`brain item show`, `brain items`, `brain spec
+  show`: « Reading a brain » below), the plan as eras, milestones and waves (`brain wave`, `brain next`), with the
   views regenerated and checked (`brain sync`, `brain check`,
   `brain refresh`; in a brain's own root, check and refresh also run `brain check --all`'s registry check: the
   registry, `config.json`, the classes, the permissions, the stacks and the bundles they declare, the ids of every
   registered project), and written once on the default branch after each merge by one writer (`brain views --write`;
   a branch need not commit them, the default branch's check warns of a stale one, fails under `config.json`
   `views.strict`: [`docs/views.md`](docs/views.md));
-- **history**: the journal (`brain journal add`) and the decision log (`brain adr new`), append-only;
+- **history**: the journal (`brain journal add`, `brain journal last`) and the decision log (`brain adr new`, `brain
+  adr show`), append-only;
 - **views**: the owner's queue (`brain queue`), the status of every project (`brain status`), a cockpit (`brain tui`,
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
   usage and cost ledgers, forecasts;
@@ -100,7 +102,9 @@ Narrower, or on a tab of several panels, Enter opens it over them.
 `C` chooses the columns of the focused table: shown or hidden (space), their order (Up, Down, or `shift+up`, `shift+down`),
 and the longest its title may be, the rest in the detail; the sessions also offer Cost, App id, Id and Branch. The palette
 (`ctrl+p`) reaches every tab, view, project, sort, filter and table's columns without learning a key, and resets the views.
-The chosen columns are kept in `<BRAIN_HOME>/tui.json`.
+The chosen columns are kept in `<BRAIN_HOME>/tui.json`, a file of its own (`v` 1, a backup `tui.json.bak` at each save,
+an atomic write): what a newer brain added to it is kept through a save, and one a newer brain wrote is shown but not
+written (`brain tui` says the views are not remembered; brain update). See [docs/formats.md](docs/formats.md).
 
 The cockpit's title bar always shows the installed version. Once the screen is drawn, it checks the tags in the
 background (kept 24 h in `<BRAIN_HOME>/update.json`, silent offline) and shows « brain 0.2.3 · 0.2.4 available »
@@ -155,6 +159,20 @@ retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root
 `Justified: <unit>: <reason>` are read from the PR body (`--pr-body FILE`, `-` for stdin) and the range's commit
 messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
 `audit: {max_lines: 1000, complexity: 15}`.
+
+The scout also reads four cheap norms in the AST of each Python file a change touches (`brain.norms`):
+`norm.timeout` (a `subprocess.run`, `call`, `check_call`, `check_output` or `urlopen` without `timeout=`, a
+`Popen`'s `communicate()` or `wait()` without one), `norm.encoding` (an `open()` in text mode, a `read_text()` or a
+`write_text()` without `encoding=`), `norm.naive-time` (a `datetime.now()` or `today()` without a tz, or a
+`utcnow()`, stored: made text by `isoformat()`, `str()` or an f-string, put in a dict or given to `json.dump`; not
+once `astimezone()` or `replace(tzinfo=...)` made it aware) and `norm.secret-argv` (a token, password, secret or API
+key variable, or a constant subscript such as `os.environ["GH_TOKEN"]`, in a subprocess call's command or its `env`,
+or assigned to `os.environ[...]`: a secret travels by stdin or the keystore). A call that unpacks `**kwargs`, or
+whose mode is not a literal, is not judged; `timeout=None` or `encoding=None` counts as none. What the change adds is
+an `info` line by default (shown, never blocking), a NEW line under `config.json` `audit.norm_lints_strict: true`
+(the owner's opt-in), which a `Justified: <path>: ...` line clears; the occurrences already in a touched file, or
+moved into it from a file that no longer defines their function, make one DEFER line per file and norm to the repo's
+debt item, fixed by batches (never blocking).
 
 ### Feature coverage
 
@@ -242,6 +260,31 @@ adds a wave at once (no DDR, unlike `brain milestone add`: a wave is named by it
 closes), and `brain wave import [--from X.Y.Z] [--write]` turns the items' free-text `props.wave` into waves: one per
 release a value names (`0.2.9 (decided ...)` is 0.2.9) from `--from` on, the earlier releases (already tagged) listed
 and left out, the other values (letters, free text) listed for the owner to place.
+
+### Reading a brain
+
+Sessions read a brain through its commands, not its files: the graph's YAML, the decision log, the journal and the
+generated views are long, and a hand read returns far more than the question needs. Each read command takes `--json`
+and needs no `research_graph` on the PATH (the graph is loaded in brain's own process, with the other stores its edges
+name):
+
+```
+brain item show ID [--history] [--json]        # props in full, edges both ways, the ids its props name, its blockers,
+                                               # the ADRs behind it (direct, inherited, superseded) and its specs, the
+                                               # DDRs that name it; --history: its changes from git (slow on a large store)
+brain items [--status S]... [--all] [--priority P]... [--wave X.Y.Z|ID] [--milestone M]... [--prop K[=TEXT]]...
+            [--text WORDS] [--type T]... [--repo R] [--limit N] [--json]
+brain adr show REF [--titles] [--json]         # the ADR REF names (id, title, or the start of its id), else the ADRs
+                                               # that decide the node REF (a rule, an item, a spec), with their text
+brain spec show REF [--section N | --toc] [--json]   # a Spec node, a Doc id (doc:<repo>:<path>::<key>) or a path
+brain journal last [N] [--titles] [--json]     # the last N dated entries (default 1; 0: all)
+```
+
+`brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
+no wave whose free-text `props.wave` names that release. `brain spec show --section` takes a heading's number (`2.1`),
+its key (the last part of a Doc id) or the start of its title, and prints it down to the next heading of its level.
+When a session reads one of those files by hand anyway, a PreToolUse hint names the command that answers (below,
+« The Claude Code hooks »).
 
 ## Start your own brain
 
@@ -527,6 +570,49 @@ no pass); the SessionStart health hook says so in one line and `brain status`'s 
 it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and says so in one line; the alerts go
 at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped.
 
+### Dependency probes: loud fallbacks
+
+A capability that relies on something outside the brain (a CLI's login, a tool's last output, an index's freshness,
+a channel's last delivery, a collector's last data, the last backup) should not fail silently. Each such dependency
+declares a token-free probe in the personal brain's `config.json`, under `probes`, with the machines it runs on; the
+engine holds the probe kinds, never a probe per dependency (`brain.depprobes`):
+
+```json
+"probes": {
+  "cli-login": {"kind": "command", "argv": ["tool", "auth", "status"], "expect": "logged in", "timeout": "20s",
+                "level": "error", "about": "the session archive's summaries", "machines": ["host-a"]},
+  "notify-delivery": {"kind": "json-age", "path": "$BRAIN_HOME/notify/*.jsonl", "field": "at",
+                      "where": {"outcome": "sent"}, "max_age": "7d"},
+  "backup": {"kind": "file-age", "path": "D:/backups/*.zip", "max_age": "26h"},
+  "index-ui": {"kind": "http", "url": "http://127.0.0.1:4747/", "timeout": "5s"}
+}
+```
+
+- `file-age`: the newest file matching `path` (a glob) was modified within `max_age`.
+- `json-age`: a timestamp `field` (dotted) of a JSON file, or of the last line of a JSON Lines file that matches
+  `where`, is within `max_age` (an ISO time, or seconds since the epoch).
+- `command`: `argv` exits with one of `ok_exit` (default 0) within `timeout`, its output matching `expect`. Never
+  through a shell, and a shell or an interpreter as the program is refused. The output is read for `expect` only: it is
+  never shown, stored or sent. Declare read-only status commands only: the alerts pass runs them unattended.
+- `http`: a GET of `url` answers one of `ok_status` (default 2xx or 3xx) within `timeout`. No header is sent, a URL
+  with a user or a password is refused, and the URL is never shown.
+
+Each probe may also give `about` (what relies on it), `level` (its alert's, default warn), `timeout` (default 10s, at
+most 120s) and `machines` (none: every machine). Durations read `90s`, `15m`, `26h`, `7d`; paths expand `~`, the
+environment's variables and `$BRAIN_HOME`. `brain config --check` (and `brain check --all`) checks every declaration.
+
+The probes run in parallel, each with its own timeout, and are OK, STALE, FAIL or TIMEOUT. A command that runs past
+its timeout is killed with every process it started (a `.cmd` shim's program too), and a probe still running then
+never holds the command at its exit. The alerts pass runs them (`brain alerts` without `--quick`, when the brain's own
+project is in scope) and raises `probe:<name>` at the probe's level on the brain's own project for each one that is
+not OK, so the pass's notify path sends it once, again if its level rises, and `resolved` once it is OK again; one
+that goes from a state not OK to another (STALE to FAIL) keeps its alert, whose message follows, and sends nothing
+new. Each run is recorded in `<BRAIN_HOME>/probes/state.json`: the
+state, why, when it ran, the last OK and since when. `brain status` shows a probes row once one runs on this machine
+(`--quick`: the last run), and the cockpit's health panel a line. `brain probes` runs them now (exit 1 when one is not
+OK, 2 for a bad declaration); `--last` shows the last run, `--list` every declared probe and its machines, `--kinds`
+the kinds and their keys.
+
 ## Quiet mode
 
 `brain quiet --for 2h` silences the notifications below `critical` for that long (90m, 2h, 1d; at most 7d); a
@@ -572,6 +658,19 @@ and `brain check --all` says what to declare). A first entry the brain skips for
 cover every project registered there, and `--store prog/graph` runs as the project that lists that store.
 `examples/projects.yaml` has both.
 
+### Edges between stores
+
+An edge of a store may name a node another store of the registry holds (every store of every registered project on
+this machine; ids are unique across them): a programme's items kept in a parent project's store keep their edges to a
+child's milestones, specs and decisions, and the parent's milestones group the children's. `brain item link` and
+`brain item add` (`--milestone`, `--after`, `--spec`, `--adr`) accept such an id as one end, the other being the
+store's own. Every brain command that runs research_graph on the store gives it the stores holding those ids
+(`--foreign-store <project>:<store>=<path>`, `brain.crossstore`; nothing for a store whose edges name only its own
+ids), so the store loads and its board and roadmap name the other store's node with its label
+(`wi-x (parent:notes/graph)`). `brain check --all` reads every edge of every store and refuses one whose end is in no
+store of the registry on this machine (the store's own check refuses it too, as before), and counts the edges between
+stores; a brain's own root, checking its registry without `--all`, warns of it.
+
 ## The Claude Code hooks
 
 `src/brain/adapters/claude/hooks/` is package data: `hooks.json` and a `.sh` launcher per hook, each running its `.py`
@@ -586,6 +685,22 @@ may write, names `gh`, a program of the owner and power guards, `claude` then `p
 comes between: a quoted `claude.exe`, global options, a line continuation), or git other than to
 read (`git [-C DIR] status`, `log`, `diff`, `show`, `rev-parse`... without `--output`: `brain.guards.GIT_READS`,
 checked against the guards' tables). In Python a guard reads the registry through libyaml and does not import `urllib.request`.
+
+**The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
+a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its
+journal or a generated view (`*_graph.md`, `decision_queue.md`, `FEATURES.md`) by hand, it adds one line of hook
+context naming the command that answers, with the id the call looked for when it names one (`brain --project P item
+show wi-x`, `brain adr show`, `brain journal last`, `brain items`, `brain next`, `brain decision pending`, `brain
+features`). A shell command counts only when it reads (`grep`, `rg`, `cat`, `head`, `tail`, `sed`, `awk`,
+`Select-String`, `Get-Content`...); "registered" is a project of the registry or a worktree of its checkout (read from
+the worktree's `.git` file, no git started). A call whose JSON names none of those files stops in bash builtins:
+measured on Windows, the launcher then costs what starting bash costs (about 0.2 s, as `budget.sh` on every call), the
+Python path about 0.6 s, taken only on a hand read of a brain file; on a shell call it runs beside `guard.sh`.
+Read and Grep had no hook before it, so it is **opt-in**: `brain render --target claude` (`brain sync`) registers it
+in the core plugin's `hooks.json` only when the brain's `config.json` says `"hints": {"read": true}`; by default it is
+not registered and no call pays its cost (the script ships either way, `brain.render.OPTIONAL_HOOKS`). To turn it on,
+set the key, run `brain sync` and restart the sessions; while it is on, `BRAIN_READ_HINT=0` turns it off in a
+session.
 
 Two guards keep what a session brings in and what it records clean (the runbook: [`docs/guards.md`](docs/guards.md)):
 
@@ -622,7 +737,7 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   from `warn` % of a quota window, refuses from `critical` %, refuses a new session past the parallel sessions cap
   (the smaller of `sessions` and what the week's room pays for), a new brainstorm past `brainstorms` (every project
   counted; a project's `usage: {brainstorms: N}` in `projects.yaml` lowers it for itself, never raises it), a new
-  session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (both
+  session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (an opt-in floor, 0 by default; both
   shown by `brain usage guard` and `brain status`, the refusal naming the one), or while the newest quota reading is older than
   `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
   now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
@@ -632,12 +747,25 @@ The quota conversion (`brain usage quota`) is per plan: only the readings of the
 `usage.plans`) count, and until the plan has 3 converted readings it says "uncalibrated", does not convert the week and
 estimates the 5-hour window from its latest reading and the ledger's cost since.
 
+The token ledger (`brain usage`) reads each session's subagents and workflow agents with it
+(`<session>/subagents/agent-<id>.jsonl` and `<session>/subagents/workflows/<run>/agent-<id>.jsonl`): their cost is in
+the session's cost and hours, so the quota forecast and the governor count it, and a message is counted once, as the
+subagent's, should the parent's transcript copy it. `brain usage` says whose the cost is (main threads, subagents,
+workflows), `--by workflow` lists each run (its agents, phases and the session that launched it) and `--by agent` each
+agent's label (the `description` of its `.meta.json`, else the run's `journal.jsonl`). `brain usage quota` measures
+the cost of a session-hour, the agents' included, as information: the governor's parallel-sessions cap uses it only
+with `usage.guard.session_hour_measured` true (default false), and then when it is above `usage.guard.session_hour_usd`;
+`brain usage guard` shows the measured value and whether it is applied.
+
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture
 hooks run `brain.capture` (`capture.sh <event>` runs `hooks/capture.py`, which calls it with the brain command's
 venv): it reads the hook's JSON on stdin and appends the session events, the session-record snapshots and the action
 records to `<BRAIN_HOME>/ledger` at zero token; it prints nothing and never fails the session (its errors go to
-`ledger/errors.log`; `BRAIN_CAPTURE=0` turns it off).
+`ledger/errors.log`, moved aside each month, or past 1 MB, as `errors-YYYY-MM.log` and kept six months;
+`BRAIN_CAPTURE=0` turns it off). The session snapshots, states, reports and plans under `<BRAIN_HOME>/sessions` and the
+budget watch's states are written through `brain.stateio` (a backup beside each, an atomic write; a newer brain's left
+to it): [docs/formats.md](docs/formats.md) gives each file's policy and each log's retention.
 
 **The engine times itself** (`brain.selftime`, local only, zero token). Every `brain` command and every hook writes
 one exec event (task `brain <command> [<subcommand>]` or `hook <name>`, a bash-only run marked `[bash]`, the engine's
@@ -657,7 +785,10 @@ brain perf --engine [--since 7d] [--task guard] [--json]
 
 Every store of a brain declares a data class in `config.json` (`classes.stores`: public, private, confidential,
 sealed, resident, secret, `tenant:<id>`), and the class says where it may go and how; `brain check --all` refuses a
-store without a class and a destination its class forbids, and `brain init` writes a starting block. What leaves a
+store without a class and a destination its class forbids, and `brain init` writes a starting block. Each store the
+engine writes under `$BRAIN_HOME` has a suggested class and a format class: one a brain does not declare takes its
+suggested class (never looser than sealed) and is noted, never failed (`brain classes --suggest` prints the lines to
+declare), and the desktop app's session metadata is read through a closed list of keys, never its texts. What leaves a
 machine is sealed client-side to public keys (`brain vault`: age, gpg as the fallback), to a device key per machine,
 kept in the OS keystore, and an offline recovery key: two recipients at least, proven daily by a canary per recipient
 (`brain health vault`). When the recipients change (a lost machine, a revoked heir, a rotated key), `brain vault

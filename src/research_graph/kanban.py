@@ -4,6 +4,9 @@ Renders the graph's WorkItems as markdown. The work frontier (what can start now
 follows, with its trigger, progress and remaining critical path, then its items by status with their blockers:
 dependencies not yet satisfied, and external blockers from ``props.external_blocker``. Items attached to no
 milestone come last. The output is deterministic (sorted, no timestamp), so a regenerated view diffs cleanly.
+Another store's node an edge names (``--foreign-store``) is shown where it is linked, by its id and that store's
+label (``wi-x (parent:graph)``): an item or a sub-milestone of a milestone, a blocker, a milestone an item is part of;
+it is never counted among the store's own items.
 
 It is a view. The source of truth stays the store's ``nodes/*.yaml`` and ``edges/*.yaml``. The default output is
 ``notes/kanban_graph.md`` (``kanban_graph.md`` in the folder ``--views`` names), which starts with a GENERATED marker; a
@@ -20,7 +23,7 @@ from pathlib import Path
 
 import networkx as nx
 
-from .model import WORK_OPEN, LayeredGraph
+from .model import FOREIGN, WORK_OPEN, LayeredGraph, kind, label, store_of
 
 VIEWS = "notes"   # the folder of the generated views when --views names none
 FILE = "kanban_graph.md"
@@ -33,7 +36,17 @@ MILESTONE_ORDER = {"pending": 0, "reached": 1, "dropped": 2}
 
 
 def _of_type(rg: LayeredGraph, nodes, node_type: str) -> list[str]:
-    return sorted(n for n in nodes if rg.g.nodes[n].get("type") == node_type)
+    """The nodes of ``nodes`` of one type, another store's included (by the type its store gives it)."""
+    return sorted(n for n in nodes if kind(rg.g, n) == node_type)
+
+
+def _own(graph: nx.DiGraph) -> list[str]:
+    """The store's own nodes: another store's node an edge names is shown where it is linked, never listed."""
+    return [n for n, a in graph.nodes(data=True) if not a.get(FOREIGN)]
+
+
+def _names(rg: LayeredGraph, nodes) -> str:
+    return ", ".join(label(rg.g, n) for n in nodes)
 
 
 def _parts(rg: LayeredGraph, mid: str, node_type: str) -> list[str]:
@@ -55,16 +68,17 @@ def _by_status(rg: LayeredGraph, items: list[str]) -> list[str]:
     return sorted(items, key=lambda n: (rank.get(rg.g.nodes[n].get("status"), len(rank)), n))
 
 
-def _item(rg: LayeredGraph, nid: str, frontier: set[str], *, in_frontier: bool = False) -> str:
+def _item(rg: LayeredGraph, nid: str, frontier: set[str], *, in_frontier: bool = False, named: bool = False) -> str:
     """One checklist line: id and title, then what holds the item (dependencies, external) or that it can start.
-    In the frontier section every item is startable, so the line names its milestones instead."""
+    ``named``: the line names its milestones (in the frontier section, where every item is startable, and for an item
+    whose milestones are other stores')."""
     a = rg.g.nodes[nid]
     status = a.get("status")
-    text = f"{nid} — {a.get('title') or ''}".rstrip(" —")
+    text = f"{label(rg.g, nid)} — {a.get('title') or ''}".rstrip(" —")
     if status == "dropped":
         text = f"~~{text}~~"
-    if in_frontier and _milestones_of(rg, nid):
-        text += f" ({', '.join(_milestones_of(rg, nid))})"
+    if named and _milestones_of(rg, nid):
+        text += f" ({_names(rg, _milestones_of(rg, nid))})"
     notes = ["startable"] if nid in frontier and not in_frontier else []
     if status == "doing":
         notes.append("doing")
@@ -72,7 +86,7 @@ def _item(rg: LayeredGraph, nid: str, frontier: set[str], *, in_frontier: bool =
         blockers = rg.blockers(nid)
         if blockers:
             notes.append(
-                "blocked by " + ", ".join(f"{b} [{rg.g.nodes[b].get('status')}]" for b in blockers)
+                "blocked by " + ", ".join(f"{label(rg.g, b)} [{rg.g.nodes[b].get('status')}]" for b in blockers)
             )
         if status == "blocked":
             reason = (a.get("props") or {}).get("external_blocker")
@@ -83,7 +97,7 @@ def _item(rg: LayeredGraph, nid: str, frontier: set[str], *, in_frontier: bool =
 
 def render_kanban(graph: nx.DiGraph) -> str:
     rg = LayeredGraph(graph)
-    items = _of_type(rg, graph.nodes, "WorkItem")
+    items = _of_type(rg, _own(graph), "WorkItem")
     frontier = set(rg.work_frontier())
     blocked = rg.blocked()
     counts = Counter(graph.nodes[n].get("status") for n in items)
@@ -100,9 +114,9 @@ def render_kanban(graph: nx.DiGraph) -> str:
         "## Startable now",
         "",
     ]
-    out += [_item(rg, n, frontier, in_frontier=True) for n in sorted(frontier)] or ["(none)"]
+    out += [_item(rg, n, frontier, in_frontier=True, named=True) for n in sorted(frontier)] or ["(none)"]
 
-    milestones = _of_type(rg, graph.nodes, "Milestone")
+    milestones = _of_type(rg, _own(graph), "Milestone")
     milestones.sort(key=lambda m: (MILESTONE_ORDER.get(graph.nodes[m].get("status"), 3), m))
     for m in milestones:
         info = rg.milestone(m)
@@ -115,16 +129,16 @@ def render_kanban(graph: nx.DiGraph) -> str:
         if info["cycle"]:
             line += ". Critical path: dependency cycle among open items"
         elif info["critical_path"]:
-            line += ". Critical path: " + " → ".join(info["critical_path"])
+            line += ". Critical path: " + " → ".join(label(graph, n) for n in info["critical_path"])
         out.append(line + ".")
         parents = _milestones_of(rg, m)
         subs = _parts(rg, m, "Milestone")
         if parents:
-            out.append("Part of: " + ", ".join(parents) + ".")
+            out.append("Part of: " + _names(rg, parents) + ".")
         if subs:
             out.append(
                 "Sub-milestones: "
-                + ", ".join(f"{s} [{graph.nodes[s].get('status')}]" for s in subs)
+                + ", ".join(f"{label(graph, s)} [{graph.nodes[s].get('status')}]" for s in subs)
                 + "."
             )
         direct = _parts(rg, m, "WorkItem")
@@ -132,11 +146,22 @@ def render_kanban(graph: nx.DiGraph) -> str:
             out.append("")
             out += [_item(rg, n, frontier) for n in _by_status(rg, direct)]
 
+    return "\n".join(out + _unplaced(rg, items, frontier)) + "\n"
+
+
+def _unplaced(rg: LayeredGraph, items: list[str], frontier: set[str]) -> list[str]:
+    """The items no milestone section of the board lists: those part of no milestone, then those part of other
+    stores' milestones only (each line names them)."""
+    out = []
     loose = [n for n in items if not _milestones_of(rg, n)]
     if loose:
         out += ["", "## No milestone", ""]
         out += [_item(rg, n, frontier) for n in _by_status(rg, loose)]
-    return "\n".join(out) + "\n"
+    elsewhere = [n for n in items if _milestones_of(rg, n) and all(store_of(rg.g, m) for m in _milestones_of(rg, n))]
+    if elsewhere:
+        out += ["", "## Part of another store's milestone", ""]
+        out += [_item(rg, n, frontier, named=True) for n in _by_status(rg, elsewhere)]
+    return out
 
 
 def view_path(file: str, views: str | Path | None = None) -> str:

@@ -23,8 +23,10 @@ USAGE = """\
                         project's, then the registry
                         (its keys, repos, stacks, code_index), the tier registry (every capability and stack declares
                         its class, profile, requirements, cost and fallback) and the ids, unique across every store of
-                        every project (an id shared on purpose is waived under shared_ids:); at a root several projects
-                        share, each one's stores (the root's own checks are its owner's)
+                        every project (an id shared on purpose is waived under shared_ids:), and the edges between
+                        stores (an edge may name another store's id: one whose end is in no store is an error with
+                        --all, a warning in a brain's own root without it); at a root several projects share, each
+                        one's stores (the root's own checks are its owner's)
   brain check --public [--repo DIR] [--remote NAME] [--history] [--engine] [--json]   before a push to a public repo
                         (config.json public.repos), at zero token: no denied term (public.deny), secret, e-mail or home
                         folder, data or sealed file, nor a domain's patterns (public.patterns, public.refuse) in the
@@ -55,7 +57,8 @@ def register(sub, ctx) -> None:
                                       "registry and the ids across every store; in a brain's own root, that "
                                       "registry check too)")
     ck.add_argument("--all", action="store_true", help="every project of the registry, then the registry's keys, "
-                                                       "repos, stacks and code_index, and the ids across every store")
+                                                       "repos, stacks and code_index, the ids across every store and "
+                                                       "the edges between stores (one to an id in no store: an error)")
     ck.add_argument("--public", action="store_true", help="before a push to a public repo: no private term, secret, "
                                                           "personal data, data file or domain pattern (brain.public)")
     ck.add_argument("--repo", help="--public: the checkout to check (default: --root, else the current folder)")

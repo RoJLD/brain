@@ -11,6 +11,8 @@ config.json `engine.pin` names; its Claude Code hooks reach sessions through thi
   and `brain check` checks (`brain refresh` does both from a worktree, `brain refresh --on-main` in the main
   checkout). The generated files (`notes/kanban_graph.md`, `notes/roadmap_graph.md`, `notes/decision_queue.md`,
   `_generated_*.yaml`, `.claude-plugin/`, `plugins/`) are never edited by hand.
+- Reading goes through the read commands too, not the files: `brain item show <id>`, `brain items` (filters),
+  `brain adr show <adr-id|rule-id>`, `brain spec show <spec-id> --section N`, `brain journal last [N]`.
 - After a merge of the default branch into a branch, `brain refresh` regenerates the views the merge driver kept
   from one side (`.gitattributes` `merge=brain`, `brain merge-driver install --apply`), then commit.
 - Every tracked file has a side in `boundary.yaml`. Code, tests and their fixtures (`src/`, `tests/`, `fixtures/`)
