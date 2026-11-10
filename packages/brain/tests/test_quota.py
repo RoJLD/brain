@@ -122,7 +122,7 @@ def test_the_session_hour_counts_the_agents(projects_dir, week):
     alone = quota.session_hour([usage.scan(boss)], NOW)
     agent = _write(projects_dir / "p" / "boss" / "subagents" / "workflows" / "wf_1" / "agent-x.jsonl", [
         _asst(f"2026-11-02T{h:02d}:10:00Z", f"x{h}", [], out=300_000) for h in range(10, 14)])
-    assert agent.exists()
+    assert usage.scan(boss)["agents"]["workflows"]["wf_1"]["agents"] == 1   # the agent is read as its session's
     with_agents = quota.session_hour([usage.scan(boss)], NOW)
     assert alone["hours"] == with_agents["hours"] == 4
     assert with_agents["usd"] == pytest.approx(4 * alone["usd"], rel=0.01)   # the agents' cost in the same hours
@@ -170,6 +170,9 @@ def test_the_live_sessions_left_and_how_many_queue_items_fit(week):
     q = fc["queue"]
     assert q["room_pct"] == pytest.approx(100 - fc["pct_now"] - 450 * f, abs=0.1)
     assert q["fit"] == int(q["room_pct"] / (600 * f)) == 3 and q["fit_usd"] == 1800.0 and q["items"] == 5
+    rows = [x for x in quota.render(fc) if x.startswith("  ") and x[2] != " " and x != "  readings"]
+    assert any(x.startswith("  live      2 session(s)") for x in rows)
+    assert all(x[11] == " " and x[12] != " " for x in rows), rows   # one label column: every value at column 12
 
 
 def test_live_sessions_and_the_queue_from_the_ledger(project, now):

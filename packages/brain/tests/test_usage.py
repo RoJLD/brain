@@ -231,6 +231,54 @@ def test_a_new_workflow_agent_rescans_its_session(projects_dir):
                                                             ["cost"])}}
 
 
+def test_a_label_written_after_the_transcript_rescans_its_session(projects_dir):
+    """A workflow agent's meta (or its run's journal) that gains a label once its transcript stopped growing is read:
+    the signature holds the agents' label files, not only their transcripts."""
+    main = _launcher(projects_dir)
+    rows, n = usage.update()
+    assert n == 1 and "fix:views" in rows["proj/boss.jsonl"]["agents"]["workflows"]["wf_run1"]["labels"]
+    _meta(main.with_suffix("") / "subagents" / "workflows" / "wf_run1" / "agent-w03.jsonl",
+          agentType="workflow-subagent", description="fix:views:late", workflowPhase="Fix")
+    rows, n = usage.update()
+    assert n == 1 and "fix:views:late" in rows["proj/boss.jsonl"]["agents"]["workflows"]["wf_run1"]["labels"]
+    with open(main.with_suffix("") / "subagents" / "workflows" / "wf_run1" / "journal.jsonl", "a",
+              encoding="utf-8") as fh:
+        fh.write(json.dumps({"type": "started", "agentId": "w09", "label": "x", "phase": "Fix"}) + "\n")
+    assert usage.update()[1] == 1   # the run's journal grew: scanned again
+    assert usage.update()[1] == 0   # nothing changed since
+
+
+def test_a_message_two_subagents_hold_is_counted_once(projects_dir):
+    """A forked agent's transcript copies its parent agent's prefix: the shared message is the first agent's, the
+    fork's own messages stay its own."""
+    main = _write(projects_dir / "proj" / "fork.jsonl", [_asst("2026-11-09T10:00:00Z", "m1", [], out=100)])
+    d = main.with_suffix("") / "subagents"
+    _meta(_write(d / "agent-aaa.jsonl", [_asst("2026-11-09T10:01:00Z", "z1", [], out=1000)]),
+          agentType="general-purpose", description="first")
+    _meta(_write(d / "agent-bbb.jsonl", [_asst("2026-11-09T10:01:00Z", "z1", [], out=1000),
+                                         _asst("2026-11-09T10:02:00Z", "z2", [], out=500)]),
+          agentType="general-purpose", description="fork")
+    row = usage.scan(main)
+    one = lambda out: usage.message_cost({"input": 10, "output": out, "cache_write_1h": 0}, OPUS)  # noqa: E731
+    assert row["tokens"]["output"] == 100 and row["sub_tokens"]["output"] == 1000 + 500
+    subs = row["agents"]["subagents"]
+    assert subs["first"]["output"] == 1000 and subs["fork"]["output"] == 500
+    assert subs["fork"]["cost"] == pytest.approx(one(500), abs=1e-4)
+    assert row["cost"] == pytest.approx(one(100) + one(1000) + one(500), abs=1e-4)
+
+
+def test_a_row_of_an_older_scanner_is_scanned_again_into_agents(projects_dir):
+    _launcher(projects_dir)
+    rows, _ = usage.update()
+    old = dict(rows["proj/boss.jsonl"], v=2)
+    old.pop("agents")
+    usage.save({"proj/boss.jsonl": old}, usage.ledger(write=True))
+    assert "agents" not in usage.load()["proj/boss.jsonl"]
+    rows, n = usage.update()
+    assert n == 1 and rows["proj/boss.jsonl"]["v"] == usage.SCAN_V
+    assert rows["proj/boss.jsonl"]["agents"]["workflows"]["wf_run1"]["agents"] == 3
+
+
 def test_families_link_a_sub_session_to_its_parent(projects_dir):
     child = _child(projects_dir)
     task = BRIEF.split("Task:\n", 1)[1]

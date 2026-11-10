@@ -482,7 +482,7 @@ def render(fc: dict) -> list[str]:
                    f"({sh['hours']} session-hour(s), {usage.usd(sh['total_usd'])} over {sh['days']} d)")
     lv = fc.get("live")
     if lv:
-        out.append(f"  live     {lv['sessions']} session(s), {usage.usd(lv['last_hour_usd'])} in the last hour; "
+        out.append(f"  live      {lv['sessions']} session(s), {usage.usd(lv['last_hour_usd'])} in the last hour; "
                    f"what they serve has about {usage.usd(lv['left_usd'])} left"
                    + (f" ({lv['left_pct']:.1f} %)" if lv.get("left_pct") is not None else ""))
     q = fc.get("queue")

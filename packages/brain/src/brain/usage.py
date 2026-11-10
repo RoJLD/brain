@@ -635,10 +635,23 @@ def _sum_tokens(stats) -> dict:
 
 
 def sig_of(path: Path) -> tuple:
-    """What tells that a session's files changed: the transcript's size and time, its subagents' count and sizes."""
+    """What tells that a session's files changed: the transcript's size and time, its subagents' count and sizes, and
+    the size and time of the files their labels come from (each ``agent-<id>.meta.json``, each run's
+    ``journal.jsonl``), which may be written once a transcript stopped growing."""
     st = path.stat()
     subs = transcript.subagent_files(path)
-    return st.st_size, st.st_mtime_ns, len(subs), sum(f.stat().st_size for f in subs)
+    labels = [f.with_name(f"{f.stem}.meta.json") for f in subs]
+    labels += sorted({f.parent / "journal.jsonl" for f in subs if f.parent.parent.name == "workflows"})
+    marks = [(m.st_size, m.st_mtime_ns) for m in (_stat(f) for f in labels) if m]
+    return (st.st_size, st.st_mtime_ns, len(subs), sum(f.stat().st_size for f in subs),
+            len(marks), sum(s for s, _ in marks), max((t for _, t in marks), default=0))
+
+
+def _stat(path: Path):
+    try:
+        return path.stat()
+    except OSError:
+        return None
 
 
 def sig_list(sig: tuple) -> list:
