@@ -342,3 +342,16 @@ def test_capture_main_keeps_going_and_reports(on, monkeypatch):
     monkeypatch.setitem(capture.HANDLERS, "stop", boom)
     assert capture.main(["stop"], stdin=io.StringIO("{}")) == 0
     assert _lines(on, "error-*.jsonl")[0]["code"] == "RuntimeError"
+
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="nowindow wraps Popen on Windows")
+def test_an_error_passing_through_nowindow_is_its_callers(monkeypatch):
+    """brain.nowindow wraps every child a console-less engine starts: a child's own error (a cwd that is a file) is
+    located at its caller, never at the wrapper (it read brain.nowindow:__init__ on 2026-11-09)."""
+    from brain import nowindow
+    monkeypatch.setattr(subprocess.Popen, "__init__", subprocess.Popen.__init__)   # restored after the test
+    assert nowindow.install(console=lambda: False)
+    with pytest.raises(OSError) as info:
+        subprocess.Popen(["git", "--version"], cwd=str(Path(__file__)))
+    assert not selftime.where(info.value).startswith("brain.nowindow")
