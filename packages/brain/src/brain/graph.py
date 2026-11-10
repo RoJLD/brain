@@ -460,3 +460,25 @@ def research_graph(root: Path, store: Path, *args: str) -> int:
     if cli is not None:
         return _run_engine(cli, root, argv)
     return subprocess.run(_legacy_cmd(root) + argv, cwd=root).returncode
+
+
+def board_stale(root: Path, store: Path, views: str) -> list[str]:
+    """The board and the roadmap of ``store`` (in the folder ``views``, relative to ``root``) that exist and no longer
+    match the graph, relative to ``root``; [] when the engine is not in this Python (research_graph check's own
+    advisory still says it) or the store does not load (its check says why). brain.views on the default branch."""
+    if engine() is None:
+        return []
+    import yaml
+
+    from research_graph import kanban, roadmap
+    from research_graph.loader import ValidationError, load_store
+
+    try:
+        g = load_store(store)
+    except (ValidationError, yaml.YAMLError, OSError, ValueError):   # research_graph check says why it does not load
+        return []
+    out = []
+    for stale, file in ((kanban.kanban_stale, kanban.FILE), (roadmap.roadmap_stale, roadmap.FILE)):
+        if stale(g, root, views):
+            out.append(kanban.view_path(file, views))
+    return out
