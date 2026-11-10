@@ -479,6 +479,46 @@ no pass); the SessionStart health hook says so in one line and `brain status`'s 
 it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and says so in one line; the alerts go
 at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped.
 
+### Dependency probes: loud fallbacks
+
+A capability that relies on something outside the brain (a CLI's login, a tool's last output, an index's freshness,
+a channel's last delivery, a collector's last data, the last backup) should not fail silently. Each such dependency
+declares a token-free probe in the personal brain's `config.json`, under `probes`, with the machines it runs on; the
+engine holds the probe kinds, never a probe per dependency (`brain.depprobes`):
+
+```json
+"probes": {
+  "cli-login": {"kind": "command", "argv": ["tool", "auth", "status"], "expect": "logged in", "timeout": "20s",
+                "level": "error", "about": "the session archive's summaries", "machines": ["host-a"]},
+  "notify-delivery": {"kind": "json-age", "path": "$BRAIN_HOME/notify/*.jsonl", "field": "at",
+                      "where": {"outcome": "sent"}, "max_age": "7d"},
+  "backup": {"kind": "file-age", "path": "D:/backups/*.zip", "max_age": "26h"},
+  "index-ui": {"kind": "http", "url": "http://127.0.0.1:4747/", "timeout": "5s"}
+}
+```
+
+- `file-age`: the newest file matching `path` (a glob) was modified within `max_age`.
+- `json-age`: a timestamp `field` (dotted) of a JSON file, or of the last line of a JSON Lines file that matches
+  `where`, is within `max_age` (an ISO time, or seconds since the epoch).
+- `command`: `argv` exits with one of `ok_exit` (default 0) within `timeout`, its output matching `expect`. Never
+  through a shell, and a shell or an interpreter as the program is refused. The output is read for `expect` only: it is
+  never shown, stored or sent. Declare read-only status commands only: the alerts pass runs them unattended.
+- `http`: a GET of `url` answers one of `ok_status` (default 2xx or 3xx) within `timeout`. No header is sent, a URL
+  with a user or a password is refused, and the URL is never shown.
+
+Each probe may also give `about` (what relies on it), `level` (its alert's, default warn), `timeout` (default 10s, at
+most 120s) and `machines` (none: every machine). Durations read `90s`, `15m`, `26h`, `7d`; paths expand `~`, the
+environment's variables and `$BRAIN_HOME`. `brain config --check` (and `brain check --all`) checks every declaration.
+
+The probes run in parallel, each with its own timeout, and are OK, STALE, FAIL or TIMEOUT. The alerts pass runs them
+(`brain alerts` without `--quick`, when the brain's own project is in scope) and raises `probe:<name>` at the probe's
+level on the brain's own project for each one that is not OK, so the pass's notify path sends it once, again if its
+level rises, and `resolved` once it is OK again. Each run is recorded in `<BRAIN_HOME>/probes/state.json`: the
+state, why, when it ran, the last OK and since when. `brain status` shows a probes row once one runs on this machine
+(`--quick`: the last run), and the cockpit's health panel a line. `brain probes` runs them now (exit 1 when one is not
+OK, 2 for a bad declaration); `--last` shows the last run, `--list` every declared probe and its machines, `--kinds`
+the kinds and their keys.
+
 ## Quiet mode
 
 `brain quiet --for 2h` silences the notifications below `critical` for that long (90m, 2h, 1d; at most 7d); a
