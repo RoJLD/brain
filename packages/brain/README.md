@@ -642,6 +642,16 @@ The quota conversion (`brain usage quota`) is per plan: only the readings of the
 `usage.plans`) count, and until the plan has 3 converted readings it says "uncalibrated", does not convert the week and
 estimates the 5-hour window from its latest reading and the ledger's cost since.
 
+The token ledger (`brain usage`) reads each session's subagents and workflow agents with it
+(`<session>/subagents/agent-<id>.jsonl` and `<session>/subagents/workflows/<run>/agent-<id>.jsonl`): their cost is in
+the session's cost and hours, so the quota forecast and the governor count it, and a message is counted once, as the
+subagent's, should the parent's transcript copy it. `brain usage` says whose the cost is (main threads, subagents,
+workflows), `--by workflow` lists each run (its agents, phases and the session that launched it) and `--by agent` each
+agent's label (the `description` of its `.meta.json`, else the run's `journal.jsonl`). `brain usage quota` measures
+the cost of a session-hour, the agents' included, as information: the governor's parallel-sessions cap uses it only
+with `usage.guard.session_hour_measured` true (default false), and then when it is above `usage.guard.session_hour_usd`;
+`brain usage guard` shows the measured value and whether it is applied.
+
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture
 hooks run `brain.capture` (`capture.sh <event>` runs `hooks/capture.py`, which calls it with the brain command's
