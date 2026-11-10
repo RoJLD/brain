@@ -115,14 +115,10 @@ def _program(argv0: str) -> str:
     return Path(argv0.replace("\\", "/")).name.lower().removesuffix(".exe").removesuffix(".cmd").removesuffix(".bat")
 
 
-def parse(name: str, conf) -> dict:
-    """One declaration checked and normalised: {name, kind, about, level, timeout, machines, ...its kind's keys};
-    raises ProbeError."""
-    where = f"config.json probes.{name}"
-    if not isinstance(name, str) or not NAME.match(name):
-        raise ProbeError(f"{where}: a name of lowercase letters, digits, dots, dashes and underscores")
-    if not isinstance(conf, dict):
-        raise ProbeError(f"{where}: an object")
+# the keys every kind shares, checked once (parse), in this order
+
+def _kind(conf: dict, where: str) -> str:
+    """The declaration's kind, its keys all known to it and its required ones all there."""
     kind = conf.get("kind")
     if kind not in KINDS:
         raise ProbeError(f"{where}: kind {kind!r}: one of {', '.join(KINDS)}")
@@ -134,58 +130,102 @@ def parse(name: str, conf) -> dict:
     missing = need - set(conf)
     if missing:
         raise ProbeError(f"{where}: kind {kind} needs {', '.join(sorted(missing))}")
+    return kind
+
+
+def _level(conf: dict, where: str) -> str:
     level = conf.get("level", "warn")
     if level not in alerts.LEVELS:
         raise ProbeError(f"{where}: level {level!r}: one of {', '.join(alerts.LEVELS)}")
+    return level
+
+
+def _machines(conf: dict, where: str) -> list[str]:
     machines = conf.get("machines") or []
     if not isinstance(machines, list) or not all(isinstance(m, str) and m for m in machines):
         raise ProbeError(f"{where}: machines: a list of host names")
+    return list(machines)
+
+
+def _timeout(conf: dict, where: str) -> float:
     timeout = _duration(conf["timeout"], f"{where}: timeout") if "timeout" in conf else TIMEOUT
     if timeout > TIMEOUT_MAX:
         raise ProbeError(f"{where}: timeout {conf['timeout']}: at most {int(TIMEOUT_MAX)}s")
+    return timeout
+
+
+# each kind's own keys (VALIDATORS): {key: normalised value}
+
+def _path_age(conf: dict, where: str) -> dict:
+    """file-age's keys, which json-age shares: max_age, then path."""
+    max_age = _duration(conf["max_age"], f"{where}: max_age")
+    if not isinstance(conf["path"], str) or not conf["path"].strip():
+        raise ProbeError(f"{where}: path: a file or a glob")
+    return {"max_age": max_age, "path": conf["path"]}
+
+
+def _json_age(conf: dict, where: str) -> dict:
+    out = _path_age(conf, where)
+    if not isinstance(conf["field"], str) or not conf["field"]:
+        raise ProbeError(f"{where}: field: a key, dotted for a nested one (meta.updated_at)")
+    w = conf.get("where") or {}
+    if not isinstance(w, dict) or not all(isinstance(v, (str, int, float, bool)) for v in w.values()):
+        raise ProbeError(f"{where}: where: an object of field -> a string, number or boolean")
+    return {**out, "field": conf["field"], "where": dict(w)}
+
+
+def _expect(value, where: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ProbeError(f"{where}: expect: a regular expression")
+    try:
+        re.compile(value)
+    except re.error as exc:
+        raise ProbeError(f"{where}: expect: {exc}") from None
+    return value
+
+
+def _command(conf: dict, where: str) -> dict:
+    argv = conf["argv"]
+    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
+        raise ProbeError(f"{where}: argv: the program and its arguments, a list of strings")
+    if _program(argv[0]) in REFUSED:
+        raise ProbeError(f"{where}: argv: {argv[0]!r} is a shell or an interpreter: name the program itself "
+                         "(a command probe runs no script)")
+    out = {"argv": list(argv), "ok_exit": _ints(conf["ok_exit"], f"{where}: ok_exit") if "ok_exit" in conf else [0]}
+    if "expect" in conf:
+        out["expect"] = _expect(conf["expect"], where)
+    return out
+
+
+def _http(conf: dict, where: str) -> dict:
+    from urllib.parse import urlsplit
+    url = conf["url"]
+    parts = urlsplit(url) if isinstance(url, str) else None
+    if not parts or parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ProbeError(f"{where}: url: an http or https URL")
+    if parts.username or parts.password:
+        raise ProbeError(f"{where}: url: no user or password in the URL (a probe carries no secret)")
+    return {"url": url, "ok_status": _ints(conf["ok_status"], f"{where}: ok_status") if "ok_status" in conf else []}
+
+
+VALIDATORS = {"file-age": _path_age, "json-age": _json_age, "command": _command, "http": _http}
+
+
+def parse(name: str, conf) -> dict:
+    """One declaration checked and normalised: {name, kind, about, level, timeout, machines, ...its kind's keys};
+    raises ProbeError. The keys every kind shares are checked once, then the kind's own (:data:`VALIDATORS`)."""
+    where = f"config.json probes.{name}"
+    if not isinstance(name, str) or not NAME.match(name):
+        raise ProbeError(f"{where}: a name of lowercase letters, digits, dots, dashes and underscores")
+    if not isinstance(conf, dict):
+        raise ProbeError(f"{where}: an object")
+    kind = _kind(conf, where)
+    level = _level(conf, where)
+    machines = _machines(conf, where)
+    timeout = _timeout(conf, where)
     p = {"name": name, "kind": kind, "about": str(conf.get("about") or ""), "level": level, "timeout": timeout,
-         "machines": list(machines)}
-    if "max_age" in need:
-        p["max_age"] = _duration(conf["max_age"], f"{where}: max_age")
-    if "path" in need:
-        if not isinstance(conf["path"], str) or not conf["path"].strip():
-            raise ProbeError(f"{where}: path: a file or a glob")
-        p["path"] = conf["path"]
-    if kind == "json-age":
-        if not isinstance(conf["field"], str) or not conf["field"]:
-            raise ProbeError(f"{where}: field: a key, dotted for a nested one (meta.updated_at)")
-        p["field"] = conf["field"]
-        w = conf.get("where") or {}
-        if not isinstance(w, dict) or not all(isinstance(v, (str, int, float, bool)) for v in w.values()):
-            raise ProbeError(f"{where}: where: an object of field -> a string, number or boolean")
-        p["where"] = dict(w)
-    if kind == "command":
-        argv = conf["argv"]
-        if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
-            raise ProbeError(f"{where}: argv: the program and its arguments, a list of strings")
-        if _program(argv[0]) in REFUSED:
-            raise ProbeError(f"{where}: argv: {argv[0]!r} is a shell or an interpreter: name the program itself "
-                             "(a command probe runs no script)")
-        p["argv"] = list(argv)
-        p["ok_exit"] = _ints(conf["ok_exit"], f"{where}: ok_exit") if "ok_exit" in conf else [0]
-        if "expect" in conf:
-            if not isinstance(conf["expect"], str) or not conf["expect"]:
-                raise ProbeError(f"{where}: expect: a regular expression")
-            try:
-                re.compile(conf["expect"])
-            except re.error as exc:
-                raise ProbeError(f"{where}: expect: {exc}") from None
-            p["expect"] = conf["expect"]
-    if kind == "http":
-        from urllib.parse import urlsplit
-        url = conf["url"]
-        parts = urlsplit(url) if isinstance(url, str) else None
-        if not parts or parts.scheme not in ("http", "https") or not parts.hostname:
-            raise ProbeError(f"{where}: url: an http or https URL")
-        if parts.username or parts.password:
-            raise ProbeError(f"{where}: url: no user or password in the URL (a probe carries no secret)")
-        p["url"] = url
-        p["ok_status"] = _ints(conf["ok_status"], f"{where}: ok_status") if "ok_status" in conf else []
+         "machines": machines}
+    p.update(VALIDATORS[kind](conf, where))
     return p
 
 
@@ -399,7 +439,7 @@ def probe_http(p: dict, now: datetime) -> tuple[str, str, float | None]:
 
     req = urllib.request.Request(p["url"], method="GET", headers={"User-Agent": "brain-probe"})
     try:
-        with urllib.request.urlopen(req, timeout=p["timeout"]) as resp:   # noqa: S310 (the owner's URL, http(s))
+        with urllib.request.urlopen(req, timeout=p["timeout"]) as resp:   # http(s) only: parse refuses any other
             code = resp.status
     except urllib.error.HTTPError as exc:
         code = exc.code
@@ -481,24 +521,33 @@ def run(cfg: config.Config | None = None, *, host: str | None = None, now: datet
     loaded = stateio.load(state_file(), known=STATE_V, check=_shape, aside=save)
     prev = {k: v for k, v in loaded.data.items() if not k.startswith("_")}
     at = alerts._iso(now)
-    rows = []
-    for r in measure(here, now):
-        p = prev.get(r["name"]) or {}
-        r["at"] = at
-        r["last_ok"] = at if r["state"] == "OK" else p.get("last_ok") or ""
-        r["since"] = p.get("since") if p.get("state") == r["state"] and p.get("since") else at
-        rows.append(r)
+    rows = [_with_history(r, prev.get(r["name"]) or {}, at) for r in measure(here, now)]
     data = {"host": host, "at": at, "probes": rows, "errors": errors, "saved": False}
     if save and (rows or prev):
-        record = {r["name"]: {k: v for k, v in r.items() if k != "name"} for r in rows}
-        record["_run"] = {"at": at, "host": host}
-        try:
-            stateio.save(loaded, record)
-            data["saved"] = True
-        except (stateio.StateError, OSError) as exc:
-            data["errors"] = [*errors, f"not recorded: {exc}"]
+        why = _record(loaded, rows, at, host)
+        data["saved"] = not why
+        data["errors"] = [*errors, why] if why else errors
     _LATEST[str(state_file())] = data
     return data
+
+
+def _with_history(r: dict, p: dict, at: str) -> dict:
+    """A row of this run given its time, its last OK and since when it is in its state (``p``: its last record)."""
+    r["at"] = at
+    r["last_ok"] = at if r["state"] == "OK" else p.get("last_ok") or ""
+    r["since"] = p.get("since") if p.get("state") == r["state"] and p.get("since") else at
+    return r
+
+
+def _record(loaded: stateio.State, rows: list[dict], at: str, host: str) -> str:
+    """The run saved to the state file: '' once saved, else why it was not."""
+    record = {r["name"]: {k: v for k, v in r.items() if k != "name"} for r in rows}
+    record["_run"] = {"at": at, "host": host}
+    try:
+        stateio.save(loaded, record)
+    except (stateio.StateError, OSError) as exc:
+        return f"not recorded: {exc}"
+    return ""
 
 
 def last() -> dict:

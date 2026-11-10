@@ -15,6 +15,7 @@ import pytest
 
 from brain import alerts, cli, cockpit, config, depprobes, notify, projects, status
 
+from test_cockpit import _cockpit
 from test_notify import ENV, Fake
 
 NOTIFY = """\
@@ -436,6 +437,24 @@ def test_the_cockpit_health_panel_shows_the_probes():
         {"name": "backup", "kind": "file-age", "state": "OK", "why": "newest file 2.0 h old"}]}}
     text = "\n".join(cockpit.health_lines(panel, width=200))
     assert "dependency probes: 1 of 2 OK; login FAIL (exit 1; last OK 2026-11-09 08:00Z)" in text
+
+
+def test_the_cockpit_probe_runs_the_dependency_probes_into_the_health_panel(tmp_path, monkeypatch, store,
+                                                                             brain_home):
+    (tmp_path / "claude" / "projects").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))   # transcripts never the owner's
+    cp = _cockpit(tmp_path, monkeypatch, store)
+    monkeypatch.setattr(status, "audit_of", lambda p, detail=0: {"skipped": "test"})
+    monkeypatch.setattr(status, "_probes", lambda root, quick: (None, None))
+    monkeypatch.setattr(alerts, "read_scheduler", lambda cfgs: {})
+    ran = {"host": "h", "at": "2026-11-10T12:00:00Z", "errors": [], "saved": True, "probes": [
+        {"name": "login", "kind": "command", "state": "FAIL", "why": "exit 1", "last_ok": ""}]}
+    monkeypatch.setattr(depprobes, "run", lambda *a, **k: ran)
+    cp.refresh(probe=True)
+    health = cp.snapshot()["panels"]["health"]
+    assert health["probes"] == ran
+    assert "dependency probes: 0 of 1 OK; login FAIL (exit 1; never OK here)" in "\n".join(
+        cockpit.health_lines(health, width=200))
 
 
 def test_brain_probes_runs_lists_and_exits_by_state(tmp_path, monkeypatch, capsys):

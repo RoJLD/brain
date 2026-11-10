@@ -40,36 +40,48 @@ def _kinds() -> dict:
             for k, (need, opt) in depprobes.KINDS.items()}
 
 
-def early(args) -> int:
-    """Machine-wide: run before any root is resolved (no graph store needed)."""
-    if args.kinds:
-        data = _kinds()
-        if args.json:
-            print(json.dumps(data, indent=1, sort_keys=True))
-        else:
-            for k, v in data.items():
-                print(f"{k:<9} {v['what']}\n          needs {', '.join(v['required'])}; may say "
-                      f"{', '.join(v['optional'])}")
+def _show_kinds(as_json: bool) -> int:
+    data = _kinds()
+    if as_json:
+        print(json.dumps(data, indent=1, sort_keys=True))
         return 0
-    if args.list:
-        data = depprobes.listing()
-        if args.json:
-            print(json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True))
-        else:
-            print(f"dependency probes declared (this machine: {data['host']})")
-            for p in data["probes"]:
-                print(f"  {'here' if p['here'] else '    '} {p['name']:<24} {p['kind']:<9} {p['level']:<8} "
-                      f"{', '.join(p['machines']) or 'every machine'}" + (f"  ({p['about']})" if p["about"] else ""))
-            if not data["probes"]:
-                print("  none (config.json probes; brain probes --kinds)")
-            for e in data["errors"]:
-                print(f"  bad declaration: {e}")
-        return 2 if data["errors"] else 0
-    data = depprobes.last() if args.last else depprobes.run()
-    if args.json:
+    for k, v in data.items():
+        print(f"{k:<9} {v['what']}\n          needs {', '.join(v['required'])}; may say "
+              f"{', '.join(v['optional'])}")
+    return 0
+
+
+def _show_list(as_json: bool) -> int:
+    data = depprobes.listing()
+    if as_json:
+        print(json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True))
+    else:
+        print(f"dependency probes declared (this machine: {data['host']})")
+        for p in data["probes"]:
+            print(f"  {'here' if p['here'] else '    '} {p['name']:<24} {p['kind']:<9} {p['level']:<8} "
+                  f"{', '.join(p['machines']) or 'every machine'}" + (f"  ({p['about']})" if p["about"] else ""))
+        if not data["probes"]:
+            print("  none (config.json probes; brain probes --kinds)")
+        for e in data["errors"]:
+            print(f"  bad declaration: {e}")
+    return 2 if data["errors"] else 0
+
+
+def _show_run(last: bool, as_json: bool) -> int:
+    data = depprobes.last() if last else depprobes.run()
+    if as_json:
         print(json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True))
     else:
         print("\n".join(depprobes.render(data)))
     if data.get("errors") and any(not e.startswith("not recorded") for e in data["errors"]):
         return 2
     return 1 if any(r.get("state") != "OK" for r in data.get("probes") or []) else 0
+
+
+def early(args) -> int:
+    """Machine-wide: run before any root is resolved (no graph store needed)."""
+    if args.kinds:
+        return _show_kinds(args.json)
+    if args.list:
+        return _show_list(args.json)
+    return _show_run(args.last, args.json)
