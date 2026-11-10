@@ -13,7 +13,7 @@ Which number moves is decided by what an owner has to do, not by how much change
 | The release holds | The number | Example |
 |---|---|---|
 | a change an owner must act on: a numbered step of `### Upgrade` beyond the standard steps below, anything that newly refuses what passed, a config or a git setting to rewrite | the middle one, `0.Y.0` | 0.2.6, a patch before this policy, would be 0.Y.0 under it (guards fail closed, `brain update` twice) |
-| a format that moves: a registered schema changed since `vP` (`SCHEMAS` in `packages/brain/installer/release_check.py`), what `brain init` wrote once; config.json's schema grown by optional keys only does not move (below) | the middle one, `0.Y.0` | 0.2.5, a patch before this policy, would be 0.Y.0 under it (the Lesson type, the `merge=brain` line) |
+| a format that moves: a registered schema changed since `vP` (`SCHEMAS` in `packages/brain/installer/release_check.py`), what `brain init` wrote once; config.json's schema grown by optional keys only, and a whole new format, do not move (below) | the middle one, `0.Y.0` | 0.2.5, a patch before this policy, would be 0.Y.0 under it (the Lesson type, the `merge=brain` line) |
 | only what needs nothing: fixes and additions an owner gets by the standard steps alone | the last one, `0.Y.Z` | a fix of a crash |
 
 **An optional key of config.json is a patch's** (wi-brain-release-schema-additive): when `config.schema.json` only
@@ -21,9 +21,10 @@ gains optional properties (none of them `required`) or changes its prose (`descr
 `examples`), every config.json the old schema accepted is still valid and an owner has nothing to do; `release-check`
 reports it as grown, not moved. Any other change of it moves the format: a key removed, a keyword added, removed
 or changed (a type, an enum, a bound, a pattern, `additionalProperties`, `required`), even a list reordered; the
-comparison errs towards a minor version. **A whole new format is a patch's too**: a registered format none of
-whose files exists at the last tag (`release_check.new_formats`) is held by no brain yet and never read by an older
-engine; a file new to a format that exists still moves it. A record schema (ar, ddr, sr, event) moves even by an
+comparison errs towards a minor version. **A whole new format is a patch's too**: a format the last tag did not
+register (its own `SCHEMAS`) and none of whose files exists there (`release_check.new_formats`) is held by no brain
+yet and never read by an older engine; a file new to a format that exists still moves it, and so does a format
+whose files are renamed. A record schema (ar, ddr, sr, event) moves even by an
 optional key, since older engines on other machines read the records this one writes. A new refusal of what passed
 stays a minor version: ship it off by default, behind a key the owner turns on, to keep a patch.
 
@@ -100,7 +101,8 @@ nothing else to do, the section says « Nothing to run for the rest » after the
   standard steps makes it `0.Y.0`, and so does a format that moves, a registered schema changed since `vP` or what
   `brain init` wrote once, even with no step for it. Only what an owner gets by the standard steps alone is `0.Y.Z`.
   `release-check` refuses a patch that changes a file `SCHEMAS` registers (the formats, and part of what `brain init`
-  writes once); a file `brain init` writes that it does not register is yours to see.
+  writes once), save config.json's schema grown by optional keys and a whole new format (above); a file `brain init`
+  writes that it does not register is yours to see.
 
 ## 2. The version PR
 
