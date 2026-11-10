@@ -6,7 +6,8 @@ It runs on three tools: a new session (``mcp__<server>__start_session``, the des
 ``Task``) and a workflow (``Workflow``). It reads only cached state: the quota readings the sessions note
 (``brain usage quota --observe``: ``<BRAIN_HOME>/usage/quota.jsonl``) and the last forecast (``usage/quota.json``),
 the desktop app's session files (``%LOCALAPPDATA%/Claude-Data/*/claude-code-sessions``, read only, as brain.tidy),
-the session records the Stop hook writes (``<BRAIN_HOME>/sessions/<id>.json``), the machine's committed memory, and
+the session records the Stop hook writes (``<BRAIN_HOME>/sessions/<id>.json``), the machine's committed memory and
+available RAM, and
 its configuration resolved once and cached in ``<BRAIN_HOME>/cache/governor.json`` while config.json and the
 registry keep their mtime and size. Its decision takes under 50 ms (tests/test_governor.py checks it).
 
@@ -433,6 +434,11 @@ def memory_info() -> dict:
         text = Path("/proc/meminfo").read_text(encoding="ascii")
     except OSError:
         return {"committed": None, "available_gb": None}
+    return meminfo(text)
+
+
+def meminfo(text: str) -> dict:
+    """The two measures from /proc/meminfo's text (kB): the memory in use in %, MemAvailable in GB."""
     kb = {m.group(1): int(m.group(2)) for m in re.finditer(r"^(\w+):\s+(\d+)", text, re.M)}
     avail = kb.get("MemAvailable")
     return {"committed": round(100.0 * (1 - avail / kb["MemTotal"]), 1) if kb.get("MemTotal") and avail is not None
@@ -446,7 +452,7 @@ def memory_pct() -> float | None:
 
 def memory_text(committed: float | None, available_gb: float | None, lim: dict) -> str:
     """Both measures and their thresholds, in words: brain usage guard, a refusal, brain status."""
-    c = f"{committed:.0f} % committed" if committed is not None else "committed unknown"
+    c = f"{committed:.1f} % committed" if committed is not None else "committed unknown"
     a = f"{available_gb:.1f} GB of RAM available" if available_gb is not None else "available RAM unknown"
     return (f"{c} (refused from {lim['memory']:g} %), {a} (refused under {lim['memory_available_gb']:g} GB)")
 

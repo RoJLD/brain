@@ -171,15 +171,23 @@ def test_the_machine_memory_reads_two_measures(ada, brain_home, monkeypatch):
     mem(monkeypatch, 97.0, 24.0)
     decision, reason = hook(START, ada.lab, title="x")
     assert decision == "deny" and "refused by the committed memory" in reason
-    assert "97 % committed (refused from 97 %), 24.0 GB of RAM available (refused under 4 GB)" in reason
+    assert "97.0 % committed (refused from 97 %), 24.0 GB of RAM available (refused under 4 GB)" in reason
     assert hook("Workflow", ada.lab)[0] == "deny" and hook("Agent", ada.lab) is None
     mem(monkeypatch, 60.0, 3.5)
     decision, reason = hook("Workflow", ada.lab)
-    assert decision == "deny" and "refused by the available RAM" in reason and "60 % committed" in reason
+    assert decision == "deny" and "refused by the available RAM" in reason and "60.0 % committed" in reason
     mem(monkeypatch, 98.0, 1.0)
     assert "refused by both memory measures" in hook(START, ada.lab, title="x")[1]
     mem(monkeypatch, None, None)   # neither measure readable: no refusal on memory
     assert hook(START, ada.lab, title="x") is None
+    mem(monkeypatch, None, 3.0)    # one measure unreadable never hides the other
+    assert "refused by the available RAM" in hook(START, ada.lab, title="x")[1]
+    mem(monkeypatch, 98.0, None)
+    assert "refused by the committed memory" in hook(START, ada.lab, title="x")[1]
+    mem(monkeypatch, 96.9, 4.0)    # the thresholds: from 97 % committed, under 4 GB
+    assert hook(START, ada.lab, title="x") is None
+    mem(monkeypatch, 96.9, 3.9)
+    assert hook(START, ada.lab, title="x")[0] == "deny"
     mem(monkeypatch, 98.0, 3.0)
     ada({"memory": 99, "memory_available_gb": 2})
     assert hook(START, ada.lab, title="x") is None
@@ -189,7 +197,13 @@ def test_the_memory_measures_are_read_from_the_machine():
     m = governor.memory_info()
     assert set(m) == {"committed", "available_gb"}
     if m["committed"] is not None:
-        assert 0 < m["committed"] <= 100 and m["available_gb"] is not None and m["available_gb"] >= 0
+        assert 0 <= m["committed"] <= 100 and m["available_gb"] is not None and m["available_gb"] >= 0
+
+
+def test_meminfo_gives_the_percent_in_use_and_the_gb_available():
+    text = "MemTotal:       16777216 kB\nMemFree:         1048576 kB\nMemAvailable:    4194304 kB\n"
+    assert governor.meminfo(text) == {"committed": 75.0, "available_gb": 4.0}
+    assert governor.meminfo("MemTotal:       16777216 kB\n") == {"committed": None, "available_gb": None}
 
 
 def test_a_cache_of_other_defaults_is_not_read(ada, brain_home, monkeypatch):
@@ -198,7 +212,9 @@ def test_a_cache_of_other_defaults_is_not_read(ada, brain_home, monkeypatch):
     assert s["limits"]["memory"] == 97.0 and s["limits"]["memory_available_gb"] == 4.0
     cache = brain_home / "cache" / "governor.json"
     kept = json.loads(cache.read_text(encoding="utf-8"))
-    kept["key"][1] = json.dumps(dict(governor.DEFAULTS, memory=90.0), sort_keys=True)
+    mine = json.dumps(governor.DEFAULTS, sort_keys=True)
+    assert mine in kept["key"]
+    kept["key"][kept["key"].index(mine)] = json.dumps(dict(governor.DEFAULTS, memory=90.0), sort_keys=True)
     kept["settings"]["limits"]["memory"] = 90.0
     cache.write_text(json.dumps(kept), encoding="utf-8")
     assert governor.settings(str(ada.lab))["limits"]["memory"] == 97.0
@@ -211,11 +227,13 @@ def test_brain_usage_guard_and_status_show_both_measures(ada, brain_home, monkey
     assert cli.main(["usage", "guard"]) == 0
     out = capsys.readouterr().out
     assert "memory 97 % committed or under 4 GB of RAM" in out
-    assert "  memory    95 % committed (refused from 97 %), 3.0 GB of RAM available (refused under 4 GB)" in out
+    assert "  memory    95.0 % committed (refused from 97 %), 3.0 GB of RAM available (refused under 4 GB)" in out
     m = status.memory_of(ada.lab)
     assert m["refused"] == "available" and m["line"].endswith("a new session or workflow is refused (available)")
     lines = status.render({"status": 1, "projects": [], "memory": m})
     assert any(x.lstrip().startswith("memory") and "3.0 GB of RAM available" in x for x in lines)
+    monkeypatch.setattr(governor, "settings", lambda cwd: 1 / 0)   # a config that does not load: the defaults
+    assert status.memory_of(ada.lab)["line"].startswith("95.0 % committed (refused from 97 %)")
 
 
 def test_the_parallel_sessions_cap(ada, brain_home):
