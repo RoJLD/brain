@@ -380,3 +380,29 @@ def test_hook_scripts_end_to_end(world, brain_home, tmp_path):
                          env=env, timeout=30)
     ctx = json.loads(out.stdout)["hookSpecificOutput"]["additionalContext"]
     assert ctx == 'refused "x" in K\\c.md:2 github-token\nsecond line\n'
+
+
+# --- the sync's record through brain.stateio (wi-brain-state-safe-io-rest) ---
+
+def test_a_newer_brains_sync_state_is_refused_before_any_fetch(world, brain_home):
+    f = brain_home / "memory-sync" / "state.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"v": 2, "notes": {}}', encoding="utf-8")
+    assert memory.job_main(force=True, gh=world.gh) == 1
+    assert f.read_text(encoding="utf-8") == '{"v": 2, "notes": {}}' and world.branches() == ["main"]
+    last = json.loads((brain_home / "memory-sync" / "last.json").read_text(encoding="utf-8"))
+    assert last["result"] == "failed" and "newer brain" in last["error"]
+    assert "brain update" in (brain_home / "memory-sync" / "alert.txt").read_text(encoding="utf-8")
+    assert memory.load_state() == {"notes": {}}  # still read, as it is: brain memory status
+
+
+def test_the_sync_state_is_saved_with_its_v_backed_up_and_set_aside_when_unreadable(brain_home):
+    memory.save_state({"notes": {"K/a.md": "x"}})
+    memory.save_state({"notes": {}})
+    f = memory.sync_dir() / "state.json"
+    assert json.loads(f.read_text(encoding="utf-8")) == {"v": memory.STATE_V, "notes": {}}
+    assert json.loads((f.parent / "state.json.bak").read_text(encoding="utf-8"))["notes"] == {"K/a.md": "x"}
+    f.write_text("[1]", encoding="utf-8")
+    assert memory.load_state() == {} and f.exists()  # a read moves nothing
+    assert memory.load_state(write=True) == {} and not f.exists()
+    assert len(list(f.parent.glob("state.json.unreadable-*"))) == 1

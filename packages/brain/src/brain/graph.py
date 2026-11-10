@@ -218,7 +218,9 @@ def append_edges(store: Path, edges: list[dict], file: str = "edges/work.yaml", 
 def add_item(store: Path, nid: str, title: str, *, node_type: str = "WorkItem", status: str = "todo",
              props: dict | None = None, spec: str = "", after: list[str] | None = None, milestone: str = "",
              adr: str = "", anchor: str = "", file: str = "nodes/work.yaml", edges_file: str = "edges/work.yaml",
-             today: str | None = None) -> dict:
+             today: str | None = None, foreign: dict | frozenset = frozenset()) -> dict:
+    """A new node and its edges (spec, after, milestone, adr); an edge's target may be another store's id of
+    ``foreign`` (brain.crossstore.registry_ids)."""
     f, _ = layer_file(store, file), layer_file(store, edges_file)   # both checked before the node is written
     index = node_index(store)
     if nid in index:
@@ -237,7 +239,7 @@ def add_item(store: Path, nid: str, title: str, *, node_type: str = "WorkItem", 
                           + [(milestone, "part_of"), (adr, "decided_by")]):
         if not target:
             continue
-        if target not in index:
+        if target not in index and target not in foreign:
             raise GraphError(f"{target}: unknown node (edge {etype} from {nid})")
         edges.append({"from": nid, "to": target, "type": etype})
     f = _layer_ready(f)
@@ -266,16 +268,24 @@ def _edit(store: Path, nid: str, change) -> dict:
     return new
 
 
+def _check_ends(index: dict, src: str, dst: str, pending, foreign) -> None:
+    """GraphError when an end is in neither the store, ``pending`` nor ``foreign``, or when both are other stores'."""
+    here = set(index) | set(pending)
+    for nid in (src, dst):
+        if nid not in here and nid not in foreign:
+            raise GraphError(f"{nid}: unknown node")
+    if src not in here and dst not in here:
+        raise GraphError(f"{src} -> {dst}: neither end is a node of this store (an edge belongs to the store of one)")
+
+
 def link(store: Path, src: str, etype: str, dst: str, edges_file: str = "edges/work.yaml",
          today: str | None = None, pending: set[str] | frozenset = frozenset(), via: str = "brain item link",
-         props: dict | None = None) -> dict:
+         props: dict | None = None, foreign: dict | frozenset = frozenset()) -> dict:
     """Append one edge between two existing nodes, unless the pair is already linked (one edge per pair).
     ``pending``: ids the next sync generates (an ADR just appended to its log), accepted as endpoints. ``props``: the
-    edge's props (an enforced_by edge's scope)."""
-    index = node_index(store)
-    for nid in (src, dst):
-        if nid not in index and nid not in pending:
-            raise GraphError(f"{nid}: unknown node")
+    edge's props (an enforced_by edge's scope). ``foreign``: other stores' ids (brain.crossstore.registry_ids),
+    accepted as one end, the other being the store's own."""
+    _check_ends(node_index(store), src, dst, pending, foreign)
     if etype not in (load_schema(store).get("edge_types") or []):
         raise GraphError(f"{etype}: not an edge type of {store / 'schema.yaml'}")
     files = [store / "edges.yaml", *sorted((store / "edges").glob("*.yaml"))]
@@ -422,10 +432,17 @@ def graph_python(root: Path) -> str:
     return sys.executable
 
 
+def _foreign(root: Path, store: Path) -> list[str]:
+    """The other stores of the registry that hold an id an edge of ``store`` names, as research_graph's options
+    (brain.crossstore; none for a store whose edges name only its own ids)."""
+    from . import crossstore  # here: it imports brain.projects, which imports this module
+    return crossstore.engine_args(root, store)
+
+
 def research_graph_json(root: Path, store: Path, *args: str):
     """The parsed ``--json`` output of a research_graph subcommand, or None when it cannot run (its error on
     stderr)."""
-    argv = ["--store", str(store), "--repo-root", str(root), *args, "--json"]
+    argv = ["--store", str(store), "--repo-root", str(root), *_foreign(root, store), *args, "--json"]
     cli = engine()
     if cli is not None:
         out, err = io.StringIO(), io.StringIO()
@@ -453,8 +470,9 @@ def research_graph_json(root: Path, store: Path, *args: str):
 
 def research_graph(root: Path, store: Path, *args: str) -> int:
     """research_graph's exit code for ``args`` on ``store``, run from ``root``. ``args`` may start with the store's
-    layout options, before the subcommand (brain.projects.layout: ``--views``, ``--decisions``, ``--no-decisions``)."""
-    argv = ["--store", str(store), "--repo-root", str(root), *args]
+    layout options, before the subcommand (brain.projects.layout: ``--views``, ``--decisions``, ``--no-decisions``); the
+    other stores an edge of ``store`` names are given too (``--foreign-store``, brain.crossstore)."""
+    argv = ["--store", str(store), "--repo-root", str(root), *_foreign(root, store), *args]
     print("$ research_graph " + " ".join(args), flush=True)
     cli = engine()
     if cli is not None:
@@ -473,8 +491,9 @@ def board_stale(root: Path, store: Path, views: str) -> list[str]:
     from research_graph import kanban, roadmap
     from research_graph.loader import ValidationError, load_store
 
+    from . import crossstore
     try:
-        g = load_store(store)
+        g = load_store(store, foreign=crossstore.foreign_nodes(root, store))
     except (ValidationError, yaml.YAMLError, OSError, ValueError):   # research_graph check says why it does not load
         return []
     out = []

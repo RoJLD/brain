@@ -29,6 +29,8 @@ from pathlib import Path
 
 import networkx as nx
 
+from .model import FOREIGN, kind
+
 CODE_TYPE = "CodeRef"
 PREFIX = "code:"
 _REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
@@ -95,6 +97,8 @@ def structure_errors(graph: nx.DiGraph) -> list[str]:
     """
     problems: list[str] = []
     for nid, a in graph.nodes(data=True):
+        if a.get(FOREIGN):   # another store's node an edge names: its own store's check checks it
+            continue
         if a.get("type") != CODE_TYPE:
             if str(nid).startswith(PREFIX):
                 problems.append(f"{nid}: ids under {PREFIX!r} are reserved for CodeRef nodes")
@@ -116,7 +120,7 @@ def structure_errors(graph: nx.DiGraph) -> list[str]:
                     f"{s}->{nid}: only implemented_by may point at a CodeRef, got {e.get('type')!r}"
                 )
     for s, d, e in graph.edges(data=True):
-        if e.get("type") == "implemented_by" and graph.nodes[d].get("type") != CODE_TYPE:
+        if e.get("type") == "implemented_by" and kind(graph, d) != CODE_TYPE:
             problems.append(f"{s}->{d}: implemented_by must point at a CodeRef")
     return problems
 

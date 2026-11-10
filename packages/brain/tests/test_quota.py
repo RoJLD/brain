@@ -46,7 +46,7 @@ def test_the_scan_buckets_cost_by_utc_hour(projects_dir):
         _asst("2026-11-02T10:59:30Z", "m1", [_tool("t1", "Read", file_path="a")], out=1000),
         _asst("2026-11-02T11:00:10Z", "m2", [_tool("t2", "Read", file_path="b")], out=2000)])
     r = usage.scan(t)
-    assert r["v"] == usage.SCAN_V == 2
+    assert r["v"] == usage.SCAN_V == 3
     assert set(r["hours"]) == {"2026-11-02T10", "2026-11-02T11"}
     assert r["hours"]["2026-11-02T11"]["cost"] == pytest.approx(2 * r["hours"]["2026-11-02T10"]["cost"], rel=0.01)
     assert sum(h["cost"] for h in r["hours"].values()) == pytest.approx(r["cost"], abs=1e-3)  # 4 decimals each
@@ -107,6 +107,28 @@ def test_forecast_converts_paces_and_advises(week):
     assert "the week window is about $3,214" in text and "on box1: $900 since the window started" in text
 
 
+def test_the_session_hour_counts_the_agents(projects_dir, week):
+    """wi-brain-usage-workflow-agents: a session-hour's cost holds its workflow agents' (their hours are merged into
+    the session's), and an hour of crumbs is not a session-hour."""
+    assert quota.forecast(week, [], NOW)["session_hour"] == {"usd": pytest.approx(950 / 10, abs=0.01), "hours": 10,
+                                                             "total_usd": 950.0, "days": 7}
+    crumbs = [{"session_id": "c", "hours": {"2026-11-02T08": {"cost": 0.1}, "2026-11-02T09": {"cost": 0.2}}}]
+    assert quota.session_hour(crumbs, NOW) is None   # below SESSION_HOUR_MIN_USD: no session-hour
+    old = [{"session_id": "o", "hours": _hours("2026-10-20T08:00", 5, 9.0)}]
+    assert quota.session_hour(old, NOW) is None      # older than the 7 days
+    boss = _write(projects_dir / "p" / "boss.jsonl", [
+        _prompt(f"2026-11-02T{h:02d}:00:00Z", "go") for h in range(10, 14)] + [
+        _asst(f"2026-11-02T{h:02d}:00:05Z", f"b{h}", [], out=100_000) for h in range(10, 14)])
+    alone = quota.session_hour([usage.scan(boss)], NOW)
+    agent = _write(projects_dir / "p" / "boss" / "subagents" / "workflows" / "wf_1" / "agent-x.jsonl", [
+        _asst(f"2026-11-02T{h:02d}:10:00Z", f"x{h}", [], out=300_000) for h in range(10, 14)])
+    assert usage.scan(boss)["agents"]["workflows"]["wf_1"]["agents"] == 1   # the agent is read as its session's
+    with_agents = quota.session_hour([usage.scan(boss)], NOW)
+    assert alone["hours"] == with_agents["hours"] == 4
+    assert with_agents["usd"] == pytest.approx(4 * alone["usd"], rel=0.01)   # the agents' cost in the same hours
+    assert any(x.startswith("  session-h") for x in quota.render(quota.forecast([usage.scan(boss)], [], NOW)))
+
+
 def test_advice_levels():
     base = {"readings": 1, "conversion": {"pct_per_usd": 0.03}, "pct_now": 40.0}
     assert quota.advice({**base, "pace": {"at_reset": 70.0}})[0] == "room"
@@ -148,6 +170,9 @@ def test_the_live_sessions_left_and_how_many_queue_items_fit(week):
     q = fc["queue"]
     assert q["room_pct"] == pytest.approx(100 - fc["pct_now"] - 450 * f, abs=0.1)
     assert q["fit"] == int(q["room_pct"] / (600 * f)) == 3 and q["fit_usd"] == 1800.0 and q["items"] == 5
+    rows = [x for x in quota.render(fc) if x.startswith("  ") and x[2] != " " and x != "  readings"]
+    assert any(x.startswith("  live      2 session(s)") for x in rows)
+    assert all(x[11] == " " and x[12] != " " for x in rows), rows   # one label column: every value at column 12
 
 
 def test_live_sessions_and_the_queue_from_the_ledger(project, now):

@@ -228,7 +228,10 @@ def forget_previous(cfg: config.Config, found: dict[str, vault.Adapter] | None =
     if stale:
         raise VaultError(f"{len(stale)} sealed file(s) are not sealed to the current recipients yet: brain vault "
                          "reseal --apply first")
+    dst = vault._device_state(write=True)   # refused before the keystore is touched when it cannot be written
+    if not dst.writable:
+        raise VaultError(dst.refusal())
     ks.delete(vault.previous_key(cfg))
     dev.pop("previous")
-    vault._write_atomic(vault.device_file(), json.dumps(dev, indent=2) + "\n")
+    vault.save_device(dev, dst)
     return {"name": dev.get("name"), "forgot": prev.get("public", "")}
