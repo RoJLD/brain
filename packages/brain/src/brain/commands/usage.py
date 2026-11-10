@@ -30,7 +30,7 @@ USAGE = """\
                  "uncalibrated", leaves the week unconverted and estimates the 5h window from its latest reading
   brain usage guard [--json]   the usage governor (brain.governor, the PreToolUse hook on start_session, Agent and
                  Workflow): the quota windows it reads, the sessions running and the brainstorms open on this
-                 machine, the committed memory, the caps (config.json usage.guard, lowered by the project's usage:)
+                 machine, the two memory measures (committed memory, available RAM), the caps (config.json usage.guard, lowered by the project's usage:)
                  and what a new session, a brainstorm, a subagent and a workflow would get now (ask at WARN, refuse at
                  CRITICAL, past a cap or while the newest reading is stale)
   brain usage allow [--hours H] [--reason TEXT]   {owner}'s override of the usage governor for H hours (default 2;
