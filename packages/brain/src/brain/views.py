@@ -9,7 +9,9 @@ One writer instead: a branch need not commit its views, and the default branch g
 merge, by ``brain views --write`` run in a worktree at the default branch's tip (its sync, the audit view, then the
 files it changed listed, committed with ``--commit``). Where it runs decides what ``brain check`` asks of the views:
 
-- on the default branch (HEAD is origin/HEAD's target, else main, else master): a stale view is an error;
+- on the default branch (HEAD is origin/HEAD's target, else main, else master): a stale view is a warning naming the
+  writer, an error under ``config.json`` ``views.strict`` (the owner's opt-in, :func:`strict`; the writer's own check
+  is always strict);
 - on any other branch, or a detached HEAD: a stale view is said on one ``views:`` line, never required;
 - outside a git checkout: the warnings as before.
 
@@ -25,7 +27,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import actions, tidy
+from . import actions, config, tidy
 from .mergedriver import GENERATED, HEAD_LINES
 
 PREFIX = "_generated_"
@@ -96,14 +98,25 @@ class Place:
     branch: str = ""    # HEAD's branch ('HEAD' when detached)
     default: str = ""   # the default branch's name ('' when none is found)
 
-    def line(self) -> str:
+    def line(self, strict: bool = False) -> str:
         if self.where == "default":
-            return f"on {self.branch}, the default branch: its views must be fresh ({WRITER} writes them)"
+            if strict:
+                return f"on {self.branch}, the default branch: its views must be fresh ({WRITER} writes them)"
+            return (f"on {self.branch}, the default branch: its views are kept fresh by {WRITER} (a stale one is a "
+                    "warning; config.json views.strict makes it an error)")
         if self.where == "branch":
             on = "a detached HEAD" if self.branch == "HEAD" else f"branch {self.branch}"
             return (f"on {on}: its views need not be fresh nor committed; {WRITER} writes them on "
                     f"{self.default or 'the default branch'} after the merge")
         return "not a git checkout: the views are checked as warnings"
+
+
+def strict(root: Path | None) -> bool:
+    """Whether the brain acted on from ``root`` opts in to the one writer's rules (``config.json`` ``views.strict``
+    true): a stale view fails brain check on the default branch, and the writers of one committed view refuse an
+    engine other than the pin (brain.skew.refuse_view). Default false: the warnings, and no refusal."""
+    opts = config.load(root).data.get("views")
+    return isinstance(opts, dict) and opts.get("strict") is True
 
 
 def place(root: Path) -> Place:
@@ -149,20 +162,25 @@ class Stale:
             self.views.append((path, fix))
 
 
-def verdict(stale: Stale, where: Place, legacy: dict[str, str] | None = None) -> tuple[int, list[str]]:
-    """(1 when the default branch holds a stale view, else 0; the lines brain check prints). ``legacy``: the label an
-    earlier engine's warning gave a path, kept outside a git checkout."""
+def verdict(stale: Stale, where: Place, legacy: dict[str, str] | None = None,
+            strict: bool = False) -> tuple[int, list[str]]:
+    """(1 when the default branch holds a stale view under ``strict``, else 0; the lines brain check prints).
+    ``legacy``: the label an earlier engine's warning gave a path, kept in the warnings. Not ``strict`` (the default,
+    config.json views.strict false), the default branch's stale views are the warnings as before, naming the writer."""
     if not stale.views:
         return 0, []
-    if where.where == "default":
+    legacy = legacy or {}
+    if where.where == "default" and strict:
         return 1, [f"error: {p} is stale on {where.branch}, the default branch: {WRITER} (the one writer, from a "
                    f"worktree at {where.branch}'s tip; docs/views.md), or {fix}" for p, fix in stale.views]
+    if where.where == "default":
+        return 0, [f"warning: {legacy.get(p, p)} is stale: {fix} (on {where.branch}, the default branch: {WRITER} "
+                   f"writes the views from a worktree at its tip; docs/views.md)" for p, fix in stale.views]
     if where.where == "branch":
         names = ", ".join(p for p, _ in stale.views)
         return 0, [f"views: {len(stale.views)} stale here ({names}), not required on a branch: brain sync refreshes "
                    f"them for this branch's checks; {WRITER} writes them on {where.default or 'the default branch'} "
                    "after the merge"]
-    legacy = legacy or {}
     return 0, [f"warning: {legacy.get(p, p)} is stale: {fix}" for p, fix in stale.views]
 
 
@@ -225,7 +243,7 @@ def status(root: Path, as_json: bool = False, out=None) -> int:
         print(json.dumps(data, indent=2), file=out)
         return 0
     lines = [f"views: {len(data['tracked'])} tracked (a GENERATED marker in their first lines, or a {PREFIX} name)",
-             f"place: {where.line()}"]
+             f"place: {where.line(strict(root))}"]
     lines += [f"  {p}" + ("  (changed here" + (", staged" if p in data["staged"] else "") + ")"
                           if p in data["changed"] else "") for p in data["tracked"]]
     if where.where == "branch" and data["staged"]:

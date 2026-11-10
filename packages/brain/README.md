@@ -15,8 +15,8 @@ What it does, every command reading files and git, never a model:
   `brain refresh`; in a brain's own root, check and refresh also run `brain check --all`'s registry check: the
   registry, `config.json`, the classes, the permissions, the stacks and the bundles they declare, the ids of every
   registered project), and written once on the default branch after each merge by one writer (`brain views --write`;
-  a branch need not commit them, the default branch's check fails on a stale one:
-  [`docs/views.md`](docs/views.md));
+  a branch need not commit them, the default branch's check warns of a stale one, fails under `config.json`
+  `views.strict`: [`docs/views.md`](docs/views.md));
 - **history**: the journal (`brain journal add`) and the decision log (`brain adr new`), append-only;
 - **views**: the owner's queue (`brain queue`), the status of every project (`brain status`), a cockpit (`brain tui`,
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
@@ -128,10 +128,10 @@ and says so.
 A pinned brain runs its pinned engine. `brain check` warns when the running brain or research-graph is not
 `config.json` `engine.pin`: a newer or an older version, or the pin's version from other code (another git revision,
 an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh`,
-`brain render --write`, `brain views --write` and every command that writes one committed view (`brain audit --write`,
-`brain coverage --write`, `brain features render --write`, `brain decision view --write`, `brain modules --write`)
-then refuse to write, since they would render the plugin's hooks, generate the links or write a view with another
-engine. `brain update` moves the pin of a brain without an installer of its own; in a brain that declares
+`brain render --write` and `brain views --write` then refuse to write, since they would render the plugin's hooks,
+generate the links or write the views with another engine; under `config.json` `views.strict`, so does every command
+that writes one committed view (`brain audit --write`, `brain coverage --write`, `brain features render --write`,
+`brain decision view --write`, `brain modules --write`). `brain update` moves the pin of a brain without an installer of its own; in a brain that declares
 one, set `engine.pin` to the new tag in `config.json` and commit it by a reviewed PR; the refusal names the file and
 the tag. Otherwise run the pinned
 engine, or pass `--force`. A brain with no pin, or a
@@ -359,8 +359,9 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   without it. A driver that cannot run falls back to git's own `merge-file`, so ours is never left without its
   conflict markers, and `brain sync` brings an earlier engine's driver line to this one (`brain.mergedriver`).
 - **`brain views`**: one writer of the generated views ([`docs/views.md`](docs/views.md)): a branch need not commit
-  them (`brain views --unstage` after `git add`, `--reset` before merging the default branch), `brain check` fails on
-  a stale one on the default branch only (a `views:` line elsewhere), and `brain views --write --commit`, in a
+  them (`brain views --unstage` after `git add`, `--reset` before merging the default branch), `brain check` warns of
+  a stale one on the default branch (fails under `config.json` `views.strict`, the owner's opt-in; a `views:` line
+  elsewhere), and `brain views --write --commit`, in a
   worktree at the default branch's tip after each merge, regenerates them, checks them by the default branch's rules
   and commits them, never from a HEAD that lacks that tip (`brain.views`).
 - **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the

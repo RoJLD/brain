@@ -62,7 +62,7 @@ def cmd_decision(args, root: Path) -> int:
             here = _project(args, root)
             name = here.shares_root_with or here.name
             if args.write:
-                if skew.refuse(root, "decision view --write", args.force, f"the committed {decisions.VIEW}"):
+                if skew.refuse_view(root, "decision view --write", args.force, f"the committed {decisions.VIEW}"):
                     return 1
                 _queue_changed(root, args)
             else:
@@ -408,7 +408,7 @@ def register(sub, ctx) -> None:
     dv = de.add_parser("view", help="the generated board notes/decision_queue.md (printed, or --write)")
     dv.add_argument("--write", action="store_true")
     dv.add_argument("--force", action="store_true", help="--write even when the running engine is not config.json "
-                                                         "engine.pin")
+                                                         "engine.pin (refused under views.strict)")
     dv.add_argument("--all", action="store_true", help="every registered project's board, printed")
     dn = de.add_parser("announce", help="SessionStart hook: answers not integrated yet (hook JSON on stdin)")
     dn.add_argument("event", nargs="?", default="SessionStart")

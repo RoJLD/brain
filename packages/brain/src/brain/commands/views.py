@@ -19,17 +19,18 @@ USAGE = """\
   brain views [--json]   the generated views (GENERATED in their first lines, or a _generated_ name: the kanban, the
                         roadmap, the plan and module maps, the decision queue, the audit, FEATURES.md, the graph's
                         _generated_*.yaml) git tracks, where this checkout stands (the default branch must hold them
-                        fresh, brain check fails there on a stale one; a branch need not commit them), those changed
-                        or staged here and those the merge driver kept from one side
+                        fresh: brain check warns of a stale one there, fails under config.json views.strict; a
+                        branch need not commit them), those changed or staged here and those the merge driver kept
+                        from one side
   brain views --unstage | --reset   on a branch: the staged views taken out of the index after git add (the working
                         tree keeps them for the branch's checks), or every view put back at HEAD before git merge of
                         the default branch (then brain sync)
   brain views --write [--commit] [--no-audit] [--offline] [--force]   the one writer, after each merge, in a worktree
                         at the default branch's tip (never a main checkout): brain sync's writes, the audit view, then
-                        brain check by the default branch's rules; the files it changed listed, and with --commit
-                        committed alone (pushed and merged the project's way), never when HEAD lacks
-                        origin/<default>'s tip (fetched unless --offline); another engine than config.json engine.pin
-                        writes nothing
+                        brain check by the default branch's strict rules (whatever views.strict); the files it
+                        changed listed, and with --commit committed alone (pushed and merged the project's way),
+                        never when HEAD lacks origin/<default>'s tip (fetched unless --offline); another engine than
+                        config.json engine.pin writes nothing
 """
 
 

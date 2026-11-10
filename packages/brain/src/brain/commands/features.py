@@ -20,8 +20,8 @@ USAGE = """\
                  [--code PATH[::SYMBOL]]... [--test T]... [--doc D]... [--spec S]... [--adr A]... [--parent F]
                  [--item WI]... [--prop k=v]...   | link ID [the same edges] | set ID key=value...
   brain features render [--write [--force]] [--repo R --out PATH]   FEATURES.md, the matrix by domain (no
-                 --write: exit 1 when the file is not the render; another engine than config.json engine.pin writes
-                 nothing); sync [--offline]: statuses named by merged PRs
+                 --write: exit 1 when the file is not the render; under config.json views.strict, another engine than
+                 engine.pin writes nothing); sync [--offline]: statuses named by merged PRs
                  ("feat-brain-x: have"), then FEATURES.md
 """
 
@@ -86,8 +86,8 @@ def cmd_features(args, root: Path) -> int:
         if sub == "render":
             if args.write and not args.out and _on_main(root):
                 raise SystemExit(f"brain: {root} is a main checkout on {_on_main(root)}: render from a worktree")
-            if args.write and skew.refuse(root, "features render --write", args.force,
-                                          f"the committed {features.VIEW}"):
+            if args.write and skew.refuse_view(root, "features render --write", args.force,
+                                               f"the committed {features.VIEW}"):
                 return 1
             return _features_view(args, root, store, args.write, args.repo or "", args.out or "")
         if sub == "sync":
@@ -135,7 +135,7 @@ def register(sub, ctx) -> None:
     fr.add_argument("--repo", help="the repo whose features (default: the root's)")
     fr.add_argument("--out", help=f"where to write another repo's {features.VIEW} (its worktree)")
     fr.add_argument("--force", action="store_true", help="--write even when the running engine is not config.json "
-                                                         "engine.pin")
+                                                         "engine.pin (refused under views.strict)")
     fy = fe.add_parser("sync", help=f"the statuses named by merged PRs (feat-brain-x: have), then {features.VIEW}")
     fy.add_argument("--offline", action="store_true", help="no gh call: only the render")
     for name in ("add", "link"):

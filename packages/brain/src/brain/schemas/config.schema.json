@@ -182,6 +182,13 @@
         }
       }
     },
+    "views": {
+      "type": "object", "additionalProperties": false,
+      "description": "The generated views and their one writer (brain views, docs/views.md).",
+      "properties": {
+        "strict": {"type": "boolean", "description": "The owner's opt-in to the one writer's rules: true, brain check and brain refresh fail (exit 1) on a stale view on the default branch, and brain audit --write, coverage --write, features render --write, decision view --write and modules --write refuse an engine other than engine.pin (unless --force); default false: a stale view on the default branch is a warning, and those writers write with any engine. brain views --write holds its own output to the strict rules either way."}
+      }
+    },
     "vault": {
       "type": "object", "additionalProperties": false,
       "description": "brain vault: the public keys stores are sealed to, never a private key (brain vault recipient add and brain check --all refuse one). docs/runbooks/vault.md.",

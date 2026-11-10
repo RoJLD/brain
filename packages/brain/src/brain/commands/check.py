@@ -16,8 +16,9 @@ USAGE_ORDER = 120   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain check [--all]   the records (schema, ids, secret scan), the open items attached to no milestone (a warning),
                         the proposed specs ready to turn active (a warning), the hard-rule ratio (Rule nodes with an enforced_by edge; a soft rule is a warning), the
-                        generated views (a stale one: an error on the default branch, one views: line on another
-                        branch, a warning outside git; brain views, docs/views.md), then research_graph check (given
+                        generated views (a stale one: a warning on the default branch, an error under config.json
+                        views.strict; one views: line on another branch; a warning outside git; brain views,
+                        docs/views.md), then research_graph check (given
                         the project's other repos' checkouts, where the anchors of their Doc, Test and Workflow nodes are read); --all: every
                         project's, then the registry
                         (its keys, repos, stacks, code_index), the tier registry (every capability and stack declares

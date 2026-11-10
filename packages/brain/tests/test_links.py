@@ -157,7 +157,7 @@ def test_audit_measures_doc_and_test_links_where_the_store_takes_them():
     assert audit.CHECKS["test.links"].scout == "never" and audit.RULESET >= 2   # 2 brought doc.links and test.links
 
 
-def test_sync_writes_the_links_and_check_warns_when_stale(tmp_path, monkeypatch, make_repo, capsys):
+def test_sync_writes_the_links_and_check_warns_when_stale(tmp_path, monkeypatch, make_repo, capsys, request):
     repo = make_repo("demo", {"notes/graph/schema.yaml": SCHEMA, "notes/graph/nodes/work.yaml": NODES,
                               "notes/graph/edges.yaml": "[]\n", "README.md": "# demo\n\nAbout wi-a.\n",
                               "tests/test_x.py": "def test_x():\n    pass\n"})
@@ -176,7 +176,13 @@ def test_sync_writes_the_links_and_check_warns_when_stale(tmp_path, monkeypatch,
     assert cli.main(["--project", "demo", "check"]) == 0
     assert "stale" not in capsys.readouterr().out
     (repo / "README.md").write_text("# demo\n\n## New\n\nwi-b.\n", encoding="utf-8")
-    assert cli.main(["--project", "demo", "check"]) == 1   # on main, the default branch: its views must be fresh
+    assert cli.main(["--project", "demo", "check"]) == 0   # on main, no views.strict: the warnings as before
+    out = capsys.readouterr().out
+    assert "warning: nodes/_generated_links.yaml is stale: brain sync (on main, the default branch: brain views " \
+           "--write" in out
+    assert "warning: edges/_generated_links.yaml is stale: brain sync" in out and "error:" not in out
+    request.getfixturevalue("views_strict")   # the owner's opt-in: its views must be fresh
+    assert cli.main(["--project", "demo", "check"]) == 1
     out = capsys.readouterr().out
     assert "error: notes/graph/nodes/_generated_links.yaml is stale on main, the default branch" in out
     assert "error: notes/graph/edges/_generated_links.yaml is stale on main, the default branch" in out

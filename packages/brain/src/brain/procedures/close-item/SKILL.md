@@ -50,7 +50,7 @@ a `Root cause:` line for a symptom fix, a `Justified: <unit>: <reason>` line for
   `brain refresh`), and after the merge, in a worktree at the default branch's tip (`git worktree add -b
   chore/views-<date> <path> origin/<default>`), `brain --root <path> views --write --commit`, then that commit
   pushed and merged the project's way (it commits nothing from a HEAD behind that tip; a views PR a later merge
-  overtakes is regenerated the same way, one run covering any number of merges). Until it runs, `brain check` on the default branch fails on the stale views;
+  overtakes is regenerated the same way, one run covering any number of merges). Until it runs, `brain check` on the default branch warns of the stale views (fails under `config.json` `views.strict`);
   a branch that still commits its views passes, the merge driver keeping one side. The runbook: the engine's
   `docs/views.md`.
 - Applied: where the change runs somewhere (a production checkout, a scheduled task, an installed copy), that place

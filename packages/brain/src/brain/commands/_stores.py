@@ -286,12 +286,13 @@ def _check_store(args, root: Path, store: Path) -> int:
         print(f"error: {line}")
     rc = 1 if clash or stubs else 0
     where, stale, legacy = views.place(root), views.Stale(), {}
-    if getattr(args, "views_as_default", False):   # brain views --write: its check is the default branch's
-        where = views.as_default(where)
+    strict = views.strict(root)   # config.json views.strict: a stale view fails the default branch's check
+    if getattr(args, "views_as_default", False):   # brain views --write: its check is the default branch's, strict
+        where, strict = views.as_default(where), True
     if project.shares_root_with:   # its store's checks only: the root's are its owner's
         print(_shared_line(project))
         rc = _store_checks(project, root, store, stale) or rc
-        rc = _views_verdict(project, root, store, where, stale, legacy) or rc
+        rc = _views_verdict(project, root, store, where, stale, legacy, strict) or rc
         return graph.research_graph(root, store, *layout, "check") or rc
     rc = (cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0) or rc
     if decisions.view_stale(root, _project(args, root).name):
@@ -314,7 +315,7 @@ def _check_store(args, root: Path, store: Path) -> int:
                 stale.add(_store_label(root, store / f))
         if features.has_type(graph.load_schema(store)) and _features_stale(args, root, store):
             stale.add(features.VIEW, "brain features render --write")
-    rc = _views_verdict(project, root, store, where, stale, legacy) or rc
+    rc = _views_verdict(project, root, store, where, stale, legacy, strict) or rc
     for line in skew.check_lines(root):   # the running engine against config.json engine.pin
         print(line)
     rc = _check_session_ids(root) or rc   # a DDR's local_ id that matches no session (scale study gap 19)
@@ -345,15 +346,16 @@ def _features_stale(args, root: Path, store: Path) -> bool:
 
 
 def _views_verdict(project: projects.Project, root: Path, store: Path, where: views.Place, stale: views.Stale,
-                   legacy: dict[str, str]) -> int:
-    """The stale views of a store's check said by where the checkout stands (brain.views): an error on the default
-    branch (with the board and the roadmap, measured there only), a ``views:`` line on another branch, the warnings
-    outside git; 1 on the default branch when one is stale."""
+                   legacy: dict[str, str], strict: bool = False) -> int:
+    """The stale views of a store's check said by where the checkout stands (brain.views): on the default branch
+    (with the board and the roadmap, measured there only) an error under ``strict`` (config.json views.strict, or the
+    one writer's own check), else a warning naming the writer; a ``views:`` line on another branch, the warnings
+    outside git; 1 on the default branch when one is stale under ``strict``."""
     if where.where == "default":
         folder = _store_label(root, projects.views_dir(project, store))
         for path in graph.board_stale(root, store, folder):
             stale.add(path, "brain sync (research_graph kanban --write)")
-    rc, lines = views.verdict(stale, where, legacy)
+    rc, lines = views.verdict(stale, where, legacy, strict)
     for line in lines:
         print(line)
     return rc

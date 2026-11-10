@@ -152,8 +152,9 @@ WRITES = "the rendered hooks and the generated links"
 
 def refuse(root: Path | None, what: str, force: bool, writes: str = WRITES) -> int:
     """1 (after saying why and the way out) when ``what`` (sync, refresh, render, views --write, or a command that
-    writes one committed view: ``writes`` names it) would write with an engine other than the pin; 0 when it is the
-    pin, or with ``force`` (said too). Committed views are written by the pinned engine only (COMPAT-1, N10)."""
+    writes one committed view, through :func:`refuse_view`: ``writes`` names it) would write with an engine other
+    than the pin; 0 when it is the pin, or with ``force`` (said too). Committed views are written by the pinned engine
+    only (COMPAT-1, N10)."""
     pin, diff, engines = of(root)
     if not diff:
         return 0
@@ -164,3 +165,11 @@ def refuse(root: Path | None, what: str, force: bool, writes: str = WRITES) -> i
     print(f"{head}. It would rewrite {writes} with another engine.\n"
           f"brain {what}: {how(root, pin, engines)}", file=sys.stderr)
     return 1
+
+
+def refuse_view(root: Path | None, what: str, force: bool, writes: str) -> int:
+    """:func:`refuse` for a command that writes one committed view (brain audit --write, coverage --write, features
+    render --write, decision view --write, modules --write), under ``config.json`` ``views.strict`` only (the owner's
+    opt-in, brain.views.strict); 0 otherwise: those commands write with any engine, as before."""
+    from . import views
+    return refuse(root, what, force, writes) if views.strict(root) else 0

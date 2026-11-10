@@ -1,7 +1,8 @@
 """One writer of the generated views (wi-brain-views-one-writer, brain.views, docs/views.md): a branch need not commit
-them, brain check fails on a stale one on the default branch only, brain views --unstage and --reset keep a branch's
-commits and merges clear of them, brain views --write regenerates and commits them at the default branch's tip, and
-committed views are written by the pinned engine only (COMPAT-1)."""
+them, brain check warns of a stale one on the default branch (fails under config.json views.strict, the owner's
+opt-in), brain views --unstage and --reset keep a branch's commits and merges clear of them, brain views --write
+regenerates and commits them at the default branch's tip, checked strictly, and under views.strict committed views
+are written by the pinned engine only (COMPAT-1)."""
 
 import json
 import shutil
@@ -67,10 +68,15 @@ def test_the_verdict_by_place():
     stale.add("notes/graph/nodes/_generated_links.yaml")
     stale.add("notes/decision_queue.md", "brain sync (or brain decision view --write)")
     stale.add("notes/decision_queue.md")   # once
-    rc, lines = views.verdict(stale, views.Place("default", "main", "main"))
+    rc, lines = views.verdict(stale, views.Place("default", "main", "main"), strict=True)
     assert rc == 1 and len(lines) == 2
     assert lines[1].startswith("error: notes/decision_queue.md is stale on main, the default branch: brain views "
                                "--write") and lines[1].endswith("or brain sync (or brain decision view --write)")
+    rc, lines = views.verdict(stale, views.Place("default", "main", "main"))   # not strict: the warnings as before
+    assert rc == 0 and len(lines) == 2
+    assert lines[1] == ("warning: notes/decision_queue.md is stale: brain sync (or brain decision view --write) (on "
+                        "main, the default branch: brain views --write writes the views from a worktree at its tip; "
+                        "docs/views.md)")
     rc, lines = views.verdict(stale, views.Place("branch", "feat", "main"))
     assert rc == 0 and lines == ["views: 2 stale here (notes/graph/nodes/_generated_links.yaml, "
                                  "notes/decision_queue.md), not required on a branch: brain sync refreshes them for "
@@ -78,18 +84,47 @@ def test_the_verdict_by_place():
     rc, lines = views.verdict(stale, views.Place(""), {"notes/graph/nodes/_generated_links.yaml":
                                                        "nodes/_generated_links.yaml"})
     assert rc == 0 and lines[0] == "warning: nodes/_generated_links.yaml is stale: brain sync"
-    assert views.verdict(views.Stale(), views.Place("default", "main", "main")) == (0, [])
+    assert views.verdict(views.Stale(), views.Place("default", "main", "main"), strict=True) == (0, [])
+
+
+def test_views_strict_is_the_owners_opt_in(tmp_path, monkeypatch, views_strict):
+    assert views.strict(tmp_path)
+    for data in ({}, {"views": {}}, {"views": {"strict": False}}, {"views": True}):
+        cfg = tmp_path / "other-config.json"
+        cfg.write_text(json.dumps({"v": 1, "identity": {"owner": "Ada", "kind": "person"}, **data}), encoding="utf-8")
+        monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+        assert not views.strict(tmp_path), data
 
 
 # --- brain check: fresh on the default branch, not required on a branch ---
 
-def test_check_fails_on_a_stale_board_on_the_default_branch_only(brainrepo, tmp_path, capsys):
-    assert cli.main(["--root", str(brainrepo), "check"]) == 0
-    capsys.readouterr()
+def _stale_board(brainrepo) -> None:
     _add_node(brainrepo, "wi-b")   # a merged PR that left the views to the one writer
     f = brainrepo / "notes" / "graph" / "nodes" / "work.yaml"
     f.write_text(f.read_text(encoding="utf-8") + '- {id: ms-x, type: Milestone, status: pending, title: "X"}\n',
                  encoding="utf-8")
+
+
+def test_check_warns_of_a_stale_board_on_the_default_branch_by_default(brainrepo, capsys):
+    capsys.readouterr()
+    _stale_board(brainrepo)   # no views.strict: as before this engine, a warning and exit 0
+    assert cli.main(["--root", str(brainrepo), "check"]) == 0
+    out = capsys.readouterr().out
+    assert f"warning: {KANBAN} is stale: brain sync (research_graph kanban --write) (on main, the default branch: " \
+           "brain views --write writes the views" in out and f"warning: {ROADMAP} is stale" in out
+    assert "error:" not in out
+    assert cli.main(["--root", str(brainrepo), "refresh", "--offline"]) == 0   # a main checkout: checked only
+    out = capsys.readouterr().out
+    assert "(main checkout on main: check only)" in out and f"warning: {KANBAN} is stale" in out
+    assert "wi-b" not in (brainrepo / KANBAN).read_text(encoding="utf-8")
+    assert cli.main(["--root", str(brainrepo), "views"]) == 0
+    assert "a stale one is a warning; config.json views.strict makes it an error" in capsys.readouterr().out
+
+
+def test_check_fails_on_a_stale_board_on_the_default_branch_only(brainrepo, tmp_path, capsys, views_strict):
+    assert cli.main(["--root", str(brainrepo), "check"]) == 0
+    capsys.readouterr()
+    _stale_board(brainrepo)
     assert cli.main(["--root", str(brainrepo), "check"]) == 1
     out = capsys.readouterr().out
     assert f"error: {KANBAN} is stale on main, the default branch: brain views --write" in out
@@ -231,6 +266,7 @@ def test_views_write_commit_refuses_a_head_behind_the_default_branch(brainrepo, 
 
 
 def test_views_write_checks_its_views_by_the_default_branch_rules(brainrepo, make_repo, monkeypatch, capsys):
+    """Strictly, whatever config.json views.strict (none here): the writer never commits a stale view."""
     from brain.commands import _stores
     _add_node(brainrepo, "wi-b")
     make_repo.commit(brainrepo, msg="a merged PR, its views left to the writer")
@@ -262,7 +298,7 @@ def test_unstage_and_reset_know_a_deleted_view(brainrepo):
     assert views.reset(brainrepo) == [KANBAN] and (brainrepo / KANBAN).is_file() and views.changed(brainrepo) == []
 
 
-def test_check_on_a_detached_head_says_a_stale_view_without_failing(brainrepo, capsys):
+def test_check_on_a_detached_head_says_a_stale_view_without_failing(brainrepo, capsys, views_strict):
     run_git(brainrepo, "checkout", "-q", "--detach")   # CI's checkout of a merge commit
     _add_node(brainrepo, "wi-b")
     capsys.readouterr()
@@ -272,7 +308,7 @@ def test_check_on_a_detached_head_says_a_stale_view_without_failing(brainrepo, c
     assert cli.main(["--root", str(brainrepo), "check"]) == 1   # the same tree on main fails
 
 
-def test_refresh_in_a_main_checkout_checks_only_and_names_the_writer(brainrepo, capsys):
+def test_refresh_in_a_main_checkout_checks_only_and_names_the_writer(brainrepo, capsys, views_strict):
     _add_node(brainrepo, "wi-b")
     capsys.readouterr()
     assert cli.main(["--root", str(brainrepo), "refresh", "--offline"]) == 1
@@ -294,7 +330,7 @@ def test_views_write_writes_the_audit_view_where_the_root_keeps_one(brainrepo, m
     assert audit.VIEW in run_git(brainrepo, "show", "--name-only", "--format=", "HEAD").split()
 
 
-# --- committed views written by the pinned engine only (COMPAT-1) ---
+# --- under views.strict, committed views written by the pinned engine only (COMPAT-1) ---
 
 PIN = "v0.2.3"
 AHEAD = [skew.Engine("brain", "0.2.4", "v0.2.4", "abc1234"), skew.Engine("research-graph", "0.2.4", "v0.2.4", "abc")]
@@ -307,6 +343,21 @@ def pinned(tmp_path, monkeypatch):
                                "engine": {"repo": "someone/brain", "pin": PIN}}), encoding="utf-8")
     monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
     monkeypatch.setattr(skew, "running", lambda: AHEAD)
+    return cfg
+
+
+def _strict(cfg) -> None:
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    cfg.write_text(json.dumps({**data, "views": {"strict": True}}), encoding="utf-8")
+
+
+def _writer_repo(brainrepo) -> str:
+    """A writer's branch with a modules registry and a stale board; the board as it was."""
+    run_git(brainrepo, "checkout", "-q", "-b", "chore/views")
+    (brainrepo / "notes" / "graph" / "modules.yaml").write_text("- {id: P1, name: core, phase: MVP, status: tree}\n",
+                                                                encoding="utf-8")
+    _add_node(brainrepo, "wi-b")
+    return (brainrepo / KANBAN).read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("argv,what", [
@@ -318,16 +369,33 @@ def pinned(tmp_path, monkeypatch):
     (["audit", "--write"], "audit --write"),
 ])
 def test_every_writer_of_a_committed_view_refuses_another_engine(brainrepo, pinned, capsys, argv, what):
-    run_git(brainrepo, "checkout", "-q", "-b", "chore/views")
-    (brainrepo / "notes" / "graph" / "modules.yaml").write_text("- {id: P1, name: core, phase: MVP, status: tree}\n",
-                                                                encoding="utf-8")
-    _add_node(brainrepo, "wi-b")
-    before = (brainrepo / KANBAN).read_text(encoding="utf-8")
+    _strict(pinned)
+    before = _writer_repo(brainrepo)
     assert cli.main(["--root", str(brainrepo), *argv]) == 1
     err = capsys.readouterr().err
     assert f"brain {what}: the running engine is not config.json engine.pin {PIN}" in err and "--force" in err
     assert (brainrepo / KANBAN).read_text(encoding="utf-8") == before
     assert not (brainrepo / "notes" / "modules_graph.md").exists() and not (brainrepo / audit.VIEW).exists()
+
+
+@pytest.mark.parametrize("argv,what,writes", [
+    (["decision", "view", "--write"], "decision view --write", "notes/decision_queue.md"),
+    (["modules", "--write"], "modules --write", "notes/modules_graph.md"),
+    (["audit", "--write"], "audit --write", audit.VIEW),
+    (["features", "render", "--write"], "features render --write", ""),
+    (["coverage", "--write"], "coverage --write", ""),
+])
+def test_the_writers_of_one_view_write_with_another_engine_by_default(brainrepo, pinned, capsys, argv, what, writes):
+    """No views.strict: as before this engine, no refusal (brain sync's and brain views --write's stay)."""
+    _writer_repo(brainrepo)
+    try:
+        cli.main(["--root", str(brainrepo), *argv])
+    except SystemExit:   # coverage --write with nothing to measure, say: the refusal would have come first
+        pass
+    assert f"brain {what}: the running engine is not config.json engine.pin" not in capsys.readouterr().err
+    assert not writes or (brainrepo / writes).is_file()
+    assert cli.main(["--root", str(brainrepo), "views", "--write", "--offline"]) == 1   # the writer still refuses
+    assert "brain views --write: the running engine is not config.json engine.pin" in capsys.readouterr().err
 
 
 # --- the scout and the records' graph ---

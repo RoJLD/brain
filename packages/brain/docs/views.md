@@ -15,7 +15,7 @@ commit its views; they are regenerated once on the default branch after each mer
 
 | Where | A stale view |
 |---|---|
-| the default branch (HEAD on origin/HEAD's target, else `main`, else `master`) | an error: `brain check` and `brain refresh` exit 1, naming `brain views --write` |
+| the default branch (HEAD on origin/HEAD's target, else `main`, else `master`) | a warning naming `brain views --write`, as before; under `views.strict` (below) an error: `brain check` and `brain refresh` exit 1 |
 | any other branch, or a detached HEAD | one `views:` line saying which, never a warning nor an error |
 | not a git checkout (or one with no commit yet) | a warning, as before |
 
@@ -25,6 +25,20 @@ still prints its advisory). It does not measure the audit (`brain audit --write`
 `_generated_decisions.yaml`, whose missing stubs research_graph check fails on wherever it runs. The scout
 (`brain audit --diff`) no longer asks a branch for a fresh `FEATURES.md` (its check `features.md` is `never` in the
 scout): the full audit and the default branch's check do.
+
+### `views.strict`: the owner's opt-in
+
+```json
+{"views": {"strict": true}}
+```
+
+`config.json` `views.strict` (a boolean, default false) is how an owner opts in to the one writer's rules: a stale
+view on the default branch fails `brain check` and `brain refresh` (exit 1), and the writers of one committed view
+refuse an engine other than the pin (below). Without it, or false, the default branch's stale views are warnings and
+those writers write with any engine, as before the one writer: an engine upgrade never newly refuses what passed.
+Before setting it, bring the default branch's views up to date (`brain check` in the main checkout names the stale
+ones; `brain views --write --commit` from a worktree at its tip, then merge that commit). `brain views --write` holds
+its own output to the strict rules whatever the key: the writer never commits a stale view.
 
 ## On a branch
 
@@ -73,14 +87,16 @@ a later merge overtakes before it lands is regenerated the same way: one run cov
 otherwise refuses (below). `--commit`, `--no-audit`, `--offline` and `--force` go with `--write` (refused without it).
 
 Who runs it is the project's choice: the coordinator's merge step after a batch of merges, the owner, or later the
-merger of `brain ship` (a merge queue). Until it runs, the default branch's `brain check` fails, which is the signal.
+merger of `brain ship` (a merge queue). Until it runs, the default branch's `brain check` warns of the stale views
+(fails under `views.strict`), which is the signal.
 A brain whose owner works on the default branch itself regenerates there with `brain sync` (or
 `brain refresh --on-main`), as before.
 
 ## Written by the pinned engine only
 
 A committed view written by another engine than the brain's pin would differ from the one the pinned engine writes
-(COMPAT-1, N10 of the data compatibility norms). `brain views --write`, `brain sync`, `brain refresh`,
-`brain render --write`, `brain audit --write`, `brain coverage --write`, `brain features render --write`,
-`brain decision view --write` and `brain modules --write` refuse to write then, each with the way out
-(`brain.skew`), unless `--force`.
+(COMPAT-1, N10 of the data compatibility norms). `brain views --write`, `brain sync`, `brain refresh` and
+`brain render --write` refuse to write then, each with the way out (`brain.skew`), unless `--force`. Under
+`views.strict`, so do `brain audit --write`, `brain coverage --write`, `brain features render --write`,
+`brain decision view --write` and `brain modules --write` (`brain.skew.refuse_view`); without it they write with any
+engine, as before.
