@@ -7,25 +7,34 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from .. import skew
 from ..inventory import AuditError
 from ._common import _repos, _root_repo, _store
 
 ORDER = 530   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 190   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain coverage [--repo R] [--run [-n N] | --from DATA [--cwd DIR]] [--python PY] [--write] [--json]
+  brain coverage [--repo R] [--run [-n N] | --from DATA [--cwd DIR]] [--python PY] [--write [--force]] [--json]
                         a repo's line coverage: --run runs its pytest suites (from each suite's pytest configuration)
                         under pytest-cov with test contexts, --from reads a coverage data file made elsewhere (the
                         CI's .coverage, run with --cov-context=test); the summary (totals; per file its statements,
                         covered lines and the test modules that ran each function) printed, and with --write kept in
                         the store as coverage/<repo>.json: brain sync links a CodeRef's symbol to the tests that ran
-                        it, brain audit measures test.coverage, FEATURES.md shows each feature's coverage
+                        it, brain audit measures test.coverage, FEATURES.md shows each feature's coverage; under
+                        config.json views.strict, another engine than engine.pin writes nothing (--force)
 """
+
+
+def _refused(args, root: Path) -> bool:
+    return bool(args.write and skew.refuse_view(root, "coverage --write", args.force,
+                                                "the committed coverage summary"))
 
 
 def cmd_coverage(args, root: Path) -> int:
     """brain coverage (brain.testcov): a repo of the project measured; the summary printed, kept with --write."""
     from .. import testcov
+    if _refused(args, root):   # before the measure: under views.strict, another engine than the pin writes nothing
+        return 1
     cfgs = _repos(args, root)
     want = (args.repo or _root_repo(args, root) or "").lower()
     c = next((c for c in cfgs if c.name.lower() == want), None)
@@ -58,6 +67,8 @@ def register(sub, ctx) -> None:
                                                                   "--cov-context=test) instead of a run")
     cv.add_argument("--cwd", default="", help="with --from: the folder pytest ran in (default: the repo's root)")
     cv.add_argument("--write", action="store_true", help="keep the summary in the store: coverage/<repo>.json")
+    cv.add_argument("--force", action="store_true", help="--write even when the running engine is not config.json "
+                                                         "engine.pin (refused under views.strict)")
     cv.add_argument("--json", action="store_true")
 
 

@@ -14,7 +14,9 @@ What it does, every command reading files and git, never a model:
   views regenerated and checked (`brain sync`, `brain check`,
   `brain refresh`; in a brain's own root, check and refresh also run `brain check --all`'s registry check: the
   registry, `config.json`, the classes, the permissions, the stacks and the bundles they declare, the ids of every
-  registered project);
+  registered project), and written once on the default branch after each merge by one writer (`brain views --write`;
+  a branch need not commit them, the default branch's check warns of a stale one, fails under `config.json`
+  `views.strict`: [`docs/views.md`](docs/views.md));
 - **history**: the journal (`brain journal add`) and the decision log (`brain adr new`), append-only;
 - **views**: the owner's queue (`brain queue`), the status of every project (`brain status`), a cockpit (`brain tui`,
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
@@ -127,9 +129,11 @@ and says so.
 
 A pinned brain runs its pinned engine. `brain check` warns when the running brain or research-graph is not
 `config.json` `engine.pin`: a newer or an older version, or the pin's version from other code (another git revision,
-an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh` and
-`brain render --write` then refuse to write, since they would render the plugin's hooks and generate the links with
-another engine. `brain update` moves the pin of a brain without an installer of its own; in a brain that declares
+an editable checkout or a folder that is not at the tag, or is dirty). `brain sync`, `brain refresh`,
+`brain render --write` and `brain views --write` then refuse to write, since they would render the plugin's hooks,
+generate the links or write the views with another engine; under `config.json` `views.strict`, so does every command
+that writes one committed view (`brain audit --write`, `brain coverage --write`, `brain features render --write`,
+`brain decision view --write`, `brain modules --write`). `brain update` moves the pin of a brain without an installer of its own; in a brain that declares
 one, set `engine.pin` to the new tag in `config.json` and commit it by a reviewed PR; the refusal names the file and
 the tag. Otherwise run the pinned
 engine, or pass `--force`. A brain with no pin, or a
@@ -347,7 +351,7 @@ line in the morning batch (`brain decision batch --zen`) and in the cockpit's qu
 
 ## Parallel sessions
 
-Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](docs/merge-driver.md)):
+Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](docs/merge-driver.md)):
 
 - **`brain merge-driver`**: a local git merge driver for the paths `.gitattributes` gives `merge=brain` (`brain init`
   writes them): a generated view keeps one side and is marked for `brain refresh`, the journal and the decision log
@@ -356,6 +360,12 @@ Three zero-token commands for many sessions on one brain ([`docs/merge-driver.md
   (`brain merge-driver install --apply`); `brain merge-driver replay` merges a repo's past merges again with and
   without it. A driver that cannot run falls back to git's own `merge-file`, so ours is never left without its
   conflict markers, and `brain sync` brings an earlier engine's driver line to this one (`brain.mergedriver`).
+- **`brain views`**: one writer of the generated views ([`docs/views.md`](docs/views.md)): a branch need not commit
+  them (`brain views --unstage` after `git add`, `--reset` before merging the default branch), `brain check` warns of
+  a stale one on the default branch (fails under `config.json` `views.strict`, the owner's opt-in; a `views:` line
+  elsewhere), and `brain views --write --commit`, in a
+  worktree at the default branch's tip after each merge, regenerates them, checks them by the default branch's rules
+  and commits them, never from a HEAD that lacks that tip (`brain.views`).
 - **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
@@ -486,6 +496,49 @@ no pass); the SessionStart health hook says so in one line and `brain status`'s 
 it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and says so in one line; the alerts go
 at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped.
 
+### Dependency probes: loud fallbacks
+
+A capability that relies on something outside the brain (a CLI's login, a tool's last output, an index's freshness,
+a channel's last delivery, a collector's last data, the last backup) should not fail silently. Each such dependency
+declares a token-free probe in the personal brain's `config.json`, under `probes`, with the machines it runs on; the
+engine holds the probe kinds, never a probe per dependency (`brain.depprobes`):
+
+```json
+"probes": {
+  "cli-login": {"kind": "command", "argv": ["tool", "auth", "status"], "expect": "logged in", "timeout": "20s",
+                "level": "error", "about": "the session archive's summaries", "machines": ["host-a"]},
+  "notify-delivery": {"kind": "json-age", "path": "$BRAIN_HOME/notify/*.jsonl", "field": "at",
+                      "where": {"outcome": "sent"}, "max_age": "7d"},
+  "backup": {"kind": "file-age", "path": "D:/backups/*.zip", "max_age": "26h"},
+  "index-ui": {"kind": "http", "url": "http://127.0.0.1:4747/", "timeout": "5s"}
+}
+```
+
+- `file-age`: the newest file matching `path` (a glob) was modified within `max_age`.
+- `json-age`: a timestamp `field` (dotted) of a JSON file, or of the last line of a JSON Lines file that matches
+  `where`, is within `max_age` (an ISO time, or seconds since the epoch).
+- `command`: `argv` exits with one of `ok_exit` (default 0) within `timeout`, its output matching `expect`. Never
+  through a shell, and a shell or an interpreter as the program is refused. The output is read for `expect` only: it is
+  never shown, stored or sent. Declare read-only status commands only: the alerts pass runs them unattended.
+- `http`: a GET of `url` answers one of `ok_status` (default 2xx or 3xx) within `timeout`. No header is sent, a URL
+  with a user or a password is refused, and the URL is never shown.
+
+Each probe may also give `about` (what relies on it), `level` (its alert's, default warn), `timeout` (default 10s, at
+most 120s) and `machines` (none: every machine). Durations read `90s`, `15m`, `26h`, `7d`; paths expand `~`, the
+environment's variables and `$BRAIN_HOME`. `brain config --check` (and `brain check --all`) checks every declaration.
+
+The probes run in parallel, each with its own timeout, and are OK, STALE, FAIL or TIMEOUT. A command that runs past
+its timeout is killed with every process it started (a `.cmd` shim's program too), and a probe still running then
+never holds the command at its exit. The alerts pass runs them (`brain alerts` without `--quick`, when the brain's own
+project is in scope) and raises `probe:<name>` at the probe's level on the brain's own project for each one that is
+not OK, so the pass's notify path sends it once, again if its level rises, and `resolved` once it is OK again; one
+that goes from a state not OK to another (STALE to FAIL) keeps its alert, whose message follows, and sends nothing
+new. Each run is recorded in `<BRAIN_HOME>/probes/state.json`: the
+state, why, when it ran, the last OK and since when. `brain status` shows a probes row once one runs on this machine
+(`--quick`: the last run), and the cockpit's health panel a line. `brain probes` runs them now (exit 1 when one is not
+OK, 2 for a bad declaration); `--last` shows the last run, `--list` every declared probe and its machines, `--kinds`
+the kinds and their keys.
+
 ## Quiet mode
 
 `brain quiet --for 2h` silences the notifications below `critical` for that long (90m, 2h, 1d; at most 7d); a
@@ -581,7 +634,7 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   from `warn` % of a quota window, refuses from `critical` %, refuses a new session past the parallel sessions cap
   (the smaller of `sessions` and what the week's room pays for), a new brainstorm past `brainstorms` (every project
   counted; a project's `usage: {brainstorms: N}` in `projects.yaml` lowers it for itself, never raises it), a new
-  session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (both
+  session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (an opt-in floor, 0 by default; both
   shown by `brain usage guard` and `brain status`, the refusal naming the one), or while the newest quota reading is older than
   `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
   now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
