@@ -366,6 +366,64 @@ def test_hooks_true_copies_the_engine_hooks(ada, tmp_path, monkeypatch):
     assert "plugins/ada-core/hooks/hooks.json" in rels and "plugins/ada-core/hooks/inject.sh" in rels
 
 
+def _rendered_hooks(ada) -> tuple[dict, set[str]]:
+    """(the core plugin's rendered hooks.json, its hooks/ files) with the engine's real hooks."""
+    write(ada / "source", {"packs.yaml": PACKS.replace("    core: true\n", "    core: true\n    hooks: true\n")})
+    outs = {o.rel: o.text for o in render.render(ada, "claude").outputs if o.rel.startswith("plugins/ada-core/hooks/")}
+    return json.loads(outs["plugins/ada-core/hooks/hooks.json"]), {r.rsplit("/", 1)[-1] for r in outs}
+
+
+def _commands(hooks: dict) -> list[str]:
+    return [h["command"] for groups in hooks["hooks"].values() for g in groups for h in g["hooks"]]
+
+
+@pytest.mark.parametrize("hints", [None, {}, {"read": False}, {"read": "yes"}])
+def test_the_read_hint_is_not_registered_by_default(ada, hints):
+    """Off by default (the owner, 2026-11-10): Read and Grep had no hook, so no call pays the read hint's cost unless
+    config.json hints.read is true; the script ships either way, and every other hook stays as the engine has it."""
+    if hints is not None:
+        cfg = json.loads((ada / "config.json").read_text(encoding="utf-8"))
+        write(ada, {"config.json": json.dumps({**cfg, "hints": hints})})
+    hooks, files = _rendered_hooks(ada)
+    assert not any("readhint" in c for c in _commands(hooks)) and "readhint.sh" in files
+    engine = json.loads((render.claude_hooks() / "hooks.json").read_text(encoding="utf-8"))
+    assert _commands(hooks) == [c for c in _commands(engine) if "readhint" not in c]
+    assert [g["matcher"] for g in hooks["hooks"]["PreToolUse"]] == \
+        [g["matcher"] for g in engine["hooks"]["PreToolUse"] if "readhint" not in g["hooks"][0]["command"]]
+
+
+def test_hints_read_true_registers_the_read_hint(ada):
+    cfg = json.loads((ada / "config.json").read_text(encoding="utf-8"))
+    write(ada, {"config.json": json.dumps({**cfg, "hints": {"read": True}})})
+    hooks, _ = _rendered_hooks(ada)
+    assert ("Read|Grep|Bash|PowerShell", 'bash "${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh"') in \
+        [(g["matcher"], g["hooks"][0]["command"]) for g in hooks["hooks"]["PreToolUse"]]
+    engine = render.claude_hooks() / "hooks.json"   # on: the engine's file byte for byte
+    out = {o.rel: o.text for o in render.render(ada, "claude").outputs}["plugins/ada-core/hooks/hooks.json"]
+    assert out == neutral.lf(engine.read_text(encoding="utf-8"))
+
+
+def test_turning_the_read_hint_on_makes_the_render_stale(ada, capsys):
+    write(ada / "source", {"packs.yaml": PACKS.replace("    core: true\n", "    core: true\n    hooks: true\n")})
+    assert render.main(ada, "claude", do_write=True) == 0
+    assert render.main(ada, "claude", check=True) == 0
+    cfg = json.loads((ada / "config.json").read_text(encoding="utf-8"))
+    write(ada, {"config.json": json.dumps({**cfg, "hints": {"read": True}})})
+    capsys.readouterr()
+    assert render.main(ada, "claude", check=True) == 1
+    assert "differs  plugins/ada-core/hooks/hooks.json" in capsys.readouterr().out
+
+
+def test_the_config_schema_declares_hints_read(ada):
+    from brain import config
+    cfg = json.loads((ada / "config.json").read_text(encoding="utf-8"))
+    write(ada, {"config.json": json.dumps({**cfg, "hints": {"read": True}})})
+    assert not [e for e in config.check(ada) if "hints" in e]
+    write(ada, {"config.json": json.dumps({**cfg, "hints": {"read": "yes"}})})
+    assert any("hints" in e for e in config.check(ada))
+    assert "hints.read" in dict(config.keys())
+
+
 def test_check_fails_on_a_hand_edit_and_write_removes_a_stray(ada, capsys):
     assert render.main(ada, "claude", do_write=True) == 0
     assert render.main(ada, "claude", check=True) == 0
