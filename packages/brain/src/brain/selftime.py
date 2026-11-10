@@ -58,6 +58,11 @@ def engine_dir() -> Path:
     return paths.ledger_dir() / FOLDER
 
 
+# Wrappers an error only passes through: brain.nowindow's Popen.__init__ wraps every child the engine starts, so a
+# child's own error (a missing cwd) is its caller's, never nowindow's.
+TRANSPARENT = ("brain.nowindow:",)
+
+
 def where(exc: BaseException) -> str:
     """``module:function`` of the innermost frame of the brain package in ``exc``'s traceback, else of the innermost
     frame; '' without a traceback."""
@@ -66,7 +71,7 @@ def where(exc: BaseException) -> str:
         f = tb.tb_frame
         name = f"{f.f_globals.get('__name__', '?')}:{f.f_code.co_name}"
         last = name
-        if name == PACKAGE or name.startswith(PACKAGE + "."):
+        if (name == PACKAGE or name.startswith(PACKAGE + ".")) and not name.startswith(TRANSPARENT):
             mine = name
         tb = tb.tb_next
     return mine or last

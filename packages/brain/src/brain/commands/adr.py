@@ -22,6 +22,8 @@ def cmd_adr(args, root: Path) -> int:
                                                     "trigger", "migration")}
     store = _store(args, root)
     try:
+        if not (store / "schema.yaml").is_file():   # checked before anything is written, as every edge is
+            raise graph.GraphError(f"{store}: no graph store here (no schema.yaml): brain init, or --store")
         etypes = graph.load_schema(store).get("edge_types") or []  # before writing: every edge must be possible
         for etype, wanted in (("supersedes", args.reverses), ("decided_by", args.decides)):
             if wanted and etype not in etypes:
@@ -29,6 +31,8 @@ def cmd_adr(args, root: Path) -> int:
         for target in args.decides or []:
             if target not in graph.node_index(store):
                 raise graph.GraphError(f"{target}: unknown node (--decides)")
+        if args.decides or args.reverses:   # the edges' file, checked before the log is written
+            graph.layer_file(store, args.edges_file)
         out = notes.adr_new(path, args.title or "", fields, day=args.date, reverses=args.reverses or "")
         edges = []
         if out["supersedes"]:
@@ -39,6 +43,9 @@ def cmd_adr(args, root: Path) -> int:
                                     via="brain adr new"))
     except (notes.NotesError, graph.GraphError) as exc:
         print(f"brain: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:   # a log or layer file that cannot be written: said, never a traceback
+        print(f"brain: {exc.filename or path}: {exc.strerror or exc}", file=sys.stderr)
         return 1
     print(f"adr: {out['id']} appended to {path.name}" + (f"; {len(edges)} edge(s)" if edges else "")
           + "; then brain sync and brain check")

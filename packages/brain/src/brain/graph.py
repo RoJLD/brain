@@ -184,10 +184,30 @@ def _check_status(store: Path, node: dict) -> None:
                          f"({', '.join(sorted(allowed))})")
 
 
+LAYERS = ("nodes", "edges")
+
+
+def layer_file(store: Path, file: str) -> Path:
+    """A layer file of the store, ``nodes/<name>.yaml`` or ``edges/<name>.yaml``, relative to it. Anything else is
+    refused before a command writes anything: a store path given twice (``notes/graph/edges/x.yaml``) or a folder of
+    its own would write a stray tree, or fail after the command's first write. The layer's folder is made when a
+    store has none yet."""
+    rel = Path(file)
+    if rel.is_absolute() or len(rel.parts) != 2 or rel.parts[0] not in LAYERS or rel.suffix != ".yaml":
+        raise GraphError(f"{file}: a layer file is nodes/<name>.yaml or edges/<name>.yaml, relative to the store "
+                         f"{store}")
+    return store / rel
+
+
+def _layer_ready(f: Path) -> Path:
+    f.parent.mkdir(exist_ok=True)   # the store's own nodes/ or edges/ folder, never deeper (layer_file)
+    return f
+
+
 def append_edges(store: Path, edges: list[dict], file: str = "edges/work.yaml", note: str = "") -> None:
     if not edges:
         return
-    f = store / file
+    f = _layer_ready(layer_file(store, file))
     text, nl = _read(f)
     before = load_yaml_list(f)
     text = _open_list(text)
@@ -199,6 +219,7 @@ def add_item(store: Path, nid: str, title: str, *, node_type: str = "WorkItem", 
              props: dict | None = None, spec: str = "", after: list[str] | None = None, milestone: str = "",
              adr: str = "", anchor: str = "", file: str = "nodes/work.yaml", edges_file: str = "edges/work.yaml",
              today: str | None = None) -> dict:
+    f, _ = layer_file(store, file), layer_file(store, edges_file)   # both checked before the node is written
     index = node_index(store)
     if nid in index:
         raise GraphError(f"{nid}: already exists in {index[nid][0].name}")
@@ -219,7 +240,7 @@ def add_item(store: Path, nid: str, title: str, *, node_type: str = "WorkItem", 
         if target not in index:
             raise GraphError(f"{target}: unknown node (edge {etype} from {nid})")
         edges.append({"from": nid, "to": target, "type": etype})
-    f = store / file
+    f = _layer_ready(f)
     text, nl = _read(f)
     before = load_yaml_list(f)
     text = _open_list(text)

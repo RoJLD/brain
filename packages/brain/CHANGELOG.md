@@ -134,6 +134,18 @@ Nothing to run for the rest.
 - The upgrade test (`compat-prev`) lays an `access: read` entry and a second project at the brain's root over the
   previous tag's brain, then rolls back over them (`tests/fixtures/formats/projects/v1/newer.yaml`).
 
+### Fixes
+
+- `brain adr new` no longer leaves an ADR appended without its edge. A layer file (`--edges-file`, `item add --file`)
+  is `nodes/<name>.yaml` or `edges/<name>.yaml` relative to the store, checked before anything is written: the store's
+  path given twice (`notes/graph/edges/rules.yaml`, which raised `FileNotFoundError` from `brain.notes.write` after
+  the log was written) is refused and makes no folder, and a store with no `edges/` folder yet gets it. A root with
+  no graph store is said before anything is written, and a file it cannot write is reported in one line.
+- An engine error that only passes through `brain.nowindow`'s wrapper of `subprocess.Popen` is located at its caller
+  (`selftime.where`): a child's missing cwd read `brain.nowindow:__init__`.
+- `test_mergedriver.py::test_installer_step` expects the driver line of the brain the installer's Python imports
+  under `-I`: on a machine whose venv holds a released brain, it no longer fails on every run.
+
 ## 0.2.8 — 2026-11-09 — the review fixes
 
 ### Upgrade

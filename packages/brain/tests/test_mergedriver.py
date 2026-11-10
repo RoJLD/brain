@@ -455,7 +455,19 @@ def test_installer_step(repo, tmp_path, python, apply):
         assert "(to set (--apply))" in res.stdout and driver.returncode == 1
     else:
         assert "(set)" in res.stdout
-        assert driver.stdout.strip() == md.command(str(bin_ / "brain.exe"))   # with its git merge-file fallback
+        assert driver.stdout.strip() == _installed_command(exe, bin_ / "brain.exe")
+
+
+def _installed_command(python: Path, launcher: Path) -> str:
+    """The driver line the installer's step writes: that of the brain its Python imports under -I (the installer's
+    own call). It is this checkout's in CI, where the checkout is installed; on a machine whose venv holds a released
+    brain, that release's line, so that the step is still checked rather than failing on the venv it found."""
+    probe = ("import sys, brain.mergedriver as m; print(m.__file__); print(m.command(sys.argv[1]))")
+    out = subprocess.run([str(python), "-I", "-c", probe, str(launcher)], capture_output=True, text=True,
+                         timeout=60).stdout.splitlines()
+    if out and Path(out[0]).resolve() == Path(md.__file__).resolve():
+        return md.command(str(launcher))   # this checkout: with its git merge-file fallback
+    return out[1] if len(out) > 1 else ""
 
 
 def test_yaml_by_id_both_add_props_to_one_entry():
