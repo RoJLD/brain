@@ -39,6 +39,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # changelog.py beside it, whoever loads this file
+
 BRAIN = "packages/brain"
 SRC = f"{BRAIN}/src/brain"
 FIXTURES = f"{BRAIN}/tests/fixtures/formats"
@@ -304,14 +306,10 @@ def sections(repo: Path, version: str, upgrade: str | None) -> list[str]:
 def wave_closure(repo: Path, store: Path, version: str) -> list[str]:
     """The closure rule (docs/release.md, « 1. Before the version PR »): what the wave named by ``version`` in
     ``store`` still holds open, by brain.waves of this checkout. :class:`CannotTell` when it cannot be read."""
-    for src in (repo / "src", (repo / SRC).parent):   # research_graph, which brain.graph imports to read YAML; brain
-        src = str(src.resolve())
-        if src not in sys.path:
-            sys.path.insert(0, src)
     readable_store(store)
     try:
         import yaml   # before brain.graph, which exits on its own without it
-        from brain import waves
+        waves = _waves(repo)
     except ImportError as exc:
         raise CannotTell(f"--store needs PyYAML and this checkout's engine: {exc}") from exc
     try:
@@ -319,6 +317,22 @@ def wave_closure(repo: Path, store: Path, version: str) -> list[str]:
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:   # research_graph.yamlio.load's errors
         raise CannotTell(f"--store {store}: cannot be read: {type(exc).__name__}: {exc}") from exc
     return waves.closure_problems(plan, version)
+
+
+def _waves(repo: Path):
+    """brain.waves: the installed engine's when it has it (CI installs this checkout), else this checkout's source
+    (``packages/brain/src`` and ``src`` for research_graph), added at the end of sys.path so that an engine already
+    imported is never shadowed by another ``src`` folder."""
+    try:
+        from brain import waves
+        return waves
+    except ImportError:
+        for src in (repo / "src", (repo / SRC).parent):
+            src = str(src.resolve())
+            if src not in sys.path:
+                sys.path.append(src)
+        from brain import waves
+        return waves
 
 
 def readable_store(store: Path) -> None:
@@ -334,13 +348,17 @@ def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], l
     for name, version in versions.items():
         if not version:
             return [], [f"{VERSIONS[name]}: no __version__ ({name})"]
+    import changelog as frag   # beside this file (sys.path above): wi-brain-changelog-unreleased-collisions
+    fragments = frag.check(repo)   # every PR: a malformed fragment, or a '## Unreleased' section again
     if all(version == tag.removeprefix("v") for version in versions.values()):
-        return [f"not a version PR: both distributions are at {tag}; nothing to check"], []
+        return [f"not a version PR: both distributions are at {tag}; the changelog fragments checked"], fragments
     if len(set(versions.values())) > 1:
         return [], [f"the versions differ: {versions}; a tag is both distributions at one version"]
     version = versions["brain"]
     said = [f"version PR: {tag} -> {version}"]
-    problems = coherence(repo, tag, version)
+    problems = fragments + coherence(repo, tag, version)
+    problems += [f"{p}: a fragment not compiled into ## {version} (python {BRAIN}/installer/changelog.py compile "
+                 f"{version} --theme T --write)" for p in frag.pending(repo)]
     changed = changed_schemas(repo, tag)
     changelog = f"{BRAIN}/CHANGELOG.md"
     upgrade = upgrade_section(read(repo, changelog), version)
