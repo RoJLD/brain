@@ -31,6 +31,8 @@ def cmd_adr(args, root: Path) -> int:
         for target in args.decides or []:
             if target not in graph.node_index(store):
                 raise graph.GraphError(f"{target}: unknown node (--decides)")
+        if args.decides or args.reverses:   # the edges' file, checked before the log is written
+            graph.layer_file(store, args.edges_file)
         out = notes.adr_new(path, args.title or "", fields, day=args.date, reverses=args.reverses or "")
         edges = []
         if out["supersedes"]:

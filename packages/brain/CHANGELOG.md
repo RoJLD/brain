@@ -96,9 +96,11 @@ Nothing to run for the rest.
 
 ### Fixes
 
-- `brain adr new` no longer leaves an ADR appended without its edge: a `--edges-file` whose folder is new is made
-  (it raised `FileNotFoundError` from `brain.notes.write` after the log was written), a root with no graph store is
-  said before anything is written, and a file it cannot write is reported in one line, never a traceback.
+- `brain adr new` no longer leaves an ADR appended without its edge. A layer file (`--edges-file`, `item add --file`)
+  is `nodes/<name>.yaml` or `edges/<name>.yaml` relative to the store, checked before anything is written: the store's
+  path given twice (`notes/graph/edges/rules.yaml`, which raised `FileNotFoundError` from `brain.notes.write` after
+  the log was written) is refused and makes no folder, and a store with no `edges/` folder yet gets it. A root with
+  no graph store is said before anything is written, and a file it cannot write is reported in one line.
 - An engine error that only passes through `brain.nowindow`'s wrapper of `subprocess.Popen` is located at its caller
   (`selftime.where`): a child's missing cwd read `brain.nowindow:__init__`.
 - `test_mergedriver.py::test_installer_step` expects the driver line of the brain the installer's Python imports
