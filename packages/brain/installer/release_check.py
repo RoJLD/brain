@@ -143,13 +143,34 @@ def _key_additive(key: str, old, new, schema: dict) -> bool:
             and all(additive(old[k], new[k]) for k in old))
 
 
+def _at_tag(repo: Path, tag: str, path: str) -> bool:
+    """Whether ``path`` exists in ``tag``'s tree."""
+    try:
+        git(repo, "cat-file", "-e", f"{tag}:{path}")
+        return True
+    except CannotTell:
+        return False
+
+
+def new_formats(repo: Path, tag: str) -> set[str]:
+    """The registered formats none of whose files exists at ``tag``: formats this version adds. No brain holds a file
+    of one yet and an older engine never reads it, so adding one asks nothing of an owner (the owner's decision of
+    2026-11-10, wi-brain-release-schema-additive)."""
+    return {name for name, group in SCHEMAS.items()
+            if group and all((repo / p).exists() and not _at_tag(repo, tag, p) for p in group)}
+
+
 def moved_schemas(repo: Path, tag: str, changed: list[str]) -> tuple[list[str], list[str]]:
-    """(moved, additive): the changed schema files split into those whose format moves and those that only grew by
-    optional keys (:data:`ADDITIVE`, :func:`additive`); a file new or gone since ``tag``, or unreadable as JSON,
-    moves."""
+    """(moved, additive): the changed schema files split into those whose format moves and those that only grew:
+    by optional keys (:data:`ADDITIVE`, :func:`additive`), or as a whole new format (:func:`new_formats`). Any other
+    file new or gone since ``tag``, or unreadable as JSON, moves."""
     grows = {path for name in ADDITIVE for path in SCHEMAS[name] if path.endswith(".json")}
+    added = {path for name in new_formats(repo, tag) for path in SCHEMAS[name]}
     moved, grown = [], []
     for path in changed:
+        if path in added:
+            grown.append(path)
+            continue
         if path in grows:
             try:
                 if additive(json.loads(git(repo, "show", f"{tag}:{path}")), json.loads(read(repo, path))):

@@ -21,7 +21,9 @@ gains optional properties (none of them `required`) or changes its prose (`descr
 `examples`), every config.json the old schema accepted is still valid and an owner has nothing to do; `release-check`
 reports it as grown, not moved. Any other change of it moves the format: a key removed, a keyword added, removed
 or changed (a type, an enum, a bound, a pattern, `additionalProperties`, `required`), even a list reordered; the
-comparison errs towards a minor version. A record schema (ar, ddr, sr, event) moves even by an
+comparison errs towards a minor version. **A whole new format is a patch's too**: a registered format none of
+whose files exists at the last tag (`release_check.new_formats`) is held by no brain yet and never read by an older
+engine; a file new to a format that exists still moves it. A record schema (ar, ddr, sr, event) moves even by an
 optional key, since older engines on other machines read the records this one writes. A new refusal of what passed
 stays a minor version: ship it off by default, behind a key the owner turns on, to keep a patch.
 

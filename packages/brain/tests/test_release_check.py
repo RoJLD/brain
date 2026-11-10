@@ -891,9 +891,27 @@ def test_moved_schemas_errs_towards_a_minor(repo):
     assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
     write(repo, CONFIG_SCHEMA, "{not json\n")
     assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
-    git(repo, "rm", "-q", "--cached", CONFIG_SCHEMA)
-    commit(repo)
-    git(repo, "tag", "-f", "v0.2.5")
-    write(repo, CONFIG_SCHEMA, '{"properties": {}}\n')   # new since the tag
-    assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
     write(repo, CONFIG_SCHEMA, '{"properties": {}, "required": ["a", "b"], "additionalProperties": false}\n')
+    store_extra = "packages/brain/src/brain/templates/generic/boundary.yaml"   # a format that exists: a new file moves
+    write(repo, store_extra, "rules: []\n")
+    assert release_check.moved_schemas(repo, "v0.2.5", [store_extra]) == ([store_extra], [])
+
+
+def test_a_whole_new_format_is_a_patchs(repo, capsys):
+    """A registered format none of whose files exists at the tag (the owner's decision of 2026-11-10): no brain holds
+    one and older engines never read it, so a patch may add it; a file new to a format that exists still moves."""
+    members = "packages/brain/src/brain/schemas/members.schema.json"
+    old = dict(release_check.SCHEMAS)
+    release_check.SCHEMAS["members"] = (members,)
+    try:
+        versions(repo, "0.2.6")
+        changelogs(repo, "0.2.6")
+        write(repo, members, '{"properties": {"v": {"const": 1}}, "required": ["v"]}\n')
+        commit(repo)
+        assert release_check.new_formats(repo, "v0.2.5") == {"members"}
+        rc, text = run(repo, capsys)
+        assert rc == 0, text
+        assert "grown" in text and members in text
+    finally:
+        release_check.SCHEMAS.clear()
+        release_check.SCHEMAS.update(old)
