@@ -20,12 +20,14 @@ is checked. On a version PR, it fails when:
   line and the ``### Upgrade`` steps repeat by design and are not compared);
 - with ``--store DIR`` (the graph store that plans the releases, a brain's ``notes/graph``): the closure rule, the
   wave this version names (a milestone of kind wave, ``props.release``) still holds an open item that is neither
-  carried to a later wave (``props.carried_to``) nor dropped (``brain wave close``, brain.waves). That one check
-  imports the engine from this checkout and needs PyYAML; a store with no wave of this version passes it.
+  carried to a later wave (``props.carried_to``) nor dropped, or is not reached yet (``brain wave close``,
+  brain.waves). That one check imports brain and research_graph from this checkout (``packages/brain/src``, ``src``)
+  and needs PyYAML; a store with no wave of this version passes it.
 
 Standard library only (``--store``'s check aside), and the working tree is what is read: the job runs before any
 install, and it can be run before committing. Exit 0 when it passes or there is nothing to check, 1 when it fails, 2
-when it cannot tell (no tag, no git, a --store that cannot be read).
+when it cannot tell (no tag, no git, a --store that cannot be read: no ``nodes/``, YAML that does not parse, no
+PyYAML; on any PR, a version PR or not).
 
     python packages/brain/installer/release_check.py [--repo DIR] [--against vX.Y.Z] [--store DIR]
 """
@@ -302,16 +304,27 @@ def sections(repo: Path, version: str, upgrade: str | None) -> list[str]:
 def wave_closure(repo: Path, store: Path, version: str) -> list[str]:
     """The closure rule (docs/release.md, « 1. Before the version PR »): what the wave named by ``version`` in
     ``store`` still holds open, by brain.waves of this checkout. :class:`CannotTell` when it cannot be read."""
-    src = str((repo / SRC).parent.resolve())
-    if src not in sys.path:
-        sys.path.insert(0, src)
+    for src in (repo / "src", (repo / SRC).parent):   # research_graph, which brain.graph imports to read YAML; brain
+        src = str(src.resolve())
+        if src not in sys.path:
+            sys.path.insert(0, src)
+    readable_store(store)
     try:
+        import yaml   # before brain.graph, which exits on its own without it
         from brain import waves
     except ImportError as exc:
-        raise CannotTell(f"--store needs the engine's dependencies (PyYAML): {exc}") from exc
+        raise CannotTell(f"--store needs PyYAML and this checkout's engine: {exc}") from exc
+    try:
+        plan = waves.load(store)
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:   # research_graph.yamlio.load's errors
+        raise CannotTell(f"--store {store}: cannot be read: {type(exc).__name__}: {exc}") from exc
+    return waves.closure_problems(plan, version)
+
+
+def readable_store(store: Path) -> None:
+    """:class:`CannotTell` unless ``store`` is a graph store (its ``nodes/``)."""
     if not (store / "nodes").is_dir():
         raise CannotTell(f"--store {store}: not a graph store (no nodes/)")
-    return waves.closure_problems(waves.load(store), version)
 
 
 def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], list[str]]:
@@ -364,6 +377,8 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8")
     repo = Path(args.repo)
     try:
+        if args.store:   # on any PR: a --store that is no store is said, not skipped with the rest
+            readable_store(Path(args.store))
         said, problems = check(repo, args.against or last_tag(repo), Path(args.store) if args.store else None)
     except CannotTell as exc:
         print(f"release-check: cannot tell: {exc}", file=sys.stderr)
