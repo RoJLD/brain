@@ -90,6 +90,56 @@ def test_report_tables_and_distributions(project):
     assert "By item" in text and "Script candidates" in text and "median" in text
 
 
+def _run(usd, day, agents, labels, phases):
+    return {"cost": usd, "agents": agents, "output": 1000, "tokens": 5000, "start": f"{day}T10:00:00Z",
+            "end": f"{day}T11:00:00Z", "days": {day: usd}, "phases": phases, "labels": labels}
+
+
+def _boss():
+    return row("boss", usd=100.0, main_cost=20.0, title="Coordinator: wave", agents={
+        "subagents": {"Review lens: tests": {"count": 2, "cost": 10.0}},
+        "workflows": {"wf_a": _run(60.0, "2026-11-01", 3, {"impl:x": {"count": 1, "cost": 50.0},
+                                                            "lens:x": {"count": 2, "cost": 10.0}},
+                                   {"Implement": {"count": 1, "cost": 50.0}, "Review": {"count": 2, "cost": 10.0}}),
+                      "wf_old": _run(10.0, "2026-10-20", 1, {"impl:x": {"count": 1, "cost": 10.0}},
+                                     {"Implement": {"count": 1, "cost": 10.0}})}})
+
+
+def test_usage_shows_the_workflow_runs_and_the_agents_apart(project):
+    """wi-brain-usage-workflow-agents: whose the cost is, each workflow run, each agent's label."""
+    old = row("old", usd=12.0, main_cost=7.0, subagents={"Explore": {"count": 1, "cost": 5.0}})  # scanned before agents
+    led = ledger(project, [_boss(), old, row("plain", usd=8.0, main_cost=8.0)])
+    rep = cost.report(led, "2026-11-01", "2026-11-02", "summary")
+    a = rep["agents"]
+    assert a["main"] == pytest.approx(35.0) and a["subagents"] == {"cost": pytest.approx(15.0), "count": 3}
+    assert a["workflows"] == {"cost": pytest.approx(70.0), "runs": 1, "agents": 3}  # wf_old is not in the window
+    assert [r["key"] for r in rep["tables"]["workflow"]] == ["wf_a"]
+    wf = rep["tables"]["workflow"][0]
+    assert wf["total"] == 60.0 and wf["agents"] == 3 and wf["session"] == "boss"
+    assert wf["phases"] == [["Implement", 1, 50.0], ["Review", 2, 10.0]]
+    agents = {r["key"]: r for r in cost.report(led, "2026-11-01", "2026-11-02", "agent")["tables"]["agent"]}
+    assert agents["impl:x"]["total"] == pytest.approx(50.0) and agents["impl:x"]["runs"] == 1
+    assert agents["Review lens: tests"]["kind"] == "subagent" and agents["lens:x"]["kind"] == "workflow"
+    text = "\n".join(cost.render_report(rep))
+    assert "whose: main threads $35.00 (29%), subagents $15.00 (12%, 3 agent(s)), workflows $70.00 (58%, 1 run(s), " \
+           "3 agent(s))" in text
+    assert "By workflow run" in text and "wf_a" in text and "Implement 1 $50.00" in text
+    assert "By agent label" in "\n".join(cost.render_report(cost.report(led, "", "", "agent")))
+    quiet = cost.report(ledger(project, [row("plain", usd=8.0, main_cost=8.0)]), "", "", "summary")
+    assert "workflow" not in quiet["tables"] and "whose:" not in "\n".join(cost.render_report(quiet))
+
+
+def test_cli_usage_by_workflow_and_agent(project, capsys):
+    led = ledger(project, [_boss()])
+    rows = {f"p/{r['session_id']}.jsonl": r for r in led.rows}
+    for r in rows.values():
+        r.pop("project"), r.pop("served")
+    usage.save(rows)
+    for by, want in (("workflow", "wf_a"), ("agent", "impl:x")):
+        assert cli.main(["--root", str(project.root), "usage", "--since", "2026-10-01", "--by", by, "--no-scan"]) == 0
+        assert want in capsys.readouterr().out
+
+
 def _history(project):
     return ledger(project, [
         row("s1", "2026-10-30", usd=10.0, closed=["wi-a"]),

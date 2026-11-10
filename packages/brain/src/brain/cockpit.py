@@ -24,7 +24,8 @@ Eight panels, each read through the function its command already uses:
               the milestone each is part of (or proposed for, marked ``?``), the open items and pending milestones
               downstream of it, and the age of its idea (the date its ``idea`` prop names);
   audit       the findings by severity and repo, the first P0 and P1 ones (brain.status.audit_of, as brain audit);
-  health      each stack's and code index repo's state (brain.status, as brain health and brain index), and the
+  health      each stack's and code index repo's state (brain.status, as brain health and brain index), this
+              machine's dependency probes (brain.depprobes, as brain probes: run at each probe) and the
               execution-time ledger's last 7 days (brain.perf: runs, failures, regressions);
   digest      the journals' last day and the records (brain.status.records_of), then the latest written digest
               (brain.digest.latest), else last week's, built offline (brain.digest.build).
@@ -80,6 +81,10 @@ Read-only: nothing here writes a record or a ledger, and nothing calls a model. 
 own state, ``<BRAIN_HOME>/tui.json`` (the scope, each panel's view, the last tab and each tab's view, and the settings:
 theme, timezone, each table's columns; ``save_state``), by the interactive views. Its settings also hold, set by hand: ``lang`` (en, fr: the queue's title, « File d'Ada »;
 $BRAIN_LANG wins) and ``titles`` (a free title per panel, ``{"queue": "Ma file"}``), read by every view (``title``).
+tui.json is a truth-local file (brain.stateio): ``v`` 1, a backup beside it and an atomic write; the keys this engine
+does not know (at the top level, in panels, tabs, columns, settings and titles: a newer brain's) are kept through a
+save; one a newer brain wrote is read but never written (« brain update »), and an unreadable one is set aside by the
+next save.
 """
 
 from __future__ import annotations
@@ -94,7 +99,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (__version__, alerts, audit, config, decisions, defaults, digest, paths, perf, plan, projects, queue,
-               quiet, resume, sessions, status, transcript, usage)
+               quiet, resume, sessions, stateio, status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
 FRAMES = {"exec": "health"}  # a frame drawn from another panel's data, not a read of its own: the health tab's fourth
@@ -118,6 +123,7 @@ WIDTH = 118
 ALL = "all"  # the scope of every registered project
 TZS = ("local", "utc")  # the cockpit's timezone: this machine's (the default), or UTC
 STATE_FILE = "tui.json"
+STATE_V = 1               # tui.json's v (brain.stateio)
 _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|min|h)?\s*$", re.I)
 _DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 
@@ -517,6 +523,7 @@ class Cockpit:
         self.panel_at: dict[str, str] = {}  # panel -> when its content was last read
         self.progress: dict | None = None  # the probe running: {what, n, total}
         self.last_ok: dict[tuple, str] = {}  # (project, stacks|code_index, name) -> its last OK measure
+        self.dep_probes: dict | None = None  # this machine's dependency probes, from the last probe (brain.depprobes)
         self.lock = threading.Lock()
 
     @property
@@ -608,6 +615,9 @@ class Cockpit:
         found = self.found
         self.progress = {"what": "the denied calls", "n": 0, "total": len(found)}
         self.scanned = queue.scan(queue.DAYS)
+        self.progress = {"what": "the dependency probes", "n": 0, "total": 1}
+        from . import depprobes
+        self.dep_probes = depprobes.run()   # first: the brain's alerts below read this run
         stack_reg, index = status._probes(self.root, False)
         measured = {}
         for i, p in enumerate(found, 1):
@@ -654,7 +664,8 @@ class Cockpit:
         now = now or datetime.now(timezone.utc)
         only = None if self.every else {p.name for p in self.projs}
         return {"alerts": {"projects": [g["alerts"] for g in got]}, "audit": {"projects": [g["audit"] for g in got]},
-                "health": {"projects": [g["health"] for g in got], "exec": perf_summary(only, now)},
+                "health": {"projects": [g["health"] for g in got], "exec": perf_summary(only, now),
+                           **({"probes": self.dep_probes} if self.dep_probes is not None else {})},
                 "digest": {"projects": [g["digest"] for g in got]}}
 
     def refresh(self, probe: bool = False) -> set[str]:
@@ -1008,7 +1019,8 @@ HELP = {
               "read": "when the graph, a DDR, a journal or a done stamp changes; the denied calls at each probe",
               "detail": "brain queue; brain decision pending; brain decision answer <id> <option>"},
     "alerts": {"what": "Each project's open alerts by level: missed or failed scheduled tasks, stacks down, a stale "
-                       "code index, audit debt above its written view, alert events and alert files.",
+                       "code index, audit debt above its written view, alert events and alert files, a dependency "
+                       "probe not OK.",
                "from": "brain.status.alerts_of, as brain status and brain alerts (the scheduler, the exec ledger, the "
                        "stacks, the code index, the audit, the alert events and files)",
                "read": "at each probe (--probe, 5 min, and r)",
@@ -1027,11 +1039,13 @@ HELP = {
               "from": "brain.status.audit_of, as brain audit (every repo of the project)",
               "read": "at each probe",
               "detail": "brain audit --project <p>"},
-    "health": {"what": "Each stack's and each code index repo's state, and the exec-time ledger's last 7 days (runs, "
-                       "failures, regressions).",
-               "from": "brain.status.probed, as brain health and brain index; brain.perf",
+    "health": {"what": "Each stack's and each code index repo's state, this machine's dependency probes (a login, a "
+                       "tool's last output, an index's or a backup's age), and the exec-time ledger's last 7 days "
+                       "(runs, failures, regressions).",
+               "from": "brain.status.probed, as brain health and brain index; brain.depprobes, as brain probes; "
+                       "brain.perf",
                "read": "at each probe",
-               "detail": "brain health; brain index; brain perf"},
+               "detail": "brain health; brain index; brain probes; brain perf"},
     "digest": {"what": "The journals' last day and the records, then the latest written digest, else last week's built "
                        "offline.",
                "from": "brain.status.records_of, brain.digest",
@@ -1076,13 +1090,10 @@ def state_path() -> Path:
 def load_state(path: Path | None = None) -> dict:
     """The scope, the panels' views, the last tab and each tab's view, each table's columns and the settings (``theme``,
     ``tz``) the interactive cockpit last showed; {} without them (the file missing, unreadable or not this shape). A tab,
-    a view or a column this engine does not have is left out."""
-    try:
-        data = json.loads((path or state_path()).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
+    a view or a column this engine does not have is left out. Read-only: an unreadable file is not moved (the next
+    :func:`save_state` sets it aside), and one a newer brain wrote is read as it is."""
+    st = stateio.load(path or state_path(), known=STATE_V, aside=False)
+    data = st.data if st.status in ("ok", "newer") else {}
     out: dict = {}
     if isinstance(data.get("scope"), str) and data["scope"]:
         out["scope"] = data["scope"]
@@ -1099,6 +1110,40 @@ def load_state(path: Path | None = None) -> dict:
                       if k in (*PANELS, *FRAMES) and isinstance(v, str) and v.strip()}
             if titles:
                 out["settings"]["titles"] = titles
+    return out
+
+
+def state_refusal(path: Path | None = None) -> str:
+    """Why :func:`save_state` will not write tui.json ('' when it will): a newer brain wrote it, or it cannot be read
+    at all. (One of the wrong shape is set aside by the save, which then writes.)"""
+    st = stateio.load(path or state_path(), known=STATE_V, aside=False)
+    return st.refusal() if st.refused else ""
+
+
+def _known_keys() -> dict:
+    """The keys of tui.json this engine knows, by level (None: a value it owns whole); every other key is kept."""
+    return {"cockpit": None, "scope": None, "tab": None, "panels": dict.fromkeys(SORTS), "tabs": dict.fromkeys(TABS),
+            "columns": dict.fromkeys(COLUMNS),
+            "settings": {"theme": None, "tz": None, "lang": None, "titles": dict.fromkeys((*PANELS, *FRAMES))}}
+
+
+def _unknown(old: dict, known: dict) -> dict:
+    """The parts of ``old`` whose keys ``known`` does not name, at every level it names."""
+    out = {}
+    for k, v in old.items():
+        if k not in known:
+            out[k] = v
+        elif isinstance(known[k], dict) and isinstance(v, dict):
+            sub = _unknown(v, known[k])
+            if sub:
+                out[k] = sub
+    return out
+
+
+def _merged(base: dict, top: dict) -> dict:
+    out = dict(base)
+    for k, v in top.items():
+        out[k] = _merged(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
     return out
 
 
@@ -1177,18 +1222,18 @@ def title(name: str) -> str:
 
 
 def save_state(state: dict, path: Path | None = None) -> bool:
-    """Written whole (a temporary file, then replaced); False when it could not be (never raised)."""
+    """Written whole through brain.stateio (a backup, then an atomic write), the keys this engine does not know kept
+    from the file on disk; False when it could not be (a newer brain's file, an OSError; never raised)."""
     path = path or state_path()
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps({"cockpit": 1, **state}, ensure_ascii=False, indent=1, sort_keys=True) + "\n",
-                       encoding="utf-8")
-        os.replace(tmp, path)
-        _settings_cache.clear()  # settings() reads the new file, whatever its time says
-        return True
-    except OSError:
+        st = stateio.load(path, known=STATE_V)
+        if not st.writable:
+            return False
+        stateio.save(st, _merged(_unknown(st.data, _known_keys()), {"cockpit": 1, **state}), indent=1)
+    except (OSError, stateio.StateError):
         return False
+    _settings_cache.clear()  # settings() reads the new file, whatever its time says
+    return True
 
 
 def digest_of(p: projects.Project) -> dict:
@@ -1388,6 +1433,10 @@ def health_lines(panel: dict | None, width: int = WIDTH, now: datetime | None = 
     for g in panel.get("projects") or []:
         lines.append(_line("  ", f"{g['project']}: stacks {_states(g['stacks'], 'stack', now)}; code index "
                                  f"{_states(g['code_index'], 'repo', now)}", width))
+    probes_ = panel.get("probes") or {}
+    if probes_.get("probes") or probes_.get("errors"):
+        from . import depprobes
+        lines.append(_line("  ", f"dependency probes: {depprobes.status_line(probes_)}", width))
     ex = panel.get("exec") or {}
     if ex:
         reg = "; ".join(f"{r['task']} +{r['change']:.0%}" for r in ex.get("regressions") or [])

@@ -23,8 +23,8 @@ from research_graph.code_layer import (
     symbol_span,
 )
 from research_graph.loader import apply_overlay, load_store
-from tests.two_stores import two_stores
 from research_graph.model import LayeredGraph
+from tests.two_stores import two_stores
 
 STORE = Path(__file__).parent / "fixtures" / "code_layer"
 

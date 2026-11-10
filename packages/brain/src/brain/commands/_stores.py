@@ -404,6 +404,8 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     and never writes are counted. Exit code 1 on an error."""
     errors = projects.check(root) + config.check(root) + permissions.check(root)
     data_classes = classes.check(root)
+    for n in data_classes.home_notes:   # an engine store undeclared takes its default class: noted, never failed
+        print(f"note: classes: {n}")
     for w in data_classes.waived:
         print(f"waived: classes: {w}")
     errors += [f"classes: {e}" for e in data_classes.errors] + [f"vault: {e}" for e in vault.check(root)]

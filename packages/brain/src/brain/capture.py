@@ -35,6 +35,9 @@ from pathlib import Path
 from . import actions, midsession, paths, plan, schema, secretscan, transcript
 from . import answers as answers_lane
 
+SR_V = 1     # sessions/<id>.json (schemas/sr.schema.json)
+STATS_V = 1  # sessions/<id>.state.json, the transcript's offsets and counts (brain.transcript.SessionStats)
+
 
 def _now() -> str:
     return transcript.iso(datetime.now(timezone.utc))
@@ -67,16 +70,16 @@ def _recent_ids(name: str, n: int = 400) -> set[str]:
 
 def _log_error(event: str, exc: BaseException) -> None:
     """The engine's error sink: a text line in ledger/errors.log (secrets dropped), and the error event of the
-    engine's self-timing (its class and module:function, never its message: brain.selftime)."""
-    from . import selftime
+    engine's self-timing (its class and module:function, never its message: brain.selftime). The log of an earlier
+    month, or one past 1 MB, moves aside first as errors-YYYY-MM.log, kept stateio.LOG_RETENTION["errors"] months."""
+    from . import selftime, stateio
 
     selftime.error(exc)
     try:
         d = paths.ledger_dir()
         d.mkdir(parents=True, exist_ok=True)
         f = d / "errors.log"
-        if f.exists() and f.stat().st_size > 1_000_000:
-            f.replace(d / "errors.log.1")
+        stateio.rotate_log(f, keep=stateio.LOG_RETENTION["errors"])
         text, _ = secretscan.clean_text("".join(traceback.format_exception_only(type(exc), exc)).strip())
         with open(f, "a", encoding="utf-8") as fh:
             fh.write(f"{_now()} {event}: {text}\n")
@@ -286,15 +289,14 @@ def stop(payload: dict) -> None:
     sid, path = payload.get("session_id"), payload.get("transcript_path")
     if not sid or not path or not Path(path).exists():
         return
+    from . import stateio
+
     d = paths.sessions_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    state_f = d / f"{sid}.state.json"
-    stats = transcript.SessionStats()
-    if state_f.exists():
-        try:
-            stats = transcript.SessionStats.from_state(json.loads(state_f.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            stats = transcript.SessionStats()
+    # both truth-local (brain.stateio): a newer brain's is its own (nothing written), an unreadable one set aside
+    srs, sst = stateio.load(d / f"{sid}.json", known=SR_V), stateio.load(d / f"{sid}.state.json", known=STATS_V)
+    if not (srs.writable and sst.writable):
+        return
+    stats = transcript.SessionStats.from_state(sst.data) if sst.status == "ok" else transcript.SessionStats()
     if stats.offset > Path(path).stat().st_size:  # the file was rewritten: start over
         stats = transcript.SessionStats()
     stats.feed_file(path)
@@ -302,10 +304,11 @@ def stop(payload: dict) -> None:
     sr = stats.record(path, status="open", actions=ar_ids, ddrs=ddr_ids)
     tree = _tree_fields(sid)
     sr.update(tree)
-    tmp = d / f"{sid}.json.tmp"
-    tmp.write_text(json.dumps(sr, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(d / f"{sid}.json")
-    state_f.write_text(json.dumps(stats.to_state(), ensure_ascii=False), encoding="utf-8")
+    try:
+        stateio.save(srs, sr, indent=1, sort_keys=False)
+        stateio.save(sst, stats.to_state(), indent=None, sort_keys=False)
+    except stateio.StateError:   # a newer brain wrote one since the load: its own
+        return
     _child_report(sid, Path(path), sr, tree)
 
 

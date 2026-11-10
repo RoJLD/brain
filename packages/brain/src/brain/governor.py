@@ -20,12 +20,14 @@ The checks, in order; the first that holds decides:
   --observe): every start reads the quota first. A machine that never notes a reading is not checked.
 - ``memory``: a new session or a workflow while the machine's committed memory (Windows: what it promised, RAM plus
   page file, in % of its commit limit; elsewhere the memory in use) is at ``memory`` % or more, or its available RAM
-  (what is free now) is under ``memory_available_gb`` GB: deny, naming both measures and the one that refused
+  (what is free now) is under ``memory_available_gb`` GB (default 0: no floor; the owner opts in): deny, naming both measures and the one that refused
   (wi-brain-memory-guard-two-measures: committed memory alone sat at 93-96 % with 24 GB of RAM free).
 - ``sessions``: a new session while the sessions running in parallel (the app's sessions not archived and active in
   the last ``live_minutes``; without the app, the session records written in that time) reach the cap: the smaller of
   ``sessions`` and what the week's room pays for, ``(100 - pct) x $ per % / (wave_hours x session_hour_usd)`` minus
-  the master (scale study gap 1).
+  the master (scale study gap 1). With ``session_hour_measured`` true (default false), the session-hour is the
+  measured one (brain.quota's, its subagents and workflow agents included, in ``usage/quota.json``) when it is above
+  ``session_hour_usd``; by default the measured value is shown, never applied.
 - ``brainstorms``: a new brainstorm while ``brainstorms`` are open on the machine (every project; SCALE-2/3): the cap
   is config.json's, which a project's ``usage: {brainstorms: N}`` in projects.yaml may lower for itself, never raise.
   A session is a brainstorm when its brief says ``Task class: brainstorm`` or carries ``#brainstorm`` (the session
@@ -58,7 +60,8 @@ from . import midsession, paths
 
 GUARD = "usage"
 DEFAULTS = {"enabled": True, "warn": 80.0, "critical": 95.0, "sessions": 8, "brainstorms": 2, "memory": 97.0,
-            "memory_available_gb": 4.0, "wave_hours": 4.0, "session_hour_usd": 14.0, "fresh_minutes": 60, "live_minutes": 30,
+            "memory_available_gb": 0.0, "wave_hours": 4.0, "session_hour_usd": 14.0, "session_hour_measured": False,
+            "fresh_minutes": 60, "live_minutes": 30,
             "brainstorm_hours": 12, "brainstorm_title": r"^\W*brainstorm\b"}
 LOWER_ONLY = ("sessions", "brainstorms")   # what a project's usage: may lower for itself, never raise
 SESSION_TOOL = re.compile(r"^mcp__.+__start_session$")
@@ -257,6 +260,8 @@ def quota_now(now: datetime, lim: dict) -> dict:
     conv = status.get("conversion") if isinstance(status.get("conversion"), dict) else {}
     if isinstance(conv.get("usd_per_pct"), (int, float)) and conv["usd_per_pct"] > 0:
         out["usd_per_pct"] = float(conv["usd_per_pct"])
+    sh = status.get("session_hour") if isinstance(status.get("session_hour"), dict) else {}
+    out["session_hour_usd"] = float(sh["usd"]) if isinstance(sh.get("usd"), (int, float)) and sh["usd"] > 0 else None
     for w in WINDOWS:
         live = [r for r in readings if r["window"] == w and _dt(r["resets"]) > now >= _dt(r["at"]) - timedelta(minutes=5)]
         if not live:
@@ -454,7 +459,8 @@ def memory_text(committed: float | None, available_gb: float | None, lim: dict) 
     """Both measures and their thresholds, in words: brain usage guard, a refusal, brain status."""
     c = f"{committed:.1f} % committed" if committed is not None else "committed unknown"
     a = f"{available_gb:.1f} GB of RAM available" if available_gb is not None else "available RAM unknown"
-    return (f"{c} (refused from {lim['memory']:g} %), {a} (refused under {lim['memory_available_gb']:g} GB)")
+    floor = lim["memory_available_gb"]
+    return f"{c} (refused from {lim['memory']:g} %), {a}" + (f" (refused under {floor:g} GB)" if floor else " (no floor)")
 
 
 def memory_refusal(committed: float | None, available_gb: float | None, lim: dict) -> str:
@@ -501,6 +507,15 @@ def _env_allowed() -> bool:
 
 # --- the decision --------------------------------------------------------------------------------------------------
 
+def _session_hour(lim: dict, q: dict) -> tuple[float, bool]:
+    """The session-hour the sessions cap divides by, and whether it is the measured one. The measured session-hour
+    (its agents' included, brain.quota) counts only when usage.guard.session_hour_measured is true, and then only
+    above the configured one: by default the cap is the configured session_hour_usd's."""
+    measured = q.get("session_hour_usd")
+    applied = bool(lim["session_hour_measured"] and measured and measured > lim["session_hour_usd"])
+    return (measured if applied else lim["session_hour_usd"]), applied
+
+
 def state(payload: dict, now: datetime | None = None) -> dict:
     """What the governor sees for ``payload``: the tool's kind, the project, the caps, the quota, the sessions, the
     memory, the override."""
@@ -523,9 +538,10 @@ def state(payload: dict, now: datetime | None = None) -> dict:
         out["memory"], out["ram_available_gb"] = mem.get("committed"), mem.get("available_gb")
     q = out["quota"]
     week = q["windows"].get("week")
+    out["session_hour_usd"], out["session_hour_applied"] = _session_hour(lim, q)
     if week and q["usd_per_pct"]:
         room = (100 - week["pct"]) * q["usd_per_pct"]
-        out["quota_cap"] = max(0, math.floor(room / max(1e-9, lim["wave_hours"] * lim["session_hour_usd"])) - 1)
+        out["quota_cap"] = max(0, math.floor(room / max(1e-9, lim["wave_hours"] * out["session_hour_usd"])) - 1)
     out["override"] = override_until(now)
     return out
 
@@ -565,8 +581,10 @@ def verdict(s: dict) -> tuple[str, str, str] | None:
         cap, why = int(lim["sessions"]), f"usage.guard.sessions {lim['sessions']:g}"
         if s.get("quota_cap") is not None and s["quota_cap"] < cap:
             cap, why = s["quota_cap"], (f"what the week's room pays for: {100 - q['windows']['week']['pct']:.0f} % "
-                                        f"left, {lim['wave_hours']:g} h at ${lim['session_hour_usd']:g} per "
-                                        "session-hour, the master's share kept")
+                                        f"left, {lim['wave_hours']:g} h at "
+                                        f"${s.get('session_hour_usd') or lim['session_hour_usd']:g} per "
+                                        "session-hour" + (" measured" if s.get("session_hour_applied") else "")
+                                        + ", the master's share kept")
         if ss["running"] >= cap:
             return ("deny", "sessions", f"{what} refused: {ss['running']} session(s) running in parallel, the cap is "
                     f"{cap} ({why}); finish or archive one first")
@@ -681,22 +699,36 @@ def report(cwd: str, now: datetime | None = None) -> dict:
     return out
 
 
+def _session_lines(s: dict, lim: dict, q: dict) -> list[str]:
+    """``brain usage guard``'s sessions line (and what the week's room pays for) and its session-hour line."""
+    ss = s.get("sessions") or {}
+    sessions = (f"  sessions  {ss.get('running', 0)} running, {ss.get('brainstorms', 0)} brainstorm(s) open "
+                f"(from {ss.get('source', '-')})"
+                + (f"; the week's room pays for {s['quota_cap']} at ${s['session_hour_usd']:g} per session-hour"
+                   + (" measured" if s.get("session_hour_applied") else "") if s.get("quota_cap") is not None else ""))
+    measured = q.get("session_hour_usd")
+    how = ("" if not measured else ", applied" if s.get("session_hour_applied") else
+           ", not applied (not above the configured)" if lim["session_hour_measured"] else
+           ", not applied (usage.guard.session_hour_measured false)")
+    hour = (f"  session-h ${lim['session_hour_usd']:g} configured; measured "
+            + (f"${measured:g}" if measured else "none") + how)
+    return [sessions, hour]
+
+
 def render(rep: dict) -> list[str]:
     s = rep["state"]
     lim, q = s["caps"], s["quota"]
     out = [f"usage guard ({'on' if lim['enabled'] else 'off'}; project {s['project'] or '-'}): warn {lim['warn']:g} %, "
            f"critical {lim['critical']:g} %, sessions {lim['sessions']:g}, brainstorms {lim['brainstorms']:g}, "
-           f"memory {lim['memory']:g} % committed or under {lim['memory_available_gb']:g} GB of RAM, fresh {lim['fresh_minutes']:g} min"]
+           f"memory {lim['memory']:g} % committed" + (f" or under {lim['memory_available_gb']:g} GB of RAM"
+                                              if lim["memory_available_gb"] else "") + f", fresh {lim['fresh_minutes']:g} min"]
     for w, v in q["windows"].items():
         out.append(f"  {w:<9} {v['pct']:.0f} % ({v['how']} at {v['at'][11:16]} UTC, resets "
                    f"{v['resets'][:16].replace('T', ' ')} UTC)")
     if not q["windows"]:
         out.append(f"  quota     no reading in force; {_how_to_note()}")
     out.append(f"  newest    {q['newest'] or 'none'}" + ("" if q["opted_in"] else " (not checked: no reading in 7 d)"))
-    ss = s.get("sessions") or {}
-    out.append(f"  sessions  {ss.get('running', 0)} running, {ss.get('brainstorms', 0)} brainstorm(s) open "
-               f"(from {ss.get('source', '-')})" + (f"; the week's room pays for {s['quota_cap']}"
-                                                    if s.get("quota_cap") is not None else ""))
+    out += _session_lines(s, lim, q)
     out.append(f"  memory    {memory_text(s.get('memory'), s.get('ram_available_gb'), lim)}")
     ov = s.get("override")
     out.append(f"  override  until {ov['until']}" + (f" ({ov['reason']})" if ov.get("reason") else "") if ov
