@@ -114,3 +114,27 @@ def test_adr_new_writes_nothing_when_an_edge_is_impossible(tmp_path, monkeypatch
     before = log.read_text(encoding="utf-8")
     assert cli.main(["--project", "demo", "adr", "new", "--reverses", "Old", "--decision", "undo"]) == 1
     assert log.read_text(encoding="utf-8") == before
+
+
+def test_adr_new_writes_its_edge_into_a_layer_file_of_a_folder_not_made_yet(tmp_path, monkeypatch, store):
+    """The edge of --decides goes to --edges-file even when its folder is new: the ADR is never left appended without
+    its edge (it raised FileNotFoundError from notes.write after the log was written)."""
+    root = store.parents[1]
+    _registry(tmp_path, monkeypatch, root)
+    (root / "notes" / "decisions.md").write_text("# Decisions\n", encoding="utf-8")
+    assert cli.main(["--project", "demo", "item", "add", "wi-new", "--title", "New"]) == 0
+    assert cli.main(["--project", "demo", "adr", "new", "Rule", "--context", "c", "--decision", "d", "--why", "w",
+                     "--revisit", "r", "--decides", "wi-new", "--edges-file", "decided/decisions.yaml",
+                     "--date", "2026-11-01"]) == 0
+    assert "decided_by" in (store / "decided" / "decisions.yaml").read_text(encoding="utf-8")
+
+
+def test_adr_new_without_a_graph_store_says_so_and_writes_nothing(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "bare"
+    (root / "notes").mkdir(parents=True)
+    log = root / "notes" / "decisions.md"
+    log.write_text("# Decisions\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+    assert cli.main(["--root", str(root), "adr", "new", "Rule", "--decision", "d"]) == 1
+    assert "no graph store here" in capsys.readouterr().err
+    assert log.read_text(encoding="utf-8") == "# Decisions\n"

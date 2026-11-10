@@ -168,6 +168,7 @@ def _write_checked(path: Path, text: str, expect: list, nl: str = "\n") -> None:
     got = load_yaml(text)
     if got != expect:
         raise GraphError(f"{path}: the edit would change more than the target node; nothing written")
+    path.parent.mkdir(parents=True, exist_ok=True)   # a layer file of its own (edges/decisions.yaml) may be the first
     notes.write(path, text, nl)
 
 
