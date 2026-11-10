@@ -106,7 +106,7 @@ def test_the_newer_data_reaches_every_file_of_a_format(st, tmp_path):
     assert data["identity"] == {"owner": "Ada Example", "pronouns": "they"} and data["telemetry"] == {"enabled": False}
     assert '"cpu_s":0.4' in (ledger / "exec-2026-11.jsonl").read_text(encoding="utf-8")
     # the formats it reached no file of fail the step: the rollback would test nothing of them
-    assert not step["ok"] and "reached no file: ar v1, ddr v1, packs v1, permissions v1, projects v1, sr v1" in \
+    assert not step["ok"] and "reached no file: ar v1, ddr v1, members v1, packs v1, permissions v1, projects v1, sr v1" in \
         step["out"]
 
 

@@ -28,7 +28,7 @@ COMPAT-3; CI's ``compat-prev`` job on every pull request, from the last tag), in
 
 1. **The previous engine writes.** TAG (or a checkout of it) is installed; brain init and the first commit; then
    every registered format (a ``tests/fixtures/formats/<format>/v<N>/`` folder) is written: a decision (DDR), an AR
-   by hand, an SR from the transcript fixture, the older ``permissions.yaml`` (no command writes it), the engine's own
+   by hand, an SR from the transcript fixture, the older ``permissions.yaml`` and ``members.yaml`` (no command writes them), the engine's own
    exec events; a format with no place in :func:`where` fails the step. Then its brain check.
 2. **The upgrade.** ``--ref`` or ``--source`` is installed over it, as an upgrade does; ``engine.pin`` is moved and
    committed if the version changed (docs/install.md); then, strict (``BRAIN_STRICT=1``: N reads N-1's data with no
@@ -275,7 +275,7 @@ def where(root: Path, home: Path) -> dict[str, list[Path]]:
     return {"ar": found(root, "records/ar/*.jsonl"), "config": found(root, "config.json"),
             "ddr": found(root, "records/ddr/*.yaml"), "event": found(home / ".brain" / "ledger", "**/exec-*.jsonl"),
             "packs": found(root, "source/packs.yaml"), "permissions": found(root, "permissions.yaml"),
-            "projects": found(root, "projects.yaml"), "sr": found(root, "records/sr/*/*.yaml"), "template": []}
+            "projects": found(root, "projects.yaml"), "members": found(root, "members.yaml"), "sr": found(root, "records/sr/*/*.yaml"), "template": []}
 
 
 def formats() -> list[tuple[str, int]]:
@@ -472,7 +472,7 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
     """The upgrade test, in one venv and one brain (``work/ada-brain``):
 
     1. the previous engine (``prev``: a tag, or a checkout) writes every registered format: brain init, a commit, a
-       decision, an AR, an SR from the transcript fixture, the older permissions.yaml (no command writes it), the
+       decision, an AR, an SR from the transcript fixture, the older permissions.yaml and members.yaml (no command writes them), the
        engine's own exec events; then its check;
     2. HEAD (``head``: ref, source, pre_tag) is installed over it, the pin moved as the docs say, then, strict
        (BRAIN_STRICT=1: no note on N-1's data either), the store plan, brain check, brain record check and the rest
@@ -506,8 +506,10 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
     ]
     ok = phase("previous", [engine_is(scripts, env, root, *prev)] + run_steps(first + older, env, root))
     shutil.copyfile(fixture("permissions", "older"), root / "permissions.yaml")
-    with (root / "boundary.yaml").open("a", encoding="utf-8", newline="\n") as fh:    # the template has no rule for it
+    shutil.copyfile(fixture("members", "older"), root / "members.yaml")
+    with (root / "boundary.yaml").open("a", encoding="utf-8", newline="\n") as fh:    # the older template has no rule
         fh.write('  - {glob: "permissions.yaml", side: personal, why: "the permission hierarchy"}\n')
+        fh.write('  - {glob: "members.yaml", side: personal, why: "who belongs to the brain"}\n')
     ok = phase("previous", [written(root, home)] + run_steps(
         [("git add", ["git", "add", "-A"], None, None), ("commit", ["git", "commit", "-q", "-m", "data"], None, None),
          ("check", [brain, "check"], None, lambda o: "graph-check OK" in o),
