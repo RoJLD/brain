@@ -609,7 +609,10 @@ brain perf --engine [--since 7d] [--task guard] [--json]
 
 Every store of a brain declares a data class in `config.json` (`classes.stores`: public, private, confidential,
 sealed, resident, secret, `tenant:<id>`), and the class says where it may go and how; `brain check --all` refuses a
-store without a class and a destination its class forbids, and `brain init` writes a starting block. What leaves a
+store without a class and a destination its class forbids, and `brain init` writes a starting block. Each store the
+engine writes under `$BRAIN_HOME` has a suggested class and a format class: one a brain does not declare takes its
+suggested class (never looser than sealed) and is noted, never failed (`brain classes --suggest` prints the lines to
+declare), and the desktop app's session metadata is read through a closed list of keys, never its texts. What leaves a
 machine is sealed client-side to public keys (`brain vault`: age, gpg as the fallback), to a device key per machine,
 kept in the OS keystore, and an offline recovery key: two recipients at least, proven daily by a canary per recipient
 (`brain health vault`). When the recipients change (a lost machine, a revoked heir, a rotated key), `brain vault

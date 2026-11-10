@@ -40,6 +40,11 @@ tolerant tests set `BRAIN_STRICT=0`.
 
 ## The formats
 
+Each store the engine writes under `$BRAIN_HOME` carries its format class (`truth-local`, `log`, `derived`,
+`install`, `external`) beside its data class in `brain.classes.ENGINE_STORES`: the list is in
+[vault.md](vault.md#the-engines-own-stores), and `brain classes --json` prints it for the stores a brain leaves at
+their default.
+
 | Format | Where | Version | Unknown field or key (read mode) | Higher `v` |
 |---|---|---|---|---|
 | DDR | `records/ddr/<id>.yaml` | `v` (`ddr.schema.json`) | a warning; `brain` rewrites keep it | refused; never overwritten |
