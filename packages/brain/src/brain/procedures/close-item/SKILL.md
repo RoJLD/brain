@@ -21,6 +21,13 @@ says more or says otherwise, follow it. Then the project's addendum, when this s
 
 When the project has no backlog or no journal, say so in the report rather than inventing one.
 
+Where the `brain` command serves the project, read its records through the read commands rather than its files (the
+graph's YAML, the decision log, the journal, the generated views): `brain [--project P] item show <id>` (the item's
+props in full, its edges both ways, the ADRs and specs behind it, the DDRs that name it; `--history` its changes),
+`brain items` with filters (`--status`, `--priority`, `--wave`, `--milestone`, `--prop K=V`, `--text`),
+`brain adr show <adr-id|rule-id>` (an ADR's text, or the ADRs that decide a rule), `brain spec show <spec-id>
+--section N` (`--toc` its headings) and `brain journal last [N]`; each takes `--json`.
+
 ## 1. Documented, tested and linked
 
 In the item's PR, every change of behaviour, command, option, configuration, setup or data updates the docs that
@@ -92,7 +99,7 @@ use it rather than editing the YAML: `brain [--project P] item close <id> --pr "
 Add one dated entry to the project's journal (append-only: never edit a past entry): item ids, PR links, outcome,
 what comes next. One entry per working day may group several items.
 With the `brain` command: `brain [--project P] journal add --title "..." "line"...` for the day's first entry,
-`brain journal add "line"` for more lines in it.
+`brain journal add "line"` for more lines in it; `brain journal last` shows the day's entry so far.
 
 ## 5. Session archived, worktree removed
 

@@ -197,7 +197,7 @@ def subgraph(st: resume.Store, nid: str, limit: int = 40) -> list[str]:
     lines += [f"- <- {e.get('type')} from {_node_text(st, e['from'])}"
               for e in sorted(into, key=lambda e: (e.get("type") or "", e["from"]))]
     if len(lines) > limit:
-        lines = lines[:limit] + [f"- ... {len(lines) - limit} more edge(s): research_graph neighbors {nid}"]
+        lines = lines[:limit] + [f"- ... {len(lines) - limit} more edge(s): brain item show {nid}"]
     return lines
 
 
@@ -245,6 +245,10 @@ def _start(p: projects.Project, node: dict) -> list[str]:
     slug = node["id"].removeprefix("wi-")
     lines.append(f"- the branch: claude/{slug} (a short slug is fine); refresh this brief with `brain brief "
                  f"{node['id']}`, the project with `brain resume --project {p.name}`")
+    lines.append(f"- read the brain through its commands, not its files (graph YAML, decision log, journal, views): "
+                 f"`brain --project {p.name} item show {node['id']}` (props, edges, ADRs, DDRs), `brain items "
+                 "--text WORDS` (filters), `brain adr show <adr-id|rule-id>`, `brain spec show <spec-id> --section N` "
+                 "(--toc), `brain journal last [N]`")
     return lines
 
 

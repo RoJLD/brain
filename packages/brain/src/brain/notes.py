@@ -1,5 +1,6 @@
 """Append-only edits of a project's markdown logs: ``brain journal add`` (notes/journal.md) and ``brain adr new``
-(notes/decisions.md), and the text I/O that keeps a file's line endings, used by every brain edit.
+(notes/decisions.md), and the text I/O that keeps a file's line endings, used by every brain edit; their dated
+sections read back for ``brain journal last`` and ``brain adr show`` (brain.reads).
 
 A file keeps its line endings (a CRLF checkout stays CRLF) and only grows: each write checks that the old text, less
 its trailing blank lines, is a prefix of the new one. A line that matches a secret pattern is refused.
@@ -209,3 +210,31 @@ def adr_new(path: Path, title: str, fields: dict, day: str | None = None, revers
     new = old.rstrip() + "\n" + f"\n## {day} — {title}\n\n" + "\n\n".join(parts) + "\n"
     _append(path, old, new, nl)
     return {"id": adr_id(day, title, existing, kind), "title": title, "supersedes": supersedes, "todo": todo}
+
+
+# --- reading (brain journal last, brain adr show) ---
+
+_SECTION_END = re.compile(r"^#{1,2}\s")
+
+
+def dated_sections(text: str) -> list[dict]:
+    """The dated ``## YYYY-MM-DD — title`` sections of a journal or a decision log, in order (the headings
+    :func:`headings` reads): {day, title, line (its heading's, from 1), text (the heading down to the next heading of
+    level 1 or 2, its trailing blank lines dropped)}."""
+    lines = text.split("\n")
+    starts = [(i, m) for i, m in enumerate(map(_HEADING_RE.match, lines)) if m]
+    out = []
+    for i, m in starts:
+        end = next((j for j in range(i + 1, len(lines)) if _SECTION_END.match(lines[j])), len(lines))
+        out.append({"day": m.group(1), "title": m.group(2), "line": i + 1, "text": "\n".join(lines[i:end]).rstrip()})
+    return out
+
+
+def adr_entries(text: str, kind: str = "adr") -> list[dict]:
+    """Each ADR (or SDR) of a decision log: :func:`dated_sections` with the node id research_graph sync gives it."""
+    seen: list[tuple[str, str]] = []
+    out = []
+    for s in dated_sections(text):
+        out.append({"id": adr_id(s["day"], s["title"], seen, kind), **s})
+        seen.append((s["day"], s["title"]))
+    return out
