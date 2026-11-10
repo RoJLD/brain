@@ -10,5 +10,8 @@ section: Added
   (no `research_graph` on the PATH). A PreToolUse hint (`readhint.sh`, `brain.readhint`), never a refusal: when Read,
   Grep or a shell command that reads targets a registered brain's graph YAML, decision log, journal or generated
   views, one line of hook context names the command that answers; bash builtins until the call names one of those
-  files, `BRAIN_READ_HINT=0` turns it off. The close-item procedure, the brief (`brain brief`, « How to start ») and
+  files. The hint is opt-in (about 0.2 s per Read and Grep call, which had no hook before): `brain render --target
+  claude` (`brain sync`) registers it in the core plugin's `hooks.json` only when `config.json` says
+  `"hints": {"read": true}` (a new optional key, default false: not registered, no call pays its cost); while it is
+  on, `BRAIN_READ_HINT=0` turns it off in a session. The close-item procedure, the brief (`brain brief`, « How to start ») and
   the generic `CLAUDE.md` template name the commands (`wi-brain-read-commands`).

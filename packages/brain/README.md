@@ -604,7 +604,11 @@ features`). A shell command counts only when it reads (`grep`, `rg`, `cat`, `hea
 the worktree's `.git` file, no git started). A call whose JSON names none of those files stops in bash builtins:
 measured on Windows, the launcher then costs what starting bash costs (about 0.2 s, as `budget.sh` on every call), the
 Python path about 0.6 s, taken only on a hand read of a brain file; on a shell call it runs beside `guard.sh`.
-`BRAIN_READ_HINT=0` turns it off.
+Read and Grep had no hook before it, so it is **opt-in**: `brain render --target claude` (`brain sync`) registers it
+in the core plugin's `hooks.json` only when the brain's `config.json` says `"hints": {"read": true}`; by default it is
+not registered and no call pays its cost (the script ships either way, `brain.render.OPTIONAL_HOOKS`). To turn it on,
+set the key, run `brain sync` and restart the sessions; while it is on, `BRAIN_READ_HINT=0` turns it off in a
+session.
 
 Two guards keep what a session brings in and what it records clean (the runbook: [`docs/guards.md`](docs/guards.md)):
 

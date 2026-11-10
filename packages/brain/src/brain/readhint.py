@@ -7,7 +7,8 @@ Never a refusal: it prints no permissionDecision, only additionalContext, and no
 <BRAIN_HOME>/ledger/errors.log). readhint.sh starts it only when the hook's JSON names one of those files, with bash
 builtins; a shell command counts only when it reads (grep, rg, cat, head, tail, sed, awk, Select-String,
 Get-Content...). "Registered": the file is under the root of a project of the brain's registry, or of a worktree of
-its checkout (read from the worktree's .git file, no git started). BRAIN_READ_HINT=0 turns it off.
+its checkout (read from the worktree's .git file, no git started). Opt-in: registered in the rendered hooks.json
+only when config.json hints.read is true (brain.render.OPTIONAL_HOOKS); BRAIN_READ_HINT=0 turns it off while on.
 """
 
 from __future__ import annotations

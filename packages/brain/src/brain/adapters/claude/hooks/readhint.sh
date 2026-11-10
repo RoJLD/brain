@@ -8,7 +8,8 @@
 # stops here. It runs beside guard.sh on a shell call (Claude Code runs a tool's hooks in parallel).
 # Uses $BRAIN_PYTHON, else the brain command's venv (<BRAIN_HOME>/venv: the installed engine), else python3, else
 # python, skipping the Windows Store stubs; without a Python 3 it does nothing.
-# BRAIN_READ_HINT=0 turns it off.
+# Opt-in: brain render --target claude (brain sync) registers it in hooks.json only when config.json hints.read is
+# true (brain.render.OPTIONAL_HOOKS); off, no call pays its cost. BRAIN_READ_HINT=0 turns it off while it is on.
 [ "${BRAIN_READ_HINT:-1}" = "0" ] && exit 0
 { . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python
 IFS= read -r -d '' payload
