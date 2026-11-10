@@ -12,9 +12,3 @@ section: Upgrade
    itself regenerates there with `brain sync`, as before. `brain audit --write`, `brain coverage --write`,
    `brain features render --write`, `brain decision view --write` and `brain modules --write` now refuse another
    engine than `config.json` `engine.pin`, as `brain sync` does (`--force` writes anyway) (`wi-brain-views-one-writer`).
-2. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
-   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
-   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
-3. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
-4. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
-   push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
