@@ -53,6 +53,18 @@ def _store(args, root: Path) -> Path:
     return projects.stores_of(_project(args, root))[0]
 
 
+def _read_stores(args, root: Path) -> list[Path]:
+    """The stores a read command searches (brain.reads): --store, else the project's stores that hold a schema."""
+    if getattr(args, "store", None):
+        return [Path(args.store).resolve()]
+    return [s for s in projects.stores_of(_project(args, root)) if (s / "schema.yaml").is_file()]
+
+
+def _print_json(data) -> None:
+    import json
+    print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+
+
 def _repos(args, root: Path) -> list[projects.Repo]:
     try:
         return projects.repos_of(_project(args, root))

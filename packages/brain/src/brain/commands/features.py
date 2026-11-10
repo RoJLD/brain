@@ -7,7 +7,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .. import features, graph, skew
+from .. import config, features, graph, skew
 from ._common import _kv, _on_main, _project, _repos, _root_repo, _store, _whole
 
 ORDER = 40   # its place in brain --help's list of commands (brain.commands)
@@ -19,11 +19,42 @@ USAGE = """\
   brain features add ID --title T --domain D [--status planned] [--value medium] [--repo R] [--module M]
                  [--code PATH[::SYMBOL]]... [--test T]... [--doc D]... [--spec S]... [--adr A]... [--parent F]
                  [--item WI]... [--prop k=v]...   | link ID [the same edges] | set ID key=value...
-  brain features render [--write [--force]] [--repo R --out PATH]   FEATURES.md, the matrix by domain (no
-                 --write: exit 1 when the file is not the render; under config.json views.strict, another engine than
-                 engine.pin writes nothing); sync [--offline]: statuses named by merged PRs
+  brain features render [--write [--force]] [--repo R --out PATH]   FEATURES.md, the matrix by domain of the
+                 repo's features (no --write: exit 1 when the file is not the render; under config.json views.strict,
+                 another engine than engine.pin writes nothing); into a clone of a public repo (config.json
+                 public.repos), the public render: props public_title and public_id, the repo's own code, tests and
+                 docs, no spec, ADR or item (its check accepts the full render too unless config.json
+                 features.public_strict); sync [--offline]: statuses named by merged PRs
                  ("feat-brain-x: have"), then FEATURES.md
 """
+
+
+def _render_for(args, root: Path, store: Path, repo: str, target: Path) -> tuple[str, bool, str | None]:
+    """(the render of ``repo``'s FEATURES.md for ``target``, whether it is the public render, the render the check
+    accepts too): public when the target's checkout is a clone of a public repo, then the full render passes the
+    check too unless config.json features.public_strict, and each line brain check --public would refuse is a
+    warning."""
+    label = store.relative_to(root).as_posix() if store.is_relative_to(root) else store.as_posix()
+    cfg = config.load(root)
+    public = features.public_checkout(target.parent, cfg)
+    m = features.load_store(store, _root_repo(args, root))
+    text = features.render(m, repo, label, public=public)
+    for line in features.denied_lines(text, cfg) if public else []:
+        print(f"brain: warning: the public {features.VIEW} of {repo}: {line} (brain features set <feature> "
+              f"{features.PUBLIC_TITLE}=... or {features.PUBLIC_ID}=...)", file=sys.stderr)
+    return text, public, features.also_accepted(m, repo, label, public, features.public_strict(cfg))
+
+
+def _check_view(repo: str, public: bool, old: str | None, text: str, also: str | None) -> int:
+    """brain features render without --write: 1 when ``old`` is neither ``text`` nor ``also`` (a public clone's full
+    render, accepted unless config.json features.public_strict), with why."""
+    why = features.check_view(old, text, also)
+    full = not why and old is not None and old.replace("\r\n", "\n") != text
+    print(f"{features.VIEW} of {repo}{' (public)' if public else ''}: "
+          + (f"{why}: brain features render --write" if why else "up to date")
+          + (f" (the full render: config.json features.{features.PUBLIC_STRICT} would ask for the public one)"
+             if full else ""))
+    return 1 if why else 0
 
 
 def _features_view(args, root: Path, store: Path, write: bool, repo: str = "", out: str = "") -> int:
@@ -35,13 +66,10 @@ def _features_view(args, root: Path, store: Path, write: bool, repo: str = "", o
               file=sys.stderr)
         return 1
     target = Path(out).resolve() if out else root / features.VIEW
-    label = store.relative_to(root).as_posix() if store.is_relative_to(root) else store.as_posix()
-    text = features.render(features.load_store(store, _root_repo(args, root)), repo, label)
+    text, public, also = _render_for(args, root, store, repo, target)
     old = target.read_text(encoding="utf-8") if target.is_file() else None
     if not write:
-        why = features.check_view(old, text)
-        print(f"{features.VIEW} of {repo}: " + (f"{why}: brain features render --write" if why else "up to date"))
-        return 1 if why else 0
+        return _check_view(repo, public, old, text, also)
     if old is not None and old.replace("\r\n", "\n") == text:
         print(f"view: {features.VIEW} unchanged")
         return 0
@@ -50,7 +78,7 @@ def _features_view(args, root: Path, store: Path, write: bool, repo: str = "", o
               file=sys.stderr)
         return 1
     target.write_text(text, encoding="utf-8", newline="\n")
-    print(f"view: {features.VIEW} written ({repo})")
+    print(f"view: {features.VIEW} written ({repo}{', public render' if public else ''})")
     return 0
 
 
@@ -133,7 +161,8 @@ def register(sub, ctx) -> None:
     fr = fe.add_parser("render", help=f"{features.VIEW}, the matrix by domain: checked, or --write")
     fr.add_argument("--write", action="store_true", help=f"write {features.VIEW} at the root (from a worktree)")
     fr.add_argument("--repo", help="the repo whose features (default: the root's)")
-    fr.add_argument("--out", help=f"where to write another repo's {features.VIEW} (its worktree)")
+    fr.add_argument("--out", help=f"where to write another repo's {features.VIEW} (its worktree; a clone of a public "
+                                  "repo of config.json public.repos gets the public render)")
     fr.add_argument("--force", action="store_true", help="--write even when the running engine is not config.json "
                                                          "engine.pin (refused under views.strict)")
     fy = fe.add_parser("sync", help=f"the statuses named by merged PRs (feat-brain-x: have), then {features.VIEW}")

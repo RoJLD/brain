@@ -212,7 +212,15 @@
       "type": "object", "additionalProperties": false,
       "description": "brain audit's opt-ins (README, The scout).",
       "properties": {
-        "feature_coverage_strict": {"type": "boolean", "description": "The owner's opt-in to fix the feature coverage of what a change touches: true, brain audit --diff makes a touched command or module of a command registry that no feature names a LEFT line (to fix in the PR, within --limit); default false: a DEFER line to the repo's debt item. An added one is a NEW line either way, on a unit feature.links already makes NEW (no implemented_by of its file)."}
+        "feature_coverage_strict": {"type": "boolean", "description": "The owner's opt-in to fix the feature coverage of what a change touches: true, brain audit --diff makes a touched command or module of a command registry that no feature names a LEFT line (to fix in the PR, within --limit); default false: a DEFER line to the repo's debt item. An added one is a NEW line either way, on a unit feature.links already makes NEW (no implemented_by of its file)."},
+        "norm_lints_strict": {"type": "boolean", "description": "The owner's opt-in to the norm lints (brain.norms): true, brain audit --diff makes each norm a change adds to a touched Python file (a subprocess or urlopen without a timeout, a text open() or read_text/write_text without an encoding, a naive datetime stored, a secret in a child's argv or env) a NEW line, to fix in the PR or justify; default false: an info line, never blocking. Those already in a touched file are DEFER lines to the repo's debt item either way."}
+      }
+    },
+    "features": {
+      "type": "object", "additionalProperties": false,
+      "description": "The feature matrix's opt-ins (brain features, README, The feature matrix of each repo).",
+      "properties": {
+        "public_strict": {"type": "boolean", "description": "The owner's opt-in to hold a public clone's FEATURES.md to the public render: true, brain audit (check features.md) and brain features render without --write refuse the full render in a checkout whose remote is in public.repos; default false: the full render passes too (brain check --public still reads it). The public render is what --write writes either way."}
       }
     },
     "views": {
@@ -220,6 +228,13 @@
       "description": "The generated views and their one writer (brain views, docs/views.md).",
       "properties": {
         "strict": {"type": "boolean", "description": "The owner's opt-in to the one writer's rules: true, brain check and brain refresh fail (exit 1) on a stale view on the default branch, and brain audit --write, coverage --write, features render --write, decision view --write and modules --write refuse an engine other than engine.pin (unless --force); default false: a stale view on the default branch is a warning, and those writers write with any engine. brain views --write holds its own output to the strict rules either way."}
+      }
+    },
+    "hints": {
+      "type": "object", "additionalProperties": false,
+      "description": "The opt-in hooks that hint, never refuse: brain render --target claude (brain sync) registers each only when it is true.",
+      "properties": {
+        "read": {"type": "boolean", "description": "The read hint (readhint.sh, brain.readhint, PreToolUse on Read, Grep, Bash and PowerShell, about 0.2 s per call): true, brain render --target claude (brain sync) registers it in the core plugin's hooks.json; default false: not registered, no call pays its cost. BRAIN_READ_HINT=0 turns it off in a session while it is on."}
       }
     },
     "vault": {

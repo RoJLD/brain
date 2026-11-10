@@ -21,7 +21,10 @@ adds, DEFER on a touched one, LEFT there only under config.json audit.feature_co
 max_lines, a function past the complexity threshold, a dependency no decision log names, an incomplete shortcut:
 marker, a symptom fix with no Root cause: line) join them: NEW, DEFER to the debt item for a file or function already
 past its threshold that grows, or justified (a Justified: or Root cause: line in --pr-body or a commit message: shown,
-never blocking). Exit code 1 when something is to fix in this PR, 2 for a usage or git error (no base found).
+never blocking). The norm lints (brain.norms: a subprocess or urlopen without a timeout, a text open() without an
+encoding, a naive datetime stored, a secret in a child's argv or env) are info lines on what the change adds, NEW
+under config.json audit.norm_lints_strict, and DEFER lines, by file and norm, for those already in a touched file.
+Exit code 1 when something is to fix in this PR, 2 for a usage or git error (no base found).
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import audit, feature_coverage, graph, inventory, paths, projects, structure
+from . import audit, feature_coverage, graph, inventory, norms, paths, projects, structure
 from .inventory import AuditError, git
 
 ORDER = {"entry": 0, "prod": 1, "other": 2, "": 3}
@@ -254,11 +257,13 @@ def _decision_texts(p: projects.Project) -> list[str]:
 
 
 def _structure(args, p: projects.Project, c: projects.Repo, top: Path, rows: list, base_tree: inventory.Tree,
-               new_tree: inventory.Tree, base_rev: str, new_rev: str) -> list[dict]:
-    """The structure signals of the change (brain.structure), with the project's thresholds and decision logs."""
+               new_tree: inventory.Tree, base_rev: str, new_rev: str, root: Path | None) -> list[dict]:
+    """The structure signals of the change (brain.structure), with the project's thresholds and decision logs, and
+    its norm lints (brain.norms, NEW under the owner's opt-in)."""
     body = structure.body_of(top, base_rev, new_rev, _pr_body(getattr(args, "pr_body", None) or ""))
     return structure.signals(c.name, rows, base_tree, new_tree, structure.thresholds(p.audit), body,
-                             _decision_texts(p))
+                             _decision_texts(p)) + norms.signals(c.name, rows, base_tree, new_tree, body,
+                                                                 norms.strict(root))
 
 
 def _tagged(out: list[dict], tag: str) -> int:
@@ -334,7 +339,7 @@ def main(args, root: Path | None) -> int:
     limit = args.limit if args.limit is not None else c.scout_limit
     out = classify(touched, deleted, added, c.name, new, base, renamed, limit, script_exts,
                    feature_coverage.strict(root))
-    out = sorted(out + _structure(args, p, c, top, rows, base_tree, new_tree, base_rev, new_rev), key=_rank)
+    out = sorted(out + _structure(args, p, c, top, rows, base_tree, new_tree, base_rev, new_rev, root), key=_rank)
     n_new = sum(1 for f in out if f["tag"] == "NEW")
     n_left = sum(1 for f in out if f["tag"] == "LEFT")
     n_defer = sum(1 for f in out if f["tag"] == "DEFER")

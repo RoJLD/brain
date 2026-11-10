@@ -10,14 +10,16 @@ What it does, every command reading files and git, never a model:
 - **records**: decisions put to the owner (DDR, `brain decision ask|answer|ack`), session and action records (SR, AR),
   captured by the hooks at zero token (`brain record`, `brain capture`);
 - **backlog**: work items, milestones and specs in a `research-graph` store (`brain item add|set|close|link`,
-  `brain milestone`, `brain spec`), the plan as eras, milestones and waves (`brain wave`, `brain next`), with the
+  `brain milestone`, `brain spec`), read back without opening its files (`brain item show`, `brain items`, `brain spec
+  show`: « Reading a brain » below), the plan as eras, milestones and waves (`brain wave`, `brain next`), with the
   views regenerated and checked (`brain sync`, `brain check`,
   `brain refresh`; in a brain's own root, check and refresh also run `brain check --all`'s registry check: the
   registry, `config.json`, the classes, the permissions, the stacks and the bundles they declare, the ids of every
   registered project), and written once on the default branch after each merge by one writer (`brain views --write`;
   a branch need not commit them, the default branch's check warns of a stale one, fails under `config.json`
   `views.strict`: [`docs/views.md`](docs/views.md));
-- **history**: the journal (`brain journal add`) and the decision log (`brain adr new`), append-only;
+- **history**: the journal (`brain journal add`, `brain journal last`) and the decision log (`brain adr new`, `brain
+  adr show`), append-only;
 - **identity**: the brain's people and their public keys (`members.yaml`), and the owner's signatures of the answers
   only they may give, verified with public keys (`brain identity`: [`docs/identity.md`](docs/identity.md));
 - **views**: the owner's queue (`brain queue`), the status of every project (`brain status`), a cockpit (`brain tui`,
@@ -160,6 +162,20 @@ retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root
 messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
 `audit: {max_lines: 1000, complexity: 15}`.
 
+The scout also reads four cheap norms in the AST of each Python file a change touches (`brain.norms`):
+`norm.timeout` (a `subprocess.run`, `call`, `check_call`, `check_output` or `urlopen` without `timeout=`, a
+`Popen`'s `communicate()` or `wait()` without one), `norm.encoding` (an `open()` in text mode, a `read_text()` or a
+`write_text()` without `encoding=`), `norm.naive-time` (a `datetime.now()` or `today()` without a tz, or a
+`utcnow()`, stored: made text by `isoformat()`, `str()` or an f-string, put in a dict or given to `json.dump`; not
+once `astimezone()` or `replace(tzinfo=...)` made it aware) and `norm.secret-argv` (a token, password, secret or API
+key variable, or a constant subscript such as `os.environ["GH_TOKEN"]`, in a subprocess call's command or its `env`,
+or assigned to `os.environ[...]`: a secret travels by stdin or the keystore). A call that unpacks `**kwargs`, or
+whose mode is not a literal, is not judged; `timeout=None` or `encoding=None` counts as none. What the change adds is
+an `info` line by default (shown, never blocking), a NEW line under `config.json` `audit.norm_lints_strict: true`
+(the owner's opt-in), which a `Justified: <path>: ...` line clears; the occurrences already in a touched file, or
+moved into it from a file that no longer defines their function, make one DEFER line per file and norm to the repo's
+debt item, fixed by batches (never blocking).
+
 ### Feature coverage
 
 A shipped capability cannot miss the feature matrix (`FEATURES.md`): in a package whose `commands/` lists its own
@@ -175,6 +191,23 @@ makes such a unit NEW, so nothing that passed is newly refused), and one already
 DEFER line to the repo's debt item; `config.json` `audit.feature_coverage_strict: true` (the owner's opt-in, default
 false) makes that one a LEFT line to fix in the PR.
 `--store DIR` gives the scout a worktree of the store where the change's features are linked.
+
+### The feature matrix of each repo
+
+Each repo of a project has its own `FEATURES.md` at its root: the features whose `repo` prop names it (`brain features
+set <id> repo=<repo>` moves one), from the Feature nodes of the brain's store. `brain sync` renders the store's own
+repo's; another repo's is rendered into a checkout of it, then committed there by its own PR (`brain features render
+--repo <repo> --out <checkout>/FEATURES.md --write`), and `brain audit` (check `features.md`) compares each repo's
+file with its own render, its fix naming the command for that repo. A checkout that is a clone of a public repo (one
+of its git remotes is in `config.json` `public.repos`) gets the public render: a feature's `public_title` and
+`public_id` props stand for a title or an id that names the owner or a private project (`brain features set <id>
+public_title="..." public_id=feat-...`; the graph keeps both, `brain features show` prints them), and only the repo's
+own code, tests and docs are shown, no spec, ADR or work item of the private brain. The render warns, line by line,
+about what `brain check --public` would still refuse in it. In such a clone the check (`brain audit`'s `features.md`,
+`brain features render` without `--write`) accepts the full render too, which is what the file held before the
+public render existed; `config.json` `features.public_strict: true` (the owner's opt-in, default false) makes it
+accept the public render only. The render has no date and sorts what it lists: the same
+graph gives the same file.
 
 ### The impact of a change
 
@@ -229,6 +262,31 @@ adds a wave at once (no DDR, unlike `brain milestone add`: a wave is named by it
 closes), and `brain wave import [--from X.Y.Z] [--write]` turns the items' free-text `props.wave` into waves: one per
 release a value names (`0.2.9 (decided ...)` is 0.2.9) from `--from` on, the earlier releases (already tagged) listed
 and left out, the other values (letters, free text) listed for the owner to place.
+
+### Reading a brain
+
+Sessions read a brain through its commands, not its files: the graph's YAML, the decision log, the journal and the
+generated views are long, and a hand read returns far more than the question needs. Each read command takes `--json`
+and needs no `research_graph` on the PATH (the graph is loaded in brain's own process, with the other stores its edges
+name):
+
+```
+brain item show ID [--history] [--json]        # props in full, edges both ways, the ids its props name, its blockers,
+                                               # the ADRs behind it (direct, inherited, superseded) and its specs, the
+                                               # DDRs that name it; --history: its changes from git (slow on a large store)
+brain items [--status S]... [--all] [--priority P]... [--wave X.Y.Z|ID] [--milestone M]... [--prop K[=TEXT]]...
+            [--text WORDS] [--type T]... [--repo R] [--limit N] [--json]
+brain adr show REF [--titles] [--json]         # the ADR REF names (id, title, or the start of its id), else the ADRs
+                                               # that decide the node REF (a rule, an item, a spec), with their text
+brain spec show REF [--section N | --toc] [--json]   # a Spec node, a Doc id (doc:<repo>:<path>::<key>) or a path
+brain journal last [N] [--titles] [--json]     # the last N dated entries (default 1; 0: all)
+```
+
+`brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
+no wave whose free-text `props.wave` names that release. `brain spec show --section` takes a heading's number (`2.1`),
+its key (the last part of a Doc id) or the start of its title, and prints it down to the next heading of its level.
+When a session reads one of those files by hand anyway, a PreToolUse hint names the command that answers (below,
+« The Claude Code hooks »).
 
 ## Start your own brain
 
@@ -629,6 +687,22 @@ may write, names `gh`, a program of the owner and power guards, `claude` then `p
 comes between: a quoted `claude.exe`, global options, a line continuation), or git other than to
 read (`git [-C DIR] status`, `log`, `diff`, `show`, `rev-parse`... without `--output`: `brain.guards.GIT_READS`,
 checked against the guards' tables). In Python a guard reads the registry through libyaml and does not import `urllib.request`.
+
+**The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
+a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its
+journal or a generated view (`*_graph.md`, `decision_queue.md`, `FEATURES.md`) by hand, it adds one line of hook
+context naming the command that answers, with the id the call looked for when it names one (`brain --project P item
+show wi-x`, `brain adr show`, `brain journal last`, `brain items`, `brain next`, `brain decision pending`, `brain
+features`). A shell command counts only when it reads (`grep`, `rg`, `cat`, `head`, `tail`, `sed`, `awk`,
+`Select-String`, `Get-Content`...); "registered" is a project of the registry or a worktree of its checkout (read from
+the worktree's `.git` file, no git started). A call whose JSON names none of those files stops in bash builtins:
+measured on Windows, the launcher then costs what starting bash costs (about 0.2 s, as `budget.sh` on every call), the
+Python path about 0.6 s, taken only on a hand read of a brain file; on a shell call it runs beside `guard.sh`.
+Read and Grep had no hook before it, so it is **opt-in**: `brain render --target claude` (`brain sync`) registers it
+in the core plugin's `hooks.json` only when the brain's `config.json` says `"hints": {"read": true}`; by default it is
+not registered and no call pays its cost (the script ships either way, `brain.render.OPTIONAL_HOOKS`). To turn it on,
+set the key, run `brain sync` and restart the sessions; while it is on, `BRAIN_READ_HINT=0` turns it off in a
+session.
 
 Two guards keep what a session brings in and what it records clean (the runbook: [`docs/guards.md`](docs/guards.md)):
 

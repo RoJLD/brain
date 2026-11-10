@@ -9,8 +9,14 @@ module of the owner's platform, a slot the module layer fills; nothing here depe
 ``decided_by`` (an ADR) and ``part_of`` (a parent Feature); a WorkItem ``delivers`` a Feature. Three things come
 from it and are never edited:
 
-- ``FEATURES.md`` at the root of each repo, the matrix by domain (``brain features render --write``, run by
-  ``brain sync``); ``brain audit`` checks it is the render of the committed graph (check ``features.md``);
+- ``FEATURES.md`` at the root of each repo, the matrix by domain of the features whose ``repo`` it is
+  (``brain features render --write``, run by ``brain sync`` for the store's own repo; ``--repo R --out
+  <checkout>/FEATURES.md`` for another repo of the project); ``brain audit`` checks each repo's is the render of the
+  committed graph (check ``features.md``). A repo whose checkout is a clone of a public repo (config.json
+  ``public.repos``) gets the public render: a feature's ``public_title`` and ``public_id`` props stand for a title or
+  an id that names the owner or a private project, and only the repo's own code, tests and docs are shown, no spec,
+  ADR or item of the private brain (wi-brain-features-repo-split); its check accepts the full render too unless
+  config.json ``features.public_strict`` is true (the owner's opt-in: nothing that passed is newly refused);
 - a SQLite index with full-text search (FTS5, standard library), a cache under ``<BRAIN_HOME>/features`` rebuilt when
   the store's files change: ``brain features list|search|show``;
 - the status: ``brain sync`` reads the merged PRs that name a feature with a status (``feat-brain-x: have``) and sets
@@ -30,10 +36,13 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from . import graph, inventory, paths, testcov
+from . import config, graph, inventory, paths, public, testcov
 from .inventory import parse_code_ref
 
 TYPE = "Feature"
+FEATURE_ID = re.compile(r"feat-[a-z0-9][a-z0-9-]*[a-z0-9]")
+PUBLIC_TITLE = "public_title"   # the neutral title a public repo's FEATURES.md shows (the graph keeps the title)
+PUBLIC_ID = "public_id"         # the neutral id it shows, for an id that names the owner or a private project
 STATUSES = ("have", "partial", "planned", "no")
 VALUES = ("high", "medium", "low")
 OUT_LINKS = ("implemented_by", "tested_by", "documented_in", "specified_by", "decided_by", "part_of")
@@ -191,17 +200,20 @@ def _cell(text) -> str:
     return str(text).replace("|", "\\|").replace("\n", " ").strip()
 
 
-def _code_cell(m: Model, fid: str, repo: str) -> str:
+def _code_cell(m: Model, fid: str, repo: str, public: bool = False) -> str:
     out = []
     for cid in m.code(fid):
         try:
             r, path, sym = parse_code_ref(cid)
         except ValueError:
-            out.append(f"`{_cell(cid)}`")
+            out.append("" if public else f"`{_cell(cid)}`")
             continue
         label = path.rsplit("/", 1)[-1] + (f"::{sym}" if sym else "")
-        out.append(f"[{label}]({path})" if r.lower() == repo else f"`{r}:{label}`")
-    return ", ".join(out)
+        if r.lower() == repo:
+            out.append(f"[{label}]({path})")
+        elif not public:   # a public render names no other repo
+            out.append(f"`{r}:{label}`")
+    return ", ".join(x for x in out if x)
 
 
 def coverage_of(m: Model, fid: str) -> float | None:
@@ -220,10 +232,34 @@ def coverage_of(m: Model, fid: str) -> float | None:
     return round(100.0 * c / s, 1) if s else None
 
 
-def _tests_cell(m: Model, fid: str, repo: str) -> str:
+def _shown_links(m: Model, fid: str, etype: str, repo: str, public: bool) -> list[str]:
+    """The sorted targets of ``fid``'s ``etype`` edges a render shows: all of them, or in a public render only the
+    repo's own Test and Doc nodes (``test:<repo>:...``, ``doc:<repo>:...``)."""
+    got = sorted(m.links(fid, etype))
+    if not public:
+        return got
+    return [x for x in got if x.lower().startswith((f"test:{repo}:", f"doc:{repo}:"))]
+
+
+def _tests_cell(m: Model, fid: str, repo: str, public: bool = False) -> str:
     pct = coverage_of(m, fid)
-    tests = ", ".join(f"`{x}`" for x in sorted(m.links(fid, "tested_by")))
+    tests = ", ".join(f"`{x}`" for x in _shown_links(m, fid, "tested_by", repo, public))
     return "; ".join(x for x in (f"{pct:g} % covered" if pct is not None else "", tests) if x)
+
+
+def shown_id(m: Model, fid: str, public: bool = False) -> str:
+    """The id a render shows: in a public render the feature's ``public_id`` prop when it has one (an id that names
+    the owner or a private project), else its id."""
+    props = (m.features.get(fid) or {}).get("props") or {}
+    return str(props.get(PUBLIC_ID) or fid) if public else fid
+
+
+def shown_title(m: Model, fid: str, public: bool = False) -> str:
+    """The title a render shows: in a public render the feature's ``public_title`` prop when it has one, else its
+    title; the graph keeps both."""
+    node = m.features.get(fid) or {}
+    props = node.get("props") or {}
+    return str((props.get(PUBLIC_TITLE) if public else "") or node.get("title") or fid)
 
 
 def _order(m: Model, ids: list[str]) -> list[tuple[str, int]]:
@@ -253,9 +289,55 @@ def _order(m: Model, ids: list[str]) -> list[tuple[str, int]]:
     return out
 
 
-def render(m: Model, repo: str, store_label: str = "notes/graph") -> str:
+def _intro(repo: str, store_label: str, public: bool) -> list[str]:
+    if public:
+        source = (f"{MARKER} from the Feature nodes of the brain that tracks this repo (a public render: neutral "
+                  "titles, and only this repo's code, tests and docs; the brain's own records are not linked). Do not "
+                  "edit: it is rendered again into a checkout of this repo (`brain features render --repo "
+                  f"{repo} --out <checkout>/{VIEW} --write`).")
+    else:
+        source = (f"{MARKER} (run by `brain sync`) from the Feature nodes of `{store_label}`. Do not edit: change a "
+                  "feature with `brain features add|set|link`, or name its new status in a merged PR "
+                  "(`feat-brain-x: have`, set by the next `brain sync`). Search them with `brain features search`.")
+    return [f"# Features — {repo}", "", source, "",
+            "Status: **have** (works today), **partial** (part of it works), **planned** (on the backlog), **no** "
+            "(not had, not planned). Value: the feature's strategic value (high, medium, low).", ""]
+
+
+def _columns(m: Model, feats: list[str], repo: str, public: bool) -> dict[str, bool]:
+    """Which optional columns the table has: Module, Tests, Docs."""
+    return {"module": any((m.features[f].get("props") or {}).get("module") for f in feats),
+            "tests": any(_shown_links(m, f, "tested_by", repo, public) or coverage_of(m, f) is not None
+                         for f in feats),
+            "docs": any(_shown_links(m, f, "documented_in", repo, public) for f in feats)}
+
+
+def _links_cell(m: Model, f: str, depth: int, public: bool) -> str:
+    """The parent (a top-level row's), then, unless public, the specs, ADRs and the items that deliver it."""
+    parent = m.parent(f)
+    links = [f"part of `{shown_id(m, parent, public)}`"] if parent and depth == 0 else []
+    if not public:
+        links += [f"`{x}`" for t in ("specified_by", "decided_by") for x in sorted(m.links(f, t))] \
+            + [f"`{s}`" for t, s in sorted(m.into.get(f, [])) if t == "delivers"]
+    return ", ".join(links)
+
+
+def _row(m: Model, f: str, depth: int, repo: str, cols: dict[str, bool], public: bool) -> str:
+    props = m.features[f].get("props") or {}
+    row = [("↳ " * depth) + f"**{_cell(shown_title(m, f, public))}** `{shown_id(m, f, public)}`",
+           str(m.features[f].get("status", "")), _cell(props.get("value", ""))]
+    row += [_cell(props.get("module", ""))] if cols["module"] else []
+    row += [_code_cell(m, f, repo, public)]
+    row += [_tests_cell(m, f, repo, public)] if cols["tests"] else []
+    row += [", ".join(f"`{x}`" for x in _shown_links(m, f, "documented_in", repo, public))] if cols["docs"] else []
+    return "| " + " | ".join(row + [_links_cell(m, f, depth, public)]) + " |"
+
+
+def render(m: Model, repo: str, store_label: str = "notes/graph", public: bool = False) -> str:
     """FEATURES.md of ``repo``: a summary by status and domain, then one table per domain. No date and only the
-    linked nodes' ids, so it changes only when a feature or its links do."""
+    linked nodes' ids, so it changes only when a feature or its links do. ``public``: the render for a public repo
+    (:func:`public_checkout`): each feature's ``public_title`` and ``public_id`` when it has them, only the repo's own
+    CodeRefs, Test and Doc nodes, and no spec, ADR or item (the private brain's records)."""
     repo = repo.lower()
     feats = sorted(f for f in m.features if m.repo.get(f) == repo)
     by_domain: dict[str, list] = {}
@@ -263,12 +345,7 @@ def render(m: Model, repo: str, store_label: str = "notes/graph") -> str:
         by_domain.setdefault(str((m.features[f].get("props") or {}).get("domain") or "other"), []).append(f)
     status = {f: str(m.features[f].get("status", "")) for f in feats}
     counts = {s: sum(1 for f in feats if status[f] == s) for s in STATUSES}
-    out = [f"# Features — {repo}", "",
-           f"{MARKER} (run by `brain sync`) from the Feature nodes of `{store_label}`. Do not edit: change a feature "
-           "with `brain features add|set|link`, or name its new status in a merged PR (`feat-brain-x: have`, set by "
-           "the next `brain sync`). Search them with `brain features search`.", "",
-           "Status: **have** (works today), **partial** (part of it works), **planned** (on the backlog), **no** "
-           "(not had, not planned). Value: the feature's strategic value (high, medium, low).", ""]
+    out = _intro(repo, store_label, public)
     if not feats:
         return "\n".join(out + ["No feature yet."]) + "\n"
     out += [f"**{len(feats)} features: " + ", ".join(f"{counts[s]} {s}" for s in STATUSES) + ".**", "",
@@ -276,38 +353,67 @@ def render(m: Model, repo: str, store_label: str = "notes/graph") -> str:
     for d in sorted(by_domain):
         out.append(f"| [{d}](#{_slug(d)}) | " + " | ".join(str(sum(1 for f in by_domain[d] if status[f] == s))
                                                          for s in STATUSES) + " |")
-    with_module = any((m.features[f].get("props") or {}).get("module") for f in feats)
-    with_tests = any(m.links(f, "tested_by") or coverage_of(m, f) is not None for f in feats)
-    with_docs = any(m.links(f, "documented_in") for f in feats)
-    head = ["Feature", "Status", "Value"] + (["Module"] if with_module else []) + ["Code"] \
-        + (["Tests"] if with_tests else []) + (["Docs"] if with_docs else []) + ["Links"]
+    cols = _columns(m, feats, repo, public)
+    head = ["Feature", "Status", "Value"] + (["Module"] if cols["module"] else []) + ["Code"] \
+        + (["Tests"] if cols["tests"] else []) + (["Docs"] if cols["docs"] else []) + ["Links"]
     for d in sorted(by_domain):
         out += ["", f"## {d}", "", "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
-        for f, depth in _order(m, by_domain[d]):
-            node, props = m.features[f], m.features[f].get("props") or {}
-            parent = m.parent(f)
-            links = ([f"part of `{parent}`"] if parent and depth == 0 else []) \
-                + [f"`{x}`" for t in ("specified_by", "decided_by") for x in sorted(m.links(f, t))] \
-                + [f"`{s}`" for t, s in sorted(m.into.get(f, [])) if t == "delivers"]
-            row = [("↳ " * depth) + f"**{_cell(node.get('title', f))}** `{f}`", status[f],
-                   _cell(props.get("value", ""))] + ([_cell(props.get("module", ""))] if with_module else []) \
-                + [_code_cell(m, f, repo)] \
-                + ([_tests_cell(m, f, repo)] if with_tests else []) \
-                + ([", ".join(f"`{x}`" for x in sorted(m.links(f, "documented_in")))] if with_docs else []) \
-                + [", ".join(links)]
-            out.append("| " + " | ".join(row) + " |")
+        out += [_row(m, f, depth, repo, cols, public) for f, depth in _order(m, by_domain[d])]
     return "\n".join(out) + "\n"
+
+
+def public_checkout(folder: Path, cfg=None) -> bool:
+    """Whether the checkout at ``folder`` is a clone of a public repo: one of its git remotes is a repo of config.json
+    ``public.repos`` (the list brain check --public and the public guard read); its FEATURES.md is then the public
+    render. False when there is no such list, no checkout or no git."""
+    cfg = cfg if cfg is not None else config.load()
+    if not public.public_repos(cfg) or not Path(folder).is_dir():
+        return False
+    try:
+        return public.is_public(public.remote_of(Path(folder), cfg)[1], cfg)
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def denied_lines(text: str, cfg=None) -> list[str]:
+    """What brain check --public would refuse in a public render ``text`` (a denied term, a personal pattern, a
+    domain's pattern), one line each: a feature that still needs a ``public_title`` or a ``public_id``."""
+    cfg = cfg if cfg is not None else config.load()
+    lines = text.splitlines()
+    out = []
+    for f in public.scan_lines(VIEW, enumerate(lines, 1), public.rules(cfg)):
+        row = re.search(r"\*\* `(feat-[a-z0-9-]+)`", lines[f.line - 1]) if f.line else None
+        out.append((f"{row.group(1)} ({VIEW}:{f.line})" if row else f"{VIEW}:{f.line}") + f": {f.check}: {f.what}")
+    return out
 
 
 def _slug(text: str) -> str:
     return re.sub(r"[^\w\- ]", "", text.lower()).strip().replace(" ", "-")
 
 
-def check_view(text: str | None, want: str) -> str:
-    """'' when ``text`` (FEATURES.md as committed) is ``want``; else why not."""
+def check_view(text: str | None, want: str, also: str | None = None) -> str:
+    """'' when ``text`` (FEATURES.md as committed) is ``want`` (or ``also``, a render accepted too); else why not."""
     if text is None:
         return "missing"
-    return "" if text.replace("\r\n", "\n") == want else ("not generated" if MARKER not in text else "stale")
+    text = text.replace("\r\n", "\n")
+    return "" if text in (want, also) else ("not generated" if MARKER not in text else "stale")
+
+
+PUBLIC_STRICT = "public_strict"   # config.json features.public_strict: the owner's opt-in
+
+
+def public_strict(cfg=None) -> bool:
+    """Whether a public clone's FEATURES.md must be the public render (config.json ``features.public_strict`` true,
+    the owner's opt-in). Default false: the full render, which is what such a file held before the public render
+    existed, passes too (brain check --public still reads what it holds)."""
+    cfg = cfg if cfg is not None else config.load()
+    opts = cfg.data.get("features") if cfg.data else None
+    return isinstance(opts, dict) and opts.get(PUBLIC_STRICT) is True
+
+
+def also_accepted(m: Model, repo: str, store_label: str, public: bool, strict: bool) -> str | None:
+    """The render a check accepts besides the one it asks for: a public clone's full render, unless ``strict``."""
+    return render(m, repo, store_label) if public and not strict else None
 
 
 # --- writing features ---
@@ -334,6 +440,8 @@ def _validate(node: dict) -> None:
         raise FeatureError(f"{node['id']}: value {props['value']!r} is one of {', '.join(VALUES)}")
     if not props.get("domain"):
         raise FeatureError(f"{node['id']}: a domain is needed (the FEATURES.md section)")
+    if props.get(PUBLIC_ID) and not FEATURE_ID.fullmatch(str(props[PUBLIC_ID])):
+        raise FeatureError(f"{node['id']}: {PUBLIC_ID} {props[PUBLIC_ID]!r} is a feature id (feat-<words>)")
 
 
 def _plan(store: Path, index: dict, fid: str, repo: str, code=(), tests=(), docs=(), specs=(), adrs=(),
@@ -404,7 +512,7 @@ def add(store: Path, fid: str, title: str, domain: str, repo: str, status: str =
         module: str = "", props: dict | None = None, today: str | None = None, **links) -> dict:
     """A new Feature node (nodes/features.yaml) and its edges (edges/features.yaml); nothing is written when the
     node or one of its links is wrong."""
-    if not re.fullmatch(r"feat-[a-z0-9][a-z0-9-]*[a-z0-9]", fid):
+    if not FEATURE_ID.fullmatch(fid):
         raise FeatureError(f"{fid}: a feature id is feat-<lowercase words joined by ->")
     node_props = {"domain": domain, "repo": repo.lower(), "value": value, **({"module": module} if module else {}),
                   **(props or {})}
@@ -439,7 +547,17 @@ def set_feature(store: Path, fid: str, assignments: list[str]) -> dict:
     if node.get("type") != TYPE:
         raise FeatureError(f"{fid}: a feature stays a {TYPE}")
     _validate(node)
+    _check_alias(index, fid, str((node.get("props") or {}).get(PUBLIC_ID) or ""))
     return graph.set_item(store, fid, assignments)
+
+
+def _check_alias(index: dict, fid: str, alias: str) -> None:
+    """A ``public_id`` stands for one feature only: no node has it as id, no other feature as its ``public_id``."""
+    if not alias or alias == fid:
+        return
+    others = {str((n.get("props") or {}).get(PUBLIC_ID) or "") for i, (_, n) in index.items() if i != fid}
+    if alias in index or alias in others:
+        raise FeatureError(f"{fid}: {PUBLIC_ID} {alias} is already a node's id or another feature's {PUBLIC_ID}")
 
 
 # --- the merged PRs ---
