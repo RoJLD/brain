@@ -24,8 +24,9 @@ which appends the reading to ``<BRAIN_HOME>/usage/quota.jsonl`` (time, window, p
   pace        the cost of the last ``PACE_HOURS`` hours per hour, converted: the percent at the reset if it goes on,
               and the time it reaches 100 % when that comes first.
   session-h   what a session-hour cost over the last ``SESSION_HOUR_DAYS`` days: the sessions' hourly buckets (each
-              with its subagents' and workflow agents' cost) over their count; the usage governor's cap reads it when
-              it is above config.json ``usage.guard.session_hour_usd``, so an ultracode wave's cost counts.
+              with its subagents' and workflow agents' cost) over their count. Information by default: the usage
+              governor's cap reads it only with config.json ``usage.guard.session_hour_measured`` true, and then when
+              it is above ``usage.guard.session_hour_usd``, so an ultracode wave's cost counts.
   live        the sessions whose ledger row moved in the last ``LIVE_MIN`` minutes, their cost of the last hour, and
               what their items have left: each item's recorded estimate (props.cost_estimate), else the estimate of
               the most alike finished items times the class's calibration (brain.cost), minus its cost so far; a
@@ -306,7 +307,8 @@ def session_hour(rows: list[dict], now: datetime, days: int = SESSION_HOUR_DAYS)
     of the sessions' hourly buckets over their count, a bucket being one session's UTC hour with
     ``SESSION_HOUR_MIN_USD`` of cost at least. A session's hours hold its subagents' and workflow agents' cost (brain.usage merges them), so an
     hour that ran a workflow costs its agents too. None below ``SESSION_HOUR_MIN`` buckets. The governor reads it
-    (``quota.json``) when it is above config.json ``usage.guard.session_hour_usd``."""
+    (``quota.json``) only with config.json ``usage.guard.session_hour_measured`` true, and then when it is above
+    ``usage.guard.session_hour_usd``."""
     lo = now - timedelta(days=days)
     usd, n = 0.0, 0
     for r in rows:

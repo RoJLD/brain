@@ -152,6 +152,7 @@
             "memory_available_gb": {"type": "number", "minimum": 0, "description": "GB of available RAM under which a new session or workflow is refused (default 4; 0: never)"},
             "wave_hours": {"type": "number", "minimum": 0, "description": "the hours a wave is planned for, in the quota cap (default 4)"},
             "session_hour_usd": {"type": "number", "minimum": 0, "description": "the API-price cost of one session-hour, in the quota cap (default 14)"},
+            "session_hour_measured": {"type": "boolean", "description": "true: the quota cap uses the measured session-hour (brain usage quota's, its agents included) when it is above session_hour_usd; false (default): the configured session_hour_usd only, the measured value shown"},
             "fresh_minutes": {"type": "number", "minimum": 0, "description": "a new session or workflow is refused while the newest quota reading is older (default 60; 0: never)"},
             "live_minutes": {"type": "number", "minimum": 0, "description": "a session counts as running when active this recently (default 30)"},
             "brainstorm_hours": {"type": "number", "minimum": 0, "description": "a brainstorm counts as open when active this recently and not archived (default 12)"},

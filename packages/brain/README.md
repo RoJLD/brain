@@ -590,8 +590,9 @@ the session's cost and hours, so the quota forecast and the governor count it, a
 subagent's, should the parent's transcript copy it. `brain usage` says whose the cost is (main threads, subagents,
 workflows), `--by workflow` lists each run (its agents, phases and the session that launched it) and `--by agent` each
 agent's label (the `description` of its `.meta.json`, else the run's `journal.jsonl`). `brain usage quota` measures
-the cost of a session-hour, the agents' included; the governor's parallel-sessions cap uses it when it is above
-`usage.guard.session_hour_usd`.
+the cost of a session-hour, the agents' included, as information: the governor's parallel-sessions cap uses it only
+with `usage.guard.session_hour_measured` true (default false), and then when it is above `usage.guard.session_hour_usd`;
+`brain usage guard` shows the measured value and whether it is applied.
 
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture
