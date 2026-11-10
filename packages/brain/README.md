@@ -510,10 +510,13 @@ Each probe may also give `about` (what relies on it), `level` (its alert's, defa
 most 120s) and `machines` (none: every machine). Durations read `90s`, `15m`, `26h`, `7d`; paths expand `~`, the
 environment's variables and `$BRAIN_HOME`. `brain config --check` (and `brain check --all`) checks every declaration.
 
-The probes run in parallel, each with its own timeout, and are OK, STALE, FAIL or TIMEOUT. The alerts pass runs them
-(`brain alerts` without `--quick`, when the brain's own project is in scope) and raises `probe:<name>` at the probe's
-level on the brain's own project for each one that is not OK, so the pass's notify path sends it once, again if its
-level rises, and `resolved` once it is OK again. Each run is recorded in `<BRAIN_HOME>/probes/state.json`: the
+The probes run in parallel, each with its own timeout, and are OK, STALE, FAIL or TIMEOUT. A command that runs past
+its timeout is killed with every process it started (a `.cmd` shim's program too), and a probe still running then
+never holds the command at its exit. The alerts pass runs them (`brain alerts` without `--quick`, when the brain's own
+project is in scope) and raises `probe:<name>` at the probe's level on the brain's own project for each one that is
+not OK, so the pass's notify path sends it once, again if its level rises, and `resolved` once it is OK again; one
+that goes from a state not OK to another (STALE to FAIL) keeps its alert, whose message follows, and sends nothing
+new. Each run is recorded in `<BRAIN_HOME>/probes/state.json`: the
 state, why, when it ran, the last OK and since when. `brain status` shows a probes row once one runs on this machine
 (`--quick`: the last run), and the cockpit's health panel a line. `brain probes` runs them now (exit 1 when one is not
 OK, 2 for a bad declaration); `--last` shows the last run, `--list` every declared probe and its machines, `--kinds`

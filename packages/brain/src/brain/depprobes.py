@@ -30,8 +30,8 @@ a path, ``~``, the environment's variables and ``$BRAIN_HOME`` (this machine's b
   }
 
 A result is OK, STALE (older than ``max_age``), FAIL (missing, unreadable, a wrong exit, status or output) or TIMEOUT.
-:func:`run` runs this machine's probes, each in its own thread with its own timeout (a file read, a stat and a
-subprocess each have theirs), and records them in ``$BRAIN_HOME/probes/state.json`` (brain.stateio's policy): each
+:func:`run` runs this machine's probes, each in its own daemon thread with its own timeout (a file read, a stat and a
+subprocess each have theirs; a command that runs past it is killed with every process it started), and records them in ``$BRAIN_HOME/probes/state.json`` (brain.stateio's policy): each
 probe's state, why, when it last ran, its last OK and since when it is in its state. :func:`last` reads that record
 back (``brain status --quick``, the alerts of a project that did not run them). The alerts pass (brain.alerts, the
 brain's own project) turns each probe that is not OK into an alert ``probe:<name>`` at its level, so the pass's
@@ -46,9 +46,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeout
+import tempfile
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -59,7 +61,8 @@ STATES = ("OK", "STALE", "FAIL", "TIMEOUT")
 TIMEOUT = 10.0                       # seconds, a probe that names none
 TIMEOUT_MAX = 120.0
 GRACE = 2.0                          # seconds a probe's thread is waited for beyond its own timeout
-WORKERS = 8
+KILL_WAIT = 5.0                      # seconds each step of killing a command probe's process tree is waited for
+OUT_MAX = 2 ** 20                    # bytes of a command probe's output read for expect
 READ_MAX = 4 * 2 ** 20               # bytes of a JSON file read at most
 TAIL = 256 * 2 ** 10                 # bytes read from the end of a JSON Lines file
 JSONL_FILES = 3                      # JSON Lines files read back, newest first, for a line that matches
@@ -291,9 +294,12 @@ def _read_json(f: Path) -> tuple[object, str]:
         size = f.stat().st_size
         with open(f, "rb") as fh:
             if f.suffix.lower() == ".jsonl":
-                fh.seek(max(0, size - TAIL))
-                lines = fh.read(TAIL).decode("utf-8", errors="replace").splitlines()
-                return lines[1:] if size > TAIL else lines, "lines"
+                if size <= TAIL:
+                    return fh.read().decode("utf-8", errors="replace").splitlines(), "lines"
+                # one byte before the tail: the first piece is then the line cut by the seek, or the empty one
+                # before a line the tail starts exactly on, and is dropped either way
+                fh.seek(size - TAIL - 1)
+                return fh.read(TAIL + 1).decode("utf-8", errors="replace").splitlines()[1:], "lines"
             if size > READ_MAX:
                 return None, f"larger than {READ_MAX // 2 ** 20} MB"
             return json.loads(fh.read().decode("utf-8-sig", errors="replace")), ""
@@ -339,23 +345,52 @@ def probe_json_age(p: dict, now: datetime) -> tuple[str, str, float | None]:
     return _aged((now - at).total_seconds(), p["max_age"], p["field"])
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """The program and every process it started, killed: a .cmd or .bat shim's real program, or a program's own
+    child, would otherwise run on after its timeout. Each step has its own timeout; a failure is left behind."""
+    try:
+        if os.name == "nt":
+            exe = shutil.which("taskkill") or os.path.join(os.environ.get("SystemRoot") or "C:/Windows", "System32",
+                                                           "taskkill.exe")
+            subprocess.run([exe, "/PID", str(proc.pid), "/T", "/F"], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=KILL_WAIT,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)   # its own session: its process group is its tree
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+        proc.wait(timeout=KILL_WAIT)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def probe_command(p: dict, now: datetime) -> tuple[str, str, float | None]:
     exe = shutil.which(p["argv"][0])
     if exe is None:
         return "FAIL", f"{_program(p['argv'][0])} not found", None
-    try:
-        proc = subprocess.run([exe, *p["argv"][1:]], capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=p["timeout"], stdin=subprocess.DEVNULL,
-                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except subprocess.TimeoutExpired:
-        return "TIMEOUT", f"no exit within {alerts.every_text(p['timeout'])}", None
-    except (OSError, subprocess.SubprocessError) as exc:
-        return "FAIL", f"could not start ({type(exc).__name__})", None
-    if proc.returncode not in p["ok_exit"]:
-        return "FAIL", f"exit {proc.returncode}", None
-    if "expect" in p and not re.search(p["expect"], (proc.stdout or "") + (proc.stderr or "")):
-        return "FAIL", f"exit {proc.returncode}, its output does not match expect", None
-    return "OK", f"exit {proc.returncode}", None
+    # the output goes to a temporary file, not a pipe: a child that keeps a pipe open could hold the wait past the
+    # timeout; the file is read for expect only, then deleted
+    with tempfile.TemporaryFile() as out:
+        try:
+            proc = subprocess.Popen([exe, *p["argv"][1:]], stdin=subprocess.DEVNULL, stdout=out,
+                                    stderr=subprocess.STDOUT, start_new_session=os.name != "nt",
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.SubprocessError) as exc:
+            return "FAIL", f"could not start ({type(exc).__name__})", None
+        try:
+            code = proc.wait(timeout=p["timeout"])
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
+            return "TIMEOUT", f"no exit within {alerts.every_text(p['timeout'])}", None
+        if code not in p["ok_exit"]:
+            return "FAIL", f"exit {code}", None
+        if "expect" in p:
+            out.seek(0)
+            if not re.search(p["expect"], out.read(OUT_MAX).decode("utf-8", errors="replace")):
+                return "FAIL", f"exit {code}, its output does not match expect", None
+    return "OK", f"exit {code}", None
 
 
 def probe_http(p: dict, now: datetime) -> tuple[str, str, float | None]:
@@ -391,26 +426,35 @@ def _one(p: dict, now: datetime) -> tuple[str, str, float | None]:
         return "FAIL", f"the probe failed ({type(exc).__name__})", None
 
 
+def _into(p: dict, now: datetime, box: list, done: threading.Event) -> None:
+    box.append(_one(p, now))
+    done.set()
+
+
 def measure(probes: list[dict], now: datetime | None = None) -> list[dict]:
-    """Each probe run in its own thread, waited for its timeout plus :data:`GRACE`: [{name, kind, about, level,
-    state, why, age_s}] in the order given."""
+    """Each probe run at once in its own daemon thread, waited for its timeout plus :data:`GRACE` from the start:
+    [{name, kind, about, level, state, why, age_s}] in the order given. A probe still running then is TIMEOUT, and its
+    thread (a stat on a share that does not answer) never holds the process at its exit."""
     now = now or alerts._now()
-    if not probes:
-        return []
-    pool = ThreadPoolExecutor(max_workers=min(WORKERS, len(probes)), thread_name_prefix="brain-depprobe")
-    futures = [(p, pool.submit(_one, p, now)) for p in probes]
+    start = time.monotonic()
+    jobs = []
+    for p in probes:
+        box: list = []
+        done = threading.Event()
+        threading.Thread(target=_into, args=(p, now, box, done), name=f"brain-depprobe-{p['name']}",
+                         daemon=True).start()
+        jobs.append((p, box, done))
     out = []
-    for p, fut in futures:
-        try:
-            state, why, age = fut.result(timeout=p["timeout"] + GRACE)
-        except FutureTimeout:
+    for p, box, done in jobs:
+        if done.wait(max(0.0, start + p["timeout"] + GRACE - time.monotonic())) and box:
+            state, why, age = box[0]
+        else:
             state, why, age = "TIMEOUT", f"no result within {alerts.every_text(p['timeout'])}", None
         row = {"name": p["name"], "kind": p["kind"], "about": p["about"], "level": p["level"], "state": state,
                "why": why}
         if age is not None:
             row["age_s"] = round(age, 1)
         out.append(row)
-    pool.shutdown(wait=False, cancel_futures=True)
     return out
 
 

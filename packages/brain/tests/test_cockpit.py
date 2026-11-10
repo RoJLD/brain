@@ -196,6 +196,22 @@ def test_probe_fills_audit_health_and_digest(tmp_path, monkeypatch, store, brain
     assert cockpit.digest_of(projects.load()["demo"])["text"] == "# built for demo, offline=True"
 
 
+def test_the_probe_runs_the_dependency_probes_into_the_health_panel(tmp_path, monkeypatch, store, brain_home):
+    from brain import depprobes
+    cp = _cockpit(tmp_path, monkeypatch, store)
+    monkeypatch.setattr(status, "audit_of", lambda p, detail=0: {"skipped": "test"})
+    monkeypatch.setattr(status, "_probes", lambda root, quick: (None, None))
+    monkeypatch.setattr(alerts, "read_scheduler", lambda cfgs: {})
+    ran = {"host": "h", "at": "2026-11-10T12:00:00Z", "errors": [], "saved": True, "probes": [
+        {"name": "login", "kind": "command", "state": "FAIL", "why": "exit 1", "last_ok": ""}]}
+    monkeypatch.setattr(depprobes, "run", lambda *a, **k: ran)
+    cp.refresh(probe=True)
+    health = cp.snapshot()["panels"]["health"]
+    assert health["probes"] == ran
+    assert "dependency probes: 0 of 1 OK; login FAIL (exit 1; never OK here)" in "\n".join(
+        cockpit.health_lines(health, width=200))
+
+
 def test_tables_and_headings(tmp_path, monkeypatch, store):
     cp = _cockpit(tmp_path, monkeypatch, store)
     cp.refresh()

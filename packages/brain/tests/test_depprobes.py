@@ -6,6 +6,7 @@ import http.server
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -171,6 +172,35 @@ def test_json_age_takes_the_last_matching_line_of_a_jsonl_file(tmp_path):
     assert depprobes.probe_json_age(p, now)[:2] == ("STALE", "at 9.1 d old > 1 w")
 
 
+def test_a_jsonl_tail_keeps_a_whole_line_it_starts_on_and_drops_one_it_cuts(tmp_path, monkeypatch):
+    now = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    other = json.dumps({"at": "2026-11-10T11:00:00Z", "outcome": "failed"}) + "\n"
+    sent = json.dumps({"at": "2026-11-09T12:00:00Z", "outcome": "sent"}) + "\n"
+    f = tmp_path / "ledger.jsonl"
+    f.write_bytes((other * 3 + sent + other * 2).encode("utf-8"))   # bytes: no newline translated
+    p = depprobes.parse("sent", {"kind": "json-age", "path": str(f), "field": "at", "where": {"outcome": "sent"},
+                                 "max_age": "7d"})
+    monkeypatch.setattr(depprobes, "TAIL", len(sent) + 2 * len(other))   # the tail starts on the sent line
+    assert depprobes._read_json(f)[0][0] == sent.strip()
+    assert depprobes.probe_json_age(p, now)[:2] == ("OK", "at 1.0 d old")
+    monkeypatch.setattr(depprobes, "TAIL", len(sent) + 2 * len(other) - 1)   # it cuts it: the piece is dropped
+    assert depprobes._read_json(f)[0] == [other.strip()] * 2
+    assert depprobes.probe_json_age(p, now)[:2] == ("FAIL", "no line with at matching where")
+    monkeypatch.setattr(depprobes, "TAIL", len(sent) + 2 * len(other) + 1)   # it starts on the newline before it
+    assert depprobes._read_json(f)[0][0] == sent.strip()
+
+
+def test_a_plain_json_file_must_match_where_and_stay_under_its_size(tmp_path, monkeypatch):
+    now = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    f = tmp_path / "meta.json"
+    f.write_text(json.dumps({"at": "2026-11-10T11:00:00Z", "state": "partial"}), encoding="utf-8")
+    p = depprobes.parse("meta", {"kind": "json-age", "path": str(f), "field": "at", "where": {"state": "done"},
+                                 "max_age": "1d"})
+    assert depprobes.probe_json_age(p, now)[:2] == ("FAIL", "the file does not match where")
+    monkeypatch.setattr(depprobes, "READ_MAX", 8)
+    assert depprobes.probe_json_age(p, now)[:2] == ("FAIL", "larger than 0 MB")
+
+
 def test_command_checks_the_exit_and_the_output_without_ever_showing_it():
     now = datetime.now(timezone.utc)
     ok = depprobes.parse("git", {"kind": "command", "argv": ["git", "--version"], "expect": r"git version \d"})
@@ -188,13 +218,40 @@ def test_command_checks_the_exit_and_the_output_without_ever_showing_it():
     assert depprobes.probe_command(missing, now)[:2] == ("FAIL", "no-such-program-anywhere not found")
 
 
-def test_command_that_runs_past_its_timeout_is_timeout(monkeypatch):
-    def slow(argv, **kw):
-        assert kw["timeout"] == 3 and kw["stdin"] is subprocess.DEVNULL and kw["encoding"] == "utf-8"
-        raise subprocess.TimeoutExpired(argv, kw["timeout"])
-    monkeypatch.setattr(depprobes.subprocess, "run", slow)
-    p = depprobes.parse("git", {"kind": "command", "argv": ["git", "--version"], "timeout": "3s"})
-    assert depprobes.probe_command(p, datetime.now(timezone.utc))[0] == "TIMEOUT"
+def test_command_that_runs_past_its_timeout_is_timeout_and_its_tree_is_killed(tmp_path):
+    """A .cmd or .bat shim (or a program's own child) that keeps the output open does not hold the probe past its
+    timeout, and the child it started is killed with it."""
+    held = tmp_path / "held.txt"
+    if os.name == "nt":
+        tool = tmp_path / "slowtool.bat"
+        tool.write_text(f'@ping -n 30 127.0.0.1 > "{held}"\r\n', encoding="utf-8")
+    else:
+        tool = tmp_path / "slowtool"
+        tool.write_text(f'#!/bin/sh\nsleep 30 > "{held}"\n', encoding="utf-8")
+        tool.chmod(0o755)
+    p = depprobes.parse("slow", {"kind": "command", "argv": [str(tool)], "timeout": "1s"})
+    t0 = time.monotonic()
+    state, why, _ = depprobes.probe_command(p, datetime.now(timezone.utc))
+    assert (state, why) == ("TIMEOUT", "no exit within 1 s") and time.monotonic() - t0 < 12
+    if os.name == "nt":   # a file a live process still writes cannot be removed on Windows
+        for _ in range(30):
+            try:
+                held.unlink()
+                break
+            except PermissionError:
+                time.sleep(0.1)
+        assert not held.exists()
+
+
+def test_a_hung_probe_never_holds_the_process_at_its_exit():
+    code = ("import threading\nfrom brain import depprobes\n"
+            "depprobes.RUNNERS['file-age'] = lambda p, now: threading.Event().wait()\n"
+            "depprobes.GRACE = 0.05\n"
+            "p = depprobes.parse('hung', {'kind': 'file-age', 'path': 'a', 'max_age': '1d', 'timeout': '0.1s'})\n"
+            "print(depprobes.measure([p])[0]['state'])\n")
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30,
+                          stdin=subprocess.DEVNULL)
+    assert done.returncode == 0 and done.stdout.strip() == "TIMEOUT"
 
 
 @pytest.fixture
@@ -304,6 +361,28 @@ def test_the_brain_project_raises_a_probe_alert_and_the_pass_sends_it_once_then_
     assert "brain: resolved probe:summaries: delivered" in lines and len(fake.posts) == 2
 
 
+def test_a_probe_that_goes_from_one_not_ok_state_to_another_keeps_its_alert_and_sends_nothing_new(tmp_path,
+                                                                                                   monkeypatch):
+    """STALE then FAIL is the same open alert at the same level: its message follows the state, no second send (the
+    pass's dedup, as for every source: once when it opens, again only if its level rises)."""
+    fake = Fake()
+    monkeypatch.setattr(notify, "_post_json", fake.post)
+    p = _brain(tmp_path, monkeypatch, NOTIFY)
+    f = tmp_path / "summary.json"
+    f.write_text("{}", encoding="utf-8")
+    _age(f, 30)
+    _config(tmp_path, monkeypatch, {"summaries": {"kind": "file-age", "path": str(f), "max_age": "1d"}})
+    depprobes.run()
+    alerts.notify_pass(alerts.run([p], quick=True), {p.name: p}, env=ENV)
+    assert len(fake.posts) == 1
+    f.unlink()
+    depprobes.run()
+    (a,) = alerts.of_project(p)
+    assert a.key == "probe:summaries" and "dependency summaries FAIL: no file matches its path" in a.message
+    lines = alerts.notify_pass(alerts.run([p], quick=True), {p.name: p}, env=ENV)
+    assert len(fake.posts) == 1 and not any("probe:summaries" in x for x in lines)
+
+
 def test_only_the_brain_project_carries_the_probe_alerts(tmp_path, monkeypatch):
     _config(tmp_path, monkeypatch, {"gone": {"kind": "file-age", "path": str(tmp_path / "none"), "max_age": "1d"}})
     depprobes.run()
@@ -324,6 +403,19 @@ def test_the_alerts_pass_runs_the_probes_when_the_brain_is_in_scope(tmp_path, mo
     assert calls == []   # --quick: the last run is read, nothing run
     alerts.run([p], quick=False)
     assert calls == [1]
+
+
+def test_brain_status_without_quick_runs_the_probes_and_shows_that_run(tmp_path, monkeypatch):
+    p = _brain(tmp_path, monkeypatch)
+    ran = {"host": "h", "at": "2026-11-10T12:00:00Z", "errors": [], "saved": True,
+           "probes": [{"name": "gone", "kind": "file-age", "state": "FAIL", "why": "no file matches its path"}]}
+    calls = []
+    monkeypatch.setattr(depprobes, "run", lambda *a, **k: calls.append(1) or ran)
+    monkeypatch.setattr(status, "_probes", lambda root, quick: (None, None))
+    monkeypatch.setattr(status, "audit_of", lambda p, detail=0: {"skipped": "test"})
+    monkeypatch.setattr(alerts, "read_scheduler", lambda cfgs: {})
+    data = status.run([p], quick=False)
+    assert calls == [1] and data["probes"]["probes"] == ran["probes"] and data["probes"]["at"] == ran["at"]
 
 
 def test_brain_status_shows_a_probes_row_once_one_is_declared(tmp_path, monkeypatch):
