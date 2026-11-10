@@ -18,7 +18,9 @@ USAGE = """\
                         the proposed specs ready to turn active (a warning), the hard-rule ratio (Rule nodes with an enforced_by edge; a soft rule is a warning), the
                         generated views (a stale one: a warning on the default branch, an error under config.json
                         views.strict; one views: line on another branch; a warning outside git; brain views,
-                        docs/views.md), then research_graph check (given
+                        docs/views.md), members.yaml and the owner-decides answers' signatures (brain identity:
+                        warnings, errors under config.json identity.require_signed; nothing without members.yaml,
+                        docs/identity.md), then research_graph check (given
                         the project's other repos' checkouts, where the anchors of their Doc, Test and Workflow nodes are read); --all: every
                         project's, then the registry
                         (its keys, repos, stacks, code_index), the tier registry (every capability and stack declares

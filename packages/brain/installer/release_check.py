@@ -56,6 +56,7 @@ SCHEMAS = {
     "config": (f"{SRC}/schemas/config.schema.json",),
     "ddr": (f"{SRC}/schemas/ddr.schema.json",),
     "event": (f"{SRC}/schemas/event.schema.json",),
+    "members": (f"{SRC}/schemas/members.schema.json",),
     "sr": (f"{SRC}/schemas/sr.schema.json",),
     "packs": (f"{SRC}/templates/generic/packs.yaml",),
     "projects": (f"{SRC}/templates/generic/projects.yaml",),

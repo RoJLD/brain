@@ -1,0 +1,18 @@
+# members.yaml as brain 0.3.1 writes it: one person, a decider of the whole brain, with a signing key.
+v: 1
+class: confidential
+people:
+  - person_id: ada
+    name: Ada
+    keys:
+      signing:
+        - {key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample0 ada@laptop", machine: laptop, since: 2026-11-10}
+      encryption:
+        - {key: age1exampleexampleexampleexampleexampleexampleexampleexample00, machine: laptop}
+accounts:
+  - {person_id: ada, provider: github, subject: ada-example}
+organizations:
+  - {id: acme, name: Acme, kind: tenant}
+memberships:
+  - {person_id: ada, roles: [owner, decider]}
+  - {person_id: ada, tenant: acme, roles: [member]}

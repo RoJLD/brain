@@ -178,6 +178,14 @@ def _ids(meta: dict) -> dict:
     return sessions.stamp(session=meta.get("session_id") or "")
 
 
+def _asker(meta: dict, tool_use_id: str = "") -> str:
+    """asked.by, never unknown (wi-brain-identity): the hook's session, else the app id of the session it runs in,
+    else the question tool's call."""
+    from . import sessions
+    return (meta.get("session_id") or sessions.here()["host_id"]
+            or (f"tool-use:{tool_use_id}" if tool_use_id else "ask-tool"))
+
+
 def ddr_from_question(q: dict, answer: str | list | None, at: str, meta: dict, tool_use_id: str = "", index: int = 0,
                       notes: str | None = None) -> dict:
     """A DDR from one question of Claude Code's question tool, and its answer when there is one. The tool returns a
@@ -210,7 +218,7 @@ def ddr_from_question(q: dict, answer: str | list | None, at: str, meta: dict, t
         "multi_select": bool(q.get("multiSelect")),
         "other_allowed": True,
         "status": "pending",
-        "asked": {"at": at, "by": meta.get("session_id") or "unknown", **_ids(meta), "via": "ask-tool"},
+        "asked": {"at": at, "by": _asker(meta, tool_use_id), **_ids(meta), "via": "ask-tool"},
     }
     if meta.get("model"):
         ddr["asked"]["model"] = meta["model"]

@@ -47,6 +47,8 @@ tolerant tests set `BRAIN_STRICT=0`.
 | AR | `records/ar/<yyyy-mm>.jsonl`, one line each | `v` per line (`ar.schema.json`) | a warning; the line is never rewritten | the line is skipped and counted (a warning; an error in strict mode) |
 | event | the ledger's `events` and ops error lines | `v` per line (`event.schema.json`) | reported by `brain.schema.validate` | refused |
 | config.json | the brain's root | `v` (`config.schema.json`) | a note on stderr; the file is kept as written | refused |
+| members.yaml | the brain's root, beside config.json ([identity.md](identity.md)) | `v` (`members.schema.json`) | ignored, the file kept as written (in strict mode, CI: reported by `brain check` with the other identity findings) | refused |
+| DDR signature | `records/ddr/<id>.sig`, beside its record | none: an SSH signature (namespace `brain-decision`) over the answer's payload | - | - (an older engine ignores the file and reads the record as before) |
 | permissions.yaml | the brain's root | `v` | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
 | packs.yaml | `source/packs.yaml` | `v` | a note | refused |
 | template.yaml | a template's folder | `engine:` range | a note (in CI: refused) | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |

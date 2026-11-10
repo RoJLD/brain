@@ -17,7 +17,8 @@
         "owner": {"type": "string", "minLength": 1, "description": "The person or team who decides for this brain, as the views name them; the same name as owner in its graph stores' schema.yaml."},
         "display_name": {"type": "string", "minLength": 1, "description": "The name the views show for the owner (the queue's title, the help texts, the confirmations), e.g. Ada or Ada L.; default owner. owner stays the id --by writes and the stores declare: a record never changes for display."},
         "kind": {"enum": ["person", "team"], "description": "A person's brain or a team's; default person."},
-        "tenant": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The tenant id when the brain is hosted for a team (HMaaS): its ledgers and keys are kept apart under that id. None for a person's own brain."}
+        "tenant": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The tenant id when the brain is hosted for a team (HMaaS): its ledgers and keys are kept apart under that id. None for a person's own brain."},
+        "require_signed": {"type": "boolean", "description": "The owner's opt-in to the merge lock on signed answers (brain identity, docs/identity.md): true, brain check fails on an answer of the owner-decides class (money, keys, accounts, visibility, heirs, scheduled tasks) recorded without a signature by a decider's key of members.yaml, on a signature that does not verify, and on an invalid members.yaml; default false: the same findings are warnings. Without members.yaml nothing is checked either way."}
       }
     },
     "registry": {"type": "string", "minLength": 1, "description": "The projects registry (brain projects, brain --project NAME); default projects.yaml."},

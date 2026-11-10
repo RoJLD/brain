@@ -1,0 +1,13 @@
+# members.yaml with a newer brain's additive keys: a top-level section, a person key and a key's key.
+v: 1
+people:
+  - person_id: ada
+    name: Ada
+    pronouns: she
+    keys:
+      signing:
+        - {key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample0 ada@laptop", hardware: yubikey}
+memberships:
+  - {person_id: ada, roles: [decider]}
+passkeys:
+  - {person_id: ada, credential: example}
