@@ -32,7 +32,7 @@ def app(tmp_path, monkeypatch):
     d.mkdir(parents=True)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
     monkeypatch.delenv(sessions.HOST_ENV, raising=False)
-    monkeypatch.setattr(governor, "memory_pct", lambda: 50.0)
+    monkeypatch.setattr(governor, "memory_info", lambda: {"committed": 50.0, "available_gb": 24.0})
 
     def put(host, cli_id, parent=None, name=None, archived=False, active=None, title="A session", detached=None):
         data = {"sessionId": host, "cliSessionId": cli_id, "title": title, "createdAt": 1_000,

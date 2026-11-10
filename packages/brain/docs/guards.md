@@ -198,7 +198,8 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
   `usage/quota.json` (its percent now, the last 24 h's pace, the $ per % of the week);
 - the sessions: the desktop app's session files (`%LOCALAPPDATA%/Claude-Data/*/claude-code-sessions`, read only),
   else the session records `<BRAIN_HOME>/sessions/*.json`;
-- the machine's committed memory (Windows; elsewhere the memory in use);
+- the machine's two memory measures: its committed memory (Windows: what it promised, RAM plus page file, in % of its
+  commit limit; elsewhere the memory in use) and its available RAM (what is free now, in GB);
 - config.json `usage.guard` and the registry's `usage:` entries, cached in `<BRAIN_HOME>/cache/governor.json`.
 
 ### What it decides, in order
@@ -207,7 +208,7 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
 |---|---|---|
 | `critical`: a window in force at `critical` % or more | all | deny |
 | `stale`: the newest reading older than `fresh_minutes`, on a machine with a reading in the last 7 days | session, workflow | deny, with the commands that note both windows |
-| `memory`: committed memory at `memory` % or more | session, workflow | deny |
+| `memory`: committed memory at `memory` % or more, or available RAM under `memory_available_gb` GB | session, workflow | deny, naming both measures and the one that refused |
 | `sessions`: the sessions running reach the cap | session | deny |
 | `brainstorms`: the open brainstorms reach the cap, for a brainstorm | session | deny |
 | `warn`: a window at `warn` % or more | all | ask the owner |
@@ -232,8 +233,8 @@ fresh master and drains its own. It is never a refusal: no guard blocks start_se
 ### Configuration (config.json `usage.guard`)
 
 ```json
-{"usage": {"guard": {"warn": 80, "critical": 95, "sessions": 8, "brainstorms": 3, "memory": 90,
-                     "wave_hours": 4, "session_hour_usd": 14, "fresh_minutes": 60, "live_minutes": 30,
+{"usage": {"guard": {"warn": 80, "critical": 95, "sessions": 8, "brainstorms": 3, "memory": 97,
+                     "memory_available_gb": 4, "wave_hours": 4, "session_hour_usd": 14, "fresh_minutes": 60, "live_minutes": 30,
                      "brainstorm_hours": 12}}}
 ```
 
@@ -249,7 +250,7 @@ lab: {root: ../lab, usage: {brainstorms: 1, sessions: 4}}
 ### Reading it
 
 ```bash
-brain usage guard          # the windows, the sessions and brainstorms, the memory, the caps, each tool's decision
+brain usage guard          # the windows, the sessions and brainstorms, both memory measures, the caps, each tool's decision
 brain usage guard --json
 ```
 

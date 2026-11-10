@@ -569,11 +569,13 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   `BRAIN_GUARD_ALLOW` does not lift it, not even `all`: the owner switches it in the app.
 - **The usage governor** (`governor.sh`, `brain.governor`), before `start_session`, `Agent` and `Workflow`: it reads
   the cached quota readings (`brain usage quota --observe`), the sessions running and the brainstorms open on the
-  machine (the desktop app's session files, else the session records), and the committed memory. It asks the owner
+  machine (the desktop app's session files, else the session records), and the machine's committed memory and available
+  RAM. It asks the owner
   from `warn` % of a quota window, refuses from `critical` %, refuses a new session past the parallel sessions cap
   (the smaller of `sessions` and what the week's room pays for), a new brainstorm past `brainstorms` (every project
   counted; a project's `usage: {brainstorms: N}` in `projects.yaml` lowers it for itself, never raises it), a new
-  session or workflow from `memory` % of committed memory or while the newest quota reading is older than
+  session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (both
+  shown by `brain usage guard` and `brain status`, the refusal naming the one), or while the newest quota reading is older than
   `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
   now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
   (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
