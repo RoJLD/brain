@@ -133,6 +133,9 @@ Nothing to run for the rest.
   `rules/scopes/` still needs a rule.
 - The upgrade test (`compat-prev`) lays an `access: read` entry and a second project at the brain's root over the
   previous tag's brain, then rolls back over them (`tests/fixtures/formats/projects/v1/newer.yaml`).
+- A conflict example in Markdown passes the marker guard and `brain check` when its fence is tagged
+  `conflict-example` (`wi-brain-guards-fence-tag`, the owner's choice of 2026-11-10); every other fence is read as
+  before, and a diff hunk that starts inside a fence whose opener it does not show is read as unfenced.
 
 ### Fixes
 
