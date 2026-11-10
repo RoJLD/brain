@@ -35,6 +35,16 @@ def test_prep_writes_the_packet_with_the_lenses_the_surfaces_call_for(pr, brain_
     assert json.loads((folder / "packet.json").read_text(encoding="utf-8"))["lenses"] == p.lenses
 
 
+def test_a_packet_prepared_again_keeps_no_file_of_an_older_diff(pr, brain_home, tmp_path):
+    repo, base, head = pr
+    out = tmp_path / "packet"
+    review.prep(repo, f"{base}..{head}", out, scout=False)
+    stale = out / "files" / "old.py"
+    stale.write_text("from an older diff\n", encoding="utf-8")
+    review.prep(repo, f"{base}..{head}", out, scout=False)
+    assert not stale.exists() and (out / "files" / "docs" / "guards.md").is_file()
+
+
 def test_a_schema_or_an_installer_calls_their_lenses():
     assert review.lenses_for(["packages/brain/src/brain/schemas/x.json", "packages/brain/installer/install.ps1"]) == [
         "correctness", "compatibility", "install and upgrade"]

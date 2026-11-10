@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -137,6 +138,8 @@ def prep(repo: Path, target: str = "", out: Path | None = None, scout: bool = Tr
     base, head = resolve(repo, target)
     files = [f for f in _git(repo, "diff", "--name-only", f"{base}..{head}").splitlines() if f]
     folder = out or folder_for(head)
+    if (folder / "files").is_dir():   # a packet prepared again: no file left from a diff it no longer holds
+        shutil.rmtree(folder / "files")
     (folder / "files").mkdir(parents=True, exist_ok=True)
     (folder / "diff.patch").write_text(_git(repo, "diff", f"{base}..{head}"), encoding="utf-8", newline="\n")
     p = Packet(base, head, files, lenses_for(files), str(folder))
