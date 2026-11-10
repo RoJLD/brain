@@ -126,22 +126,20 @@ def additive(old, new) -> bool:
     ``required`` changed) is not additive."""
     if isinstance(old, dict) and isinstance(new, dict):
         keys = (set(old) | set(new)) - set(PROSE)
-        for key in keys:
-            if key not in old or key not in new:
-                return False
-            if key == "properties" and isinstance(old[key], dict) and isinstance(new[key], dict):
-                if not set(old[key]) <= set(new[key]):
-                    return False
-                if any(not additive(old[key][k], new[key][k]) for k in old[key]):
-                    return False
-                if (set(new[key]) - set(old[key])) & set(new.get("required") or []):
-                    return False
-            elif not additive(old[key], new[key]):
-                return False
-        return True
+        return all(key in old and key in new and _key_additive(key, old[key], new[key], new) for key in keys)
     if isinstance(old, list) and isinstance(new, list):
         return len(old) == len(new) and all(additive(a, b) for a, b in zip(old, new))
     return old == new
+
+
+def _key_additive(key: str, old, new, schema: dict) -> bool:
+    """One key of a schema object, kept by both sides: ``properties`` may gain optional ones (none in ``schema``'s
+    ``required``), every other key compares whole."""
+    if key != "properties" or not (isinstance(old, dict) and isinstance(new, dict)):
+        return additive(old, new)
+    added = set(new) - set(old)
+    return (set(old) <= set(new) and not added & set(schema.get("required") or [])
+            and all(additive(old[k], new[k]) for k in old))
 
 
 def moved_schemas(repo: Path, tag: str, changed: list[str]) -> tuple[list[str], list[str]]:
