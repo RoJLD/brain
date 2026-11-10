@@ -34,7 +34,7 @@
                     "key": {"type": "string", "pattern": "^(ssh-ed25519|sk-ssh-ed25519@openssh\\.com) [A-Za-z0-9+/=]{40,}( .*)?$", "description": "The public half, as the .pub file holds it: type, base64, optional comment."},
                     "machine": {"type": "string", "description": "Where its private half lives (a label, never a path)."},
                     "since": {"type": "string", "format": "date", "description": "The day the key was declared: answers recorded before the earliest since of the deciders' keys need no signature."},
-                    "revoked": {"type": "string", "format": "date", "description": "The day the key stopped counting: a signature by it no longer verifies."}
+                    "revoked": {"type": "string", "format": "date", "description": "The day the key was revoked (a record of when): from then on it verifies nothing, a signature it made before included, since the date written in an answer is not proof of when it was signed; the owner signs those answers again with another key."}
                   }
                 }
               },

@@ -44,7 +44,11 @@ memberships:
   belongs to. `owner`, `member` and `viewer` are read by later checks.
 - `since` on a signing key: answers recorded before the earliest `since` of the deciders' keys need no signature (the
   past is not re-signed). A key without `since` asks a signature of every owner-decides answer.
-- `revoked: <date>` on a key: it no longer verifies anything; the owner signs again with another key.
+- `revoked: <date>` on a key: it no longer verifies anything, not even a signature it made before that day. The date
+  is a record of when, not a cut-off: an answer's `at` is written by whoever records it, so a stolen key could sign
+  an answer dated before its revocation. After a rotation, `brain identity check` names each signature that no
+  longer verifies; delete those `records/ddr/<id>.sig` files (void), and `brain identity unsigned --write DIR` gives
+  their answers to sign again with the new key, as below.
 - Its data class is confidential (names, accounts): declare it in `config.json` `classes.stores`, e.g.
   `"members": {"class": "confidential", "paths": ["members.yaml"], "waive": {"git-private": "public keys and names,
   read in clear by brain check"}}` ([vault.md](vault.md)).
@@ -69,7 +73,9 @@ Why a file and not a field of the DDR: a new field moves the record's format (a 
 elsewhere would refuse the record; the file is ignored by an older engine, which reads the record as before.
 
 An answer without its signature is **unsigned**. The board (`notes/decision_queue.md`) marks each owner-decides
-answer `(signed)` or `(unsigned, relayed by session S (ask-tool))` once `members.yaml` exists; `brain check` and
+answer once `members.yaml` exists: `(signed)` only when its signature verifies with a decider's key, `(signature not
+verified: brain identity check)` when the file is there but does not verify (the answer changed after it, another or
+a revoked key, no `ssh-keygen` on this machine), else `(unsigned, relayed by session S (ask-tool))`; `brain check` and
 `brain identity check` report each unsigned answer and each signature that does not verify. `asked.by` names the
 asking session, else the owner who asked from their own terminal: never `unknown`.
 
@@ -98,7 +104,7 @@ brain identity attach ~/brain-sign                         # verified, then kept
 In PowerShell the second line is
 `ssh-keygen -Y sign -f $HOME\.ssh\brain_decision -n brain-decision (Get-ChildItem $HOME\brain-sign\*.txt).FullName`.
 `attach` verifies each signature against the answer as recorded and the deciders' keys, and keeps none when one
-fails. A session may run `unsigned` and `attach` (the public side); only the owner's key makes a signature. Then
+fails or names a decision not answered yet. A session may run `unsigned` and `attach` (the public side); only the owner's key makes a signature. Then
 commit the `.sig` files with the records (a PR as any record change).
 
 ## The merge lock (opt-in)

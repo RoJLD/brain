@@ -116,6 +116,26 @@ def test_members_yaml_errors_are_reported(brain, monkeypatch):
     assert identity.check(brain)[0]
 
 
+def test_a_members_yaml_of_wrong_types_is_reported_not_a_crash(brain, monkeypatch):
+    monkeypatch.setenv("BRAIN_STRICT", "0")
+    (brain / identity.FILE).write_text(yaml.safe_dump({
+        "v": 1, "class": "confidential",
+        "people": [{"person_id": ["ada"], "name": "Ada", "keys": [{"key": "x"}]}, {"person_id": "bob", "name": "B",
+                                                                                   "keys": {"signing": "k"}}],
+        "organizations": [{"id": ["acme"], "name": "Acme", "kind": "tenant"}],
+        "memberships": [{"person_id": ["ada"], "roles": "decider"}, {"person_id": "bob", "tenant": ["x"],
+                                                                     "roles": ["member"]},
+                        {"person_id": "bob", "roles": ["decider"]}]}), encoding="utf-8")
+    ddr = ask_answer(brain, "Rotate the deploy key", ["Rotate now", "Later"])
+    found = identity.load(brain).errors
+    assert any("people[0].person_id" in e for e in found)                  # the schema says it
+    assert any("memberships[1]: tenant ['x'] is not in organizations" in e for e in found)
+    assert identity.deciders(identity.load(brain).data) == {"bob": []}
+    errors, warnings = identity.check(brain)
+    assert errors == [] and warnings and identity.marks(brain) == {}
+    assert ddr["status"] == "answered" and "Decision queue" in decisions.view(brain, "demo")
+
+
 # --- the class --------------------------------------------------------------------------------------------------
 
 def test_the_owner_decides_class_by_its_words():
@@ -186,9 +206,37 @@ def test_a_forged_or_stale_signature_does_not_verify(brain, tmp_path):
     payload.with_name(payload.name + ".sig").unlink()
     sign(key, [payload])
     identity.attach(brain, [payload.with_name(payload.name + ".sig")])
+    assert identity.marks(brain) == {ddr["id"]: "signed"} and "(signed)" in decisions.view(brain, "demo")
     decisions.answer(brain, ddr["id"], ["Later"], via="cli", at=AT, again=True)   # the answer changed after
     errors, warnings = identity.check(brain)
     assert errors == [] and len(warnings) == 1 and warnings[0].startswith(f"records/ddr/{ddr['id']}.sig: ")
+    assert identity.marks(brain) == {ddr["id"]: "unverified"}             # the board no longer says signed
+    board = decisions.view(brain, "demo")
+    assert "(signature not verified: brain identity check)" in board and "(signed)" not in board
+
+
+def test_the_board_says_signed_only_when_the_signature_verifies(brain):
+    members(brain, ["ssh-ed25519 " + "A" * 68 + " ada@laptop"])
+    ddr = ask_answer(brain, "Rotate the deploy key", ["Rotate now", "Later"])
+    identity.sig_file(ddr_file(brain, ddr)).write_text("not a signature\n", encoding="utf-8")
+    assert identity.marks(brain) == {ddr["id"]: "unverified"}
+    board = decisions.view(brain, "demo")
+    assert "(signature not verified" in board and "(signed)" not in board
+
+
+@needs_ssh
+def test_attach_refuses_a_signature_of_a_decision_not_answered(brain, tmp_path):
+    key, pub = make_key(tmp_path)
+    members(brain, [pub])
+    ddr, _ = decisions.ask(brain, title="Rotate the deploy key", question="Rotate it?", options=["Now", "Later"],
+                           why="first", at=AT)
+    out = tmp_path / "pending"
+    out.mkdir()
+    (out / f"{ddr['id']}.txt").write_bytes(identity.payload(ddr))         # a payload made by hand: no answer in it
+    sign(key, [out / f"{ddr['id']}.txt"])
+    with pytest.raises(identity.IdentityError, match="has no answer to sign"):
+        identity.attach(brain, [out / f"{ddr['id']}.txt.sig"])
+    assert not identity.sig_file(ddr_file(brain, ddr)).exists()
 
 
 @needs_ssh
@@ -204,6 +252,30 @@ def test_a_revoked_key_and_the_since_day(brain, tmp_path):
     assert identity.deciders(data) == {"ada": []}
     assert identity.unsigned(brain) == []                                  # no key to sign with: nothing asked
     assert any("no person has the decider role" in w for w in identity.check(brain)[1])
+
+
+@needs_ssh
+def test_a_rotation_voids_the_old_keys_signatures_and_they_are_signed_again(brain, tmp_path):
+    """docs/identity.md: a revoked key verifies nothing, not even what it signed before its date (an answer's ``at``
+    is no proof of when it was signed); the owner deletes the void files and signs those answers with the new key."""
+    old, old_pub = make_key(tmp_path, "old")
+    new, new_pub = make_key(tmp_path, "new")
+    members(brain, [old_pub])
+    ddr = ask_answer(brain, "Rotate the deploy key", ["Rotate now", "Later"], at="2026-11-01T09:00:00Z")
+    [payload] = identity.write_payloads(identity.unsigned(brain), tmp_path / "first")
+    sign(old, [payload])
+    identity.attach(brain, [payload.with_name(payload.name + ".sig")])
+    data = yaml.safe_load((brain / identity.FILE).read_text(encoding="utf-8"))
+    data["people"][0]["keys"]["signing"][0]["revoked"] = "2026-12-01"   # after the answer: still void
+    data["people"][0]["keys"]["signing"].append({"key": new_pub, "machine": "laptop"})
+    (brain / identity.FILE).write_text(yaml.safe_dump(data), encoding="utf-8")
+    assert any("no decider's key" in w for w in identity.check(brain)[1])
+    assert identity.marks(brain) == {ddr["id"]: "unverified"}
+    identity.sig_file(ddr_file(brain, ddr)).unlink()                      # void: the owner deletes it
+    [payload] = identity.write_payloads(identity.unsigned(brain), tmp_path / "again")
+    sign(new, [payload])
+    identity.attach(brain, [payload.with_name(payload.name + ".sig")])
+    assert identity.check(brain) == ([], []) and identity.marks(brain) == {ddr["id"]: "signed"}
 
 
 def test_deciders_per_project_and_tenant():

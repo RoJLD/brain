@@ -381,11 +381,15 @@ def view(root: Path, name: str) -> str:
 
 
 def _sign(d: dict, signs: dict[str, str]) -> str:
-    """' (signed)' or ' (unsigned, relayed by session S (ask-tool))' for an owner-decides answer (brain.identity);
-    '' for any other, and for every answer without members.yaml."""
+    """' (signed)' (its signature verifies), ' (signature not verified: brain identity check)' or ' (unsigned,
+    relayed by session S (ask-tool))' for an owner-decides answer (brain.identity); '' for any other, and for every
+    answer without members.yaml."""
     from . import identity
     mark = signs.get(d.get("id", ""))
-    return "" if not mark else " (signed)" if mark == "signed" else f" (unsigned, {identity.relayed(d)})"
+    if not mark:
+        return ""
+    return {"signed": " (signed)", "unverified": " (signature not verified: brain identity check)"}.get(
+        mark, f" (unsigned, {identity.relayed(d)})")
 
 
 def _answer_text(d: dict) -> str:

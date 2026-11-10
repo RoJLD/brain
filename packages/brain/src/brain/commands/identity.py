@@ -20,8 +20,8 @@ USAGE = """\
                  one's payload as DIR/<id>.txt and the one command that signs them all in the owner's terminal
   brain identity payload ID   what a signature covers: the question and the answer as recorded (stdout)
   brain identity attach SIG|DIR...   the owner's signatures (DIR/<id>.txt.sig), verified with the deciders' public keys,
-                 then kept beside their records (records/ddr/<id>.sig); nothing kept when one fails. The engine never
-                 signs and never reads a private key (docs/identity.md)
+                 then kept beside their records (records/ddr/<id>.sig); nothing kept when one fails or names a
+                 decision not answered yet. The engine never signs and never reads a private key (docs/identity.md)
 """
 
 

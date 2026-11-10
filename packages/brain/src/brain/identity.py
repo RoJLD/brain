@@ -89,45 +89,59 @@ def plain(value):
 
 
 def _list(data: dict, key: str) -> list[dict]:
-    return [x for x in data.get(key) or [] if isinstance(x, dict)]
+    items = data.get(key)
+    return [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
+
+
+def _id(x: dict, key: str = "person_id") -> str | None:
+    """``x[key]`` when it is text, else None: a wrong type is the schema's error, never a crash here."""
+    v = x.get(key)
+    return v if isinstance(v, str) else None
 
 
 def _references(data: dict) -> list[str]:
     """What the schema cannot say: unique ids, and every person, organization and tenant named exists."""
-    errors = []
-    people = [p.get("person_id") for p in _list(data, "people")]
-    orgs = {o.get("id"): o.get("kind") or "organization" for o in _list(data, "organizations")}
-    errors += [f"people: person_id {p!r} is declared twice" for p in sorted({p for p in people if people.count(p) > 1})]
-    for key in ("accounts", "memberships"):
-        for i, x in enumerate(_list(data, key)):
-            if x.get("person_id") not in people:
-                errors.append(f"{key}[{i}]: person_id {x.get('person_id')!r} is not in people")
-    for i, m in enumerate(_list(data, "memberships")):
-        for key, kind in (("organization", "organization"), ("tenant", "tenant")):
-            if m.get(key) and orgs.get(m[key]) != kind:
-                errors.append(f"memberships[{i}]: {key} {m[key]!r} is not in organizations with kind {kind}")
-    return errors
+    people = [_id(p) for p in _list(data, "people")]
+    dupes = {p for p in people if p is not None and people.count(p) > 1}
+    errors = [f"people: person_id {p!r} is declared twice" for p in sorted(dupes)]
+    errors += [f"{key}[{i}]: person_id {x.get('person_id')!r} is not in people"
+               for key in ("accounts", "memberships") for i, x in enumerate(_list(data, key))
+               if _id(x) is None or _id(x) not in people]
+    return errors + _org_references(data)
+
+
+def _org_references(data: dict) -> list[str]:
+    """Each membership's organization or tenant is declared with that kind."""
+    orgs = {_id(o, "id"): o.get("kind") or "organization" for o in _list(data, "organizations")}
+    return [f"memberships[{i}]: {key} {m[key]!r} is not in organizations with kind {key}"
+            for i, m in enumerate(_list(data, "memberships")) for key in ("organization", "tenant")
+            if m.get(key) and (_id(m, key) is None or orgs.get(m[key]) != key)]
 
 
 def deciders(data: dict, project: str = "") -> dict[str, list[dict]]:
     """{person_id: their signing keys not revoked} for the people with the decider role on the whole brain or on
     ``project``."""
-    who = {m.get("person_id") for m in _list(data, "memberships") if _decides(m, project)}
-    return {p["person_id"]: _signing(p) for p in _list(data, "people") if p.get("person_id") in who}
+    who = {_id(m) for m in _list(data, "memberships") if _decides(m, project)} - {None}
+    return {p["person_id"]: _signing(p) for p in _list(data, "people") if _id(p) in who}
 
 
 def _decides(membership: dict, project: str) -> bool:
     """Whether a membership gives the decider role on the whole brain or on ``project`` (not an organization's or a
     tenant's: another identity domain)."""
-    if DECIDER not in (membership.get("roles") or []) or membership.get("organization") or membership.get("tenant"):
+    roles = membership.get("roles")
+    if not isinstance(roles, list) or DECIDER not in roles:
+        return False
+    if membership.get("organization") or membership.get("tenant"):
         return False
     return membership.get("project") in (None, "", project)
 
 
 def _signing(person: dict) -> list[dict]:
     """A person's signing keys that still count (a key, not revoked)."""
-    keys = (person.get("keys") or {}).get("signing") or []
-    return [k for k in keys if isinstance(k, dict) and k.get("key") and not k.get("revoked")]
+    keys = person.get("keys")
+    keys = keys.get("signing") if isinstance(keys, dict) else None
+    return [k for k in keys if isinstance(k, dict) and _id(k, "key") and not k.get("revoked")] \
+        if isinstance(keys, list) else []
 
 
 def since(keys: dict[str, list[dict]]) -> str | None:
@@ -186,17 +200,21 @@ def relayed(ddr: dict) -> str:
 
 
 def marks(root: Path, project: str = "") -> dict[str, str]:
-    """{DDR id: 'signed' or 'unsigned'} for the owner-decides answers the board marks: by the signature file's
-    presence (brain check verifies it), {} without members.yaml."""
+    """{DDR id: 'signed', 'unverified' or 'unsigned'} for the owner-decides answers the board marks, {} without
+    members.yaml: 'signed' only when the signature file verifies (a decider's public key, ssh-keygen), 'unverified'
+    when it is there but does not (an answer changed after it, another key, a revoked key, no ssh-keygen here)."""
     m = load(root)
     if m is None:
         return {}
-    start = since(deciders(m.data, project))
-    out = {}
-    for f, d in records.load(root)["ddr"]:
-        if needs_signature(d, start):
-            out[d["id"]] = "signed" if sig_file(f).is_file() else "unsigned"
-    return out
+    keys = deciders(m.data, project)
+    start, exe = since(keys), sshsig.tool()
+    return {d["id"]: _mark(f, d, keys, exe) for f, d in records.load(root)["ddr"] if needs_signature(d, start)}
+
+
+def _mark(f: Path, ddr: dict, keys: dict[str, list[dict]], exe: str) -> str:
+    if not sig_file(f).is_file():
+        return "unsigned"
+    return "unverified" if _verify_lines(f, ddr, keys, exe) else "signed"
 
 
 # --- the check ---
@@ -274,7 +292,7 @@ def write_payloads(entries: list[tuple[Path, dict, list[str]]], out: Path) -> li
 def attach(root: Path, files: list[Path], project: str = "") -> list[str]:
     """Each ``<id>.txt.sig`` (or ``<id>.sig``) the owner made, verified against the answer as recorded and the
     deciders' keys, then copied beside its record as ``records/ddr/<id>.sig``. Refused, with nothing copied, when one
-    does not verify."""
+    does not verify or its decision has no answer yet."""
     m = load(root)
     if m is None or m.errors:
         raise IdentityError("; ".join(m.errors) if m else f"no {FILE}: declare the deciders first")
@@ -286,6 +304,8 @@ def attach(root: Path, files: list[Path], project: str = "") -> list[str]:
         if ddr_id not in by_id:
             raise IdentityError(f"{s.name}: no DDR {ddr_id} in {records.RECORDS_DIR}/ddr")
         f, d = by_id[ddr_id]
+        if not _answered(d):   # a payload of a pending question: an answer recorded later voids it
+            raise IdentityError(f"{s.name}: {ddr_id} has no answer to sign ({d.get('status')})")
         person, why = sshsig.verify(payload(d), s.read_bytes(), keys)
         if not person:
             raise IdentityError(f"{s.name}: {why}")
