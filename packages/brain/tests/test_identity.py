@@ -23,7 +23,7 @@ def make_key(folder: Path, name: str = "key") -> tuple[Path, str]:
     """A test's own ed25519 key pair, without a passphrase, in its temp folder: (private file, public line)."""
     key = folder / name
     subprocess.run([KEYGEN, "-q", "-t", "ed25519", "-N", "", "-C", f"{name}@test", "-f", str(key)], check=True,
-                   capture_output=True)
+                   capture_output=True, timeout=60)
     key.chmod(0o600)
     return key, key.with_suffix(".pub").read_text(encoding="utf-8").strip()
 
@@ -31,7 +31,7 @@ def make_key(folder: Path, name: str = "key") -> tuple[Path, str]:
 def sign(key: Path, files: list[Path], namespace: str = sshsig.NAMESPACE) -> None:
     """The owner's act, as the docs give it: ssh-keygen -Y sign over the payload files at once."""
     subprocess.run([KEYGEN, "-Y", "sign", "-f", str(key), "-n", namespace, *map(str, files)], check=True,
-                   capture_output=True)
+                   capture_output=True, timeout=60)
 
 
 @pytest.fixture
