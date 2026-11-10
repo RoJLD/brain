@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import networkx as nx
 import yaml
 
 from . import yamlio
+from .model import FOREIGN
 from .schema import Schema, load_schema
 
 
@@ -28,7 +30,74 @@ def _load_yaml_list(path: Path) -> list:
     return data
 
 
-def load_store(store_dir: str | Path, schema: Schema | None = None) -> nx.DiGraph:
+def read_foreign(stores: Iterable[tuple[str, str | Path]]) -> dict[str, dict]:
+    """The nodes of other stores an edge of a store may name, for :func:`load_store`'s ``foreign``: {id: {store,
+    type, title, status}}, ``stores`` being (label, store folder) pairs. They are read, not validated (each store's
+    own check validates it): a file that does not parse, or a folder without nodes/, is left out. An id two of
+    them hold keeps the first's."""
+    out: dict[str, dict] = {}
+    for name, path in stores:
+        for nf in sorted((Path(path) / "nodes").glob("*.yaml")):
+            try:
+                entries = _load_yaml_list(nf)
+            except ValidationError:
+                continue
+            for rn in entries:
+                if isinstance(rn, dict) and rn.get("id") is not None:
+                    out.setdefault(str(rn["id"]), {"store": name, "type": rn.get("type"),
+                                                   "title": rn.get("title") or "", "status": rn.get("status")})
+    return out
+
+
+def _foreign_node(g: nx.DiGraph, nid: str, entry: Mapping | str) -> None:
+    """Add another store's node an edge names: no type of this store (FOREIGN names its store), its own title,
+    status and type (``foreign_type``) when ``entry`` gives them (a bare string is the store's label alone)."""
+    info = {"store": entry} if isinstance(entry, str) else dict(entry)
+    g.add_node(nid, type=None, foreign_type=info.get("type"), title=info.get("title") or "",
+               status=info.get("status"), level=None, layer=None, anchor=None, repo=None, props={},
+               **{FOREIGN: str(info.get("store") or "another store")})
+
+
+def _edge_problems(s, d, et, schema: Schema, seen: set[str], foreign: Mapping) -> list[str]:
+    """What is wrong with one edge: its type, an end neither the store nor ``foreign`` holds, no end of the store's."""
+    out = [] if et in schema.edge_types else [f"edge {s}->{d}: unknown type {et!r}"]
+    out += [f"edge {s}->{d}: unknown {end} {nid!r}" for end, nid in (("source", s), ("target", d))
+            if nid not in seen and nid not in foreign]
+    if not out and s not in seen and d not in seen:
+        out.append(f"edge {s}->{d}: both ends are other stores' nodes (an edge belongs to the store of one)")
+    return out
+
+
+def _add_edges(g: nx.DiGraph, raw_edges: list, schema: Schema, seen: set[str], foreign: Mapping,
+               errors: list[str]) -> None:
+    """The store's edges into ``g``. An endpoint the store does not hold is refused as unknown, unless ``foreign``
+    holds it (another store's node: added once, see :func:`_foreign_node`); one end at least is the store's own."""
+    for re_ in raw_edges:
+        if not isinstance(re_, dict):
+            errors.append(f"edge entry is not a mapping: {re_!r}")
+            continue
+        s, d, et = re_.get("from"), re_.get("to"), re_.get("type")
+        problems = _edge_problems(s, d, et, schema, seen, foreign)
+        errors += problems
+        if problems:
+            continue
+        for end in (s, d):
+            if end not in seen and end not in g:
+                _foreign_node(g, end, foreign[end])
+        if g.has_edge(s, d):
+            # A DiGraph keeps one edge per node pair: the later edge replaces the earlier one.
+            g.graph.setdefault("collapsed_edges", []).append(
+                f"{s}->{d}: {g.edges[s, d]['type']!r} replaced by {et!r} (one edge per node pair)"
+            )
+        g.add_edge(s, d, type=et, props=re_.get("props", {}))
+
+
+def load_store(store_dir: str | Path, schema: Schema | None = None,
+               foreign: Mapping[str, Mapping | str] | None = None) -> nx.DiGraph:
+    """Load and validate a store. ``foreign``: the ids of other stores an edge of this one may name, {id: the
+    store's label, or {store, type, title, status}} (:func:`read_foreign`); without it an edge to an id the store
+    does not hold is refused, as it always was. Another store's node is added with the attribute ``foreign`` (its
+    store's label) and no type of this store, so no listing of the store's own nodes holds it."""
     store = Path(store_dir)
 
     structural: list[str] = []
@@ -97,28 +166,7 @@ def load_store(store_dir: str | Path, schema: Schema | None = None) -> nx.DiGrap
             props=rn.get("props", {}),
         )
 
-    for re_ in raw_edges:
-        if not isinstance(re_, dict):
-            errors.append(f"edge entry is not a mapping: {re_!r}")
-            continue
-        s, d, et = re_.get("from"), re_.get("to"), re_.get("type")
-        ok = True
-        if et not in schema.edge_types:
-            errors.append(f"edge {s}->{d}: unknown type {et!r}")
-            ok = False
-        if s not in seen:
-            errors.append(f"edge {s}->{d}: unknown source {s!r}")
-            ok = False
-        if d not in seen:
-            errors.append(f"edge {s}->{d}: unknown target {d!r}")
-            ok = False
-        if ok:
-            if g.has_edge(s, d):
-                # A DiGraph keeps one edge per node pair: the later edge replaces the earlier one.
-                g.graph.setdefault("collapsed_edges", []).append(
-                    f"{s}->{d}: {g.edges[s, d]['type']!r} replaced by {et!r} (one edge per node pair)"
-                )
-            g.add_edge(s, d, type=et, props=re_.get("props", {}))
+    _add_edges(g, raw_edges, schema, seen, foreign or {}, errors)
 
     if errors:
         raise ValidationError(errors)

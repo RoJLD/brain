@@ -3,13 +3,15 @@ merge, PR refs, moves between files, unparsable versions, the store on a given d
 
 from __future__ import annotations
 
+import subprocess
 from datetime import date
 
 import pytest
 
 from research_graph import history
-from research_graph.loader import ValidationError
+from research_graph.loader import ValidationError, read_foreign
 from tests.backlog_world import make_history
+from tests.two_stores import two_stores
 
 
 @pytest.fixture(scope="module")
@@ -95,3 +97,17 @@ def test_commit_dates_read_on_every_supported_python():
 
     assert history._when("2026-10-07T12:00:00Z") == datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
     assert history._when("2026-10-07T14:00:00+02:00") == datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+
+
+def test_load_store_at_takes_the_other_stores_ids(tmp_path):
+    """wi-brain-cross-store-edges: asof loads a past version whose edges name another store's ids."""
+    home, parent = two_stores(tmp_path)
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit",
+                                                 "-qm", "two stores"]):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+    sha = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True,
+                         text=True).stdout.strip()
+    with pytest.raises(ValidationError):
+        history.load_store_at(home, sha)
+    g = history.load_store_at(home, sha, read_foreign([("parent", parent)]))
+    assert g.nodes["wi-s"]["foreign"] == "parent" and g["wi-a"]["wi-s"]["type"] == "depends_on"

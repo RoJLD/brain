@@ -335,10 +335,12 @@ def touched_refs(refs: list[codemap.Ref], changes: list[Change], symbols: list[d
 
 # --- 4. the graph ---
 
-def _load(store: Path):
+def _load(store: Path, root: Path | None = None):
     from research_graph.loader import ValidationError, load_store
-    try:
-        return load_store(store), ""
+
+    from . import crossstore
+    try:   # an edge may name another store's node (brain.crossstore)
+        return load_store(store, foreign=crossstore.foreign_nodes(root, store)), ""
     except ValidationError as exc:
         more = f" (and {len(exc.errors) - 3} more)" if len(exc.errors) > 3 else ""
         return None, f"{store.as_posix()} does not load: {'; '.join(exc.errors[:3])}{more}"
@@ -578,7 +580,7 @@ def _graph(rep: Report, p: projects.Project, repo_match, hit: list[Touched], cha
     now = {ch.new for ch in changes if ch.new}
     changed = now | {ch.old for ch in changes if ch.old}
     for store in (s for s in p.stores if (s / "schema.yaml").is_file()):
-        g, problem = _load(store)
+        g, problem = _load(store, p.root)
         if g is None:
             rep.stores.append(problem)
             continue

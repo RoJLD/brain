@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .. import graph, milestones
+from .. import crossstore, graph, milestones
 from ._common import _kv, _store
 
 ORDER = 20   # its place in brain --help's list of commands (brain.commands)
@@ -15,7 +15,8 @@ USAGE = """\
                  [--prop k=v]...         without --milestone, prints the milestone the signals suggest
   brain item set ID key=value...
   brain item close ID --pr "repo #N" [--outcome TEXT]
-  brain item link FROM TYPE TO [--prop k=v]...   an edge (with props: enforced_by's scope)
+  brain item link FROM TYPE TO [--prop k=v]...   an edge (with props: enforced_by's scope); one end may be another
+                 store's id (a store of the registry: research_graph shows it with its store's label)
   brain item unlink FROM TO   remove the curated edge between two nodes (re-typing one: unlink, then link)
 """
 
@@ -29,7 +30,9 @@ def cmd_item(args, root: Path) -> int:
             props.update(_kv(args.prop))
             node = graph.add_item(store, args.id, args.title, node_type=args.type, status=args.status, props=props,
                                   spec=args.spec, after=args.after, milestone=args.milestone, adr=args.adr,
-                                  anchor=args.anchor, file=args.file, edges_file=args.edges_file)
+                                  anchor=args.anchor, file=args.file, edges_file=args.edges_file,
+                                  foreign=_foreign(root, store, [args.spec, *(args.after or []), args.milestone,
+                                                                 args.adr]))
         elif args.item_cmd == "set":
             node = graph.set_item(store, args.id, args.assign)
         elif args.item_cmd == "unlink":
@@ -38,7 +41,8 @@ def cmd_item(args, root: Path) -> int:
                   "brain check")
             return 0
         elif args.item_cmd == "link":
-            edge = graph.link(store, args.id, args.type, args.to, args.edges_file, props=_kv(args.prop))
+            edge = graph.link(store, args.id, args.type, args.to, args.edges_file, props=_kv(args.prop),
+                              foreign=_foreign(root, store, [args.id, args.to]))
             print(f"link: {edge['from']} -{edge['type']}-> {edge['to']}; then brain sync and brain check")
             return 0
         else:
@@ -51,6 +55,15 @@ def cmd_item(args, root: Path) -> int:
             and milestones.PROPOSED not in (node.get("props") or {}):
         _print_suggestion(store, node["id"])
     return 0
+
+
+def _foreign(root: Path, store: Path, ends: list) -> dict[str, str]:
+    """{id: its store's label} of the ends the store does not hold that another store of the registry does
+    (brain.crossstore); the registry is read only when an end is not the store's."""
+    index = graph.node_index(store)
+    if all(not e or e in index for e in ends):
+        return {}
+    return crossstore.registry_ids(root, store)
 
 
 def _print_suggestion(store: Path, nid: str) -> None:

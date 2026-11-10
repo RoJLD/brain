@@ -12,7 +12,7 @@ from .export_gitnexus import build_payload, push
 from .init import init_store
 from .kanban import FILE as KANBAN_FILE
 from .kanban import kanban_stale, render_kanban, view_path, write_kanban
-from .loader import ValidationError, apply_overlay, load_store
+from .loader import ValidationError, apply_overlay, load_store, read_foreign
 from .model import LayeredGraph
 from .roadmap import FILE as ROADMAP_FILE
 from .roadmap import render_roadmap, roadmap_stale, write_roadmap
@@ -84,6 +84,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo-root", default=".")
     p.add_argument("--overlay", action="append", default=[],
                    help="Sibling graph store to add read-only, e.g. ../ops-repo/ops/graph (repeatable).")
+    p.add_argument("--foreign-store", action="append", default=[], metavar="LABEL=PATH", type=_name_path,
+                   help="Another store whose ids an edge of this store may name (repeatable): such an edge loads, "
+                        "its other end shown by its id and LABEL in the views, never listed as this store's own; "
+                        "without it an edge to an id the store does not hold is refused. An edge needs one end in "
+                        "this store.")
     logs = p.add_mutually_exclusive_group()
     logs.add_argument("--decisions", action="append", metavar="PATH",
                       help="A decision log the store covers, relative to --repo-root (repeatable): check wants an "
@@ -235,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        graph = load_store(args.store)
+        graph = load_store(args.store, foreign=_foreign(args))
         for overlay in args.overlay:
             apply_overlay(graph, overlay, args.repo_root)
     except ValidationError as exc:
@@ -296,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
         d = rg.decisions(args.node)
 
         def show(e: dict) -> str:
-            line = f"  {e['id']} [{e['type']} {e['status']}] {e['title']}"
+            line = f"  {report.name(e)} [{e['type']} {e['status']}] {e['title']}"
             if e.get("superseded_by"):
                 line += f"  -> superseded by {e['superseded_by']}"
             if e.get("via"):
@@ -312,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
             print(show(e))
         print(f"specs (pre-registrations): {len(d['specs'])}")
         for s_ in d["specs"]:
-            print(f"  {s_['id']} [{s_['status']}] {s_['anchor'] or ''}")
+            print(f"  {report.name(s_)} [{s_['status']}] {s_['anchor'] or ''}")
         return 0
     if args.cmd == "code":
         c = rg.code(args.node)
@@ -371,6 +376,11 @@ def main(argv: list[str] | None = None) -> int:
         print("graph-check OK")
         return 0
     return 0
+
+
+def _foreign(args) -> dict | None:
+    """The ids of the --foreign-store stores (None without one: the loader refuses an edge to an id it lacks)."""
+    return read_foreign(args.foreign_store) if args.foreign_store else None
 
 
 def _init(args) -> int:
@@ -496,7 +506,7 @@ def _asof(graph, args) -> int:
         if commit is None:
             print(f"no commit on or before {args.day}", file=sys.stderr)
             return 1
-        old = history.load_store_at(args.store, commit.sha)
+        old = history.load_store_at(args.store, commit.sha, _foreign(args))
     except (history.GitError, ValidationError) as exc:
         print(exc, file=sys.stderr)
         return 1

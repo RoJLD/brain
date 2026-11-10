@@ -18,10 +18,21 @@ def short(text: object, n: int = TITLE) -> str:
     return text if len(text) <= n else text[:n - 1].rstrip() + "…"
 
 
+def name(row: Mapping) -> str:
+    """A row's id, with the label of the other store that holds it (``wi-x (parent:graph)``)."""
+    return f"{row['id']} ({row['store']})" if row.get("store") else row["id"]
+
+
+def names(row: Mapping, ids: Iterable[str], sep: str = ", ") -> str:
+    """Ids a row names, each of another store with that store's label (the row's ``stores``)."""
+    stores = row.get("stores") or {}
+    return sep.join(f"{n} ({stores[n]})" if n in stores else n for n in ids)
+
+
 def _holds(row: Mapping) -> str:
     notes = []
     if row.get("blockers"):
-        notes.append("needs " + ", ".join(row["blockers"]))
+        notes.append("needs " + names(row, row["blockers"]))
     if row.get("status") == "blocked":
         notes.append(f"external: {short(row.get('external_blocker'), 80)}" if row.get("external_blocker")
                      else "external blocker")
@@ -46,7 +57,7 @@ def event_line(e: Event, *, with_id: bool = True) -> str:
 
 def item(detail: Mapping, events: list[Event] | None, git_error: str | None = None) -> list[str]:
     """Everything about one node: header, props, links, blockers, and its history from git."""
-    out = [f"{detail['id']}  [{detail['type']} {detail['status']}]  priority {priority_label(detail)}",
+    out = [f"{name(detail)}  [{detail['type']} {detail['status']}]  priority {priority_label(detail)}",
            f"  {detail['title']}"]
     if detail.get("anchor"):
         out.append(f"  anchor: {detail['anchor']}")
@@ -58,7 +69,7 @@ def item(detail: Mapping, events: list[Event] | None, git_error: str | None = No
     for key, heading in (("out", "links out"), ("in", "links in")):
         if detail.get(key):
             out.append(f"{heading}:")
-            out += [f"  {e['edge']:<13} {e['id']} [{e['status']}]  {short(e['title'], 80)}" for e in detail[key]]
+            out += [f"  {e['edge']:<13} {name(e)} [{e['status']}]  {short(e['title'], 80)}" for e in detail[key]]
     if detail.get("mentions"):
         out.append("named in its props (no edge yet):")
         out += [f"  {e['id']} [{e['type']} {e['status']}]  {short(e['title'], 80)}" for e in detail["mentions"]]
@@ -66,9 +77,9 @@ def item(detail: Mapping, events: list[Event] | None, git_error: str | None = No
         out.append("named by:")
         out += [f"  {e['id']} [{e['type']} {e['status']}]  {short(e['title'], 80)}" for e in detail["mentioned_by"]]
     if detail.get("blockers"):
-        out.append("blocked by: " + ", ".join(detail["blockers"]))
+        out.append("blocked by: " + names(detail, detail["blockers"]))
     if detail.get("waiting_on_it"):
-        out.append("open items waiting on it: " + ", ".join(detail["waiting_on_it"]))
+        out.append("open items waiting on it: " + names(detail, detail["waiting_on_it"]))
     if git_error:
         out.append(f"history: unavailable ({git_error})")
     elif events is not None:
@@ -115,14 +126,14 @@ def roadmap(milestones: list[dict], *, items: bool = True) -> list[str]:
         if m["trigger"]:
             out.append(f"    trigger: {short(m['trigger'], TEXT)}")
         if m["critical_path"]:
-            out.append("    critical path: " + " → ".join(m["critical_path"]))
+            out.append("    critical path: " + names(m, m["critical_path"], " → "))
         if not items:
             continue
         open_part = [r for r in m["part_of"] if r["status"] in ("doing", "todo", "blocked")]
         for heading, group in (("moves it", open_part), ("prerequisite", m["depends_on"]),
                                ("names it", m["mentions"])):
             for r in group:
-                out.append(f"    {heading:<12} {r['id']} [{r['status']}] {priority_label(r)}"
+                out.append(f"    {heading:<12} {name(r)} [{r['status']}] {priority_label(r)}"
                            f"  {short(r['title'], 80)}{_holds(r)}")
     return out
 

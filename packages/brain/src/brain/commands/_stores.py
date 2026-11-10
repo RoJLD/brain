@@ -12,9 +12,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .. import (alerts, bundles, classes, codeindex, config, decisions, defaults, features, graph, links, lint, markers,
-                milestones, modules, neutral, permissions, projects, public, records, render, skew, specs, stacks, tidy,
-                tiers, vault, views, waves)
+from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, features, graph, links,
+                lint, markers, milestones, modules, neutral, permissions, projects, public, records, render, skew,
+                specs, stacks, tidy, tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -383,10 +383,12 @@ def _merge_marks(root: Path, then: str, clear: bool = False) -> None:
         print(f"merge driver: {len(views)} view(s) kept from one side at the last merge ({', '.join(views)}); {then}")
 
 
-def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
+def check_registry(root: Path | None, projs: list[projects.Project], every: bool = False) -> int:
     """The registry (its keys and shapes, repos, stacks, code_index), its alerts and config.json (brain.config),
-    then the ids: unique across every store of every project, unless waived under a project's shared_ids. The
-    projects the brain reads and never writes are counted. Exit code 1 on an error."""
+    then the ids: unique across every store of every project, unless waived under a project's shared_ids; then the
+    edges between stores (brain.crossstore): one whose end is in no store is an error with ``every`` (check --all,
+    which checks every store: that store's own check refuses it too), else a warning. The projects the brain reads
+    and never writes are counted. Exit code 1 on an error."""
     errors = projects.check(root) + config.check(root) + permissions.check(root)
     data_classes = classes.check(root)
     for w in data_classes.waived:
@@ -412,6 +414,7 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
             errors.append(f"{line} (rename one, or waive it under shared_ids: with its reason)")
     for s in ids["stale"]:
         print(f"warning: shared_ids of {s}: no longer in two stores (remove it)")
+    errors += _cross_store(projs, every)
     for line in render.registry_warnings(neutral.brain_root(root), projs) + _uncloned(root):
         print(f"warning: {line}")
     for e in errors:
@@ -420,6 +423,17 @@ def check_registry(root: Path | None, projs: list[projects.Project]) -> int:
     print(f"registry: {len(projs)} project(s), {ids['stores']} store(s), "
           + (f"{len(errors)} error(s)" if errors else "ids unique") + (f"; {read_only} read only" if read_only else ""))
     return 1 if errors else 0
+
+
+def _cross_store(projs: list[projects.Project], every: bool) -> list[str]:
+    """The edges between the registry's stores, said; the dangling ones returned as errors with ``every``, else
+    warned (brain.crossstore)."""
+    rep = crossstore.check([p for p in projs if p.root.is_dir()])
+    if rep.cross:
+        print(f"cross-store edges: {len(rep.cross)} (an edge's end held by another store of the registry)")
+    for line in rep.dangling if not every else []:
+        print(f"warning: edge {line} (its store's check refuses it)")
+    return [f"edge {line}" for line in rep.dangling] if every else []
 
 
 def _uncloned(root: Path | None) -> list[str]:
@@ -491,7 +505,7 @@ def _each_store(args, root: Path, *, sync: bool, check: bool, written_on_main: b
                 failed.append(p.name)
     if check and _registry_too(args, root):
         print("== registry")
-        if check_registry(root, _registry_scope(root)):
+        if check_registry(root, _registry_scope(root), every=bool(getattr(args, "all", False))):
             failed.append("registry")
     print(f"{args.cmd}: {len(failed)} project(s) failed" + (f": {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0

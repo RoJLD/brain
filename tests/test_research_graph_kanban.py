@@ -17,7 +17,8 @@ from research_graph.kanban import (
     render_kanban,
     write_kanban,
 )
-from research_graph.loader import load_store
+from research_graph.loader import load_store, read_foreign
+from tests.two_stores import two_stores
 
 STORE = Path(__file__).parent / "fixtures" / "layered_graph"
 
@@ -183,3 +184,23 @@ def test_views_puts_the_board_and_the_roadmap_in_another_folder(tmp_path, capsys
     assert "is stale" not in capsys.readouterr().out
     assert main(args + ["--views", str(tmp_path / "boards"), "kanban", "--write"]) == 0  # outside the root: no anchor
     assert (tmp_path / "boards" / "kanban_graph.md").exists()
+
+
+def test_another_stores_nodes_are_shown_by_id_and_store_never_counted(tmp_path):
+    """wi-brain-cross-store-edges: a blocker, a milestone and a milestone's item or sub-milestone held by another
+    store are shown by their id and that store's label; the board counts the store's own items only."""
+    home, parent = two_stores(tmp_path)
+    board = render_kanban(load_store(home, foreign=read_foreign([("parent:graph", parent)])))
+    assert "2 work items: todo 2. Startable now: 1. Cannot proceed: 1." in board
+    assert _section(board, "## ms-home — Home milestone [pending]") == [
+        "Items: 1 (todo 1). Critical path: wi-a.",
+        "- [ ] wi-a — Home step  ← blocked by wi-s (parent:graph) [todo]"]
+    assert _section(board, "## Part of another store's milestone") == [
+        "- [ ] wi-b — Home extra (ms-parent (parent:graph))  ← startable"]
+    assert "## ms-parent" not in board and "## No milestone" not in board
+    board = render_kanban(load_store(parent, foreign=read_foreign([("home:graph", home)])))
+    assert "1 work items: todo 1." in board
+    section = _section(board, "## ms-parent — Parent milestone [pending]")
+    assert section[0].startswith("Items: 2 (todo 2).")   # its own item and home's wi-a: a rollup across stores
+    assert section[1:] == ["Sub-milestones: ms-home (home:graph) [pending].", "- [ ] wi-a (home:graph) — Home step",
+                           "- [ ] wi-s — Parent step  ← startable"]

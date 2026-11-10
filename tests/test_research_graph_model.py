@@ -4,9 +4,10 @@ from pathlib import Path
 
 import networkx as nx
 
-from research_graph.loader import load_store
-from research_graph.model import ResearchGraph
+from research_graph.loader import load_store, read_foreign
+from research_graph.model import LayeredGraph, ResearchGraph, kind, label, store_of
 from research_graph.model import ResearchGraph as _RG
+from tests.two_stores import two_stores
 
 STORE = Path(__file__).parent / "fixtures" / "research_graph"
 
@@ -54,3 +55,21 @@ def test_supersedes_chain_terminates_on_cycle():
     rg = _RG(g)
     chain = rg.supersedes_chain("a")
     assert chain == ["a", "b"]  # stops when it revisits 'a'
+
+
+def test_another_stores_node_counts_where_it_is_linked_and_is_listed_nowhere(tmp_path):
+    """wi-brain-cross-store-edges: another store's item counts in a milestone's progress and its blocker blocks,
+    its ADR is a decision behind a node, its milestone is a sub-milestone (not an item); no listing holds it."""
+    home, parent = two_stores(tmp_path)
+    lg = LayeredGraph(load_store(parent, foreign=read_foreign([("home:graph", home)])))
+    assert lg.milestone_items("ms-parent") == ["wi-a", "wi-s"] and lg.milestone("ms-parent")["items"] == 2
+    assert lg.decisions("wi-s")["direct"] == [
+        {"id": "adr-x", "type": "ADR", "status": "active", "title": "A decision", "store": "home:graph"}]
+    assert lg.work_frontier() == ["wi-s"] and "wi-a" not in lg.layer("work") and "ms-home" not in lg.layer("work")
+    assert lg.impact("adr-x") == {"work": ["ms-parent", "wi-s"]}
+    assert (kind(lg.g, "ms-home"), store_of(lg.g, "ms-home"), label(lg.g, "ms-home")) == (
+        "Milestone", "home:graph", "ms-home (home:graph)")
+    lg = LayeredGraph(load_store(home, foreign=read_foreign([("parent:graph", parent)])))
+    assert lg.blockers("wi-a") == ["wi-s"] and lg.blocked() == {"wi-a": ["wi-s"]}
+    assert lg.impact("wi-b") == {"store parent:graph": ["ms-parent"]}   # parent's milestone relies on home's item
+    assert (label(lg.g, "wi-a"), store_of(lg.g, "wi-a")) == ("wi-a", None)
