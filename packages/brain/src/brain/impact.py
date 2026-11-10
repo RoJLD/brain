@@ -335,10 +335,12 @@ def touched_refs(refs: list[codemap.Ref], changes: list[Change], symbols: list[d
 
 # --- 4. the graph ---
 
-def _load(store: Path):
+def _load(store: Path, root: Path | None = None):
     from research_graph.loader import ValidationError, load_store
-    try:
-        return load_store(store), ""
+
+    from . import crossstore
+    try:   # an edge may name another store's node (brain.crossstore)
+        return load_store(store, foreign=crossstore.foreign_nodes(root, store)), ""
     except ValidationError as exc:
         more = f" (and {len(exc.errors) - 3} more)" if len(exc.errors) > 3 else ""
         return None, f"{store.as_posix()} does not load: {'; '.join(exc.errors[:3])}{more}"
@@ -572,13 +574,15 @@ def _unmapped(refs: list[codemap.Ref], symbols: list[dict]) -> list[dict]:
     return [s for s in symbols if s["id"] not in named and s["label"] in codemap.SYMBOLS]
 
 
-def _graph(rep: Report, p: projects.Project, repo_match, hit: list[Touched], changes: list[Change]) -> None:
+def _graph(rep: Report, p: projects.Project, repo_match, hit: list[Touched], changes: list[Change],
+           root: Path | None) -> None:
     """Step 4 in each store of the project, then the test files the change adds or edits that no store names yet
-    (never a path it deletes or moves away: the pytest line must run)."""
+    (never a path it deletes or moves away: the pytest line must run). The other stores an edge names are read from
+    the registry of the brain at ``root``, the one that found the project (never ``p.root``: no projects.yaml)."""
     now = {ch.new for ch in changes if ch.new}
     changed = now | {ch.old for ch in changes if ch.old}
     for store in (s for s in p.stores if (s / "schema.yaml").is_file()):
-        g, problem = _load(store)
+        g, problem = _load(store, root)
         if g is None:
             rep.stores.append(problem)
             continue
@@ -611,7 +615,7 @@ def run(args, root: Path | None) -> Report:
         return not repo if own else str(repo or "").lower() in (c.name.lower(), folder.lower())
 
     if registered:
-        _graph(rep, p, repo_match, hit, changes)
+        _graph(rep, p, repo_match, hit, changes, root)
     return rep
 
 

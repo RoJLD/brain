@@ -41,7 +41,7 @@ from . import __version__, _started, paths, timing
 
 ENGINE = "brain"         # the project of the engine's own events
 FOLDER = "engine"        # under the ledger
-KEEP_MONTHS = 3
+KEEP_MONTHS = 3          # the log class "timing" (brain.stateio.LOG_RETENTION)
 T0_ENV = "BRAIN_HOOK_T0"  # the hook's bash start, epoch seconds ($EPOCHREALTIME: a dot or the locale's comma)
 T0_MAX_S = 600.0          # an older or future start is not this run's: the Python start is used
 PACKAGE = __name__.rpartition(".")[0]
@@ -101,19 +101,9 @@ def _write(kind: str, event: dict, now: datetime) -> None:
 
 def prune(d: Path, now: datetime) -> list[Path]:
     """Remove the engine's event files of the months before the last KEEP_MONTHS (this one counted); the removed."""
-    y, m = now.year, now.month - (KEEP_MONTHS - 1)
-    while m < 1:
-        y, m = y - 1, m + 12
-    oldest, gone = f"{y:04d}-{m:02d}", []
-    for f in d.glob("*.jsonl") if d.is_dir() else ():
-        month = f.stem[-7:]
-        if len(month) == 7 and month[4] == "-" and month < oldest:
-            try:
-                f.unlink()
-                gone.append(f)
-            except OSError:
-                pass
-    return gone
+    from . import stateio  # only when a month's first event starts a file: the import stays light
+
+    return stateio.prune_months(d.glob("*.jsonl") if d.is_dir() else (), KEEP_MONTHS, now)
 
 
 def _envelope(kind: str, task: str, now: datetime) -> dict:

@@ -23,6 +23,10 @@ which appends the reading to ``<BRAIN_HOME>/usage/quota.jsonl`` (time, window, p
               cost since the window started, converted (an estimate, said so).
   pace        the cost of the last ``PACE_HOURS`` hours per hour, converted: the percent at the reset if it goes on,
               and the time it reaches 100 % when that comes first.
+  session-h   what a session-hour cost over the last ``SESSION_HOUR_DAYS`` days: the sessions' hourly buckets (each
+              with its subagents' and workflow agents' cost) over their count. Information by default: the usage
+              governor's cap reads it only with config.json ``usage.guard.session_hour_measured`` true, and then when
+              it is above ``usage.guard.session_hour_usd``, so an ultracode wave's cost counts.
   live        the sessions whose ledger row moved in the last ``LIVE_MIN`` minutes, their cost of the last hour, and
               what their items have left: each item's recorded estimate (props.cost_estimate), else the estimate of
               the most alike finished items times the class's calibration (brain.cost), minus its cost so far; a
@@ -63,6 +67,9 @@ LIVE_MIN = 15
 SKEW = timedelta(minutes=5)  # a reading this far after now is a clock's skew, not the future; two resets this close
 # are the same (get_usage gives 2026-11-09T12:00:00.433Z, then 11:59:59.654Z)
 WARN = 85.0
+SESSION_HOUR_DAYS = 7
+SESSION_HOUR_MIN = 4  # session-hours before the measure is given
+SESSION_HOUR_MIN_USD = 0.5  # a session's hour under this (a resume, a last message) is not a session-hour
 LEVELS = ("unknown", "room", "p0p1", "none")
 _Z_RE = re.compile(r"Z$", re.I)
 
@@ -293,6 +300,32 @@ def queue_of(led: cost.Ledger, projs: list[projects.Project], skip: list[str], e
     return sorted(out, key=lambda q: (q["priority"], q["project"], q["id"]))
 
 
+# --- the session-hour ---
+
+def session_hour(rows: list[dict], now: datetime, days: int = SESSION_HOUR_DAYS) -> dict | None:
+    """What a session-hour cost at API prices over the last ``days`` days (wi-brain-usage-workflow-agents): the cost
+    of the sessions' hourly buckets over their count, a bucket being one session's UTC hour with
+    ``SESSION_HOUR_MIN_USD`` of cost at least. A session's hours hold its subagents' and workflow agents' cost (brain.usage merges them), so an
+    hour that ran a workflow costs its agents too. None below ``SESSION_HOUR_MIN`` buckets. The governor reads it
+    (``quota.json``) only with config.json ``usage.guard.session_hour_measured`` true, and then when it is above
+    ``usage.guard.session_hour_usd``."""
+    lo = now - timedelta(days=days)
+    usd, n = 0.0, 0
+    for r in rows:
+        for key, b in (r.get("hours") or {}).items():
+            c = b.get("cost") or 0.0
+            try:
+                at = datetime.fromisoformat(key + ":00:00").replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            if lo <= at < now and c >= SESSION_HOUR_MIN_USD:
+                usd += c
+                n += 1
+    if n < SESSION_HOUR_MIN:
+        return None
+    return {"usd": round(usd / n, 2), "hours": n, "total_usd": round(usd, 2), "days": days}
+
+
 # --- the forecast ---
 
 def forecast(rows: list[dict], readings: list[dict], now: datetime, window: str = "week", live: dict | None = None,
@@ -349,6 +382,7 @@ def forecast(rows: list[dict], readings: list[dict], now: datetime, window: str 
                 full = now + timedelta(hours=max(0.0, 100 - pct) / pace["pct_h"])
                 pace["full_at"] = iso(full) if full < resets else None
         fc["pace"] = pace
+    fc["session_hour"] = session_hour(rows, now)
     if live is not None:
         fc["live"] = dict(live, left_pct=round(live["left_usd"] * f, 1) if f else None)
     if queue is not None:
@@ -444,6 +478,10 @@ def render(fc: dict) -> list[str]:
             f", 100 % on {when(_dt(p['full_at']))}" if p.get("full_at") else "")
         out.append(f"  pace      last {p['hours']} h {usage.usd(p['usd'])} ({usage.usd(p['usd_h'])}/h, "
                    f"{p['pct_h']:.2f} %/h){tail}")
+    sh = fc.get("session_hour")
+    if sh:
+        out.append(f"  session-h {usage.usd(sh['usd'])} per session-hour at API prices, its agents included "
+                   f"({sh['hours']} session-hour(s), {usage.usd(sh['total_usd'])} over {sh['days']} d)")
     lv = fc.get("live")
     if lv:
         out.append(f"  live      {lv['sessions']} session(s), {usage.usd(lv['last_hour_usd'])} in the last hour; "

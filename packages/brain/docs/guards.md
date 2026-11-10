@@ -208,14 +208,19 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
 |---|---|---|
 | `critical`: a window in force at `critical` % or more | all | deny |
 | `stale`: the newest reading older than `fresh_minutes`, on a machine with a reading in the last 7 days | session, workflow | deny, with the commands that note both windows |
-| `memory`: committed memory at `memory` % or more, or available RAM under `memory_available_gb` GB | session, workflow | deny, naming both measures and the one that refused |
+| `memory`: committed memory at `memory` % or more, or available RAM under `memory_available_gb` GB (default 0: no floor) | session, workflow | deny, naming both measures and the one that refused |
 | `sessions`: the sessions running reach the cap | session | deny |
 | `brainstorms`: the open brainstorms reach the cap, for a brainstorm | session | deny |
 | `warn`: a window at `warn` % or more | all | ask the owner |
 
 The parallel sessions cap is the smaller of `sessions` and what the week's room pays for:
 `(100 - week %) x $ per % / (wave_hours x session_hour_usd)`, minus one for the master. A session runs when the app
-shows it not archived and active in the last `live_minutes`.
+shows it not archived and active in the last `live_minutes`. `session_hour_usd` is the configured one. With
+`session_hour_measured` true (an opt-in, default false), it is instead the one `brain usage quota` measured when that
+is higher (its `session-h` line, kept in `quota.json`): the last 7 days' cost per session-hour, the subagents' and
+workflow agents' cost included, so that a wave whose sessions run workflows leaves room for fewer of them. By default
+the measured value is information only: `brain usage guard` shows it on its `session-h` line with whether it is
+applied, and a `sessions` refusal names the session-hour it used (`measured` when it is the measured one).
 
 A brainstorm is a session whose brief says `Task class: brainstorm` or carries `#brainstorm` (the session record's
 `task_class`), or whose title matches `brainstorm_title` (default: it starts with "Brainstorm"). It is open while not
@@ -234,11 +239,12 @@ fresh master and drains its own. It is never a refusal: no guard blocks start_se
 
 ```json
 {"usage": {"guard": {"warn": 80, "critical": 95, "sessions": 8, "brainstorms": 3, "memory": 97,
-                     "memory_available_gb": 4, "wave_hours": 4, "session_hour_usd": 14, "fresh_minutes": 60, "live_minutes": 30,
-                     "brainstorm_hours": 12}}}
+                     "memory_available_gb": 4, "wave_hours": 4, "session_hour_usd": 14, "session_hour_measured": false,
+                     "fresh_minutes": 60, "live_minutes": 30, "brainstorm_hours": 12}}}
 ```
 
-Every key is optional (the defaults above, except `brainstorms`: 2). `"enabled": false` turns the governor off. A
+Every key is optional (the defaults above, except `brainstorms`: 2, and `memory_available_gb`: 0, no floor; 4 is the
+opt-in shown). `"enabled": false` turns the governor off. A
 project lowers its own caps in `projects.yaml`, never raises them:
 
 ```yaml

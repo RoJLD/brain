@@ -17,14 +17,23 @@ in the order of the file, so specific stores come first and a catch-all last.
 :func:`check` (``brain classes --check``, ``brain check --all``) refuses:
 
 - a store without a valid class, an unknown exit, a waiver without its reason (15 characters or more);
-- a tracked file that no store classes, and an engine store (:data:`KNOWN`: the ledgers, the sessions, the
-  transcripts...) that no store declares: a store without a class;
+- a tracked file that no store classes;
 - a destination its class forbids: an exit in ``to`` the class says ``never`` for, and the git reality: tracked
   files whose class does not allow the repo's remote in clear (``git-private``, or ``git-public`` when the remote is
   one of ``public.repos``);
 - a class under the floor of its project's scope chain (``classes: {floor: ...}`` on the nodes of ``scopes.yaml``,
   spec-brain-scope-tree §3.9). Until the scope tree's registry exists, :func:`scope_chain` reads it when present and
   finds no floor otherwise.
+
+The engine's own stores outside the repo (:data:`ENGINE_STORES`: every name it writes under BRAIN_HOME, and the
+transcripts) each carry a suggested data class and a format class (truth-local, log, derived, install, external). One
+that a brain does not declare is never without a class: it takes its suggested one, never looser than sealed (secret
+for the secrets), and the check notes it without failing (COMPAT-6); ``brain classes --suggest`` prints the lines to
+declare. A name in BRAIN_HOME that no store covers is noted too, sealed by default.
+
+The engine also reads :data:`SOURCES` it never writes: the desktop app's session metadata is read through a closed
+list of keys, never its text keys (:data:`APP_TEXT_KEYS`: the turn report, the pending reminders, the prompt
+snapshots, the connectors' configuration); :func:`outside` says which keys a reader took beyond the list.
 
 A waiver (``waive: {exit: reason}``) keeps a known gap visible: ``brain classes`` and the check print it, it is never
 silent. :func:`decide` is what an exit's adapter asks before a store leaves (the session archive, the data remote,
@@ -84,16 +93,147 @@ _ROW = {
 }
 POLICY = {c: dict(zip(EXITS, row)) for c, row in _ROW.items()}
 
-# The engine's own stores outside the repo: each must be covered by a declared store (a store without a class).
-KNOWN = {
-    "ledger": ("$BRAIN_HOME/ledger", "sealed"),
-    "sessions": ("$BRAIN_HOME/sessions", "sealed"),
-    "resume": ("$BRAIN_HOME/resume", "sealed"),
-    "digest": ("$BRAIN_HOME/digest", "sealed"),
-    "vault": ("$BRAIN_HOME/vault", "sealed"),
-    "transcripts": ("~/.claude/projects", "sealed"),
+# How a store is read and written (spec-brain-data-compat §1, its format class); its data class says where it may go.
+FORMATS = {
+    "truth-local": "one machine, no git: what nothing else keeps; backed up before a write-back, read-only for an "
+                   "engine older than the one that wrote it",
+    "log": "append-only, never rewritten; bad or unknown lines are skipped and counted",
+    "derived": "rebuilt from the rest (a cache, a view, an index, a stamp): never edited, never migrated",
+    "install": "an engine install (a venv, a launcher, a tag's clone): the installer rebuilds it",
+    "external": "written by another tool, read by the engine only",
 }
+FLOOR = "sealed"    # COMPAT-6: an engine store a brain does not declare takes its class, never looser than this
+
+
+@dataclass(frozen=True)
+class Known:
+    """One of the engine's own stores outside the repo: where, its suggested data class (the default while a brain
+    does not declare it), its format class and what it holds."""
+    path: str
+    cls: str
+    format: str
+    what: str
+
+
+# The engine's own stores outside the repo, a specific path before the folder that holds it. A brain declares each
+# (classes.stores); one it does not declare takes its suggested class here, never looser than sealed (secret for the
+# secrets), and brain check --all notes it without failing (COMPAT-6). tests/test_classes_home.py fails on a name
+# the engine's code writes under BRAIN_HOME that this list does not hold.
+ENGINE_STORES = {
+    "ledger": Known("$BRAIN_HOME/ledger", "sealed", "log",
+                    "the token ledger's events, the session records' lines, the engine's own timings and errors"),
+    "sessions": Known("$BRAIN_HOME/sessions", "sealed", "truth-local", "the session records, the children's reports"),
+    "resume": Known("$BRAIN_HOME/resume", "sealed", "derived", "the resume packs, one per project"),
+    "digest": Known("$BRAIN_HOME/digest", "sealed", "derived", "the digests"),
+    "vault": Known("$BRAIN_HOME/vault", "sealed", "truth-local",
+                   "the sealed copies, the canaries, the device's public facts and the vault's state"),
+    "transcripts": Known("~/.claude/projects", "sealed", "external",
+                         "the agent's transcripts: prompts, tool inputs and outputs, sometimes a secret"),
+    "usage": Known("$BRAIN_HOME/usage", "sealed", "log",
+                   "the token ledger's views, quota.json and quota.jsonl, the session starts, the usage audits"),
+    "budget": Known("$BRAIN_HOME/budget", "sealed", "truth-local", "the context budget watch's marks per session"),
+    "forecast": Known("$BRAIN_HOME/forecast", "sealed", "derived", "the forecasts, one folder per project"),
+    "announce": Known("$BRAIN_HOME/announce", "sealed", "truth-local",
+                      "the mid-session marks: the decisions already announced to a session"),
+    "handover": Known("$BRAIN_HOME/handover", "sealed", "truth-local",
+                      "the hand-over notes and their mirror, the cockpit's launch scripts"),
+    "inbox": Known("$BRAIN_HOME/inbox", "sealed", "log", "the owner's messages to sessions"),
+    "features": Known("$BRAIN_HOME/features", "sealed", "derived", "the feature stores' indexes (sqlite)"),
+    "cache": Known("$BRAIN_HOME/cache", "sealed", "derived",
+                   "the app metadata's picked keys (a closed list), the governor's and the guards' caches"),
+    "memory-sync": Known("$BRAIN_HOME/memory-sync", "sealed", "truth-local",
+                         "the memory export's state, alerts and backups"),
+    "schedules": Known("$BRAIN_HOME/schedules", "sealed", "truth-local", "the scheduled tasks this machine installed"),
+    "alerts": Known("$BRAIN_HOME/alerts", "sealed", "truth-local", "the alerts already raised and sent"),
+    "probes": Known("$BRAIN_HOME/probes", "sealed", "derived", "the dependency probes' last run (brain.depprobes)"),
+    "notify": Known("$BRAIN_HOME/notify", "sealed", "truth-local", "the notifications' state and the quiet hours"),
+    "secrets": Known("$BRAIN_HOME/secrets", "secret", "truth-local",
+                     "the stack bundles' secret files: never copied, never in the brain"),
+    "collector": Known("$BRAIN_HOME/stacks/sovereign/data/otel-collector", "sealed", "log",
+                       "the telemetry collector's data, after its processors"),
+    "stacks": Known("$BRAIN_HOME/stacks", "sealed", "truth-local", "the rendered stack bundles and their data"),
+    "telemetry": Known("$BRAIN_HOME/telemetry", "sealed", "truth-local",
+                       "the telemetry consent record and the report outbox"),
+    "code-index": Known("$BRAIN_HOME/code-index", "sealed", "derived", "the code index's bundles"),
+    "code-index-record": Known("$BRAIN_HOME/code-index.json", "sealed", "truth-local", "the repos indexed, and when"),
+    "code-map": Known("$BRAIN_HOME/code-map", "sealed", "derived", "the code maps, one per project"),
+    "public-check": Known("$BRAIN_HOME/public-check", "sealed", "derived",
+                          "the public check's stamps, per repo and commit"),
+    "reviews": Known("$BRAIN_HOME/reviews", "sealed", "truth-local", "the reviews' findings and stamps"),
+    "backup": Known("$BRAIN_HOME/backup", "sealed", "truth-local", "copies taken before a write-back"),
+    "cockpit": Known("$BRAIN_HOME/tui.json", "sealed", "truth-local", "the cockpit's settings"),
+    "update-check": Known("$BRAIN_HOME/update.json", "sealed", "derived", "the last engine tags read, and when"),
+    "personal": Known("$BRAIN_HOME/personal.json", "sealed", "truth-local",
+                      "the pointer to this machine's personal brain"),
+    "profile": Known("$BRAIN_HOME/profile.json", "sealed", "truth-local", "this machine's frozen tier profile"),
+    "venv": Known("$BRAIN_HOME/venv", "sealed", "install", "the brain command's own Python environment"),
+    "bin": Known("$BRAIN_HOME/bin", "sealed", "install", "the brain command's launcher, alone on the PATH"),
+    "engine-clones": Known("$BRAIN_HOME/engine", "sealed", "install",
+                           "the engine tags' clones an installer or a shim keeps"),
+}
+# The suggested class of each engine store: {name: (path, class)}.
+KNOWN = {name: (k.path, k.cls) for name, k in ENGINE_STORES.items()}
 TRANSCRIPTS = "~/.claude/projects"      # read under $CLAUDE_CONFIG_DIR when it is set (brain.paths.projects_dir)
+# A write's leftover beside an engine store's file, the same store: a name ending in .tmp, .bak or .lock, or set
+# aside with its stamp (``<name>.unreadable-<UTC stamp>``, brain.stateio). Told by the suffix, never by a substring:
+# export.tmpl or sync.lockfile is a name of its own.
+HOME_TRANSIENT = re.compile(r"\.(?:tmp|bak|lock)$|\.unreadable-\d")
+
+
+@dataclass(frozen=True)
+class Source:
+    """What the engine reads outside its stores and never writes: where, and the closed list of keys it may read
+    (``keys``; a key's own list in ``nested``, ``key.*`` for the entries of a mapping; None: whole files are read).
+    ``never`` names the keys that hold texts: never read, never copied into a store."""
+    path: str
+    what: str
+    keys: frozenset | None = None
+    nested: dict = field(default_factory=dict)
+    never: tuple = ()
+
+
+# The desktop app's session metadata (ST-1, spec-brain-session-telemetry §3.7): brain.sessions, brain.governor,
+# brain.tidy and the capture hook (through brain.sessions) read these keys and no other; tests/test_classes_home.py
+# holds every reader to them and checks that no text key reaches a store.
+APP_TEXT_KEYS = ("lastTurnReport", "pendingSystemReminder", "promptAppendSnapshot", "remoteMcpServersConfig",
+                 "spawnSeed")
+APP_SESSION_KEYS = frozenset({"sessionId", "cliSessionId", "title", "createdAt", "lastActivityAt", "isArchived",
+                              "completedTurns", "model", "effort", "branch", "lineageDetached", "spawnedFrom", "prs",
+                              "cwd"})
+APP_SPAWN_KEYS = frozenset({"sessionId", "taskId", "name", "sideSession"})
+SOURCES = {
+    "app-sessions": Source("$LOCALAPPDATA/Claude-Data/*/claude-code-sessions",
+                           "the desktop app's metadata of each session: both ids, the parent, the dates, the state",
+                           APP_SESSION_KEYS, {"spawnedFrom": APP_SPAWN_KEYS}, APP_TEXT_KEYS),
+    "app-worktrees": Source("$LOCALAPPDATA/Claude-Data/*/git-worktrees.json",
+                            "the desktop app's worktrees and the session leasing each",
+                            frozenset({"worktrees"}), {"worktrees.*": frozenset({"path", "leasedBy"})}),
+    "app-notes": Source("$LOCALAPPDATA/Claude-Data/*/side-session-notes",
+                        "the notes a family of sessions shares: read whole by brain resume and the briefs, never "
+                        "written"),
+}
+
+
+def outside(source: str, read) -> list[str]:
+    """The keys of ``read`` (``key``, ``key.sub`` or ``key.*.sub``) that the source's closed list does not allow,
+    sorted; a text key always counts, at any depth."""
+    src = SOURCES[source]
+    if src.keys is None:
+        return []
+    bad = []
+    for k in set(read):
+        parts = k.split(".")
+        if any(p in src.never for p in parts):
+            bad.append(k)
+        elif len(parts) == 1:
+            if parts[0] not in src.keys:
+                bad.append(k)
+        else:
+            parent, sub = ".".join(parts[:-1]), parts[-1]
+            allowed = src.nested.get(parent)
+            if parts[0] not in src.keys or allowed is None or sub not in allowed:
+                bad.append(k)
+    return sorted(bad)
 STORE_KEYS = {"class", "paths", "to", "waive", "project", "why"}
 REASON_MIN = 15
 SEALED_SUFFIXES = (".age", ".gpg")      # a tracked file that is already sealed is not in clear
@@ -232,6 +372,29 @@ def store_of(declared: list[Store], path: str) -> Store | None:
     return None
 
 
+def default_stores(declared: list[Store]) -> list[Store]:
+    """The engine stores (:data:`ENGINE_STORES`) that no declared store covers, each a store of its suggested class:
+    the class it takes until the brain declares it (COMPAT-6)."""
+    return [Store(name, k.cls, [], [k.path]) for name, k in ENGINE_STORES.items() if not store_of(declared, k.path)]
+
+
+def effective(declared: list[Store]) -> list[Store]:
+    """The declared stores, then the engine stores they leave out at their default class: what a path or an exit is
+    decided by."""
+    return declared + default_stores(declared)
+
+
+def home_unknown(declared: list[Store]) -> list[str]:
+    """The names at the top of BRAIN_HOME that neither a declared store nor an engine store covers (a store written
+    by a newer or another engine, or by hand); a write's leftover (``.tmp``, ``.bak``...) is not counted."""
+    try:
+        names = sorted(p.name for p in paths.brain_home().iterdir())
+    except OSError:
+        return []
+    every = effective(declared)
+    return [n for n in names if not HOME_TRANSIENT.search(n) and not store_of(every, f"$BRAIN_HOME/{n}")]
+
+
 def tracked(root: Path) -> list[str]:
     try:
         return boundary.tracked(root)
@@ -330,6 +493,23 @@ class Report:
     files: dict[str, list[str]] = field(default_factory=dict)
     remote: str = ""
     declared: bool = False
+    defaulted: list[Store] = field(default_factory=list)   # engine stores undeclared, at their suggested class
+    unknown: list[str] = field(default_factory=list)       # names in BRAIN_HOME no store covers
+    home_notes: list[str] = field(default_factory=list)    # what brain check --all prints of the two
+
+
+def home_notes(defaulted: list[Store], unknown: list[str]) -> list[str]:
+    """The notes of the engine stores a brain leaves undeclared and of the names in BRAIN_HOME no store covers: they
+    never fail a check (COMPAT-6)."""
+    out = []
+    if defaulted:
+        out.append(f"{len(defaulted)} engine store(s) undeclared take their suggested class by default: "
+                   + ", ".join(f"{s.name} ({s.cls})" for s in defaulted)
+                   + " (brain classes --suggest prints the lines to declare)")
+    if unknown:
+        out.append(f"{len(unknown)} name(s) in BRAIN_HOME that no store covers, {FLOOR} by default: "
+                   + ", ".join(unknown) + " (declare them in classes.stores)")
+    return out
 
 
 def check(root: Path | None = None, cfg: config.Config | None = None) -> Report:
@@ -349,9 +529,10 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> Report:
     if orphans:
         rep.errors.append(f"{len(orphans)} tracked file(s) have no class (no store's glob matches): "
                           + ", ".join(orphans[:5]) + (" ..." if len(orphans) > 5 else ""))
-    for name, (path, suggested) in KNOWN.items():
-        if not store_of(declared, path):
-            rep.errors.append(f"the engine's store {name} ({path}) has no class (declare it; suggested: {suggested})")
+    rep.defaulted = default_stores(declared)
+    rep.unknown = home_unknown(declared)
+    rep.home_notes = home_notes(rep.defaulted, rep.unknown)
+    rep.notes += rep.home_notes
     rep.remote = remote_exit(cfg.root, cfg)
     by_name = {s.name: s for s in declared}
     for s in declared:
@@ -398,9 +579,10 @@ def _floors(cfg: config.Config, rep: Report, by_name: dict[str, Store]) -> None:
 
 def decide(cfg: config.Config, store: str, exit_: str) -> str:
     """What an exit's adapter may do with a store: clear, sealed or never (opt-in resolved by the store's ``to``,
-    a waiver counting as the owner's explicit yes). Unknown store or exit: never."""
+    a waiver counting as the owner's explicit yes). An engine store the brain does not declare is decided at its
+    suggested class (COMPAT-6). Unknown store or exit: never."""
     declared, _ = stores(cfg)
-    s = next((x for x in declared if x.name == store), None)
+    s = next((x for x in effective(declared) if x.name == store), None)
     if s is None or exit_ not in EXITS:
         return "never"
     h = how(s.cls, exit_)
@@ -411,9 +593,26 @@ def decide(cfg: config.Config, store: str, exit_: str) -> str:
     return h
 
 
+def engine_line(name: str) -> dict:
+    """An engine store's declaration at its suggested class; the stores nothing else keeps (truth-local, log) go to
+    the offsite copy and the backups, sealed."""
+    k = ENGINE_STORES[name]
+    line: dict = {"class": k.cls, "paths": [k.path]}
+    if k.format in ("truth-local", "log") and all(how(k.cls, e) != "never" for e in ("offsite", "backup")):
+        line["to"] = ["offsite", "backup"]
+    return line
+
+
 def suggest(cfg: config.Config) -> dict:
     """A starting classes block: the engine's machine stores, the brain's own folders by their usual class, and a
-    catch-all; brain classes --suggest prints it to edit, never writes it."""
+    catch-all; brain classes --suggest prints it to edit, never writes it. A brain that already declares classes gets
+    only the lines it misses: the engine stores it leaves at their default (a name it already uses gets ``home-``)."""
+    if isinstance(cfg.data.get("classes"), dict):
+        declared, errors = stores(cfg)
+        if not errors:
+            names = {s.name for s in declared}
+            return {"stores": {(s.name if s.name not in names else f"home-{s.name}"): engine_line(s.name)
+                               for s in default_stores(declared)}}
     root = cfg.root
     folders = {"memory": "confidential", "records/ddr": "confidential", "notes": "private", "docs": "private",
                "records": "private"}
@@ -421,10 +620,22 @@ def suggest(cfg: config.Config) -> dict:
     for rel, cls in folders.items():
         if (root / rel).is_dir():
             out[rel.replace("/", "-")] = {"class": cls, "paths": [f"{rel}/**"]}
-    for name, (path, cls) in KNOWN.items():
-        out[name] = {"class": cls, "paths": [path], "to": ["offsite", "backup"]}
+    for name in ENGINE_STORES:
+        out[name] = engine_line(name)
     out["repo"] = {"class": "private", "paths": ["**"]}
     return {"stores": out}
+
+
+def sources() -> list[str]:
+    """The sources the engine reads and never writes, as text lines: where, and the closed list of keys."""
+    lines = []
+    for name, src in SOURCES.items():
+        keys = (f"{len(src.keys)} key(s): " + ", ".join(sorted(src.keys))
+                + "".join(f"; {k}: {', '.join(sorted(v))}" for k, v in src.nested.items())) \
+            if src.keys is not None else "whole files"
+        lines.append(f"source {name}: {src.path}: read only, {keys}"
+                     + (f"; never: {', '.join(src.never)}" if src.never else ""))
+    return lines
 
 
 def matrix() -> list[str]:
@@ -442,8 +653,11 @@ def render(rep: Report) -> list[str]:
         exits = ", ".join(f"{e}:{how(s.cls, e)}" for e in s.to) or "-"
         lines.append(f"{s.name:<14} {s.cls:<13} {'; '.join(where):<34} to {exits}"
                      + (f"  waived: {', '.join(s.waive)}" if s.waive else ""))
+    for s in rep.defaulted:
+        lines.append(f"{s.name:<14} {s.cls:<13} {'; '.join(s.machine):<34} by default (undeclared)")
     if rep.remote:
         lines.append(f"remote: {rep.remote}")
+    lines += sources()
     lines += [f"note: {n}" for n in rep.notes]
     lines += [f"waived: {w}" for w in rep.waived]
     lines += [f"error: {e}" for e in rep.errors]
@@ -455,7 +669,30 @@ def render(rep: Report) -> list[str]:
 def as_dict(rep: Report) -> dict:
     return {"stores": [{"name": s.name, "class": s.cls, "paths": s.globs + s.machine, "tracked": len(rep.files.get(
         s.name, [])), "to": {e: how(s.cls, e) for e in s.to}, "waive": s.waive, "project": s.project}
-        for s in rep.stores], "remote": rep.remote, "errors": rep.errors, "waived": rep.waived, "notes": rep.notes}
+        for s in rep.stores], "remote": rep.remote, "errors": rep.errors, "waived": rep.waived, "notes": rep.notes,
+        "defaulted": [{"name": s.name, "class": s.cls, "paths": s.machine,
+                       "format": ENGINE_STORES[s.name].format} for s in rep.defaulted],
+        "unknown": rep.unknown,
+        "sources": {n: {"path": src.path, "keys": sorted(src.keys) if src.keys is not None else None,
+                        "nested": {k: sorted(v) for k, v in src.nested.items()}, "never": list(src.never)}
+                    for n, src in SOURCES.items()}}
+
+
+def _show_paths(cfg, which: list[str]) -> int:
+    """``brain classes PATH...``: the store of each path and its class, a store the brain does not declare shown at
+    its default; exit 1 when the declared stores have an error."""
+    declared, errs = stores(cfg)
+    for e in errs:
+        print(f"error: {e}")
+    every = effective(declared)
+    for p in which:
+        s = store_of(every, p)
+        if s is None:
+            print(f"{p}: no store: no class")
+        else:
+            own = any(s is d for d in declared)
+            print(f"{p}: {s.name} ({s.cls}" + (")" if own else ", by default: undeclared)"))
+    return 1 if errs else 0
 
 
 def main(root: Path | None, *, check_only: bool = False, as_json: bool = False, which: list[str] | None = None,
@@ -470,18 +707,13 @@ def main(root: Path | None, *, check_only: bool = False, as_json: bool = False, 
         print(json.dumps({"classes": suggest(cfg)}, indent=2))
         return 0
     if which:
-        declared, errs = stores(cfg)
-        for e in errs:
-            print(f"error: {e}")
-        for p in which:
-            s = store_of(declared, p)
-            print(f"{p}: " + (f"{s.name} ({s.cls})" if s else "no store: no class"))
-        return 1 if errs else 0
+        return _show_paths(cfg, which)
     rep = check(root, cfg)
     if as_json:
         print(json.dumps(as_dict(rep), indent=2))
     elif check_only:
-        for line in [f"waived: {w}" for w in rep.waived] + [f"error: {e}" for e in rep.errors]:
+        for line in ([f"note: {n}" for n in rep.home_notes] + [f"waived: {w}" for w in rep.waived]
+                     + [f"error: {e}" for e in rep.errors]):
             print(line)
         print(f"classes: {len(rep.stores)} store(s), " + (f"{len(rep.errors)} error(s)" if rep.errors else "OK"))
     else:

@@ -18,10 +18,12 @@ USAGE = """\
   brain alerts [--project P | --all] [--quick] [--json] [--fail-on LEVEL] [--notify [--dry-run]]
                  the open alerts of each project, at zero token: the scheduler's tasks (missed passes against their
                  cadence, 2 before an alert; killed, failed, disabled, silent), the exec ledger, watched stacks, the
-                 code index, the audit debt above the written view, the project's alert events and files (brain
-                 status shows them in the project's section); --quick: the files and events only; --fail-on: exit 1
-                 when one is open at that level or above; --notify: the pass a scheduled task runs, which sends each
-                 new, risen or failed alert through brain notify at its level (resolved ones at info) and records
+                 code index, the audit debt above the written view, the project's alert events and files, and on
+                 the brain's own project this machine's dependency probes, run by the pass (brain probes; brain
+                 status shows them in the project's section); --quick: the files and events only, the probes' last
+                 run; --fail-on: exit 1 when one is open at that level or above; --notify: the pass a scheduled
+                 task runs, which sends each new, risen or failed alert through brain notify at its level (resolved
+                 ones at info) and records
                  the changes in $BRAIN_HOME/alerts (--dry-run: what it would send, nothing recorded); without its
                  channel's variable ($BRAIN_NTFY_TOPIC) it sends nothing and says so in one line
   brain alerts raise KEY [MESSAGE|-|@FILE] --level L [--task T] [--source S] [--code C] [--link URL]
@@ -69,7 +71,7 @@ def register(sub, ctx) -> None:
     al.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
     al.add_argument("--all", action="store_true", help="every project of the registry")
     al.add_argument("--quick", action="store_true", help="the files and events only: no scheduler, stack, code index "
-                                                         "or audit probe")
+                                                         "or audit probe, and the dependency probes' last run")
     al.add_argument("--json", action="store_true", help="stable keys, no timestamp of its own")
     al.add_argument("--fail-on", choices=list(alerts.LEVELS), help="exit 1 when an alert at this level or above is "
                                                                     "open")

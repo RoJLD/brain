@@ -24,6 +24,7 @@ from research_graph.code_layer import (
 )
 from research_graph.loader import apply_overlay, load_store
 from research_graph.model import LayeredGraph
+from tests.two_stores import two_stores
 
 STORE = Path(__file__).parent / "fixtures" / "code_layer"
 
@@ -381,3 +382,18 @@ def test_cli_code_query(capsys):
     out = capsys.readouterr().out
     assert "direct: 1" in out and "code:fake-repo:fake_pkg/store.py  (via ds-x)" in out
     assert main(["--store", str(STORE), "code", "nope"]) == 1
+
+
+def test_another_stores_coderef_an_edge_names_is_its_stores_to_check(tmp_path):
+    """wi-brain-cross-store-edges: an implemented_by edge to another store's CodeRef passes the layer's rules (that
+    store's own check reads its id and Repo node)."""
+    home, _ = two_stores(tmp_path)
+    schema = (home / "schema.yaml").read_text(encoding="utf-8").replace("decided_by]", "decided_by, implemented_by]")
+    (home / "schema.yaml").write_text(schema, encoding="utf-8")
+    (home / "edges" / "code.yaml").write_text("- {from: wi-a, to: 'code:elsewhere:x.py', type: implemented_by}\n",
+                                              encoding="utf-8")
+    foreign = {"wi-s": "parent", "ms-parent": "parent", "code:elsewhere:x.py": {"store": "lib", "type": "CodeRef"}}
+    assert structure_errors(load_store(home, foreign=foreign)) == []
+    foreign["code:elsewhere:x.py"] = {"store": "lib", "type": "Dataset"}
+    assert structure_errors(load_store(home, foreign=foreign)) == [
+        "wi-a->code:elsewhere:x.py: implemented_by must point at a CodeRef"]

@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import pytest
 
+from research_graph import query, report
 from research_graph.cli import main
 from research_graph.kanban import DEFAULT_OUT as KANBAN_OUT
-from research_graph.loader import load_store
+from research_graph.loader import load_store, read_foreign
 from research_graph.roadmap import (
     DEFAULT_OUT,
     MARKER,
@@ -16,6 +17,7 @@ from research_graph.roadmap import (
     write_roadmap,
 )
 from tests.backlog_world import write_store
+from tests.two_stores import two_stores
 
 
 @pytest.fixture
@@ -86,3 +88,19 @@ def test_roadmap_write_goes_to_the_views_folder(store, tmp_path, capsys):
     assert roadmap_stale(load_store(store), repo, views="prog") == [
         "prog/roadmap_graph.md is stale: run `research_graph kanban --write`"]
     assert roadmap_stale(load_store(store), repo) == []  # the default folder holds none
+
+
+def test_the_roadmap_names_another_stores_items_and_sub_milestones(tmp_path):
+    """wi-brain-cross-store-edges: the items that move a milestone, its sub-milestones and its critical path name
+    another store's node with that store's label, in the view, the summary and --json."""
+    home, parent = two_stores(tmp_path)
+    g = load_store(parent, foreign=read_foreign([("home:graph", home)]))
+    text = render_roadmap(g)
+    assert "| ms-parent — Parent milestone | pending | 0/2 | - |" in text
+    assert "Sub-milestones: ms-home (home:graph)." in text
+    assert "- [ ] wi-a (home:graph) — Home step" in text and "- [ ] wi-s — Parent step" in text
+    (m,) = query.roadmap(g)
+    assert m["stores"]["ms-home"] == "home:graph" and [r.get("store") for r in m["part_of"]] == ["home:graph", None]
+    lines = report.roadmap([m])
+    assert "    moves it     wi-a (home:graph) [todo] -  Home step" in lines
+    assert "stores" not in query.roadmap(load_store(home, foreign=read_foreign([("parent:graph", parent)])))[0]

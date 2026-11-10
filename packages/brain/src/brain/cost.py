@@ -10,9 +10,12 @@ signals. Its task class is its briefs' (the owner's sub-session rule: trivial, s
 milestone the graph's, its kind the words of its title (spec, review, fix, build).
 
   brain usage    the window's sessions by project, item, PR, class, kind, theme, milestone, model, phase, tool,
-                 command, skill, session, family (a session and the sub-sessions it started), day or week: the totals,
-                 their share, and the distribution per unit (median, p25-p75, p90), not only the mean; the repeated
-                 3-step sequences (script candidates); the cost of a session's start (its first messages).
+                 command, skill, session, family (a session and the sub-sessions it started), workflow (each workflow
+                 run: its agents, phases and the session that launched it), agent (the subagents' and workflow agents'
+                 labels), day or week: the totals, their share, and the distribution per unit (median, p25-p75, p90),
+                 not only the mean; the split of the cost between the main threads, the plain subagents and the
+                 workflow agents; the repeated 3-step sequences (script candidates); the cost of a session's start
+                 (its first messages).
   cost estimate  an item or a brief's text: the finished items most alike (the same class and theme, else class and
                  milestone, class and kind, class, all; the nearest half by brief size when there are enough), their
                  median and p25-p75 range of cost, output, context peak, active time and sessions, times the
@@ -56,7 +59,8 @@ SESSION_DIMS = ("project", "class", "kind", "model", "pr")
 ITEM_DIMS = ("item", "theme", "milestone")
 PART_DIMS = {"phase": "phases", "tool": "tools", "command": "commands", "skill": "skills"}
 TIME_DIMS = ("day", "week")
-DIMS = ("summary", *SESSION_DIMS, *ITEM_DIMS, *PART_DIMS, "session", "family", *TIME_DIMS, "sequences")
+AGENT_DIMS = ("workflow", "agent")  # a workflow run, an agent's label (wi-brain-usage-workflow-agents)
+DIMS = ("summary", *SESSION_DIMS, *ITEM_DIMS, *PART_DIMS, "session", "family", *AGENT_DIMS, *TIME_DIMS, "sequences")
 METRICS = ("cost", "output", "peak", "active_s", "sessions")
 # The signals explain() names; {owner}: config.owner_of(), read when it runs.
 EXPLAIN = (("review_rounds", "review rounds"), ("merges", "merge, rebase or pull commands"),
@@ -522,6 +526,39 @@ def table_of(led: Ledger, rows: list[dict], dim: str, since: str, until: str) ->
             q = usage.quantiles([r.get("cost") or 0 for r in rs])
             out.append({"key": k[:8], "share": q["total"] / total, "unit": "session", **q,
                         "title": titles.get(k, ""), "in_window": k in ids})
+    elif dim == "workflow":
+        for r in rows:
+            for run, w in ((r.get("agents") or {}).get("workflows") or {}).items():
+                if not usage.in_window(w, since, until):
+                    continue
+                phases = sorted((w.get("phases") or {}).items(), key=lambda kv: -(kv[1].get("cost") or 0))
+                out.append({"key": run, "total": w.get("cost") or 0.0, "share": (w.get("cost") or 0.0) / total,
+                            "agents": w.get("agents") or 0, "session": r["session_id"][:8], "project": r["project"],
+                            "title": r.get("title") or r.get("branch") or "", "start": w.get("start") or "",
+                            "phases": [[k, v.get("count") or 0, round(v.get("cost") or 0.0, 4)] for k, v in phases],
+                            "output": w.get("output") or 0})
+    elif dim == "agent":
+        per: dict[str, dict] = {}
+
+        def add(label: str, v: dict, kind: str, run: str = "") -> None:
+            a = per.setdefault(label, {"total": 0.0, "n": 0, "kinds": set(), "runs": set()})
+            a["total"] += v.get("cost") or 0.0
+            a["n"] += v.get("count") or 0
+            a["kinds"].add(kind)
+            if run:
+                a["runs"].add(run)
+
+        for r in rows:
+            ag = r.get("agents") or {}
+            for label, v in (ag.get("subagents") or {}).items():
+                add(label, v, "subagent")
+            for run, w in (ag.get("workflows") or {}).items():
+                if usage.in_window(w, since, until):
+                    for label, v in (w.get("labels") or {}).items():
+                        add(label, v, "workflow", run)
+        for k, a in per.items():
+            out.append({"key": k, "total": round(a["total"], 4), "share": a["total"] / total, "n": a["n"],
+                        "kind": "+".join(sorted(a["kinds"])), "runs": len(a["runs"])})
     elif dim in TIME_DIMS:
         buckets: dict[str, dict] = {}
         for r in rows:
@@ -563,6 +600,32 @@ def sequences(rows: list[dict], min_sessions: int = SEQ_SESSIONS) -> list[dict]:
     return sorted(out, key=lambda a: (-a["total"], a["key"]))
 
 
+def agents_split(rows: list[dict], since: str = "", until: str = "") -> dict:
+    """Whose the sessions' cost is: the main threads', the plain subagents' and the workflow agents' (with the count
+    of the runs that have a day in [since, until) and of their agents), from the rows' ``main_cost`` and ``agents``; a
+    row scanned before ``agents`` (SCAN_V 2, its transcript gone) has all its subagents' cost plain."""
+    out = {"main": 0.0, "subagents": {"cost": 0.0, "count": 0}, "workflows": {"cost": 0.0, "runs": 0, "agents": 0}}
+    for r in rows:
+        c = r.get("cost") or 0.0
+        main = r["main_cost"] if isinstance(r.get("main_cost"), (int, float)) else c
+        ag = r.get("agents")
+        wf = 0.0
+        for w in ((ag or {}).get("workflows") or {}).values():
+            wf += w.get("cost") or 0.0
+            if usage.in_window(w, since, until):
+                out["workflows"]["runs"] += 1
+                out["workflows"]["agents"] += w.get("agents") or 0
+        out["main"] += main
+        out["workflows"]["cost"] += wf
+        out["subagents"]["cost"] += max(0.0, c - main - wf)
+        plain = ag.get("subagents") if isinstance(ag, dict) else r.get("subagents")
+        out["subagents"]["count"] += sum(v.get("count") or 0 for v in (plain or {}).values())
+    out["main"] = round(out["main"], 4)
+    out["subagents"]["cost"] = round(out["subagents"]["cost"], 4)
+    out["workflows"]["cost"] = round(out["workflows"]["cost"], 4)
+    return out
+
+
 def report(led: Ledger, since: str, until: str, by: str, plans=None) -> dict:
     rows = led.window(since, until)
     total = sum(r.get("cost") or 0 for r in rows)
@@ -575,10 +638,13 @@ def report(led: Ledger, since: str, until: str, by: str, plans=None) -> dict:
     start = usage.quantiles([(r.get("start_cost") or {}).get("cost") or 0 for r in rows])
     rep = {"since": since, "until": until, "by": by, "sessions": len(rows), "cost": round(total, 4),
            "tokens": dict(tokens), "plans": sorted({usage.plan_of(d, plans) for d in days}),
-           "unpriced": sum(r.get("unpriced") or 0 for r in rows), "start": start}
+           "unpriced": sum(r.get("unpriced") or 0 for r in rows), "start": start,
+           "agents": agents_split(rows, since, until)}
     dims = ("project", "item", "class", "phase", "tool", "command") if by == "summary" else (by,)
     rep["tables"] = {d: (sequences(rows) if d == "sequences" else table_of(led, rows, d, since, until)) for d in dims}
     if by == "summary":
+        if rep["agents"]["workflows"]["runs"]:
+            rep["tables"]["workflow"] = table_of(led, rows, "workflow", since, until)
         rep["tables"]["sequences"] = sequences(rows)
     return rep
 
@@ -595,6 +661,14 @@ def render_report(rep: dict, top: int = TOP) -> list[str]:
              f"{usage.ktok(t.get('output'))}, cache read {usage.ktok(t.get('cache_read'))}, cache write "
              f"{usage.ktok(t.get('cache_write'))}" + (f"; {rep['unpriced']} message(s) of unknown models unpriced"
                                                      if rep["unpriced"] else "")]
+    a = rep.get("agents")
+    if a and (a["subagents"]["cost"] or a["workflows"]["cost"]):
+        whole = rep["cost"] or 1e-9
+        lines.append(f"  whose: main threads {usage.usd(a['main'])} ({_pct(a['main'] / whole)}), subagents "
+                     f"{usage.usd(a['subagents']['cost'])} ({_pct(a['subagents']['cost'] / whole)}, "
+                     f"{a['subagents']['count']} agent(s)), workflows {usage.usd(a['workflows']['cost'])} "
+                     f"({_pct(a['workflows']['cost'] / whole)}, {a['workflows']['runs']} run(s), "
+                     f"{a['workflows']['agents']} agent(s))")
     s = rep["start"]
     if s["n"]:
         lines.append(f"  a session's start ({usage.START_MESSAGES} first messages): median {usage.usd(s['median'])}, "
@@ -623,6 +697,18 @@ def _render_table(dim: str, rows: list[dict], top: int) -> list[str]:
         lines += [f"  {r['key']:<10} {usage.usd(r['total']):>9} {_pct(r['share']):>4}  {r['sessions']:>3} sess  "
                   f"{r['messages']:>5} msg  out {usage.ktok(r['output']):>5}  top {r['top']}" for r in rows]
         return lines
+    if dim == "workflow":
+        lines = [f"By workflow run{more}: its agents, the session that launched it"]
+        for r in shown:
+            ph = ", ".join(f"{k} {n} {usage.usd(c)}" for k, n, c in r["phases"][:4])
+            lines.append(f"  {r['key'][:18]:<18} {usage.usd(r['total']):>9} {_pct(r['share']):>4}  {r['agents']:>3} "
+                         f"agent(s)  <{r['session']} {r['start'][:10]}  {ph}  {r['title'][:40]}".rstrip())
+        return lines if rows else lines + ["  none"]
+    if dim == "agent":
+        lines = [f"By agent label{more}: the subagents and the workflow agents"]
+        lines += [f"  {str(r['key'])[:40]:<40} {usage.usd(r['total']):>9} {_pct(r['share']):>4}  n {r['n']:>3}  "
+                  f"{r['kind']}" + (f", {r['runs']} run(s)" if r["runs"] else "") for r in shown]
+        return lines if rows else lines + ["  none"]
     if dim == "session":
         lines = [f"By session{more}"]
         for r in shown:
