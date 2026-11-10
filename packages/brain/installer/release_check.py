@@ -437,6 +437,21 @@ def readable_store(store: Path) -> None:
         raise CannotTell(f"--store {store}: not a graph store (no nodes/)")
 
 
+def grown_lines(repo: Path, tag: str, grown: list[str]) -> list[str]:
+    """What check says of the schema files that did not move: a new format's files on their own line, then the
+    schemas grown by optional keys only (both compatible with a patch)."""
+    added = {path for name in new_formats(repo, tag) for path in SCHEMAS[name]}
+    new, optional = [p for p in grown if p in added], [p for p in grown if p not in added]
+    lines = []
+    if new:
+        lines.append(f"new registered formats since {tag}, held by no brain yet (compatible with a patch): "
+                     f"{', '.join(new)}")
+    if optional:
+        lines.append(f"registered schemas grown by optional keys only since {tag} (compatible with a patch): "
+                     f"{', '.join(optional)}")
+    return lines
+
+
 def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], list[str]]:
     """(what it says, what fails) for the checkout ``repo`` against the tag ``tag``; ``store``: the graph store whose
     wave of this version must be closed."""
@@ -456,13 +471,7 @@ def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], l
     problems += [f"{p}: a fragment not compiled into ## {version} (python {BRAIN}/installer/changelog.py compile "
                  f"{version} --theme T --write)" for p in frag.pending(repo)]
     changed, grown = moved_schemas(repo, tag, changed_schemas(repo, tag))
-    added = {path for name in new_formats(repo, tag) for path in SCHEMAS[name]}
-    if [p for p in grown if p in added]:
-        said.append(f"new registered formats since {tag}, held by no brain yet (compatible with a patch): "
-                    f"{', '.join(p for p in grown if p in added)}")
-    if [p for p in grown if p not in added]:
-        said.append(f"registered schemas grown by optional keys only since {tag} (compatible with a patch): "
-                    f"{', '.join(p for p in grown if p not in added)}")
+    said += grown_lines(repo, tag, grown)
     changelog = f"{BRAIN}/CHANGELOG.md"
     upgrade = upgrade_section(read(repo, changelog), version)
     if not changed:
