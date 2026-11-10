@@ -8,7 +8,10 @@ project's own `CLAUDE.md` or `AGENTS.md` adds its rules, and a project rule wins
 An item is done when it is documented (README, docs and CHANGELOG updated in the same change as any change of
 behaviour, commands or configuration), tested (a test for the changed behaviour whenever one can be written), linked
 in the project's graph (its item, spec, ADR and code references), merged, ticked in the backlog with its PR and date,
-and written in the project's journal.
+written in the project's journal, and its session archived (the close-item procedure, step 5): the session that merges
+its own PR archives itself once its after-merge steps are done, a coordinator archives a child whose report says
+merged and verified, standing authorization for both, never a running session or one with uncommitted or unmerged
+work.
 
 ## Backlog and history
 

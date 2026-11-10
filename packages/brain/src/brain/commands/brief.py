@@ -14,8 +14,10 @@ USAGE = """\
                         a sub-session's brief from the graph: the item, its decided props and open questions, its
                         subgraph, its specs and ADRs, its files and collisions, the class's model and effort
                         (config.json brief.classes), the budget, the cost estimate, the coordinator's id (--coordinator,
-                        else $CLAUDE_CODE_HOST_SESSION_ID), the shared notes folder, and the definition of done and
-                        the never-list read from {owner}'s rules
+                        else $CLAUDE_CODE_HOST_SESSION_ID), the shared notes folder, what to do after the merge
+                        (close-item step 5: the session that merges its own PR archives itself, the coordinator archives
+                        a child reported merged and verified; config.json brief.after_merge), and the definition of
+                        done and the never-list read from {owner}'s rules
 """
 
 
