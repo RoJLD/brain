@@ -110,6 +110,19 @@ def test_the_newer_data_reaches_every_file_of_a_format(st, tmp_path):
         step["out"]
 
 
+def test_the_newer_data_reaches_a_yaml_file_holding_dates(st, tmp_path):
+    """members.yaml's keys carry dates (since:), which YAML reads as dates: the overlay copies them as they are."""
+    import yaml
+    root, home = tmp_path / "brain", tmp_path / "home"
+    root.mkdir()
+    (root / "members.yaml").write_text(st.fixture("members", "older").read_text(encoding="utf-8"), encoding="utf-8")
+    step = st.add_newer(root, home)
+    assert "members: members.yaml +keys" in step["out"], step["out"]
+    data = yaml.safe_load((root / "members.yaml").read_text(encoding="utf-8"))
+    assert data["people"][0]["pronouns"] == "she" and "passkeys" in data
+    assert str(data["people"][0]["keys"]["signing"][0]["since"]) == "2026-11-10"
+
+
 def test_a_file_changed_or_removed_is_data_lost_and_a_ledger_may_only_grow(st, tmp_path):
     root = tmp_path / "brain"
     (root / ".git").mkdir(parents=True)

@@ -63,6 +63,7 @@ written to ``<work>/report.json``.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -360,7 +361,7 @@ def add_newer(root: Path, home: Path) -> dict:
                     fh.write("".join(x + "\n" for x in add))
             else:
                 before = _load(f)
-                after = overlay(json.loads(json.dumps(before)), _load(fixture(fmt, "older", v)),
+                after = overlay(copy.deepcopy(before), _load(fixture(fmt, "older", v)),
                                 _load(fixture(fmt, "newer", v)))
                 add = [] if after == before else ["keys"]
                 if add:
