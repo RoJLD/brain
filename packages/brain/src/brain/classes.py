@@ -145,6 +145,7 @@ ENGINE_STORES = {
                          "the memory export's state, alerts and backups"),
     "schedules": Known("$BRAIN_HOME/schedules", "sealed", "truth-local", "the scheduled tasks this machine installed"),
     "alerts": Known("$BRAIN_HOME/alerts", "sealed", "truth-local", "the alerts already raised and sent"),
+    "probes": Known("$BRAIN_HOME/probes", "sealed", "derived", "the dependency probes' last run (brain.depprobes)"),
     "notify": Known("$BRAIN_HOME/notify", "sealed", "truth-local", "the notifications' state and the quiet hours"),
     "secrets": Known("$BRAIN_HOME/secrets", "secret", "truth-local",
                      "the stack bundles' secret files: never copied, never in the brain"),
