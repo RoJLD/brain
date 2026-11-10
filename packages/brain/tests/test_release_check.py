@@ -879,13 +879,21 @@ def test_an_optional_record_key_still_moves_the_format(repo, capsys):
     assert rc == 1 and "a format that moves is a minor version" in text and ar in text
 
 
-def test_the_real_config_schema_has_only_grown_since_v030():
-    """The engine's own config.schema.json against v0.3.0, when the tag is here: wave 0.3.1's keys are optional."""
-    import json as _json
-    root = PACKAGE.parents[1]
-    old = subprocess.run(["git", "-C", str(root), "show", f"v0.3.0:{CONFIG_SCHEMA}"], capture_output=True, text=True,
-                         encoding="utf-8")
-    if old.returncode:
-        pytest.skip("no v0.3.0 tag in this checkout")
-    new = (root / CONFIG_SCHEMA).read_text(encoding="utf-8")
-    assert release_check.additive(_json.loads(old.stdout), _json.loads(new))
+def test_moved_schemas_errs_towards_a_minor(repo):
+    """A config schema new since the tag, one that does not parse, a required list reordered, a scalar of another type:
+    each moves the format (never a patch by mistake)."""
+    write(repo, CONFIG_SCHEMA, '{"properties": {}, "required": ["a", "b"], "additionalProperties": false}\n')
+    commit(repo)
+    git(repo, "tag", "-f", "v0.2.5")
+    write(repo, CONFIG_SCHEMA, '{"properties": {}, "required": ["b", "a"], "additionalProperties": false}\n')
+    assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
+    write(repo, CONFIG_SCHEMA, '{"properties": {}, "required": ["a", "b"], "additionalProperties": 0}\n')
+    assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
+    write(repo, CONFIG_SCHEMA, "{not json\n")
+    assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
+    git(repo, "rm", "-q", "--cached", CONFIG_SCHEMA)
+    commit(repo)
+    git(repo, "tag", "-f", "v0.2.5")
+    write(repo, CONFIG_SCHEMA, '{"properties": {}}\n')   # new since the tag
+    assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
+    write(repo, CONFIG_SCHEMA, '{"properties": {}, "required": ["a", "b"], "additionalProperties": false}\n')

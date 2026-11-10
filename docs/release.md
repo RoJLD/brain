@@ -19,8 +19,9 @@ Which number moves is decided by what an owner has to do, not by how much change
 **An optional key of config.json is a patch's** (wi-brain-release-schema-additive): when `config.schema.json` only
 gains optional properties (none of them `required`) or changes its prose (`description`, `title`, `$comment`,
 `examples`), every config.json the old schema accepted is still valid and an owner has nothing to do; `release-check`
-reports it as grown, not moved. Any other change of it moves the format (a key removed, a type, an enum, a bound, a
-pattern, `additionalProperties` or `required` changed). A record schema (ar, ddr, sr, event) moves even by an
+reports it as grown, not moved. Any other change of it moves the format: a key removed, a keyword added, removed
+or changed (a type, an enum, a bound, a pattern, `additionalProperties`, `required`), even a list reordered; the
+comparison errs towards a minor version. A record schema (ar, ddr, sr, event) moves even by an
 optional key, since older engines on other machines read the records this one writes. A new refusal of what passed
 stays a minor version: ship it off by default, behind a key the owner turns on, to keep a patch.
 

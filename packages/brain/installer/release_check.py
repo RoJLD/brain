@@ -122,14 +122,15 @@ PROSE = ("description", "title", "$comment", "examples")
 def additive(old, new) -> bool:
     """True when the JSON schema ``new`` only adds to ``old`` optional properties (in an object's ``properties``, none
     of them ``required``) or changes its prose (:data:`PROSE`): every document ``old`` accepts, ``new`` accepts.
-    Any other change (a property removed, a type, an enum, a bound, a pattern, ``additionalProperties`` or
-    ``required`` changed) is not additive."""
+    Any other change (a property removed, a keyword added, removed or changed: a type, an enum, a bound, a pattern,
+    ``additionalProperties``, ``required``, a list reordered) is not additive: the comparison errs towards a minor
+    version. A scalar keeps its type too (``false`` is not ``0``)."""
     if isinstance(old, dict) and isinstance(new, dict):
         keys = (set(old) | set(new)) - set(PROSE)
         return all(key in old and key in new and _key_additive(key, old[key], new[key], new) for key in keys)
     if isinstance(old, list) and isinstance(new, list):
         return len(old) == len(new) and all(additive(a, b) for a, b in zip(old, new))
-    return old == new
+    return type(old) is type(new) and old == new
 
 
 def _key_additive(key: str, old, new, schema: dict) -> bool:
