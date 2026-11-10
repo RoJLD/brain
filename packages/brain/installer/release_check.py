@@ -4,7 +4,8 @@
 A pull request is a version PR when either distribution's ``__version__`` is not the last tag's. On any other, nothing
 is checked. On a version PR, it fails when:
 
-- a registered schema (:data:`SCHEMAS`) changed since the last tag and this version's section of
+- a registered schema (:data:`SCHEMAS`) moved since the last tag (changed, except an additive change of a JSON schema
+  of :data:`ADDITIVE`: :func:`additive`) and this version's section of
   ``packages/brain/CHANGELOG.md`` has no ``### Upgrade`` with something in it: an upgrade that needs a step and does
   not say so is how a brain breaks on its owner's machine (``brain update`` prints that section);
 - the version is not coherent: both ``__version__``, the research-graph pin, the hooks' ``brain_version``, a dated
@@ -13,7 +14,7 @@ is checked. On a version PR, it fails when:
 - its ``### Upgrade`` does not number each of the standard steps (:data:`STANDARD_STEPS`), which every release asks
   of an owner and ``brain update`` prints;
 - the version policy (docs/release.md, « The version policy ») is broken by a patch, a version whose X.Y is the last
-  tag's: a registered schema changed since that tag, or its ``### Upgrade`` numbers a step that is not one of the
+  tag's: a registered schema moved since that tag, or its ``### Upgrade`` numbers a step that is not one of the
   standard steps (:data:`STANDARD_STEPS`, by the bold title that opens the step). Such a release is a minor one;
 - either CHANGELOG's section repeats an entry an earlier section of it released: a fix that cannot wait, released from
   ``release/X.Y``, and left in main's ``## Unreleased`` when that branch merged back (by its text; a « No change »
@@ -34,6 +35,7 @@ PyYAML; on any PR, a version PR or not).
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -106,6 +108,58 @@ def changed_schemas(repo: Path, tag: str) -> list[str]:
     included."""
     paths = sorted({path for group in SCHEMAS.values() for path in group})
     return [line for line in git(repo, "diff", "--name-only", tag, "--", *paths).splitlines() if line]
+
+
+# The formats whose JSON schema may grow by an optional key in a patch (the owner, 2026-11-10,
+# wi-brain-release-schema-additive): every file an older engine wrote stays valid under the new schema, so an owner
+# has nothing to do. Only config.json's: a record schema (ar, ddr, sr, event) is read by the engines of other machines,
+# which would refuse the new key in a record this one writes.
+ADDITIVE = ("config",)
+# The keys of a JSON schema that only describe it: a change of them moves no format.
+PROSE = ("description", "title", "$comment", "examples")
+
+
+def additive(old, new) -> bool:
+    """True when the JSON schema ``new`` only adds to ``old`` optional properties (in an object's ``properties``, none
+    of them ``required``) or changes its prose (:data:`PROSE`): every document ``old`` accepts, ``new`` accepts.
+    Any other change (a property removed, a type, an enum, a bound, a pattern, ``additionalProperties`` or
+    ``required`` changed) is not additive."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        keys = (set(old) | set(new)) - set(PROSE)
+        for key in keys:
+            if key not in old or key not in new:
+                return False
+            if key == "properties" and isinstance(old[key], dict) and isinstance(new[key], dict):
+                if not set(old[key]) <= set(new[key]):
+                    return False
+                if any(not additive(old[key][k], new[key][k]) for k in old[key]):
+                    return False
+                if (set(new[key]) - set(old[key])) & set(new.get("required") or []):
+                    return False
+            elif not additive(old[key], new[key]):
+                return False
+        return True
+    if isinstance(old, list) and isinstance(new, list):
+        return len(old) == len(new) and all(additive(a, b) for a, b in zip(old, new))
+    return old == new
+
+
+def moved_schemas(repo: Path, tag: str, changed: list[str]) -> tuple[list[str], list[str]]:
+    """(moved, additive): the changed schema files split into those whose format moves and those that only grew by
+    optional keys (:data:`ADDITIVE`, :func:`additive`); a file new or gone since ``tag``, or unreadable as JSON,
+    moves."""
+    grows = {path for name in ADDITIVE for path in SCHEMAS[name] if path.endswith(".json")}
+    moved, grown = [], []
+    for path in changed:
+        if path in grows:
+            try:
+                if additive(json.loads(git(repo, "show", f"{tag}:{path}")), json.loads(read(repo, path))):
+                    grown.append(path)
+                    continue
+            except (CannotTell, ValueError):
+                pass
+        moved.append(path)
+    return moved, grown
 
 
 def read(repo: Path, path: str) -> str:
@@ -359,7 +413,10 @@ def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], l
     problems = fragments + coherence(repo, tag, version)
     problems += [f"{p}: a fragment not compiled into ## {version} (python {BRAIN}/installer/changelog.py compile "
                  f"{version} --theme T --write)" for p in frag.pending(repo)]
-    changed = changed_schemas(repo, tag)
+    changed, grown = moved_schemas(repo, tag, changed_schemas(repo, tag))
+    if grown:
+        said.append(f"registered schemas grown by optional keys only since {tag} (compatible with a patch): "
+                    f"{', '.join(grown)}")
     changelog = f"{BRAIN}/CHANGELOG.md"
     upgrade = upgrade_section(read(repo, changelog), version)
     if not changed:
@@ -372,7 +429,7 @@ def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], l
                             f"steps and what an owner does beyond them (docs/release.md, « The standard steps »)")
     problems += sections(repo, version, upgrade)
     if is_patch(tag, version):
-        said.append(f"a patch of {tag}: it may hold no schema change and no Upgrade step beyond the standard ones")
+        said.append(f"a patch of {tag}: it may hold no schema that moves and no Upgrade step beyond the standard ones")
     problems += policy(tag, version, changed, upgrade)
     if store is not None:
         closure = wave_closure(repo, store, version)
