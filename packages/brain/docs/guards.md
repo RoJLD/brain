@@ -238,7 +238,8 @@ fresh master and drains its own. It is never a refusal: no guard blocks start_se
                      "brainstorm_hours": 12}}}
 ```
 
-Every key is optional (the defaults above, except `brainstorms`: 2). `"enabled": false` turns the governor off. A
+Every key is optional (the defaults above, except `brainstorms`: 2, and `memory_available_gb`: 0, no floor; 4 is the
+opt-in shown). `"enabled": false` turns the governor off. A
 project lowers its own caps in `projects.yaml`, never raises them:
 
 ```yaml
