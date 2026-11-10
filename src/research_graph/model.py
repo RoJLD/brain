@@ -2,6 +2,28 @@ from __future__ import annotations
 
 import networkx as nx
 
+# The node attribute naming the store that holds a node an edge of this store points to (loader.load_store's
+# ``foreign``): such a node has no ``type`` of this store (every listing of the store's own nodes leaves it out), its
+# type kept as ``foreign_type``, its title and status as its own store has them.
+FOREIGN = "foreign"
+
+
+def kind(g: nx.DiGraph, nid: str) -> str | None:
+    """A node's type: its own, or the one its store gives it when it is another store's (:data:`FOREIGN`)."""
+    a = g.nodes[nid]
+    return a.get("type") or a.get("foreign_type")
+
+
+def store_of(g: nx.DiGraph, nid: str) -> str | None:
+    """The label of the other store that holds ``nid``, None for a node of this store."""
+    return g.nodes[nid].get(FOREIGN)
+
+
+def label(g: nx.DiGraph, nid: str) -> str:
+    """How a view names a node: its id, and for another store's node that store's label (``wi-x (parent:graph)``)."""
+    store = store_of(g, nid)
+    return f"{nid} ({store})" if store else nid
+
 
 class ResearchGraph:
     def __init__(self, graph: nx.DiGraph):
@@ -11,7 +33,7 @@ class ResearchGraph:
         return self.g.nodes[nid].get("status")
 
     def _type(self, nid: str) -> str | None:
-        return self.g.nodes[nid].get("type")
+        return kind(self.g, nid)
 
     def gating_verdicts(self, nid: str) -> list[str]:
         return [d for _, d, a in self.g.out_edges(nid, data=True) if a.get("type") == "gated_by"]
@@ -181,12 +203,14 @@ class LayeredGraph(ResearchGraph):
         reliance = self._reliance()
         dependents = nx.ancestors(reliance, nid)
         out: dict[str, list[str]] = {}
-        for n in dependents:
-            out.setdefault(self.g.nodes[n].get("layer") or "research", []).append(n)
+        for n in dependents:   # another store's node: under that store's label, its layer being that store's
+            key = f"store {store_of(self.g, n)}" if store_of(self.g, n) else self.g.nodes[n].get("layer") or "research"
+            out.setdefault(key, []).append(n)
         return {k: sorted(v) for k, v in sorted(out.items())}
 
     def layer(self, name: str) -> list[str]:
-        return sorted(n for n, a in self.g.nodes(data=True) if (a.get("layer") or "research") == name)
+        return sorted(n for n, a in self.g.nodes(data=True)
+                      if not a.get(FOREIGN) and (a.get("layer") or "research") == name)
 
     # --- decisions layer ---
 
@@ -228,6 +252,8 @@ class LayeredGraph(ResearchGraph):
                    "title": self.g.nodes[did].get("title", "")}
             if cur != did:
                 out["superseded_by"] = cur
+            if store_of(self.g, did):
+                out["store"] = store_of(self.g, did)
             if via:
                 out["via"] = via
             return out
@@ -249,7 +275,8 @@ class LayeredGraph(ResearchGraph):
             "node": nid,
             "direct": direct,
             "inherited": inherited,
-            "specs": [{"id": s, "status": self._status(s), "anchor": self.g.nodes[s].get("anchor")}
+            "specs": [{"id": s, "status": self._status(s), "anchor": self.g.nodes[s].get("anchor"),
+                       **({"store": store_of(self.g, s)} if store_of(self.g, s) else {})}
                       for s in specs if s != nid],
         }
 

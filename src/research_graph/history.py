@@ -260,9 +260,10 @@ def commit_on(store: str | Path, day: date, *, rev: str = "HEAD") -> Commit | No
     return Commit(sha, _when(when), subject)
 
 
-def load_store_at(store: str | Path, commit: str) -> nx.DiGraph:
-    """The store as of ``commit``, loaded (and validated) with that commit's own schema. Raises GitError when the
-    store did not exist then, and ``loader.ValidationError`` when that version does not validate."""
+def load_store_at(store: str | Path, commit: str, foreign=None) -> nx.DiGraph:
+    """The store as of ``commit``, loaded (and validated) with that commit's own schema; ``foreign``: the other stores'
+    ids its edges may name, as ``load_store`` takes them (as they are now). Raises GitError when the store did not
+    exist then, and ``loader.ValidationError`` when that version does not validate."""
     top, prefix = repo_location(store)
     listing = _git(top, "ls-tree", "-r", "-z", "--full-tree", commit, "--", prefix or ".")
     entries = []
@@ -282,4 +283,4 @@ def load_store_at(store: str | Path, commit: str) -> nx.DiGraph:
             dst = Path(tmp, rel)
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(blobs[blob])
-        return load_store(tmp)
+        return load_store(tmp, foreign=foreign)

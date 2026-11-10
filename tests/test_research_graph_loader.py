@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from research_graph.loader import ValidationError, load_store
+from research_graph.loader import ValidationError, load_store, read_foreign
+from research_graph.model import FOREIGN
+from tests.two_stores import two_stores
 
 STORE = Path(__file__).parent / "fixtures" / "research_graph"
 
@@ -156,3 +158,51 @@ def test_a_node_missing_a_required_prop_is_an_error(tmp_path):
     with pytest.raises(ValidationError) as exc:
         load_store(tmp_path)
     assert exc.value.errors == ["node les-b: Lesson needs props check"]
+
+
+# --- edges to another store's node (wi-brain-cross-store-edges) ---
+
+
+def test_an_edge_to_another_stores_id_is_refused_without_foreign_as_before(tmp_path):
+    home, _ = two_stores(tmp_path)
+    with pytest.raises(ValidationError) as exc:
+        load_store(home)
+    assert exc.value.errors == ["edge wi-a->wi-s: unknown target 'wi-s'",
+                                "edge wi-b->ms-parent: unknown target 'ms-parent'"]
+
+
+def test_foreign_ids_load_the_edge_and_the_node_is_named_by_its_store(tmp_path):
+    home, parent = two_stores(tmp_path)
+    g = load_store(home, foreign=read_foreign([("parent:graph", parent)]))
+    s = g.nodes["wi-s"]
+    assert (s["type"], s["foreign_type"], s[FOREIGN], s["status"], s["title"]) == (
+        None, "WorkItem", "parent:graph", "todo", "Parent step")
+    assert g["wi-a"]["wi-s"]["type"] == "depends_on" and g["wi-b"]["ms-parent"]["type"] == "part_of"
+    assert "ms-parent" in g and g.nodes["ms-home"].get(FOREIGN) is None   # the store's own node stays its own
+    assert sorted(n for n, a in g.nodes(data=True) if a.get("type") == "WorkItem") == ["wi-a", "wi-b"]
+
+
+def test_a_dangling_edge_is_still_refused_with_foreign_ids(tmp_path):
+    home, parent = two_stores(tmp_path)
+    with (home / "edges" / "work.yaml").open("a", encoding="utf-8") as f:
+        f.write("- {from: wi-a, to: wi-ghost, type: depends_on}\n- {from: wi-s, to: ms-parent, type: part_of}\n")
+    with pytest.raises(ValidationError) as exc:
+        load_store(home, foreign=read_foreign([("parent", parent)]))
+    assert exc.value.errors == [
+        "edge wi-a->wi-ghost: unknown target 'wi-ghost'",
+        "edge wi-s->ms-parent: both ends are other stores' nodes (an edge belongs to the store of one)"]
+
+
+def test_a_bare_label_is_enough_and_the_stores_own_id_wins(tmp_path):
+    home, _ = two_stores(tmp_path)
+    g = load_store(home, foreign={"wi-s": "parent", "ms-parent": "parent", "wi-a": "elsewhere"})
+    assert g.nodes["wi-s"][FOREIGN] == "parent" and g.nodes["wi-s"]["foreign_type"] is None
+    assert g.nodes["wi-a"]["type"] == "WorkItem" and FOREIGN not in g.nodes["wi-a"]
+
+
+def test_read_foreign_skips_what_does_not_parse_and_keeps_the_first_store(tmp_path):
+    home, parent = two_stores(tmp_path)
+    (parent / "nodes" / "broken.yaml").write_text("- {id: [unclosed\n", encoding="utf-8")
+    ids = read_foreign([("parent", parent), ("home", home), ("gone", tmp_path / "nowhere")])
+    assert ids["wi-s"] == {"store": "parent", "type": "WorkItem", "title": "Parent step", "status": "todo"}
+    assert ids["wi-a"]["store"] == "home" and set(ids) == {"wi-s", "ms-parent", "wi-a", "wi-b", "ms-home", "adr-x"}

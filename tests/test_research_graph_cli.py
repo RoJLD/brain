@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from research_graph.cli import main
+from tests.two_stores import two_stores
 
 STORE = str(Path(__file__).parent / "fixtures" / "research_graph")
 
@@ -186,3 +187,29 @@ def test_cli_sync_empties_the_generated_decisions_once_no_log_derives_them(tmp_p
     assert main(args + ["--no-decisions", "sync", "--write"]) == 0
     assert "adr-" not in gen.read_text(encoding="utf-8")  # derived from the logs, in git: none left is authoritative
     assert main(args + ["--no-decisions", "check"]) == 0
+
+
+def test_foreign_store_lets_an_edge_name_another_stores_id(tmp_path, capsys):
+    """wi-brain-cross-store-edges: without --foreign-store the edge is refused as before; with it the store loads,
+    checks, and its commands name the other store's node with its label."""
+    home, parent = two_stores(tmp_path)
+    base = ["--store", str(home), "--repo-root", str(tmp_path)]
+    assert main([*base, "check"]) == 1
+    assert "edge wi-a->wi-s: unknown target 'wi-s'" in capsys.readouterr().err
+    base += ["--foreign-store", f"parent:graph={parent}"]
+    assert main([*base, "check"]) == 0
+    assert "graph-check OK" in capsys.readouterr().out
+    assert main([*base, "items"]) == 0
+    assert "wi-a  todo     -    Home step  ← needs wi-s (parent:graph)" in capsys.readouterr().out
+    assert main([*base, "item", "wi-a", "--no-git"]) == 0
+    out = capsys.readouterr().out
+    assert "  depends_on    wi-s (parent:graph) [todo]  Parent step" in out and "blocked by: wi-s (parent:graph)" in out
+    assert main([*base, "layer", "work"]) == 0
+    assert "wi-s" not in capsys.readouterr().out   # another store's node is never listed as this store's
+    sbase = ["--store", str(parent), "--repo-root", str(tmp_path), "--foreign-store", f"home:graph={home}"]
+    assert main([*sbase, "decisions", "wi-s"]) == 0
+    assert "  adr-x (home:graph) [ADR active] A decision" in capsys.readouterr().out
+    assert main([*sbase, "item", "wi-a", "--no-git"]) == 0   # another store's node, shown by its label
+    assert capsys.readouterr().out.startswith("wi-a (home:graph)  [WorkItem todo]")
+    with pytest.raises(SystemExit):
+        main([*sbase, "--foreign-store", "no-path", "build"])

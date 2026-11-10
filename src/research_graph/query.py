@@ -23,7 +23,7 @@ import networkx as nx
 from .history import Event
 from .kanban import MILESTONE_ORDER, STATUS_ORDER
 from .loader import apply_overlay, load_store
-from .model import WORK_OPEN, LayeredGraph
+from .model import WORK_OPEN, LayeredGraph, kind, store_of
 
 PRIORITIES = ("P0", "P1", "P2", "P3")
 CLOSED = ("done", "dropped")
@@ -56,12 +56,12 @@ class Source:
 
 
 def load_source(store: str | Path, *, repo_root: str | Path | None = None, overlays: Iterable[str | Path] = (),
-                name: str | None = None) -> Source:
+                name: str | None = None, foreign: Mapping | None = None) -> Source:
     """Load ``store`` (``<repo>/notes/graph`` by convention, so the repo root defaults to two levels up) and apply
     the overlays. Raises ``loader.ValidationError`` like the ``research_graph`` command."""
     store = Path(store)
     root = Path(repo_root) if repo_root is not None else store.resolve().parents[1]
-    g = load_store(store)
+    g = load_store(store, foreign=foreign)
     for overlay in overlays:
         apply_overlay(g, overlay, root)
     return Source(name or root.resolve().name, store, root, g, [str(o) for o in overlays])
@@ -114,7 +114,7 @@ def priority_label(row: Mapping) -> str:
 
 def milestones_of(g: nx.DiGraph, nid: str) -> list[str]:
     return sorted(d for _, d, e in g.out_edges(nid, data=True)
-                  if e.get("type") == "part_of" and g.nodes[d].get("type") == "Milestone")
+                  if e.get("type") == "part_of" and kind(g, d) == "Milestone")
 
 
 def item_row(g: nx.DiGraph, nid: str, default_repo: str | None = None) -> dict:
@@ -122,7 +122,7 @@ def item_row(g: nx.DiGraph, nid: str, default_repo: str | None = None) -> dict:
     props = a.get("props") or {}
     status = a.get("status")
     row = {
-        "id": nid, "type": a.get("type"), "status": status, "title": a.get("title") or "",
+        "id": nid, "type": kind(g, nid), "status": status, "title": a.get("title") or "",
         "priority": props.get("priority"), "priority_proposed": props.get("priority_proposed"),
         "repos": repos_of(props, default_repo), "milestones": milestones_of(g, nid),
         "blockers": LayeredGraph(g).blockers(nid) if status in WORK_OPEN else [],
@@ -130,7 +130,16 @@ def item_row(g: nx.DiGraph, nid: str, default_repo: str | None = None) -> dict:
     }
     if a.get("overlay"):
         row["overlay"] = a["overlay"]
-    return row
+    if store_of(g, nid):
+        row["store"] = store_of(g, nid)
+    return _with_stores(g, row, [*row["milestones"], *row["blockers"]])
+
+
+def _with_stores(g: nx.DiGraph, row: dict, ids: Iterable[str]) -> dict:
+    """``row`` with ``stores``, {id: store label} of the other stores' nodes among ``ids`` (the ids it names), when
+    there is one: a view names them with their store."""
+    stores = {**row.get("stores", {}), **{n: store_of(g, n) for n in ids if store_of(g, n)}}
+    return {**row, "stores": stores} if stores else row
 
 
 def sort_rows(rows: list[dict]) -> list[dict]:
@@ -210,7 +219,10 @@ def counts(rows: Iterable[Mapping]) -> dict[str, int]:
 
 def _brief(g: nx.DiGraph, nid: str) -> dict:
     a = g.nodes[nid]
-    return {"id": nid, "type": a.get("type"), "status": a.get("status"), "title": a.get("title") or ""}
+    out = {"id": nid, "type": kind(g, nid), "status": a.get("status"), "title": a.get("title") or ""}
+    if store_of(g, nid):
+        out["store"] = store_of(g, nid)
+    return out
 
 
 def named_ids(g: nx.DiGraph, nid: str) -> list[str]:
@@ -236,7 +248,7 @@ def show_item(g: nx.DiGraph, nid: str, *, default_repo: str | None = None) -> di
     waiting = sorted(s for s, _, e in g.in_edges(nid, data=True) if e.get("type") in {"depends_on", "gated_by"}
                      and g.nodes[s].get("status") in WORK_OPEN)
     a = g.nodes[nid]
-    return {
+    detail = {
         **item_row(g, nid, default_repo),
         "anchor": a.get("anchor"),
         "props": a.get("props") or {},
@@ -247,6 +259,7 @@ def show_item(g: nx.DiGraph, nid: str, *, default_repo: str | None = None) -> di
         "prerequisites": rg.prerequisites(nid),
         "waiting_on_it": waiting,
     }
+    return _with_stores(g, detail, [*detail["prerequisites"], *waiting])
 
 
 # ---------------------------------------------------------------- closed items
@@ -299,7 +312,7 @@ def _upstream_items(g: nx.DiGraph, start: Iterable[str]) -> set[str]:
     while stack:
         cur = stack.pop()
         for _, d, e in g.out_edges(cur, data=True):
-            if e.get("type") == "depends_on" and d not in seen and g.nodes[d].get("type") == "WorkItem":
+            if e.get("type") == "depends_on" and d not in seen and kind(g, d) == "WorkItem":
                 seen.add(d)
                 stack.append(d)
     return seen
@@ -316,25 +329,27 @@ def roadmap(g: nx.DiGraph, *, default_repo: str | None = None) -> list[dict]:
         a = g.nodes[m]
         props = a.get("props") or {}
         info = rg.milestone(m)
-        part = [n for n in rg.milestone_items(m) if g.nodes[n].get("type") == "WorkItem"]
+        part = [n for n in rg.milestone_items(m) if kind(g, n) == "WorkItem"]
         open_part = [n for n in part if g.nodes[n].get("status") in WORK_OPEN]
         deps = sorted(n for n in _upstream_items(g, open_part) - set(part)
                       if g.nodes[n].get("status") in WORK_OPEN)
         mentions = sorted(n for n, b in g.nodes(data=True) if b.get("type") == "WorkItem"
                           and n not in part and n not in deps and m in named_ids(g, n))
-        out.append({
+        parents = milestones_of(g, m)
+        subs = sorted(s for s, _, e in g.in_edges(m, data=True) if e.get("type") == "part_of"
+                      and kind(g, s) == "Milestone")
+        row = {
             "id": m, "title": a.get("title") or "", "status": a.get("status"),
             "trigger": props.get("trigger"), "reached": props.get("reached"),
             "reached_date": leading_date(props.get("reached")), "note": props.get("note"),
-            "parents": milestones_of(g, m),
-            "sub_milestones": sorted(s for s, _, e in g.in_edges(m, data=True)
-                                     if e.get("type") == "part_of" and g.nodes[s].get("type") == "Milestone"),
+            "parents": parents, "sub_milestones": subs,
             "items": info["items"], "by_status": info["by_status"],
             "critical_path": info["critical_path"], "cycle": info["cycle"],
             "part_of": sort_rows([item_row(g, n, default_repo) for n in part]),
             "depends_on": sort_rows([item_row(g, n, default_repo) for n in deps]),
             "mentions": sort_rows([item_row(g, n, default_repo) for n in mentions]),
-        })
+        }
+        out.append(_with_stores(g, row, (*parents, *subs, *info["critical_path"])))
     return sorted(out, key=lambda r: (MILESTONE_ORDER.get(r["status"], 3),
                                       _neg(r["reached_date"]) if r["reached_date"] else "~", r["id"]))
 

@@ -600,6 +600,19 @@ and `brain check --all` says what to declare). A first entry the brain skips for
 cover every project registered there, and `--store prog/graph` runs as the project that lists that store.
 `examples/projects.yaml` has both.
 
+### Edges between stores
+
+An edge of a store may name a node another store of the registry holds (every store of every registered project on
+this machine; ids are unique across them): a programme's items kept in a parent project's store keep their edges to a
+child's milestones, specs and decisions, and the parent's milestones group the children's. `brain item link` and
+`brain item add` (`--milestone`, `--after`, `--spec`, `--adr`) accept such an id as one end, the other being the
+store's own. Every brain command that runs research_graph on the store gives it the stores holding those ids
+(`--foreign-store <project>:<store>=<path>`, `brain.crossstore`; nothing for a store whose edges name only its own
+ids), so the store loads and its board and roadmap name the other store's node with its label
+(`wi-x (parent:notes/graph)`). `brain check --all` reads every edge of every store and refuses one whose end is in no
+store of the registry on this machine (the store's own check refuses it too, as before), and counts the edges between
+stores; a brain's own root, checking its registry without `--all`, warns of it.
+
 ## The Claude Code hooks
 
 `src/brain/adapters/claude/hooks/` is package data: `hooks.json` and a `.sh` launcher per hook, each running its `.py`
