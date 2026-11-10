@@ -906,18 +906,18 @@ def test_moved_schemas_errs_towards_a_minor(repo):
 def test_a_whole_new_format_is_a_patchs(repo, capsys):
     """A registered format none of whose files exists at the tag (the owner's decision of 2026-11-10): no brain holds
     one and older engines never read it, so a patch may add it; a file new to a format that exists still moves."""
-    members = "packages/brain/src/brain/schemas/members.schema.json"
+    widgets = "packages/brain/src/brain/schemas/widgets.schema.json"
     old = dict(release_check.SCHEMAS)
-    release_check.SCHEMAS["members"] = (members,)
+    release_check.SCHEMAS["widgets"] = (widgets,)
     try:
         versions(repo, "0.2.6")
         changelogs(repo, "0.2.6")
-        write(repo, members, '{"properties": {"v": {"const": 1}}, "required": ["v"]}\n')
+        write(repo, widgets, '{"properties": {"v": {"const": 1}}, "required": ["v"]}\n')
         commit(repo)
-        assert release_check.new_formats(repo, "v0.2.5") == {"members"}
+        assert release_check.new_formats(repo, "v0.2.5") == {"widgets"}
         rc, text = run(repo, capsys)
         assert rc == 0, text
-        assert f"new registered formats since v0.2.5, held by no brain yet (compatible with a patch): {members}" in text
+        assert f"new registered formats since v0.2.5, held by no brain yet (compatible with a patch): {widgets}" in text
         assert "grown by optional keys" not in text
     finally:
         release_check.SCHEMAS.clear()
@@ -946,17 +946,17 @@ def test_a_format_whose_files_are_renamed_moves(repo, capsys):
 
 
 def test_no_format_is_new_when_the_tags_registry_cannot_be_read(repo):
-    members = "packages/brain/src/brain/schemas/members.schema.json"
+    widgets = "packages/brain/src/brain/schemas/widgets.schema.json"
     git(repo, "rm", "-q", release_check.REGISTRY)
     commit(repo)
     git(repo, "tag", "-f", "v0.2.5")
     assert release_check.formats_at(repo, "v0.2.5") is None
     old = dict(release_check.SCHEMAS)
-    release_check.SCHEMAS["members"] = (members,)
+    release_check.SCHEMAS["widgets"] = (widgets,)
     try:
-        write(repo, members, '{"properties": {}}\n')
+        write(repo, widgets, '{"properties": {}}\n')
         assert release_check.new_formats(repo, "v0.2.5") == set()
-        assert release_check.moved_schemas(repo, "v0.2.5", [members]) == ([members], [])
+        assert release_check.moved_schemas(repo, "v0.2.5", [widgets]) == ([widgets], [])
     finally:
         release_check.SCHEMAS.clear()
         release_check.SCHEMAS.update(old)

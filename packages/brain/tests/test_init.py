@@ -4,6 +4,7 @@ import json
 import re
 import shlex
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -272,6 +273,26 @@ def test_the_generic_template_writes_a_publishable_brain(fresh, capsys):
     assert re.search(r"boundary: \d+ tracked file\(s\) classified; engine side 1 file\(s\), readiness 0 \(max 0\), "
                      r"public scan green", out), out
     assert cli.main(["--root", str(fresh), "boundary", "--check"]) == 0
+
+
+def test_members_yaml_takes_the_boundary_rule_its_docs_give(fresh, capsys):
+    """members.yaml (docs/identity.md): the template has no rule for it yet (a template change moves what brain init
+    wrote once), so the boundary names it until the owner adds the line the docs give; then it classifies it."""
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    committed(fresh)
+    members = Path(__file__).parent / "fixtures" / "formats" / "members" / "v1" / "older.yaml"
+    (fresh / "members.yaml").write_text(members.read_text(encoding="utf-8"), encoding="utf-8")
+    run_git(fresh, "add", "-A")
+    capsys.readouterr()
+    assert cli.main(["--root", str(fresh), "boundary", "--check"]) == 1
+    assert "members.yaml: no rule of boundary.yaml classifies it" in capsys.readouterr().out
+    docs = (Path(__file__).parents[1] / "docs" / "identity.md").read_text(encoding="utf-8")
+    rule = re.search(r'`(- \{glob: "members\.yaml", side: personal, why: "who belongs to the\s+brain"\})`', docs)
+    assert rule, "docs/identity.md gives the boundary line"
+    with (fresh / "boundary.yaml").open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write("  " + re.sub(r"\s+", " ", rule.group(1)) + "\n")
+    run_git(fresh, "add", "-A")
+    assert cli.main(["--root", str(fresh), "boundary", "--check"]) == 0, capsys.readouterr().out
 
 
 @pytest.mark.parametrize("rel, text, why", [

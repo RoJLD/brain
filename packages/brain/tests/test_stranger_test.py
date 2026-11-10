@@ -106,8 +106,21 @@ def test_the_newer_data_reaches_every_file_of_a_format(st, tmp_path):
     assert data["identity"] == {"owner": "Ada Example", "pronouns": "they"} and data["telemetry"] == {"enabled": False}
     assert '"cpu_s":0.4' in (ledger / "exec-2026-11.jsonl").read_text(encoding="utf-8")
     # the formats it reached no file of fail the step: the rollback would test nothing of them
-    assert not step["ok"] and "reached no file: ar v1, ddr v1, packs v1, permissions v1, projects v1, sr v1" in \
+    assert not step["ok"] and "reached no file: ar v1, ddr v1, members v1, packs v1, permissions v1, projects v1, sr v1" in \
         step["out"]
+
+
+def test_the_newer_data_reaches_a_yaml_file_holding_dates(st, tmp_path):
+    """members.yaml's keys carry dates (since:), which YAML reads as dates: the overlay copies them as they are."""
+    import yaml
+    root, home = tmp_path / "brain", tmp_path / "home"
+    root.mkdir()
+    (root / "members.yaml").write_text(st.fixture("members", "older").read_text(encoding="utf-8"), encoding="utf-8")
+    step = st.add_newer(root, home)
+    assert "members: members.yaml +keys" in step["out"], step["out"]
+    data = yaml.safe_load((root / "members.yaml").read_text(encoding="utf-8"))
+    assert data["people"][0]["pronouns"] == "she" and "passkeys" in data
+    assert str(data["people"][0]["keys"]["signing"][0]["since"]) == "2026-11-10"
 
 
 def test_a_file_changed_or_removed_is_data_lost_and_a_ledger_may_only_grow(st, tmp_path):

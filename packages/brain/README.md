@@ -20,6 +20,8 @@ What it does, every command reading files and git, never a model:
   `views.strict`: [`docs/views.md`](docs/views.md));
 - **history**: the journal (`brain journal add`, `brain journal last`) and the decision log (`brain adr new`, `brain
   adr show`), append-only;
+- **identity**: the brain's people and their public keys (`members.yaml`), and the owner's signatures of the answers
+  only they may give, verified with public keys (`brain identity`: [`docs/identity.md`](docs/identity.md));
 - **views**: the owner's queue (`brain queue`), the status of every project (`brain status`), a cockpit (`brain tui`,
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
   usage and cost ledgers, forecasts;
@@ -801,6 +803,24 @@ brain classes [--check] [--suggest] [--matrix] [PATH...]
 brain vault status | seal STORE | canary | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
 brain vault device init [--rotate] | device forget-previous | open FILE | drill RECIPIENT
 brain health vault
+```
+
+## Identity: members and signed answers
+
+A brain may declare its people in `members.yaml`, beside `config.json` (`schemas/members.schema.json`, class
+confidential): each person's `person_id`, public SSH ed25519 signing keys and age recipients, their accounts, the
+organizations and tenants, and their roles per project or tenant. An answer to a decision of the owner-decides class
+(money, keys, accounts, visibility, heirs, scheduled tasks) may then carry a detached signature,
+`records/ddr/<id>.sig`, made by a decider's key in the owner's own terminal (`ssh-keygen -Y sign`, namespace
+`brain-decision`); the engine only verifies it with the public keys, and never generates, reads or prints a private
+key. An answer relayed by a session is marked unsigned on the board (`brain decision view`), and `asked.by` names
+the asking session, else the owner: never `unknown`. `brain check` reports the unsigned answers and the signatures
+that do not verify as warnings, as errors under `config.json` `identity.require_signed: true`; without
+`members.yaml` nothing is checked. The owner's commands (making the key, declaring it, signing a batch):
+[`docs/identity.md`](docs/identity.md).
+
+```
+brain identity check | unsigned [--write DIR] [--json] | payload ID | attach SIG|DIR...
 ```
 
 ## Adding a command

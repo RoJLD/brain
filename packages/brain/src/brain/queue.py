@@ -994,7 +994,7 @@ def add(root: Path, *, kind: str, title: str, what: str, at: str, context: str =
         if v:
             ddr[k] = v
     ddr["status"] = "pending"
-    ddr["asked"] = {"at": at, "by": session or "unknown", "via": "cli"}
+    ddr["asked"] = {"at": at, "by": session or decisions.asker(decisions.who()), "via": "cli"}
     links = {k: v for k, v in {"items": items, "specs": specs}.items() if v}
     if project:
         links["project"] = project

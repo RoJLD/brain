@@ -319,6 +319,7 @@ def _check_store(args, root: Path, store: Path) -> int:
     for line in skew.check_lines(root):   # the running engine against config.json engine.pin
         print(line)
     rc = _check_session_ids(root) or rc   # a DDR's local_ id that matches no session (scale study gap 19)
+    rc = _check_identity(root, project.name) or rc   # members.yaml and the owner's signed answers (brain.identity)
     if neutral.applies(root):   # the marketplace is the source's render: a hand edit fails here
         rc = render.main(root, "claude", check=True) or rc
     gate_rc, lines = public.gate(root)   # boundary.yaml: every file has a side, the engine side holds nothing private
@@ -372,6 +373,18 @@ def _check_session_ids(root: Path) -> int:
     for line in warned:
         print(f"warning: {line}")
     return 1 if refused else 0
+
+
+def _check_identity(root: Path, project: str) -> int:
+    """1 when members.yaml or an owner-decides answer's signature fails under config.json identity.require_signed;
+    the same findings are warnings without it, and nothing is said without members.yaml (brain.identity)."""
+    from .. import identity
+    errors, warnings = identity.check(root, project)
+    for line in errors:
+        print(f"error: identity: {line}")
+    for line in warnings:
+        print(f"warning: identity: {line}")
+    return 1 if errors else 0
 
 
 def _merge_marks(root: Path, then: str, clear: bool = False) -> None:
