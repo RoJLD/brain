@@ -24,7 +24,8 @@ Eight panels, each read through the function its command already uses:
               the milestone each is part of (or proposed for, marked ``?``), the open items and pending milestones
               downstream of it, and the age of its idea (the date its ``idea`` prop names);
   audit       the findings by severity and repo, the first P0 and P1 ones (brain.status.audit_of, as brain audit);
-  health      each stack's and code index repo's state (brain.status, as brain health and brain index), and the
+  health      each stack's and code index repo's state (brain.status, as brain health and brain index), this
+              machine's dependency probes (brain.depprobes, as brain probes: run at each probe) and the
               execution-time ledger's last 7 days (brain.perf: runs, failures, regressions);
   digest      the journals' last day and the records (brain.status.records_of), then the latest written digest
               (brain.digest.latest), else last week's, built offline (brain.digest.build).
@@ -517,6 +518,7 @@ class Cockpit:
         self.panel_at: dict[str, str] = {}  # panel -> when its content was last read
         self.progress: dict | None = None  # the probe running: {what, n, total}
         self.last_ok: dict[tuple, str] = {}  # (project, stacks|code_index, name) -> its last OK measure
+        self.dep_probes: dict | None = None  # this machine's dependency probes, from the last probe (brain.depprobes)
         self.lock = threading.Lock()
 
     @property
@@ -608,6 +610,9 @@ class Cockpit:
         found = self.found
         self.progress = {"what": "the denied calls", "n": 0, "total": len(found)}
         self.scanned = queue.scan(queue.DAYS)
+        self.progress = {"what": "the dependency probes", "n": 0, "total": 1}
+        from . import depprobes
+        self.dep_probes = depprobes.run()   # first: the brain's alerts below read this run
         stack_reg, index = status._probes(self.root, False)
         measured = {}
         for i, p in enumerate(found, 1):
@@ -654,7 +659,8 @@ class Cockpit:
         now = now or datetime.now(timezone.utc)
         only = None if self.every else {p.name for p in self.projs}
         return {"alerts": {"projects": [g["alerts"] for g in got]}, "audit": {"projects": [g["audit"] for g in got]},
-                "health": {"projects": [g["health"] for g in got], "exec": perf_summary(only, now)},
+                "health": {"projects": [g["health"] for g in got], "exec": perf_summary(only, now),
+                           **({"probes": self.dep_probes} if self.dep_probes is not None else {})},
                 "digest": {"projects": [g["digest"] for g in got]}}
 
     def refresh(self, probe: bool = False) -> set[str]:
@@ -1008,7 +1014,8 @@ HELP = {
               "read": "when the graph, a DDR, a journal or a done stamp changes; the denied calls at each probe",
               "detail": "brain queue; brain decision pending; brain decision answer <id> <option>"},
     "alerts": {"what": "Each project's open alerts by level: missed or failed scheduled tasks, stacks down, a stale "
-                       "code index, audit debt above its written view, alert events and alert files.",
+                       "code index, audit debt above its written view, alert events and alert files, a dependency "
+                       "probe not OK.",
                "from": "brain.status.alerts_of, as brain status and brain alerts (the scheduler, the exec ledger, the "
                        "stacks, the code index, the audit, the alert events and files)",
                "read": "at each probe (--probe, 5 min, and r)",
@@ -1027,11 +1034,13 @@ HELP = {
               "from": "brain.status.audit_of, as brain audit (every repo of the project)",
               "read": "at each probe",
               "detail": "brain audit --project <p>"},
-    "health": {"what": "Each stack's and each code index repo's state, and the exec-time ledger's last 7 days (runs, "
-                       "failures, regressions).",
-               "from": "brain.status.probed, as brain health and brain index; brain.perf",
+    "health": {"what": "Each stack's and each code index repo's state, this machine's dependency probes (a login, a "
+                       "tool's last output, an index's or a backup's age), and the exec-time ledger's last 7 days "
+                       "(runs, failures, regressions).",
+               "from": "brain.status.probed, as brain health and brain index; brain.depprobes, as brain probes; "
+                       "brain.perf",
                "read": "at each probe",
-               "detail": "brain health; brain index; brain perf"},
+               "detail": "brain health; brain index; brain probes; brain perf"},
     "digest": {"what": "The journals' last day and the records, then the latest written digest, else last week's built "
                        "offline.",
                "from": "brain.status.records_of, brain.digest",
@@ -1388,6 +1397,10 @@ def health_lines(panel: dict | None, width: int = WIDTH, now: datetime | None = 
     for g in panel.get("projects") or []:
         lines.append(_line("  ", f"{g['project']}: stacks {_states(g['stacks'], 'stack', now)}; code index "
                                  f"{_states(g['code_index'], 'repo', now)}", width))
+    probes_ = panel.get("probes") or {}
+    if probes_.get("probes") or probes_.get("errors"):
+        from . import depprobes
+        lines.append(_line("  ", f"dependency probes: {depprobes.status_line(probes_)}", width))
     ex = panel.get("exec") or {}
     if ex:
         reg = "; ".join(f"{r['task']} +{r['change']:.0%}" for r in ex.get("regressions") or [])

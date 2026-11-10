@@ -103,6 +103,29 @@
         "schema": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*/v[0-9]+$", "description": "The inventory contract's id the report carries (schema), the owner's machines brick's format; default brain.status/v1."}
       }
     },
+    "probes": {
+      "type": "object",
+      "description": "{name: probe}: the dependency probes (brain.depprobes, brain probes): each external dependency of a capability checked at zero token by the alerts pass on the machines it names, an alert probe:<name> when it is not OK. brain probes --kinds lists each kind's keys; brain config --check checks them.",
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false, "required": ["kind"],
+        "properties": {
+          "kind": {"enum": ["file-age", "json-age", "command", "http"], "description": "file-age (path, max_age), json-age (path, field, max_age, where), command (argv, ok_exit, expect), http (url, ok_status)."},
+          "about": {"type": "string", "description": "The capability that relies on it, shown in its alert."},
+          "level": {"enum": ["info", "warn", "error", "critical"], "description": "Its alert's level; default warn."},
+          "timeout": {"type": "string", "pattern": "^\\s*\\d+(\\.\\d+)?\\s*(s|m|min|h|d|w)\\s*$", "description": "How long it may take (90s, 2m); default 10s, at most 120s."},
+          "machines": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The hosts it runs on (case-insensitive); none: every machine."},
+          "path": {"type": "string", "minLength": 1, "description": "file-age, json-age: a file or a glob (the newest match); ~, the environment's variables and $BRAIN_HOME are expanded."},
+          "max_age": {"type": "string", "pattern": "^\\s*\\d+(\\.\\d+)?\\s*(s|m|min|h|d|w)\\s*$", "description": "file-age, json-age: the oldest the file or the field may be (26h, 7d)."},
+          "field": {"type": "string", "minLength": 1, "description": "json-age: the timestamp's key, dotted for a nested one: an ISO time or seconds since the epoch."},
+          "where": {"type": "object", "description": "json-age: {field: value} a JSON Lines line (the last that matches) or the JSON file must match."},
+          "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "command: the program and its arguments, never through a shell (a shell or an interpreter is refused); its output is never shown."},
+          "ok_exit": {"type": "array", "minItems": 1, "items": {"type": "integer"}, "description": "command: the exit codes that mean OK; default [0]."},
+          "expect": {"type": "string", "minLength": 1, "description": "command: a regular expression its output must match."},
+          "url": {"type": "string", "pattern": "^https?://", "description": "http: the URL a GET is sent to, with no header and no user or password; never shown."},
+          "ok_status": {"type": "array", "minItems": 1, "items": {"type": "integer"}, "description": "http: the statuses that mean OK; default any 2xx or 3xx."}
+        }
+      }
+    },
     "power": {
       "type": "object", "additionalProperties": false,
       "description": "The owner's platform as the power guard knows it by name (brain.guards): what acts on a node beyond the engine's own list (shutdown, reboot, Wake-on-LAN, k3s, kubectl writes).",
@@ -150,7 +173,7 @@
             "sessions": {"type": "integer", "minimum": 0, "description": "the sessions running in parallel on this machine, at most (default 8); lowered to what the week's room pays for"},
             "brainstorms": {"type": "integer", "minimum": 0, "description": "the brainstorms open at once on this machine, every project counted (default 2)"},
             "memory": {"type": "number", "minimum": 0, "maximum": 100, "description": "% of committed memory (Windows: RAM plus page file promised, of the commit limit; elsewhere the memory in use) from which a new session or workflow is refused (default 97)"},
-            "memory_available_gb": {"type": "number", "minimum": 0, "description": "GB of available RAM under which a new session or workflow is refused (default 4; 0: never)"},
+            "memory_available_gb": {"type": "number", "minimum": 0, "description": "GB of available RAM under which a new session or workflow is refused (default 0: no floor; the owner opts in, e.g. 4)"},
             "wave_hours": {"type": "number", "minimum": 0, "description": "the hours a wave is planned for, in the quota cap (default 4)"},
             "session_hour_usd": {"type": "number", "minimum": 0, "description": "the API-price cost of one session-hour, in the quota cap (default 14)"},
             "fresh_minutes": {"type": "number", "minimum": 0, "description": "a new session or workflow is refused while the newest quota reading is older (default 60; 0: never)"},

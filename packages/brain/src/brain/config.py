@@ -210,6 +210,9 @@ def check(root: Path | None = None) -> list[str]:
         for store, who in store_owners(cfg).items():
             if who != ident["owner"]:
                 errors.append(f"{FILE}: identity.owner {ident['owner']!r}, but {store}/schema.yaml says owner: {who}")
+    # what the schema cannot say of a probe: each kind's keys, durations, the program
+    from . import depprobes
+    errors += depprobes.check(cfg)
     return errors
 
 

@@ -27,6 +27,9 @@ BRAIN_LOG = "packages/brain/CHANGELOG.md"
 CONFIG_SCHEMA = "packages/brain/src/brain/schemas/config.schema.json"
 STORE_SCHEMA = "src/research_graph/templates/schema.yaml"
 OTHER = "packages/brain/src/brain/cockpit.py"
+# A config schema whose format moves (a key made required): an additive change is a patch's
+# (test_an_optional_config_key_is_compatible_with_a_patch)
+MOVED = '{"properties": {}, "required": ["new"]}\n'
 
 
 def write(repo: Path, path: str, text: str) -> None:
@@ -103,7 +106,7 @@ def run(repo: Path, capsys) -> tuple[int, str]:
 def test_schema_changed_without_an_upgrade_section_fails(repo, capsys):
     versions(repo, "0.3.0")
     changelogs(repo, "0.3.0", NO_UPGRADE)
-    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
+    write(repo, CONFIG_SCHEMA, MOVED)
     commit(repo)
     rc, text = run(repo, capsys)
     assert rc == 1
@@ -114,7 +117,7 @@ def test_schema_changed_without_an_upgrade_section_fails(repo, capsys):
 def test_schema_changed_with_an_upgrade_section_passes(repo, capsys):
     versions(repo, "0.3.0")
     changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run", "4. **Run brain sync**.\n\nNothing to run"))
-    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
+    write(repo, CONFIG_SCHEMA, MOVED)
     commit(repo)
     rc, text = run(repo, capsys)
     assert rc == 0, text
@@ -174,7 +177,7 @@ def test_a_removed_schema_counts_too(repo, capsys):
 
 
 def test_a_schema_changed_in_an_earlier_pr_since_the_tag_still_counts(repo, capsys):
-    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
+    write(repo, CONFIG_SCHEMA, MOVED)
     commit(repo)
     versions(repo, "0.3.0")
     changelogs(repo, "0.3.0", NO_UPGRADE)
@@ -210,7 +213,7 @@ def test_the_upgrade_section_ends_at_the_next_heading():
 
 
 def test_any_other_pr_passes_at_once_even_with_a_schema_change(repo, capsys):
-    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
+    write(repo, CONFIG_SCHEMA, MOVED)
     commit(repo)
     rc, text = run(repo, capsys)
     assert rc == 0, text
@@ -333,7 +336,7 @@ def test_a_patch_moves_only_the_last_number(tag, version, patch):
 def test_a_patch_with_a_schema_change_fails_even_with_its_upgrade_section(repo, capsys):
     versions(repo, "0.2.6")
     changelogs(repo, "0.2.6", "### Upgrade\n\n1. Run brain sync.\n\n### Changes\n\n- A change.\n")
-    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
+    write(repo, CONFIG_SCHEMA, MOVED)
     commit(repo)
     rc, text = run(repo, capsys)
     assert rc == 1
@@ -345,7 +348,7 @@ def test_the_same_change_as_a_minor_version_passes(repo, capsys):
     versions(repo, "0.3.0")
     changelogs(repo, "0.3.0", STANDARD_UPGRADE.replace("\nNothing to run",
                                                        "4. **Edit config.json** by hand.\n\nNothing to run"))
-    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')
+    write(repo, CONFIG_SCHEMA, MOVED)
     commit(repo)
     rc, text = run(repo, capsys)
     assert rc == 0, text
@@ -822,3 +825,75 @@ def test_store_imports_the_engine_and_research_graph_from_this_checkout(tmp_path
     r = _isolated(code, None)
     assert r.returncode == 0, r.stderr
     assert r.stdout.startswith("cannot tell: --store needs PyYAML"), r.stdout
+
+# An optional key added to config.json's schema (the owner, 2026-11-10, wi-brain-release-schema-additive)
+
+
+def test_an_optional_config_key_is_compatible_with_a_patch(repo, capsys):
+    """Every config.json the old schema accepts, the new one accepts: an owner has nothing to do, so a patch may hold
+    it, with only the standard steps."""
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    write(repo, CONFIG_SCHEMA, '{"properties": {"new": {"type": "number", "description": "x"}}, "title": "T"}\n')
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 0, text
+    assert "grown by optional keys only" in text and CONFIG_SCHEMA in text
+
+
+@pytest.mark.parametrize("old, new", [
+    ({"properties": {"a": {"type": "string"}}}, {"properties": {}}),                              # a key removed
+    ({"properties": {"a": {"type": "string"}}}, {"properties": {"a": {"type": "number"}}}),      # a type changed
+    ({"properties": {}}, {"properties": {"b": {}}, "required": ["b"]}),                          # a required key
+    ({"properties": {}}, {"properties": {}, "additionalProperties": False}),                     # a constraint added
+    ({"properties": {"a": {"enum": [1, 2]}}}, {"properties": {"a": {"enum": [1]}}}),             # an enum narrowed
+    ({"properties": {"a": {"minimum": 0}}}, {"properties": {"a": {"minimum": 1}}}),              # a bound moved
+    ({"properties": {"o": {"properties": {}, "required": []}}},
+     {"properties": {"o": {"properties": {"x": {}}, "required": ["x"]}}}),                       # nested and required
+])
+def test_any_other_schema_change_is_not_additive(old, new):
+    assert not release_check.additive(old, new)
+
+
+def test_additive_reads_nested_objects_and_prose():
+    old = {"properties": {"usage": {"type": "object", "additionalProperties": False,
+                                    "properties": {"guard": {"properties": {"memory": {"type": "number"}}}}}}}
+    new = {"description": "new words", "properties": {"usage": {
+        "type": "object", "additionalProperties": False, "description": "d",
+        "properties": {"guard": {"properties": {"memory": {"type": "number", "description": "d"},
+                                                "floor": {"type": "number"}}}, "plans": {}}}}}
+    assert release_check.additive(old, new)
+
+
+def test_an_optional_record_key_still_moves_the_format(repo, capsys):
+    """Only config.json's schema may grow in a patch: a record written here is read by older engines elsewhere."""
+    ar = "packages/brain/src/brain/schemas/ar.schema.json"
+    write(repo, ar, '{"properties": {}}\n')
+    commit(repo)
+    git(repo, "tag", "-f", "v0.2.5")
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    write(repo, ar, '{"properties": {"new": {}}}\n')
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1 and "a format that moves is a minor version" in text and ar in text
+
+
+def test_moved_schemas_errs_towards_a_minor(repo):
+    """A config schema new since the tag, one that does not parse, a required list reordered, a scalar of another type:
+    each moves the format (never a patch by mistake)."""
+    write(repo, CONFIG_SCHEMA, '{"properties": {}, "required": ["a", "b"], "additionalProperties": false}\n')
+    commit(repo)
+    git(repo, "tag", "-f", "v0.2.5")
+    write(repo, CONFIG_SCHEMA, '{"properties": {}, "required": ["b", "a"], "additionalProperties": false}\n')
+    assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
+    write(repo, CONFIG_SCHEMA, '{"properties": {}, "required": ["a", "b"], "additionalProperties": 0}\n')
+    assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
+    write(repo, CONFIG_SCHEMA, "{not json\n")
+    assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
+    git(repo, "rm", "-q", "--cached", CONFIG_SCHEMA)
+    commit(repo)
+    git(repo, "tag", "-f", "v0.2.5")
+    write(repo, CONFIG_SCHEMA, '{"properties": {}}\n')   # new since the tag
+    assert release_check.moved_schemas(repo, "v0.2.5", [CONFIG_SCHEMA]) == ([CONFIG_SCHEMA], [])
+    write(repo, CONFIG_SCHEMA, '{"properties": {}, "required": ["a", "b"], "additionalProperties": false}\n')

@@ -23,6 +23,9 @@ through the notification channels (brain.notify) per level. Every source is read
              (the one named brain, or whose root is the personal brain).
   session    a master past 80 % of its budget that still has live children (the budget watch's master state,
              brain.budget; ST-4): warn, error from 90 %; carried as engine is.
+  probe      this machine's dependency probes (brain.depprobes, config.json ``probes``) that are not OK: key
+             ``probe:<name>``, at the probe's level; carried as engine is. The pass (``brain alerts`` without
+             ``--quick``) runs them; a view reads their last run.
 
 A task alerts after MISSED (2) missed passes (the owner, 2026-10-30: a 15-minute task after 30 minutes), its own
 ``missed:`` otherwise: a pass is missed when no run started within the cadence plus a grace (a tenth of it, 1 to 15
@@ -78,7 +81,7 @@ ERROR_HOURS = 24      # an error event without a later successful run of its tas
 ENGINE_FAILS = 3      # the engine's errors of one task and class in ERROR_HOURS that raise an alert
 MONTHS = 2            # the event files read: this month's and the one before
 SHOWN = 3             # alerts named in brain status's row
-SOURCES = ("scheduler", "ledger", "stack", "code-index", "audit", "events", "file", "engine", "session")
+SOURCES = ("scheduler", "ledger", "stack", "code-index", "audit", "events", "file", "engine", "session", "probe")
 MASTER_HOURS = 6      # a master the session tree does not know: its watch state written this recently is a live one's
 KEYS = {"scheduler", "exits", "tasks", "stacks", "files", "events", "levels"}
 TASK_KEYS = {"every", "missed", "level", "ledger", "running"}
@@ -728,6 +731,18 @@ def master_alerts(cfg: Config, now: datetime) -> list[Alert]:
     return out
 
 
+def probe_alerts(cfg: Config, rows) -> list[Alert]:
+    """Each dependency probe that is not OK (brain.depprobes's rows): key ``probe:<name>``, at its level (or
+    ``levels: {probe: ...}``), since it entered its state."""
+    from . import depprobes
+
+    if not isinstance(rows, list):
+        return []
+    return [Alert(cfg.project, f"probe:{r['name']}", cfg.levels.get("probe") or r.get("level") or "warn", "probe",
+                  r["name"], depprobes.message(r), str(r.get("since") or ""))
+            for r in rows if isinstance(r, dict) and r.get("name") and r.get("state") not in (None, "OK")]
+
+
 def carries_engine(p: projects.Project) -> bool:
     """Whether ``p`` shows the engine's own alerts: it is named brain, or its root is the personal brain's."""
     from .selftime import ENGINE
@@ -790,9 +805,10 @@ def _sorted(alerts: list[Alert]) -> list[Alert]:
 
 
 def of_project(p: projects.Project, *, stacks_rows=None, index_rows=None, audit=None, sched: dict | None = None,
-               watched: set[str] | None = None, now: datetime | None = None) -> list[Alert]:
+               watched: set[str] | None = None, now: datetime | None = None, probe_rows=None) -> list[Alert]:
     """The open alerts of ``p`` from what was measured (brain.status's stacks, code index and audit rows; None when
-    not probed) and the scheduler's rows (read_scheduler; None or {} when not read). Raises AlertsError."""
+    not probed), the scheduler's rows (read_scheduler; None or {} when not read) and, for the brain's own project,
+    the dependency probes' rows (None: their last run, brain.depprobes.last). Raises AlertsError."""
     now = now or _now()
     cfg = config(p)
     events = read_events(p.name, cfg.events, now)
@@ -805,6 +821,10 @@ def of_project(p: projects.Project, *, stacks_rows=None, index_rows=None, audit=
     if carries_engine(p):
         out += engine_alerts(cfg, now)
         out += master_alerts(cfg, now)
+        if probe_rows is None:
+            from . import depprobes
+            probe_rows = depprobes.last()["probes"]
+        out += probe_alerts(cfg, probe_rows)
     seen, unique = set(), []
     for a in _sorted(out):
         if a.key not in seen:
@@ -824,9 +844,13 @@ def summary(alerts: list[Alert], last_pass: str | None) -> dict:
 
 def run(projs: list[projects.Project], *, quick: bool = False, root: Path | None = None) -> dict:
     """{projects: [{project, found, open, counts, alerts, last_pass} or {project, found, error}], quick}: brain
-    status's probes (stacks, code index, audit; none with ``quick``) and the scheduler, read once for every project."""
-    from . import status  # here: brain.status imports this module
+    status's probes (stacks, code index, audit; none with ``quick``), the scheduler and this machine's dependency
+    probes (brain.depprobes: run and recorded when the brain's own project is in scope; their last run with
+    ``quick``), read once for every project."""
+    from . import depprobes, status  # here: brain.status imports this module
 
+    if not quick and any(carries_engine(p) for p in projs):
+        depprobes.run()   # recorded: the brain's own project's alerts below read this run
     stack_reg, index = status._probes(root, quick)
     sched = {} if quick else read_scheduler(status._alert_configs(projs))
     last = state_load()

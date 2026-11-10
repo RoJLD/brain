@@ -165,7 +165,11 @@ def mem(monkeypatch, committed, available_gb):
 
 def test_the_machine_memory_reads_two_measures(ada, brain_home, monkeypatch):
     """wi-brain-memory-guard-two-measures: committed memory at 93-96 % with 24 GB of RAM free refused every start;
-    the guard refuses only past 97 % committed or under 4 GB available, and names both measures and the one."""
+    the guard refuses only past 97 % committed or under the RAM floor the owner sets, and names both measures and the
+    one."""
+    mem(monkeypatch, 60.0, 1.0)    # no floor by default: low RAM alone refuses nothing (a patch never newly refuses)
+    assert hook(START, ada.lab, title="x") is None
+    ada({"memory_available_gb": 4})
     mem(monkeypatch, 96.0, 24.0)
     assert hook(START, ada.lab, title="x") is None and hook("Workflow", ada.lab) is None
     mem(monkeypatch, 97.0, 24.0)
@@ -209,7 +213,7 @@ def test_meminfo_gives_the_percent_in_use_and_the_gb_available():
 def test_a_cache_of_other_defaults_is_not_read(ada, brain_home, monkeypatch):
     """The settings cache keys on the defaults: a cache an engine with the old memory cap (90) wrote is rebuilt."""
     s = governor.settings(str(ada.lab))
-    assert s["limits"]["memory"] == 97.0 and s["limits"]["memory_available_gb"] == 4.0
+    assert s["limits"]["memory"] == 97.0 and s["limits"]["memory_available_gb"] == 0.0
     cache = brain_home / "cache" / "governor.json"
     kept = json.loads(cache.read_text(encoding="utf-8"))
     mine = json.dumps(governor.DEFAULTS, sort_keys=True)
@@ -224,6 +228,8 @@ def test_brain_usage_guard_and_status_show_both_measures(ada, brain_home, monkey
     from brain import status
     mem(monkeypatch, 95.0, 3.0)
     monkeypatch.chdir(ada.lab)
+    assert "3.0 GB of RAM available (no floor)" in status.memory_of(ada.lab)["line"]
+    ada({"memory_available_gb": 4})
     assert cli.main(["usage", "guard"]) == 0
     out = capsys.readouterr().out
     assert "memory 97 % committed or under 4 GB of RAM" in out
