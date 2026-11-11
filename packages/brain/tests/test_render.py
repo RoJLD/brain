@@ -409,8 +409,9 @@ def test_hints_read_true_registers_the_read_hint(ada):
     cfg = json.loads((ada / "config.json").read_text(encoding="utf-8"))
     write(ada, {"config.json": json.dumps({**cfg, "hints": {"read": True}})})
     hooks, _ = _rendered_hooks(ada)
-    assert ("Read|Grep|Bash|PowerShell", 'bash "${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh"') in \
-        [(g["matcher"], g["hooks"][0]["command"]) for g in hooks["hooks"]["PreToolUse"]]
+    hinted = [g["matcher"] for g in hooks["hooks"]["PreToolUse"]
+              if all(h["command"] == 'bash "${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh"' for h in g["hooks"])]
+    assert hinted == ["Read", "Grep", "Bash", "PowerShell"]   # one group per tool, gated by if (test_hook_latency)
     engine = render.claude_hooks() / "hooks.json"   # on: the engine's file byte for byte
     out = {o.rel: o.text for o in render.render(ada, "claude").outputs}["plugins/ada-core/hooks/hooks.json"]
     assert out == neutral.lf(engine.read_text(encoding="utf-8"))

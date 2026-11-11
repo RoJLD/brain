@@ -6,6 +6,9 @@
 # Fast path in bash builtins (no process started): a call whose JSON names none of those files (a store's nodes/ or
 # edges/ YAML, a folder named graph, decisions.md, journal.md, a *_graph.md view, decision_queue.md, FEATURES.md)
 # stops here. It runs beside guard.sh on a shell call (Claude Code runs a tool's hooks in parallel).
+# Before that, Claude Code starts it only on a likely hit: hooks.json gates each of its Read, Bash and PowerShell
+# hooks with an if condition naming those files (Read(//**/journal.md), Bash(*decisions.md*)...), so a call that
+# names none starts no bash; Grep's path is a folder or a glob, which a rule cannot match: Grep always starts it.
 # Uses $BRAIN_PYTHON, else the brain command's venv (<BRAIN_HOME>/venv: the installed engine), else python3, else
 # python, skipping the Windows Store stubs; without a Python 3 it does nothing.
 # Opt-in: brain render --target claude (brain sync) registers it in hooks.json only when config.json hints.read is

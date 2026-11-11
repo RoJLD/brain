@@ -2,6 +2,7 @@
 without a fork, a guard does not import urllib.request, the registry is read through libyaml; git that only reads is
 left to bash (tests/test_guards.py: the pre-filter against the guards' tables)."""
 
+import json
 import os
 import re
 import subprocess
@@ -97,3 +98,71 @@ def test_the_registry_is_read_through_libyaml(tmp_path, monkeypatch):
     projects.raw()
     assert seen == [getattr(yaml, "CSafeLoader", yaml.SafeLoader)]
     assert graph.load_yaml("a: [1, 2]") == {"a": [1, 2]}
+
+
+# wi-brain-read-hint-matcher: Claude Code starts the read hint only when the call's path or command names a brain's
+# file (the hooks' if conditions), so a call that names none starts no bash at all. Before: every Read, Grep, Bash and
+# PowerShell call started bash (on the owner's machine, 4,854 of 4,981 runs in a week stopped at its fast path, each
+# a bash start of ~85 ms); after: only Grep (its path is a folder or a glob, which a permission rule cannot match) and
+# the calls whose path or command names one.
+
+def _rule(pattern: str, shell: bool) -> re.Pattern:
+    """A permission rule's specifier as Claude Code matches it: a file path (gitignore style, ``//`` absolute, ``**/``
+    any folders, ``*`` within one) or a shell command (``*`` anything)."""
+    if shell:
+        return re.compile("^" + ".*".join(map(re.escape, pattern.split("*"))) + "$", re.S)
+    body = re.escape(pattern.removeprefix("/")).replace(r"\*\*/", "(?:.*/)?").replace(r"\*", "[^/]*")
+    return re.compile("^" + body + "$")
+
+
+def _readhint_hooks() -> dict[str, list[dict]]:
+    engine = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))
+    out: dict[str, list[dict]] = {}
+    for g in engine["hooks"]["PreToolUse"]:
+        out.setdefault(g["matcher"], []).extend(h for h in g["hooks"] if "readhint.sh" in h["command"])
+    return {m: hs for m, hs in out.items() if hs}
+
+
+def _starts(hooks: list[dict], tool: str, value: str) -> bool:
+    for h in hooks:
+        if "if" not in h:
+            return True
+        m = re.fullmatch(rf"{tool}\((.*)\)", h["if"])
+        assert m, h["if"]
+        if _rule(m.group(1), tool != "Read").match(value):
+            return True
+    return False
+
+
+READS = ["/e/b/notes/graph/nodes/work.yaml", "/e/b/notes/graph/edges/work.yml", "/e/b/notes/decisions.md",
+         "/e/b/notes/scientific_decisions.md", "/e/b/notes/journal.md", "/e/b/notes/kanban_graph.md",
+         "/e/b/notes/roadmap_graph.md", "/e/b/notes/plan_graph.md", "/e/b/notes/decision_queue.md", "/e/b/FEATURES.md"]
+SHELLS = ["grep -n wi-x notes/graph/nodes/work.yaml", "cat notes/decisions.md", "Get-Content notes\\journal.md",
+          "head -40 notes/kanban_graph.md", "sls x FEATURES.md", "type notes\\decision_queue.md",
+          "rg wi-x notes/graph/edges/work.yaml"]
+
+
+def test_the_read_hint_starts_only_on_a_likely_hit():
+    from brain import readhint
+    hooks = _readhint_hooks()
+    assert set(hooks) == {"Read", "Grep", "Bash", "PowerShell"}
+    assert all("if" in h for t in ("Read", "Bash", "PowerShell") for h in hooks[t])
+    assert [h.get("if") for h in hooks["Grep"]] == [None]   # a folder or a glob: the bash fast path filters it
+    assert {readhint.kind_of(p) for p in READS} == {k for _, k in readhint.KINDS}   # every kind of brain file
+    for p in READS:   # every file the hint names starts it
+        assert _starts(hooks["Read"], "Read", p), p
+    for c in SHELLS:
+        assert _starts(hooks["Bash"], "Bash", c) and _starts(hooks["PowerShell"], "PowerShell", c), c
+    for p in ("/e/b/src/app.py", "/e/b/notes/README.md", "/e/b/notes/graph/schema.yaml", "/e/b/nodes.yaml"):
+        assert not _starts(hooks["Read"], "Read", p), p   # a call that names none starts no process
+    for c in ("git status", "python -m pytest -q", "gh pr view 12"):
+        assert not _starts(hooks["Bash"], "Bash", c), c
+
+
+def test_what_the_if_conditions_let_through_the_bash_fast_path_still_filters():
+    """The if conditions only narrow: each sample they let through still reaches readhint.sh's own filter, so a hit
+    the bash fast path saw before, it sees now (the Python hint decides as before)."""
+    text = (HOOKS / "readhint.sh").read_text(encoding="utf-8")
+    fast = re.search(r"brain_files='([^']+)'", text).group(1)
+    for value in READS + SHELLS:
+        assert re.search(fast, json.dumps(value)), value
