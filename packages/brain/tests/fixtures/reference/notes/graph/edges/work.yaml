@@ -1,0 +1,8 @@
+- {from: wi-boil, to: adr-2026-10-01-boil-at-100, type: decided_by}
+- {from: wi-boil, to: adr-2026-10-09-reversal-boil, type: decided_by}
+- {from: adr-2026-10-09-reversal-boil, to: adr-2026-10-01-boil-at-100, type: supersedes}
+- {from: wi-pour, to: adr-2026-10-02-old-pour, type: decided_by}
+- {from: wi-free, to: adr-2026-10-05-answers-of-ada, type: decided_by}
+- {from: wi-boil, to: rule-pour-slow, type: delivers}
+- {from: wi-pour, to: spec-kettle, type: specified_by}
+- {from: feat-lab-ada-boil, to: spec-kettle, type: specified_by}
