@@ -116,6 +116,43 @@ jobs:
           path: ${{ runner.temp }}/compat-prev/report.json
           retention-days: 14
 
+  harness-controls:
+    # The harness's negative controls (wi-brain-harness-negative-controls; docs/formats.md, « Negative controls »):
+    # the upgrade test rerun once with each injected fault, every one a no-go at the step that guards against it, and
+    # once without, a go; the plain stranger test with a denied term, a leak. Slow (each run installs the engine four
+    # times): only on a pull request that touches the harness, its fixtures or the workflows.
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Does this pull request touch the harness?
+        id: touched
+        shell: bash
+        run: |
+          files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          test -n "$files"
+          if grep -qE '^(packages/brain/(installer/stranger_test\.py|pyproject\.toml)|packages/brain/tests/(fixtures/|test_harness_negative_controls\.py|test_stranger_test\.py)|\.github/workflows/)' <<< "$files"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install
+        if: steps.touched.outputs.run == 'true'
+        shell: bash
+        run: |
+          pip install -e .
+          pip install --no-deps -e packages/brain
+          pip install pyyaml pytest pytest-xdist "tomli>=2; python_version < '3.11'"
+      - name: Every fault a no-go, no fault a go
+        if: steps.touched.outputs.run == 'true'
+        working-directory: packages/brain
+        run: pytest tests/test_harness_negative_controls.py -m harness -p no:randomly -n 3 --durations=10
+
   release-preview:
     # The release preview (wi-brain-release-preview; docs/release.md, « The release preview »): on every PR, the version
     # policy applied as if the next release were a patch of the last tag. It says whether that release would be a minor
