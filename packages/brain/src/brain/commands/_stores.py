@@ -28,14 +28,14 @@ def _module_view(project: projects.Project, root: Path, store: Path) -> str:
 
 
 def _module_warnings(project: projects.Project, root: Path, store: Path, stale: views.Stale) -> list[str]:
-    """brain check's lines on the module map: an open item it does not place; its view, when stale, joins
-    ``stale``."""
+    """brain check's lines on the module map: an open item it does not place, a feature or a done item with no module
+    (wi-brain-module-backfill); its view, when stale, joins ``stale``."""
     if not modules.applies(store):
         return []
     view = _module_view(project, root, store)
     if modules.stale(root, store, _store_label(root, store), view):
         stale.add(view, "brain sync (or brain modules --write)")
-    return [f"module map: {line}" for line in modules.problems(store)]
+    return [f"module map: {line}" for line in modules.problems(store) + modules.warnings(store)]
 
 
 def _write_module_view(project: projects.Project, root: Path, store: Path) -> None:
