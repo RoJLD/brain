@@ -263,6 +263,16 @@ closes), and `brain wave import [--from X.Y.Z] [--write]` turns the items' free-
 release a value names (`0.2.9 (decided ...)` is 0.2.9) from `--from` on, the earlier releases (already tagged) listed
 and left out, the other values (letters, free text) listed for the owner to place.
 
+`brain wave plan [X.Y.Z] [--at-once N] [--hot NAME]... [--json]` composes a wave's lots at zero token (default: the
+current wave; `brain.lots`): each open item's predicted surface (`brain collisions`': its features' CodeRefs, its
+modules, the files it names), the items that share a file in one lot, run in the order of their `depends_on`; the hot
+files every PR adds to (the READMEs, CHANGELOGs, `formats.md`, `FEATURES.md`, `config.schema.json`, the `changes/`
+fragments; `--hot` adds one) counted apart and listed, to merge origin/main before the push. A lot that holds another's
+prerequisite comes a round earlier, the lots that unblock the most first, at most the sessions cap in force less the
+master's and `N` PRs verified at once (3) a round. It prints the rounds, the predicted conflicts, the hot files shared
+and the items with no known surface (each a lot of its own, unchecked), with what the memory guard and the last quota
+forecast say now; it refuses nothing. `brain next` shows the current wave's first round.
+
 ### Reading a brain
 
 Sessions read a brain through its commands, not its files: the graph's YAML, the decision log, the journal and the

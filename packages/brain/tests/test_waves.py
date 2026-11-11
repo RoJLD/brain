@@ -7,7 +7,14 @@ import json
 import pytest
 import yaml
 
-from brain import cli, decisions, milestones, waves
+from brain import cli, decisions, governor, milestones, quota, waves
+
+
+@pytest.fixture(autouse=True)
+def _no_machine(monkeypatch):
+    """brain next reads the guards' state for its lots (brain.lots): this test's, not the machine's running it."""
+    monkeypatch.setattr(governor, "memory_info", lambda: {"committed": 40.0, "available_gb": 30.0})
+    monkeypatch.setattr(quota, "load_status", lambda: {})
 
 SCHEMA = (
     "node_types: [ADR, WorkItem, Milestone, Spec, DDR, Session, Action]\n"
@@ -357,7 +364,7 @@ def test_the_commands_say_their_lines_in_the_help(capsys):
     from brain.commands import next as next_cmd
     from brain.commands import wave as wave_cmd
     assert next_cmd.run is next_cmd.cmd_next and wave_cmd.run is wave_cmd.cmd_wave
-    for sub in ("add", "close", "check", "import"):
+    for sub in ("add", "close", "check", "import", "plan"):
         assert f"brain wave {sub}" in wave_cmd.USAGE
     assert "brain next [--json]" in next_cmd.USAGE
     with pytest.raises(SystemExit):
