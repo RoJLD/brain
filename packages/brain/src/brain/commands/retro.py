@@ -17,7 +17,8 @@ USAGE = """\
                  the close-item retro: the friction signals of the item's sessions (merges and conflicts, guard
                  refusals, failed tests, waits, tokens against the estimate, the owner's minutes, rework pushes on its
                  PRs), the known lessons of those signals, the five questions; --record writes props.retro (and the
-                 --note lines in props.retro_notes); --wave: the deep retro of a wave's items (props.wave)
+                 --note lines in props.retro_notes); --wave: the deep retro of a wave's items (X.Y.Z or
+                 wave-X.Y.Z: its part_of and carried_to items; a letter wave such as F: props.wave)
 """
 
 
@@ -62,7 +63,8 @@ def register(sub, ctx) -> None:
                                       "a wave's deep retro (--wave)")
     rt.add_argument("item", nargs="?")
     rt.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
-    rt.add_argument("--wave", help="the wave's name (props.wave), e.g. F")
+    rt.add_argument("--wave", help="the wave: X.Y.Z or wave-X.Y.Z (its items part_of it or carried to it), or a "
+                                   "letter wave's props.wave, e.g. F")
     rt.add_argument("--record", action="store_true", help="write props.retro (and props.retro_notes) on the item")
     rt.add_argument("--note", action="append", help="one of the session's five lines (repeatable)")
     rt.add_argument("--no-scan", action="store_true", help="the token ledger as it is, transcripts not rescanned")

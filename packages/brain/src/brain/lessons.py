@@ -31,8 +31,10 @@ the time they took, tokens against the estimate, the context peak against the br
 the guards ledger in those sessions, the failed test runs, the pushes to the item's PRs after they were opened
 (rework); the known lessons of the signals that fired; then the five lines the session answers. ``--record`` writes
 ``props.retro`` (the signals in one line, its friction points first) and ``props.retro_notes`` (the lines given with
-``--note``). ``brain retro --wave W``: the deep retro, every item of the wave (props.wave) with its signals, the
-costliest frictions and the lessons learned from the wave's items.
+``--note``). ``brain retro --wave W``: the deep retro, every item of the wave with its signals, the costliest
+frictions, the retro notes recorded on them and the lessons learned from the wave's items. The wave's items are those
+of a numbered wave (``W`` is ``X.Y.Z`` or ``wave-X.Y.Z``: the items ``part_of`` it and those carried to it by
+``props.carried_to``, brain.waves) and those whose free-text ``props.wave`` names it (the letter waves, ``F``).
 
 **The iron rules** (``brain lesson rules``): the rule ids (``Σ-NAME`` or ``Sigma-NAME``) of each registered repo's
 tracked Markdown, read only: where each is cited, its first sentence, the lessons that restate it.
@@ -50,7 +52,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from . import config, graph, lint, paths, projects, resume
+from . import config, graph, lint, paths, projects, resume, waves
 from .inventory import AuditError, git
 
 LESSON = "Lesson"
@@ -561,17 +563,31 @@ def render_retro(r: dict, owner: str = "") -> list[str]:
     return lines
 
 
-def wave_items(led, wave: str) -> list[str]:
-    """The items of a wave: props.wave is the wave's name, alone or followed by a space or a parenthesis."""
-    rx = re.compile(rf"^{re.escape(wave)}(?:\s|\(|$)")
-    return sorted(i for i, it in led.items.items() if rx.match(str(it.props.get("wave") or "")))
+def wave_items(led, wave: str, store: Path | None = None) -> list[str]:
+    """The items of a wave (wi-brain-retro-numbered-waves): those of the numbered wave ``X.Y.Z`` or ``wave-X.Y.Z``
+    in the items' stores and ``store`` (brain.waves: part_of it, or carried to it by props.carried_to; carried out
+    of it left out), and those whose props.wave names it, alone or followed by a space, a comma or a parenthesis
+    (the letter waves, ``F``, and the numbered ones written ``0.3.2, week of ...``)."""
+    wave = str(wave).strip()
+    name = wave.removeprefix("wave-")
+    rx = re.compile(rf"^(?:wave-)?{re.escape(name)}(?:[\s,(]|$)")
+    ids = {i for i, it in led.items.items() if rx.match(str(it.props.get("wave") or "").strip())}
+    for st in sorted({it.store for it in led.items.values() if it.store} | ({store} if store else set())):
+        if not (st / "nodes").is_dir() or not waves.applies(st):
+            continue
+        plan = waves.load(st)
+        wid = plan.resolve(wave) or plan.resolve(name)
+        if wid:
+            ids |= {i for i in plan.items_of(wid) if i in led.items}
+    return sorted(ids)
 
 
 def wave_retro(led, wave: str, store: Path | None = None) -> dict:
-    """The deep retro of a wave: each item's retro, the totals by signal, the costliest frictions and the lessons
-    learned from the wave's items."""
+    """The deep retro of a wave: each item's retro, the totals by signal, the costliest frictions, the retro notes
+    recorded on the wave's items (props.retro_notes) and the lessons learned from them."""
     acts, guards = _jsonl("ar"), _jsonl("guards")
-    items = [retro(led, i, store, acts, guards) for i in wave_items(led, wave) if led.items[i].sessions]
+    members = wave_items(led, wave, store)
+    items = [retro(led, i, store, acts, guards) for i in members if led.items[i].sessions]
     tot = Counter()
     for r in items:
         s = r["signals"]
@@ -579,14 +595,18 @@ def wave_retro(led, wave: str, store: Path | None = None) -> dict:
             tot[k] += s[k]
         tot["rework"] += sum(s["rework"].values())
         tot["cost"] += s["cost"]
-    ids = {r["item"] for r in items} | set(wave_items(led, wave))
-    learned = []
+    ids = {r["item"] for r in items} | set(members)
+    learned, seen = [], set()
     stores = {led.items[i].store for i in ids if led.items[i].store} | ({store} if store else set())
-    for st in stores:
+    for st in sorted(stores):
         if st and (st / FILE).is_file():
-            learned += [x for x in rows(st) if set(x["learned_from"]) & ids]
+            for x in rows(st):
+                if set(x["learned_from"]) & ids and x["id"] not in seen:
+                    seen.add(x["id"])
+                    learned.append(x)
+    notes = {i: str(led.items[i].props["retro_notes"]) for i in sorted(ids) if led.items[i].props.get("retro_notes")}
     return {"wave": wave, "items": sorted(items, key=lambda r: -r["friction"]), "totals": dict(tot),
-            "learned": learned, "open": sorted(ids - {r["item"] for r in items})}
+            "learned": learned, "notes": notes, "open": sorted(ids - {r["item"] for r in items})}
 
 
 def render_wave(w: dict) -> list[str]:
@@ -599,6 +619,9 @@ def render_wave(w: dict) -> list[str]:
         lines.append(f"  {r['item']}: friction {r['friction']} ({', '.join(r['fired']) or 'no signal'})")
     if w["open"]:
         lines.append("  no session yet: " + ", ".join(w["open"]))
+    if w.get("notes"):
+        lines.append(f"retro notes recorded on the wave's items: {len(w['notes'])}")
+        lines += [f"  {i}: {n}" for i, n in w["notes"].items()]
     lines.append(f"lessons learned from the wave's items: {len(w['learned'])}")
     lines += [f"  {x['id']} [{x['status']}] seen {x['seen']}: {x['title']}" for x in w["learned"]]
     lines.append("the coordinator answers: what slowed the wave most, what the next wave's briefs change, which "
