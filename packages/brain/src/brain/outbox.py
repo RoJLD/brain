@@ -100,44 +100,82 @@ def pending() -> dict[str, dict]:
     return {k: e for k, e in stateio.load(path(), aside=False).data.items() if isinstance(e, dict)}
 
 
+def supersede(match: Callable[[dict], bool], keep: str = "") -> int:
+    """Drop the entries whose payload ``match`` says a newer call replaces (a resolved message queued before its
+    alert reopened), except ``keep``; how many. Never fails the caller."""
+    state = stateio.load(path(), aside=False)
+    gone = [k for k, e in state.data.items() if k != keep and isinstance(e, dict)
+            and isinstance(e.get("payload"), dict) and match(e["payload"])]
+    if not gone or not state.writable:
+        return 0
+    for k in gone:
+        del state.data[k]
+    try:
+        stateio.save(state)
+    except (stateio.StateError, OSError):
+        return 0
+    return len(gone)
+
+
 def replay(handlers: Mapping[str, Handler], *, now: datetime | None = None, dry_run: bool = False,
            limit: int = 50) -> list[str]:
-    """Hand each entry due to its kind's handler, oldest first, at most ``limit``; the lines to print."""
+    """Hand each entry due to its kind's handler, oldest first, at most ``limit``; the lines to print. A file this
+    engine must not write (a newer brain's) is not replayed at all: what it sent could never be marked sent. The
+    changes are applied to the file as it is after the sends, so that a call queued meanwhile is kept."""
     now = now or datetime.now(timezone.utc)
     state = stateio.load(path(), aside=not dry_run)
     if not state.data:
         return []
+    if not dry_run and not state.writable:
+        return [f"outbox: not replayed: {state.refusal()}"]
     due = sorted((e.get("at") or "", k) for k, e in state.data.items()
                  if isinstance(e, dict) and e.get("kind") in handlers and (_at(e.get("next")) or now) <= now)[:limit]
     if dry_run:
         return [f"outbox: would send {state.data[k]['kind']} {k} (queued {state.data[k].get('at')}, tried "
                 f"{state.data[k].get('tries', 0)})" for _, k in due]
-    lines = [_try(state.data, key, handlers, now) for _, key in due]
-    if lines:
+    lines, after = [], {}
+    for _, key in due:
+        line, after[key] = _try(key, dict(state.data[key]), handlers, now)
+        if line:
+            lines.append(line)
+    if any(v is not _SAME for v in after.values()):
+        fresh = stateio.load(path())
+        for key, entry in after.items():
+            if entry is None:
+                fresh.data.pop(key, None)
+            elif entry is not _SAME and key in fresh.data:
+                fresh.data[key] = entry
         try:
-            stateio.save(state)
+            stateio.save(fresh)
         except (stateio.StateError, OSError) as exc:
             lines.append(f"outbox: not saved ({exc})")
     return lines
 
 
-def _try(data: dict, key: str, handlers: Mapping[str, Handler], now: datetime) -> str:
-    """Hand entry ``key`` to its handler: dropped when it returns, given up or put back with a later try when it
-    raises; the line that says which."""
-    e = data[key]
+class Later(Exception):
+    """Raised by a handler that cannot try now (its sends are switched off, its project out of this pass's
+    scope): the entry waits as it is, no try counted."""
+
+
+_SAME = object()
+
+
+def _try(key: str, e: dict, handlers: Mapping[str, Handler], now: datetime) -> tuple[str, object]:
+    """Hand entry ``key`` to its handler: (the line that says what happened, the entry after: None when dropped,
+    ``_SAME`` when untouched)."""
     kind = e["kind"]
     try:
         detail = handlers[kind](e.get("payload") or {})
+    except Later:
+        return "", _SAME
     except Exception as exc:  # noqa: BLE001 (a handler's failure keeps the entry for the next pass)
         e["tries"] = int(e.get("tries") or 0) + 1
         e["why"] = str(exc).splitlines()[0][:200] if str(exc) else type(exc).__name__
         if e["tries"] >= MAX_TRIES or now - (_at(e.get("at")) or now) > MAX_AGE:
-            del data[key]
-            return f"outbox: gave up {kind} {key} after {e['tries']} tries since {e.get('at')}: {e['why']}"
+            return f"outbox: gave up {kind} {key} after {e['tries']} tries since {e.get('at')}: {e['why']}", None
         e["next"] = _iso(now + timedelta(seconds=wait(e["tries"] + 1)))
-        return f"outbox: {kind} {key} not sent ({e['why']}); next try after {e['next']}"
-    del data[key]
-    return f"outbox: sent {kind} {key} queued {e.get('at')}" + (f" ({detail})" if detail else "")
+        return f"outbox: {kind} {key} not sent ({e['why']}); next try after {e['next']}", e
+    return f"outbox: sent {kind} {key} queued {e.get('at')}" + (f" ({detail})" if detail else ""), None
 
 
 def status(now: datetime | None = None) -> dict:

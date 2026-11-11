@@ -160,6 +160,7 @@ class Result:
     route: list[str] = field(default_factory=list)
     attempts: list[Attempt] = field(default_factory=list)
     queued: bool = False  # kept in the outbox (brain.outbox), sent again by the alerts pass
+    outbox: str = ""      # why it could not be kept there ('' when it was, or was not to be)
 
     @property
     def code(self) -> int:
@@ -175,6 +176,8 @@ class Result:
             out.append(f"  {a.channel}: {a.outcome}" + (f" ({a.detail})" if a.detail else ""))
         if self.queued:
             out.append("  queued in the outbox: sent again by the alerts pass (brain notify status)")
+        if self.outbox:
+            out.append(f"  {self.outbox}")
         return out
 
     def to_json(self) -> dict:
@@ -552,8 +555,10 @@ def send(cfg: Config, msg: Message, *, only: list[str] | None = None, dry_run: b
             try:
                 a = Attempt(name, "sent", TRANSPORTS[ch.type](ch, msg, env))
             except Exception as exc:  # noqa: BLE001 (a channel never fails the caller: the next one is tried)
+                # the outbox keeps only what was surely not handled (refused, a DNS miss, 429, 503, a breaker
+                # open): a timeout or a reset may have delivered it, and nothing is sent twice
                 a = Attempt(name, "failed", _why(exc, ch.secrets(env)),
-                            net.failure(exc) or isinstance(exc, net.Unavailable))
+                            net.quick(exc, idempotent=False) or isinstance(exc, net.Unavailable))
         res.attempts.append(a)
         lines.append({**base, "channel": name, "outcome": a.outcome, "detail": a.detail})
         if a.outcome == "sent" and route.mode == "first":
@@ -563,42 +568,47 @@ def send(cfg: Config, msg: Message, *, only: list[str] | None = None, dry_run: b
         res.status = "dry-run"
     else:
         res.status = "delivered" if any(a.outcome == "sent" for a in res.attempts) else "failed"
-        _outbox(res, msg, only, queue, now)
+        _outbox(res, msg, only, force, queue, now)
     return res
 
 
-def _outbox(res: Result, msg: Message, only: list[str] | None, queue: bool, now: datetime) -> None:
-    """Delivered: drop a queued copy of ``msg``; failed because a channel was down: queue it (brain.outbox)."""
-    key = outbox.key_of("notify", *_fields(msg, only).values())
+def _outbox(res: Result, msg: Message, only: list[str] | None, force: bool, queue: bool, now: datetime) -> None:
+    """Delivered: drop a queued copy of ``msg``, and an older message of the same project and key (a resolved one
+    queued before its alert reopened); failed because a channel was down: queue it (brain.outbox)."""
+    fields = _fields(msg, only, force)
+    key = outbox.key_of("notify", *fields.values())
+    if msg.key:
+        outbox.supersede(lambda p: (p.get("project"), p.get("key")) == (msg.project, msg.key), keep=key)
     if res.status == "delivered":
         outbox.drop(key)
     elif queue and any(a.again for a in res.attempts):
         why = "; ".join(f"{a.channel}: {a.detail}" for a in res.attempts if a.outcome == "failed")
-        note = outbox.put("notify", key, _fields(msg, only), why, now=now)
-        res.queued = not note
-        if note:
-            res.attempts.append(Attempt("outbox", "failed", note))
+        res.outbox = outbox.put("notify", key, fields, why, now=now)
+        res.queued = not res.outbox
 
 
-def _fields(msg: Message, only: list[str] | None) -> dict:
+def _fields(msg: Message, only: list[str] | None, force: bool = False) -> dict:
     """The message as the outbox keeps it (its idempotency key is made of these)."""
     return {"project": msg.project, "level": msg.level, "body": msg.body, "title": msg.title, "source": msg.source,
-            "key": msg.key, "link": msg.link, "host": msg.host, "only": list(only or [])}
+            "key": msg.key, "link": msg.link, "host": msg.host, "only": list(only or []), "force": bool(force)}
 
 
 def replay(registry: Mapping[str, projects.Project], *, now: datetime | None = None, dry_run: bool = False,
            env: Mapping[str, str] | None = None) -> list[str]:
     """Send again the notifications the outbox keeps (brain.outbox), each through its project's routes as they are
-    now; the lines to print. Called by every alerts pass. Throttled or held by a quiet counts as done."""
+    now; the lines to print. Called by every alerts pass. Throttled or held by a quiet counts as done; a project
+    outside the pass's scope, or sends switched off ($BRAIN_NOTIFY=off or dry-run), leave the entry as it is."""
     def again(p: dict) -> str:
         project = registry.get(str(p.get("project")))
-        if project is None:
-            raise NotifyError(f"project {p.get('project')!r} not in the registry")
+        if project is None:   # another project's: its own pass sends it
+            raise outbox.Later()
         msg = Message(str(p["project"]), str(p["level"]), str(p.get("body") or ""), str(p.get("title") or ""),
                       str(p.get("source") or ""), str(p.get("key") or ""), str(p.get("link") or ""),
                       str(p.get("host") or ""))
-        res = send(config(project, registry), msg, only=list(p.get("only") or []) or None, env=env, now=now,
-                   queue=False)
+        res = send(config(project), msg, only=list(p.get("only") or []) or None, env=env, now=now,
+                   force=bool(p.get("force")), queue=False)   # config: every project's channels, as a send's
+        if res.status in ("off", "dry-run"):
+            raise outbox.Later()
         if res.status == "failed":
             raise DeliveryError("; ".join(f"{a.channel}: {a.detail}" for a in res.attempts) or "not delivered")
         return res.status

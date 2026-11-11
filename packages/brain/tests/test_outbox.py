@@ -157,3 +157,108 @@ def test_the_alerts_pass_replays_the_outbox(tmp_path, monkeypatch, flaky):
     lines = alerts.notify_pass({"projects": []}, {"demo": projects.get("demo")}, now=NOW + timedelta(hours=1))
     assert any(ln.startswith("outbox: sent notify") for ln in lines) and outbox.pending() == {}
     assert flaky.posts and flaky.posts[0]["message"].startswith("resolved: the pass")
+
+
+# --- the review's findings ---
+
+def test_given_up_past_its_tries(tmp_path):
+    outbox.put("notify", "a", {}, now=NOW)
+    t = NOW
+    for _ in range(outbox.MAX_TRIES):
+        t += timedelta(seconds=outbox.CAP_S)
+        lines = outbox.replay({"notify": down}, now=t)
+    assert lines[0].startswith(f"outbox: gave up notify a after {outbox.MAX_TRIES} tries") and outbox.pending() == {}
+
+
+def test_what_may_have_been_delivered_is_not_queued(tmp_path, monkeypatch):
+    """A timeout or a reset may have delivered the message: the outbox never sends it twice. A skipped call (its
+    breaker open) surely was not."""
+    def post(exc):
+        def f(url, payload, headers, timeout):
+            raise exc
+        return f
+    monkeypatch.delenv("BRAIN_NOTIFY", raising=False)
+    for k, v in ENV.items():
+        monkeypatch.setenv(k, v)
+    cfg = _cfg(tmp_path, monkeypatch, ONLY_NTFY)
+    for exc in (urllib.error.URLError(TimeoutError("timed out")), ConnectionResetError("reset"),
+                urllib.error.HTTPError("u", 502, "bad gateway", {}, io.BytesIO(b"{}"))):
+        monkeypatch.setattr(notify, "_post_json", post(exc))
+        res = notify.send(cfg, _msg(), now=NOW)
+        assert res.status == "failed" and not res.queued
+    assert outbox.pending() == {}
+    monkeypatch.setattr(notify, "_post_json", post(net.Unavailable("http:ntfy.sh", "http:ntfy.sh unavailable")))
+    assert notify.send(cfg, _msg(), now=NOW).queued
+
+
+def test_sends_switched_off_leave_the_outbox_as_it_is(tmp_path, monkeypatch, flaky):
+    cfg = _cfg(tmp_path, monkeypatch, ONLY_NTFY)
+    notify.send(cfg, _msg(key="k1"), now=NOW)
+    flaky.up = True
+    reg = {"demo": projects.get("demo")}
+    for switch in ("dry-run", "off"):
+        monkeypatch.setenv("BRAIN_NOTIFY", switch)
+        assert notify.replay(reg, now=NOW + timedelta(hours=1)) == []
+        [e] = outbox.pending().values()
+        assert e["tries"] == 0
+    assert flaky.posts == []
+
+
+def test_a_newer_brains_outbox_is_not_replayed(tmp_path):
+    outbox.path().parent.mkdir(parents=True)
+    outbox.path().write_text(json.dumps({"v": 99, "a": {"kind": "notify", "payload": {}, "at": "2026-11-01T00:00:00Z",
+                                                         "tries": 0, "next": "2026-11-01T00:00:00Z"}}),
+                             encoding="utf-8")
+    sent = []
+    lines = outbox.replay({"notify": lambda p: sent.append(p) or "ok"}, now=NOW)
+    assert sent == [] and lines[0].startswith("outbox: not replayed")
+
+
+def test_another_projects_entry_waits_for_its_own_pass(tmp_path, monkeypatch, flaky):
+    cfg = _cfg(tmp_path, monkeypatch, ONLY_NTFY)
+    notify.send(cfg, _msg(key="k1"), now=NOW)
+    for i in range(outbox.MAX_TRIES + 2):
+        assert notify.replay({}, now=NOW + timedelta(days=1, hours=i)) == []
+    [e] = outbox.pending().values()
+    assert e["tries"] == 0
+
+
+def test_a_forced_send_stays_forced_when_replayed(tmp_path, monkeypatch, flaky):
+    cfg = _cfg(tmp_path, monkeypatch, ONLY_NTFY)
+    flaky.up = True
+    assert notify.send(cfg, _msg(key="k1"), now=NOW).status == "delivered"
+    flaky.up = False
+    assert notify.send(cfg, _msg(key="k1", body="again"), force=True, now=NOW + timedelta(minutes=1)).queued
+    flaky.up = True
+    lines = notify.replay({"demo": projects.get("demo")}, now=NOW + timedelta(minutes=10))
+    assert lines[0].startswith("outbox: sent notify") and lines[0].endswith("(delivered)")
+    assert [p["message"].split("\n")[0] for p in flaky.posts] == ["the pass of 12:00 was missed", "again"]
+
+
+def test_a_newer_message_of_the_same_key_replaces_the_queued_one(tmp_path, monkeypatch, flaky):
+    """A resolved message queued while ntfy was down is not sent after its alert reopened."""
+    cfg = _cfg(tmp_path, monkeypatch, LEVELS)
+    notify.send(cfg, _msg("info", body="resolved: the pass", key="k9"), only=["ntfy"], now=NOW)
+    assert outbox.pending()
+    flaky.up = True
+    notify.send(cfg, _msg("error", body="the pass again", key="k9"), queue=False, now=NOW + timedelta(hours=1))
+    assert outbox.pending() == {}
+
+
+def test_a_call_queued_during_a_replay_is_kept(tmp_path):
+    outbox.put("notify", "a", {}, now=NOW)
+
+    def meanwhile(payload):
+        outbox.put("notify", "b", {}, now=NOW)   # another command queues while this pass sends
+        return "ok"
+    outbox.replay({"notify": meanwhile}, now=NOW + timedelta(days=1))
+    assert list(outbox.pending()) == ["b"]
+
+
+def test_the_alerts_pass_does_not_queue_an_open_alert(tmp_path, monkeypatch, flaky):
+    """The pass sends a failed open alert again itself: the outbox would send it twice."""
+    _cfg(tmp_path, monkeypatch, LEVELS)
+    data = {"projects": [{"project": "demo", "found": True, "alerts": [
+        {"key": "a1", "level": "error", "message": "the pass of 12:00 was missed", "source": "watchdog"}]}]}
+    lines = alerts.notify_pass(data, {"demo": projects.get("demo")}, now=NOW)
+    assert any("a1" in ln for ln in lines) and outbox.pending() == {}
