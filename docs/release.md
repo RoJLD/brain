@@ -187,16 +187,25 @@ jobs read the PR, and a schema merged after it would reach the tag with no job h
 ## 3. The tag: the owner
 
 From an up-to-date main, at the version PR's merge commit. The tag message names the release's theme, the one its
-section heading names (« The version policy »):
+section heading names (« The version policy »). **The tag is signed** (STD-3, from v0.3.2 on): `git tag -s` with the
+owner's SSH release key, so that `brain update` and the installer can tell it from a tag pushed by someone else
+(wi-brain-release-signing; the key, the `releaser` role and `allowed_signers`:
+[`packages/brain/docs/identity.md`](../packages/brain/docs/identity.md), « Signed releases »):
 
 ```bash
 git switch main
 git pull --ff-only
 git log -1 --oneline                                  # the merge of chore/release-X.Y.Z
 brain check --public --history                        # the stamp the push guard reads
-git tag -a vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z — theme: what it brings"
+git tag -s vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z — theme: what it brings"   # your key's passphrase
+git -c gpg.ssh.allowedSignersFile=<your brain>/allowed_signers verify-tag vX.Y.Z      # Good "git" signature for <you>
 git push origin vX.Y.Z
 ```
+
+Signing needs, once: the key made in the owner's own terminal, its public half and the `releaser` role in the
+personal brain's `members.yaml`, `brain identity allowed-signers --write` committed there, and git's
+`gpg.format ssh` and `user.signingkey` set (identity.md gives the lines). A tag made with `-a` by mistake is
+unsigned: delete it before pushing it (`git tag -d vX.Y.Z`) and sign it again; once pushed, a tag is never moved.
 
 **A fix that cannot wait** (« The version policy ») is tagged the same way from `release/X.Y`, at the merge of its
 version PR, instead of main: `git switch release/X.Y`, then `git pull --ff-only` and the lines after it. Then
@@ -205,7 +214,10 @@ the next version PR's `release-check` refuses a section that repeats an entry al
 reworded during the cherry-pick is yours to see.
 
 CI's `release-tag` job then checks that the tag, both `__version__` and the pin agree. It does not check the theme of
-the tag message: `release-check` checked it in the section heading, and the owner copies it. Once it is green,
+the tag message: `release-check` checked it in the section heading, and the owner copies it. It says whether the
+tag carries an SSH signature (a notice, or a warning for an unsigned one) and never fails on it: the keys that
+verify it are in the owner's `allowed_signers`, not in this repo, so the verification is `brain update`'s and the
+installer's, before they install (refused only where `config.json` `engine.verify_tags` is on). Once it is green,
 `brain update --check` on a machine at `vP` shows the new version and its `### Upgrade`. A tag is never moved: a
 mistake is a new version, a patch when its fix needs nothing beyond the standard steps (« The version policy »).
 
@@ -219,6 +231,9 @@ steps for that version; in general:
   (in the same PR, so that they never name a command the pin does not have). Run `brain sync` with the new engine (a venv at the tag: the machine's own is still the
   old one, and sync refuses another engine than the pin), so the hooks it renders go in too. After its merge, on each machine: `<installer> -Apply` (its plan first), then restart
   the sessions.
+- **Each install verifies the tag** first, against the brain's `allowed_signers`: `verify   vX.Y.Z: signed by <you>`
+  in the plan of `brain update` and of the installer, else why not; with `engine.verify_tags` on, an unsigned tag is
+  refused there, and so is a rollback to one (every tag up to v0.3.1): turn it off first to roll back.
 - **A brain from `brain init`** (no `engine.installer`): `brain update` in the owner's terminal, then `y`. It installs
   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. Then restart the sessions. An engine older
   than 0.2.6 runs that update and only reminds of the pin: run `brain update` once more.

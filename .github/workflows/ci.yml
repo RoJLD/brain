@@ -171,3 +171,16 @@ jobs:
           test "${GITHUB_REF_NAME}" = "v${brain}" || { echo "tag ${GITHUB_REF_NAME} != brain v${brain}"; exit 1; }
           grep -q "research-graph @ git+https://github.com/RoJLD/brain.git@${GITHUB_REF_NAME}\"" packages/brain/pyproject.toml \
             || { echo "packages/brain/pyproject.toml does not pin research-graph at ${GITHUB_REF_NAME}"; exit 1; }
+      - name: Tag signature (advisory)
+        # wi-brain-release-signing (STD-3): the owner signs each tag from v0.3.2 on (git tag -s, gpg.format ssh). The
+        # keys that verify it live in the owner's allowed_signers, not in this repo (publishing them is a separate
+        # decision), so this job only says whether the tag carries an SSH signature; it never fails on it. brain update
+        # and the installer verify it against the keys before installing (docs/release.md).
+        run: |
+          git fetch --quiet --no-tags --depth 1 origin "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}" || true
+          if [ "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = tag ] \
+              && git cat-file -p "refs/tags/${GITHUB_REF_NAME}" | grep -q -- "-----BEGIN SSH SIGNATURE-----"; then
+            echo "::notice::${GITHUB_REF_NAME} carries an SSH signature (verified by brain update and the installer)"
+          else
+            echo "::warning::${GITHUB_REF_NAME} is not signed: brain update and the installer refuse it where engine.verify_tags is on (docs/release.md, « 3. The tag »)"
+          fi

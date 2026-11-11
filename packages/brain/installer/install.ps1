@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Install the brain command on this machine and, for a personal brain, the owner's Claude configuration (plan by
     default, -Apply to change it).
@@ -18,6 +18,11 @@
                    launcher is copied into <BRAIN_HOME>\bin and that folder alone added to the user PATH (no python.exe
                    there to shadow another); on Linux and macOS a link in ~/.local/bin. -SkipCommand leaves it out.
                    -Extras tui adds the cockpit's Textual app (brain tui; without it brain tui draws its text view).
+      verify       before the install, the pin's tag fetched alone into a temporary repo and checked with git
+                   verify-tag against the personal brain's allowed_signers (brain identity allowed-signers --write:
+                   members.yaml's releaser keys); a verified tag is installed by the commit it names. Said either way;
+                   config.json engine.verify_tags: true refuses a tag unsigned, signed by another key or that cannot be
+                   verified (docs/release.md). -Engine installs what it names, unchecked.
       pointer      <BRAIN_HOME>\personal.json, {"root": <the personal brain's main checkout>}: how the engine and its
                    hooks find the personal brain from anywhere ($env:BRAIN_PERSONAL overrides it)
       profile      this machine's profile (brain profile, alias brain doctor: Lite, Défaut, Recommandé,
@@ -142,12 +147,56 @@ if ($repo) { "personal $repo (owner $($config.identity.owner))" } else { 'person
 $version = ([regex]'__version__ = "([^"]+)"').Match((Get-Content (Join-Path $engine_root 'src\brain\__init__.py') -Raw)).Groups[1].Value
 $engine_repo = if ($config -and $config.engine) { $config.engine.repo } else { $default_engine }
 $engine_pin = if ($config -and $config.engine) { $config.engine.pin } else { "v$version" }
+$engine_ref = $engine_pin   # the commit the signed tag names, once verified (the verify step below)
+$verify_tags = [bool]($config -and $config.engine -and $config.engine.verify_tags -eq $true)
 $wanted = @($Extras | Where-Object { $_ } | Sort-Object -Unique)
 function Get-Spec([string[]]$extras) {
     $name = if ($extras) { "brain[$($extras -join ',')]" } else { 'brain' }
     if ($Engine) { if ($extras) { return "$Engine[$($extras -join ',')]" } else { return $Engine } }
-    "$name @ git+https://github.com/$engine_repo.git@$engine_pin#subdirectory=packages/brain"
+    "$name @ git+https://github.com/$engine_repo.git@$engine_ref#subdirectory=packages/brain"
 }
+
+# --- the tag verification (tests/test_tagsig.py runs it alone) ---
+function Test-TagSignature([string]$url, [string]$tag, [string]$allowed) {
+    # The release tag fetched alone into a temporary repo and checked with git verify-tag against the allowed_signers
+    # file (brain identity allowed-signers --write, from members.yaml's releaser role; namespace git): status verified
+    # (with the releaser and the commit the tag names), unsigned, unknown-key or unverifiable. Public keys only.
+    $ErrorActionPreference = 'Continue'
+    $result = [pscustomobject]@{ status = 'unverifiable'; tag = $tag; signer = ''; commit = ''; why = '' }
+    if (-not $allowed -or -not (Test-Path -LiteralPath $allowed)) {
+        $result.status = 'no-signers'
+        $result.why = 'no allowed_signers beside config.json (brain identity allowed-signers --write)'
+        return $result
+    }
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("brain-tag-" + [guid]::NewGuid().ToString('N').Substring(0, 12))
+    try {
+        & git init --quiet $tmp 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { $result.why = 'git init failed'; return $result }
+        $ref = "refs/tags/$tag"
+        $said = @(& git -c credential.helper= -C $tmp fetch --quiet --no-tags --depth 1 $url "+${ref}:${ref}" 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -ne 0) { $result.why = "git fetch $tag failed (offline?): $($said | Select-Object -Last 1)"; return $result }
+        $kind = "$(& git -C $tmp cat-file -t $ref 2>$null)".Trim()
+        $result.commit = "$(& git -C $tmp rev-parse --verify "$ref^{commit}" 2>$null)".Trim()
+        if ($kind -ne 'tag') { $result.status = 'unsigned'; $result.why = "$tag is a lightweight tag: no signature"; return $result }
+        $file = (Resolve-Path -LiteralPath $allowed).Path -replace '\\', '/'
+        $said = @(& git -C $tmp -c "gpg.ssh.allowedSignersFile=$file" verify-tag --raw $ref 2>&1 | ForEach-Object { "$_" }) -join "`n"
+        $code = $LASTEXITCODE
+        if ($code -eq 0 -and $said -match 'Good "git" signature for (\S+) with') {
+            $result.status = 'verified'
+            $result.signer = $Matches[1]
+        } elseif ($said -match 'no signature found') {
+            $result.status = 'unsigned'
+            $result.why = "$tag carries no signature"
+        } else {
+            $result.status = 'unknown-key'
+            $result.why = "$tag is not signed by a key of allowed_signers"
+        }
+        return $result
+    } finally {
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+# --- end of the tag verification ---
 
 # The Claude steps: only for a personal brain whose config.json names its marketplace and rules.
 $names = if ($config -and $config.adapters) { $config.adapters.claude } else { $null }
@@ -410,7 +459,40 @@ function Show-Tier($t) {
     $r.warnings | Where-Object { $_ } | ForEach-Object { "warning  profile: $_" }
 }
 
+function Get-InstalledCommit([string]$dist) {
+    # The commit pip recorded for a distribution installed from git (its dist-info's direct_url.json), '' when none.
+    $sites = if ($windows) { @(Join-Path $venv 'Lib\site-packages') } else {
+        @(Get-ChildItem (Join-Path $venv 'lib') -Directory -Filter 'python3*' -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName 'site-packages' }) }
+    foreach ($site in $sites) {
+        foreach ($d in Get-ChildItem $site -Directory -Filter "$dist-*.dist-info" -ErrorAction SilentlyContinue) {
+            $f = Join-Path $d.FullName 'direct_url.json'
+            if (-not (Test-Path $f)) { continue }
+            try { $c = (Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json).vcs_info.commit_id } catch { $c = $null }
+            if ($c) { return "$c" }
+        }
+    }
+    ''
+}
+
 if (-not $SkipCommand) {
+    # The release tag's signature (wi-brain-release-signing), before anything is installed: verified against the
+    # personal brain's allowed_signers, the install then goes by the commit the signed tag names; said either way,
+    # refused only under config.json engine.verify_tags (the owner's opt-in). -Engine installs what it names, unchecked.
+    $sig = $null
+    if (-not $Engine) {
+        $allowed = if ($repo) { Join-Path $repo 'allowed_signers' } else { $null }
+        $sig = Test-TagSignature "https://github.com/$engine_repo.git" $engine_pin $allowed
+        if ($sig.status -eq 'verified') {
+            "verify   ${engine_pin}: signed by $($sig.signer) ($allowed), commit $($sig.commit.Substring(0, 12))"
+            $engine_ref = $sig.commit
+        } elseif ($verify_tags) {
+            "refuse   ${engine_pin}: not verified, $($sig.why) (config.json engine.verify_tags is on)"
+            if ($Apply) { throw "$engine_pin is not verified ($($sig.why)): nothing installed (config.json engine.verify_tags is on)" }
+        } else {
+            "verify   ${engine_pin}: not verified, $($sig.why) (not refused: config.json engine.verify_tags is off)"
+        }
+    }
     if (Test-Path $venv_python) {
         "same     venv $venv"
     } else {
@@ -429,6 +511,15 @@ if (-not $SkipCommand) {
     $spec = Get-Spec $wanted
     "install  brain $engine_pin and its dependencies, research-graph at the same tag among them (pip install `"$spec`") into $venv"
     if ($Apply) { Install-Brain $spec }
+    if ($Apply -and $sig -and $sig.status -eq 'verified') {
+        # research-graph comes by the tag the engine's pyproject pins: a commit other than the verified one means the
+        # tag moved between the check and the install
+        $got = Get-InstalledCommit 'research_graph'
+        if ($got -and $got -ne $sig.commit) {
+            "warning  research-graph was installed from commit $got, not $($sig.commit) which the signed $engine_pin names: the tag moved during the install"
+            if ($verify_tags) { throw "the tag $engine_pin moved during the install: the venv's research-graph is not the signed one; check the repo's tags, then -Apply again" }
+        }
+    }
     # The machine's profile, read from the installed brain command: the extras it wants too.
     if (Test-Path $launcher) {
         $chosen = Read-Tier
