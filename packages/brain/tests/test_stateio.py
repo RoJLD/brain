@@ -600,3 +600,21 @@ def test_refused_tells_a_writers_refusal_from_a_file_it_will_set_aside(tmp_path)
     assert stateio.load(_write(tmp_path / "new.json", '{"v": 9}'), aside=False).refused
     (tmp_path / "dir.json").mkdir()   # a read that fails: a lock, a permission
     assert stateio.load(tmp_path / "dir.json", aside=False).refused
+
+
+def test_log_files_gives_a_rotated_logs_files_in_order(tmp_path):
+    """wi-brain-logs-unclassified: the monthly files by month, then n (-10 after -2), then the live file."""
+    for name in ("quota-2026-10-10.jsonl", "quota-2026-10.jsonl", "quota-2026-10-2.jsonl", "quota-2026-09.jsonl",
+                 "quota.jsonl", "quota.json", "quotas-2026-10.jsonl", "quota-2026-10.jsonl.bak"):
+        _write(tmp_path / name, "x")
+    assert [p.name for p in stateio.log_files(tmp_path / "quota.jsonl")] == [
+        "quota-2026-09.jsonl", "quota-2026-10.jsonl", "quota-2026-10-2.jsonl", "quota-2026-10-10.jsonl",
+        "quota.jsonl"]
+    (tmp_path / "quota.jsonl").unlink()
+    assert stateio.log_files(tmp_path / "quota.jsonl")[-1].name == "quota-2026-10-10.jsonl"
+    assert stateio.log_files(tmp_path / "nowhere" / "x.jsonl") == []
+
+
+def test_the_unclassified_logs_have_a_retention():
+    assert {k: stateio.LOG_RETENTION[k] for k in ("starts", "quota", "notify")} == {"starts": 2, "quota": 12,
+                                                                                 "notify": 6}

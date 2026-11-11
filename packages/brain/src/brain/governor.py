@@ -33,7 +33,9 @@ The checks, in order; the first that holds decides:
   A session is a brainstorm when its brief says ``Task class: brainstorm`` or carries ``#brainstorm`` (the session
   record's ``task_class``), or its title matches ``brainstorm_title`` (default: it starts with "Brainstorm"); an
   open brainstorm is one not archived and active in the last ``brainstorm_hours``. A brainstorm start this hook lets
-  through is noted in ``usage/starts.jsonl``, so the next start counts it before its first turn ends.
+  through is noted in ``usage/starts.jsonl``, so the next start counts it before its first turn ends (a log rotated
+  monthly, two months kept: brain.stateio; both quota readings and starts are read from the live file and the newest
+  monthly one).
 - ``warn``: a window at ``warn`` % or more: ask the owner, for every tool.
 
 The thresholds and caps are config.json's ``usage.guard`` (:data:`DEFAULTS`), never rule text. A refusal names the
@@ -56,7 +58,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import midsession, paths
+from . import midsession, paths, stateio
 
 GUARD = "usage"
 DEFAULTS = {"enabled": True, "warn": 80.0, "critical": 95.0, "sessions": 8, "brainstorms": 2, "memory": 97.0,
@@ -238,13 +240,19 @@ def _tail_lines(f: Path, size: int = 65536) -> list[str]:
         return []
 
 
+def _tail_log(f: Path, size: int = 65536) -> list[str]:
+    """The last lines of a rotated log (brain.stateio.rotate_log): the tail of its newest monthly file, then of the live
+    one, so that the month's turn hides nothing recent."""
+    return [line for p in stateio.log_files(f)[-2:] for line in _tail_lines(p, size)]
+
+
 def quota_now(now: datetime, lim: dict) -> dict:
     """The windows in force, {window: {pct, at, how}} (how: read, the reading as noted; forecast, the last brain
     usage quota's percent now; plus the week's last pace up to fresh_minutes past it), the newest reading's time,
     whether the machine notes readings, and the $ per % of the week."""
     home = paths.brain_home() / "usage"
     readings = []
-    for line in _tail_lines(home / "quota.jsonl"):
+    for line in _tail_log(home / "quota.jsonl"):
         try:
             r = json.loads(line)
         except ValueError:
@@ -341,7 +349,7 @@ def _record_class(cli: str) -> str:
 def _starts(now: datetime) -> list[dict]:
     """The brainstorm starts this hook let through in the last :data:`PENDING`."""
     out = []
-    for line in _tail_lines(paths.brain_home() / "usage" / "starts.jsonl", 16384):
+    for line in _tail_log(paths.brain_home() / "usage" / "starts.jsonl", 16384):
         try:
             r = json.loads(line)
         except ValueError:
@@ -622,6 +630,7 @@ def _note_start(payload: dict, s: dict) -> None:
         return
     f = paths.brain_home() / "usage" / "starts.jsonl"
     f.parent.mkdir(parents=True, exist_ok=True)
+    stateio.rotate_log(f, keep=stateio.LOG_RETENTION["starts"])
     rec = {"at": s["now"], "brainstorm": True, "title": str(inp.get("title") or ""), "project": s["project"],
            "by": payload.get("session_id")}
     with open(f, "a", encoding="utf-8", newline="\n") as fh:

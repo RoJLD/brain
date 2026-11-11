@@ -194,7 +194,8 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
 ### What it reads
 
 - the quota readings the sessions note: `brain usage quota --observe PCT --resets RESETS_AT [--window 5h]`
-  (get_usage's percent used and reset time), in `<BRAIN_HOME>/usage/quota.jsonl`, and the last forecast,
+  (get_usage's percent used and reset time), in `<BRAIN_HOME>/usage/quota.jsonl` (rotated monthly into
+  `quota-YYYY-MM.jsonl`, 12 months kept; the governor reads the live file and the newest month), and the last forecast,
   `usage/quota.json` (its percent now, the last 24 h's pace, the $ per % of the week);
 - the sessions: the desktop app's session files (`%LOCALAPPDATA%/Claude-Data/*/claude-code-sessions`, read only),
   else the session records `<BRAIN_HOME>/sessions/*.json`;
@@ -225,7 +226,8 @@ applied, and a `sessions` refusal names the session-hour it used (`measured` whe
 A brainstorm is a session whose brief says `Task class: brainstorm` or carries `#brainstorm` (the session record's
 `task_class`), or whose title matches `brainstorm_title` (default: it starts with "Brainstorm"). It is open while not
 archived and active in the last `brainstorm_hours`, in any project. A brainstorm start the governor lets through is
-noted in `<BRAIN_HOME>/usage/starts.jsonl` and counted for 10 minutes, until the app shows its session.
+noted in `<BRAIN_HOME>/usage/starts.jsonl` and counted for 10 minutes, until the app shows its session (a log rotated
+monthly, two months kept, so a start just before the month turned still counts).
 
 ### A master's start_session (the master's watch)
 
