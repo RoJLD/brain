@@ -41,7 +41,8 @@ brain = ["schemas/*.json", "tiers.yaml", "catalogs/*.yaml", "compose/*/*", "proc
 testpaths = ["tests"]
 addopts = "-p no:cacheprovider"
 # docker: calls the real docker client, flaky on a busy runner; the CI runs it apart, on one process, after the rest
-markers = ["docker: calls the real docker client (the CI runs these apart: -m docker)"]
+markers = ["docker: calls the real docker client (the CI runs these apart: -m docker)",
+           "harness: reruns the stranger test with an injected fault (slow, installs; skipped unless -m harness)"]
 
 [tool.coverage.run]
 # the CI's coverage data names its files relative to packages/brain, so brain coverage --from reads it in any checkout

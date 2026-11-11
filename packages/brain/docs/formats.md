@@ -353,3 +353,36 @@ python packages/brain/installer/stranger_test.py --source . --upgrade-from v0.2.
 
 After each install the harness checks that brain's `direct_url.json` names the engine meant: the tag and HEAD can
 share a version. The job uploads its report (`compat-prev-report`, every step's command, exit code and output).
+
+### Negative controls
+
+A harness that cannot fail proves nothing (wi-brain-harness-negative-controls: the review of brain #52 found seven
+false greens in this one). `tests/test_harness_negative_controls.py` reruns the upgrade test with one fault injected
+each (`stranger_test.py --fault NAME`), and requires a no-go failing at the step that guards against it and at no
+other, then once without a fault, which must be a go:
+
+| Fault | What it does | The step that must fail |
+|---|---|---|
+| `rewrite` | `config.json` saved again after the older engine's reads, the same data in other bytes | `no loss` |
+| `truncated-ledger` | an exec ledger's first line dropped there (the older engine appended its own after) | `no loss` |
+| `unreached` | the `members` format's newer fixture replaced by its older one: its additive keys reach no file | `newer data` |
+| `wrong-engine` | the previous engine reinstalled in place of this checkout for the way back | `engine` |
+
+The missing tag needs no seam: `--upgrade-from ""` is refused before any install (a fast test). The plain stranger
+test's control installs the last tag and denies the invented owner's name (`--deny "people:Ada Example"`): its leaks
+must be found, every step ok. An upgrade rerun installs the engine four times (each on a copy of the checkout: pip
+builds one in place, so two runs on the same one break each other): about 10 minutes on Windows. The reruns are
+skipped unless selected,
+
+```bash
+pytest packages/brain/tests/test_harness_negative_controls.py -m harness -n 3
+```
+
+and CI's `harness-controls` job runs them on a pull request that touches `stranger_test.py`, the test fixtures, the
+package's `pyproject.toml`, the controls or the workflows. The seams themselves are tested fast in the default suite. A new guard of the harness gets
+its fault in `stranger_test.FAULTS` and its rerun here.
+
+`tests/test_ci_workflows.py` checks the engine's own workflows: a step that writes a command substitution to
+`GITHUB_OUTPUT` (`>>` or `tee -a`, in bash or pwsh; directly, or through a variable assigned one) must test first that it is not empty (`test -n`, or
+`${var:?}`): an empty output is no error to the shell, and compat-prev once went on green with no tag. It reads only
+this repository's `.github/workflows`, so no user repository is newly refused.
