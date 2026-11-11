@@ -44,7 +44,8 @@
       "properties": {
         "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "owner/name of the engine's repo on GitHub."},
         "pin": {"type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$", "description": "The tag installed, vX.Y.Z; moved by a reviewed PR."},
-        "installer": {"type": "string", "minLength": 1, "description": "This brain's own installer, relative to its root (install.ps1, say): run without arguments it prints its plan, with -Apply it installs the engine at the pin. When the installed engine lags the pin, the cockpit's u opens its plan and runs -Apply on the owner's yes; a brain without one is updated by brain update."}
+        "installer": {"type": "string", "minLength": 1, "description": "This brain's own installer, relative to its root (install.ps1, say): run without arguments it prints its plan, with -Apply it installs the engine at the pin. When the installed engine lags the pin, the cockpit's u opens its plan and runs -Apply on the owner's yes; a brain without one is updated by brain update."},
+        "verify_tags": {"type": "boolean", "description": "The owner's opt-in (wi-brain-release-signing, off by default): brain update and the engine's installer refuse a release tag that is not signed by a key of allowed_signers, the file brain identity allowed-signers --write generates beside config.json from members.yaml's releaser role. Without it they report the verification and install anyway."}
       }
     },
     "adapters": {

@@ -1,0 +1,30 @@
+# A standards catalog as brain 0.3.2 writes it (brain.standards): the keys of the first version, nothing more.
+v: 1
+catalog: fixture
+title: A catalog of two rows
+source: a fixture
+rows:
+  - id: fx-atomic-writes
+    domain: persistence
+    title: Atomic writes
+    statement: Every file the program owns is written to a temporary file, then renamed over the old one.
+    why: A crash mid-write leaves half a file.
+    profiles: [cli, local-client]
+    stage: mvp
+    enforcement: check
+    check: a lint refuses an open for writing outside the helper
+    adapter: lint
+    languages: [py]
+    coverage: {status: partial, by: the state helper}
+    status: proposed
+    source: pillar 1
+    refs: [fx-utc]
+  - id: fx-utc
+    domain: time
+    statement: Timestamps are stored in UTC.
+    profiles: [any]
+    stage: prototype
+    enforcement: review-lens
+    check: does a stored time carry its zone?
+    languages: [any]
+    status: validated

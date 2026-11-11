@@ -81,6 +81,13 @@ It runs only on the owner's yes: `y` at its prompt, or `--yes`; never from a Cla
 told to run it in the owner's own terminal. `brain update --check` prints the plan and changes nothing; `--json`
 gives its data. A checkout installed editable is not updated by pip (`git pull` there).
 
+Before the install, the plan verifies the tag's signature (since 0.3.2, STD-3): `git verify-tag` against the
+`releaser` keys of the brain's `members.yaml` (else `allowed_signers`, the file generated from them); after the
+install, the commits pip recorded are checked against the one the signed tag names. The plan says
+`verify   vX.Y.Z: signed by <person>`, or why not, and installs anyway unless `config.json` `engine.verify_tags` is
+`true`, the owner's opt-in, which refuses an unsigned tag (`brain update --yes` then exits 1). The installer does the same
+([docs/identity.md](docs/identity.md), « Signed releases »).
+
 The cockpit (`brain tui`) has one tab per question, each on its key: `0` the overview, `1` the queue, `2` the sessions,
 `3` the frontier, `4` the milestones, `8` health (alerts on top; audit debt, stacks and index, and the exec times).
 The overview shows one card per tab, what counts in it in a few lines: the band now, the sessions asking, the nearest
@@ -228,6 +235,25 @@ that touch it; a public repo's render is neutral (the features' public titles, n
 `brain docs check` exits 1 when `readme.yaml` misses a field, a quoted command is gone, or `README.md` is not the
 render (a hand edit, or a stale render: a feature, a command's help or the graph changed); `brain check` runs it
 (a stale README is a stale view, [docs/views.md](docs/views.md)). A repo without `readme.yaml` is never read.
+
+### Standards
+
+The standards registry holds engineering standards as data ([docs/standards.md](docs/standards.md)): one row per
+standard, its domain, statement, the profiles it applies to, the stage it is required from, how it is enforced and by
+what check, the languages that check covers and how the Brain itself meets it, in catalogs (the engine's own, and a
+brain's local ones). A project opts in with `projects.yaml` `standards: {profiles, stage, include, exclude,
+catalogs}`; `brain standards list|show|check` reads them, `brain check --all` checks each project's opt-in, and
+`brain brief` lists the project's standards as its invariants. A project without the key follows none.
+
+### Language adapters
+
+A repo plugs its own tools in through `projects.yaml` `repos[].tools` (`brain.langs`): for each slot (lint,
+typecheck, test, coverage, format), the report file its tool writes and that report's format (SARIF, JUnit XML,
+Cobertura, lcov, coverage.py's JSON, istanbul's summary), so a TypeScript or Swift product is read through its own
+tools. The engine reads the reports and runs nothing: the project's CI or its developer writes them. `brain audit`
+measures `lang.report` for a repo that declares `tools:` (a report missing or unreadable, failed tests, findings,
+coverage under 50 %), and `brain standards check` counts a standard whose `adapter` slot a repo declares as covered on that repo's
+language. A repo without `tools:` is read as before. See [docs/standards.md](docs/standards.md), « Language adapters ».
 
 ### The impact of a change
 
@@ -859,8 +885,12 @@ that do not verify as warnings, as errors under `config.json` `identity.require_
 `members.yaml` nothing is checked. The owner's commands (making the key, declaring it, signing a batch):
 [`docs/identity.md`](docs/identity.md).
 
+The `releaser` role's keys verify the engine's release tags: `brain identity allowed-signers --write` generates
+`allowed_signers` beside `config.json` (namespace `git`), which `brain update` and the installer read before an
+install ([docs/identity.md](docs/identity.md), « Signed releases »).
+
 ```
-brain identity check | unsigned [--write DIR] [--json] | payload ID | attach SIG|DIR...
+brain identity check | unsigned [--write DIR] [--json] | payload ID | attach SIG|DIR... | allowed-signers [--write [FILE]]
 ```
 
 ## Adding a command

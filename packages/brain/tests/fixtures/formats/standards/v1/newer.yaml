@@ -1,0 +1,17 @@
+# A standards catalog with a newer brain's additive keys under the same v: a top-level key, a row's key, and a
+# vocabulary value this engine does not know. Read mode keeps the rows and notes them; strict mode (CI) refuses.
+v: 1
+catalog: fixture-newer
+title: A catalog a newer engine wrote
+owner: a team
+rows:
+  - id: fx-newer
+    domain: security
+    statement: Inputs are parsed into typed values at the boundary.
+    profiles: [cli, quantum]
+    stage: mvp
+    enforcement: check
+    check: a type checker in strict mode
+    languages: [py]
+    status: proposed
+    severity: high
