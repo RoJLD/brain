@@ -16,6 +16,8 @@ The brief holds, in this order:
 - its files and collisions (brain collisions' line for the item);
 - how to start: the repo, a worktree from the default branch (a card cannot carry a source branch, so the brief says
   how to start from one);
+- the invariants: the standards the project follows (projects.yaml ``standards:``, brain.standards), one line each
+  with its domain and how it is enforced; no section for a project that declares none;
 - a section the coordinator fills in (scope, order, what to read first);
 - after the merge (wi-brain-archive-after-merge, close-item step 5): the session that merges its own PR archives itself
   once its after-merge steps are done, the coordinator archives a child whose report says merged and verified without
@@ -36,7 +38,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, projects, resume, tidy
+from . import config, projects, resume, standards, tidy
 
 CLASSES = {"trivial": {"model": "haiku", "effort": "low", "budget": "400k"},
            "standard": {"model": "", "effort": "", "budget": "400k"},
@@ -80,6 +82,7 @@ class Brief:
     subgraph: list[str] = field(default_factory=list)
     collisions: list[str] = field(default_factory=list)
     start: list[str] = field(default_factory=list)
+    invariants: list[str] = field(default_factory=list)
     after_merge: list[str] = field(default_factory=list)
     done: list[str] = field(default_factory=list)
     never: list[str] = field(default_factory=list)
@@ -292,7 +295,8 @@ def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget
     return Brief(item=node, project=p.name, task_class=task_class, model=cls.get("model") or "",
                  effort=cls.get("effort") or "", budget=budget, coordinator=coordinator, notes=notes,
                  estimate=_estimate(p, nid, task_class), subgraph=subgraph(st, nid),
-                 collisions=collisions.item_line(rep, nid), start=_start(p, node), after_merge=after_merge(opts),
+                 collisions=collisions.item_line(rep, nid), start=_start(p, node),
+                 invariants=standards.invariants(p), after_merge=after_merge(opts),
                  done=done, never=never,
                  sources=sources, warnings=warnings,
                  generated=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
@@ -303,6 +307,11 @@ def _prop(key: str, value) -> str:
         import json
         value = json.dumps(value, ensure_ascii=False)
     return f"- {key}: {' '.join(str(value).split())}"
+
+
+def _section(title: str, lines: list[str]) -> list[str]:
+    """An optional section: its heading and lines, nothing when it has none."""
+    return ["", f"## {title}", ""] + lines if lines else []
 
 
 def render(b: Brief) -> str:
@@ -332,10 +341,10 @@ def render(b: Brief) -> str:
     lines += ["", "## Its subgraph", ""] + (b.subgraph or ["- no edge"])
     lines += ["", "## Files and collisions (brain collisions)", ""] + [f"- {x}" for x in b.collisions]
     lines += ["", "## How to start", ""] + b.start
+    lines += _section("Invariants: the project's standards (brain standards list --applicable)", b.invariants)
     lines += ["", "## To decide (the coordinator)", "",
               "- Scope and order: <edit>", "- What is decided, and by which ADR: <edit>", "- Read first: <edit>"]
-    if b.after_merge:
-        lines += ["", "## After the merge (close-item step 5)", ""] + b.after_merge
+    lines += _section("After the merge (close-item step 5)", b.after_merge)
     lines += ["", "## Definition of done (the owner's rules)", ""] + (b.done or ["- none found in the rules"])
     lines += ["", "## Never (the owner's rules)", ""] + (b.never or ["- none found in the rules"])
     if b.sources:

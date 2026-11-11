@@ -13,7 +13,10 @@ one ``brain journal add`` and ``brain adr new`` write, every one is read by the 
 project's other append-only ledgers (``{name: path}``), whose size and last write ``brain status`` shows.
 ``shared_ids`` waives an id that a store of this project shares with another store (``{id: reason}``): ids are unique
 across every store of every project, checked by :func:`collisions`. ``plugin`` is reserved for the CLI plugin that
-will bring the project's own subcommands (wi-brain-command-plugins); no command reads it yet.
+will bring the project's own subcommands (wi-brain-command-plugins); no command reads it yet. ``standards`` opts the
+project in to the standards registry (brain.standards, docs/standards.md): its profiles and stage select the rows it
+follows, ``include`` and ``exclude`` adjust them, ``catalogs`` names the brain's local catalogs (relative to the
+registry's folder, as ``root`` is); a project without it follows none.
 
 ``production`` lists the checkouts a service or a scheduled task runs from, relative to the root (no default): the
 core plugin's guards refuse tool edits and git changes there (brain.guards). ``stacks`` declares the project's stacks,
@@ -110,6 +113,8 @@ KEYS = {
               "tenant drops its contract export, relative to BRAIN_HOME}; a mount holds title and tenant only",
     "access": "write (the default: the brain writes the project, by PR) or read (it reads the project and never "
               "writes it: an entry of title and access only, which no command loads, names or writes into)",
+    "standards": "its opt-in to the standards registry, {profiles, stage, include, exclude: {id: reason}, catalogs}: "
+                 "the rows it follows (brain standards; docs/standards.md); without it, none",
 }
 ACCESS = ("write", "read")
 READ_ONLY_KEYS = {"title", "access"}
@@ -148,6 +153,8 @@ class Project:
     shared_ids: dict = field(default_factory=dict)
     plugin: object = None            # reserved (wi-brain-command-plugins), kept as declared
     shares_root_with: str = ""       # the project registered first at this root, which owns it ('': this one does)
+    standards: object = None         # its standards: opt-in as declared (brain.standards.selection); None: none
+    registry_dir: Path | None = None  # the registry's folder: where its standards.catalogs are read from
 
 
 @dataclass
@@ -213,7 +220,7 @@ def _project(name: str, entry: dict, root: Path) -> Project:
                    title=str(e.get("title") or ""), journals=journals, decision_logs=logs,
                    ledgers={str(k): root / v for k, v in ledgers.items() if isinstance(v, str) and v},
                    shared_ids=dict(e["shared_ids"]) if isinstance(e.get("shared_ids"), dict) else {},
-                   plugin=e.get("plugin"))
+                   plugin=e.get("plugin"), standards=e.get("standards"))
 
 
 def _resolve_root(rel: str, base: Path) -> Path:
@@ -314,6 +321,7 @@ def _load(root: Path | None = None) -> tuple[dict[str, Project], dict[str, tuple
             continue
         entry = entry if isinstance(entry, dict) else {}
         p = p or _project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent))
+        p.registry_dir = f.parent
         owner = owners.setdefault(_norm(p.root), p.name)
         p.shares_root_with = "" if owner == p.name else owner
         files = held.setdefault(_norm(p.root), {})
@@ -461,6 +469,7 @@ def get(name: str, root: Path | None = None) -> Project:
         return reg[name]
     p = _project(name, raw(root).get(name) or {}, root)
     p.shares_root_with = reg[name].shares_root_with
+    p.registry_dir = reg[name].registry_dir
     return p
 
 
@@ -684,6 +693,7 @@ def check(root: Path | None = None) -> list[str]:
     project at a shared root that is not loaded (:func:`_claims`), two stores that write their views in one folder.
     Stacks and code_index entries are checked by their own loaders (brain.stacks, brain.codeindex)."""
     errors = []
+    engine: list = []   # the engine's standards catalogs, read once for every project that opts in
     for name, entry in raw(root).items():
         where = f"project {name}"
         if entry is None:
@@ -728,6 +738,8 @@ def check(root: Path | None = None) -> list[str]:
                    if not isinstance(entry.get(k) or {}, (dict, str))]
         from .governor import project_limits
         errors += [f"{where}: {e}" for e in project_limits(entry)[1]]
+        if "standards" in entry:
+            errors += _standards_errors(where, entry["standards"], registry_file(root), engine)
     loaded, refused = _load(root)
     for _, why in refused.values():
         errors += why
@@ -737,6 +749,28 @@ def check(root: Path | None = None) -> list[str]:
         except RepoError as exc:
             errors.append(str(exc))
     return errors + list(view_clashes(holders(root)).values())
+
+
+def _standards_errors(where: str, value, registry: Path | None, engine: list) -> list[str]:
+    """What a project's standards: breaks (brain.standards.selection_errors), its ids looked up in the engine's
+    catalogs (``engine``: filled on the first call, then reused) and the local ones it names; a catalog that cannot
+    be read or breaks its schema is an error too. An empty value declares none, as without the key."""
+    from . import standards
+    if value is None:
+        return []
+    if not engine:
+        try:
+            engine += standards.engine_catalogs() or [None]
+        except standards.StandardsError as exc:
+            return [f"{where}: standards: {exc}"]
+    engine = [c for c in engine if c is not None]
+    local, errors = standards.local_catalogs(standards.selection(value), registry.parent if registry else None)
+    errors = [f"{where}: {e}" for e in errors]
+    for cat in local:
+        errors += [f"{where}: standards catalog {e}" for e in cat.errors]
+    errors += [f"{where}: {e}" for e in standards.duplicates(engine + local)]
+    ids = {r.id for c in engine + local for r in c.rows}
+    return errors + standards.selection_errors(where, value, ids if not errors else None)
 
 
 def node_ids(store: Path) -> dict[str, str]:
