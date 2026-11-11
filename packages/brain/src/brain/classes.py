@@ -162,7 +162,8 @@ ENGINE_STORES = {
     "public-check": Known("$BRAIN_HOME/public-check", "sealed", "derived",
                           "the public check's stamps, per repo and commit"),
     "reviews": Known("$BRAIN_HOME/reviews", "sealed", "truth-local", "the reviews' findings and stamps"),
-    "backup": Known("$BRAIN_HOME/backup", "sealed", "truth-local", "copies taken before a write-back"),
+    "backup": Known("$BRAIN_HOME/backup", "sealed", "truth-local",
+                     "copies before a write-back: a work tree's settings files, <project>-<key>/<folder>, 10 each"),
     "spool": Known("$BRAIN_HOME/spool", "sealed", "truth-local",
                    "the sealed copies waiting to leave the machine and their index (brain spool push)"),
     "cockpit": Known("$BRAIN_HOME/tui.json", "sealed", "truth-local", "the cockpit's settings"),
@@ -178,10 +179,10 @@ ENGINE_STORES = {
 # The suggested class of each engine store: {name: (path, class)}.
 KNOWN = {name: (k.path, k.cls) for name, k in ENGINE_STORES.items()}
 TRANSCRIPTS = "~/.claude/projects"      # read under $CLAUDE_CONFIG_DIR when it is set (brain.paths.projects_dir)
-# A write's leftover beside an engine store's file, the same store: a name ending in .tmp, .bak or .lock, or set
-# aside with its stamp (``<name>.unreadable-<UTC stamp>``, brain.stateio). Told by the suffix, never by a substring:
-# export.tmpl or sync.lockfile is a name of its own.
-HOME_TRANSIENT = re.compile(r"\.(?:tmp|bak|lock)$|\.unreadable-\d")
+# A write's leftover beside an engine store's file, the same store: a name ending in .tmp, .bak or .lock, set aside
+# with its stamp (``<name>.unreadable-<UTC stamp>``), or its integrity sidecar (``<name>.sha256``, brain.stateio).
+# Told by the suffix, never by a substring: export.tmpl or sync.lockfile is a name of its own.
+HOME_TRANSIENT = re.compile(r"\.(?:tmp|bak|lock|sha256)$|\.unreadable-\d")
 
 
 @dataclass(frozen=True)
