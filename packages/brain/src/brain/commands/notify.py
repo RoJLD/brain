@@ -19,7 +19,8 @@ USAGE = """\
                  through the project's route for that level (projects.yaml notify:): ntfy, Telegram, e-mail, the
                  first that delivers or every one; --channel: these channels only; --key: not again within the
                  throttle (--force: anyway); --dry-run: print what would be sent; exit 1 when nothing delivered
-  brain notify status [--all]     channels (their environment variables set or missing, never their values), routes
+  brain notify status [--all]     channels (their environment variables set or missing, never their values), routes,
+                 the notifications waiting in the outbox (sent again by the alerts pass)
   brain notify setup ntfy|telegram|email|CHANNEL [--find-chat]   a channel's setup steps; --find-chat lists the
                  chats that wrote to the Telegram bot (it sends nothing)
 """
@@ -68,7 +69,7 @@ def register(sub, ctx) -> None:
     ns.add_argument("--dry-run", action="store_true", help="print what would be sent, send nothing")
     ns.add_argument("--json", action="store_true")
     nt = no.add_parser("status", help="channels, their environment variables (set or missing, never their values), "
-                                      "the project's routes, the last sends")
+                                      "the project's routes, the outbox's waiting count, the last sends")
     nu = no.add_parser("setup", help="a channel's setup steps (the TUI wizard's): ntfy, telegram, email or a name")
     nu.add_argument("target", metavar="CHANNEL")
     nu.add_argument("--find-chat", action="store_true", help="telegram: the chats that wrote to the bot (getUpdates; "

@@ -200,7 +200,8 @@ def release(registry: Mapping, *, now: datetime | None = None, dry_run: bool = F
             continue
         level, body = summary_text(mine)
         res = notify.send(cfg, notify.Message(name, level, body, f"{len(mine)} held during the quiet",
-                                              source="quiet"), dry_run=dry_run, force=True, now=now, env=env)
+                                              source="quiet"), dry_run=dry_run, force=True, now=now, env=env,
+                          queue=False)   # a summary that fails stays held: the next pass sends it again
         lines.append(f"quiet: {name}: summary of {len(mine)} held: {res.status}")
         if dry_run or res.status == "failed":
             keep += mine

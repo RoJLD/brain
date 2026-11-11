@@ -689,6 +689,23 @@ timeout (a snapshot) and a poll of GitNexus's analyze job never open a breaker; 
 when the cockpit's background check opened it. `BRAIN_NET_BREAKER=off` tries every call for one run (a service just
 restarted by hand).
 
+### The outbox
+
+A notification that no channel delivered because one was surely not reached (a refused connection, a DNS miss, an
+HTTP 429 or 503, its breaker open) is no longer lost: `brain notify send`, a blocking decision's notification and an
+alert's `resolved` message keep it in the sealed local outbox (`<BRAIN_HOME>/outbox/queue.json`, store `outbox`,
+sealed) under an idempotency key made of its content, so the same message queued twice is kept once, a later
+delivery of it drops the queued copy, and a newer message of the same project and key (its alert reopened) replaces
+it. A timeout or a reset is not queued: the message may have arrived, and nothing is sent twice. Every alerts pass
+(`brain alerts --notify`, after its own sends) sends what is due again through the project's routes as they are
+then, waiting 5 minutes, then twice as long each time (at most 6 h, with full jitter); an entry is given up after 12
+tries or 7 days, said in the pass's lines. A pass leaves as they are the entries of projects outside its scope and
+every entry while `$BRAIN_NOTIFY` is `off` or `dry-run`; an outbox a newer brain wrote is not replayed. A refusal (a
+wrong token, an HTTP 401) is not queued: sending it again would not help. An open alert is not queued either, since
+the pass already sends a failed one again, nor the quiet mode's summary, which stays held. `brain notify status` says
+how many wait. The outbox's API (`brain.outbox.put`, `drop`, `supersede`, `replay`) takes other kinds of calls as
+their callers come (the shareboard, the telemetry reports).
+
 ## Quiet mode
 
 `brain quiet --for 2h` silences the notifications below `critical` for that long (90m, 2h, 1d; at most 7d); a
