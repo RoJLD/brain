@@ -293,7 +293,10 @@ def test_milestone_needs_every_repo_no_p0_p1_no_pending_and_four_falls(monkeypat
     ok = {"counts": {"P0": 0, "P1": 0, "P2": 3}, "repos": [{"name": "a"}]}
     tr = {"weeks": [{}], "falling": 4}
     assert not audit.milestone([ok], tr)["met"]                         # generator checks still pending
-    assert "3 P0/P1 checks not measured" in audit.milestone([ok], tr)["reasons"]   # features.md, feature.links run
+    assert "1 P0/P1 checks not measured" in audit.milestone([ok], tr)["reasons"]   # readme.generated: features.md,
+    #                                    feature.links, readme.yaml and help.quoted run (wi-brain-readme-sync)
+    unopted = {**ok, "repos": [{"name": "a", "not_measured": [{"check": "readme.yaml", "owner": audit.NO_README}]}]}
+    assert audit.milestone([unopted], tr)["pending"] == ["readme.generated", "readme.yaml"]   # not opted in: pending
     monkeypatch.setattr(audit, "PENDING", {k: dataclasses.replace(v, run=len) for k, v in audit.PENDING.items()})
     assert audit.milestone([ok], tr)["met"]
     unfeatured = {**ok, "repos": [{"name": "a", "not_measured": [{"check": "features.md", "owner": audit.NO_FEATURES},

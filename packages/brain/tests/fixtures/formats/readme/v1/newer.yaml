@@ -1,0 +1,11 @@
+# readme.yaml with a newer brain's additive keys: a top-level section, a command's key and a step's key.
+v: 1
+title: Lab
+what: The lab's code and its command.
+why: To measure tea the same way every time.
+start:
+  - {text: "Install it", run: "pip install -e .", os: windows}
+commands:
+  - {cli: brain, args: sync, since: "0.3.2"}
+badges:
+  - ci
