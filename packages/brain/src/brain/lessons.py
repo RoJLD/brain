@@ -34,7 +34,8 @@ the guards ledger in those sessions, the failed test runs, the pushes to the ite
 ``--note``). ``brain retro --wave W``: the deep retro, every item of the wave with its signals, the costliest
 frictions, the retro notes recorded on them and the lessons learned from the wave's items. The wave's items are those
 of a numbered wave (``W`` is ``X.Y.Z`` or ``wave-X.Y.Z``: the items ``part_of`` it and those carried to it by
-``props.carried_to``, brain.waves) and those whose free-text ``props.wave`` names it (the letter waves, ``F``).
+``props.carried_to``, brain.waves) and those whose free-text ``props.wave`` names it (the letter waves, ``F``, and
+``0.3.2, week of ...``); with ``--all``, each project's wave of that release.
 
 **The iron rules** (``brain lesson rules``): the rule ids (``Σ-NAME`` or ``Sigma-NAME``) of each registered repo's
 tracked Markdown, read only: where each is cited, its first sentence, the lessons that restate it.
@@ -567,9 +568,12 @@ def wave_items(led, wave: str, store: Path | None = None) -> list[str]:
     """The items of a wave (wi-brain-retro-numbered-waves): those of the numbered wave ``X.Y.Z`` or ``wave-X.Y.Z``
     in the items' stores and ``store`` (brain.waves: part_of it, or carried to it by props.carried_to; carried out
     of it left out), and those whose props.wave names it, alone or followed by a space, a comma or a parenthesis
-    (the letter waves, ``F``, and the numbered ones written ``0.3.2, week of ...``)."""
+    (the letter waves, ``F``, and the numbered ones written ``0.3.2, week of ...``). A store's wave counts only its own
+    items: with several projects (``--all``), each project's wave of that release, never an id of another store."""
     wave = str(wave).strip()
     name = wave.removeprefix("wave-")
+    if not name:
+        return []
     rx = re.compile(rf"^(?:wave-)?{re.escape(name)}(?:[\s,(]|$)")
     ids = {i for i, it in led.items.items() if rx.match(str(it.props.get("wave") or "").strip())}
     for st in sorted({it.store for it in led.items.values() if it.store} | ({store} if store else set())):
@@ -578,7 +582,9 @@ def wave_items(led, wave: str, store: Path | None = None) -> list[str]:
         plan = waves.load(st)
         wid = plan.resolve(wave) or plan.resolve(name)
         if wid:
-            ids |= {i for i in plan.items_of(wid) if i in led.items}
+            here = st.resolve()
+            ids |= {i for i in plan.items_of(wid) if i in led.items and led.items[i].store
+                    and led.items[i].store.resolve() == here}
     return sorted(ids)
 
 
@@ -596,14 +602,11 @@ def wave_retro(led, wave: str, store: Path | None = None) -> dict:
         tot["rework"] += sum(s["rework"].values())
         tot["cost"] += s["cost"]
     ids = {r["item"] for r in items} | set(members)
-    learned, seen = [], set()
+    learned = []
     stores = {led.items[i].store for i in ids if led.items[i].store} | ({store} if store else set())
-    for st in sorted(stores):
+    for st in stores:
         if st and (st / FILE).is_file():
-            for x in rows(st):
-                if set(x["learned_from"]) & ids and x["id"] not in seen:
-                    seen.add(x["id"])
-                    learned.append(x)
+            learned += [x for x in rows(st) if set(x["learned_from"]) & ids]
     notes = {i: str(led.items[i].props["retro_notes"]) for i in sorted(ids) if led.items[i].props.get("retro_notes")}
     return {"wave": wave, "items": sorted(items, key=lambda r: -r["friction"]), "totals": dict(tot),
             "learned": learned, "notes": notes, "open": sorted(ids - {r["item"] for r in items})}
