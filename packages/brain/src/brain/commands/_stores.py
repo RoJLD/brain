@@ -135,41 +135,6 @@ def _activate_specs(args, root: Path, store: Path) -> int:
     return 0
 
 
-DECISION_STUBS = "_generated_decisions.yaml"   # research_graph's file of the stubs derived from the decision logs
-
-
-def _edge_files(store: Path) -> list[Path]:
-    """A store's hand-written edge files (its generated ones left out)."""
-    return [store / "edges.yaml", *sorted(f for f in (store / "edges").glob("*.yaml")
-                                          if not f.name.startswith(graph.GENERATED_PREFIX))]
-
-
-def _first_stubs(first: Path, store: Path) -> dict[str, str]:
-    """{id: type} of the decision stubs the store ``first`` derives that ``store`` does not hold as a node of its own
-    (one still among its own stubs counts: the next sync drops it)."""
-    here = projects.node_ids(store)
-    return {nid: str(node.get("type") or "decision") for nid, (f, node) in graph.node_index(first).items()
-            if f.name == DECISION_STUBS and here.get(nid, DECISION_STUBS) == DECISION_STUBS}
-
-
-def _stub_edges(project: projects.Project, store: Path) -> list[str]:
-    """The edges of a store listed after its project's first to a decision stub that first store derives: the store
-    covers no decision log (--no-decisions), so research_graph finds no such node in it. Before
-    wi-brain-shared-root-projects every store derived the root's stubs; said with what to do."""
-    if not projects._later(project, store):
-        return []
-    label, first_label = _store_label(project.root, store), _store_label(project.root, project.stores[0])
-    stub = _first_stubs(project.stores[0], store)
-    out = []
-    for e in (e for f in _edge_files(store) for e in graph.load_yaml_list(f) if isinstance(e, dict)):
-        for nid in (str(e.get("from") or ""), str(e.get("to") or "")):
-            if nid in stub:
-                out.append(f"{label}: edge {e.get('from')} -> {e.get('to')}: that {stub[nid]} stub is {first_label}'s "
-                           f"only (a store listed after its project's first covers no decision log): move the edge "
-                           f"to {first_label}, or remove it")
-    return out
-
-
 def _take_defaults(root: Path) -> bool:
     """The low-stakes defaults due now, taken (24 h without an answer: brain.defaults), before any view is written:
     the records' graph and the kanban then show those DDRs answered. False when the project has no DDR."""
@@ -208,18 +173,15 @@ def _sync_store(args, root: Path, store: Path) -> int:
 
 
 def _sync_graph(args, project: projects.Project, root: Path, store: Path, layout: list[str], *, owner: bool) -> int:
-    """The features' statuses (before the graph sync: it reads them), the graph sync with the store's layout, then the
-    edges to a decision stub the store no longer derives; 0, else the failing code."""
+    """The features' statuses (before the graph sync: it reads them), then the graph sync with the store's layout; 0,
+    else the failing code. An edge of a store listed after its project's first may name a decision stub that first
+    store derives: research_graph resolves it there (brain.crossstore, wi-brain-shared-root-stub-rule-drop)."""
     if features.has_type(graph.load_schema(store)) and not getattr(args, "offline", False):
         repos = [(c.name, c.path) for c in _repos(args, root) if c.path.is_dir()]
         if not repos and not owner:   # a project that spans no repo: its features are named by the root's PRs
             repos = [(projects._repo_folder(root).lower(), root)]
         features.sync_prs(store, repos)
-    rc = graph.research_graph(root, store, *layout, "sync", "--write")
-    stubs = _stub_edges(project, store)   # a stub it derived before is gone: an edge to it dangles
-    for line in stubs:
-        print(f"error: {line}")
-    return rc or (1 if stubs else 0)
+    return graph.research_graph(root, store, *layout, "sync", "--write")
 
 
 def _graph_views(args, root: Path, store: Path) -> int:
@@ -281,10 +243,7 @@ def _check_store(args, root: Path, store: Path) -> int:
     clash = _view_clash(args, project, root, store)
     if clash:
         print(f"error: {clash}")
-    stubs = _stub_edges(project, store)
-    for line in stubs:
-        print(f"error: {line}")
-    rc = 1 if clash or stubs else 0
+    rc = 1 if clash else 0
     where, stale, legacy = views.place(root), views.Stale(), {}
     strict = views.strict(root)   # config.json views.strict: a stale view fails the default branch's check
     if getattr(args, "views_as_default", False):   # brain views --write: its check is the default branch's, strict
