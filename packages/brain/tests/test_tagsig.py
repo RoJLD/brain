@@ -152,7 +152,19 @@ def test_git_missing_is_said_not_raised():
     def missing(*a, **k):
         raise FileNotFoundError("git")
     v = tagsig.verify_remote("https://example.invalid/x.git", "v1.0.0", allowed("ssh-ed25519 AAAA k"), runner=missing)
-    assert v["status"] == tagsig.UNVERIFIABLE and "git" in v["why"]
+    assert v["status"] == tagsig.UNVERIFIABLE and v["why"].startswith("git init failed")
+
+
+def test_verify_tag_that_cannot_run_is_unverifiable_not_a_foreign_key():
+    """git ran for the fetch, then verify-tag could not run (exit 127 from the runner): never « another key »."""
+    def runner(cmd, **kw):
+        if "verify-tag" in cmd:
+            raise OSError("ssh-keygen vanished")
+        out = {"cat-file": "tag\n", "rev-parse": "c0ffee\n"}.get(next((a for a in cmd if a in ("cat-file",
+                                                                                               "rev-parse")), ""), "")
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+    v = tagsig.verify_remote("https://example.invalid/x.git", "v1.0.0", allowed("ssh-ed25519 AAAA k"), runner=runner)
+    assert v["status"] == tagsig.UNVERIFIABLE and "could not run" in v["why"], v
 
 
 # --- the allowed signers, generated from members.yaml's releaser role ---------------------------------------------
@@ -184,11 +196,22 @@ def test_members_yaml_wins_and_the_file_serves_a_brain_without_it(brain):
     assert text == tagsig.generate(brain) and "members.yaml" in source
     f = tagsig.write(brain)
     assert f == brain / tagsig.FILE and f.read_text(encoding="utf-8") == text
-    members(brain, {"ada": [KADA]}, {"ada": ["owner"]})   # the role taken away: the stale file trusts nothing more
+    revoke_all(brain)   # the key revoked in members.yaml: the stale file trusts nothing more
     assert tagsig.signers(brain) == ("", "")
-    (brain / identity.FILE).unlink()   # no members.yaml: a published file is read
     f.write_text('# a published file\nrel namespaces="git" ssh-ed25519 AAAApub\n', encoding="utf-8")
+    members(brain, {"ada": [KADA]}, {"ada": ["owner", "decider"]})   # a brain that names no releaser of its own
+    assert tagsig.signers(brain) == (f.read_text(encoding="utf-8"), str(f))   # reads a published file
+    assert tagsig.problems(brain) == []   # and does not call it stale
+    (brain / identity.FILE).unlink()   # nor does a brain without members.yaml
     assert tagsig.signers(brain) == (f.read_text(encoding="utf-8"), str(f))
+
+
+def revoke_all(root: Path) -> None:
+    data = yaml.safe_load((root / identity.FILE).read_text(encoding="utf-8"))
+    for p in data["people"]:
+        for k in p["keys"]["signing"]:
+            k["revoked"] = "2026-11-11"
+    (root / identity.FILE).write_text(yaml.safe_dump(data), encoding="utf-8")
 
 
 def test_check_warns_of_a_stale_file_and_of_the_opt_in_without_one(brain):
@@ -197,7 +220,7 @@ def test_check_warns_of_a_stale_file_and_of_the_opt_in_without_one(brain):
     tagsig.write(brain)
     members(brain, {"ada": [KNEW + " ada@laptop"]}, {"ada": ["releaser"]})   # a key rotated
     assert any("not what members.yaml" in p for p in tagsig.problems(brain))
-    members(brain, {"ada": [KNEW]}, {"ada": ["owner"]})   # the releaser role taken away, the file left
+    revoke_all(brain)   # the releaser's last key revoked, the file left
     assert any("no releaser key is left" in p for p in tagsig.problems(brain))
     (brain / tagsig.FILE).unlink()
     verify_tags(brain)

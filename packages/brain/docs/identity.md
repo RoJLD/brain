@@ -141,8 +141,10 @@ install (wi-brain-release-signing). The engine verifies; it never signs.
   decision of its own, not a code change.
 - **`brain update`** verifies the tag before installing it: the tag alone is fetched into a temporary repo
   (`git fetch --depth 1 --filter=tree:0`) and checked with `git verify-tag` against the releaser keys of
-  `members.yaml` when the brain has one (a key revoked there stops verifying at once, before the file is written
-  again), else against `allowed_signers`. Its plan says `verify   vX.Y.Z: signed by <person>`, or why not. pip then
+  `members.yaml` when it gives someone the `releaser` role (a key revoked there, `revoked: <date>`, stops verifying
+  at once, before the file is written again: revoke a key that way rather than by taking the role away), else
+  against `allowed_signers` (a brain that names no releaser of its own reads a file brought from elsewhere, such as
+  a published one). Its plan says `verify   vX.Y.Z: signed by <person>`, or why not. pip then
   installs the tag as before (a release is read by its tag), and the commits pip recorded for brain and research-graph
   are compared with the one the signed tag names: one that differs means the tag moved between the check and the
   install, which is said with the repair (and refused under `verify_tags`, after the fact: the venv already holds that

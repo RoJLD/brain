@@ -52,14 +52,18 @@ def releasers(data: dict) -> dict[str, list[str]]:
     organization's or a tenant's), their signing keys not revoked."""
     from . import identity
 
-    who = set()
-    for m in identity._list(data, "memberships"):
-        roles = m.get("roles")
-        if isinstance(roles, list) and RELEASER in roles and not (m.get("project") or m.get("organization")
-                                                                   or m.get("tenant")):
-            who.add(identity._id(m))
+    who = _releaser_ids(data)
     return {p["person_id"]: [_bare(k["key"]) for k in identity._signing(p)]
-            for p in identity._list(data, "people") if identity._id(p) in who - {None} and identity._signing(p)}
+            for p in identity._list(data, "people") if identity._id(p) in who and identity._signing(p)}
+
+
+def _releaser_ids(data: dict) -> set[str]:
+    """The person_ids with the releaser role on the whole brain."""
+    from . import identity
+
+    return {identity._id(m) for m in identity._list(data, "memberships")
+            if isinstance(m.get("roles"), list) and RELEASER in m["roles"]
+            and not (m.get("project") or m.get("organization") or m.get("tenant"))} - {None}
 
 
 def _bare(key: str) -> str:
@@ -69,12 +73,13 @@ def _bare(key: str) -> str:
 
 
 def _from_members(root: Path) -> str | None:
-    """The allowed_signers text members.yaml gives ('' when no releaser has a key); None when there is no
-    members.yaml or it has errors (nothing to compare with)."""
+    """The allowed_signers text members.yaml gives ('' when its releasers have no key left: all revoked); None when
+    there is no members.yaml, it has errors, or it gives nobody the releaser role (the brain does not manage its
+    releasers: a file brought from elsewhere, such as a published one, is then the truth)."""
     from . import identity
 
     m = identity.load(root)
-    if m is None or m.errors:
+    if m is None or m.errors or not _releaser_ids(m.data):
         return None
     keys = releasers(m.data)
     return HEADER + sshsig.allowed_signers(keys, NAMESPACE) if keys else ""
@@ -93,10 +98,11 @@ def signers_file(root: Path | None) -> Path | None:
 
 
 def signers(root: Path | None) -> tuple[str, str]:
-    """(the allowed-signers text, where it comes from) for brain update: the text members.yaml gives when it is there
-    and valid, so that a key revoked or a role taken away stops verifying at once, even before the file is written
-    again; else the file beside config.json (a brain without members.yaml: a published file); ('', '') when neither
-    has a key. The installer, which runs before the brain command exists, reads the file only."""
+    """(the allowed-signers text, where it comes from) for brain update: the text members.yaml gives when it gives
+    someone the releaser role, so that a key revoked there stops verifying at once, even before the file is written
+    again; else the file beside config.json (a published file, in a brain that does not manage its releasers);
+    ('', '') when neither has a key. The installer, which runs before the brain command exists, reads the file
+    only."""
     f = signers_file(root)
     if f is None:
         return "", ""
