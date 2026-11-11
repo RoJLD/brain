@@ -18,7 +18,8 @@ own `modules.yaml`, or the one `config.json` `modules.store` names, below) is no
 - `status`: `tree` for a module of the platform's tree, `proposed` for one the brain proposes and the owner has not
   taken yet.
 - `lab`: the brain's own phase.
-- `since`: the day a proposed module was proposed.
+- `since`: the day a proposed module was proposed; for a wanted module of the map, the day it was wanted (its 90
+  days count from it, below).
 - `note`: free text.
 
 ## A registry kept in another store
@@ -89,11 +90,12 @@ document read. The engine validates what the import wrote, generates the counts 
   `--check`, the report comes first, then the check; with `--check --json`, one object `{diff, problems}`.
 
 `brain modules --json` gives `counts` (`tree`, `proposed`, `all`, `bricks`), `imported` (how many entries) and
-`registry_problems`; `brain modules --check --json` lists the imported entries' problems before the open items'.
+`registry_problems`; `brain modules --check --json` lists the imported entries' problems, then the map's (below),
+then the open items'.
 
 ## The map of realisations
 
-Beside the document fields, an entry can say who realises the module and where (since 0.3.2, `wi-brain-sigma-map`,
+Beside the document fields, an entry can say who realises the module and where (since 0.3.2,
 `brain.modulemap`). These fields are written by hand, by PR, and never by an import:
 
 ```yaml
@@ -104,7 +106,7 @@ Beside the document fields, an entry can say who realises the module and where (
                  {project: kettle, kind: product, what: "the kettle", state: pr-open, ships_in: kettle}]}
 ```
 
-- `wanted`: whether the owner wants the module.
+- `wanted`: whether the owner wants the module (set `since` the day it is wanted).
 - `capabilities`: the engine's capabilities (`tiers.yaml`, [tiers.md](tiers.md)) that realise it in a brain.
 - `depends_on` and `uses`: the modules it needs (hard) and the ones it uses when they are there (soft), ids of the
   registry, classified by hand from the documents' `declared`; a declared one in neither counts as soft.
@@ -117,8 +119,8 @@ Beside the document fields, an entry can say who realises the module and where (
 - `map_review`: `proposed` while the map of the entry waits on the owner's review, `validated` once reviewed.
 
 The format is the engine's `schemas/modules.schema.json` (a registered format, [formats.md](formats.md)). Only an
-entry that carries one of these fields is concerned: a registry written before the map is checked and rendered
-as before. On the store that keeps the registry, `brain modules --check` (exit 1) and `brain check` (a warning)
+entry that carries `realized_by` or `map_review` is concerned, whatever other fields it holds: a registry written
+before the map, where a hand entry may hold its own `wanted` or `uses`, is checked and rendered as before. On the store that keeps the registry, `brain modules --check` (exit 1) and `brain check` (a warning)
 refuse:
 
 - an entry the schema refuses (a type, a `kind` or `state` it does not know, a realisation without `project`, `kind`

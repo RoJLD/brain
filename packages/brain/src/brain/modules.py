@@ -610,7 +610,7 @@ def render(store: Path, store_label: str = "notes/graph", root: Path | None = No
                    f"{_cell(m.get('phase', ''))} | {_cell(m.get('status', 'tree'))} | {d} | {o} | {s} |")
     out += ["", "## Gaps", ""] + _gaps(reg, counts, primary)
     out += _import_lines(reg)
-    from . import modulemap   # the map of realisations (wi-brain-sigma-map): its sections, when an entry has it
+    from . import modulemap   # the map of realisations (brain.modulemap): its sections, when an entry has it
     out += modulemap.view_lines(reg)
     for b, m in _order(reg):
         out += _section(b, m, counts, primary, secondary)

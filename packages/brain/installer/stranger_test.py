@@ -278,7 +278,8 @@ def where(root: Path, home: Path) -> dict[str, list[Path]]:
             "ddr": found(root, "records/ddr/*.yaml"), "event": found(home / ".brain" / "ledger", "**/exec-*.jsonl"),
             "packs": found(root, "source/packs.yaml"), "permissions": found(root, "permissions.yaml"),
             "projects": found(root, "projects.yaml"), "members": found(root, "members.yaml"),
-            "readme": found(root, "readme.yaml"), "sr": found(root, "records/sr/*/*.yaml"), "template": []}
+            "readme": found(root, "readme.yaml"), "sr": found(root, "records/sr/*/*.yaml"), "template": [],
+            "modules": found(root, "notes/graph/modules.yaml")}
 
 
 def formats() -> list[tuple[str, int]]:
@@ -511,6 +512,7 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
     shutil.copyfile(fixture("permissions", "older"), root / "permissions.yaml")
     shutil.copyfile(fixture("members", "older"), root / "members.yaml")
     shutil.copyfile(fixture("readme", "older"), root / "readme.yaml")   # opt-in: no command writes it
+    shutil.copyfile(fixture("modules", "older"), root / "notes" / "graph" / "modules.yaml")   # written by hand
     with (root / "boundary.yaml").open("a", encoding="utf-8", newline="\n") as fh:    # the template has no rule
         fh.write('  - {glob: "permissions.yaml", side: personal, why: "the permission hierarchy"}\n')
         fh.write('  - {glob: "members.yaml", side: personal, why: "who belongs to the brain"}\n')

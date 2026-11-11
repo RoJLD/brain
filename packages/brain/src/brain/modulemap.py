@@ -1,4 +1,4 @@
-"""The map of realisations (wi-brain-sigma-map): who realises each module of a store's registry and where, beside the
+"""The map of realisations (brain.modulemap): who realises each module of a store's registry and where, beside the
 registry's document fields (brain.modules). Zero token.
 
 A registry entry gains hand-written fields (``schemas/modules.schema.json``): ``wanted`` (the owner wants the module),
@@ -7,8 +7,8 @@ A registry entry gains hand-written fields (``schemas/modules.schema.json``): ``
 ``realized_by`` (each realisation: project, kind, what, paths, ref, licence, state, contract, ships_in, retire) and
 ``map_review`` (proposed by a session, or validated by the owner).
 
-``brain modules --check`` validates an entry that carries one of these fields, and only such an entry (a registry
-written before the map passes as before): its shape against the schema, the module ids it names, the capabilities
+``brain modules --check`` validates an entry that carries ``realized_by`` or ``map_review``, and only such an entry (a
+registry written before the map passes as before, whatever free fields it holds): its shape against the schema, the module ids it names, the capabilities
 (``tiers.yaml``), the projects (the projects registry, read-only ones included), the paths at their ref when the
 project's checkout is on this machine, a wanted module with neither a realisation nor an open item. It warns (never
 fails) of a wanted module with no item done or open 90 days after its ``since``. The checks run on the store that
@@ -34,9 +34,14 @@ TARGETS = ("product", "brain", "app")   # the kinds a lab realisation hands over
 PRODUCT_PHASE = re.compile(r"^(MVP|V\d)")   # a phase of the product's roadmap (MVP, V1, V1.5, V2...)
 
 
+MARKS = ("realized_by", "map_review")   # the fields only the map writes: what makes an entry a map entry
+
+
 def has_map(m: dict) -> bool:
-    """An entry that carries the map: one of :data:`MAP`. The map's checks and view apply to it only."""
-    return any(k in m for k in MAP)
+    """An entry that carries the map: ``realized_by`` or ``map_review`` (:data:`MARKS`), names no free-form registry
+    used before. The map's checks and view apply to it only; a hand entry whose own ``wanted``, ``uses`` or ``ai``
+    means something else stays a hand entry, checked as before."""
+    return any(k in m for k in MARKS)
 
 
 def _ids(value) -> list[str]:
@@ -80,35 +85,45 @@ def _projects(root: Path | None) -> tuple[set[str], dict[str, Path]]:
     return names, roots
 
 
-def _path_at(top: Path, ref: str, path: str) -> bool | None:
-    """Whether ``path`` exists at ``ref`` in the repo at ``top``; None when git cannot tell (no repo, no ref)."""
+CHECKED = ("partial", "built", "running")   # the states whose paths exist: a planned or retired one's may not
+
+
+def _git(top: Path, *args: str) -> int | None:
+    """git's exit code in ``top`` (its output unread, never decoded); None when git cannot run."""
     try:
-        out = subprocess.run(["git", "-C", str(top), "cat-file", "-e", f"{ref}:{path.strip('/')}"], capture_output=True,
-                             text=True, timeout=30, stdin=subprocess.DEVNULL)
-        ok = subprocess.run(["git", "-C", str(top), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-                            capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+        return subprocess.run(["git", "-C", str(top), *args], capture_output=True, timeout=30,
+                              stdin=subprocess.DEVNULL).returncode
     except (OSError, subprocess.SubprocessError):
         return None
-    return None if ok.returncode else out.returncode == 0
+
+
+def _repo(top: Path, ref: str) -> str:
+    """'' when ``top`` is in a git repository where ``ref`` is a commit, else why the paths cannot be checked."""
+    if _git(top, "rev-parse", "--git-dir") != 0:
+        return "not a git repository"
+    return "" if _git(top, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") == 0 else f"ref {ref} is no commit"
+
+
+def _path_at(top: Path, ref: str, path: str) -> bool:
+    """Whether ``path`` (relative to ``top``, a project's root, maybe a folder of its repo) exists at ``ref``."""
+    return _git(top, "cat-file", "-e", f"{ref}:./{path.replace(chr(92), '/').strip('/')}") == 0
 
 
 def _check_realisation(mid: str, i: int, r: dict, names: set[str], roots: dict[str, Path]) -> list[str]:
+    """A realisation's project (registered) and its paths at their ref, when the project's root is on this machine
+    and the realisation's state says they exist (:data:`CHECKED`), or its ref is given."""
     project, out = str(r.get("project") or ""), []
-    where = f"{mid}: realized_by {i} ({project or '?'})"
+    where = f"{mid}.realized_by[{i}] ({project or '?'})"
     if project and names and project not in names:
         out.append(f"{where}: project {project} is not in the projects registry")
-    top = roots.get(project)
-    if top is None or not (top / ".git").exists():
-        return out   # no checkout on this machine: the paths are not checked
+    top, paths = roots.get(project), r.get("paths") if isinstance(r.get("paths"), list) else []
+    if top is None or not top.is_dir() or not paths or (r.get("state") not in CHECKED and not r.get("ref")):
+        return out   # no checkout here, no path, or not built yet: nothing to check
     ref = str(r.get("ref") or "HEAD")
-    for p in r.get("paths") if isinstance(r.get("paths"), list) else []:
-        found = _path_at(top, ref, str(p))
-        if found is None:
-            out.append(f"{where}: ref {ref} is no commit of {top}")
-            break
-        if not found:
-            out.append(f"{where}: path {p} is not in {project} at {ref}")
-    return out
+    why = _repo(top, ref)
+    if why:
+        return out + [f"{where}: its paths cannot be checked in {top}: {why}"]
+    return out + [f"{where}: path {p} is not in {project} at {ref}" for p in paths if not _path_at(top, ref, str(p))]
 
 
 def _check_ids(mid: str, m: dict, known: set[str], caps: set[str]) -> list[str]:
@@ -163,11 +178,11 @@ def problems(store: Path, root: Path | None = None) -> list[str]:
     for m in mapped:
         mid = str(m["id"])
         out += _shape(m) + _check_ids(mid, m, known, caps)
-        for i, r in enumerate(_realisations(m), 1):
+        for i, r in enumerate(_realisations(m)):
             out += _check_realisation(mid, i, r, names, roots)
         if m.get("wanted") is True and not _live(m) and not counts.get(mid, (0, 0))[1]:
             out.append(f"{mid}: wanted, with no realisation and no open item that builds it")
-    return out
+    return list(dict.fromkeys(out))
 
 
 def warnings(store: Path, root: Path | None = None, today: date | None = None) -> list[str]:
@@ -178,8 +193,9 @@ def warnings(store: Path, root: Path | None = None, today: date | None = None) -
     today, counts, out = today or date.today(), built(store, root), []
     for m in modules.registry(store, root) or []:
         since = modules._day(m.get("since"))
-        if m.get("wanted") is not True or since is None or any(counts.get(str(m["id"]), (0, 0))):
-            continue
+        exists = any(r.get("state") in CHECKED for r in _live(m))
+        if m.get("wanted") is not True or since is None or any(counts.get(str(m["id"]), (0, 0))) or exists:
+            continue   # not wanted, no day, something done or open, or a realisation that exists
         if today >= since + timedelta(days=modules.DORMANT_DAYS):
             out.append(f"{m['id']}: wanted since {since}, no item done or open in {modules.DORMANT_DAYS} days: "
                        "dormant, to put back to sleep")
@@ -190,7 +206,7 @@ def warnings(store: Path, root: Path | None = None, today: date | None = None) -
 
 def _row(mid: str, m: dict, r: dict | None) -> str:
     cell = modules._cell
-    want = {True: "yes", False: "no"}.get(m.get("wanted"), "-")
+    want = ("yes" if m["wanted"] else "no") if isinstance(m.get("wanted"), bool) else "-"
     if r is None:
         return f"| {mid} | {cell(m.get('name', ''))} | {want} | - | - | - | - | - | {m.get('map_review', '-')} |"
     return (f"| {mid} | {cell(m.get('name', ''))} | {want} | {cell(r.get('project', ''))} | {cell(r.get('kind', ''))}"
@@ -201,7 +217,7 @@ def _row(mid: str, m: dict, r: dict | None) -> str:
 def _gaps(mapped: list[dict]) -> list[str]:
     out = []
     for m in mapped:
-        mid, kinds = str(m["id"]), {r.get("kind") for r in _live(m)}
+        mid, kinds = str(m["id"]), {r.get("kind") for r in _live(m) if isinstance(r.get("kind"), str)}
         if m.get("wanted") is True and not kinds:
             out.append(f"- {mid}: wanted, no realisation")
         if "lab" in kinds and not kinds & set(TARGETS):

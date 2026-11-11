@@ -91,7 +91,7 @@ def _diff(args, root: Path, store: Path) -> None:
 
 
 def _problems(root: Path, store: Path) -> list[str]:
-    """What brain modules --check refuses: the imported entries', the map's (wi-brain-sigma-map), the open items'."""
+    """What brain modules --check refuses: the imported entries', the map's (brain.modulemap), the open items'."""
     return modules.registry_problems(store, root) + modulemap.problems(store, root) + modules.problems(store, root)
 
 
