@@ -64,7 +64,7 @@ def test_the_public_render_is_by_domain_and_leaks_nothing_private(tmp_path, monk
     assert sorted(files) == ["README.md", "domains/brewing.md", "domains/measures.md"]
     text = "\n".join(files.values())
     assert "The boiler: boils to the owner's taste** `feat-lab-boil` (have)" in text
-    assert "| [brewing](domains/brewing.md) | 2 | 1 | 0 | 1 |" in files["README.md"]
+    assert "| [brewing](domains/brewing.md) | 2 | 1 | 0 | 1 | `feat-lab-boil`, `feat-lab-pour` |" in files["README.md"]
     for private in ("Ada", "Quill", "feat-lab-ada", "K1", "K2", "kettle-core", "adr-", "ddr-", "wi-", "spec-",
                     "rule-", "notes/graph", "feat-sib"):
         assert private not in text, private

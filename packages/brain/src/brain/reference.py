@@ -100,38 +100,48 @@ def _ddr_text(d: dict) -> str:
         + (f" ({by}, {_day(ans.get('at'))})" if by else f" ({_day(ans.get('at'))})")
 
 
-def load(root: Path, store: Path) -> Model:
-    """The reference's model of ``store`` (and the DDR records under ``root``)."""
-    nodes = {nid: node for nid, (_, node) in graph.node_index(store).items()}
-    edges = _edges(store)
-    ddrs = [d for _, d in records.load(root).get("ddr", [])] if (root / records.RECORDS_DIR).is_dir() else []
-    units: list[Unit] = []
-    went: set[str] = set()
-    for d in ddrs:
-        if not (d.get("answer") and d.get("status") in ANSWERED):
-            continue
-        links = d.get("links") or {}
-        adrs = [str(a) for a in links.get("adrs") or []]
-        went |= set(adrs)
-        units.append(Unit(d["id"], "ddr", _day((d.get("answer") or {}).get("at")), _ddr_text(d), adrs,
-                          [str(x) for x in (links.get("items") or []) + (links.get("specs") or [])]))
-    decided: dict[str, list[str]] = {}
-    for e in edges:
-        if e.get("type") == "decided_by":
-            decided.setdefault(str(e["to"]), []).append(str(e["from"]))
-    for nid, n in nodes.items():
-        if n.get("type") == "ADR" and nid not in went:
-            units.append(Unit(nid, "adr", _adr_day(nid), _short(n.get("title"), 140), [nid],
-                              sorted(decided.get(nid, []))))
+def _links(d: dict) -> dict:
+    return d.get("links") if isinstance(d.get("links"), dict) else {}
+
+
+def _ddr_unit(d: dict) -> Unit:
+    links = _links(d)
+    return Unit(d["id"], "ddr", _day((d.get("answer") or {}).get("at")), _ddr_text(d),
+                [str(a) for a in links.get("adrs") or []],
+                [str(x) for x in (links.get("items") or []) + (links.get("specs") or [])])
+
+
+def _decided(edges: list[dict]) -> dict[str, list[str]]:
+    """{ADR: the nodes it decides} (``decided_by``)."""
+    out: dict[str, list[str]] = {}
+    for e in (e for e in edges if e.get("type") == "decided_by"):
+        out.setdefault(str(e["to"]), []).append(str(e["from"]))
+    return out
+
+
+def _mark(units: list[Unit], nodes: dict, edges: list[dict], decided: dict[str, list[str]]) -> None:
+    """A unit whose ADR is superseded marked so; a DDR that names no node about the nodes its ADRs decide."""
     superseded = {str(e["to"]): str(e["from"]) for e in edges if e.get("type") == "supersedes"}
     for u in units:
         old = [a for a in u.adrs if a in superseded or nodes.get(a, {}).get("status") == "superseded"]
         if old:
             u.superseded_by = superseded.get(old[0], "a later decision")
-        if u.kind == "ddr" and not u.about:   # a DDR that names no node: the nodes its ADRs decide
+        if u.kind == "ddr" and not u.about:
             u.about = sorted({x for a in u.adrs for x in decided.get(a, [])})
-    pending = [d for d in ddrs if d.get("status") == "pending"]
-    return Model(nodes, edges, modules.registry(store) or [], units, pending)
+
+
+def load(root: Path, store: Path) -> Model:
+    """The reference's model of ``store`` (and the DDR records under ``root``)."""
+    nodes = {nid: node for nid, (_, node) in graph.node_index(store).items()}
+    edges = _edges(store)
+    ddrs = [d for _, d in records.load(root).get("ddr", [])] if (root / records.RECORDS_DIR).is_dir() else []
+    units = [_ddr_unit(d) for d in ddrs if d.get("answer") and d.get("status") in ANSWERED]
+    went = {a for u in units for a in u.adrs}   # an ADR some DDR went to: never shown by its title alone
+    decided = _decided(edges)
+    units += [Unit(nid, "adr", _adr_day(nid), _short(n.get("title"), 140), [nid], sorted(decided.get(nid, [])))
+              for nid, n in nodes.items() if n.get("type") == "ADR" and nid not in went]
+    _mark(units, nodes, edges, decided)
+    return Model(nodes, edges, modules.registry(store) or [], units, [d for d in ddrs if d.get("status") == "pending"])
 
 
 def module_of(m: Model, nid: str) -> str:
@@ -181,42 +191,75 @@ def _title(m: Model, nid: str) -> str:
     return _short(m.nodes.get(nid, {}).get("title", ""))
 
 
-def render_module(m: Model, mod: dict, store_label: str) -> str:
-    mid = str(mod["id"])
-    own = _members(m, mid)
-    feats = sorted((n for n in own if m.nodes[n].get("type") == features.TYPE),
-                   key=lambda f: (features.STATUSES.index(m.nodes[f].get("status", "no"))
-                                  if m.nodes[f].get("status") in features.STATUSES else 9, f))
+def _status_rank(m: Model, f: str) -> tuple:
+    st = m.nodes[f].get("status")
+    return (features.STATUSES.index(st) if st in features.STATUSES else 9, f)
+
+
+def _list(title: str, lines: list[str], none: str = "None.") -> list[str]:
+    return ["", title, ""] + (lines or [none])
+
+
+def _decisions_section(m: Model, own: set[str]) -> list[str]:
+    out = []
+    for nid, live, earlier in in_force(m, own):
+        out += [f"- **`{nid}`** {_title(m, nid)}", f"  - {_unit_line(live)}"]
+        out += [f"  - earlier: {_unit_line(u)}" for u in earlier]
+    return _list("## Decisions in force", out, "None recorded on its nodes.")
+
+
+def _items_section(m: Model, own: set[str]) -> list[str]:
     items = sorted(n for n in own if m.nodes[n].get("type") == "WorkItem")
     done = [n for n in items if m.nodes[n].get("status") == "done"]
     opened = [n for n in items if m.nodes[n].get("status") in OPEN]
+    lines = [f"- [ ] `{n}`: {_title(m, n)}" for n in opened] + [f"- [x] `{n}`: {_title(m, n)}" for n in done]
+    return _list(f"## Items: {len(done)} done, {len(opened)} open", lines)
+
+
+def _asked_about(m: Model, d: dict, mid: str) -> bool:
+    links = _links(d)
+    return any(module_of(m, str(x)) == mid for x in (links.get("items") or []) + (links.get("specs") or []))
+
+
+def render_module(m: Model, mod: dict, store_label: str) -> str:
+    mid = str(mod["id"])
+    own = _members(m, mid)
+    feats = sorted((n for n in own if m.nodes[n].get("type") == features.TYPE), key=lambda f: _status_rank(m, f))
+    items = {n for n in own if m.nodes[n].get("type") == "WorkItem"}
+    note = f" {_cell(mod['note'])}" if mod.get("note") else ""
     out = [f"# {mid} {_cell(mod.get('name'))}".rstrip(), "",
            f"{MARKER} from `{store_label}` (its modules.yaml, its nodes and the DDR records). Do not edit: change the "
            "graph, then brain sync.", "",
-           f"Brick {mod.get('brick') or '?'}, phase {mod.get('phase') or '?'}, {mod.get('status', 'tree')}."
-           + (f" {_cell(mod['note'])}" if mod.get("note") else ""), "", "## What it does", ""]
-    out += [f"- **{_title(m, f)}** `{f}` ({m.nodes[f].get('status')})" for f in feats] or ["No feature yet."]
-    out += ["", "## Decisions in force", ""]
-    force = in_force(m, own)
-    for nid, live, earlier in force:
-        out.append(f"- **`{nid}`** {_title(m, nid)}")
-        out.append(f"  - {_unit_line(live)}")
-        out += [f"  - earlier: {_unit_line(u)}" for u in earlier]
-    if not force:
-        out.append("None recorded on its nodes.")
-    rules = _linked(m, set(items), "delivers", "Rule")
-    out += ["", "## Rules", ""] + ([f"- `{r}`: {_title(m, r)}" for r in rules] or ["None delivered by its items."])
-    specs = _linked(m, own, "specified_by", "Spec")
-    out += ["", "## Specs", ""] + ([f"- `{s}`: {_title(m, s)}" for s in specs] or ["None."])
-    out += ["", f"## Items: {len(done)} done, {len(opened)} open", ""]
-    out += [f"- [ ] `{n}`: {_title(m, n)}" for n in opened] + [f"- [x] `{n}`: {_title(m, n)}" for n in done]
-    if not items:
-        out.append("None.")
-    asks = sorted(str(d["id"]) for d in m.pending if any(
-        module_of(m, str(x)) == mid for x in ((d.get("links") or {}).get("items") or [])
-        + ((d.get("links") or {}).get("specs") or [])))
-    out += ["", "## Open questions", ""] + ([f"- `{a}`" for a in asks] or ["None."])
+           f"Brick {mod.get('brick') or '?'}, phase {mod.get('phase') or '?'}, {mod.get('status', 'tree')}.{note}"]
+    out += _list("## What it does", [f"- **{_title(m, f)}** `{f}` ({m.nodes[f].get('status')})" for f in feats],
+                 "No feature yet.")
+    out += _decisions_section(m, own)
+    out += _list("## Rules", [f"- `{r}`: {_title(m, r)}" for r in _linked(m, items, "delivers", "Rule")],
+                 "None delivered by its items.")
+    out += _list("## Specs", [f"- `{s}`: {_title(m, s)}" for s in _linked(m, own, "specified_by", "Spec")])
+    out += _items_section(m, own)
+    out += _list("## Open questions", [f"- `{d['id']}`" for d in sorted(m.pending, key=lambda d: str(d["id"]))
+                                       if _asked_about(m, d, mid)])
     return "\n".join(out) + "\n"
+
+
+def _placed(m: Model) -> dict[str, list[Unit]]:
+    """{module or UNPLACED: the units about it}."""
+    placed: dict[str, list[Unit]] = {mid: [] for mid in [str(x["id"]) for x in m.registry] + [UNPLACED]}
+    for u in m.units:
+        for s in subjects(m, u):
+            placed.setdefault(s, []).append(u)
+    return placed
+
+
+def _index_row(m: Model, mod: dict, placed: dict[str, list[Unit]]) -> str:
+    mid = str(mod["id"])
+    own = _members(m, mid)
+    kinds = [m.nodes[n].get("type") for n in own]
+    st = [m.nodes[n].get("status") for n in own if m.nodes[n].get("type") == "WorkItem"]
+    return (f"| [{mid}]({MODULES_DIR}/{mid}.md) | {_cell(mod.get('name'))} | {mod.get('brick') or '?'} | "
+            f"{kinds.count(features.TYPE)} | {st.count('done')} | {sum(1 for s in st if s in OPEN)} | "
+            f"{len(placed.get(mid, []))} |")
 
 
 def render_index(m: Model, store_label: str) -> str:
@@ -227,19 +270,10 @@ def render_index(m: Model, store_label: str) -> str:
            "sync. The decision log stays the history.", ""]
     if not m.registry:
         return "\n".join(out + ["No module registry (`modules.yaml`) in this store: no module page."]) + "\n"
-    placed = {mid: [] for mid in [str(x["id"]) for x in m.registry] + [UNPLACED]}
-    for u in m.units:
-        for s in subjects(m, u):
-            placed.setdefault(s, []).append(u)
+    placed = _placed(m)
+    order = sorted(m.registry, key=lambda x: (str(x.get("brick") or "?"), len(str(x["id"])), str(x["id"])))
     out += ["| Module | Name | Brick | Features | Items done | Items open | Decisions |", "|---|---|---|---|---|---|---|"]
-    for mod in sorted(m.registry, key=lambda x: (str(x.get("brick") or "?"), len(str(x["id"])), str(x["id"]))):
-        mid = str(mod["id"])
-        own = _members(m, mid)
-        kinds = [m.nodes[n].get("type") for n in own]
-        st = [m.nodes[n].get("status") for n in own if m.nodes[n].get("type") == "WorkItem"]
-        out.append(f"| [{mid}]({MODULES_DIR}/{mid}.md) | {_cell(mod.get('name'))} | {mod.get('brick') or '?'} | "
-                   f"{kinds.count(features.TYPE)} | {st.count('done')} | {sum(1 for s in st if s in OPEN)} | "
-                   f"{len(placed.get(mid, []))} |")
+    out += [_index_row(m, mod, placed) for mod in order]
     left = sorted(placed[UNPLACED], key=lambda u: (u.date, u.id), reverse=True)
     out += ["", f"## Unplaced decisions: {len(left)}", "",
             "Decisions about no node of a module (no item, spec or feature with a module): a debt line, placed by "
@@ -275,26 +309,30 @@ def render_public(store: Path, repo: str, default_repo: str = "") -> dict[str, s
     if not feats:
         return {"README.md": "\n".join(head + ["No feature yet."]) + "\n"}
     out = {}
-    index = head + ["| Domain | Features | have | partial | planned |", "|---|---|---|---|---|"]
+    index = head + ["| Domain | Features | have | partial | planned | Ids |", "|---|---|---|---|---|---|"]
     for d in sorted(by_domain):
         fs = by_domain[d]
         st = [str(fm.features[f].get("status")) for f in fs]
+        ids = ", ".join(f"`{features.shown_id(fm, f, True)}`" for f in fs)
         index.append(f"| [{d}]({DOMAINS_DIR}/{_slug(d)}.md) | {len(fs)} | {st.count('have')} | "
-                     f"{st.count('partial')} | {st.count('planned')} |")
-        page = [f"# {d}", "", f"{MARKER} (the public render of `{repo}`'s features). Do not edit.", ""]
-        for f, depth in features._order(fm, fs):
-            p = "  " * depth
-            page.append(f"{p}- **{features._cell(features.shown_title(fm, f, True))}** "
-                        f"`{features.shown_id(fm, f, True)}` ({fm.features[f].get('status')})")
-            code = features._code_cell(fm, f, repo, True)
-            if code:
-                page.append(f"{p}  - code: {code}")
-            docs = features._shown_links(fm, f, "documented_in", repo, True)
-            if docs:
-                page.append(f"{p}  - docs: " + ", ".join(f"`{x}`" for x in docs))
-        out[f"{DOMAINS_DIR}/{_slug(d)}.md"] = "\n".join(page) + "\n"
+                     f"{st.count('partial')} | {st.count('planned')} | {ids} |")
+        out[f"{DOMAINS_DIR}/{_slug(d)}.md"] = _domain_page(fm, d, fs, repo)
     out["README.md"] = "\n".join(index) + "\n"
     return out
+
+
+def _domain_page(fm: features.Model, domain: str, fs: list[str], repo: str) -> str:
+    """One domain's page of the neutral render: its features nested by parent, each with its own code and docs."""
+    page = [f"# {domain}", "", f"{MARKER} (the public render of `{repo}`'s features). Do not edit.", ""]
+    for f, depth in features._order(fm, fs):
+        p = "  " * depth
+        page.append(f"{p}- **{features._cell(features.shown_title(fm, f, True))}** "
+                    f"`{features.shown_id(fm, f, True)}` ({fm.features[f].get('status')})")
+        code = features._code_cell(fm, f, repo, True)
+        docs = features._shown_links(fm, f, "documented_in", repo, True)
+        page += [f"{p}  - code: {code}"] if code else []
+        page += [f"{p}  - docs: " + ", ".join(f"`{x}`" for x in docs)] if docs else []
+    return "\n".join(page) + "\n"
 
 
 def denied(files: dict[str, str], cfg=None) -> list[str]:
