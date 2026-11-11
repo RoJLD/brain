@@ -2,6 +2,7 @@
 conversion, the forecast at the weekly reset and its line in brain status (brain.quota)."""
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -261,3 +262,23 @@ def test_a_calibrated_plan_converts_with_its_own_readings_only(monkeypatch):
     assert "window_5h" not in with_ultra
     # a median over the Ultra reading too would have been lower: it is not in
     assert quota.calibrate(rows, ultra + pro, "week", now)["n"] == 4
+
+
+def test_the_readings_are_read_across_the_monthly_files(now, brain_home):
+    """wi-brain-logs-unclassified: quota.jsonl rotates monthly (brain.stateio.rotate_log, 12 months kept) and
+    load_readings, the reader the forecast and the wave planner go through, reads every month in order."""
+    rec = quota.observe(28, at=quota.parse_time("2026-11-02T21:05Z", now), resets=quota.parse_time(RESET, now))
+    f = quota.readings_file()
+    old = datetime(2026, 10, 30, tzinfo=UTC).timestamp()
+    os.utime(f, (old, old))                               # last written in October: the next reading rotates it
+    (f.parent / "quota-2026-09.jsonl").write_text(json.dumps({**rec, "at": "2026-09-30T10:00:00Z", "pct": 90.0,
+                                                              "resets": "2026-10-05T12:00:00Z"}) + "\n",
+                                                  encoding="utf-8")
+    quota.observe(30)
+    assert sorted(p.name for p in f.parent.glob("quota*.jsonl")) == ["quota-2026-09.jsonl", "quota-2026-10.jsonl",
+                                                                       "quota.jsonl"]
+    assert [r["pct"] for r in quota.load_readings()] == [90.0, 28.0, 30.0]
+    (f.parent / "quota-2025-10.jsonl").write_text("{}\n", encoding="utf-8")   # past the 12 months
+    os.utime(f, (old, old))
+    quota.observe(31)
+    assert not (f.parent / "quota-2025-10.jsonl").exists() and (f.parent / "quota-2026-09.jsonl").exists()
