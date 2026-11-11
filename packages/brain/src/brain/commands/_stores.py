@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, features, graph, links,
-                lint, markers, milestones, modules, neutral, permissions, projects, public, readme, records,
+                lint, markers, milestones, modulemap, modules, neutral, permissions, projects, public, readme, records,
                 reference, render, skew, specs, stacks, tidy, tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
@@ -40,8 +40,8 @@ def _module_warnings(project: projects.Project, root: Path, store: Path, stale: 
     view = _module_view(project, root, store)
     if modules.stale(root, store, _store_label(root, store), view):
         stale.add(view, "brain sync (or brain modules --write)")
-    return [f"module map: {line}" for line in modules.registry_problems(store, root) + modules.problems(store, root)
-            + modules.warnings(store, root)]
+    found = modules.registry_problems(store, root) + modulemap.problems(store, root) + modules.problems(store, root)
+    return [f"module map: {line}" for line in found + modules.warnings(store, root) + modulemap.warnings(store, root)]
 
 
 def _write_module_view(project: projects.Project, root: Path, store: Path) -> None:

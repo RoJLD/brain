@@ -581,8 +581,10 @@ def data(store: Path, root: Path | None = None) -> dict:
 def _import_data(store: Path, root: Path | None, reg: list[dict]) -> dict:
     """brain modules --json's keys on the import (wi-brain-module-registry-import): the counts, how many entries are
     imported, their problems."""
+    from . import modulemap
     return {"counts": tally(reg), "imported": len([m for m in reg if is_imported(m)]),
-            "registry_problems": registry_problems(store, root)}
+            "registry_problems": registry_problems(store, root), "map": modulemap.data(reg),
+            "map_problems": modulemap.problems(store, root)}
 
 
 def render(store: Path, store_label: str = "notes/graph", root: Path | None = None) -> str:
@@ -608,6 +610,8 @@ def render(store: Path, store_label: str = "notes/graph", root: Path | None = No
                    f"{_cell(m.get('phase', ''))} | {_cell(m.get('status', 'tree'))} | {d} | {o} | {s} |")
     out += ["", "## Gaps", ""] + _gaps(reg, counts, primary)
     out += _import_lines(reg)
+    from . import modulemap   # the map of realisations (brain.modulemap): its sections, when an entry has it
+    out += modulemap.view_lines(reg)
     for b, m in _order(reg):
         out += _section(b, m, counts, primary, secondary)
     out += ["", "## Outside the tree", ""] + ([f"- `{n['id']}`: {_cell(_props(n).get('module_reason', ''))}"
