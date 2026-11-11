@@ -722,6 +722,23 @@ def test_rotate_log_looks_again_when_another_hook_rotated_meanwhile(tmp_path, mo
     assert f.read_text(encoding="utf-8") == "november\n" and not (tmp_path / "errors-2026-10-2.log").exists()
 
 
+def test_rotate_log_looks_again_when_the_log_changed_while_it_chose_a_name(tmp_path, monkeypatch):
+    """Hook A rotated and C started a fresh log between B's look at the log and B's choice of a free name: B sees the
+    log changed and leaves the fresh one where it is, never filing it under the old month's -2 name."""
+    f = _aged(_write(tmp_path / "starts.jsonl", "october\n"), datetime(2026, 10, 31, tzinfo=timezone.utc))
+    real, done = Path.exists, []
+
+    def raced(self, *a, **kw):
+        if self.name == "starts-2026-10.jsonl" and not done:
+            done.append(1)
+            os.replace(f, self)                              # hook A rotates
+            _aged(_write(f, "a fresh line\n"), NOV)          # hook C starts this month's log
+        return real(self, *a, **kw)
+    monkeypatch.setattr(Path, "exists", raced)
+    assert stateio.rotate_log(f, NOV) is None and done
+    assert f.read_text(encoding="utf-8") == "a fresh line\n" and not (tmp_path / "starts-2026-10-2.jsonl").exists()
+
+
 def test_the_error_sink_rotates_errors_log_monthly(brain_home):
     d = brain_home / "ledger"
     f = _write(d / "errors.log", "2026-01-01T00:00:00Z old: x\n")
@@ -740,3 +757,21 @@ def test_refused_tells_a_writers_refusal_from_a_file_it_will_set_aside(tmp_path)
     assert stateio.load(_write(tmp_path / "new.json", '{"v": 9}'), aside=False).refused
     (tmp_path / "dir.json").mkdir()   # a read that fails: a lock, a permission
     assert stateio.load(tmp_path / "dir.json", aside=False).refused
+
+
+def test_log_files_gives_a_rotated_logs_files_in_order(tmp_path):
+    """wi-brain-logs-unclassified: the monthly files by month, then n (-10 after -2), then the live file."""
+    for name in ("quota-2026-10-10.jsonl", "quota-2026-10.jsonl", "quota-2026-10-2.jsonl", "quota-2026-09.jsonl",
+                 "quota.jsonl", "quota.json", "quotas-2026-10.jsonl", "quota-2026-10.jsonl.bak"):
+        _write(tmp_path / name, "x")
+    assert [p.name for p in stateio.log_files(tmp_path / "quota.jsonl")] == [
+        "quota-2026-09.jsonl", "quota-2026-10.jsonl", "quota-2026-10-2.jsonl", "quota-2026-10-10.jsonl",
+        "quota.jsonl"]
+    (tmp_path / "quota.jsonl").unlink()
+    assert stateio.log_files(tmp_path / "quota.jsonl")[-1].name == "quota-2026-10-10.jsonl"
+    assert stateio.log_files(tmp_path / "nowhere" / "x.jsonl") == []
+
+
+def test_the_unclassified_logs_have_a_retention():
+    assert {k: stateio.LOG_RETENTION[k] for k in ("starts", "quota", "notify")} == {"starts": 2, "quota": 12,
+                                                                                 "notify": 6}

@@ -173,8 +173,15 @@ over. Each class keeps (`stateio.LOG_RETENTION`, this month counted):
 | errors | `ledger/errors.log`, `ledger/errors-YYYY-MM[-n].log` | 6 months |
 | timing | `ledger/engine/*-YYYY-MM.jsonl` (brain.selftime, the hooks' `exec-bash-`) | 3 months |
 | ledger | `ledger/<name>-YYYY-MM.jsonl` (actions, decisions, events, guard decisions, the queue) | kept: records nothing else holds |
+| starts | `usage/starts.jsonl`, `usage/starts-YYYY-MM[-n].jsonl` (the governor's brainstorm starts, read for 10 minutes) | 2 months |
+| quota | `usage/quota.jsonl`, `usage/quota-YYYY-MM[-n].jsonl` (`brain usage quota --observe`'s readings) | 12 months |
+| notify | `notify/YYYY-MM.jsonl` (the notifications' audit: one file per month already; the older months go at a month's first line) | 6 months |
 
-An `errors.log.1` left by an older engine (which cut errors.log at 1 MB into that one file) stays as it is.
+An `errors.log.1` left by an older engine (which cut errors.log at 1 MB into that one file) stays as it is. A reader
+of a rotated log's history reads its files in order (`stateio.log_files`: the monthly files by month, then the live
+one): `quota.load_readings` reads them all, the governor the live file and the newest month. An older engine reads
+only the live file after a rotation: it sees less history; its `brain usage quota --observe` may then ask for
+`--resets` when the month's file holds no weekly reading yet.
 
 ### The `return {}` sites, classified
 
