@@ -187,22 +187,10 @@ def verify_remote(url: str, tag: str, allowed: str, *, source: str = "", program
     if not _lines(allowed):
         return verdict(NO_SIGNERS, tag, why=f"no {FILE}: no releaser key to verify {tag} with", source=source)
     with tempfile.TemporaryDirectory(prefix="brain-tag-", ignore_cleanup_errors=True) as tmp:
-        work = Path(tmp) / "repo"
-        init = _git(["init", "--quiet", str(work)], None, runner)
-        if init.returncode != 0:
-            return verdict(UNVERIFIABLE, tag, why=f"git init failed: {_said(init)}", source=source)
-        ref = f"refs/tags/{tag}"
-        got = _git(["fetch", "--quiet", "--no-tags", "--depth", "1", "--filter=tree:0", url, f"+{ref}:{ref}"], work,
-                   runner)
-        if got.returncode != 0:
-            return verdict(UNVERIFIABLE, tag, why=f"git fetch {tag} failed (offline?): {_said(got)}", source=source)
-        kind = (_git(["cat-file", "-t", ref], work, runner).stdout or "").strip()
-        commit = (_git(["rev-parse", "--verify", f"{ref}^{{commit}}"], work, runner).stdout or "").strip()
-        if not kind or not commit:
-            return verdict(UNVERIFIABLE, tag, why=f"git could not read the fetched {tag}", source=source)
-        if kind != "tag":
-            return verdict(UNSIGNED, tag, commit=commit, why=f"{tag} is a lightweight tag: no signature",
-                           source=source)
+        work, ref = Path(tmp) / "repo", f"refs/tags/{tag}"
+        commit, why = _fetch(url, tag, work, runner)
+        if why:
+            return verdict(UNVERIFIABLE if not commit else UNSIGNED, tag, commit=commit, why=why, source=source)
         allowed_file = Path(tmp) / FILE
         allowed_file.write_text(allowed, encoding="utf-8", newline="\n")
         conf = ["-c", f"gpg.ssh.allowedSignersFile={allowed_file.as_posix()}"]
@@ -210,6 +198,29 @@ def verify_remote(url: str, tag: str, allowed: str, *, source: str = "", program
         # not verify)
         conf += ["-c", f"gpg.ssh.program={Path(program).as_posix() if program else 'ssh-keygen'}"]
         checked = _git([*conf, "verify-tag", "--raw", ref], work, runner)
+    return _classify(checked, tag, commit, source)
+
+
+def _fetch(url: str, tag: str, work: Path, runner) -> tuple[str, str]:
+    """(the commit the tag names, '') once the tag alone is fetched into a new repo ``work`` and is an annotated tag;
+    ('', why) when it cannot be (unverifiable); (commit, why) for a lightweight tag (unsigned)."""
+    init = _git(["init", "--quiet", str(work)], None, runner)
+    if init.returncode != 0:
+        return "", f"git init failed: {_said(init)}"
+    ref = f"refs/tags/{tag}"
+    got = _git(["fetch", "--quiet", "--no-tags", "--depth", "1", "--filter=tree:0", url, f"+{ref}:{ref}"], work,
+               runner)
+    if got.returncode != 0:
+        return "", f"git fetch {tag} failed (offline?): {_said(got)}"
+    kind = (_git(["cat-file", "-t", ref], work, runner).stdout or "").strip()
+    commit = (_git(["rev-parse", "--verify", f"{ref}^{{commit}}"], work, runner).stdout or "").strip()
+    if not kind or not commit:
+        return "", f"git could not read the fetched {tag}"
+    return commit, "" if kind == "tag" else f"{tag} is a lightweight tag: no signature"
+
+
+def _classify(checked, tag: str, commit: str, source: str) -> dict:
+    """git verify-tag's answer as a verdict."""
     said = f"{checked.stdout or ''}\n{checked.stderr or ''}"
     good = GOOD_RE.search(said)
     if checked.returncode == 0 and good:
