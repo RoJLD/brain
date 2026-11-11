@@ -127,14 +127,14 @@ def _mark(sid: str, transcript_path: str, next_s: float) -> None:
 
 
 def _prune(keep_days: int = KEEP_DAYS) -> None:
-    """The states older than ``keep_days``, with their mark, backup and set-aside copies."""
+    """The states older than ``keep_days``, with their mark, backup, integrity sidecar and set-aside copies."""
     limit = time.time() - keep_days * 86400
     try:
         with os.scandir(state_dir()) as it:
             for e in it:
                 own = e.name.endswith(".json")
-                if (own or e.name.endswith(".json" + stateio.BACKUP) or ".json" + stateio.ASIDE in e.name) \
-                        and e.stat().st_mtime < limit:
+                kin = e.name.endswith((".json" + stateio.BACKUP, ".json" + stateio.SIDECAR))
+                if (own or kin or ".json" + stateio.ASIDE in e.name) and e.stat().st_mtime < limit:
                     os.remove(e.path)
                     mark = Path(e.path).with_suffix(".mark")
                     if own and mark.exists():

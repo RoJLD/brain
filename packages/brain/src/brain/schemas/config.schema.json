@@ -271,6 +271,13 @@
         "keep": {"type": "integer", "minimum": 1, "description": "The snapshots kept per store in the spool, the newest; default 3. A file put with its own paths (the session archive) is pruned only once sent, past the newest 3 of them."},
         "max_age_days": {"type": "integer", "minimum": 1, "description": "How old the last push without an error may be before brain health spool warns; default 7."}
       }
+    },
+    "integrity": {
+      "type": "object", "additionalProperties": false,
+      "description": "Integrity of the engine's truth-local state files (brain.stateio). Optional, off by default.",
+      "properties": {
+        "sidecars": {"type": "boolean", "description": "true: each save writes a sha256 sidecar (<name>.sha256: the hash, size and mtime) and each load checks it; a file whose size and mtime match but whose hash does not (bit rot) is set aside with a note (its copy kept, never saved over); a missing sidecar loads as before. Default false. $BRAIN_STATE_INTEGRITY=1 or 0 overrides it."}
+      }
     }
   },
   "$defs": {

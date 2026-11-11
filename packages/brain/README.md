@@ -800,7 +800,9 @@ records to `<BRAIN_HOME>/ledger` at zero token; it prints nothing and never fail
 `ledger/errors.log`, moved aside each month, or past 1 MB, as `errors-YYYY-MM.log` and kept six months;
 `BRAIN_CAPTURE=0` turns it off). The session snapshots, states, reports and plans under `<BRAIN_HOME>/sessions` and the
 budget watch's states are written through `brain.stateio` (a backup beside each, an atomic write; a newer brain's left
-to it): [docs/formats.md](docs/formats.md) gives each file's policy and each log's retention.
+to it): [docs/formats.md](docs/formats.md) gives each file's policy and each log's retention. With `config.json`
+`integrity.sidecars: true` (or `BRAIN_STATE_INTEGRITY=1`; off by default) each of these files gets a sha256 sidecar
+(`<name>.sha256`), checked at each load: a file that rotted is set aside with a note.
 
 **The engine times itself** (`brain.selftime`, local only, zero token). Every `brain` command and every hook writes
 one exec event (task `brain <command> [<subcommand>]` or `hook <name>`, a bash-only run marked `[bash]`, the engine's
