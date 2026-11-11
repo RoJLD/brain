@@ -34,8 +34,8 @@ The checks, in order; the first that holds decides:
   record's ``task_class``), or its title matches ``brainstorm_title`` (default: it starts with "Brainstorm"); an
   open brainstorm is one not archived and active in the last ``brainstorm_hours``. A brainstorm start this hook lets
   through is noted in ``usage/starts.jsonl``, so the next start counts it before its first turn ends (a log rotated
-  monthly, two months kept: brain.stateio; both quota readings and starts are read from the live file and the newest
-  monthly one).
+  monthly, two months kept, brain.stateio: the hook reads the live file and the newest monthly one, so a start just
+  before the month turned still counts; the quota readings likewise).
 - ``warn``: a window at ``warn`` % or more: ask the owner, for every tool.
 
 The thresholds and caps are config.json's ``usage.guard`` (:data:`DEFAULTS`), never rule text. A refusal names the

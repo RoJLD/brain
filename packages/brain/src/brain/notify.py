@@ -27,7 +27,8 @@ where the topic is the password). A level without channels sends nothing; a proj
 
 ``send`` tries the route's channels and records one line per channel tried in ``<BRAIN_HOME>/notify/<YYYY-MM>.jsonl``
 (time, host, project, level, source, key, channel, outcome, title; never the message, a secret or a URL that carries
-one); a log kept 6 months (brain.stateio.LOG_RETENTION's ``notify``: an older month's file goes at a write). A failure is reported by its HTTP or SMTP status or its exception class, with every configured secret masked.
+one); a log kept 6 months (brain.stateio.LOG_RETENTION's ``notify``: the older months go at a month's first line).
+A failure is reported by its HTTP or SMTP status or its exception class, with every configured secret masked.
 ``--dry-run`` prints what would be sent and sends nothing; ``$BRAIN_NOTIFY=off`` sends nothing at all (the tests run
 so), ``dry-run`` turns every send into a dry run. Exit code 0 when a channel delivered or nothing was due (no route,
 held back by the throttle, off, dry run); 1 when every channel of the route failed or is not set up; 2 for a

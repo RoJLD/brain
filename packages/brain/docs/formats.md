@@ -167,8 +167,9 @@ over. Each class keeps (`stateio.LOG_RETENTION`, this month counted):
 
 An `errors.log.1` left by an older engine (which cut errors.log at 1 MB into that one file) stays as it is. A reader
 of a rotated log's history reads its files in order (`stateio.log_files`: the monthly files by month, then the live
-one): `quota.load_readings` reads them all, the governor the live file and the newest month. An engine before 0.3.2
-reads only the live file after a rotation: it sees less history, and refuses nothing.
+one): `quota.load_readings` reads them all, the governor the live file and the newest month. An older engine reads
+only the live file after a rotation: it sees less history; its `brain usage quota --observe` may then ask for
+`--resets` when the month's file holds no weekly reading yet.
 
 ### The `return {}` sites, classified
 

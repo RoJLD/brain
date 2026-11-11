@@ -227,7 +227,8 @@ A brainstorm is a session whose brief says `Task class: brainstorm` or carries `
 `task_class`), or whose title matches `brainstorm_title` (default: it starts with "Brainstorm"). It is open while not
 archived and active in the last `brainstorm_hours`, in any project. A brainstorm start the governor lets through is
 noted in `<BRAIN_HOME>/usage/starts.jsonl` and counted for 10 minutes, until the app shows its session (a log rotated
-monthly, two months kept, so a start just before the month turned still counts).
+monthly, two months kept; the governor reads the live file and the newest monthly one, so a start just before the
+month turned still counts).
 
 ### A master's start_session (the master's watch)
 

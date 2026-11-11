@@ -9,9 +9,8 @@ A session that read it notes it with its time::
 
 which appends the reading to ``<BRAIN_HOME>/usage/quota.jsonl`` (time, window, percent, reset, plan, host; a log
 rotated monthly, ``quota-YYYY-MM.jsonl`` kept 12 months, brain.stateio, and :func:`load_readings` reads them all);
-without
-``--resets`` a weekly reading takes the last reading's reset, moved by whole weeks past ``--at``. The token ledger
-(brain.usage) has every session's cost at API prices by UTC hour; from them:
+without ``--resets`` a weekly reading takes the last reading's reset, moved by whole weeks past ``--at``. The token
+ledger (brain.usage) has every session's cost at API prices by UTC hour; from them:
 
   conversion  each reading's percent over the ledger's cost since its window started (its reset minus the window's
               length): the percent of the window per dollar at API prices, the median of the readings of the last

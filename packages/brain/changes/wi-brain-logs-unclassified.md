@@ -5,4 +5,5 @@ section: Changes
   months) rotate monthly into `<stem>-YYYY-MM.jsonl` like `errors.log`, and the notifications' audit
   (`notify/YYYY-MM.jsonl`) drops the months past 6. `quota.load_readings` reads every monthly file, the governor the
   live file and the newest month, so the month's turn hides nothing (`stateio.log_files`). An older engine after a
-  rollback reads only the live file: less history, nothing refused (`wi-brain-logs-unclassified`).
+  rollback reads only the live file: less history, and its `--observe` may ask for `--resets` until a weekly
+  reading is noted again (`wi-brain-logs-unclassified`).
