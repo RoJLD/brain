@@ -175,21 +175,29 @@ def parse(data, path: Path, engine: bool = False, strict: bool | None = None) ->
     cat.notes += [f"{path.name}: {u} (kept: a newer brain's key?)" for u in unknown]
     if errors and any("written by brain >" in e for e in errors):
         return cat   # a higher v: its rows may mean something else
-    for i, row in enumerate(data.get("rows") if isinstance(data.get("rows"), list) else []):
-        where = f"{path.name}: rows[{i}]" + (f" {row.get('id')}" if isinstance(row, dict) and row.get("id") else "")
-        if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row.get("statement"):
+    rows = data.get("rows")
+    for i, row in enumerate(rows if isinstance(rows, list) else []):
+        if not _readable(row):
             continue   # its schema error says why
-        cat.errors += row_errors(where, row, mode == schema.STRICT, cat.notes)
-        cov = row.get("coverage")
-        cat.rows.append(Row(row["id"], cat.name, str(row.get("domain") or ""), str(row["statement"]),
-                            _strings(row.get("profiles")), str(row.get("stage") or ""),
-                            str(row.get("enforcement") or ""), str(row.get("check") or ""),
-                            _strings(row.get("languages")), str(row.get("status") or ""),
-                            title=str(row.get("title") or ""), why=str(row.get("why") or ""),
-                            adapter=str(row.get("adapter") or ""), coverage=dict(cov) if isinstance(cov, dict) else {},
-                            source=str(row.get("source") or ""), refs=_strings(row.get("refs")),
-                            file=path.as_posix()))
+        cat.errors += row_errors(f"{path.name}: rows[{i}] {row['id']}", row, mode == schema.STRICT, cat.notes)
+        cat.rows.append(_row(row, cat.name, path))
     return cat
+
+
+def _readable(row) -> bool:
+    """A row with an id and a statement: read into a :class:`Row` (another is its schema's error only)."""
+    return isinstance(row, dict) and isinstance(row.get("id"), str) and bool(row.get("statement"))
+
+
+def _row(row: dict, catalog: str, path: Path) -> Row:
+    text = {k: str(row.get(k) or "") for k in ("domain", "stage", "enforcement", "check", "status", "title", "why",
+                                                "adapter", "source")}
+    cov = row.get("coverage")
+    return Row(row["id"], catalog, text["domain"], str(row["statement"]), _strings(row.get("profiles")),
+               text["stage"], text["enforcement"], text["check"], _strings(row.get("languages")), text["status"],
+               title=text["title"], why=text["why"], adapter=text["adapter"],
+               coverage=dict(cov) if isinstance(cov, dict) else {}, source=text["source"],
+               refs=_strings(row.get("refs")), file=path.as_posix())
 
 
 def load_file(path: Path, engine: bool = False, strict: bool | None = None) -> Catalog:
@@ -287,34 +295,45 @@ def selection_errors(where: str, value, ids: set[str] | None = None, strict: boo
     where = f"{where}: standards"
     if not isinstance(value, dict):
         return [f"{where} is a mapping of {', '.join(SELECTION_KEYS)} (docs/standards.md)"]
-    errors = []
     unknown = sorted(set(map(str, value)) - set(SELECTION_KEYS))
-    if unknown:
-        errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (known: {', '.join(SELECTION_KEYS)})",
-                                  strict, notes)
-    for key in ("profiles", "include", "catalogs"):
-        if key in value and not (isinstance(value[key], list) and all(isinstance(v, str) and v for v in value[key])):
-            errors.append(f"{where}: {key} is a list of names")
-    for p in _strings(value.get("profiles")):
-        errors += _vocab(where, "profile", p, PROFILES, strict, notes)
-    if "stage" in value:
-        if not isinstance(value["stage"], str):
-            errors.append(f"{where}: stage is one of {', '.join(STAGES)}")
-        else:
-            errors += _vocab(where, "stage", value["stage"], STAGES, strict, notes)
-    if (value.get("profiles") or value.get("stage")) and not (value.get("profiles") and value.get("stage")):
-        errors.append(f"{where}: profiles and stage go together (a profile selects rows from a stage on)")
-    exclude = value.get("exclude")
-    if exclude is not None and not isinstance(exclude, dict):
-        errors.append(f"{where}: exclude is a mapping of id -> reason")
-    for sid, reason in (exclude if isinstance(exclude, dict) else {}).items():
-        if not isinstance(reason, str) or len(reason.strip()) < REASON:
-            errors.append(f"{where}: exclude {sid!r}: a reason of {REASON} characters at least")
+    errors = schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (known: {', '.join(SELECTION_KEYS)})",
+                             strict, notes) if unknown else []
+    errors += [f"{where}: {key} is a list of names" for key in ("profiles", "include", "catalogs")
+               if key in value and not _names(value[key])]
+    errors += _profile_stage_errors(where, value, strict, notes) + _exclude_errors(where, value.get("exclude"))
     if ids is not None:
-        named = _strings(value.get("include")) + [str(k) for k in (exclude if isinstance(exclude, dict) else {})]
+        exclude = value.get("exclude") if isinstance(value.get("exclude"), dict) else {}
+        named = _strings(value.get("include")) + [str(k) for k in exclude]
         errors += [f"{where}: {sid!r} is no standard of the catalogs (brain standards list)" for sid in named
                    if sid not in ids]
     return errors
+
+
+def _names(value) -> bool:
+    return isinstance(value, list) and all(isinstance(v, str) and v for v in value)
+
+
+def _profile_stage_errors(where: str, value: dict, strict: bool | None, notes: list[str] | None) -> list[str]:
+    errors = []
+    for p in _strings(value.get("profiles")):
+        errors += _vocab(where, "profile", p, PROFILES, strict, notes)
+    stage = value.get("stage")
+    if "stage" in value and not isinstance(stage, str):
+        errors.append(f"{where}: stage is one of {', '.join(STAGES)}")
+    elif "stage" in value:
+        errors += _vocab(where, "stage", stage, STAGES, strict, notes)
+    if bool(value.get("profiles")) != bool(stage):
+        errors.append(f"{where}: profiles and stage go together (a profile selects rows from a stage on)")
+    return errors
+
+
+def _exclude_errors(where: str, exclude) -> list[str]:
+    if exclude is None:
+        return []
+    if not isinstance(exclude, dict):
+        return [f"{where}: exclude is a mapping of id -> reason"]
+    return [f"{where}: exclude {sid!r}: a reason of {REASON} characters at least" for sid, reason in exclude.items()
+            if not isinstance(reason, str) or len(reason.strip()) < REASON]
 
 
 def applicable(rows: list[Row], sel: Selection | None) -> list[tuple[Row, str]]:

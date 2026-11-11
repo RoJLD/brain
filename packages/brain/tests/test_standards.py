@@ -135,7 +135,9 @@ def test_an_id_twice_is_an_error(tmp_path):
 
 def test_the_selection_picks_by_profile_and_stage(engine):
     rows = standards.rows_of(standards.engine_catalogs())
-    pick = lambda **v: {r.id: why for r, why in standards.applicable(rows, standards.selection(v))}  # noqa: E731
+
+    def pick(**v):
+        return {r.id: why for r, why in standards.applicable(rows, standards.selection(v))}
     assert pick(profiles=["cli"], stage="prototype") == {"sw-utc": "profile any, from prototype"}
     assert set(pick(profiles=["cli"], stage="mvp")) == {"sw-utc", "sw-atomic-writes"}
     assert set(pick(profiles=["cli"], stage="scale")) == {"sw-utc", "sw-atomic-writes", "sw-fuzz"}   # not sw-sbom

@@ -309,6 +309,11 @@ def _prop(key: str, value) -> str:
     return f"- {key}: {' '.join(str(value).split())}"
 
 
+def _section(title: str, lines: list[str]) -> list[str]:
+    """An optional section: its heading and lines, nothing when it has none."""
+    return ["", f"## {title}", ""] + lines if lines else []
+
+
 def render(b: Brief) -> str:
     n = b.item
     props = dict(n.get("props") or {})
@@ -336,12 +341,10 @@ def render(b: Brief) -> str:
     lines += ["", "## Its subgraph", ""] + (b.subgraph or ["- no edge"])
     lines += ["", "## Files and collisions (brain collisions)", ""] + [f"- {x}" for x in b.collisions]
     lines += ["", "## How to start", ""] + b.start
-    if b.invariants:
-        lines += ["", "## Invariants: the project's standards (brain standards list --applicable)", ""] + b.invariants
+    lines += _section("Invariants: the project's standards (brain standards list --applicable)", b.invariants)
     lines += ["", "## To decide (the coordinator)", "",
               "- Scope and order: <edit>", "- What is decided, and by which ADR: <edit>", "- Read first: <edit>"]
-    if b.after_merge:
-        lines += ["", "## After the merge (close-item step 5)", ""] + b.after_merge
+    lines += _section("After the merge (close-item step 5)", b.after_merge)
     lines += ["", "## Definition of done (the owner's rules)", ""] + (b.done or ["- none found in the rules"])
     lines += ["", "## Never (the owner's rules)", ""] + (b.never or ["- none found in the rules"])
     if b.sources:

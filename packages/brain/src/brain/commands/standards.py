@@ -46,28 +46,20 @@ def _matches(row: standards.Row, args) -> bool:
     return not profile or profile in row.profiles or "any" in row.profiles
 
 
-def _cmd_list(args, root: Path) -> int:
-    p, catalogs, sel, errors = _load(args, root)
-    for e in errors:
-        print(f"brain standards: {e}", file=sys.stderr)
-    rows = standards.rows_of(catalogs)
-    if args.applicable:
-        if sel is None:
-            print(f"brain standards: project {p.name} declares no standards: in projects.yaml (docs/standards.md): "
-                  "it follows none", file=sys.stderr)
-            chosen = []
-        else:
-            chosen = standards.applicable(rows, sel)
-    else:
+def _chosen(args, p, rows: list[standards.Row], sel) -> list[tuple[standards.Row, str]]:
+    """The rows list prints, each with why it applies (--applicable) or "", after the filters."""
+    if not args.applicable:
         chosen = [(r, "") for r in rows]
-    chosen = [(r, why) for r, why in chosen if _matches(r, args)]
-    if args.json:
-        _print_json({"project": p.name, "concerned": sel is not None, "applicable": bool(args.applicable),
-                     "standards": [{**r.as_dict(), "selected_by": why} for r, why in chosen]})
-        return 1 if errors else 0
-    if not chosen:
-        print("no standard" + (" applies" if args.applicable else " matches"))
-        return 1 if errors else 0
+    elif sel is None:
+        print(f"brain standards: project {p.name} declares no standards: in projects.yaml (docs/standards.md): "
+              "it follows none", file=sys.stderr)
+        chosen = []
+    else:
+        chosen = standards.applicable(rows, sel)
+    return [(r, why) for r, why in chosen if _matches(r, args)]
+
+
+def _print_rows(chosen: list[tuple[standards.Row, str]]) -> None:
     domain = None
     for r, why in sorted(chosen, key=lambda rw: (rw[0].catalog, rw[0].domain, rw[0].id)):
         if (r.catalog, r.domain) != domain:
@@ -78,6 +70,20 @@ def _cmd_list(args, root: Path) -> int:
         print(f"      {' '.join(r.statement.split())}")
     by = ", ".join(f"{n} {k}" for k, n in standards.counts([r for r, _ in chosen]).items())
     print(f"{len(chosen)} standard(s): {by}")
+
+
+def _cmd_list(args, root: Path) -> int:
+    p, catalogs, sel, errors = _load(args, root)
+    for e in errors:
+        print(f"brain standards: {e}", file=sys.stderr)
+    chosen = _chosen(args, p, standards.rows_of(catalogs), sel)
+    if args.json:
+        _print_json({"project": p.name, "concerned": sel is not None, "applicable": bool(args.applicable),
+                     "standards": [{**r.as_dict(), "selected_by": why} for r, why in chosen]})
+    elif chosen:
+        _print_rows(chosen)
+    else:
+        print("no standard" + (" applies" if args.applicable else " matches"))
     return 1 if errors else 0
 
 
@@ -106,45 +112,50 @@ def _cmd_show(args, root: Path) -> int:
     return 0
 
 
-def _cmd_check(args, root: Path) -> int:
-    p, catalogs, sel, errors = _load(args, root)
-    notes: list[str] = []
-    for cat in catalogs:
-        errors += cat.errors
-        notes += cat.notes
-    errors += standards.duplicates(catalogs)
+def _languages(p, notes: list[str]) -> dict[str, str]:
+    """{repo: its language} of the project; {} with a note when its repos cannot be read."""
+    try:
+        return {r.name: r.lang for r in projects.repos_of(p)}
+    except projects.RepoError as exc:
+        notes.append(f"its repos cannot be read ({exc}): the languages are not compared")
+        return {}
+
+
+def report(p, catalogs: list[standards.Catalog], sel, errors: list[str]) -> dict:
+    """What brain standards check says, with stable keys: the catalogs, the errors, the notes, the applicable ids
+    and the language gaps of a project (``errors``: those of its local catalogs that cannot be read)."""
+    notes = [n for cat in catalogs for n in cat.notes]
+    errors = errors + [e for cat in catalogs for e in cat.errors] + standards.duplicates(catalogs)
     rows = standards.rows_of(catalogs)
     chosen, gaps = [], []
     if sel is not None:
         ids = None if errors else {r.id for r in rows}   # a local catalog unread: its ids would be named unknown
         errors += standards.selection_errors(f"project {p.name}", p.standards, ids, notes=notes)
         chosen = standards.applicable(rows, sel)
-        try:
-            langs = {r.name: r.lang for r in projects.repos_of(p)}
-        except projects.RepoError as exc:
-            langs = {}
-            notes.append(f"its repos cannot be read ({exc}): the languages are not compared")
-        gaps = standards.gaps(chosen, langs)
+        gaps = standards.gaps(chosen, _languages(p, notes))
+    return {"project": p.name, "concerned": sel is not None, "catalogs": [
+        {"name": c.name, "file": c.path.as_posix(), "engine": c.engine, "rows": len(c.rows)} for c in catalogs],
+        "rows": len(rows), "applicable": [r.id for r, _ in chosen], "errors": errors, "gaps": gaps, "notes": notes}
+
+
+def _cmd_check(args, root: Path) -> int:
+    p, catalogs, sel, errors = _load(args, root)
+    data = report(p, catalogs, sel, errors)
     if args.json:
-        _print_json({"project": p.name, "concerned": sel is not None, "catalogs": [
-            {"name": c.name, "file": c.path.as_posix(), "engine": c.engine, "rows": len(c.rows)} for c in catalogs],
-            "rows": len(rows), "applicable": [r.id for r, _ in chosen], "errors": errors, "gaps": gaps,
-            "notes": notes})
-        return 1 if errors else 0
-    for c in catalogs:
-        print(f"catalog {c.name} ({'engine' if c.engine else c.path.as_posix()}): {len(c.rows)} row(s)")
-    for line in notes:
-        print(f"note: {line}")
-    for e in errors:
-        print(f"error: {e}")
-    if sel is None:
-        print(f"standards check: {len(rows)} standard(s); project {p.name} declares no standards: (not concerned)")
+        _print_json(data)
+        return 1 if data["errors"] else 0
+    for c in data["catalogs"]:
+        print(f"catalog {c['name']} ({'engine' if c['engine'] else c['file']}): {c['rows']} row(s)")
+    for line in ([f"note: {n}" for n in data["notes"]] + [f"error: {e}" for e in data["errors"]]
+                 + [f"gap: {g}" for g in data["gaps"]]):
+        print(line)
+    if data["concerned"]:
+        gaps = f", {len(data['gaps'])} not covered on every language" if data["gaps"] else ""
+        print(f"standards check: {len(data['applicable'])} of {data['rows']} standard(s) apply to {p.name}{gaps}")
     else:
-        for g in gaps:
-            print(f"gap: {g}")
-        print(f"standards check: {len(chosen)} of {len(rows)} standard(s) apply to {p.name}"
-              + (f", {len(gaps)} not covered on every language" if gaps else ""))
-    return 1 if errors else 0
+        print(f"standards check: {data['rows']} standard(s); project {p.name} declares no standards: "
+              "(not concerned)")
+    return 1 if data["errors"] else 0
 
 
 def cmd_standards(args, root: Path) -> int:
