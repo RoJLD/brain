@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from brain import cli, config, keystore, schema, spool, vault
 from brain import sessionarchive as sa
+from brain.commands import session_archive as cmd
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FAKE_AGE = FIXTURES / "fake_age.py"
@@ -220,3 +221,18 @@ def test_the_spool_keeps_its_own_refusals(brain):
     with pytest.raises(sa.ArchiveError, match="never lets it leave"):
         sa.run(cfg, argv=GITLEAKS, now=NOW, found=brain.found)
     assert spool.load_index()[1]["files"] == {}
+
+
+def test_the_command_runs_the_archive_and_prints_its_status(brain, brain_home, monkeypatch, capsys):
+    brain(ON)
+    monkeypatch.setattr(sa, "scanner", lambda: GITLEAKS)
+    args = type("Args", (), {"sarch_cmd": "run", "dry_run": True, "max": None, "json": True})()
+    assert cmd.run(args, brain.root) == 0
+    res = json.loads(capsys.readouterr().out)
+    assert res["dry_run"] and {a["file"] for a in res["archived"]} == {f"{SR}.jsonl", f"{SR}--agent-abc.jsonl"}
+    args.sarch_cmd, args.json = "status", False
+    assert cmd.run(args, brain.root) == 0
+    out = capsys.readouterr().out
+    assert "session archive: on" in out and "scanner: gitleaks" in out and "residency filters: vendor" in out
+    assert cli.main(["--root", str(brain.root), "health", "session-archive"]) == 0
+    assert "WARN no run has sealed anything yet" in capsys.readouterr().out

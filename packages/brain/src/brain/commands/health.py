@@ -31,20 +31,20 @@ USAGE = """\
                                   config.json session_archive.enabled is not true
 """
 
+# The machine's own checks, each named by its CHECK and run with --all: health(cfg, named=...) -> exit code.
+MACHINE_CHECKS = (vault, spool, sessionarchive)
+
 
 def cmd_health(args, root: Path | None, project: str | None) -> int:
     """``brain health``: the stacks asked for (no name: the watched ones, every one with --all, every one of the
     project with --project), then the code index when code-index is named, with --all, or with --project alone, and
     the vault's canaries when vault is named or with --all, the spool's last push when spool is named or with
     --all, the session archive's last run when session-archive is named or with --all."""
-    names = [n for n in args.stacks if n not in (codeindex.CHECK, vault.CHECK, spool.CHECK, sessionarchive.CHECK)]
+    names = [n for n in args.stacks if n not in (codeindex.CHECK, *(m.CHECK for m in MACHINE_CHECKS))]
     rc = stacks.main("health", names, args.all, root, project=project) if names or not args.stacks else 0
-    if vault.CHECK in args.stacks or args.all:
-        rc = max(rc, vault.health(config.load(root), named=vault.CHECK in args.stacks))
-    if spool.CHECK in args.stacks or args.all:
-        rc = max(rc, spool.health(config.load(root), named=spool.CHECK in args.stacks))
-    if sessionarchive.CHECK in args.stacks or args.all:
-        rc = max(rc, sessionarchive.health(config.load(root), named=sessionarchive.CHECK in args.stacks))
+    for mod in MACHINE_CHECKS:
+        if mod.CHECK in args.stacks or args.all:
+            rc = max(rc, mod.health(config.load(root), named=mod.CHECK in args.stacks))
     if not (codeindex.CHECK in args.stacks or args.all or (project and not args.stacks)):
         return rc
     try:

@@ -272,20 +272,24 @@ def gitleaks(argv: list[str], folder: Path) -> dict[str, set[int]]:
             if r.returncode == 0:
                 return {}
             if r.returncode == LEAKS_EXIT and report.is_file():
-                try:
-                    found = json.loads(report.read_text(encoding="utf-8") or "[]") or []
-                except ValueError:
-                    raise ArchiveError("gitleaks wrote a report that is not JSON: nothing archived") from None
-                hits: dict[str, set[int]] = {}
-                for f in found:
-                    if isinstance(f, dict) and isinstance(f.get("StartLine"), int):
-                        hits.setdefault(Path(str(f.get("File", ""))).name, set()).add(f["StartLine"])
-                if found and not hits:
-                    raise ArchiveError("gitleaks reported findings without a file and line: nothing archived")
-                return hits
-            why = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-1:] or [f"exit {r.returncode}"]
-            why = why[0][:200]
-        raise ArchiveError(f"gitleaks failed ({why}): nothing archived")
+                return _report_hits(report)
+            why = ((r.stderr or b"").decode("utf-8", "replace").strip().splitlines() or [f"exit {r.returncode}"])[-1]
+        raise ArchiveError(f"gitleaks failed ({why[:200]}): nothing archived")
+
+
+def _report_hits(report: Path) -> dict[str, set[int]]:
+    """gitleaks' JSON report as {file name: line numbers}; ArchiveError when it cannot be read as one."""
+    try:
+        found = json.loads(report.read_text(encoding="utf-8") or "[]") or []
+    except ValueError:
+        raise ArchiveError("gitleaks wrote a report that is not JSON: nothing archived") from None
+    hits: dict[str, set[int]] = {}
+    for f in found if isinstance(found, list) else []:
+        if isinstance(f, dict) and isinstance(f.get("StartLine"), int):
+            hits.setdefault(Path(str(f.get("File", ""))).name, set()).add(f["StartLine"])
+    if not hits:
+        raise ArchiveError("gitleaks reported findings without a file and line: nothing archived")
+    return hits
 
 
 def _stub_lines(f: Path, lines: set[int]) -> int:
@@ -314,10 +318,10 @@ def scan_staged(argv: list[str], folder: Path, counts: dict[str, Counts]) -> Non
 # --- the run ---
 def _tree() -> dict[str, dict]:
     """{session id: {host_id, parent, role}} from brain sessions, {} when it cannot tell."""
-    try:
-        from . import sessions
+    from . import sessions
+    try:   # the tree is a courtesy of the index, never a reason to stop the archive
         tree = sessions.load(briefs=False)
-    except Exception:  # noqa: BLE001 - the tree is a courtesy of the index, never a reason to stop the archive
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, stateio.StateError):
         return {}
     out = {}
     for sid, key in tree.by_session.items():
