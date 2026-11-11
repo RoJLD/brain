@@ -159,10 +159,16 @@ def test_an_unknown_key_is_counted_logged_once_and_shown_once(brain_home):
     and the SessionStart health names it once."""
     payload = json.loads((CLAUDE / "hooks" / "session-end.json").read_text(encoding="utf-8"))
     payload["exit_detail"] = "x"
+    f = brain_home / "ledger" / capture.CONTRACTS
     for _ in range(2):
         assert capture.main(["session-end"], stdin=io.BytesIO(json.dumps(payload).encode())) == 0
     entry = _contracts(brain_home)["keys"]["hook session-end: unknown exit_detail"]
-    assert entry["count"] == 2 and entry["shown"] is False
+    assert entry["count"] == 1 and entry["shown"] is False   # counted again at most once an hour: no write per call
+    data = _contracts(brain_home)
+    data["keys"]["hook session-end: unknown exit_detail"]["last"] = "2026-01-01T00:00:00Z"
+    f.write_text(json.dumps(data), encoding="utf-8")
+    assert capture.main(["session-end"], stdin=io.BytesIO(json.dumps(payload).encode())) == 0
+    assert _contracts(brain_home)["keys"]["hook session-end: unknown exit_detail"]["count"] == 2
     errors = (brain_home / "ledger" / "errors.log").read_text(encoding="utf-8")
     assert errors.count("contract: Claude Code's format changed: hook session-end: unknown exit_detail") == 1
     (line,) = capture.contract_notes()
@@ -199,3 +205,17 @@ def test_the_transcript_fixture_reads_clean_and_a_new_type_is_counted(tmp_path, 
     payload = {"session_id": "s-1", "transcript_path": str(t), "cwd": str(tmp_path)}
     assert capture.main(["stop"], stdin=io.BytesIO(json.dumps(payload).encode())) == 0
     assert _contracts(brain_home)["keys"]["transcript: unknown type hologram"]["count"] == 1
+
+
+def test_a_failed_count_never_costs_the_turn_its_snapshot(tmp_path, brain_home, monkeypatch):
+    t = tmp_path / "s.jsonl"
+    t.write_text((CLAUDE / "transcript.jsonl").read_text(encoding="utf-8") + '{"type": "hologram"}\n',
+                 encoding="utf-8")
+
+    def broken(*a, **k):
+        raise PermissionError("contracts.json is being replaced")
+    monkeypatch.setattr(capture, "note_contract", broken)
+    payload = {"session_id": "s-1", "transcript_path": str(t), "cwd": str(tmp_path)}
+    assert capture.main(["stop"], stdin=io.BytesIO(json.dumps(payload).encode())) == 0
+    assert (brain_home / "sessions" / "s-1.json").is_file()
+    assert "stop contract: PermissionError" in (brain_home / "ledger" / "errors.log").read_text(encoding="utf-8")

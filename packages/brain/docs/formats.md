@@ -245,8 +245,9 @@ hooks reference's) and the Stop hook's transcript reader (`brain.transcript.Sess
 type outside `transcript.RECORD_TYPES` and a user or assistant record without a key it reads (`timestamp`,
 `message.id`, `message.model`, `message.usage`). Each is counted in `<BRAIN_HOME>/ledger/contracts.json` (`v` 1:
 `{"keys": {"<source>: unknown|missing <key>": {count, first, last, shown}}}`, left as it is when a newer brain wrote
-it); its first sighting adds a line to `ledger/errors.log`, and the next SessionStart health names it once. Nothing is
-refused. `tests/fixtures/claude/` holds a payload per captured event and a transcript, invented with the keys real ones
+it; a key already counted is counted again at most once an hour, so a new key costs no write per tool call, and a
+write that fails is a count lost, never a capture); its first sighting adds a line to `ledger/errors.log`, and the
+next SessionStart health names it once. Nothing is refused. `tests/fixtures/claude/` holds a payload per captured event and a transcript, invented with the keys real ones
 carry: `tests/test_capture.py` reads them clean.
 
 **Out: the status document.** `brain doctor --json` (`brain profile`) prints the inventory contract a machines agent

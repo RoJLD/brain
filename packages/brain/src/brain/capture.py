@@ -104,17 +104,20 @@ def _log_line(event: str, text: str) -> None:
 # required one missing, and what brain.transcript.SessionStats.contract counts in a transcript are counted in
 # <BRAIN_HOME>/ledger/contracts.json; a first sighting is logged to errors.log and named once by the next SessionStart
 # health (contract_notes). Nothing is refused: the readers keep their defaults.
+# (Seen in Claude Code 2.1.321's payload builders, 2026-11-11.)
 PAYLOAD_COMMON = frozenset({"session_id", "transcript_path", "cwd", "permission_mode", "hook_event_name", "agent_id",
-                            "agent_type", "effort"})
+                            "agent_type", "effort", "prompt_id", "scratchpad_dir"})
 PAYLOAD_KEYS = {
-    "session-start": (frozenset({"session_id", "source"}), frozenset({"model"})),
+    "session-start": (frozenset({"session_id", "source"}), frozenset({"model", "session_title"})),
     "session-end": (frozenset({"session_id", "reason"}), frozenset()),
-    "stop": (frozenset({"session_id", "transcript_path"}), frozenset({"stop_hook_active", "last_assistant_message"})),
+    "stop": (frozenset({"session_id", "transcript_path"}),
+             frozenset({"stop_hook_active", "last_assistant_message", "background_tasks", "session_crons"})),
     "post-tool-use": (frozenset({"session_id", "tool_name", "tool_input", "tool_response"}),
-                      frozenset({"tool_use_id", "duration_ms"})),
+                      frozenset({"tool_use_id", "duration_ms", "mcp_server"})),
 }
 CONTRACTS = "contracts.json"   # under ledger/: {"v": 1, "keys": {"<source>: <what>": {count, first, last, shown}}}
 CONTRACTS_V = 1
+COUNT_EVERY_S = 3600   # a key already counted is counted again at most once an hour: no write per tool call
 
 
 def payload_contract(event: str, payload: dict) -> list[str]:
@@ -138,15 +141,33 @@ def _load_contracts(f: Path) -> dict | None:
     return None if isinstance(v, int) and not isinstance(v, bool) and v > CONTRACTS_V else data
 
 
-def _save_contracts(f: Path, data: dict) -> None:
+def _save_contracts(f: Path, data: dict) -> bool:
+    """An atomic write; False when it failed (another process replacing or reading it on Windows): a count lost is
+    acceptable, a capture stopped is not."""
     tmp = f.with_name(f"{f.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(tmp, f)
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, f)
+        return True
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+
+
+def _int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def note_contract(source: str, breaks) -> list[str]:
     """Count each of ``breaks`` (``unknown K``, ``missing K``, with a count: a Counter) under ``source`` in the contracts
-    ledger; a first sighting goes to errors.log too. Returns the first sightings."""
+    ledger; a first sighting goes to errors.log too. A key already counted is counted again at most once every
+    :data:`COUNT_EVERY_S` (``count`` is then the sightings that were written). Returns the first sightings."""
     counts = breaks if isinstance(breaks, dict) else {b: 1 for b in breaks}
     if not counts:
         return []
@@ -155,18 +176,28 @@ def note_contract(source: str, breaks) -> list[str]:
     if data is None:
         return []
     keys = data.get("keys") if isinstance(data.get("keys"), dict) else {}
-    now, new = _now(), []
+    now, new, due = _now(), [], False
     for what, n in counts.items():
         k = f"{source}: {what}"
         entry = keys.get(k) if isinstance(keys.get(k), dict) else None
         if entry is None:
             entry = {"count": 0, "first": now, "shown": False}
             new.append(k)
-        entry["count"] = int(entry.get("count") or 0) + int(n)
+        else:
+            last = transcript.parse_ts(entry.get("last") if isinstance(entry.get("last"), str) else None)
+            if last and last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if last and (datetime.now(timezone.utc) - last).total_seconds() < COUNT_EVERY_S:
+                continue
+        entry["count"] = _int(entry.get("count")) + _int(n)
         entry["last"] = now
         keys[k] = entry
+        due = True
+    if not due:
+        return []
     f.parent.mkdir(parents=True, exist_ok=True)
-    _save_contracts(f, {**data, "v": CONTRACTS_V, "keys": keys})
+    if not _save_contracts(f, {**data, "v": CONTRACTS_V, "keys": keys}):
+        return []
     for k in new:
         _log_line("contract", f"Claude Code's format changed: {k} (counted in ledger/{CONTRACTS})")
     return new
@@ -406,7 +437,10 @@ def stop(payload: dict) -> None:
         stats = transcript.SessionStats()
     stats.feed_file(path)
     if stats.contract:
-        note_contract("transcript", stats.contract)
+        try:
+            note_contract("transcript", stats.contract)
+        except Exception as exc:  # noqa: BLE001 - the count never costs the turn its snapshot
+            _log_error("stop contract", exc)
     ar_ids, ddr_ids = _session_ids("ar", sid), _session_ids("ddr", sid)
     sr = stats.record(path, status="open", actions=ar_ids, ddrs=ddr_ids)
     tree = _tree_fields(sid)
