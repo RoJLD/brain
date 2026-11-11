@@ -691,17 +691,20 @@ restarted by hand).
 
 ### The outbox
 
-A notification that no channel delivered because one was down (a refused connection, a timeout, an HTTP 429 or 5xx,
-a breaker open) is no longer lost: `brain notify send`, a blocking decision's notification and an alert's
-`resolved` message keep it in the sealed local outbox (`<BRAIN_HOME>/outbox/queue.json`, store `outbox`, sealed)
-under an idempotency key made of its content, so the same message queued twice is kept once and a later delivery of
-it drops the queued copy. Every alerts pass (`brain alerts --notify`, after its own sends) sends what is due again
-through the project's routes as they are then, waiting 5 minutes, then twice as long each time (at most 6 h, with
-full jitter); an entry is given up after 12 tries or 7 days, said in the pass's lines. A refusal (a wrong token, an
-HTTP 401) is not queued: sending it again would not help. An open alert is not queued either, since the pass already
-sends a failed one again, nor the quiet mode's summary, which stays held. `brain notify status` says how many wait.
-The outbox's API (`brain.outbox.put`, `replay`) takes other kinds of calls as their callers come (the shareboard,
-the telemetry reports).
+A notification that no channel delivered because one was surely not reached (a refused connection, a DNS miss, an
+HTTP 429 or 503, its breaker open) is no longer lost: `brain notify send`, a blocking decision's notification and an
+alert's `resolved` message keep it in the sealed local outbox (`<BRAIN_HOME>/outbox/queue.json`, store `outbox`,
+sealed) under an idempotency key made of its content, so the same message queued twice is kept once, a later
+delivery of it drops the queued copy, and a newer message of the same project and key (its alert reopened) replaces
+it. A timeout or a reset is not queued: the message may have arrived, and nothing is sent twice. Every alerts pass
+(`brain alerts --notify`, after its own sends) sends what is due again through the project's routes as they are
+then, waiting 5 minutes, then twice as long each time (at most 6 h, with full jitter); an entry is given up after 12
+tries or 7 days, said in the pass's lines. A pass leaves as they are the entries of projects outside its scope and
+every entry while `$BRAIN_NOTIFY` is `off` or `dry-run`; an outbox a newer brain wrote is not replayed. A refusal (a
+wrong token, an HTTP 401) is not queued: sending it again would not help. An open alert is not queued either, since
+the pass already sends a failed one again, nor the quiet mode's summary, which stays held. `brain notify status` says
+how many wait. The outbox's API (`brain.outbox.put`, `drop`, `supersede`, `replay`) takes other kinds of calls as
+their callers come (the shareboard, the telemetry reports).
 
 ## Quiet mode
 
