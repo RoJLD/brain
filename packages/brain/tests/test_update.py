@@ -514,3 +514,125 @@ def test_git_missing_is_said_not_raised(venv, pin_repo):
     code, done = update.apply(_plan("0.2.2"), runner=run)
     assert code == 1 and done[0].startswith("installed brain v0.2.3")
     assert any("git cannot run" in line for line in done) and _pin(pin_repo) == "v0.2.2"
+
+
+# --- wi-brain-release-signing (STD-3): the tag verified before it is installed, refused only under verify_tags ---
+
+COMMIT = "c0ffee" * 6 + "abcd"
+
+
+def _verdict(status, signer="ada"):
+    from brain import tagsig
+
+    def verify(root, repo, tag):
+        return tagsig.verdict(status, tag, signer=signer if status == tagsig.VERIFIED else "", commit=COMMIT,
+                              why="" if status == tagsig.VERIFIED else f"{tag} carries no signature",
+                              source="allowed_signers")
+    return verify
+
+
+def _verify_tags(root, on=True):
+    f = root / "config.json"
+    data = json.loads(f.read_text(encoding="utf-8"))
+    data["engine"]["verify_tags"] = on
+    f.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _signed_plan(status, **kw):
+    info = update.check(fetch=_fetch(), now=NOW, installed="0.2.2")
+    return update.plan(info, read_changelog=lambda *a: [], verify=_verdict(status), **kw)
+
+
+
+
+def test_a_verified_tag_is_said_and_installed_by_its_tag(venv, pinned):
+    """pip installs the tag as before: brain.skew reads a release by its tag, so a commit would be refused there."""
+    p = _signed_plan("verified")
+    assert p["signature"]["status"] == "verified" and not p["blocked"]
+    assert p["spec"] == "brain[tui] @ git+https://github.com/ada/engine.git@v0.2.3#subdirectory=packages/brain"
+    text = "\n".join(update.lines(p))
+    assert f"verify   v0.2.3: signed by ada (allowed_signers), commit {COMMIT[:12]}" in text
+
+
+def test_an_unsigned_tag_is_said_and_installed_while_verify_tags_is_off(venv, pinned):
+    p = _signed_plan("unsigned")
+    assert p["verify_tags"] is False and not p["blocked"] and p["spec"].endswith("@v0.2.3#subdirectory=packages/brain")
+    assert "verify   v0.2.3: not verified, v0.2.3 carries no signature (not refused: config.json engine.verify_tags " \
+           "is off)" in "\n".join(update.lines(p))
+
+
+def test_verify_tags_refuses_an_unsigned_tag_before_any_install(venv, pinned):
+    _verify_tags(pinned)
+    for status in ("unsigned", "unknown-key", "unverifiable", "no-signers"):
+        p = _signed_plan(status)
+        assert p["spec"] is None and p["blocked"].startswith("refused: v0.2.3: not verified"), status
+        assert "Not applicable here: refused" in "\n".join(update.lines(p))
+        assert p["pin"] is None   # never moved to a refused tag
+        assert update.apply(p, runner=lambda *a, **kw: pytest.fail("no pip"))[0] == 1
+    assert _signed_plan("verified")["spec"] is not None
+
+
+def test_brain_update_yes_exits_1_on_a_refused_tag(venv, pinned, monkeypatch):
+    """The cockpit's handover reads the exit code: a refusal is a failure, not « nothing to do »."""
+    _verify_tags(pinned)
+    monkeypatch.setattr(update, "remote_tags", _fetch(["v0.2.2", "v9.0.0"]))   # newer than the running engine
+    real = update.plan
+    monkeypatch.setattr(update, "plan", lambda info, root=None, **kw: real(info, root, read_changelog=lambda *a: [],
+                                                                           verify=_verdict("unsigned")))
+    said = []
+    assert update.main(None, check_only=False, yes=True, as_json=False, out=said.append) == 1
+    assert update.main(None, check_only=True, yes=False, as_json=False, out=said.append) == 0   # --check reports
+
+
+def test_without_signers_the_plan_reads_no_network(venv, pinned):
+    """The default verification: no allowed_signers and no releaser in members.yaml, so nothing is fetched."""
+    from brain import tagsig
+    info = update.check(fetch=_fetch(), now=NOW, installed="0.2.2")
+    p = update.plan(info, read_changelog=lambda *a: [])
+    assert p["signature"]["status"] == tagsig.NO_SIGNERS and p["spec"].endswith("@v0.2.3#subdirectory=packages/brain")
+
+
+def test_a_verification_that_raises_is_a_verdict(venv, pinned):
+    def boom(*a):
+        raise RuntimeError("broken")
+    p = update.plan(update.check(fetch=_fetch(), now=NOW, installed="0.2.2"), read_changelog=lambda *a: [],
+                    verify=boom)
+    assert p["signature"]["status"] == "unverifiable" and "RuntimeError" in p["signature"]["why"]
+
+
+def _installed_from(dist, commit, repo="ada/engine"):
+    site = update._site_packages(update.venv_python())[0 if update.WINDOWS else 1]
+    d = site / f"{dist}-0.2.3.dist-info"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "direct_url.json").write_text(json.dumps({"url": f"https://github.com/{repo}.git",
+                                                   "vcs_info": {"vcs": "git", "commit_id": commit}}),
+                                        encoding="utf-8")
+
+
+def _ok(cmd, **kw):
+    return subprocess.CompletedProcess(cmd, 0, "", "")
+
+
+def test_a_tag_moved_during_the_install_is_said_and_refused_under_verify_tags(brain_home, venv, installer_brain):
+    _installed_from("brain", COMMIT)
+    _installed_from("research_graph", COMMIT)
+    code, done = update.apply(_signed_plan("verified"), runner=_ok)
+    assert code == 0 and not any(line.startswith(("warning", "repair")) for line in done), done
+    _installed_from("brain", "bad" * 13 + "b")   # pip installed another commit than the one verified
+    code, done = update.apply(_signed_plan("verified"), runner=_ok)
+    assert code == 0 and any(line.startswith("warning  brain was installed from commit badbad") for line in done)
+    assert any(line.startswith("repair   ") and "--force-reinstall" in line for line in done)
+    _verify_tags(installer_brain)
+    if update.WINDOWS:
+        (brain_home / "bin" / "brain.exe").unlink(missing_ok=True)
+    code, done = update.apply(_signed_plan("verified"), runner=_ok)
+    assert code == 1 and done[-1].startswith("refused  the launcher and the pin are left as they were")
+    assert not (brain_home / "bin" / "brain.exe").exists() and _pin(installer_brain) == "v0.2.2"   # nothing swapped, nor moved
+
+
+def test_a_dependency_from_another_repo_is_not_a_moved_tag(brain_home, venv, installer_brain):
+    """research-graph comes from the repo the engine's pyproject names: a fork's engine.repo is not compared to it."""
+    _installed_from("brain", COMMIT)
+    _installed_from("research_graph", "other" * 8, repo="RoJLD/brain")
+    code, done = update.apply(_signed_plan("verified"), runner=_ok)
+    assert code == 0 and not any(line.startswith("warning") for line in done), done

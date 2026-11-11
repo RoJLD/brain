@@ -16,6 +16,8 @@ answers the owner signed.
   owner-decides answer recorded from the deciders' earliest ``since``: unsigned, or a signature that does not verify.
   **Warnings by default**; errors under config.json ``identity.require_signed: true``, the owner's opt-in (the merge
   lock of 2026-11-04). Without members.yaml nothing is checked.
+- ``releaser`` is the role whose keys verify a signed engine release tag: brain.tagsig generates ``allowed_signers``
+  from it (``brain identity allowed-signers``).
 
 The engine only verifies, with public keys (brain.sshsig): no session generates, reads, stores or prints a private key.
 """
@@ -261,9 +263,13 @@ def problems(root: Path, project: str = "") -> list[str]:
 
 
 def check(root: Path, project: str = "") -> tuple[list[str], list[str]]:
-    """(errors, warnings): :func:`problems` are errors under identity.require_signed, warnings otherwise."""
+    """(errors, warnings): :func:`problems` are errors under identity.require_signed, warnings otherwise; the release
+    signers' file (brain.tagsig: stale, or missing under engine.verify_tags) is always a warning."""
+    from . import tagsig
+
     found = problems(root, project)
-    return (found, []) if require_signed(root) else ([], found)
+    errors, warnings = (found, []) if require_signed(root) else ([], found)
+    return errors, warnings + tagsig.problems(root)
 
 
 # --- the owner's signing: the payloads out, the signatures in ---

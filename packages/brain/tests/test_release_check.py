@@ -618,7 +618,7 @@ def test_ci_runs_the_job_on_pull_requests():
 
 def test_the_release_page_says_each_step():
     page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
-    for needed in ("### Upgrade", "release-check", "compat-prev", "release-tag", "git tag -a", "engine.pin",
+    for needed in ("### Upgrade", "release-check", "compat-prev", "release-tag", "git tag -s", "engine.pin",
                    "brain check --public --history", "tests/fixtures/formats", "brain_version"):
         assert needed in page, needed
 
@@ -687,7 +687,7 @@ def test_the_tag_section_names_the_theme_and_the_patch_that_cannot_wait():
     the tag section shows both, and says that release-tag does not check the theme."""
     page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
     tag = page.split("## 3. The tag", 1)[1].split("\n## ", 1)[0]
-    assert 'git tag -a vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z — theme: what it brings"' in tag
+    assert 'git tag -s vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z — theme: what it brings"' in tag
     assert "git switch release/X.Y" in tag and "release/X.Y` merges back into main" in tag
     assert "does not check the theme" in tag
     assert "deletes from main every fragment that `## X.Y.Z+1` now holds" in tag

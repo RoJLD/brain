@@ -41,7 +41,8 @@ memberships:
 ```
 
 - `decider` is the role whose keys verify an owner-decides answer: on the whole brain, or on the project the DDR
-  belongs to. `owner`, `member` and `viewer` are read by later checks.
+  belongs to. `releaser`, on the whole brain, is the role whose keys verify a release tag of the engine (« Signed
+  releases » below). `owner`, `member` and `viewer` are read by later checks.
 - `since` on a signing key: answers recorded before the earliest `since` of the deciders' keys need no signature (the
   past is not re-signed). A key without `since` asks a signature of every owner-decides answer.
 - `revoked: <date>` on a key: it no longer verifies anything, not even a signature it made before that day. The date
@@ -123,6 +124,84 @@ lines are warnings.
 
 `ssh-keygen` with `-Y` is OpenSSH 8.1 or later: Windows 10 and later and Git for Windows ship it.
 
+## Signed releases
+
+A release tag of the engine is signed by its releaser, so that a tag pushed from a compromised account does not
+install (wi-brain-release-signing). The engine verifies; it never signs.
+
+- **The `releaser` role**: in `members.yaml`, a membership on the whole brain (no project, organization nor tenant)
+  with `releaser` in its roles. Its people's signing keys not revoked are the release keys. They sit in
+  `keys.signing` with the decision keys: a person who is also a `decider` verifies answers with them too.
+- **`allowed_signers`**, beside `config.json`: the file `git verify-tag` reads (`gpg.ssh.allowedSignersFile`), one line
+  per release key, valid for the namespace `git` only (a `brain-decision` signature verifies no tag, and a tag's
+  signature no answer). It is **generated**, never edited by hand: `brain identity allowed-signers` prints it,
+  `--write` writes it (or `--write FILE`). Commit it with `members.yaml`; `brain check` warns when it is no longer what
+  `members.yaml` gives (a key added, rotated or revoked, a role taken away), and when `engine.verify_tags` is on with no
+  file written. Publishing it elsewhere later (in the public engine, for a pilot) is an export of this file, a
+  decision of its own, not a code change.
+- **`brain update`** verifies the tag before installing it: the tag alone is fetched into a temporary repo
+  (`git fetch --depth 1 --filter=tree:0`) and checked with `git verify-tag` against the releaser keys of
+  `members.yaml` when it gives someone the `releaser` role (a key revoked there, `revoked: <date>`, stops verifying
+  at once, before the file is written again: revoke a key that way rather than by taking the role away), else
+  against `allowed_signers` (a brain that names no releaser of its own reads a file brought from elsewhere, such as
+  a published one). Its plan says `verify   vX.Y.Z: signed by <person>`, or why not. pip then
+  installs the tag as before (a release is read by its tag), and the commits pip recorded for brain and research-graph
+  are compared with the one the signed tag names: one that differs means the tag moved between the check and the
+  install, which is said with the repair (and refused under `verify_tags`, after the fact: the venv already holds that
+  code, and the repair line says how to replace it).
+- **The engine's installer** (`installer/install.ps1`) does the same before `pip install`, with the personal brain's
+  `allowed_signers` (it runs before the brain command exists, so it reads the file only: write it). `-Engine` installs
+  what it names, unchecked. **Its limit**: the installer that checks is the one of the tag being installed (a brain's
+  own installer, such as one that clones the engine at the pin and runs that clone's `install.ps1`, runs the tag's
+  code before any check). An older tag's installer has no check at all, so a rollback through it is not refused. A
+  brain's own installer protects its machines only by running `git verify-tag` on its clone itself, before running it.
+- **Nothing is refused by default**: both say the verification and install anyway, until the owner sets
+  `"engine": {..., "verify_tags": true}` in `config.json`. Then a tag that is unsigned, signed by a key not in
+  `allowed_signers`, or that cannot be verified (offline, no `ssh-keygen` git can run) is refused, before anything is
+  installed, and `brain update --yes` exits 1.
+- **What it needs**: git 2.34 or later and OpenSSH 8.2 or later (`ssh-keygen -Y find-principals`). git runs the
+  `ssh-keygen` it finds itself; Git for Windows ships a recent one.
+
+**Scope and target compatibility** (the one-way doors of this feature):
+
+- `engine.verify_tags`: an optional boolean of `config.json`'s `engine`, off when absent. An engine before 0.3.2 reads
+  it as an unknown key (a warning in `brain config --check`, never an error outside CI) and verifies nothing: turn it on
+  once every machine runs 0.3.2 or later. Every engine from 0.3.2 reads it the same way; it is never renamed.
+- `allowed_signers`: OpenSSH's own format (ssh-keygen(1), « ALLOWED SIGNERS »), at the brain's root beside
+  `config.json`, generated from `members.yaml`. After one `#` comment line, its lines are
+  `<person_id> namespaces="git" <key type> <base64>`: the key's comment (often a machine's name) is left out, since
+  the file may be published one day. Its place and format stay; a later engine may read more files of the same format
+  (a published one), never another format at this path. An older engine ignores the file.
+- **A rollback** to an unsigned tag (every tag up to v0.3.1) is refused by `brain update` and by this installer while
+  `verify_tags` is on: turn it off first, the owner's decision, then roll back. An older tag's installer refuses
+  nothing (above).
+
+The owner's steps, once, in their own terminal (never in a session):
+
+```
+ssh-keygen -t ed25519 -f ~/.ssh/brain_release -C "release"            # asks a passphrase: give one
+cat ~/.ssh/brain_release.pub                                           # the line for members.yaml
+```
+
+Add the `.pub` line to your `people[].keys.signing` in `members.yaml` **with `since:` today** (a key without `since`
+asks a signature of every owner-decides answer ever recorded, « members.yaml » above), `releaser` to your roles on the
+whole brain, then `brain identity allowed-signers --write` and commit both (with `boundary.yaml`'s lines for
+`members.yaml` and `allowed_signers`, side personal, if the brain has none yet). Your decision key may serve as the
+release key instead: then only `releaser` is added. Then tell git to sign tags with that key:
+
+```
+git config --global gpg.format ssh
+git config --global user.signingkey "$HOME/.ssh/brain_release"     # the key file: ssh-keygen asks its passphrase
+```
+
+(In PowerShell, `"$HOME\.ssh\brain_release"`. The `.pub` path works instead only while an ssh-agent holds the key;
+the key stays outside the agent here, as for the answers.)
+
+Each release tag is then `git tag -s vX.Y.Z -m "..."` (your passphrase), checked with
+`git -c gpg.ssh.allowedSignersFile=<brain>/allowed_signers verify-tag vX.Y.Z` before `git push origin vX.Y.Z`
+(docs/release.md, « 3. The tag »). The same key may also be added to the GitHub account as a signing key, so that the
+web shows the tag as verified; that is the account's setting, not the engine's.
+
 ## Commands
 
 ```
@@ -130,4 +209,5 @@ brain identity check                         members.yaml and the signatures (wh
 brain identity unsigned [--write DIR] [--json]   the owner-decides answers without a signature
 brain identity payload ID                    what a signature of that answer covers
 brain identity attach SIG|DIR...             verify the owner's signatures, keep them beside their records
+brain identity allowed-signers [--write [FILE]]   the release signers (role releaser, namespace git), generated
 ```
