@@ -74,6 +74,9 @@ CHECK_S = ((50, 120), (75, 30), (101, 10))  # (below this percent of a budget, t
 IDLE_S = 1800  # nothing to watch: look again (an estimate recorded since) this often
 DONE_S = 10 * 365 * 86400  # every notice given: never again
 KEEP_DAYS = 14
+# The .mark's last line (wi-brain-hook-contracts): its format, which budget.sh trusts; a line 1 reader (bash before
+# 0.3.2) still reads the transcript there.
+MARK_FORMAT = "#brain.budget-mark/v1"
 BRIEF_TEXTS = 5  # the first user texts that may hold the brief's budget (transcript.SessionStats reads as many)
 OPEN = ("todo", "doing", "blocked")
 _SID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -108,8 +111,8 @@ def _load(sid: str) -> dict | None:
 
 def _save(st: stateio.State, state: dict, next_s: float) -> None:
     """The state (brain.stateio: a backup, then an atomic write), then the mark: line 1 the transcript bash compares
-    it with; its mtime ``next_s`` from now. A newer brain that wrote the state since the load keeps it: the mark
-    then waits :data:`IDLE_S`."""
+    it with, line 2 :data:`MARK_FORMAT`; its mtime ``next_s`` from now. A newer brain that wrote the state since the
+    load keeps it: the mark then waits :data:`IDLE_S`."""
     try:
         stateio.save(st, state, indent=None, sort_keys=False)
     except stateio.StateError:
@@ -121,7 +124,7 @@ def _mark(sid: str, transcript_path: str, next_s: float) -> None:
     d = state_dir()
     d.mkdir(parents=True, exist_ok=True)
     mark = d / f"{sid}.mark"
-    mark.write_text(Path(transcript_path).as_posix() + "\n", encoding="utf-8", newline="\n")
+    mark.write_text(Path(transcript_path).as_posix() + "\n" + MARK_FORMAT + "\n", encoding="utf-8", newline="\n")
     t = time.time() + next_s
     os.utime(mark, (t, t))
 

@@ -34,6 +34,9 @@ DIR = "announce"
 MAX_ROWS = 8
 CAP = 2000  # characters: well under Claude Code's cap on a hook's context
 KEEP_DAYS = 14
+# The .mark's last line (wi-brain-hook-contracts): its format, which midsession.sh trusts; bash before 0.3.2 reads it
+# as one more DDR name, a file that does not exist, so never newer.
+MARK_FORMAT = "#brain.announce-mark/v1"
 _SID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 
@@ -102,7 +105,8 @@ def _load(sid: str) -> dict | None:
 def _save(sid: str, cwd: str, queue: Path | None, files: dict, seen: dict, started: float) -> None:
     """The state, then the mark the bash fast path reads: line 1 the session's folder as the hook JSON spells it, line
     2 the queue (empty outside a project), then the pending DDRs (and the unreadable ones), the files an answer
-    rewrites; a DDR added or removed moves the folder's mtime. The mark's mtime is a whole second before the scan
+    rewrites, then :data:`MARK_FORMAT`; a DDR added or removed moves the folder's mtime. The mark's mtime is a whole
+    second before the scan
     began, so a DDR written during or after the scan is newer even where mtimes count in seconds. An answer given
     again to a decision already answered or archived (``--again``) is seen at the next run of Python."""
     d = state_dir()
@@ -112,7 +116,8 @@ def _save(sid: str, cwd: str, queue: Path | None, files: dict, seen: dict, start
     (d / f"{sid}.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
     watch = sorted(n for n, status in seen.items() if status in (None, "pending"))
     mark = d / f"{sid}.mark"
-    mark.write_text("\n".join([json.dumps(cwd, ensure_ascii=False)[1:-1], queue.as_posix() if queue else "", *watch])
+    mark.write_text("\n".join([json.dumps(cwd, ensure_ascii=False)[1:-1], queue.as_posix() if queue else "", *watch,
+                              MARK_FORMAT])
                     + "\n", encoding="utf-8", newline="\n")
     t = int(started) - 1
     os.utime(mark, (t, t))
