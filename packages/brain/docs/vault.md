@@ -103,6 +103,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `spool` | `$BRAIN_HOME/spool` | sealed | truth-local | the sealed copies waiting to leave the machine and their index (`brain spool push`) |
 | `cockpit` | `$BRAIN_HOME/tui.json` | sealed | truth-local | the cockpit's settings |
 | `update-check` | `$BRAIN_HOME/update.json` | sealed | derived | the last engine tags read |
+| `net` | `$BRAIN_HOME/net` | sealed | truth-local | the external services' circuit breakers (`brain.net`) |
 | `personal` | `$BRAIN_HOME/personal.json` | sealed | truth-local | the pointer to the personal brain |
 | `profile` | `$BRAIN_HOME/profile.json` | sealed | truth-local | the machine's frozen tier profile |
 | `venv`, `bin`, `engine-clones` | `$BRAIN_HOME/venv`, `bin`, `engine` | sealed | install | the command's environment, its launcher, the tags' clones |

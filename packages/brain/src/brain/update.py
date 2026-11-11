@@ -48,7 +48,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__, config, paths, tagsig
+from . import __version__, config, net, paths, tagsig
 
 ENGINE_REPO = "RoJLD/brain"   # where this package is published (brain.init.ENGINE_REPO): the default engine.repo
 CACHE = "update.json"         # <BRAIN_HOME>/update.json: the last tags read, and when
@@ -123,10 +123,10 @@ def remote_tags(repo: str, runner=subprocess.run) -> list[str]:
     """The release tags of github.com/<repo>, read with git ls-remote without a token: no credential helper, no
     prompt (a missing repo fails instead of asking). Raises OSError when git cannot read them."""
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
-    try:
-        proc = runner(["git", "-c", "credential.helper=", "ls-remote", "--tags", "--refs",
-                       f"https://github.com/{repo}.git"], capture_output=True, text=True, timeout=TIMEOUT_S,
-                      stdin=subprocess.DEVNULL, env=env)
+    try:   # under GitHub's breaker (brain.net): a timeout skips the next reads for a window
+        proc = net.call("git-remote:github.com", lambda: runner(
+            ["git", "-c", "credential.helper=", "ls-remote", "--tags", "--refs", f"https://github.com/{repo}.git"],
+            capture_output=True, text=True, timeout=TIMEOUT_S, stdin=subprocess.DEVNULL, env=env), retries=0)
     except (OSError, subprocess.SubprocessError) as exc:
         raise OSError(f"git ls-remote {repo}: {exc}") from exc
     if proc.returncode != 0:

@@ -671,6 +671,19 @@ state, why, when it ran, the last OK and since when. `brain status` shows a prob
 OK, 2 for a bad declaration); `--last` shows the last run, `--list` every declared probe and its machines, `--kinds`
 the kinds and their keys.
 
+### External calls: retries and breakers
+
+The engine's calls to services it does not run (GitNexus's API, docker in `brain index`, the ntfy and Telegram
+channels, `git ls-remote` for the update check and `brain tidy --remote`, `gh` listing the open PRs) go through one
+helper, `brain.net`. Each keeps its own timeout. A quick failure (a refused or reset connection, an HTTP 429, 502, 503
+or 504) is tried again twice, after a wait that doubles from 0.5 s with full jitter; a timeout is never tried again.
+A call that still fails opens that service's breaker for 5 minutes (`<BRAIN_HOME>/net/breakers.json`): until then
+its calls are skipped at once and the command says so in one line (« gitnexus unavailable since 20:14 (timed out);
+skipped until 20:19 »), so a service that is down costs one timeout per window, not one per call. The first call
+after the window tries again and closes the breaker when it answers. Any answer from the service (a 404, a non-zero
+exit) is passed on as before and never retried. `BRAIN_NET_BREAKER=off` tries every call for one run (a service just
+restarted by hand).
+
 ## Quiet mode
 
 `brain quiet --for 2h` silences the notifications below `critical` for that long (90m, 2h, 1d; at most 7d); a

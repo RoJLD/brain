@@ -168,6 +168,7 @@ ENGINE_STORES = {
                    "the sealed copies waiting to leave the machine and their index (brain spool push)"),
     "cockpit": Known("$BRAIN_HOME/tui.json", "sealed", "truth-local", "the cockpit's settings"),
     "update-check": Known("$BRAIN_HOME/update.json", "sealed", "derived", "the last engine tags read, and when"),
+    "net": Known("$BRAIN_HOME/net", "sealed", "truth-local", "the external services' circuit breakers (brain.net)"),
     "personal": Known("$BRAIN_HOME/personal.json", "sealed", "truth-local",
                       "the pointer to this machine's personal brain"),
     "profile": Known("$BRAIN_HOME/profile.json", "sealed", "truth-local", "this machine's frozen tier profile"),

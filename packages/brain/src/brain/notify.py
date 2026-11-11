@@ -50,7 +50,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from . import graph, paths, projects, quiet, secretscan, stateio
+from . import graph, net, paths, projects, quiet, secretscan, stateio
 from .config import owner_of   # brain.config's: this module's own config() reads the notify configuration
 
 LEVELS = ("info", "warn", "error", "critical")
@@ -300,11 +300,17 @@ def config(project: projects.Project, registry: Mapping[str, projects.Project] |
 # --- transports (standard library, imported when they send) ---
 
 def _post_json(url: str, payload: dict, headers: dict, timeout: float) -> tuple[int, bytes]:
+    """The POST, under its host's breaker (brain.net ``http:<host>``): a refused connection or a 429/5xx retried
+    with backoff and jitter, a host that timed out skipped for its window (net.Unavailable, said as the failure)."""
+    import urllib.parse
     import urllib.request
     req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST",
                                  headers={"Content-Type": "application/json", **headers})
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (http and https only, from the config)
-        return r.status, r.read()
+
+    def go() -> tuple[int, bytes]:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (http and https only, from the config)
+            return r.status, r.read()
+    return net.call(f"http:{urllib.parse.urlsplit(url).hostname or '?'}", go)
 
 
 def _get_json(url: str, timeout: float) -> dict:
