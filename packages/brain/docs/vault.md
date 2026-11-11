@@ -257,26 +257,36 @@ wait in a local spool, `$BRAIN_HOME/spool`, sealed and checked by hash. **It run
 until you add one.
 
 - `push` takes the spool's set (`spool.stores` in config.json, else `ledger`, `usage` and `sessions`; each declared in
-  `classes.stores`). A store whose content (its files' names, sizes and times) has not changed since its last push is
-  skipped. Each other one is scanned for a secret's shape (a key's prefix, a token's form: `brain.secretscan.SHAPED`;
-  a hit stops that store and names the file and line, never the value), then sealed through `brain vault seal` to its
-  recipients into `$BRAIN_HOME/spool/<store>/`, its manifest beside it, its sha256 recorded in `spool.json`. A store
-  whose class never leaves the machine (`resident`, `secret`: `brain.classes.decide(cfg, store, "offsite")`) is
-  refused, and the other stores go on.
-- With `spool.remote` set (a folder: a mounted share, a synced drive), `push` then copies each file that waits to
-  `<remote>/<store>/`, its manifest beside it. The file's sha256 is checked against the index before the copy and on
-  the copy; only then is it marked sent. A remote that is not reachable leaves them waiting. Without a remote, they
-  stay in the spool.
-- Then it prunes: the newest 3 files per store are kept (`spool.keep`), sent or not, since a newer snapshot holds the
-  store. A file put with its own paths (the session archive's) is pruned only once sent.
-- `brain health spool` (and `--all`) gives the last push's age and what waits. It warns when no push succeeded for 7
-  days (`spool.max_age_days`) or the last one had an error, and fails only when a waiting file is missing or no longer
-  matches its sha256. It says OFF until the first push.
-- A spool file is sealed to its store's recipients at the time of its push; `brain vault reseal` does not rewrite the
-  spool (the next push seals the store again to the current recipients).
+  `classes.stores`). A store whose content (its files' names, sizes and times) and recipients have not changed since
+  its last push is skipped. Each other one is scanned for a secret's shape (a key's prefix, a token's form:
+  `brain.secretscan.SHAPED`; the password heuristics are left out, since the engine's own JSON keys would trip them).
+  A hit stops that store and names the file and line, never the value; so does a file that cannot be read. A binary
+  file (a NUL byte in its first 8 KB: sqlite, an archive) is sealed unscanned. Then the store is sealed through
+  `brain vault seal` to its recipients into `$BRAIN_HOME/spool/<store>/`, its manifest beside it, its sha256 and its
+  recipients' fingerprints recorded in `spool.json`. A store whose class never leaves the machine (`resident`,
+  `secret`: `brain.classes.decide(cfg, store, "offsite")`), an undeclared one and a file locked while it is packed
+  fail that store; the other stores go on.
+- Then it prunes (below), and with `spool.remote` set (a folder: a mounted share, a synced drive; a relative path from
+  the brain's root) it copies each file that waits to `<remote>/<store>/`, with brain.vault's manifest beside it (in
+  clear, as in `vault/sealed/`: the recipients' names and fingerprints, the counts, the sha256). The file's sha256 is
+  checked against the index before the copy and on the copy; only then is it marked sent. A remote that is not
+  reachable leaves them waiting. Without a remote, they stay in the spool.
+- When the recipients change (a removed or rotated key), the next push seals each store again, since its recipients
+  differ; a file that waits sealed to the old set is never sent, and a superseded snapshot of it is pruned.
+  `brain vault reseal` does not rewrite the spool.
+- Pruning keeps, per store, the newest 3 snapshots (`spool.keep`), sent or not, since a newer one holds the store. A
+  file put with its own paths (the session archive's) is pruned only once sent, past the newest 3 of them.
+- `push` exits 1 when a store or a copy failed (an unreachable remote counts), 2 when the index cannot be written (a
+  newer brain's: nothing sealed; `--dry-run` only reads it and prints the plan). `verify` exits 1 on a missing or
+  changed file.
+- `brain health spool` gives the age of the last push without an error (`brain spool status` shows the last push,
+  failed or not) and what waits. It warns when no push succeeded for 7 days (`spool.max_age_days`), or none ever did,
+  or the last one had an error, and fails only when a waiting file is missing or no longer matches its sha256. Named,
+  it says OFF while nothing was ever pushed and config.json has no `spool` block; with `--all` it is silent then.
 
 For a caller (the session archive), `brain.spool.put(cfg, store, items)` seals the given paths into the spool as one
-entry of kind `items`, after the same scan and refusals.
+entry of kind `items`, after the same scan and refusals. It refuses an empty list, two items of the same file name (one
+would overwrite the other when opened) and an item inside a store whose class never leaves the machine.
 
 ## Once a year: the drill
 

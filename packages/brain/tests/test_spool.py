@@ -232,7 +232,7 @@ def test_health_gives_the_last_push_age_and_warns_when_old(brain, capsys):
     spool.push(cfg, now=NOW, found=brain.found)
     assert spool.health(cfg, now=NOW + timedelta(hours=3)) == 0
     out = capsys.readouterr().out
-    assert "spool OK (last push 3 h ago, 2 file(s) waiting" in out and "warning" not in out
+    assert "spool OK (last push without an error 3 h ago, 2 file(s) waiting" in out and "warning" not in out
     assert spool.health(cfg, now=NOW + timedelta(days=8)) == 0
     assert "spool warning: no push without an error for more than 7 d" in capsys.readouterr().out
 
@@ -261,9 +261,173 @@ def test_the_spool_is_an_engine_store_sealed():
 
 def test_scan_file_finds_shaped_secrets_by_line_and_skips_binaries(tmp_path):
     t = tmp_path / "a.log"
-    t.write_text("one\n" + "x hf_" + "a1B2" * 9 + "\n" + 'password = "hunter2hunter2"\n', encoding="utf-8")  # gitleaks:allow
+    heuristic = 'password = "hunter2hunter2"\n'  # gitleaks:allow
+    t.write_text("one\n" + "x hf_" + "a1B2" * 9 + "\n" + heuristic, encoding="utf-8")
     assert secretscan.scan_file(t) == [(2, "huggingface-token")]       # the heuristics are not the spool's
     assert (3, "password-quoted") in secretscan.scan_file(t, secretscan.PATTERNS)
     b = tmp_path / "b.db"
     b.write_bytes(b"SQLite\0" + b"hf_" + b"a1B2" * 9)
     assert secretscan.scan_file(b) == []
+
+
+# --- what the review found (wi-brain-storage-split) ---
+def test_a_change_of_recipients_seals_again_and_the_stale_file_is_never_sent(brain, brain_home, tmp_path):
+    cfg = brain()
+    spool.push(cfg, ["ledger"], now=NOW, found=brain.found)
+    _, c_pub = brain.found["age"].keygen("test 2")
+    data = json.loads((brain.root / config.FILE).read_text(encoding="utf-8"))
+    data["vault"]["recipients"]["box2"] = {"kind": "device", "age": c_pub}
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    data["spool"] = {"remote": str(remote)}
+    (brain.root / config.FILE).write_text(json.dumps(data), encoding="utf-8")
+    cfg = config.load(brain.root)
+    stale = "ledger/ledger-20261111T120000Z.tar.gz.age"
+    (r,) = spool.send(cfg, now=NOW)
+    assert r["file"] == stale and "no longer its store" in r["error"] and not (remote / stale).exists()
+    res = spool.push(cfg, ["ledger"], now=NOW + timedelta(hours=1), found=brain.found)
+    assert [p["file"] for p in res["put"]] == ["ledger/ledger-20261111T130000Z.tar.gz.age"]   # content unchanged
+    assert len(res["put"][0]["recipients"]) == 3 and stale in res["pruned"]                  # superseded, not sent
+    assert [x["file"] for x in res["sent"]] == ["ledger/ledger-20261111T130000Z.tar.gz.age"] and not res["errors"]
+
+
+def test_send_keeps_an_entry_put_while_it_copied(brain, brain_home, tmp_path, monkeypatch):
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    cfg = brain({"remote": str(remote)})
+    spool.push(cfg, ["ledger"], now=NOW, found=brain.found)
+    spool.put(cfg, "usage", now=NOW, found=brain.found)
+    t = tmp_path / "t.jsonl"
+    t.write_bytes(b"{}\n")
+    real = spool._send_one
+
+    def slow(src, target, sha):   # another writer puts a file while the copy runs
+        if not slow.done:
+            slow.done = True
+            spool.put(cfg, "ledger", [t], now=NOW + timedelta(minutes=1), found=brain.found)
+        return real(src, target, sha)
+    slow.done = False
+    monkeypatch.setattr(spool, "_send_one", slow)
+    spool.send(cfg, now=NOW)
+    files = json.loads(spool.index_file().read_text(encoding="utf-8"))["files"]
+    assert "ledger/ledger-20261111T120100Z.tar.gz.age" in files and len(files) == 3
+
+
+def test_a_copy_that_does_not_match_or_a_missing_file_is_not_sent(brain, brain_home, tmp_path, monkeypatch):
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    cfg = brain({"remote": str(remote)})
+    spool.push(cfg, now=NOW, found=brain.found)       # both sent
+    spool.put(cfg, "ledger", [brain_home / "ledger" / "events-2026-11.jsonl"], now=NOW, found=brain.found)
+    real = spool.shutil.copyfile
+
+    def bad_copy(src, dst):
+        real(src, dst)
+        if str(dst).endswith(".part"):
+            with open(dst, "ab") as fh:
+                fh.write(b"x")
+    monkeypatch.setattr(spool.shutil, "copyfile", bad_copy)
+    (r,) = spool.send(cfg, now=NOW)
+    assert "copy's sha256 does not match" in r["error"] and not list(remote.rglob("*.part"))
+    monkeypatch.setattr(spool.shutil, "copyfile", real)
+    (brain_home / "spool" / r["file"]).unlink()
+    (r2,) = spool.send(cfg, now=NOW)
+    assert r2["error"] == "missing from the spool"
+    assert spool.health(cfg, now=NOW) == 1                 # a waiting file is gone: it would never arrive
+
+
+def test_items_are_checked(brain, brain_home, tmp_path):
+    cfg = brain()
+    with pytest.raises(spool.SpoolError, match="no item given"):
+        spool.put(cfg, "ledger", [], now=NOW, found=brain.found)
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    for d in ("a", "b"):
+        (tmp_path / d / "x.txt").write_bytes(d.encode())
+    with pytest.raises(spool.SpoolError, match="share a name in the archive: x.txt"):
+        spool.put(cfg, "ledger", [tmp_path / "a" / "x.txt", tmp_path / "b" / "x.txt"], now=NOW, found=brain.found)
+    (brain_home / "keys").mkdir()
+    (brain_home / "keys" / "k.txt").write_bytes(b"not a shaped secret")
+    with pytest.raises(spool.SpoolError, match="in store keys, whose class never lets it leave"):
+        spool.put(cfg, "ledger", [brain_home / "keys" / "k.txt"], now=NOW, found=brain.found)
+
+
+def test_prune_keeps_the_newest_of_one_second(brain, brain_home, tmp_path):
+    cfg = brain({"keep": 1})
+    t = tmp_path / "t.jsonl"
+    t.write_bytes(b"{}\n")
+    puts = [spool.put(cfg, "ledger", [t], now=NOW, found=brain.found)["file"] for _ in range(3)]
+    idx_st, idx = spool.load_index(write=True)
+    for rel in puts:
+        idx["files"][rel]["sent"] = "2026-11-11T12:00:00Z"
+    spool._save(idx_st, idx)
+    assert sorted(spool.prune(cfg)) == sorted(puts[:2])     # -3 is the newest, kept
+    assert puts[2].endswith("-3.tar.gz.age")
+
+
+def test_a_file_that_cannot_be_removed_keeps_its_entry(brain, brain_home, monkeypatch):
+    cfg = brain({"keep": 1})
+    f = brain_home / "ledger" / "events-2026-11.jsonl"
+    spool.push(cfg, ["ledger"], now=NOW, found=brain.found)
+    f.write_bytes(b'{"e": 9}\n')
+    os.utime(f, (1_900_000_000, 1_900_000_000))
+    monkeypatch.setattr(spool, "_unlink", lambda p: not p.name.endswith(".age"))
+    spool.push(cfg, ["ledger"], now=NOW + timedelta(hours=1), found=brain.found)
+    assert "ledger/ledger-20261111T120000Z.tar.gz.age" in spool.status(cfg)["files"]
+
+
+def test_a_store_that_fails_while_packed_lets_the_others_go_on(brain, monkeypatch):
+    cfg = brain()
+    real = vault.pack
+
+    def locked(items, dst):
+        if any(a == "ledger" for _, a in items):
+            raise PermissionError(13, "locked")
+        return real(items, dst)
+    monkeypatch.setattr(vault, "pack", locked)
+    res = spool.push(cfg, now=NOW, found=brain.found)
+    assert res["errors"][0].startswith("ledger: store ledger: PermissionError while sealing")
+    assert [p["store"] for p in res["put"]] == ["usage"]
+
+
+def test_a_newer_index_of_another_shape_is_still_read(brain, brain_home, capsys):
+    from brain import cli
+    cfg = brain({})
+    (brain_home / "spool").mkdir()
+    (brain_home / "spool" / "spool.json").write_text('{"v": 2, "files": [{"file": "x"}], "last": []}',
+                                                     encoding="utf-8")
+    assert spool.status(cfg)["files"] == {} and spool.health(cfg, now=NOW) == 0
+    assert cli.main(["--root", str(brain.root), "spool", "push"]) == 2
+    assert "newer brain" in capsys.readouterr().err
+
+
+def test_an_unreadable_index_is_set_aside(brain, brain_home):
+    cfg = brain()
+    (brain_home / "spool").mkdir()
+    (brain_home / "spool" / "spool.json").write_text("not json", encoding="utf-8")
+    spool.push(cfg, ["ledger"], now=NOW, found=brain.found)
+    names = sorted(p.name for p in (brain_home / "spool").iterdir())
+    assert any(n.startswith("spool.json.unreadable-") for n in names)
+    assert len(spool.status(cfg)["files"]) == 1
+
+
+def test_the_config_readers(brain, monkeypatch):
+    cfg = brain({"stores": ["usage", "usage", "ledger"], "keep": 0, "max_age_days": True, "remote": "rel/dir"})
+    assert spool.chosen(cfg) == ["usage", "ledger"]
+    assert (spool.keep(cfg), spool.max_age_days(cfg)) == (spool.KEEP, spool.MAX_AGE_DAYS)
+    assert spool.remote(cfg) == brain.root / "rel" / "dir"
+    monkeypatch.setenv("SPOOL_TEST_DIR", str(brain.root / "abs"))
+    assert spool.remote(brain({"remote": "$SPOOL_TEST_DIR"})) == brain.root / "abs"
+    assert spool.chosen(brain({"stores": []})) == list(spool.DEFAULT_STORES)
+
+
+def test_health_warns_after_a_push_with_errors_and_verify_exits_1(brain, brain_home, tmp_path, capsys):
+    from brain import cli
+    cfg = brain({"remote": str(tmp_path / "offline")})
+    spool.push(cfg, ["ledger"], now=NOW, found=brain.found)
+    assert spool.health(cfg, now=NOW) == 0
+    out = capsys.readouterr().out
+    assert "never pushed without an error" in out and "the last push (2026-11-11T12:00:00Z) had 1 error(s)" in out
+    with open(brain_home / "spool" / "ledger" / "ledger-20261111T120000Z.tar.gz.age", "ab") as fh:
+        fh.write(b"rot")
+    assert cli.main(["--root", str(brain.root), "spool", "verify"]) == 1

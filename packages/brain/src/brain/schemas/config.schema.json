@@ -268,7 +268,7 @@
       "properties": {
         "stores": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "description": "The stores brain spool push seals into the spool, declared in classes.stores; default ledger, usage and sessions."},
         "remote": {"type": "string", "minLength": 1, "description": "A folder the sealed files are sent to, each copy checked by sha256 (a mounted share, a synced drive; ~ and environment variables expanded); default none: they wait in $BRAIN_HOME/spool."},
-        "keep": {"type": "integer", "minimum": 1, "description": "The files kept per store in the spool, the newest; default 3. A file put with its own paths (the session archive) is pruned only once sent."},
+        "keep": {"type": "integer", "minimum": 1, "description": "The snapshots kept per store in the spool, the newest; default 3. A file put with its own paths (the session archive) is pruned only once sent, past the newest 3 of them."},
         "max_age_days": {"type": "integer", "minimum": 1, "description": "How old the last push without an error may be before brain health spool warns; default 7."}
       }
     }

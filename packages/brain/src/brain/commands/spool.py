@@ -15,7 +15,8 @@ USAGE = """\
                  spool.stores, else ledger, usage and sessions) whose content changed since its last push into
                  $BRAIN_HOME/spool, after a secret scan, through brain vault (refuses a store whose class never leaves
                  the machine); send what waits to spool.remote when one is set, each copy checked by sha256; keep the
-                 last 3 per store (spool.keep); exit 1 when a store or a copy failed
+                 last 3 snapshots per store (spool.keep); exit 1 when a store or a copy failed, 2 when the index
+                 cannot be written (a newer brain's)
   brain spool status [--json]   the spool's folder, remote, set, last push, and each file waiting or sent
   brain spool verify   each file of the spool against its sha256 in the index; exit 1 on a missing or changed one
 """
