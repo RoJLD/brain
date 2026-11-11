@@ -13,6 +13,7 @@ the harness (docs/formats.md, « Negative controls »):
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -34,9 +35,9 @@ def st():
     return mod
 
 
-def harness(*args: str, timeout: float = 120) -> subprocess.CompletedProcess:
+def harness(*args: str, timeout: float = 120, env: dict | None = None) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout, cwd=REPO)
+                          errors="replace", timeout=timeout, cwd=REPO, env=env)
 
 
 # --- fast: in the default suite --------------------------------------------------------------------------------------
@@ -141,7 +142,10 @@ def rerun(*args: str, source: bool = True) -> tuple[int, dict, str]:
         if source:
             shutil.copytree(REPO, copy, ignore=shutil.ignore_patterns(".git", "build", "*.egg-info", "__pycache__",
                                                                       ".venv", ".pytest_cache", ".ruff_cache"))
-        r = harness(*(["--source", str(copy)] if source else []), *args, "--work", str(work / "run"), timeout=3600)
+        # a pip cache of its own: runs at once sharing a warm one have failed to resolve setuptools (twice, locally)
+        env = dict(os.environ, PIP_CACHE_DIR=str(work / "pip-cache"))
+        r = harness(*(["--source", str(copy)] if source else []), *args, "--work", str(work / "run"), timeout=3600,
+                    env=env)
         report = json.loads((work / "run" / "report.json").read_text(encoding="utf-8"))
     finally:
         shutil.rmtree(work, ignore_errors=True)
