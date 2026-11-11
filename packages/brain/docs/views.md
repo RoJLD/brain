@@ -108,7 +108,7 @@ A repo that holds `readme.yaml` at its root opts in to a generated `README.md` (
 what it is, why, how to start, its notes, the commands it quotes) and the facts of their sources: the repo's features
 (counts by status and domain, the top ones by value, a link to its `FEATURES.md`), each quoted command's usage from its
 `--help` (the brain command's from the running engine's own parser, another program's by running it in the checkout,
-at a fixed width of 120 columns), and, for a private repo, the active specs, the five most recent active ADRs and the
+at a fixed width of 120 columns), and, for a private repo, the active specs, the five newest active ADRs (by the date their id starts with) and the
 pending milestones that its features and items (`props.repo`) link to. A clone of a public repo (`config.json`
 `public.repos`) gets the neutral render: the features' `public_title`, no spec, ADR, milestone nor item.
 
@@ -121,8 +121,14 @@ pending milestones that its features and items (`props.repo`) link to. A clone o
 - `brain check` runs the same check for every repo of the project that holds `readme.yaml` (once, from the project's
   first store): an invalid `readme.yaml` or a gone command is an error; a stale `README.md` is a stale view, a warning
   on the default branch (an error under `views.strict`). A project with no `readme.yaml` is not read at all.
-- `brain audit` measures `readme.yaml` and `help.quoted` in the committed tree of an opted-in repo; the others are
-  listed as not measured (not opted in).
+- `--repo R` picks one repo of the project (every one with `readme.yaml` by default); `--dir PATH` reads and writes
+  another checkout than the registered one: a worktree of `--repo`, else of the root's repo (another repo's worktree
+  needs `--repo` too, or it gets the root repo's facts). A target with no `readme.yaml` is said not concerned, never
+  counted as checked. A `README.md` that is not UTF-8 is read with its bad bytes replaced: simply not the render.
+- `brain audit` reads `readme.yaml` from the committed tree of an opted-in repo (check `readme.yaml`) and runs its
+  quoted commands' `--help` in the repo's checkout with the running engine (check `help.quoted`); a repo without it is
+  listed as not measured (not opted in), which changes the not-measured lines of an existing `notes/audit.md` (and
+  `help.quoted` now applies to every repo, not only those with commands) until its next `brain audit --write`.
 
 The README has no date and sorts what it lists: the same sources give the same file. Its quoted commands' usage comes
 from the running engine, so render it with the pinned engine.

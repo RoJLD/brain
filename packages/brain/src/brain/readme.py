@@ -205,6 +205,12 @@ def _touching(facts: Facts) -> set[str]:
     return own
 
 
+def _dated(nid: str) -> str:
+    """The date an ADR's id starts with (adr-YYYY-MM-DD-...), '' for another id: the recent ones are the newest."""
+    m = re.match(r"(?:adr|sdr)-(\d{4}-\d{2}-\d{2})-", nid)
+    return m.group(1) if m else ""
+
+
 def _graph_block(facts: Facts) -> str:
     """A private repo's active specs, recent ADRs and pending milestones, from the graph (never in a public render)."""
     if facts.public or not facts.nodes:
@@ -217,7 +223,7 @@ def _graph_block(facts: Facts) -> str:
                       and facts.nodes[t].get("status") in statuses)
 
     specs = nodes("specified_by", "Spec", ("active",))
-    adrs = sorted(nodes("decided_by", "ADR", ("active",)), reverse=True)[:RECENT]
+    adrs = sorted(nodes("decided_by", "ADR", ("active",)), key=lambda a: (_dated(a), a), reverse=True)[:RECENT]
     opened = {nid for nid in own if facts.nodes.get(nid, {}).get("status") in OPEN}
     miles = sorted({str(e.get("to")) for e in facts.edges if e.get("type") == "part_of" and str(e.get("from")) in opened
                     and facts.nodes.get(str(e.get("to")), {}).get("type") == "Milestone"
@@ -308,8 +314,7 @@ def check(repo_dir: Path, facts: Facts, cfg=None) -> Report:
     rep.text = render(spec, facts, repo_dir)
     if facts.public:
         rep.errors += [f"{VIEW} (public): {line}" for line in features.denied_lines(rep.text, cfg)]
-    f = Path(repo_dir) / VIEW
-    old = f.read_text(encoding="utf-8").replace("\r\n", "\n") if f.is_file() else None
+    old = _existing(Path(repo_dir) / VIEW)
     if old is None:
         rep.stale = f"{VIEW} is missing"
     elif old != rep.text:
@@ -318,11 +323,17 @@ def check(repo_dir: Path, facts: Facts, cfg=None) -> Report:
     return rep
 
 
+def _existing(f: Path) -> str | None:
+    """The README as it is (CRLF read as LF), None when there is none; one that is not UTF-8 (a hand-written README
+    in another encoding) is read with its bad bytes replaced: it is then simply not the render."""
+    return f.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n") if f.is_file() else None
+
+
 def write(repo_dir: Path, text: str, force: bool = False) -> str:
     """Write README.md; 'written', 'unchanged', or why not: a README that is not generated (no marker) is replaced
     only with ``force`` (the first render of an opted-in repo)."""
     f = Path(repo_dir) / VIEW
-    old = f.read_text(encoding="utf-8").replace("\r\n", "\n") if f.is_file() else None
+    old = _existing(f)
     if old == text:
         return "unchanged"
     if old is not None and MARKER not in old and not force:

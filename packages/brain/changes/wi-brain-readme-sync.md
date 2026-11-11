@@ -8,4 +8,6 @@ section: Added
   public repo's render neutral. `brain docs check` exits 1 when `readme.yaml` misses a field, a quoted command is
   gone, or `README.md` is not the render; `brain check` runs it (a stale README is a stale view), `brain audit`
   measures `readme.yaml` and `help.quoted` in an opted-in repo, and close-item renders and checks it. A repo without
-  `readme.yaml` is never read: nothing is newly refused.
+  `readme.yaml` is never read: nothing is newly refused. An existing `notes/audit.md` changes its not-measured lines
+  (`readme.yaml` and `help.quoted` say « not opted in », `help.quoted` now for every repo) at its next
+  `brain audit --write`.

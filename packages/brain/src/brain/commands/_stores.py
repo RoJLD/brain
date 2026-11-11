@@ -9,6 +9,7 @@ the session ids and the hygiene line."""
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -281,11 +282,12 @@ def _readme_checks(args, project: projects.Project, root: Path, store: Path) -> 
     if not projects.uses_defaults(project, store):
         return [], []
     from . import docs  # here: brain.commands.docs imports this module's package
+    every = argparse.Namespace(**{**vars(args), "repo": "", "dir": ""})   # brain check's --repo is --public's
     try:
-        if not docs.targets(args, root):
+        if not [t for t in docs.targets(every, root) if readme.applies(t[1])]:
             return [], []
-        errors, stale = docs.problems(args, root, config.load(root))
-    except (SystemExit, readme.ReadmeError, graph.GraphError) as exc:
+        errors, stale = docs.problems(every, root, config.load(root))
+    except (SystemExit, readme.ReadmeError, graph.GraphError, OSError, ValueError) as exc:
         errors, stale = [f"the generated READMEs could not be checked: {exc}"], []
     for line in errors:
         print(f"error: {line}: brain docs check")

@@ -150,11 +150,68 @@ def test_brain_check_is_opt_in_by_readme_yaml(tmp_path, monkeypatch, capsys):
     assert "error: lab: readme.yaml: the quoted command `brain no-such-command` is gone" in capsys.readouterr().out
 
 
-def test_brain_check_names_a_stale_readme_as_a_stale_view(tmp_path, monkeypatch, capsys):
+def test_brain_check_names_a_stale_readme_as_a_stale_view_on_the_default_branch(tmp_path, monkeypatch, capsys):
     root, store = _lab(tmp_path, monkeypatch)
-    _, stale = __import__("brain.commands.docs", fromlist=["problems"]).problems(
-        type("A", (), {"repo": "", "dir": "", "store": None, "project": None, "root": None})(), root)
-    assert stale == ["lab: README.md is missing: brain docs render --write"]
+    assert cli.main(["docs", "render", "--write"]) == 0
+    run_git(root, "add", "-A")
+    run_git(root, "commit", "-q", "-m", "lab")   # on main, the default branch
+    capsys.readouterr()
+    cli.main(["check"])
+    assert "README.md" not in capsys.readouterr().out   # up to date: nothing said
+    features.set_feature(store, "feat-lab-cold", ["status=have"])   # a feature changed without the README
+    cli.main(["check"])
+    out = capsys.readouterr().out
+    assert "lab:README.md" in out and "brain docs render --write" in out   # a stale view, named with its writer
+    assert "error: lab:" not in out
+    cfg = tmp_path / "home-strict" / "config.json"
+    cfg.parent.mkdir()
+    cfg.write_text(json.dumps({"views": {"strict": True}}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    assert cli.main(["check"]) == 1   # under views.strict a stale view fails the default branch
+
+
+def test_brain_check_ignores_its_own_repo_option_and_a_bad_readme_encoding(tmp_path, monkeypatch, capsys):
+    root, store = _lab(tmp_path, monkeypatch)
+    (root / "readme.yaml").unlink()
+    before = cli.main(["check"])
+    capsys.readouterr()
+    assert cli.main(["check", "--repo", "zzz"]) == before   # --repo is --public's: no README check reads it
+    assert "generated READMEs" not in capsys.readouterr().out
+    (root / "readme.yaml").write_text(SPEC, encoding="utf-8")
+    (root / "README.md").write_bytes("# Lab\n\nCaf\xe9 by hand.\n".encode("cp1252"))   # not UTF-8
+    assert "a hand-written README" in readme.check(root, readme.store_facts(store, "lab", False)).stale
+    assert cli.main(["docs", "check"]) == 1 and "Traceback" not in capsys.readouterr().out
+
+
+def test_dir_and_repo_name_the_checkout_and_a_target_without_readme_yaml_is_not_concerned(tmp_path, monkeypatch,
+                                                                                          capsys):
+    root, store = _lab(tmp_path, monkeypatch)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / "readme.yaml").write_text(SPEC.replace("title: Lab", "title: Lab worktree"), encoding="utf-8")
+    assert cli.main(["docs", "render", "--write", "--repo", "lab", "--dir", str(wt)]) == 0
+    assert "# Lab worktree" in (wt / "README.md").read_text(encoding="utf-8") and not (root / "README.md").exists()
+    assert (wt / features.VIEW).is_file()   # its FEATURES.md beside it
+    assert cli.main(["docs", "check", "--dir", str(wt)]) == 0   # --dir alone: a worktree of the root's repo
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    capsys.readouterr()
+    assert cli.main(["docs", "check", "--dir", str(empty)]) == 0
+    out = capsys.readouterr().out
+    assert "holds no readme.yaml: not concerned" in out and "up to date" not in out
+
+
+def test_recent_decisions_are_the_newest_by_their_date(tmp_path, monkeypatch):
+    root, store = _lab(tmp_path, monkeypatch)
+    with (store / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
+        for d in range(2, 9):
+            f.write(f"- {{id: adr-2026-11-0{d}-call-{d}, type: ADR, status: active, title: \"Call {d}\"}}\n")
+    with (store / "edges" / "work.yaml").open("a", encoding="utf-8") as f:
+        for d in range(2, 9):
+            f.write(f"- {{from: wi-tea, to: adr-2026-11-0{d}-call-{d}, type: decided_by}}\n")
+    text = _render(root, store)
+    shown = [x for x in text.split("\n") if x.startswith("- `adr-")]
+    assert [x.split("`")[1] for x in shown] == [f"adr-2026-11-0{d}-call-{d}" for d in range(8, 3, -1)]
 
 
 def test_the_schema_is_registered_and_holds_the_required_fields():

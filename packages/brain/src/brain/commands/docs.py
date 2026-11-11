@@ -19,16 +19,19 @@ USAGE = """\
                  notes, the commands it quotes), the facts from their sources (the features recap and FEATURES.md,
                  each quoted command's usage from its --help, a private repo's active specs, recent ADRs and
                  milestones); a public repo's render is neutral. render prints it (--write writes README.md and
-                 FEATURES.md; --force replaces a hand-written README once). check exits 1 when readme.yaml misses a
-                 field, a quoted command is gone, or README.md is not the render. Only a checkout with readme.yaml is
-                 concerned (--repo: one of the project's repos, every one with readme.yaml by default; --dir: a
-                 worktree of it); brain check runs the same check
+                 FEATURES.md; --force replaces a hand-written README once, and writes under views.strict with another
+                 engine than the pin). check exits 1 when readme.yaml misses a field, a quoted command is gone, or
+                 README.md is not the render. Only a checkout with readme.yaml is concerned (--repo: one of the
+                 project's repos, every one with readme.yaml by default; --dir: the checkout to use instead of the
+                 registered one, a worktree of --repo, else of the root's repo); brain check runs the same check
 """
 
 
 def targets(args, root: Path) -> list[tuple[str, Path]]:
-    """(repo, checkout) of what to render or check: --repo (its registered path, or --dir), else the root's repo
-    with --dir, else every repo of the project whose checkout holds readme.yaml."""
+    """(repo, checkout) of what to render or check: --repo (its registered path, or --dir: a worktree of it), else
+    the root's repo with --dir (a worktree of the root's repo: another repo needs --repo), else every repo of the
+    project whose checkout holds readme.yaml. A named target is returned even when it holds no readme.yaml: the
+    caller says it is not concerned."""
     repos = {c.name.lower(): c.path for c in _repos(args, root)}
     name = (getattr(args, "repo", "") or "").lower()
     where = Path(args.dir).resolve() if getattr(args, "dir", "") else None
@@ -108,6 +111,10 @@ def cmd_docs(args, root: Path) -> int:
             rc = _render_one(args, root, repo, checkout, cfg) or rc
         return rc
     found = targets(args, root)
+    for repo, checkout in found:
+        if not readme.applies(checkout):   # named by --repo or --dir: said, never counted as checked
+            print(f"docs check: {repo} ({checkout}) holds no {readme.FILE}: not concerned")
+    found = [(r, c) for r, c in found if readme.applies(c)]
     if not found:
         print(f"docs check: no repo of the project holds {readme.FILE}: not concerned")
         return 0
@@ -129,12 +136,14 @@ def register(sub, ctx) -> None:
     ds = do.add_subparsers(dest="docs_cmd", required=True)
     dr = ds.add_parser("render", help="print README.md's render, or write it (and FEATURES.md) with --write")
     dr.add_argument("--write", action="store_true", help="write README.md and the repo's FEATURES.md")
-    dr.add_argument("--force", action="store_true", help="replace a hand-written README.md (the first render)")
+    dr.add_argument("--force", action="store_true", help="replace a hand-written README.md (the first render); write "
+                                                         "under views.strict with another engine than the pin")
     dc = ds.add_parser("check", help="exit 1 when readme.yaml misses a field, a quoted command is gone, or README.md "
                                      "is not the render")
     for p in (dr, dc):
         p.add_argument("--repo", default="", help="one of the project's repos (default: every one with readme.yaml)")
-        p.add_argument("--dir", default="", help="the checkout to read and write (a worktree of --repo)")
+        p.add_argument("--dir", default="", help="the checkout to read and write instead of the registered one (a "
+                                                 "worktree of --repo, else of the root's repo)")
 
 
 run = cmd_docs

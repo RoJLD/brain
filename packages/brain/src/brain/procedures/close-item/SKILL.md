@@ -40,8 +40,8 @@ in the project's graph (its item, spec and ADR, and code references for new modu
 same way.
 
 A repo that holds `readme.yaml` has a generated README (`brain docs`): never edit its `README.md`, change
-`readme.yaml` or the sources, then run `brain [--project P] docs render --write` in the PR's worktree (`--dir` for
-another repo of the project) and `brain docs check`, exit 0, before the PR. A repo without `readme.yaml` is not
+`readme.yaml` or the sources, then run `brain [--project P] docs render --write` in the PR's worktree (`--repo R --dir
+<its worktree>` for another repo of the project) and `brain docs check` with the same options, exit 0, before the PR. A repo without `readme.yaml` is not
 concerned.
 
 Then the scout (rule R8): run `brain [--project P] audit --diff` in the PR's worktree (`--diff A..B` once merged).
