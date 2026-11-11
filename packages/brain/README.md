@@ -276,7 +276,7 @@ coverage. The rules: [docs/tests-graph.md](docs/tests-graph.md).
 
 ### The module map
 
-A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place, and about a feature or a done item with no module (the technical reference reads them by module). A programme's registry can live in another store (`config.json` `modules.store`) and be a read copy of the platform's documents, written by an agent session: `brain modules --check` validates the imported entries, the view generates the counts and lists the divergences between the documents, `brain modules --diff` says what an import changed. See [docs/modules.md](docs/modules.md).
+A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place, and about a feature or a done item with no module (the technical reference reads them by module). A programme's registry can live in another store (`config.json` `modules.store`) and be a read copy of the platform's documents, written by an agent session: `brain modules --check` validates the imported entries, the view generates the counts and lists the divergences between the documents, `brain modules --diff` says what an import changed; the map of realisations says who realises each module and where. See [docs/modules.md](docs/modules.md).
 
 ### Waves and eras
 
@@ -738,7 +738,10 @@ stores; a brain's own root, checking its registry without `--all`, warns of it.
 entry with `$BRAIN_PYTHON`, else the brain command's venv (`<BRAIN_HOME>/venv`), else `python3`/`python`. A personal
 brain whose `source/packs.yaml` gives its core pack `hooks:` gets them copied into its own plugin by
 `brain render --target claude --write`, at the version it pins; `inject-rules.sh` injects the files of config.json
-`rules`. The guards never block a session on an error: without Python, the call goes through.
+`rules`, read from the flat `hooks/contract.txt` the render writes beside the hooks (the hook contract,
+[docs/formats.md](docs/formats.md#the-hook-contract)). The guards never block a session on an error: without Python,
+the call goes through. Each hook passes its `brain_version` to the Python it starts, and the SessionStart health says
+when a session's plugin copy and the engine differ, or when two `.brain` folders exist.
 
 A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
 Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that

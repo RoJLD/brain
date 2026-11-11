@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import brain
 from brain import cli, neutral, render
 from brain.commands import _stores
 
@@ -364,6 +365,18 @@ def test_hooks_true_copies_the_engine_hooks(ada, tmp_path, monkeypatch):
     write(ada / "source", {"packs.yaml": PACKS.replace("    core: true\n", "    core: true\n    hooks: true\n")})
     rels = [o.rel for o in render.render(ada, "claude").outputs]
     assert "plugins/ada-core/hooks/hooks.json" in rels and "plugins/ada-core/hooks/inject.sh" in rels
+
+
+def test_the_hooks_carry_the_contract_bash_reads(ada, tmp_path, monkeypatch):
+    """wi-brain-hook-contracts: hooks/contract.txt, config.json's rules and the engine's version as flat lines, once
+    even where the engine's hooks folder is a plugin's that holds a rendered one."""
+    hooks = tmp_path / "engine-hooks"
+    write(hooks, {"hooks.json": "{}\n", "inject.sh": "echo hi\n", "contract.txt": "stale\n"})
+    monkeypatch.setattr(render, "claude_hooks", lambda: hooks)
+    write(ada / "source", {"packs.yaml": PACKS.replace("    core: true\n", "    core: true\n    hooks: true\n")})
+    got = [o for o in render.render(ada, "claude").outputs if o.rel == "plugins/ada-core/hooks/contract.txt"]
+    assert [o.text for o in got] == [f"#brain.hook-contract/v1\nversion {brain.__version__}\n"
+                                     "rule plugins/ada-core/rules/global.md\n"]
 
 
 def _rendered_hooks(ada) -> tuple[dict, set[str]]:

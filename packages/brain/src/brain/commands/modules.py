@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .. import modules, skew
+from .. import modulemap, modules, skew
 from ._common import _project, _store, _store_label
 from ._stores import _module_view
 
@@ -19,9 +19,12 @@ USAGE = """\
                  reads the registry config.json modules.store names); the view notes/modules_graph.md (beside the
                  store's board when it is not in notes/; per module its phase, status, items done and open, and
                  the gaps, and how many features and done items are placed; for an imported registry, the counts by
-                 brick, the documents read and their divergences), written by brain sync; --check: the open items
-                 with no module, or a module the registry does not know, and the imported entries' fields (exit 1),
-                 then, as warnings, the features and done items with none (brain check warns of all of it);
+                 brick, the documents read and their divergences; for a map, the realisations and their gaps),
+                 written by brain sync; --check: the open items with no module, or a module the registry does not
+                 know, the imported entries' fields and the map's (the modules, capabilities, projects and paths it
+                 names; a wanted module with nothing that builds it) (exit 1),
+                 then, as warnings, the features and done items with none and a dormant wanted module (brain check
+                 warns of all of it);
                  --diff: what changed in the registry since its version at REF (default HEAD): modules added and
                  removed, document fields and hand fields changed;
                  under config.json views.strict, another engine than engine.pin writes nothing (--force)
@@ -59,7 +62,7 @@ def _no_registry(root: Path, store: Path) -> str:
 def _report(args, root: Path, store: Path) -> int:
     """--diff, then --check; with both and --json, one JSON object (never text then JSON)."""
     if args.diff is not None and args.check and args.json:
-        found = modules.registry_problems(store, root) + modules.problems(store, root)
+        found = _problems(root, store)
         print(json.dumps({"diff": _diff_data(args, root, store), "problems": found}, indent=1, ensure_ascii=False))
         return 1 if found else 0
     if args.diff is not None:
@@ -87,14 +90,19 @@ def _diff(args, root: Path, store: Path) -> None:
         print("\n".join(modules.diff_lines(d, d["registry"], args.diff)))
 
 
+def _problems(root: Path, store: Path) -> list[str]:
+    """What brain modules --check refuses: the imported entries', the map's (brain.modulemap), the open items'."""
+    return modules.registry_problems(store, root) + modulemap.problems(store, root) + modules.problems(store, root)
+
+
 def _check(args, root: Path, store: Path) -> int:
     """brain modules --check: the imported entries' and the open items' problems (exit 1), then the warnings."""
-    found = modules.registry_problems(store, root) + modules.problems(store, root)
+    found = _problems(root, store)
     if args.json:
         print(json.dumps(found, indent=1))
         return 1 if found else 0
     print("\n".join(found) or "module map: every open item placed")
-    for line in modules.warnings(store, root):   # the features and done items: told, never counted
+    for line in modules.warnings(store, root) + modulemap.warnings(store, root):   # told, never counted
         print(f"warning: {line}")
     return 1 if found else 0
 

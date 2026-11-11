@@ -664,7 +664,7 @@ def test_prefilter_reads_the_node_clis_from_the_cache(owner, brain_home):
     cache = brain_home / "cache" / guards.NODE_CLI_CACHE
     assert not cache.exists() and _needs_python(["acme-cli wake box1", "acme wake box1"]) == [False, False]
     assert refused(bash(owner, "acme-cli wake box1"), "power", "node")
-    assert cache.read_text(encoding="utf-8") == "acme|acme-cli|kubectl-acme\n"
+    assert cache.read_text(encoding="utf-8") == "acme|acme-cli|kubectl-acme\n" + guards.NODE_CLI_FORMAT + "\n"
     assert _needs_python(["acme-cli wake box1", "acme wake box1", "kubectl-acme sleep box2", "acmex wake",
                           "ls my-acme", "echo kubectl-acmes"]) == [True, True, True, False, False, False]
     cache.write_text("\n", encoding="utf-8")

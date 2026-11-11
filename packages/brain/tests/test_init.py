@@ -144,7 +144,8 @@ def test_apply_renders_a_local_claude_marketplace(fresh, capsys):
     assert "readhint.sh" not in json.dumps(hooks["hooks"])   # opt-in (config.json hints.read): off in a new brain
     engine = render.claude_hooks()
     shipped = {f.relative_to(engine).as_posix() for f in engine.rglob("*") if f.is_file() and "__pycache__" not in f.parts}
-    assert {f.relative_to(plugin / "hooks").as_posix() for f in (plugin / "hooks").rglob("*") if f.is_file()} == shipped
+    assert {f.relative_to(plugin / "hooks").as_posix() for f in (plugin / "hooks").rglob("*") if f.is_file()} == \
+        shipped | {render.HOOK_CONTRACT}   # and the hook contract the render writes
     assert (plugin / "hooks" / "inject-rules.sh").read_bytes() == \
         (engine / "inject-rules.sh").read_bytes().replace(b"\r\n", b"\n")
     packs = (fresh / "source" / "packs.yaml").read_text(encoding="utf-8")

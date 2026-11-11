@@ -10,7 +10,7 @@
 # the Windows Store stubs; without a Python 3 it does nothing.
 [ "${BRAIN_MEMORY_SYNC:-1}" = "0" ] && exit 0
 { . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python
-home="${BRAIN_HOME:-$HOME/.brain}"
+home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"
 
 if [ "${1:-}" = "SessionStart" ]; then
   alert="$home/memory-sync/alert.txt"

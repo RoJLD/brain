@@ -1,0 +1,5 @@
+# modules.yaml with a newer brain's additive keys: an entry's free field and a realisation's unknown key (a note in
+# read mode, an error in strict mode).
+- {id: K1, name: tea-room, brick: K, phase: MVP, status: tree, persona: [tea-drinker]}
+- {id: P2, name: kettle-core, brick: P, phase: MVP, status: tree, wanted: true,
+   realized_by: [{project: lab, kind: brain, state: built, ships_in: brain, since: "0.4.0"}]}

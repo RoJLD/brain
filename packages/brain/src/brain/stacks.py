@@ -535,6 +535,25 @@ def watched_down(reg: dict[str, Stack], budget: float = HOOK_BUDGET) -> list[str
     return rows
 
 
+def hook_contract_notes() -> list[str]:
+    """The hook contract's health lines (wi-brain-hook-contracts): the plugin copy's bash hooks (their brain_version,
+    as BRAIN_HOOK_VERSION) against the engine this Python imports, and two ``.brain`` folders (brain.paths.home_folders)
+    when $BRAIN_HOME is unset. A hook older than 0.3.2 passes no version: nothing is said of it."""
+    from . import __version__
+    from .paths import home_folders
+    out = []
+    hook = os.environ.get("BRAIN_HOOK_VERSION", "").strip()
+    if hook and hook != __version__:
+        out.append(f"This session's brain hooks are {hook} while the engine is {__version__}: a session keeps the "
+                   "plugin copy it started with. Restart the session; if a new session says it again, run brain sync "
+                   "(the plugin) or brain update (the engine).")
+    homes = home_folders()
+    if len(homes) > 1:
+        out.append("Two .brain folders: " + " and ".join(str(h) for h in homes) + f". The engine uses {homes[0]}; "
+                   "move what the other holds there and remove it, or set BRAIN_HOME to the one to keep.")
+    return out
+
+
 def hook_main(argv: list[str], stdin=None) -> int:
     """SessionStart hook: the down watched stacks as additionalContext; nothing when all is well. Never fails: an
     error goes to <BRAIN_HOME>/ledger/errors.log."""
@@ -565,6 +584,10 @@ def hook_main(argv: list[str], stdin=None) -> int:
                 parts.append(f"The public and secrets guards refuse every git commit and git push: {why}")
         except Exception as exc:  # noqa: BLE001
             _log_error("guards-health", exc)
+        try:
+            parts.extend(hook_contract_notes())
+        except Exception as exc:  # noqa: BLE001
+            _log_error("hook-contract", exc)
         if parts:
             text = "\n".join(parts)
             event = argv[0] if argv else "SessionStart"

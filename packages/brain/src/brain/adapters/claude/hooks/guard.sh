@@ -46,8 +46,11 @@ needs_python() {
   # or skills, then plugin or add as a later word, whatever comes between (a quote after a quoted claude.exe, global
   # options such as --model opus, a line continuation).
   local owner_power="$before"'(schtasks|register-scheduledtask|set-scheduledtask|unregister-scheduledtask|enable-scheduledtask|disable-scheduledtask|register-scheduledjob|set-scheduledjob|unregister-scheduledjob|new-service|set-service|remove-service|nssm|crontab|at|batch|atrm|systemctl|systemd-run|launchctl|reg|new-itemproperty|set-itemproperty|sp|install\.ps1|ssh-keygen|age-keygen|gpg2?|cmdkey|set-secret|remove-secret|register-secretvault|unregister-secretvault|set-secretstorepassword|reset-secretstore|new-storedcredential|remove-storedcredential|security|secret-tool|docker|npm|pnpm|yarn|az|gcloud|aws|argocd|net|new-localuser|set-localuser|remove-localuser|rename-localuser|enable-localuser|disable-localuser|add-localgroupmember|remove-localgroupmember|useradd|usermod|userdel|passwd|chpasswd|chage|groupadd|groupmod|groupdel|gpasswd|setx|k3s|microk8s|kubectl|kubecolor|oc|helm|https?|xh|shutdown|poweroff|reboot|halt|psshutdown|rtcwake|logoff|pm-suspend|pm-hibernate|pm-suspend-hybrid|stop-computer|restart-computer|init|telinit|loginctl|pmset|osascript|dbus-send|busctl|gdbus|rundll32|nircmd|wmic|invoke-cimmethod|invoke-wmimethod|bcdedit|efibootmgr|ipmitool|racadm|k3s-killall\.sh|k3s-uninstall\.sh|k3s-agent-uninstall\.sh|wakeonlan|wol|etherwake|ether-wake|wakemeonlan|mc-wol|wolcmd|send-wol|invoke-wakeonlan|send-wakeonlan|sigma_node_power|forge_boot|pxe_router|telegram-send|tg|telegram|power|ssh|plink|start-process|saps|start|brain_guard_allow|0xff|gh|git|255)([^A-Za-z0-9_-]|$)|--arm([^A-Za-z0-9_-]|$)|usage[[:space:]]+allow([^A-Za-z0-9_-]|$)|schedule[[:space:]]+install([^A-Za-z0-9_-]|$)|win32shutdown|setsuspendstate|exitwindowsex|initiatesystemshutdown|win32_operatingsystem|'"$before"'(claude(\.exe)?|skills(@[^[:space:]]*)?)(([^A-Za-z0-9_-]|\\[nrt]).*)?([[:space:]]|\\[nrt])(plugins?|add)([^A-Za-z0-9_-]|$)'
-  local clis='' cache="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}/cache/node-clis.txt"
-  [ -f "$cache" ] && IFS= read -r clis < "$cache"
+  # node-clis.txt: line 1 the alternation, line 2 its format (brain.guards.NODE_CLI_FORMAT; none before 0.3.2): with
+  # another format the pre-filter cannot read the CLIs, so the guards read the command
+  local clis='' form='' cache="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}/cache/node-clis.txt"
+  [ -f "$cache" ] && { IFS= read -r clis; IFS= read -r form; } < "$cache"
+  [[ -n $form && $form != '#brain.node-clis/v1' ]] && return 0
   local node_clis="$before($clis)([^A-Za-z0-9_-]|$)"
   shopt -s nocasematch
   [[ $rest =~ $writers || $rest =~ $owner_power || ( -n $clis && $rest =~ $node_clis ) ]] && found=0 || found=1
@@ -82,7 +85,7 @@ root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
 IFS= read -r -d '' input  # the hook's JSON, without $(cat)'s fork
 needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }
 
-home="${BRAIN_HOME:-$HOME/.brain}"
+home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"
 brain_py=
 brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
 # here no Python was found, or the one found failed: guard.py's main never fails, so it could not import brain

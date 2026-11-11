@@ -54,6 +54,7 @@ their default.
 | config.json | the brain's root | `v` (`config.schema.json`) | a note on stderr; the file is kept as written | refused |
 | members.yaml | the brain's root, beside config.json ([identity.md](identity.md)) | `v` (`members.schema.json`) | ignored, the file kept as written (in strict mode, CI: reported by `brain check` with the other identity findings) | refused |
 | readme.yaml | a repo's root, opt-in ([views.md](views.md), « Generated READMEs ») | `v` (`readme.schema.json`) | ignored, the file kept as written (in strict mode, CI: `brain docs check` and `brain check` report it) | refused |
+| modules.yaml | a store (or the one `config.json` `modules.store` names, [modules.md](modules.md)) | none: a YAML list; each entry that carries the map (`realized_by` or `map_review`) is checked against `modules.schema.json` | an entry's other field is free; a realisation's unknown key is a note (in strict mode, CI: `brain modules --check` refuses it, `brain check` warns) | - (no `v`: a change of the schema moves the format) |
 | standards catalog | the engine's `src/brain/catalogs/*.yaml`; a brain's local ones that `projects.yaml` `standards.catalogs` names ([standards.md](standards.md)) | `v` (`standards.schema.json`) | a note, the row kept; a vocabulary value this engine does not know (a profile, stage, enforcement...) too (in strict mode, CI: `brain standards check` and `brain check --all` report it) | refused: its rows are not read |
 | DDR signature | `records/ddr/<id>.sig`, beside its record | none: an SSH signature (namespace `brain-decision`) over the answer's payload | - | - (an older engine ignores the file and reads the record as before) |
 | permissions.yaml | the brain's root | `v` | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
@@ -213,6 +214,38 @@ foreign one is never written here.
 | `forecast.load_latest` | `forecast/<project>/latest.json` | derived (local) | `{}` is right: rebuilt |
 | `quota.load_status` | the quota forecast | derived (local) | `{}` is right: rebuilt |
 | `update._read_cache` | `update.json` | derived (local) | `{}` is right: the tags are asked again |
+
+## The hook contract
+
+The bash hooks (`src/brain/adapters/claude/hooks/*.sh`) read four files that Python writes, with bash builtins only
+(no fork: wi-brain-hook-latency). A session keeps the plugin copy it started with (one cached copy per commit), so old
+bash reads what a newer engine writes until the session restarts: each file keeps its first line(s) as bash before
+0.3.2 reads them and names its format on a line of its own, after them (wi-brain-hook-contracts). Today's bash trusts
+a file without a format line (an older engine's) or with its own; another format makes it start Python, which decides.
+
+| File | Writer | Lines | Format line |
+|---|---|---|---|
+| `<BRAIN_HOME>/budget/<session>.mark` | `brain.budget` | the transcript `budget.sh` compares its mtime with | last, `#brain.budget-mark/v1` |
+| `<BRAIN_HOME>/announce/<session>.mark` | `brain.midsession` | the session's folder, the queue, the pending DDRs | last, `#brain.announce-mark/v1` (bash before 0.3.2 reads it as a DDR that does not exist) |
+| `<BRAIN_HOME>/cache/node-clis.txt` | `brain.guards.node_tools` | the node CLIs as one alternation, which `guard.sh`'s pre-filter matches | last, `#brain.node-clis/v1` |
+| `plugins/<plugin>/hooks/contract.txt` | `brain render` (`brain sync`) | `version <the engine that rendered it>`, then one `rule <path>` per file of config.json `rules`, relative to its folder | first, `#brain.hook-contract/v1` (a new file: no older reader) |
+
+`inject-rules.sh` reads the contract's `rule` lines instead of the first `"rules"` array in config.json's text (which
+may be another section's), for the config the plugin was rendered from as it was then: no `BRAIN_CONFIG` or
+`CLAUDE_BRAIN_DIR` naming another, and a contract newer than config.json (a rules edit since the render is read from
+config.json at once). Otherwise, without a contract (the engine's own hooks folder, a plugin rendered before 0.3.2),
+or with another format, it reads config.json as before. `tests/fixtures/hooks/` holds each file as the engine writes it, and
+`tests/test_hook_contracts.py` checks the writers against them and today's bash against each format line.
+
+The version: `common.sh` exports its `brain_version` as `BRAIN_HOOK_VERSION`, so every Python a hook starts knows the
+plugin copy's version. The SessionStart health (`brain.stacks.hook_contract_notes`) says when it differs from the
+engine's: restart the session, then `brain sync` or `brain update`. A hook before 0.3.2 passes none, and nothing is
+said.
+
+`<BRAIN_HOME>`: every hook spells it `${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}`, the folder Python's
+`Path.home()` names on Windows (before 0.3.2, some hooks started the venv of `$HOME/.brain`). With `$BRAIN_HOME`
+unset, the health says when more than one of `Path.home()`, `%USERPROFILE%` and `$HOME` holds a `.brain` folder
+(`brain.paths.home_folders`): bash and Python may each have used their own.
 
 ## Public-check stamps: a derived file with its whole key
 
