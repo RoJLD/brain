@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .. import codeindex, config, projects, spool, stacks, vault
+from .. import codeindex, config, projects, sessionarchive, spool, stacks, vault
 from ._common import root_of
 
 ORDER = 340   # its place in brain --help's list of commands (brain.commands)
@@ -25,21 +25,26 @@ USAGE = """\
                                   (brain.vault), OFF without a vault block or without age and gpg; the name
                                   spool (or --all): the last brain spool push's age and what waits to be sent
                                   (brain.spool), a warning past 7 days, FAIL when a waiting file no longer
-                                  matches its sha256, OFF when never pushed
+                                  matches its sha256, OFF when never pushed; the name session-archive (or
+                                  --all): the age of the last session archive run that sealed something
+                                  (brain.sessionarchive), a warning past 7 days or without gitleaks, OFF while
+                                  config.json session_archive.enabled is not true
 """
+
+# The machine's own checks, each named by its CHECK and run with --all: health(cfg, named=...) -> exit code.
+MACHINE_CHECKS = (vault, spool, sessionarchive)
 
 
 def cmd_health(args, root: Path | None, project: str | None) -> int:
     """``brain health``: the stacks asked for (no name: the watched ones, every one with --all, every one of the
     project with --project), then the code index when code-index is named, with --all, or with --project alone, and
     the vault's canaries when vault is named or with --all, the spool's last push when spool is named or with
-    --all."""
-    names = [n for n in args.stacks if n not in (codeindex.CHECK, vault.CHECK, spool.CHECK)]
+    --all, the session archive's last run when session-archive is named or with --all."""
+    names = [n for n in args.stacks if n not in (codeindex.CHECK, *(m.CHECK for m in MACHINE_CHECKS))]
     rc = stacks.main("health", names, args.all, root, project=project) if names or not args.stacks else 0
-    if vault.CHECK in args.stacks or args.all:
-        rc = max(rc, vault.health(config.load(root), named=vault.CHECK in args.stacks))
-    if spool.CHECK in args.stacks or args.all:
-        rc = max(rc, spool.health(config.load(root), named=spool.CHECK in args.stacks))
+    for mod in MACHINE_CHECKS:
+        if mod.CHECK in args.stacks or args.all:
+            rc = max(rc, mod.health(config.load(root), named=mod.CHECK in args.stacks))
     if not (codeindex.CHECK in args.stacks or args.all or (project and not args.stacks)):
         return rc
     try:
