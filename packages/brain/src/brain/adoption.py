@@ -1,10 +1,12 @@
 """Command adoption (wi-brain-command-adoption): ``brain perf --usage``, at zero token. It crosses the CLI registry
 with the engine's exec ledger and a mini scan of the sessions' transcripts, so a command no one runs, or work a
-session did by hand that a command answers, shows up; each gap comes with what to propose (a hint, a hook wiring, a
-procedure line, wire, document or retire). It refuses nothing, and reruns after each wave.
+session did by hand that a command answers, shows up; each gap comes with what to propose, of three kinds: hint (the
+read hint), procedure (a line in a procedure), wire (a hook, a schedule or a procedure, documented, or retired). It
+refuses nothing, and reruns after each wave.
 
 - **The registry**: every command of ``brain --help`` and, for a family (``brain item show``), each subcommand, as
-  the exec ledger names its runs (brain.selftime.command_task); an alias counts as its command.
+  the exec ledger names its runs (brain.selftime.command_task); an alias counts as its command, and a family run
+  through its alias, which the ledger names without its subcommand (``brain doctor``), counts for each subcommand.
 - **The exec ledger** (brain.selftime's, ``<BRAIN_HOME>/ledger/engine/``): runs per command and subcommand over the
   period (28 days by default), the ones that never ran.
 - **The transcripts** (Claude Code's, this machine's, main and subagents, those written in the period): the brain
@@ -59,6 +61,8 @@ ANSWERS = {   # a kind -> the read command that answers a hand read of it
 SEGMENT = re.compile(r"[;&|\n]+|\$\(|`")
 BRAIN = re.compile(r"(^|[\\/])brain(\.exe)?$", re.I)
 OPTIONS = ("--root", "--project", "--store")   # brain's options that take a value, before the command
+QUOTED = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'")
+PREFIXES = {"&", "sudo", "time", "exec", "nohup", "call", "do", "then", "else", "{", "("}
 
 
 def units(parser: argparse.ArgumentParser) -> tuple[dict[str, str], dict[str, str]]:
@@ -85,11 +89,18 @@ def units(parser: argparse.ArgumentParser) -> tuple[dict[str, str], dict[str, st
             out.setdefault(unit, module)
             if mine != unit:
                 alias[mine] = unit
+        if name != canon:   # the ledger names a family run through its alias without its subcommand (brain doctor)
+            alias[f"brain {name}"] = f"brain {canon}"
         if not names:
             out.setdefault(f"brain {canon}", module)
-            if name != canon:
-                alias[f"brain {name}"] = f"brain {canon}"
     return out, alias
+
+
+def ran_count(unit: str, counts: Counter) -> int:
+    """The runs of ``unit``, else of its family when the ledger names it without the subcommand (a family run through
+    its alias: brain doctor list is recorded as brain doctor, counted as brain profile)."""
+    words = unit.split()
+    return int(counts.get(unit, 0)) or (int(counts.get(" ".join(words[:2]), 0)) if len(words) > 2 else 0)
 
 
 def _command(words: list[str]) -> tuple[str, list[str]] | None:
@@ -109,18 +120,22 @@ def _command(words: list[str]) -> tuple[str, list[str]] | None:
 
 def typed(command: str, known: dict[str, str], alias: dict[str, str]) -> list[str]:
     """The registry's units a shell command line runs (``brain [options] <command> [<subcommand>]``, the program
-    ``brain`` or ``brain.exe`` by any path); a heredoc's body is left out."""
+    ``brain`` or ``brain.exe`` by any path, or ``python -m brain``) at the start of a part of the line, after an
+    assignment or a prefix (``&``, ``sudo``); a quoted text is one word (a commit message that names a command runs
+    none), and from the first heredoc on the line is left out."""
     if not isinstance(command, str):
         return []
-    first = command.partition("\n")[0]
-    text = first if "<<" in first else command
+    text = QUOTED.sub(lambda m: re.sub(r"[;&|`\n]|\$\(", " ", m.group(0)), command.split("<<", 1)[0])
     out = []
     for seg in SEGMENT.split(text):
-        words = [w.strip("'\"") for w in seg.split()]
-        at = next((i for i, w in enumerate(words) if BRAIN.search(w)), None)
-        if at is None:
+        words = seg.split()
+        while words and (words[0].lower() in PREFIXES or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0])):
+            words.pop(0)
+        if len(words) > 2 and words[0].lower() in ("python", "python3", "py") and words[1:3] == ["-m", "brain"]:
+            words = words[2:]
+        if not words or not BRAIN.search(words[0].strip("'\"")):
             continue
-        parts = _command(words[at + 1:])
+        parts = _command([w.strip("'\"") for w in words[1:]])
         if parts is None:
             continue
         cmd, after = parts
@@ -182,21 +197,39 @@ def scan(files: list[Path], since: datetime, until: datetime, known: dict[str, s
 
 
 def _tool_calls(f: Path, since: datetime, until: datetime):
-    """(record, tool, input) for each tool call an assistant message of ``f`` made in [since, until)."""
-    from .transcript import iter_records, parse_ts
-    try:
-        records = list(iter_records(f))
-    except OSError:
-        return
-    for rec, _ in records:
+    """(record, tool, input) for each tool call an assistant message of ``f`` made in [since, until), the file read a
+    line at a time (a line with no tool call is not parsed); a record whose time cannot be read is skipped."""
+    for rec in _records(f):
         content = (rec.get("message") if isinstance(rec.get("message"), dict) else {}).get("content")
-        at = parse_ts(rec.get("timestamp")) if rec.get("type") == "assistant" and isinstance(content, list) else None
-        if at is None or not since <= at < until:
+        if rec.get("type") != "assistant" or not isinstance(content, list):
+            continue
+        try:
+            at = datetime.fromisoformat(str(rec.get("timestamp")).replace("Z", "+00:00"))
+            at = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+            if not since <= at < until:
+                continue
+        except (TypeError, ValueError):
             continue
         for block in content:
             if isinstance(block, dict) and block.get("type") == "tool_use":
                 inp = block.get("input")
                 yield rec, str(block.get("name") or ""), inp if isinstance(inp, dict) else {}
+
+
+def _records(f: Path):
+    try:
+        with open(f, "rb") as fh:
+            for raw in fh:
+                if b'"tool_use"' not in raw:
+                    continue
+                try:
+                    rec = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict):
+                    yield rec
+    except OSError:
+        return
 
 
 def _count(counts: dict[str, Counter], tool: str, inp: dict, cwd: str, known: dict[str, str],
@@ -237,7 +270,7 @@ def unused_features(store: Path | None, known: dict[str, str], ran: Counter) -> 
         mods = {re.sub(r"\.py(::.*)?$", "", ref.rsplit("/commands/", 1)[1]) for ref in m.code(fid)
                 if "/commands/" in ref}
         cmds = sorted(u for mod in mods for u in by_module.get(mod, []))
-        if cmds and not any(ran.get(u) for u in cmds):
+        if cmds and not any(ran_count(u, ran) for u in cmds):
             out.append({"feature": fid, "commands": cmds})
     return out
 
@@ -266,7 +299,7 @@ def report(known: dict[str, str], ran: Counter, sessions: dict, since: datetime,
         rows.append({"command": unit, "module": known[unit], "runs": n, "by_session": min(t, n) if n else t,
                      "otherwise": max(n - t, 0)})
     rows.sort(key=lambda r: (-r["runs"], r["command"]))
-    never = [r["command"] for r in rows if not r["runs"] and not r["by_session"]]
+    never = [r["command"] for r in rows if not ran_count(r["command"], ran) and not r["by_session"]]
     proposals = (_by_hand(sessions, hints_on) + _coordination(ran, subsessions)
                  + [{"kind": "wire", "count": len(f["commands"]),
                      "what": f"{f['feature']} is have, and its commands never ran: {', '.join(f['commands'])}",

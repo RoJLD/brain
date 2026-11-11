@@ -850,11 +850,14 @@ brain perf --engine [--since 7d] [--task guard] [--json]
 **Command adoption** (`brain perf --usage`, `brain.adoption`, zero token) crosses the CLI registry (every command,
 and each subcommand of a family, as the exec ledger names them) with those events and with this machine's session
 transcripts of the period (28 days by default): each command's runs, split into those a session typed itself in a
-shell and the others (a hook, a scheduled task, a script); the commands that never ran; the Read, Grep and shell reads
-of a registered brain's graph YAML, decision logs, journals and generated views that a read command answers; the hand
-edits of the files a command writes or regenerates; a feature marked have whose command modules never ran; the
-sub-sessions started against the runs of `brain brief` and `brain wave plan`. Each gap comes with what to propose (the
-read hint, a hook wiring, a procedure line, wire, document or retire); nothing is refused. Run it after each wave. It
+shell (a command at the start of a part of the line; a quoted text or a heredoc runs none) and the others (a hook, a
+scheduled task, a script: the ledger's runs less the sessions', never below zero, so when the transcripts go further
+back than the ledger a command may show runs by a session only); the commands that never ran; the Read, Grep and
+shell reads of a registered brain's graph YAML, decision logs, journals and generated views that a read command
+answers; the hand edits of the files a command writes or regenerates; a feature marked have whose command modules
+never ran; the sub-sessions started against the runs of `brain brief`, `brain collisions` and `brain wave plan`. Each
+gap comes with what to propose, of three kinds: hint (the read hint), procedure (a procedure line), wire (a hook, a
+schedule or a procedure, documented, or retired); nothing is refused. Run it after each wave. It
 is a flag of `brain perf` rather than an audit lens because it reads what ran on a machine, as perf does, not a repo's
 code.
 
