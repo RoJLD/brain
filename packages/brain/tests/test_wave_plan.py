@@ -77,7 +77,7 @@ def test_items_that_share_a_file_share_a_lot_and_a_hot_file_does_not(root):
     assert set(wp.units) == {"wi-cli-fix", "wi-cli-help", "wi-views", "wi-views-more", "wi-lots", "wi-after",
                              "wi-blank", "wi-carried"}   # open, carried in included, done left out
     assert by["wi-cli-fix"] is by["wi-cli-help"]   # a feature's CodeRef meets the file name cli.py
-    assert {"items": ["wi-cli-fix", "wi-cli-help"], "files": ["packages/brain/src/brain/cli.py"]} in wp.conflicts
+    assert {"items": ["wi-cli-fix", "wi-cli-help"], "files": ["engine:packages/brain/src/brain/cli.py"]} in wp.conflicts
     assert by["wi-views"] is by["wi-views-more"] and by["wi-views"].items == ["wi-views", "wi-views-more"]
     assert by["wi-views"] is not by["wi-lots"]   # README.md is hot: counted apart, never a reason to share a lot
     assert wp.hot == {"README.md": ["wi-lots", "wi-views"]}
@@ -114,8 +114,45 @@ def test_the_caps_in_force_size_the_rounds_and_the_guards_say_now(root, monkeypa
     text = "\n".join(lots.render(wp))
     assert "memory guard refuses a new session now" in text and "no lot can start now" in text
     monkeypatch.setattr(governor, "memory_info", lambda: {"committed": 40.0, "available_gb": 30.0})
-    monkeypatch.setattr(quota, "load_status", lambda: {"pct_now": 80, "pace": {"at_reset": 120}})
-    assert _plan(root, wave="1.1.0").caps["now"] == 0   # the forecast: open no new wave
+    monkeypatch.setattr(quota, "load_status", lambda: {"pct_now": 80, "pace": {"at_reset": 120},
+                                                       "now": "2999-01-01T00:00Z", "resets": "2999-01-05T12:00Z"})
+    wp = _plan(root, wave="1.1.0")
+    assert wp.caps["now"] == 0 and "(the last forecast, 2999-01-01T00:00Z)" in wp.caps["quota_advice"]
+    monkeypatch.setattr(quota, "load_status", lambda: {"pct_now": 80, "pace": {"at_reset": 120},
+                                                       "now": "2026-01-01T00:00Z", "resets": "2026-01-05T12:00Z"})
+    wp = _plan(root, wave="1.1.0")   # its window has reset since: that forecast answers nothing now
+    assert wp.caps["quota"] == "unknown" and wp.caps["now"] == wp.caps["at_once"]
+    assert "from before the window's reset" in wp.caps["quota_advice"]
+    monkeypatch.setattr(quota, "load_status", lambda: {"pct_now": 80, "pace": {"at_reset": 50}, "live": "x"})
+    assert _plan(root, wave="1.1.0").caps["quota"] == "unknown"   # a quota.json no engine wrote breaks nothing
+    assert _plan(root, wave="1.1.0", at_once=-2).caps["at_once"] == 1
+
+
+def test_a_sessions_cap_with_no_room_beside_the_master_lets_no_lot_start(root, monkeypatch):
+    monkeypatch.setattr(governor, "settings", lambda cwd: {"limits": dict(governor.DEFAULTS, sessions=1),
+                                                           "projects": {}})
+    wp = _plan(root, wave="1.1.0")
+    assert wp.caps["at_once"] == 1 and wp.caps["sessions_left"] == 0 and wp.caps["now"] == 0
+    text = "\n".join(lots.render(wp))
+    assert "the sessions cap leaves no session beside the master's" in text and "no lot can start now" in text
+
+
+def test_a_prerequisite_reached_through_an_item_outside_the_wave_orders_the_rounds(root):
+    store = root / "notes" / "graph"
+    edges = store / "edges" / "work.yaml"
+    edges.write_text(edges.read_text(encoding="utf-8") + "- {from: wi-outside, to: wi-cli-fix, type: depends_on}\n",
+                     encoding="utf-8", newline="\n")
+    wp = _plan(root, wave="1.1.0")
+    round_of = {i: lot.round for lot in wp.lots for i in lot.items}
+    assert wp.units["wi-blank"].after == ["wi-cli-fix"] and wp.units["wi-blank"].outside == ["wi-outside"]
+    assert round_of["wi-blank"] > round_of["wi-cli-fix"]
+
+
+def test_the_command_refuses_an_at_once_below_one(root, capsys):
+    for bad in ("0", "-2", "x"):
+        with pytest.raises(SystemExit):
+            cli.main(["--root", str(root), "wave", "plan", "--at-once", bad])
+    assert "a whole number of 1 or more" in capsys.readouterr().err
 
 
 def test_is_hot_and_meet():
@@ -123,6 +160,9 @@ def test_is_hot_and_meet():
     assert lots.is_hot("packages/brain/changes/wi-x.md") and not lots.is_hot("src/brain/changes.py")
     assert lots.is_hot("src/x.py", ("x.py",)) and not lots.is_hot("src/xx.py", ("x.py",))
     assert lots.meet("packages/brain/src/brain/cli.py", "cli.py") and not lots.meet("src/mycli.py", "cli.py")
+    assert lots.meet("brain:src/x.py", "x.py") and lots.meet("brain:src/x.py", "brain:src/x.py")
+    assert not lots.meet("brain:src/x.py", "other:src/x.py")   # one path in two repos: two files
+    assert lots.is_hot("brain:packages/brain/README.md")
 
 
 def test_the_command_prints_the_plan_and_its_json(root, capsys):

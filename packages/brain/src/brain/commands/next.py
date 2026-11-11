@@ -32,7 +32,7 @@ def cmd_next(args, root: Path) -> int:
             name = ""
         try:
             wp = lots.plan(store, root, rep["current"]["id"], name)
-        except ValueError:
+        except Exception:   # noqa: BLE001 - the lots are a summary: brain next prints the waves whatever they say
             wp = None
     if args.json:
         print(json.dumps(rep | {"lots": wp.as_dict() if wp else None}, indent=2, ensure_ascii=False))

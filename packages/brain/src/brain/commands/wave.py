@@ -5,6 +5,7 @@ makes, the closure check, the import of the items' free-text props.wave (brain.w
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -76,6 +77,16 @@ def _import(args, store: Path) -> int:
     return 0
 
 
+def _positive(text: str) -> int:
+    try:
+        n = int(text)
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"{text!r}: a whole number of 1 or more")
+    return n
+
+
 def _plan(args, root: Path, store: Path) -> int:
     try:
         name = _project(args, root).name
@@ -140,7 +151,7 @@ def register(sub, ctx) -> None:
     wp = wv.add_parser("plan", help="the wave's lots: items that share no file but hot ones, in rounds by their "
                                     "depends_on, sized by the caps in force (zero token, refuses nothing)")
     wp.add_argument("version", nargs="?", help="the wave's release (or its id); default: the current wave")
-    wp.add_argument("--at-once", type=int, help=f"the PRs one machine verifies at once (default {lots.AT_ONCE})")
+    wp.add_argument("--at-once", type=_positive, help=f"the PRs one machine verifies at once (default {lots.AT_ONCE})")
     wp.add_argument("--hot", action="append", help="a hot file more, counted apart (a name, or a folder ending in /; "
                                                    "repeatable)")
     wp.add_argument("--json", action="store_true", help="the data, as JSON")

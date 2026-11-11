@@ -28,6 +28,7 @@ next`` shows the current wave's plan in short.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import collisions, governor, quota, resume, waves
@@ -85,8 +86,8 @@ class WavePlan:
 
 def is_hot(path: str, extra: tuple[str, ...] = ()) -> bool:
     """Whether ``path`` is a hot file: its name is one of :data:`HOT` (or ``extra``), or it lies in a folder that one
-    ending in ``/`` names (``changes/``)."""
-    p = "/" + path.replace("\\", "/").lstrip("/")
+    ending in ``/`` names (``changes/``). A CodeRef's ``repo:`` before the path is left aside."""
+    p = "/" + _split(path)[1].replace("\\", "/").lstrip("/")
     for h in (*HOT, *extra):
         if h.endswith("/") and f"/{h}" in p:
             return True
@@ -95,9 +96,19 @@ def is_hot(path: str, extra: tuple[str, ...] = ()) -> bool:
     return False
 
 
+def _split(entry: str) -> tuple[str, str]:
+    """(repo, path) of a surface entry: ``repo:path`` for a CodeRef's, a bare name or path otherwise ('' repo)."""
+    repo, sep, path = entry.partition(":")
+    return (repo, path) if sep else ("", entry)
+
+
 def meet(a: str, b: str) -> bool:
-    """Whether two surface entries are one file: equal, or one a path that ends with ``/`` and the other."""
-    return a == b or a.endswith("/" + b) or b.endswith("/" + a)
+    """Whether two surface entries are one file: equal, or one a path that ends with ``/`` and the other; two
+    CodeRefs of different repos never meet."""
+    (ra, pa), (rb, pb) = _split(a), _split(b)
+    if ra and rb and ra != rb:
+        return False
+    return pa == pb or pa.endswith("/" + pb) or pb.endswith("/" + pa)
 
 
 def shared(a: Unit, b: Unit) -> list[str]:
@@ -116,15 +127,30 @@ def units_of(plan: waves.Plan, st: resume.Store, wid: str, extra_hot: tuple[str,
     for i in ids:
         node = st.nodes.get(i) or plan.nodes.get(i) or {"id": i}
         paths, names = collisions.surface(node, st)
-        entries = sorted({p for _repo, p in paths} | set(names))
+        entries = sorted({f"{repo}:{p}" if repo else p for repo, p in paths} | set(names))
         out[i] = Unit(i, str(node.get("title") or ""), plan.status(i), str((node.get("props") or {}).get("priority")
                                                                            or ""),
                       [e for e in entries if not is_hot(e, extra_hot)], [e for e in entries if is_hot(e, extra_hot)])
     for i, u in out.items():
-        open_deps = plan.blockers(i)
-        u.after = sorted(d for d in open_deps if d in out)
-        u.outside = sorted(d for d in open_deps if d not in out)
+        u.outside = sorted(d for d in plan.blockers(i) if d not in out)
+        u.after = sorted(_inside(plan, i, set(out)))
     return out
+
+
+def _inside(plan: waves.Plan, nid: str, wave: set[str]) -> set[str]:
+    """The wave's open items ``nid`` waits on: its open prerequisites in the wave, and those it reaches through open
+    items outside the wave (A after B outside, B after C inside: A comes after C)."""
+    found, seen, stack = set(), {nid}, list(plan.blockers(nid))
+    while stack:
+        d = stack.pop()
+        if d in seen:
+            continue
+        seen.add(d)
+        if d in wave:
+            found.add(d)
+        else:
+            stack += plan.blockers(d)
+    return found
 
 
 class _Union:
@@ -253,8 +279,9 @@ def caps_in_force(root: Path | None, project: str, at_once: int | None = None) -
         lim = governor.caps(governor.settings(str(root or "")), project)
     except Exception:   # noqa: BLE001 - a config that does not load leaves the defaults; the plan still prints
         lim = dict(governor.DEFAULTS)
-    sessions = max(int(lim["sessions"]) - 1, 1)   # the master's own session counts in the cap
-    verify = int(at_once) if at_once else AT_ONCE
+    children = int(lim["sessions"]) - 1   # the master's own session counts in the cap
+    sessions = max(children, 1)           # a plan still has a round of one; ``now`` says none can start
+    verify = max(int(at_once), 1) if at_once is not None else AT_ONCE
     try:
         mem = governor.memory_info()
         refused = governor.memory_refusal(mem.get("committed"), mem.get("available_gb"), lim)
@@ -262,15 +289,27 @@ def caps_in_force(root: Path | None, project: str, at_once: int | None = None) -
             mem.get("committed"), mem.get("available_gb"), lim)
     except Exception:   # noqa: BLE001 - a machine whose memory cannot be read
         refused, memory = "", "not read on this machine"
-    fc = quota.load_status()
-    try:
-        level, advice = quota.advice(fc) if fc else ("unknown", "no forecast yet (brain usage quota)")
-    except (KeyError, TypeError, ValueError):
-        level, advice = "unknown", "the last forecast cannot be read (brain usage quota)"
+    level, advice = quota_answer(quota.load_status(), datetime.now(timezone.utc))
     lots = min(sessions, verify)
-    now = 0 if refused or level == "none" else lots
+    now = 0 if refused or level == "none" or children < 1 else lots
     return {"at_once": lots, "sessions": sessions, "verify": verify, "memory": memory, "memory_refuses": bool(refused),
-            "quota": level, "quota_advice": advice, "now": now}
+            "sessions_left": max(children, 0), "quota": level, "quota_advice": advice, "now": now}
+
+
+def quota_answer(fc: dict, now: datetime) -> tuple[str, str]:
+    """(level, words) of the last quota forecast (brain.quota's quota.json, through its reader), said as the last
+    forecast with its time; a forecast whose window has reset since, or that cannot be read, answers nothing
+    ("unknown")."""
+    if not fc:
+        return "unknown", "no forecast yet (brain usage quota)"
+    try:
+        resets = quota._dt(fc.get("resets"))
+        if resets is not None and resets <= now:
+            return "unknown", f"the last forecast ({fc.get('now')}) is from before the window's reset (brain usage quota)"
+        level, words = quota.advice(fc)
+    except Exception:   # noqa: BLE001 - a quota.json written by hand or by another engine never breaks a plan
+        return "unknown", "the last forecast cannot be read (brain usage quota)"
+    return level, f"{words} (the last forecast, {fc.get('now') or 'undated'})"
 
 
 def plan(store: Path, root: Path | None, wave: str = "", project: str = "", at_once: int | None = None,
@@ -329,6 +368,7 @@ def render(wp: WavePlan) -> list[str]:
              f"At most {c['at_once']} lot(s) a round: the sessions cap in force less the master's ({c['sessions']}), "
              f"the PRs verified at once ({c['verify']}, --at-once)",
              f"Now: memory guard {c['memory']}; quota: {c['quota_advice']}"
+             + ("; the sessions cap leaves no session beside the master's" if not c["sessions_left"] else "")
              + ("; no lot can start now" if not c["now"] else "")]
     for r, group in enumerate(wp.rounds, 1):
         lines.append(f"Round {r} ({len(group)} lot(s)):")
