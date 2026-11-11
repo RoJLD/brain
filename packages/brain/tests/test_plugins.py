@@ -29,7 +29,7 @@ SEEN = []
 
 def main(argv):
     SEEN.append(list(argv))
-    return 5 if argv[:1] == ["boom"] else None
+    return {"boom": 5, "say": "a message"}.get(argv[0] if argv else "")
 '''
 
 
@@ -78,9 +78,9 @@ def test_a_plugin_that_cannot_load_fails_its_own_run_only(plugged, capsys):
     _ref(plugged, "'nope_cli:'")
     assert cli.main(["demo", "hello"]) == 2
     assert "plugin 'nope_cli:' cannot be loaded" in capsys.readouterr().err
-    assert cli.main(["status", "--project", "demo", "--quick"]) == 0
-    _ref(plugged, "'side_cli:'")   # a module that is neither a command module nor a main
+    assert cli.main(["journal", "last", "--project", "demo"]) in (0, 1)
     plugged.write_text(plugged.read_text(encoding="utf-8").replace("nope_cli:", "side_cli:"), encoding="utf-8")
+    # side_cli: a module that is neither a command module nor a main
     capsys.readouterr()
     assert cli.main(["demo", "hello"]) == 2
     assert "neither a command module" in capsys.readouterr().err
@@ -106,7 +106,46 @@ def test_a_main_plugin_from_an_entry_point_gets_the_words_after_the_project(plug
     import side_cli
     assert cli.main(["side", "cron", "list", "--all"]) == 0
     assert cli.main(["side", "boom"]) == 5
-    assert side_cli.SEEN == [["cron", "list", "--all"], ["boom"]]
+    assert cli.main(["side", "say"]) == 1 and capsys.readouterr().err == "a message\n"   # sys.exit(main())'s str
+    assert side_cli.SEEN == [["cron", "list", "--all"], ["boom"], ["say"]]
+
+
+def test_a_plugin_whose_import_raises_fails_its_own_run(plugged, tmp_path, capsys):
+    (tmp_path / "lib" / "raising_cli.py").write_text("raise RuntimeError('broken at import')\n", encoding="utf-8")
+    _ref(plugged, "'raising_cli:'")
+    assert cli.main(["demo", "hello"]) == 2
+    assert "broken at import" in capsys.readouterr().err
+
+
+def test_brains_own_commands_never_read_the_plugins(plugged, monkeypatch, capsys):
+    monkeypatch.setattr(plugins, "declared", lambda root=None: pytest.fail("a builtin command read the plugins"))
+    assert cli.main(["--proj", "demo", "journal", "last"]) in (0, 1)   # an abbreviated option takes its value
+    assert cli.main(["journal", "last", "--project", "demo"]) in (0, 1)
+
+
+def test_a_registry_that_cannot_be_read_leaves_argparses_error(tmp_path, monkeypatch, capsys):
+    def broken(root=None):
+        raise ValueError("bad registry")
+
+    monkeypatch.setattr(plugins, "declared", broken)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["demo", "x"])
+    assert exc.value.code == 2 and "invalid choice: 'demo'" in capsys.readouterr().err
+
+
+def test_check_all_checks_the_plugins_against_brains_commands(monkeypatch, tmp_path):
+    from brain.commands import _stores
+    seen = []
+
+    def spy(root, commands):
+        seen.append(set(commands))
+        raise LookupError("stop the registry's check here")
+
+    monkeypatch.setenv("BRAIN_PROJECTS", str(tmp_path / "none.yaml"))
+    monkeypatch.setattr(plugins, "check", spy)
+    with pytest.raises(LookupError, match="stop the registry"):
+        _stores.check_registry(tmp_path, [])
+    assert {"status", "item", "check", "perf"} <= seen[0]
 
 
 def test_a_registry_without_the_key_behaves_as_before(plugged, capsys):
@@ -141,7 +180,8 @@ def test_a_plugin_run_is_timed_as_brain_project_subcommand(plugged, monkeypatch,
 def test_check_reports_a_plugin_that_never_runs(tmp_path, monkeypatch, capsys):
     reg = tmp_path / "projects.yaml"
     reg.write_text("status: {root: ., plugin: x}\nbad: {root: ., stores: [g], plugin: 3}\n"
-                   "ok: {root: ., stores: [h], plugin: 'pkg:main'}\n", encoding="utf-8")
+                   "ok: {root: ., stores: [h], plugin: 'pkg:main'}\nnone: {root: ., stores: [i], plugin: null}\n"
+                   "empty: {root: ., stores: [j], plugin: ''}\n", encoding="utf-8")
     monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
     errors = plugins.check(None, {"status", "item"})
     assert errors == ["project status: its plugin never runs, brain status is one of brain's commands (rename the "
@@ -154,3 +194,4 @@ def test_split_skips_brains_own_options():
     assert plugins.split(["--root", "r", "--store=s", "demo", "x", "--root", "y"]) == (
         ["--root", "r", "--store=s"], "demo", ["x", "--root", "y"])
     assert plugins.split(["--help"]) is None and plugins.split([]) is None
+    assert plugins.split(["--ro", "r", "--root=s", "demo"]) == (["--ro", "r", "--root=s"], "demo", [])

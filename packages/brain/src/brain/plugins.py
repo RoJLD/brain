@@ -53,7 +53,7 @@ def resolve(ref: str):
             for part in filter(None, attr.strip().split(".")):   # module: is the module itself
                 obj = getattr(obj, part)
             return obj
-        except (ImportError, AttributeError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - a plugin's import error is its own
             raise PluginError(f"plugin {ref!r} cannot be loaded: {exc}") from exc
     found = [ep for ep in metadata.entry_points(group=GROUP) if ep.name == ref]
     if not found:
@@ -78,8 +78,8 @@ def split(argv: list[str]) -> tuple[list[str], str, list[str]] | None:
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a in OPTIONS:
-            i += 2
+        if a.startswith("--") and "=" not in a and len(a) > 2 and any(o.startswith(a) for o in OPTIONS):
+            i += 2   # --root X, or an abbreviation argparse accepts (--proj X)
         elif a.startswith("-"):
             i += 1
         else:
@@ -128,7 +128,10 @@ def run(before: list[str], name: str, ref: str, after: list[str], ctx, resolve_r
         sub = next((w for w in after if not w.startswith("-")), "")
         with selftime.run(" ".join(["brain", name, *([sub] if sub else [])])):
             code = obj(list(after))
-        return code if isinstance(code, int) else 0
+        if isinstance(code, str):   # sys.exit(main())'s convention: a message is a failure
+            print(code, file=sys.stderr)
+            return 1
+        return int(code) if isinstance(code, int) else 0
     if kind != "module":
         print(f"brain {name}: plugin {ref!r} is neither a command module (register and run) nor a callable main",
               file=sys.stderr)
@@ -161,15 +164,18 @@ def help_lines(root: Path | None = None) -> list[str]:
 
 
 def check(root: Path | None, commands) -> list[str]:
-    """What is wrong with the plugins declared: a value that is not a non-empty string, a project whose name is one
-    of brain's ``commands`` (the command wins, so the plugin would never run). A plugin that is not installed is not
-    an error here: a machine may lack a project's package; its run says so."""
+    """What is wrong with the plugins declared: a value that is neither empty (null or '': none declared, as without the
+    key) nor a string, a project whose name is one of brain's ``commands`` (the command wins, so the plugin would
+    never run). A plugin that is not installed is not an error here: a machine may lack a project's package; its run
+    says so."""
     errors = []
     for name, entry in projects.raw(root).items():
         if not isinstance(entry, dict) or "plugin" not in entry:
             continue
         value = entry["plugin"]
-        if not (isinstance(value, str) and value.strip()):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        if not isinstance(value, str):
             errors.append(f"project {name}: plugin is an entry point name of the group {GROUP} or module:attr")
         elif name in commands:
             errors.append(f"project {name}: its plugin never runs, brain {name} is one of brain's commands "

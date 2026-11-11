@@ -958,9 +958,12 @@ The object is either a command module, with the contract above (`register(sub, c
 `args.project` and the project's root, its worktree when run from one), or a callable `main(argv)` given the words
 after the project's name: a project's own CLI plugs in unchanged, so its console script stays a shortcut
 (`demo cron list` is `brain demo cron list`). `brain --help` lists the plugged projects without importing them,
-`brain demo --help` the plugin's subcommands; each run is timed in the exec ledger as `brain demo <subcommand>`. A
-registry without the key behaves as before, and a plugin that cannot load fails its own run only (exit 2). A project
-named like one of brain's commands never runs its plugin (the command wins): `brain check --all` reports it.
+`brain demo --help` a command module's subcommands (a main gets `--help` itself); brain's own options (`--root`,
+`--store`) go before the project's name. Each run is timed in the exec ledger as `brain demo <subcommand>`; a main
+that returns a string fails with it as its message (`sys.exit(main())`'s convention). A registry without the key, or
+with `plugin: null`, behaves as before, and a plugin that cannot load fails its own run only (exit 2). `brain check
+--all` reports a value that is not a string and a project named like one of brain's commands, whose plugin never runs
+(the command wins).
 `brain status --project demo` and `brain status --all` show the project as any other.
 
 ## Tests
