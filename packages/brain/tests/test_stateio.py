@@ -37,6 +37,82 @@ def test_a_missing_file_is_an_empty_writable_record(tmp_path):
     assert not (tmp_path / "s.json.bak").exists()  # nothing to back up the first time
 
 
+# --- integrity (wi-brain-integrity-checks): opt-in sha256 sidecars ---
+
+@pytest.fixture
+def integrity(monkeypatch):
+    monkeypatch.setenv(stateio.INTEGRITY_ENV, "1")
+
+
+def test_integrity_is_off_by_default_and_a_save_removes_a_stale_sidecar(tmp_path, monkeypatch):
+    monkeypatch.delenv(stateio.INTEGRITY_ENV, raising=False)
+    monkeypatch.setenv("BRAIN_CONFIG", str(tmp_path / "none.json"))
+    assert not stateio.integrity_on()
+    f = tmp_path / "s.json"
+    stateio.save(stateio.load(f), {"a": 1})
+    assert not stateio.sidecar(f).exists()
+    _write(stateio.sidecar(f), '{"sha256": "0"}')        # left from a time it was on: it would go stale
+    _write(f, '{"a": 2}')
+    assert stateio.load(f).data == {"a": 2}               # off: not checked
+    stateio.save(stateio.load(f), {"a": 3})
+    assert not stateio.sidecar(f).exists()
+
+
+def test_a_sidecar_is_written_and_checked(tmp_path, integrity):
+    f = tmp_path / "s.json"
+    stateio.save(stateio.load(f), {"a": 1})
+    side = json.loads(stateio.sidecar(f).read_text(encoding="utf-8"))
+    assert side["sha256"] == __import__("hashlib").sha256(f.read_bytes()).hexdigest()
+    assert (side["size"], side["mtime_ns"]) == (f.stat().st_size, f.stat().st_mtime_ns)
+    assert stateio.load(f).status == "ok"
+    stateio.sidecar(f).unlink()
+    assert stateio.load(f).data == {"a": 1}               # no sidecar (every file before): loads as before
+
+
+def test_bit_rot_is_set_aside_never_reset(tmp_path, integrity, capsys):
+    f = tmp_path / "s.json"
+    stateio.save(stateio.load(f), {"a": 1})
+    st0 = f.stat()
+    f.write_bytes(f.read_bytes().replace(b'"a": 1', b'"a": 7'))    # the same size
+    os.utime(f, ns=(st0.st_atime_ns, st0.st_mtime_ns))             # and the same time: rot, not a writer
+    ro = stateio.load(f, aside=False)                               # a read-only command moves nothing
+    assert ro.status == "unreadable" and "sha256 sidecar" in ro.why and not ro.refused and f.exists()
+    st = stateio.load(f)
+    assert st.status == "aside" and st.data == {} and not f.exists()
+    (copy,) = [p for p in _asides(f) if not p.name.endswith(stateio.SIDECAR)]
+    assert json.loads(copy.read_text(encoding="utf-8"))["a"] == 7 and stateio.sidecar(copy).exists()
+    assert "sha256 sidecar" in capsys.readouterr().err and not stateio.sidecar(f).exists()
+    stateio.save(st, {"b": 1})
+    assert stateio.load(f).data == {"b": 1}
+
+
+def test_a_file_another_writer_wrote_since_loads_and_gets_a_fresh_sidecar(tmp_path, integrity):
+    f = tmp_path / "s.json"
+    stateio.save(stateio.load(f), {"a": 1})
+    _write(f, '{"v": 1, "a": 22}')     # an older engine after a rollback: no sidecar update, its size differs
+    st = stateio.load(f)
+    assert st.status == "ok" and st.data == {"a": 22}
+    stateio.save(st)
+    assert json.loads(stateio.sidecar(f).read_text(encoding="utf-8"))["size"] == f.stat().st_size
+
+
+def test_integrity_follows_config_json_and_the_environment(tmp_path, monkeypatch):
+    monkeypatch.delenv(stateio.INTEGRITY_ENV, raising=False)
+    cfg = _write(tmp_path / "config.json", json.dumps({"v": 1, "integrity": {"sidecars": True}}))
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    assert stateio.integrity_on()
+    _write(cfg, json.dumps({"v": 1, "integrity": {"sidecars": False}, "pad": "changed size"}))
+    assert not stateio.integrity_on()                     # read again: the file changed
+    _write(cfg, json.dumps({"v": 1, "integrity": {"sidecars": True}}))
+    monkeypatch.setenv(stateio.INTEGRITY_ENV, "0")
+    assert not stateio.integrity_on()
+
+
+def test_a_sidecar_is_a_leftover_of_its_store_not_a_name_of_its_own():
+    from brain import classes
+    assert classes.HOME_TRANSIENT.search("tui.json.sha256") and not classes.HOME_TRANSIENT.search("sha256s")
+
+
 @pytest.mark.parametrize("text, why", [("{not json", "is not JSON"), ("[1, 2]", "is not an object (a list)"),
                                        ('"x"', "is not an object (a str)"), ("", "is not JSON")])
 def test_an_unreadable_or_non_object_file_is_set_aside_never_saved_over(tmp_path, capsys, text, why):

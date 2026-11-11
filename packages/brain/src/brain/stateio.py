@@ -21,7 +21,13 @@ A truth-local file lives on one machine, with no git behind it: ``$BRAIN_HOME/sc
 - **the write**: a backup of the file on disk first (``<name>.bak``, beside it: the same folder, so the same store
   and the same data class; a store under ``$BRAIN_HOME/secrets`` is never copied), then a temporary file, flushed
   and synced, moved over the file with ``os.replace``. The file on disk is checked again just before: a newer brain
-  that wrote it since the load still wins.
+  that wrote it since the load still wins;
+- **integrity** (opt-in: config.json ``integrity.sidecars`` true, or ``$BRAIN_STATE_INTEGRITY=1``; off by default):
+  :func:`save` writes a sidecar beside the file, ``<name>.sha256`` (its sha256, size and mtime), and :func:`load`
+  checks it. A file whose size and mtime are the sidecar's but whose sha256 is not (bit rot) is set aside like an
+  unreadable one, with its note; one whose size or mtime differ was written since by another writer (an older engine
+  after a rollback): it loads, and the next save writes a fresh sidecar. A missing sidecar (every file before) loads
+  as before; with integrity off, a save removes a sidecar left from before, so that none goes stale.
 
 The version locator is the top-level key ``v``, an integer. It never reaches the caller's data: :attr:`State.data`
 is the record without it, and :func:`save` writes it back. A file without ``v`` is read as version 1. A record keyed
@@ -43,6 +49,7 @@ Two other classes go through this module (wi-brain-state-safe-io-rest):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -59,6 +66,10 @@ from . import paths
 VKEY = "v"
 BACKUP = ".bak"
 ASIDE = ".unreadable-"
+SIDECAR = ".sha256"                       # <name>.sha256 beside a truth-local file, with integrity on
+INTEGRITY_ENV = "BRAIN_STATE_INTEGRITY"   # 1/on or 0/off: wins over config.json integrity.sidecars
+_INTEGRITY: dict[tuple, bool] = {}        # (config.json, its mtime and size) -> integrity.sidecars, per process
+_CONFIG_AT: dict[tuple, Path | None] = {}  # the environment that finds config.json -> where it is, per process
 # The months a log class keeps, this one counted (None: kept, a record nothing else holds). The engine's errors
 # (ledger/errors.log and its monthly files), its self-timing (engine/*.jsonl), the ledgers of records
 # (ledger/<name>-YYYY-MM.jsonl: actions, decisions, events, guard decisions, the queue).
@@ -101,6 +112,83 @@ class State:
         return ""
 
 
+def integrity_on() -> bool:
+    """Whether the sha256 sidecars are on: ``$BRAIN_STATE_INTEGRITY`` (1, on, true / 0, off, false), else config.json's
+    ``integrity.sidecars`` (the file brain.config finds: ``$BRAIN_CONFIG``, else the personal brain's), else off. Read
+    once per process while config.json keeps its time and size: a hook pays one stat."""
+    env = os.environ.get(INTEGRITY_ENV, "").strip().lower()
+    if env in ("1", "on", "true", "yes"):
+        return True
+    if env in ("0", "off", "false", "no"):
+        return False
+    f = _config_file()
+    try:
+        st = f.stat() if f else None
+    except OSError:
+        st = None
+    if st is None:
+        return False
+    key = (str(f), st.st_mtime_ns, st.st_size)
+    if key not in _INTEGRITY:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            data = None
+        block = data.get("integrity") if isinstance(data, dict) else None
+        _INTEGRITY[key] = isinstance(block, dict) and block.get("sidecars") is True
+    return _INTEGRITY[key]
+
+
+def _config_file() -> Path | None:
+    """config.json as brain.config finds it without a repo: ``$BRAIN_CONFIG``, else the first of brain.paths.bases()
+    that holds one."""
+    env = os.environ.get("BRAIN_CONFIG")
+    if env:
+        return Path(env).expanduser()
+    key = tuple(os.environ.get(k, "") for k in ("CLAUDE_BRAIN_DIR", "BRAIN_PERSONAL", "BRAIN_HOME"))
+    if key not in _CONFIG_AT:   # found once per process (a hook saves often): then one stat per call
+        _CONFIG_AT[key] = next((b / "config.json" for b in paths.bases() if (b / "config.json").is_file()), None)
+    return _CONFIG_AT[key]
+
+
+def sidecar(path: Path) -> Path:
+    return Path(path).with_name(Path(path).name + SIDECAR)
+
+
+def _facts(path: Path, blob: bytes) -> dict:
+    st = path.stat()
+    return {"sha256": hashlib.sha256(blob).hexdigest(), "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
+def _check_sidecar(path: Path, blob: bytes) -> str:
+    """Why ``blob`` (the file read) fails its sidecar: '' when it matches, there is none, it cannot be read, or the
+    file was written since by another writer (its size or time differ from the sidecar's: not bit rot)."""
+    try:
+        side = json.loads(sidecar(path).read_text(encoding="utf-8"))
+        st = path.stat()
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(side, dict) or not isinstance(side.get("sha256"), str):
+        return ""
+    if side.get("size") != st.st_size or side.get("mtime_ns") != st.st_mtime_ns or len(blob) != st.st_size:
+        return ""
+    return "" if hashlib.sha256(blob).hexdigest() == side["sha256"] else \
+        "is not what its sha256 sidecar holds (its size and time unchanged: bit rot or a write outside the engine)"
+
+
+def _write_sidecar(path: Path) -> None:
+    """The sidecar of the file just written (integrity on), or the removal of a stale one (off). Never raises: a
+    sidecar that cannot be written leaves the file as it is (a missing sidecar loads)."""
+    side = sidecar(path)
+    try:
+        if integrity_on():
+            write_atomic(side, json.dumps({"v": 1, **_facts(path, path.read_bytes())}) + "\n")
+        elif side.exists():
+            side.unlink()
+    except OSError as exc:
+        print(f"brain: {side}: not written ({exc.__class__.__name__})", file=sys.stderr)
+
+
 def _version(raw: dict) -> object:
     """The version locator: None without one (a ``v`` that holds an object is a record named v, not a version)."""
     v = raw.get(VKEY)
@@ -119,6 +207,12 @@ def set_aside(path: Path, why: str, seen: bytes | None = None) -> Path | None:
         n += 1
         target = path.with_name(f"{path.name}{ASIDE}{stamp}-{n}")
     os.replace(path, target)
+    side = sidecar(path)
+    if side.exists():   # the sidecar goes with the copy it describes: the evidence of a mismatch, never stale here
+        try:
+            os.replace(side, sidecar(target))
+        except OSError:
+            pass
     print(f"brain: {path} {why}: set aside as {target.name}, the record starts afresh", file=sys.stderr)
     return target
 
@@ -136,7 +230,7 @@ def load(path: Path, *, known: int = 1, check: Callable[[dict], str] | None = No
     except OSError as exc:
         st.status, st.why = "unreadable", exc.__class__.__name__
         return st
-    why = ""
+    why = _check_sidecar(st.path, blob) if integrity_on() else ""
     try:
         raw = json.loads(blob.decode("utf-8"))
     except ValueError as exc:   # UnicodeDecodeError included: a byte that is not UTF-8
@@ -254,6 +348,7 @@ def save(state: State, data: dict | None = None, *, write_v: bool = True, **dump
     opts.update(dump)
     backup(state.path)
     write_atomic(state.path, json.dumps(body, **opts) + "\n")
+    _write_sidecar(state.path)
     state.data, state.status = data, "ok"
     if write_v:
         state.v = state.known
