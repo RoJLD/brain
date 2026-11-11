@@ -137,6 +137,27 @@ def scan_lines(text: str) -> list[tuple[int, str]]:
     return hits
 
 
+# The patterns with a shape of their own (a key's prefix, a token's form): what a scan of machine files looks for
+# (brain.spool, before a store is sealed to leave the machine). The password and assignment heuristics read a word
+# before a value, and a key of the engine's own JSON files can look like one: a false refusal. The engine's text lines
+# were cleaned with the whole list when they were written (:func:`clean`).
+LOOSE = ("assignment", "password-quoted", "password-field")
+SHAPED = [(name, rx) for name, rx in PATTERNS if name not in LOOSE]
+BINARY_PROBE = 8192   # a NUL byte in a file's first 8 KB: a binary file (sqlite, an archive), not scanned
+
+
+def scan_file(path, patterns: list[tuple[str, re.Pattern[str]]] | None = None) -> list[tuple[int, str]]:
+    """(line number, pattern name) of each match of ``patterns`` (:data:`SHAPED` by default) in a text file, in
+    order; [] for a binary one. OSError when it cannot be read."""
+    with open(path, "rb") as fh:
+        blob = fh.read()
+    if b"\0" in blob[:BINARY_PROBE]:
+        return []
+    text = blob.decode("utf-8", "replace")
+    hits = [(text.count("\n", 0, m.start()) + 1, name) for name, rx in (patterns or SHAPED) for m in rx.finditer(text)]
+    return sorted(hits)
+
+
 def strip_url_credentials(url: str) -> str:
     """The URL without its user-info part (the user and password before the @)."""
     return re.sub(r"^([a-z][a-z0-9+.\-]*://)[^/@\s]+@", r"\1", url.strip())
