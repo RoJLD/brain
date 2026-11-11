@@ -28,6 +28,11 @@ def sessions_dir() -> Path:
     return brain_home() / "sessions"
 
 
+def backup_dir() -> Path:
+    """The copies taken before a write-back of a foreign file in a git work tree (brain.permissions)."""
+    return brain_home() / "backup"
+
+
 def projects_dir() -> Path:
     """Claude Code's transcripts: $CLAUDE_CONFIG_DIR/projects, default ~/.claude/projects (read only)."""
     env = os.environ.get("CLAUDE_CONFIG_DIR")
