@@ -236,3 +236,65 @@ def test_the_command_runs_the_archive_and_prints_its_status(brain, brain_home, m
     assert "session archive: on" in out and "scanner: gitleaks" in out and "residency filters: vendor" in out
     assert cli.main(["--root", str(brain.root), "health", "session-archive"]) == 0
     assert "WARN no run has sealed anything yet" in capsys.readouterr().out
+
+
+def test_gitleaks_reads_with_its_own_rules_whatever_the_line_or_the_environment_says(brain, monkeypatch, tmp_path):
+    """A whole tool result is one line: a gitleaks:allow in it must not hide a secret, nor an inherited config."""
+    folder = tmp_path / "f"
+    folder.mkdir()
+    (folder / "x.jsonl").write_text('{"m": "a FAKELEAK in a file that says gitleaks:allow"}\n', encoding="utf-8")
+    monkeypatch.setenv("GITLEAKS_CONFIG", str(tmp_path / "narrow.toml"))
+    assert sa.gitleaks(GITLEAKS, folder) == {"x.jsonl": {1}}
+
+
+def test_a_lone_carriage_return_does_not_shift_the_dropped_line(tmp_path):
+    src = tmp_path / "t.jsonl"
+    src.write_bytes(b'{"a": 1}\npartial\rwith a CR\n{"m": "a FAKELEAK"}\n{"z": 2}\n')
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    counts = {"t.jsonl": sa.filter_file(src, stage / "t.jsonl", {})}
+    sa.scan_staged(GITLEAKS, stage, counts)
+    with open(stage / "t.jsonl", encoding="utf-8", newline="") as fh:
+        lines = fh.read().split("\n")
+    assert lines[:4] == ['{"a": 1}', "partial with a CR", sa.STUB_SECRET, '{"z": 2}'] and counts["t.jsonl"].secret == 1
+
+
+def test_staged_copies_left_by_a_killed_run_are_removed_and_warned_about(brain, brain_home, monkeypatch):
+    cfg = brain(ON)
+    left = brain_home / "session-archive" / "staging-killed"
+    left.mkdir(parents=True)
+    (left / "x.jsonl").write_text("clear\n", encoding="utf-8")
+    assert any("staged copies in clear" in ln for ln in sa.render_status(sa.status(cfg)))
+    monkeypatch.setattr(sa, "scanner", lambda: GITLEAKS)
+    out = io.StringIO()
+    sa.health(cfg, now=NOW, out=out)
+    assert "1 staged folder(s) in clear" in out.getvalue()
+    res = sa.run(cfg, now=NOW, found=brain.found)
+    assert not left.exists() and res["leftovers"] == [] and res["sealed"]
+
+
+def test_a_grown_transcript_is_archived_again(brain):
+    cfg = brain(ON)
+    sa.run(cfg, argv=GITLEAKS, now=NOW, found=brain.found)
+    with brain.main.open("a", encoding="utf-8") as fh:
+        fh.write(line("resumed") + "\n")
+    old = (NOW - timedelta(hours=3)).timestamp()
+    os.utime(brain.main, (old, old))
+    res = sa.run(cfg, argv=GITLEAKS, now=NOW, found=brain.found)
+    assert [a["file"] for a in res["archived"]] == [f"{SR}.jsonl"] and res["unchanged"] == 1
+
+
+def test_a_newer_index_refuses_the_run_but_not_the_plan(brain, brain_home):
+    cfg = brain(ON)
+    (brain_home / "session-archive").mkdir(parents=True)
+    (brain_home / "session-archive" / "index.json").write_text('{"v": 99, "sessions": {}, "last": {}}',
+                                                               encoding="utf-8")
+    with pytest.raises(sa.ArchiveError):
+        sa.run(cfg, argv=GITLEAKS, now=NOW, found=brain.found)
+    assert sa.run(cfg, dry_run=True, argv=GITLEAKS, now=NOW)["archived"]
+
+
+@pytest.mark.parametrize("n", ["0", "-1"])
+def test_max_is_one_or_more(brain, n):
+    with pytest.raises(SystemExit):
+        cli.main(["--root", str(brain.root), "session-archive", "run", "--max", n])

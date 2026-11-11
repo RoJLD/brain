@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -38,13 +39,20 @@ def cmd_session_archive(args, root: Path) -> int:
     return 0
 
 
+def _positive(text: str) -> int:
+    n = int(text)
+    if n < 1:
+        raise argparse.ArgumentTypeError("N is 1 or more")
+    return n
+
+
 def register(sub, ctx) -> None:
     sp = sub.add_parser("session-archive", help="the agents' transcripts, scanned (gitleaks), filtered and sealed "
                                                 "into the spool, opt-in (brain.sessionarchive)"
                         ).add_subparsers(dest="sarch_cmd", required=True)
     pr = sp.add_parser("run", help="archive the quiet transcripts changed since their last archive")
     pr.add_argument("--dry-run", action="store_true", help="the plan and what would be dropped: nothing sealed")
-    pr.add_argument("--max", type=int, default=None, metavar="N",
+    pr.add_argument("--max", type=_positive, default=None, metavar="N",
                     help="at most N transcripts this run (default session_archive.max_files, else 200)")
     pr.add_argument("--json", action="store_true", help="stable keys")
     ps = sp.add_parser("status", help="on or off, the scanner, the index, the last run")

@@ -320,12 +320,16 @@ A run:
    The engine names no source: the patterns are yours. A pattern that does not compile refuses the run;
 3. **the secret scan**, fail-closed: the engine's patterns (`brain.secretscan`) drop the matching lines of each string
    value, and a line still holding a key's shape becomes a stub (`"why": "secret"`); then **gitleaks** reads the
-   staged copies (`gitleaks dir`, else `detect --no-git` for an older one): each line it reports becomes a stub, and a
+   staged copies (`gitleaks dir`, else `detect --no-git` for an older one) with its default rules, `gitleaks:allow`
+   marks ignored and no `GITLEAKS_CONFIG` or `.gitleaksignore` read: each line it reports becomes a stub, and a
    second pass must find nothing. **gitleaks absent** (one line says so), failing, or still finding something:
    **nothing is archived** (exit 2). A transcript is never archived unscanned;
 4. **sealed**: the staged copies go into the spool as one entry (`brain.spool.put`, store `session-archive`), which
    scans them once more and seals them with `brain vault` to the store's recipients (two at least); `brain spool push`
-   sends them to `spool.remote`. The staged copies in clear are deleted in every case. The store must be declared in
+   sends them to `spool.remote`. The staged copies in clear (`$BRAIN_HOME/session-archive/staging-*`) are
+   deleted when the run ends, whatever its outcome; a run killed mid-way, or a file locked by an indexer or an
+   antivirus, can leave them: the next run removes them first, and `status` and `brain health session-archive` warn
+   while they are there. The store must be declared in
    `classes.stores` (sealed), or the spool refuses it;
 5. **the index**, `$BRAIN_HOME/session-archive/index.json`: by session record (`sr-<start date>-<first 8 characters of
    the session id>`, the SR's id), each session's id, project folder, machine of origin, its place in the tree when

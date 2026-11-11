@@ -37,10 +37,12 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -57,7 +59,6 @@ LEAKS_EXIT = 3                   # the exit code gitleaks is told to give when i
 SCAN_TIMEOUT = 900
 STUB_RESIDENT = json.dumps({"type": "brain-archive-dropped", "why": "residency"})
 STUB_SECRET = json.dumps({"type": "brain-archive-dropped", "why": "secret"})
-BLOCK_KEYS = {"enabled", "quiet_minutes", "max_files", "max_age_days", "resident"}
 NO_SCANNER = ("gitleaks is not on the PATH: nothing archived (a transcript is never archived unscanned; install "
               "gitleaks, then run again)")
 
@@ -237,9 +238,9 @@ def filter_file(src: Path, dst: Path, filters: dict[str, re.Pattern[str]]) -> Co
             try:
                 obj, n = secretscan.clean(json.loads(line))
                 text = json.dumps(obj, ensure_ascii=False) if n else line
-            except ValueError:
+            except ValueError:   # not JSON (a line cut by a crash): one line still, whatever it holds
                 text, n = secretscan.clean_text(line)
-                text = text.replace("\n", " ")
+                text = text.replace("\n", " ").replace("\r", " ")
             c.cleaned += n
             if _shaped(text):
                 c.secret += 1
@@ -257,16 +258,21 @@ def scanner() -> list[str] | None:
 
 def gitleaks(argv: list[str], folder: Path) -> dict[str, set[int]]:
     """gitleaks over a folder's files: {file name: the line numbers it reports}, {} when clean. ArchiveError when it
-    fails (an old gitleaks without ``dir`` is asked through ``detect --no-git``)."""
+    fails (an old gitleaks without ``dir`` is asked through ``detect --no-git``). Its default rules, whatever the
+    environment holds: a ``gitleaks:allow`` in a transcript's line is ignored (a whole tool result is one line), a
+    config named by GITLEAKS_CONFIG* and a .gitleaksignore of the current folder are never read."""
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GITLEAKS_")}
     with tempfile.TemporaryDirectory(prefix="brain-gl-") as tmp:
         report = Path(tmp) / "report.json"
         why = ""
         for sub in (["dir", str(folder)], ["detect", "--no-git", "--source", str(folder)]):
             report.unlink(missing_ok=True)
             try:
-                r = subprocess.run([*argv, *sub, "--no-banner", "--redact", "--exit-code", str(LEAKS_EXIT),
-                                    "--report-format", "json", "--report-path", str(report)],
-                                   capture_output=True, timeout=SCAN_TIMEOUT, stdin=subprocess.DEVNULL)
+                r = subprocess.run([*argv, *sub, "--no-banner", "--redact", "--ignore-gitleaks-allow",
+                                    "--exit-code", str(LEAKS_EXIT), "--report-format", "json",
+                                    "--report-path", str(report)],
+                                   capture_output=True, timeout=SCAN_TIMEOUT, stdin=subprocess.DEVNULL, cwd=tmp,
+                                   env=env)
             except (OSError, subprocess.SubprocessError) as exc:
                 raise ArchiveError(f"gitleaks could not run ({exc.__class__.__name__}): nothing archived") from None
             if r.returncode == 0:
@@ -294,13 +300,15 @@ def _report_hits(report: Path) -> dict[str, set[int]]:
 
 def _stub_lines(f: Path, lines: set[int]) -> int:
     """Replace the given 1-based lines of a staged file by the secret stub; how many were replaced."""
-    text = f.read_text(encoding="utf-8").split("\n")
+    with f.open(encoding="utf-8", newline="") as fh:   # lines as gitleaks counts them: by \n alone
+        text = fh.read().split("\n")
     n = 0
     for i in sorted(lines):
         if 1 <= i <= len(text) and text[i - 1] != STUB_SECRET:
             text[i - 1] = STUB_SECRET
             n += 1
-    f.write_text("\n".join(text), encoding="utf-8", newline="\n")
+    with f.open("w", encoding="utf-8", newline="") as fh:
+        fh.write("\n".join(text))
     return n
 
 
@@ -335,7 +343,7 @@ def run(cfg: config.Config, *, dry_run: bool = False, max_files: int | None = No
         argv: list[str] | None = None, found=None) -> dict:
     """One run (see the module's docstring): {off, dry_run, archived, live, unchanged, waiting, sealed, ...}."""
     res: dict = {"off": not enabled(cfg), "dry_run": dry_run, "archived": [], "live": 0, "unchanged": 0,
-                 "waiting": 0, "sealed": ""}
+                 "waiting": 0, "sealed": "", "leftovers": []}
     if res["off"]:
         return res
     filters = resident(cfg)
@@ -343,7 +351,9 @@ def run(cfg: config.Config, *, dry_run: bool = False, max_files: int | None = No
     if not argv:
         raise ArchiveError(NO_SCANNER)
     t = _now(now)
-    st, data = load_index(write=not dry_run)
+    _, data = load_index(write=not dry_run)   # refused here when a newer brain wrote it
+    if not dry_run:   # a run killed mid-way left its clear copies: removed before anything else
+        res["leftovers"] = [str(p) for p in leftovers() if not _remove(p)]
     srcs, res["live"], res["unchanged"] = candidates(data["sessions"], t, _int(cfg, "quiet_minutes", QUIET_MINUTES))
     cap = max_files or _int(cfg, "max_files", MAX_FILES)
     srcs, res["waiting"] = srcs[:cap], max(0, len(srcs) - cap)
@@ -367,15 +377,35 @@ def run(cfg: config.Config, *, dry_run: bool = False, max_files: int | None = No
         except spool.SpoolError as exc:
             raise ArchiveError(f"the spool refused the archive: {exc}") from None
         res["sealed"] = entry["file"]
-        _record(st, data, srcs, counts, entry["file"], t)
+        _record(srcs, counts, entry["file"], t)
         return res
     finally:
-        shutil.rmtree(stage, ignore_errors=True)
+        if not _remove(stage):
+            res["leftovers"].append(str(stage))
 
 
-def _record(st: stateio.State, data: dict, srcs: list[Source], counts: dict[str, Counts], sealed: str,
-            t: datetime) -> None:
+def leftovers() -> list[Path]:
+    """The staged folders a run left in the store (killed, or a file locked when it tried to remove them)."""
+    d = archive_dir()
+    return sorted(p for p in d.glob("staging-*") if p.is_dir()) if d.is_dir() else []
+
+
+def _remove(folder: Path, tries: int = 3) -> bool:
+    """Remove a staged folder, again after a short wait when a file is locked (an indexer, an antivirus); whether
+    it is gone."""
+    for i in range(tries):
+        shutil.rmtree(folder, ignore_errors=True)
+        if not folder.exists():
+            return True
+        if i + 1 < tries:
+            time.sleep(0.5)
+    return False
+
+
+def _record(srcs: list[Source], counts: dict[str, Counts], sealed: str, t: datetime) -> None:
+    """The index updated with what was sealed, read again first: another run may have written it meanwhile."""
     from .timing import host
+    st, data = load_index(write=True)
     tree = _tree()
     for s in srcs:
         sess = data["sessions"].setdefault(s.sr, {})
@@ -396,6 +426,7 @@ def status(cfg: config.Config) -> dict:
     files = sum(len((s or {}).get("files") or {}) for s in data["sessions"].values())
     return {"enabled": enabled(cfg), "scanner": bool(scanner()), "index": str(index_file()),
             "sessions": len(data["sessions"]), "files": files, "last": data["last"],
+            "leftovers": [str(p) for p in leftovers()],
             "resident": sorted((_block(cfg).get("resident") or {}) if isinstance(_block(cfg).get("resident"), dict)
                                else [])}
 
@@ -407,12 +438,13 @@ def render_status(s: dict) -> list[str]:
             f"index: {s['index']}: {s['sessions']} session(s), {s['files']} file(s)",
             f"residency filters: {', '.join(s['resident']) or 'none'}",
             "last run that sealed: " + (f"{last.get('at')} ({last.get('files')} file(s), {last.get('sealed')})"
-                                        if last.get("at") else "never")]
+                                        if last.get("at") else "never")] + \
+        [f"WARN staged copies in clear left by a run (the next run removes them): {p}" for p in s["leftovers"]]
 
 
 def health(cfg: config.Config, now: datetime | None = None, out=None, named: bool = True) -> int:
-    """``brain health session-archive``: OFF while it is not enabled (silent with --all), a warning when gitleaks is
-    missing or no run sealed anything for ``max_age_days``; never a failure (exit 0)."""
+    """``brain health session-archive``: OFF while it is not enabled (silent with --all), a warning when a run left
+    staged copies, gitleaks is missing or no run sealed anything for ``max_age_days``; never a failure (exit 0)."""
     import sys
     out = out or sys.stdout
     if not enabled(cfg):
@@ -429,7 +461,11 @@ def health(cfg: config.Config, now: datetime | None = None, out=None, named: boo
         except ValueError:
             when = None
     age = _now(now) - when if when else None
-    if not scanner():
+    left = leftovers()
+    if left:
+        print(f"{CHECK}: WARN {len(left)} staged folder(s) in clear left by a run (the next run removes them)",
+              file=out)
+    elif not scanner():
         print(f"{CHECK}: WARN gitleaks is not on the PATH: a run archives nothing", file=out)
     elif age is None:
         print(f"{CHECK}: WARN no run has sealed anything yet (brain session-archive run)", file=out)
@@ -453,6 +489,7 @@ def run_lines(res: dict) -> list[str]:
                      f"string lines cleaned {a['cleaned']})")
     lines.append(f"{res['live']} live transcript(s) wait, {res['unchanged']} unchanged since archived"
                  + (f", {res['waiting']} left for the next run" if res["waiting"] else ""))
+    lines += [f"WARN could not remove staged copies in clear (a file locked): {p}" for p in res["leftovers"]]
     if res["sealed"]:
         lines.append(f"sealed into the spool: {res['sealed']} (brain spool push sends it)")
     if res["dry_run"]:
