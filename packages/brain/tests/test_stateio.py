@@ -467,11 +467,25 @@ def _git(repo: Path, *args: str) -> None:
                     "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
 
 
+def _status(repo: Path) -> str:
+    return subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True,
+                          check=True).stdout
+
+
+def _repo(path: Path) -> Path:
+    path.mkdir(parents=True)
+    _git(path, "init", "-q")
+    _write(path / "README", "x")
+    _git(path, "add", ".")
+    _git(path, "commit", "-q", "-m", "c")
+    return path
+
+
 @pytest.mark.skipif(not shutil.which("git"), reason="git")
-def test_only_a_settings_file_git_keeps_as_it_is_goes_without_a_backup(tmp_path):
-    """A project's committed, unchanged settings.json: no .bak (git keeps it, a .bak would show in git status). Its
-    settings.local.json, gitignored as Claude Code does, and a changed or untracked file are backed up: git holds no
-    copy of them."""
+def test_a_work_trees_settings_are_backed_up_under_brain_home(tmp_path, brain_home):
+    """wi-brain-settings-backup-home: a project's settings.json (tracked) and its settings.local.json (gitignored, as
+    Claude Code does) are backed up under $BRAIN_HOME/backup/<project>-<key>/.claude before each write, never beside
+    themselves: git status stays clean. An untracked .bak an older engine left beside one moves there first."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
@@ -480,19 +494,106 @@ def test_only_a_settings_file_git_keeps_as_it_is_goes_without_a_backup(tmp_path)
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "c")
     local = _write(repo / ".claude" / "settings.local.json", '{"permissions": {"allow": ["mine"]}}')
-    assert permissions.kept_by_git(shared) and not permissions.kept_by_git(local)
-    assert permissions.in_work_tree(local) and not permissions.kept_by_git(permissions.claude_home() / "settings.json")
+    old = _write(Path(str(local) + ".bak"), '{"permissions": {"allow": ["older"]}}')   # left by an older engine
+    os.utime(old, (1_700_000_000, 1_700_000_000))
+    home = permissions.home_backup_dir(local)
+    assert home.parent.parent == brain_home / "backup" and home.parent.name.startswith("repo-")
+    assert home.name == ".claude"
+    assert permissions.in_work_tree(local) and permissions.home_backup_dir(permissions.claude_home() / "x") is None
 
     permissions.ClaudeCode().write(shared, {"allow": ["B"]})
-    assert json.loads(shared.read_text(encoding="utf-8"))["permissions"]["allow"] == ["B"]
-    assert not Path(str(shared) + ".bak").exists()   # git keeps the committed one
     permissions.ClaudeCode().write(local, {"allow": ["B"]})
-    assert json.loads(Path(str(local) + ".bak").read_text(encoding="utf-8")) == {"permissions": {"allow": ["mine"]}}
-    assert not permissions.kept_by_git(shared)   # changed since the commit: the next write backs it up
+    assert not list((repo / ".claude").glob("*.bak"))
+    assert _status(repo) == " M .claude/settings.json\n"          # only the change itself: no .bak shows
+    copies = sorted(p.name for p in home.iterdir())
+    assert [n.split(".2")[0] for n in copies] == ["settings.json", "settings.local.json", "settings.local.json"]
+    olds = [json.loads((home / n).read_text(encoding="utf-8"))["permissions"].get("allow") for n in copies]
+    assert olds == [None, ["older"], ["mine"]]                      # the adopted .bak, older, sorts first
     permissions.ClaudeCode().write(shared, {"allow": ["C"]})
-    assert json.loads(Path(str(shared) + ".bak").read_text(encoding="utf-8"))["permissions"]["allow"] == ["B"]
-    untracked = _write(repo / "other" / "settings.json", "{}")
-    assert permissions.in_work_tree(untracked) and not permissions.kept_by_git(untracked)
+    newest = sorted(home.glob("settings.json.*.bak"))[-1]
+    assert json.loads(newest.read_text(encoding="utf-8"))["permissions"]["allow"] == ["B"]
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git")
+def test_two_repos_of_one_name_and_a_linked_worktree_keep_their_own_copies(tmp_path, brain_home):
+    a, b = _repo(tmp_path / "a" / "api"), _repo(tmp_path / "b" / "api")
+    fa = _write(a / ".claude" / "settings.local.json", "{}")
+    fb = _write(b / ".claude" / "settings.local.json", "{}")
+    da, db = permissions.home_backup_dir(fa), permissions.home_backup_dir(fb)
+    assert da != db and da.parent.name.startswith("api-") and db.parent.name.startswith("api-")
+    _git(a, "worktree", "add", "-q", str(tmp_path / "wt-one"))
+    fw = _write(tmp_path / "wt-one" / ".claude" / "settings.local.json", "{}")
+    dw = permissions.home_backup_dir(fw)
+    assert dw.parent.parent.name == "worktrees" and dw.parent.name.startswith("wt-one-")
+    assert dw.parent.parent.parent == da.parent                     # under its repo's folder
+
+
+def test_backup_home_keeps_the_last_copies_and_skips_the_same_bytes(tmp_path):
+    f = _write(tmp_path / "settings.json", "0")
+    folder = tmp_path / "home"
+    _write(folder / "settings.json.notes", "kept")                     # not a copy: never pruned
+    _write(folder / "settings.local.json.20260101T000000000000Z.bak", "another file's copy")
+    first = stateio.backup_home(f, folder, keep=3)
+    assert stateio.backup_home(f, folder, keep=3) == first           # the same bytes: no new copy
+    for i in range(1, 5):
+        _write(f, str(i))
+        stateio.backup_home(f, folder, keep=3)
+    names = sorted(p.name for p in folder.glob("settings.json.*.bak"))
+    assert [(folder / n).read_text(encoding="utf-8") for n in names] == ["2", "3", "4"]
+    assert (folder / "settings.json.notes").exists() and len(list(folder.glob("settings.local.json.*"))) == 1
+    assert stateio.backup_home(tmp_path / "none", folder) is None
+
+
+def test_two_copies_in_one_clock_tick_are_both_kept(tmp_path, monkeypatch):
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(stateio, "datetime", Frozen)
+    f = _write(tmp_path / "settings.json", "a")
+    folder = tmp_path / "home"
+    stateio.backup_home(f, folder)
+    _write(f, "b")
+    stateio.backup_home(f, folder)
+    assert sorted(p.read_text(encoding="utf-8") for p in folder.iterdir()) == ["a", "b"]
+
+
+def test_a_write_with_no_change_takes_no_new_copy_and_a_failed_copy_never_stops_it(tmp_path, capsys):
+    f = _write(tmp_path / "s.json", '{"a": 0}')
+    folder = tmp_path / "home"
+    for _ in range(3):
+        _, seen = stateio.read_foreign(f)
+        stateio.write_foreign(f, '{"a": 1}\n', seen, backup_dir=folder)
+    assert sorted(p.read_text(encoding="utf-8") for p in folder.iterdir()) == ['{"a": 0}', '{"a": 1}\n']
+    blocked = _write(tmp_path / "blocked", "a file where the folder should be")
+    _, seen = stateio.read_foreign(f)
+    assert stateio.write_foreign(f, '{"a": 2}\n', seen, backup_dir=blocked) is None
+    assert f.read_text(encoding="utf-8") == '{"a": 2}\n' and "no backup in" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git")
+def test_an_old_bak_is_adopted_only_when_git_says_it_is_untracked(tmp_path, brain_home, monkeypatch):
+    repo = _repo(tmp_path / "repo")
+    f = _write(repo / ".claude" / "settings.json", "{}")
+    bak = _write(Path(str(f) + ".bak"), "{}")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "a tracked .bak")
+    home = tmp_path / "home"
+    assert permissions.adopt_old_backup(f, home) is None and bak.exists()          # tracked: stays
+    _git(repo, "rm", "-q", "--cached", ".claude/settings.json.bak")
+    real = subprocess.run
+
+    def no_git(*a, **kw):
+        raise FileNotFoundError("git")
+    monkeypatch.setattr(subprocess, "run", no_git)
+    assert permissions.adopt_old_backup(f, home) is None and bak.exists()          # git cannot say: stays
+    monkeypatch.setattr(subprocess, "run", real)
+    moved = permissions.adopt_old_backup(f, home)
+    assert moved is not None and moved.parent == home and not bak.exists()
+    _write(bak, "{}")
+    stamp = datetime.fromtimestamp(bak.stat().st_mtime, timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    _write(home / f"settings.json.{stamp}.bak", "{}")                               # its copy is already there
+    assert permissions.adopt_old_backup(f, home) is None and not bak.exists()       # so the .bak goes
 
 
 def test_a_symlinked_settings_file_is_written_through_its_link(tmp_path):
