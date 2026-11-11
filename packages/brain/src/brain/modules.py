@@ -11,6 +11,11 @@ platform's tree) or ``proposed`` (proposed by the brain, waiting on the owner), 
 ``since`` the day a proposed module was proposed. An open item's ``props.module`` is an id of the registry, or
 ``none`` with ``props.module_reason`` (outside the tree: the brain's own process).
 
+The features (``Feature`` nodes) and the done items carry a module too, which the technical reference reads
+(wi-brain-module-backfill): the view counts how many are placed, and brain check warns (never fails) about one with no
+module, or one the registry does not know; ``brain modules --check`` lists them as warnings, its exit code being the
+open items' only.
+
 The view gives, per brick then per module: its phase and status, its state in the brain (items done and open with it
 as primary, open items with it as secondary), its open items, and the gaps: a module with no item done or open, a
 proposed one with none since 90 days (to put back to sleep), an item whose module the registry does not know. It
@@ -48,11 +53,12 @@ def applies(store: Path) -> bool:
     return (store / REGISTRY).is_file()
 
 
-def items(store: Path) -> list[dict]:
-    """The store's WorkItem nodes that have an id (one without is research_graph check's to report)."""
+def items(store: Path, node_type: str = "WorkItem") -> list[dict]:
+    """The store's nodes of ``node_type`` (its WorkItem nodes by default) that have an id (one without is
+    research_graph check's to report)."""
     out = []
     for f in sorted((store / "nodes").glob("*.yaml")):
-        out += [n for n in graph.load_yaml_list(f) if isinstance(n, dict) and n.get("type") == "WorkItem"
+        out += [n for n in graph.load_yaml_list(f) if isinstance(n, dict) and n.get("type") == node_type
                 and n.get("id")]
     return out
 
@@ -91,6 +97,55 @@ def problems(store: Path) -> list[str]:
                 out.append(f"{nid}: props.modules_secondary {s} is not in {REGISTRY}")
             elif s == mod:
                 out.append(f"{nid}: props.modules_secondary repeats its module {s}")
+    return out
+
+
+FEATURE = "Feature"
+SHOWN = 10   # the ids a warning names before « and N more »
+
+
+def placed_nodes(store: Path) -> dict[str, list[dict]]:
+    """The nodes beyond the open items that the reference reads by module (wi-brain-module-backfill): the features
+    (``Feature`` nodes, any status) and the done items."""
+    return {"features": items(store, FEATURE), "done": [n for n in items(store) if n.get("status") == "done"]}
+
+
+def unplaced(store: Path) -> dict[str, list[str]]:
+    """The features and the done items with no ``props.module``, by kind (``features``, ``done``): the ids, sorted.
+    A store without a registry is not concerned (empty lists)."""
+    if not applies(store):
+        return {"features": [], "done": []}
+    return {kind: sorted(str(n["id"]) for n in nodes if not str(_props(n).get("module") or ""))
+            for kind, nodes in placed_nodes(store).items()}
+
+
+def _named(ids: list[str]) -> str:
+    more = len(ids) - SHOWN
+    return ", ".join(ids[:SHOWN]) + (f" and {more} more" if more > 0 else "")
+
+
+def warnings(store: Path) -> list[str]:
+    """What brain check warns about beyond :func:`problems`, never a failure (``brain modules --check`` does not
+    count them either): the features and the done items with no module, one line per kind, and those whose module is
+    not in the registry or is ``none`` without its reason, one line each. Once a brain has placed them all
+    (wi-brain-module-backfill), a line here names a new one."""
+    reg = registry(store)
+    if reg is None:
+        return []
+    known, out = {str(m["id"]) for m in reg}, []
+    missing = unplaced(store)
+    how = {"features": ("feature(s)", "brain features set <id> module=<module>"),
+           "done": ("done item(s)", "brain item set <id> props.module=<module>")}
+    for kind, nodes in placed_nodes(store).items():
+        if missing[kind]:
+            what, cmd = how[kind]
+            out.append(f"{len(missing[kind])} {what} with no props.module: {_named(missing[kind])} ({cmd})")
+        for n in sorted(nodes, key=lambda n: str(n["id"])):
+            mod, p = str(_props(n).get("module") or ""), _props(n)
+            if mod == NONE and not p.get("module_reason"):
+                out.append(f"{n['id']}: props.module is none without props.module_reason")
+            elif mod and mod != NONE and mod not in known:
+                out.append(f"{n['id']}: props.module {mod} is not in {REGISTRY}")
     return out
 
 
@@ -176,9 +231,12 @@ def data(store: Path) -> dict:
                      "done": sum(1 for n in got if n.get("status") == "done"),
                      "open": sum(1 for n in got if n.get("status") in OPEN),
                      "secondary": len(secondary.get(str(m["id"]), []))})
+    more, missing = placed_nodes(store), unplaced(store)
     return {"modules": mods, "open_items": len(opened),
             "placed": sum(1 for n in opened if _props(n).get("module")),
-            "outside": sum(1 for n in opened if _props(n).get("module") == NONE), "problems": problems(store)}
+            "outside": sum(1 for n in opened if _props(n).get("module") == NONE), "problems": problems(store),
+            "features": len(more["features"]), "features_unplaced": missing["features"],
+            "done_items": len(more["done"]), "done_unplaced": missing["done"], "warnings": warnings(store)}
 
 
 def render(store: Path, store_label: str = "notes/graph") -> str:
@@ -196,8 +254,12 @@ def render(store: Path, store_label: str = "notes/graph") -> str:
     out = [HEAD.format(reg=f"{store_label}/{REGISTRY}"),
            f"**{len(reg)} modules ({sum(1 for m in reg if m.get('status') == 'proposed')} proposed); "
            f"{sum(1 for n in opened if _props(n).get('module'))} of {len(opened)} open items placed, "
-           f"{len(nones)} outside the tree.**", "",
-           "| Module | Name | Brick | Phase | Status | Done | Open | Secondary |", "|---|---|---|---|---|---|---|---|"]
+           f"{len(nones)} outside the tree.**", ""]
+    more, missing = placed_nodes(store), unplaced(store)
+    if more["features"] or more["done"]:   # what the reference reads by module (wi-brain-module-backfill)
+        out += [f"Features placed: {len(more['features']) - len(missing['features'])} of {len(more['features'])}; "
+                f"done items placed: {len(more['done']) - len(missing['done'])} of {len(more['done'])}.", ""]
+    out += ["| Module | Name | Brick | Phase | Status | Done | Open | Secondary |", "|---|---|---|---|---|---|---|---|"]
     for b, m in _order(reg):
         d, o, s = counts(str(m["id"]))
         out.append(f"| [{m['id']}](#{str(m['id']).lower()}) | {_cell(m.get('name', ''))} | {b} | "

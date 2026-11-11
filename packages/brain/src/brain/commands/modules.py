@@ -17,8 +17,9 @@ USAGE = """\
   brain modules [--write] [--force] [--check] [--json]   the module map: each open item's props.module (and
                  props.modules_secondary) against the store's modules.yaml; the view notes/modules_graph.md (beside
                  the store's board when it is not in notes/; per module its phase, status, items done and open, and
-                 the gaps), written by brain sync; --check: the
-                 open items with no module, or a module the registry does not know (brain check warns of them);
+                 the gaps, and how many features and done items are placed), written by brain sync; --check:
+                 the open items with no module, or a module the registry does not know (exit 1), then, as
+                 warnings, the features and done items with none (brain check warns of both);
                  under config.json views.strict, another engine than engine.pin writes nothing (--force)
 """
 
@@ -35,8 +36,13 @@ def cmd_modules(args, root: Path) -> int:
         print(f"view: {view} " + ("written" if modules.write(root, store, _store_label(root, store), view)
                                   else "unchanged"))
     if args.check:
-        found = modules.problems(store)
-        print(json.dumps(found, indent=1) if args.json else "\n".join(found) or "module map: every open item placed")
+        found, more = modules.problems(store), modules.warnings(store)
+        if args.json:
+            print(json.dumps(found, indent=1))
+        else:
+            print("\n".join(found) or "module map: every open item placed")
+            for line in more:   # the features and done items: told, never counted (wi-brain-module-backfill)
+                print(f"warning: {line}")
         return 1 if found else 0
     if args.json:
         print(json.dumps(modules.data(store), indent=1, ensure_ascii=False, default=str))   # a YAML date

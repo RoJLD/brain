@@ -35,10 +35,32 @@ brain item set wi-y props.module=none "props.module_reason=the brain's own proce
 - its module, or one of its secondary modules, is not in the registry;
 - a secondary module repeats the primary.
 
+## The features' and the done items' modules
+
+The technical reference reads by module what each module does (its features) and what was delivered in it (its done
+items), so those carry a `props.module` too (since 0.3.2, `wi-brain-module-backfill`):
+
+```bash
+brain features set feat-x module=P2
+brain item set wi-old props.module=P2
+```
+
+`brain check` warns about them, and `brain modules --check` lists them as warnings without counting them in its exit
+code (a warning, never a failure):
+
+- the features, then the done items, with no `props.module`: one line per kind, with how many and the first ten ids;
+  once a brain has placed them all, such a line names a new one;
+- one whose module is `none` with no `props.module_reason`, or is not in the registry.
+
+`brain modules --json` gives `features`, `features_unplaced`, `done_items`, `done_unplaced` and `warnings`. The
+public render of `FEATURES.md` (`brain features render` into a public repo) never shows the Module column: the module
+ids are the owner's platform's.
+
 ## The view
 
 `notes/modules_graph.md` (`brain modules` prints it, `--write` writes it, `brain sync` writes it) gives:
 
+- how many features and done items are placed (when the store has any);
 - a table of the modules by brick, each with its phase, its status, the items done and open with it as primary, and
   the open items with it as secondary;
 - the gaps:
