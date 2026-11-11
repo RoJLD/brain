@@ -166,6 +166,9 @@ ENGINE_STORES = {
                      "copies before a write-back: a work tree's settings files, <project>-<key>/<folder>, 10 each"),
     "spool": Known("$BRAIN_HOME/spool", "sealed", "truth-local",
                    "the sealed copies waiting to leave the machine and their index (brain spool push)"),
+    "session-archive": Known("$BRAIN_HOME/session-archive", "sealed", "truth-local",
+                             "the session archive's index by session record, and its staged copies while a run "
+                             "seals them (brain session-archive)"),
     "cockpit": Known("$BRAIN_HOME/tui.json", "sealed", "truth-local", "the cockpit's settings"),
     "update-check": Known("$BRAIN_HOME/update.json", "sealed", "derived", "the last engine tags read, and when"),
     "net": Known("$BRAIN_HOME/net", "sealed", "truth-local", "the external services' circuit breakers (brain.net)"),
