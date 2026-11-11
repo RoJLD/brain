@@ -172,42 +172,44 @@ def _mtime(f: Path) -> datetime:
 def scan(files: list[Path], since: datetime, until: datetime, known: dict[str, str], alias: dict[str, str]) -> dict:
     """{typed: {unit: runs}, reads: {kind: n}, edits: {kind: n}, sessions: n} from the transcripts' tool calls in
     [since, until)."""
-    from .transcript import iter_records, parse_ts
-    ran, reads, edits = Counter(), Counter(), Counter()
+    counts = {"typed": Counter(), "reads": Counter(), "edits": Counter()}
     sessions = set()
     for f in files:
-        try:
-            records = list(iter_records(f))
-        except OSError:
+        for rec, tool, inp in _tool_calls(f, since, until):
+            sessions.add(str(rec.get("sessionId") or f))
+            _count(counts, tool, inp, str(rec.get("cwd") or ""), known, alias)
+    return {**{k: dict(v) for k, v in counts.items()}, "sessions": len(sessions)}
+
+
+def _tool_calls(f: Path, since: datetime, until: datetime):
+    """(record, tool, input) for each tool call an assistant message of ``f`` made in [since, until)."""
+    from .transcript import iter_records, parse_ts
+    try:
+        records = list(iter_records(f))
+    except OSError:
+        return
+    for rec, _ in records:
+        content = (rec.get("message") if isinstance(rec.get("message"), dict) else {}).get("content")
+        at = parse_ts(rec.get("timestamp")) if rec.get("type") == "assistant" and isinstance(content, list) else None
+        if at is None or not since <= at < until:
             continue
-        for rec, _ in records:
-            msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
-            content = msg.get("content")
-            if rec.get("type") != "assistant" or not isinstance(content, list):
-                continue
-            at = parse_ts(rec.get("timestamp"))
-            if at is None or not since <= at < until:
-                continue
-            cwd = str(rec.get("cwd") or "")
-            for block in content:
-                if not isinstance(block, dict) or block.get("type") != "tool_use":
-                    continue
-                tool, inp = str(block.get("name") or ""), block.get("input")
-                inp = inp if isinstance(inp, dict) else {}
-                sessions.add(str(rec.get("sessionId") or f))
-                if tool in SHELLS:
-                    ran.update(typed(str(inp.get("command") or ""), known, alias))
-                if tool in EDITORS:
-                    kind = _brain_kind(str(inp.get("file_path") or inp.get("notebook_path") or ""), cwd)
-                    if kind:
-                        edits[kind] += 1
-                    continue
-                if tool in ("Read", "Grep", *SHELLS):
-                    paths_, _ = readhint._targets(tool, inp)
-                    kind = next((k for k in (_brain_kind(p, cwd) for p in paths_) if k), "")
-                    if kind:
-                        reads[kind] += 1
-    return {"typed": dict(ran), "reads": dict(reads), "edits": dict(edits), "sessions": len(sessions)}
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                inp = block.get("input")
+                yield rec, str(block.get("name") or ""), inp if isinstance(inp, dict) else {}
+
+
+def _count(counts: dict[str, Counter], tool: str, inp: dict, cwd: str, known: dict[str, str],
+           alias: dict[str, str]) -> None:
+    """One tool call counted: the brain commands a shell call runs, a hand edit or a hand read of a brain's file."""
+    if tool in SHELLS:
+        counts["typed"].update(typed(str(inp.get("command") or ""), known, alias))
+    if tool in EDITORS:
+        kind = _brain_kind(str(inp.get("file_path") or inp.get("notebook_path") or ""), cwd)
+        counts["edits"].update([kind] if kind else [])
+    elif tool in ("Read", "Grep", *SHELLS):
+        kind = next((k for k in (_brain_kind(p, cwd) for p in readhint._targets(tool, inp)[0]) if k), "")
+        counts["reads"].update([kind] if kind else [])
 
 
 def runs(since: datetime, until: datetime, alias: dict[str, str]) -> Counter:
@@ -265,6 +267,23 @@ def report(known: dict[str, str], ran: Counter, sessions: dict, since: datetime,
                      "otherwise": max(n - t, 0)})
     rows.sort(key=lambda r: (-r["runs"], r["command"]))
     never = [r["command"] for r in rows if not r["runs"] and not r["by_session"]]
+    proposals = (_by_hand(sessions, hints_on) + _coordination(ran, subsessions)
+                 + [{"kind": "wire", "count": len(f["commands"]),
+                     "what": f"{f['feature']} is have, and its commands never ran: {', '.join(f['commands'])}",
+                     "propose": "wire it (a hook, a procedure), document it, or mark it partial or retire it"}
+                    for f in feats or []])
+    if never:
+        proposals.append({"kind": "wire", "count": len(never),
+                          "what": f"{len(never)} command(s) never ran in the period",
+                          "propose": "each wired (a hook, a schedule, a procedure), documented, or retired"})
+    return {"since": since.isoformat(timespec="seconds"), "until": until.isoformat(timespec="seconds"),
+            "sessions": sessions.get("sessions", 0), "subsessions": subsessions, "commands": rows, "never_run": never,
+            "reads": sessions.get("reads") or {}, "edits": sessions.get("edits") or {}, "features": feats or [],
+            "proposals": proposals}
+
+
+def _by_hand(sessions: dict, hints_on: bool) -> list[dict]:
+    """The proposals for the hand reads (the read hint, or a procedure line when it is on) and the hand edits."""
     proposals = []
     for kind, n in sorted((sessions.get("reads") or {}).items(), key=lambda kv: -kv[1]):
         how = ("a procedure line (the read hint is on and still read past)" if hints_on else
@@ -276,29 +295,25 @@ def report(known: dict[str, str], ran: Counter, sessions: dict, since: datetime,
         proposals.append({"kind": "procedure", "count": n,
                           "what": f"{n} hand edit(s) of the {readhint.WHAT[kind]}: {WRITES[kind]} writes it",
                           "propose": "a procedure line, or a guard hint on the edit"})
+    return proposals
+
+
+def _coordination(ran: Counter, subsessions: int | None) -> list[dict]:
+    """The sub-sessions started against the briefs brain brief wrote and the lots brain wave plan composed."""
+    if not subsessions:
+        return []
     briefs = int(ran.get("brain brief", 0))
-    if subsessions:
-        lots = int(ran.get("brain collisions", 0)) + int(ran.get("brain wave plan", 0))
-        if briefs < subsessions:
-            proposals.append({"kind": "procedure", "count": subsessions - briefs,
-                              "what": f"{subsessions} sub-session(s) started, brain brief ran {briefs} time(s)",
-                              "propose": "the coordinator's procedure: each brief from brain brief"})
-        if not lots:
-            proposals.append({"kind": "procedure", "count": subsessions,
-                              "what": "sub-sessions started with no run of brain collisions or brain wave plan",
-                              "propose": "the coordinator's procedure: lots composed by brain wave plan"})
-    for f in feats or []:
-        proposals.append({"kind": "wire", "count": len(f["commands"]),
-                          "what": f"{f['feature']} is have, and its commands never ran: {', '.join(f['commands'])}",
-                          "propose": "wire it (a hook, a procedure), document it, or mark it partial or retire it"})
-    if never:
-        proposals.append({"kind": "wire", "count": len(never),
-                          "what": f"{len(never)} command(s) never ran in the period",
-                          "propose": "each wired (a hook, a schedule, a procedure), documented, or retired"})
-    return {"since": since.isoformat(timespec="seconds"), "until": until.isoformat(timespec="seconds"),
-            "sessions": sessions.get("sessions", 0), "subsessions": subsessions, "commands": rows, "never_run": never,
-            "reads": sessions.get("reads") or {}, "edits": sessions.get("edits") or {}, "features": feats or [],
-            "proposals": proposals}
+    lots = int(ran.get("brain collisions", 0)) + int(ran.get("brain wave plan", 0))
+    out = []
+    if briefs < subsessions:
+        out.append({"kind": "procedure", "count": subsessions - briefs,
+                    "what": f"{subsessions} sub-session(s) started, brain brief ran {briefs} time(s)",
+                    "propose": "the coordinator's procedure: each brief from brain brief"})
+    if not lots:
+        out.append({"kind": "procedure", "count": subsessions,
+                    "what": "sub-sessions started with no run of brain collisions or brain wave plan",
+                    "propose": "the coordinator's procedure: lots composed by brain wave plan"})
+    return out
 
 
 def render(rep: dict, top: int = perf.TOP) -> list[str]:
