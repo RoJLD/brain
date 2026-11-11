@@ -2,7 +2,7 @@
 someone who has never seen its author's machine would, then run the Lite scenario; its verdict is a pilot's go.
 
     python stranger_test.py [--ref v0.3.1 | --source DIR] [--pre-tag] [--deny people:NAME ...] [--work DIR] [--keep]
-                            [--json] [--upgrade-from TAG|DIR]
+                            [--json] [--upgrade-from TAG|DIR [--fault NAME]]
 
 Standard library only, on Windows, Linux or macOS (a container: ``docker run --rm -v <this folder>:/t:ro python:3.12
 python /t/stranger_test.py``; Docker is the harness there, never something the brain needs):
@@ -55,6 +55,14 @@ can share a version. ``--upgrade-from`` refuses an empty value and the ``--sourc
 reduced PATH is only reported here (the pilot's isolation, not the upgrade's; GitHub's Windows runners have it). The
 upgrade test
 reads PyYAML in the harness's own Python (CI installs it) and the fixtures from the checkout it runs from.
+
+**Negative controls** (``--fault NAME``, with ``--upgrade-from``; wi-brain-harness-negative-controls): one fault
+injected into the upgrade test, whose verdict must then be a no-go, failing at the step that guards against it
+(tests/test_harness_negative_controls.py reruns each, ``pytest -m harness``). ``rewrite``: config.json rewritten
+after the older engine's reads (the same data, other bytes), as an older engine that saves what it reads would;
+``truncated-ledger``: an exec ledger's last line dropped there; ``unreached``: the members format's newer fixture
+replaced by its older one, so its additive keys reach no file; ``wrong-engine``: the previous engine reinstalled in
+place of HEAD for the way back. The missing tag needs no seam: ``--upgrade-from ""`` is refused.
 
 Exit code 0 on a go, 1 when a check fails (an upgrade's or rollback's install included), 2 when the first install
 fails. ``--json`` prints the report; it is also
@@ -251,6 +259,9 @@ DIGEST = "0" * 64                                     # a canary's sha-256 (no c
 NEWER = re.compile(r"unknown key|unknown field|unexpected field|brain update|written by brain >")
 STALE_ROW = re.compile(r"^\s+(differs|new|stray)\s+(\S+)")
 RENDER_STALE = re.compile(r"^brain render: \d+ file\(s\) not current", re.M)
+# the negative controls (--fault): each a fault the upgrade test must catch, and the step that catches it
+FAULTS = {"rewrite": "no loss", "truncated-ledger": "no loss", "unreached": "newer data", "wrong-engine": "engine"}
+UNREACHED = "members"           # the format whose newer fixture --fault unreached makes add nothing
 
 
 def stale_render_only(rc: int, out: str) -> bool:
@@ -349,10 +360,11 @@ def _dump(f: Path, data) -> None:
     f.write_text(text, encoding="utf-8")
 
 
-def add_newer(root: Path, home: Path) -> dict:
+def add_newer(root: Path, home: Path, fault: str = "") -> dict:
     """HEAD's additive fixtures put into the brain HEAD worked on: each registered format's newer keys laid over its
     files (JSONL: the additive lines appended). The step that reports it; it fails when a format's newer keys reached
-    none of its files (the rollback would then test nothing of it)."""
+    none of its files (the rollback would then test nothing of it). ``fault`` ``unreached`` (a negative control):
+    UNREACHED's newer fixture is its older one, which adds nothing."""
     out: list[str] = []
     reached: set[str] = set()
     places = where(root, home)
@@ -364,8 +376,9 @@ def add_newer(root: Path, home: Path) -> dict:
                     fh.write("".join(x + "\n" for x in add))
             else:
                 before = _load(f)
+                newer = "older" if fault == "unreached" and fmt == UNREACHED else "newer"
                 after = overlay(copy.deepcopy(before), _load(fixture(fmt, "older", v)),
-                                _load(fixture(fmt, "newer", v)))
+                                _load(fixture(fmt, newer, v)))
                 add = [] if after == before else ["keys"]
                 if add:
                     _dump(f, after)
@@ -416,6 +429,25 @@ def lost(before: dict[str, tuple[int, str]]) -> list[str]:
                                                                                   len(data) != size):
             out.append(f"changed: {p}")
     return sorted(out)
+
+
+def inject(fault: str, root: Path, home: Path) -> dict:
+    """A negative control's fault put on the brain after the older engine's reads (``rewrite``: config.json saved
+    again with the same data and other bytes; ``truncated-ledger``: an exec ledger's last line dropped), the step that
+    reports it. It is ok when the fault was put: the no-loss check, not this step, must then fail."""
+    if fault == "rewrite":
+        files = [root / "config.json"] if (root / "config.json").is_file() else []
+        for f in files:
+            text = f.read_text(encoding="utf-8")
+            again = json.dumps(json.loads(text), indent=4) + "\n"
+            f.write_text(again + ("\n" if again == text else ""), encoding="utf-8")
+    else:
+        files = [f for f in where(root, home)["event"] if f.read_bytes().strip()][:1]
+        for f in files:
+            lines = f.read_bytes().splitlines(keepends=True)
+            f.write_bytes(b"".join(lines[:-1]))
+    return {"step": "fault", "cmd": f"--fault {fault}: {', '.join(f.name for f in files) or 'no file to put it on'}",
+            "rc": int(not files), "ok": bool(files), "out": ""}
 
 
 def _py(scripts: Path, code: str, env: dict, root: Path) -> tuple[int, str]:
@@ -472,7 +504,8 @@ def pin_moved(root: Path, env: dict, scripts: Path) -> dict:
     return {"step": "pin", "cmd": f"engine.pin {pin} -> v{version}", "rc": rc, "ok": rc == 0, "out": text + more}
 
 
-def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: tuple[str, str, bool]) -> list[dict]:
+def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: tuple[str, str, bool],
+            fault: str = "") -> list[dict]:
     """The upgrade test, in one venv and one brain (``work/ada-brain``):
 
     1. the previous engine (``prev``: a tag, or a checkout) writes every registered format: brain init, a commit, a
@@ -486,7 +519,9 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
        record check, vault status, permissions check and a newer template's plan, in read mode (BRAIN_STRICT=0). An
        engine that has the read mode must pass them (its check may only find HEAD's plugin render not current:
        stale_render_only); one before it (0.2.5) may refuse, cleanly. Either way no file
-       of the brain, the vault drill included, is changed or removed."""
+       of the brain, the vault drill included, is changed or removed.
+
+    ``fault`` (a negative control, FAULTS) injects one fault the test must catch."""
     root = work / "ada-brain"
     root.mkdir(exist_ok=True)
     home = Path(env["HOME"])
@@ -563,7 +598,7 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
         _dump(manifest, overlay(_load(manifest), _load(fixture("template", "older")),
                                 _load(fixture("template", "newer"))))
     phase("rollback", [{"step": "drill", "cmd": "a canary and a drill on record (their entries, written by HEAD's "
-                        "vault)", "rc": rc, "ok": rc == 0, "out": text}, add_newer(root, home)])
+                        "vault)", "rc": rc, "ok": rc == 0, "out": text}, add_newer(root, home, fault)])
     kept = [root, home / ".brain" / "ledger", home / ".brain" / "vault"]
     before = snapshot(kept)
     prev_ref, prev_source = prev
@@ -589,6 +624,8 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
         ("template plan", [brain, "init", "--owner", OWNER, "--template", str(template)], None,
          lambda o: clean(o) and ("plan only" in o or bool(NEWER.search(o))), codes),
     ], reads, empty))
+    if fault in ("rewrite", "truncated-ledger"):
+        phase("rollback", [inject(fault, root, home)])
     gone = lost(before)
     mode = "read mode" if tolerant else "an engine before the read mode: refusals of the newer keys allowed"
     phase("rollback", [{"step": "no loss", "cmd": f"{len(before)} file(s) unchanged (ledgers only appended), the "
@@ -596,7 +633,8 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
                         "out": "\n".join(gone)}])
 
     # and back: HEAD reads what both engines left, in read mode, and nothing is lost over the whole round trip
-    _, inst = install(work, ref, source, pre_tag, over=True, step="reinstall")
+    back = (prev_ref, prev_source, False) if fault == "wrong-engine" else (ref, source, pre_tag)
+    _, inst = install(work, *back, over=True, step="reinstall")
     if not phase("back", inst + [engine_is(scripts, env, root, ref, source)]):
         return steps
     phase("back", run_steps(read_steps(brain, None, (0,)), reads, root))
@@ -663,7 +701,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--upgrade-from", metavar="TAG|DIR",
                     help="the upgrade test: this tag (or a checkout of it) writes the data, then --ref or --source "
                          "is installed over it and runs on it, then the tag again reads what that one wrote")
+    ap.add_argument("--fault", choices=sorted(FAULTS),
+                    help="a negative control of the upgrade test: inject this fault; the verdict must be a no-go")
     args = ap.parse_args(argv)
+    if args.fault and args.upgrade_from is None:
+        ap.error("--fault: a fault of the upgrade test, with --upgrade-from")
     deny = parse_deny(args.deny)
     work = Path(args.work or tempfile.mkdtemp(prefix="stranger-")).resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -678,11 +720,13 @@ def main(argv: list[str] | None = None) -> int:
               "python": sys.version.split()[0], "work": str(work), "steps": list(steps), "leaks": []}
     if prev:
         report["upgrade_from"] = args.upgrade_from
+    if args.fault:
+        report["fault"] = args.fault
     if installed:
         env = isolated_env(work, scripts)
         report["docker_on_path"] = bool(shutil.which("docker", path=env["PATH"]))
         if prev:
-            report["steps"] += upgrade(work, env, scripts, prev, (args.ref, source, args.pre_tag))
+            report["steps"] += upgrade(work, env, scripts, prev, (args.ref, source, args.pre_tag), args.fault or "")
         else:
             report["steps"] += scenario(work, env, scripts)
         texts = {f"output of {s['step']}": s["out"] for s in report["steps"]}
@@ -700,6 +744,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"stranger test: {report['ref']}{' (pre-tag)' if args.pre_tag else ''}"
               f"{' upgraded from ' + args.upgrade_from if prev else ''} on {sys.platform}, Python "
               f"{report['python']}, in {work}")
+        if args.fault:
+            print(f"  fault injected: {args.fault} (a negative control: the verdict must be no-go, at its "
+                  f"{FAULTS[args.fault]!r} step)")
         for s in report["steps"]:
             where = f"{s['phase']}: " if s.get("phase") else ""
             print(f"  {'ok  ' if s['ok'] else 'FAIL'} {where + s['step']:<12} rc {s['rc']}  {s['cmd']}")
