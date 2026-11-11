@@ -101,6 +101,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `reviews` | `$BRAIN_HOME/reviews` | sealed | truth-local | the reviews' findings and stamps |
 | `backup` | `$BRAIN_HOME/backup` | sealed | truth-local | copies taken before a write-back: a work tree's settings files (`<project>-<key>/<folder>`, the last 10 each) |
 | `spool` | `$BRAIN_HOME/spool` | sealed | truth-local | the sealed copies waiting to leave the machine and their index (`brain spool push`) |
+| `session-archive` | `$BRAIN_HOME/session-archive` | sealed | truth-local | the session archive's index by session record, and its staged copies while a run seals them (`brain session-archive`) |
 | `cockpit` | `$BRAIN_HOME/tui.json` | sealed | truth-local | the cockpit's settings |
 | `update-check` | `$BRAIN_HOME/update.json` | sealed | derived | the last engine tags read |
 | `personal` | `$BRAIN_HOME/personal.json` | sealed | truth-local | the pointer to the personal brain |
@@ -287,6 +288,56 @@ until you add one.
 For a caller (the session archive), `brain.spool.put(cfg, store, items)` seals the given paths into the spool as one
 entry of kind `items`, after the same scan and refusals. It refuses an empty list, two items of the same file name (one
 would overwrite the other when opened) and an item inside a store whose class never leaves the machine.
+
+## The session archive: transcripts, scanned and filtered, then sealed
+
+```text
+brain session-archive run [--dry-run] [--max N] [--json]
+brain session-archive status [--json]
+brain health session-archive
+```
+
+The agents' transcripts (Claude Code's first: each session's `.jsonl` and its subagents'; other agents later, through
+their adapters) are the episodic memory of every machine. They hold prompts, tool inputs and outputs, and sometimes a
+secret, so they leave the machine only scanned, filtered and sealed, and never go to a git repo.
+
+**Opt-in.** Nothing runs until `config.json` says so; no scheduled task is created (add one yourself when you want the
+archive kept up without you):
+
+```json
+"session_archive": {"enabled": true, "resident": {"vendor-rows": "\\bvendor-feed\\b"}},
+"classes": {"stores": {"session-archive": {"class": "sealed", "paths": ["$BRAIN_HOME/session-archive"],
+                                           "to": ["offsite", "backup"]}, "...": "..."}}
+```
+
+A run:
+
+1. takes each transcript quiet for 2 hours (`session_archive.quiet_minutes`; a live session waits for a later run)
+   whose size or time changed since it was archived, 200 at most per run (`max_files`, `--max`; the rest wait);
+2. **the residency filter**: a line a pattern of `session_archive.resident` (`{name: regex}`, matched against the line
+   as it is written, JSON escapes included) matches is a row a data source forbids from leaving the machine: it is
+   replaced by a stub (`{"type": "brain-archive-dropped", "why": "residency"}`) and counted under the filter's name.
+   The engine names no source: the patterns are yours. A pattern that does not compile refuses the run;
+3. **the secret scan**, fail-closed: the engine's patterns (`brain.secretscan`) drop the matching lines of each string
+   value, and a line still holding a key's shape becomes a stub (`"why": "secret"`); then **gitleaks** reads the
+   staged copies (`gitleaks dir`, else `detect --no-git` for an older one): each line it reports becomes a stub, and a
+   second pass must find nothing. **gitleaks absent** (one line says so), failing, or still finding something:
+   **nothing is archived** (exit 2). A transcript is never archived unscanned;
+4. **sealed**: the staged copies go into the spool as one entry (`brain.spool.put`, store `session-archive`), which
+   scans them once more and seals them with `brain vault` to the store's recipients (two at least); `brain spool push`
+   sends them to `spool.remote`. The staged copies in clear are deleted in every case. The store must be declared in
+   `classes.stores` (sealed), or the spool refuses it;
+5. **the index**, `$BRAIN_HOME/session-archive/index.json`: by session record (`sr-<start date>-<first 8 characters of
+   the session id>`, the SR's id), each session's id, project folder, machine of origin, its place in the tree when
+   `brain sessions` knows it (`host_id`, `parent`, `role`), and per file its source, fingerprint, lines, what the
+   filter and the scans dropped, and the sealed file in the spool. A transcript that grows again (a resumed session) is
+   archived again whole at the next run.
+
+`--dry-run` lists what would be archived and what the filter and the scans would drop (gitleaks still runs, over copies
+in a temporary folder deleted after); it seals nothing and writes no index. The desktop app's session metadata (its
+turn reports, reminders, prompt snapshots, connectors) is never read here. `brain health session-archive` warns when
+gitleaks is missing or no run sealed anything for 7 days (`session_archive.max_age_days`); it says OFF while the
+archive is not enabled, and with `--all` it is silent then.
 
 ## Once a year: the drill
 
