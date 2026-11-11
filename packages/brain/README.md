@@ -81,10 +81,11 @@ It runs only on the owner's yes: `y` at its prompt, or `--yes`; never from a Cla
 told to run it in the owner's own terminal. `brain update --check` prints the plan and changes nothing; `--json`
 gives its data. A checkout installed editable is not updated by pip (`git pull` there).
 
-Before the install, the plan verifies the tag's signature (since 0.3.2, STD-3): `git verify-tag` against the brain's
-`allowed_signers`, generated from `members.yaml`'s `releaser` role; a verified tag is installed by the commit it
-names. The plan says `verify   vX.Y.Z: signed by <person>`, or why not, and installs anyway unless `config.json`
-`engine.verify_tags` is `true`, the owner's opt-in, which refuses an unsigned tag. The installer does the same
+Before the install, the plan verifies the tag's signature (since 0.3.2, STD-3): `git verify-tag` against the
+`releaser` keys of the brain's `members.yaml` (else `allowed_signers`, the file generated from them); after the
+install, the commits pip recorded are checked against the one the signed tag names. The plan says
+`verify   vX.Y.Z: signed by <person>`, or why not, and installs anyway unless `config.json` `engine.verify_tags` is
+`true`, the owner's opt-in, which refuses an unsigned tag (`brain update --yes` then exits 1). The installer does the same
 ([docs/identity.md](docs/identity.md), « Signed releases »).
 
 The cockpit (`brain tui`) has one tab per question, each on its key: `0` the overview, `1` the queue, `2` the sessions,
@@ -860,7 +861,7 @@ The `releaser` role's keys verify the engine's release tags: `brain identity all
 install ([docs/identity.md](docs/identity.md), « Signed releases »).
 
 ```
-brain identity check | unsigned [--write DIR] [--json] | payload ID | attach SIG|DIR... | allowed-signers [--write]
+brain identity check | unsigned [--write DIR] [--json] | payload ID | attach SIG|DIR... | allowed-signers [--write [FILE]]
 ```
 
 ## Adding a command

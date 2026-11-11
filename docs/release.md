@@ -233,7 +233,9 @@ steps for that version; in general:
   the sessions.
 - **Each install verifies the tag** first, against the brain's `allowed_signers`: `verify   vX.Y.Z: signed by <you>`
   in the plan of `brain update` and of the installer, else why not; with `engine.verify_tags` on, an unsigned tag is
-  refused there, and so is a rollback to one (every tag up to v0.3.1): turn it off first to roll back.
+  refused there, and so is a rollback to one (every tag up to v0.3.1): turn it off first to roll back. The check runs
+  in the installer of the tag being installed: a brain's own installer that clones the engine at the pin and runs
+  that clone verifies it only if it runs `git verify-tag` on the clone first (identity.md, « Signed releases »).
 - **A brain from `brain init`** (no `engine.installer`): `brain update` in the owner's terminal, then `y`. It installs
   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. Then restart the sessions. An engine older
   than 0.2.6 runs that update and only reminds of the pin: run `brain update` once more.

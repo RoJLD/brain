@@ -28,8 +28,9 @@ pinned brain (``config.json`` ``engine.pin``) the pin to move. Which way the pin
   is not a release tag, nor for an editable install; a ``config.json`` with changes not committed is left as it is.
 
 Before an install, the plan verifies the tag (brain.tagsig, wi-brain-release-signing): ``git verify-tag`` against the
-brain's ``allowed_signers`` (members.yaml's releaser role); a verified tag is installed by the commit it names, so it
-cannot move between the check and the install. The plan says the verification either way; under config.json
+brain's ``allowed_signers`` (members.yaml's releaser role). pip installs the tag (brain.skew reads a release by its
+tag), then the commits it recorded for brain and research-graph are compared with the verified one: a tag moved
+between the check and the install is said. The plan says the verification either way; under config.json
 ``engine.verify_tags: true`` (the owner's opt-in, off by default) a tag not verified is refused.
 
 :func:`apply` runs it: only from ``brain update --yes``, the terminal's yes or the cockpit's confirmation (which runs
@@ -288,7 +289,7 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=No
     """What brain update would do for ``info`` (:func:`check`): {installed, latest, tag, repo, changelog, python,
     spec, launcher, pin, signature, verify_tags, blocked}. ``blocked`` says why there is nothing to apply ('' when
     there is). ``signature`` is the tag's verification (brain.tagsig.verdict) when there is something to install:
-    a verified tag is installed by its commit; one not verified is refused only under config.json
+    after the install the commits pip recorded are checked against it; one not verified is refused only under config.json
     engine.verify_tags. ``verify`` (tests) stands for brain.tagsig.verify."""
     installed, latest, repo = info["installed"], info.get("latest"), info["repo"]
     py = venv_python()
@@ -322,7 +323,7 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=No
         out["blocked"] = f"refused: {tagsig.line(sig, True)}"
         out["pin"] = None   # never moved to a tag refused
         return out
-    out["spec"] = spec(repo, sig["commit"] if sig["status"] == tagsig.VERIFIED else out["tag"], extras(py))
+    out["spec"] = spec(repo, out["tag"], extras(py))
     pair = launcher(py)
     out["launcher"] = [str(pair[0]), str(pair[1])] if pair else None
     return out
@@ -569,19 +570,23 @@ def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
 
 
 def _moved_since_verified(p: dict) -> list[str]:
-    """When the tag was verified, brain went in by its commit; research-graph came by the tag the engine's pyproject
-    pins. A commit pip recorded for it other than the verified one means the tag moved between the check and the
-    install: said (a warning, then a refusal line under engine.verify_tags), [] otherwise."""
+    """When the tag was verified: a commit pip recorded for brain or research-graph (both by the tag, from the
+    engine's repo) other than the verified one means the tag moved between the check and the install: said (a
+    warning, then a refusal line under engine.verify_tags), [] otherwise."""
     sig = p.get("signature") or {}
-    got = tagsig.installed_commit(_site_packages(Path(p["python"])), "research_graph") \
-        if sig.get("status") == tagsig.VERIFIED else ""
-    if not got or got == sig["commit"]:
+    if sig.get("status") != tagsig.VERIFIED:
         return []
-    said = [f"warning  research-graph was installed from commit {got[:12]}, not {sig['commit'][:12]} which the "
-            f"signed {p['tag']} names: the tag moved during the install"]
+    sites = _site_packages(Path(p["python"]))
+    moved = [(d, got) for d in ("brain", "research_graph")
+             for got in [tagsig.installed_commit(sites, d, p["repo"])] if got and got != sig["commit"]]
+    if not moved:
+        return []
+    said = [f"warning  {d} was installed from commit {got[:12]}, not {sig['commit'][:12]} which the signed "
+            f"{p['tag']} names: the tag moved during the install" for d, got in moved]
+    said.append("repair   the venv holds code the signature does not cover: check the repo's tags (git ls-remote), "
+                f"then {p['python']} -m pip install --force-reinstall \"{p['spec']}\"")
     if p.get("verify_tags"):
-        said.append("refused  the launcher and the pin are left as they were; the venv's research-graph is not the "
-                    "signed one: check the repo's tags, then brain update again")
+        said.append("refused  the launcher and the pin are left as they were")
     return said
 
 
@@ -593,8 +598,10 @@ def main(root: Path | None, *, check_only: bool, yes: bool, as_json: bool, refus
         out(json.dumps(p, ensure_ascii=False, indent=1, sort_keys=True))
     else:
         out("\n".join(lines(p)))
-    if check_only or not runs(p):
+    if check_only:
         return 0
+    if not runs(p):
+        return 1 if p.get("blocked", "").startswith("refused:") else 0   # a tag refused is a failure, not "nothing"
     if refused:
         out(f"brain update: {refused}; run it yourself in a terminal")
         return 1
