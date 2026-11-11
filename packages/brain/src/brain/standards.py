@@ -355,12 +355,15 @@ def applicable(rows: list[Row], sel: Selection | None) -> list[tuple[Row, str]]:
     return out
 
 
-def gaps(chosen: list[tuple[Row, str]], langs: dict[str, str]) -> list[str]:
+def gaps(chosen: list[tuple[Row, str]], langs: dict[str, str], tools: dict[str, set] | None = None) -> list[str]:
     """The applicable rows whose check does not cover a repo's language ({repo: lang}): a gap to report, never an
-    error (the language adapters close them, wi-brain-lang-adapters)."""
+    error. A repo that declares the row's adapter slot in its tools: ({repo: {slot}}, brain.langs) runs the check
+    through its own tool's report, so it is covered (wi-brain-lang-adapters)."""
+    tools = tools or {}
     out = []
     for row, _ in chosen:
-        missing = sorted(f"{name} ({lang})" for name, lang in langs.items() if not row.covers(lang))
+        missing = sorted(f"{name} ({lang})" for name, lang in langs.items()
+                         if not row.covers(lang) and not (row.adapter and row.adapter in tools.get(name, ())))
         if missing:
             out.append(f"{row.id}: its check covers {', '.join(row.languages)}, not {', '.join(missing)}")
     return out
