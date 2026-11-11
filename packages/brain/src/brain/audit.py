@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, feature_coverage, features, graph, inventory, links, paths, projects, public, testcov
+from . import config, feature_coverage, features, graph, inventory, links, paths, projects, public, readme, testcov
 from .inventory import AuditError
 
 RULESET = 7   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
@@ -87,6 +87,11 @@ CHECKS = {c.id: c for c in (
           "commands/ package that lists its modules adds itself, or a module of that package with no register"),
     Check("coderef.module", "P2", "new", "a module of a repo with a code layer has no CodeRef"),
     Check("readme.sections", "P2", "never", "README headings for install, usage and tests (until readme.generated)"),
+    # opt-in (wi-brain-readme-sync): measured only in a repo whose tree holds readme.yaml (brain.readme)
+    Check("readme.yaml", "P1", "new+left", "an opted-in repo's readme.yaml misses a required field or breaks its "
+          "schema (schemas/readme.schema.json)"),
+    Check("help.quoted", "P1", "new+left", "a command an opted-in repo's readme.yaml quotes is gone: its --help "
+          "does not run"),
     Check("doc.links", "P2", "new+left", "a doc no section of which documents a graph node, or a spec no Spec node "
           "anchors"),
     Check("test.links", "P2", "never", "a test module no graph node is tested_by (no Hook, and no node implemented_by "
@@ -286,10 +291,51 @@ def feature_cover(ctx: dict) -> list[dict] | str:
             for t in missing]
 
 
+NO_README = f"no {readme.FILE} (not opted in to a generated README: brain docs, wi-brain-readme-sync)"
+
+
+def _readme_spec(ctx: dict) -> dict | str:
+    """The repo's committed readme.yaml as a mapping, or why it is not measured (no readme.yaml: not opted in)."""
+    t = ctx["rf"].tree
+    if not t.has(readme.FILE):
+        return NO_README
+    try:
+        data = graph.load_yaml(t.text(readme.FILE))
+    except (ValueError, graph._yaml().YAMLError) as exc:
+        return {"__error__": f"{readme.FILE} cannot be read ({exc})"}
+    return data if isinstance(data, dict) else {"__error__": f"{readme.FILE} is not a mapping"}
+
+
+def readme_yaml(ctx: dict) -> list[dict] | str:
+    """readme.yaml (brain.readme): an opted-in repo's readme.yaml holds its required fields and fits its schema."""
+    spec = _readme_spec(ctx)
+    if isinstance(spec, str):
+        return spec
+    name = ctx["rf"].name
+    errors = [spec["__error__"]] if "__error__" in spec else readme.spec_errors(spec)
+    return [finding(name, "readme.yaml", readme.FILE, e, f"fix {readme.FILE} (schemas/readme.schema.json), then "
+                    "brain docs render --write") for e in errors]
+
+
+def help_quoted(ctx: dict) -> list[dict] | str:
+    """help.quoted (brain.readme): every command an opted-in repo's readme.yaml quotes still answers --help (run in
+    the repo's checkout)."""
+    spec = _readme_spec(ctx)
+    if isinstance(spec, str):
+        return spec
+    if "__error__" in spec:
+        return []   # readme.yaml says why
+    c = ctx["cfg"]
+    return [finding(c.name, "help.quoted", readme.FILE, line.removeprefix(f"{readme.FILE}: "),
+                    f"change or remove it in {readme.FILE}, then brain docs render --write")
+            for line in readme.gone(spec, Path(c.path))]
+
+
 PENDING = {
-    "readme.yaml": Pending("wi-brain-readme-sync", True, "every"),
+    "readme.yaml": Pending("wi-brain-readme-sync", True, "every", readme_yaml),
+    # the README against its render: brain docs check and brain check (a generated view, the default branch's to hold)
     "readme.generated": Pending("wi-brain-readme-sync", True, "every"),
-    "help.quoted": Pending("wi-brain-readme-sync", True, "commands"),
+    "help.quoted": Pending("wi-brain-readme-sync", True, "every", help_quoted),
     "features.md": Pending("wi-brain-feature-matrix", True, "code", features_md),
     "feature.links": Pending("wi-brain-feature-matrix", True, "code", feature_links),
     "doc.links": Pending("wi-brain-doc-test-links", False, "every", doc_links),

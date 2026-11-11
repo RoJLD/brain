@@ -209,6 +209,18 @@ public render existed; `config.json` `features.public_strict: true` (the owner's
 accept the public render only. The render has no date and sorts what it lists: the same
 graph gives the same file.
 
+### Generated READMEs
+
+A repo opts in by holding `readme.yaml` at its root (`schemas/readme.schema.json`): the text only a person writes, what
+the repo is, why, how to start, its own notes and the commands its README quotes. `brain docs render --write` then
+writes its `README.md` from the engine's template (`templates/readme/README.md.tmpl`) and the facts of their sources:
+the features recap (counts by status and domain, the top ones, a link to the repo's `FEATURES.md`, written too), each
+quoted command's usage from its `--help`, and, for a private repo, the active specs, recent ADRs and pending milestones
+that touch it; a public repo's render is neutral (the features' public titles, no record of the private brain).
+`brain docs check` exits 1 when `readme.yaml` misses a field, a quoted command is gone, or `README.md` is not the
+render (a hand edit, or a stale render: a feature, a command's help or the graph changed); `brain check` runs it
+(a stale README is a stale view, [docs/views.md](docs/views.md)). A repo without `readme.yaml` is never read.
+
 ### The impact of a change
 
 `brain impact [--diff BASE|A..B]` says, before merge, what a change's code carries in the graph
