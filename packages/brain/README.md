@@ -867,7 +867,10 @@ owner's acts, refused in an agent session. The owner's steps, the canary's sched
 and what to do with a lost key are in the runbook, [`docs/vault.md`](docs/vault.md). Until a data remote exists,
 what leaves waits in a sealed local spool: `brain spool push`, run by hand, seals the changed stores of its set (the
 ledger, the usage, the session records by default) after a secret scan, sends them to `spool.remote` when one is set,
-each copy checked by sha256, and `brain health spool` gives the last push's age.
+each copy checked by sha256, and `brain health spool` gives the last push's age. The session archive (opt-in,
+`session_archive.enabled`) puts the agents' quiet transcripts into the spool: each row a residency filter of the
+owner's matches dropped, scanned by the engine's patterns then gitleaks (absent or failing: nothing archived), sealed
+and indexed by session record (`brain session-archive run [--dry-run]`).
 
 ```
 brain classes [--check] [--suggest] [--matrix] [PATH...]
@@ -876,6 +879,8 @@ brain vault device init [--rotate] | device forget-previous | open FILE | drill 
 brain health vault
 brain spool push [STORE...] [--dry-run] | status | verify
 brain health spool
+brain session-archive run [--dry-run] [--max N] | status
+brain health session-archive
 ```
 
 ## Identity: members and signed answers
