@@ -176,7 +176,7 @@ def load(root: Path, store: Path) -> Model:
     units += [Unit(nid, "adr", _adr_day(nid), _short(n.get("title"), 140), [nid], sorted(decided.get(nid, [])))
               for nid, n in nodes.items() if n.get("type") == "ADR" and nid not in went]
     _mark(units, nodes, edges, decided)
-    return Model(nodes, edges, modules.registry(store) or [], units,
+    return Model(nodes, edges, modules.registry(store, root) or [], units,
                  [d for d in ddrs if d.get("id") and d.get("status") == "pending"])
 
 
