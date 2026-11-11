@@ -56,6 +56,34 @@ A value outside them is a newer engine's: a note in read mode, an error in stric
 `v` (a newer engine's) is refused and its rows are not read: `brain standards check` and `brain check --all` are red
 until the engine is updated.
 
+## The engine's catalogs
+
+**software** (`catalogs/software.yaml`, `wi-brain-standards-catalog-software`): 90 standards for code products
+(profiles library, cli, local-client, service, data-pipeline, embedded), in ten domains, curated from two
+taxonomies of engineering standards (a client architecture's six pillars and five gaps; software engineering's ten
+domains) and the pillars they leave out (supply chain, portability and encodings, time, configuration and feature
+flags, error messages, performance budgets, data lifecycle, recovery, AI-agent safety, multi-tenant isolation,
+accessibility and i18n). Every row is `proposed` until the owner validates its domain; a validated row turns
+`validated` in the same file.
+
+| Domain | Rows | What it holds |
+|---|---|---|
+| architecture | 8 | separation of concerns, bounded contexts, simplicity, injected dependencies, state machines, decision records, fitness functions |
+| code-quality | 6 | parse don't validate, strict typing, typed errors, contracts, functional core, lint and format |
+| concurrency | 7 | timeouts, locked writers, backpressure, cancellation, deterministic memory, mechanical sympathy, lock-free by measure |
+| persistence | 9 | atomic writes, versioned formats, tolerant reader, migrations, checksums, backups, transactions, caches, recovery |
+| distributed | 8 | idempotency, retries with backoff, circuit breakers, outbox, graceful degradation, bulkheads, replication, protocol versions |
+| security | 14 | zero-trust input, secrets, encryption at rest and in transit, local IPC, least privilege, constant time, lockfiles, SBOM, reproducible builds, signing, image pinning, tenant isolation, AI-agent safety |
+| testing | 12 | a test per change, the pyramid, hermetic tests, coverage, property-based, fuzzing, mutation, fault injection, simulation, formal specs, performance budgets, load tests |
+| release | 9 | CI gates, SemVer, blue/green updates, canaries, feature flags, configuration as data, single instance, graceful shutdown, host footprint |
+| observability | 6 | structured logs, metrics, correlation ids, crash reports, self-diagnosis, profiling |
+| data-governance | 11 | privacy by design, erasure, retention, UTF-8, UTC, portability, i18n, accessibility, error messages, docs as code, a reproducible dev environment |
+
+A prototype gets few rows (simplicity, lint and format, secrets, a test per change, UTF-8, UTC); a row's stage says
+from when it is required, and the heavy ones (consensus, lock-free structures, canaries, mutation scores) wait for
+`scale`. `brain standards list --catalog software --profile cli --stage mvp` shows what a command-line tool at MVP
+follows.
+
 ## The opt-in
 
 ```yaml

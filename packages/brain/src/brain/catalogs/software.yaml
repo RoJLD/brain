@@ -1,0 +1,1310 @@
+# The software catalog of the standards registry (brain.standards, docs/standards.md): generic engineering standards
+# for code products, curated from two taxonomies of engineering standards (client architecture: six pillars and five
+# gaps; software engineering: ten domains) and the pillars they leave out (supply chain, portability, time,
+# configuration, error messages, performance budgets, data lifecycle, recovery, AI-agent safety, multi-tenant
+# isolation, accessibility). Every row is proposed until the owner validates it, domain by domain.
+#
+# Profiles: library, cli, local-client, service, data-pipeline, embedded (never research, strategy or marketing: their
+# catalogs are their own). coverage says how the Brain itself meets the row today.
+v: 1
+catalog: software
+title: Software engineering standards for code products, from the architecture to the developer experience
+source: two taxonomies of engineering standards (client architecture, software engineering) and the pillars they leave out
+rows:
+  # --- architecture: system design, modelling, governance -----------------------------------------------------
+  - id: sw-separation-of-concerns
+    domain: architecture
+    title: Separation of concerns
+    statement: Domain logic lives apart from I/O, user interfaces and frameworks; the core imports no adapter (ports and adapters).
+    why: A core tied to its adapters cannot be tested alone or moved to another interface.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: check
+    check: an import contract (a fitness function) fails when the core package imports an adapter package
+    adapter: lint
+    languages: [py]
+    coverage:
+      status: partial
+      by: "brain audit and the scout check the modules' structure, not the layers"
+    status: proposed
+    source: software engineering 1, modularity
+  - id: sw-bounded-contexts
+    domain: architecture
+    title: Bounded contexts
+    statement: Each bounded context keeps its own model and vocabulary; contexts talk through explicit contracts, never through each other's internals or tables.
+    profiles: [local-client, service, data-pipeline]
+    stage: v1
+    enforcement: review-lens
+    check: does the change reach into another context's internals or share its storage?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "the engine and a brain talk through a small contract (config.json, projects.yaml, the stores)"
+    status: proposed
+    source: software engineering 1, modularity
+  - id: sw-simplicity
+    domain: architecture
+    title: Simplicity first (KISS, YAGNI)
+    statement: No abstraction, option or layer is added without a present need; SOLID and the law of Demeter apply where a seam already exists.
+    why: Speculative design is paid for in every later change.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: prototype
+    enforcement: review-lens
+    check: does the change add an abstraction, option or layer that nothing uses yet?
+    languages: [any]
+    coverage:
+      status: have
+      by: "the review's lenses and the one-way-door rule (scope and target, never a later phase)"
+    status: proposed
+    source: software engineering 1, design principles
+  - id: sw-dependency-injection
+    domain: architecture
+    title: Dependencies passed in
+    statement: A unit receives its dependencies (clock, file system, network, runners) instead of reaching for globals, so it runs with fakes in a test.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: review-lens
+    check: can the unit run in a test without the real clock, disk or network?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "the tests inject today, now and fake runners"
+    status: proposed
+    source: software engineering 1, design principles
+  - id: sw-state-machines
+    domain: architecture
+    title: Explicit state machines
+    statement: A component with modes models them as an explicit finite state machine; every transition is named and an illegal one is refused.
+    profiles: [local-client, service, embedded]
+    stage: v1
+    enforcement: review-lens
+    check: are the component's modes and transitions explicit, and is an illegal transition refused?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "item and decision statuses are closed sets checked by the graph's schema"
+    status: proposed
+    source: software engineering 1, flow and state models
+  - id: sw-event-models-by-decision
+    domain: architecture
+    title: Event models chosen, not defaulted
+    statement: Event sourcing, CQRS or an actor model is adopted by a recorded decision when an audit trail, a read model or isolation needs it, never by default.
+    profiles: [service, data-pipeline]
+    stage: v1
+    enforcement: rule
+    check: a decision record names the need before an event model is adopted
+    languages: [any]
+    coverage:
+      status: partial
+      by: "append-only records with generated views, chosen by decision"
+    status: proposed
+    source: software engineering 1, flow and state models
+  - id: sw-decision-records
+    domain: architecture
+    title: Decision records
+    statement: Every architectural trade-off is recorded as a decision record (context, decision, why, when to revisit), and a one-way door states its scope and target compatibility.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: review-lens
+    check: does the change take a one-way door (a format, a public contract, a key) without a decision record?
+    languages: [any]
+    coverage:
+      status: have
+      by: "the decision log and brain adr"
+    status: proposed
+    source: software engineering 1, architectural governance
+  - id: sw-fitness-functions
+    domain: architecture
+    title: Architectural fitness functions
+    statement: Architectural rules (forbidden imports, size and complexity budgets) are automated checks that fail the build.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: check
+    check: an import contract and size and complexity thresholds run in CI
+    adapter: lint
+    languages: [py]
+    coverage:
+      status: have
+      by: "brain audit --diff's structure thresholds and the scout"
+    status: proposed
+    source: software engineering 1, architectural governance
+
+  # --- code-quality: typing, errors, contracts, purity -----------------------------------------------------------
+  - id: sw-parse-dont-validate
+    domain: code-quality
+    title: Parse, don't validate
+    statement: Inputs are parsed once at the boundary into types that cannot hold an illegal state; the core never handles raw data.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: review-lens
+    check: does raw input (a dict, a string) travel past the boundary into the core?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "JSON Schemas at the readers; the core still handles dicts"
+    status: proposed
+    source: software engineering 2, type safety
+  - id: sw-strict-typing
+    domain: code-quality
+    title: Strict typing
+    statement: The code passes a type checker in strict mode; values that carry a meaning get their own types (newtypes, algebraic types), never bare primitives.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: v1
+    enforcement: check
+    check: a type checker in strict mode (mypy or pyright; tsc --strict)
+    adapter: typecheck
+    languages: [py, ts]
+    coverage:
+      status: none
+      by: "no type checker runs yet"
+    status: proposed
+    source: software engineering 2, type safety
+  - id: sw-typed-errors
+    domain: code-quality
+    title: Typed errors
+    statement: Recoverable errors are values or typed exceptions with their context; a broken invariant is a fatal error, never swallowed.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: review-lens
+    check: does the change catch an error it cannot handle, or lose its context?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "typed errors per module and exit codes 1 and 2"
+    status: proposed
+    source: software engineering 2, error handling
+  - id: sw-contracts
+    domain: code-quality
+    title: Design by contract
+    statement: The pre- and postconditions and invariants of critical functions are asserted in the code.
+    profiles: [library, service, embedded]
+    stage: v1
+    enforcement: review-lens
+    check: are the critical function's preconditions and invariants asserted?
+    languages: [any]
+    coverage:
+      status: none
+    status: proposed
+    source: software engineering 2, defensive programming
+  - id: sw-functional-core
+    domain: code-quality
+    title: Functional core, imperative shell
+    statement: Side effects (I/O, network, clock, shared mutation) sit at the edges; the core is pure functions over immutable data.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: review-lens
+    check: does the change mix a decision with an effect that could be split into a pure plan and an apply?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "plan-then-apply commands (a pure plan, then an apply at the edge)"
+    status: proposed
+    source: software engineering 2, purity and immutability
+  - id: sw-lint-format
+    domain: code-quality
+    title: Lint and format in CI
+    statement: A linter and a format check run in CI and block a merge.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: prototype
+    enforcement: check
+    check: the language's linter and format checker (ruff; eslint and prettier)
+    adapter: lint
+    languages: [py, ts]
+    coverage:
+      status: have
+      by: "ruff in CI"
+    status: proposed
+    source: software engineering 8, CI/CD
+
+  # --- concurrency: memory, concurrency, low-level performance ---------------------------------------------------
+  - id: sw-timeouts
+    domain: concurrency
+    title: Timeouts everywhere
+    statement: Every blocking call (a subprocess, a network call, a lock, a queue) has a timeout.
+    why: A call without a timeout turns a stuck dependency into a stuck program.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: check
+    check: a lint flags a subprocess or network call without a timeout
+    adapter: lint
+    languages: [py]
+    coverage:
+      status: partial
+      by: "most subprocess calls have one; the lint is planned"
+    status: proposed
+    source: client architecture 5; software engineering 3, asynchrony and I/O
+  - id: sw-locks
+    domain: concurrency
+    title: Locked writers
+    statement: Concurrent writers of one file or resource take a lock with an owner and an expiry; a stale lock is broken safely and said.
+    why: Unlocked appenders lose lines under load.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: test-template
+    check: a test runs several writers at once and loses nothing
+    adapter: test
+    languages: [any]
+    coverage:
+      status: partial
+      by: "the ledgers' append lock; agent locks planned"
+    status: proposed
+    source: client architecture 4 and 5; software engineering 3, concurrency
+  - id: sw-backpressure
+    domain: concurrency
+    title: Backpressure
+    statement: A producer that can outrun its consumer is bounded; queues have a limit and an explicit overflow policy.
+    profiles: [service, data-pipeline, embedded]
+    stage: v1
+    enforcement: review-lens
+    check: is every queue bounded, and what happens when it is full?
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 3, asynchrony and I/O
+  - id: sw-cancellation
+    domain: concurrency
+    title: Cooperative cancellation
+    statement: A long task can be cancelled cooperatively and releases its resources when it is.
+    profiles: [local-client, service, data-pipeline]
+    stage: v1
+    enforcement: review-lens
+    check: can the long task be cancelled, and does it release its locks and files?
+    languages: [any]
+    coverage:
+      status: none
+    status: proposed
+    source: software engineering 3, asynchrony and I/O
+  - id: sw-memory-ownership
+    domain: concurrency
+    title: Deterministic memory
+    statement: Allocation and release are deterministic (ownership, RAII, pools or arenas), and a long-running process shows no growth under a soak test.
+    profiles: [service, embedded]
+    stage: scale
+    enforcement: measure
+    check: resident memory over a soak test
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 3, memory management
+  - id: sw-mechanical-sympathy
+    domain: concurrency
+    title: Mechanical sympathy
+    statement: Hot paths are laid out for the cache and the CPU (data-oriented layout, no false sharing, zero copy, vectorisation where it pays), as a benchmark shows.
+    profiles: [data-pipeline, embedded]
+    stage: scale
+    enforcement: measure
+    check: a benchmark of the hot path, tracked per change
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 3, mechanical sympathy
+  - id: sw-lock-free-by-measure
+    domain: concurrency
+    title: Lock-free only where measured
+    statement: Lock-free or wait-free structures are used only where a benchmark shows contention, with their memory ordering written and tested.
+    profiles: [service, embedded]
+    stage: scale
+    enforcement: review-lens
+    check: does a benchmark justify the lock-free structure, and is its memory ordering documented?
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 3, concurrency and parallelism
+
+  # --- persistence: local data, integrity, schema evolution ------------------------------------------------------
+  - id: sw-atomic-writes
+    domain: persistence
+    title: Atomic writes
+    statement: Every file the program owns is written to a temporary file in the same folder, flushed, then renamed over the old one.
+    why: A crash mid-write otherwise leaves half a file.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: check
+    check: a lint flags a write to an owned file outside the atomic-write helper
+    adapter: lint
+    languages: [py]
+    coverage:
+      status: partial
+      by: "a state helper for the machine-local stores; not every writer uses it"
+    status: proposed
+    source: client architecture 1; software engineering 4, transactional guarantees
+  - id: sw-schema-versioning
+    domain: persistence
+    title: Versioned formats
+    statement: Every persisted format carries a version; a reader accepts older versions (upcasting) and refuses a newer one with a message that names the upgrade.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: check
+    check: a format registry and a schema diff in CI refuse a moved format without its version and upgrade note
+    languages: [any]
+    coverage:
+      status: have
+      by: "v on every record, the format registry and the release check"
+    status: proposed
+    source: client architecture 1; software engineering 4, schema lifecycle
+  - id: sw-tolerant-reader
+    domain: persistence
+    title: Tolerant reader, strict writer
+    statement: Readers keep unknown fields and report them; writers write only what their version knows; a file a newer version wrote round-trips without loss.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: test-template
+    check: an older and a newer fixture of each format round-trip through the reader and the writer
+    adapter: test
+    languages: [any]
+    coverage:
+      status: have
+      by: "the formats' fixtures and their round-trip tests"
+    status: proposed
+    source: software engineering 4, schema lifecycle
+  - id: sw-migrations
+    domain: persistence
+    title: Tested migrations
+    statement: Migrations are deterministic and idempotent, tested against a copy of real old data, and a backup or a downgrade path exists before one runs.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: test-template
+    check: a test migrates an old fixture twice and compares the result
+    adapter: test
+    languages: [any]
+    coverage:
+      status: partial
+      by: "a legacy-store drill; a migrate command is planned"
+    status: proposed
+    source: client architecture 1; software engineering 4, schema lifecycle
+  - id: sw-checksums
+    domain: persistence
+    title: Corruption detected
+    statement: Stored data carries a checksum verified on load; a corrupt file is set aside and reported, never silently reset.
+    profiles: [local-client, service, data-pipeline, embedded]
+    stage: v1
+    enforcement: test-template
+    check: a test corrupts a file and expects it set aside with a message
+    adapter: test
+    languages: [any]
+    coverage:
+      status: partial
+      by: "hashes of the sealed copies; integrity sidecars for the local stores"
+    status: proposed
+    source: client architecture 1; software engineering 4, integrity and storage
+  - id: sw-snapshots
+    domain: persistence
+    title: Backups before risk
+    statement: Data the user cannot recreate is copied before a risky operation and on a schedule, and a restore is tested.
+    profiles: [local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: test-template
+    check: a test restores from the backup and compares
+    adapter: test
+    languages: [any]
+    coverage:
+      status: partial
+      by: "sealed copies and a recovery drill"
+    status: proposed
+    source: client architecture 1; software engineering 4, integrity and storage
+  - id: sw-transactions
+    domain: persistence
+    title: Transactions or a write-ahead log
+    statement: Multi-step writes that must stay consistent use a transaction or a write-ahead log, at an isolation level chosen and written down.
+    profiles: [local-client, service, data-pipeline]
+    stage: v1
+    enforcement: review-lens
+    check: can a crash between two of the change's writes leave the data inconsistent?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "git commits for the committed data"
+    status: proposed
+    source: software engineering 4, transactional guarantees
+  - id: sw-access-performance
+    domain: persistence
+    title: Indexes and caches from measures
+    statement: Indexes, partitions and caches are chosen from measured access patterns; a cache has an eviction policy and protection against a stampede.
+    profiles: [service, data-pipeline]
+    stage: scale
+    enforcement: review-lens
+    check: does a measure justify the index or cache, and what evicts it?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "a per-process memo keyed by file size and time"
+    status: proposed
+    source: software engineering 4, access performance
+  - id: sw-recovery
+    domain: persistence
+    title: Recovery drilled
+    statement: "Recovery is planned: an off-site copy, a written restore procedure, and a drill run on a schedule."
+    profiles: [local-client, service, data-pipeline]
+    stage: v1
+    enforcement: measure
+    check: the date of the last restore drill, against its schedule
+    languages: [any]
+    coverage:
+      status: partial
+      by: "the vault's recovery drill; the off-site copy is planned"
+    status: proposed
+    source: added pillar, recovery and succession
+
+  # --- distributed: network, resilience ---------------------------------------------------------------------------
+  - id: sw-idempotency
+    domain: distributed
+    title: Idempotent operations
+    statement: "An operation that may be retried is idempotent: applying it twice changes nothing the second time (an idempotency key for a request)."
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: test-template
+    check: a test applies the operation twice and finds nothing changed the second time
+    adapter: test
+    languages: [any]
+    coverage:
+      status: have
+      by: "plan-then-apply everywhere"
+    status: proposed
+    source: client architecture 2; software engineering 5, resilience patterns
+  - id: sw-retry-backoff
+    domain: distributed
+    title: Retries with backoff and jitter
+    statement: Retries use exponential backoff with jitter and a cap; an error that is not transient is not retried.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: review-lens
+    check: is the retry bounded, jittered, and limited to transient errors?
+    languages: [any]
+    coverage:
+      status: none
+      by: "one network helper is planned"
+    status: proposed
+    source: software engineering 5, resilience patterns
+  - id: sw-circuit-breaker
+    domain: distributed
+    title: Circuit breakers
+    statement: A failing dependency trips a circuit breaker, so a down service costs one timeout per window, not one per call.
+    profiles: [local-client, service, data-pipeline]
+    stage: v1
+    enforcement: test-template
+    check: a test fails the dependency N times and expects the breaker to open
+    adapter: test
+    languages: [any]
+    coverage:
+      status: none
+      by: "one network helper is planned"
+    status: proposed
+    source: client architecture 2; software engineering 5, resilience patterns
+  - id: sw-outbox
+    domain: distributed
+    title: Outbox for offline work
+    statement: Outbound calls that must not be lost go through a durable local queue, replayed with backoff when the network returns.
+    profiles: [local-client, service]
+    stage: v1
+    enforcement: test-template
+    check: a test cuts the network, queues a call, restores it and expects one delivery
+    adapter: test
+    languages: [any]
+    coverage:
+      status: none
+      by: "an outbox is planned; a failed notification is lost today"
+    status: proposed
+    source: client architecture 2; software engineering 5, resilience patterns
+  - id: sw-graceful-degradation
+    domain: distributed
+    title: Graceful degradation
+    statement: When a subsystem or dependency is down, the rest keeps working in a degraded mode that says so.
+    profiles: [local-client, service, data-pipeline]
+    stage: v1
+    enforcement: review-lens
+    check: what does the user see when this dependency is missing?
+    languages: [any]
+    coverage:
+      status: have
+      by: "a fallback per capability and loud dependency probes"
+    status: proposed
+    source: software engineering 5, protocols and transport
+  - id: sw-bulkheads
+    domain: distributed
+    title: Bulkheads
+    statement: Resource pools are isolated per dependency, so one slow dependency cannot exhaust them all.
+    profiles: [service]
+    stage: scale
+    enforcement: review-lens
+    check: can one slow dependency take every worker or connection?
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 5, resilience patterns
+  - id: sw-replication
+    domain: distributed
+    title: Proven replication and logical clocks
+    statement: Replicated state uses a proven protocol (consensus, CRDTs), and events are ordered by logical clocks, never by wall-clock time across machines.
+    profiles: [service]
+    stage: scale
+    enforcement: review-lens
+    check: what orders these events across machines, and what happens on a partition?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "git and a merge driver for the shared stores"
+    status: proposed
+    source: software engineering 5, consensus and coordination
+  - id: sw-protocol-versioning
+    domain: distributed
+    title: Versioned protocols
+    statement: A network protocol negotiates its version at the handshake; an unknown version is refused with a message that names the upgrade.
+    profiles: [library, service]
+    stage: v1
+    enforcement: test-template
+    check: a test connects with an older and a newer version
+    adapter: test
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 5, protocols and transport
+
+  # --- security: zero trust, secrets, confinement, supply chain --------------------------------------------------
+  - id: sw-zero-trust-input
+    domain: security
+    title: Zero-trust input
+    statement: Every input from outside the process (files, network, IPC, environment, arguments) is validated against a schema or a parser before use.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: check
+    check: every reader validates against its schema; the parsers of untrusted input are fuzzed
+    languages: [any]
+    coverage:
+      status: have
+      by: "JSON Schemas and the guards' command parsing"
+    status: proposed
+    source: client architecture 3; software engineering 6, zero trust
+  - id: sw-secrets-handling
+    domain: security
+    title: Secrets out of argv, logs and files
+    statement: Secrets travel by the OS keystore or stdin, never in arguments, environment variables, logs or files in clear, and are dropped as soon as used.
+    why: Memory cannot always be zeroed; a secret that never lands in argv or a log cannot leak from there.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: prototype
+    enforcement: check
+    check: a secret scan of the tree and its history; a lint refuses a secret in argv or a log
+    languages: [any]
+    coverage:
+      status: partial
+      by: "the keystore and the secret scan; the argv lint is planned"
+    status: proposed
+    source: client architecture 3 (zeroization); software engineering 6, secrets
+  - id: sw-encryption-at-rest
+    domain: security
+    title: Encryption at rest
+    statement: Sensitive data at rest is encrypted with a key kept by the OS key store (DPAPI, Keychain, Secret Service, a TPM).
+    profiles: [local-client, service, data-pipeline]
+    stage: v1
+    enforcement: review-lens
+    check: is any sensitive data written in clear, and where is its key?
+    languages: [any]
+    coverage:
+      status: have
+      by: "the vault and the keystore"
+    status: proposed
+    source: client architecture 3; software engineering 6, secrets and cryptography
+  - id: sw-encryption-in-transit
+    domain: security
+    title: Encryption in transit
+    statement: Network traffic is encrypted (TLS 1.3), and services authenticate each other (mutual TLS), even inside one network.
+    profiles: [service, data-pipeline]
+    stage: v1
+    enforcement: check
+    check: a scan of the endpoints refuses plain text and a missing client certificate
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 6, zero trust
+  - id: sw-local-ipc
+    domain: security
+    title: Authenticated local IPC
+    statement: Every local service binds the loopback only and requires a per-machine token, so another program on the machine cannot command it.
+    profiles: [local-client, service]
+    stage: mvp
+    enforcement: test-template
+    check: a test calls the local service without the token and expects a refusal
+    adapter: test
+    languages: [any]
+    coverage:
+      status: partial
+      by: "loopback binding; tokens planned"
+    status: proposed
+    source: client architecture gap 2; software engineering 6, zero trust
+  - id: sw-least-privilege
+    domain: security
+    title: Least privilege
+    statement: The program runs without admin or root rights, its containers as non-root, and its system calls restricted where the platform allows (a sandbox).
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: check
+    check: the installer and the containers run without elevation; a scan refuses a root container
+    languages: [any]
+    coverage:
+      status: partial
+      by: "the installer runs without admin"
+    status: proposed
+    source: client architecture gap 2; software engineering 6, confinement
+  - id: sw-constant-time
+    domain: security
+    title: Constant-time comparisons
+    statement: Secrets, tokens and signatures are compared in constant time.
+    profiles: [library, service, embedded]
+    stage: v1
+    enforcement: check
+    check: a lint flags an equality test on a secret or token
+    adapter: lint
+    languages: [py]
+    coverage:
+      status: none
+    status: proposed
+    source: software engineering 6, secrets and cryptography
+  - id: sw-lockfiles
+    domain: security
+    title: Locked dependencies
+    statement: Dependencies are pinned in a lockfile with hashes; a build resolves nothing new.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: check
+    check: the build installs from the lockfile with hash checking
+    languages: [any]
+    coverage:
+      status: partial
+      by: "pinned versions, no hashes yet"
+    status: proposed
+    source: added pillar, supply chain; software engineering 6, supply chain
+  - id: sw-sbom
+    domain: security
+    title: SBOM and vulnerability scan
+    statement: Each release ships a software bill of materials and is scanned for known vulnerabilities.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: check
+    check: an SBOM generator and a vulnerability scanner in the release job (syft, pip-audit)
+    languages: [py]
+    coverage:
+      status: none
+      by: "a dependency watch is planned"
+    status: proposed
+    source: added pillar, supply chain; software engineering 6, supply chain
+  - id: sw-reproducible-builds
+    domain: security
+    title: Reproducible builds
+    statement: A release can be rebuilt bit for bit from its tag.
+    profiles: [library, cli, local-client]
+    stage: scale
+    enforcement: check
+    check: CI rebuilds the release and compares the hashes
+    languages: [any]
+    coverage:
+      status: none
+    status: proposed
+    source: software engineering 6, supply chain
+  - id: sw-code-signing
+    domain: security
+    title: Signed releases, verified
+    statement: Releases are signed, and the installer and the updater verify the signature before installing; an unsigned release can be refused.
+    profiles: [library, cli, local-client]
+    stage: v1
+    enforcement: check
+    check: the installer verifies the release's signature against the allowed signers
+    languages: [any]
+    coverage:
+      status: partial
+      by: "signed tags, their verification opt-in"
+    status: proposed
+    source: client architecture gap 3; software engineering 6, supply chain
+  - id: sw-image-pinning
+    domain: security
+    title: Images pinned by digest
+    statement: Container images are pinned by digest, never by a moving tag.
+    profiles: [service, data-pipeline]
+    stage: mvp
+    enforcement: check
+    check: the stack's loader refuses an image without a digest
+    languages: [any]
+    coverage:
+      status: have
+      by: "an unpinned image is refused"
+    status: proposed
+    source: added pillar, supply chain
+  - id: sw-tenant-isolation
+    domain: security
+    title: Tenant isolation
+    statement: One tenant's data never reaches another; every store, key and log is scoped to its tenant, and a test proves the scoping.
+    profiles: [service, data-pipeline]
+    stage: v1
+    enforcement: test-template
+    check: a test reads as one tenant and finds nothing of another
+    adapter: test
+    languages: [any]
+    coverage:
+      status: partial
+      by: "tenant scopes in the data classes; a tenant is mounted opaque"
+    status: proposed
+    source: added pillar, multi-tenant isolation
+  - id: sw-agent-safety
+    domain: security
+    title: AI agents under guards
+    statement: An AI agent acting on the project runs under guards; owner-only actions are refused to it, its cost and memory are governed, fetched content is data, never instructions, and every code change it makes is reviewed.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: check
+    check: the guards refuse an owner-only action and a merge without a review stamp
+    languages: [any]
+    coverage:
+      status: have
+      by: "the guards, the usage governor and the review stamp"
+    status: proposed
+    source: added pillar, AI-agent safety
+
+  # --- testing: verification and validation ---------------------------------------------------------------------
+  - id: sw-test-per-change
+    domain: testing
+    title: A test per change of behaviour
+    statement: Every change of behaviour comes with a test that fails without it.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: prototype
+    enforcement: review-lens
+    check: would the new test fail on the code before the change?
+    languages: [any]
+    coverage:
+      status: have
+      by: "the review's lenses and the scout"
+    status: proposed
+    source: software engineering 7, test pyramid
+  - id: sw-test-pyramid
+    domain: testing
+    title: The test pyramid
+    statement: Unit tests are fast and isolated; integration tests use real, ephemeral dependencies; a few end-to-end tests cover the main paths.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: review-lens
+    check: is each test at the cheapest layer that can catch the bug?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "unit and integration suites, docker-marked tests apart"
+    status: proposed
+    source: software engineering 7, test pyramid
+  - id: sw-hermetic-tests
+    domain: testing
+    title: Hermetic tests
+    statement: Tests never read or write the developer's real home, data or network; each runs in its own temporary environment.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: check
+    check: the test harness points every home, config and data path at a temporary folder
+    adapter: test
+    languages: [any]
+    coverage:
+      status: have
+      by: "every test writes to a temporary home"
+    status: proposed
+    source: software engineering 7, test pyramid
+  - id: sw-coverage
+    domain: testing
+    title: Coverage measured
+    statement: Line and branch coverage is measured on every change and does not drop below the project's floor.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: measure
+    check: coverage per change against a floor (pytest-cov; c8 or istanbul)
+    adapter: coverage
+    languages: [py, ts]
+    coverage:
+      status: have
+      by: "brain coverage and the audit's test.coverage"
+    status: proposed
+    source: software engineering 7
+  - id: sw-property-based
+    domain: testing
+    title: Property-based tests
+    statement: The invariants of parsers, serialisers and pure functions are checked with property-based tests.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: test-template
+    check: a property-based test per parser and serialiser (hypothesis; fast-check)
+    adapter: test
+    languages: [py, ts]
+    coverage:
+      status: none
+    status: proposed
+    source: software engineering 7, advanced verification
+  - id: sw-fuzzing
+    domain: testing
+    title: Fuzzing
+    statement: Parsers of untrusted input are fuzzed.
+    profiles: [library, service, embedded]
+    stage: v1
+    enforcement: test-template
+    check: a fuzz target per parser of untrusted input (atheris; jazzer.js)
+    adapter: test
+    languages: [py, ts]
+    coverage:
+      status: none
+    status: proposed
+    source: software engineering 7, advanced verification
+  - id: sw-mutation-score
+    domain: testing
+    title: Mutation score
+    statement: A mutation score is measured on the core and does not regress.
+    profiles: [library, service]
+    stage: scale
+    enforcement: measure
+    check: a mutation testing run on the core (mutmut; stryker)
+    adapter: test
+    languages: [py, ts]
+    coverage:
+      status: none
+    status: proposed
+    source: software engineering 7, advanced verification
+  - id: sw-fault-injection
+    domain: testing
+    title: Fault injection and a virtual clock
+    statement: The program can play a failure end to end (a virtual clock, a full disk, a timeout, a corrupt file, a kill mid-write) through injection points its shared helpers honour.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: test-template
+    check: an end-to-end test per failure point, driven by the injection variable
+    adapter: test
+    languages: [any]
+    coverage:
+      status: none
+      by: "injection points are planned; tests inject today and now"
+    status: proposed
+    source: client architecture gap 5; software engineering 7, chaos engineering
+  - id: sw-deterministic-simulation
+    domain: testing
+    title: Deterministic simulation
+    statement: A distributed protocol is tested by deterministic simulation (one thread, a virtual clock, faults replayable from a seed).
+    profiles: [service]
+    stage: scale
+    enforcement: test-template
+    check: a simulation run per protocol change, its seed kept on failure
+    adapter: test
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 7, formal methods and determinism
+  - id: sw-formal-specification
+    domain: testing
+    title: Formal specification of critical algorithms
+    statement: A critical algorithm (consensus, locking, a protocol) has a formal specification checked by a model checker.
+    profiles: [service, embedded]
+    stage: scale
+    enforcement: rule
+    check: a model-checked specification (TLA+, Alloy) beside the algorithm
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 7, formal methods and determinism
+  - id: sw-performance-budgets
+    domain: testing
+    title: Performance budgets
+    statement: Each command or endpoint has a latency budget, and benchmarks on every change fail on a regression beyond it.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: measure
+    check: a benchmark per budgeted path, compared with the last release
+    languages: [any]
+    coverage:
+      status: partial
+      by: "a hook latency budget; no per-command budget yet"
+    status: proposed
+    source: added pillar, performance budgets; software engineering 7, continuous benchmarking
+  - id: sw-load-tests
+    domain: testing
+    title: Load, stress and soak tests
+    statement: Load, stress and soak tests run before a release that changes capacity.
+    profiles: [service, data-pipeline]
+    stage: scale
+    enforcement: test-template
+    check: a load test at the expected peak and a soak test over hours
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 7, chaos engineering and performance
+
+  # --- release: CI/CD, deployment, run-time lifecycle, host footprint --------------------------------------------
+  - id: sw-ci-gates
+    domain: release
+    title: CI gates
+    statement: Every change runs lint, type check, tests and a static security analysis in CI before it merges.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: check
+    check: the CI jobs are required checks of the default branch
+    languages: [any]
+    coverage:
+      status: partial
+      by: "lint and tests in CI; no static security analysis yet"
+    status: proposed
+    source: software engineering 8, CI/CD
+  - id: sw-semver
+    domain: release
+    title: Semantic versions
+    statement: Versions follow SemVer; a breaking change of a format, command or API is a major (a minor before 1.0) and states its upgrade steps.
+    profiles: [library, cli, local-client, service]
+    stage: mvp
+    enforcement: check
+    check: a release check refuses a moved format or an extra upgrade step in a patch
+    languages: [any]
+    coverage:
+      status: have
+      by: "the release check and the release preview"
+    status: proposed
+    source: software engineering 8, CI/CD
+  - id: sw-blue-green-update
+    domain: release
+    title: Blue/green updates with rollback
+    statement: An update installs beside the running version, is health-checked, then switched atomically; a failed check switches back (a watchdog rollback).
+    profiles: [cli, local-client, service]
+    stage: v1
+    enforcement: test-template
+    check: a test installs a version that fails its health check and expects the old one running
+    adapter: test
+    languages: [any]
+    coverage:
+      status: partial
+      by: "earlier versions kept beside the pinned one; the switch is planned"
+    status: proposed
+    source: client architecture 4 and gap 3; software engineering 8, deployment
+  - id: sw-canary
+    domain: release
+    title: Canary releases
+    statement: A risky change reaches a small share of users first, with an automatic rollback on anomaly.
+    profiles: [service]
+    stage: scale
+    enforcement: rule
+    check: the release plan names the canary share and the anomaly that rolls it back
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 8, deployment
+  - id: sw-feature-flags
+    domain: release
+    title: Feature flags for one-way changes
+    statement: Deployment is decoupled from activation; a change that refuses what passed before lands behind a flag, off by default.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: review-lens
+    check: does the change refuse something that passed before, without a flag?
+    languages: [any]
+    coverage:
+      status: have
+      by: "new refusals ship opt-in, off by default"
+    status: proposed
+    source: added pillar, configuration and feature flags; software engineering 8, deployment
+  - id: sw-config-as-data
+    domain: release
+    title: Configuration as data, plan then apply
+    statement: Installs and configuration are data applied by one idempotent command (a plan, then an apply), never a hidden manual change.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: review-lens
+    check: does the change need a manual step that a plan-then-apply command could do?
+    languages: [any]
+    coverage:
+      status: have
+      by: "the plan-then-apply installer and schedules"
+    status: proposed
+    source: added pillar, configuration
+  - id: sw-single-instance
+    domain: release
+    title: Single instance
+    statement: A program that must run once per machine takes a single-instance lock and says who holds it.
+    profiles: [local-client, service]
+    stage: mvp
+    enforcement: test-template
+    check: a test starts two instances and expects the second refused with the holder named
+    adapter: test
+    languages: [any]
+    coverage:
+      status: partial
+      by: "locks for the shared ledgers; not for every long command"
+    status: proposed
+    source: client architecture 4; software engineering 8, run-time lifecycle
+  - id: sw-graceful-shutdown
+    domain: release
+    title: Graceful shutdown
+    statement: Long-running commands trap the stop signals (SIGINT, SIGTERM, SIGHUP), finish or roll back the current write, release their locks and exit cleanly.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: test-template
+    check: a test interrupts the command mid-write and finds no half file and no lock left
+    adapter: test
+    languages: [any]
+    coverage:
+      status: none
+      by: "planned"
+    status: proposed
+    source: client architecture 4; software engineering 8, run-time lifecycle
+  - id: sw-host-footprint
+    domain: release
+    title: A bounded host footprint
+    statement: The program's CPU, memory, disk and wake-ups are bounded; background work is batched (coalescing) and throttled on battery or under heat.
+    profiles: [local-client]
+    stage: v1
+    enforcement: measure
+    check: resident memory, CPU time and wake-ups per hour on an idle machine
+    languages: [any]
+    coverage:
+      status: partial
+      by: "a memory gate on new sessions; a battery option is planned"
+    status: proposed
+    source: client architecture gap 1; software engineering 8, host footprint
+
+  # --- observability: logs, metrics, traces, diagnosis -----------------------------------------------------------
+  - id: sw-structured-logs
+    domain: observability
+    title: Structured, bounded logs
+    statement: Logs are structured and levelled, rotated, and bounded in size and age.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: test-template
+    check: a test writes past the limit and expects a rotation
+    adapter: test
+    languages: [any]
+    coverage:
+      status: partial
+      by: "monthly ledgers and retention per log class"
+    status: proposed
+    source: client architecture 6; software engineering 9, the three pillars
+  - id: sw-metrics
+    domain: observability
+    title: Metrics
+    statement: Key operations emit metrics (counters, gauges, latency histograms with p50, p95, p99).
+    profiles: [service, data-pipeline]
+    stage: v1
+    enforcement: measure
+    check: the metrics of each key operation are exported and charted
+    languages: [any]
+    coverage:
+      status: partial
+      by: "an execution-time ledger"
+    status: proposed
+    source: software engineering 9, the three pillars
+  - id: sw-correlation-ids
+    domain: observability
+    title: Traces and correlation ids
+    statement: A request or a command carries a correlation id through every log line and span it causes.
+    profiles: [service, data-pipeline]
+    stage: v1
+    enforcement: review-lens
+    check: can every log line of one request be found from its id?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "session ids on the records; tracing is planned"
+    status: proposed
+    source: software engineering 9, the three pillars
+  - id: sw-crash-reports
+    domain: observability
+    title: Crash reports without leaks
+    statement: A crash leaves a local report with what is needed to diagnose it and nothing personal (secrets, user names in paths, e-mail addresses scrubbed).
+    profiles: [cli, local-client, service]
+    stage: mvp
+    enforcement: test-template
+    check: a test crashes the program with personal data in scope and greps the report
+    adapter: test
+    languages: [any]
+    coverage:
+      status: partial
+      by: "the error log keeps the exception type; a scrub is planned"
+    status: proposed
+    source: client architecture 6 and gap 4; software engineering 9, post-mortem diagnostics
+  - id: sw-health-probes
+    domain: observability
+    title: Self-diagnosis
+    statement: The program checks itself (liveness, readiness, startup; disk space, pools, dependencies) and says what is wrong and how to fix it.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: check
+    check: a health command or probe exits non-zero on a failed check and names its fix
+    languages: [any]
+    coverage:
+      status: have
+      by: "brain health, brain doctor and the session start's health line"
+    status: proposed
+    source: client architecture 6; software engineering 9, self-diagnosis
+  - id: sw-profiling
+    domain: observability
+    title: Profiling
+    statement: Hot paths are profiled on demand or continuously in production, and the profiles are kept for comparison.
+    profiles: [service, data-pipeline]
+    stage: scale
+    enforcement: measure
+    check: a profile per release of the hot paths
+    languages: [any]
+    coverage:
+      status: n/a
+    status: proposed
+    source: software engineering 9, post-mortem diagnostics
+
+  # --- data-governance: privacy, lifecycle, encodings, time, i18n, accessibility, DX ------------------------------
+  - id: sw-privacy-by-design
+    domain: data-governance
+    title: Privacy by design
+    statement: Only the data needed is collected; personal data is classified, minimised, and scrubbed from logs, reports and telemetry before they leave the machine.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: review-lens
+    check: what personal data does the change collect, keep or send, and is it classified?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "data classes and the public check; the scrub is planned"
+    status: proposed
+    source: client architecture gap 4; software engineering 10, privacy by design
+  - id: sw-erasure
+    domain: data-governance
+    title: Erasure on request
+    statement: The user can erase every trace the program left (data, caches, logs, keys) with one command that shows its plan first.
+    profiles: [local-client, service]
+    stage: v1
+    enforcement: test-template
+    check: a test installs, uses, purges, and finds no file left
+    adapter: test
+    languages: [any]
+    coverage:
+      status: none
+      by: "a purge command is planned"
+    status: proposed
+    source: client architecture gap 4; software engineering 10, privacy by design
+  - id: sw-retention
+    domain: data-governance
+    title: Retention per data class
+    statement: Each class of data and log has a retention period, applied automatically.
+    profiles: [cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: check
+    check: a check lists every store without a retention class
+    languages: [any]
+    coverage:
+      status: have
+      by: "a format and retention class for every store under the home folder"
+    status: proposed
+    source: added pillar, data lifecycle
+  - id: sw-utf8
+    domain: data-governance
+    title: UTF-8 and LF everywhere
+    statement: Text is UTF-8 everywhere, every open names its encoding, and the repository's text files end lines with LF.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: prototype
+    enforcement: check
+    check: a lint flags an open of a text file without an encoding; the repository's attributes fix the line endings
+    adapter: lint
+    languages: [py]
+    coverage:
+      status: partial
+      by: "encodings named across the engine; the lint is planned"
+    status: proposed
+    source: added pillar, portability and encodings; software engineering 10
+  - id: sw-utc
+    domain: data-governance
+    title: UTC and monotonic time
+    statement: Timestamps are stored and exchanged in UTC; durations use a monotonic or awake clock; time zones appear only at display.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: prototype
+    enforcement: review-lens
+    check: does a stored time carry its zone, and is a duration measured on a monotonic clock?
+    languages: [any]
+    coverage:
+      status: have
+      by: "UTC timestamps in every record and ledger"
+    status: proposed
+    source: added pillar, time; software engineering 10
+  - id: sw-portability
+    domain: data-governance
+    title: Portable paths and shells
+    statement: Paths, encodings and shells work on every supported OS (spaces in paths, the console code page, line endings), proven by CI on each.
+    profiles: [library, cli, local-client]
+    stage: mvp
+    enforcement: check
+    check: the suite runs in CI on every supported OS
+    languages: [any]
+    coverage:
+      status: partial
+      by: "Windows first, Linux in CI"
+    status: proposed
+    source: added pillar, portability and encodings
+  - id: sw-i18n
+    domain: data-governance
+    title: Strings apart from code
+    statement: User-facing strings are kept apart from the code, ready for translation.
+    profiles: [local-client, service]
+    stage: v1
+    enforcement: review-lens
+    check: does the change hard-code a user-facing string in the logic?
+    languages: [any]
+    coverage:
+      status: none
+    status: proposed
+    source: added pillar, accessibility and i18n; software engineering 10
+  - id: sw-accessibility
+    domain: data-governance
+    title: Accessible interfaces
+    statement: An interface meets WCAG (keyboard-only use, contrast, screen readers); a command line uses standard exit codes and clear messages.
+    profiles: [cli, local-client]
+    stage: v1
+    enforcement: review-lens
+    check: can the change be used with the keyboard alone, and does every exit code mean what the standard says?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "the cockpit is keyboard-only; exit codes 0, 1 and 2"
+    status: proposed
+    source: added pillar, accessibility and i18n; software engineering 10
+  - id: sw-error-messages
+    domain: data-governance
+    title: Errors that name their fix
+    statement: Every refusal or error message names its cause and the fix.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: mvp
+    enforcement: review-lens
+    check: does each new error message say what to do next?
+    languages: [any]
+    coverage:
+      status: have
+      by: "the house style of every refusal"
+    status: proposed
+    source: added pillar, error messages
+  - id: sw-docs-as-code
+    domain: data-governance
+    title: Docs as code
+    statement: Docs live with the code and are generated from it where possible (command help, API schemas); a change of behaviour updates them in the same change.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: check
+    check: a docs check fails when a generated document is stale
+    languages: [any]
+    coverage:
+      status: have
+      by: "generated READMEs and views, checked in CI"
+    status: proposed
+    source: software engineering 10, documentation
+  - id: sw-reproducible-dev-env
+    domain: data-governance
+    title: A reproducible development environment
+    statement: A development environment is reproducible in one command (a lockfile and a script, a dev container, Nix).
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: review-lens
+    check: can a new contributor run the suite after one documented command?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "an editable install into a virtual environment, documented"
+    status: proposed
+    source: software engineering 10, documentation and maintainability
