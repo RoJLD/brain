@@ -100,6 +100,13 @@ def test_an_unreached_format_fails_the_newer_data_step(st, tmp_path):
     assert st.FAULTS["unreached"] == "newer data"
 
 
+def test_the_wrong_engine_goes_back_only_under_its_fault(st, tmp_path):
+    prev, head = ("v0.3.1", ""), ("", str(REPO), False)
+    assert st.back_to("wrong-engine", prev, head) == ("v0.3.1", "", False)
+    assert all(st.back_to(f, prev, head) == head for f in ("", "rewrite", "unreached"))
+    assert st.injected("", tmp_path, tmp_path) == st.injected("wrong-engine", tmp_path, tmp_path) == []
+
+
 def test_every_fault_has_its_rerun(st):
     assert set(st.FAULTS) == set(FAULTS)
 
@@ -116,7 +123,7 @@ def selected(request):
 
 def last_tag() -> str:
     r = subprocess.run(["git", "describe", "--tags", "--abbrev=0", "--match", "v*", "HEAD"], capture_output=True,
-                       text=True, cwd=REPO)
+                       text=True, cwd=REPO, timeout=60)
     tag = r.stdout.strip()
     if r.returncode or not tag:
         pytest.fail("no tag before HEAD: fetch the tags (git fetch --tags), the upgrade test needs one")

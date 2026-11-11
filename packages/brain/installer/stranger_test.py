@@ -360,6 +360,11 @@ def _dump(f: Path, data) -> None:
     f.write_text(text, encoding="utf-8")
 
 
+def newer_fixture(fmt: str, v: int, fault: str = "") -> Path:
+    """A format's newer fixture; under the negative control ``unreached``, UNREACHED's older one (it adds nothing)."""
+    return fixture(fmt, "older" if fault == "unreached" and fmt == UNREACHED else "newer", v)
+
+
 def add_newer(root: Path, home: Path, fault: str = "") -> dict:
     """HEAD's additive fixtures put into the brain HEAD worked on: each registered format's newer keys laid over its
     files (JSONL: the additive lines appended). The step that reports it; it fails when a format's newer keys reached
@@ -376,9 +381,8 @@ def add_newer(root: Path, home: Path, fault: str = "") -> dict:
                     fh.write("".join(x + "\n" for x in add))
             else:
                 before = _load(f)
-                newer = "older" if fault == "unreached" and fmt == UNREACHED else "newer"
                 after = overlay(copy.deepcopy(before), _load(fixture(fmt, "older", v)),
-                                _load(fixture(fmt, newer, v)))
+                                _load(newer_fixture(fmt, v, fault)))
                 add = [] if after == before else ["keys"]
                 if add:
                     _dump(f, after)
@@ -429,6 +433,16 @@ def lost(before: dict[str, tuple[int, str]]) -> list[str]:
                                                                                   len(data) != size):
             out.append(f"changed: {p}")
     return sorted(out)
+
+
+def injected(fault: str, root: Path, home: Path) -> list[dict]:
+    """The step of a fault put on the brain after the older engine's reads (inject), none for the other faults."""
+    return [inject(fault, root, home)] if fault in ("rewrite", "truncated-ledger") else []
+
+
+def back_to(fault: str, prev: tuple[str, str], head: tuple[str, str, bool]) -> tuple[str, str, bool]:
+    """The engine reinstalled for the way back: HEAD; the previous one under the negative control ``wrong-engine``."""
+    return (*prev, False) if fault == "wrong-engine" else head
 
 
 def inject(fault: str, root: Path, home: Path) -> dict:
@@ -624,8 +638,7 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
         ("template plan", [brain, "init", "--owner", OWNER, "--template", str(template)], None,
          lambda o: clean(o) and ("plan only" in o or bool(NEWER.search(o))), codes),
     ], reads, empty))
-    if fault in ("rewrite", "truncated-ledger"):
-        phase("rollback", [inject(fault, root, home)])
+    phase("rollback", injected(fault, root, home))
     gone = lost(before)
     mode = "read mode" if tolerant else "an engine before the read mode: refusals of the newer keys allowed"
     phase("rollback", [{"step": "no loss", "cmd": f"{len(before)} file(s) unchanged (ledgers only appended), the "
@@ -633,8 +646,7 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
                         "out": "\n".join(gone)}])
 
     # and back: HEAD reads what both engines left, in read mode, and nothing is lost over the whole round trip
-    back = (prev_ref, prev_source, False) if fault == "wrong-engine" else (ref, source, pre_tag)
-    _, inst = install(work, *back, over=True, step="reinstall")
+    _, inst = install(work, *back_to(fault, prev, head), over=True, step="reinstall")
     if not phase("back", inst + [engine_is(scripts, env, root, ref, source)]):
         return steps
     phase("back", run_steps(read_steps(brain, None, (0,)), reads, root))
