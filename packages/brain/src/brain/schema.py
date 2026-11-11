@@ -24,9 +24,10 @@ from functools import lru_cache
 from pathlib import Path
 
 KINDS = ("ddr", "sr", "ar")
-SCHEMAS = KINDS + ("event", "config", "members", "readme", "standards")  # event: the execution-time ledger and the
-# ops error events (brain.timing); config: a personal brain's config.json (brain.config); members: its members.yaml
-# (brain.identity); readme: a repo's readme.yaml (brain.readme); standards: a standards catalog (brain.standards)
+SCHEMAS = KINDS + ("event", "config", "members", "readme", "standards", "modules")  # event: the execution-time
+# ledger and the ops error events (brain.timing); config: a personal brain's config.json (brain.config); members:
+# its members.yaml (brain.identity); readme: a repo's readme.yaml (brain.readme); standards: a standards catalog
+# (brain.standards); modules: an entry of a store's modules.yaml (brain.modules, brain.modulemap)
 SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
 
 STRICT, READ = "strict", "read"
