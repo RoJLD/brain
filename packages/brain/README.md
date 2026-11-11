@@ -242,7 +242,7 @@ coverage. The rules: [docs/tests-graph.md](docs/tests-graph.md).
 
 ### The module map
 
-A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place. See [docs/modules.md](docs/modules.md).
+A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place, and about a feature or a done item with no module (the technical reference reads them by module). See [docs/modules.md](docs/modules.md).
 
 ### Waves and eras
 
@@ -681,7 +681,10 @@ child's milestones, specs and decisions, and the parent's milestones group the c
 store's own. Every brain command that runs research_graph on the store gives it the stores holding those ids
 (`--foreign-store <project>:<store>=<path>`, `brain.crossstore`; nothing for a store whose edges name only its own
 ids), so the store loads and its board and roadmap name the other store's node with its label
-(`wi-x (parent:notes/graph)`). `brain check --all` reads every edge of every store and refuses one whose end is in no
+(`wi-x (parent:notes/graph)`). That holds for a project's own stores too: a store listed after its first covers no
+decision log, and an edge of it to an ADR or SDR stub its first store derives (an item `decided_by` an ADR of
+`notes/decisions.md`) resolves there, accepted by `brain sync` and `brain check` since 0.3.2 (0.3.0 and 0.3.1
+refused it). `brain check --all` reads every edge of every store and refuses one whose end is in no
 store of the registry on this machine (the store's own check refuses it too, as before), and counts the edges between
 stores; a brain's own root, checking its registry without `--all`, warns of it.
 
@@ -808,13 +811,18 @@ kept in the OS keystore, and an offline recovery key: two recipients at least, p
 (`brain health vault`). When the recipients change (a lost machine, a revoked heir, a rotated key), `brain vault
 reseal` seals the kept copies again to the current set. Opening, drilling, and creating or rotating a key are the
 owner's acts, refused in an agent session. The owner's steps, the canary's scheduled task per system, the rotation
-and what to do with a lost key are in the runbook, [`docs/vault.md`](docs/vault.md).
+and what to do with a lost key are in the runbook, [`docs/vault.md`](docs/vault.md). Until a data remote exists,
+what leaves waits in a sealed local spool: `brain spool push`, run by hand, seals the changed stores of its set (the
+ledger, the usage, the session records by default) after a secret scan, sends them to `spool.remote` when one is set,
+each copy checked by sha256, and `brain health spool` gives the last push's age.
 
 ```
 brain classes [--check] [--suggest] [--matrix] [PATH...]
 brain vault status | seal STORE | canary | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
 brain vault device init [--rotate] | device forget-previous | open FILE | drill RECIPIENT
 brain health vault
+brain spool push [STORE...] [--dry-run] | status | verify
+brain health spool
 ```
 
 ## Identity: members and signed answers

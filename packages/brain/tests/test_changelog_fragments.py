@@ -72,3 +72,38 @@ def test_the_cli_plans_then_writes(repo, capsys):
                            "--write"]) == 0
     assert "### Changes\n\n- something" in (repo / "CHANGELOG.md").read_text(encoding="utf-8")
     assert changelog.main(["--repo", str(repo), "check"]) == 0
+
+
+STEPS = ("section: Upgrade\n\n1. **Install the engine**: `brain update`.\n2. **Restart the Claude Code sessions**.\n"
+         "3. **Refresh the public stamp**: `brain check --public --history`,\n   in each public repo.\n")
+
+
+def test_a_prose_fragment_after_the_steps_is_a_paragraph_of_its_own(repo):
+    """wi-brain-changelog-prose-fragment: 0.3.1's « Nothing to run for the rest » joined step 3."""
+    _frag(repo, "standard-upgrade", STEPS)
+    _frag(repo, "wi-y-step", "section: Upgrade\n\n4. **Move the store**: `brain store move`.\n")
+    _frag(repo, "wi-z-note", "section: Upgrade\n\nNothing to run for the rest.\n")
+    _frag(repo, "wi-a", "section: Fixes\n\n- the first fix\n")
+    _frag(repo, "wi-b", "section: Fixes\n\n- the second fix,\n  on two lines\n")
+    text = changelog.compile_release(repo, "0.3.2", "t", "2026-11-11")["packages/brain/CHANGELOG.md"]
+    assert "   in each public repo.\n4. **Move the store**" in text   # a list after a list: one list
+    assert "`brain store move`.\n\nNothing to run for the rest.\n" in text   # prose: a blank line before it
+    assert "- the first fix\n- the second fix,\n  on two lines\n" in text
+    sys.path.insert(0, str(PACKAGE / "installer"))
+    try:
+        import release_check
+    finally:
+        sys.path.remove(str(PACKAGE / "installer"))
+    log = BRAIN_LOG.replace("## 0.2.8", text + "\n## 0.2.8")
+    upgrade = release_check.upgrade_section(log, "0.3.2")
+    assert release_check.standard_steps_missing(upgrade) == []
+    assert release_check.steps_beyond_standard(upgrade) == ["4. **Move the store**: `brain store move`."]
+    assert release_check.entries(log)["0.3.2"] == ["the first fix", "the second fix, on two lines"]
+
+
+def test_prose_before_a_list_and_between_two_paragraphs_is_set_apart():
+    assert changelog.join_bodies(["A paragraph.", "- a bullet"]) == "A paragraph.\n\n- a bullet"
+    assert changelog.join_bodies(["One.", "Two."]) == "One.\n\nTwo."
+    assert changelog.join_bodies(["- a\n\n  more of a", "- b"]) == "- a\n\n  more of a\n- b"
+    assert changelog.join_bodies(["- a\n\nA closing line.", "- b"]) == "- a\n\nA closing line.\n\n- b"
+    assert changelog.join_bodies(["only"]) == "only"
