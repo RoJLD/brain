@@ -111,7 +111,9 @@ def test_budget_sh_trusts_its_format_only(tmp_path, brain_home, form, starts):
 
 @pytest.mark.parametrize("form,starts", [(None, False), ("#brain.announce-mark/v1", False),
                                          ("#brain.announce-mark/v2", True)])
-def test_midsession_sh_trusts_its_format_only(tmp_path, brain_home, form, starts):
+@pytest.mark.parametrize("queued", [True, False])
+def test_midsession_sh_trusts_its_format_only(tmp_path, brain_home, form, starts, queued):
+    """With a queue or without (a session outside a project), the format line decides."""
     q = tmp_path / "queue"
     q.mkdir()
     (q / "ddr-2026-01-01-pending.md").write_text("x\n", encoding="utf-8")
@@ -119,6 +121,8 @@ def test_midsession_sh_trusts_its_format_only(tmp_path, brain_home, form, starts
     for p in (q / "ddr-2026-01-01-pending.md", q):
         os.utime(p, (old, old))
     lines = fixture("announce.mark", cwd="D:/w", queue=q.as_posix()).splitlines()
+    if not queued:
+        lines = [lines[0], "", lines[-1]]
     mark = brain_home / "announce" / "s-1.mark"
     mark.parent.mkdir(parents=True)
     mark.write_text("\n".join(lines[:-1] + ([form] if form else [])) + "\n", encoding="utf-8", newline="\n")
@@ -148,17 +152,23 @@ def test_guard_sh_reads_the_node_clis_fixture(brain_home):
     assert _needs_python(["ls -la"], brain_home) == [True]
 
 
-def _inject(plugin: Path, config: Path) -> str:
-    env = {k: v for k, v in os.environ.items() if k not in ("BRAIN_CONFIG", "CLAUDE_BRAIN_DIR")}
-    env.update(CLAUDE_PLUGIN_ROOT=plugin.as_posix(), BRAIN_CONFIG=str(config))
+def _inject(plugin: Path, **env_extra) -> str:
+    env = {k: v for k, v in os.environ.items() if k not in ("BRAIN_CONFIG", "CLAUDE_BRAIN_DIR", "BRAIN_PERSONAL")}
+    env.update(CLAUDE_PLUGIN_ROOT=plugin.as_posix(), BRAIN_HOME=str(plugin / "no-home"), **env_extra)
     out = subprocess.run([_sh(), (HOOKS / "inject-rules.sh").as_posix(), "SessionStart"], capture_output=True,
-                         text=True, env=env, check=True, encoding="utf-8").stdout
+                         text=True, env=env, check=True, encoding="utf-8", timeout=60).stdout
     return json.loads(out)["hookSpecificOutput"]["additionalContext"]
 
 
+def _age(path: Path, seconds: float) -> None:
+    t = time.time() - seconds
+    os.utime(path, (t, t))
+
+
 def test_inject_rules_reads_the_contract_not_the_json(tmp_path):
-    """The contract's rule lines win over config.json's text, whose first "rules" array may be another section's;
-    a contract of another format, or none, falls back to config.json."""
+    """The contract's rule lines win over config.json's text, whose first "rules" array may be another section's,
+    for the config the plugin was rendered from as it was then; a config edited since, one named by BRAIN_CONFIG or
+    CLAUDE_BRAIN_DIR, a contract of another format, or none, fall back to config.json."""
     me = tmp_path / "me"
     (me / "rules").mkdir(parents=True)
     for n in ("a", "b", "wrong"):
@@ -166,16 +176,22 @@ def test_inject_rules_reads_the_contract_not_the_json(tmp_path):
     config = me / "config.json"
     config.write_text('{"v": 1, "standards": {"rules": ["rules/wrong.md"]}, "rules": ["rules/a.md"]}',
                       encoding="utf-8")
-    plugin = tmp_path / "plugin"
+    _age(config, 600)
+    plugin = me / "plugins" / "core"   # the plugin in the brain it was rendered from: config.json two folders up
     (plugin / "hooks").mkdir(parents=True)
     contract = plugin / "hooks" / "contract.txt"
     contract.write_text(fixture("contract.txt", version="9.9.9").replace("\n", "\r\n"), encoding="utf-8",
                         newline="")
-    assert _inject(plugin, config) == "a rule\n\nb rule\n"
+    assert _inject(plugin) == "a rule\n\nb rule\n"
+    assert _inject(plugin, BRAIN_CONFIG=str(config)) == "wrong rule\n"
+    assert _inject(plugin, CLAUDE_BRAIN_DIR=str(me)) == "wrong rule\n"
+    _age(contract, 1200)   # config.json edited after the render
+    assert _inject(plugin) == "wrong rule\n"
     contract.write_text("#brain.hook-contract/v2\nrule rules/b.md\n", encoding="utf-8")
-    assert _inject(plugin, config) == "wrong rule\n"
+    assert _inject(plugin) == "wrong rule\n"
     contract.unlink()
-    assert _inject(plugin, config) == "wrong rule\n"
+    assert _inject(plugin) == "wrong rule\n"
+
 
 
 # --- the version and the home ------------------------------------------------------------------------------------

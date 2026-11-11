@@ -27,12 +27,15 @@ fi
 
 rules=()
 # The hook contract brain sync renders beside this script (hooks/contract.txt, brain.render.hook_contract): its "rule"
-# lines are config.json's "rules", read without parsing JSON; another format, or no contract (the engine's own copy,
-# a plugin rendered before 0.3.2), falls back to the first "rules" array of config.json.
+# lines are config.json's "rules", read without parsing JSON. It is read only for the config the plugin was rendered
+# from as it was then: no BRAIN_CONFIG or CLAUDE_BRAIN_DIR naming another, and a contract newer than config.json (a
+# rules edit since the render is read from config.json at once). Otherwise, with another format, or with no contract
+# (the engine's own copy, a plugin rendered before 0.3.2), the first "rules" array of config.json.
 contract="$root/hooks/contract.txt" form=
 if [ -f "$contract" ]; then IFS= read -r form < "$contract" || :; fi
 form=${form%$'\r'}
-if [ -f "$config" ] && [ "$form" = "#brain.hook-contract/v1" ]; then
+if [ -f "$config" ] && [ "$form" = "#brain.hook-contract/v1" ] && [ -z "${BRAIN_CONFIG:-}${CLAUDE_BRAIN_DIR:-}" ] \
+   && [ "$contract" -nt "$config" ]; then
   base=$(cd "$(dirname "$config")" && pwd)
   while IFS= read -r line || [ -n "$line" ]; do
     line=${line%$'\r'}

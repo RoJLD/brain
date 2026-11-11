@@ -127,10 +127,10 @@ for its own commands to your Claude Code settings and copies the brain's memory 
   Turn it off until you have decided you want that: `[Environment]::SetEnvironmentVariable('BRAIN_MEMORY_SYNC', '0', 'User')`.
 - **The engine's Python**: the venv at `%USERPROFILE%\.brain\venv` (the installer's), or `BRAIN_PYTHON` naming it
   (step 2). In a session, `brain --version` must answer.
-- **Git Bash's HOME is your user folder.** The hooks run in Git's bash and find `~/.brain` from its `HOME`; Python
-  finds it from `%USERPROFILE%`. In Git Bash, `echo $HOME` should print `/c/Users/<you>`. If it prints anything else
-  (a `HOME` variable set for another tool), set `BRAIN_HOME` to `%USERPROFILE%\.brain` so that both read the same
-  folder.
+- **One `.brain` folder.** The hooks run in Git's bash and, like Python, find `.brain` in `%USERPROFILE%` (from
+  0.3.2; before, some hooks read Git Bash's `HOME`). When `BRAIN_HOME` is unset and a second `.brain` folder exists
+  under another `HOME` (a variable set for another tool), the SessionStart health names both: move what the other
+  holds into `%USERPROFILE%\.brain` and remove it, or set `BRAIN_HOME` to the one to keep.
 
 Telemetry is off by default: the engine sends nothing anywhere, and nothing changes that unless you turn it on.
 

@@ -230,8 +230,10 @@ a file without a format line (an older engine's) or with its own; another format
 | `plugins/<plugin>/hooks/contract.txt` | `brain render` (`brain sync`) | `version <the engine that rendered it>`, then one `rule <path>` per file of config.json `rules`, relative to its folder | first, `#brain.hook-contract/v1` (a new file: no older reader) |
 
 `inject-rules.sh` reads the contract's `rule` lines instead of the first `"rules"` array in config.json's text (which
-may be another section's); without a contract (the engine's own hooks folder, a plugin rendered before 0.3.2), or with
-another format, it falls back to that. `tests/fixtures/hooks/` holds each file as the engine writes it, and
+may be another section's), for the config the plugin was rendered from as it was then: no `BRAIN_CONFIG` or
+`CLAUDE_BRAIN_DIR` naming another, and a contract newer than config.json (a rules edit since the render is read from
+config.json at once). Otherwise, without a contract (the engine's own hooks folder, a plugin rendered before 0.3.2),
+or with another format, it reads config.json as before. `tests/fixtures/hooks/` holds each file as the engine writes it, and
 `tests/test_hook_contracts.py` checks the writers against them and today's bash against each format line.
 
 The version: `common.sh` exports its `brain_version` as `BRAIN_HOOK_VERSION`, so every Python a hook starts knows the

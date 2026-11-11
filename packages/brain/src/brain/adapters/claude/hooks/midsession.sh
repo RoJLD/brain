@@ -22,15 +22,14 @@ if [[ -n $sid && -f $mark ]]; then
     IFS= read -r queue
     if [[ $marked_cwd == "$cwd" ]]; then
       newer=
-      if [[ -n $queue ]]; then
-        [[ $queue -nt $mark ]] && newer=1
-        # the last line is the mark's format (brain.midsession.MARK_FORMAT; none before 0.3.2): another starts Python
-        while [[ -z $newer ]] && IFS= read -r name; do
-          if [[ $name == '#'* ]]; then [[ $name == '#brain.announce-mark/v1' ]] || newer=1
-          elif [[ -n $name && $queue/$name -nt $mark ]]; then newer=1
-          fi
-        done
-      fi
+      [[ -n $queue && $queue -nt $mark ]] && newer=1
+      # the last line is the mark's format (brain.midsession.MARK_FORMAT; none before 0.3.2), read with or without a
+      # queue: another format starts Python
+      while [[ -z $newer ]] && IFS= read -r name; do
+        if [[ $name == '#'* ]]; then [[ $name == '#brain.announce-mark/v1' ]] || newer=1
+        elif [[ -n $queue && -n $name && $queue/$name -nt $mark ]]; then newer=1
+        fi
+      done
     fi
   } < "$mark"
   [[ -z $newer ]] && { selftime_bash "hook midsession [bash]"; exit 0; }
