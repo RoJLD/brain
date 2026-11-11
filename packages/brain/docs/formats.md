@@ -110,6 +110,17 @@ nothing else keeps. Such a file is read and written through `brain.stateio` (`lo
   under `$BRAIN_HOME/secrets` is never copied), then a temporary file, synced and moved over the file
   (`os.replace`). The `v` on disk is checked again just before: a newer brain that wrote since the load wins;
 - keeps the keys it does not know (a newer brain's additive ones) through the round trip.
+- with **integrity** on (config.json `integrity.sidecars: true`, or `BRAIN_STATE_INTEGRITY=1`; off by default),
+  writes a sidecar beside each file it saves, `<name>.sha256` (`{"v": 1, "sha256", "size", "mtime_ns"}`), and
+  checks it at each load. A file whose size and mtime are its sidecar's but whose sha256 is not (bit rot, or a write
+  outside the engine that kept both) is set aside as above, its sidecar beside the copy, with a line on stderr: the
+  copy is kept, never saved over, and the record starts afresh. A file whose size or mtime differ was written since by
+  another writer (an older engine after a rollback, which does not know the sidecar): it loads, and the next save
+  writes a fresh sidecar. A missing sidecar (every file written before) loads as it always did. With integrity off, a save removes a sidecar left from before, so none goes stale. A
+  sidecar is a leftover of its store (`classes.HOME_TRANSIENT`), never a name of its own; an older engine's `brain
+  check` notes a top-level one (`tui.json.sha256`) as a name no store covers, a note that never fails. The old
+  sidecar goes just before each write, and the new one is made from the file's bytes and stat read through one
+  handle, so a writer cut short or racing another never leaves a sidecar that does not describe its file.
 
 `v` is the top-level integer `v`; a file without one is read as version 1. A record keyed by names (schedules,
 projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key as a name, still reads it.

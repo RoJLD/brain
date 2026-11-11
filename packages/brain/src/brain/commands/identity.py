@@ -22,6 +22,10 @@ USAGE = """\
   brain identity attach SIG|DIR...   the owner's signatures (DIR/<id>.txt.sig), verified with the deciders' public keys,
                  then kept beside their records (records/ddr/<id>.sig); nothing kept when one fails or names a
                  decision not answered yet. The engine never signs and never reads a private key (docs/identity.md)
+  brain identity allowed-signers [--write [FILE]]   the allowed_signers text generated from members.yaml's releaser
+                 role (namespace git), on stdout; --write: into allowed_signers beside config.json (or FILE), the file
+                 brain update and the installer verify a release tag with (git verify-tag; refused only under
+                 config.json engine.verify_tags)
 """
 
 
@@ -97,7 +101,26 @@ def _attach(args, root: Path) -> int:
     return 0
 
 
-SUBS = {"check": _check, "unsigned": _unsigned, "payload": _payload, "attach": _attach}
+def _allowed_signers(args, root: Path) -> int:
+    from .. import tagsig
+
+    if args.write is None:
+        text = tagsig.generate(root)
+        if not text:
+            raise identity.IdentityError(f"no person has the {tagsig.RELEASER} role with a signing key in "
+                                         f"{identity.FILE} (docs/identity.md, « Signed releases »)")
+        sys.stdout.write(text)
+        return 0
+    try:
+        f = tagsig.write(root, Path(args.write).resolve() if args.write else None)
+    except ValueError as exc:
+        raise identity.IdentityError(str(exc)) from exc
+    print(f"wrote {f}: commit it with members.yaml; brain update and the installer verify release tags with it")
+    return 0
+
+
+SUBS = {"check": _check, "unsigned": _unsigned, "payload": _payload, "attach": _attach,
+        "allowed-signers": _allowed_signers}
 
 
 def cmd_identity(args, root: Path) -> int:
@@ -109,8 +132,8 @@ def cmd_identity(args, root: Path) -> int:
 
 
 def register(sub, ctx) -> None:
-    ident = sub.add_parser("identity", help="members.yaml and the owner's signed answers: check, unsigned, payload, "
-                                            "attach (brain.identity)")
+    ident = sub.add_parser("identity", help="members.yaml, the owner's signed answers and the release signers: check, unsigned, payload, "
+                                            "attach, allowed-signers (brain.identity)")
     isub = ident.add_subparsers(dest="identity_cmd", required=True)
     isub.add_parser("check", help="members.yaml and the owner-decides answers' signatures (warnings; errors under "
                                   "config.json identity.require_signed)")
@@ -122,6 +145,10 @@ def register(sub, ctx) -> None:
     at = isub.add_parser("attach", help="verify the owner's signatures and keep them beside their records")
     at.add_argument("sig", nargs="+", metavar="SIG", help="DIR/<id>.txt.sig as ssh-keygen -Y sign wrote it, or DIR "
                                                          "(its *.sig)")
+    al = isub.add_parser("allowed-signers", help="the release signers' allowed_signers, generated from members.yaml's "
+                                                 "releaser role (git verify-tag reads it)")
+    al.add_argument("--write", nargs="?", const="", metavar="FILE",
+                    help="write it: allowed_signers beside config.json, or FILE")
 
 
 run = cmd_identity
