@@ -112,13 +112,15 @@ def _cmd_show(args, root: Path) -> int:
     return 0
 
 
-def _languages(p, notes: list[str]) -> dict[str, str]:
-    """{repo: its language} of the project; {} with a note when its repos cannot be read."""
+def _languages(p, notes: list[str]) -> tuple[dict[str, str], dict[str, set]]:
+    """({repo: its language}, {repo: the adapter slots its tools: declares}) of the project; ({}, {}) with a note
+    when its repos cannot be read."""
     try:
-        return {r.name: r.lang for r in projects.repos_of(p)}
+        repos = projects.repos_of(p)
     except projects.RepoError as exc:
         notes.append(f"its repos cannot be read ({exc}): the languages are not compared")
-        return {}
+        return {}, {}
+    return {r.name: r.lang for r in repos}, {r.name: set(r.tools) for r in repos}
 
 
 def report(p, catalogs: list[standards.Catalog], sel, errors: list[str]) -> dict:
@@ -132,7 +134,7 @@ def report(p, catalogs: list[standards.Catalog], sel, errors: list[str]) -> dict
         ids = None if errors else {r.id for r in rows}   # a local catalog unread: its ids would be named unknown
         errors += standards.selection_errors(f"project {p.name}", p.standards, ids, notes=notes)
         chosen = standards.applicable(rows, sel)
-        gaps = standards.gaps(chosen, _languages(p, notes))
+        gaps = standards.gaps(chosen, *_languages(p, notes))
     return {"project": p.name, "concerned": sel is not None, "catalogs": [
         {"name": c.name, "file": c.path.as_posix(), "engine": c.engine, "rows": len(c.rows)} for c in catalogs],
         "rows": len(rows), "applicable": [r.id for r, _ in chosen], "errors": errors, "gaps": gaps, "notes": notes}

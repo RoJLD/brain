@@ -91,7 +91,8 @@ KEYS = {
     "production": "the checkouts a service or a scheduled task runs from, relative to the root; the core plugin's "
                   "guards refuse edits and git changes there (brain.guards)",
     "repos": "the repos it spans, for brain audit: a path or {path, name, entry, roots, waive, item, lang, "
-             "scout_limit} (default: the root and the production checkouts)",
+             "scout_limit, tools} (default: the root and the production checkouts); tools: the report each of its "
+             "own tools writes, {lint|typecheck|test|coverage|format: {report, format, tool}} (brain.langs)",
     "audit": "{spec: <id>, max_lines: N, complexity: N}: the spec brain audit's debt items link to; brain audit "
              "--diff's structure thresholds (default 1000 lines per code file, cyclomatic complexity 15)",
     "code_index": "the repos brain index has GitNexus index, relative to the root: a path or {path, branch}",
@@ -124,7 +125,7 @@ GRAPH_DECISIONS = ("notes/scientific_decisions.md", "notes/decisions.md")
 # What a mount's tenant: mapping may hold (wi-brain-tenant-export reads the export; a mount only says where it lands).
 TENANT_KEYS = {"export": "the file the tenant's contract export is dropped into: absolute, ~, or relative to BRAIN_HOME"}
 MOUNT_KEYS = {"title", "tenant"}
-REPO_KEYS = {"path", "name", "entry", "roots", "waive", "item", "lang", "scout_limit"}
+REPO_KEYS = {"path", "name", "entry", "roots", "waive", "item", "lang", "scout_limit", "tools"}
 AUDIT_KEYS = {"spec", "max_lines", "complexity"}
 REPO_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]*")
 WAIVE_REASON = 15
@@ -170,6 +171,7 @@ class Repo:
     lang: str = "py"                      # ts: module checks delegated to the repo's own checker
     scout_limit: int = 3
     folder: str = ""                      # its main checkout's folder name, case kept (a CodeRef's <repo> token)
+    tools: dict = field(default_factory=dict)   # slot -> {report, format, tool}: its own tools' reports (brain.langs)
 
 
 @dataclass
@@ -617,11 +619,12 @@ def repos_of(p: Project) -> list[Repo]:
         limit = entry.get("scout_limit", 3)
         if not isinstance(limit, int) or limit < 0:
             raise RepoError(f"{where}: scout_limit is a whole number")
+        tools = _tools(where, entry.get("tools"))
         out.append(Repo(name, path, _norm(path) in prod,
                         _strings(entry["entry"], f"{where} entry") if entry.get("entry") is not None else None,
                         _strings(entry["roots"], f"{where} roots") if entry.get("roots") is not None else None,
                         {str(k): str(v) for k, v in waive.items()}, str(entry.get("item") or ""), lang, limit,
-                        folder))
+                        folder, tools))
     names = [r.name for r in out]
     dup = sorted({n for n in names if names.count(n) > 1})
     if dup:
@@ -684,6 +687,17 @@ def view_clashes(projs: list[Project]) -> dict[tuple[str, str], str]:
                     f"project {p.name}: its store {_rel(store, p.root)} writes its views in {_rel(folder, p.root)}, "
                     f"as {other}'s store {_rel(theirs, p.root)} does (give each store a folder of its own)")
     return out
+
+
+def _tools(where: str, value) -> dict:
+    """A repo's tools: as brain.langs reads it; RepoError on a wrong shape (a newer engine's slot, key or format is a
+    note in read mode, kept and passed over)."""
+    if value is None:
+        return {}
+    from . import langs
+    for message in langs.tools_errors(where, value):
+        raise RepoError(message)
+    return langs.declared(value)
 
 
 def check(root: Path | None = None) -> list[str]:

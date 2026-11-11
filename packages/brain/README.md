@@ -245,6 +245,16 @@ brain's local ones). A project opts in with `projects.yaml` `standards: {profile
 catalogs}`; `brain standards list|show|check` reads them, `brain check --all` checks each project's opt-in, and
 `brain brief` lists the project's standards as its invariants. A project without the key follows none.
 
+### Language adapters
+
+A repo plugs its own tools in through `projects.yaml` `repos[].tools` (`brain.langs`): for each slot (lint,
+typecheck, test, coverage, format), the report file its tool writes and that report's format (SARIF, JUnit XML,
+Cobertura, lcov, coverage.py's JSON, istanbul's summary), so a TypeScript or Swift product is read through its own
+tools. The engine reads the reports and runs nothing: the project's CI or its developer writes them. `brain audit`
+measures `lang.report` for a repo that declares `tools:` (a report missing or unreadable, failed tests, findings,
+coverage under 50 %), and `brain standards check` counts a standard whose `adapter` slot a repo declares as covered on that repo's
+language. A repo without `tools:` is read as before. See [docs/standards.md](docs/standards.md), « Language adapters ».
+
 ### The impact of a change
 
 `brain impact [--diff BASE|A..B]` says, before merge, what a change's code carries in the graph
