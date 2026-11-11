@@ -35,16 +35,30 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, feature_coverage, features, graph, inventory, links, paths, projects, public, readme, testcov
+from . import (
+    config,
+    feature_coverage,
+    features,
+    graph,
+    inventory,
+    langs,
+    links,
+    paths,
+    projects,
+    public,
+    readme,
+    testcov,
+)
 from .inventory import AuditError
 
-RULESET = 7   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+RULESET = 8   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
 #               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
 #               (wi-brain-test-links-auto); 5: cmd.registry (wi-brain-cli-registry); 6: feature.coverage, info in
 #               the full audit, NEW in the scout for an added command or module (wi-brain-audit-feature-coverage); 7: the scout's norm lints
 #               (brain.norms: norm.timeout, norm.encoding, norm.naive-time, norm.secret-argv), info on what a change
 #               adds, NEW under config.json audit.norm_lints_strict, DEFER for a touched file's old ones
-#               (wi-brain-norm-lints)
+#               (wi-brain-norm-lints); 8: lang.report, a repo's own tools' reports read where it declares
+#               repos[].tools (wi-brain-lang-adapters)
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "
@@ -92,6 +106,9 @@ CHECKS = {c.id: c for c in (
           "schema (schemas/readme.schema.json)"),
     Check("help.quoted", "P1", "new+left", "a command an opted-in repo's readme.yaml quotes is gone: its --help "
           "does not run"),
+    # opt-in (wi-brain-lang-adapters): measured only for a repo that declares repos[].tools (brain.langs)
+    Check("lang.report", "P2", "never", "a report a repo's own tool writes (repos[].tools) is missing or unreadable, "
+          f"or says no test ran, failed tests, lint, type or format findings, or coverage under {COVERAGE_FLOOR:g} %"),
     Check("doc.links", "P2", "new+left", "a doc no section of which documents a graph node, or a spec no Spec node "
           "anchors"),
     Check("test.links", "P2", "never", "a test module no graph node is tested_by (no Hook, and no node implemented_by "
@@ -116,7 +133,7 @@ CHECKS = {c.id: c for c in (
 class Pending:
     owner: str        # the item that will measure it
     blocks: bool      # it would carry P0 or P1: the milestone waits on it
-    applies: str      # every, code, python, commands, ts, no-code-layer
+    applies: str      # every, code, python, commands, ts, no-code-layer, tools (a repo that declares repos[].tools)
     run: object = None   # a generator's PR sets it (its own ADR): the check is then measured; run(ctx) returns the
     #                      findings, or why this repo cannot be measured (listed as not measured)
 
@@ -331,8 +348,40 @@ def help_quoted(ctx: dict) -> list[dict] | str:
             for line in readme.gone(spec, Path(c.path))]
 
 
+NO_TOOLS = "no tools: declared (not opted in to the language adapters: brain.langs, wi-brain-lang-adapters)"
+
+
+def _lang_finding(c: projects.Repo, r: langs.Result) -> dict | None:
+    unit, tool = f"{r.slot}:{r.report}", f" ({r.tool})" if r.tool else ""
+    if r.error:
+        made = langs.how(c.lang, r.slot)
+        return finding(c.name, "lang.report", unit, f"the {r.slot} report{tool} cannot be read: {r.error}",
+                       "run the tool so it writes its report" + (f" (e.g. {made})" if made else "")
+                       + ", or fix repos[].tools")
+    if r.slot == "coverage":
+        if r.percent is not None and r.percent < COVERAGE_FLOOR:
+            return finding(c.name, "lang.report", unit, f"coverage{tool} {r.percent:g} % (under "
+                           f"{COVERAGE_FLOOR:g} %)", "add tests for the least covered files")
+        return None
+    if r.count:
+        what = f"{r.count} of {r.total} test(s) failed" if r.slot == "test" else f"{r.count} {r.slot} finding(s)"
+        return finding(c.name, "lang.report", unit, f"{what}{tool}", f"fix them, then rerun the {r.slot} tool")
+    return None
+
+
+def lang_report(ctx: dict) -> list[dict] | str:
+    """lang.report (brain.langs): what the reports a repo's own tools write say, read from its checkout (the engine
+    runs no tool)."""
+    c = ctx["cfg"]
+    if not c.tools:
+        return NO_TOOLS
+    out = [_lang_finding(c, r) for r in langs.results(Path(c.path), c.tools)]
+    return [f for f in out if f]
+
+
 PENDING = {
     "readme.yaml": Pending("wi-brain-readme-sync", True, "every", readme_yaml),
+    "lang.report": Pending("wi-brain-lang-adapters", False, "tools", lang_report),
     # the README against its render: brain docs check and brain check (a generated view, the default branch's to hold)
     "readme.generated": Pending("wi-brain-readme-sync", True, "every"),
     "help.quoted": Pending("wi-brain-readme-sync", True, "every", help_quoted),
@@ -803,7 +852,7 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
     # not measured
     applies = {"every": True, "code": has_code, "python": bool(modules), "commands": any(
         u.kind == "command" for u in rf.units), "ts": c.lang == "ts", "no-code-layer": bool(modules)
-        and name not in layered}
+        and name not in layered, "tools": bool(c.tools)}
     pending = []
     for k, v in PENDING.items():
         if not applies[v.applies]:

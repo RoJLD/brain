@@ -57,6 +57,36 @@ A value outside them is a newer engine's: a note in read mode, an error in stric
 `v` (a newer engine's) is refused and its rows are not read: `brain standards check` and `brain check --all` are red
 until the engine is updated.
 
+## The engine's catalogs
+
+**software** (`catalogs/software.yaml`, `wi-brain-standards-catalog-software`): 90 standards for code products
+(profiles library, cli, local-client, service, data-pipeline, embedded), in ten domains, curated from two
+taxonomies of engineering standards (a client architecture's six pillars and five gaps; software engineering's ten
+domains) and the pillars they leave out (supply chain, portability and encodings, time, configuration and feature
+flags, error messages, performance budgets, data lifecycle, recovery, AI-agent safety, multi-tenant isolation,
+accessibility and i18n). Every row is `proposed` until the owner validates its domain; a validated row turns
+`validated` in the same file. A row's `source` is a provenance trail (the pillar, gap or domain of the taxonomies it
+comes from, by number); `refs` links the rows that overlap, kept apart because they are enforced differently. The
+last domain holds data governance and the developer experience together, as the taxonomy does.
+
+| Domain | Rows | What it holds |
+|---|---|---|
+| architecture | 8 | separation of concerns, bounded contexts, simplicity, injected dependencies, state machines, decision records, fitness functions |
+| code-quality | 6 | parse don't validate, strict typing, typed errors, contracts, functional core, lint and format |
+| concurrency | 7 | timeouts, locked writers, backpressure, cancellation, deterministic memory, mechanical sympathy, lock-free by measure |
+| persistence | 9 | atomic writes, versioned formats, tolerant reader, migrations, checksums, backups, transactions, caches, recovery |
+| distributed | 8 | idempotency, retries with backoff, circuit breakers, outbox, graceful degradation, bulkheads, replication, protocol versions |
+| security | 14 | zero-trust input, secrets, encryption at rest and in transit, local IPC, least privilege, constant time, lockfiles, SBOM, reproducible builds, signing, image pinning, tenant isolation, AI-agent safety |
+| testing | 12 | a test per change, the pyramid, hermetic tests, coverage, property-based, fuzzing, mutation, fault injection, simulation, formal specs, performance budgets, load tests |
+| release | 9 | CI gates, SemVer, blue/green updates, canaries, feature flags, configuration as data, single instance, graceful shutdown, host footprint |
+| observability | 6 | structured logs, metrics, correlation ids, crash reports, self-diagnosis, profiling |
+| data-governance | 11 | privacy by design, erasure, retention, UTF-8, UTC, portability, i18n, accessibility, error messages, docs as code, a reproducible dev environment |
+
+A prototype gets few rows (simplicity, lint and format, secrets, a test per change, UTF-8, UTC); a row's stage says
+from when it is required, and the heavy ones (consensus, lock-free structures, canaries, mutation scores) wait for
+`scale`. `brain standards list --catalog software --profile cli --stage mvp` shows what a command-line tool at MVP
+follows.
+
 ## The opt-in
 
 ```yaml
@@ -90,7 +120,48 @@ plus `include`, minus `exclude`. `profiles` and `stage` go together; a project m
 - `brain brief` lists the project's applicable standards as the invariants of the item's session.
 
 The other consumers (the review lenses, the audit's standards check, the rules text, CI templates) come with
-`wi-brain-standards-registry-consumers`; the languages' adapters with `wi-brain-lang-adapters`.
+`wi-brain-standards-registry-consumers`; the languages' adapters are « Language adapters » below
+(`wi-brain-lang-adapters`).
+
+## Language adapters
+
+A row's `adapter` names the slot whose results carry its check. A repo declares the reports its own tools write in
+`projects.yaml` `repos[].tools` (`brain.langs`, `wi-brain-lang-adapters`), a new optional key beside `lang`, which
+does not change:
+
+```yaml
+repos:
+  - path: ../web
+    lang: ts
+    tools:
+      lint: {report: reports/eslint.sarif, format: sarif, tool: eslint}
+      typecheck: {report: reports/tsc.sarif, format: sarif}
+      test: {report: reports/junit.xml, format: junit, tool: vitest}
+      coverage: {report: coverage/coverage-summary.json, format: istanbul-summary}
+```
+
+| Slot | Formats it reads | What counts |
+|---|---|---|
+| `lint`, `typecheck`, `format` | `sarif`, `junit` | every SARIF result (a `note` or `none` level aside), every failed or errored case |
+| `test` | `junit` | failed and errored cases, over the cases run (a suite that lists no case: its own counts); none run is a finding |
+| `coverage` | `cobertura`, `lcov`, `coverage-json` (coverage.py), `istanbul-summary` (istanbul, c8) | the line coverage, in percent |
+
+A report path is relative to the repo's registered checkout and stays inside it. The engine **reads** the reports and
+runs no tool: the project's CI or its developer writes them (running the declared commands, under the guards, is
+`wi-brain-lang-adapters-exec`, after a test phase). `brain.langs.DEFAULTS` names the usual tools of Python and
+TypeScript and how each writes its report; the messages quote them, nothing is assumed from them.
+
+- `brain audit` measures `lang.report` (P2, never in the scout, listed only for a repo that declares `tools:`): a
+  report missing or unreadable, no test run, failed tests, lint, type or format findings, coverage under 50 % (the
+  floor of `test.coverage`).
+- `brain standards check` counts a standard whose `adapter` slot a repo declares as covered on that repo's language,
+  so a TypeScript repo with a `lint` report is no gap for a lint standard written for Python.
+- A slot, key or format this engine does not know, or a format it does not read in that slot, is a note in read mode
+  (a newer engine's; that slot is then not measured), an error in strict mode (CI); an older engine notes `tools` as
+  an unknown repo key, and refuses it in CI's strict mode.
+- Not yet: the scout, `test.coverage` and `test.links` still read Python only, and a standard's check runs only where
+  its consumer reads it (`wi-brain-standards-registry-consumers`); running the declared tools is
+  `wi-brain-lang-adapters-exec`.
 
 ## Scope and target compatibility
 
@@ -105,8 +176,10 @@ a project's code yet: the registry says what applies, and `brain standards check
   catalog or row moves no format.
 - The consumers (`wi-brain-standards-registry-consumers`) read the same rows: `enforcement` says which consumer takes
   a row, `check` and `adapter` what it runs or reads. An extension point, nothing to change in the format.
-- The language adapters (`wi-brain-lang-adapters`) carry a row's check per language through `adapter`; `languages`
-  says which languages it covers today.
+- The language adapters (`wi-brain-lang-adapters`, « Language adapters » above) carry a row's check per language
+  through `adapter`; `languages` says which languages it covers without one. Running the declared commands
+  (`wi-brain-lang-adapters-exec`) adds a key to a slot's entry (an older engine notes it), never a change of
+  `report` or `format`.
 - The project templates (`wi-brain-project-templates`) write a `standards:` selection for a profile and stage.
 - Left open: packs (a named set of ids), which a later key can add to the selection (an older engine notes an
   unknown key and keeps the file), and a row's per-stage severity (a later `v`).
