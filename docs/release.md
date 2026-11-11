@@ -127,7 +127,9 @@ do: a release that asks nothing more says « Nothing to run for the rest » afte
 entry as a fragment, never in the CHANGELOG (`packages/brain/changes/<item>.md` for the brain, `changes/<item>.md` for
 research-graph: a first line `section: Upgrade|Added|Fixes|Changes`, a blank line, the entry; the folders' READMEs),
 so that parallel PRs never collide in one `## Unreleased`; `changelog.py compile` puts them in the section order
-Upgrade, Added, Fixes, Changes, and the version PR then numbers the Upgrade steps.
+Upgrade, Added, Fixes, Changes, and the version PR then numbers the Upgrade steps. Within a section, a list fragment
+after a list continues it, and anything else (a closing paragraph such as « Nothing to run for the rest ») gets a blank
+line before it, so it never reads as the last step's continuation.
 
 **The fixture freeze.** `packages/brain/tests/fixtures/formats/<format>/v<N>/` holds what the readers are tested on, and
 it only grows: an `older` file is what a released engine wrote, and is never edited. By hand for now (a `brain fixtures freeze` command is planned,

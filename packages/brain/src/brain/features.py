@@ -305,8 +305,9 @@ def _intro(repo: str, store_label: str, public: bool) -> list[str]:
 
 
 def _columns(m: Model, feats: list[str], repo: str, public: bool) -> dict[str, bool]:
-    """Which optional columns the table has: Module, Tests, Docs."""
-    return {"module": any((m.features[f].get("props") or {}).get("module") for f in feats),
+    """Which optional columns the table has: Module (never in a public render: the module ids are the owner's
+    platform's, wi-brain-module-backfill), Tests, Docs."""
+    return {"module": not public and any((m.features[f].get("props") or {}).get("module") for f in feats),
             "tests": any(_shown_links(m, f, "tested_by", repo, public) or coverage_of(m, f) is not None
                          for f in feats),
             "docs": any(_shown_links(m, f, "documented_in", repo, public) for f in feats)}
