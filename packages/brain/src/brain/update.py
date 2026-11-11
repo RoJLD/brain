@@ -48,12 +48,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__, config, paths, tagsig
+from . import __version__, config, net, paths, tagsig
 
 ENGINE_REPO = "RoJLD/brain"   # where this package is published (brain.init.ENGINE_REPO): the default engine.repo
 CACHE = "update.json"         # <BRAIN_HOME>/update.json: the last tags read, and when
 TTL_S = 24 * 3600.0           # UPD-1: one read a day at most
 TIMEOUT_S = 15.0              # git ls-remote, and the CHANGELOG's read
+SERVICE = "git-remote:github.com"   # the tags' breaker (brain.net); brain update's refresh closes it first
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 CHANGELOG = "https://raw.githubusercontent.com/{repo}/{tag}/packages/brain/CHANGELOG.md"
 SECTION_RE = re.compile(r"^## (\d+\.\d+\.\d+)\b")
@@ -123,10 +124,10 @@ def remote_tags(repo: str, runner=subprocess.run) -> list[str]:
     """The release tags of github.com/<repo>, read with git ls-remote without a token: no credential helper, no
     prompt (a missing repo fails instead of asking). Raises OSError when git cannot read them."""
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
-    try:
-        proc = runner(["git", "-c", "credential.helper=", "ls-remote", "--tags", "--refs",
-                       f"https://github.com/{repo}.git"], capture_output=True, text=True, timeout=TIMEOUT_S,
-                      stdin=subprocess.DEVNULL, env=env)
+    try:   # under GitHub's breaker (brain.net): a timeout skips the next reads for a window
+        proc = net.call(SERVICE, lambda: runner(
+            ["git", "-c", "credential.helper=", "ls-remote", "--tags", "--refs", f"https://github.com/{repo}.git"],
+            capture_output=True, text=True, timeout=TIMEOUT_S, stdin=subprocess.DEVNULL, env=env), retries=0)
     except (OSError, subprocess.SubprocessError) as exc:
         raise OSError(f"git ls-remote {repo}: {exc}") from exc
     if proc.returncode != 0:
@@ -187,6 +188,8 @@ def check(root: Path | None = None, *, refresh: bool = False, now: float | None 
     tags, checked, source = cached.get("tags"), cached.get("checked"), "cache"
     at = _epoch(checked)
     if refresh or at is None or not 0 <= now - at < TTL_S:
+        if refresh:   # asked for (brain update): tried even when a background check timed out a minute ago
+            net.ok(SERVICE)
         try:
             tags = (fetch or remote_tags)(repo)
             source, checked = "remote", _iso(now)

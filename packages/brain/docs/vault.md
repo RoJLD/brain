@@ -104,6 +104,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `session-archive` | `$BRAIN_HOME/session-archive` | sealed | truth-local | the session archive's index by session record, and its staged copies while a run seals them (`brain session-archive`) |
 | `cockpit` | `$BRAIN_HOME/tui.json` | sealed | truth-local | the cockpit's settings |
 | `update-check` | `$BRAIN_HOME/update.json` | sealed | derived | the last engine tags read |
+| `net` | `$BRAIN_HOME/net` | sealed | truth-local | the external services' circuit breakers (`brain.net`) |
 | `personal` | `$BRAIN_HOME/personal.json` | sealed | truth-local | the pointer to the personal brain |
 | `profile` | `$BRAIN_HOME/profile.json` | sealed | truth-local | the machine's frozen tier profile |
 | `venv`, `bin`, `engine-clones` | `$BRAIN_HOME/venv`, `bin`, `engine` | sealed | install | the command's environment, its launcher, the tags' clones |

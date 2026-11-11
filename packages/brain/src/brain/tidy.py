@@ -39,7 +39,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import config, detail, guards, paths, projects
+from . import config, detail, guards, net, paths, projects
 
 RECENT_HOURS = 24
 KEEP = ("main", "master")
@@ -399,7 +399,8 @@ def remote_merged(repo: Path, default: str, staying: dict[str, str] | None = Non
     if not _exists(repo, ref):
         return [], f"no {ref}"
     try:
-        r = _git(repo, "ls-remote", "--heads", "origin", timeout=60)
+        r = net.call(f"git-remote:{Path(repo).name}", lambda: _git(repo, "ls-remote", "--heads", "origin", timeout=60),
+                     retries=0)   # its breaker (brain.net): a remote that timed out is skipped for a window
     except (OSError, subprocess.SubprocessError) as exc:
         return [], f"git ls-remote failed ({exc})"
     if r.returncode:
@@ -421,6 +422,7 @@ def remote_merged(repo: Path, default: str, staying: dict[str, str] | None = Non
 
 def _open_pr_heads(repo: Path) -> tuple[set[str], str]:
     try:
+        # no breaker here (brain.net): the open PRs' heads protect branches from --apply, so gh is always asked
         r = subprocess.run(["gh", "pr", "list", "--state", "open", "--json", "headRefName", "--limit", "500"],
                            cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=60, stdin=subprocess.DEVNULL)
