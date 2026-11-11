@@ -99,17 +99,23 @@ def problems(args, root: Path, cfg=None) -> tuple[list[str], list[str]]:
 
 def cmd_docs(args, root: Path) -> int:
     cfg = config.load(root)
-    if args.docs_cmd == "render":
-        found = targets(args, root)
-        if not found:
-            print(f"brain docs: no repo of the project holds {readme.FILE}: not concerned")
-            return 0
-        if args.write and skew.refuse_view(root, "docs render --write", args.force, f"the committed {readme.VIEW}"):
-            return 1
-        rc = 0
-        for repo, checkout in found:
-            rc = _render_one(args, root, repo, checkout, cfg) or rc
-        return rc
+    return (_cmd_render if args.docs_cmd == "render" else _cmd_check)(args, root, cfg)
+
+
+def _cmd_render(args, root: Path, cfg) -> int:
+    found = targets(args, root)
+    if not found:
+        print(f"brain docs: no repo of the project holds {readme.FILE}: not concerned")
+        return 0
+    if args.write and skew.refuse_view(root, "docs render --write", args.force, f"the committed {readme.VIEW}"):
+        return 1
+    rc = 0
+    for repo, checkout in found:
+        rc = _render_one(args, root, repo, checkout, cfg) or rc
+    return rc
+
+
+def _cmd_check(args, root: Path, cfg) -> int:
     found = targets(args, root)
     for repo, checkout in found:
         if not readme.applies(checkout):   # named by --repo or --dir: said, never counted as checked
