@@ -590,11 +590,13 @@ def _research_graph_from(commit):
     d = site / "research_graph-0.2.3.dist-info"
     d.mkdir(parents=True, exist_ok=True)
     (d / "direct_url.json").write_text(json.dumps({"url": "https://github.com/ada/engine.git",
-                                                   "vcs_info": {"vcs": "git", "commit_id": commit}}))
+                                                   "vcs_info": {"vcs": "git", "commit_id": commit}}),
+                                        encoding="utf-8")
 
 
 def test_a_tag_moved_during_the_install_is_said_and_refused_under_verify_tags(brain_home, venv, installer_brain):
-    ok = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
+    def ok(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, "", "")
     _research_graph_from(COMMIT)
     code, done = update.apply(_signed_plan("verified"), runner=ok)
     assert code == 0 and not any(line.startswith("warning") for line in done), done

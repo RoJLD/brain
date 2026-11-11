@@ -317,7 +317,7 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=No
                           "docs/install.md)")
         return out
     sig = _verified(root, repo, out["tag"], verify)
-    out["signature"], out["verify_tags"] = sig, _required(root)
+    out["signature"], out["verify_tags"] = sig, tagsig.required(root)
     if sig["status"] != tagsig.VERIFIED and out["verify_tags"]:
         out["blocked"] = f"refused: {tagsig.line(sig, True)}"
         out["pin"] = None   # never moved to a tag refused
@@ -328,18 +328,11 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=No
     return out
 
 
-def _required(root: Path | None) -> bool:
-    try:
-        return tagsig.required(root)
-    except Exception:   # a config that cannot be read: config --check says so; the default stays off
-        return False
-
-
 def _verified(root: Path | None, repo: str, tag: str, verify) -> dict:
     """The tag's verification; never raises (a failure is a verdict that says why)."""
     try:
         return (verify or tagsig.verify)(root, repo, tag)
-    except Exception as exc:
+    except Exception as exc:   # by design: the cockpit's plan never raises; the verdict says unverifiable and why
         return tagsig.verdict(tagsig.UNVERIFIABLE, tag, why=f"{type(exc).__name__}: {exc}")
 
 
@@ -554,13 +547,9 @@ def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
     said = ((proc.stdout or "") + (proc.stderr or "")).strip()
     if proc.returncode != 0:
         return 1, [f"pip install \"{p['spec']}\" failed with exit code {proc.returncode}", *said.splitlines()[-20:]]
-    out = [f"installed brain {p['tag']} into {Path(p['python']).parent.parent}"]
-    moved = _moved_since_verified(p)
-    if moved:
-        out.append(moved)
-        if p.get("verify_tags"):
-            return 1, [*out, "refused  the launcher and the pin are left as they were; the venv's research-graph is "
-                             "not the signed one: check the repo's tags, then brain update again"]
+    out = [f"installed brain {p['tag']} into {Path(p['python']).parent.parent}", *_moved_since_verified(p)]
+    if out[-1].startswith("refused"):
+        return 1, out
     if p.get("launcher"):
         src, dst = Path(p["launcher"][0]), Path(p["launcher"][1])
         try:
@@ -579,18 +568,21 @@ def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
     return code, out
 
 
-def _moved_since_verified(p: dict) -> str:
+def _moved_since_verified(p: dict) -> list[str]:
     """When the tag was verified, brain went in by its commit; research-graph came by the tag the engine's pyproject
     pins. A commit pip recorded for it other than the verified one means the tag moved between the check and the
-    install: said, '' otherwise."""
+    install: said (a warning, then a refusal line under engine.verify_tags), [] otherwise."""
     sig = p.get("signature") or {}
-    if sig.get("status") != tagsig.VERIFIED:
-        return ""
-    got = tagsig.installed_commit(_site_packages(Path(p["python"])), "research_graph")
-    if got and got != sig["commit"]:
-        return (f"warning  research-graph was installed from commit {got[:12]}, not {sig['commit'][:12]} which the "
-                f"signed {p['tag']} names: the tag moved during the install")
-    return ""
+    got = tagsig.installed_commit(_site_packages(Path(p["python"])), "research_graph") \
+        if sig.get("status") == tagsig.VERIFIED else ""
+    if not got or got == sig["commit"]:
+        return []
+    said = [f"warning  research-graph was installed from commit {got[:12]}, not {sig['commit'][:12]} which the "
+            f"signed {p['tag']} names: the tag moved during the install"]
+    if p.get("verify_tags"):
+        said.append("refused  the launcher and the pin are left as they were; the venv's research-graph is not the "
+                    "signed one: check the repo's tags, then brain update again")
+    return said
 
 
 def main(root: Path | None, *, check_only: bool, yes: bool, as_json: bool, refused: str = "",

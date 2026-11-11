@@ -161,7 +161,7 @@ def verify_remote(url: str, tag: str, allowed: str, *, source: str = "", runner=
     the releaser's principal and the commit the tag names), unsigned, unknown-key or unverifiable."""
     if not _lines(allowed):
         return verdict(NO_SIGNERS, tag, why=f"no {FILE}: no releaser key to verify {tag} with", source=source)
-    with tempfile.TemporaryDirectory(prefix="brain-tag-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="brain-tag-", ignore_cleanup_errors=True) as tmp:
         work = Path(tmp) / "repo"
         init = _git(["init", "--quiet", str(work)], None, runner)
         if init.returncode != 0:

@@ -220,7 +220,8 @@ def test_installed_commit_reads_pips_direct_url(tmp_path):
     d = sp / "research_graph-1.0.0.dist-info"
     d.mkdir(parents=True)
     (d / "direct_url.json").write_text(json.dumps({"url": "https://x", "vcs_info": {"vcs": "git",
-                                                                                     "commit_id": "abc"}}))
+                                                                                     "commit_id": "abc"}}),
+                                       encoding="utf-8")
     assert tagsig.installed_commit([sp], "research_graph") == "abc"
     assert tagsig.installed_commit([sp], "brain") == ""
 
