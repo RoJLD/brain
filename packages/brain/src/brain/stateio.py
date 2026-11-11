@@ -39,8 +39,9 @@ Two other classes go through this module (wi-brain-state-safe-io-rest):
 
 - **foreign** (a file another tool owns: Claude Code's ``settings.json``): :func:`read_foreign` refuses one that
   cannot be read, is not JSON or not an object (« fix it by hand first »: never set aside, never replaced), and
-  :func:`write_foreign` refuses to write over a file that changed since it was read, backs it up beside itself
-  (unless the caller says git keeps it), then writes atomically;
+  :func:`write_foreign` refuses to write over a file that changed since it was read, backs it up beside itself, or
+  into a folder of ``$BRAIN_HOME/backup`` the caller names (:func:`backup_home`: a git work tree's file, so that git
+  status stays clean), then writes atomically;
 - **log** (append-only lines): :func:`rotate_log` moves a log of an earlier month (or one past
   :data:`LOG_MAX_BYTES`) aside as ``<stem>-<YYYY-MM>[-n]<suffix>`` before a line is appended, and
   :func:`prune_months` drops the monthly files older than their class's retention (:data:`LOG_RETENTION`; None:
@@ -57,7 +58,7 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -402,10 +403,53 @@ def read_foreign(path: Path) -> tuple[dict, bytes | None]:
     return data, blob
 
 
-def write_foreign(path: Path, text: str, seen: bytes | None, *, keep_backup: bool = True) -> Path | None:
+HOME_BACKUPS = 10   # the copies :func:`backup_home` keeps per file
+
+
+def backup_home(path: Path, folder: Path, keep: int = HOME_BACKUPS) -> Path | None:
+    """A copy of ``path`` into ``folder`` (``<name>.<UTC stamp>.bak``, a store of ``$BRAIN_HOME/backup``) unless the
+    newest copy there holds the same bytes (that one is returned); then the copies past ``keep`` go, the oldest
+    first. None when there is nothing to copy, the file is a secret, or the copy failed (said on stderr)."""
+    path, folder = Path(path), Path(folder)
+    if not path.is_file() or _secret(path):
+        return None
+    try:
+        blob = path.read_bytes()
+        folder.mkdir(parents=True, exist_ok=True)
+        olds = sorted(p for p in folder.iterdir() if _home_copy_of(p.name, path.name))
+        if olds and olds[-1].read_bytes() == blob:
+            return olds[-1]
+        t = datetime.now(timezone.utc)
+        dst = folder / f"{path.name}.{t:%Y%m%dT%H%M%S%fZ}{BACKUP}"
+        while dst.exists():   # a coarse clock (about 16 ms on Windows): never over another copy
+            t += timedelta(microseconds=1)
+            dst = folder / f"{path.name}.{t:%Y%m%dT%H%M%S%fZ}{BACKUP}"
+        tmp = dst.with_name(f"{dst.name}.{os.getpid()}.tmp")
+        tmp.write_bytes(blob)
+        os.replace(tmp, dst)
+    except OSError as exc:
+        print(f"brain: {path}: no backup in {folder} ({exc.__class__.__name__}); written without one", file=sys.stderr)
+        return None
+    for old in (olds + [dst])[:-max(keep, 1)]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return dst
+
+
+def _home_copy_of(name: str, of: str) -> bool:
+    """Whether ``name`` is a copy :func:`backup_home` made of a file named ``of``."""
+    stamp = name[len(of) + 1:-len(BACKUP)] if name.startswith(of + ".") and name.endswith(BACKUP) else ""
+    return bool(re.fullmatch(r"\d{8}T\d{12}Z", stamp))
+
+
+def write_foreign(path: Path, text: str, seen: bytes | None, *, keep_backup: bool = True,
+                  backup_dir: Path | None = None) -> Path | None:
     """``text`` over a foreign file read as ``seen`` (its bytes then, None when it was missing): refused
-    (:class:`StateError`) when the file changed since, since its owner wrote it meanwhile; a backup beside it first
-    (``keep_backup``: False where git keeps the file), then the atomic write. The backup's path, None without one."""
+    (:class:`StateError`) when the file changed since, since its owner wrote it meanwhile; a backup first, into
+    ``backup_dir`` when given (:func:`backup_home`), else beside it unless ``keep_backup`` is False; then the atomic
+    write. The backup's path, None without one."""
     path = Path(path)
     try:
         now = path.read_bytes()
@@ -416,7 +460,7 @@ def write_foreign(path: Path, text: str, seen: bytes | None, *, keep_backup: boo
     if now != seen:
         raise StateError(f"{path}: changed while it was being edited (its owner wrote it): run the command again; "
                          "nothing written")
-    bak = backup(path) if keep_backup else None
+    bak = backup_home(path, backup_dir) if backup_dir is not None else backup(path) if keep_backup else None
     write_atomic(path, text)
     return bak
 
