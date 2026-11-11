@@ -109,6 +109,12 @@ def _path_at(top: Path, ref: str, path: str) -> bool:
     return _git(top, "cat-file", "-e", f"{ref}:./{path.replace(chr(92), '/').strip('/')}") == 0
 
 
+def _checkable(r: dict, top: Path | None, paths: list) -> bool:
+    """Whether a realisation's paths are checked: its project's root is on this machine, it names paths, and it
+    exists (:data:`CHECKED`) or names its ref."""
+    return top is not None and top.is_dir() and bool(paths) and (r.get("state") in CHECKED or bool(r.get("ref")))
+
+
 def _check_realisation(mid: str, i: int, r: dict, names: set[str], roots: dict[str, Path]) -> list[str]:
     """A realisation's project (registered) and its paths at their ref, when the project's root is on this machine
     and the realisation's state says they exist (:data:`CHECKED`), or its ref is given."""
@@ -117,7 +123,7 @@ def _check_realisation(mid: str, i: int, r: dict, names: set[str], roots: dict[s
     if project and names and project not in names:
         out.append(f"{where}: project {project} is not in the projects registry")
     top, paths = roots.get(project), r.get("paths") if isinstance(r.get("paths"), list) else []
-    if top is None or not top.is_dir() or not paths or (r.get("state") not in CHECKED and not r.get("ref")):
+    if not _checkable(r, top, paths):
         return out   # no checkout here, no path, or not built yet: nothing to check
     ref = str(r.get("ref") or "HEAD")
     why = _repo(top, ref)
