@@ -30,18 +30,23 @@ def _module_view(project: projects.Project, root: Path, store: Path) -> str:
 
 def _module_warnings(project: projects.Project, root: Path, store: Path, stale: views.Stale) -> list[str]:
     """brain check's lines on the module map: an open item it does not place, a feature or a done item with no module
-    (wi-brain-module-backfill); its view, when stale, joins ``stale``."""
-    if not modules.applies(store):
-        return []
+    (wi-brain-module-backfill), an imported entry's fields (wi-brain-module-registry-import); its view, when stale,
+    joins ``stale``. A store without a registry of its own reads the one config.json modules.store names; a key that
+    names none is a warning here."""
+    if not modules.applies(store, root):
+        wanted = modules.named(root, store)
+        return [f"module map: config.json modules.store {wanted!r} names no store of the registry that keeps "
+                f"{modules.REGISTRY}"] if wanted else []
     view = _module_view(project, root, store)
     if modules.stale(root, store, _store_label(root, store), view):
         stale.add(view, "brain sync (or brain modules --write)")
-    return [f"module map: {line}" for line in modules.problems(store) + modules.warnings(store)]
+    return [f"module map: {line}" for line in modules.registry_problems(store, root) + modules.problems(store, root)
+            + modules.warnings(store, root)]
 
 
 def _write_module_view(project: projects.Project, root: Path, store: Path) -> None:
     view = _module_view(project, root, store)
-    if modules.applies(store) and modules.write(root, store, _store_label(root, store), view):
+    if modules.applies(store, root) and modules.write(root, store, _store_label(root, store), view):
         print(f"view: {view} written")
 
 

@@ -104,7 +104,7 @@ it they write with any engine, as before.
 ## The technical reference
 
 `brain reference` (`brain.reference`, `wi-brain-technical-reference`) writes a project's technical reference into
-`docs/reference/`: `README.md`, the index of the modules of the store's registry (`modules.yaml`, [modules.md](modules.md))
+`docs/reference/`: `README.md`, the index of the modules of the store's registry (`modules.yaml`, or the one `config.json` `modules.store` names, [modules.md](modules.md))
 with their features, items and decisions, then the decisions no module holds (« unplaced », counted: a debt line);
 and `modules/<id>.md` per module: what it does (its features, have first), the decisions in force on each of its
 nodes, the rules its items deliver, its specs, its items done and open, and its open questions (the pending DDRs about

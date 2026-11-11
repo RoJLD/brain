@@ -213,3 +213,247 @@ def test_the_public_features_render_never_shows_the_module_column():
     assert "| Module |" in features.render(m, "sib") and "B3" in features.render(m, "sib")
     public = features.render(m, "sib", public=True)
     assert "Module" not in public and "B3" not in public
+
+
+# --- wi-brain-module-registry-import: a registry read in another store, an imported registry ---
+
+IMPORTED = """\
+- {id: P2, name: kettle-core, brick: P, phase: MVP, status: tree, imported: 2026-11-11, declared: [K1],
+   source: [{ref: "annex A of the vision", date: 2026-10-20}, {ref: placement sheet, date: 2026-10-24,
+   fields: [phase, status]}]}
+- {id: P12, name: kettle-meter, brick: P, phase: V1.5, status: proposed, lab: now, since: 2026-08-01,
+   imported: 2026-11-11, source: [{ref: board topic, date: 2026-11-02}],
+   divergences: ["the placement sheet says V2, the annex V1.5"]}
+- {id: K1, name: tea-room, brick: K, phase: MVP, status: tree, imported: 2026-11-11,
+   source: [{ref: "annex A of the vision", date: 2026-10-20}]}
+- {id: M4, name: lamp-post, brick: M, phase: V1, status: proposed, since: 2026-08-01}
+"""
+
+
+def test_imported_entries_are_validated_and_hand_entries_are_not(tmp_path):
+    assert modules.registry_problems(_brain(tmp_path)) == []   # a hand registry passes as before
+    assert modules.registry_problems(_brain(tmp_path / "ok", registry=IMPORTED)) == []
+    bad = IMPORTED + """\
+- {id: Q1, brick: Q, phase: "", status: maybe, imported: 2026-11-01, declared: [Z9, K1],
+   source: [{ref: late, date: 2026-11-05, fields: [lab]}, {date: 2026-10-01}, {ref: undated}],
+   divergences: "one text"}
+- {id: Q2, name: no-source, brick: Q, phase: MVP, status: tree, source: [], placement: [planned]}
+- {id: K1, name: tea-room-again, brick: K, phase: MVP, status: tree, imported: 2026-11-11,
+   source: [{ref: "annex A of the vision", date: 2026-10-20}]}
+- {id: M5, name: hand-only, brick: M, status: whatever}
+"""
+    assert modules.registry_problems(_brain(tmp_path / "bad", registry=bad)) == [
+        "K1: imported, and its id is given 2 times in modules.yaml",
+        "Q1: imported without name",
+        "Q1: imported without phase",
+        "Q1: imported with status 'maybe' (one of tree, proposed)",
+        "Q1: source late is dated 2026-11-05, after the import of 2026-11-01",
+        "Q1: source late fields must list document fields (name, brick, phase, status, placement, definition, "
+        "declared, divergences)",
+        "Q1: source 2 has no ref (the document read)",
+        "Q1: source undated has no date (the document's, YYYY-MM-DD)",
+        "Q1: declared Z9 is not in modules.yaml",
+        "Q1: divergences must be a list of texts",
+        "Q2: imported without source (the documents read: a list of {ref, date})",
+        "Q2: imported without imported (the day of the import, YYYY-MM-DD)",
+        "Q2: placement must be a text",
+    ]   # M5, a hand entry with no phase and an odd status, is not the import's to check
+
+
+def test_a_timestamp_a_quoted_day_and_a_hand_source_never_break_the_check(tmp_path):
+    reg = IMPORTED + """\
+- {id: T1, name: timed, brick: T, phase: MVP, status: tree, imported: 2026-11-11 10:00:00,
+   source: [{ref: early, date: "2026-11-20"}, {ref: timed, date: 2026-10-20 09:30:00}]}
+- {id: H1, name: hand, brick: H, phase: V2, status: whatever, source: "workshop notes", imported: false}
+- {id: H2, name: hand-too, brick: H, status: odd, source: [notes, of a meeting]}
+"""
+    assert modules.registry_problems(_brain(tmp_path, registry=reg)) == [
+        "T1: source early is dated 2026-11-20, after the import of 2026-11-11"]   # no TypeError
+    got = modules.registry(_brain(tmp_path / "again", registry=reg))
+    assert [m["id"] for m in got if modules.is_imported(m)] == ["P2", "P12", "K1", "T1"]   # H1, H2: hand entries
+    bad = IMPORTED + ('- {id: F1, name: f, brick: F, phase: MVP, status: tree, imported: 2026-11-11,\n'
+                      '   source: [{ref: a, date: 2026-11-01, fields: [imported]}], declared: K1}\n')
+    assert modules.registry_problems(_brain(tmp_path / "fields", registry=bad)) == [
+        "F1: source a fields must list document fields (name, brick, phase, status, placement, definition, declared, "
+        "divergences)", "F1: declared must be a list of module ids"]
+
+
+def test_check_refuses_an_imported_entry_and_brain_check_warns(tmp_path, monkeypatch, capsys):
+    from brain import projects, views
+    from brain.commands._stores import _module_warnings
+    nodes = '- {id: wi-guard, type: WorkItem, status: todo, title: "A guard", props: {module: P2}}\n'
+    gone = IMPORTED.replace("phase: MVP, status: tree, imported", "phase: MVP, status: gone, imported", 1)
+    store = _brain(tmp_path, registry=gone, nodes=nodes)
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
+    assert cli.main(["modules", "--check"]) == 1
+    assert "P2: imported with status 'gone' (one of tree, proposed)" in capsys.readouterr().out
+    p = projects.Project("lab", tmp_path, [store])
+    assert "module map: P2: imported with status 'gone' (one of tree, proposed)" in \
+        _module_warnings(p, tmp_path, store, views.Stale())
+    (store / "modules.yaml").write_text(IMPORTED, encoding="utf-8")
+    assert cli.main(["modules", "--check"]) == 0
+
+
+def test_the_view_generates_the_counts_the_documents_and_the_divergences_of_an_import(tmp_path):
+    hand = modules.render(_brain(tmp_path))
+    assert "## Counts" not in hand and "## The import" not in hand   # a hand registry's view is what it was
+    text = modules.render(_brain(tmp_path / "imp", registry=IMPORTED))
+    assert "Generated from the registry: 2 in the tree, 2 proposed, 4 in all (3 imported)." in text
+    assert "| K | 1 | 0 |" in text and "| M | 0 | 1 |" in text and "| P | 1 | 1 |" in text
+    assert "Imported 2026-11-11 from the documents below" in text
+    assert "- annex A of the vision (2026-10-20): 2 module(s)" in text and "- placement sheet (2026-10-24): 1" in text
+    assert "- P12: the placement sheet says V2, the annex V1.5" in text
+    assert text.index("## Gaps") < text.index("## Counts") < text.index("## K1")
+    got = modules.data(_brain(tmp_path / "json", registry=IMPORTED))
+    assert got["counts"] == {"tree": 2, "proposed": 2, "all": 4, "bricks": {
+        "K": {"tree": 1, "proposed": 0}, "M": {"tree": 0, "proposed": 1}, "P": {"tree": 1, "proposed": 1}}}
+    assert got["imported"] == 3 and got["registry_problems"] == []
+
+
+def test_diff_says_what_changed_since_the_registry_at_a_ref(tmp_path, monkeypatch, capsys):
+    from conftest import run_git
+    store = _brain(tmp_path, registry=IMPORTED)
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
+    with pytest.raises(SystemExit, match="HEAD is no commit of the git repository"):
+        cli.main(["modules", "--diff"])   # no repository: told, never read as « all new »
+    run_git(tmp_path, "init", "-q")
+    run_git(tmp_path, "add", "notes/graph/schema.yaml")
+    run_git(tmp_path, "commit", "-q", "-m", "the store, no registry yet")
+    assert cli.main(["modules", "--diff"]) == 0   # the registry not committed yet: everything is new
+    out = capsys.readouterr().out
+    assert "registry: notes/graph/modules.yaml, against HEAD" in out
+    assert "counts: none -> 4 modules (2 proposed) (HEAD has no modules.yaml: all are new)" in out
+    assert "added (4): K1, M4, P2, P12" in out
+    run_git(tmp_path, "add", "-A")
+    run_git(tmp_path, "commit", "-q", "-m", "registry")
+    new = IMPORTED.replace("phase: V1.5, status: proposed, lab: now", "phase: V2, status: proposed, lab: next")
+    new = new.replace("- {id: K1, name: tea-room, brick: K, phase: MVP, status: tree, imported: 2026-11-11,",
+                      "- {id: K1, name: tea-room, brick: K, phase: MVP, status: tree, imported: 2026-11-12,")
+    new = new.replace("- {id: M4, name: lamp-post, brick: M, phase: V1, status: proposed, since: 2026-08-01}\n",
+                      "- {id: N3, name: night-lamp, brick: N, phase: V2, status: tree, imported: 2026-11-11,\n"
+                      "   source: [{ref: \"annex A of the vision\", date: 2026-10-20}]}\n")
+    (store / "modules.yaml").write_text(new, encoding="utf-8")
+    assert cli.main(["modules", "--diff"]) == 0
+    out = capsys.readouterr().out
+    assert "counts: 4 modules (2 proposed) -> 4 modules (1 proposed)" in out
+    assert "added (1): N3" in out and "removed (1): M4" in out
+    assert 'document fields changed (1):\n  P12.phase: "V1.5" -> "V2"' in out
+    assert 'hand fields changed (1): an import never touches them\n  P12.lab: "now" -> "next"' in out
+    assert "sources or day of import changed (1): K1" in out and "K1.imported" not in out
+    assert cli.main(["modules", "--diff", "HEAD", "--json"]) == 0
+    got = json.loads(capsys.readouterr().out)
+    assert got["added"] == ["N3"] and got["drive"] == ['P12.phase: "V1.5" -> "V2"'] and got["ref"] == "HEAD"
+    assert got["provenance"] == ["K1"]
+    assert cli.main(["modules", "--diff", "--check"]) == 1   # the report, then the check (wi-bare has no module)
+    out = capsys.readouterr().out
+    assert out.index("added (1): N3") < out.index("wi-bare: no props.module")
+    assert cli.main(["modules", "--diff", "--check", "--json"]) == 1   # one JSON object
+    got = json.loads(capsys.readouterr().out)
+    assert got["diff"]["added"] == ["N3"] and "wi-bare: no props.module (a module of modules.yaml, or none with " \
+        "props.module_reason)" in got["problems"]
+    for ref in ("mian", "--output=x"):   # a typo or an option: told, never read as « all new »
+        with pytest.raises(SystemExit, match="brain modules --diff: .*(no commit|not a git ref)"):
+            cli.main(["modules", f"--diff={ref}"])
+    (store / "modules.yaml").write_text("[unclosed\n", encoding="utf-8")
+    run_git(tmp_path, "commit", "-q", "-am", "a broken registry")
+    (store / "modules.yaml").write_text(new, encoding="utf-8")
+    with pytest.raises(SystemExit, match="modules.yaml at HEAD does not parse"):
+        cli.main(["modules", "--diff"])
+
+
+def _programme(tmp_path, monkeypatch, store_key=None):
+    """lab (its config.json at its root, a store without a registry), prog (another project whose store keeps the
+    registry) and other (a project at its own root, no registry)."""
+    import shutil
+
+    from conftest import BRAIN
+    lab = tmp_path / "lab"
+    lab_store = _brain(lab, registry=None)
+    prog_store = _brain(tmp_path / "prog", nodes="- {id: wi-prog, type: WorkItem, status: todo, title: P, "
+                                                   "props: {module: K1}}\n")
+    other_store = _brain(tmp_path / "other", registry=None, nodes="- {id: wi-other, type: WorkItem, status: todo, "
+                                                                   "title: O}\n")
+    data = json.loads(BRAIN.read_text(encoding="utf-8"))
+    if store_key:
+        data["modules"] = {"store": store_key}
+    shutil.copy(BRAIN.parent / "rules.md", lab / "rules.md")
+    (lab / "config.json").write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(lab / "config.json"))
+    reg = tmp_path / "projects.yaml"
+    reg.write_text(f"lab:\n  root: {lab.as_posix()}\nprog:\n  root: {(tmp_path / 'prog').as_posix()}\n"
+                   f"other:\n  root: {(tmp_path / 'other').as_posix()}\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    monkeypatch.setenv("BRAIN_ROOT", str(lab))
+    return lab, lab_store, prog_store, other_store
+
+
+def test_without_the_key_a_store_reads_only_its_own_registry(tmp_path, monkeypatch):
+    lab, lab_store, _, _ = _programme(tmp_path, monkeypatch)
+    assert not modules.applies(lab_store, lab) and modules.problems(lab_store, lab) == []
+    with pytest.raises(SystemExit, match="no modules.yaml") as exc:
+        cli.main(["modules"])
+    assert "modules.store" not in str(exc.value)
+
+
+@pytest.mark.parametrize("key", ["prog", "prog:notes/graph"])
+def test_a_store_without_a_registry_reads_the_one_config_names(tmp_path, monkeypatch, capsys, key):
+    lab, lab_store, prog_store, other_store = _programme(tmp_path, monkeypatch, key)
+    assert modules.registry_file(lab_store, lab) == prog_store / "modules.yaml"
+    assert modules.registry_label(lab_store, "notes/graph", lab) == "prog:notes/graph/modules.yaml"
+    assert "wi-bare: no props.module (a module of modules.yaml, or none with props.module_reason)" in \
+        modules.problems(lab_store, lab)   # the lab's items keep their module check
+    assert modules.registry_file(prog_store, lab) == prog_store / "modules.yaml"   # its own, always
+    assert not modules.applies(other_store, lab)   # another root never reads it
+    assert modules.problems(lab_store) == []   # no root: no config to read, as before
+    assert cli.main(["modules", "--write"]) == 0
+    assert "view: notes/modules_graph.md written" in capsys.readouterr().out
+    view = (lab / "notes" / "modules_graph.md").read_text(encoding="utf-8")
+    assert "the registry `prog:notes/graph/modules.yaml`" in view and "| [P2](#p2) | kettle-core | P |" in view
+    assert cli.main(["modules", "--check"]) == 1
+    assert "wi-bare: no props.module" in capsys.readouterr().out
+    from brain import projects, reference, views
+    from brain.commands._stores import _module_warnings
+    assert [m["id"] for m in reference.load(lab, lab_store).registry] == ["P2", "P12", "K1", "M4"]
+    stale = views.Stale()
+    _module_warnings(projects.Project("lab", lab, [lab_store]), lab, lab_store, stale)
+    assert stale.views == []   # the view just written is current
+    with (prog_store / "modules.yaml").open("a", encoding="utf-8") as f:
+        f.write("- {id: Q7, name: queue, brick: Q, phase: V1, status: tree}\n")
+    _module_warnings(projects.Project("lab", lab, [lab_store]), lab, lab_store, stale)
+    assert stale.views == [("notes/modules_graph.md", "brain sync (or brain modules --write)")]
+
+
+def test_the_projects_registry_unreadable_the_lookup_reads_nothing(tmp_path, monkeypatch):
+    from brain import projects, views
+    from brain.commands._stores import _module_warnings
+    lab, lab_store, _, _ = _programme(tmp_path, monkeypatch, "prog")
+    (tmp_path / "projects.yaml").write_text("lab: [\n", encoding="utf-8")
+    assert not modules.applies(lab_store, lab)
+    assert _module_warnings(projects.Project("lab", lab, [lab_store]), lab, lab_store, views.Stale()) == [
+        "module map: config.json modules.store 'prog' names no store of the registry that keeps modules.yaml"]
+
+
+def test_a_worktree_of_the_checkout_that_holds_config_reads_the_registry(tmp_path, monkeypatch):
+    from conftest import run_git
+    lab, lab_store, prog_store, _ = _programme(tmp_path, monkeypatch, "prog")
+    run_git(lab, "init", "-q")
+    run_git(lab, "add", "-A")
+    run_git(lab, "commit", "-q", "-m", "lab")
+    wt = tmp_path / "wt-lab"
+    run_git(lab, "worktree", "add", "-q", str(wt))
+    # config.json found in the main checkout (BRAIN_CONFIG, the pointer): the worktree's store reads the registry
+    assert modules.registry_file(wt / "notes" / "graph", wt) == prog_store / "modules.yaml"
+    assert not modules.applies(tmp_path / "other" / "notes" / "graph", wt)   # another root still never does
+
+
+def test_a_key_that_names_no_registry_is_told(tmp_path, monkeypatch):
+    from brain import config, projects, views
+    from brain.commands._stores import _module_warnings
+    lab, lab_store, _, _ = _programme(tmp_path, monkeypatch, "nowhere")
+    assert not modules.applies(lab_store, lab)
+    with pytest.raises(SystemExit, match="config.json modules.store 'nowhere' names no store"):
+        cli.main(["modules"])
+    p = projects.Project("lab", lab, [lab_store])
+    assert _module_warnings(p, lab, lab_store, views.Stale()) == [
+        "module map: config.json modules.store 'nowhere' names no store of the registry that keeps modules.yaml"]
+    assert config.check(lab) == []   # the key is the schema's
