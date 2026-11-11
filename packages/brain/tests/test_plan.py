@@ -55,6 +55,7 @@ def test_what_is_not_a_plan_call_changes_nothing():
 
 
 def _hook(payload):
+    payload = {"tool_response": {}, **payload}   # what every real PostToolUse payload carries (capture.PAYLOAD_KEYS)
     return capture.main(["post-tool-use"], stdin=io.StringIO(json.dumps(payload)))
 
 

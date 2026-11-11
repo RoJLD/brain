@@ -282,7 +282,8 @@ def stale_render_only(rc: int, out: str) -> bool:
 
 def where(root: Path, home: Path) -> dict[str, list[Path]]:
     """Where each registered format lives in a brain (docs/formats.md), its files found there. ``template`` lives
-    in a template's folder, not in a brain: the store plan reads the engine's, the rollback a newer one."""
+    in a template's folder, not in a brain: the store plan reads the engine's, the rollback a newer one; ``status``
+    is printed by brain doctor --json, never stored (:data:`NOT_STORED`)."""
     def found(base: Path, pattern: str) -> list[Path]:
         return sorted(base.glob(pattern)) if base.is_dir() else []
     return {"ar": found(root, "records/ar/*.jsonl"), "config": found(root, "config.json"),
@@ -290,8 +291,11 @@ def where(root: Path, home: Path) -> dict[str, list[Path]]:
             "packs": found(root, "source/packs.yaml"), "permissions": found(root, "permissions.yaml"),
             "projects": found(root, "projects.yaml"), "members": found(root, "members.yaml"),
             "readme": found(root, "readme.yaml"), "sr": found(root, "records/sr/*/*.yaml"),
-            "standards": found(root, "standards/*.yaml"), "template": [],
+            "standards": found(root, "standards/*.yaml"), "template": [], "status": [],
             "modules": found(root, "notes/graph/modules.yaml")}
+
+
+NOT_STORED = ("template", "status")   # registered formats a brain holds no file of (where())
 
 
 def formats() -> list[tuple[str, int]]:
@@ -307,7 +311,7 @@ def written(root: Path, home: Path) -> dict:
     """The step that checks the older engine wrote every registered format (a format with no place here fails it:
     a new format joins the upgrade test with its fixtures)."""
     places = where(root, home)
-    missing = [f"{fmt} v{v}" for fmt, v in formats() if fmt != "template" and not places.get(fmt)]
+    missing = [f"{fmt} v{v}" for fmt, v in formats() if fmt not in NOT_STORED and not places.get(fmt)]
     out = "\n".join(f"{fmt}: {', '.join(p.name for p in places.get(fmt, [])) or '-'}" for fmt, _ in formats())
     return {"step": "formats", "cmd": "every registered format written", "rc": int(bool(missing)),
             "ok": not missing and bool(formats()), "out": out + ("\nmissing: " + ", ".join(missing) if missing else "")}
@@ -391,7 +395,7 @@ def add_newer(root: Path, home: Path, fault: str = "") -> dict:
                 reached.add(fmt)
             what = (f"+{len(add)} line(s)" if f.suffix == ".jsonl" else "+keys") if add else "unchanged"
             out.append(f"{fmt}: {f.name} {what}")
-    missing = [f"{fmt} v{v}" for fmt, v in formats() if fmt != "template" and fmt not in reached]
+    missing = [f"{fmt} v{v}" for fmt, v in formats() if fmt not in NOT_STORED and fmt not in reached]
     if missing:
         out.append("reached no file: " + ", ".join(missing))
     return {"step": "newer data", "cmd": "HEAD's additive fixtures laid over the brain", "rc": int(bool(missing)),

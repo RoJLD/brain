@@ -24,10 +24,12 @@ from functools import lru_cache
 from pathlib import Path
 
 KINDS = ("ddr", "sr", "ar")
-SCHEMAS = KINDS + ("event", "config", "members", "readme", "standards", "modules")  # event: the execution-time
-# ledger and the ops error events (brain.timing); config: a personal brain's config.json (brain.config); members:
-# its members.yaml (brain.identity); readme: a repo's readme.yaml (brain.readme); standards: a standards catalog
-# (brain.standards); modules: an entry of a store's modules.yaml (brain.modules, brain.modulemap)
+SCHEMAS = KINDS + ("event", "config", "members", "readme", "standards", "modules", "status")  # event: the
+# execution-time ledger and the ops error events (brain.timing); config: a personal brain's config.json
+# (brain.config); members: its members.yaml (brain.identity); readme: a repo's readme.yaml (brain.readme); standards:
+# a standards catalog (brain.standards); modules: an entry of a store's modules.yaml (brain.modules, brain.modulemap);
+# status: the status document brain doctor --json prints (brain.probe), versioned by its id (schema: <name>/v<N>),
+# not by a top-level v
 SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
 
 STRICT, READ = "strict", "read"
@@ -120,8 +122,8 @@ _OFF = ("0", "false", "no", "off", "n", "f")
 
 
 def known_v(kind: str) -> int:
-    """The ``v`` this engine reads and writes for ``kind``."""
-    return int(load(kind)["properties"]["v"]["const"])
+    """The ``v`` this engine reads and writes for ``kind`` (1 for a format versioned otherwise: status)."""
+    return int((load(kind)["properties"].get("v") or {}).get("const", 1))
 
 
 def newer(where: str, v, known: int = 1) -> str:

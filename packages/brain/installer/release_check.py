@@ -75,6 +75,7 @@ SCHEMAS = {
     "modules": (f"{SRC}/schemas/modules.schema.json",),   # an entry of a store's modules.yaml (brain.modulemap)
     "standards": (f"{SRC}/schemas/standards.schema.json",),   # a standards catalog (brain.standards)
     "sr": (f"{SRC}/schemas/sr.schema.json",),
+    "status": (f"{SRC}/schemas/status.schema.json",),   # the status document brain doctor --json prints (brain.probe)
     "packs": (f"{SRC}/templates/generic/packs.yaml",),
     "projects": (f"{SRC}/templates/generic/projects.yaml",),
     "template": (f"{SRC}/templates/generic/template.yaml",),

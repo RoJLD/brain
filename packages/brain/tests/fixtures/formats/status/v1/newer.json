@@ -1,0 +1,13 @@
+{
+  "schema": "machines.status/v1",
+  "health": "degraded",
+  "uptime_s": 86400,
+  "inventory": {
+    "cpu": {"model": "Example ARM SoC", "cores": 8, "avx2": null, "avx512": null, "threads_per_core": 1},
+    "memory": {"total_bytes": 8589934592, "free_bytes": null},
+    "gpus": [{"vendor": "amd", "name": "Example iGPU", "vram_bytes": null}],
+    "inference": {"backend": "rocm", "available": ["rocm", "cpu"]},
+    "load": {"load1": 0.42},
+    "platform": {"os": "linux", "distro": "debian", "version": "12", "arch": "arm64", "kernel": "6.1.0"}
+  }
+}

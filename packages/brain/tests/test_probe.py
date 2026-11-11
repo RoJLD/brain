@@ -1,9 +1,10 @@
 import json
 import time
+from pathlib import Path
 
 import pytest
 
-from brain import probe
+from brain import probe, schema
 
 
 @pytest.fixture
@@ -116,3 +117,46 @@ def test_the_docker_probe_reports_a_client_without_its_server(monkeypatch):
     monkeypatch.setattr(probe, "_which", lambda name: None)
     assert probe.probe_docker() == {"runtime": None, "client": None, "server": None}
     assert probe.probe_kube() == {"kubectl": False, "context": None}
+
+
+# --- the published status document (wi-brain-external-contracts) ---------------------------------------------------
+
+STATUS = Path(__file__).parent / "fixtures" / "formats" / "status" / "v1"
+
+
+@pytest.mark.parametrize("which", ["older", "newer"])
+def test_the_status_fixtures_read_against_the_published_schema(which):
+    """Both sides test against the same files: the engine's document (older) and another emitter's, with keys this
+    schema does not name and no brain block (newer): read tolerantly, never refused."""
+    doc = json.loads((STATUS / f"{which}.json").read_text(encoding="utf-8"))
+    assert schema.validate("status", doc, schema.STRICT) == ([], [])
+
+
+def test_the_report_is_the_published_status_document(windows, monkeypatch):
+    monkeypatch.setattr(probe, "probe_tools", lambda: {"python": "3.12", "git": True})
+    monkeypatch.setattr(probe, "probe_disk", lambda roots=None: {"disks": [], "brain_home": None})
+    doc = probe.collect(quick=True)
+    assert schema.validate("status", doc, schema.STRICT) == ([], [])
+    older = json.loads((STATUS / "older.json").read_text(encoding="utf-8"))
+    assert _shape(doc) == _shape(older)   # the fixture is what the engine writes, key for key
+
+
+def _shape(value, depth: int = 0):
+    """The keys of a document down to its second level (the leaves' values vary by machine)."""
+    if isinstance(value, dict) and depth < 2:
+        return {k: _shape(v, depth + 1) for k, v in value.items() if k not in ("tools", "probes")}
+    return type(value).__name__ if depth < 2 else None
+
+
+@pytest.mark.parametrize("sid,errors", [("acme.status/v2", 0), ("Acme status", 1), ("", 1)])
+def test_the_contracts_id_is_any_of_the_config_pattern(sid, errors, monkeypatch, windows):
+    """config.json inventory.schema names the contract's id (default brain.status/v1); the schema accepts any id of
+    config.schema's pattern, which a brain's config check holds to."""
+    monkeypatch.setattr(probe, "probe_tools", lambda: {"python": "3.12"})
+    monkeypatch.setattr(probe, "probe_disk", lambda roots=None: {"disks": [], "brain_home": None})
+    doc = {**probe.collect(quick=True), "schema": sid}
+    assert len(schema.validate("status", doc, schema.STRICT)[0]) == errors
+    cfg = json.loads((Path(schema.SCHEMA_DIR) / "config.schema.json").read_text(encoding="utf-8"))
+    status = json.loads((Path(schema.SCHEMA_DIR) / "status.schema.json").read_text(encoding="utf-8"))
+    assert cfg["properties"]["inventory"]["properties"]["schema"]["pattern"] == \
+        status["properties"]["schema"]["pattern"]

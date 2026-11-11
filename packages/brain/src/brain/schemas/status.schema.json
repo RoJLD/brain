@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/status.schema.json",
+  "title": "The status document, a machine's inventory",
+  "description": "What brain doctor --json (brain profile) prints (brain.probe.report; wi-brain-external-contracts): the inventory contract a machines agent emits too. schema is the contract's id, brain.status/v1 unless config.json inventory.schema names another of the same pattern; health and inventory are the contract's, brain the engine's own block. Read tolerantly: a key this schema does not name is allowed at every level, so an emitter may add one without breaking a reader; a key it names keeps its type. A change that removes or retypes a key is a new id (/v2). tests/fixtures/formats/status/v1/ holds a document of each side.",
+  "type": "object",
+  "required": ["schema", "health", "inventory"],
+  "properties": {
+    "schema": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*/v[0-9]+$", "description": "The contract's id: <name>/v<N>."},
+    "health": {"enum": ["ok", "degraded"], "description": "degraded when a GPU's memory is unknown or the GPU probe failed."},
+    "inventory": {
+      "type": "object",
+      "required": ["cpu", "memory", "gpus", "inference", "load", "platform"],
+      "properties": {
+        "cpu": {
+          "type": "object",
+          "required": ["model", "cores"],
+          "properties": {
+            "model": {"type": "string"},
+            "cores": {"type": "integer", "minimum": 0},
+            "avx2": {"type": ["boolean", "null"]},
+            "avx512": {"type": ["boolean", "null"]}
+          }
+        },
+        "memory": {
+          "type": "object",
+          "required": ["total_bytes", "free_bytes"],
+          "properties": {
+            "total_bytes": {"type": ["integer", "null"], "minimum": 0},
+            "free_bytes": {"type": ["integer", "null"], "minimum": 0}
+          }
+        },
+        "gpus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["vendor", "name", "vram_bytes"],
+            "properties": {
+              "vendor": {"type": "string"},
+              "name": {"type": "string"},
+              "vram_bytes": {"type": ["integer", "null"], "minimum": 0},
+              "vram_free_bytes": {"type": ["integer", "null"], "minimum": 0},
+              "utilization_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+              "source": {"type": "string"}
+            }
+          }
+        },
+        "inference": {
+          "type": "object",
+          "required": ["backend", "available"],
+          "properties": {
+            "backend": {"enum": ["cuda", "rocm", "metal", "cpu"]},
+            "available": {"type": "array", "items": {"enum": ["cuda", "rocm", "metal", "cpu"]}}
+          }
+        },
+        "load": {
+          "type": "object",
+          "properties": {"load1": {"type": ["number", "null"]}}
+        },
+        "platform": {
+          "type": "object",
+          "required": ["os", "arch"],
+          "properties": {
+            "os": {"type": "string"},
+            "distro": {"type": "string"},
+            "version": {"type": "string"},
+            "arch": {"type": "string"}
+          }
+        }
+      }
+    },
+    "brain": {
+      "type": "object",
+      "description": "The engine's own block (absent from another emitter's document).",
+      "required": ["v", "machine", "at"],
+      "properties": {
+        "v": {"const": 1},
+        "machine": {"type": "string"},
+        "at": {"type": "string", "format": "date-time"},
+        "tools": {"type": "object"},
+        "container": {"type": ["object", "null"]},
+        "kube": {"type": ["object", "null"]},
+        "disks": {"type": "array", "items": {"type": "object"}},
+        "brain_home": {"type": ["object", "null"]},
+        "encryption": {"type": ["array", "null"]},
+        "probes": {"type": "object"}
+      }
+    }
+  }
+}
