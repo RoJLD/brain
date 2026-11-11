@@ -669,7 +669,10 @@ child's milestones, specs and decisions, and the parent's milestones group the c
 store's own. Every brain command that runs research_graph on the store gives it the stores holding those ids
 (`--foreign-store <project>:<store>=<path>`, `brain.crossstore`; nothing for a store whose edges name only its own
 ids), so the store loads and its board and roadmap name the other store's node with its label
-(`wi-x (parent:notes/graph)`). `brain check --all` reads every edge of every store and refuses one whose end is in no
+(`wi-x (parent:notes/graph)`). That holds for a project's own stores too: a store listed after its first covers no
+decision log, and an edge of it to an ADR or SDR stub its first store derives (an item `decided_by` an ADR of
+`notes/decisions.md`) resolves there, accepted by `brain sync` and `brain check` since 0.3.2 (0.3.0 and 0.3.1
+refused it). `brain check --all` reads every edge of every store and refuses one whose end is in no
 store of the registry on this machine (the store's own check refuses it too, as before), and counts the edges between
 stores; a brain's own root, checking its registry without `--all`, warns of it.
 
