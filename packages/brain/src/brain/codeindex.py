@@ -53,6 +53,7 @@ SNAPSHOT_TIMEOUT, GIT_TIMEOUT, URL_TIMEOUT, QUERY_TIMEOUT = 600.0, 30.0, 10.0, 1
 POLL = 2.0
 RECORD = "code-index.json"
 SERVICE = "gitnexus"   # its breaker in brain.net (the REST API and the MCP endpoint)
+SHORT_TIMEOUT = 120.0  # a docker command that times out within this opens the docker breaker (a longer one: a job)
 # Reset GitNexus's clone $2/$1 to branch $3 of the bundle read on stdin; prints the clone's HEAD. One line: the
 # argument goes through the Windows command line.
 SNAPSHOT = ("set -e; b=/tmp/brain-index-$1.bundle; trap 'rm -f \"$b\"' EXIT; cat > \"$b\"; d=$2/$1; mkdir -p \"$2\"; "
@@ -117,8 +118,9 @@ def _git(path: Path, *args: str, timeout: float = GIT_TIMEOUT) -> tuple[int | No
 
 
 def _docker(argv: list[str], timeout: float, stdin: Path | None = None) -> tuple[int | None, str]:
-    """``_exec`` of a docker command under the docker breaker (brain.net): a timeout opens it, and while it is open
-    the call is skipped as (127, the line that says so)."""
+    """``_exec`` of a docker command under the docker breaker (brain.net): a short command that times out opens it
+    (a long job past its time is the job's, not a daemon down), and while it is open the call is skipped as (127,
+    the line that says so)."""
     why = net.blocked("docker")
     if why:
         return 127, why
@@ -126,7 +128,7 @@ def _docker(argv: list[str], timeout: float, stdin: Path | None = None) -> tuple
     if not resolved:
         return 127, f"{argv[0]} not found"
     code, out = _exec(resolved, timeout, stdin)
-    if code is None:
+    if code is None and timeout <= SHORT_TIMEOUT:
         net.failed("docker", "timed out")
     else:
         net.ok("docker")
@@ -143,8 +145,11 @@ def _http(method: str, url: str, body: dict | None = None, timeout: float = URL_
     def go() -> tuple[int, object]:
         with opener.open(req, timeout=timeout) as r:
             return r.status, _json(r.read())
-    try:   # under GitNexus's breaker: a refused connection retried, a timeout or a skip said as status 0
-        return net.call(SERVICE, go)
+    # under GitNexus's breaker: a refused connection retried (a POST only when surely not handled), a timeout or a
+    # skip said as status 0; a job's poll is retried but never opens it (one slow answer while it analyzes)
+    poll = method == "GET" and "/api/analyze/" in url
+    try:
+        return net.call(SERVICE, go, idempotent=method == "GET", breaker=not poll)
     except urllib.error.HTTPError as exc:
         return exc.code, _json(exc.read())
     except (urllib.error.URLError, OSError, ValueError) as exc:
@@ -184,7 +189,7 @@ def _mcp_tool(url: str, name: str, arguments: dict, timeout: float = QUERY_TIMEO
         net.ok(SERVICE)
         return "", f"HTTP {exc.code}"
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        if net.failure(exc):
+        if net.down(exc):
             net.failed(SERVICE, exc)
         return "", str(getattr(exc, "reason", exc)) or type(exc).__name__
     finally:

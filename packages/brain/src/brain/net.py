@@ -2,28 +2,36 @@
 and a circuit breaker remembered across runs, so that a service that is down costs one timeout per window, not one
 per call, and the caller says what it skipped in one line.
 
-A *service* is a short name the caller picks: ``gitnexus`` (its REST API and MCP endpoint), ``docker``, ``gh``,
+A *service* is a short name the caller picks: ``gitnexus`` (its REST API and MCP endpoint), ``docker``,
 ``http:<host>`` (ntfy, Telegram), ``git-remote:<host or repo>`` (``git ls-remote``). The policy:
 
 - **the timeout** stays the caller's (each call site keeps the one it had); this module only reads its outcome;
-- **a quick failure** (a refused or reset connection, an HTTP 429, 502, 503 or 504) is retried :data:`RETRIES`
-  times, after :func:`backoff` seconds: exponential (:data:`BACKOFF_S` doubled per attempt, capped at
-  :data:`CAP_S`) with full jitter, so that several machines do not retry in step;
+- **a quick failure** is retried :data:`RETRIES` times, after :func:`backoff` seconds: exponential
+  (:data:`BACKOFF_S` doubled per attempt, capped at :data:`CAP_S`) with full jitter, so that several machines do
+  not retry in step. For a call that may be repeated (a read: ``idempotent``), a quick failure is a refused or
+  reset connection, a DNS miss, or an HTTP 429, 502, 503 or 504; for one that must not act twice (a POST that sends
+  a notification or starts a job), only what proves the request was not handled: a refused connection, a DNS miss,
+  an HTTP 429 or 503;
 - **a timeout** is never retried: it already cost the whole wait;
-- **the breaker**: a call that still fails that way (a timeout, or a quick failure past its retries) opens the
-  service's breaker for :data:`WINDOW_S` seconds. While it is open, :func:`call` raises :class:`Unavailable` at
+- **the breaker**: a call whose service is down (a timeout, or a connection that failed past its retries) opens
+  the service's breaker for :data:`WINDOW_S` seconds. While it is open, :func:`call` raises :class:`Unavailable` at
   once, without calling, and its text is the one line the caller prints (« gitnexus unavailable since 20:14
-  (timed out); skipped until 20:19 »). The first call after the window goes through (half-open): a success closes
+  (timed out); skipped until 20:19 »). The first call after the window goes through (half-open): an answer closes
   the breaker, a failure opens it for another window;
-- **anything else** (an HTTP 404, a command's own non-zero exit, a missing program) is the service's answer: it
-  goes back to the caller unchanged, closes the breaker (the service answered) and is never retried.
+- **an answer** (any HTTP status, 429 and 5xx included once their retries are spent; a command's own non-zero
+  exit; a missing program; a certificate refused) goes back to the caller unchanged and closes the breaker: the
+  service is there, so a busy or rate-limited one never shuts its other calls;
+- ``breaker=False``: the retry only, nothing checked or recorded (a poll inside a long job, a call the owner asked
+  for by hand).
 
 ``$BRAIN_NET_BREAKER=off`` turns the breaker off for a run (every call is tried, nothing is recorded): a service
-just restarted by hand need not wait for its window.
+just restarted by hand need not wait for its window. :func:`ok` closes a breaker before an explicit retry
+(``brain update`` reads the tags even when the cockpit's background check timed out a minute ago).
 
 The breakers are a truth-local file, ``$BRAIN_HOME/net/breakers.json`` (brain.stateio, ``v`` 1; store ``net`` in
 brain.classes, sealed): ``{service: {"since", "until", "why", "failures"}}``, written only when a breaker opens or
-closes. Losing it costs one timeout per service; a file this engine cannot write never fails a call.
+closes (a read-only command that meets a down service writes it too: the breaker is this module's state, not the
+command's data). Losing it costs one timeout per service; a file this engine cannot write never fails a call.
 """
 
 from __future__ import annotations
@@ -31,6 +39,7 @@ from __future__ import annotations
 import os
 import random
 import socket
+import ssl
 import subprocess
 import time
 import urllib.error
@@ -47,7 +56,8 @@ BACKOFF_S = 0.5        # the first retry's ceiling, doubled per attempt
 CAP_S = 8.0            # no wait above this
 WINDOW_S = 300.0       # how long an open breaker skips its service
 SWITCH = "BRAIN_NET_BREAKER"   # off: no breaker for this run
-RETRY_HTTP = {429, 502, 503, 504}
+RETRY_HTTP = {429, 502, 503, 504}   # retried on a read
+UNHANDLED_HTTP = {429, 503}         # the request was not handled: retried on a POST too
 FILE = "breakers.json"
 
 _sleep = time.sleep    # the tests replace these
@@ -75,27 +85,51 @@ def enabled() -> bool:
     return (os.environ.get(SWITCH) or "").strip().lower() not in ("off", "0", "no", "false")
 
 
+def _reason(exc: BaseException) -> object:
+    """What a URLError wraps (the exception itself otherwise)."""
+    if isinstance(exc, urllib.error.URLError) and not isinstance(exc, urllib.error.HTTPError):
+        return exc.reason
+    return exc
+
+
 def timed_out(exc: BaseException) -> bool:
     """Whether ``exc`` is a call that ran out of time."""
     if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError, socket.timeout)):
         return True
-    reason = getattr(exc, "reason", None) if isinstance(exc, urllib.error.URLError) else None
-    return isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason or "")
+    reason = _reason(exc)
+    return reason is not exc and (isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason))
 
 
-def quick(exc: BaseException) -> bool:
-    """Whether ``exc`` is a failure worth another try soon: a connection refused or reset, a DNS miss, an HTTP 429
-    or 5xx gateway answer. An HTTP status otherwise is the service's answer."""
+def down(exc: BaseException) -> bool:
+    """Whether ``exc`` says the service is not there: a timeout, a connection refused, reset or never made, a DNS
+    miss. An HTTP status, a certificate refused or a missing program is an answer, not that."""
+    if timed_out(exc):
+        return True
     if isinstance(exc, urllib.error.HTTPError):
-        return exc.code in RETRY_HTTP
-    if isinstance(exc, urllib.error.URLError):
-        return not timed_out(exc)
+        return False
+    reason = _reason(exc)
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return False
+    if reason is not exc:   # a URLError: the connection was not made, whatever its reason
+        return True
     return isinstance(exc, (ConnectionError, socket.gaierror))
 
 
+def quick(exc: BaseException, idempotent: bool = True) -> bool:
+    """Whether ``exc`` is worth another try now (never a timeout): see the module's policy."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in (RETRY_HTTP if idempotent else UNHANDLED_HTTP)
+    if timed_out(exc) or not down(exc):
+        return False
+    if idempotent:
+        return True
+    reason = _reason(exc)
+    return isinstance(reason, (ConnectionRefusedError, socket.gaierror))
+
+
 def failure(exc: BaseException) -> bool:
-    """Whether ``exc`` counts against the service's breaker."""
-    return timed_out(exc) or quick(exc)
+    """Whether ``exc`` may pass if tried later (down, or a 429/5xx): what an outbox keeps."""
+    return down(exc) or (isinstance(exc, urllib.error.HTTPError) and exc.code in RETRY_HTTP)
 
 
 def backoff(attempt: int, base: float = BACKOFF_S, cap: float = CAP_S) -> float:
@@ -110,15 +144,10 @@ def _hm(t: float) -> str:
 def _why(exc: BaseException) -> str:
     if timed_out(exc):
         return "timed out"
-    if isinstance(exc, urllib.error.HTTPError):
-        return f"HTTP {exc.code}"
-    reason = getattr(exc, "reason", None)
-    text = f"{type(exc).__name__}: {reason if reason is not None else exc}"
+    reason = _reason(exc)
+    text = f"{type(reason).__name__}: {reason}" if isinstance(reason, BaseException) else \
+        f"{type(exc).__name__}: {reason}"
     return text.splitlines()[0][:120] if text else type(exc).__name__
-
-
-def _load() -> stateio.State:
-    return stateio.load(path())
 
 
 def _save(state: stateio.State) -> None:
@@ -147,10 +176,10 @@ def blocked(service: str) -> str:
 
 
 def failed(service: str, exc: BaseException | str) -> str:
-    """Open ``service``'s breaker for :data:`WINDOW_S` after a failed call; the line said from now on."""
+    """Open ``service``'s breaker for :data:`WINDOW_S` after a call that found it down; the line said from now on."""
     if not enabled():
         return ""
-    state = _load()
+    state = stateio.load(path())
     now = _clock()
     prev = state.data.get(service) if isinstance(state.data.get(service), dict) else {}
     entry = {"since": prev.get("since") or now, "until": now + WINDOW_S,
@@ -161,37 +190,43 @@ def failed(service: str, exc: BaseException | str) -> str:
 
 
 def ok(service: str) -> None:
-    """Close ``service``'s breaker: it answered. Writes only when one was recorded."""
+    """Close ``service``'s breaker: it answered (or the owner asks for a retry). Writes only when one was recorded,
+    and never moves an unreadable file (a read-only command calls it)."""
     if not enabled():
         return
-    state = _load()
-    if service in state.data:
+    state = stateio.load(path(), aside=False)
+    if service in state.data and state.writable:
         del state.data[service]
         _save(state)
 
 
-def call(service: str, fn: Callable[[], T], *, retries: int = RETRIES) -> T:
+def call(service: str, fn: Callable[[], T], *, retries: int = RETRIES, idempotent: bool = True,
+         breaker: bool = True) -> T:
     """``fn()`` under ``service``'s breaker: skipped with :class:`Unavailable` while it is open, a quick failure
-    retried with backoff and jitter, a timeout not retried; the last failure opens the breaker and is raised as it
-    was. Another exception (the service's own answer) closes the breaker and is raised unchanged."""
-    why = blocked(service)
-    if why:
-        raise Unavailable(service, why)
+    retried with backoff and jitter, a timeout not retried; a last failure that says the service is down opens the
+    breaker and is raised as it was. An answer (any other exception) closes the breaker and is raised unchanged.
+    ``idempotent=False``: retried only when the request was surely not handled; ``breaker=False``: the retry only."""
+    if breaker:
+        why = blocked(service)
+        if why:
+            raise Unavailable(service, why)
     attempt = 0
     while True:
         try:
             out = fn()
         except Exception as exc:  # noqa: BLE001 (sorted below, then raised as it was)
-            if not failure(exc):
-                ok(service)
-                raise
-            if quick(exc) and attempt < retries:
+            if attempt < retries and quick(exc, idempotent):
                 attempt += 1
                 _sleep(backoff(attempt))
                 continue
-            failed(service, exc)
+            if breaker:
+                if down(exc):
+                    failed(service, exc)
+                else:
+                    ok(service)
             raise
-        ok(service)
+        if breaker:
+            ok(service)
         return out
 
 

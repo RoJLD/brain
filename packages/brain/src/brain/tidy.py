@@ -422,9 +422,10 @@ def remote_merged(repo: Path, default: str, staying: dict[str, str] | None = Non
 
 def _open_pr_heads(repo: Path) -> tuple[set[str], str]:
     try:
-        r = net.run("gh", ["gh", "pr", "list", "--state", "open", "--json", "headRefName", "--limit", "500"],
-                    cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace",
-                    timeout=60, stdin=subprocess.DEVNULL)
+        # no breaker here (brain.net): the open PRs' heads protect branches from --apply, so gh is always asked
+        r = subprocess.run(["gh", "pr", "list", "--state", "open", "--json", "headRefName", "--limit", "500"],
+                           cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=60, stdin=subprocess.DEVNULL)
         if r.returncode == 0:
             return {p["headRefName"] for p in json.loads(r.stdout or "[]")}, ""
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
