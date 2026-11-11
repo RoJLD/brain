@@ -217,6 +217,18 @@ questions) and an index with the decisions no module holds; `brain sync` keeps i
 `--public` renders a public repo's neutral reference by feature domain, from its features only (this repo's own is
 [docs/reference/](../../docs/reference/README.md)). See [docs/views.md](docs/views.md).
 
+### Generated READMEs
+
+A repo opts in by holding `readme.yaml` at its root (`schemas/readme.schema.json`): the text only a person writes, what
+the repo is, why, how to start, its own notes and the commands its README quotes. `brain docs render --write` then
+writes its `README.md` from the engine's template (`templates/readme/README.md.tmpl`) and the facts of their sources:
+the features recap (counts by status and domain, the top ones, a link to the repo's `FEATURES.md`, written too), each
+quoted command's usage from its `--help`, and, for a private repo, the active specs, recent ADRs and pending milestones
+that touch it; a public repo's render is neutral (the features' public titles, no record of the private brain).
+`brain docs check` exits 1 when `readme.yaml` misses a field, a quoted command is gone, or `README.md` is not the
+render (a hand edit, or a stale render: a feature, a command's help or the graph changed); `brain check` runs it
+(a stale README is a stale view, [docs/views.md](docs/views.md)). A repo without `readme.yaml` is never read.
+
 ### The impact of a change
 
 `brain impact [--diff BASE|A..B]` says, before merge, what a change's code carries in the graph
@@ -270,6 +282,16 @@ adds a wave at once (no DDR, unlike `brain milestone add`: a wave is named by it
 closes), and `brain wave import [--from X.Y.Z] [--write]` turns the items' free-text `props.wave` into waves: one per
 release a value names (`0.2.9 (decided ...)` is 0.2.9) from `--from` on, the earlier releases (already tagged) listed
 and left out, the other values (letters, free text) listed for the owner to place.
+
+`brain wave plan [X.Y.Z] [--at-once N] [--hot NAME]... [--json]` composes a wave's lots at zero token (default: the
+current wave; `brain.lots`): each open item's predicted surface (`brain collisions`': its features' CodeRefs, its
+modules, the files it names), the items that share a file in one lot, run in the order of their `depends_on`; the hot
+files every PR adds to (the READMEs, CHANGELOGs, `formats.md`, `FEATURES.md`, `config.schema.json`, the `changes/`
+fragments; `--hot` adds one) counted apart and listed, to merge origin/main before the push. A lot that holds another's
+prerequisite comes a round earlier, the lots that unblock the most first, at most the sessions cap in force less the
+master's and `N` PRs verified at once (3) a round. It prints the rounds, the predicted conflicts, the hot files shared
+and the items with no known surface (each a lot of its own, unchecked), with what the memory guard and the last quota
+forecast say now; it refuses nothing. `brain next` shows the current wave's first round.
 
 ### Reading a brain
 

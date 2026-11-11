@@ -53,6 +53,7 @@ their default.
 | event | the ledger's `events` and ops error lines | `v` per line (`event.schema.json`) | reported by `brain.schema.validate` | refused |
 | config.json | the brain's root | `v` (`config.schema.json`) | a note on stderr; the file is kept as written | refused |
 | members.yaml | the brain's root, beside config.json ([identity.md](identity.md)) | `v` (`members.schema.json`) | ignored, the file kept as written (in strict mode, CI: reported by `brain check` with the other identity findings) | refused |
+| readme.yaml | a repo's root, opt-in ([views.md](views.md), « Generated READMEs ») | `v` (`readme.schema.json`) | ignored, the file kept as written (in strict mode, CI: `brain docs check` and `brain check` report it) | refused |
 | DDR signature | `records/ddr/<id>.sig`, beside its record | none: an SSH signature (namespace `brain-decision`) over the answer's payload | - | - (an older engine ignores the file and reads the record as before) |
 | permissions.yaml | the brain's root | `v` | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
 | packs.yaml | `source/packs.yaml` | `v` | a note | refused |
@@ -162,8 +163,15 @@ over. Each class keeps (`stateio.LOG_RETENTION`, this month counted):
 | errors | `ledger/errors.log`, `ledger/errors-YYYY-MM[-n].log` | 6 months |
 | timing | `ledger/engine/*-YYYY-MM.jsonl` (brain.selftime, the hooks' `exec-bash-`) | 3 months |
 | ledger | `ledger/<name>-YYYY-MM.jsonl` (actions, decisions, events, guard decisions, the queue) | kept: records nothing else holds |
+| starts | `usage/starts.jsonl`, `usage/starts-YYYY-MM[-n].jsonl` (the governor's brainstorm starts, read for 10 minutes) | 2 months |
+| quota | `usage/quota.jsonl`, `usage/quota-YYYY-MM[-n].jsonl` (`brain usage quota --observe`'s readings) | 12 months |
+| notify | `notify/YYYY-MM.jsonl` (the notifications' audit: one file per month already; the older months go at a month's first line) | 6 months |
 
-An `errors.log.1` left by an older engine (which cut errors.log at 1 MB into that one file) stays as it is.
+An `errors.log.1` left by an older engine (which cut errors.log at 1 MB into that one file) stays as it is. A reader
+of a rotated log's history reads its files in order (`stateio.log_files`: the monthly files by month, then the live
+one): `quota.load_readings` reads them all, the governor the live file and the newest month. An older engine reads
+only the live file after a rotation: it sees less history; its `brain usage quota --observe` may then ask for
+`--resets` when the month's file holds no weekly reading yet.
 
 ### The `return {}` sites, classified
 

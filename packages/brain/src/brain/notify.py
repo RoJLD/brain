@@ -27,7 +27,8 @@ where the topic is the password). A level without channels sends nothing; a proj
 
 ``send`` tries the route's channels and records one line per channel tried in ``<BRAIN_HOME>/notify/<YYYY-MM>.jsonl``
 (time, host, project, level, source, key, channel, outcome, title; never the message, a secret or a URL that carries
-one). A failure is reported by its HTTP or SMTP status or its exception class, with every configured secret masked.
+one); a log kept 6 months (brain.stateio.LOG_RETENTION's ``notify``: the older months go at a month's first line).
+A failure is reported by its HTTP or SMTP status or its exception class, with every configured secret masked.
 ``--dry-run`` prints what would be sent and sends nothing; ``$BRAIN_NOTIFY=off`` sends nothing at all (the tests run
 so), ``dry-run`` turns every send into a dry run. Exit code 0 when a channel delivered or nothing was due (no route,
 held back by the throttle, off, dry run); 1 when every channel of the route failed or is not set up; 2 for a
@@ -49,7 +50,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from . import graph, paths, projects, quiet, secretscan
+from . import graph, paths, projects, quiet, secretscan, stateio
 from .config import owner_of   # brain.config's: this module's own config() reads the notify configuration
 
 LEVELS = ("info", "warn", "error", "critical")
@@ -438,9 +439,13 @@ def _audit(lines: list[dict], now: datetime) -> None:
         return
     d = audit_dir()
     d.mkdir(parents=True, exist_ok=True)
-    with open(d / f"{now:%Y-%m}.jsonl", "a", encoding="utf-8") as f:
+    f = d / f"{now:%Y-%m}.jsonl"
+    new = not f.exists()
+    with open(f, "a", encoding="utf-8") as fh:
         for line in lines:
-            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+    if new:   # a month's first line: the months past the retention go (brain.stateio)
+        stateio.prune_months(d.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl"), stateio.LOG_RETENTION["notify"], now)
 
 
 def history(now: datetime | None = None, months: int = 2) -> list[dict]:

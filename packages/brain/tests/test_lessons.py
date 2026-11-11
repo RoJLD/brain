@@ -270,6 +270,58 @@ def test_cli_retro_records_and_the_wave_retro(demo, capsys, monkeypatch):
         cli.main(["--root", root, "retro", "wi-nope"])
 
 
+def test_the_wave_retro_reads_the_numbered_waves(demo, brain_home):
+    """wi-brain-retro-numbered-waves: the 0.3.1 deep retro found 0 items, its items being part_of wave-0.3.1 with no
+    props.wave. A numbered wave's items are its part_of and carried_to ones, those carried out of it left out."""
+    p, store = demo
+    for rel in ("0.3.1", "0.3.2", "0.3.3"):
+        graph.add_item(store, f"wave-{rel}", f"Wave {rel}", node_type="Milestone", status="pending",
+                       props={"kind": "wave", "release": rel})
+    graph.add_item(store, "wi-three", "In the wave", milestone="wave-0.3.2",
+                   props={"retro_notes": "the merges cost the most"})
+    graph.add_item(store, "wi-four", "Carried in", milestone="wave-0.3.1", props={"carried_to": "0.3.2"})
+    graph.add_item(store, "wi-five", "Carried out", milestone="wave-0.3.2", props={"carried_to": "wave-0.3.3"})
+    graph.add_item(store, "wi-six", "Free text", props={"wave": "0.3.2, week of 2026-11-16"})
+    _lesson(store, frm=["wi-three"])
+    led = cost.Ledger([_row("s1", "wi-three", folder=str(p.root))], [p])
+    for name in ("0.3.2", "wave-0.3.2"):
+        assert lessons.wave_items(led, name) == ["wi-four", "wi-six", "wi-three"], name
+    w = lessons.wave_retro(led, "0.3.2", store)
+    assert [r["item"] for r in w["items"]] == ["wi-three"] and w["open"] == ["wi-four", "wi-six"]
+    assert w["notes"] == {"wi-three": "the merges cost the most"}
+    assert [x["id"] for x in w["learned"]] == ["les-demo-merge-stale-main"]
+    text = "\n".join(lessons.render_wave(w))
+    assert "retro notes recorded on the wave's items: 1" in text and "wi-three: the merges cost the most" in text
+    assert lessons.wave_items(led, "0.3.3") == ["wi-five"]
+    assert lessons.wave_items(led, "0.3") == []   # a prefix of a release names no wave
+    assert lessons.wave_items(led, "F") == ["wi-one", "wi-two"]   # the letter waves, as before
+    assert lessons.wave_items(led, "wave-") == [] and lessons.wave_items(led, " ") == []   # no name: no item
+
+
+def test_a_numbered_wave_counts_only_its_own_stores_items(demo, tmp_path):
+    """With several projects (--all), each project's wave of that release counts its own items, with the props.wave
+    match."""
+    p, store = demo
+    graph.add_item(store, "wave-0.3.2", "Wave 0.3.2", node_type="Milestone", status="pending",
+                   props={"kind": "wave", "release": "0.3.2"})
+    graph.add_item(store, "wi-mine", "Mine", milestone="wave-0.3.2")
+    other = tmp_path / "other" / "notes" / "graph"
+    (other / "nodes").mkdir(parents=True)
+    (other / "edges").mkdir()
+    (other / "schema.yaml").write_text(LESSON_SCHEMA, encoding="utf-8")
+    graph.add_item(other, "wave-0.3.2", "Its own 0.3.2", node_type="Milestone", status="pending",
+                   props={"kind": "wave", "release": "0.3.2"})
+    graph.add_item(other, "wi-theirs", "Theirs", milestone="wave-0.3.2")
+    q = projects.Project(name="other", root=other.parents[1], stores=[other])
+    led = cost.Ledger([], [p, q])
+    assert lessons.wave_items(led, "0.3.2") == ["wi-mine", "wi-theirs"]
+    led.items["wi-theirs"].store = store   # an id the ledger places in another store: not this wave's
+    assert lessons.wave_items(led, "0.3.2") == ["wi-mine"]
+    graph.set_item(store, "wi-two", ["wave=0.3.2, week of 2026-11-16"])
+    led = cost.Ledger([], [p, q])
+    assert lessons.wave_items(led, "0.3.2") == ["wi-mine", "wi-theirs", "wi-two"]
+
+
 def test_cli_lesson_add_seen_list_follow_and_lint(lstore, capsys):
     root = str(lstore.parents[1])
     base = ["--root", root, "lesson", "add", "les-demo-bom", "--title", "A BOM in the answers file",

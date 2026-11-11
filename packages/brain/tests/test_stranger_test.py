@@ -106,8 +106,8 @@ def test_the_newer_data_reaches_every_file_of_a_format(st, tmp_path):
     assert data["identity"] == {"owner": "Ada Example", "pronouns": "they"} and data["telemetry"] == {"enabled": False}
     assert '"cpu_s":0.4' in (ledger / "exec-2026-11.jsonl").read_text(encoding="utf-8")
     # the formats it reached no file of fail the step: the rollback would test nothing of them
-    assert not step["ok"] and "reached no file: ar v1, ddr v1, members v1, packs v1, permissions v1, projects v1, sr v1" in \
-        step["out"]
+    assert not step["ok"] and "reached no file: ar v1, ddr v1, members v1, packs v1, permissions v1, projects v1, " \
+        "readme v1, sr v1" in step["out"]
 
 
 def test_the_newer_data_reaches_a_yaml_file_holding_dates(st, tmp_path):
@@ -121,6 +121,18 @@ def test_the_newer_data_reaches_a_yaml_file_holding_dates(st, tmp_path):
     data = yaml.safe_load((root / "members.yaml").read_text(encoding="utf-8"))
     assert data["people"][0]["pronouns"] == "she" and "passkeys" in data
     assert str(data["people"][0]["keys"]["signing"][0]["since"]) == "2026-11-10"
+
+
+def test_the_newer_data_reaches_readme_yaml(st, tmp_path):
+    """readme.yaml (wi-brain-readme-sync) has its place at the brain's root: the newer keys reach it."""
+    import yaml
+    root, home = tmp_path / "brain", tmp_path / "home"
+    root.mkdir()
+    (root / "readme.yaml").write_text(st.fixture("readme", "older").read_text(encoding="utf-8"), encoding="utf-8")
+    assert st.where(root, home)["readme"] == [root / "readme.yaml"]
+    step = st.add_newer(root, home)
+    assert "readme: readme.yaml +keys" in step["out"], step["out"]
+    assert "badges" in yaml.safe_load((root / "readme.yaml").read_text(encoding="utf-8"))
 
 
 def test_a_file_changed_or_removed_is_data_lost_and_a_ledger_may_only_grow(st, tmp_path):

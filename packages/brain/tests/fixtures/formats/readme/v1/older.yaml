@@ -1,0 +1,16 @@
+# readme.yaml as brain 0.3.2 reads it (wi-brain-readme-sync): the required fields and each optional one.
+v: 1
+title: Lab
+tagline: A lab that measures tea.
+what: The lab's code and its command.
+why: To measure tea the same way every time.
+start:
+  - Clone the repo.
+  - {text: "Install it", run: "pip install -e ."}
+commands:
+  - {cli: brain, args: docs render, say: "Writes this README."}
+features: {top: 5, strategy: notes/strategy.md}
+sections:
+  - {title: Notes, text: "Brewed at 95 degrees."}
+links:
+  - {title: The site, href: "https://example.org"}

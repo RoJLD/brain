@@ -295,3 +295,19 @@ def test_cli_send_status_setup_and_the_blocking_ask(tmp_path, monkeypatch, fake,
     assert cli.main(["--project", "demo", "decision", "ask", "--title", "Free", "--question", "Q", "--option", "A: a",
                      "--option", "B: b", "--why", "w"]) == 0
     assert "notify" not in capsys.readouterr().out and len(fake.posts) == n
+
+
+def test_the_audit_keeps_six_months(tmp_path, monkeypatch, fake):
+    """wi-brain-logs-unclassified: a month's first audit line prunes the months past the retention; the state files
+    beside the audit stay."""
+    cfg = _cfg(tmp_path, monkeypatch, LEVELS)
+    d = notify.audit_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    for name in ("2026-04.jsonl", "2026-05.jsonl", "2026-06.jsonl", "state.json"):
+        (d / name).write_text("{}\n", encoding="utf-8")
+    notify.send(cfg, _msg(), now=NOW)
+    assert sorted(p.name for p in d.iterdir()) == ["2026-06.jsonl", "2026-11.jsonl", "state.json"]
+    (d / "2026-05.jsonl").write_text("{}\n", encoding="utf-8")
+    notify.send(cfg, _msg(), now=NOW)                       # not the month's first line: nothing pruned
+    assert (d / "2026-05.jsonl").exists()
+    assert len(notify.history(NOW)) >= 2

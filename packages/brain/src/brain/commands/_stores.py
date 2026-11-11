@@ -9,12 +9,13 @@ the session ids and the hygiene line."""
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, features, graph, links,
-                lint, markers, milestones, modules, neutral, permissions, projects, public, records, reference, render,
-                skew, specs, stacks, tidy, tiers, vault, views, waves)
+                lint, markers, milestones, modules, neutral, permissions, projects, public, readme, records,
+                reference, render, skew, specs, stacks, tidy, tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -252,6 +253,26 @@ def _check_markers(project: projects.Project, root: Path, store: Path) -> int:
     return 1 if hits else 0
 
 
+def _readme_checks(args, project: projects.Project, root: Path, store: Path) -> tuple[list[str], list[str]]:
+    """The generated READMEs of the project's opted-in repos (a checkout with readme.yaml, brain.readme), once per
+    project (from its first store): (errors, stale ones). The errors are printed here (readme.yaml invalid, a quoted
+    command gone); a stale README is a stale view, the default branch's to hold fresh. ([], []) for a project with no
+    readme.yaml anywhere: nothing is read."""
+    if not projects.uses_defaults(project, store):
+        return [], []
+    from . import docs  # here: brain.commands.docs imports this module's package
+    every = argparse.Namespace(**{**vars(args), "repo": "", "dir": ""})   # brain check's --repo is --public's
+    try:
+        if not [t for t in docs.targets(every, root) if readme.applies(t[1])]:
+            return [], []
+        errors, stale = docs.problems(every, root, config.load(root))
+    except (SystemExit, readme.ReadmeError, graph.GraphError, OSError, ValueError) as exc:
+        errors, stale = [f"the generated READMEs could not be checked: {exc}"], []
+    for line in errors:
+        print(f"error: {line}: brain docs check")
+    return errors, stale
+
+
 def _check_store(args, root: Path, store: Path) -> int:
     project = _project(args, root)
     if _check_markers(project, root, store):   # every later step would read a half-merged file
@@ -285,6 +306,8 @@ def _check_store(args, root: Path, store: Path) -> int:
         except AuditError as exc:
             print(f"warning: the links graph could not be checked: {exc}")
     rc = _store_checks(project, root, store, stale) or rc
+    readmes = _readme_checks(args, project, root, store)   # opt-in: a repo with readme.yaml (wi-brain-readme-sync)
+    rc = (1 if readmes[0] else 0) or rc
     if where.where == "default":   # the views only the default branch must hold fresh (brain.views)
         if _records_view(root, store):
             for f in records.graph_stale(root, store):
@@ -294,6 +317,8 @@ def _check_store(args, root: Path, store: Path) -> int:
         if _reference_applies(project, root, store):   # opt-in: brain reference --write
             for f in reference.stale(root / reference.DIR, reference.render(root, store, _store_label(root, store))):
                 stale.add(f"{reference.DIR}/{f}", "brain sync (or brain reference --write)")
+        for line in readmes[1]:
+            stale.add(line.split(":", 1)[0] + ":" + readme.VIEW, "brain docs render --write")
     rc = _views_verdict(project, root, store, where, stale, legacy, strict) or rc
     for line in skew.check_lines(root):   # the running engine against config.json engine.pin
         print(line)
