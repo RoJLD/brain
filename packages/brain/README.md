@@ -81,6 +81,13 @@ It runs only on the owner's yes: `y` at its prompt, or `--yes`; never from a Cla
 told to run it in the owner's own terminal. `brain update --check` prints the plan and changes nothing; `--json`
 gives its data. A checkout installed editable is not updated by pip (`git pull` there).
 
+Before the install, the plan verifies the tag's signature (since 0.3.2, STD-3): `git verify-tag` against the
+`releaser` keys of the brain's `members.yaml` (else `allowed_signers`, the file generated from them); after the
+install, the commits pip recorded are checked against the one the signed tag names. The plan says
+`verify   vX.Y.Z: signed by <person>`, or why not, and installs anyway unless `config.json` `engine.verify_tags` is
+`true`, the owner's opt-in, which refuses an unsigned tag (`brain update --yes` then exits 1). The installer does the same
+([docs/identity.md](docs/identity.md), « Signed releases »).
+
 The cockpit (`brain tui`) has one tab per question, each on its key: `0` the overview, `1` the queue, `2` the sessions,
 `3` the frontier, `4` the milestones, `8` health (alerts on top; audit debt, stacks and index, and the exec times).
 The overview shows one card per tab, what counts in it in a few lines: the band now, the sessions asking, the nearest
@@ -809,7 +816,9 @@ records to `<BRAIN_HOME>/ledger` at zero token; it prints nothing and never fail
 `ledger/errors.log`, moved aside each month, or past 1 MB, as `errors-YYYY-MM.log` and kept six months;
 `BRAIN_CAPTURE=0` turns it off). The session snapshots, states, reports and plans under `<BRAIN_HOME>/sessions` and the
 budget watch's states are written through `brain.stateio` (a backup beside each, an atomic write; a newer brain's left
-to it): [docs/formats.md](docs/formats.md) gives each file's policy and each log's retention.
+to it): [docs/formats.md](docs/formats.md) gives each file's policy and each log's retention. With `config.json`
+`integrity.sidecars: true` (or `BRAIN_STATE_INTEGRITY=1`; off by default) each of these files gets a sha256 sidecar
+(`<name>.sha256`), checked at each load: a file that rotted is set aside with a note.
 
 **The engine times itself** (`brain.selftime`, local only, zero token). Every `brain` command and every hook writes
 one exec event (task `brain <command> [<subcommand>]` or `hook <name>`, a bash-only run marked `[bash]`, the engine's
@@ -866,8 +875,12 @@ that do not verify as warnings, as errors under `config.json` `identity.require_
 `members.yaml` nothing is checked. The owner's commands (making the key, declaring it, signing a batch):
 [`docs/identity.md`](docs/identity.md).
 
+The `releaser` role's keys verify the engine's release tags: `brain identity allowed-signers --write` generates
+`allowed_signers` beside `config.json` (namespace `git`), which `brain update` and the installer read before an
+install ([docs/identity.md](docs/identity.md), « Signed releases »).
+
 ```
-brain identity check | unsigned [--write DIR] [--json] | payload ID | attach SIG|DIR...
+brain identity check | unsigned [--write DIR] [--json] | payload ID | attach SIG|DIR... | allowed-signers [--write [FILE]]
 ```
 
 ## Adding a command

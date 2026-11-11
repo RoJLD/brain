@@ -47,6 +47,9 @@ def brain_home(tmp_path, monkeypatch):
         raise OSError("no network in the tests")
     monkeypatch.setattr(update, "remote_tags", offline)
     monkeypatch.setattr(update, "changelog", lambda *args, **kwargs: None)
+    from brain import tagsig  # nor fetches a release tag to verify it: a folder that does not exist instead
+
+    monkeypatch.setattr(tagsig, "repo_url", lambda repo: (tmp_path / "no-network" / repo).as_uri())
     # a test that runs cli.main in a process with no console (a CI runner) lets brain.nowindow wrap Popen: undone after
     monkeypatch.setattr(subprocess.Popen, "__init__", subprocess.Popen.__init__)
     return home

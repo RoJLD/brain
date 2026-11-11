@@ -27,6 +27,12 @@ pinned brain (``config.json`` ``engine.pin``) the pin to move. Which way the pin
   latest tag and past the pin (an update made before this one). It never moves backwards, nor to or from a pin that
   is not a release tag, nor for an editable install; a ``config.json`` with changes not committed is left as it is.
 
+Before an install, the plan verifies the tag (brain.tagsig, wi-brain-release-signing): ``git verify-tag`` against the
+brain's ``allowed_signers`` (members.yaml's releaser role). pip installs the tag (brain.skew reads a release by its
+tag), then the commits it recorded for brain and research-graph are compared with the verified one: a tag moved
+between the check and the install is said. The plan says the verification either way; under config.json
+``engine.verify_tags: true`` (the owner's opt-in, off by default) a tag not verified is refused.
+
 :func:`apply` runs it: only from ``brain update --yes``, the terminal's yes or the cockpit's confirmation (which runs
 ``brain update --yes`` in a window), the owner's gesture; never from a Claude Code session's shell, never on its own.
 """
@@ -42,7 +48,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__, config, paths
+from . import __version__, config, paths, tagsig
 
 ENGINE_REPO = "RoJLD/brain"   # where this package is published (brain.init.ENGINE_REPO): the default engine.repo
 CACHE = "update.json"         # <BRAIN_HOME>/update.json: the last tags read, and when
@@ -234,7 +240,8 @@ def extras(py: Path) -> list[str]:
 
 
 def spec(repo: str, tag: str, extra: list[str]) -> str:
-    """The pip spec of the engine at a tag, as install.ps1 writes it (research-graph comes at the same tag)."""
+    """The pip spec of the engine at a tag (or at the commit a verified tag names), as install.ps1 writes it
+    (research-graph comes at the tag the engine's pyproject pins)."""
     name = f"brain[{','.join(extra)}]" if extra else "brain"
     return f"{name} @ git+https://github.com/{repo}.git@{tag}#subdirectory=packages/brain"
 
@@ -278,14 +285,17 @@ def sections(text: str, since: str, upto: str) -> list[str]:
     return out
 
 
-def plan(info: dict, root: Path | None = None, *, read_changelog=None) -> dict:
+def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=None) -> dict:
     """What brain update would do for ``info`` (:func:`check`): {installed, latest, tag, repo, changelog, python,
-    spec, launcher, pin, blocked}. ``blocked`` says why there is nothing to apply ('' when there is)."""
+    spec, launcher, pin, signature, verify_tags, blocked}. ``blocked`` says why there is nothing to apply ('' when
+    there is). ``signature`` is the tag's verification (brain.tagsig.verdict) when there is something to install:
+    after the install the commits pip recorded are checked against it; one not verified is refused only under config.json
+    engine.verify_tags. ``verify`` (tests) stands for brain.tagsig.verify."""
     installed, latest, repo = info["installed"], info.get("latest"), info["repo"]
     py = venv_python()
     out = {"installed": installed, "latest": latest, "tag": f"v{latest}" if latest else None, "repo": repo,
            "checked": info.get("checked"), "source": info.get("source"), "changelog": None, "python": str(py),
-           "spec": None, "launcher": None, "pin": None, "blocked": ""}
+           "spec": None, "launcher": None, "pin": None, "signature": None, "verify_tags": False, "blocked": ""}
     target = f"v{latest}" if info.get("newer") else f"v{installed}"
     pin = info.get("pin")
     editable = paths.installed_checkout()
@@ -307,10 +317,24 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None) -> dict:
         out["blocked"] = (f"no brain venv at {py.parent.parent}: install the engine first (installer/install.ps1, "
                           "docs/install.md)")
         return out
+    sig = _verified(root, repo, out["tag"], verify)
+    out["signature"], out["verify_tags"] = sig, tagsig.required(root)
+    if sig["status"] != tagsig.VERIFIED and out["verify_tags"]:
+        out["blocked"] = f"refused: {tagsig.line(sig, True)}"
+        out["pin"] = None   # never moved to a tag refused
+        return out
     out["spec"] = spec(repo, out["tag"], extras(py))
     pair = launcher(py)
     out["launcher"] = [str(pair[0]), str(pair[1])] if pair else None
     return out
+
+
+def _verified(root: Path | None, repo: str, tag: str, verify) -> dict:
+    """The tag's verification; never raises (a failure is a verdict that says why)."""
+    try:
+        return (verify or tagsig.verify)(root, repo, tag)
+    except Exception as exc:   # by design: the cockpit's plan never raises; the verdict says unverifiable and why
+        return tagsig.verdict(tagsig.UNVERIFIABLE, tag, why=f"{type(exc).__name__}: {exc}")
 
 
 def _pin_move(cfg, pin: str, target: str, latest: str | None, editable, py: Path, newer: bool) -> str:
@@ -361,6 +385,8 @@ def lines(p: dict) -> list[str]:
         else:
             out += ["", f"What changes: the CHANGELOG at {p['tag']} could not be read"]
     steps = []
+    if p.get("signature") and p.get("spec"):
+        steps.append(f"verify   {tagsig.line(p['signature'], bool(p.get('verify_tags')))}")
     if p.get("spec"):
         steps.append(f"install  brain {p['tag']} into {Path(p['python']).parent.parent} "
                      f"(pip install \"{p['spec']}\")")
@@ -522,7 +548,9 @@ def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
     said = ((proc.stdout or "") + (proc.stderr or "")).strip()
     if proc.returncode != 0:
         return 1, [f"pip install \"{p['spec']}\" failed with exit code {proc.returncode}", *said.splitlines()[-20:]]
-    out = [f"installed brain {p['tag']} into {Path(p['python']).parent.parent}"]
+    out = [f"installed brain {p['tag']} into {Path(p['python']).parent.parent}", *_moved_since_verified(p)]
+    if out[-1].startswith("refused"):
+        return 1, out
     if p.get("launcher"):
         src, dst = Path(p["launcher"][0]), Path(p["launcher"][1])
         try:
@@ -541,6 +569,27 @@ def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
     return code, out
 
 
+def _moved_since_verified(p: dict) -> list[str]:
+    """When the tag was verified: a commit pip recorded for brain or research-graph (both by the tag, from the
+    engine's repo) other than the verified one means the tag moved between the check and the install: said (a
+    warning, then a refusal line under engine.verify_tags), [] otherwise."""
+    sig = p.get("signature") or {}
+    if sig.get("status") != tagsig.VERIFIED:
+        return []
+    sites = _site_packages(Path(p["python"]))
+    moved = [(d, got) for d in ("brain", "research_graph")
+             for got in [tagsig.installed_commit(sites, d, p["repo"])] if got and got != sig["commit"]]
+    if not moved:
+        return []
+    said = [f"warning  {d} was installed from commit {got[:12]}, not {sig['commit'][:12]} which the signed "
+            f"{p['tag']} names: the tag moved during the install" for d, got in moved]
+    said.append("repair   the venv holds code the signature does not cover: check the repo's tags (git ls-remote), "
+                f"then {p['python']} -m pip install --force-reinstall \"{p['spec']}\"")
+    if p.get("verify_tags"):
+        said.append("refused  the launcher and the pin are left as they were")
+    return said
+
+
 def main(root: Path | None, *, check_only: bool, yes: bool, as_json: bool, refused: str = "",
          ask=None, out=print) -> int:
     """brain update: the plan (always), then on the owner's yes (--yes, or y in a terminal) its install."""
@@ -549,8 +598,10 @@ def main(root: Path | None, *, check_only: bool, yes: bool, as_json: bool, refus
         out(json.dumps(p, ensure_ascii=False, indent=1, sort_keys=True))
     else:
         out("\n".join(lines(p)))
-    if check_only or not runs(p):
+    if check_only:
         return 0
+    if not runs(p):
+        return 1 if p.get("blocked", "").startswith("refused:") else 0   # a tag refused is a failure, not "nothing"
     if refused:
         out(f"brain update: {refused}; run it yourself in a terminal")
         return 1

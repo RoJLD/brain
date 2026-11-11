@@ -262,6 +262,12 @@ Python 3.10+ and git; then section 2 by hand (or `pwsh` from Homebrew) and secti
   declares its installer, move `engine.pin` by a reviewed PR (the plan reminds you; otherwise the installer's next
   `-Apply` puts the pinned tag back), then `brain sync`. Until the pin moves, `brain sync` refuses to write with an
   engine other than the pinned one and says which line to change.
+- **The tag's signature** (from 0.3.2): `brain update` and the installer check the tag with `git verify-tag` before
+  installing it, and say `verify   vX.Y.Z: signed by ...` or why not. `brain update` reads the `releaser` keys of your
+  `members.yaml` (else `allowed_signers`); the installer reads `allowed_signers` only, the file
+  `brain identity allowed-signers --write` generates from those keys. With no key to check against they say so and
+  install anyway; `config.json` `engine.verify_tags: true` makes them refuse a tag they cannot verify
+  ([`packages/brain/docs/identity.md`](../packages/brain/docs/identity.md), « Signed releases »).
 - **Upgrade through your brain's installer**, when your brain has one and declares it (`config.json` `engine`
   `installer`, say `"install.ps1"`): after the PR that moves `engine.pin`, the cockpit's title bar reads « brain X ·
   pin vY: -Apply » and `u` shows that installer's plan, then runs `-Apply` on `y` in a new window, once the cockpit
