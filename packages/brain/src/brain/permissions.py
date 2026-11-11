@@ -55,6 +55,7 @@ never removes one; ``brain permissions`` shows the rules a settings file holds t
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -948,10 +949,11 @@ class ClaudeCode(Adapter):
         is Claude Code's (a foreign file, brain.stateio): one that cannot be read, is not JSON or not an object is
         refused, never replaced; one Claude Code wrote meanwhile is refused (run again); its other keys are kept; it
         is backed up first: a file of a git work tree (a project's ``.claude/settings.json``, its untracked
-        ``settings.local.json``) under ``$BRAIN_HOME/backup/<project>/`` (:func:`home_backup_dir`, the last
-        ``stateio.HOME_BACKUPS`` copies), so that git status stays clean, and a ``.bak`` an older engine left beside it
-        moves there too (:func:`adopt_old_backup`); any other file (``~/.claude/settings.json``) beside itself
-        (``settings.json.bak``). Then it is written atomically."""
+        ``settings.local.json``) under ``$BRAIN_HOME/backup/<project>-<key>/`` (:func:`home_backup_dir`, the last
+        ``stateio.HOME_BACKUPS`` copies), so that git status stays clean; an untracked ``.bak`` an older engine left
+        beside it moves there first, as an older copy (:func:`adopt_old_backup`; a tracked one stays where it is); any
+        other file (``~/.claude/settings.json``) beside itself (``settings.json.bak``). Then it is written
+        atomically."""
         try:
             data, seen = stateio.read_foreign(path)
         except stateio.StateError as exc:
@@ -968,13 +970,13 @@ class ClaudeCode(Adapter):
             if (expired or {}).get(v) and perms.get(v):
                 perms[v] = [x for x in perms[v] if x not in expired[v]]
         home = home_backup_dir(path)
+        if home is not None:   # first: the copy of this write is the newest, and the prune keeps the last 10
+            adopt_old_backup(path, home)
         try:   # UTF-8 without BOM, as Claude Code writes it
             stateio.write_foreign(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", seen,
                                   backup_dir=home)
         except stateio.StateError as exc:
             raise PermissionsError(str(exc)) from None
-        if home is not None:
-            adopt_old_backup(path, home)
 
 
 def work_tree(path: Path) -> Path | None:
@@ -987,25 +989,50 @@ def in_work_tree(path: Path) -> bool:
     return work_tree(path) is not None
 
 
+def _safe(name: str, default: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip(".-") or default
+
+
+def _key(p: Path) -> str:
+    """Eight hex digits of a folder's resolved path (its case folded where the system folds it): two repos of the same
+    folder name never share a backup folder."""
+    return hashlib.sha256(os.path.normcase(str(p.resolve())).encode("utf-8")).hexdigest()[:8]
+
+
+def _git_dirs(top: Path) -> tuple[Path, Path]:
+    """(the work tree's git dir, the repo's common dir), absolute; both ``top/.git`` when git cannot say."""
+    try:
+        out = subprocess.run(["git", "-C", str(top), "rev-parse", "--path-format=absolute", "--git-dir",
+                              "--git-common-dir"], capture_output=True, text=True, timeout=10,
+                             stdin=subprocess.DEVNULL).stdout.split("\n")
+    except (OSError, subprocess.SubprocessError):
+        out = []
+    if len(out) >= 2 and out[0].strip() and out[1].strip():
+        return Path(out[0].strip()), Path(out[1].strip())
+    return top / ".git", top / ".git"
+
+
 def home_backup_dir(path: Path) -> Path | None:
-    """Where a file of a git work tree is backed up before a write: ``$BRAIN_HOME/backup/<project>/<its folder in
-    the work tree>``, the project named by its main checkout's folder, a linked worktree's copies under
-    ``<project>/worktrees/<its folder>``. None outside a work tree: the file is backed up beside itself."""
+    """Where a file of a git work tree is backed up before a write: ``$BRAIN_HOME/backup/<project>-<key>/<its folder
+    in the work tree>``. The project is named by its main checkout's folder (a bare repo's ``<name>.git``, else the
+    work tree's own folder: a submodule's) and keyed by eight hex digits of its git common dir's path, so two repos of
+    the same name never share one; a linked worktree's copies go under ``worktrees/<folder>-<key>``. None outside a
+    work tree: the file is backed up beside itself."""
     top = work_tree(path)
     if top is None:
         return None
-    main = paths.main_checkout(top) or top
-    name = re.sub(r"[^A-Za-z0-9._-]+", "-", main.name).strip(".-") or "repo"
-    base = paths.backup_dir() / name
-    if main.resolve() != top.resolve():
-        base = base / "worktrees" / (re.sub(r"[^A-Za-z0-9._-]+", "-", top.name).strip(".-") or "worktree")
+    git_dir, common = (p.resolve() for p in _git_dirs(top))
+    label = common.parent.name if common.name == ".git" else common.stem if common.suffix == ".git" else top.name
+    base = paths.backup_dir() / f"{_safe(label, 'repo')}-{_key(common)}"
+    if git_dir != common:   # a linked worktree (of a checkout or of a bare repo)
+        base = base / "worktrees" / f"{_safe(top.name, 'worktree')}-{_key(top)}"
     return base / Path(path).resolve().parent.relative_to(top)
 
 
 def adopt_old_backup(path: Path, home: Path) -> Path | None:
-    """The ``<name>.bak`` an older engine left beside a work tree's file, moved under ``home`` as its oldest copy (its
-    time as its stamp), so that git status stays clean; left where it is when git tracks it (or cannot say). The copy
-    made, None when nothing moved."""
+    """The ``<name>.bak`` an older engine left beside a work tree's file, moved under ``home`` as a copy (its time as
+    its stamp, so it sorts before the copy the write takes next), so that git status stays clean; left where it is
+    when git tracks it (or cannot say). The copy made, None when nothing moved."""
     old = Path(path).with_name(Path(path).name + stateio.BACKUP)
     if not old.is_file():
         return None

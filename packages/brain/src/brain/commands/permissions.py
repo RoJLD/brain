@@ -257,7 +257,7 @@ def register(sub, ctx) -> None:
     pr.add_argument("--write", action="store_true", help="add the missing rules (not the user file, not a "
                                                          "production checkout); a settings file that is not a JSON "
                                                          "object is refused, never replaced; one of a git work tree "
-                                                         "is backed up first under $BRAIN_HOME/backup/<project>/ "
+                                                         "is backed up first under $BRAIN_HOME/backup/<project>-<key>/ "
                                                          "(the last 10 copies), never beside itself")
     pr.add_argument("--out", help="session level: write the file for claude --settings there")
     pr.add_argument("--json", action="store_true", default=argparse.SUPPRESS,

@@ -99,7 +99,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `code-map` | `$BRAIN_HOME/code-map` | sealed | derived | the code maps |
 | `public-check` | `$BRAIN_HOME/public-check` | sealed | derived | the public check's stamps |
 | `reviews` | `$BRAIN_HOME/reviews` | sealed | truth-local | the reviews' findings and stamps |
-| `backup` | `$BRAIN_HOME/backup` | sealed | truth-local | copies taken before a write-back: a work tree's settings files (`<project>/<folder>`, the last 10 each) |
+| `backup` | `$BRAIN_HOME/backup` | sealed | truth-local | copies taken before a write-back: a work tree's settings files (`<project>-<key>/<folder>`, the last 10 each) |
 | `cockpit` | `$BRAIN_HOME/tui.json` | sealed | truth-local | the cockpit's settings |
 | `update-check` | `$BRAIN_HOME/update.json` | sealed | derived | the last engine tags read |
 | `personal` | `$BRAIN_HOME/personal.json` | sealed | truth-local | the pointer to the personal brain |

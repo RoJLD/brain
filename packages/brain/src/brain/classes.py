@@ -161,7 +161,7 @@ ENGINE_STORES = {
                           "the public check's stamps, per repo and commit"),
     "reviews": Known("$BRAIN_HOME/reviews", "sealed", "truth-local", "the reviews' findings and stamps"),
     "backup": Known("$BRAIN_HOME/backup", "sealed", "truth-local",
-                     "copies taken before a write-back: a work tree's settings files, <project>/<folder>, 10 each"),
+                     "copies before a write-back: a work tree's settings files, <project>-<key>/<folder>, 10 each"),
     "cockpit": Known("$BRAIN_HOME/tui.json", "sealed", "truth-local", "the cockpit's settings"),
     "update-check": Known("$BRAIN_HOME/update.json", "sealed", "derived", "the last engine tags read, and when"),
     "personal": Known("$BRAIN_HOME/personal.json", "sealed", "truth-local",

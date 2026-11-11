@@ -51,7 +51,7 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -299,7 +299,11 @@ def backup_home(path: Path, folder: Path, keep: int = HOME_BACKUPS) -> Path | No
         olds = sorted(p for p in folder.iterdir() if _home_copy_of(p.name, path.name))
         if olds and olds[-1].read_bytes() == blob:
             return olds[-1]
-        dst = folder / f"{path.name}.{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}{BACKUP}"
+        t = datetime.now(timezone.utc)
+        dst = folder / f"{path.name}.{t:%Y%m%dT%H%M%S%fZ}{BACKUP}"
+        while dst.exists():   # a coarse clock (about 16 ms on Windows): never over another copy
+            t += timedelta(microseconds=1)
+            dst = folder / f"{path.name}.{t:%Y%m%dT%H%M%S%fZ}{BACKUP}"
         tmp = dst.with_name(f"{dst.name}.{os.getpid()}.tmp")
         tmp.write_bytes(blob)
         os.replace(tmp, dst)

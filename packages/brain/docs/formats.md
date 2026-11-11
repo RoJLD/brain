@@ -141,14 +141,15 @@ was read (its owner wrote it meanwhile: « run the command again »), backs it u
 then writes atomically.
 A symbolic link (a settings file kept in a dotfiles repo) is written through: the file it points to changes, the link
 stays. `permissions.ClaudeCode.write` (`brain permissions render --write`, `--level session --out`) goes through
-them; a file of a git work tree (a project's committed `.claude/settings.json`, its `.claude/settings.local.json`,
-which Claude Code gitignores) is backed up under `$BRAIN_HOME/backup/<project>/<its folder>` (the project named by its
-main checkout's folder, a linked worktree's under `<project>/worktrees/<folder>`; `permissions.home_backup_dir`), never
-beside itself, so git status stays clean; a `<name>.bak` an older engine left beside it, untracked, moves there as its
-oldest copy. Any other file is backed up beside itself. The user file, `~/.claude/settings.json`, is the owner's act:
-`install.ps1 -Apply` writes it, with the same policy in PowerShell (`Read-ForeignJson`, `Write-ForeignJson`: a file
-that is not a JSON object stops it, an empty one is read as missing, a backup `settings.json.bak`, a temporary file
-that replaces it).
+them; a file of a git work tree (a project's committed `.claude/settings.json`, its `.claude/settings.local.json`, which
+Claude Code gitignores) is backed up under `$BRAIN_HOME/backup/<project>-<key>/<its folder>` (the project named by its
+main checkout's folder and keyed by eight hex digits of its git common dir's path, so two repos of one name never share
+a folder; a linked worktree's copies under `worktrees/<folder>-<key>`; `permissions.home_backup_dir`), never beside
+itself, so git status stays clean; an untracked `<name>.bak` an older engine left beside it moves there first, its time
+as its stamp (a tracked one stays). Any other file is backed up beside itself. The user file, `~/.claude/settings.json`,
+is the owner's act: `install.ps1 -Apply` writes it, with the same policy in PowerShell (`Read-ForeignJson`,
+`Write-ForeignJson`: a file that is not a JSON object stops it, an empty one is read as missing, a backup
+`settings.json.bak`, a temporary file that replaces it).
 
 ### The log class: rotation and retention
 
