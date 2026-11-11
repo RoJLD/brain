@@ -8,7 +8,7 @@ import subprocess
 import urllib.error
 
 import pytest
-from brain import codeindex, net, notify, tidy, update
+from brain import codeindex, net, notify, update
 
 REMOTE_TAGS = update.remote_tags   # the real one: conftest keeps the tests offline
 
@@ -225,14 +225,73 @@ def test_ls_remote_timeout_is_said_as_the_oserror_it_was(clock):
     assert len(tries) == 1
 
 
-def test_gh_open_prs_skipped_while_gh_is_down(clock, monkeypatch, tmp_path):
-    runs = []
+def test_brain_update_reads_the_tags_even_with_the_breaker_open(clock):
+    """An explicit refresh (brain update) closes the breaker a background check opened a minute ago."""
+    def slow(*a, **kw):
+        raise subprocess.TimeoutExpired("git", update.TIMEOUT_S)
 
-    def fake(argv, timeout, **kw):
-        runs.append(argv)
-        raise subprocess.TimeoutExpired(argv, timeout)
-    monkeypatch.setattr(net.subprocess, "run", fake)
-    assert tidy._open_pr_heads(tmp_path)[0] == set()
-    heads, note = tidy._open_pr_heads(tmp_path)
-    assert heads == set() and "gh did not list" in note
-    assert len(runs) == 1
+    def fine(*a, **kw):
+        return subprocess.CompletedProcess(a, 0, "abc\trefs/tags/v9.0.0\n", "")
+    with pytest.raises(OSError):
+        REMOTE_TAGS("x/y", runner=slow)
+    assert update.check(refresh=False, fetch=lambda r: REMOTE_TAGS(r, runner=fine))["source"] in ("offline", "cache")
+    got = update.check(refresh=True, fetch=lambda r: REMOTE_TAGS(r, runner=fine))
+    assert got["source"] == "remote" and got["latest"] == "9.0.0"
+
+
+def test_a_rate_limit_or_a_busy_gateway_never_opens_the_breaker(clock):
+    """An HTTP 429 or 5xx is the service answering: retried, then raised, and its other calls still go."""
+    fn = calls(urllib.error.HTTPError("u", 429, "slow down", {}, None))
+    with pytest.raises(urllib.error.HTTPError):
+        net.call("svc", fn)
+    assert len(fn.seen) == 1 + net.RETRIES
+    assert net.status() == {} and net.call("svc", calls("ok")) == "ok"
+
+
+def test_a_post_is_retried_only_when_surely_not_handled(clock):
+    reset = calls(ConnectionResetError("reset"), "ok")
+    with pytest.raises(ConnectionResetError):          # the server may have acted: never sent twice
+        net.call("svc", reset, idempotent=False)
+    assert len(reset.seen) == 1
+    clock.t += net.WINDOW_S + 1
+    for first in (urllib.error.URLError(ConnectionRefusedError("refused")),
+                  urllib.error.HTTPError("u", 503, "busy", {}, None)):
+        fn = calls(first, "ok")
+        assert net.call("svc", fn, idempotent=False) == "ok" and len(fn.seen) == 2
+    fn = calls(urllib.error.HTTPError("u", 502, "bad gateway", {}, None))
+    with pytest.raises(urllib.error.HTTPError):
+        net.call("svc", fn, idempotent=False)
+    assert len(fn.seen) == 1
+
+
+def test_a_refused_certificate_is_an_answer(clock):
+    import ssl
+    fn = calls(urllib.error.URLError(ssl.SSLCertVerificationError("bad cert")))
+    with pytest.raises(urllib.error.URLError):
+        net.call("svc", fn)
+    assert len(fn.seen) == 1 and net.status() == {}
+
+
+def test_gitnexus_http_status_passes_through_and_a_poll_never_opens(clock, monkeypatch):
+    import io
+    tries = []
+
+    class Opener:
+        def open(self, req, timeout):
+            tries.append((req.get_method(), req.full_url))
+            if req.full_url.endswith("/api/repos"):
+                raise urllib.error.HTTPError(req.full_url, 404, "no", {}, io.BytesIO(b'{"error": "none"}'))
+            raise urllib.error.URLError(socket.timeout("timed out"))
+    monkeypatch.setattr(codeindex.urllib.request, "build_opener", lambda *a: Opener())
+    assert codeindex._http("GET", "http://127.0.0.1:1/api/repos") == (404, {"error": "none"})
+    assert codeindex._http("GET", "http://127.0.0.1:1/api/analyze/7")[0] == 0     # a poll that timed out
+    assert net.status() == {}                                                     # opened nothing
+    assert codeindex._http("GET", "http://127.0.0.1:1/api/analyze/7")[0] == 0
+    assert len(tries) == 3
+
+
+def test_a_long_docker_job_past_its_time_does_not_shut_docker(clock, monkeypatch):
+    monkeypatch.setattr(codeindex.stacks, "_resolve", lambda argv: argv)
+    monkeypatch.setattr(codeindex, "_exec", lambda argv, timeout, stdin=None: (None, ""))
+    assert codeindex._docker(["docker", "exec", "-i", "c", "sh"], codeindex.SNAPSHOT_TIMEOUT) == (None, "")
+    assert net.status() == {}
