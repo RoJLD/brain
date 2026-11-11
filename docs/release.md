@@ -76,6 +76,28 @@ nothing else to do, the section says « Nothing to run for the rest » after the
    push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
 ```
 
+### The release preview
+
+So that a PR that would make the next release a minor one is seen when it is opened, not at the version PR
+(wi-brain-release-preview; the owner's decision of 2026-11-10), CI's `release-preview` job runs on every pull request
+`python packages/brain/installer/release_check.py --preview --base origin/<the PR's target>`: the version policy above,
+applied now as if the next release were a patch of `vP`, to
+
+- the registered schemas that moved since `vP` (the same comparison as `release-check`: an optional config key and a
+  whole new format are reported as compatible with a patch);
+- the steps of the pending Upgrade fragments (`packages/brain/changes/`) beyond the standard ones: a fragment's
+  numbered lines, or its first line when it opens with a bold title (the step the version PR will number); a closing
+  paragraph such as « Nothing to run for the rest » is no step.
+
+It says « a patch », or « a minor » and whether this PR carries the reasons (« because of this PR », « already before
+this PR », or how many of them), naming each with « (this PR) », in the job's summary. It is advisory: it exits 0
+whatever it says (2 when it cannot tell: no tag), and a minor version stays the owner's decision at the version PR.
+Run it from a branch before pushing, committed or not. Making it a required check is a branch-protection setting.
+
+`release-check` itself refuses, on every PR, a standard step that the pending Upgrade fragments ask twice: one fragment
+holds the standard steps for the whole release, and a PR's fragment adds only its own step, never a copy of them
+(les-brain-upgrade-fragment-copies-standard).
+
 ## 1. Before the version PR
 
 - The items named for this release are merged, each reviewed, CI green on Windows (the `brain` job) included.
@@ -127,7 +149,9 @@ do: a release that asks nothing more says « Nothing to run for the rest » afte
 entry as a fragment, never in the CHANGELOG (`packages/brain/changes/<item>.md` for the brain, `changes/<item>.md` for
 research-graph: a first line `section: Upgrade|Added|Fixes|Changes`, a blank line, the entry; the folders' READMEs),
 so that parallel PRs never collide in one `## Unreleased`; `changelog.py compile` puts them in the section order
-Upgrade, Added, Fixes, Changes, and the version PR then numbers the Upgrade steps.
+Upgrade, Added, Fixes, Changes, and the version PR then numbers the Upgrade steps. Within a section, a list fragment
+after a list continues it, and anything else (a closing paragraph such as « Nothing to run for the rest ») gets a blank
+line before it, so it never reads as the last step's continuation.
 
 **The fixture freeze.** `packages/brain/tests/fixtures/formats/<format>/v<N>/` holds what the readers are tested on, and
 it only grows: an `older` file is what a released engine wrote, and is never edited. By hand for now (a `brain fixtures freeze` command is planned,
@@ -138,7 +162,8 @@ wi-brain-old-store-fixture):
   test places it, or fails;
 - an additive change under the same `v` extends the `newer` file only.
 
-**The jobs on this PR.** All of them run on every pull request; two matter here:
+**The jobs on this PR.** All of them run on every pull request; two matter here (`release-preview`, « The release
+preview », only says what `release-check` will judge):
 
 - **`release-check`** (`packages/brain/installer/release_check.py`) sees that this is a version PR because `__version__`
   is not the last tag's. It fails when a registered schema changed since the last tag and this version's section has no
