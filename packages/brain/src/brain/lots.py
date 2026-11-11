@@ -120,17 +120,20 @@ def _rank(u: Unit) -> tuple:
     return PRIORITY.get(u.priority, 9), u.id
 
 
+def _unit(plan: waves.Plan, st: resume.Store, nid: str, extra_hot: tuple[str, ...]) -> Unit:
+    """One item with its surface (a CodeRef as ``repo:path``, a name as it is), split into files and hot files."""
+    node = st.nodes.get(nid) or plan.nodes.get(nid) or {"id": nid}
+    paths, names = collisions.surface(node, st)
+    entries = sorted({f"{repo}:{p}" if repo else p for repo, p in paths} | set(names))
+    hot = [e for e in entries if is_hot(e, extra_hot)]
+    priority = str((node.get("props") or {}).get("priority") or "")
+    return Unit(nid, str(node.get("title") or ""), plan.status(nid), priority, [e for e in entries if e not in hot],
+                hot)
+
+
 def units_of(plan: waves.Plan, st: resume.Store, wid: str, extra_hot: tuple[str, ...] = ()) -> dict[str, Unit]:
     """The wave's open items, each with its surface split into files and hot files, and its open prerequisites."""
-    ids = [i for i in plan.items_of(wid) if plan.status(i) in waves.OPEN]
-    out = {}
-    for i in ids:
-        node = st.nodes.get(i) or plan.nodes.get(i) or {"id": i}
-        paths, names = collisions.surface(node, st)
-        entries = sorted({f"{repo}:{p}" if repo else p for repo, p in paths} | set(names))
-        out[i] = Unit(i, str(node.get("title") or ""), plan.status(i), str((node.get("props") or {}).get("priority")
-                                                                           or ""),
-                      [e for e in entries if not is_hot(e, extra_hot)], [e for e in entries if is_hot(e, extra_hot)])
+    out = {i: _unit(plan, st, i, extra_hot) for i in plan.items_of(wid) if plan.status(i) in waves.OPEN}
     for i, u in out.items():
         u.outside = sorted(d for d in plan.blockers(i) if d not in out)
         u.after = sorted(_inside(plan, i, set(out)))
@@ -317,33 +320,42 @@ def plan(store: Path, root: Path | None, wave: str = "", project: str = "", at_o
     """The plan of ``wave`` (its release or id; default the current wave, brain next's) in ``store``.
     :class:`ValueError` when the store holds no such wave."""
     pl = waves.load(store, root)
+    wid = _wave_id(pl, wave, store)
+    units = units_of(pl, resume.Store.load(store), wid, tuple(hot))
+    caps = caps_in_force(root, project, at_once)
+    lots, conflicts = lots_of(units)
+    rounds = rounds_of(lots, units, caps["at_once"])
+    numbered = [lot for group in rounds for lot in group]
+    for n, lot in enumerate(numbered, 1):
+        lot.n = n
+    for r, group in enumerate(rounds, 1):
+        for lot in group:
+            lot.round = r
+    return WavePlan(pl.label(wid), wid, units, numbered, [[lot.n for lot in g] for g in rounds], conflicts,
+                    _hot_shared(units, numbered), caps)
+
+
+def _wave_id(pl: waves.Plan, wave: str, store: Path) -> str:
+    """The wave named (its release or id), else the current one; :class:`ValueError` without one."""
     if wave:
         wid = pl.resolve(wave) or pl.resolve(wave.removeprefix("wave-"))
         if not wid:
             raise ValueError(f"{wave}: no wave of that release or id in {store}")
-    else:
-        pend = waves.pending_waves(pl)
-        if not pend:
-            raise ValueError(f"no open wave in {store} (brain wave add X.Y.Z)")
-        wid = pend[0]
-    st = resume.Store.load(store)
-    units = units_of(pl, st, wid, tuple(hot))
-    caps = caps_in_force(root, project, at_once)
-    lots, conflicts = lots_of(units)
-    rounds = rounds_of(lots, units, caps["at_once"])
-    numbered: list[Lot] = []
-    for r, group in enumerate(rounds, 1):
-        for lot in group:
-            lot.n, lot.round = len(numbered) + 1, r
-            numbered.append(lot)
-    lot_of = {i: lot.n for lot in numbered for i in lot.items}
-    hot_by: dict[str, set[str]] = {}
+        return wid
+    pend = waves.pending_waves(pl)
+    if not pend:
+        raise ValueError(f"no open wave in {store} (brain wave add X.Y.Z)")
+    return pend[0]
+
+
+def _hot_shared(units: dict[str, Unit], lots: list[Lot]) -> dict[str, list[str]]:
+    """Each hot file that items of two lots or more touch, with those items."""
+    lot_of = {i: lot.n for lot in lots for i in lot.items}
+    by: dict[str, set[str]] = {}
     for u in units.values():
         for f in u.hot:
-            hot_by.setdefault(f, set()).add(u.id)
-    hot_shared = {f: sorted(ids) for f, ids in sorted(hot_by.items()) if len({lot_of[i] for i in ids}) > 1}
-    return WavePlan(pl.label(wid), wid, units, numbered, [[lot.n for lot in g] for g in rounds], conflicts,
-                    hot_shared, caps)
+            by.setdefault(f, set()).add(u.id)
+    return {f: sorted(ids) for f, ids in sorted(by.items()) if len({lot_of[i] for i in ids}) > 1}
 
 
 def _item(u: Unit) -> str:
@@ -361,6 +373,18 @@ def _files(files: list[str], n: int = 6) -> str:
     return ", ".join(files[:n]) + (f", ... {len(files) - n} more" if len(files) > n else "")
 
 
+def _lot_lines(wp: WavePlan, lot: Lot) -> list[str]:
+    """A lot's two lines: its items in their order, then its files."""
+    if not lot.checked:
+        what = "unchecked: no known surface"
+    else:
+        what = f"files: {_files(lot.files)}" if lot.files else "no file but hot ones"
+    extra = f"; hot: {_files(lot.hot)}" if lot.hot else ""
+    unb = f", unblocks {lot.unblocks}" if lot.unblocks else ""
+    return [f"  Lot {lot.n} ({len(lot.items)} item(s){unb}): " + " -> ".join(_item(wp.units[i]) for i in lot.items),
+            f"    {what}{extra}"]
+
+
 def render(wp: WavePlan) -> list[str]:
     c = wp.caps
     lines = [f"Wave {wp.wave} ({wp.wid}): {len(wp.units)} open item(s) in {len(wp.lots)} lot(s) over "
@@ -373,14 +397,7 @@ def render(wp: WavePlan) -> list[str]:
     for r, group in enumerate(wp.rounds, 1):
         lines.append(f"Round {r} ({len(group)} lot(s)):")
         for n in group:
-            lot = wp.lots[n - 1]
-            what = (f"files: {_files(lot.files)}" if lot.files else "no file but hot ones") if lot.checked else \
-                "unchecked: no known surface"
-            extra = f"; hot: {_files(lot.hot)}" if lot.hot else ""
-            unb = f", unblocks {lot.unblocks}" if lot.unblocks else ""
-            lines.append(f"  Lot {lot.n} ({len(lot.items)} item(s){unb}): "
-                         + " -> ".join(_item(wp.units[i]) for i in lot.items))
-            lines.append(f"    {what}{extra}")
+            lines += _lot_lines(wp, wp.lots[n - 1])
     lines.append(f"Predicted conflicts ({len(wp.conflicts)}), the reason two items share a lot:")
     lines += [f"  {' + '.join(x['items'])}: {_files(x['files'])}" for x in wp.conflicts] or ["  none"]
     lines.append(f"Hot files shared across lots ({len(wp.hot)}): add, never rewrite; merge origin/main before the push")
