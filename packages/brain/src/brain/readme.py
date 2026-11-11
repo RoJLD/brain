@@ -109,22 +109,29 @@ def _features_block(spec: dict, facts: Facts) -> str:
         return ""
     status = {f: str(m.features[f].get("status", "")) for f in feats}
     counts = ", ".join(f"{sum(1 for f in feats if status[f] == s)} {s}" for s in features.STATUSES)
+    shown = _top_features(m, feats, status)[: int(cfg.get("top", TOP))]
+    out = ["## Features", "", f"**{len(feats)} features: {counts}.** By domain: {_domains(m, feats)}.", ""]
+    out += [f"- **{features._cell(features.shown_title(m, f, facts.public))}** ({status[f]})" for f in shown]
+    links = [f"The full matrix: [{features.VIEW}]({features.VIEW})"]
+    links += [f"the strategy view: [{cfg['strategy']}]({cfg['strategy']})"] if cfg.get("strategy") else []
+    return "\n".join(out + ([""] if shown else []) + ["; ".join(links) + "."])
+
+
+def _domains(m: features.Model, feats: list[str]) -> str:
+    """« brewing 2, measures 1 »: the features of each domain."""
     domains: dict[str, int] = {}
     for f in feats:
         d = str((m.features[f].get("props") or {}).get("domain") or "other")
         domains[d] = domains.get(d, 0) + 1
+    return ", ".join(f"{d} {n}" for d, n in sorted(domains.items()))
+
+
+def _top_features(m: features.Model, feats: list[str], status: dict[str, str]) -> list[str]:
+    """The top-level have and partial features, high value first, then have before partial, then by id."""
     rank = {"high": 0, "medium": 1, "low": 2}
     shown = [f for f in feats if status[f] in ("have", "partial") and not m.parent(f)]
-    shown.sort(key=lambda f: (rank.get(str((m.features[f].get("props") or {}).get("value")), 3),
-                              0 if status[f] == "have" else 1, f))
-    top = int(cfg.get("top", TOP))
-    out = ["## Features", "", f"**{len(feats)} features: {counts}.** By domain: "
-           + ", ".join(f"{d} {n}" for d, n in sorted(domains.items())) + ".", ""]
-    out += [f"- **{features._cell(features.shown_title(m, f, facts.public))}** ({status[f]})" for f in shown[:top]]
-    links = [f"The full matrix: [{features.VIEW}]({features.VIEW})"]
-    if cfg.get("strategy"):
-        links.append(f"the strategy view: [{cfg['strategy']}]({cfg['strategy']})")
-    return "\n".join(out + ([""] if shown[:top] else []) + ["; ".join(links) + "."])
+    return sorted(shown, key=lambda f: (rank.get(str((m.features[f].get("props") or {}).get("value")), 3),
+                                        0 if status[f] == "have" else 1, f))
 
 
 def brain_usage(words: list[str]) -> str | None:

@@ -205,3 +205,17 @@ def test_the_audit_measures_an_opted_in_repo_only(tmp_path):
     gone = audit.help_quoted(ctx({"readme.yaml": SPEC.replace("args: sync", "args: nope")}))
     assert [f["why"] for f in gone] == ["the quoted command `brain nope` is gone (its --help does not run): change "
                                         "or remove it"] and gone[0]["severity"] == "P1"
+
+
+def test_the_format_fixtures_read_tolerant_and_strict(monkeypatch):
+    from brain import schema
+    formats = readme.TEMPLATE.parents[4] / "tests" / "fixtures" / "formats" / "readme" / "v1"
+    older = graph.load_yaml((formats / "older.yaml").read_text(encoding="utf-8"))
+    newer = graph.load_yaml((formats / "newer.yaml").read_text(encoding="utf-8"))
+    assert schema.schema_errors("readme", older, schema.STRICT) == []
+    errors, unknown = schema.validate("readme", newer, schema.READ)
+    assert errors == [] and len(unknown) == 3   # read mode: noted, kept
+    assert len(schema.schema_errors("readme", newer, schema.STRICT)) == 3   # strict (CI at the pin): refused
+    assert schema.schema_errors("readme", {**older, "v": 2})[0].startswith("readme: v2 is written by brain >")
+    monkeypatch.setenv("BRAIN_STRICT", "0")
+    assert readme.spec_errors(newer) == []   # an owner's file read by an older engine: nothing refused
