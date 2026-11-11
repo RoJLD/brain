@@ -969,14 +969,20 @@ class ClaudeCode(Adapter):
                 perms[v] = list(perms.get(v) or []) + missing[v]
             if (expired or {}).get(v) and perms.get(v):
                 perms[v] = [x for x in perms[v] if x not in expired[v]]
-        home = home_backup_dir(path)
-        if home is not None:   # first: the copy of this write is the newest, and the prune keeps the last 10
-            adopt_old_backup(path, home)
-        try:   # UTF-8 without BOM, as Claude Code writes it
-            stateio.write_foreign(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", seen,
-                                  backup_dir=home)
-        except stateio.StateError as exc:
-            raise PermissionsError(str(exc)) from None
+        write_backed_up(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", seen)
+
+
+def write_backed_up(path: Path, text: str, seen: bytes | None) -> None:
+    """A settings file written through brain.stateio, backed up first: under ``$BRAIN_HOME/backup`` for a file of a
+    git work tree (an old ``.bak`` beside it adopted first, so this write's copy is the newest and the prune keeps
+    the last 10), beside itself otherwise. UTF-8 without BOM, as Claude Code writes it."""
+    home = home_backup_dir(path)
+    if home is not None:
+        adopt_old_backup(path, home)
+    try:
+        stateio.write_foreign(path, text, seen, backup_dir=home)
+    except stateio.StateError as exc:
+        raise PermissionsError(str(exc)) from None
 
 
 def work_tree(path: Path) -> Path | None:
