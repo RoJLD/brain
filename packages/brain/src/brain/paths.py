@@ -20,6 +20,28 @@ def brain_home() -> Path:
     return Path(env).expanduser() if env else Path.home() / ".brain"
 
 
+def home_folders() -> list[Path]:
+    """The ``.brain`` folders that exist under each home a hook may spell, when $BRAIN_HOME is unset: Python's
+    (``Path.home()``, %USERPROFILE% on Windows) first, then $USERPROFILE's and $HOME's (the bash hooks before 0.3.2
+    started the venv from ``$HOME/.brain``); two or more means bash and Python may each use their own
+    (wi-brain-hook-contracts). An MSYS spelling of $HOME (``/c/Users/x``) is read as ``C:/Users/x``."""
+    if os.environ.get("BRAIN_HOME"):
+        return []
+    out: list[Path] = []
+    for home in (str(Path.home()), os.environ.get("USERPROFILE") or "", os.environ.get("HOME") or ""):
+        if not home:
+            continue
+        if os.name == "nt":
+            home = re.sub(r"^/([A-Za-z])(?:/|$)", r"\1:/", home)
+        d = Path(home) / ".brain"
+        try:
+            if d.is_dir() and not any(d.samefile(o) for o in out):
+                out.append(d)
+        except OSError:
+            continue
+    return out
+
+
 def ledger_dir() -> Path:
     return brain_home() / "ledger"
 

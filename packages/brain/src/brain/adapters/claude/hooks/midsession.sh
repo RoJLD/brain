@@ -24,8 +24,11 @@ if [[ -n $sid && -f $mark ]]; then
       newer=
       if [[ -n $queue ]]; then
         [[ $queue -nt $mark ]] && newer=1
+        # the last line is the mark's format (brain.midsession.MARK_FORMAT; none before 0.3.2): another starts Python
         while [[ -z $newer ]] && IFS= read -r name; do
-          [[ -n $name && $queue/$name -nt $mark ]] && newer=1
+          if [[ $name == '#'* ]]; then [[ $name == '#brain.announce-mark/v1' ]] || newer=1
+          elif [[ -n $name && $queue/$name -nt $mark ]]; then newer=1
+          fi
         done
       fi
     fi
@@ -34,6 +37,6 @@ if [[ -n $sid && -f $mark ]]; then
 fi
 
 root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
-home="${BRAIN_HOME:-$HOME/.brain}"
+home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"
 brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/midsession.py" UserPromptSubmit <<<"$payload" 2>/dev/null
 exit 0

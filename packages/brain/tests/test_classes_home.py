@@ -21,7 +21,7 @@ PARENT = "local_55555555-5555-4555-8555-555555555555"
 # --- what the engine's code writes under BRAIN_HOME ------------------------------------------------------------------
 
 _PY = re.compile(r"""brain_home\(\)\s*/\s*(?:"([^"{}/]+)"|'([^'{}/]+)'|f"([^"{}/]+)/|([A-Z][A-Z0-9_]*)\b)""")
-_SH = re.compile(r"\$\{BRAIN_HOME:-(?:\$\{[^}]*\}|[^}])*\}/([\w.-]+)")
+_SH = re.compile(r"\$\{BRAIN_HOME:-(?:\$\{[^}]*\}|\$(?!\{)|[^}$])*\}/([\w.-]+)")   # a nested ${...} whole
 _HOME_VAR = re.compile(r"\$home/([\w.-]+)")
 _DOC = re.compile(r"(?:<BRAIN_HOME>|\$BRAIN_HOME|~/\.brain)[\\/]([A-Za-z][\w.-]*)")
 _PS = re.compile(r"Join-Path \$brain_home '([\w.-]+)'")

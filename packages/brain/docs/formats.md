@@ -214,6 +214,36 @@ foreign one is never written here.
 | `quota.load_status` | the quota forecast | derived (local) | `{}` is right: rebuilt |
 | `update._read_cache` | `update.json` | derived (local) | `{}` is right: the tags are asked again |
 
+## The hook contract
+
+The bash hooks (`src/brain/adapters/claude/hooks/*.sh`) read four files that Python writes, with bash builtins only
+(no fork: wi-brain-hook-latency). A session keeps the plugin copy it started with (one cached copy per commit), so old
+bash reads what a newer engine writes until the session restarts: each file keeps its first line(s) as bash before
+0.3.2 reads them and names its format on a line of its own, after them (wi-brain-hook-contracts). Today's bash trusts
+a file without a format line (an older engine's) or with its own; another format makes it start Python, which decides.
+
+| File | Writer | Lines | Format line |
+|---|---|---|---|
+| `<BRAIN_HOME>/budget/<session>.mark` | `brain.budget` | the transcript `budget.sh` compares its mtime with | last, `#brain.budget-mark/v1` |
+| `<BRAIN_HOME>/announce/<session>.mark` | `brain.midsession` | the session's folder, the queue, the pending DDRs | last, `#brain.announce-mark/v1` (bash before 0.3.2 reads it as a DDR that does not exist) |
+| `<BRAIN_HOME>/cache/node-clis.txt` | `brain.guards.node_tools` | the node CLIs as one alternation, which `guard.sh`'s pre-filter matches | last, `#brain.node-clis/v1` |
+| `plugins/<plugin>/hooks/contract.txt` | `brain render` (`brain sync`) | `version <the engine that rendered it>`, then one `rule <path>` per file of config.json `rules`, relative to its folder | first, `#brain.hook-contract/v1` (a new file: no older reader) |
+
+`inject-rules.sh` reads the contract's `rule` lines instead of the first `"rules"` array in config.json's text (which
+may be another section's); without a contract (the engine's own hooks folder, a plugin rendered before 0.3.2), or with
+another format, it falls back to that. `tests/fixtures/hooks/` holds each file as the engine writes it, and
+`tests/test_hook_contracts.py` checks the writers against them and today's bash against each format line.
+
+The version: `common.sh` exports its `brain_version` as `BRAIN_HOOK_VERSION`, so every Python a hook starts knows the
+plugin copy's version. The SessionStart health (`brain.stacks.hook_contract_notes`) says when it differs from the
+engine's: restart the session, then `brain sync` or `brain update`. A hook before 0.3.2 passes none, and nothing is
+said.
+
+`<BRAIN_HOME>`: every hook spells it `${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}`, the folder Python's
+`Path.home()` names on Windows (before 0.3.2, some hooks started the venv of `$HOME/.brain`). With `$BRAIN_HOME`
+unset, the health says when more than one of `Path.home()`, `%USERPROFILE%` and `$HOME` holds a `.brain` folder
+(`brain.paths.home_folders`): bash and Python may each have used their own.
+
 ## Public-check stamps: a derived file with its whole key
 
 A green `brain check --public --history` on a public repo writes `$BRAIN_HOME/public-check/<owner>/<repo>/<sha>`

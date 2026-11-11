@@ -234,11 +234,29 @@ def _claude_hook_outputs(src: neutral.Source, p: neutral.Pack, base: str) -> lis
     """The engine's Claude hooks copied into a pack's plugin, hooks.json with this brain's opt-in hooks only."""
     hooks, out = claude_hooks(), []
     for f in sorted(hooks.rglob("*")) if hooks.is_dir() else []:
-        if f.is_file() and "__pycache__" not in f.parts:
+        if f.is_file() and "__pycache__" not in f.parts and f.name != HOOK_CONTRACT:
             rel, text = f.relative_to(hooks).as_posix(), neutral.lf(f.read_text(encoding="utf-8"))
             out.append(Output(f"{base}/hooks/{rel}", claude_hooks_json(text, src) if rel == "hooks.json" else text,
                               "brain", f"pack {p.id}: the engine's Claude hooks"))
+    if out:
+        out.append(Output(f"{base}/hooks/{HOOK_CONTRACT}", hook_contract(src), "brain",
+                          f"pack {p.id}: the hook contract (the rules list, the engine's version)"))
     return out
+
+
+# The flat file the bash hooks read instead of parsing JSON (wi-brain-hook-contracts, docs/formats.md « The hook
+# contract »): line 1 its format, then ``version <the engine that rendered it>`` and one ``rule <path>`` per file of
+# config.json's "rules" (relative to its folder), in order. A line it does not know is skipped by inject-rules.sh.
+HOOK_CONTRACT = "contract.txt"
+HOOK_CONTRACT_FORMAT = "#brain.hook-contract/v1"
+
+
+def hook_contract(src: neutral.Source) -> str:
+    from . import __version__
+    rules = _own_config(src).get("rules")
+    rules = [r for r in rules if isinstance(r, str) and r.splitlines() == [r]] if isinstance(rules, list) else []
+    return "".join(f"{line}\n" for line in [HOOK_CONTRACT_FORMAT, f"version {__version__}",
+                                            *(f"rule {r}" for r in rules)])
 
 
 def _claude_server(s: neutral.Server) -> dict:
