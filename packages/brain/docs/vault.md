@@ -100,6 +100,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `public-check` | `$BRAIN_HOME/public-check` | sealed | derived | the public check's stamps |
 | `reviews` | `$BRAIN_HOME/reviews` | sealed | truth-local | the reviews' findings and stamps |
 | `backup` | `$BRAIN_HOME/backup` | sealed | truth-local | copies taken before a write-back |
+| `spool` | `$BRAIN_HOME/spool` | sealed | truth-local | the sealed copies waiting to leave the machine and their index (`brain spool push`) |
 | `cockpit` | `$BRAIN_HOME/tui.json` | sealed | truth-local | the cockpit's settings |
 | `update-check` | `$BRAIN_HOME/update.json` | sealed | derived | the last engine tags read |
 | `personal` | `$BRAIN_HOME/personal.json` | sealed | truth-local | the pointer to the personal brain |
@@ -241,6 +242,42 @@ brain vault open FILE [--out DIR] [--identity FILE|-]
   block itself); `--identity FILE` a key file. An archive is extracted into `--out`, refusing any path that would land
   outside.
 
+## The spool: what leaves the machine, sealed, waiting for its remote
+
+```text
+brain spool push [STORE...] [--dry-run] [--json]
+brain spool status [--json]
+brain spool verify
+brain health spool
+```
+
+The stores that leave the machine (the ledger, the usage, the session records; the transcripts later, with the
+session archive) leave only sealed. Until a data remote exists (a NAS, object storage, a private dataset host), they
+wait in a local spool, `$BRAIN_HOME/spool`, sealed and checked by hash. **It runs by hand**: no scheduled task runs it
+until you add one.
+
+- `push` takes the spool's set (`spool.stores` in config.json, else `ledger`, `usage` and `sessions`; each declared in
+  `classes.stores`). A store whose content (its files' names, sizes and times) has not changed since its last push is
+  skipped. Each other one is scanned for a secret's shape (a key's prefix, a token's form: `brain.secretscan.SHAPED`;
+  a hit stops that store and names the file and line, never the value), then sealed through `brain vault seal` to its
+  recipients into `$BRAIN_HOME/spool/<store>/`, its manifest beside it, its sha256 recorded in `spool.json`. A store
+  whose class never leaves the machine (`resident`, `secret`: `brain.classes.decide(cfg, store, "offsite")`) is
+  refused, and the other stores go on.
+- With `spool.remote` set (a folder: a mounted share, a synced drive), `push` then copies each file that waits to
+  `<remote>/<store>/`, its manifest beside it. The file's sha256 is checked against the index before the copy and on
+  the copy; only then is it marked sent. A remote that is not reachable leaves them waiting. Without a remote, they
+  stay in the spool.
+- Then it prunes: the newest 3 files per store are kept (`spool.keep`), sent or not, since a newer snapshot holds the
+  store. A file put with its own paths (the session archive's) is pruned only once sent.
+- `brain health spool` (and `--all`) gives the last push's age and what waits. It warns when no push succeeded for 7
+  days (`spool.max_age_days`) or the last one had an error, and fails only when a waiting file is missing or no longer
+  matches its sha256. It says OFF until the first push.
+- A spool file is sealed to its store's recipients at the time of its push; `brain vault reseal` does not rewrite the
+  spool (the next push seals the store again to the current recipients).
+
+For a caller (the session archive), `brain.spool.put(cfg, store, items)` seals the given paths into the spool as one
+entry of kind `items`, after the same scan and refusals.
+
 ## Once a year: the drill
 
 ```
@@ -318,5 +355,8 @@ as `/c/...` and needs a short path for its agent's sockets: the vault handles bo
 | `$BRAIN_HOME/vault/state.json` | the canaries (sealed, opened, digest, error), the drills, the last seal of each store; `v` 1, read and written through `brain.stateio` (a backup in `state.json.bak` before each write; an unreadable file set aside, never reset; a newer brain's state read-only: [formats.md](formats.md)) |
 | `$BRAIN_HOME/vault/canary/` | one sealed nonce per recipient |
 | `$BRAIN_HOME/vault/sealed/<store>/` | the sealed copies and their manifests (`resealed` once sealed again) |
+| `config.json` `spool` | optional: `stores` (the spool's set), `remote` (a folder), `keep` (3), `max_age_days` (7) |
+| `$BRAIN_HOME/spool/spool.json` | the spool's index: each sealed file's store, kind, sha256, bytes, when put and sent; the last push; `v` 1 through `brain.stateio` |
+| `$BRAIN_HOME/spool/<store>/` | the sealed copies waiting to leave, each with brain.vault's manifest |
 | the OS keystore, `brain-vault/device` | the device key itself: never on disk in clear, never printed |
 | the OS keystore, `brain-vault/device-previous` | during a rotation only: the replaced key, until `forget-previous` |

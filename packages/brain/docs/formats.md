@@ -124,6 +124,7 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 | `sessions/<id>.json`, `<id>.state.json` | `v` 1 (the SR's schema, `capture.SR_V`; `STATS_V`) | the Stop hook writes neither (a newer brain's session) and logs nothing |
 | `sessions/<id>.report.json`, `<id>.plan.json` | `v` 1 | `sessions.write_report` returns None, the plan hook keeps the file |
 | `budget/<session>.json` | `v` 1 | the budget watch gives no notice and sets its mark `IDLE_S` ahead, so bash starts no Python meanwhile |
+| `spool/spool.json` | `v` 1 (`spool.INDEX_V`) | `brain spool push` refuses before sealing anything (exit 2); `status` and `brain health spool` still read it |
 
 `tui.json` keeps the keys this engine does not know at each level it names (the top level, `panels`, `tabs`,
 `columns`, `settings`, `settings.titles`): a newer brain's panel view, tab or setting survives a save of this one. A
