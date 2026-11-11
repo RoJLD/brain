@@ -1,0 +1,2 @@
+- {id: K1, name: kettle-core, brick: K, phase: MVP, status: tree, note: "Boil and pour."}
+- {id: K2, name: kettle-meter, brick: K, phase: V1, status: proposed, since: 2026-08-01}
