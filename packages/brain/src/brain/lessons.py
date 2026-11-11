@@ -577,15 +577,21 @@ def wave_items(led, wave: str, store: Path | None = None) -> list[str]:
     rx = re.compile(rf"^(?:wave-)?{re.escape(name)}(?:[\s,(]|$)")
     ids = {i for i, it in led.items.items() if rx.match(str(it.props.get("wave") or "").strip())}
     for st in sorted({it.store for it in led.items.values() if it.store} | ({store} if store else set())):
-        if not (st / "nodes").is_dir() or not waves.applies(st):
-            continue
-        plan = waves.load(st)
-        wid = plan.resolve(wave) or plan.resolve(name)
-        if wid:
-            here = st.resolve()
-            ids |= {i for i in plan.items_of(wid) if i in led.items and led.items[i].store
-                    and led.items[i].store.resolve() == here}
+        ids |= _numbered_wave(led, st, wave, name)
     return sorted(ids)
+
+
+def _numbered_wave(led, st: Path, wave: str, name: str) -> set[str]:
+    """The items of ``st``'s wave ``wave`` (or ``name``, its release) that the ledger places in ``st``."""
+    if not (st / "nodes").is_dir() or not waves.applies(st):
+        return set()
+    plan = waves.load(st)
+    wid = plan.resolve(wave) or plan.resolve(name)
+    if not wid:
+        return set()
+    here = st.resolve()
+    return {i for i in plan.items_of(wid) if i in led.items and led.items[i].store
+            and led.items[i].store.resolve() == here}
 
 
 def wave_retro(led, wave: str, store: Path | None = None) -> dict:
@@ -602,14 +608,24 @@ def wave_retro(led, wave: str, store: Path | None = None) -> dict:
         tot["rework"] += sum(s["rework"].values())
         tot["cost"] += s["cost"]
     ids = {r["item"] for r in items} | set(members)
+    return {"wave": wave, "items": sorted(items, key=lambda r: -r["friction"]), "totals": dict(tot),
+            "learned": _learned(led, ids, store), "notes": _notes(led, ids),
+            "open": sorted(ids - {r["item"] for r in items})}
+
+
+def _learned(led, ids: set[str], store: Path | None) -> list[dict]:
+    """The lessons learned from ``ids``, in their stores and ``store``."""
     learned = []
     stores = {led.items[i].store for i in ids if led.items[i].store} | ({store} if store else set())
     for st in stores:
         if st and (st / FILE).is_file():
             learned += [x for x in rows(st) if set(x["learned_from"]) & ids]
-    notes = {i: str(led.items[i].props["retro_notes"]) for i in sorted(ids) if led.items[i].props.get("retro_notes")}
-    return {"wave": wave, "items": sorted(items, key=lambda r: -r["friction"]), "totals": dict(tot),
-            "learned": learned, "notes": notes, "open": sorted(ids - {r["item"] for r in items})}
+    return learned
+
+
+def _notes(led, ids: set[str]) -> dict[str, str]:
+    """The retro notes recorded on ``ids`` (props.retro_notes), by item."""
+    return {i: str(led.items[i].props["retro_notes"]) for i in sorted(ids) if led.items[i].props.get("retro_notes")}
 
 
 def render_wave(w: dict) -> list[str]:
