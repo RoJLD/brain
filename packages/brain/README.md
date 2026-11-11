@@ -244,8 +244,8 @@ A repo plugs its own tools in through `projects.yaml` `repos[].tools` (`brain.la
 typecheck, test, coverage, format), the report file its tool writes and that report's format (SARIF, JUnit XML,
 Cobertura, lcov, coverage.py's JSON, istanbul's summary), so a TypeScript or Swift product is read through its own
 tools. The engine reads the reports and runs nothing: the project's CI or its developer writes them. `brain audit`
-measures `lang.report` for a repo that declares `tools:` (a report missing, failed tests, findings, coverage under the
-floor), and `brain standards check` counts a standard whose `adapter` slot a repo declares as covered on that repo's
+measures `lang.report` for a repo that declares `tools:` (a report missing or unreadable, failed tests, findings,
+coverage under 50 %), and `brain standards check` counts a standard whose `adapter` slot a repo declares as covered on that repo's
 language. A repo without `tools:` is read as before. See [docs/standards.md](docs/standards.md), « Language adapters ».
 
 ### The impact of a change

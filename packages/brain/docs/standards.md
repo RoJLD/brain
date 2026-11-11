@@ -90,7 +90,8 @@ plus `include`, minus `exclude`. `profiles` and `stage` go together; a project m
 - `brain brief` lists the project's applicable standards as the invariants of the item's session.
 
 The other consumers (the review lenses, the audit's standards check, the rules text, CI templates) come with
-`wi-brain-standards-registry-consumers`; the languages' adapters with `wi-brain-lang-adapters`.
+`wi-brain-standards-registry-consumers`; the languages' adapters are « Language adapters » below
+(`wi-brain-lang-adapters`).
 
 ## Language adapters
 
@@ -112,7 +113,7 @@ repos:
 | Slot | Formats it reads | What counts |
 |---|---|---|
 | `lint`, `typecheck`, `format` | `sarif`, `junit` | every SARIF result (a `note` or `none` level aside), every failed or errored case |
-| `test` | `junit` | failed and errored cases, over the cases run |
+| `test` | `junit` | failed and errored cases, over the cases run (a suite that lists no case: its own counts); none run is a finding |
 | `coverage` | `cobertura`, `lcov`, `coverage-json` (coverage.py), `istanbul-summary` (istanbul, c8) | the line coverage, in percent |
 
 A report path is relative to the repo's registered checkout and stays inside it. The engine **reads** the reports and
@@ -121,11 +122,16 @@ runs no tool: the project's CI or its developer writes them (running the declare
 TypeScript and how each writes its report; the messages quote them, nothing is assumed from them.
 
 - `brain audit` measures `lang.report` (P2, never in the scout, listed only for a repo that declares `tools:`): a
-  report missing or unreadable, failed tests, lint, type or format findings, coverage under the floor.
+  report missing or unreadable, no test run, failed tests, lint, type or format findings, coverage under 50 % (the
+  floor of `test.coverage`).
 - `brain standards check` counts a standard whose `adapter` slot a repo declares as covered on that repo's language,
   so a TypeScript repo with a `lint` report is no gap for a lint standard written for Python.
-- A slot, key or format this engine does not know is a note in read mode (a newer engine's), an error in strict mode
-  (CI); an older engine notes `tools` as an unknown repo key, and refuses it in CI's strict mode.
+- A slot, key or format this engine does not know, or a format it does not read in that slot, is a note in read mode
+  (a newer engine's; that slot is then not measured), an error in strict mode (CI); an older engine notes `tools` as
+  an unknown repo key, and refuses it in CI's strict mode.
+- Not yet: the scout, `test.coverage` and `test.links` still read Python only, and a standard's check runs only where
+  its consumer reads it (`wi-brain-standards-registry-consumers`); running the declared tools is
+  `wi-brain-lang-adapters-exec`.
 
 ## Scope and target compatibility
 

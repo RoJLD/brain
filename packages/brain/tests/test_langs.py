@@ -85,7 +85,8 @@ def test_read_says_why_a_report_cannot_be_read(tmp_path):
     ({"lint": {"format": "sarif"}}, "report is the path"),
     ({"lint": {"report": "/abs/eslint.sarif", "format": "sarif"}}, "inside the repo's checkout"),
     ({"lint": {"report": "../eslint.sarif", "format": "sarif"}}, "inside the repo's checkout"),
-    ({"test": {"report": "j.xml", "format": "sarif"}}, "format is one of junit"),
+    ({"test": {"report": "j.xml", "format": "sarif"}}, "format 'sarif' is not one of junit"),
+    ({"test": {"report": "j.xml"}}, "format is one of junit"),
     ({"lint": {"report": "x", "format": "sarif", "command": "eslint ."}}, "unknown key(s) command"),
     ({"bench": {"report": "b.json", "format": "json"}}, "unknown slot 'bench'"),
     ({"lint": {"report": "x", "format": "pylint-json"}}, "format 'pylint-json'"),
@@ -102,7 +103,9 @@ def test_a_newer_engines_slot_key_or_format_is_a_note_in_read_mode(monkeypatch, 
              "coverage": {"report": "c.xml", "format": "jacoco"}}
     assert langs.tools_errors("repos[0]", value) == []
     assert langs.declared(value) == {"lint": {"report": "x.sarif", "format": "sarif", "command": "eslint ."}}
-    assert "unknown slot 'bench'" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "unknown slot 'bench'" in err and "unknown key(s) command" in err and "format 'jacoco'" in err
+    assert langs.declared(None) == {} and langs.declared({"test": "j.xml"}) == {}
 
 
 def _registry(tmp_path, monkeypatch, repo: str) -> Path:
@@ -131,9 +134,12 @@ def test_a_repo_without_tools_is_unchanged(tmp_path, monkeypatch):
 
 def test_a_bad_tools_entry_fails_the_registry_check(tmp_path, monkeypatch):
     _registry(tmp_path, monkeypatch, "{path: ../web, tools: {test: {report: junit.xml, format: sarif}}}")
-    with pytest.raises(projects.RepoError, match="format is one of junit"):
+    with pytest.raises(projects.RepoError, match="is not one of junit"):   # strict mode, as in CI
         projects.repos_of(projects.get("demo"))
-    assert any("format is one of junit" in e for e in projects.check())
+    assert any("is not one of junit" in e for e in projects.check())
+    monkeypatch.setenv("BRAIN_STRICT", "0")   # a newer engine's format for the slot: a note, the slot not read
+    [r] = projects.repos_of(projects.get("demo"))
+    assert r.tools == {}
 
 
 # --- brain audit's lang.report ----------------------------------------------------------------------------------
@@ -180,3 +186,85 @@ def test_a_declared_slot_covers_a_standard_on_its_repos_language():
     assert standards.gaps(chosen, langs_) == ["sw-lint: its check covers py, not web (ts)",
                                               "sw-x: its check covers py, not web (ts)"]
     assert standards.gaps(chosen, langs_, {"web": {"lint"}}) == ["sw-x: its check covers py, not web (ts)"]
+
+
+def test_junit_nesting_counts_each_suites_own_cases(tmp_path):
+    nested = "<testsuite><testsuite><testcase><failure/></testcase><testcase/></testsuite></testsuite>"
+    assert langs.read_junit(_write(tmp_path, "n.xml", nested)) == (1, 2)
+    mixed = ("<testsuites><testsuite><testcase><failure/></testcase>"
+             "<testsuite><testcase/><testcase><error/></testcase></testsuite></testsuite></testsuites>")
+    assert langs.read_junit(_write(tmp_path, "m.xml", mixed)) == (2, 3)
+    bad = '<testsuite tests="x" failures=""></testsuite>'
+    assert langs.read_junit(_write(tmp_path, "b.xml", bad)) == (0, 0)
+
+
+@pytest.mark.parametrize("fmt, text, needle", [
+    ("cobertura", '<coverage line-rate="n/a"/>', "is not a number"),
+    ("cobertura", '<coverage line-rate="1.5"/>', "is not a coverage"),
+    ("coverage-json", '{"totals": {"percent_covered": NaN}}', "is not a coverage"),
+    ("istanbul-summary", '{"total": {"lines": {"pct": "Unknown"}}}', "is not a number"),
+])
+def test_a_coverage_value_that_is_no_percent_is_said(tmp_path, fmt, text, needle):
+    with pytest.raises(langs.ReportError, match=needle):
+        langs.read_coverage(_write(tmp_path, "c", text), fmt)
+    r = langs.read(tmp_path, "coverage", {"report": "c", "format": fmt})   # never a crash of the audit
+    assert needle in r.error
+
+
+def test_a_test_report_where_no_test_ran_is_said(tmp_path):
+    _write(tmp_path, "empty.xml", "<testsuites></testsuites>")
+    assert langs.read(tmp_path, "test", {"report": "empty.xml", "format": "junit"}).error == "empty.xml: no test ran"
+
+
+def test_sarif_runs_of_other_shapes_count_nothing(tmp_path):
+    f = _write(tmp_path, "s.sarif", json.dumps({"runs": ["x", {"results": None}, {"results": [{"level": "none"}]}]}))
+    assert langs.read_sarif(f) == 0
+
+
+def test_how_names_the_usual_tool_or_nothing():
+    assert "pytest --junitxml" in langs.how("py", "test") and langs.how("swift", "test") == ""
+    assert set(langs.DEFAULTS["py"]) == set(langs.SLOTS) == set(langs.DEFAULTS["ts"])
+
+
+def test_lang_report_lines_for_every_slot_state(tmp_path):
+    _write(tmp_path, "cov.xml", '<coverage line-rate="0.9"/>')
+    _write(tmp_path, "ok.xml", '<testsuite><testcase/></testsuite>')
+    tools = {"coverage": {"report": "cov.xml", "format": "cobertura"},
+             "test": {"report": "ok.xml", "format": "junit"},
+             "lint": {"report": "none.sarif", "format": "sarif", "tool": "ruff"}}
+    got = audit.lang_report({"cfg": _repo(tmp_path, tools, lang="swift")})
+    assert [f["unit"] for f in got] == ["lint:none.sarif"]   # coverage over the floor, a test passing: no finding
+    assert got[0]["why"] == "the lint report (ruff) cannot be read: no report at none.sarif"
+    assert got[0]["fix"] == "run the tool so it writes its report, or fix repos[].tools"   # no usual tool for swift
+
+
+def test_the_audit_lists_lang_report_only_for_a_repo_that_declares_tools():
+    """End to end through audit.measure: a repo with tools: is measured (its reports read from its checkout), a repo
+    without it neither measured nor listed as not measured."""
+    from test_audit import README, _found, _measure
+    files = {"README.md": README}
+    tools = {"test": {"report": "junit.xml", "format": "junit"}}
+    res = _measure({"web": files, "lab": files}, {"web": {"lang": "ts", "tools": langs.declared(tools)}})
+    assert _found(res, "web")[("lang.report", "test:junit.xml")] == "P2"
+    assert not any(c == "lang.report" for c, _ in _found(res, "lab"))
+    lab = next(r for r in res["repos"] if r["name"] == "lab")
+    assert "lang.report" not in [x["check"] for x in lab["not_measured"]]
+
+
+def test_brain_standards_check_counts_a_declared_slot(tmp_path, monkeypatch, capsys):
+    from brain import cli
+    folder = tmp_path / "engine"
+    folder.mkdir()
+    (folder / "sw.yaml").write_text(json.dumps({"v": 1, "catalog": "sw", "title": "t", "rows": [
+        {"id": "sw-lint", "domain": "q", "statement": "Lint.", "profiles": ["cli"], "stage": "mvp",
+         "enforcement": "check", "check": "a linter", "adapter": "lint", "languages": ["py"], "status": "proposed"},
+        {"id": "sw-types", "domain": "q", "statement": "Types.", "profiles": ["cli"], "stage": "mvp",
+         "enforcement": "check", "check": "a type checker", "adapter": "typecheck", "languages": ["py"],
+         "status": "proposed"}]}), encoding="utf-8")
+    monkeypatch.setattr(standards, "ENGINE_DIR", folder)
+    _registry(tmp_path, monkeypatch, "{path: ../web, lang: ts, tools: {lint: {report: e.sarif, format: sarif}}}")
+    reg = tmp_path / "brain" / "projects.yaml"
+    reg.write_text(reg.read_text(encoding="utf-8") + "  standards: {profiles: [cli], stage: mvp}\n", encoding="utf-8")
+    assert cli.main(["--project", "demo", "standards", "check", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["gaps"] == ["sw-types: its check covers py, not web (ts)"]   # sw-lint: through the lint slot

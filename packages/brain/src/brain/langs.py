@@ -25,6 +25,7 @@ the docs and the messages only: nothing is assumed from them.
 from __future__ import annotations
 
 import json
+import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,7 +34,7 @@ from . import schema
 
 SLOTS = ("lint", "typecheck", "test", "coverage", "format")
 FORMATS = {
-    "sarif": "SARIF 2.1 (lint, type and format findings): every result counts",
+    "sarif": "SARIF 2.1 (lint, type and format findings): every result counts, a level of note or none aside",
     "junit": "JUnit XML (tests, or findings a tool reports as failed cases): failures and errors count",
     "cobertura": "Cobertura XML coverage: the root's line-rate",
     "lcov": "an lcov trace: lines hit over lines found",
@@ -111,10 +112,11 @@ def _entry_errors(where: str, slot: str, spec, strict: bool | None, notes: list[
     elif Path(spec["report"]).anchor or ".." in Path(spec["report"]).parts:
         errors.append(f"{where}: report is a path inside the repo's checkout")
     fmt = spec.get("format")
-    if fmt not in SLOT_FORMATS[slot]:
+    if not isinstance(fmt, str) or not fmt:
+        errors.append(f"{where}: format is one of {', '.join(SLOT_FORMATS[slot])}")
+    elif fmt not in SLOT_FORMATS[slot]:   # a newer engine may read it in this slot: a note in read mode
         errors += schema.tolerate(f"{where}: format {fmt!r} is not one of {', '.join(SLOT_FORMATS[slot])}",
-                                  strict, notes) if isinstance(fmt, str) and fmt not in FORMATS \
-            else [f"{where}: format is one of {', '.join(SLOT_FORMATS[slot])}"]
+                                  strict, notes)
     return errors
 
 
@@ -143,20 +145,19 @@ def _int(value) -> int:
 
 
 def read_junit(path: Path) -> tuple[int, int]:
-    """(failed, run) of a JUnit XML report: failures and errors over tests, skipped left out of neither."""
+    """(failed, run) of a JUnit XML report: the cases with a failure or an error, over the cases (a skipped case is
+    run, never failed). Each suite counts its own cases, nested suites theirs; a suite that lists no case and holds
+    no suite gives its tests, failures and errors attributes instead."""
     root = _xml(path)
     if root.tag not in ("testsuite", "testsuites"):
         raise ReportError(f"not JUnit XML (root <{root.tag}>)")
-    suites = [root] if root.tag == "testsuite" else root.iter("testsuite")
     failed = run = 0
-    for s in suites:
-        if any(child.tag == "testsuite" for child in s):
-            continue   # a nesting suite: its leaves count
-        cases = list(s.iter("testcase"))
+    for s in root.iter("testsuite"):   # the root itself first when it is a suite
+        cases = s.findall("testcase")
         if cases:
             run += len(cases)
             failed += sum(1 for c in cases if c.find("failure") is not None or c.find("error") is not None)
-        else:
+        elif s.find("testsuite") is None:
             run += _int(s.get("tests"))
             failed += _int(s.get("failures")) + _int(s.get("errors"))
     return failed, run
@@ -185,7 +186,7 @@ def read_coverage(path: Path, fmt: str) -> float:
         root = _xml(path)
         if root.tag != "coverage" or root.get("line-rate") is None:
             raise ReportError("not Cobertura XML (no <coverage line-rate>)")
-        return round(float(root.get("line-rate")) * 100, 2)
+        return _percent(root.get("line-rate"), "Cobertura XML (line-rate)", 100)
     if fmt == "lcov":
         found = hit = 0
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -197,12 +198,23 @@ def read_coverage(path: Path, fmt: str) -> float:
             raise ReportError("not an lcov trace (no LF: line)")
         return round(100 * hit / found, 2)
     data = _json(path)
+    key = "totals.percent_covered" if fmt == "coverage-json" else "total.lines.pct"
     try:
         value = data["totals"]["percent_covered"] if fmt == "coverage-json" else data["total"]["lines"]["pct"]
-        return round(float(value), 2)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ReportError(f"not {fmt} (no {'totals.percent_covered' if fmt == 'coverage-json' else 'total.lines.pct'})"
-                          ) from exc
+    except (KeyError, TypeError) as exc:
+        raise ReportError(f"not {fmt} (no {key})") from exc
+    return _percent(value, f"{fmt} ({key})")
+
+
+def _percent(value, what: str, scale: float = 1) -> float:
+    """A coverage value as a percent of 0 to 100; :class:`ReportError` for anything else (text, NaN, out of range)."""
+    try:
+        pct = float(value) * scale
+    except (TypeError, ValueError) as exc:
+        raise ReportError(f"not {what}: {value!r} is not a number") from exc
+    if not math.isfinite(pct) or not 0 <= pct <= 100:
+        raise ReportError(f"not {what}: {value!r} is not a coverage")
+    return round(pct, 2)
 
 
 def read(checkout: Path, slot: str, spec: dict) -> Result:
@@ -222,6 +234,9 @@ def read(checkout: Path, slot: str, spec: dict) -> Result:
             out.count = read_sarif(path)
     except (ReportError, OSError) as exc:
         out.error = f"{spec['report']}: {exc}"
+    else:
+        if slot == "test" and not out.total:
+            out.error = f"{spec['report']}: no test ran"
     return out
 
 

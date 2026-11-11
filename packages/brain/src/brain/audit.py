@@ -108,7 +108,7 @@ CHECKS = {c.id: c for c in (
           "does not run"),
     # opt-in (wi-brain-lang-adapters): measured only for a repo that declares repos[].tools (brain.langs)
     Check("lang.report", "P2", "never", "a report a repo's own tool writes (repos[].tools) is missing or unreadable, "
-          "or says failed tests, lint, type or format findings, or coverage under the floor"),
+          f"or says no test ran, failed tests, lint, type or format findings, or coverage under {COVERAGE_FLOOR:g} %"),
     Check("doc.links", "P2", "new+left", "a doc no section of which documents a graph node, or a spec no Spec node "
           "anchors"),
     Check("test.links", "P2", "never", "a test module no graph node is tested_by (no Hook, and no node implemented_by "
