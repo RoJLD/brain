@@ -1,0 +1,28 @@
+{
+  "schema": "brain.status/v1",
+  "health": "ok",
+  "inventory": {
+    "cpu": {"model": "Example CPU 8-Core", "cores": 16, "avx2": true, "avx512": false},
+    "memory": {"total_bytes": 34359738368, "free_bytes": 17179869184},
+    "gpus": [
+      {"vendor": "nvidia", "name": "Example GPU 12GB", "vram_bytes": 12884901888, "vram_free_bytes": 10737418240,
+       "utilization_percent": 3, "source": "nvidia-smi"}
+    ],
+    "inference": {"backend": "cuda", "available": ["cuda", "cpu"]},
+    "load": {"load1": null},
+    "platform": {"os": "windows", "distro": "", "version": "10.0.26100", "arch": "amd64"}
+  },
+  "brain": {
+    "v": 1,
+    "machine": "box1",
+    "at": "2026-11-11T12:00:00Z",
+    "tools": {"python": "3.12.7", "git": true, "bash": true, "docker": false},
+    "container": {"runtime": null, "client": null, "server": null},
+    "kube": {"kubectl": false, "context": null},
+    "disks": [{"for": "brain_home", "path": "D:\\brain-home", "free_bytes": 107374182400,
+               "total_bytes": 512110190592}],
+    "brain_home": {"path": "D:\\brain-home", "bytes": 52428800, "complete": true},
+    "encryption": [],
+    "probes": {"cpu": {"ok": true, "seconds": 0.05}, "gpus": {"ok": true, "seconds": 0.4}}
+  }
+}
