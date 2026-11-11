@@ -8,9 +8,7 @@ import urllib.error
 from datetime import datetime, timedelta, timezone
 
 import pytest
-
 from brain import alerts, net, notify, outbox, projects
-
 from test_notify import ENV, LEVELS, _cfg, _msg
 
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)

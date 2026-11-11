@@ -107,38 +107,37 @@ def replay(handlers: Mapping[str, Handler], *, now: datetime | None = None, dry_
     state = stateio.load(path(), aside=not dry_run)
     if not state.data:
         return []
-    lines: list[str] = []
-    changed = False
     due = sorted((e.get("at") or "", k) for k, e in state.data.items()
-                 if isinstance(e, dict) and e.get("kind") in handlers and (_at(e.get("next")) or now) <= now)
-    for _, key in due[:limit]:
-        e = state.data[key]
-        kind = e["kind"]
-        if dry_run:
-            lines.append(f"outbox: would send {kind} {key} (queued {e.get('at')}, tried {e.get('tries', 0)})")
-            continue
-        try:
-            detail = handlers[kind](e.get("payload") or {})
-        except Exception as exc:  # noqa: BLE001 (a handler's failure keeps the entry for the next pass)
-            e["tries"] = int(e.get("tries") or 0) + 1
-            e["why"] = str(exc).splitlines()[0][:200] if str(exc) else type(exc).__name__
-            queued = _at(e.get("at")) or now
-            if e["tries"] >= MAX_TRIES or now - queued > MAX_AGE:
-                del state.data[key]
-                lines.append(f"outbox: gave up {kind} {key} after {e['tries']} tries since {e.get('at')}: {e['why']}")
-            else:
-                e["next"] = _iso(now + timedelta(seconds=wait(e["tries"] + 1)))
-                lines.append(f"outbox: {kind} {key} not sent ({e['why']}); next try after {e['next']}")
-        else:
-            del state.data[key]
-            lines.append(f"outbox: sent {kind} {key} queued {e.get('at')}" + (f" ({detail})" if detail else ""))
-        changed = True
-    if changed:
+                 if isinstance(e, dict) and e.get("kind") in handlers and (_at(e.get("next")) or now) <= now)[:limit]
+    if dry_run:
+        return [f"outbox: would send {state.data[k]['kind']} {k} (queued {state.data[k].get('at')}, tried "
+                f"{state.data[k].get('tries', 0)})" for _, k in due]
+    lines = [_try(state.data, key, handlers, now) for _, key in due]
+    if lines:
         try:
             stateio.save(state)
         except (stateio.StateError, OSError) as exc:
             lines.append(f"outbox: not saved ({exc})")
     return lines
+
+
+def _try(data: dict, key: str, handlers: Mapping[str, Handler], now: datetime) -> str:
+    """Hand entry ``key`` to its handler: dropped when it returns, given up or put back with a later try when it
+    raises; the line that says which."""
+    e = data[key]
+    kind = e["kind"]
+    try:
+        detail = handlers[kind](e.get("payload") or {})
+    except Exception as exc:  # noqa: BLE001 (a handler's failure keeps the entry for the next pass)
+        e["tries"] = int(e.get("tries") or 0) + 1
+        e["why"] = str(exc).splitlines()[0][:200] if str(exc) else type(exc).__name__
+        if e["tries"] >= MAX_TRIES or now - (_at(e.get("at")) or now) > MAX_AGE:
+            del data[key]
+            return f"outbox: gave up {kind} {key} after {e['tries']} tries since {e.get('at')}: {e['why']}"
+        e["next"] = _iso(now + timedelta(seconds=wait(e["tries"] + 1)))
+        return f"outbox: {kind} {key} not sent ({e['why']}); next try after {e['next']}"
+    del data[key]
+    return f"outbox: sent {kind} {key} queued {e.get('at')}" + (f" ({detail})" if detail else "")
 
 
 def status(now: datetime | None = None) -> dict:

@@ -563,16 +563,21 @@ def send(cfg: Config, msg: Message, *, only: list[str] | None = None, dry_run: b
         res.status = "dry-run"
     else:
         res.status = "delivered" if any(a.outcome == "sent" for a in res.attempts) else "failed"
-        key = outbox.key_of("notify", *_fields(msg, only).values())
-        if res.status == "delivered":
-            outbox.drop(key)
-        elif queue and any(a.again for a in res.attempts):
-            why = "; ".join(f"{a.channel}: {a.detail}" for a in res.attempts if a.outcome == "failed")
-            note = outbox.put("notify", key, _fields(msg, only), why, now=now)
-            res.queued = not note
-            if note:
-                res.attempts.append(Attempt("outbox", "failed", note))
+        _outbox(res, msg, only, queue, now)
     return res
+
+
+def _outbox(res: Result, msg: Message, only: list[str] | None, queue: bool, now: datetime) -> None:
+    """Delivered: drop a queued copy of ``msg``; failed because a channel was down: queue it (brain.outbox)."""
+    key = outbox.key_of("notify", *_fields(msg, only).values())
+    if res.status == "delivered":
+        outbox.drop(key)
+    elif queue and any(a.again for a in res.attempts):
+        why = "; ".join(f"{a.channel}: {a.detail}" for a in res.attempts if a.outcome == "failed")
+        note = outbox.put("notify", key, _fields(msg, only), why, now=now)
+        res.queued = not note
+        if note:
+            res.attempts.append(Attempt("outbox", "failed", note))
 
 
 def _fields(msg: Message, only: list[str] | None) -> dict:
