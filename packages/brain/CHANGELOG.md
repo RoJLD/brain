@@ -2,6 +2,252 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## 0.3.2 — 2026-11-11 — Standards, contracts and resilience
+
+### Upgrade
+
+1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
+2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
+3. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
+   push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
+
+Nothing to run for the rest. What this release could newly refuse or newly run is off until the owner turns it on, each
+an optional key, default off: `engine.verify_tags` (signed release tags), `session_archive.enabled` (the session
+archive, which also needs gitleaks), `integrity.sidecars` (sha256 sidecars of the truth-local stores), `modules.store`
+(a module registry read in another store) and a project's `standards:` in `projects.yaml` (the standards it follows).
+
+### Added
+
+- The module registry's map of realisations (`brain.modulemap`): a `modules.yaml` entry can carry hand-written
+  fields beside the document ones (`wanted`, `capabilities`, `depends_on`, `uses`, `ai`, `realized_by` with each
+  realisation's project, kind, what, paths, ref, licence, state, contract, ships_in and retire, and `map_review`),
+  described by the new registered format `schemas/modules.schema.json`. On the store that keeps the registry,
+  `brain modules --check` (exit 1) and `brain check` (a warning) validate an entry that carries `realized_by` or
+  `map_review`, and only such an entry: its shape, the module ids it names, the capabilities (`tiers.yaml`), the
+  projects (the projects registry), the paths of a realisation that exists at their ref when the project's
+  checkout is on the machine, a wanted module with neither a realisation nor an open item; a wanted module with no
+  item done or open and no realisation that exists, 90 days after its `since`, is a warning. The view gains the
+  realisations, the map's gaps and the declared dependencies still to classify, and `brain modules --json` gains
+  `map` and `map_problems`. A registry with no entry that carries the map, and its view, are unchanged.
+- `brain perf --usage [--since 28d] [--top N] [--json]`: command adoption at zero token (`brain.adoption`). The CLI
+  registry crossed with the engine's exec ledger (runs per command and subcommand, split into those a session typed
+  and the others: a hook, a scheduled task, a script; the commands that never ran), with a mini scan of this
+  machine's transcripts (hand reads of a brain's graph, decision logs, journals and views that a read command
+  answers; hand edits of the files a command writes) and with the features (a have feature whose commands never
+  ran). Each gap comes with what to propose: the read hint, a hook wiring, a procedure line, or wire, document or
+  retire; nothing is refused (`wi-brain-command-adoption`).
+- `brain <project> <subcommand> ...`: a project's command plugin, named under its `plugin` key in `projects.yaml`
+  (reserved until now), runs its subcommands (`brain.plugins`). The value is an entry point of the group
+  `brain.plugins` or `module:attr`; the plugin is a command module (`register` and `run`, as brain's own) or a
+  callable `main(argv)`, so a project's own CLI plugs in unchanged and stays a shortcut of `brain <project>`.
+  `brain --help` lists the plugged projects without importing them; a plugin that cannot load fails its own run only
+  (exit 2); `brain check --all` reports a `plugin` that is neither empty nor a string and a project named like one
+  of brain's commands, whose plugin would never run. A registry without the key, or with `plugin: null`, behaves as
+  before (`wi-brain-command-plugins`).
+- External formats under contract (`wi-brain-external-contracts`, docs/formats.md « External formats »): the capture
+  hook counts the keys of Claude Code's hook payloads it does not know or misses, and the Stop hook the transcript
+  records of an unknown type or without a key it reads, in `ledger/contracts.json`; a first sighting goes to
+  `errors.log` and the next SessionStart health names it once, and nothing is refused. The status document that
+  `brain doctor --json` prints is published as `schemas/status.schema.json`, a new format (`status`) with its fixtures
+  in `tests/fixtures/formats/status/v1/`: any contract id of config.json `inventory.schema`'s pattern, default
+  `brain.status/v1`. Real-shaped fixtures of each captured hook payload and of a transcript are in
+  `tests/fixtures/claude/`.
+- Negative controls for the stranger test's harness: `stranger_test.py --fault rewrite|truncated-ledger|unreached|wrong-engine`
+  injects one fault into the upgrade test, and `pytest -m harness` (CI's `harness-controls` job, on a pull request that
+  touches the harness) requires each a no-go at the step that guards against it, and the run without a fault a go; a
+  test refuses an engine workflow step that writes a command substitution to `GITHUB_OUTPUT` without testing that it is
+  not empty (`wi-brain-harness-negative-controls`; docs/formats.md, « Negative controls »).
+- The hook contract between the bash hooks and Python (`wi-brain-hook-contracts`, docs/formats.md « The hook
+  contract »): `brain sync` renders `hooks/contract.txt` beside the plugin's hooks (config.json's rules and the
+  engine's version as flat lines), which `inject-rules.sh` reads instead of the first `"rules"` array in config.json's
+  text; the budget and announce `.mark` files and `cache/node-clis.txt` end with a format line that today's bash
+  checks (another format starts Python), after the lines an older plugin copy reads, so its bash keeps working; each
+  hook passes its `brain_version` to Python, and the SessionStart health says when the session's hooks and the engine
+  differ. Every hook now spells `<BRAIN_HOME>` as Python does on Windows (`%USERPROFILE%\.brain` before `$HOME`), and
+  the health says when two `.brain` folders exist.
+- Integrity of the engine's truth-local state files, opt-in (config.json `integrity.sidecars: true`, or
+  `BRAIN_STATE_INTEGRITY=1`; off by default): each save through `brain.stateio` writes a sha256 sidecar beside the
+  file (`<name>.sha256`: the hash, size and mtime) and each load checks it. A file whose size and mtime match but whose
+  hash does not (bit rot) is set aside with a note (the copy kept, never saved over); one another writer changed since
+  (an older engine) loads and gets a fresh sidecar; a missing sidecar loads as before (`wi-brain-integrity-checks`).
+- Language adapters (`wi-brain-lang-adapters`, [docs/standards.md](docs/standards.md), « Language adapters »): a repo
+  declares the reports its own tools write in a new optional `projects.yaml` key, `repos[].tools` (`{lint|typecheck|
+  test|coverage|format: {report, format, tool}}`; formats SARIF, JUnit XML, Cobertura, lcov, coverage.py's JSON,
+  istanbul's summary); `repos[].lang` does not change. The engine reads the reports and runs no tool. `brain audit`
+  measures a new check, `lang.report` (P2, ruleset 8), for a repo that declares `tools:` only: a report missing or
+  unreadable, no test run, failed tests, lint, type or format findings, coverage under 50 %. The scout,
+  `test.coverage` and `test.links` still read Python only. `brain standards check` counts a
+  standard whose `adapter` slot a repo declares as covered on that repo's language. A repo without `tools:` is read
+  as before: nothing is newly refused. An older engine notes `tools` as an unknown repo key (refused in CI's strict
+  mode), so the key lands in a registry once its CI runs this engine.
+- The module map reads the features and the done items too (`wi-brain-module-backfill`): in a store with
+  `modules.yaml`, `brain modules` counts how many features and done items carry a `props.module` (the view's new line,
+  `--json`'s `features`, `features_unplaced`, `done_items`, `done_unplaced`, `warnings`), and `brain check` warns,
+  never fails, about one with no module, `none` without its reason, or a module the registry does not know;
+  `brain modules --check` lists them as warnings, its exit code still the open items' only. The public render of
+  `FEATURES.md` never shows the Module column (the module ids are the owner's platform's): a public `FEATURES.md` an
+  earlier engine rendered with it, and `notes/modules_graph.md` (its new line), are stale until the next `brain sync`.
+  The technical reference reads these modules.
+- The module registry can be kept in another store and imported from the platform's documents
+  (`wi-brain-module-registry-import`). `config.json` `modules.store` (optional, default none) names the store of the
+  projects registry whose `modules.yaml` a store without its own reads (`<project>:<store>` or a project's name;
+  only the stores under `config.json`'s folder): its items keep their module checks, and its view names that
+  registry. An imported entry (`source` a list of documents, or `imported` a day) is validated by
+  `brain modules --check` and warned of by `brain check`: its document fields, the documents read with their dates,
+  the day of the import, the dependencies it declares; a hand entry is checked as before. The view of a registry with imported entries gains
+  the generated counts (in the tree, proposed, by brick), the documents read and the divergences the import
+  reported; `brain modules --diff [REF]` says what changed since the registry at a git ref (modules added and
+  removed, document fields and hand fields changed). The engine never reads the documents: an agent session writes
+  the import. A registry with no imported entry, and its view, are unchanged. Turning `modules.store` on is the
+  owner's opt-in to the module checks on the stores that then read it: their view is written by the next
+  `brain sync` (stale until then, an error of `brain check` under `views.strict`).
+- **External calls retry, then step aside** (`wi-brain-net-resilience`). One helper, `brain.net`, now carries the
+  engine's calls to GitNexus (its API and MCP endpoint), docker in `brain index`, the ntfy and Telegram channels and
+  `git ls-remote` (the update check, `brain tidy --remote`): a read that fails quickly (refused or reset, a DNS
+  miss, an HTTP 429/502/503/504) is tried again twice with exponential backoff and full jitter, a POST only when it
+  was surely not handled (refused, 429, 503: nothing is sent twice), a timeout never. A call that finds its service
+  down (a timeout, a connection that still fails) opens the service's circuit breaker for 5 minutes
+  (`<BRAIN_HOME>/net/breakers.json`, store `net`, sealed, truth-local): its next calls are skipped at once and said
+  in one line, so a service that is down costs one timeout per window. An HTTP status is an answer and never opens
+  it; `brain update` reads the tags even with it open; `BRAIN_NET_BREAKER=off` tries every call for a run. A call
+  that succeeds behaves as before.
+- **A failed notification waits in the outbox instead of being lost** (`wi-brain-outbox`). When no channel delivers
+  because none was reached (refused, a DNS miss, HTTP 429/503, its breaker open), `brain notify send`, a blocking
+  decision's notification and an alert's `resolved` message are kept in the sealed local outbox
+  (`<BRAIN_HOME>/outbox/queue.json`, store `outbox`, sealed, truth-local) under an idempotency key made of their
+  content: queued once, dropped when the same message is delivered later, replaced by a newer message of the same
+  key. A timeout or a reset is not queued (the message may have arrived). Every alerts pass sends what is due again,
+  after 5 minutes, then twice as long each time (at most 6 h, full jitter), and gives an entry up after 12 tries or
+  7 days. A refusal (HTTP 401) is not queued; nor is an open alert (the pass already sends it again) or the quiet
+  mode's summary (it stays held). `brain notify status` says how many wait.
+- Generated READMEs (`wi-brain-readme-sync`): a repo opts in by holding `readme.yaml` at its root (a new format,
+  `schemas/readme.schema.json`: what the repo is, why, how to start, its notes, the commands its README quotes).
+  `brain docs render [--write [--force]] [--repo R] [--dir PATH]` writes its `README.md` from the engine's template
+  and the facts of their sources (the features recap with a link to the repo's `FEATURES.md`, written too; each
+  quoted command's usage from its `--help`; a private repo's active specs, recent ADRs and pending milestones), a
+  public repo's render neutral. `brain docs check` exits 1 when `readme.yaml` misses a field, a quoted command is
+  gone, or `README.md` is not the render; `brain check` runs it (a stale README is a stale view), `brain audit`
+  measures `readme.yaml` and `help.quoted` in an opted-in repo, and close-item renders and checks it. A repo without
+  `readme.yaml` is never read: nothing is newly refused. An existing `notes/audit.md` changes its not-measured lines
+  (`readme.yaml` and `help.quoted` say « not opted in », `help.quoted` now for every repo) at its next
+  `brain audit --write`.
+- The release preview: CI's advisory `release-preview` job runs `release_check.py --preview --base origin/<target>` on
+  every engine PR, the version policy applied as if the next release were a patch of the last tag. It names the
+  registered schemas that moved since that tag and the pending Upgrade fragments' steps beyond the standard ones, says
+  « a patch » or « a minor » and which reasons the PR carries, in the job's summary, and exits 0 whatever it says.
+  `release-check` now also refuses, on every PR, a standard step that two pending Upgrade fragments ask, so a PR's
+  fragment never copies the standard steps again (`wi-brain-release-preview`, docs/release.md « The release preview »).
+- Signed engine releases (STD-3): `brain update` and the installer verify a release tag with `git verify-tag` before
+  installing it, against the keys of `members.yaml`'s new `releaser` role, through `allowed_signers`, a file
+  `brain identity allowed-signers --write` generates beside `config.json` (namespace `git`; the installer reads the
+  file, `brain update` the keys themselves when the brain has a `members.yaml`). After the install, the commits pip
+  recorded are compared with the one the signed tag names (a tag moved meanwhile is said). Both say the verification
+  either way and refuse nothing by default; `config.json` `engine.verify_tags: true`, an optional key, refuses an
+  unsigned tag, one signed by another key, or one that cannot be verified. `brain check` warns when `allowed_signers`
+  is no longer what `members.yaml` gives. CI's `release-tag` job says whether the tag is signed, advisory. The release
+  checklist signs each tag (`git tag -s`, docs/release.md « 3. The tag »); the owner's key and its setup:
+  docs/identity.md « Signed releases » (`wi-brain-release-signing`).
+- `brain session-archive run [--dry-run] [--max N]`, opt-in (`session_archive.enabled` in config.json, off by default;
+  no scheduled task is created): the agents' transcripts (Claude Code's sessions and their subagents, quiet for 2
+  hours, changed since archived) copied line by line with each row a residency filter matches replaced by a stub
+  (`session_archive.resident`, `{name: regex}`: the owner's patterns, the engine names no source), scanned by the
+  engine's secret patterns then by gitleaks, each line it reports dropped and a second pass required clean, then sealed
+  into the spool (`brain.spool.put`, store `session-archive`, class sealed, a new engine store) and indexed by session
+  record in `$BRAIN_HOME/session-archive/index.json` (machine of origin, the session's place in the tree, what was
+  dropped). gitleaks absent or failing: nothing is archived. `--dry-run` lists what would be archived and dropped and
+  seals nothing. `brain session-archive status`; `brain health session-archive` gives the age of the last archive
+  (`wi-brain-session-archive`).
+- The software catalog of the standards registry (`wi-brain-standards-catalog-software`, `catalogs/software.yaml`,
+  [docs/standards.md](docs/standards.md)): 90 standards for code products in ten domains (architecture, code
+  quality, concurrency, persistence, distributed systems, security, testing, release, observability, data governance
+  and developer experience), each with its profiles, the stage it is required from, how it is enforced and by what
+  check, the languages that check covers and how the Brain itself meets it. Every row is proposed until the owner
+  validates its domain. A project follows them only once it opts in (`projects.yaml` `standards:`): nothing is
+  newly refused.
+- The standards registry (`wi-brain-standards-registry`, [docs/standards.md](docs/standards.md)): standards as data,
+  one row per standard (its domain, statement, the profiles it applies to, the stage it is required from, how it is
+  enforced and by what check, the languages that check covers, how the Brain itself meets it, proposed or
+  validated), in catalogs of a new format (`schemas/standards.schema.json`, `v: 1`): the engine's own under
+  `src/brain/catalogs/`, and a brain's local ones that a project names. A project opts in with a new optional
+  `projects.yaml` key, `standards: {profiles, stage, include, exclude, catalogs}`. `brain standards list|show|check`
+  reads them (`check` exits 1 on a broken catalog, an id found twice or an unknown profile, stage or id, and lists
+  the applicable standards whose check does not cover a repo's language); `brain check --all` checks every
+  project's `standards:`, and `brain brief` lists the project's applicable standards as its invariants. A project
+  without the key follows none: nothing is newly refused. A brain older than this one notes `standards:` as an
+  unknown key (refused in CI's strict mode), so the key lands in a registry once its CI runs this engine.
+- `brain spool push`, run by hand: the sealed local spool of the stores that leave the machine (`$BRAIN_HOME/spool`,
+  a new engine store, class sealed). It seals each changed store of its set (`spool.stores`, else the ledger, the
+  usage and the session records) through `brain vault` after a secret scan, refuses a store whose class never leaves
+  the machine, seals a store again when its recipients change, sends what waits to `spool.remote` when one is set (a
+  folder), each copy checked by sha256, and keeps the last 3 snapshots per store. `brain spool status` and `verify`;
+  `brain health spool` gives the age of the last push without an error. The `spool` block of config.json is optional
+  and additive; nothing runs until a first push (`wi-brain-storage-split`).
+- The technical reference, generated (`wi-brain-technical-reference`): `brain reference [--write]` writes
+  `docs/reference/`, an index of the modules of the store's `modules.yaml` and one page per module (what it does from
+  its features; the decisions in force on its nodes, from the answered DDRs with the earlier ones folded, an ADR no DDR
+  went to by its title, a superseded one marked; the rules its items deliver, its specs, items done and open, open
+  questions), and counts the decisions no module holds; without `--write` it exits 1 when the folder is not the
+  render. Once the owner opted in (`brain reference --write`: the project's own render in `docs/reference/`), `brain
+  sync` writes it again and `brain check` warns when it is stale on the default branch; a brain without it is not
+  concerned, and a page there that is not generated is never overwritten. `brain reference --public --repo R --out DIR` renders a
+  public repo's neutral reference by feature domain from its features only, written only when
+  `brain check --public` would refuse none of it; the engine's own is in `docs/reference/`.
+- `brain wave plan [X.Y.Z] [--at-once N] [--hot NAME]... [--json]`: a wave's lots at zero token (`brain.lots`). The
+  open items whose predicted surface (`brain collisions`') shares a file go into one lot, run in the order of their
+  `depends_on`; hot files (READMEs, CHANGELOGs, `formats.md`, `FEATURES.md`, `config.schema.json`, `changes/`) are
+  counted apart. A lot that holds another's prerequisite comes a round earlier, the lots that unblock the most first,
+  at most the sessions cap in force less the master's and the PRs verified at once (3) a round. It prints the
+  predicted conflicts, the hot files shared, the items with no known surface and what the memory guard and the last
+  quota forecast say now, and refuses nothing; `brain next` shows the current wave's first round
+  (`wi-brain-wave-lot-planner`).
+
+### Fixes
+
+- `changelog.py compile` puts a blank line before a fragment that is not a list when it follows another in the same
+  section, so a closing Upgrade paragraph such as « Nothing to run for the rest » no longer joins the last numbered
+  step; a list after a list still continues it (`wi-brain-changelog-prose-fragment`).
+- `brain` no longer raises `UnicodeEncodeError` when its output goes to `NUL` on Windows (`brain items --text x >
+  NUL`): `NUL` reports `isatty()` true in the ANSI code page, so the CLI now switches stdout and stderr to UTF-8 with
+  `errors=replace` whenever a stream's encoding is not UTF-8, not only when it is not a terminal; a UTF-8 console is
+  left alone (`wi-brain-nul-stdout-encoding`).
+- `brain retro --wave` reads the numbered waves: `--wave 0.3.2` (or `wave-0.3.2`) takes the items `part_of` that
+  wave and those carried to it by `props.carried_to` (not those carried out of it), with the items whose free-text
+  `props.wave` names it, a comma after the release included (`0.3.2, week of ...`); the deep retro of 0.3.1 found no
+  item. It also lists the retro notes recorded on the wave's items (`props.retro_notes`, a `notes` key in `--json`)
+  (`wi-brain-retro-numbered-waves`).
+
+### Changes
+
+- The three append-only files that grew with no retention are logs of their own now (`stateio.LOG_RETENTION`):
+  `usage/starts.jsonl` (the governor's brainstorm starts, 2 months) and `usage/quota.jsonl` (the quota readings, 12
+  months) rotate monthly into `<stem>-YYYY-MM.jsonl` like `errors.log`, and the notifications' audit
+  (`notify/YYYY-MM.jsonl`) drops the months past 6. `quota.load_readings` reads every monthly file, the governor the
+  live file and the newest month, so the month's turn hides nothing (`stateio.log_files`). An older engine after a
+  rollback reads only the live file: less history, and its `--observe` may ask for `--resets` until a weekly
+  reading is noted again (`wi-brain-logs-unclassified`).
+- The read hint starts only on a likely hit (`wi-brain-read-hint-matcher`): its hooks in the core plugin's
+  `hooks.json` are split per tool, each Read, Bash and PowerShell hook gated by an `if` condition naming the brain
+  files it hints about (`Read(//**/journal.md)`, `Bash(*decisions.md*)`...), so a call that names none starts no
+  bash at all; Grep's path is a folder or a glob, which a permission rule cannot match, so a Grep call still starts
+  it. The rules do not overlap: a call that names one brain file starts it once. Before, every such call started
+  bash (on one machine, 4,854 of 4,981 runs in a week stopped at its fast path, about 85 ms each on Windows). The
+  conditions only narrow: the bash fast path and the Python hint decide as before, and the hint stays opt-in
+  (`config.json` `hints.read`); `brain sync` renders the new `hooks.json`.
+- Before `brain permissions render --write` writes a settings file of a git work tree (a project's
+  `.claude/settings.json`, its untracked `settings.local.json`), it backs the file up under
+  `$BRAIN_HOME/backup/<project>-<key>/<its folder>` (the sealed backup store, keyed by the repo's path; the last 10
+  copies per file, none when nothing changed), never as a `.bak` beside it, so git status stays clean; an untracked
+  `.bak` an older engine left beside it moves there too. `~/.claude/settings.json` is backed up beside itself as
+  before (`wi-brain-settings-backup-home`).
+- An edge of a store listed after its project's first may name an ADR or SDR stub that first store derives (an item
+  of a second store `decided_by` an ADR of `notes/decisions.md`): `brain sync` and `brain check` accept it and
+  research_graph resolves it in the first store, as any edge between stores (`--foreign-store`). The 0.3.0 rule that
+  refused it (« that ADR stub is notes/graph's only ... move the edge ») is dropped, with its error: it only stops
+  refusing (`wi-brain-shared-root-stub-rule-drop`). An engine before 0.3.2 still refuses such an edge: write one only
+  once every machine of the brain runs 0.3.2 (`brain update`).
+
 ## 0.3.1 — 2026-11-10 — Opt-in guards, read commands and identity
 
 ### Upgrade
