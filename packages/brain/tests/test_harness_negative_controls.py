@@ -4,11 +4,11 @@ be a no-go, failing at the step meant to catch it and at no other; the same run 
 no-goes would prove nothing either. The skeptic review of brain #52 found seven false greens in this harness.
 
 The fast tests here run in the default suite (the seams on a brain built by hand, the missing tag). The reruns
-install the engine several times each (the last tag from GitHub, this checkout, then back): about 5 minutes each,
+install the engine several times each (the last tag from GitHub, this checkout, then back): about 10 minutes each,
 skipped unless selected with ``-m harness``; CI's ``harness-controls`` job runs them on a pull request that touches
 the harness (docs/formats.md, « Negative controls »):
 
-    pytest packages/brain/tests/test_harness_negative_controls.py -m harness -n 6
+    pytest packages/brain/tests/test_harness_negative_controls.py -m harness -n 3
 """
 
 import importlib.util
@@ -70,8 +70,10 @@ def _brain(st, tmp_path):
 
 @pytest.mark.parametrize("fault, changed", [("rewrite", "config.json"), ("truncated-ledger", "exec-2026-11.jsonl")])
 def test_the_no_loss_check_catches_each_injected_loss(st, tmp_path, fault, changed):
-    root, home, _ = _brain(st, tmp_path)
+    root, home, ledger = _brain(st, tmp_path)
     before = st.snapshot([root, home / ".brain" / "ledger"])
+    with ledger.open("a", encoding="utf-8") as fh:      # the older engine's reads append their events after it
+        fh.write('{"v":1,"kind":"exec","task":"check"}\n')
     assert st.lost(before) == []
     step = st.inject(fault, root, home)
     assert step["ok"], step
@@ -130,11 +132,17 @@ def last_tag() -> str:
     return tag
 
 
-def rerun(*args: str) -> tuple[int, dict, str]:
-    work = Path(tempfile.mkdtemp(prefix="nc-"))       # short: pip's paths in the venv stay under Windows' limit
+def rerun(*args: str, source: bool = True) -> tuple[int, dict, str]:
+    """The harness run in a new short folder (pip's paths in the venv stay under Windows' limit), on a copy of this
+    checkout of its own: pip builds a checkout in place, so two runs at once on the same one break each other."""
+    work = Path(tempfile.mkdtemp(prefix="nc-"))
     try:
-        r = harness("--source", str(REPO), *args, "--work", str(work), timeout=3600)
-        report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+        copy = work / "src" / REPO.name                  # the same folder name: the harness's engine check reads it
+        if source:
+            shutil.copytree(REPO, copy, ignore=shutil.ignore_patterns(".git", "build", "*.egg-info", "__pycache__",
+                                                                      ".venv", ".pytest_cache", ".ruff_cache"))
+        r = harness(*(["--source", str(copy)] if source else []), *args, "--work", str(work / "run"), timeout=3600)
+        report = json.loads((work / "run" / "report.json").read_text(encoding="utf-8"))
     finally:
         shutil.rmtree(work, ignore_errors=True)
     return r.returncode, report, r.stdout[-6000:] + r.stderr[-2000:]
@@ -155,8 +163,9 @@ def test_the_upgrade_test_fails_at_the_step_that_guards_against_each_fault(selec
 @pytest.mark.harness
 def test_the_plain_stranger_test_fails_on_a_leak(selected):
     """The plain run's negative control: the invented owner's name denied, as the author's would be. The leak alone
-    must be found (every step ok); docker on the PATH, also a no-go, is not what this proves."""
-    rc, report, out = rerun("--deny", "people:Ada Example")
+    must be found (every step ok); docker on the PATH, also a no-go, is not what this proves. The last tag is
+    installed, as the pilot's go does: a checkout is no pin, so its brain refresh refuses (a dry run, not the go)."""
+    rc, report, out = rerun("--ref", last_tag(), "--deny", "people:Ada Example", source=False)
     assert rc == 1 and report["verdict"] == "no-go", out
     assert all(s["ok"] for s in report["steps"]), out
     assert {lk["term"] for lk in report["leaks"]} == {"Ada Example"} and len(report["leaks"]) > 3, out

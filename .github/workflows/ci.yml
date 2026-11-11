@@ -136,13 +136,14 @@ jobs:
         run: |
           files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
           test -n "$files"
-          if printf '%s\n' "$files" | grep -qE '^(packages/brain/installer/stranger_test\.py|packages/brain/tests/(fixtures/formats/|test_harness_negative_controls\.py|test_stranger_test\.py)|\.github/workflows/)'; then
+          if grep -qE '^(packages/brain/(installer/stranger_test\.py|pyproject\.toml)|packages/brain/tests/(fixtures/|test_harness_negative_controls\.py|test_stranger_test\.py)|\.github/workflows/)' <<< "$files"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Install
         if: steps.touched.outputs.run == 'true'
+        shell: bash
         run: |
           pip install -e .
           pip install --no-deps -e packages/brain
@@ -150,7 +151,7 @@ jobs:
       - name: Every fault a no-go, no fault a go
         if: steps.touched.outputs.run == 'true'
         working-directory: packages/brain
-        run: pytest tests/test_harness_negative_controls.py -m harness -p no:randomly -n 6 --durations=10
+        run: pytest tests/test_harness_negative_controls.py -m harness -p no:randomly -n 3 --durations=10
 
   release-preview:
     # The release preview (wi-brain-release-preview; docs/release.md, « The release preview »): on every PR, the version

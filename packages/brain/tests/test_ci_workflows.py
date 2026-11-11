@@ -14,7 +14,7 @@ REPO = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO / ".github" / "workflows"
 
 SUBST = re.compile(r"\$\(|`")
-OUTPUT = re.compile(r">>\s*\"?\$\{?GITHUB_OUTPUT\b")
+OUTPUT = re.compile(r"(?:>>|\btee\s+-a)\s*\"?\$(?:env:)?\{?GITHUB_OUTPUT\b")
 ASSIGN = re.compile(r"^\s*(?:export\s+|local\s+|readonly\s+)?([A-Za-z_]\w*)=(.*)$")
 VAR = re.compile(r"\$\{?([A-Za-z_]\w*)")
 
@@ -80,6 +80,8 @@ def test_the_engines_workflows_test_each_substitution_they_output():
     ('tag=$(git describe)\ntest -n "$other"\necho "tag=$tag" >> "$GITHUB_OUTPUT"', True),
     ('echo "tag=$tag"\ntag=$(git describe)\n# test -n "$tag"\necho "tag=$tag" >> "$GITHUB_OUTPUT"', True),
     ('echo "run=true" >> "$GITHUB_OUTPUT"', False),
+    ('echo "tag=$(git describe)" | tee -a "$GITHUB_OUTPUT"', True),
+    ('"tag=$(git describe)" >> $env:GITHUB_OUTPUT', True),
     ('name=${{ github.ref_name }}\necho "name=$name" >> "$GITHUB_OUTPUT"', False),
 ])
 def test_a_substitution_written_untested_is_refused(script, refused):

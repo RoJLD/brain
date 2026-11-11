@@ -60,7 +60,7 @@ reads PyYAML in the harness's own Python (CI installs it) and the fixtures from 
 injected into the upgrade test, whose verdict must then be a no-go, failing at the step that guards against it
 (tests/test_harness_negative_controls.py reruns each, ``pytest -m harness``). ``rewrite``: config.json rewritten
 after the older engine's reads (the same data, other bytes), as an older engine that saves what it reads would;
-``truncated-ledger``: an exec ledger's last line dropped there; ``unreached``: the members format's newer fixture
+``truncated-ledger``: an exec ledger's first line dropped there; ``unreached``: the members format's newer fixture
 replaced by its older one, so its additive keys reach no file; ``wrong-engine``: the previous engine reinstalled in
 place of HEAD for the way back. The missing tag needs no seam: ``--upgrade-from ""`` is refused.
 
@@ -447,7 +447,7 @@ def back_to(fault: str, prev: tuple[str, str], head: tuple[str, str, bool]) -> t
 
 def inject(fault: str, root: Path, home: Path) -> dict:
     """A negative control's fault put on the brain after the older engine's reads (``rewrite``: config.json saved
-    again with the same data and other bytes; ``truncated-ledger``: an exec ledger's last line dropped), the step that
+    again with the same data and other bytes; ``truncated-ledger``: an exec ledger's first line dropped), the step that
     reports it. It is ok when the fault was put: the no-loss check, not this step, must then fail."""
     if fault == "rewrite":
         files = [root / "config.json"] if (root / "config.json").is_file() else []
@@ -457,9 +457,9 @@ def inject(fault: str, root: Path, home: Path) -> dict:
             f.write_text(again + ("\n" if again == text else ""), encoding="utf-8")
     else:
         files = [f for f in where(root, home)["event"] if f.read_bytes().strip()][:1]
-        for f in files:
+        for f in files:     # its first line: the older engine's reads appended theirs after the snapshot
             lines = f.read_bytes().splitlines(keepends=True)
-            f.write_bytes(b"".join(lines[:-1]))
+            f.write_bytes(b"".join(lines[1:]))
     return {"step": "fault", "cmd": f"--fault {fault}: {', '.join(f.name for f in files) or 'no file to put it on'}",
             "rc": int(not files), "ok": bool(files), "out": ""}
 
@@ -716,6 +716,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fault", choices=sorted(FAULTS),
                     help="a negative control of the upgrade test: inject this fault; the verdict must be a no-go")
     args = ap.parse_args(argv)
+    try:            # a pipe on Windows is cp1252: a step's output (pip's included) must not crash the report
+        sys.stdout.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError, OSError):
+        pass
     if args.fault and args.upgrade_from is None:
         ap.error("--fault: a fault of the upgrade test, with --upgrade-from")
     deny = parse_deny(args.deny)
