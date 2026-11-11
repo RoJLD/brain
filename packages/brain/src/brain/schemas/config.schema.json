@@ -266,7 +266,7 @@
       "type": "object", "additionalProperties": false,
       "description": "Integrity of the engine's truth-local state files (brain.stateio). Optional, off by default.",
       "properties": {
-        "sidecars": {"type": "boolean", "description": "true: each save writes a sha256 sidecar (<name>.sha256: the hash, size and mtime) and each load checks it; a file whose size and mtime match but whose hash does not (bit rot) is set aside with a note, never reset; a missing sidecar loads as before. Default false. $BRAIN_STATE_INTEGRITY=1 or 0 overrides it."}
+        "sidecars": {"type": "boolean", "description": "true: each save writes a sha256 sidecar (<name>.sha256: the hash, size and mtime) and each load checks it; a file whose size and mtime match but whose hash does not (bit rot) is set aside with a note (its copy kept, never saved over); a missing sidecar loads as before. Default false. $BRAIN_STATE_INTEGRITY=1 or 0 overrides it."}
       }
     }
   },

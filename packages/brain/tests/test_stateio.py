@@ -2,6 +2,7 @@
 installed.json, alerts/state.json, vault/state.json, usage/sessions.json; then (wi-brain-state-safe-io-rest) tui.json,
 the sessions' snapshots, states, reports and plans, Claude Code's settings.json (foreign) and the log class."""
 
+import hashlib
 import io
 import json
 import os
@@ -51,8 +52,9 @@ def test_integrity_is_off_by_default_and_a_save_removes_a_stale_sidecar(tmp_path
     f = tmp_path / "s.json"
     stateio.save(stateio.load(f), {"a": 1})
     assert not stateio.sidecar(f).exists()
-    _write(stateio.sidecar(f), '{"sha256": "0"}')        # left from a time it was on: it would go stale
     _write(f, '{"a": 2}')
+    stale = {"sha256": "0" * 64, "size": f.stat().st_size, "mtime_ns": f.stat().st_mtime_ns}   # same size and time
+    _write(stateio.sidecar(f), json.dumps(stale))        # left from a time it was on: on, it would set the file aside
     assert stateio.load(f).data == {"a": 2}               # off: not checked
     stateio.save(stateio.load(f), {"a": 3})
     assert not stateio.sidecar(f).exists()
@@ -62,7 +64,7 @@ def test_a_sidecar_is_written_and_checked(tmp_path, integrity):
     f = tmp_path / "s.json"
     stateio.save(stateio.load(f), {"a": 1})
     side = json.loads(stateio.sidecar(f).read_text(encoding="utf-8"))
-    assert side["sha256"] == __import__("hashlib").sha256(f.read_bytes()).hexdigest()
+    assert side["sha256"] == hashlib.sha256(f.read_bytes()).hexdigest()
     assert (side["size"], side["mtime_ns"]) == (f.stat().st_size, f.stat().st_mtime_ns)
     assert stateio.load(f).status == "ok"
     stateio.sidecar(f).unlink()
@@ -108,9 +110,71 @@ def test_integrity_follows_config_json_and_the_environment(tmp_path, monkeypatch
     assert not stateio.integrity_on()
 
 
-def test_a_sidecar_is_a_leftover_of_its_store_not_a_name_of_its_own():
+def test_a_sidecar_is_a_leftover_of_its_store_not_a_name_of_its_own(brain_home):
     from brain import classes
     assert classes.HOME_TRANSIENT.search("tui.json.sha256") and not classes.HOME_TRANSIENT.search("sha256s")
+    brain_home.mkdir(parents=True, exist_ok=True)
+    for name in ("tui.json", "tui.json.sha256", "notes.sha256s"):
+        _write(brain_home / name, "{}")
+    assert classes.home_unknown([]) == ["notes.sha256s"]
+
+
+def test_an_unreadable_sidecar_loads_and_a_failed_one_leaves_none(tmp_path, integrity, monkeypatch, capsys):
+    f = tmp_path / "s.json"
+    stateio.save(stateio.load(f), {"a": 1})
+    _write(stateio.sidecar(f), "not json")
+    assert stateio.load(f).data == {"a": 1}                # a sidecar it cannot read is no proof: loads
+    real = stateio.write_atomic
+
+    def no_sidecar(path, text):
+        if str(path).endswith(stateio.SIDECAR):
+            raise PermissionError(13, "locked")
+        return real(path, text)
+    monkeypatch.setattr(stateio, "write_atomic", no_sidecar)
+    stateio.save(stateio.load(f), {"a": 2})
+    assert json.loads(f.read_text(encoding="utf-8"))["a"] == 2 and not stateio.sidecar(f).exists()
+    assert "not written (PermissionError)" in capsys.readouterr().err
+
+
+def test_a_write_cut_short_leaves_no_stale_sidecar(tmp_path, integrity, monkeypatch):
+    """The old sidecar goes before the write: a writer killed between the two leaves none (a missing one loads)."""
+    f = tmp_path / "s.json"
+    stateio.save(stateio.load(f), {"a": 1})
+
+    def killed(path, text):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(stateio, "write_atomic", killed)
+    with pytest.raises(KeyboardInterrupt):
+        stateio.save(stateio.load(f), {"a": 2})
+    assert not stateio.sidecar(f).exists() and stateio.load(f).status == "ok"
+
+
+def test_a_sidecar_pairs_the_bytes_with_their_own_stat(tmp_path, integrity, monkeypatch):
+    """Read and stat through one handle: a writer that replaces the file between them never yields a sidecar that
+    pairs one file's hash with another's size and time."""
+    f = tmp_path / "s.json"
+    stateio.save(stateio.load(f), {"a": 1})
+    blob, st = stateio._read(f)
+    assert hashlib.sha256(blob).hexdigest() == json.loads(stateio.sidecar(f).read_text(encoding="utf-8"))["sha256"]
+    assert (st.st_size, st.st_mtime_ns) == (f.stat().st_size, f.stat().st_mtime_ns)
+
+
+def test_no_sidecar_for_a_secret(brain_home, integrity):
+    f = brain_home / "secrets" / "bundle" / "s.json"
+    stateio.save(stateio.load(f), {"a": 1})
+    assert f.exists() and not stateio.sidecar(f).exists()
+
+
+def test_the_budget_prune_takes_the_sidecars_too(brain_home, integrity):
+    from brain import budget
+    d = budget.state_dir()
+    stateio.save(stateio.load(d / "s1.json"), {"a": 1})
+    assert stateio.sidecar(d / "s1.json").exists()
+    old = time.time() - 100 * 86400
+    for p in d.iterdir():
+        os.utime(p, (old, old))
+    budget._prune()
+    assert list(d.iterdir()) == []
 
 
 @pytest.mark.parametrize("text, why", [("{not json", "is not JSON"), ("[1, 2]", "is not an object (a list)"),

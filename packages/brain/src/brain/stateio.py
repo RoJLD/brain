@@ -114,7 +114,7 @@ class State:
 
 def integrity_on() -> bool:
     """Whether the sha256 sidecars are on: ``$BRAIN_STATE_INTEGRITY`` (1, on, true / 0, off, false), else config.json's
-    ``integrity.sidecars`` (the file brain.config finds: ``$BRAIN_CONFIG``, else the personal brain's), else off. Read
+    ``integrity.sidecars`` (found without a repo acted on: ``$BRAIN_CONFIG``, else the personal brain's), else off. Read
     once per process while config.json keeps its time and size: a hook pays one stat."""
     env = os.environ.get(INTEGRITY_ENV, "").strip().lower()
     if env in ("1", "on", "true", "yes"):
@@ -140,13 +140,14 @@ def integrity_on() -> bool:
 
 
 def _config_file() -> Path | None:
-    """config.json as brain.config finds it without a repo: ``$BRAIN_CONFIG``, else the first of brain.paths.bases()
-    that holds one."""
+    """config.json as found without a repo acted on: ``$BRAIN_CONFIG``, else the first of brain.paths.bases() that
+    holds one (the personal brain's, through ``<BRAIN_HOME>/personal.json``). A place found is kept for the process
+    (a hook saves often: then one stat per call); none found is looked for again at the next call."""
     env = os.environ.get("BRAIN_CONFIG")
     if env:
         return Path(env).expanduser()
     key = tuple(os.environ.get(k, "") for k in ("CLAUDE_BRAIN_DIR", "BRAIN_PERSONAL", "BRAIN_HOME"))
-    if key not in _CONFIG_AT:   # found once per process (a hook saves often): then one stat per call
+    if _CONFIG_AT.get(key) is None:
         _CONFIG_AT[key] = next((b / "config.json" for b in paths.bases() if (b / "config.json").is_file()), None)
     return _CONFIG_AT[key]
 
@@ -155,17 +156,19 @@ def sidecar(path: Path) -> Path:
     return Path(path).with_name(Path(path).name + SIDECAR)
 
 
-def _facts(path: Path, blob: bytes) -> dict:
-    st = path.stat()
-    return {"sha256": hashlib.sha256(blob).hexdigest(), "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+def _read(path: Path) -> tuple[bytes, os.stat_result]:
+    """A file's bytes and its stat through one handle: the two describe the same file even when a writer replaces it
+    meanwhile."""
+    with open(path, "rb") as fh:
+        return fh.read(), os.fstat(fh.fileno())
 
 
-def _check_sidecar(path: Path, blob: bytes) -> str:
-    """Why ``blob`` (the file read) fails its sidecar: '' when it matches, there is none, it cannot be read, or the
-    file was written since by another writer (its size or time differ from the sidecar's: not bit rot)."""
+def _check_sidecar(path: Path, blob: bytes, st: os.stat_result) -> str:
+    """Why ``blob`` (the file read, ``st`` its stat) fails its sidecar: '' when it matches, there is none, it cannot be
+    read, or the file was written since by another writer (its size or time differ from the sidecar's: not bit
+    rot)."""
     try:
         side = json.loads(sidecar(path).read_text(encoding="utf-8"))
-        st = path.stat()
     except (OSError, ValueError):
         return ""
     if not isinstance(side, dict) or not isinstance(side.get("sha256"), str):
@@ -176,15 +179,28 @@ def _check_sidecar(path: Path, blob: bytes) -> str:
         "is not what its sha256 sidecar holds (its size and time unchanged: bit rot or a write outside the engine)"
 
 
+def _drop_sidecar(path: Path) -> None:
+    """Before a write: the old sidecar goes, so that a write cut short (a killed hook) leaves none rather than a stale
+    one (a missing sidecar loads)."""
+    try:
+        sidecar(path).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(f"brain: {sidecar(path)}: not removed ({exc.__class__.__name__})", file=sys.stderr)
+
+
 def _write_sidecar(path: Path) -> None:
-    """The sidecar of the file just written (integrity on), or the removal of a stale one (off). Never raises: a
-    sidecar that cannot be written leaves the file as it is (a missing sidecar loads)."""
+    """The sidecar of the file just written (integrity on; never for a secret's file), its bytes and stat read
+    through one handle. Never raises: a sidecar that cannot be written leaves the file as it is (a missing sidecar
+    loads)."""
+    if _secret(path):
+        return
     side = sidecar(path)
     try:
-        if integrity_on():
-            write_atomic(side, json.dumps({"v": 1, **_facts(path, path.read_bytes())}) + "\n")
-        elif side.exists():
-            side.unlink()
+        blob, st = _read(path)
+        write_atomic(side, json.dumps({"v": 1, "sha256": hashlib.sha256(blob).hexdigest(), "size": st.st_size,
+                                       "mtime_ns": st.st_mtime_ns}) + "\n")
     except OSError as exc:
         print(f"brain: {side}: not written ({exc.__class__.__name__})", file=sys.stderr)
 
@@ -223,14 +239,15 @@ def load(path: Path, *, known: int = 1, check: Callable[[dict], str] | None = No
     cockpit, a plan) reads without moving anything: a file that would be set aside reads as unreadable, so empty and
     read-only, and the next command that writes it sets it aside."""
     st = State(path=Path(path), known=known)
+    on = integrity_on()
     try:
-        blob = st.path.read_bytes()
+        blob, stat = _read(st.path) if on else (st.path.read_bytes(), None)
     except FileNotFoundError:
         return st
     except OSError as exc:
         st.status, st.why = "unreadable", exc.__class__.__name__
         return st
-    why = _check_sidecar(st.path, blob) if integrity_on() else ""
+    why = _check_sidecar(st.path, blob, stat) if on else ""
     try:
         raw = json.loads(blob.decode("utf-8"))
     except ValueError as exc:   # UnicodeDecodeError included: a byte that is not UTF-8
@@ -347,8 +364,12 @@ def save(state: State, data: dict | None = None, *, write_v: bool = True, **dump
     opts = {"indent": 1, "sort_keys": True, "ensure_ascii": False}
     opts.update(dump)
     backup(state.path)
+    on = integrity_on()
+    if on or sidecar(state.path).exists():   # off: a sidecar left from before goes, so none goes stale
+        _drop_sidecar(state.path)
     write_atomic(state.path, json.dumps(body, **opts) + "\n")
-    _write_sidecar(state.path)
+    if on:
+        _write_sidecar(state.path)
     state.data, state.status = data, "ok"
     if write_v:
         state.v = state.known
