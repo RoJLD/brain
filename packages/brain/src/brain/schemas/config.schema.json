@@ -280,6 +280,17 @@
         "max_age_days": {"type": "integer", "minimum": 1, "description": "How old the last push without an error may be before brain health spool warns; default 7."}
       }
     },
+    "session_archive": {
+      "type": "object", "additionalProperties": false,
+      "description": "brain session-archive: the agents' transcripts, filtered and scanned (gitleaks), sealed into the spool and indexed by session record. Optional, off by default: nothing runs and no scheduled task is created until enabled is true. packages/brain/docs/vault.md.",
+      "properties": {
+        "enabled": {"type": "boolean", "description": "true: brain session-archive run archives; default false (it does nothing)."},
+        "quiet_minutes": {"type": "integer", "minimum": 1, "description": "How long a transcript must be untouched before a run takes it (a live session waits); default 120."},
+        "max_files": {"type": "integer", "minimum": 1, "description": "The transcripts one run seals at most, the rest waiting for the next run; default 200."},
+        "max_age_days": {"type": "integer", "minimum": 1, "description": "How old the last run that sealed something may be before brain health session-archive warns; default 7."},
+        "resident": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}, "description": "The residency filter, {name: regex}: a transcript line a pattern matches (as written, JSON escapes included) is a row a data source forbids from leaving the machine; it is replaced by a stub and counted under its name. A pattern that does not compile refuses the run."}
+      }
+    },
     "integrity": {
       "type": "object", "additionalProperties": false,
       "description": "Integrity of the engine's truth-local state files (brain.stateio). Optional, off by default.",
