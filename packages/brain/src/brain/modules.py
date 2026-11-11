@@ -1,8 +1,8 @@
 """The module map (wi-brain-module-map): each open item's module, ``props.module`` (its primary, one) and
-``props.modules_secondary`` (a list), against the registry of modules the store keeps, ``<store>/modules.yaml``;
-the generated view ``notes/modules_graph.md`` (brain sync; ``modules_graph.md`` beside the store's other views when
-they are not in notes/, brain.projects.views_dir) and brain check's warnings. Zero token. A store without
-a registry is not concerned.
+``props.modules_secondary`` (a list), against the registry of modules the store keeps, ``<store>/modules.yaml`` (or
+the one config.json ``modules.store`` names, below); the generated view ``notes/modules_graph.md`` (brain sync;
+``modules_graph.md`` beside the store's other views when they are not in notes/, brain.projects.views_dir) and brain
+check's warnings. Zero token. A store that reads no registry is not concerned.
 
 The registry is a YAML list, one entry per module:
 ``{id: P2, name: kettle-core, brick: P, phase: MVP, status: tree, lab: now, since: 2026-08-01, note: ...}``:
@@ -43,7 +43,7 @@ import json
 import re
 import subprocess
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import graph
@@ -75,11 +75,34 @@ def named(root: Path | None, store: Path | None = None) -> str:
     cfg = config.load(root)
     m = cfg.data.get("modules")
     s = m.get("store") if isinstance(m, dict) else None
-    if not isinstance(s, str) or not s.strip() or cfg.file is None:
+    if not isinstance(s, str) or not s.strip():
         return ""
-    if store is not None and not store.resolve().is_relative_to(cfg.root):
+    if store is not None and not _under(store, cfg.root):
         return ""
     return s.strip()
+
+
+def _under(store: Path, folder: Path) -> bool:
+    """Whether ``store`` is under ``folder`` (config.json's), or under a worktree of the checkout ``folder`` is in:
+    config.json found in the main checkout ($BRAIN_CONFIG, the machine's pointer) applies to its worktrees' stores."""
+    store = store.resolve()
+    if store.is_relative_to(folder):
+        return True
+    from . import paths
+    main, mine, top = paths.main_checkout(folder), paths.main_checkout(store), _toplevel(store)
+    if main is None or mine is None or top is None or main.resolve() != mine.resolve():
+        return False
+    folder, main = folder.resolve(), main.resolve()
+    return folder.is_relative_to(main) and (top / folder.relative_to(main)) in (store, *store.parents)
+
+
+def _toplevel(d: Path) -> Path | None:
+    try:
+        out = subprocess.run(["git", "-C", str(d), "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                             timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return Path(out.stdout.strip()).resolve() if out.returncode == 0 and out.stdout.strip() else None
 
 
 def lookup(store: Path, root: Path | None) -> tuple[str, Path] | None:
@@ -239,12 +262,17 @@ def warnings(store: Path, root: Path | None = None) -> list[str]:
 # --- an imported registry (wi-brain-module-registry-import) ---
 
 def is_imported(m: dict) -> bool:
-    """An entry an import wrote: it carries ``source`` or ``imported``. A hand entry carries neither."""
-    return SOURCE in m or IMPORTED in m
+    """An entry an import wrote: it carries the import's shape, ``source`` a list of mappings or ``imported`` a day.
+    A hand entry that happens to hold another ``source`` (a text, a note) or ``imported: false`` stays a hand entry,
+    checked as before."""
+    src = m.get(SOURCE)
+    return (isinstance(src, list) and all(isinstance(s, dict) for s in src)) or _day(m.get(IMPORTED)) is not None
 
 
 def _day(value) -> date | None:
-    """A day as YAML gives it (a date, or a YYYY-MM-DD string); None for anything else."""
+    """A day as YAML gives it (a date, a timestamp: its day, or a YYYY-MM-DD string); None for anything else."""
+    if isinstance(value, datetime):
+        return value.date()
     if isinstance(value, date):
         return value
     try:
@@ -275,7 +303,7 @@ def _check_source(mid: str, i: int, s, day: date | None) -> list[str]:
         out.append(f"{mid}: source {ref} has no date (the document's, YYYY-MM-DD)")
     elif day is not None and when > day:
         out.append(f"{mid}: source {ref} is dated {when}, after the import of {day}")
-    if fields is not None and not (_strings(fields) and set(fields) <= set(DRIVE)):
+    if fields is not None and not (_strings(fields) and set(fields) <= set(DRIVE[:-2])):
         out.append(f"{mid}: source {ref} fields must list document fields ({', '.join(DRIVE[:-2])})")
     return out
 
@@ -312,8 +340,9 @@ def _check_entry(m: dict, known: set[str]) -> list[str]:
 def registry_problems(store: Path, root: Path | None = None) -> list[str]:
     """What ``brain modules --check`` refuses in the registry's imported entries (:func:`is_imported`): a document
     field missing (name, brick, phase), a status other than tree or proposed, no source (the documents read, each a
-    ref and its date, none after the import), no day of import, a declared dependency the registry does not know, an
-    id given twice. A hand entry is checked as before: never here."""
+    ref and its date, none after the import, its ``fields`` document fields), no day of import, a ``placement`` or
+    ``definition`` that is not a text, a ``declared`` that is not a list of ids the registry knows, ``divergences``
+    that are not texts, an id given twice (:func:`_check_entry`). A hand entry is checked as before: never here."""
     reg = registry(store, root) or []
     known, twice = {str(m["id"]) for m in reg}, Counter(str(m["id"]) for m in reg)
     out = []
@@ -369,20 +398,31 @@ def diff(old: list[dict] | None, new: list[dict]) -> dict:
             "before": tally(old or []) if old is not None else None, "after": tally(new)}
 
 
-def at_ref(f: Path, ref: str) -> list[dict] | None:
-    """The registry file ``f`` as it was at the git ref ``ref`` (its entries with an id); None when git does not have
-    it there (no repository, no such ref, a file not committed yet)."""
+def _git(d: Path, *args: str) -> subprocess.CompletedProcess | None:
     try:
-        out = subprocess.run(["git", "-C", str(f.parent), "show", f"{ref}:./{f.name}"], capture_output=True,
-                             text=True, encoding="utf-8", errors="replace", timeout=60)
-    except (OSError, subprocess.TimeoutExpired):
+        return subprocess.run(["git", "-C", str(d), *args], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
         return None
-    if out.returncode:
+
+
+def at_ref(f: Path, ref: str) -> list[dict] | None:
+    """The registry file ``f`` as it was at the git ref ``ref`` (its entries with an id); None when that commit does
+    not hold it (a registry not committed yet: every module is new). Raises ValueError when ``ref`` is no commit of
+    the repo ``f`` is in (a typo, another repo's ref, no repository: never read as « all new »), or when the file at
+    ``ref`` does not parse."""
+    if not ref or ref.startswith("-"):
+        raise ValueError(f"{ref!r} is not a git ref")
+    found = _git(f.parent, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    if found is None or found.returncode:
+        raise ValueError(f"{ref} is no commit of the git repository at {f.parent}")
+    out = _git(f.parent, "show", f"{ref}:./{f.name}")
+    if out is None or out.returncode:
         return None
     try:
         data = graph.load_yaml(out.stdout)
-    except graph._yaml().YAMLError:
-        return None
+    except graph._yaml().YAMLError as exc:
+        raise ValueError(f"{f.name} at {ref} does not parse ({exc})") from exc
     return [m for m in data if isinstance(m, dict) and m.get("id")] if isinstance(data, list) else []
 
 

@@ -260,6 +260,24 @@ def test_imported_entries_are_validated_and_hand_entries_are_not(tmp_path):
     ]   # M5, a hand entry with no phase and an odd status, is not the import's to check
 
 
+def test_a_timestamp_a_quoted_day_and_a_hand_source_never_break_the_check(tmp_path):
+    reg = IMPORTED + """\
+- {id: T1, name: timed, brick: T, phase: MVP, status: tree, imported: 2026-11-11 10:00:00,
+   source: [{ref: early, date: "2026-11-20"}, {ref: timed, date: 2026-10-20 09:30:00}]}
+- {id: H1, name: hand, brick: H, phase: V2, status: whatever, source: "workshop notes", imported: false}
+- {id: H2, name: hand-too, brick: H, status: odd, source: [notes, of a meeting]}
+"""
+    assert modules.registry_problems(_brain(tmp_path, registry=reg)) == [
+        "T1: source early is dated 2026-11-20, after the import of 2026-11-11"]   # no TypeError
+    got = modules.registry(_brain(tmp_path / "again", registry=reg))
+    assert [m["id"] for m in got if modules.is_imported(m)] == ["P2", "P12", "K1", "T1"]   # H1, H2: hand entries
+    bad = IMPORTED + ('- {id: F1, name: f, brick: F, phase: MVP, status: tree, imported: 2026-11-11,\n'
+                      '   source: [{ref: a, date: 2026-11-01, fields: [imported]}], declared: K1}\n')
+    assert modules.registry_problems(_brain(tmp_path / "fields", registry=bad)) == [
+        "F1: source a fields must list document fields (name, brick, phase, status, placement, definition, declared, "
+        "divergences)", "F1: declared must be a list of module ids"]
+
+
 def test_check_refuses_an_imported_entry_and_brain_check_warns(tmp_path, monkeypatch, capsys):
     from brain import projects, views
     from brain.commands._stores import _module_warnings
@@ -296,12 +314,16 @@ def test_diff_says_what_changed_since_the_registry_at_a_ref(tmp_path, monkeypatc
     from conftest import run_git
     store = _brain(tmp_path, registry=IMPORTED)
     monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
-    assert cli.main(["modules", "--diff"]) == 0   # no git: everything is new
+    with pytest.raises(SystemExit, match="HEAD is no commit of the git repository"):
+        cli.main(["modules", "--diff"])   # no repository: told, never read as « all new »
+    run_git(tmp_path, "init", "-q")
+    run_git(tmp_path, "add", "notes/graph/schema.yaml")
+    run_git(tmp_path, "commit", "-q", "-m", "the store, no registry yet")
+    assert cli.main(["modules", "--diff"]) == 0   # the registry not committed yet: everything is new
     out = capsys.readouterr().out
     assert "registry: notes/graph/modules.yaml, against HEAD" in out
     assert "counts: none -> 4 modules (2 proposed) (HEAD has no modules.yaml: all are new)" in out
     assert "added (4): K1, M4, P2, P12" in out
-    run_git(tmp_path, "init", "-q")
     run_git(tmp_path, "add", "-A")
     run_git(tmp_path, "commit", "-q", "-m", "registry")
     new = IMPORTED.replace("phase: V1.5, status: proposed, lab: now", "phase: V2, status: proposed, lab: next")
@@ -325,6 +347,18 @@ def test_diff_says_what_changed_since_the_registry_at_a_ref(tmp_path, monkeypatc
     assert cli.main(["modules", "--diff", "--check"]) == 1   # the report, then the check (wi-bare has no module)
     out = capsys.readouterr().out
     assert out.index("added (1): N3") < out.index("wi-bare: no props.module")
+    assert cli.main(["modules", "--diff", "--check", "--json"]) == 1   # one JSON object
+    got = json.loads(capsys.readouterr().out)
+    assert got["diff"]["added"] == ["N3"] and "wi-bare: no props.module (a module of modules.yaml, or none with " \
+        "props.module_reason)" in got["problems"]
+    for ref in ("mian", "--output=x"):   # a typo or an option: told, never read as « all new »
+        with pytest.raises(SystemExit, match="brain modules --diff: .*(no commit|not a git ref)"):
+            cli.main(["modules", f"--diff={ref}"])
+    (store / "modules.yaml").write_text("[unclosed\n", encoding="utf-8")
+    run_git(tmp_path, "commit", "-q", "-am", "a broken registry")
+    (store / "modules.yaml").write_text(new, encoding="utf-8")
+    with pytest.raises(SystemExit, match="modules.yaml at HEAD does not parse"):
+        cli.main(["modules", "--diff"])
 
 
 def _programme(tmp_path, monkeypatch, store_key=None):
@@ -377,6 +411,39 @@ def test_a_store_without_a_registry_reads_the_one_config_names(tmp_path, monkeyp
     assert "the registry `prog:notes/graph/modules.yaml`" in view and "| [P2](#p2) | kettle-core | P |" in view
     assert cli.main(["modules", "--check"]) == 1
     assert "wi-bare: no props.module" in capsys.readouterr().out
+    from brain import projects, reference, views
+    from brain.commands._stores import _module_warnings
+    assert [m["id"] for m in reference.load(lab, lab_store).registry] == ["P2", "P12", "K1", "M4"]
+    stale = views.Stale()
+    _module_warnings(projects.Project("lab", lab, [lab_store]), lab, lab_store, stale)
+    assert stale.views == []   # the view just written is current
+    with (prog_store / "modules.yaml").open("a", encoding="utf-8") as f:
+        f.write("- {id: Q7, name: queue, brick: Q, phase: V1, status: tree}\n")
+    _module_warnings(projects.Project("lab", lab, [lab_store]), lab, lab_store, stale)
+    assert stale.views == [("notes/modules_graph.md", "brain sync (or brain modules --write)")]
+
+
+def test_the_projects_registry_unreadable_the_lookup_reads_nothing(tmp_path, monkeypatch):
+    from brain import projects, views
+    from brain.commands._stores import _module_warnings
+    lab, lab_store, _, _ = _programme(tmp_path, monkeypatch, "prog")
+    (tmp_path / "projects.yaml").write_text("lab: [\n", encoding="utf-8")
+    assert not modules.applies(lab_store, lab)
+    assert _module_warnings(projects.Project("lab", lab, [lab_store]), lab, lab_store, views.Stale()) == [
+        "module map: config.json modules.store 'prog' names no store of the registry that keeps modules.yaml"]
+
+
+def test_a_worktree_of_the_checkout_that_holds_config_reads_the_registry(tmp_path, monkeypatch):
+    from conftest import run_git
+    lab, lab_store, prog_store, _ = _programme(tmp_path, monkeypatch, "prog")
+    run_git(lab, "init", "-q")
+    run_git(lab, "add", "-A")
+    run_git(lab, "commit", "-q", "-m", "lab")
+    wt = tmp_path / "wt-lab"
+    run_git(lab, "worktree", "add", "-q", str(wt))
+    # config.json found in the main checkout (BRAIN_CONFIG, the pointer): the worktree's store reads the registry
+    assert modules.registry_file(wt / "notes" / "graph", wt) == prog_store / "modules.yaml"
+    assert not modules.applies(tmp_path / "other" / "notes" / "graph", wt)   # another root still never does
 
 
 def test_a_key_that_names_no_registry_is_told(tmp_path, monkeypatch):

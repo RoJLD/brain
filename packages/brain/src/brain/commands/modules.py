@@ -43,6 +43,10 @@ def cmd_modules(args, root: Path) -> int:
         view = _module_view(_project(args, root), root, store)
         print(f"view: {view} " + ("written" if modules.write(root, store, _store_label(root, store), view)
                                   else "unchanged"))
+    if args.diff is not None and args.check and args.json:   # one JSON object, never text then JSON
+        found = modules.registry_problems(store, root) + modules.problems(store, root)
+        print(json.dumps({"diff": _diff_data(args, root, store), "problems": found}, indent=1, ensure_ascii=False))
+        return 1 if found else 0
     if args.diff is not None:
         _diff(args, root, store)
         if not args.check:
@@ -56,14 +60,24 @@ def cmd_modules(args, root: Path) -> int:
     return 0
 
 
+def _diff_data(args, root: Path, store: Path) -> dict:
+    """brain.modules.diff of the registry against its version at --diff's ref, with its label and the ref; a ref
+    that is no commit, or a registry there that does not parse, ends the command (never read as « all new »)."""
+    try:
+        old = modules.at_ref(modules.registry_file(store, root), args.diff)
+    except ValueError as exc:
+        raise SystemExit(f"brain modules --diff: {exc}") from exc
+    return {"registry": modules.registry_label(store, _store_label(root, store), root), "ref": args.diff,
+            **modules.diff(old, modules.registry(store, root) or [])}
+
+
 def _diff(args, root: Path, store: Path) -> None:
-    """brain modules --diff [REF]: what changed in the registry since its version at REF (brain.modules.diff)."""
-    d = modules.diff(modules.at_ref(modules.registry_file(store, root), args.diff), modules.registry(store, root) or [])
-    label = modules.registry_label(store, _store_label(root, store), root)
-    if args.json and not args.check:
-        print(json.dumps({"registry": label, "ref": args.diff, **d}, indent=1, ensure_ascii=False))
+    """brain modules --diff [REF]: what changed in the registry since its version at REF, text or --json."""
+    d = _diff_data(args, root, store)
+    if args.json:
+        print(json.dumps(d, indent=1, ensure_ascii=False))
     else:
-        print("\n".join(modules.diff_lines(d, label, args.diff)))
+        print("\n".join(modules.diff_lines(d, d["registry"], args.diff)))
 
 
 def _check(args, root: Path, store: Path) -> int:
@@ -90,7 +104,8 @@ def register(sub, ctx) -> None:
                     help="what changed in the registry since its version at the git ref REF (default HEAD): the "
                          "modules added and removed, the document fields and the hand fields changed")
     mo.add_argument("--json", action="store_true", help="the map as JSON (each module's counts, the problems); with "
-                                                        "--check, the problems; with --diff, the changes")
+                                                        "--check, the problems; with --diff, the changes; with both, "
+                                                        "one object {diff, problems}")
 
 
 run = cmd_modules
