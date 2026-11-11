@@ -1,0 +1,10 @@
+- {id: spec-kettle, type: Spec, status: active, title: "Ada Quill's kettle spec"}
+- {id: adr-2026-10-01-boil-at-100, type: ADR, status: active, title: "Boil at 100 on Ada's stove"}
+- {id: adr-2026-10-05-answers-of-ada, type: ADR, status: active, title: "Ada's answers of 2026-10-05"}
+- {id: adr-2026-10-09-reversal-boil, type: ADR, status: active, title: "REVERSAL: boil at 95"}
+- {id: adr-2026-10-02-old-pour, type: ADR, status: superseded, title: "Pour fast"}
+- {id: rule-pour-slow, type: Rule, status: active, title: "Pour slowly, as Ada does"}
+- {id: wi-boil, type: WorkItem, status: done, title: "Boil water", props: {module: K1, repo: lab}}
+- {id: wi-pour, type: WorkItem, status: todo, title: "Pour for Ada", props: {module: K1, repo: lab}}
+- {id: wi-weigh, type: WorkItem, status: todo, title: "Weigh the leaves", props: {module: K2, repo: lab}}
+- {id: wi-free, type: WorkItem, status: todo, title: "An item no module holds", props: {repo: lab}}

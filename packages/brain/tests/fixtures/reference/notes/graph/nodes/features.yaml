@@ -1,0 +1,6 @@
+- {id: feat-lab-ada-boil, type: Feature, status: have, title: "Ada's boiler: boils as Ada Quill likes",
+   props: {domain: brewing, repo: lab, value: high, module: K1, public_title: "The boiler: boils to the owner's taste",
+           public_id: feat-lab-boil}}
+- {id: feat-lab-pour, type: Feature, status: planned, title: "Pour", props: {domain: brewing, repo: lab, module: K1}}
+- {id: feat-lab-weigh, type: Feature, status: partial, title: "Weigh", props: {domain: measures, repo: lab, module: K2}}
+- {id: feat-sib-private, type: Feature, status: have, title: "Ada's private sibling", props: {domain: x, repo: sib}}
