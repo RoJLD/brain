@@ -1,14 +1,17 @@
 """``brain wave``: the waves, milestones of kind wave named by their release: a new one, the closure its version PR
-makes, the closure check, the import of the items' free-text props.wave (brain.waves).
+makes, the closure check, the import of the items' free-text props.wave (brain.waves), the plan of its lots
+(brain.lots).
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import sys
 from pathlib import Path
 
-from .. import config, graph, waves
-from ._common import _store
+from .. import config, graph, lots, waves
+from ._common import _project, _store
 
 ORDER = 55   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 55   # its usage lines' place in brain --help's epilog
@@ -23,6 +26,12 @@ USAGE = """\
   brain wave import [--from X.Y.Z] [--write]   the items' free-text props.wave: a wave proposed per release it names
                  (X.Y.Z; --from: the first one, the earlier ones already tagged are listed and left out), the other
                  values listed to place by {owner}; --write creates the waves and their items' part_of edges
+  brain wave plan [X.Y.Z] [--at-once N] [--hot NAME]... [--json]   the wave's lots (default: the current wave), at
+                 zero token: its open items grouped by the files their predicted surface shares (brain collisions'),
+                 hot files (READMEs, CHANGELOGs, formats.md, FEATURES.md, config.schema.json, changes/) counted apart,
+                 in rounds by their depends_on, the lots that unblock the most first, at most the sessions cap less the
+                 master's and N PRs verified at once (3) a round; the predicted conflicts, the hot files shared, the
+                 items with no known surface, what the memory guard and the quota forecast say now; refuses nothing
 """
 
 
@@ -68,6 +77,30 @@ def _import(args, store: Path) -> int:
     return 0
 
 
+def _positive(text: str) -> int:
+    try:
+        n = int(text)
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"{text!r}: a whole number of 1 or more")
+    return n
+
+
+def _plan(args, root: Path, store: Path) -> int:
+    try:
+        name = _project(args, root).name
+    except SystemExit:
+        name = ""
+    try:
+        wp = lots.plan(store, root, args.version or "", name, args.at_once, tuple(args.hot or ()))
+    except ValueError as exc:
+        print(f"brain wave plan: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(wp.as_dict(), indent=2, ensure_ascii=False) if args.json else "\n".join(lots.render(wp)))
+    return 0
+
+
 def cmd_wave(args, root: Path) -> int:
     store = _store(args, root)
     try:
@@ -79,6 +112,8 @@ def cmd_wave(args, root: Path) -> int:
             return 0
         if args.wave_cmd == "close":
             return _close(args, root, store)
+        if args.wave_cmd == "plan":
+            return _plan(args, root, store)
         if args.wave_cmd == "check":
             found = waves.closure_problems(waves.load(store, root), args.version)
             for line in found:
@@ -113,6 +148,13 @@ def register(sub, ctx) -> None:
     wi.add_argument("--from", dest="start", metavar="X.Y.Z", help="the first release to import: the earlier ones, "
                                                                     "already tagged, are listed and left out")
     wi.add_argument("--write", action="store_true", help="create the waves and the part_of edges")
+    wp = wv.add_parser("plan", help="the wave's lots: items that share no file but hot ones, in rounds by their "
+                                    "depends_on, sized by the caps in force (zero token, refuses nothing)")
+    wp.add_argument("version", nargs="?", help="the wave's release (or its id); default: the current wave")
+    wp.add_argument("--at-once", type=_positive, help=f"the PRs one machine verifies at once (default {lots.AT_ONCE})")
+    wp.add_argument("--hot", action="append", help="a hot file more, counted apart (a name, or a folder ending in /; "
+                                                   "repeatable)")
+    wp.add_argument("--json", action="store_true", help="the data, as JSON")
 
 
 run = cmd_wave

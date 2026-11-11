@@ -56,6 +56,7 @@ brain lesson rules --all
 brain lint lessons [--propose]
 brain retro wi-brain-other [--record --note "..."]
 brain retro --wave F
+brain retro --wave 0.3.2
 ```
 
 - **Dedup.** `add` compares the new lesson's words (title, trigger, anti-pattern) with every known lesson's (the
@@ -102,6 +103,9 @@ prevented, what to keep, a lesson for the registry or a known one seen again, wh
 `--record` writes `props.retro` on the item (`2026-11-03 friction=9 merges=11 conflicts=4 ...`) and the `--note`
 lines in `props.retro_notes`.
 
-`brain retro --wave W` is the coordinator's deep retro at a wave's end or hand-over: every item whose `props.wave`
-names the wave, with its friction and signals, the totals, the items with no session yet and the lessons learned
-from the wave's items.
+`brain retro --wave W` is the coordinator's deep retro at a wave's end or hand-over: every item of the wave, with its
+friction and signals, the totals, the items with no session yet, the retro notes recorded on them
+(`props.retro_notes`) and the lessons learned from the wave's items. A numbered wave is named `X.Y.Z` or `wave-X.Y.Z`:
+its items are those `part_of` it and those carried to it by `props.carried_to` (brain.waves), not those carried
+out of it; an item whose free-text `props.wave` names the wave (a letter wave such as `F`, or `0.3.2, week of ...`)
+counts too (wi-brain-retro-numbered-waves).

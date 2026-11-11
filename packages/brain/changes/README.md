@@ -15,8 +15,13 @@ section: Fixes
 - Then a blank line, then the entry as it will read in the CHANGELOG. For `Upgrade`, write the step (its bold title
   first); the version PR numbers the steps.
 - Several entries of one PR in different sections: one file per section (`wi-brain-x-upgrade.md`, `wi-brain-x.md`).
+- A section's fragments follow one another in file-name order: a list after a list continues it, anything else (a
+  closing paragraph after the Upgrade steps) gets a blank line before it.
 
 The version PR compiles them into `## X.Y.Z — YYYY-MM-DD — theme` and deletes them:
 `python packages/brain/installer/changelog.py compile X.Y.Z --theme "..." --write` (docs/release.md, « 2. The
-version PR »). `release-check` refuses, on every PR, a malformed fragment and a `## Unreleased` section in either
-CHANGELOG, and on a version PR a fragment left uncompiled.
+version PR »). `release-check` refuses, on every PR, a malformed fragment, a `## Unreleased` section in either
+CHANGELOG and a standard step that two Upgrade fragments ask (one fragment holds the standard steps for the whole
+release: never copy them into yours), and on a version PR a fragment left uncompiled. `release-preview` says on every
+PR whether the pending fragments' steps would make the next release a minor one (docs/release.md, « The release
+preview »).

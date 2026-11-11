@@ -230,7 +230,7 @@ coverage. The rules: [docs/tests-graph.md](docs/tests-graph.md).
 
 ### The module map
 
-A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place. See [docs/modules.md](docs/modules.md).
+A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place, and about a feature or a done item with no module (the technical reference reads them by module). See [docs/modules.md](docs/modules.md).
 
 ### Waves and eras
 
@@ -262,6 +262,16 @@ adds a wave at once (no DDR, unlike `brain milestone add`: a wave is named by it
 closes), and `brain wave import [--from X.Y.Z] [--write]` turns the items' free-text `props.wave` into waves: one per
 release a value names (`0.2.9 (decided ...)` is 0.2.9) from `--from` on, the earlier releases (already tagged) listed
 and left out, the other values (letters, free text) listed for the owner to place.
+
+`brain wave plan [X.Y.Z] [--at-once N] [--hot NAME]... [--json]` composes a wave's lots at zero token (default: the
+current wave; `brain.lots`): each open item's predicted surface (`brain collisions`': its features' CodeRefs, its
+modules, the files it names), the items that share a file in one lot, run in the order of their `depends_on`; the hot
+files every PR adds to (the READMEs, CHANGELOGs, `formats.md`, `FEATURES.md`, `config.schema.json`, the `changes/`
+fragments; `--hot` adds one) counted apart and listed, to merge origin/main before the push. A lot that holds another's
+prerequisite comes a round earlier, the lots that unblock the most first, at most the sessions cap in force less the
+master's and `N` PRs verified at once (3) a round. It prints the rounds, the predicted conflicts, the hot files shared
+and the items with no known surface (each a lot of its own, unchecked), with what the memory guard and the last quota
+forecast say now; it refuses nothing. `brain next` shows the current wave's first round.
 
 ### Reading a brain
 
@@ -669,7 +679,10 @@ child's milestones, specs and decisions, and the parent's milestones group the c
 store's own. Every brain command that runs research_graph on the store gives it the stores holding those ids
 (`--foreign-store <project>:<store>=<path>`, `brain.crossstore`; nothing for a store whose edges name only its own
 ids), so the store loads and its board and roadmap name the other store's node with its label
-(`wi-x (parent:notes/graph)`). `brain check --all` reads every edge of every store and refuses one whose end is in no
+(`wi-x (parent:notes/graph)`). That holds for a project's own stores too: a store listed after its first covers no
+decision log, and an edge of it to an ADR or SDR stub its first store derives (an item `decided_by` an ADR of
+`notes/decisions.md`) resolves there, accepted by `brain sync` and `brain check` since 0.3.2 (0.3.0 and 0.3.1
+refused it). `brain check --all` reads every edge of every store and refuses one whose end is in no
 store of the registry on this machine (the store's own check refuses it too, as before), and counts the edges between
 stores; a brain's own root, checking its registry without `--all`, warns of it.
 
@@ -796,13 +809,18 @@ kept in the OS keystore, and an offline recovery key: two recipients at least, p
 (`brain health vault`). When the recipients change (a lost machine, a revoked heir, a rotated key), `brain vault
 reseal` seals the kept copies again to the current set. Opening, drilling, and creating or rotating a key are the
 owner's acts, refused in an agent session. The owner's steps, the canary's scheduled task per system, the rotation
-and what to do with a lost key are in the runbook, [`docs/vault.md`](docs/vault.md).
+and what to do with a lost key are in the runbook, [`docs/vault.md`](docs/vault.md). Until a data remote exists,
+what leaves waits in a sealed local spool: `brain spool push`, run by hand, seals the changed stores of its set (the
+ledger, the usage, the session records by default) after a secret scan, sends them to `spool.remote` when one is set,
+each copy checked by sha256, and `brain health spool` gives the last push's age.
 
 ```
 brain classes [--check] [--suggest] [--matrix] [PATH...]
 brain vault status | seal STORE | canary | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
 brain vault device init [--rotate] | device forget-previous | open FILE | drill RECIPIENT
 brain health vault
+brain spool push [STORE...] [--dry-run] | status | verify
+brain health spool
 ```
 
 ## Identity: members and signed answers
@@ -895,8 +913,9 @@ refuses a patch with a schema change or an `### Upgrade` step beyond the standar
 out a standard step, a section with no theme, and a section of either CHANGELOG that repeats an entry an earlier one
 released. A PR never edits a CHANGELOG: it writes its entry as a fragment, `changes/<item>.md` here (`changes/` at
 the root for research-graph; the folders' READMEs), and the version PR compiles them with `installer/changelog.py
-compile X.Y.Z --theme T --write`; `release-check` refuses a malformed fragment and a `## Unreleased` section on every
-PR, and a fragment left uncompiled on a version PR. The CHANGELOGs are `merge=brain` in `.gitattributes`, a net for a
+compile X.Y.Z --theme T --write`; `release-check` refuses a malformed fragment, a `## Unreleased` section and a standard
+step two Upgrade fragments ask on every PR, and a fragment left uncompiled on a version PR; `release_check.py
+--preview` (CI's advisory `release-preview`) says on every PR whether the next release would be a minor one. The CHANGELOGs are `merge=brain` in `.gitattributes`, a net for a
 merge back from `release/X.Y`.
 
 ## License

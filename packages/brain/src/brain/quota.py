@@ -7,9 +7,10 @@ A session that read it notes it with its time::
 
   brain usage quota --observe 28 --resets 2026-11-09T12:00Z [--window week|5h] [--at WHEN]
 
-which appends the reading to ``<BRAIN_HOME>/usage/quota.jsonl`` (time, window, percent, reset, plan, host); without
-``--resets`` a weekly reading takes the last reading's reset, moved by whole weeks past ``--at``. The token ledger
-(brain.usage) has every session's cost at API prices by UTC hour; from them:
+which appends the reading to ``<BRAIN_HOME>/usage/quota.jsonl`` (time, window, percent, reset, plan, host; a log
+rotated monthly, ``quota-YYYY-MM.jsonl`` kept 12 months, brain.stateio, and :func:`load_readings` reads them all);
+without ``--resets`` a weekly reading takes the last reading's reset, moved by whole weeks past ``--at``. The token
+ledger (brain.usage) has every session's cost at API prices by UTC hour; from them:
 
   conversion  each reading's percent over the ledger's cost since its window started (its reset minus the window's
               length): the percent of the window per dollar at API prices, the median of the readings of the last
@@ -56,7 +57,7 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, cost, paths, projects, resume, usage
+from . import config, cost, paths, projects, resume, stateio, usage
 
 WINDOWS = {"week": timedelta(days=7), "5h": timedelta(hours=5)}
 FACTOR_DAYS = 28
@@ -118,12 +119,14 @@ def when(dt: datetime | None) -> str:
 # --- readings ---
 
 def load_readings() -> list[dict]:
-    """The readings noted on this machine, oldest first; a line that is not a reading is skipped."""
-    out = []
-    try:
-        lines = readings_file().read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return out
+    """The readings noted on this machine, oldest first, from the live file and its monthly files
+    (brain.stateio.log_files); a line that is not a reading is skipped, a file that cannot be read too."""
+    out, lines = [], []
+    for f in stateio.log_files(readings_file()):
+        try:
+            lines += f.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
     for line in lines:
         try:
             r = json.loads(line)
@@ -175,6 +178,7 @@ def observe(pct: float, window: str = "week", at: datetime | None = None, resets
            "plan": usage.plan_of(iso(at)[:10], plans), "host": socket.gethostname()}
     f = readings_file()
     f.parent.mkdir(parents=True, exist_ok=True)
+    stateio.rotate_log(f, now, keep=stateio.LOG_RETENTION["quota"])
     with open(f, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return rec

@@ -39,7 +39,7 @@ Two other classes go through this module (wi-brain-state-safe-io-rest):
 - **log** (append-only lines): :func:`rotate_log` moves a log of an earlier month (or one past
   :data:`LOG_MAX_BYTES`) aside as ``<stem>-<YYYY-MM>[-n]<suffix>`` before a line is appended, and
   :func:`prune_months` drops the monthly files older than their class's retention (:data:`LOG_RETENTION`; None:
-  kept, a record).
+  kept, a record); :func:`log_files` gives a reader the log's files in order.
 """
 
 from __future__ import annotations
@@ -62,8 +62,12 @@ BACKUP = ".bak"
 ASIDE = ".unreadable-"
 # The months a log class keeps, this one counted (None: kept, a record nothing else holds). The engine's errors
 # (ledger/errors.log and its monthly files), its self-timing (engine/*.jsonl), the ledgers of records
-# (ledger/<name>-YYYY-MM.jsonl: actions, decisions, events, guard decisions, the queue).
-LOG_RETENTION: dict[str, int | None] = {"errors": 6, "timing": 3, "ledger": None}
+# (ledger/<name>-YYYY-MM.jsonl: actions, decisions, events, guard decisions, the queue); the governor's brainstorm
+# starts (usage/starts.jsonl, read for 10 minutes: last month kept for a start just before the month turned), the
+# quota readings (usage/quota.jsonl: the forecast calibrates on 28 days, the history by weeks), the notifications'
+# audit (notify/YYYY-MM.jsonl, read two months back).
+LOG_RETENTION: dict[str, int | None] = {"errors": 6, "timing": 3, "ledger": None, "starts": 2, "quota": 12,
+                                        "notify": 6}
 LOG_MAX_BYTES = 1_000_000
 _MONTH_RE = re.compile(r"(?<!\d)\d{4}-\d{2}(?!\d)")
 
@@ -406,6 +410,12 @@ def rotate_log(path: Path, now: datetime | None = None, *, keep: int | None = LO
         while name(n).exists():
             n += 1
         target = name(n)
+        try:   # looked at again: another hook may have rotated it and started a fresh one since the stat
+            again = path.stat()
+        except OSError:
+            return None
+        if (again.st_mtime_ns, again.st_size) != (st.st_mtime_ns, st.st_size):
+            continue
         try:
             _move_new(path, target)
         except FileExistsError:
@@ -419,6 +429,19 @@ def rotate_log(path: Path, now: datetime | None = None, *, keep: int | None = LO
 
 
 _ROTATE_TRIES = 8
+
+
+def log_files(path: Path) -> list[Path]:
+    """A rotated log's files, oldest first: its monthly files (``<stem>-<YYYY-MM>[-n]<suffix>``, by month, then n),
+    then the live file when it exists. What a reader of the log's history reads after :func:`rotate_log`."""
+    path = Path(path)
+    rx = re.compile(rf"^{re.escape(path.stem)}-(\d{{4}}-\d{{2}})(?:-(\d+))?{re.escape(path.suffix)}$")
+    try:
+        names = [p for p in path.parent.iterdir() if p.is_file()]
+    except OSError:
+        names = []
+    found = sorted(((m.group(1), int(m.group(2) or 1)), p) for p in names if (m := rx.match(p.name)))
+    return [p for _, p in found] + ([path] if path.is_file() else [])
 
 
 def _move_new(src: Path, dst: Path) -> None:

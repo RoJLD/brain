@@ -512,3 +512,38 @@ def test_the_session_record_has_ultracode_and_the_task_class(tmp_path):
     assert plain.record()["ultracode"] is False and "task_class" not in plain.record()
     from brain import schema
     assert schema.check("sr", sr)[0] == []
+
+
+def test_the_starts_and_readings_of_last_month_are_read_after_the_rotation(ada, brain_home):
+    """wi-brain-logs-unclassified: starts.jsonl and quota.jsonl rotate monthly (brain.stateio); the governor reads
+    the live file and the newest monthly one, so a start or a reading just before the month turned still counts."""
+    turn = datetime(2026, 12, 1, 0, 2, tzinfo=timezone.utc)
+    usage_dir = brain_home / "usage"
+    usage_dir.mkdir(parents=True, exist_ok=True)
+    (usage_dir / "starts-2026-11.jsonl").write_text(json.dumps(
+        {"at": iso(turn - timedelta(minutes=5)), "brainstorm": True, "title": "Brainstorm: late"}) + "\n",
+        encoding="utf-8")
+    (usage_dir / "starts-2026-10.jsonl").write_text(json.dumps(        # an older month: not read
+        {"at": iso(turn - timedelta(minutes=3)), "brainstorm": True, "title": "Brainstorm: old file"}) + "\n",
+        encoding="utf-8")
+    (usage_dir / "starts.jsonl").write_text(json.dumps(
+        {"at": iso(turn - timedelta(minutes=1)), "brainstorm": True, "title": "Brainstorm: live"}) + "\n",
+        encoding="utf-8")
+    assert [s["title"] for s in governor._starts(turn)] == ["Brainstorm: late", "Brainstorm: live"]
+    reading(brain_home, 42, at=turn - timedelta(minutes=10), resets="2026-12-07T12:00:00Z")
+    os.replace(usage_dir / "quota.jsonl", usage_dir / "quota-2026-11.jsonl")
+    q = governor.quota_now(turn, governor.DEFAULTS)
+    assert q["newest"] == iso(turn - timedelta(minutes=10)) and q["windows"]["week"]["pct"] == 42
+
+
+def test_a_brainstorm_start_rotates_its_log(ada, brain_home):
+    f = brain_home / "usage" / "starts.jsonl"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text('{"at": "2020-01-01T00:00:00Z"}\n', encoding="utf-8")
+    old = datetime(2020, 1, 15, tzinfo=timezone.utc).timestamp()
+    os.utime(f, (old, old))
+    last_month = f.parent / "starts-2020-02.jsonl"
+    last_month.write_text("{}\n", encoding="utf-8")
+    assert hook(START, ada.lab, title="Brainstorm: one", initiation="user_asked") is None
+    assert '"Brainstorm: one"' in f.read_text(encoding="utf-8") and "2020-01-01" not in f.read_text(encoding="utf-8")
+    assert not (f.parent / "starts-2020-01.jsonl").exists() and not last_month.exists()   # rotated, then pruned

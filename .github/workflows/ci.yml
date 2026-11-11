@@ -116,11 +116,30 @@ jobs:
           path: ${{ runner.temp }}/compat-prev/report.json
           retention-days: 14
 
+  release-preview:
+    # The release preview (wi-brain-release-preview; docs/release.md, « The release preview »): on every PR, the version
+    # policy applied as if the next release were a patch of the last tag. It says whether that release would be a minor
+    # one (a registered schema that moved, a pending Upgrade step beyond the standard ones) and which reasons this PR
+    # carries, in the job's summary. Advisory: it never fails the PR. Standard library only: nothing to install.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Would the next release be a patch?
+        run: python packages/brain/installer/release_check.py --preview --base "origin/${{ github.base_ref }}"
+
   release-check:
     # The version PR's check (docs/release.md; spec-brain-data-compat, gate item 6), before any tag: a registered schema
     # changed since the last tag with no ### Upgrade in this version's CHANGELOG section, or a place left at the old
     # version, a section with no theme, or a patch that breaks the version policy (a schema change, an Upgrade step
-    # beyond the standard ones). Any other pull request passes at once. Standard library only: nothing to install.
+    # beyond the standard ones). Any other pull request has only its changelog fragments checked (one malformed, a
+    # standard step two fragments ask). Standard library only: nothing to install.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:

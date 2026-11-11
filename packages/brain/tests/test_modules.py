@@ -118,3 +118,98 @@ def test_json_write_check_an_item_without_id_and_a_repeated_secondary(tmp_path, 
     assert cli.main(["modules", "--write", "--check"]) == 1   # writes the view, then checks the map
     out = capsys.readouterr().out
     assert "view: notes/modules_graph.md written" in out and "wi-bare: no props.module" in out
+
+
+# --- wi-brain-module-backfill: the features and the done items carry a module too ---
+
+FEATURES = """\
+- {id: feat-tea, type: Feature, status: have, title: "Tea", props: {domain: room, module: K1}}
+- {id: feat-lamp, type: Feature, status: planned, title: "Lamp", props: {domain: street}}
+- {id: feat-odd, type: Feature, status: have, title: "Odd", props: {domain: room, module: Z9}}
+- {id: feat-meta, type: Feature, status: have, title: "Meta", props: {domain: room, module: none}}
+"""
+
+
+def _with_features(tmp_path, nodes=NODES, feats=FEATURES):
+    store = _brain(tmp_path, nodes=nodes + '- {id: wi-done-bare, type: WorkItem, status: done, title: "Done, none"}\n')
+    (store / "schema.yaml").write_text("node_types: [WorkItem, Milestone, Feature]\nedge_types: []\n",
+                                       encoding="utf-8")
+    (store / "nodes" / "features.yaml").write_text(feats, encoding="utf-8")
+    return store
+
+
+def test_features_and_done_items_without_a_module_are_counted_and_warned_never_failed(tmp_path, monkeypatch, capsys):
+    store = _with_features(tmp_path)
+    assert modules.unplaced(store) == {"features": ["feat-lamp"], "done": ["wi-done-bare"]}
+    assert modules.warnings(store) == [
+        "1 feature(s) with no props.module: feat-lamp (brain features set <id> module=<module>)",
+        "feat-meta: props.module is none without props.module_reason",
+        "feat-odd: props.module Z9 is not in modules.yaml",
+        "1 done item(s) with no props.module: wi-done-bare (brain item set <id> props.module=<module>)",
+    ]
+    assert modules.problems(store) == modules.problems(_brain(tmp_path / "old"))   # the open items' only, as before
+    text = modules.render(store)
+    assert "Features placed: 3 of 4; done items placed: 1 of 2." in text
+    got = modules.data(store)
+    assert (got["features"], got["features_unplaced"], got["done_items"], got["done_unplaced"]) == \
+        (4, ["feat-lamp"], 2, ["wi-done-bare"]) and got["warnings"] == modules.warnings(store)
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
+    assert cli.main(["modules", "--check"]) == 1   # wi-bare (an open item) still fails it, as before
+    out = capsys.readouterr().out
+    assert "warning: 1 feature(s) with no props.module: feat-lamp" in out and "wi-bare: no props.module" in out
+    assert cli.main(["modules", "--check", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == modules.problems(store)   # --json --check: the problems only
+
+
+def test_placed_everywhere_nothing_is_warned_and_a_new_one_is(tmp_path, monkeypatch, capsys):
+    nodes = ('- {id: wi-open, type: WorkItem, status: todo, title: "Open", props: {module: P2}}\n'
+             '- {id: wi-done, type: WorkItem, status: done, title: "Done", props: {module: none, '
+             'module_reason: "the brain itself"}}\n')
+    feats = '- {id: feat-tea, type: Feature, status: have, title: "Tea", props: {domain: room, module: K1}}\n'
+    store = _brain(tmp_path, nodes=nodes)
+    (store / "schema.yaml").write_text("node_types: [WorkItem, Feature]\nedge_types: []\n", encoding="utf-8")
+    (store / "nodes" / "features.yaml").write_text(feats, encoding="utf-8")
+    assert modules.warnings(store) == [] and modules.problems(store) == []
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
+    assert cli.main(["modules", "--check"]) == 0
+    assert "warning:" not in capsys.readouterr().out
+    many = "".join(f'- {{id: feat-n{i:02}, type: Feature, status: planned, title: "N{i}", props: {{domain: d}}}}\n'
+                   for i in range(12))
+    (store / "nodes" / "features.yaml").write_text(feats + many, encoding="utf-8")   # twelve new ones
+    assert modules.warnings(store) == ["12 feature(s) with no props.module: " + ", ".join(
+        f"feat-n{i:02}" for i in range(10)) + " and 2 more (brain features set <id> module=<module>)"]
+    assert cli.main(["modules", "--check"]) == 0   # a warning, never a failure
+    assert "warning: 12 feature(s)" in capsys.readouterr().out
+
+
+def test_brain_check_warns_of_a_feature_with_no_module(tmp_path, monkeypatch, capsys):
+    from research_graph.cli import main as research_graph
+    root = tmp_path / "lab"
+    assert research_graph(["--store", str(root / "notes" / "graph"), "--repo-root", str(root), "init"]) == 0
+    store = root / "notes" / "graph"
+    schema = (store / "schema.yaml").read_text(encoding="utf-8")
+    schema = schema.replace("node_types: [WorkItem,", "node_types: [Feature, WorkItem,").replace(
+        "statuses: [todo,", "statuses: [have, partial, planned, \"no\", todo,")
+    (store / "schema.yaml").write_text(schema, encoding="utf-8")   # the features layer, as a brain's store has it
+    (store / "modules.yaml").write_text(REGISTRY, encoding="utf-8")
+    monkeypatch.setenv("BRAIN_ROOT", str(root))
+    monkeypatch.chdir(root)
+    assert cli.main(["features", "add", "feat-lab-tea", "--title", "Tea", "--domain", "room", "--repo", "lab"]) == 0
+    capsys.readouterr()
+    rc = cli.main(["check"])
+    out = capsys.readouterr().out
+    assert "warning: module map: 1 feature(s) with no props.module: feat-lab-tea" in out
+    assert cli.main(["features", "set", "feat-lab-tea", "module=K1"]) == 0
+    capsys.readouterr()
+    assert cli.main(["check"]) == rc   # placing it changes no verdict, only the warning goes
+    assert "feature(s) with no props.module" not in capsys.readouterr().out
+
+
+def test_the_public_features_render_never_shows_the_module_column():
+    from brain import features
+    nodes = [[{"id": "feat-sib-x", "type": "Feature", "status": "have", "title": "X",
+               "props": {"domain": "d", "repo": "sib", "module": "B3"}}]]
+    m = features.build(nodes, [])
+    assert "| Module |" in features.render(m, "sib") and "B3" in features.render(m, "sib")
+    public = features.render(m, "sib", public=True)
+    assert "Module" not in public and "B3" not in public
