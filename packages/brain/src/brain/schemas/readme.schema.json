@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/readme.schema.json",
+  "title": "readme.yaml, the text of a generated README",
+  "description": "A repo's readme.yaml, at its root (wi-brain-readme-sync): the text only a person writes (what the repo is, why, how to start, its own notes, the commands its README quotes and what each does). brain docs render writes README.md from the engine's template, this file and the facts of their sources (the repo's features, each quoted command's --help, the graph); brain docs check refuses a README that is not that render. A repo without this file is not concerned: its README is never read.",
+  "type": "object",
+  "required": ["v", "title", "what", "why", "start"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1},
+    "title": {"type": "string", "minLength": 1, "description": "The README's heading: the repo's name as people say it."},
+    "tagline": {"type": "string", "description": "One line under the title."},
+    "what": {"type": "string", "minLength": 1, "description": "What the repo is (Markdown)."},
+    "why": {"type": "string", "minLength": 1, "description": "Why it exists (Markdown)."},
+    "start": {
+      "type": "array",
+      "minItems": 1,
+      "description": "How to start, one numbered step each: a sentence, or {text, run} with the commands to run.",
+      "items": {
+        "type": ["string", "object"],
+        "allOf": [{
+          "if": {"type": "object"},
+          "then": {
+            "type": "object",
+            "required": ["text"],
+            "additionalProperties": false,
+            "properties": {
+              "text": {"type": "string", "minLength": 1},
+              "run": {"type": "string", "description": "Shell lines shown in a code block under the step."}
+            }
+          }
+        }]
+      }
+    },
+    "commands": {
+      "type": "array",
+      "description": "The commands the README quotes: each rendered with its usage, taken from its --help (the brain command's from the engine's own parser); a command whose --help no longer runs fails brain docs check.",
+      "items": {
+        "type": "object",
+        "required": ["cli"],
+        "additionalProperties": false,
+        "properties": {
+          "cli": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9_.-]+$", "description": "The program: brain, or a console script on the PATH."},
+          "args": {"type": "string", "description": "Its subcommands (the words before any option), e.g. 'docs render'."},
+          "say": {"type": "string", "description": "What it does, in a sentence or two."}
+        }
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The features recap: the counts, the top ones, the link to the generated FEATURES.md.",
+      "properties": {
+        "top": {"type": "integer", "minimum": 0, "maximum": 50, "description": "How many features the recap lists (default 8)."},
+        "strategy": {"type": "string", "description": "A relative link to the project's strategy view."}
+      }
+    },
+    "sections": {
+      "type": "array",
+      "description": "The repo's own notes, each a section after the facts.",
+      "items": {
+        "type": "object",
+        "required": ["title", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "title": {"type": "string", "minLength": 1},
+          "text": {"type": "string"}
+        }
+      }
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "href"],
+        "additionalProperties": false,
+        "properties": {
+          "title": {"type": "string", "minLength": 1},
+          "href": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

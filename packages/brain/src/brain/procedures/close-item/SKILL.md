@@ -39,6 +39,11 @@ The same PR carries a test for the changed behaviour whenever one can be written
 in the project's graph (its item, spec and ADR, and code references for new modules). Missing ones are added the
 same way.
 
+A repo that holds `readme.yaml` has a generated README (`brain docs`): never edit its `README.md`, change
+`readme.yaml` or the sources, then run `brain [--project P] docs render --write` in the PR's worktree (`--dir` for
+another repo of the project) and `brain docs check`, exit 0, before the PR. A repo without `readme.yaml` is not
+concerned.
+
 Then the scout (rule R8): run `brain [--project P] audit --diff` in the PR's worktree (`--diff A..B` once merged).
 Exit 1: fix each NEW and LEFT line in this PR, a catch-up test checking the behaviour the spec or ADR expects. DEFER
 lines go to the debt item named (the line prints its `brain item add` when the item is missing). PENDING is not
