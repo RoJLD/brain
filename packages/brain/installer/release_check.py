@@ -25,18 +25,29 @@ is checked. On a version PR, it fails when:
   brain.waves). That one check imports brain and research_graph from this checkout (``packages/brain/src``, ``src``)
   and needs PyYAML; a store with no wave of this version passes it.
 
+On any PR, a version PR or not, it fails on a malformed changelog fragment, a ``## Unreleased`` section, and a standard
+step that the pending Upgrade fragments ask twice (:func:`standard_step_copies`).
+
+``--preview`` is the release preview (CI's advisory ``release-preview`` job, wi-brain-release-preview): on any PR, the
+version policy applied as if the next release were a patch of the last tag, to the registered schemas that moved since
+it and to the pending Upgrade fragments' steps beyond the standard ones; it says whether the next release would be a
+minor one and, with ``--base``, which of the reasons this branch carries, appends that to ``--summary`` (default
+$GITHUB_STEP_SUMMARY) and exits 0 whatever it says (2 when it cannot tell).
+
 Standard library only (``--store``'s check aside), and the working tree is what is read: the job runs before any
 install, and it can be run before committing. Exit 0 when it passes or there is nothing to check, 1 when it fails, 2
 when it cannot tell (no tag, no git, a --store that cannot be read: no ``nodes/``, YAML that does not parse, no
 PyYAML; on any PR, a version PR or not).
 
     python packages/brain/installer/release_check.py [--repo DIR] [--against vX.Y.Z] [--store DIR]
+    python packages/brain/installer/release_check.py --preview [--base origin/main] [--summary FILE]
 """
 from __future__ import annotations
 
 import argparse
 import ast
 import json
+import os
 import re
 import subprocess
 import sys
@@ -461,7 +472,8 @@ def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], l
         if not version:
             return [], [f"{VERSIONS[name]}: no __version__ ({name})"]
     import changelog as frag   # beside this file (sys.path above): wi-brain-changelog-unreleased-collisions
-    fragments = frag.check(repo)   # every PR: a malformed fragment, or a '## Unreleased' section again
+    # every PR: a malformed fragment, a '## Unreleased' section again, a standard step copied by a second fragment
+    fragments = frag.check(repo) + standard_step_copies(repo, frag.load(repo, "brain")[0])
     if all(version == tag.removeprefix("v") for version in versions.values()):
         return [f"not a version PR: both distributions are at {tag}; the changelog fragments checked"], fragments
     if len(set(versions.values())) > 1:
@@ -494,12 +506,175 @@ def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], l
     return said, problems
 
 
+def _rel(repo: Path, path: Path) -> str:
+    try:
+        return path.relative_to(repo).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _step_title(line: str) -> str:
+    """The compared title of a step line, numbered or not; '' without a bold title."""
+    step = STEP_RE.match(line.strip())
+    title = TITLE_RE.match(step.group(1) if step else line.strip())
+    return _title(title.group(1)) if title else ""
+
+
+def fragment_steps(body: str) -> list[str]:
+    """The steps an Upgrade fragment asks, as their lines: its numbered lines (:data:`STEP_RE`, as the version PR's
+    ``### Upgrade`` is read), else its first line when it opens with a bold title (one step, which the version PR will
+    number, as ``packages/brain/changes/README.md`` asks), else none (a closing paragraph such as « Nothing to run for
+    the rest »)."""
+    numbered = [line.strip() for line in body.splitlines() if STEP_RE.match(line)]
+    if numbered:
+        return numbered
+    first = body.strip().split("\n", 1)[0].strip()
+    return [first] if TITLE_RE.match(first) else []
+
+
+def standard_step_copies(repo: Path, fragments: list) -> list[str]:
+    """Each standard step that the pending Upgrade fragments ask more than once (two fragments, or one twice): the
+    compiled ``### Upgrade`` would list it twice (les-brain-upgrade-fragment-copies-standard, wi-brain-release-preview).
+    A PR adds its own step, never a copy of the standard ones, which one fragment holds for the whole release."""
+    standard = {_title(step): step for step in STANDARD_STEPS}
+    holders: dict[str, list[str]] = {}
+    for f in fragments:
+        if f.section == "Upgrade":
+            for line in fragment_steps(f.body):
+                if _step_title(line) in standard:
+                    holders.setdefault(_step_title(line), []).append(_rel(repo, f.path))
+    return [f"the standard step **{standard[title]}** is asked {len(paths)} times by the Upgrade fragments "
+            f"({', '.join(paths)}): one fragment holds the standard steps for the whole release; a PR's fragment "
+            f"adds only its own step (docs/release.md, « The release preview »)"
+            for title, paths in holders.items() if len(paths) > 1]
+
+
+def next_patch(tag: str) -> str:
+    """X.Y.Z+1 of the tag ``vX.Y.Z``, '' when it is not one."""
+    match = TAG_RE.match(tag)
+    return f"{match.group(1)}.{match.group(2)}.{int(match.group(3)) + 1}" if match else ""
+
+
+def next_minor(tag: str) -> str:
+    match = TAG_RE.match(tag)
+    return f"{match.group(1)}.{int(match.group(2)) + 1}.0" if match else ""
+
+
+def pr_files(repo: Path, base: str) -> set[str]:
+    """The files this branch changes since it left ``base``: committed, staged, unstaged and untracked ones (the
+    preview can run before a commit)."""
+    fork = git(repo, "merge-base", base, "HEAD")
+    files = set(git(repo, "diff", "--name-only", fork).splitlines())
+    files |= set(git(repo, "ls-files", "--others", "--exclude-standard").splitlines())
+    return {f for f in files if f}
+
+
+class Preview:
+    """What the next release would be if it were cut now as a patch of ``tag`` (:func:`preview`)."""
+
+    def __init__(self, tag: str, moved: list[str], grown: list[str], beyond: list[tuple[str, str]],
+                 copies: list[str], touched: set[str] | None, version_pr: bool):
+        self.tag, self.moved, self.grown, self.beyond, self.copies = tag, moved, grown, beyond, copies
+        self.touched, self.version_pr = touched, version_pr
+
+    @property
+    def minor(self) -> bool:
+        return bool(self.moved or self.beyond)
+
+    def mine(self) -> list[str]:
+        """The reasons for a minor release that this branch's own files carry ([] without ``--base``)."""
+        if self.touched is None:
+            return []
+        return ([p for p in self.moved if p in self.touched]
+                + [f"{path}: {line}" for path, line in self.beyond if path in self.touched])
+
+    def verdict(self) -> str:
+        patch, minor = next_patch(self.tag), next_minor(self.tag)
+        if not self.minor:
+            return f"a patch, {patch}: nothing pending moves a format or asks an Upgrade step beyond the standard ones"
+        said = f"a minor, {minor}, not the patch {patch}"
+        if self.touched is None:
+            return said
+        mine, total = len(self.mine()), len(self.moved) + len(self.beyond)
+        if not mine:
+            return f"{said}, already before this PR, which adds no reason"
+        if mine == total:
+            return f"{said}, because of this PR"
+        return f"{said}; this PR carries {mine} of its {total} reasons"
+
+    def lines(self) -> list[str]:
+        out = [f"the next release after {self.tag}: {self.verdict()}"]
+        if self.version_pr:
+            out.append("a version PR: release-check judges it, this preview reads only the pending fragments")
+        mine = set(self.mine())
+
+        def ours(reason: str) -> str:
+            return f"{reason} (this PR)" if reason in mine else reason
+
+        out += [f"a registered schema moved since {self.tag}: {ours(p)}" for p in self.moved] or \
+               [f"no registered schema moved since {self.tag}"]
+        out += self.grown
+        out += [f"an Upgrade step beyond the standard ones: {ours(f'{path}: {line}')}"
+                for path, line in self.beyond] or ["no pending Upgrade step beyond the standard ones"]
+        out += [f"a fragment copies a standard step: {c}" for c in self.copies]
+        return out
+
+    def markdown(self) -> str:
+        head = "Minor" if self.minor else "Patch"
+        rest = self.lines()
+        body = "\n".join(f"- {line}" for line in rest[1:])
+        return (f"### Release preview: {head}\n\n{rest[0][0].upper()}{rest[0][1:]}.\n\n{body}\n\n"
+                f"Advisory: the policy is docs/release.md, « The version policy »; a minor version is the owner's "
+                f"decision at the version PR.\n")
+
+
+def preview(repo: Path, tag: str, base: str = "") -> Preview:
+    """The release preview (wi-brain-release-preview; the owner's decision of 2026-11-10, point 3): the version policy
+    of :func:`policy` applied now, as if the next release were a patch of ``tag``, to the registered schemas that
+    moved since it (:func:`moved_schemas`) and to the pending Upgrade fragments' steps beyond the standard ones
+    (:func:`fragment_steps`), with the fragments that copy a standard step; ``base`` (the PR's target branch) names
+    which reasons this branch's own files carry."""
+    import changelog as frag
+    fragments = frag.load(repo, "brain")[0]
+    moved, grown = moved_schemas(repo, tag, changed_schemas(repo, tag))
+    standard = {_title(step) for step in STANDARD_STEPS}
+    beyond = [(_rel(repo, f.path), line) for f in fragments if f.section == "Upgrade"
+              for line in fragment_steps(f.body) if _step_title(line) not in standard]
+    versions = {version_in(repo, path) for path in VERSIONS.values()}
+    return Preview(tag, moved, grown_lines(repo, tag, grown), beyond, standard_step_copies(repo, fragments),
+                   pr_files(repo, base) if base else None, versions != {tag.removeprefix("v")})
+
+
+def run_preview(repo: Path, tag: str, base: str, summary: str) -> int:
+    """Print the preview, append it to ``summary`` (the job's $GITHUB_STEP_SUMMARY); exit 0 whatever it says (the job
+    is advisory), 2 when it cannot tell."""
+    try:
+        said = preview(repo, tag or last_tag(repo), base)
+    except CannotTell as exc:
+        print(f"release-preview: cannot tell: {exc}", file=sys.stderr)
+        return 2
+    for line in said.lines():
+        print(f"release-preview: {line}")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as out:
+            out.write(said.markdown())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="The version PR's check (docs/release.md).")
     ap.add_argument("--repo", default=".", help="the checkout (default: here)")
     ap.add_argument("--against", default="", help="the tag to compare with (default: the last tag before HEAD)")
     ap.add_argument("--store", default="", help="the graph store that plans the releases: its wave of this version "
                                                 "must be closed (brain wave close)")
+    ap.add_argument("--preview", action="store_true",
+                    help="the release preview, on any PR: would the next release be a patch of the last tag? Prints "
+                         "the schemas that moved, the pending Upgrade steps beyond the standard ones and the "
+                         "fragments that copy one; exit 0 whatever it says (docs/release.md, « The release preview »)")
+    ap.add_argument("--base", default="", help="with --preview: the PR's target (origin/main), to say which reasons "
+                                               "this branch carries")
+    ap.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY", ""),
+                    help="with --preview: a Markdown file the preview is appended to (default: $GITHUB_STEP_SUMMARY)")
     args = ap.parse_args(argv)
     # Its messages quote docs/release.md's « » titles: a pipe on Windows is in the ANSI code page, and a reader of
     # UTF-8 (CI, a test) would fail on them. A console is written in UTF-16 whatever this says.
@@ -507,6 +682,8 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     repo = Path(args.repo)
+    if args.preview:
+        return run_preview(repo, args.against, args.base, args.summary)
     try:
         if args.store:   # on any PR: a --store that is no store is said, not skipped with the rest
             readable_store(Path(args.store))
