@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/standards.schema.json",
+  "title": "A standards catalog: one row per engineering standard",
+  "description": "A catalog of the standards registry (brain.standards, wi-brain-standards-registry): the engine's own catalogs under brain/catalogs/, and a brain's local ones that projects.yaml standards.catalogs names. Each row says what the standard is, where it applies (profiles), from which stage it is required, how it is enforced and by what check, the languages that check covers and how the Brain itself meets it. A row binds no project: a project opts in through projects.yaml standards: (profiles, stage, include, exclude). The vocabularies (profiles, stages, enforcement levels, coverage, status, adapters) are brain.standards' and docs/standards.md's: a value this engine does not know is a note in read mode, an error in strict mode.",
+  "type": "object",
+  "required": ["v", "catalog", "title", "rows"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1},
+    "catalog": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "The catalog's name (software, research...): what brain standards list --catalog filters on."},
+    "title": {"type": "string", "minLength": 1, "description": "One line saying what the catalog covers."},
+    "source": {"type": "string", "description": "Where its rows were curated from, in neutral words (the source stays the reference)."},
+    "rows": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/row"}
+    }
+  },
+  "$defs": {
+    "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "row": {
+      "type": "object",
+      "required": ["id", "domain", "statement", "profiles", "stage", "enforcement", "check", "languages", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Unique across every catalog a brain loads; never reused for another standard."},
+        "domain": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The domain it belongs to, within its catalog (persistence, security, testing...)."},
+        "title": {"type": "string", "description": "A short name, for the lists."},
+        "statement": {"type": "string", "minLength": 1, "description": "What a project that follows it does, as one or two sentences that can be checked."},
+        "why": {"type": "string", "description": "What goes wrong without it."},
+        "profiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/slug"}, "description": "The kinds of project it applies to (brain.standards.PROFILES), or [any]."},
+        "stage": {"type": "string", "description": "The stage from which it is required: prototype, mvp, v1 or scale (brain.standards.STAGES)."},
+        "enforcement": {"type": "string", "description": "How it is enforced, from the cheapest: check (a machine check that blocks), measure (a number that trends), test-template (a test the brief asks for), review-lens (a question of the review), rule (judgement only)."},
+        "check": {"type": "string", "minLength": 1, "description": "What enforces it: the tool, lint, test, measure or review question."},
+        "adapter": {"type": "string", "description": "The slot of a repo's language adapter whose results carry its check: lint, typecheck, test, coverage or format (brain.standards.ADAPTERS)."},
+        "languages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/slug"}, "description": "The languages its check covers (py, ts...), or [any] when it does not depend on one."},
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "description": "How the Brain itself meets it.",
+          "properties": {
+            "status": {"type": "string", "description": "have, partial, none or n/a (brain.standards.COVERAGE)."},
+            "by": {"type": "string", "description": "What in the Brain meets it, or the work item that will."}
+          }
+        },
+        "status": {"type": "string", "description": "proposed (curated, not validated yet) or validated (the owner validated it)."},
+        "source": {"type": "string", "description": "Where in the catalog's source it comes from (a section, a pillar)."},
+        "refs": {"type": "array", "items": {"type": "string"}, "description": "Related ids: other standards, items, specs."}
+      }
+    }
+  }
+}

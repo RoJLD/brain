@@ -221,6 +221,15 @@ that touch it; a public repo's render is neutral (the features' public titles, n
 render (a hand edit, or a stale render: a feature, a command's help or the graph changed); `brain check` runs it
 (a stale README is a stale view, [docs/views.md](docs/views.md)). A repo without `readme.yaml` is never read.
 
+### Standards
+
+The standards registry holds engineering standards as data ([docs/standards.md](docs/standards.md)): one row per
+standard, its domain, statement, the profiles it applies to, the stage it is required from, how it is enforced and by
+what check, the languages that check covers and how the Brain itself meets it, in catalogs (the engine's own, and a
+brain's local ones). A project opts in with `projects.yaml` `standards: {profiles, stage, include, exclude,
+catalogs}`; `brain standards list|show|check` reads them, `brain check --all` checks each project's opt-in, and
+`brain brief` lists the project's standards as its invariants. A project without the key follows none.
+
 ### The impact of a change
 
 `brain impact [--diff BASE|A..B]` says, before merge, what a change's code carries in the graph
