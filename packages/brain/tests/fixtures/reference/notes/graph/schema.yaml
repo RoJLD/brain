@@ -1,5 +1,5 @@
 # The reference fixture's store (wi-brain-technical-reference): a lab whose owner, Ada Quill, names herself in titles.
-node_types: [WorkItem, Milestone, Spec, ADR, Feature, CodeRef, Rule, DDR]
+node_types: [WorkItem, Milestone, Spec, ADR, Feature, CodeRef, Repo, Rule, DDR]
 edge_types: [depends_on, part_of, specified_by, decided_by, supersedes, delivers, implemented_by, documented_in,
              about, answered_in]
 statuses: [todo, doing, blocked, done, dropped, pending, reached, proposed, active, superseded, have, partial,

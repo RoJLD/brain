@@ -18,9 +18,11 @@ USAGE = """\
                  README.md and modules/<id>.md per module of the store's modules.yaml (what it does from its
                  features, the decisions in force on its nodes from the answered DDRs, earlier ones folded, an ADR no
                  DDR went to by its title; its rules, specs, items done and open, open questions), and the decisions
-                 no module holds; no --write: exit 1 when docs/reference/ is not the render. brain sync writes it once
-                 docs/reference/ exists. --public: a public repo's neutral reference by feature domain (its features'
-                 public titles, its own code and docs), into --out (a checkout's docs/reference)
+                 no module holds; no --write: exit 1 when docs/reference/ is not the render; a page there that is not
+                 generated is never overwritten. Once written, brain sync keeps it current (the owner's opt-in).
+                 --public: a public repo's neutral reference by feature domain (its features' public titles, its own
+                 code and docs), into --out (a checkout's docs/reference), written only when brain check --public
+                 would refuse none of it; --force: write under views.strict with another engine than the pin
 """
 
 
@@ -41,19 +43,25 @@ def cmd_reference(args, root: Path) -> int:
         return 1
     files = files_for(args, root)
     base = _target(args, root)
-    if args.public:
-        for line in reference.denied(files, config.load(root)):
-            print(f"brain: warning: the public reference: {line} (brain features set <feature> public_title=...)",
-                  file=sys.stderr)
+    denied = reference.denied(files, config.load(root)) if args.public else []
+    for line in denied:   # what brain check --public would refuse: never written into a public repo
+        print(f"brain: the public reference: {line} (brain features set <feature> public_title=... or public_id=...)",
+              file=sys.stderr)
     if not args.write:
         late = reference.stale(base, files)
         print("\n".join(f"{reference.DIR}/{p}: not the render" for p in late) or f"{reference.DIR}: up to date")
-        return 1 if late else 0
+        return 1 if late or denied else 0
+    if denied:
+        print(f"brain reference --public: {len(denied)} line(s) a public check would refuse: nothing written",
+              file=sys.stderr)
+        return 1
     if skew.refuse_view(root, "reference --write", args.force, f"the committed {reference.DIR}"):
         return 1
-    changed = reference.write(base, files)
+    changed, kept = reference.write(base, files)
+    for p in kept:
+        print(f"brain: {base / p} is not generated (no '{reference.MARKER}'): kept, not overwritten", file=sys.stderr)
     print(f"reference: {len(changed)} file(s) written in {base}" if changed else "reference: unchanged")
-    return 0
+    return 1 if kept else 0
 
 
 def register(sub, ctx) -> None:
