@@ -760,7 +760,7 @@ features`). A shell command counts only when it reads (`grep`, `rg`, `cat`, `hea
 the worktree's `.git` file, no git started). Claude Code starts it only on a likely hit: each of its hooks carries an
 `if` condition (a permission rule: `Read(//**/journal.md)`, `Bash(*decisions.md*)`...) naming the files it hints
 about, so a Read, Bash or PowerShell call that names none starts no process at all; Grep's path is a folder or a glob,
-which a rule cannot match, so a Grep call still starts it. What gets through still stops in bash builtins when its
+which a rule cannot match, so a Grep call still starts it. The rules do not overlap, so a call that names one brain file starts it once (one that names two kinds may start it twice: Claude Code runs every matching hook). What gets through still stops in bash builtins when its
 JSON names none of those files (the conditions only narrow), the Python path, about 0.4 s, taken only on a hand read
 of a brain file. Measured on the owner's machine over a week before the conditions: 4,854 of 4,981 runs stopped at
 the bash fast path, each a bash start of about 85 ms on Windows; on a shell call it runs beside `guard.sh`.

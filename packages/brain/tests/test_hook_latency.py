@@ -123,15 +123,18 @@ def _readhint_hooks() -> dict[str, list[dict]]:
     return {m: hs for m, hs in out.items() if hs}
 
 
-def _starts(hooks: list[dict], tool: str, value: str) -> bool:
+def _matches(hooks: list[dict], tool: str, value: str) -> int:
+    """How many of the hooks a call starts (Claude Code runs every matching one)."""
+    n = 0
     for h in hooks:
-        if "if" not in h:
-            return True
-        m = re.fullmatch(rf"{tool}\((.*)\)", h["if"])
+        m = re.fullmatch(rf"{tool}\((.*)\)", h.get("if") or f"{tool}(*)")
         assert m, h["if"]
-        if _rule(m.group(1), tool != "Read").match(value):
-            return True
-    return False
+        n += bool(_rule(m.group(1), tool != "Read").match(value))
+    return n
+
+
+def _starts(hooks: list[dict], tool: str, value: str) -> bool:
+    return _matches(hooks, tool, value) > 0
 
 
 READS = ["/e/b/notes/graph/nodes/work.yaml", "/e/b/notes/graph/edges/work.yml", "/e/b/notes/decisions.md",
@@ -139,7 +142,7 @@ READS = ["/e/b/notes/graph/nodes/work.yaml", "/e/b/notes/graph/edges/work.yml", 
          "/e/b/notes/roadmap_graph.md", "/e/b/notes/plan_graph.md", "/e/b/notes/decision_queue.md", "/e/b/FEATURES.md"]
 SHELLS = ["grep -n wi-x notes/graph/nodes/work.yaml", "cat notes/decisions.md", "Get-Content notes\\journal.md",
           "head -40 notes/kanban_graph.md", "sls x FEATURES.md", "type notes\\decision_queue.md",
-          "rg wi-x notes/graph/edges/work.yaml"]
+          "rg wi-x notes/graph/edges/work.yaml", "grep -rn wi-x notes/graph", "ls notes/graph/"]
 
 
 def test_the_read_hint_starts_only_on_a_likely_hit():
@@ -149,10 +152,10 @@ def test_the_read_hint_starts_only_on_a_likely_hit():
     assert all("if" in h for t in ("Read", "Bash", "PowerShell") for h in hooks[t])
     assert [h.get("if") for h in hooks["Grep"]] == [None]   # a folder or a glob: the bash fast path filters it
     assert {readhint.kind_of(p) for p in READS} == {k for _, k in readhint.KINDS}   # every kind of brain file
-    for p in READS:   # every file the hint names starts it
-        assert _starts(hooks["Read"], "Read", p), p
+    for p in READS:   # every file the hint names starts it, once: the rules do not overlap
+        assert _matches(hooks["Read"], "Read", p) == 1, p
     for c in SHELLS:
-        assert _starts(hooks["Bash"], "Bash", c) and _starts(hooks["PowerShell"], "PowerShell", c), c
+        assert _matches(hooks["Bash"], "Bash", c) == 1 and _matches(hooks["PowerShell"], "PowerShell", c) == 1, c
     for p in ("/e/b/src/app.py", "/e/b/notes/README.md", "/e/b/notes/graph/schema.yaml", "/e/b/nodes.yaml"):
         assert not _starts(hooks["Read"], "Read", p), p   # a call that names none starts no process
     for c in ("git status", "python -m pytest -q", "gh pr view 12"):

@@ -232,7 +232,13 @@
           },
           {
             "type": "command",
-            "if": "Bash(*graph*)",
+            "if": "Bash(*graph)",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(*graph/)",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh\"",
             "timeout": 5
           },
@@ -245,6 +251,12 @@
           {
             "type": "command",
             "if": "Bash(*journal.md*)",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(*_graph.md*)",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh\"",
             "timeout": 5
           },
@@ -279,7 +291,13 @@
           },
           {
             "type": "command",
-            "if": "PowerShell(*graph*)",
+            "if": "PowerShell(*graph)",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "PowerShell(*graph/)",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh\"",
             "timeout": 5
           },
@@ -292,6 +310,12 @@
           {
             "type": "command",
             "if": "PowerShell(*journal.md*)",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "PowerShell(*_graph.md*)",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh\"",
             "timeout": 5
           },
