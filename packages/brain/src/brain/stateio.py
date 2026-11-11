@@ -366,6 +366,12 @@ def rotate_log(path: Path, now: datetime | None = None, *, keep: int | None = LO
         while name(n).exists():
             n += 1
         target = name(n)
+        try:   # looked at again: another hook may have rotated it and started a fresh one since the stat
+            again = path.stat()
+        except OSError:
+            return None
+        if (again.st_mtime_ns, again.st_size) != (st.st_mtime_ns, st.st_size):
+            continue
         try:
             _move_new(path, target)
         except FileExistsError:
