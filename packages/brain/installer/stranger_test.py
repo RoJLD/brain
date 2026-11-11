@@ -278,7 +278,8 @@ def where(root: Path, home: Path) -> dict[str, list[Path]]:
             "ddr": found(root, "records/ddr/*.yaml"), "event": found(home / ".brain" / "ledger", "**/exec-*.jsonl"),
             "packs": found(root, "source/packs.yaml"), "permissions": found(root, "permissions.yaml"),
             "projects": found(root, "projects.yaml"), "members": found(root, "members.yaml"),
-            "readme": found(root, "readme.yaml"), "sr": found(root, "records/sr/*/*.yaml"), "template": []}
+            "readme": found(root, "readme.yaml"), "sr": found(root, "records/sr/*/*.yaml"),
+            "standards": found(root, "standards/*.yaml"), "template": []}
 
 
 def formats() -> list[tuple[str, int]]:
@@ -511,10 +512,13 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
     shutil.copyfile(fixture("permissions", "older"), root / "permissions.yaml")
     shutil.copyfile(fixture("members", "older"), root / "members.yaml")
     shutil.copyfile(fixture("readme", "older"), root / "readme.yaml")   # opt-in: no command writes it
+    (root / "standards").mkdir(exist_ok=True)   # a local standards catalog (brain.standards): opt-in too
+    shutil.copyfile(fixture("standards", "older"), root / "standards" / "local.yaml")
     with (root / "boundary.yaml").open("a", encoding="utf-8", newline="\n") as fh:    # the template has no rule
         fh.write('  - {glob: "permissions.yaml", side: personal, why: "the permission hierarchy"}\n')
         fh.write('  - {glob: "members.yaml", side: personal, why: "who belongs to the brain"}\n')
         fh.write('  - {glob: "readme.yaml", side: personal, why: "the text of the generated README"}\n')
+        fh.write('  - {glob: "standards/**", side: personal, why: "the brain\'s local standards catalogs"}\n')
     ok = phase("previous", [written(root, home)] + run_steps(
         [("git add", ["git", "add", "-A"], None, None), ("commit", ["git", "commit", "-q", "-m", "data"], None, None),
          ("check", [brain, "check"], None, lambda o: "graph-check OK" in o),
