@@ -558,6 +558,11 @@ def hook_main(argv: list[str], stdin=None) -> int:
                 parts.append(silent)
         except Exception as exc:  # noqa: BLE001
             _log_error("alerts-dead-man", exc)
+        try:   # what capture counted of Claude Code's formats that brain does not read (wi-brain-external-contracts)
+            from .capture import contract_notes
+            parts.extend(contract_notes())
+        except Exception as exc:  # noqa: BLE001
+            _log_error("contracts-health", exc)
         try:   # COMPAT-4: the public and secrets guards fail closed on an unexpected configuration
             from . import config
             why = config.unexpected()

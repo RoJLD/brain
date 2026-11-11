@@ -133,3 +133,69 @@ def test_hooks_json_declares_the_capture_hooks():
             for h in m["hooks"]:
                 if "capture.sh" in h["command"]:
                     assert h.get("async") or event == "SessionEnd", event
+
+
+# --- the external contracts (wi-brain-external-contracts) ----------------------------------------------------------
+
+CLAUDE = Path(__file__).parent / "fixtures" / "claude"
+
+
+@pytest.mark.parametrize("event", sorted(capture.PAYLOAD_KEYS))
+def test_each_hook_payload_fixture_is_what_capture_reads(event):
+    payload = json.loads((CLAUDE / "hooks" / f"{event}.json").read_text(encoding="utf-8"))
+    assert capture.payload_contract(event, payload) == []
+    assert capture.payload_contract(event, {**payload, "new_key": 1}) == ["unknown new_key"]
+    required = sorted(capture.PAYLOAD_KEYS[event][0])
+    assert capture.payload_contract(event, {k: v for k, v in payload.items() if k != required[0]}) == \
+        [f"missing {required[0]}"]
+
+
+def _contracts(brain_home):
+    return json.loads((brain_home / "ledger" / capture.CONTRACTS).read_text(encoding="utf-8"))
+
+
+def test_an_unknown_key_is_counted_logged_once_and_shown_once(brain_home):
+    """Tolerant reading made loud: the capture goes on, the key is counted, errors.log says it at its first sighting
+    and the SessionStart health names it once."""
+    payload = json.loads((CLAUDE / "hooks" / "session-end.json").read_text(encoding="utf-8"))
+    payload["exit_detail"] = "x"
+    for _ in range(2):
+        assert capture.main(["session-end"], stdin=io.BytesIO(json.dumps(payload).encode())) == 0
+    entry = _contracts(brain_home)["keys"]["hook session-end: unknown exit_detail"]
+    assert entry["count"] == 2 and entry["shown"] is False
+    errors = (brain_home / "ledger" / "errors.log").read_text(encoding="utf-8")
+    assert errors.count("contract: Claude Code's format changed: hook session-end: unknown exit_detail") == 1
+    (line,) = capture.contract_notes()
+    assert "hook session-end: unknown exit_detail (2x)" in line and "Nothing is refused" in line
+    assert capture.contract_notes() == [] and _contracts(brain_home)["keys"]["hook session-end: unknown exit_detail"][
+        "shown"] is True
+    events = (brain_home / "ledger").glob("events-*.jsonl")
+    assert any('"session_end"' in f.read_text(encoding="utf-8") for f in events)   # captured all the same
+
+
+def test_a_newer_brains_ledger_is_left_as_it_is(brain_home):
+    f = brain_home / "ledger" / capture.CONTRACTS
+    f.parent.mkdir(parents=True)
+    f.write_text('{"v": 2, "keys": {"x": {"shown": false}}}', encoding="utf-8")
+    assert capture.note_contract("hook stop", ["unknown y"]) == [] and capture.contract_notes() == []
+    assert json.loads(f.read_text(encoding="utf-8")) == {"v": 2, "keys": {"x": {"shown": False}}}
+
+
+def test_the_transcript_fixture_reads_clean_and_a_new_type_is_counted(tmp_path, brain_home):
+    from brain import transcript
+    stats = transcript.SessionStats()
+    stats.feed_file(CLAUDE / "transcript.jsonl")
+    assert stats.contract == {} and stats.tokens["output"] == 20 and stats.title == "Add the demo"
+    t = tmp_path / "s.jsonl"
+    lines = (CLAUDE / "transcript.jsonl").read_text(encoding="utf-8").splitlines()
+    rec = json.loads(lines[6])
+    del rec["message"]["usage"]
+    t.write_text("\n".join(lines + ['{"type": "hologram", "sessionId": "s"}', json.dumps(rec)]) + "\n",
+                 encoding="utf-8")
+    stats = transcript.SessionStats()
+    stats.feed_file(t)
+    assert stats.contract == {"unknown type hologram": 1, "missing message.usage": 1}
+    assert "_contract" not in stats.to_state() and "contract" not in stats.to_state()
+    payload = {"session_id": "s-1", "transcript_path": str(t), "cwd": str(tmp_path)}
+    assert capture.main(["stop"], stdin=io.BytesIO(json.dumps(payload).encode())) == 0
+    assert _contracts(brain_home)["keys"]["transcript: unknown type hologram"]["count"] == 1

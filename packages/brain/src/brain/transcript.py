@@ -37,6 +37,13 @@ _CLASS_RE = re.compile(r"task class\W{0,8}(trivial|standard|strategic|brainstorm
 # The app's attachment records when ultracode turns on (seen: ultra_effort_enter) and, by the same naming, off
 ULTRA_ON = {"ultra_effort_enter"}
 ULTRA_OFF = {"ultra_effort_exit", "ultra_effort_leave"}
+# The record types of Claude Code's transcripts (wi-brain-external-contracts; seen in real transcripts, 2026-11-11, and
+# tests/fixtures/claude/transcript.jsonl): one outside this set, and a user or assistant record without a key read
+# here, is counted (SessionStats.contract, never saved with the state) for brain.capture's contracts ledger.
+RECORD_TYPES = frozenset({"user", "assistant", "system", "summary", "attachment", "custom-title", "pr-link",
+                          "cost-state", "file-history-snapshot", "file-history-delta", "queue-operation",
+                          "last-prompt", "atis-latch", "agent-name", "api-request", "api-request-shape",
+                          "api-request-blob", "mode", "bridge-session", "tools-used", "relocated", "progress"})
 _ITEM_CMD_RE = re.compile(r"\bbrain\s+item\s+(?:add|set|close)\s+((?:wi|ms|spec)-[a-z0-9-]+)")
 
 
@@ -132,10 +139,11 @@ class SessionStats:
         self.task_class = ""
         self.ultracode = False         # on at any time in the session
         self.ultracode_now = False     # on at its last record
+        self._contract: Counter = Counter()   # "unknown type T" / "missing K": this run's records only, never saved
 
     # --- state ---
     def to_state(self) -> dict:
-        d = dict(self.__dict__)
+        d = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
         for k, v in d.items():
             if isinstance(v, Counter):
                 d[k] = dict(v)
@@ -178,8 +186,19 @@ class SessionStats:
         if action and action not in pr["actions"]:
             pr["actions"].append(action)
 
+    @property
+    def contract(self) -> Counter:
+        """What the records fed since this object was made broke of the format read here: ``unknown type T`` (a type
+        outside :data:`RECORD_TYPES`), ``missing K`` (a user or assistant record without ``timestamp``, an assistant
+        message without ``id``, ``model`` or ``usage``)."""
+        return self._contract
+
     def feed(self, rec: dict) -> None:
         t = rec.get("type")
+        if t not in RECORD_TYPES:
+            self._contract[f"unknown type {t if isinstance(t, str) else type(t).__name__}"] += 1
+        elif t in ("user", "assistant") and not rec.get("timestamp"):
+            self._contract["missing timestamp"] += 1
         if not self.session_id and rec.get("sessionId"):
             self.session_id = rec["sessionId"]
         if t in ("user", "assistant", "attachment", "system"):
@@ -225,6 +244,10 @@ class SessionStats:
                         if item not in self.items:
                             self.items.append(item)
         mid, model = msg.get("id"), msg.get("model")
+        if model != "<synthetic>" and not rec.get("isApiErrorMessage"):
+            for key in ("id", "model", "usage"):
+                if not msg.get(key):
+                    self._contract[f"missing message.{key}"] += 1
         if not mid or model == "<synthetic>" or mid in self.recent_ids:
             return
         self.recent_ids = (self.recent_ids + [mid])[-64:]

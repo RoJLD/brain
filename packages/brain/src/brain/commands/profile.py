@@ -19,7 +19,8 @@ USAGE = """\
                  tools, container runtime, Kubernetes context, disk encryption), the active profile and its overrides,
                  each capability's and stack's state (on, to install, fallback, missing, off, unavailable, planned),
                  the Recommended profile computed for this machine and what it would add; --json: the machines
-                 brick's inventory fields and a brain block, for the cockpit; --quick: no probe that starts a program
+                 brick's inventory fields and a brain block, for the cockpit (schemas/status.schema.json, the status
+                 document); --quick: no probe that starts a program
   brain profile list | show lite|default|recommended|custom [--json]   each profile's entries (Lite, Défaut,
                  Recommandé computed for this machine, Personnalisable: this machine's overrides); show: one profile's
                  entries with their class, requirements, cost, fallback and state (brain.tiers, tiers.yaml)

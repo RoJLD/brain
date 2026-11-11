@@ -20,6 +20,10 @@ Events (hook payload fields checked against the Claude Code hooks reference, 202
   ``sessions/<session_id>.report.json`` (brain.sessions.build_report: PRs, head, items, DDRs, what it waits on, what
   comes next, the recap), which brain sessions tree reads;
 - ``session-end`` (SessionEnd: reason; 1.5 s budget): one event line.
+
+Each payload is first compared with its event's keys (:data:`PAYLOAD_KEYS`), and the Stop hook's transcript records
+with what brain.transcript reads: what differs is counted in ``ledger/contracts.json``, never refused
+(wi-brain-external-contracts, docs/formats.md « External formats »).
 """
 
 from __future__ import annotations
@@ -72,19 +76,120 @@ def _log_error(event: str, exc: BaseException) -> None:
     """The engine's error sink: a text line in ledger/errors.log (secrets dropped), and the error event of the
     engine's self-timing (its class and module:function, never its message: brain.selftime). The log of an earlier
     month, or one past 1 MB, moves aside first as errors-YYYY-MM.log, kept stateio.LOG_RETENTION["errors"] months."""
-    from . import selftime, stateio
+    from . import selftime
 
     selftime.error(exc)
+    _log_line(event, "".join(traceback.format_exception_only(type(exc), exc)).strip())
+
+
+def _log_line(event: str, text: str) -> None:
+    """One line in ledger/errors.log (secrets dropped), the log rotated first (:func:`_log_error`)."""
+    from . import stateio
+
     try:
         d = paths.ledger_dir()
         d.mkdir(parents=True, exist_ok=True)
         f = d / "errors.log"
         stateio.rotate_log(f, keep=stateio.LOG_RETENTION["errors"])
-        text, _ = secretscan.clean_text("".join(traceback.format_exception_only(type(exc), exc)).strip())
+        text, _ = secretscan.clean_text(text)
         with open(f, "a", encoding="utf-8") as fh:
             fh.write(f"{_now()} {event}: {text}\n")
     except OSError:
         pass
+
+
+# --- the external contracts (wi-brain-external-contracts, docs/formats.md « External formats ») ----------------------
+# Claude Code's hook payloads: the keys every event may carry, then per capture event (required: what capture reads;
+# known: the rest of the hooks reference's), checked against tests/fixtures/claude/hooks/. A key outside them, a
+# required one missing, and what brain.transcript.SessionStats.contract counts in a transcript are counted in
+# <BRAIN_HOME>/ledger/contracts.json; a first sighting is logged to errors.log and named once by the next SessionStart
+# health (contract_notes). Nothing is refused: the readers keep their defaults.
+PAYLOAD_COMMON = frozenset({"session_id", "transcript_path", "cwd", "permission_mode", "hook_event_name", "agent_id",
+                            "agent_type", "effort"})
+PAYLOAD_KEYS = {
+    "session-start": (frozenset({"session_id", "source"}), frozenset({"model"})),
+    "session-end": (frozenset({"session_id", "reason"}), frozenset()),
+    "stop": (frozenset({"session_id", "transcript_path"}), frozenset({"stop_hook_active", "last_assistant_message"})),
+    "post-tool-use": (frozenset({"session_id", "tool_name", "tool_input", "tool_response"}),
+                      frozenset({"tool_use_id", "duration_ms"})),
+}
+CONTRACTS = "contracts.json"   # under ledger/: {"v": 1, "keys": {"<source>: <what>": {count, first, last, shown}}}
+CONTRACTS_V = 1
+
+
+def payload_contract(event: str, payload: dict) -> list[str]:
+    """What ``payload`` breaks of its event's keys: ``unknown K``, ``missing K`` (none for an event not listed)."""
+    if event not in PAYLOAD_KEYS:
+        return []
+    required, known = PAYLOAD_KEYS[event]
+    return [f"unknown {k}" for k in sorted(set(payload) - PAYLOAD_COMMON - required - known)] + \
+        [f"missing {k}" for k in sorted(required - set(payload))]
+
+
+def _load_contracts(f: Path) -> dict | None:
+    """The ledger's data; {} when absent or unreadable; None when a newer brain wrote it (left as it is)."""
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    v = data.get("v")
+    return None if isinstance(v, int) and not isinstance(v, bool) and v > CONTRACTS_V else data
+
+
+def _save_contracts(f: Path, data: dict) -> None:
+    tmp = f.with_name(f"{f.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, f)
+
+
+def note_contract(source: str, breaks) -> list[str]:
+    """Count each of ``breaks`` (``unknown K``, ``missing K``, with a count: a Counter) under ``source`` in the contracts
+    ledger; a first sighting goes to errors.log too. Returns the first sightings."""
+    counts = breaks if isinstance(breaks, dict) else {b: 1 for b in breaks}
+    if not counts:
+        return []
+    f = paths.ledger_dir() / CONTRACTS
+    data = _load_contracts(f)
+    if data is None:
+        return []
+    keys = data.get("keys") if isinstance(data.get("keys"), dict) else {}
+    now, new = _now(), []
+    for what, n in counts.items():
+        k = f"{source}: {what}"
+        entry = keys.get(k) if isinstance(keys.get(k), dict) else None
+        if entry is None:
+            entry = {"count": 0, "first": now, "shown": False}
+            new.append(k)
+        entry["count"] = int(entry.get("count") or 0) + int(n)
+        entry["last"] = now
+        keys[k] = entry
+    f.parent.mkdir(parents=True, exist_ok=True)
+    _save_contracts(f, {**data, "v": CONTRACTS_V, "keys": keys})
+    for k in new:
+        _log_line("contract", f"Claude Code's format changed: {k} (counted in ledger/{CONTRACTS})")
+    return new
+
+
+def contract_notes(limit: int = 8) -> list[str]:
+    """The SessionStart health's line on what the contracts ledger counted and has not shown yet; marks it shown."""
+    f = paths.ledger_dir() / CONTRACTS
+    data = _load_contracts(f)
+    keys = (data or {}).get("keys")
+    if not isinstance(keys, dict):
+        return []
+    fresh = [k for k, e in keys.items() if isinstance(e, dict) and not e.get("shown")]
+    if not fresh:
+        return []
+    for k in fresh:
+        keys[k]["shown"] = True
+    _save_contracts(f, data)
+    names = ", ".join(f"{k} ({keys[k].get('count', 0)}x)" for k in fresh[:limit])
+    more = f" and {len(fresh) - limit} more" if len(fresh) > limit else ""
+    return [f"Claude Code's hook payloads or transcripts no longer match what brain reads: {names}{more}. Nothing "
+            f"is refused (the readers keep their defaults), but usage, costs or captures may be off until brain "
+            f"knows them: brain update, else report it (ledger/{CONTRACTS} keeps the counts)."]
 
 
 def _meta(payload: dict) -> dict:
@@ -300,6 +405,8 @@ def stop(payload: dict) -> None:
     if stats.offset > Path(path).stat().st_size:  # the file was rewritten: start over
         stats = transcript.SessionStats()
     stats.feed_file(path)
+    if stats.contract:
+        note_contract("transcript", stats.contract)
     ar_ids, ddr_ids = _session_ids("ar", sid), _session_ids("ddr", sid)
     sr = stats.record(path, status="open", actions=ar_ids, ddrs=ddr_ids)
     tree = _tree_fields(sid)
@@ -384,6 +491,10 @@ def main(argv: list[str] | None = None, stdin=None) -> int:
     event = argv[0]
     try:
         payload = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
+        try:
+            note_contract(f"hook {event}", payload_contract(event, payload))
+        except Exception as exc:  # noqa: BLE001 - the count never stops the capture
+            _log_error(f"{event} contract", exc)
         if event == "post-tool-use":
             post_tool_use(payload, argv[1] if len(argv) > 1 else "")
         elif event in HANDLERS:

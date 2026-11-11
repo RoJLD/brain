@@ -234,6 +234,31 @@ and one a newer brain wrote are refused the same way, never a crash; each refusa
 check --public --history ». A stamp is never upgraded in place: the check writes a new one. A gitleaks that is on
 the PATH but fails stamps nothing (the check exits 1 and says so): its stamp would be refused at every push.
 
+## External formats
+
+What the engine reads from another program, and what it writes for one (wi-brain-external-contracts).
+
+**In: Claude Code's hook payloads and transcripts.** Neither is a public API, so both are read tolerantly: every
+field with a default, an unknown record skipped. That tolerance is made loud: the capture hook compares each payload
+with its event's keys (`brain.capture.PAYLOAD_KEYS`: those every event may carry, those capture reads, the rest of the
+hooks reference's) and the Stop hook's transcript reader (`brain.transcript.SessionStats.contract`) counts a record
+type outside `transcript.RECORD_TYPES` and a user or assistant record without a key it reads (`timestamp`,
+`message.id`, `message.model`, `message.usage`). Each is counted in `<BRAIN_HOME>/ledger/contracts.json` (`v` 1:
+`{"keys": {"<source>: unknown|missing <key>": {count, first, last, shown}}}`, left as it is when a newer brain wrote
+it); its first sighting adds a line to `ledger/errors.log`, and the next SessionStart health names it once. Nothing is
+refused. `tests/fixtures/claude/` holds a payload per captured event and a transcript, invented with the keys real ones
+carry: `tests/test_capture.py` reads them clean.
+
+**Out: the status document.** `brain doctor --json` (`brain profile`) prints the inventory contract a machines agent
+emits too, published as `schemas/status.schema.json` (registered in `SCHEMAS`, `status`): `schema` is the contract's
+id, `brain.status/v1` unless config.json `inventory.schema` names another of the same pattern (`<name>/v<N>`), so a
+brain whose consumers know the contract under another name keeps it without the engine naming it. The schema is
+versioned by that id, not by a top-level `v`; it allows a key it does not name at every level (an emitter may add
+one) and holds the type of each key it names; removing or retyping one is a new id. Its fixtures,
+`tests/fixtures/formats/status/v1/`, are the engine's document (`older`) and another emitter's, with keys of its own
+and no `brain` block (`newer`); `tests/test_probe.py` checks the probe's report against the schema and the fixture,
+and a consumer tests against the same two files.
+
 ## The validator's keywords
 
 `brain.schema` validates with the standard library only, so the capture hooks can validate what they write. It
