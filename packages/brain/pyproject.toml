@@ -12,7 +12,7 @@ license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.10"
 # The graph engine of this repo, at this distribution's own tag: the two distributions share one tag series and one
 # version (a release moves both __version__, the CI checks they agree).
-dependencies = ["pyyaml>=6", "research-graph @ git+https://github.com/RoJLD/brain.git@v0.3.1",
+dependencies = ["pyyaml>=6", "research-graph @ git+https://github.com/RoJLD/brain.git@v0.3.2",
                 "tomli>=2; python_version < '3.11'"]
 dynamic = ["version"]
 

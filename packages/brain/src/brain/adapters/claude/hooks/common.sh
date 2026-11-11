@@ -13,7 +13,7 @@
 # folder Python's Path.home() names on Windows.
 
 brain_t0=$EPOCHREALTIME
-brain_version=0.3.1
+brain_version=0.3.2
 export BRAIN_HOOK_VERSION=$brain_version
 
 # selftime_bash TASK [EXIT]: the exec event of this hook's bash run (project brain, the task, the engine's version).
