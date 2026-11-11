@@ -33,31 +33,38 @@ def cmd_modules(args, root: Path) -> int:
     --diff: what changed in the registry since a git ref."""
     store = _store(args, root)
     if not modules.applies(store, root):
-        wanted = modules.named(root, store)
-        raise SystemExit(f"brain modules: no {modules.REGISTRY} in {store} (the registry of modules)"
-                         + (f", and config.json modules.store {wanted!r} names no store of the registry that keeps "
-                            "one" if wanted else ""))
+        raise SystemExit(_no_registry(root, store))
     if args.write and skew.refuse_view(root, "modules --write", args.force, f"the committed {modules.FILE}"):
         return 1
     if args.write:   # first, so --write --check writes the view and then checks the map
         view = _module_view(_project(args, root), root, store)
         print(f"view: {view} " + ("written" if modules.write(root, store, _store_label(root, store), view)
                                   else "unchanged"))
-    if args.diff is not None and args.check and args.json:   # one JSON object, never text then JSON
-        found = modules.registry_problems(store, root) + modules.problems(store, root)
-        print(json.dumps({"diff": _diff_data(args, root, store), "problems": found}, indent=1, ensure_ascii=False))
-        return 1 if found else 0
-    if args.diff is not None:
-        _diff(args, root, store)
-        if not args.check:
-            return 0
-    if args.check:
-        return _check(args, root, store)
+    if args.diff is not None or args.check:
+        return _report(args, root, store)
     if args.json:
         print(json.dumps(modules.data(store, root), indent=1, ensure_ascii=False, default=str))   # a YAML date
     elif not args.write:
         print(modules.render(store, _store_label(root, store), root), end="")
     return 0
+
+
+def _no_registry(root: Path, store: Path) -> str:
+    wanted = modules.named(root, store)
+    return (f"brain modules: no {modules.REGISTRY} in {store} (the registry of modules)"
+            + (f", and config.json modules.store {wanted!r} names no store of the registry that keeps one"
+               if wanted else ""))
+
+
+def _report(args, root: Path, store: Path) -> int:
+    """--diff, then --check; with both and --json, one JSON object (never text then JSON)."""
+    if args.diff is not None and args.check and args.json:
+        found = modules.registry_problems(store, root) + modules.problems(store, root)
+        print(json.dumps({"diff": _diff_data(args, root, store), "problems": found}, indent=1, ensure_ascii=False))
+        return 1 if found else 0
+    if args.diff is not None:
+        _diff(args, root, store)
+    return _check(args, root, store) if args.check else 0
 
 
 def _diff_data(args, root: Path, store: Path) -> dict:
