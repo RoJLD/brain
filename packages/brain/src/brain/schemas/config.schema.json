@@ -223,6 +223,13 @@
         "public_strict": {"type": "boolean", "description": "The owner's opt-in to hold a public clone's FEATURES.md to the public render: true, brain audit (check features.md) and brain features render without --write refuse the full render in a checkout whose remote is in public.repos; default false: the full render passes too (brain check --public still reads it). The public render is what --write writes either way."}
       }
     },
+    "modules": {
+      "type": "object", "additionalProperties": false,
+      "description": "The module registry (brain modules, docs/modules.md).",
+      "properties": {
+        "store": {"type": "string", "minLength": 1, "description": "The store whose modules.yaml a store without its own reads (a registry kept in a programme's store): a store of the projects registry, as <project>:<store relative to its root> or by its project's name (its first store that keeps one); only the stores under this file's folder read it. Default none: a store reads only its own modules.yaml, and one without is not concerned."}
+      }
+    },
     "views": {
       "type": "object", "additionalProperties": false,
       "description": "The generated views and their one writer (brain views, docs/views.md).",
