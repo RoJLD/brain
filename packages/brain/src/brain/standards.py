@@ -221,16 +221,31 @@ def selection(value) -> Selection | None:
                      {str(k): str(v) for k, v in exclude.items()}, _strings(value.get("catalogs")))
 
 
+def catalog_path(rel: str, registry_dir: Path) -> Path:
+    """A local catalog's file: ``rel`` read from the registry's folder, and only inside it (an absolute path or one
+    that climbs out is :class:`StandardsError`: the catalogs are the brain's own files, committed beside its
+    registry)."""
+    base = registry_dir.resolve()
+    path = (base / rel).resolve()
+    if Path(rel).is_absolute() or not path.is_relative_to(base):
+        raise StandardsError(f"standards catalog {rel}: a path relative to the registry's folder, inside it")
+    return path
+
+
 def local_catalogs(sel: Selection | None, registry_dir: Path | None,
                    strict: bool | None = None) -> tuple[list[Catalog], list[str]]:
-    """(the local catalogs a selection names, the errors of those that cannot be read)."""
-    out, errors = [], []
+    """(the local catalogs a selection names, each file once, the errors of those that cannot be read)."""
+    out, errors, seen = [], [], set()
     for rel in (sel.catalogs if sel else []):
         if registry_dir is None:
             errors.append(f"standards catalog {rel}: no registry folder to read it from")
             continue
         try:
-            out.append(load_file(registry_dir / rel, False, strict))
+            path = catalog_path(rel, registry_dir)
+            if path in seen:
+                continue
+            seen.add(path)
+            out.append(load_file(path, False, strict))
         except StandardsError as exc:
             errors.append(str(exc))
     return out, errors
@@ -241,11 +256,12 @@ def duplicates(catalogs: list[Catalog]) -> list[str]:
     seen: dict[str, str] = {}
     errors = []
     for cat in catalogs:
+        where = f"{cat.name} ({'engine' if cat.engine else cat.path.as_posix()})"
         for row in cat.rows:
             if row.id in seen:
-                errors.append(f"standard {row.id}: in {seen[row.id]} and {cat.path.name} (an id names one standard)")
+                errors.append(f"standard {row.id}: in {seen[row.id]} and {where} (an id names one standard)")
             else:
-                seen[row.id] = cat.path.name
+                seen[row.id] = where
     return errors
 
 
@@ -266,10 +282,11 @@ def selection_errors(where: str, value, ids: set[str] | None = None, strict: boo
     """What a project's ``standards:`` breaks: not a mapping, an unknown key (a note in read mode), a profile or stage
     this engine does not know, an include or exclude that is not a list or mapping, an exclude without its reason;
     with ``ids`` (every id the catalogs hold), an include or exclude that names no standard."""
+    if value is None:
+        return []   # standards: left empty: none declared, as without the key
     where = f"{where}: standards"
     if not isinstance(value, dict):
         return [f"{where} is a mapping of {', '.join(SELECTION_KEYS)} (docs/standards.md)"]
-    notes = notes if notes is not None else []
     errors = []
     unknown = sorted(set(map(str, value)) - set(SELECTION_KEYS))
     if unknown:
@@ -348,9 +365,16 @@ def for_project(p, strict: bool | None = None) -> tuple[list[Catalog], Selection
     return engine_catalogs(strict) + local, sel, errors
 
 
+def required_at(row: Row, stage: str) -> bool:
+    """Whether ``row`` is required at ``stage`` (its own stage is at or before it)."""
+    return row.stage in STAGES and stage in STAGES and STAGES.index(row.stage) <= STAGES.index(stage)
+
+
 def invariants(p, limit: int = 60) -> list[str]:
     """The brief's lines (brain brief): the project's applicable standards, one each, by domain; [] when it declares
-    none or its catalogs cannot be read (brain standards check says why)."""
+    none (no catalog read) or its catalogs cannot be read (brain standards check says why)."""
+    if selection(getattr(p, "standards", None)) is None:
+        return []
     try:
         catalogs, sel, _ = for_project(p)
     except StandardsError:

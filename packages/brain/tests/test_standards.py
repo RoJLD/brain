@@ -105,7 +105,9 @@ def test_a_row_breaking_its_schema_is_an_error(tmp_path):
     cat = standards.load_file(_catalog(tmp_path, "x", [_row("a", profiles=[]), {"id": "b"},
                                                        _row("Bad Id")]))
     text = "\n".join(cat.errors)
-    assert "profiles" in text and "statement" in text and "pattern" in text or "Bad Id" in text
+    assert "rows[0].profiles" in text                      # minItems
+    assert "rows[1]" in text and "statement" in text       # required
+    assert "Bad Id" in text and "does not match" in text   # the id's pattern
     assert [r.id for r in cat.rows] == ["a", "Bad Id"]   # b has no statement: left out
 
 
@@ -181,12 +183,10 @@ def test_a_project_without_standards_is_not_concerned(engine, registry):
 
 
 def test_the_registry_check_refuses_a_bad_opt_in_only(engine, registry):
-    registry("  standards: {profiles: [cli], stage: mvp, include: [res-pre-registration], "
-             "catalogs: [standards/research.yaml]}\n")
-    assert projects.check() == []
-    p = projects.get("demo")
-    assert p.registry_dir == registry("  standards: {profiles: [cli], stage: mvp, include: [res-pre-registration], "
-                                      "catalogs: [standards/research.yaml]}\n").parent
+    reg = registry("  standards: {profiles: [cli], stage: mvp, include: [res-pre-registration], "
+                   "catalogs: [standards/research.yaml, ./standards/research.yaml]}\n")
+    assert projects.check() == []   # the same file named twice is read once: no id found twice
+    assert projects.get("demo").registry_dir == reg.parent
     registry("  standards: {profiles: [cli], stage: mvp, include: [res-pre-registration]}\n")
     assert any("'res-pre-registration' is no standard" in e for e in projects.check())   # its catalog not named
     registry("  standards: {catalogs: [standards/none.yaml]}\n")
@@ -226,7 +226,7 @@ def test_cli_check_fails_on_a_broken_catalog_or_opt_in(engine, registry, capsys)
     _catalog(engine, "other", [_row("sw-utc")])   # an id twice
     assert cli.main(["--project", "demo", "standards", "check"]) == 1
     out = capsys.readouterr().out
-    assert "standard sw-utc: in other.yaml and software.yaml" in out and "not concerned" in out
+    assert "standard sw-utc: in other (engine) and software (engine)" in out and "not concerned" in out
     (engine / "other.yaml").unlink()
     registry("  standards: {profiles: [cli], stage: alpha}\n")
     assert cli.main(["--project", "demo", "standards", "check", "--json"]) == 1
@@ -271,7 +271,92 @@ def test_the_engine_catalogs_are_valid_neutral_and_unique():
     """Every catalog the engine ships reads clean in strict mode, its ids unique across them (a public engine:
     brain check --public reads the same files)."""
     cats = standards.engine_catalogs(strict=True)
+    if not cats:
+        pytest.skip("the engine ships no catalog yet (wi-brain-standards-catalog-software adds the first)")
     for cat in cats:
         assert cat.errors == [], cat.errors
         assert cat.name == cat.path.stem
     assert standards.duplicates(cats) == []
+
+
+def test_an_empty_standards_key_declares_none(engine, registry, capsys):
+    registry("  standards:\n")
+    assert projects.check() == []
+    assert standards.invariants(projects.get("demo")) == []
+    assert cli.main(["--project", "demo", "standards", "check"]) == 0
+    assert "not concerned" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("rel", ["../outside.yaml", "standards/../../outside.yaml"])
+def test_a_local_catalog_stays_inside_the_registry_folder(engine, registry, tmp_path, rel):
+    _catalog(tmp_path, "outside", [_row("out-a")])
+    registry(f"  standards: {{catalogs: [{rel}]}}\n")
+    assert any("inside it" in e for e in projects.check())
+
+
+def test_an_absolute_catalog_path_is_refused(engine, registry, tmp_path):
+    f = _catalog(tmp_path, "outside", [_row("out-a")])
+    with pytest.raises(standards.StandardsError, match="inside it"):
+        standards.catalog_path(str(f), tmp_path / "brain")
+
+
+def test_an_unreadable_local_catalog_names_no_spurious_id(engine, registry, capsys):
+    registry("  standards: {include: [res-pre-registration], catalogs: [standards/none.yaml]}\n")
+    assert cli.main(["--project", "demo", "standards", "check"]) == 1
+    out = capsys.readouterr().out
+    assert "no such catalog" in out and "is no standard" not in out
+
+
+def test_an_engine_catalog_that_is_not_yaml_exits_2(engine, registry, capsys):
+    (engine / "broken.yaml").write_text("rows: [\n", encoding="utf-8")
+    assert cli.main(["--project", "demo", "standards", "list"]) == 2
+    assert "not YAML" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag, value, want", [
+    ("--catalog", "research", {"res-pre-registration"}),
+    ("--domain", "time", {"sw-utc"}),
+    ("--profile", "service", {"sw-utc", "sw-sbom"}),            # sw-utc: profile any
+    ("--stage", "mvp", {"sw-utc", "sw-atomic-writes", "res-pre-registration"}),   # required at mvp
+    ("--status", "validated", {"sw-utc"}),
+])
+def test_cli_list_filters(engine, registry, capsys, flag, value, want):
+    registry("  standards: {catalogs: [standards/research.yaml]}\n")
+    assert cli.main(["--project", "demo", "standards", "list", flag, value, "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert {s["id"] for s in data["standards"]} == want
+    assert data["project"] == "demo" and data["concerned"] and not data["applicable"]
+
+
+def test_cli_show_json_and_check_json(engine, registry, capsys):
+    assert cli.main(["--project", "demo", "standards", "show", "sw-fuzz", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["adapter"] == "test"
+    registry("  standards: {profiles: [cli], stage: mvp}\n  repos: [{path: ., lang: ts}]\n")
+    assert cli.main(["--project", "demo", "standards", "check", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["catalogs"] == [{"name": "software", "file": (engine / "software.yaml").as_posix(), "engine": True,
+                                 "rows": 4}]
+    assert sorted(data["applicable"]) == ["sw-atomic-writes", "sw-utc"] and data["errors"] == []
+    assert len(data["gaps"]) == 1 and data["gaps"][0].startswith("sw-atomic-writes: its check covers py, not ")
+
+
+def test_the_invariants_say_validated_and_cut_a_long_list(engine, registry):
+    registry("  standards: {profiles: [cli], stage: scale}\n")
+    p = projects.get("demo")
+    full = standards.invariants(p)
+    assert "- `sw-utc` (time, review-lens): sw-utc holds." in full   # validated: no proposed mark
+    assert len(full) == 3
+    cut = standards.invariants(p, limit=2)
+    assert cut[:2] == full[:2] and cut[-1] == "- and 1 more: brain --project demo standards list --applicable"
+
+
+def test_counts_put_an_unknown_level_last(engine):
+    rows = standards.rows_of(standards.engine_catalogs())
+    rows[0].enforcement = "audit"
+    assert list(standards.counts(rows)) == ["measure", "test-template", "review-lens", "audit"]
+
+
+def test_a_non_string_stage_or_profile_is_named():
+    errors = standards.selection_errors("project demo", {"profiles": ["cli", 3], "stage": 2})
+    assert any("profiles is a list of names" in e for e in errors)
+    assert any("stage is one of" in e for e in errors)

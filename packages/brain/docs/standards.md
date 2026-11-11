@@ -10,9 +10,12 @@ none, so nothing that passed before is refused.
 A catalog is a YAML file of rows, in the format `schemas/standards.schema.json` (kind `standards`, `v: 1`):
 
 - the engine's own catalogs, under `src/brain/catalogs/*.yaml`: generic rows, in English, with nothing private (the
-  engine is public, and `brain check --public` reads them like any file);
+  engine is public, and `brain check --public` reads them like any file; the first, `software`, comes with
+  `wi-brain-standards-catalog-software`, and until then `brain standards list` is empty);
 - a brain's local catalogs, that a project names in `standards.catalogs`: paths relative to the registry's folder
-  (where `projects.yaml` is), as `root` is. A discipline's rows that stay in the owner's private brain live there.
+  (where `projects.yaml` is), as `root` is, and inside it (an absolute path, or one that climbs out of it, is an
+  error); the same file named twice is read once. A discipline's rows that stay in the owner's private brain live
+  there.
 
 ```yaml
 v: 1
@@ -49,12 +52,14 @@ The vocabularies (`brain.standards`):
 | `status` | `proposed` (curated, not validated yet), `validated` (the owner validated it, batch by batch) |
 
 A value outside them is a newer engine's: a note in read mode, an error in strict mode (CI), as an unknown key is
-([formats.md](formats.md)). An id found twice, in one catalog or across them, is an error.
+([formats.md](formats.md)). An id found twice, in one catalog or across them, is an error. A catalog of a higher
+`v` (a newer engine's) is refused and its rows are not read: `brain standards check` and `brain check --all` are red
+until the engine is updated.
 
 ## The opt-in
 
 ```yaml
-# projects.yaml
+# projects.yaml (the ids are illustrative: brain standards list gives the real ones)
 app:
   root: ../app
   standards:
@@ -66,16 +71,20 @@ app:
 ```
 
 The rows that apply are those whose profiles meet the project's (or `any`) and whose stage is at or before its own,
-plus `include`, minus `exclude`. `profiles` and `stage` go together; a project may hold `include` alone.
+plus `include`, minus `exclude`. `profiles` and `stage` go together; a project may hold `include` alone. An empty
+`standards:` declares none, as without the key.
 
 ## The commands
 
 - `brain standards list [--catalog C] [--domain D] [--profile P] [--stage S] [--enforcement E] [--status S]
-  [--applicable] [--json]`: the rows by catalog and domain; `--applicable`, those the project follows, with why.
+  [--applicable] [--json]`: the rows by catalog and domain; `--stage S`, those required at stage S (theirs at or
+  before it); `--applicable`, those the project follows, with why.
 - `brain standards show ID [--json]`: one row, every field.
-- `brain standards check [--json]`: exits 1 when a catalog breaks its format, an id is found twice, or the project's
-  `standards:` names an unknown profile, stage or id; it lists the applicable standards whose check does not cover
-  one of the project's repos' languages (`repos[].lang`), as gaps, never errors.
+- `brain standards check [--json]`: exits 1 when a catalog breaks its format, an id is found twice, a local catalog
+  cannot be read, or the project's `standards:` is malformed (a wrong shape, an exclude without its reason, profiles
+  without a stage) or names an unknown profile, stage or id; it lists the applicable standards whose check does not
+  cover one of the project's repos' languages (`repos[].lang`), as gaps, never errors. Every `brain standards`
+  command exits 2 when one of the engine's own catalogs cannot be read.
 - `brain check --all` (and a brain's own `brain check`) checks every project's `standards:` the same way.
 - `brain brief` lists the project's applicable standards as the invariants of the item's session.
 
@@ -84,7 +93,8 @@ The other consumers (the review lenses, the audit's standards check, the rules t
 
 ## Scope and target compatibility
 
-**Scope.** Wave 0.3.2: the row format (`standards.schema.json`, `v: 1`), the engine's catalog folder, the
+**Scope.** Wave 0.3.2: the row format (`standards.schema.json`, `v: 1`), the engine's catalog folder (its first
+catalog, software, in the same wave), the
 `projects.yaml` `standards:` key, `brain standards list|show|check` and the brief's invariants. Nothing is enforced on
 a project's code yet: the registry says what applies, and `brain standards check` says what is declared wrong.
 

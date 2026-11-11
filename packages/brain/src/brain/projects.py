@@ -693,6 +693,7 @@ def check(root: Path | None = None) -> list[str]:
     project at a shared root that is not loaded (:func:`_claims`), two stores that write their views in one folder.
     Stacks and code_index entries are checked by their own loaders (brain.stacks, brain.codeindex)."""
     errors = []
+    engine: list = []   # the engine's standards catalogs, read once for every project that opts in
     for name, entry in raw(root).items():
         where = f"project {name}"
         if entry is None:
@@ -738,7 +739,7 @@ def check(root: Path | None = None) -> list[str]:
         from .governor import project_limits
         errors += [f"{where}: {e}" for e in project_limits(entry)[1]]
         if "standards" in entry:
-            errors += _standards_errors(where, entry["standards"], registry_file(root))
+            errors += _standards_errors(where, entry["standards"], registry_file(root), engine)
     loaded, refused = _load(root)
     for _, why in refused.values():
         errors += why
@@ -750,14 +751,19 @@ def check(root: Path | None = None) -> list[str]:
     return errors + list(view_clashes(holders(root)).values())
 
 
-def _standards_errors(where: str, value, registry: Path | None) -> list[str]:
+def _standards_errors(where: str, value, registry: Path | None, engine: list) -> list[str]:
     """What a project's standards: breaks (brain.standards.selection_errors), its ids looked up in the engine's
-    catalogs and the local ones it names; a catalog that cannot be read or breaks its schema is an error too."""
+    catalogs (``engine``: filled on the first call, then reused) and the local ones it names; a catalog that cannot
+    be read or breaks its schema is an error too. An empty value declares none, as without the key."""
     from . import standards
-    try:
-        engine = standards.engine_catalogs()
-    except standards.StandardsError as exc:
-        return [f"{where}: standards: {exc}"]
+    if value is None:
+        return []
+    if not engine:
+        try:
+            engine += standards.engine_catalogs() or [None]
+        except standards.StandardsError as exc:
+            return [f"{where}: standards: {exc}"]
+    engine = [c for c in engine if c is not None]
     local, errors = standards.local_catalogs(standards.selection(value), registry.parent if registry else None)
     errors = [f"{where}: {e}" for e in errors]
     for cat in local:

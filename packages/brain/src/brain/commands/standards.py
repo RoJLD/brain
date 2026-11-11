@@ -19,11 +19,12 @@ USAGE = """\
                  standard (its domain, statement, the profiles it applies to, the stage it is required from, how it
                  is enforced and by what check, the languages that check covers, how the Brain itself meets it,
                  proposed or validated), from the engine's catalogs and the brain's local ones that projects.yaml
-                 standards.catalogs names (docs/standards.md). list filters the rows (--applicable: those the
-                 project's standards: opt-in selects, with why); show prints one; check exits 1 when a catalog breaks
-                 its format, an id is found twice, or the project's standards: names an unknown profile, stage or id,
-                 and lists the applicable standards whose check does not cover a repo's language (a note). A project
-                 without standards: follows none
+                 standards.catalogs names (docs/standards.md). list filters the rows (--stage: those required at
+                 that stage; --applicable: those the project's standards: opt-in selects, with why); show prints one;
+                 check exits 1 when a catalog breaks its format, an id is found twice, the project's standards: is
+                 malformed or names an unknown profile, stage or id, or a local catalog cannot be read, and lists the
+                 applicable standards whose check does not cover a repo's language (a gap, not an error); 2 when one
+                 of the engine's catalogs cannot be read. A project without standards: follows none
 """
 
 
@@ -35,9 +36,11 @@ def _load(args, root: Path):
 
 
 def _matches(row: standards.Row, args) -> bool:
-    pairs = (("catalog", row.catalog), ("domain", row.domain), ("stage", row.stage),
-             ("enforcement", row.enforcement), ("status", row.status))
+    pairs = (("catalog", row.catalog), ("domain", row.domain), ("enforcement", row.enforcement),
+             ("status", row.status))
     if any(getattr(args, k, "") and getattr(args, k) != v for k, v in pairs):
+        return False
+    if getattr(args, "stage", "") and not standards.required_at(row, args.stage):
         return False
     profile = getattr(args, "profile", "")
     return not profile or profile in row.profiles or "any" in row.profiles
@@ -59,7 +62,7 @@ def _cmd_list(args, root: Path) -> int:
         chosen = [(r, "") for r in rows]
     chosen = [(r, why) for r, why in chosen if _matches(r, args)]
     if args.json:
-        _print_json({"project": p.name if sel is not None else "", "applicable": bool(args.applicable),
+        _print_json({"project": p.name, "concerned": sel is not None, "applicable": bool(args.applicable),
                      "standards": [{**r.as_dict(), "selected_by": why} for r, why in chosen]})
         return 1 if errors else 0
     if not chosen:
@@ -113,7 +116,8 @@ def _cmd_check(args, root: Path) -> int:
     rows = standards.rows_of(catalogs)
     chosen, gaps = [], []
     if sel is not None:
-        errors += standards.selection_errors(f"project {p.name}", p.standards, {r.id for r in rows}, notes=notes)
+        ids = None if errors else {r.id for r in rows}   # a local catalog unread: its ids would be named unknown
+        errors += standards.selection_errors(f"project {p.name}", p.standards, ids, notes=notes)
         chosen = standards.applicable(rows, sel)
         try:
             langs = {r.name: r.lang for r in projects.repos_of(p)}
@@ -159,14 +163,15 @@ def register(sub, ctx) -> None:
     sl.add_argument("--catalog", default="", help="one catalog (software, research...)")
     sl.add_argument("--domain", default="", help="one domain")
     sl.add_argument("--profile", default="", help="the rows that apply to this profile (a row of profile any too)")
-    sl.add_argument("--stage", default="", help="the rows required from this stage")
+    sl.add_argument("--stage", default="", help="the rows required at this stage (theirs at or before it)")
     sl.add_argument("--enforcement", default="", help="check, measure, test-template, review-lens or rule")
     sl.add_argument("--status", default="", help="proposed or validated")
     sl.add_argument("--applicable", action="store_true", help="the rows the project's standards: selects, with why")
     sh = ss.add_parser("show", help="one standard, every field")
     sh.add_argument("id")
-    sc = ss.add_parser("check", help="exit 1 when a catalog breaks its format, an id is found twice, or the "
-                                     "project's standards: names an unknown profile, stage or id")
+    sc = ss.add_parser("check", help="exit 1 when a catalog breaks its format or cannot be read, an id is found "
+                                     "twice, or the project's standards: is malformed or names an unknown profile, "
+                                     "stage or id")
     for p in (sl, sh, sc):
         p.add_argument("--json", action="store_true", help="stable keys")
 
