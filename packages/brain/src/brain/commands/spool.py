@@ -21,6 +21,27 @@ USAGE = """\
 """
 
 
+def push_lines(res: dict) -> list[str]:
+    """What ``brain spool push`` prints of its result."""
+    lines = [f"to put: {p['store']}" if p.get("plan") else
+             f"put: {p['file']} ({p['files']} file(s), {p['bytes']} bytes sealed)" for p in res["put"]]
+    lines += [f"unchanged since its last push: {name}" for name in res["unchanged"]]
+    lines += [f"nothing to put: {name}" for name in res["empty"]]
+    lines += [f"sent: {r['file']}" if r.get("sent") else f"waits: {r['file']}: {r['error']}" for r in res["sent"]]
+    lines += [("to prune: " if res["dry_run"] else "pruned: ") + rel for rel in res["pruned"]]
+    lines += [f"error: {e}" for e in res["errors"]]
+    lines += [] if res["remote"] else ["no spool.remote: the sealed files wait in the spool"]
+    return lines + (["plan only: run again without --dry-run"] if res["dry_run"] else [])
+
+
+def _verify() -> int:
+    bad = spool.verify()
+    for rel, why in bad:
+        print(f"{rel}: {why}")
+    print(f"spool: {len(bad)} problem(s)" if bad else "spool: every file matches its sha256")
+    return 1 if bad else 0
+
+
 def cmd_spool(args, root: Path) -> int:
     """``brain spool``: push, status, verify (brain.spool). Exit 2 on a refusal (the index written by a newer
     brain)."""
@@ -31,35 +52,12 @@ def cmd_spool(args, root: Path) -> int:
             print(json.dumps(s, indent=1, sort_keys=True) if args.json else "\n".join(spool.render_status(s)))
             return 0
         if args.spool_cmd == "verify":
-            bad = spool.verify()
-            for rel, why in bad:
-                print(f"{rel}: {why}")
-            print(f"spool: {len(bad)} problem(s)" if bad else "spool: every file matches its sha256")
-            return 1 if bad else 0
+            return _verify()
         res = spool.push(cfg, args.stores or None, dry_run=args.dry_run)
     except spool.SpoolError as exc:
         print(f"brain spool {args.spool_cmd}: {exc}", file=sys.stderr)
         return 2
-    if args.json:
-        print(json.dumps(res, indent=1, sort_keys=True))
-    else:
-        for p in res["put"]:
-            print(f"to put: {p['store']}" if p.get("plan") else
-                  f"put: {p['file']} ({p['files']} file(s), {p['bytes']} bytes sealed)")
-        for name in res["unchanged"]:
-            print(f"unchanged since its last push: {name}")
-        for name in res["empty"]:
-            print(f"nothing to put: {name}")
-        for r in res["sent"]:
-            print(f"sent: {r['file']}" if r.get("sent") else f"waits: {r['file']}: {r['error']}")
-        for rel in res["pruned"]:
-            print(("to prune: " if args.dry_run else "pruned: ") + rel)
-        for e in res["errors"]:
-            print(f"error: {e}")
-        if not res["remote"]:
-            print("no spool.remote: the sealed files wait in the spool")
-        if args.dry_run:
-            print("plan only: run again without --dry-run")
+    print(json.dumps(res, indent=1, sort_keys=True) if args.json else "\n".join(push_lines(res)))
     return 1 if res["errors"] or any(r.get("error") for r in res["sent"]) else 0
 
 

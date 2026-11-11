@@ -273,29 +273,40 @@ def prune(cfg: config.Config, *, dry_run: bool = False) -> list[str]:
     """Drop the spool's files past :func:`keep` per store, the oldest first: a snapshot whether sent or not (a newer
     one holds the store), an items entry only once sent. The files removed (relative to the spool)."""
     st, data = load_index(write=not dry_run)
-    n, gone = keep(cfg), []
-    by: dict[tuple[str, str], list[tuple[str, dict]]] = {}
-    for rel, e in data["files"].items():
-        if isinstance(e, dict):
-            by.setdefault((str(e.get("store", "")), str(e.get("kind", "snapshot"))), []).append((rel, e))
-    for (_, kind), rows in by.items():
-        rows.sort(key=lambda x: (str(x[1].get("at", "")), x[0]), reverse=True)
-        gone += [rel for rel, e in rows[n:] if kind != "items" or e.get("sent")]
+    gone = _past_keep(data["files"], keep(cfg))
     if dry_run or not gone:
         return gone
     for rel in gone:
         f = spool_dir() / rel
-        for p in (f, f.with_name(f.name + ".json")):
-            try:
-                p.unlink()
-            except FileNotFoundError:
-                pass
-            except OSError:
-                continue
-        if not f.exists():
+        _unlink(f.with_name(f.name + ".json"))
+        if _unlink(f):
             data["files"].pop(rel, None)
     _save(st, data)
     return [rel for rel in gone if rel not in data["files"]]
+
+
+def _past_keep(files: dict, n: int) -> list[str]:
+    """The files past the newest ``n`` of their store and kind; an items entry only once sent."""
+    by: dict[tuple[str, str], list[tuple[str, dict]]] = {}
+    for rel, e in files.items():
+        if isinstance(e, dict):
+            by.setdefault((str(e.get("store", "")), str(e.get("kind", "snapshot"))), []).append((rel, e))
+    gone = []
+    for (_, kind), rows in by.items():
+        rows.sort(key=lambda x: (str(x[1].get("at", "")), x[0]), reverse=True)
+        gone += [rel for rel, e in rows[n:] if kind != "items" or e.get("sent")]
+    return gone
+
+
+def _unlink(p: Path) -> bool:
+    """Whether ``p`` is gone (a lock, a permission: it stays, and so does its entry)."""
+    try:
+        p.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    return True
 
 
 def push(cfg: config.Config, stores: list[str] | None = None, *, now: datetime | None = None,

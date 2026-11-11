@@ -112,7 +112,7 @@ def test_a_store_that_must_not_leave_is_refused(brain, brain_home, store, why):
         spool.put(cfg, store, now=NOW, found=brain.found)
     res = spool.push(cfg, [store, "ledger"], now=NOW, found=brain.found)
     assert res["errors"][0].startswith(f"{store}: ") and [p["store"] for p in res["put"]] == ["ledger"]
-    assert json.loads((brain_home / "spool" / "spool.json").read_text())["last"]["errors"] == 1
+    assert json.loads((brain_home / "spool" / "spool.json").read_text(encoding="utf-8"))["last"]["errors"] == 1
 
 
 def test_a_secret_in_a_store_stops_its_put_and_names_no_value(brain, brain_home):
@@ -134,7 +134,7 @@ def test_items_are_put_as_their_own_entry(brain, brain_home, tmp_path):
     assert e["kind"] == "items" and e["file"] == "ledger/ledger-20261111T120000Z.tar.gz.age"
     e2 = spool.put(cfg, "ledger", [t], now=NOW, found=brain.found)      # the same second: a name of its own
     assert e2["file"] == "ledger/ledger-20261111T120000Z-2.tar.gz.age"
-    idx = json.loads((brain_home / "spool" / "spool.json").read_text())
+    idx = json.loads((brain_home / "spool" / "spool.json").read_text(encoding="utf-8"))
     assert idx["stores"] == {} and set(idx["files"]) == {e["file"], e2["file"]}
     assert opened(cfg, brain, brain_home / "spool" / e["file"], tmp_path / "o") == {"t1.jsonl": b'{"turn": 1}\n'}
 
@@ -161,7 +161,7 @@ def test_an_absent_remote_leaves_them_waiting(brain, tmp_path):
     res = spool.push(cfg, now=NOW, found=brain.found)
     assert len(res["sent"]) == 2 and all("not reachable" in r["error"] for r in res["sent"])
     assert not (tmp_path / "nas-offline").exists() and spool.status(cfg)["waiting"] == 2
-    idx = json.loads((Path(spool.index_file())).read_text())
+    idx = json.loads(spool.index_file().read_text(encoding="utf-8"))
     assert idx["last"]["errors"] == 2 and "ok_at" not in idx
 
 
