@@ -15,11 +15,14 @@ sid=
 [[ -z $sid ]] && { selftime_bash "hook budget [bash]"; exit 0; }
 mark="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}/budget/$sid.mark"
 if [[ -f $mark ]]; then
-  IFS= read -r watched < "$mark"
-  [[ -n $watched && $mark -nt $watched ]] && { selftime_bash "hook budget [bash]"; exit 0; }
+  # line 1 the transcript, line 2 the mark's format (brain.budget.MARK_FORMAT; none before 0.3.2): another starts Python
+  watched= form=
+  { IFS= read -r watched; IFS= read -r form; } < "$mark"
+  [[ -n $watched && ( -z $form || $form == '#brain.budget-mark/v1' ) && $mark -nt $watched ]] && {
+    selftime_bash "hook budget [bash]"; exit 0; }
 fi
 
 root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
-home="${BRAIN_HOME:-$HOME/.brain}"
+home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"
 brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/budget.py" PostToolUse <<<"$payload" 2>/dev/null
 exit 0

@@ -6,9 +6,15 @@
 # one printf >> per event, which bash opens O_APPEND (whole lines with several writers at once, on Windows too).
 # BRAIN_SELFTIME=0 turns it off; it never fails the hook. brain_version is the engine's (tests/test_selftime.py checks
 # it against brain.__version__).
+#
+# The hook contract (wi-brain-hook-contracts, docs/formats.md « The hook contract »): BRAIN_HOOK_VERSION, exported,
+# gives the Python a hook starts this file's brain_version, so the SessionStart health reports a plugin copy older or
+# newer than the engine it runs on. Every hook spells <BRAIN_HOME> as ${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}, the
+# folder Python's Path.home() names on Windows.
 
 brain_t0=$EPOCHREALTIME
 brain_version=0.3.1
+export BRAIN_HOOK_VERSION=$brain_version
 
 # selftime_bash TASK [EXIT]: the exec event of this hook's bash run (project brain, the task, the engine's version).
 selftime_bash() {

@@ -110,4 +110,4 @@ def test_every_hook_tries_the_brain_commands_venv(hook):
     loop = next(line for line in text.splitlines() if line.startswith("brain_python "))  # hooks/common.sh
     assert '"$home/venv/Scripts/python.exe" "$home/venv/bin/python"' in loop and '"${BRAIN_PYTHON:-}"' in loop
     assert loop.index("venv") < loop.index("python3")
-    assert 'home="${BRAIN_HOME:-$HOME/.brain}"' in text
+    assert 'home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"' in text   # Python's home (wi-brain-hook-contracts)

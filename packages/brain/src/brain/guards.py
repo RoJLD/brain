@@ -1999,6 +1999,7 @@ ARGO_VALUES = {"--server", "--auth-token", "-l", "--selector", "-p", "--paramete
                "--grpc-web-root-path", "--header", "-H", "--kube-context"}
 NODE_CLI_READS = {"status", "events", "history", "help", "version", "completion"}   # a node CLI's verbs that only read
 NODE_CLI_CACHE = "node-clis.txt"   # <BRAIN_HOME>/cache/: config.json's power.node_clis, for guard.sh's pre-filter
+NODE_CLI_FORMAT = "#brain.node-clis/v1"   # its line 2 (line 1 the alternation, which guard.sh before 0.3.2 reads)
 PROGRAM = re.compile(r"^[a-z0-9][a-z0-9._-]*$")   # a program's name as power.node_clis and node_services give it
 NODE_POWER = re.compile(r"(?i)(?:^|[\\/.])(?:sigma_node_power|forge_boot|pxe_router)(?:\.py)?$|(?:^|\.)node_power\b")
 NODE_SCRIPTS = {"k3s-killall.sh", "k3s-uninstall.sh", "k3s-agent-uninstall.sh"}
@@ -2031,9 +2032,10 @@ def node_tools() -> dict[str, frozenset[str]]:
     line = "|".join(sorted(n.replace(".", "\\.") for n in out["node_clis"]))   # a bash regular expression
     cache = paths.brain_home() / "cache" / NODE_CLI_CACHE
     try:
-        if not cache.is_file() or cache.read_text(encoding="utf-8").strip() != line:
+        text = line + "\n" + NODE_CLI_FORMAT + "\n"
+        if not cache.is_file() or cache.read_text(encoding="utf-8") != text:
             cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_text(line + "\n", encoding="utf-8", newline="\n")
+            cache.write_text(text, encoding="utf-8", newline="\n")
     except OSError:
         pass
     return out

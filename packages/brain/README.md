@@ -738,7 +738,10 @@ stores; a brain's own root, checking its registry without `--all`, warns of it.
 entry with `$BRAIN_PYTHON`, else the brain command's venv (`<BRAIN_HOME>/venv`), else `python3`/`python`. A personal
 brain whose `source/packs.yaml` gives its core pack `hooks:` gets them copied into its own plugin by
 `brain render --target claude --write`, at the version it pins; `inject-rules.sh` injects the files of config.json
-`rules`. The guards never block a session on an error: without Python, the call goes through.
+`rules`, read from the flat `hooks/contract.txt` the render writes beside the hooks (the hook contract,
+[docs/formats.md](docs/formats.md#the-hook-contract)). The guards never block a session on an error: without Python,
+the call goes through. Each hook passes its `brain_version` to the Python it starts, and the SessionStart health says
+when a session's plugin copy and the engine differ, or when two `.brain` folders exist.
 
 A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
 Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that

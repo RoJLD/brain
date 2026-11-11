@@ -13,7 +13,7 @@ root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 config="${BRAIN_CONFIG:-}"
 if [ -z "$config" ]; then
-  pointer="${BRAIN_HOME:-$HOME/.brain}/personal.json" personal=
+  pointer="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}/personal.json" personal=
   if [ -f "$pointer" ]; then
     json=$(tr -d '\r\n' < "$pointer")
     key='"root"[[:space:]]*:[[:space:]]*"([^"]+)"'
@@ -26,7 +26,22 @@ if [ -z "$config" ]; then
 fi
 
 rules=()
-if [ -f "$config" ]; then
+# The hook contract brain sync renders beside this script (hooks/contract.txt, brain.render.hook_contract): its "rule"
+# lines are config.json's "rules", read without parsing JSON. It is read only for the config the plugin was rendered
+# from as it was then: no BRAIN_CONFIG or CLAUDE_BRAIN_DIR naming another, and a contract newer than config.json (a
+# rules edit since the render is read from config.json at once). Otherwise, with another format, or with no contract
+# (the engine's own copy, a plugin rendered before 0.3.2), the first "rules" array of config.json.
+contract="$root/hooks/contract.txt" form=
+if [ -f "$contract" ]; then IFS= read -r form < "$contract" || :; fi
+form=${form%$'\r'}
+if [ -f "$config" ] && [ "$form" = "#brain.hook-contract/v1" ] && [ -z "${BRAIN_CONFIG:-}${CLAUDE_BRAIN_DIR:-}" ] \
+   && [ "$contract" -nt "$config" ]; then
+  base=$(cd "$(dirname "$config")" && pwd)
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    case $line in 'rule '?*) [ -f "$base/${line#rule }" ] && rules+=("$base/${line#rule }") ;; esac
+  done < "$contract"
+elif [ -f "$config" ]; then
   base=$(cd "$(dirname "$config")" && pwd)
   json=$(tr -d '\r\n' < "$config")
   list='"rules"[[:space:]]*:[[:space:]]*\[([^]]*)\]'

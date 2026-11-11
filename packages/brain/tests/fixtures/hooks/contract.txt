@@ -1,0 +1,4 @@
+#brain.hook-contract/v1
+version {version}
+rule rules/a.md
+rule rules/b.md
