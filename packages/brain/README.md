@@ -895,8 +895,9 @@ refuses a patch with a schema change or an `### Upgrade` step beyond the standar
 out a standard step, a section with no theme, and a section of either CHANGELOG that repeats an entry an earlier one
 released. A PR never edits a CHANGELOG: it writes its entry as a fragment, `changes/<item>.md` here (`changes/` at
 the root for research-graph; the folders' READMEs), and the version PR compiles them with `installer/changelog.py
-compile X.Y.Z --theme T --write`; `release-check` refuses a malformed fragment and a `## Unreleased` section on every
-PR, and a fragment left uncompiled on a version PR. The CHANGELOGs are `merge=brain` in `.gitattributes`, a net for a
+compile X.Y.Z --theme T --write`; `release-check` refuses a malformed fragment, a `## Unreleased` section and a standard
+step two Upgrade fragments ask on every PR, and a fragment left uncompiled on a version PR; `release_check.py
+--preview` (CI's advisory `release-preview`) says on every PR whether the next release would be a minor one. The CHANGELOGs are `merge=brain` in `.gitattributes`, a net for a
 merge back from `release/X.Y`.
 
 ## License

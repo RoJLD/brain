@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The version PR's check (docs/release.md): CI's ``release-check`` job, or by hand from a checkout.
 
-A pull request is a version PR when either distribution's ``__version__`` is not the last tag's. On any other, nothing
-is checked. On a version PR, it fails when:
+A pull request is a version PR when either distribution's ``__version__`` is not the last tag's. On any other, only the
+changelog fragments are checked (below). On a version PR, it fails when:
 
 - a registered schema (:data:`SCHEMAS`) moved since the last tag (changed, except an additive change of a JSON schema
   of :data:`ADDITIVE`: :func:`additive`) and this version's section of
@@ -522,14 +522,15 @@ def _step_title(line: str) -> str:
 
 def fragment_steps(body: str) -> list[str]:
     """The steps an Upgrade fragment asks, as their lines: its numbered lines (:data:`STEP_RE`, as the version PR's
-    ``### Upgrade`` is read), else its first line when it opens with a bold title (one step, which the version PR will
-    number, as ``packages/brain/changes/README.md`` asks), else none (a closing paragraph such as « Nothing to run for
-    the rest »)."""
-    numbered = [line.strip() for line in body.splitlines() if STEP_RE.match(line)]
+    ``### Upgrade`` is read), else the first line of each paragraph that opens with a bold title (a step the version PR
+    will number, as ``packages/brain/changes/README.md`` asks); a paragraph without one is no step (an introduction, or
+    a closing paragraph such as « Nothing to run for the rest »)."""
+    lines = body.splitlines()
+    numbered = [line.strip() for line in lines if STEP_RE.match(line)]
     if numbered:
         return numbered
-    first = body.strip().split("\n", 1)[0].strip()
-    return [first] if TITLE_RE.match(first) else []
+    return [line.strip() for k, line in enumerate(lines)
+            if TITLE_RE.match(line) and (k == 0 or not lines[k - 1].strip())]
 
 
 def standard_step_copies(repo: Path, fragments: list) -> list[str]:
@@ -640,9 +641,13 @@ def preview(repo: Path, tag: str, base: str = "") -> Preview:
     standard = {_title(step) for step in STANDARD_STEPS}
     beyond = [(_rel(repo, f.path), line) for f in fragments if f.section == "Upgrade"
               for line in fragment_steps(f.body) if _step_title(line) not in standard]
-    versions = {version_in(repo, path) for path in VERSIONS.values()}
+    version = version_in(repo, VERSIONS["brain"])
+    version_pr = {version_in(repo, path) for path in VERSIONS.values()} != {tag.removeprefix("v")}
+    if version_pr:   # the fragments are compiled: the version's ### Upgrade holds its steps
+        log = f"{BRAIN}/CHANGELOG.md"
+        beyond += [(log, line) for line in steps_beyond_standard(upgrade_section(read(repo, log), version) or "")]
     return Preview(tag, moved, grown_lines(repo, tag, grown), beyond, standard_step_copies(repo, fragments),
-                   pr_files(repo, base) if base else None, versions != {tag.removeprefix("v")})
+                   pr_files(repo, base) if base else None, version_pr)
 
 
 def run_preview(repo: Path, tag: str, base: str, summary: str) -> int:
@@ -650,14 +655,17 @@ def run_preview(repo: Path, tag: str, base: str, summary: str) -> int:
     is advisory), 2 when it cannot tell."""
     try:
         said = preview(repo, tag or last_tag(repo), base)
-    except CannotTell as exc:
+    except (CannotTell, OSError, UnicodeDecodeError) as exc:   # a fragment that is not UTF-8 included
         print(f"release-preview: cannot tell: {exc}", file=sys.stderr)
         return 2
     for line in said.lines():
         print(f"release-preview: {line}")
     if summary:
-        with open(summary, "a", encoding="utf-8") as out:
-            out.write(said.markdown())
+        try:
+            with open(summary, "a", encoding="utf-8") as out:
+                out.write(said.markdown())
+        except OSError as exc:
+            print(f"release-preview: the summary not written: {exc}", file=sys.stderr)
     return 0
 
 

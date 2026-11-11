@@ -160,7 +160,8 @@ wi-brain-old-store-fixture):
   test places it, or fails;
 - an additive change under the same `v` extends the `newer` file only.
 
-**The jobs on this PR.** All of them run on every pull request; two matter here:
+**The jobs on this PR.** All of them run on every pull request; two matter here (`release-preview`, « The release
+preview », only says what `release-check` will judge):
 
 - **`release-check`** (`packages/brain/installer/release_check.py`) sees that this is a version PR because `__version__`
   is not the last tag's. It fails when a registered schema changed since the last tag and this version's section has no
