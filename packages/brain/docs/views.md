@@ -100,3 +100,33 @@ A committed view written by another engine than the brain's pin would differ fro
 `views.strict`, so do `brain audit --write`, `brain coverage --write`, `brain features render --write`,
 `brain decision view --write` and `brain modules --write` (`brain.skew.refuse_view`); without it they write with any
 engine, as before.
+
+## The technical reference
+
+`brain reference` (`brain.reference`, `wi-brain-technical-reference`) writes a project's technical reference into
+`docs/reference/`: `README.md`, the index of the modules of the store's registry (`modules.yaml`, [modules.md](modules.md))
+with their features, items and decisions, then the decisions no module holds (« unplaced », counted: a debt line);
+and `modules/<id>.md` per module: what it does (its features, have first), the decisions in force on each of its
+nodes, the rules its items deliver, its specs, its items done and open, and its open questions (the pending DDRs about
+its nodes). A node's module is its `props.module`; a module page reads the features and done items too, which is why
+they carry one ([modules.md](modules.md)).
+
+The decisions in force: the unit is the answered DDR (its question, the chosen option, who answered and when), with the
+ADR it went to; an ADR no DDR went to shows by its title; an ADR some DDR went to (a batch of answers) never by its
+title alone. A unit is about the nodes its DDR links (`links.items`, `links.specs`) or its ADR decides
+(`decided_by`). On one node the newest answer is in force and the earlier ones fold under it; an ADR a REVERSAL
+supersedes (`supersedes`, or status `superseded`) is marked so. No inference beyond: the decision log stays the
+history.
+
+- `brain reference` exits 1 when `docs/reference/` is not the render (each file named); `--write` writes it and
+  removes a generated page no longer rendered (a module gone from the registry). Under `views.strict` another engine
+  than the pin writes nothing (`--force`).
+- `brain sync` writes it again once `docs/reference/` exists, and `brain check` on the default branch warns of it when
+  stale (an error under `views.strict`); a brain without the folder gets none: create it with
+  `brain reference --write`.
+- `brain reference --public --repo R --out <checkout>/docs/reference --write`: the neutral reference of a public repo,
+  by feature domain (`README.md`, `domains/<domain>.md`), drawn only from that repo's features (their `public_title`
+  and `public_id`, the repo's own code and docs): no module, spec, ADR, DDR, item nor rule of the private brain. It
+  warns of each line `brain check --public` would refuse. The engine's own is `docs/reference/` in its repo.
+
+The reference has no date and sorts what it lists: the same graph gives the same files.

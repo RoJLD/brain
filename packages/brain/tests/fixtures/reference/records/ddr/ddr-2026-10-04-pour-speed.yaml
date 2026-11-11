@@ -1,0 +1,9 @@
+v: 1
+id: ddr-2026-10-04-pour-speed
+title: Pour speed
+question: How fast does Ada pour?
+options: [{label: Slowly}, {label: Fast}]
+status: archived
+asked: {at: '2026-10-04T10:00:00Z'}
+answer: {at: '2026-10-04T12:00:00Z', by: Ada Quill, choices: [Slowly]}
+links: {adrs: [adr-2026-10-05-answers-of-ada], items: [wi-pour]}

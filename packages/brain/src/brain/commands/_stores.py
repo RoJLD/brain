@@ -13,8 +13,8 @@ import sys
 from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, features, graph, links,
-                lint, markers, milestones, modules, neutral, permissions, projects, public, records, render, skew,
-                specs, stacks, tidy, tiers, vault, views, waves)
+                lint, markers, milestones, modules, neutral, permissions, projects, public, records, reference, render,
+                skew, specs, stacks, tidy, tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -42,6 +42,15 @@ def _write_module_view(project: projects.Project, root: Path, store: Path) -> No
     view = _module_view(project, root, store)
     if modules.applies(store) and modules.write(root, store, _store_label(root, store), view):
         print(f"view: {view} written")
+
+
+def _write_reference(root: Path, store: Path) -> None:
+    """docs/reference/ written again (brain.reference), once it exists: a brain without it gets none (the owner's
+    opt-in, brain reference --write)."""
+    if (root / reference.DIR).is_dir():
+        changed = reference.write(root / reference.DIR, reference.render(root, store, _store_label(root, store)))
+        if changed:
+            print(f"view: {reference.DIR} written ({len(changed)} file(s))")
 
 
 def _plan_view(project: projects.Project, root: Path, store: Path) -> str:
@@ -251,6 +260,7 @@ def _sync_views(args, project: projects.Project, root: Path, store: Path, layout
         return 1   # after the links: FEATURES.md shows them
     _write_module_view(project, root, store)
     _write_plan_view(project, root, store)
+    _write_reference(root, store)
     if ddrs:
         _queue_changed(root, args)
         queued.append(True)
@@ -315,6 +325,9 @@ def _check_store(args, root: Path, store: Path) -> int:
                 stale.add(_store_label(root, store / f))
         if features.has_type(graph.load_schema(store)) and _features_stale(args, root, store):
             stale.add(features.VIEW, "brain features render --write")
+        if (root / reference.DIR).is_dir() and projects.uses_defaults(project, store):   # opt-in: it exists
+            for f in reference.stale(root / reference.DIR, reference.render(root, store, _store_label(root, store))):
+                stale.add(f"{reference.DIR}/{f}", "brain sync (or brain reference --write)")
     rc = _views_verdict(project, root, store, where, stale, legacy, strict) or rc
     for line in skew.check_lines(root):   # the running engine against config.json engine.pin
         print(line)
