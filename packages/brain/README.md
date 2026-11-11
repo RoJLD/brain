@@ -216,6 +216,14 @@ public render existed; `config.json` `features.public_strict: true` (the owner's
 accept the public render only. The render has no date and sorts what it lists: the same
 graph gives the same file.
 
+### The technical reference
+
+`brain reference --write` writes `docs/reference/`: one page per module of the store's registry (what it does, the
+decisions in force on its nodes from the answered DDRs, earlier ones folded, its rules, specs, items and open
+questions) and an index with the decisions no module holds; `brain sync` keeps it current once the folder exists.
+`--public` renders a public repo's neutral reference by feature domain, from its features only (this repo's own is
+[docs/reference/](../../docs/reference/README.md)). See [docs/views.md](docs/views.md).
+
 ### Generated READMEs
 
 A repo opts in by holding `readme.yaml` at its root (`schemas/readme.schema.json`): the text only a person writes, what

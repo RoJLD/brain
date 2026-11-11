@@ -1,0 +1,8 @@
+v: 1
+id: ddr-2026-10-10-weigh-unit
+title: Weigh unit
+question: Grams or ounces?
+options: [{label: Grams}, {label: Ounces}]
+status: pending
+asked: {at: '2026-10-10T10:00:00Z'}
+links: {items: [wi-weigh]}
