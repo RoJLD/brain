@@ -22,15 +22,44 @@ def test_the_registry_units_are_named_as_the_exec_ledger_names_runs(known):
     units, alias = known
     assert units["brain status"] == "status" and units["brain item show"] == "item"
     assert "brain item" not in units and "brain perf" in units and "brain journal last" in units
-    assert all(a.startswith("brain ") and t in units for a, t in alias.items())
+    families = {" ".join(u.split()[:2]) for u in units}
+    assert all(a.startswith("brain ") and (t in units or t in families) for a, t in alias.items())
+
+
+def test_every_run_the_ledger_names_lands_on_a_unit(known):
+    """Each command and subcommand parsed as typed (aliases too), named by selftime.command_task as its exec event
+    is, counts for its unit: none drifts into 'never ran' (a family run through its alias counts for its family)."""
+    from brain import selftime
+    units, alias = known
+    parser = cli.build_parser()
+    top = next(a for a in parser._actions if a.__class__.__name__ == "_SubParsersAction")
+    checked = 0
+    for name, sp in top.choices.items():
+        subs = next((a for a in sp._actions if a.__class__.__name__ == "_SubParsersAction"), None)
+        for words in [[name, s] for s in subs.choices] if subs is not None else [[name]]:
+            try:
+                args, _ = parser.parse_known_args(words)
+            except SystemExit:   # a required argument: its task name is the same, so its sibling's check stands
+                continue
+            task = selftime.command_task(args)
+            want = alias.get(" ".join(["brain", *words]), " ".join(["brain", *words]))
+            assert adoption.ran_count(want, Counter({alias.get(task, task): 1})) == 1, (words, task)
+            checked += 1
+    assert checked > 50
 
 
 @pytest.mark.parametrize("line, want", [
     ("cd x && brain --project demo item show wi-1 | head -5", ["brain item show"]),
     ('"E:/venv/Scripts/brain.exe" --root=. status --all', ["brain status"]),
+    ('& "C:/v/Scripts/brain.exe" items --text x', ["brain items"]),
     ("brain --proj demo journal last 3; brain perf --usage", ["brain journal last", "brain perf"]),
+    ("BRAIN_HOME=/tmp/h python -m brain status", ["brain status"]),
     ("python -m pytest -q", []),
     ("cat <<EOF > f\nbrain status\nEOF", []),
+    ("cd a\ncat <<EOF\nbrain items\nEOF", []),
+    ("git -C D:/work/brain status", []),
+    ('git commit -m "brain item add x; brain status"', []),
+    ('echo "run brain items now"', []),
     ("brain nope", []),
 ])
 def test_typed_reads_the_brain_commands_of_a_shell_line(known, line, want):
@@ -66,6 +95,8 @@ def _transcript(tmp_path, root):
         _record(day, "Read", {"file_path": str(root.parent / "elsewhere" / "journal.md")}, root),   # not a brain's
         _record(NOW - timedelta(days=40), "Bash", {"command": "brain brief wi-one"}, root),   # before the period
         {"type": "user", "message": {"content": "brain status"}},
+        {**_record(day, "Bash", {"command": "brain items"}, root), "timestamp": 12},   # a time that cannot be read
+        {**_record(day, "Bash", {"command": "brain items"}, root), "timestamp": "2026-11-10T10:00:00"},   # naive: UTC
     ]
     f = tmp_path / "t.jsonl"
     f.write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
@@ -74,7 +105,7 @@ def _transcript(tmp_path, root):
 
 def test_scan_counts_the_typed_commands_the_hand_reads_and_edits(tmp_path, brain, known):
     seen = adoption.scan([_transcript(tmp_path, brain)], NOW - timedelta(days=28), NOW, *known)
-    assert seen == {"typed": {"brain status": 1, "brain item show": 1}, "reads": {"journal": 1, "graph": 1, "adr": 1},
+    assert seen == {"typed": {"brain status": 1, "brain item show": 1, "brain items": 1}, "reads": {"journal": 1, "graph": 1, "adr": 1},
                     "edits": {"adr": 1}, "sessions": 2}
 
 
