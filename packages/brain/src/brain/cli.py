@@ -22,6 +22,7 @@ levels) is declared under alerts: (brain.alerts).
 from __future__ import annotations
 
 import argparse
+import codecs
 import os
 import sys
 
@@ -69,15 +70,28 @@ def _project_after(parser: argparse.ArgumentParser, skip: set[str]) -> None:
                                     help="a registered project (same as brain --project)")
 
 
+def _utf8(stream) -> None:
+    """Records and logs are UTF-8; a pipe or a file on Windows defaults to cp1252, and so does NUL, which reports
+    isatty() true (wi-brain-nul-stdout-encoding): any stream that is not a tty, or whose encoding is not UTF-8, writes
+    UTF-8 with errors=replace. A real console (UTF-8 since Python 3.6) is left alone."""
+    if not hasattr(stream, "reconfigure"):
+        return
+    try:
+        utf8 = codecs.lookup(stream.encoding or "ascii").name == "utf-8"
+    except LookupError:
+        utf8 = False
+    if not utf8 or not stream.isatty():
+        stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
     nowindow.install()  # under pythonw.exe, a scheduled task's: each git or gh would otherwise open a window
     if sys.stdout is None:  # pythonw.exe has no console: argparse's help writes to a stream, so give it one
         sys.stdout = open(os.devnull, "w", encoding="utf-8")
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
-    for stream in (sys.stdout, sys.stderr):  # records and logs are UTF-8; a pipe on Windows defaults to cp1252
-        if hasattr(stream, "reconfigure") and not stream.isatty():
-            stream.reconfigure(encoding="utf-8", errors="replace")
+    for stream in (sys.stdout, sys.stderr):
+        _utf8(stream)
     args = build_parser().parse_args(argv)
     with selftime.run(selftime.command_task(args)):  # the engine's exec event, and an error event if it raises
         return _dispatch(args)
