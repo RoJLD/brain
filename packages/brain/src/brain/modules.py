@@ -257,43 +257,56 @@ def _strings(value) -> bool:
     return isinstance(value, list) and all(isinstance(x, str) and x.strip() for x in value)
 
 
-def _check_entry(m: dict, known: set[str]) -> list[str]:
-    mid, out = str(m["id"]), []
-    for key in ("name", "brick", "phase"):
-        if not str(m.get(key) or "").strip():
-            out.append(f"{mid}: imported without {key}")
+def _check_fields(mid: str, m: dict) -> list[str]:
+    """An imported entry's required document fields and its status."""
+    out = [f"{mid}: imported without {key}" for key in ("name", "brick", "phase") if not str(m.get(key) or "").strip()]
     if m.get("status") not in STATUSES:
         out.append(f"{mid}: imported with status {m.get('status')!r} (one of {', '.join(STATUSES)})")
+    return out
+
+
+def _check_source(mid: str, i: int, s, day: date | None) -> list[str]:
+    """One document of an entry's ``source``: its ref, its date (not after the import), the fields it gave."""
+    ref = str(s.get("ref") or "").strip() if isinstance(s, dict) else ""
+    if not ref:
+        return [f"{mid}: source {i} has no ref (the document read)"]
+    out, when, fields = [], _day(s.get("date")), s.get("fields")
+    if when is None:
+        out.append(f"{mid}: source {ref} has no date (the document's, YYYY-MM-DD)")
+    elif day is not None and when > day:
+        out.append(f"{mid}: source {ref} is dated {when}, after the import of {day}")
+    if fields is not None and not (_strings(fields) and set(fields) <= set(DRIVE)):
+        out.append(f"{mid}: source {ref} fields must list document fields ({', '.join(DRIVE[:-2])})")
+    return out
+
+
+def _check_provenance(mid: str, m: dict) -> list[str]:
+    """An imported entry's ``source`` (each document) and ``imported`` (the day)."""
     src, day = m.get(SOURCE), _day(m.get(IMPORTED))
-    if not isinstance(src, list) or not src:
-        out.append(f"{mid}: imported without source (the documents read: a list of {{ref, date}})")
+    out = [] if isinstance(src, list) and src else \
+        [f"{mid}: imported without source (the documents read: a list of {{ref, date}})"]
     for i, s in enumerate(src if isinstance(src, list) else [], 1):
-        ref = str(s.get("ref") or "").strip() if isinstance(s, dict) else ""
-        if not ref:
-            out.append(f"{mid}: source {i} has no ref (the document read)")
-            continue
-        when = _day(s.get("date"))
-        if when is None:
-            out.append(f"{mid}: source {ref} has no date (the document's, YYYY-MM-DD)")
-        elif day is not None and when > day:
-            out.append(f"{mid}: source {ref} is dated {when}, after the import of {day}")
-        fields = s.get("fields")
-        if fields is not None and not (_strings(fields) and set(fields) <= set(DRIVE)):
-            out.append(f"{mid}: source {ref} fields must list document fields ({', '.join(DRIVE[:-2])})")
-    if day is None:
-        out.append(f"{mid}: imported without imported (the day of the import, YYYY-MM-DD)")
-    declared = m.get("declared")
-    if declared is not None:
-        if not _strings(declared):
-            out.append(f"{mid}: declared must be a list of module ids")
-        else:
-            out += [f"{mid}: declared {d} is not in {REGISTRY}" for d in declared if d not in known]
-    for key in ("placement", "definition"):
-        if m.get(key) is not None and not isinstance(m[key], str):
-            out.append(f"{mid}: {key} must be a text")
+        out += _check_source(mid, i, s, day)
+    return out + ([] if day else [f"{mid}: imported without imported (the day of the import, YYYY-MM-DD)"])
+
+
+def _check_lists(mid: str, m: dict, known: set[str]) -> list[str]:
+    """An imported entry's ``declared`` (module ids the registry knows), texts and ``divergences``."""
+    declared, out = m.get("declared"), []
+    if declared is not None and not _strings(declared):
+        out.append(f"{mid}: declared must be a list of module ids")
+    elif declared is not None:
+        out += [f"{mid}: declared {d} is not in {REGISTRY}" for d in declared if d not in known]
+    out += [f"{mid}: {key} must be a text" for key in ("placement", "definition")
+            if m.get(key) is not None and not isinstance(m[key], str)]
     if m.get("divergences") is not None and not _strings(m["divergences"]):
         out.append(f"{mid}: divergences must be a list of texts")
     return out
+
+
+def _check_entry(m: dict, known: set[str]) -> list[str]:
+    mid = str(m["id"])
+    return _check_fields(mid, m) + _check_provenance(mid, m) + _check_lists(mid, m, known)
 
 
 def registry_problems(store: Path, root: Path | None = None) -> list[str]:
@@ -361,8 +374,8 @@ def at_ref(f: Path, ref: str) -> list[dict] | None:
     it there (no repository, no such ref, a file not committed yet)."""
     try:
         out = subprocess.run(["git", "-C", str(f.parent), "show", f"{ref}:./{f.name}"], capture_output=True,
-                             text=True, encoding="utf-8", errors="replace")
-    except OSError:
+                             text=True, encoding="utf-8", errors="replace", timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
         return None
     if out.returncode:
         return None
@@ -403,23 +416,35 @@ def _import_lines(reg: list[dict]) -> list[str]:
            f"Generated from the registry: {c['tree']} in the tree, {c['proposed']} proposed, {c['all']} in all "
            f"({len(got)} imported).", "", "| Brick | In the tree | Proposed |", "|---|---|---|"]
     out += [f"| {b} | {n['tree']} | {n['proposed']} |" for b, n in c["bricks"].items()]
-    docs: dict[str, tuple[str, int]] = {}
-    for m in got:
-        for s in m.get(SOURCE) if isinstance(m.get(SOURCE), list) else []:
-            if isinstance(s, dict) and str(s.get("ref") or "").strip():
-                ref = _cell(s["ref"])
-                when, n = docs.get(ref, ("", 0))
-                docs[ref] = (max(when, str(_day(s.get("date")) or "")), n + 1)
     days = sorted({str(_day(m.get(IMPORTED))) for m in got if _day(m.get(IMPORTED))})
     out += ["", "## The import", "", f"Imported {', '.join(days) or '?'} from the documents below; the brain never "
             "edits these fields: a correction goes to the documents, then to a new import.", ""]
-    out += [f"- {ref} ({when or 'no date'}): {n} module(s)" for ref, (when, n) in sorted(docs.items())] or ["- None."]
-    div = [(str(m["id"]), d) for m in sorted(got, key=lambda m: _id_key(str(m["id"])))
-           for d in (m.get("divergences") if _strings(m.get("divergences")) else [])]
+    out += [f"- {ref} ({when or 'no date'}): {n} module(s)" for ref, (when, n) in _documents(got)] or ["- None."]
     out += ["", "## Divergences between the documents", "",
             "Reported by the import, never settled by the brain: the owner settles them in the documents.", ""]
-    out += [f"- {mid}: {_cell(d)}" for mid, d in div] or ["None."]
-    return out
+    return out + ([f"- {mid}: {_cell(d)}" for mid, d in _divergences(got)] or ["None."])
+
+
+def _sources(m: dict) -> list[dict]:
+    """An entry's documents that name a ref."""
+    src = m.get(SOURCE) if isinstance(m.get(SOURCE), list) else []
+    return [s for s in src if isinstance(s, dict) and str(s.get("ref") or "").strip()]
+
+
+def _documents(got: list[dict]) -> list[tuple[str, tuple[str, int]]]:
+    """(ref, (its latest date, how many entries it gave)) of every document the imported entries name, by ref."""
+    docs: dict[str, tuple[str, int]] = {}
+    for s in (s for m in got for s in _sources(m)):
+        ref = _cell(s["ref"])
+        when, n = docs.get(ref, ("", 0))
+        docs[ref] = (max(when, str(_day(s.get("date")) or "")), n + 1)
+    return sorted(docs.items())
+
+
+def _divergences(got: list[dict]) -> list[tuple[str, str]]:
+    """(module id, text) of every divergence the import reported, by module."""
+    return [(str(m["id"]), d) for m in sorted(got, key=lambda m: _id_key(str(m["id"])))
+            for d in (m.get("divergences") if _strings(m.get("divergences")) else [])]
 
 
 def _cell(text) -> str:
@@ -510,7 +535,13 @@ def data(store: Path, root: Path | None = None) -> dict:
             "outside": sum(1 for n in opened if _props(n).get("module") == NONE), "problems": problems(store, root),
             "features": len(more["features"]), "features_unplaced": missing["features"],
             "done_items": len(more["done"]), "done_unplaced": missing["done"], "warnings": warnings(store, root),
-            "counts": tally(reg), "imported": sum(1 for m in reg if is_imported(m)),
+            **_import_data(store, root, reg)}
+
+
+def _import_data(store: Path, root: Path | None, reg: list[dict]) -> dict:
+    """brain modules --json's keys on the import (wi-brain-module-registry-import): the counts, how many entries are
+    imported, their problems."""
+    return {"counts": tally(reg), "imported": len([m for m in reg if is_imported(m)]),
             "registry_problems": registry_problems(store, root)}
 
 

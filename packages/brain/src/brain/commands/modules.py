@@ -44,30 +44,38 @@ def cmd_modules(args, root: Path) -> int:
         print(f"view: {view} " + ("written" if modules.write(root, store, _store_label(root, store), view)
                                   else "unchanged"))
     if args.diff is not None:
-        f = modules.registry_file(store, root)
-        d = modules.diff(modules.at_ref(f, args.diff), modules.registry(store, root) or [])
-        label = modules.registry_label(store, _store_label(root, store), root)
-        if args.json and not args.check:
-            print(json.dumps({"registry": label, "ref": args.diff, **d}, indent=1, ensure_ascii=False))
-        else:
-            print("\n".join(modules.diff_lines(d, label, args.diff)))
+        _diff(args, root, store)
         if not args.check:
             return 0
     if args.check:
-        found = modules.registry_problems(store, root) + modules.problems(store, root)
-        more = modules.warnings(store, root)
-        if args.json:
-            print(json.dumps(found, indent=1))
-        else:
-            print("\n".join(found) or "module map: every open item placed")
-            for line in more:   # the features and done items: told, never counted (wi-brain-module-backfill)
-                print(f"warning: {line}")
-        return 1 if found else 0
+        return _check(args, root, store)
     if args.json:
         print(json.dumps(modules.data(store, root), indent=1, ensure_ascii=False, default=str))   # a YAML date
     elif not args.write:
         print(modules.render(store, _store_label(root, store), root), end="")
     return 0
+
+
+def _diff(args, root: Path, store: Path) -> None:
+    """brain modules --diff [REF]: what changed in the registry since its version at REF (brain.modules.diff)."""
+    d = modules.diff(modules.at_ref(modules.registry_file(store, root), args.diff), modules.registry(store, root) or [])
+    label = modules.registry_label(store, _store_label(root, store), root)
+    if args.json and not args.check:
+        print(json.dumps({"registry": label, "ref": args.diff, **d}, indent=1, ensure_ascii=False))
+    else:
+        print("\n".join(modules.diff_lines(d, label, args.diff)))
+
+
+def _check(args, root: Path, store: Path) -> int:
+    """brain modules --check: the imported entries' and the open items' problems (exit 1), then the warnings."""
+    found = modules.registry_problems(store, root) + modules.problems(store, root)
+    if args.json:
+        print(json.dumps(found, indent=1))
+        return 1 if found else 0
+    print("\n".join(found) or "module map: every open item placed")
+    for line in modules.warnings(store, root):   # the features and done items: told, never counted
+        print(f"warning: {line}")
+    return 1 if found else 0
 
 
 def register(sub, ctx) -> None:
