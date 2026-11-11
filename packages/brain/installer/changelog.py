@@ -100,8 +100,31 @@ def section_text(frags: list[Fragment], version: str, day: str, theme: str, dist
     for sec in SECTIONS:
         bodies = [f.body for f in frags if f.section == sec]
         if bodies:
-            out += [f"### {sec}", ""] + ["\n".join(bodies), ""]
+            out += [f"### {sec}", ""] + [join_bodies(bodies), ""]
     return "\n".join(out)
+
+
+# A list item opening a line: a bullet or a numbered step (release_check.py's STEP_RE numbers the latter).
+LIST_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s")
+
+
+def join_bodies(bodies: list[str]) -> str:
+    """A section's fragment bodies in order: a list after a list continues it (one newline, so the bullets or the
+    numbered steps stay one list); anything else gets a blank line before it, so a closing paragraph after the
+    Upgrade steps is a paragraph of its own, not the last step's continuation (wi-brain-changelog-prose-fragment)."""
+    text = bodies[0] if bodies else ""
+    for before, body in zip(bodies, bodies[1:]):
+        text += ("\n" if _ends_in_list(before) and LIST_ITEM.match(body) else "\n\n") + body
+    return text
+
+
+def _ends_in_list(body: str) -> bool:
+    """Whether the body ends in a list: its last line that is not indented (a list item's continuation is) opens a
+    list item."""
+    for line in reversed(body.split("\n")):
+        if line.strip() and not line[:1].isspace():
+            return bool(LIST_ITEM.match(line))
+    return False
 
 
 def insert(changelog: str, section: str) -> str:
