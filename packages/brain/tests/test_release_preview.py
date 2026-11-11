@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from test_release_check import (CONFIG_SCHEMA, MOVED, OTHER, ROOT, commit, git, release_check, repo,  # noqa: F401
+from test_release_check import (CONFIG_SCHEMA, MOVED, OTHER, ROOT, commit, git, release_check, repo,
                                 run, versions, write)
 
 # The release preview (wi-brain-release-preview): on any PR, would the next release be a patch of the last tag?
