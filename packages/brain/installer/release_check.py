@@ -72,6 +72,7 @@ SCHEMAS = {
     "event": (f"{SRC}/schemas/event.schema.json",),
     "members": (f"{SRC}/schemas/members.schema.json",),
     "readme": (f"{SRC}/schemas/readme.schema.json",),   # a repo's readme.yaml (brain.readme)
+    "modules": (f"{SRC}/schemas/modules.schema.json",),   # an entry of a store's modules.yaml (brain.modulemap)
     "sr": (f"{SRC}/schemas/sr.schema.json",),
     "packs": (f"{SRC}/templates/generic/packs.yaml",),
     "projects": (f"{SRC}/templates/generic/projects.yaml",),

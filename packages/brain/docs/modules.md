@@ -91,6 +91,51 @@ document read. The engine validates what the import wrote, generates the counts 
 `brain modules --json` gives `counts` (`tree`, `proposed`, `all`, `bricks`), `imported` (how many entries) and
 `registry_problems`; `brain modules --check --json` lists the imported entries' problems before the open items'.
 
+## The map of realisations
+
+Beside the document fields, an entry can say who realises the module and where (since 0.3.2, `wi-brain-sigma-map`,
+`brain.modulemap`). These fields are written by hand, by PR, and never by an import:
+
+```yaml
+- {id: P2, name: kettle-core, brick: P, phase: MVP, status: tree,
+   wanted: true, ai: false, capabilities: [backlog], depends_on: [K1], uses: [P12], map_review: proposed,
+   realized_by: [{project: lab, kind: lab, what: "the kettle bench", paths: [bench/], ref: HEAD, licence: MIT,
+                  state: running, contract: kettle/v1, ships_in: lab, retire: "once the product ships it"},
+                 {project: kettle, kind: product, what: "the kettle", state: pr-open, ships_in: kettle}]}
+```
+
+- `wanted`: whether the owner wants the module.
+- `capabilities`: the engine's capabilities (`tiers.yaml`, [tiers.md](tiers.md)) that realise it in a brain.
+- `depends_on` and `uses`: the modules it needs (hard) and the ones it uses when they are there (soft), ids of the
+  registry, classified by hand from the documents' `declared`; a declared one in neither counts as soft.
+- `ai`: the module is AI (a model).
+- `realized_by`: each realisation, with `project` (a project of the projects registry, read-only ones included),
+  `kind` (`lab`, `product`, `brain`, or `app` for an application of the owner's software hub), `what`, `paths` (in
+  the project's repo) and the git `ref` they are checked at (default `HEAD`), `licence`, `state` (`planned`,
+  `building`, `pr-open`, `partial`, `built`, `running`, `retired`), `contract` (what it exposes), `ships_in` (the
+  distribution that ships it) and, for a lab realisation, `retire` (when it gives way).
+- `map_review`: `proposed` while the map of the entry waits on the owner's review, `validated` once reviewed.
+
+The format is the engine's `schemas/modules.schema.json` (a registered format, [formats.md](formats.md)). Only an
+entry that carries one of these fields is concerned: a registry written before the map is checked and rendered
+as before. On the store that keeps the registry, `brain modules --check` (exit 1) and `brain check` (a warning)
+refuse:
+
+- an entry the schema refuses (a type, a `kind` or `state` it does not know, a realisation without `project`, `kind`
+  or `state`); a realisation's unknown key is a newer brain's: a note in read mode, an error in strict mode (CI);
+- a `depends_on` or `uses` module the registry does not know, a module in both;
+- a capability not in `tiers.yaml`;
+- a project not in the projects registry;
+- a path missing at its ref, when the project's checkout is on this machine (a project without one is not checked);
+- a wanted module with no realisation (a retired one does not count) and no open item that builds it, in any store
+  that reads the registry.
+
+They warn, never fail, of a wanted module with no item done or open 90 days after its `since`: dormant, to put back
+to sleep. The view gains, when an entry carries the map, the realisations (one row each, with the entry's review),
+the map's gaps (a wanted module with no realisation, a lab realisation with no target one, a product phase, MVP or
+Vn, with no product realisation for a module of the tree) and the declared dependencies still to classify;
+`brain modules --json` gains `map` (each entry's map fields) and `map_problems`.
+
 ## An item's module
 
 ```bash

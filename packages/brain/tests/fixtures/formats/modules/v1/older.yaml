@@ -1,0 +1,12 @@
+# modules.yaml as brain 0.3.2 reads it (wi-brain-sigma-map): a hand entry, an imported one, and entries that carry
+# every field of the map.
+- {id: K1, name: tea-room, brick: K, phase: MVP, status: tree, lab: now, note: "A hand entry: no map, no import."}
+- {id: P2, name: kettle-core, brick: P, phase: MVP, status: tree, placement: planned, definition: "Boil and pour",
+   declared: [K1, P12], source: [{ref: "the vision, annex A", date: 2026-10-20, fields: [name, brick, phase]}],
+   imported: 2026-11-11,
+   wanted: true, ai: false, capabilities: [backlog], depends_on: [K1], uses: [P12], map_review: proposed,
+   realized_by: [{project: lab, kind: lab, what: "the kettle bench", paths: [notes/], ref: HEAD, licence: MIT,
+                  state: running, contract: kettle/v1, ships_in: lab, retire: "once the product ships it"},
+                 {project: lab, kind: brain, what: "the brain's kettle view", state: built, ships_in: brain}]}
+- {id: P12, name: kettle-meter, brick: P, phase: V1.5, status: proposed, since: 2026-08-01, wanted: false,
+   map_review: validated}

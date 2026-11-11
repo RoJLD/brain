@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/modules.schema.json",
+  "title": "An entry of modules.yaml, the module registry and its map of realisations",
+  "description": "One entry of a store's modules.yaml (brain modules, docs/modules.md): a module of the platform the brain builds. The document fields (name, brick, phase, status, placement, definition, declared, divergences, source, imported) are an import's (brain.modules); the map's fields (wanted, capabilities, depends_on, uses, ai, realized_by, map_review) are written by hand (wi-brain-sigma-map). brain modules --check validates an entry against this schema only when it carries one of the map's fields: a registry with none is checked as before. Other fields (lab, since, note...) are free. A realisation's unknown key is a newer brain's: a note in read mode, an error in strict mode (CI). No v: the registry is a YAML list; a change of this schema moves its format (docs/release.md).",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": {"type": ["string", "integer"], "description": "The module's id, unique in the registry (P2, B7)."},
+    "name": {"type": "string", "description": "Its name in the platform's documents (an import's)."},
+    "brick": {"type": "string", "description": "Its brick (an import's)."},
+    "phase": {"type": "string", "description": "The product's phase the documents give it (an import's)."},
+    "status": {"type": "string", "description": "tree or proposed (an import's)."},
+    "wanted": {"type": "boolean", "description": "Whether the brain's owner wants the module: true asks for a realisation or an open item that builds it; brain modules --check flags one with neither, and warns of one with no item done or open 90 days after its since."},
+    "capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The engine's capabilities (tiers.yaml) that realise the module in a brain: what enabling the module turns on."},
+    "depends_on": {"type": "array", "items": {"type": ["string", "integer"]}, "description": "The modules it needs (hard dependencies), ids of the registry; classified by hand from the documents' declared ones."},
+    "uses": {"type": "array", "items": {"type": ["string", "integer"]}, "description": "The modules it uses when they are there (soft dependencies), ids of the registry. A declared dependency in neither depends_on nor uses counts as soft and the view lists it to classify."},
+    "ai": {"type": "boolean", "description": "Whether the module is AI (a model): what a preset that forbids AI leaves out."},
+    "map_review": {"enum": ["proposed", "validated"], "description": "Where the entry's map fields stand: proposed (written by a session, waiting on the owner's review) or validated (reviewed by the owner)."},
+    "realized_by": {"type": "array", "items": {"$ref": "#/$defs/realisation"}, "description": "Who realises the module and where, one entry per realisation."}
+  },
+  "$defs": {
+    "realisation": {
+      "type": "object",
+      "required": ["project", "kind", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "project": {"type": "string", "minLength": 1, "description": "The project that realises it: a name of the projects registry (projects.yaml), read-only projects included."},
+        "kind": {"enum": ["lab", "product", "brain", "app"], "description": "lab: a laboratory realisation, retired once a target one takes over; product: the product's; brain: the brain engine's; app: an application of the owner's software hub."},
+        "what": {"type": "string", "description": "What the realisation is, in a few words."},
+        "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Where it lives in the project's repo, relative to its root: checked at ref when the project's checkout is on this machine."},
+        "ref": {"type": "string", "minLength": 1, "description": "The git ref the paths are checked at; default HEAD."},
+        "licence": {"type": "string", "description": "Its licence (SPDX id or a name)."},
+        "state": {"enum": ["planned", "building", "pr-open", "partial", "built", "running", "retired"], "description": "Its state: planned, building, pr-open, partial, built, running (in service) or retired."},
+        "contract": {"type": "string", "description": "The contract it exposes (a format, an API, with its version)."},
+        "ships_in": {"type": "string", "description": "The distribution that ships it."},
+        "retire": {"type": "string", "description": "For a lab realisation, the condition of its retirement."}
+      }
+    }
+  }
+}
