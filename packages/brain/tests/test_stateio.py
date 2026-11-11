@@ -467,11 +467,16 @@ def _git(repo: Path, *args: str) -> None:
                     "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
 
 
+def _status(repo: Path) -> str:
+    return subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True,
+                          check=True).stdout
+
+
 @pytest.mark.skipif(not shutil.which("git"), reason="git")
-def test_only_a_settings_file_git_keeps_as_it_is_goes_without_a_backup(tmp_path):
-    """A project's committed, unchanged settings.json: no .bak (git keeps it, a .bak would show in git status). Its
-    settings.local.json, gitignored as Claude Code does, and a changed or untracked file are backed up: git holds no
-    copy of them."""
+def test_a_work_trees_settings_are_backed_up_under_brain_home(tmp_path, brain_home):
+    """wi-brain-settings-backup-home: a project's settings.json (tracked) and its settings.local.json (gitignored, as
+    Claude Code does) are backed up under $BRAIN_HOME/backup/<project>/.claude before each write, never beside
+    themselves: git status stays clean. A .bak an older engine left beside one moves there too."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
@@ -480,19 +485,50 @@ def test_only_a_settings_file_git_keeps_as_it_is_goes_without_a_backup(tmp_path)
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "c")
     local = _write(repo / ".claude" / "settings.local.json", '{"permissions": {"allow": ["mine"]}}')
-    assert permissions.kept_by_git(shared) and not permissions.kept_by_git(local)
-    assert permissions.in_work_tree(local) and not permissions.kept_by_git(permissions.claude_home() / "settings.json")
+    old = _write(Path(str(local) + ".bak"), '{"permissions": {"allow": ["older"]}}')   # left by an older engine
+    os.utime(old, (1_700_000_000, 1_700_000_000))
+    home = brain_home / "backup" / "repo" / ".claude"
+    assert permissions.home_backup_dir(local) == home and permissions.in_work_tree(local)
+    assert permissions.home_backup_dir(permissions.claude_home() / "settings.json") is None
 
     permissions.ClaudeCode().write(shared, {"allow": ["B"]})
-    assert json.loads(shared.read_text(encoding="utf-8"))["permissions"]["allow"] == ["B"]
-    assert not Path(str(shared) + ".bak").exists()   # git keeps the committed one
     permissions.ClaudeCode().write(local, {"allow": ["B"]})
-    assert json.loads(Path(str(local) + ".bak").read_text(encoding="utf-8")) == {"permissions": {"allow": ["mine"]}}
-    assert not permissions.kept_by_git(shared)   # changed since the commit: the next write backs it up
+    assert not list((repo / ".claude").glob("*.bak"))
+    assert _status(repo) == " M .claude/settings.json\n"          # only the change itself: no .bak shows
+    copies = sorted(p.name for p in home.iterdir())
+    assert [n.split(".2")[0] for n in copies] == ["settings.json", "settings.local.json", "settings.local.json"]
+    olds = [json.loads((home / n).read_text(encoding="utf-8"))["permissions"].get("allow") for n in copies]
+    assert olds == [None, ["older"], ["mine"]]                      # the adopted .bak, older, sorts first
     permissions.ClaudeCode().write(shared, {"allow": ["C"]})
-    assert json.loads(Path(str(shared) + ".bak").read_text(encoding="utf-8"))["permissions"]["allow"] == ["B"]
-    untracked = _write(repo / "other" / "settings.json", "{}")
-    assert permissions.in_work_tree(untracked) and not permissions.kept_by_git(untracked)
+    newest = sorted(home.glob("settings.json.*.bak"))[-1]
+    assert json.loads(newest.read_text(encoding="utf-8"))["permissions"]["allow"] == ["B"]
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git")
+def test_a_linked_worktrees_settings_go_beside_its_main_checkouts(tmp_path, brain_home):
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _write(repo / "README", "x")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "c")
+    _git(repo, "worktree", "add", "-q", str(tmp_path / "wt-one"))
+    f = _write(tmp_path / "wt-one" / ".claude" / "settings.local.json", "{}")
+    assert permissions.home_backup_dir(f) == brain_home / "backup" / "proj" / "worktrees" / "wt-one" / ".claude"
+
+
+def test_backup_home_keeps_the_last_copies_and_skips_the_same_bytes(tmp_path):
+    f = _write(tmp_path / "settings.json", "0")
+    folder = tmp_path / "home"
+    first = stateio.backup_home(f, folder, keep=3)
+    assert stateio.backup_home(f, folder, keep=3) == first           # the same bytes: no new copy
+    for i in range(1, 5):
+        _write(f, str(i))
+        stateio.backup_home(f, folder, keep=3)
+    _write(folder / "settings.json.notes", "kept")                     # not a copy: never pruned
+    names = sorted(p.name for p in folder.glob("settings.json.*.bak"))
+    assert [(folder / n).read_text(encoding="utf-8") for n in names] == ["2", "3", "4"]
+    assert (folder / "settings.json.notes").exists() and stateio.backup_home(tmp_path / "none", folder) is None
 
 
 def test_a_symlinked_settings_file_is_written_through_its_link(tmp_path):
