@@ -9,6 +9,8 @@ audit, sync, check, refresh, tui, usage, forecast (cost takes --project);
 health, index, up and down take --project to narrow them to that project's stacks and repos (their names are global);
 perf reads every project unless --project; timed and memory are machine-wide. A text value written @FILE is read from
 FILE; a journal line '-' reads stdin.
+brain <project> <subcommand> runs the subcommands of the project's command plugin, named under its plugin: in
+projects.yaml (brain.plugins); the plugged projects are listed at the end.
 The local ledger the hooks write is $BRAIN_HOME (default ~/.brain). The stacks are declared under each project's
 stacks: in projects.yaml (brain.stacks); up, down and health print one line per stack, exit 1 on a failure. The repos
 GitNexus indexes are declared under each project's code_index:, the stack that indexes them under its index:
@@ -26,7 +28,7 @@ import codecs
 import os
 import sys
 
-from . import __version__, config, nowindow, paths, projects, selftime
+from . import __version__, config, nowindow, paths, plugins, projects, selftime
 from .commands import _registry as registry
 from .commands._common import root_of
 
@@ -39,7 +41,7 @@ from .commands._stores import (_bundle_problems, _bundles_check, _check_session_
 def build_parser() -> argparse.ArgumentParser:
     # the help names the owner by their display name (identity.display_name) and --by defaults to their id
     # (identity.owner): a record never changes for display
-    ctx = registry.Context(who=config.name_of(), by=config.owner_of())
+    ctx = _context()
     # the docstring holds the first line and the closing paragraph; each command module's USAGE goes between them
     doc = __doc__.split("\n")
     usage_ = "\n".join(doc[:2] + registry.usage() + [""] + doc[2:]).replace("{owner}", ctx.who).split("\n")
@@ -92,9 +94,24 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
     for stream in (sys.stdout, sys.stderr):
         _utf8(stream)
-    args = build_parser().parse_args(argv)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = build_parser()
+    commands = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction)).choices
+    plugged = plugins.target(argv, commands)   # brain <project> ...: its plugin's subcommands (brain.plugins)
+    if plugged is not None:
+        before, name, ref, after = plugged
+        return plugins.run(before, name, ref, after, _context(), _project_root)
+    if plugins.split(argv) is None and {"-h", "--help"} & set(argv):   # brain --help lists the plugged projects
+        lines = plugins.help_lines()
+        if lines:
+            parser.epilog = "\n".join([parser.epilog or "", "", *lines])
+    args = parser.parse_args(argv)
     with selftime.run(selftime.command_task(args)):  # the engine's exec event, and an error event if it raises
         return _dispatch(args)
+
+
+def _context() -> registry.Context:
+    return registry.Context(who=config.name_of(), by=config.owner_of())
 
 
 def _dispatch(args) -> int:
@@ -106,6 +123,12 @@ def _dispatch(args) -> int:
         code = early(args)
         if code is not None or not hasattr(command, "run"):
             return code
+    return command.run(args, _project_root(args))
+
+
+def _project_root(args):
+    """The root a command runs at: --root, else --project's root (the worktree of it run from), else $BRAIN_ROOT or
+    the nearest notes/graph above; sets ``args.project_obj`` for --project (a plugin's run too, brain.plugins)."""
     root = root_of(args)
     if args.project:
         args.project_obj = projects.get(args.project, root)
@@ -115,8 +138,7 @@ def _dispatch(args) -> int:
             if wt is not None:
                 args.project_obj = projects.get(args.project, wt)
                 root = wt
-    root = root or paths.find_root()
-    return command.run(args, root)
+    return root or paths.find_root()
 
 
 if __name__ == "__main__":

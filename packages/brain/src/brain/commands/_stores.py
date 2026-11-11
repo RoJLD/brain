@@ -412,6 +412,10 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     which checks every store: that store's own check refuses it too), else a warning. The projects the brain reads
     and never writes are counted. Exit code 1 on an error."""
     errors = projects.check(root) + config.check(root) + permissions.check(root)
+    from .. import plugins
+    from . import _registry
+    errors += plugins.check(root, _registry.register_all(argparse.ArgumentParser().add_subparsers(),
+                                                         _registry.Context("", "")))
     data_classes = classes.check(root)
     for n in data_classes.home_notes:   # an engine store undeclared takes its default class: noted, never failed
         print(f"note: classes: {n}")

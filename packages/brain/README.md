@@ -938,6 +938,31 @@ def run(args, root: Path) -> int:
   `cmd.registry`). `tests/test_cli_registry.py` checks every module's contract; `python tests/help_dump.py` prints
   every command's and subcommand's help and arguments: run it before and after a change of the parsers, and diff.
 
+### A project's command plugin
+
+A project brings its own subcommands through a plugin, named under its `plugin` key in `projects.yaml`, and `brain
+<project> <subcommand> ...` runs them (`brain.plugins`): one command for every project. The value is an entry point
+of the group `brain.plugins`, which the project's installed package declares, or `module:attr` directly (`module:`
+names the module itself):
+
+```toml
+[project.entry-points."brain.plugins"]
+demo = "demo_cli.brain:plugin"
+```
+
+```yaml
+demo: {root: ../demo, title: The demo platform, plugin: demo}
+```
+
+The object is either a command module, with the contract above (`register(sub, ctx)` and `run(args, root)`, given
+`args.project` and the project's root, its worktree when run from one), or a callable `main(argv)` given the words
+after the project's name: a project's own CLI plugs in unchanged, so its console script stays a shortcut
+(`demo cron list` is `brain demo cron list`). `brain --help` lists the plugged projects without importing them,
+`brain demo --help` the plugin's subcommands; each run is timed in the exec ledger as `brain demo <subcommand>`. A
+registry without the key behaves as before, and a plugin that cannot load fails its own run only (exit 2). A project
+named like one of brain's commands never runs its plugin (the command wins): `brain check --all` reports it.
+`brain status --project demo` and `brain status --all` show the project as any other.
+
 ## Tests
 
 From a checkout of this repo, with research-graph from the same checkout:

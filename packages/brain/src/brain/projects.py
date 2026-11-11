@@ -12,8 +12,9 @@ another one (``brain check --all``); loading never fails on them, so a bad entry
 one ``brain journal add`` and ``brain adr new`` write, every one is read by the views. ``ledgers`` names the
 project's other append-only ledgers (``{name: path}``), whose size and last write ``brain status`` shows.
 ``shared_ids`` waives an id that a store of this project shares with another store (``{id: reason}``): ids are unique
-across every store of every project, checked by :func:`collisions`. ``plugin`` is reserved for the CLI plugin that
-will bring the project's own subcommands (wi-brain-command-plugins); no command reads it yet. ``standards`` opts the
+across every store of every project, checked by :func:`collisions`. ``plugin`` names the project's command plugin, whose
+subcommands ``brain <project> ...`` runs: an entry point of the group brain.plugins or ``module:attr``
+(brain.plugins). ``standards`` opts the
 project in to the standards registry (brain.standards, docs/standards.md): its profiles and stage select the rows it
 follows, ``include`` and ``exclude`` adjust them, ``catalogs`` names the brain's local catalogs (relative to the
 registry's folder, as ``root`` is); a project without it follows none.
@@ -108,8 +109,8 @@ KEYS = {
                   "found in two stores fails brain check --all",
     "usage": "the usage governor's caps for this project, {sessions: N, brainstorms: N}: lower than config.json "
              "usage.guard's, never higher (brain.governor)",
-    "plugin": "reserved (wi-brain-command-plugins): the CLI plugin that brings its subcommands; no command reads it "
-              "yet",
+    "plugin": "its command plugin, whose subcommands brain <project> ... runs: an entry point name of the group "
+              "brain.plugins, or module:attr (brain.plugins)",
     "tenant": "makes the entry a tenant mount: another brain, opaque, that no command reads into; {export: where the "
               "tenant drops its contract export, relative to BRAIN_HOME}; a mount holds title and tenant only",
     "access": "write (the default: the brain writes the project, by PR) or read (it reads the project and never "
@@ -152,7 +153,7 @@ class Project:
     decision_logs: list[Path] = field(default_factory=list)
     ledgers: dict[str, Path] = field(default_factory=dict)
     shared_ids: dict = field(default_factory=dict)
-    plugin: object = None            # reserved (wi-brain-command-plugins), kept as declared
+    plugin: object = None            # its command plugin as declared (brain.plugins)
     shares_root_with: str = ""       # the project registered first at this root, which owns it ('': this one does)
     standards: object = None         # its standards: opt-in as declared (brain.standards.selection); None: none
     registry_dir: Path | None = None  # the registry's folder: where its standards.catalogs are read from
