@@ -15,7 +15,8 @@ A catalog is a YAML file of rows, in the format `schemas/standards.schema.json` 
 - a brain's local catalogs, that a project names in `standards.catalogs`: paths relative to the registry's folder
   (where `projects.yaml` is), as `root` is, and inside it (an absolute path, or one that climbs out of it, is an
   error); the same file named twice is read once. A discipline's rows that stay in the owner's private brain live
-  there.
+  there, by convention under `standards/` at the brain's root (where the upgrade test looks for them; the brain's
+  `boundary.yaml` keeps them on the personal side).
 
 ```yaml
 v: 1
