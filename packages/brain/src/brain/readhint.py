@@ -4,9 +4,10 @@ its journal or one of its generated views by hand, adds hook context naming the 
 item show, brain items, brain adr show, brain journal last, brain next, brain decision pending, brain features).
 
 Never a refusal: it prints no permissionDecision, only additionalContext, and nothing at all on an error (logged to
-<BRAIN_HOME>/ledger/errors.log). readhint.sh starts it only when the hook's JSON names one of those files, with bash
-builtins; a shell command counts only when it reads (grep, rg, cat, head, tail, sed, awk, Select-String,
-Get-Content...). "Registered": the file is under the root of a project of the brain's registry, or of a worktree of
+<BRAIN_HOME>/ledger/errors.log). Claude Code starts readhint.sh only when a Read, Bash or PowerShell call's path
+or command names one of those files (the if conditions of hooks.json; a Grep call always), and readhint.sh starts
+it only when the hook's JSON names one of those files, with bash builtins; a shell command counts only when it reads
+(grep, rg, cat, head, tail, sed, awk, Select-String, Get-Content...). "Registered": the file is under the root of a project of the brain's registry, or of a worktree of
 its checkout (read from the worktree's .git file, no git started). Opt-in: registered in the rendered hooks.json
 only when config.json hints.read is true (brain.render.OPTIONAL_HOOKS); BRAIN_READ_HINT=0 turns it off while on.
 """

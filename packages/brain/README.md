@@ -757,9 +757,13 @@ context naming the command that answers, with the id the call looked for when it
 show wi-x`, `brain adr show`, `brain journal last`, `brain items`, `brain next`, `brain decision pending`, `brain
 features`). A shell command counts only when it reads (`grep`, `rg`, `cat`, `head`, `tail`, `sed`, `awk`,
 `Select-String`, `Get-Content`...); "registered" is a project of the registry or a worktree of its checkout (read from
-the worktree's `.git` file, no git started). A call whose JSON names none of those files stops in bash builtins:
-measured on Windows, the launcher then costs what starting bash costs (about 0.2 s, as `budget.sh` on every call), the
-Python path about 0.6 s, taken only on a hand read of a brain file; on a shell call it runs beside `guard.sh`.
+the worktree's `.git` file, no git started). Claude Code starts it only on a likely hit: each of its hooks carries an
+`if` condition (a permission rule: `Read(//**/journal.md)`, `Bash(*decisions.md*)`...) naming the files it hints
+about, so a Read, Bash or PowerShell call that names none starts no process at all; Grep's path is a folder or a glob,
+which a rule cannot match, so a Grep call still starts it. The rules do not overlap, so a call that names one brain file starts it once (one that names two kinds may start it twice: Claude Code runs every matching hook). What gets through still stops in bash builtins when its
+JSON names none of those files (the conditions only narrow), the Python path, about 0.4 s, taken only on a hand read
+of a brain file. Measured on the owner's machine over a week before the conditions: 4,854 of 4,981 runs stopped at
+the bash fast path, each a bash start of about 85 ms on Windows; on a shell call it runs beside `guard.sh`.
 Read and Grep had no hook before it, so it is **opt-in**: `brain render --target claude` (`brain sync`) registers it
 in the core plugin's `hooks.json` only when the brain's `config.json` says `"hints": {"read": true}`; by default it is
 not registered and no call pays its cost (the script ships either way, `brain.render.OPTIONAL_HOOKS`). To turn it on,

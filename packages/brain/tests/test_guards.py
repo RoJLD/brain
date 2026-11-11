@@ -647,7 +647,8 @@ def test_hooks_json_declares_the_guards():
         ("mcp__.*__set_(remote_control|session_permission_mode|setting)", "tool"),
         ("^(Agent|Task|Workflow)$|^mcp__.+__start_session$", '"${CLAUDE_PLUGIN_ROOT}/hooks/governor.sh"'),
         ("mcp__.*terminal__run_in_terminal", "shell"),
-        ("Read|Grep|Bash|PowerShell", '"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh"')]   # a hint, never a refusal
+        *[(t, '"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh"') for t in ("Read", "Grep", "Bash", "PowerShell")]]
+    # the read hint: a hint, never a refusal, one group per tool gated by if conditions (test_hook_latency)
     assert not any(h.get("async") for m in pre for h in m["hooks"])
     settings, governed = re.compile(pre[3]["matcher"]), re.compile(pre[4]["matcher"])
     assert settings.search("mcp__ccd_session_mgmt__set_remote_control") and settings.search(
