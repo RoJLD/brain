@@ -109,6 +109,17 @@ nothing else keeps. Such a file is read and written through `brain.stateio` (`lo
   under `$BRAIN_HOME/secrets` is never copied), then a temporary file, synced and moved over the file
   (`os.replace`). The `v` on disk is checked again just before: a newer brain that wrote since the load wins;
 - keeps the keys it does not know (a newer brain's additive ones) through the round trip.
+- with **integrity** on (config.json `integrity.sidecars: true`, or `BRAIN_STATE_INTEGRITY=1`; off by default),
+  writes a sidecar beside each file it saves, `<name>.sha256` (`{"v": 1, "sha256", "size", "mtime_ns"}`), and
+  checks it at each load. A file whose size and mtime are its sidecar's but whose sha256 is not (bit rot, or a write
+  outside the engine that kept both) is set aside as above, its sidecar beside the copy, with a line on stderr: the
+  copy is kept, never saved over, and the record starts afresh. A file whose size or mtime differ was written since by
+  another writer (an older engine after a rollback, which does not know the sidecar): it loads, and the next save
+  writes a fresh sidecar. A missing sidecar (every file written before) loads as it always did. With integrity off, a save removes a sidecar left from before, so none goes stale. A
+  sidecar is a leftover of its store (`classes.HOME_TRANSIENT`), never a name of its own; an older engine's `brain
+  check` notes a top-level one (`tui.json.sha256`) as a name no store covers, a note that never fails. The old
+  sidecar goes just before each write, and the new one is made from the file's bytes and stat read through one
+  handle, so a writer cut short or racing another never leaves a sidecar that does not describe its file.
 
 `v` is the top-level integer `v`; a file without one is read as version 1. A record keyed by names (schedules,
 projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key as a name, still reads it.
@@ -138,16 +149,20 @@ there; the prune of states older than `KEEP_DAYS` takes their `.bak` and set-asi
 A file another tool owns is edited in its own keys only (spec-brain-data-compat §1, class foreign).
 `brain.stateio.read_foreign` refuses one that cannot be read (a lock, a permission), is not JSON or not an object
 (« fix it by hand first »): it is never set aside nor replaced. `write_foreign` refuses a file that changed since it
-was read (its owner wrote it meanwhile: « run the command again »), backs it up beside itself, then writes atomically.
+was read (its owner wrote it meanwhile: « run the command again »), backs it up (beside itself, or into a folder of
+`$BRAIN_HOME/backup` the caller names: `backup_home`, the last 10 copies per file, none when the bytes did not change),
+then writes atomically.
 A symbolic link (a settings file kept in a dotfiles repo) is written through: the file it points to changes, the link
 stays. `permissions.ClaudeCode.write` (`brain permissions render --write`, `--level session --out`) goes through
-them; a file git keeps as it is (`permissions.kept_by_git`: tracked, with no change in `git status`, such as a
-project's committed `.claude/settings.json`) is not backed up beside itself, since a `.bak` would only show in git
-status; an untracked, ignored or changed one (a project's `.claude/settings.local.json`, which Claude Code
-gitignores) is backed up, git holding no copy of it. The user file, `~/.claude/settings.json`, is the owner's act:
-`install.ps1 -Apply` writes it, with the same policy in PowerShell (`Read-ForeignJson`, `Write-ForeignJson`: a file
-that is not a JSON object stops it, an empty one is read as missing, a backup `settings.json.bak`, a temporary file
-that replaces it).
+them; a file of a git work tree (a project's committed `.claude/settings.json`, its `.claude/settings.local.json`, which
+Claude Code gitignores) is backed up under `$BRAIN_HOME/backup/<project>-<key>/<its folder>` (the project named by its
+main checkout's folder and keyed by eight hex digits of its git common dir's path, so two repos of one name never share
+a folder; a linked worktree's copies under `worktrees/<folder>-<key>`; `permissions.home_backup_dir`), never beside
+itself, so git status stays clean; an untracked `<name>.bak` an older engine left beside it moves there first, its time
+as its stamp (a tracked one stays). Any other file is backed up beside itself. The user file, `~/.claude/settings.json`,
+is the owner's act: `install.ps1 -Apply` writes it, with the same policy in PowerShell (`Read-ForeignJson`,
+`Write-ForeignJson`: a file that is not a JSON object stops it, an empty one is read as missing, a backup
+`settings.json.bak`, a temporary file that replaces it).
 
 ### The log class: rotation and retention
 

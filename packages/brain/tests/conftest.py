@@ -78,6 +78,7 @@ def run_git(cwd, *args):
 
 
 _TEMPLATES: dict[str, Path] = {}
+NO_LOCKS = shutil.ignore_patterns("*.lock")   # a lock git holds a moment is never part of a template's copy
 _TEMPLATE_ROOT: list[Path] = []
 
 
@@ -95,7 +96,10 @@ def _template(kind: str) -> Path:
     if kind not in _TEMPLATES:
         repo = _TEMPLATE_ROOT[0] / kind
         run_git(_TEMPLATE_ROOT[0], "init", "-q", *(["--bare"] if kind == "bare" else []), "-b", "main", str(repo))
-        for key, value in (("commit.gpgsign", "false"), ("core.autocrlf", "false")):
+        # no background maintenance after a commit (git maintenance run --auto): its objects/maintenance.lock,
+        # made and removed while a test copies the template, failed shutil.copytree in CI
+        for key, value in (("commit.gpgsign", "false"), ("core.autocrlf", "false"), ("maintenance.auto", "false"),
+                           ("gc.auto", "0")):
             run_git(repo, "config", key, value)
         _TEMPLATES[kind] = repo
     return _TEMPLATES[kind]
@@ -106,10 +110,10 @@ def git_init(path, branch: str = "main", bare: bool = False) -> Path:
     repository: ``path`` may exist (empty or not), its files are left as they are."""
     path = Path(path)
     if bare:
-        shutil.copytree(_template("bare"), path, dirs_exist_ok=True)
+        shutil.copytree(_template("bare"), path, dirs_exist_ok=True, ignore=NO_LOCKS)
     else:
         path.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(_template("work") / ".git", path / ".git")
+        shutil.copytree(_template("work") / ".git", path / ".git", ignore=NO_LOCKS)
     if branch != "main":
         (path / ("HEAD" if bare else ".git/HEAD")).write_text(f"ref: refs/heads/{branch}\n", encoding="utf-8")
     return path
@@ -131,7 +135,7 @@ def git_repo(tmp_path, monkeypatch):
         run_git(repo, "add", "-A")
         run_git(repo, "commit", "-q", "-m", "init")
         _TEMPLATES["git_repo"] = repo
-    return Path(shutil.copytree(_TEMPLATES["git_repo"], tmp_path / "repo"))
+    return Path(shutil.copytree(_TEMPLATES["git_repo"], tmp_path / "repo", ignore=NO_LOCKS))
 
 
 @pytest.fixture

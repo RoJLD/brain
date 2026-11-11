@@ -55,13 +55,14 @@ never removes one; ``brain permissions`` shows the rules a settings file holds t
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import config, graph, paths, projects, schema, stateio
@@ -947,9 +948,12 @@ class ClaudeCode(Adapter):
         """Add the missing rules; take out the expired ones (rules the hierarchy declared, and only those). The file
         is Claude Code's (a foreign file, brain.stateio): one that cannot be read, is not JSON or not an object is
         refused, never replaced; one Claude Code wrote meanwhile is refused (run again); its other keys are kept; it
-        is backed up beside itself (``settings.json.bak``) unless git keeps it as it is (:func:`kept_by_git`: a
-        project's tracked file with no change, where a .bak would only show in git status; an untracked, ignored or
-        changed one, such as ``settings.local.json``, is backed up), then written atomically."""
+        is backed up first: a file of a git work tree (a project's ``.claude/settings.json``, its untracked
+        ``settings.local.json``) under ``$BRAIN_HOME/backup/<project>-<key>/`` (:func:`home_backup_dir`, the last
+        ``stateio.HOME_BACKUPS`` copies), so that git status stays clean; an untracked ``.bak`` an older engine left
+        beside it moves there first, as an older copy (:func:`adopt_old_backup`; a tracked one stays where it is); any
+        other file (``~/.claude/settings.json``) beside itself (``settings.json.bak``). Then it is written
+        atomically."""
         try:
             data, seen = stateio.read_foreign(path)
         except stateio.StateError as exc:
@@ -965,35 +969,97 @@ class ClaudeCode(Adapter):
                 perms[v] = list(perms.get(v) or []) + missing[v]
             if (expired or {}).get(v) and perms.get(v):
                 perms[v] = [x for x in perms[v] if x not in expired[v]]
-        try:   # UTF-8 without BOM, as Claude Code writes it
-            stateio.write_foreign(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", seen,
-                                  keep_backup=not kept_by_git(path))
-        except stateio.StateError as exc:
-            raise PermissionsError(str(exc)) from None
+        write_backed_up(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", seen)
+
+
+def write_backed_up(path: Path, text: str, seen: bytes | None) -> None:
+    """A settings file written through brain.stateio, backed up first: under ``$BRAIN_HOME/backup`` for a file of a
+    git work tree (an old ``.bak`` beside it adopted first, so this write's copy is the newest and the prune keeps
+    the last 10), beside itself otherwise. UTF-8 without BOM, as Claude Code writes it."""
+    home = home_backup_dir(path)
+    if home is not None:
+        adopt_old_backup(path, home)
+    try:
+        stateio.write_foreign(path, text, seen, backup_dir=home)
+    except stateio.StateError as exc:
+        raise PermissionsError(str(exc)) from None
+
+
+def work_tree(path: Path) -> Path | None:
+    """The top of the git work tree ``path`` lies in (the nearest parent with a ``.git`` folder or file), else None."""
+    return next((p for p in Path(path).resolve().parents if (p / ".git").exists()), None)
 
 
 def in_work_tree(path: Path) -> bool:
     """Whether ``path`` lies in a git work tree (a ``.git`` folder or file in one of its parents)."""
-    return any((p / ".git").exists() for p in Path(path).resolve().parents)
+    return work_tree(path) is not None
 
 
-def kept_by_git(path: Path) -> bool:
-    """Whether git keeps ``path`` as it is now: a file of a git work tree, tracked, that ``git status`` shows no
-    change of. False for a missing, untracked, ignored or changed file, outside a work tree, or when git cannot
-    say (not installed, an error, a timeout): a backup is then made."""
-    path = Path(path).resolve()
-    if not path.is_file() or not in_work_tree(path):
-        return False
+def _safe(name: str, default: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip(".-") or default
+
+
+def _key(p: Path) -> str:
+    """Eight hex digits of a folder's resolved path (its case folded where the system folds it): two repos of the same
+    folder name never share a backup folder."""
+    return hashlib.sha256(os.path.normcase(str(p.resolve())).encode("utf-8")).hexdigest()[:8]
+
+
+def _git_dirs(top: Path) -> tuple[Path, Path]:
+    """(the work tree's git dir, the repo's common dir), absolute; both ``top/.git`` when git cannot say."""
     try:
-        tracked = subprocess.run(["git", "-C", str(path.parent), "ls-files", "--error-unmatch", "--", path.name],
-                                 capture_output=True, timeout=30)
-        if tracked.returncode != 0:
-            return False
-        status = subprocess.run(["git", "-C", str(path.parent), "status", "--porcelain", "--", path.name],
-                                capture_output=True, text=True, timeout=30)
+        out = subprocess.run(["git", "-C", str(top), "rev-parse", "--path-format=absolute", "--git-dir",
+                              "--git-common-dir"], capture_output=True, text=True, timeout=10,
+                             stdin=subprocess.DEVNULL).stdout.split("\n")
     except (OSError, subprocess.SubprocessError):
-        return False
-    return status.returncode == 0 and not status.stdout.strip()
+        out = []
+    if len(out) >= 2 and out[0].strip() and out[1].strip():
+        return Path(out[0].strip()), Path(out[1].strip())
+    return top / ".git", top / ".git"
+
+
+def home_backup_dir(path: Path) -> Path | None:
+    """Where a file of a git work tree is backed up before a write: ``$BRAIN_HOME/backup/<project>-<key>/<its folder
+    in the work tree>``. The project is named by its main checkout's folder (a bare repo's ``<name>.git``, else the
+    work tree's own folder: a submodule's) and keyed by eight hex digits of its git common dir's path, so two repos of
+    the same name never share one; a linked worktree's copies go under ``worktrees/<folder>-<key>``. None outside a
+    work tree: the file is backed up beside itself."""
+    top = work_tree(path)
+    if top is None:
+        return None
+    git_dir, common = (p.resolve() for p in _git_dirs(top))
+    label = common.parent.name if common.name == ".git" else common.stem if common.suffix == ".git" else top.name
+    base = paths.backup_dir() / f"{_safe(label, 'repo')}-{_key(common)}"
+    if git_dir != common:   # a linked worktree (of a checkout or of a bare repo)
+        base = base / "worktrees" / f"{_safe(top.name, 'worktree')}-{_key(top)}"
+    return base / Path(path).resolve().parent.relative_to(top)
+
+
+def adopt_old_backup(path: Path, home: Path) -> Path | None:
+    """The ``<name>.bak`` an older engine left beside a work tree's file, moved under ``home`` as a copy (its time as
+    its stamp, so it sorts before the copy the write takes next), so that git status stays clean; left where it is
+    when git tracks it (or cannot say). The copy made, None when nothing moved."""
+    old = Path(path).with_name(Path(path).name + stateio.BACKUP)
+    if not old.is_file():
+        return None
+    try:
+        tracked = subprocess.run(["git", "-C", str(old.parent), "ls-files", "--error-unmatch", "--", old.name],
+                                 capture_output=True, timeout=30, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if tracked.returncode != 1:   # tracked (0), or git cannot say (another code): left as it is
+        return None
+    try:
+        stamp = datetime.fromtimestamp(old.stat().st_mtime, timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        home.mkdir(parents=True, exist_ok=True)
+        dst = home / f"{Path(path).name}.{stamp}{stateio.BACKUP}"
+        if not dst.exists():
+            os.replace(old, dst)
+            return dst
+        old.unlink()
+    except OSError:
+        return None
+    return None
 
 
 ADAPTERS: dict[str, Adapter] = {"claude": ClaudeCode()}
