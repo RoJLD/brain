@@ -269,9 +269,9 @@ class _NoReport:
 
 # --- the engine's own catalogs --------------------------------------------------------------------------------
 
-def test_the_engine_catalogs_are_valid_neutral_and_unique():
-    """Every catalog the engine ships reads clean in strict mode, its ids unique across them (a public engine:
-    brain check --public reads the same files)."""
+def test_the_engine_catalogs_are_valid_and_unique():
+    """Every catalog the engine ships reads clean in strict mode, its ids unique across them (they are public files:
+    brain check --public reads them before every push)."""
     cats = standards.engine_catalogs(strict=True)
     assert [c.name for c in cats] == ["software"]
     for cat in cats:
@@ -291,11 +291,15 @@ def test_the_software_catalog_covers_its_ten_domains_for_code_products_only():
     each with how the Brain meets it."""
     [cat] = standards.engine_catalogs(strict=True)
     assert list(dict.fromkeys(r.domain for r in cat.rows)) == DOMAINS
+    assert len(cat.rows) == 90   # docs/standards.md's table and the fragment say so
+    ids = {r.id for r in cat.rows}
     for r in cat.rows:
         assert r.id.startswith("sw-") and r.status == "proposed", r.id
         assert set(r.profiles) <= set(SOFTWARE), r.id
         assert r.coverage.get("status") in standards.COVERAGE, r.id
-        assert r.source, r.id
+        assert r.coverage.get("by") or r.coverage["status"] in ("none", "n/a"), r.id   # have or partial: by what
+        assert r.source and r.check, r.id
+        assert set(r.refs) <= ids, r.id
     by = {r.id: r for r in cat.rows}
     # the client architecture's pillars and gaps each land in a row
     for sid in ("sw-schema-versioning", "sw-atomic-writes", "sw-checksums", "sw-snapshots", "sw-outbox",
@@ -306,9 +310,24 @@ def test_the_software_catalog_covers_its_ten_domains_for_code_products_only():
                 "sw-privacy-by-design", "sw-erasure", "sw-fault-injection"):
         assert sid in by, sid
     # a prototype is not buried under a V1's rules: few rows from prototype, the heavy ones from scale
-    assert {r.id for r in cat.rows if r.stage == "prototype"} <= {
+    assert {r.id for r in cat.rows if r.stage == "prototype"} == {
         "sw-simplicity", "sw-lint-format", "sw-secrets-handling", "sw-test-per-change", "sw-utf8", "sw-utc"}
     assert by["sw-lock-free-by-measure"].stage == "scale" and by["sw-replication"].stage == "scale"
+
+
+@pytest.mark.parametrize("row", [r for c in standards.engine_catalogs(strict=True) for r in c.rows],
+                         ids=lambda r: r.id)
+def test_a_software_row_is_consistent(row):
+    """A row's enforcement, adapter and languages agree: an adapter's check runs on named languages, a measure or a
+    lens carries no blocking adapter but test or coverage, a review lens asks a question."""
+    if row.adapter in ("lint", "typecheck", "coverage", "format"):
+        assert "any" not in row.languages, "a tool's check covers named languages"
+    if row.enforcement in ("review-lens", "rule"):
+        assert not row.adapter, "a lens or a rule runs no tool"
+    if row.enforcement == "review-lens":
+        assert row.check.endswith("?"), "a lens is a question"
+    if row.enforcement == "measure":
+        assert row.adapter in ("", "coverage")
 
 
 def test_a_cli_at_mvp_gets_a_short_list_from_the_software_catalog():

@@ -65,7 +65,9 @@ taxonomies of engineering standards (a client architecture's six pillars and fiv
 domains) and the pillars they leave out (supply chain, portability and encodings, time, configuration and feature
 flags, error messages, performance budgets, data lifecycle, recovery, AI-agent safety, multi-tenant isolation,
 accessibility and i18n). Every row is `proposed` until the owner validates its domain; a validated row turns
-`validated` in the same file.
+`validated` in the same file. A row's `source` is a provenance trail (the pillar, gap or domain of the taxonomies it
+comes from, by number); `refs` links the rows that overlap, kept apart because they are enforced differently. The
+last domain holds data governance and the developer experience together, as the taxonomy does.
 
 | Domain | Rows | What it holds |
 |---|---|---|

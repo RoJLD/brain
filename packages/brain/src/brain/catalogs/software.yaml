@@ -28,6 +28,7 @@ rows:
       by: "brain audit and the scout check the modules' structure, not the layers"
     status: proposed
     source: software engineering 1, modularity
+    refs: [sw-fitness-functions]
   - id: sw-bounded-contexts
     domain: architecture
     title: Bounded contexts
@@ -99,6 +100,7 @@ rows:
       by: "append-only records with generated views, chosen by decision"
     status: proposed
     source: software engineering 1, flow and state models
+    refs: [sw-decision-records]
   - id: sw-decision-records
     domain: architecture
     title: Decision records
@@ -116,18 +118,19 @@ rows:
   - id: sw-fitness-functions
     domain: architecture
     title: Architectural fitness functions
-    statement: Architectural rules (forbidden imports, size and complexity budgets) are automated checks that fail the build.
+    statement: Architectural rules (size and complexity budgets, forbidden imports between layers) are automated checks that fail the build.
     profiles: [library, cli, local-client, service, data-pipeline]
     stage: v1
     enforcement: check
-    check: an import contract and size and complexity thresholds run in CI
+    check: size and complexity thresholds on each change; the import contract where layers exist
     adapter: lint
     languages: [py]
     coverage:
-      status: have
-      by: "brain audit --diff's structure thresholds and the scout"
+      status: partial
+      by: "brain audit --diff's size and complexity thresholds; no import contract yet"
     status: proposed
     source: software engineering 1, architectural governance
+    refs: [sw-separation-of-concerns]
 
   # --- code-quality: typing, errors, contracts, purity -----------------------------------------------------------
   - id: sw-parse-dont-validate
@@ -230,7 +233,7 @@ rows:
     languages: [py]
     coverage:
       status: partial
-      by: "most subprocess calls have one; the lint is planned"
+      by: "most subprocess calls have one; the scout's norm.timeout flags a call a change adds without one"
     status: proposed
     source: client architecture 5; software engineering 3, asynchrony and I/O
   - id: sw-locks
@@ -346,6 +349,7 @@ rows:
       by: "v on every record, the format registry and the release check"
     status: proposed
     source: client architecture 1; software engineering 4, schema lifecycle
+    refs: [sw-tolerant-reader, sw-migrations, sw-semver]
   - id: sw-tolerant-reader
     domain: persistence
     title: Tolerant reader, strict writer
@@ -361,6 +365,7 @@ rows:
       by: "the formats' fixtures and their round-trip tests"
     status: proposed
     source: software engineering 4, schema lifecycle
+    refs: [sw-schema-versioning, sw-migrations]
   - id: sw-migrations
     domain: persistence
     title: Tested migrations
@@ -376,6 +381,7 @@ rows:
       by: "a legacy-store drill; a migrate command is planned"
     status: proposed
     source: client architecture 1; software engineering 4, schema lifecycle
+    refs: [sw-schema-versioning, sw-tolerant-reader]
   - id: sw-checksums
     domain: persistence
     title: Corruption detected
@@ -406,6 +412,7 @@ rows:
       by: "sealed copies and a recovery drill"
     status: proposed
     source: client architecture 1; software engineering 4, integrity and storage
+    refs: [sw-recovery]
   - id: sw-transactions
     domain: persistence
     title: Transactions or a write-ahead log
@@ -448,6 +455,7 @@ rows:
       by: "the vault's recovery drill; the off-site copy is planned"
     status: proposed
     source: added pillar, recovery and succession
+    refs: [sw-snapshots]
 
   # --- distributed: network, resilience ---------------------------------------------------------------------------
   - id: sw-idempotency
@@ -564,6 +572,7 @@ rows:
       status: n/a
     status: proposed
     source: software engineering 5, protocols and transport
+    refs: [sw-schema-versioning]
 
   # --- security: zero trust, secrets, confinement, supply chain --------------------------------------------------
   - id: sw-zero-trust-input
@@ -573,13 +582,14 @@ rows:
     profiles: [library, cli, local-client, service, data-pipeline, embedded]
     stage: mvp
     enforcement: check
-    check: every reader validates against its schema; the parsers of untrusted input are fuzzed
+    check: every reader validates its input against a schema or a parser before use
     languages: [any]
     coverage:
       status: have
       by: "JSON Schemas and the guards' command parsing"
     status: proposed
     source: client architecture 3; software engineering 6, zero trust
+    refs: [sw-fuzzing, sw-parse-dont-validate]
   - id: sw-secrets-handling
     domain: security
     title: Secrets out of argv, logs and files
@@ -605,18 +615,18 @@ rows:
     check: is any sensitive data written in clear, and where is its key?
     languages: [any]
     coverage:
-      status: have
-      by: "the vault and the keystore"
+      status: partial
+      by: "sealed copies encrypted (the vault) and keys in the OS keystore; the working stores are in clear"
     status: proposed
     source: client architecture 3; software engineering 6, secrets and cryptography
   - id: sw-encryption-in-transit
     domain: security
     title: Encryption in transit
-    statement: Network traffic is encrypted (TLS 1.3), and services authenticate each other (mutual TLS), even inside one network.
+    statement: Network traffic is encrypted (TLS 1.3); services that call each other authenticate each other (mutual TLS or signed tokens), even inside one network.
     profiles: [service, data-pipeline]
     stage: v1
     enforcement: check
-    check: a scan of the endpoints refuses plain text and a missing client certificate
+    check: a scan of the endpoints refuses plain text and an unauthenticated caller
     languages: [any]
     coverage:
       status: n/a
@@ -657,10 +667,9 @@ rows:
     statement: Secrets, tokens and signatures are compared in constant time.
     profiles: [library, service, embedded]
     stage: v1
-    enforcement: check
-    check: a lint flags an equality test on a secret or token
-    adapter: lint
-    languages: [py]
+    enforcement: review-lens
+    check: is every comparison of a secret, token or signature constant-time (hmac.compare_digest)?
+    languages: [any]
     coverage:
       status: none
     status: proposed
@@ -686,8 +695,8 @@ rows:
     profiles: [library, cli, local-client, service, data-pipeline]
     stage: v1
     enforcement: check
-    check: an SBOM generator and a vulnerability scanner in the release job (syft, pip-audit)
-    languages: [py]
+    check: an SBOM generator and a vulnerability scanner of the dependencies in the release job (syft; pip-audit, npm audit)
+    languages: [any]
     coverage:
       status: none
       by: "a dependency watch is planned"
@@ -737,7 +746,7 @@ rows:
   - id: sw-tenant-isolation
     domain: security
     title: Tenant isolation
-    statement: One tenant's data never reaches another; every store, key and log is scoped to its tenant, and a test proves the scoping.
+    statement: In a multi-tenant product, one tenant's data never reaches another; every store, key and log is scoped to its tenant, and a test proves the scoping.
     profiles: [service, data-pipeline]
     stage: v1
     enforcement: test-template
@@ -799,9 +808,8 @@ rows:
     statement: Tests never read or write the developer's real home, data or network; each runs in its own temporary environment.
     profiles: [library, cli, local-client, service, data-pipeline]
     stage: mvp
-    enforcement: check
-    check: the test harness points every home, config and data path at a temporary folder
-    adapter: test
+    enforcement: review-lens
+    check: does the test read or write anything outside its temporary folder, or reach the network?
     languages: [any]
     coverage:
       status: have
@@ -851,6 +859,7 @@ rows:
       status: none
     status: proposed
     source: software engineering 7, advanced verification
+    refs: [sw-zero-trust-input]
   - id: sw-mutation-score
     domain: testing
     title: Mutation score
@@ -859,7 +868,6 @@ rows:
     stage: scale
     enforcement: measure
     check: a mutation testing run on the core (mutmut; stryker)
-    adapter: test
     languages: [py, ts]
     coverage:
       status: none
@@ -964,6 +972,7 @@ rows:
       by: "the release check and the release preview"
     status: proposed
     source: software engineering 8, CI/CD
+    refs: [sw-schema-versioning]
   - id: sw-blue-green-update
     domain: release
     title: Blue/green updates with rollback
@@ -1073,7 +1082,7 @@ rows:
     profiles: [cli, local-client, service, data-pipeline]
     stage: mvp
     enforcement: test-template
-    check: a test writes past the limit and expects a rotation
+    check: a test writes past the limit and expects a rotation; every line parses as a structured record with its level
     adapter: test
     languages: [any]
     coverage:
@@ -1192,8 +1201,8 @@ rows:
     check: a check lists every store without a retention class
     languages: [any]
     coverage:
-      status: have
-      by: "a format and retention class for every store under the home folder"
+      status: partial
+      by: "the log classes have a retention period; the other stores do not"
     status: proposed
     source: added pillar, data lifecycle
   - id: sw-utf8
@@ -1221,8 +1230,8 @@ rows:
     check: does a stored time carry its zone, and is a duration measured on a monotonic clock?
     languages: [any]
     coverage:
-      status: have
-      by: "UTC timestamps in every record and ledger"
+      status: partial
+      by: "records and ledgers in UTC; the scout's norm.naive-time flags a naive datetime a change adds"
     status: proposed
     source: added pillar, time; software engineering 10
   - id: sw-portability
@@ -1244,7 +1253,7 @@ rows:
     title: Strings apart from code
     statement: User-facing strings are kept apart from the code, ready for translation.
     profiles: [local-client, service]
-    stage: v1
+    stage: scale
     enforcement: review-lens
     check: does the change hard-code a user-facing string in the logic?
     languages: [any]
@@ -1287,11 +1296,11 @@ rows:
     profiles: [library, cli, local-client, service, data-pipeline, embedded]
     stage: mvp
     enforcement: check
-    check: a docs check fails when a generated document is stale
+    check: a docs check fails when a generated document is stale or a quoted command is gone
     languages: [any]
     coverage:
-      status: have
-      by: "generated READMEs and views, checked in CI"
+      status: partial
+      by: "generated READMEs and views, checked by brain check and brain docs check; the other docs by review"
     status: proposed
     source: software engineering 10, documentation
   - id: sw-reproducible-dev-env
