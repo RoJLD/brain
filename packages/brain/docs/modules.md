@@ -52,9 +52,11 @@ code (a warning, never a failure):
   once a brain has placed them all, such a line names a new one;
 - one whose module is `none` with no `props.module_reason`, or is not in the registry.
 
-`brain modules --json` gives `features`, `features_unplaced`, `done_items`, `done_unplaced` and `warnings`. The
-public render of `FEATURES.md` (`brain features render` into a public repo) never shows the Module column: the module
-ids are the owner's platform's.
+`brain modules --json` gives `features`, `features_unplaced`, `done_items`, `done_unplaced` and `warnings`;
+`brain modules --check --json` keeps the open items' problems only, as before. The public render of `FEATURES.md`
+(`brain features render` into a public repo) never shows the Module column: the module ids are the owner's
+platform's. A public `FEATURES.md` an earlier engine rendered with that column is then stale: `brain sync` (or
+`brain features render --write`) renders it again.
 
 ## The view
 
