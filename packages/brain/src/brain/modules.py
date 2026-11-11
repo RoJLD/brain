@@ -119,6 +119,16 @@ def unplaced(store: Path) -> dict[str, list[str]]:
             for kind, nodes in placed_nodes(store).items()}
 
 
+def _placed_line(store: Path) -> list[str]:
+    """The view's line on what the reference reads by module (wi-brain-module-backfill), then a blank line; none for
+    a store with no feature and no done item."""
+    more, missing = placed_nodes(store), unplaced(store)
+    if not (more["features"] or more["done"]):
+        return []
+    return [f"Features placed: {len(more['features']) - len(missing['features'])} of {len(more['features'])}; "
+            f"done items placed: {len(more['done']) - len(missing['done'])} of {len(more['done'])}.", ""]
+
+
 def _named(ids: list[str]) -> str:
     more = len(ids) - SHOWN
     return ", ".join(ids[:SHOWN]) + (f" and {more} more" if more > 0 else "")
@@ -254,12 +264,8 @@ def render(store: Path, store_label: str = "notes/graph") -> str:
     out = [HEAD.format(reg=f"{store_label}/{REGISTRY}"),
            f"**{len(reg)} modules ({sum(1 for m in reg if m.get('status') == 'proposed')} proposed); "
            f"{sum(1 for n in opened if _props(n).get('module'))} of {len(opened)} open items placed, "
-           f"{len(nones)} outside the tree.**", ""]
-    more, missing = placed_nodes(store), unplaced(store)
-    if more["features"] or more["done"]:   # what the reference reads by module (wi-brain-module-backfill)
-        out += [f"Features placed: {len(more['features']) - len(missing['features'])} of {len(more['features'])}; "
-                f"done items placed: {len(more['done']) - len(missing['done'])} of {len(more['done'])}.", ""]
-    out += ["| Module | Name | Brick | Phase | Status | Done | Open | Secondary |", "|---|---|---|---|---|---|---|---|"]
+           f"{len(nones)} outside the tree.**", "", *_placed_line(store),
+           "| Module | Name | Brick | Phase | Status | Done | Open | Secondary |", "|---|---|---|---|---|---|---|---|"]
     for b, m in _order(reg):
         d, o, s = counts(str(m["id"]))
         out.append(f"| [{m['id']}](#{str(m['id']).lower()}) | {_cell(m.get('name', ''))} | {b} | "
