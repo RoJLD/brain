@@ -335,9 +335,12 @@ def test_a_scope_or_pack_naming_a_sharer_not_loaded_gives_the_reason(tmp_path, m
     assert not any("not a node of the scope tree" in e or "is not registered" in e for e in errors)
 
 
-def test_an_edge_of_a_later_store_to_a_stub_the_first_store_derives_says_why(tmp_path, monkeypatch, capsys):
+def test_an_edge_of_a_later_store_to_a_stub_the_first_store_derives_resolves_there(tmp_path, monkeypatch, capsys):
     """Before wi-brain-shared-root-projects every store ran with research_graph's defaults, so a second store derived
-    the stubs of notes/decisions.md too and an item of it could be decided_by one; it now covers no decision log."""
+    the stubs of notes/decisions.md too and an item of it could be decided_by one; it now covers no decision log. Since
+    wi-brain-cross-store-edges the edge resolves in the first store, so 0.3.2 dropped the 0.3.0 rule that refused it
+    (wi-brain-shared-root-stub-rule-drop): brain sync, brain check and check --all accept it."""
+    from brain import crossstore
     root = tmp_path / "team"
     assert research_graph(["--store", str(root / "notes" / "graph"), "--repo-root", str(root), "init",
                            "--examples"]) == 0
@@ -352,16 +355,27 @@ def test_an_edge_of_a_later_store_to_a_stub_the_first_store_derives_says_why(tmp
     reg.parent.mkdir()
     reg.write_text(f"team:\n  root: {root.as_posix()}\n  stores: [notes/graph, ops/graph]\n", encoding="utf-8")
     monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
-    why = (f"error: ops/graph: edge wi-ops-first -> {adr}: that ADR stub is notes/graph's only (a store listed "
-           "after its project's first covers no decision log): move the edge to notes/graph, or remove it")
-    assert cli.main(["sync", "--all", "--offline"]) == 1
-    assert why in capsys.readouterr().out
-    assert cli.main(["check", "--all"]) == 1
-    assert why in capsys.readouterr().out
-    (ops / "edges" / "work.yaml").write_text("", encoding="utf-8")  # the edge moved away: nothing more to say
     assert cli.main(["sync", "--all", "--offline"]) == 0
+    out = capsys.readouterr().out
+    assert "error: " not in out and "that ADR stub" not in out
+    assert adr not in _ids(ops) and adr in _ids(root / "notes" / "graph")  # the stub is the first store's only now
+    gen = root / "notes" / "graph" / "nodes" / "_generated_decisions.yaml"
+    assert adr in gen.read_text(encoding="utf-8")
+    assert f"to: {adr}" in (ops / "edges" / "work.yaml").read_text(encoding="utf-8")  # the edge kept
+    # research_graph is given the first store for ops (--foreign-store) and resolves the edge to its stub there
+    assert crossstore.engine_args(root, ops) == ["--foreign-store", f"team:notes/graph={root / 'notes' / 'graph'}"]
+    layout = projects.layout(projects.load()["team"], ops)
+    assert "--no-decisions" in layout  # it covers no decision log: the stub is not its own
+    assert research_graph([*crossstore.engine_args(root, ops), "--store", str(ops), "--repo-root", str(root),
+                           *layout, "check"]) == 0
+    rep = crossstore.check(list(projects.load().values()))
+    assert rep.dangling == [] and any(adr in c and "team:notes/graph" in c for c in rep.cross), rep.cross
+    assert cli.main(["--project", "team", "check"]) == 0
     assert cli.main(["check", "--all"]) == 0
-    assert "that ADR stub" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "error: " not in out and "dangling" not in out and "that ADR stub" not in out
+    assert cli.main(["sync", "--all", "--offline"]) == 0  # a second sync: the same, nothing refused
+    assert "error: " not in capsys.readouterr().out
 
 
 def test_an_owner_with_no_store_listed_still_holds_notes_graph(tmp_path, monkeypatch):
