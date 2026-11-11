@@ -107,7 +107,7 @@ def test_the_newer_data_reaches_every_file_of_a_format(st, tmp_path):
     assert '"cpu_s":0.4' in (ledger / "exec-2026-11.jsonl").read_text(encoding="utf-8")
     # the formats it reached no file of fail the step: the rollback would test nothing of them
     assert not step["ok"] and "reached no file: ar v1, ddr v1, members v1, packs v1, permissions v1, projects v1, " \
-        "readme v1, sr v1" in step["out"]
+        "readme v1, sr v1, standards v1" in step["out"]
 
 
 def test_the_newer_data_reaches_a_yaml_file_holding_dates(st, tmp_path):
@@ -133,6 +133,21 @@ def test_the_newer_data_reaches_readme_yaml(st, tmp_path):
     step = st.add_newer(root, home)
     assert "readme: readme.yaml +keys" in step["out"], step["out"]
     assert "badges" in yaml.safe_load((root / "readme.yaml").read_text(encoding="utf-8"))
+
+
+def test_the_newer_data_reaches_a_local_standards_catalog(st, tmp_path):
+    """A brain's local standards catalog (wi-brain-standards-registry) has its place, standards/ at the brain's root:
+    the newer keys reach it, the older engine's rows kept."""
+    import yaml
+    root, home = tmp_path / "brain", tmp_path / "home"
+    (root / "standards").mkdir(parents=True)
+    f = root / "standards" / "local.yaml"
+    f.write_text(st.fixture("standards", "older").read_text(encoding="utf-8"), encoding="utf-8")
+    assert st.where(root, home)["standards"] == [f]
+    step = st.add_newer(root, home)
+    assert "standards: local.yaml +keys" in step["out"], step["out"]
+    data = yaml.safe_load(f.read_text(encoding="utf-8"))
+    assert data["owner"] == "a team" and [r["id"] for r in data["rows"]] == ["fx-atomic-writes", "fx-utc"]
 
 
 def test_a_file_changed_or_removed_is_data_lost_and_a_ledger_may_only_grow(st, tmp_path):
