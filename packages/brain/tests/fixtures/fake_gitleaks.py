@@ -34,11 +34,15 @@ def main(args: list[str]) -> int:
         return 2
     code = int(args[args.index("--exit-code") + 1])
     report = args[args.index("--report-path") + 1]
+    found = [] if os.environ.get("GITLEAKS_CONFIG") else scan(folder, mode, "--ignore-gitleaks-allow" not in args)
+    Path(report).write_text(json.dumps(found), encoding="utf-8")
+    return code if found else 0
+
+
+def scan(folder: str, mode: str, honour_allow: bool) -> list[dict]:
+    """The findings: each line holding the marker (line 1 of every file when sticky). An owner's narrowed config
+    (GITLEAKS_CONFIG) would hide everything: the caller gives none then."""
     found = []
-    if os.environ.get("GITLEAKS_CONFIG"):   # an owner's narrowed config would hide everything
-        Path(report).write_text("[]", encoding="utf-8")
-        return 0
-    honour_allow = "--ignore-gitleaks-allow" not in args
     for f in sorted(Path(folder).iterdir()):
         with open(f, encoding="utf-8", newline="") as fh:   # lines by \n alone, as gitleaks counts them
             lines = fh.read().split("\n")
@@ -47,8 +51,7 @@ def main(args: list[str]) -> int:
                 continue
             if (mode == "sticky" and i == 1) or MARK in line:
                 found.append({"File": str(f), "StartLine": i, "RuleID": "fake", "Secret": "REDACTED"})
-    Path(report).write_text(json.dumps(found), encoding="utf-8")
-    return code if found else 0
+    return found
 
 
 if __name__ == "__main__":

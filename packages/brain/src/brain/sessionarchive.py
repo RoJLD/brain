@@ -359,12 +359,7 @@ def run(cfg: config.Config, *, dry_run: bool = False, max_files: int | None = No
     srcs, res["waiting"] = srcs[:cap], max(0, len(srcs) - cap)
     if not srcs:
         return res
-    if dry_run:
-        stage_ctx = tempfile.TemporaryDirectory(prefix="brain-sarch-")
-        stage = Path(stage_ctx.name)
-    else:
-        archive_dir().mkdir(parents=True, exist_ok=True)
-        stage = Path(tempfile.mkdtemp(prefix="staging-", dir=archive_dir()))
+    stage = _stage_dir(dry_run)
     try:
         counts = {s.name: filter_file(s.path, stage / s.name, filters) for s in srcs}
         scan_staged(argv, stage, counts)
@@ -382,6 +377,15 @@ def run(cfg: config.Config, *, dry_run: bool = False, max_files: int | None = No
     finally:
         if not _remove(stage):
             res["leftovers"].append(str(stage))
+
+
+def _stage_dir(dry_run: bool) -> Path:
+    """Where a run stages its copies: a temporary folder for a plan, else a folder of the store (sealed class), so
+    that the spool takes them as the store's own items."""
+    if dry_run:
+        return Path(tempfile.mkdtemp(prefix="brain-sarch-"))
+    archive_dir().mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="staging-", dir=archive_dir()))
 
 
 def leftovers() -> list[Path]:
