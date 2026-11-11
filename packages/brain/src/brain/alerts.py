@@ -1015,7 +1015,7 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
                 unset.update(missing)
                 outcome = "unset"
             else:
-                outcome = _send(cfg, why, name, a["level"], a["message"], a["key"], dry_run, now, env)
+                outcome = _send(cfg, why, name, a["level"], a["message"], a["key"], dry_run, now, env, queue=False)
                 lines.append(f"{name}: {a['level']} {a['key']}: {outcome}")
             opened[a["key"]]["sent"] = outcome
             hist.append(_history(a, name, "open", now))
@@ -1033,6 +1033,7 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
             st[name] = {"open": opened, "last_pass": _iso(now)}
         lines.append(f"{name}: {len(d['alerts'])} open, {len(send)} new, risen or retried, {len(closed)} resolved"
                      + (" (dry run: nothing recorded)" if dry_run else ""))
+    lines += notify.replay(registry, now=now, dry_run=dry_run, env=env)   # the outbox, after this pass's sends
     if unset:
         lines.append(f"nothing sent: ${', $'.join(sorted(unset))} not set (brain notify setup ntfy); the alerts wait "
                      "for the first pass that finds it")
@@ -1047,13 +1048,15 @@ def notify_pass(data: dict, registry: Mapping[str, projects.Project], *, dry_run
     return lines
 
 
-def _send(cfg, why: str, project: str, level: str, body: str, key: str, dry_run: bool, now: datetime, env) -> str:
-    """One alert through brain notify: delivered, failed, no-route, throttled, off, dry-run, or why not sent."""
+def _send(cfg, why: str, project: str, level: str, body: str, key: str, dry_run: bool, now: datetime, env,
+          queue: bool = True) -> str:
+    """One alert through brain notify: delivered, failed, no-route, throttled, off, dry-run, or why not sent. An
+    open alert that fails is sent again by the next pass (``queue=False``); a resolved one goes to the outbox."""
     if cfg is None:
         return f"not sent: {why}"
     msg = notify.Message(project, level, body, source="alerts", key=key)
     try:
-        res = notify.send(cfg, msg, dry_run=dry_run, now=now, env=env)
+        res = notify.send(cfg, msg, dry_run=dry_run, now=now, env=env, queue=queue)
     except notify.NotifyError as exc:
         return f"not sent: {exc}"
     return res.status

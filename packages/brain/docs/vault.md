@@ -104,6 +104,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `cockpit` | `$BRAIN_HOME/tui.json` | sealed | truth-local | the cockpit's settings |
 | `update-check` | `$BRAIN_HOME/update.json` | sealed | derived | the last engine tags read |
 | `net` | `$BRAIN_HOME/net` | sealed | truth-local | the external services' circuit breakers (`brain.net`) |
+| `outbox` | `$BRAIN_HOME/outbox` | sealed | truth-local | the outbound calls that failed, waiting to be sent again (`brain.outbox`) |
 | `personal` | `$BRAIN_HOME/personal.json` | sealed | truth-local | the pointer to the personal brain |
 | `profile` | `$BRAIN_HOME/profile.json` | sealed | truth-local | the machine's frozen tier profile |
 | `venv`, `bin`, `engine-clones` | `$BRAIN_HOME/venv`, `bin`, `engine` | sealed | install | the command's environment, its launcher, the tags' clones |

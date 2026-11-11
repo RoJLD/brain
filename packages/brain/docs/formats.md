@@ -215,6 +215,7 @@ foreign one is never written here.
 | `quota.load_status` | the quota forecast | derived (local) | `{}` is right: rebuilt |
 | `update._read_cache` | `update.json` | derived (local) | `{}` is right: the tags are asked again |
 | `net.blocked`, `net.failed` | `net/breakers.json` | truth-local | through `brain.stateio`; losing it costs one timeout per service |
+| `outbox.put`, `outbox.replay` | `outbox/queue.json` | truth-local | through `brain.stateio`; a newer brain's is read-only (nothing queued, said) |
 
 ## The hook contract
 
