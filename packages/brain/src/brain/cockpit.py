@@ -93,6 +93,7 @@ import json
 import math
 import os
 import re
+import signal
 import sys
 import threading
 import time
@@ -1934,5 +1935,7 @@ def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, o
             if ticks and n >= ticks:
                 return 0
             time.sleep(refresh_s)
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as exc:   # Ctrl+C quits; SIGTERM or a hang-up stops it as any command (brain.shutdown)
+        if getattr(exc, "signum", signal.SIGINT) != signal.SIGINT:
+            raise
         return 0
