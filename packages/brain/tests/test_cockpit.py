@@ -998,4 +998,3 @@ def test_a_newer_brains_tui_json_is_shown_never_written(tmp_path, monkeypatch, s
     err = capsys.readouterr().err
     assert "newer brain" in err and "views are not remembered" in err
     assert cockpit.state_path().read_text(encoding="utf-8") == text
-
