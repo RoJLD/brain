@@ -286,8 +286,8 @@ def store_narrowed(old: dict, new: dict) -> list[str]:
 def _load(path: str, text: str):
     if path.lower().endswith(".json"):
         return json.loads(text)
-    import yaml
-    return yaml.safe_load("\n".join(PLACEHOLDER.sub("", line) for line in text.splitlines())) or {}
+    from . import graph   # the one YAML helper (wi-brain-yaml-fast-load)
+    return graph.load_yaml("\n".join(PLACEHOLDER.sub("", line) for line in text.splitlines())) or {}
 
 
 def compare(path: str, before: str | None, after: str | None) -> Diff:
