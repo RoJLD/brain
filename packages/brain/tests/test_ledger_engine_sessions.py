@@ -12,16 +12,16 @@ from brain import cost, projects, queue
 @pytest.fixture
 def two(tmp_path, store, git_repo):
     """``mine``: a personal brain whose project declares the engine's checkout (``git_repo``, beside it) as a repo;
-    ``quant``: another project, with a repo of its own."""
+    ``acme``: another project, with a repo of its own."""
     with (store / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
         f.write(ITEMS)
     root = store.parents[1]
     engine = tmp_path / "brain"
     git_repo.rename(engine)
-    quant = tmp_path / "quant"
-    (quant / "lab").mkdir(parents=True)
+    acme = tmp_path / "acme"
+    (acme / "lab").mkdir(parents=True)
     mine = projects.Project(name="mine", root=root, stores=[store], repos=[".", str(engine)])
-    other = projects.Project(name="quant", root=quant, repos=[".", "lab"])
+    other = projects.Project(name="acme", root=acme, repos=[".", "lab"])
     return mine, other, engine
 
 
@@ -31,8 +31,8 @@ def test_the_engine_checkout_and_its_worktrees_are_the_project_s(two, tmp_path):
     assert place(str(engine)) == "mine"
     assert place(str(engine / ".claude" / "worktrees" / "speed-d0f7b1")) == "mine"  # gone or not: under the repo
     assert place(str(tmp_path / "brain-wt-023")) == "mine"            # a checkout beside it, gone
-    assert place(str(mine.root)) == "mine" and place(str(other.root / "lab")) == "quant"
-    assert place(str(tmp_path / "elsewhere")) == "" and place(str(tmp_path / "quant-wt-x")) == "quant"
+    assert place(str(mine.root)) == "mine" and place(str(other.root / "lab")) == "acme"
+    assert place(str(tmp_path / "elsewhere")) == "" and place(str(tmp_path / "acme-wt-x")) == "acme"
     assert place(str(tmp_path / "brainy-wt-1")) == ""                 # only a known repo's name
 
 
@@ -62,15 +62,15 @@ def test_brain_usage_credits_the_engine_sessions(two, tmp_path):
     rows = [row("s-root", folder=str(mine.root)),
             row("s-engine", folder=str(engine / ".claude" / "worktrees" / "guards-quota-af1c97")),
             row("s-wt", folder=str(tmp_path / "brain-wt-023")),
-            row("s-quant", folder=str(other.root / "lab")),
-            # a sub-session that ran in quant's repo for an item of mine: the project it serves
+            row("s-acme", folder=str(other.root / "lab")),
+            # a sub-session that ran in acme's repo for an item of mine: the project it serves
             row("s-serves", folder=str(other.root), brief={"side": True, "items": ["wi-b"], "class": "standard"}),
             # a main session whose first prompt names an item: its folder decides
             row("s-main", folder=str(other.root), brief={"side": False, "items": ["wi-b"], "class": "standard"}),
             row("s-away", folder=str(tmp_path / "elsewhere"))]
     led = cost.Ledger(rows, [mine], queue.Placer([mine, other]))
     got = {r["session_id"]: r["project"] for r in led.rows}
-    assert got == {"s-root": "mine", "s-engine": "mine", "s-wt": "mine", "s-quant": "quant", "s-serves": "mine",
-                   "s-main": "quant", "s-away": queue.OUTSIDE}
+    assert got == {"s-root": "mine", "s-engine": "mine", "s-wt": "mine", "s-acme": "acme", "s-serves": "mine",
+                   "s-main": "acme", "s-away": queue.OUTSIDE}
     assert {r["session_id"] for r in cost.scoped(led, [mine], False).rows} == {"s-root", "s-engine", "s-wt",
                                                                                "s-serves"}

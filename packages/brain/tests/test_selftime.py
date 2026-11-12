@@ -255,11 +255,11 @@ def test_perf_engine_reads_the_engine_folder_only(on, brain_home, capsys):
                         for i in range(5)] + [_exec("hook capture stop", now, 2.0)])
     _write(on, "exec-bash", [_exec("hook budget [bash]", now, 0.1)])
     _write(on, "error", [_err("hook guard shell", now - timedelta(minutes=i)) for i in range(2)])
-    _write(brain_home / "ledger", "exec", [{**_exec("cycle L4", now, 9.0), "project": "quant"}])
+    _write(brain_home / "ledger", "exec", [{**_exec("cycle L4", now, 9.0), "project": "acme"}])
     assert perf.main(engine=True, as_json=True) == 0
     rep = json.loads(capsys.readouterr().out)
     rows = {r["task"]: r for r in rep["slowest"]}
-    assert set(rows) == {"hook guard shell", "hook capture stop", "hook budget [bash]"}  # not quant's cycle
+    assert set(rows) == {"hook guard shell", "hook capture stop", "hook budget [bash]"}  # not acme's cycle
     assert rows["hook guard shell"]["errors"] == 2 and rows["hook guard shell"]["median_s"] == 0.7
     (week,) = rep["hook_weeks"]
     assert week["runs"] == 7 and week["blocking_s"] == pytest.approx(3.6)  # capture stop is async
@@ -282,7 +282,7 @@ def test_perf_engine_regressions_by_engine_version(on, capsys):
 
 def test_perf_engine_refuses_from_and_project(on):
     assert perf.main(engine=True, sources=["x.jsonl"]) == 2
-    assert perf.main(engine=True, project="quant") == 2
+    assert perf.main(engine=True, project="acme") == 2
 
 
 def test_perf_engine_says_where_when_empty(on, capsys):
@@ -315,7 +315,7 @@ def test_a_hook_failing_three_times_a_day_raises_an_alert(on, tmp_path):
 def test_the_brain_project_carries_the_engine_alerts(on, tmp_path, monkeypatch):
     now = datetime.now(timezone.utc)
     _write(on, "error", [_err("hook guard edit", now - timedelta(minutes=i)) for i in range(4)])
-    brain_p, other = _project(tmp_path), _project(tmp_path, "quant")
+    brain_p, other = _project(tmp_path), _project(tmp_path, "acme")
     assert alerts.carries_engine(brain_p) and not alerts.carries_engine(other)
     keys = [a.key for a in alerts.of_project(brain_p)]
     assert "engine:hook-guard-edit:TypeError" in keys

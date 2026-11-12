@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _project_after(parser: argparse.ArgumentParser, skip: set[str]) -> None:
-    """--project after the subcommand too (brain status --project quant), on every leaf subcommand but those of
+    """--project after the subcommand too (brain status --project acme), on every leaf subcommand but those of
     ``skip`` (the commands' NO_PROJECT: the hooks', memory and sessions, machine-wide)."""
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):

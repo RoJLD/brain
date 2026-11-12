@@ -4,7 +4,7 @@ and ``brain up / down / health``, one status line per stack, at zero token for t
 Each project of projects.yaml may declare its stacks under ``stacks:``, inline or as a YAML file relative to the
 project's root. Stack names are global: ``depends_on`` may name another project's stack (the Docker engine)::
 
-  quant:
+  acme:
     root: ../demo
     stacks:
       gitnexus:

@@ -30,7 +30,8 @@ DEFAULTS = {"registry": "projects.yaml", "rules": [], "memory": "memory", "recor
 PATH_KEYS = ("registry", "memory", "records", "source")   # declared paths that must exist (and each of rules)
 DENY = ("people", "users", "hosts", "repos", "paths")
 # public's keys the public checks read, and their type (config.schema.json): another type is unexpected (COMPAT-4)
-PUBLIC_KEYS = {"repos": list, "deny": dict, "allow": dict, "patterns": dict, "refuse": dict, "deny_from_tree": bool}
+PUBLIC_KEYS = {"repos": list, "deny": dict, "allow": dict, "patterns": dict, "refuse": dict, "deny_from_tree": bool,
+               "derive": list, "public_names": dict}
 NO_OWNER = "the owner"
 # The names of the Claude rendering (adapters.claude) when config.json gives none: the engine's own, no person's.
 CLAUDE = {"marketplace": "brain", "plugin": "brain-core", "source": ""}
@@ -106,6 +107,12 @@ def unexpected(cfg: Config | None = None) -> str:
         why = scopes.deny_unexpected(cfg)
         if why:
             return why
+    from . import denylist
+    try:   # a derivation that fails would leave the registries' names out of the deny list: refuse (fail closed)
+        denylist.terms(cfg)
+    except Exception as exc:  # noqa: BLE001 - any failure to derive is a reason to refuse, said as one
+        return (f"the deny terms could not be derived from the registries ({type(exc).__name__}: {exc}): fix it "
+                "(brain check --all), or narrow config.json public.derive")
     v = cfg.data.get("v")
     if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
         return f"{FILE}: v is {v!r}, not a whole number: fix {cfg.file} (brain config --check)"
@@ -179,11 +186,32 @@ def deny_from_tree(cfg: Config) -> bool:
 
 def deny_terms(cfg: Config) -> list[tuple[str, str]]:
     """(category, term) for each term of public.deny, in DENY's order; with public.deny_from_tree, the repos gain
-    the private projects of the scope tree and their repos (brain.scopes.private_terms), after the hand list."""
+    the private projects of the scope tree and their repos (brain.scopes.private_terms), after the hand list; then
+    each category gains the terms derived from the brain's registries (brain.denylist, public.derive), none twice."""
     deny = (cfg.data.get("public") or {}).get("deny") if isinstance(cfg.data.get("public"), dict) else None
     deny = deny if isinstance(deny, dict) else {}
     terms = [(cat, t) for cat in DENY for t in deny.get(cat) or [] if isinstance(t, str) and t]
-    return _with_tree_terms(cfg, terms) if deny_from_tree(cfg) else terms
+    terms = _with_tree_terms(cfg, terms) if deny_from_tree(cfg) else terms
+    return _with_derived(cfg, terms)
+
+
+def _with_derived(cfg: Config, terms: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``terms`` with brain.denylist's after each category's own, none twice whatever its case or category. A
+    derivation that fails adds nothing here: :func:`unexpected` names it, and the guards refuse (fail closed)."""
+    from . import denylist
+    try:
+        derived = denylist.terms(cfg)
+    except Exception:   # noqa: BLE001 - unexpected() says why
+        return terms
+    seen = {t.lower() for _, t in terms}
+    out = []
+    for cat in DENY:
+        out += [(c, t) for c, t in terms if c == cat]
+        for c, t in derived:
+            if c == cat and t.lower() not in seen:
+                seen.add(t.lower())
+                out.append((c, t))
+    return out
 
 
 def _with_tree_terms(cfg: Config, terms: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -192,6 +220,16 @@ def _with_tree_terms(cfg: Config, terms: list[tuple[str, str]]) -> list[tuple[st
     hand = {t.lower() for cat, t in terms if cat == "repos"}
     at = max((i + 1 for i, (cat, _) in enumerate(terms) if DENY.index(cat) <= DENY.index("repos")), default=0)
     return terms[:at] + [("repos", t) for t in scopes.private_terms(cfg) if t.lower() not in hand] + terms[at:]
+
+
+def _derive_sources(cfg: Config) -> tuple[str, ...]:
+    from . import denylist
+    return denylist.sources(cfg)
+
+
+def _public_names(cfg: Config) -> dict[str, str]:
+    from . import denylist
+    return denylist.public_names(cfg)
 
 
 def allowed(cfg: Config) -> dict[str, str]:
@@ -250,6 +288,7 @@ def describe(cfg: Config) -> dict:
             "claude": claude(cfg), "public_repos": list(pub.get("repos") or []),
             "personal": str(paths.personal_root()) if paths.personal_root() else None,
             "deny": {cat: sum(1 for c, _ in terms if c == cat) for cat in DENY}, "deny_from_tree": deny_from_tree(cfg),
+            "derive": list(_derive_sources(cfg)), "public_names": sorted(_public_names(cfg)),
             "allow": sorted(allowed(cfg)), "secrets": sorted(cfg.data.get("secrets") or {})}
 
 

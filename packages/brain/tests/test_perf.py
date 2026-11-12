@@ -13,7 +13,7 @@ def _day(month, day, hour=6):
     return datetime(2026, month, day, hour, tzinfo=timezone.utc)
 
 
-def _ev(task, end, d, exit=0, project="quant", version="a1", ledger=None):
+def _ev(task, end, d, exit=0, project="acme", version="a1", ledger=None):
     timing.write_event(timing.make_event(task, end - timedelta(seconds=d), end, d, exit, project=project,
                                          version=version), ledger)
 
@@ -47,7 +47,7 @@ def _report(**kw):
 
 def test_slowest_steps(ledger):
     rep = _report()
-    assert (rep["runs"], rep["tasks"], rep["skipped"], rep["projects"]) == (15, 3, 2, ["brain", "quant"])
+    assert (rep["runs"], rep["tasks"], rep["skipped"], rep["projects"]) == (15, 3, 2, ["acme", "brain"])
     assert [r["task"] for r in rep["slowest"]] == ["download f1v2", "cycle L4", "pytest"]
     l4 = rep["slowest"][1]
     assert (l4["runs"], l4["failed"], l4["median_s"], l4["p90_s"], l4["max_s"]) == (8, 1, 110, 210, 210)
@@ -80,7 +80,7 @@ def test_filters_and_sources(ledger, tmp_path):
     assert {r["task"] for r in _report(task="CYCLE")["slowest"]} == {"cycle L4"}
     assert _report(since="2026-10-27")["runs"] == 8
     other = tmp_path / "events"
-    _ev("collector", _day(10, 30), 12, project="quant", ledger=other)
+    _ev("collector", _day(10, 30), 12, project="acme", ledger=other)
     rep = _report(sources=[str(other)])
     assert [r["task"] for r in rep["slowest"]] == ["collector"] and rep["skipped"] == 0
     with pytest.raises(perf.PerfError):

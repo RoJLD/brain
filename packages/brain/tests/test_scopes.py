@@ -262,8 +262,9 @@ def test_archived_subtrees_are_left_out_of_the_counts_unless_asked(brain, capsys
 
 
 def _config(root, **public):
+    """config.json with a hand deny list; the registries' derived terms off (brain.denylist): the tree's alone."""
     data = {"v": 1, "identity": {"owner": "Ada"}, "public": {"deny": {"people": ["Ada"], "repos": ["handmade"],
-                                                                     "paths": ["E:/Work"]}, **public}}
+                                                                     "paths": ["E:/Work"]}, "derive": [], **public}}
     (root / config.FILE).write_text(json.dumps(data), encoding="utf-8")
     return config.load(root)
 

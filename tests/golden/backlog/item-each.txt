@@ -613,14 +613,14 @@ exit: 0
  "priority": null,
  "priority_proposed": null,
  "repos": [
-  "quant-marketdata"
+  "acme-data"
  ],
  "milestones": [],
  "blockers": [],
  "external_blocker": null,
  "anchor": null,
  "props": {
-  "pr": "quant-marketdata #16",
+  "pr": "acme-data #16",
   "after": "wi-doing stage 1"
  },
  "out": [],

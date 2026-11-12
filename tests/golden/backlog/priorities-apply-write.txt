@@ -20,7 +20,7 @@ wi-todo: P2? -> P2
 - {id: wi-todo, type: WorkItem, status: todo, title: "Todo after doing",
    props: {priority: P2, priority_reason: "after wi-doing", spec: spec-draft}}
 - {id: wi-free, type: WorkItem, status: todo, title: "Free item about funding",
-   props: {pr: "quant-marketdata #16", after: "wi-doing stage 1",
+   props: {pr: "acme-data #16", after: "wi-doing stage 1",
            priority: P3}}
 - {id: wi-ext, type: WorkItem, status: blocked, title: "Waits on Ada",
    props: {external_blocker: "Ada decides", open: "which venue"}}

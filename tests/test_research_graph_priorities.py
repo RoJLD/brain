@@ -87,7 +87,7 @@ def test_propose_then_apply_with_dry_run_skip_and_overrides(store):
     changes = apply_priorities(store, skip=["wi-prereq"], overrides={"wi-free": "p1", "wi-ext": "P0"}, write=True)
     assert [c.line() for c in changes] == ["wi-ext: -? -> P0 (the owner's value)", "wi-free: P3? -> P1 (the owner's value)",
                                            "wi-todo: P2? -> P2"]
-    assert _priority(store, "wi-free") == {"pr": "quant-marketdata #16", "after": "wi-doing stage 1",
+    assert _priority(store, "wi-free") == {"pr": "acme-data #16", "after": "wi-doing stage 1",
                                            "priority": "P1", "priority_reason": "later"}
     assert _priority(store, "wi-prereq")["priority_proposed"] == "P1"  # skipped: still a proposal
     assert apply_priorities(store, only=["wi-prereq"])[0].id == "wi-prereq"

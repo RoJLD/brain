@@ -18,7 +18,7 @@ Every level but the engine's is ``permissions.yaml``, next to the registry (``$B
 ``never`` (the categories no level may allow), ``profiles``, ``machines``, ``tenants``, ``sessions`` (each declared with
 a title) and ``rules``, the file's last key, one flow mapping per line, which ``brain permissions grant`` appends to::
 
-  - {allow: "Shell(docker inspect *)", project: quant, why: "...", by: "<who>, <date>", from: perm-60c75cdd84}
+  - {allow: "Shell(docker inspect *)", project: acme, why: "...", by: "<who>, <date>", from: perm-60c75cdd84}
 
 A rule's level is what it names: nothing (global), ``profile``, ``machine``, ``tenant``, ``project``, ``project`` with
 ``machine`` (local), or ``session``. Its text is Claude Code's syntax (``Tool`` or ``Tool(specifier)``), the reference
@@ -1495,7 +1495,7 @@ def _request(model: Model, rules: list[Rule], **fields) -> dict:
 
 def select(reqs: list[dict], *, status: str = "", scope: str = "", item: str = "", search: str = "",
            sort: str = "unblocks") -> list[dict]:
-    """The requests filtered (status, a scope's start: global, project, project quant, machine...; an item or
+    """The requests filtered (status, a scope's start: global, project, project acme, machine...; an item or
     milestone they unblock; a text in their reason, evidence or id) and sorted: unblocks (most first, then oldest),
     age (oldest first), project, status (pending, granted, expired)."""
     out = [r for r in reqs if (not status or r["status"] == status) and (not scope or r["scope"].startswith(scope))
