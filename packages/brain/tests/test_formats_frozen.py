@@ -38,7 +38,7 @@ def test_this_engine_reads_it_strict(path, tmp_path, monkeypatch):
     fmt, v = path.parent.parent.name, int(path.parent.name[1:])
     text = path.read_text(encoding="utf-8")
     if fmt in JSON_LINES:
-        for line in text.splitlines():
+        for line in (x for x in text.split("\n") if x):   # at \n only: a record may hold U+2028
             record = json.loads(line)
             assert schema.check(fmt, record) == ([], []), line
     elif fmt in RECORDS:

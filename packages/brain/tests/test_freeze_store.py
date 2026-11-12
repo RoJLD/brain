@@ -155,6 +155,59 @@ def fz_version(text: str) -> int:
     return mod.version_of(text)
 
 
+def kept_freeze(fz, monkeypatch, tmp_path, ok: bool = True) -> Path:
+    """A work folder as a previous freeze kept it: a venv, a brain, a ledger; engine_is says whether it is the tag."""
+    work = tmp_path / "work"
+    (work / "venv" / ("Scripts" if fz.os.name == "nt" else "bin")).mkdir(parents=True)
+    (work / "ada-brain").mkdir()
+    (work / "ada-brain" / "config.json").write_text('{"v": 1, "x": "/no/path"}\n', encoding="utf-8")
+    monkeypatch.setattr(fz, "machine", lambda: {})
+    monkeypatch.setattr(fz, "engine_text", lambda *a: None)
+    monkeypatch.setattr(fz.st, "engine_is", lambda *a: {"ok": ok})
+    return work
+
+
+def test_reuse_freezes_the_formats_of_the_kept_engine_only_if_it_is_the_tag(fz, monkeypatch, tmp_path, capsys):
+    work = kept_freeze(fz, monkeypatch, tmp_path)
+    out = tmp_path / "formats"
+    args = ["v0.3.1", "--only-formats", "--reuse", "--work", str(work), "--formats-out", str(out)]
+    assert fz.main(args) == 0 and (out / "config" / "v1" / "v0.3.1.json").is_file()
+    (out / "config" / "v1" / "v0.3.1.json").write_text("kept\n", encoding="utf-8")
+    assert fz.main(args) == 0 and (out / "config" / "v1" / "v0.3.1.json").read_text(encoding="utf-8") == "kept\n"
+    assert fz.main([*args, "--force"]) == 0 and "kept" not in (out / "config" / "v1" / "v0.3.1.json").read_text(
+        encoding="utf-8")
+    monkeypatch.setattr(fz.st, "engine_is", lambda *a: {"ok": False})     # another tag's freeze
+    assert fz.main(["v0.2.4", *args[1:]]) == 2 and "is not v0.2.4" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        fz.main(["v0.3.1", "--reuse", "--work", str(work)])               # --reuse writes no store
+
+
+@pytest.mark.parametrize("config,why", [
+    ("{work}", "config: names this machine (a path)"),
+    ('{{"v": 7}}', "config: v7 has no hand-written pair"),
+])
+def test_a_format_refused_freezes_nothing(fz, monkeypatch, tmp_path, capsys, config, why):
+    work = kept_freeze(fz, monkeypatch, tmp_path)
+    (work / "ada-brain" / "config.json").write_text(config.format(work=work) + "\n", encoding="utf-8")
+    ledger = work / "home" / ".brain" / "ledger"
+    ledger.mkdir(parents=True)
+    (ledger / "exec-2026-11.jsonl").write_text('{"v":1}\n', encoding="utf-8")
+    out = tmp_path / "formats"
+    assert fz.main(["v0.3.1", "--only-formats", "--reuse", "--work", str(work), "--formats-out", str(out)]) == 1
+    assert why in capsys.readouterr().err and not out.exists()   # the event file neither: all checked first
+
+
+def test_a_full_hostname_is_replaced_whole(fz, monkeypatch):
+    monkeypatch.setattr(fz.socket, "gethostname", lambda: "boxa12.corp.example.com")
+    monkeypatch.setattr(fz.getpass, "getuser", lambda: "root")
+    terms = fz.machine()
+    assert list(terms) == ["boxa12.corp.example.com", "boxa12"]
+    text = '{"host":"boxa12.corp.example.com"} on boxa12'
+    for term, invented in terms.items():
+        text = fz._term(term).sub(invented, text)
+    assert text == '{"host":"host-a"} on host-a'
+
+
 def test_reuse_needs_a_previous_freeze(fz, tmp_path, capsys):
     assert fz.main(["v0.3.1", "--only-formats", "--reuse", "--work", str(tmp_path)]) == 2
     assert "no engine and brain of a previous freeze" in capsys.readouterr().err

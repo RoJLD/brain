@@ -24,7 +24,7 @@ still names one, the work folder or this checkout (an absolute path of this mach
 
 **Each format's file** (wi-brain-format-fixture-freeze) is frozen too, as that engine wrote it, neutralized the same
 way: ``tests/fixtures/formats/<format>/v<N>/<TAG>.<ext>`` (N the ``v`` the file states), from the brain (ar, config,
-ddr, sr, projects, packs), the engine's ledger (event, its first :data:`LINES` lines) and the engine's own template
+ddr, sr, projects, packs), an exec ledger file (event, its first :data:`LINES` lines) and the engine's own template
 manifest; ``tests/test_formats_frozen.py`` reads each one strict. A format no command writes (permissions, members,
 readme, modules, standards) is skipped, and so is the status document (:data:`MACHINE_FORMATS`: brain doctor --json
 prints this machine's inventory). One already frozen is kept unless ``--force``. ``--only-formats`` freezes them
@@ -123,15 +123,19 @@ def files(root: Path) -> list[Path]:
 
 def machine() -> dict[str, str]:
     """This machine's names that brain init writes into public.deny (brain.init.machine_terms: its user and host, at
-    least 3 characters and none of :func:`common_names`), each with the invented name a fixture holds in its place."""
+    least 3 characters and none of :func:`common_names`), each with the invented name a fixture holds in its place.
+    The host's full name comes first (the event ledger writes it whole: a domain left after its short name replaced
+    would be published), then its short one."""
     try:
         user = getpass.getuser()
     except Exception:   # no user name in this environment: nothing to replace
         user = ""
-    host = socket.gethostname().split(".")[0]
+    full = socket.gethostname()
+    short = full.split(".")[0]
     common = common_names()
-    return {term: invented for term, invented in ((host, INVENTED["hosts"]), (user, INVENTED["users"]))
-            if len(term) >= 3 and term.lower() not in common}
+    hosts = [] if len(short) < 3 or short.lower() in common else [full, short]   # 'localhost.x' is no machine's name
+    pairs = [(h, INVENTED["hosts"]) for h in dict.fromkeys(hosts)] + [(user, INVENTED["users"])]
+    return {term: invented for term, invented in pairs if len(term) >= 3 and term.lower() not in common}
 
 
 def places_of(work: Path) -> set[str]:
@@ -225,8 +229,8 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
                     help="with --work: the engine and the brain a previous freeze left there, nothing installed")
     ap.add_argument("--formats-out", help=f"the formats folder (default: {FORMATS_OUT})")
     args = ap.parse_args(argv)
-    if args.reuse and not args.work:
-        ap.error("--reuse: with --work, the folder of a previous freeze")
+    if args.reuse and not (args.work and args.only_formats):
+        ap.error("--reuse: with --work (the folder of a previous freeze) and --only-formats (no steps run: no store)")
     if not args.tag.strip():
         ap.error("TAG: empty")
     return args
@@ -249,6 +253,10 @@ def prepared(args, work: Path, source: str) -> tuple[Path, list[dict]] | int:
         scripts = work / "venv" / ("Scripts" if os.name == "nt" else "bin")
         if not (scripts.is_dir() and (work / "ada-brain" / "config.json").is_file()):
             print(f"freeze: --reuse: no engine and brain of a previous freeze in {work}", file=sys.stderr)
+            return 2
+        which = st.engine_is(scripts, st.isolated_env(work, scripts), work / "ada-brain", args.tag, "")
+        if not which["ok"]:   # another tag's freeze: its files would be frozen under this tag's name
+            print(f"freeze: --reuse: the engine in {work} is not {args.tag}", file=sys.stderr)
             return 2
         return scripts, []
     scripts = installed(work, args.tag, source)
@@ -276,14 +284,15 @@ def main(argv: list[str] | None = None) -> int:
     scripts, ran = got
     root, terms = work / "ada-brain", machine()
     replaced = neutralize(root, terms)
-    if any_refused(refusals(ran, root, work, terms), work):
+    found, refused = collect_formats(args.tag, work, scripts, terms)   # all checked before anything is written
+    if any_refused(refusals(ran, root, work, terms) + refused, work):
         return 1
-    done = freeze_formats(args.tag, work, scripts, terms, Path(args.formats_out or FORMATS_OUT), args.force)
+    write_formats(found, Path(args.formats_out or FORMATS_OUT), args.force)
     if not args.only_formats:
         store(args.tag, root, dest, {**report_of(args.tag, source, ran), "neutralized": replaced})
     if not (args.keep or args.work):
         shutil.rmtree(work, ignore_errors=True)
-    return 0 if done else 1
+    return 0
 
 
 def any_refused(refused: list[str], work: Path) -> bool:
@@ -333,19 +342,20 @@ def format_text(fmt: str, places: dict, root: Path, scripts: Path, env: dict) ->
         return engine_text(fmt, root, scripts, env)
     f = files[0]
     text = f.read_bytes().decode("utf-8")
-    if f.suffix == ".jsonl":
-        text = "".join(text.splitlines(keepends=True)[:LINES])
+    if f.suffix == ".jsonl":   # cut at \n only: a record may hold U+2028 or \x85, which str.splitlines also splits on
+        text = "".join(line + "\n" for line in text.split("\n")[:LINES] if line)
     return text, f.suffix
 
 
-def freeze_formats(tag: str, work: Path, scripts: Path, terms: dict[str, str], out: Path, force: bool) -> bool:
-    """Each registered format's file the tag's engine wrote, neutralized, frozen as ``<out>/<format>/v<N>/<tag><ext>``
-    (an existing one kept unless ``force``). A format no command of that engine writes (permissions, members, readme,
-    modules, standards: by hand) is skipped and said, and so is :data:`MACHINE_FORMATS`; one that names this machine
-    is refused. True when nothing was refused."""
+def collect_formats(tag: str, work: Path, scripts: Path, terms: dict[str, str]) -> tuple[list, list[str]]:
+    """([(format, its path under the formats folder, its text)], why some cannot be frozen): each registered
+    format's file the tag's engine wrote, neutralized. A format no command of that engine writes (permissions,
+    members, readme, modules, standards: by hand) is skipped and said, and so is :data:`MACHINE_FORMATS`. One that
+    names this machine (a path) is refused, and so is a ``v`` with no hand-written pair (a format that moves brings
+    its migration and its older/newer pair first: formats.md)."""
     root, home = work / "ada-brain", work / "home"
     env = st.isolated_env(work, scripts)
-    places, needles, refused = st.where(root, home), places_of(work), []
+    places, needles, found, refused = st.where(root, home), places_of(work), [], []
     for fmt, _ in st.formats():
         got = None if fmt in MACHINE_FORMATS else format_text(fmt, places, root, scripts, env)
         if got is None:
@@ -355,18 +365,26 @@ def freeze_formats(tag: str, work: Path, scripts: Path, terms: dict[str, str], o
         text, ext = got
         for term, invented in terms.items():
             text = _term(term).sub(invented, text)
+        v = version_of(text)
         if any(n in text.lower() for n in needles):
-            refused.append(fmt)
-            print(f"  FAIL {fmt:<12} names this machine (a path): not frozen", file=sys.stderr)
-            continue
-        dest = out / fmt / f"v{version_of(text)}" / f"{tag}{ext}"
+            refused.append(f"{fmt}: names this machine (a path)")
+        elif not (st.FORMATS / fmt / f"v{v}").is_dir():
+            refused.append(f"{fmt}: v{v} has no hand-written pair ({fmt}/v{v}/older and newer): add it first")
+        else:
+            found.append((fmt, f"{fmt}/v{v}/{tag}{ext}", text))
+    return found, refused
+
+
+def write_formats(found: list, out: Path, force: bool) -> None:
+    """Each collected format's file under ``out`` (an existing one kept unless ``force``)."""
+    for fmt, rel, text in found:
+        dest = out / rel
         if dest.exists() and not force:
-            print(f"  kept {fmt:<12} {dest.relative_to(out).as_posix()} (frozen already)")
+            print(f"  kept {fmt:<12} {rel} (frozen already)")
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(text.encode("utf-8"))
-        print(f"  ok   {fmt:<12} {dest.relative_to(out).as_posix()}")
-    return not refused
+        print(f"  ok   {fmt:<12} {rel}")
 
 
 def report_of(tag: str, source: str, ran: list[dict]) -> dict:
