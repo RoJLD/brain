@@ -118,15 +118,14 @@ def context(m, prose: dict, ctx: dict) -> list[str]:
 
 
 def own_registry(root: Path) -> dict:
-    """The registry as declared, when it is this repo's own (``projects.yaml`` at ``root``, the file the registry is
-    read from): the reference is a function of the repo, never of a machine's other brains. {} otherwise."""
+    """The registry as declared in this repo's own ``projects.yaml`` (at ``root``), read from the file itself: the
+    reference is a function of the repo (as of any commit), never of a machine's other brains. {} without one."""
+    f = Path(root) / projects.REGISTRY
     try:
-        f = projects.registry_file(root)
-        if f is None or Path(f).resolve().parent != Path(root).resolve():
-            return {}
-        return projects.raw(root)
+        data = graph.load_yaml(f.read_text(encoding="utf-8")) if f.is_file() else {}
     except (OSError, ValueError, graph._yaml().YAMLError):   # unreadable: the section says there is none
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _repo_names(name: str, entry: dict) -> list[str]:

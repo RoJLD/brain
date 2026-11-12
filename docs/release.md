@@ -145,6 +145,11 @@ One branch, `chore/release-X.Y.Z`, one PR that moves the version and nothing els
 | `CHANGELOG.md`, `packages/brain/CHANGELOG.md` | the fragments compiled into `## X.Y.Z — YYYY-MM-DD`, and `## X.Y.Z — YYYY-MM-DD — theme` in the brain's (`python packages/brain/installer/changelog.py compile X.Y.Z --theme "..." --write`, which deletes them); a distribution with no fragment still gets its section, in one line opening « No change » |
 | the `### Upgrade` section, `packages/brain/CHANGELOG.md` | see below |
 
+**The wave's reference.** The release notes of a wave name its rendering as of that wave, which the maintainer
+renders on a machine with the brain that plans it, after the wave is closed: `brain reference --asof wave-X.Y.Z`
+(`<BRAIN_HOME>/views/reference/<project>/wave-X.Y.Z/`, never committed; packages/brain/docs/views.md, « The reference
+as of a point »).
+
 **The `### Upgrade` section** is the first thing in the brain's section, and `brain update` prints it. Numbered steps
 for what an owner must do from `vP`, in the order that works, each opening with its title in bold and then its reason
 and what fails until it is done, the standard steps under their own titles; then what needs nothing, said so.
