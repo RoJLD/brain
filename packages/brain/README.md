@@ -852,7 +852,12 @@ those conditions before the calls, at zero token, from the files the guard reads
   Code session's shell, and by the guard to every session, like `brain usage allow`): a session the owner started
   (no parent in the app's files) marked a chain root, `<BRAIN_HOME>/handover/roots.json`. A root hands over without a
   coordinator's name, and the coordinators it starts pass the parent condition through it, until `--clear`; a
-  marked id that a session started, or that the app's files do not know, is no root. No ID lists the marks.
+  marked id that a session started, or that the app's files do not know, is no root. No ID lists the marks. The mark
+  is automatic since wi-brain-handover-auto-root (HANDOVER-1): the first prompt of a session the owner started, when
+  it asks for a coordinator (`brain.succession.ROOT_WORDS`: coordinator, coordinateur, coordination...), marks it
+  through the UserPromptSubmit hook (`midsession`), its reason naming the hook; a later prompt, a session another
+  session started, or a prompt that names none marks nothing, and the guard refuses a session that runs the hook's
+  entry by hand. `brain handover root` stays the fallback.
 
 ## Lessons
 
