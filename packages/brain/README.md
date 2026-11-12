@@ -34,7 +34,7 @@ What it does, every command reading files and git, never a model:
   workflow; a command a session types into the owner's Terminal panel, `run_in_terminal`, meets the same shell
   guards), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
-  shapes, data files, the personal graph's decision ids and titles) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
+  shapes, data files, the personal graph's decision ids and titles and the other projects' ids) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
   deny rules and gitleaks as now. After an upgrade, `brain update` and the installer's `-Apply` re-check the
   registry's public checkouts with the new engine (`brain check --public --refresh`), so each one's HEAD is stamped
   again; a checkout with uncommitted work is skipped and named, and another local branch still asks its own check.

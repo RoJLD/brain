@@ -15,7 +15,9 @@ What is refused, in the lines of a public repo (its files, the lines its commits
 - an ADR's title, of 4 words or more, matched on its first 8 words (or all of them when shorter), whatever the case
   and the punctuation between the words: a title copied whole, or cut where a view truncates it.
 
-An id that no store holds passes (a test's invented ``adr-2026-01-01-x``), as does a file under ``public.allow``.
+An id that no store holds passes (a test's invented ``adr-2026-01-01-x``), as does a file under ``public.allow``; an
+id followed by a file's extension (``adr-x.md``) is the id. The index is read only for a repo of ``public.repos``
+(brain.public.rules with its slug): a render or a PR body checked without its repo checks no graph id.
 The ids are not part of the stamp's key (brain.public.rules_hash): a new item every few minutes would void every
 stamp, and a line checked before an id existed cannot hold it.
 """
@@ -65,16 +67,42 @@ def own_projects(loaded: dict, slug: str) -> list[str]:
     return out
 
 
+_CACHE: dict[tuple, Index] = {}
+
+
+def _stamp(stores: list) -> tuple:
+    """What the index of ``stores`` depends on: each nodes file's path, size and time (a commit guard that runs
+    twice in one process reads them once)."""
+    out = []
+    for _, store in stores:
+        for f in sorted((Path(store) / "nodes").glob("*.yaml")):
+            try:
+                st = f.stat()
+                out.append((str(f), st.st_size, st.st_mtime_ns))
+            except OSError:
+                out.append((str(f), -1, -1))
+    return tuple(out)
+
+
 def index(root: Path, slug: str) -> Index:
-    """The ids and ADR titles a public repo ``slug`` refuses, read from every store of the registry at ``root``."""
-    from . import crossstore, graph, projects
-    idx = Index()
+    """The ids and ADR titles a public repo ``slug`` refuses, read from every store of the registry at ``root``;
+    kept for this process while no nodes file changes."""
+    from . import crossstore, projects
     try:
         loaded = projects.load(root)
         stores = crossstore.stores(list(loaded.values()))
     except Exception as exc:   # noqa: BLE001 - an unreadable registry: said in the check's notes
-        idx.errors.append(f"the personal graph's ids are not checked: the registry cannot be read ({exc})")
-        return idx
+        return Index(errors=[f"the personal graph's ids are not checked: the registry cannot be read ({exc})"])
+    key = (str(root), slug.lower(), _stamp(stores))
+    if key not in _CACHE:
+        _CACHE.clear()
+        _CACHE[key] = _build(loaded, stores, slug)
+    return _CACHE[key]
+
+
+def _build(loaded: dict, stores: list, slug: str) -> Index:
+    from . import graph
+    idx = Index()
     idx.own = own_projects(loaded, slug) if slug else []
     for label, store in stores:
         project = label.split(":", 1)[0]
@@ -100,9 +128,18 @@ def index(root: Path, slug: str) -> Index:
     return idx
 
 
+def _held(token: str, idx: Index) -> str:
+    """The id of ``idx`` that ``token`` is, or that it starts with before a ``.`` (a file name: ``adr-x.md``)."""
+    while token:
+        if token in idx.ids:
+            return token
+        token = token.rpartition(".")[0]
+    return ""
+
+
 def find(line: str, idx: Index) -> list[str]:
     """What ``line`` holds of ``idx``: the private ids, then the ADR titles, each said once."""
-    out = [idx.ids[m.group(1)] for m in TOKEN.finditer(line) if m.group(1) in idx.ids]
+    out = [idx.ids[nid] for m in TOKEN.finditer(line) if (nid := _held(m.group(1), idx))]
     if idx.titles:
         w = words(line)
         for i, first in enumerate(w):

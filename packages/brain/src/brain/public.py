@@ -117,6 +117,14 @@ def public_repos(cfg: config.Config) -> list[str]:
     return [r for r in repos if isinstance(r, str) and r] if isinstance(repos, list) else []
 
 
+def engine_repo(cfg: config.Config) -> str:
+    """The public repo the engine side leaves for: config.json engine.repo when it is one of public.repos, else the
+    first of them, else ''."""
+    engine = cfg.data.get("engine") if isinstance(cfg.data.get("engine"), dict) else {}
+    repo = engine.get("repo") if isinstance(engine.get("repo"), str) else ""
+    return repo if is_public(repo, cfg) else (public_repos(cfg) or [""])[0]
+
+
 def is_public(slug: str, cfg: config.Config) -> bool:
     return bool(slug) and slug.lower() in {r.lower() for r in public_repos(cfg)}
 
@@ -234,8 +242,9 @@ class Rules:
 
 
 def rules(cfg: config.Config, slug: str = "") -> Rules:
-    """The rules of config.json, and the personal graph's ids a public repo ``slug`` refuses (brain.privateids; read
-    when config.json names a public repo: the registry's every store)."""
+    """The rules of config.json, and the personal graph's ids the public repo ``slug`` refuses (brain.privateids),
+    read only for a repo of public.repos: a caller without the repo (a render, a PR body) checks no graph id, since
+    which ids are its own depends on the repo."""
     pub = cfg.data.get("public") if isinstance(cfg.data.get("public"), dict) else {}
     patterns, errors = [], []
     for name, rx in (pub.get("patterns") or {}).items() if isinstance(pub.get("patterns"), dict) else []:
@@ -245,7 +254,7 @@ def rules(cfg: config.Config, slug: str = "") -> Rules:
             errors.append(f"config.json public.patterns {name}: {exc}")
     refuse = [(g, boundary.glob_regex(g), str(why)) for g, why in (pub.get("refuse") or {}).items()] \
         if isinstance(pub.get("refuse"), dict) else []
-    graph = privateids.index(cfg.root, slug) if public_repos(cfg) else None
+    graph = privateids.index(cfg.root, slug) if is_public(slug, cfg) else None
     errors += graph.errors if graph is not None else []
     return Rules([(cat, t, boundary.term_regex(t)) for cat, t in config.deny_terms(cfg)],
                  [boundary.glob_regex(g) for g in config.allowed(cfg)], patterns, refuse, errors, graph or None)
@@ -439,7 +448,7 @@ def check(repo: Path, cfg: config.Config | None = None, *, history: bool = False
             files = boundary.report(repo, cfg)["by_side"]["engine"]
         except boundary.BoundaryError as exc:
             raise PublicError(str(exc)) from exc
-        name, slug = "", (public_repos(cfg) or [""])[0]
+        name, slug = "", engine_repo(cfg)
     else:
         files = boundary.tracked(repo)
         name, slug = remote_of(repo, cfg, remote)

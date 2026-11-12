@@ -71,6 +71,42 @@ def test_a_line_with_a_private_id_or_title_is_refused(pub, line, what):
     assert privateids.find(line, idx) == [what]
 
 
+def test_an_id_with_a_files_extension_is_the_id(pub):
+    idx = privateids.index((pub.parent / "ada-brain"), "acme/engine")
+    assert privateids.find("see ../decisions/adr-2026-03-04-sovereign-choice.md", idx) == [
+        "the private ADR adr-2026-03-04-sovereign-choice (mine:notes/graph)"]
+    assert privateids.find("changes/wi-lab-secret-plan.v2.md", idx)
+
+
+def test_the_index_is_read_once_until_a_nodes_file_changes(pub):
+    brain = pub.parent / "ada-brain"
+    first = privateids.index(brain, "acme/engine")
+    assert privateids.index(brain, "acme/engine") is first
+    f = brain / "notes" / "graph" / "nodes" / "work.yaml"
+    f.write_text(f.read_text(encoding="utf-8") + "- {id: wi-mine-new, type: WorkItem, status: todo, title: N}\n",
+                 encoding="utf-8")
+    assert privateids.index(brain, "acme/engine") is not first
+
+
+def test_a_caller_without_the_public_repo_checks_no_graph_id(pub):
+    """A render (brain features, brain reference, the README check) or a PR body (the merge gate) is checked
+    without its repo: no graph id, since which ids are its own depends on the repo."""
+    from brain import features
+    cfg = config.load()
+    assert public.rules(cfg).graph is None and public.rules(cfg, "acme/other").graph is None
+    assert public.rules(cfg, "acme/engine").graph is not None
+    assert features.denied_lines("- **Thing** `feat-mine-thing` see wi-lab-secret-plan\n", cfg) == []
+
+
+def test_the_engine_side_takes_the_engines_repo(pub):
+    cfg = config.load()
+    cfg.data["public"]["repos"] = ["acme/docs", "acme/engine"]
+    cfg.data["engine"] = {"repo": "acme/engine"}
+    assert public.engine_repo(cfg) == "acme/engine"
+    cfg.data["engine"] = {}
+    assert public.engine_repo(cfg) == "acme/docs"
+
+
 @pytest.mark.parametrize("line", ["wi-mine-task and feat-mine-thing", "adr-2026-01-01-x, an invented id",
                                   "wi-lab-secret-planner", "Les choix souverains du moteur", "Too short"])
 def test_the_own_projects_ids_and_invented_ids_pass(pub, line):
