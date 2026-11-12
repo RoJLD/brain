@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import alerts, resume
+from .. import alerts, resume, shutdown
 from ._common import _scope, _text
 
 ORDER = 460   # its place in brain --help's list of commands (brain.commands)
@@ -25,7 +25,8 @@ USAGE = """\
                  task runs, which sends each new, risen or failed alert through brain notify at its level (resolved
                  ones at info) and records
                  the changes in $BRAIN_HOME/alerts (--dry-run: what it would send, nothing recorded); without its
-                 channel's variable ($BRAIN_NTFY_TOPIC) it sends nothing and says so in one line
+                 channel's variable ($BRAIN_NTFY_TOPIC) it sends nothing and says so in one line; one pass at a
+                 time per machine: a second one, while the first runs, is skipped (exit 0, one line on stderr)
   brain alerts raise KEY [MESSAGE|-|@FILE] --level L [--task T] [--source S] [--code C] [--link URL]
   brain alerts resolve KEY [MESSAGE] [--level L]   a project's alert event (kind alert of the event schema) in
                  $BRAIN_HOME/ledger/alert-<yyyy-mm>.jsonl, what its writers call instead of a tracked alerts file
@@ -52,6 +53,17 @@ def cmd_alerts(args, root: Path) -> int:
     if args.dry_run and not args.notify:
         raise SystemExit("brain: --dry-run goes with --notify")
     scope = _scope(args, root)
+    if args.notify and not args.dry_run:   # the scheduled pass: one at a time per machine (brain.shutdown)
+        try:
+            with shutdown.single_instance("alerts-pass", "brain alerts --notify"):
+                return _report(args, root, scope)
+        except shutdown.Busy as exc:
+            print(f"brain alerts: {exc}; this pass is skipped", file=sys.stderr)
+            return 0
+    return _report(args, root, scope)
+
+
+def _report(args, root: Path, scope: list) -> int:
     data = alerts.run(scope, quick=args.quick, root=root)
     sent = alerts.notify_pass(data, {p.name: p for p in scope}, dry_run=args.dry_run) if args.notify else None
     if args.json:

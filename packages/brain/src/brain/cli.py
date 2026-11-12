@@ -29,7 +29,7 @@ import codecs
 import os
 import sys
 
-from . import __version__, config, nowindow, paths, plugins, projects, selftime
+from . import __version__, config, nowindow, paths, plugins, projects, selftime, shutdown
 from .commands import _registry as registry
 from .commands._common import root_of
 
@@ -107,8 +107,13 @@ def main(argv: list[str] | None = None) -> int:
         if lines:
             parser.epilog = "\n".join([parser.epilog or "", "", *lines])
     args = parser.parse_args(argv)
-    with selftime.run(selftime.command_task(args)):  # the engine's exec event, and an error event if it raises
-        return _dispatch(args)
+    try:
+        # a signal stops the command once its current write is whole, its locks released (brain.shutdown)
+        with shutdown.graceful(), selftime.run(selftime.command_task(args)):  # the exec event; an error event too
+            return _dispatch(args)
+    except shutdown.Stopped as exc:
+        print(f"brain: stopped by {exc.name}; the write in progress was finished or rolled back", file=sys.stderr)
+        return exc.exit_code
 
 
 def _context() -> registry.Context:

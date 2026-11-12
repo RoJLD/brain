@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import cockpit, detail
+from .. import cockpit, detail, shutdown
 from ._common import _scope
 
 ORDER = 140   # its place in brain --help's list of commands (brain.commands)
@@ -44,7 +44,8 @@ USAGE = """\
                  without a registry: this folder's project); the
                  interactive views remember the scope, views, last tab, columns, theme and timezone (--tz, t; default local) in
                  $BRAIN_HOME/tui.json (--reset forgets them; --project, --all, --sort, --filter, --tab and --tz win;
-                 a newer brain's tui.json is shown, never written).
+                 a newer brain's tui.json is shown, never written); one interactive cockpit per machine (a second
+                 is refused, exit 1; --once, --json and --detail read beside it).
                  Enter: the row's detail (a DDR's options, an item's spec, ADRs and PR, a session's plan): from 140
                  columns, on a tab of one list, it sits right of the list and follows the cursor (Enter gives it the
                  focus, Escape gives it back; a, d and A work from the list too), else it opens over the panels; in it, o
@@ -97,6 +98,15 @@ def cmd_tui(args, root: Path) -> int:
         print(json.dumps(snap, ensure_ascii=False, indent=1, sort_keys=True) if args.json
               else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz, tab=args.tab)))
         return 1 if _failed_reads(snap) else 0
+    try:   # one interactive cockpit per machine (brain.shutdown); --once, --json and --detail read beside it
+        with shutdown.single_instance("cockpit", "brain tui"):
+            return _interactive(args, cp, saved, views, settings)
+    except shutdown.Busy as exc:
+        print(f"brain tui: {exc}; brain tui --once reads beside it", file=sys.stderr)
+        return 1
+
+
+def _interactive(args, cp, saved: dict, views: dict, settings: dict) -> int:
     tab, tabs, columns = args.tab or saved.get("tab"), saved.get("tabs") or {}, saved.get("columns") or {}
     kept = (saved.get("scope") or cp.scope) if args.scope else cp.scope   # --scope keeps the one remembered
     if not cockpit.save_state({"scope": kept, "panels": views, "settings": settings, "tab": tab, "tabs": tabs,
