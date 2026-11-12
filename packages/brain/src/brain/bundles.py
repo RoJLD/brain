@@ -176,7 +176,7 @@ def collector_auth(text: bytes) -> bytes:
     """The collector's configuration with the bearertokenauth extension on every OTLP receiver, the token read from
     the secret file (otelcol-contrib's bearertokenauth: ``filename``, scheme Bearer)."""
     y = graph._yaml()
-    cfg = y.safe_load(text.decode("utf-8")) or {}
+    cfg = graph.load_yaml(text.decode("utf-8")) or {}
     cfg.setdefault("extensions", {})["bearertokenauth"] = {"filename": TOKEN_MOUNT}
     for rx in ((cfg.get("receivers") or {}).get("otlp") or {}).get("protocols", {}).values():
         if isinstance(rx, dict):
