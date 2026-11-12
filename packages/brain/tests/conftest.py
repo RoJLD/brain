@@ -18,11 +18,13 @@ def pytest_cmdline_main(config):
     """``-n N`` with no ``--dist``: pytest-xdist's worksteal, not its default load (wi-brain-test-speed-2). load hands
     each worker a fixed share up front, so the suite ends on the one or two workers left with the git-heavy tests
     while the others idle; worksteal lets an idle worker take tests still queued on a busy one. Runs before xdist's
-    own hook, which turns ``dist`` from "no" to "load"; an explicit ``--dist`` is kept, ``-n 0`` stays one process.
-    A conftest hook rather than ``--dist`` in addopts: a run from the repo root reads the root's pytest config, whose
-    research-graph job has no xdist."""
+    own hook, which turns ``dist`` from "no" to "load"; an explicit ``--dist`` is kept, and so is load when
+    ``--maxschedchunk`` (load's own option) is given; ``-n 0`` stays one process. A conftest hook rather than ``--dist``
+    in addopts: a run whose paths span the repo root (``pytest packages/brain/tests tests``) reads the root's pytest
+    config, and ``--dist`` there would fail the research-graph job, which has no xdist."""
     if config.pluginmanager.hasplugin("xdist") and config.getoption("dist", "no") == "no" \
-            and config.getoption("numprocesses", None) not in (None, 0):
+            and config.getoption("numprocesses", None) not in (None, 0) \
+            and config.getoption("maxschedchunk", None) is None:
         config.option.dist = "worksteal"
 
 
