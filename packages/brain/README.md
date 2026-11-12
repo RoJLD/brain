@@ -606,8 +606,8 @@ lacks, then `brain init`'s plan) and `--apply`: the project's brain written by `
 profile template (`trading` takes `research`'s; `--template` names another), its registry entry recording
 `lifecycle: {typologies, stage}` (the lifecycle's stage: `mvp` reads as `build`), which `brain item clauses` reads.
 Run again in a folder that holds that brain, the plan shows what the answers change in its entry (typologies, stage,
-the standards' stage) and writes nothing: an existing registry changes by a branch and a PR. The cockpit's Setup page
-offers it as « A new project ». The languages and tools, the data classes and the pack, procedures and permissions it
+the standards' stage, the template) and writes nothing: an existing registry changes by a branch and a PR. The cockpit's Setup page
+offers it as « A new project » (without `--owner`, the owner of this machine's personal brain). The languages and tools, the data classes and the pack, procedures and permissions it
 will propose are its later slices.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
