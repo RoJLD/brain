@@ -20,6 +20,7 @@ _DAY_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2})\b")
 _HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\s*[—:\-]*\s*(.*?)\s*$")  # research_graph.sync's ADR heading
 _LIST_RE = re.compile(r"^(\s*)([-*]|\d+\.)\s+(.*)$")
 ADR_SUFFIX_RE = re.compile(r"\s*\((?:ADR|SDR)\)\s*$")
+DDR_ID_RE = re.compile(r"^ddr-[A-Za-z0-9_.-]+$")   # an answered DDR a REVERSAL may supersede (brain.pins)
 
 
 class NotesError(Exception):
@@ -189,6 +190,19 @@ def _parts(old: str, spec: list, fields: dict, width: int) -> tuple[list[str], l
     return todo, parts
 
 
+def _reversal(old: str, reverses: str, title: str, fields: dict, kind: str) -> tuple[str, str]:
+    """(the title, the id superseded) of a reversal, its Supersedes field set in ``fields``: an ADR of the log (its
+    title the default), or an answered DDR (a decision pin's, brain.pins: a title is needed)."""
+    if DDR_ID_RE.match(reverses):
+        if not title.strip():
+            raise NotesError(f"adr new --reverses {reverses}: a DDR has no ADR title to reverse: give the title")
+        fields.setdefault("supersedes", f"the answer of the DDR (`{reverses}`)")
+        return title, reverses
+    o_day, o_title, supersedes = find_adr(old, reverses, kind)
+    fields.setdefault("supersedes", f"{o_day} — {o_title} (`{supersedes}`)")
+    return title or f"REVERSAL: {ADR_SUFFIX_RE.sub('', o_title)}", supersedes
+
+
 def adr_new(path: Path, title: str, fields: dict, day: str | None = None, reverses: str = "",
             kind: str = "adr", width: int = WIDTH) -> dict:
     """Append a dated ADR to a decision log: ``## <day> — <title>`` and its fields (a missing one is written TODO).
@@ -203,11 +217,8 @@ def adr_new(path: Path, title: str, fields: dict, day: str | None = None, revers
     spec = FIELDS
     fields = {k: v for k, v in fields.items() if v}
     if reverses:
-        o_day, o_title, supersedes = find_adr(old, reverses, kind)
-        title = title or f"REVERSAL: {ADR_SUFFIX_RE.sub('', o_title)}"
-        fields.setdefault("supersedes", f"{o_day} — {o_title} (`{supersedes}`)")
-        spec = REVERSAL_FIELDS
-        spec = spec + [f for f in FIELDS if f[0] in OPTIONAL and fields.get(f[0])]
+        title, supersedes = _reversal(old, reverses, title, fields, kind)
+        spec = REVERSAL_FIELDS + [f for f in FIELDS if f[0] in OPTIONAL and fields.get(f[0])]
     if not title.strip():
         raise NotesError("adr new: a title is needed")
     title = " ".join(title.split())

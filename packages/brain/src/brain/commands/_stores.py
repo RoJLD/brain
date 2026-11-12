@@ -14,9 +14,9 @@ import sys
 from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, docsgraph, features,
-                gates, graph, links, lint, markers, milestones, modulemap, modules, neutral, permissions, projects,
-                public, readme, records, reference, render, scopes, sizing, skew, specs, stacks, tidy, tiers, vault,
-                views, waves)
+                gates, graph, links, lint, markers, milestones, modulemap, modules, neutral, permissions, pins,
+                projects, public, readme, records, reference, render, scopes, sizing, skew, specs, stacks, tidy,
+                tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -361,6 +361,9 @@ def _check_store(args, root: Path, store: Path) -> int:
         rc = _views_verdict(project, root, store, where, stale, legacy, strict) or rc
         return graph.research_graph(root, store, *layout, "check") or rc
     rc = (cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0) or rc
+    first = next((s for s in project.stores if (s / "schema.yaml").is_file()), store)
+    for line in pins.check_lines(project) if store == first else ():   # the decision pins, once a project
+        print(line)
     if decisions.view_stale(root, _project(args, root).name):
         stale.add(decisions.VIEW, "brain sync (or brain decision view --write)")
     roots: dict[str, Path] = {}   # the other repos' checkouts, where research_graph reads their nodes' anchors
