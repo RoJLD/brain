@@ -151,10 +151,7 @@ def check_lines(root: Path | None) -> list[str]:
 def below_min(root: Path | None = None) -> str:
     """Why this engine is below config.json ``engine.min`` ('' when it is not, or no minimum is set): under it the
     machine reads but never writes the shared formats (the memory sync, the DDRs; spec one-brain 4.10)."""
-    try:
-        eng = config.load(root).data.get("engine")
-    except Exception:  # noqa: BLE001 - an unreadable config.json is brain check's to report
-        return ""
+    eng = config.load(root).data.get("engine")
     want = update.version_of(eng.get("min")) if isinstance(eng, dict) and eng.get("min") else None
     if want is None:
         return ""

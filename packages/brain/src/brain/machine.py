@@ -128,7 +128,7 @@ def anchor() -> tuple[str | None, str]:
     system = _os()
     try:
         raw = _install_id_raw(system)
-    except Exception as exc:  # noqa: BLE001 - an unreadable id is a state (no-anchor), never an error
+    except (OSError, ValueError, ImportError, subprocess.SubprocessError) as exc:   # unreadable: a state, no error
         return None, f"{INSTALL_ID_SOURCES.get(system, system)}: {type(exc).__name__}"
     if not raw:
         return None, f"{INSTALL_ID_SOURCES.get(system, system)} not found"
@@ -153,52 +153,52 @@ def hosts(cfg_data: dict | None) -> dict:
     return h if isinstance(h, dict) else {}
 
 
+def _stamp() -> str:
+    return _now().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _state(nm: str, anc: str | None, first: dict, declared: dict) -> tuple[str, str | None]:
+    """(the identity's state, the other name that holds this anchor in hosts) from what is read and recorded."""
+    mine = declared.get(nm) if isinstance(declared.get(nm), dict) else {}
+    other = next((k for k, v in declared.items() if k != nm and isinstance(v, dict) and anc
+                  and v.get("anchor") == anc), None)
+    checks = (("no-anchor", anc is None), ("reused", bool(mine.get("anchor")) and mine.get("anchor") != anc),
+              ("duplicate", bool(other)), ("new", not first),
+              ("moved", bool(first.get("anchor")) and first.get("anchor") != anc),
+              ("renamed", bool(first.get("name")) and first.get("name") != nm))
+    return next((state for state, hit in checks if hit), "ok"), other
+
+
+def _write(f: Path, rec: dict) -> bool:
+    from . import stateio
+
+    try:
+        stateio.write_atomic(f, json.dumps(rec, indent=1) + "\n")
+    except OSError:
+        return False
+    return True
+
+
 def identity(cfg_data: dict | None = None, write: bool = True) -> dict:
     """This machine's identity and its state (see the module's docstring); machine.json is written at first sight
     (``write``), and its ``asked`` stamped the first time a doubt is shown."""
-    from . import stateio
-
-    nm = (name())
-    anc, src = anchor()
-    f = machine_file()
-    first = _load(f)
-    declared = hosts(cfg_data)
+    nm, (anc, src), f = name(), anchor(), machine_file()
+    first, declared = _load(f), hosts(cfg_data)
+    state, other = _state(nm, anc, first, declared)
     out = {"v": V, "name": nm, "anchor": anc, "anchor_source": src, "local_id": first.get("local_id"),
-           "since": first.get("since"), "file": f.as_posix(), "state": "ok", "doubt": "",
-           "declared": nm in declared}
-    other = next((k for k, v in declared.items() if k != nm and isinstance(v, dict) and anc
-                  and v.get("anchor") == anc), None)
-    mine = declared.get(nm) if isinstance(declared.get(nm), dict) else {}
-    if anc is None:
-        out["state"] = "no-anchor"
-    elif mine.get("anchor") and mine["anchor"] != anc:
-        out["state"] = "reused"
-    elif other:
-        out["state"] = "duplicate"
-    elif not first:
-        out["state"] = "new"
-    elif first.get("anchor") and first["anchor"] != anc:
-        out["state"] = "moved"
-    elif first.get("name") and first["name"] != nm:
-        out["state"] = "renamed"
-    if out["state"] in DOUBTS:
-        out["doubt"] = DOUBTS[out["state"]].format(name=nm, first=first.get("name") or "?", other=other, why=src)
-    if write and not first and out["state"] in ("new", "no-anchor"):
-        rec = {"v": V, "name": nm, "anchor": anc, "local_id": uuid.uuid4().hex,
-               "since": _now().strftime("%Y-%m-%dT%H:%M:%SZ")}
-        try:
-            stateio.write_atomic(f, json.dumps(rec, indent=1) + "\n")
+           "since": first.get("since"), "file": f.as_posix(), "state": state, "declared": nm in declared,
+           "doubt": DOUBTS[state].format(name=nm, first=first.get("name") or "?", other=other, why=src)
+           if state in DOUBTS else ""}
+    if write and not first and state in ("new", "no-anchor"):
+        rec = {"v": V, "name": nm, "anchor": anc, "local_id": uuid.uuid4().hex, "since": _stamp()}
+        if _write(f, rec):
             out.update(local_id=rec["local_id"], since=rec["since"])
-        except OSError:
-            pass
-    elif write and out["doubt"] and first and out["state"] not in (first.get("asked") or {}):
-        first.setdefault("asked", {})[out["state"]] = _now().strftime("%Y-%m-%dT%H:%M:%SZ")
-        try:
-            stateio.write_atomic(f, json.dumps(first, indent=1) + "\n")
-        except OSError:
-            pass
-    out["asked"] = (first.get("asked") or {}).get(out["state"])
-    if anc and not mine.get("anchor") and out["state"] in ("ok", "new"):
+    elif write and out["doubt"] and first and state not in (first.get("asked") or {}):
+        first.setdefault("asked", {})[state] = _stamp()
+        _write(f, first)
+    out["asked"] = (first.get("asked") or {}).get(state)
+    mine = declared.get(nm) if isinstance(declared.get(nm), dict) else {}
+    if anc and not mine.get("anchor") and state in ("ok", "new"):
         out["declare"] = f'"hosts": {{"{nm}": {{"anchor": "{anc}"}}}}'   # the line the owner's config.json lacks
     return out
 
@@ -223,36 +223,37 @@ def _dotted(data, path: str):
     return cur
 
 
+def _find_node(nodes, wanted: list[str], key: str) -> tuple[str | None, dict | None]:
+    """(the name found, its node) among ``nodes``, a mapping by name or a list whose ``key`` holds the name."""
+    for w in wanted:
+        if isinstance(nodes, dict) and isinstance(nodes.get(w), dict):
+            return w, nodes[w]
+        if isinstance(nodes, list):
+            hit = next((n for n in nodes if isinstance(n, dict) and n.get(key) == w), None)
+            if hit is not None:
+                return w, hit
+    return None, None
+
+
 def nodes_file(spec: dict, me: str, aliases: list[str]) -> tuple[dict, dict]:
     """The facts of ``me`` (or one of its aliases, or ``spec.node``) in a nodes file read at a git ref through its
-    field table: ({fact: value}, {fingerprint, ref, node}). ValueError for an unknown version or an unreadable file."""
+    field table: ({fact: value}, {fingerprint, ref, node, version}). ValueError for an unknown version or a file git
+    cannot show."""
     from .graph import load_yaml
 
-    text = _git_show(str(spec["checkout"]), spec.get("ref") or "origin/main", spec["file"])
+    ref = spec.get("ref") or "origin/main"
+    text = _git_show(str(spec["checkout"]), ref, str(spec["file"]))
     data = load_yaml(text) or {}
-    vpath = spec.get("version_path", "version")
-    accept = [str(v) for v in spec.get("versions") or []]
+    vpath, accept = spec.get("version_path", "version"), [str(v) for v in spec.get("versions") or []]
     got = _dotted(data, vpath)
     if accept and str(got) not in accept:
         raise ValueError(f"{spec['file']}: {vpath} {got!r} is not one this brain reads ({', '.join(accept)})")
-    nodes = _dotted(data, spec.get("nodes", "nodes")) or {}
     wanted = [spec["node"]] if spec.get("node") else [me, *aliases]
-    node = None
-    if isinstance(nodes, dict):
-        node = next((nodes[w] for w in wanted if isinstance(nodes.get(w), dict)), None)
-    elif isinstance(nodes, list):
-        key = spec.get("key", "name")
-        node = next((n for w in wanted for n in nodes if isinstance(n, dict) and n.get(key) == w), None)
-    meta = {"fingerprint": hashlib.sha256(text.encode("utf-8")).hexdigest()[:12], "ref": spec.get("ref") or
-            "origin/main", "node": next((w for w in wanted if node is not None), None), "version": got}
-    if node is None:
-        return {}, meta
-    out = {}
-    for fact, path in (spec.get("fields") or {}).items():
-        v = _dotted(node, str(path))
-        if v is not None:
-            out[fact] = v
-    return out, meta
+    found, node = _find_node(_dotted(data, spec.get("nodes", "nodes")), wanted, spec.get("key", "name"))
+    meta = {"fingerprint": hashlib.sha256(text.encode("utf-8")).hexdigest()[:12], "ref": ref, "node": found,
+            "version": got}
+    fields = (spec.get("fields") or {}).items() if node is not None else ()
+    return {fact: v for fact, path in fields if (v := _dotted(node, str(path))) is not None}, meta
 
 
 def agent_report(spec: dict, me: str, now: datetime | None = None) -> tuple[dict, dict]:
@@ -276,10 +277,8 @@ def agent_report(spec: dict, me: str, now: datetime | None = None) -> tuple[dict
     return flat, {"path": f.as_posix(), "at": at}
 
 
-def facts(probed: dict, cfg_data: dict | None = None, infra_node: bool = False,
-          now: datetime | None = None) -> tuple[dict, dict, list[str]]:
-    """(the flat facts, {fact: {value, source}}, the providers' errors): each fact from the first source that knows
-    it (see the module's docstring)."""
+def _layers(probed: dict, cfg_data: dict | None, infra_node: bool, now: datetime | None) -> tuple[list, list[str]]:
+    """[(source, {fact: value})] in their order of trust, and the providers' errors."""
     me = name()
     declared = hosts(cfg_data).get(me) if isinstance(hosts(cfg_data).get(me), dict) else {}
     inv = (cfg_data or {}).get("inventory") or {}
@@ -287,8 +286,7 @@ def facts(probed: dict, cfg_data: dict | None = None, infra_node: bool = False,
     if infra_node and isinstance(inv.get("agent_json"), dict):
         agent, meta = agent_report(inv["agent_json"], me, now)
         layers.append(("agent", agent))
-        if meta.get("note"):
-            errors.append(f"agent report {meta['path']}: {meta['note']}")
+        errors += [f"agent report {meta['path']}: {meta['note']}"] if meta.get("note") else []
     layers.append(("probed", probed))
     if isinstance(inv.get("nodes_file"), dict):
         try:
@@ -297,18 +295,20 @@ def facts(probed: dict, cfg_data: dict | None = None, infra_node: bool = False,
         except (ValueError, KeyError, OSError, subprocess.SubprocessError) as exc:
             errors.append(f"nodes file: {exc}")
     layers.append(("declared", {k: v for k, v in declared.items() if k in DECLARED}))
-    flat, sources = {}, {}
-    for _, values in layers:
-        for k in values:
-            flat.setdefault(k, None)
-    for k in list(flat):
-        for src, values in layers:
-            if values.get(k) is not None:
-                flat[k], sources[k] = values[k], src
-                break
-        else:
-            sources[k] = "unknown"
-    return flat, {k: {"value": flat[k], "source": sources[k]} for k in sorted(flat)}, errors
+    return layers, errors
+
+
+def facts(probed: dict, cfg_data: dict | None = None, infra_node: bool = False,
+          now: datetime | None = None) -> tuple[dict, dict, list[str]]:
+    """(the flat facts, {fact: {value, source}}, the providers' errors): each fact from the first source that knows
+    it (see the module's docstring)."""
+    layers, errors = _layers(probed, cfg_data, infra_node, now)
+    keys = sorted({k for _, values in layers for k in values})
+    sourced = {}
+    for k in keys:
+        src, value = next(((s, v[k]) for s, v in layers if v.get(k) is not None), ("unknown", None))
+        sourced[k] = {"value": value, "source": src}
+    return {k: s["value"] for k, s in sourced.items()}, sourced, errors
 
 
 def save_facts(sourced: dict, now: datetime | None = None) -> None:
