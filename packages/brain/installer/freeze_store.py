@@ -19,7 +19,7 @@ sync, item, lesson and retro on it, strict. The version PR adds the last tag's s
 freeze »); an existing folder is refused unless ``--force``. The engine is public, and a fixture names no machine of
 anyone's: this machine's user and host names, which brain init writes into ``public.deny``, are replaced by invented
 ones (``host-a``, ``ada-l``, :data:`INVENTED`; the files listed in freeze.json's ``neutralized``), and a store that
-still names one, or the work folder (an absolute path of this machine), is refused.
+still names one, the work folder or this checkout (an absolute path of this machine), is refused.
 
 Exit code 0 when frozen, 1 when a step the store needs failed (init, the first commit, the engine's own check) or the
 store names the work folder or a machine term, 2 when the install fails.
@@ -28,6 +28,7 @@ store names the work folder or a machine term, 2 when the install fails.
 from __future__ import annotations
 
 import argparse
+import ast
 import getpass
 import importlib.util
 import json
@@ -52,6 +53,18 @@ STORES = st.FIXTURES / "stores"
 NEEDED = ("init apply", "git init", "first commit", "check")   # without these there is no store to freeze
 LEFT_OUT = (".git",)
 INVENTED = {"hosts": "host-a", "users": "ada-l"}   # in the place of this machine's names (as tests/test_init.py)
+CHECKOUT = st.FIXTURES.parents[3]                   # this checkout: a step names its fixtures (the SR's transcript)
+
+
+def common_names() -> set[str]:
+    """brain.init.COMMON_NAMES, read from this checkout's source without importing brain (this script runs on the
+    standard library): the names init never denies, so never replaced here either ('root' in projects.yaml)."""
+    tree = ast.parse((CHECKOUT / "packages" / "brain" / "src" / "brain" / "init.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "COMMON_NAMES"
+                                                for t in node.targets):
+            return {str(x).lower() for x in ast.literal_eval(node.value)}
+    raise SystemExit("freeze: brain.init.COMMON_NAMES not found: the rule of brain init's machine terms moved")
 
 
 def steps(brain: str) -> list[tuple]:
@@ -97,15 +110,26 @@ def files(root: Path) -> list[Path]:
 
 
 def machine() -> dict[str, str]:
-    """This machine's names that brain init writes into public.deny (brain.init.machine_terms: its user and host),
-    each with the invented name a fixture holds in its place."""
+    """This machine's names that brain init writes into public.deny (brain.init.machine_terms: its user and host, at
+    least 3 characters and none of :func:`common_names`), each with the invented name a fixture holds in its place."""
     try:
         user = getpass.getuser()
     except Exception:   # no user name in this environment: nothing to replace
         user = ""
     host = socket.gethostname().split(".")[0]
+    common = common_names()
     return {term: invented for term, invented in ((host, INVENTED["hosts"]), (user, INVENTED["users"]))
-            if len(term) >= 3}
+            if len(term) >= 3 and term.lower() not in common}
+
+
+def places(work: Path) -> set[str]:
+    """The absolute paths of this machine a store may not name, lower-cased: the work folder and this checkout (a
+    step reads its fixtures), each as Windows and POSIX text, JSON-escaped and as a file URI."""
+    out = set()
+    for p in (work, CHECKOUT):
+        p = p.resolve()
+        out |= {str(p), p.as_posix(), str(p).replace("\\", "\\\\"), p.as_uri()}
+    return {n.lower() for n in out}
 
 
 def _term(term: str) -> re.Pattern:
@@ -131,13 +155,13 @@ def neutralize(root: Path, terms: dict[str, str]) -> list[str]:
 
 
 def named(root: Path, work: Path, terms: dict[str, str] | None = None) -> list[str]:
-    """The store's files that name the work folder (an absolute path of this machine) or a machine term: never
-    frozen."""
-    needles = {str(work), work.as_posix(), str(work).replace("\\", "\\\\")}
+    """The store's files that name the work folder or this checkout (:func:`places`, whatever the case) or a machine
+    term: never frozen."""
+    needles = places(work)
     out = []
     for f in files(root):
         text = f.read_text(encoding="utf-8", errors="replace")
-        if any(n in text for n in needles) or any(_term(t).search(text) for t in terms or {}):
+        if any(n in text.lower() for n in needles) or any(_term(t).search(text) for t in terms or {}):
             out.append(f.relative_to(root).as_posix())
     return out
 

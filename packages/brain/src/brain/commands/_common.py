@@ -96,7 +96,11 @@ def _queue_changed(root: Path, args) -> None:
 def _scope(args, root: Path, *, root_shared: bool = False) -> list[projects.Project]:
     """--all: every registered project; else the one --project names or the one at ``root``. ``root_shared`` (sync,
     check, refresh): every project registered at ``root`` when several share it and neither --project nor --store
-    names one, so the views of the next ones are kept as current as the owner's."""
+    names one, so the views of the next ones are kept as current as the owner's. ``--scope REF`` (a view that takes
+    it): the projects of that node's subtree in the scope tree (brain.scopes; global is every one, as --all); the node
+    is left in ``args.scope_node``."""
+    if getattr(args, "scope", None):
+        return _scope_projects(args, root)
     if getattr(args, "all", False):
         if getattr(args, "project", None):
             raise SystemExit("brain: --project or --all, not both")
@@ -110,6 +114,32 @@ def _scope(args, root: Path, *, root_shared: bool = False) -> list[projects.Proj
         if len(here) > 1:
             return here
     return [_project(args, root)]
+
+
+def _scope_projects(args, root: Path) -> list[projects.Project]:
+    """--scope REF resolved to the loaded projects under that node, depth first; one of --scope, --project, --all."""
+    from .. import scopes
+    from .scopes import here
+    if getattr(args, "all", False) or getattr(args, "project", None):
+        raise SystemExit("brain: --scope, --project or --all: one of them")
+    try:
+        args.scope_node, names = scopes.select(args.scope, root, here(root))
+    except scopes.ScopeError as exc:
+        raise SystemExit(f"brain: {exc}") from None
+    if not names:
+        raise SystemExit(f"brain: --scope {args.scope}: no registered project the brain loads under "
+                         f"{args.scope_node} (brain scopes shows the tree)")
+    reg = projects.load(root)
+    return [reg[n] for n in names]
+
+
+def scope_every(args, scope: list[projects.Project]) -> bool:
+    """A view's --all behaviour (the totals, the ids shared across stores): --all, or --scope on Global or on a node
+    that holds several projects."""
+    if getattr(args, "all", False):
+        return True
+    node = getattr(args, "scope_node", "")
+    return bool(node) and (node == "global" or len(scope) > 1)
 
 
 def _notify_project(args, root: Path) -> projects.Project:

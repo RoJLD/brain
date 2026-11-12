@@ -534,11 +534,13 @@ def in_tests(path: str) -> bool:
     return any(p in TEST_DIRS for p in path.split("/")[:-1])
 
 
-def fixture_data(path: str) -> bool:
-    """A file under a ``fixtures`` folder of a test folder (tests/fixtures/**): data a test reads, such as a brain an
-    older engine wrote and froze (wi-brain-old-store-fixture), never a doc or code a change is reviewed on."""
+def frozen_store(path: str) -> bool:
+    """A file of a frozen store: under ``<a test folder>/**/fixtures/stores/`` (tests/fixtures/stores/<tag>/), a brain
+    an older engine wrote and froze (wi-brain-old-store-fixture), data a test reads, never a doc or code a change is
+    reviewed on. Any other fixture, code a test runs (a fake binary) included, is reviewed as it was."""
     parts = path.split("/")[:-1]
-    return any(p in TEST_DIRS and "fixtures" in parts[i + 1:] for i, p in enumerate(parts))
+    return any(p in TEST_DIRS and any(parts[j:j + 2] == ["fixtures", "stores"] for j in range(i + 1, len(parts)))
+               for i, p in enumerate(parts))
 
 
 def is_test(path: str) -> bool:
@@ -554,12 +556,12 @@ def is_test(path: str) -> bool:
 
 def is_doc(path: str) -> bool:
     """The docs set: READMEs at any depth, docs/**, runbooks; not specs or plans (docs/specs, docs/*/plans...),
-    changelogs, journals or a test's fixture data (:func:`fixture_data`)."""
+    changelogs, journals or a frozen store (:func:`frozen_store`)."""
     low = path.lower()
     base = low.rsplit("/", 1)[-1]
     dirs = low.split("/")[:-1]
     if not low.endswith(".md") or skipped(path) or (dirs[:1] == ["docs"] and {"specs", "plans"} & set(dirs)) \
-            or base.startswith(("changelog", "journal")) or fixture_data(path):
+            or base.startswith(("changelog", "journal")) or frozen_store(path):
         return False
     return base == "readme.md" or low.startswith("docs/") or "runbook" in base
 

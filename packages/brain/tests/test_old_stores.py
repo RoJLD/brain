@@ -98,7 +98,13 @@ def test_check_before_sync_finds_only_the_plugin_to_render(raw, capsys):
     rc = brain(raw, "check")
     out = capsys.readouterr().out
     assert clean(out) and "graph-check OK" in out and "public scan green" in out
-    assert rc == 0 or re.search(r"^brain render: \d+ file\(s\) not current", out, re.M), out
+    if rc:
+        assert re.search(r"^brain render: \d+ file\(s\) not current", out, re.M), out
+        # the one failure: the plugin rendered again, and nothing else, check passes
+        assert brain(raw, "render", "--target", "claude", "--write") == 0
+        commit(raw, "the plugin rendered again")
+        capsys.readouterr()
+        assert brain(raw, "check") == 0, capsys.readouterr().out
     assert brain(raw, "record", "check") == 0
     assert "0 error(s), 0 warning(s)" in capsys.readouterr().out
     assert config.check(raw) == []

@@ -410,9 +410,9 @@ def _file(repo: str, old: str, path: str, before: str | None, after: str, ctx: d
 
 
 def _reviewed(path: str, new: inventory.Tree) -> bool:
-    """A file the change leaves whose shape is reviewed: not deleted, and not a test's fixture data (data a test
-    reads, such as a frozen brain's rendered hooks: inventory.fixture_data)."""
-    return bool(path) and not inventory.fixture_data(path) and new.text(path) is not None
+    """A file the change leaves whose shape is reviewed: not deleted, and not a frozen store (a brain an older engine
+    wrote, its rendered hooks included: inventory.frozen_store)."""
+    return bool(path) and not inventory.frozen_store(path) and new.text(path) is not None
 
 
 def signals(repo: str, rows: list[tuple[str, str, str]], base: inventory.Tree, new: inventory.Tree, limits: dict,
