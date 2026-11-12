@@ -20,8 +20,8 @@ jobs:
           pip install pytest pytest-cov pyyaml
           if [ -f pyproject.toml ]; then pip install -e .; fi
       - name: Tests and coverage
-        # The floor rises with the stage (brain standards list --applicable names the coverage standard). The reports
-        # are those projects.yaml repos[].tools may name, which brain audit reads (lang.report).
+        # Raise the floor as the stage moves (brain standards list --applicable names the coverage standard). The
+        # reports are those projects.yaml repos[].tools may name, which brain audit reads (lang.report).
         run: >-
           pytest --cov --cov-report=term --cov-report=xml:reports/coverage.xml --junitxml=reports/junit.xml
           --cov-fail-under=50
@@ -51,8 +51,10 @@ jobs:
       - name: Its tests on this code
         if: steps.prev.outputs.tag != ''
         run: |
-          git checkout "${{ steps.prev.outputs.tag }}" -- tests
-          git checkout "${{ steps.prev.outputs.tag }}" -- fixtures 2>/dev/null || true
+          tag="${{ steps.prev.outputs.tag }}"
+          if ! git cat-file -e "$tag:tests" 2>/dev/null; then echo "$tag has no tests/: nothing to compare"; exit 0; fi
+          rm -rf tests && git checkout "$tag" -- tests     # its tests only, none added since
+          git checkout "$tag" -- fixtures 2>/dev/null || true
           pip install pytest pyyaml
           if [ -f pyproject.toml ]; then pip install -e .; fi
           pytest

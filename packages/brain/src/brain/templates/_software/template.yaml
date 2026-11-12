@@ -11,7 +11,7 @@ graphs:                    # the brain's main store: the base, and the code, doc
   - {name: work, store: notes/graph, layers: [work, decisions, records, lessons, code, docs_tests, features]}
 files:
   .github/workflows/ci.yml: ci.yml
-  tests/conftest.py: conftest.py
-  tests/test_harness.py: test_harness.py
+  tests/conftest.py: conftest.py.tmpl     # .tmpl: the engine's own pytest and ruff leave them alone
+  tests/test_harness.py: test_harness.py.tmpl
   docs/formats.md: formats.md
   fixtures/formats/README.md: formats-fixtures-README.md

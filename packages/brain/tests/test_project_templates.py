@@ -3,6 +3,7 @@ research extend the generic brain (through the bases _project and _software) wit
 its stage, the CI jobs, the test harness, the format registry's skeleton, the issue and ADR templates and the graph's
 layers; the generic template's files are unchanged."""
 
+import re
 import subprocess
 import sys
 
@@ -115,8 +116,45 @@ def test_a_template_of_ones_own_extends_a_profile(fresh, tmp_path, capsys):
     ("name: mine\nversion: 1\nextends: cli\nappend: {projects.yaml: more.md}\n", "projects.yaml with what it appends "
                                                                                  "is not YAML"),
     ("name: mine\nversion: 1\n", "files maps the brain's path"),
+    ("name: mine\nversion: 1\nextends: cli\nclasses: [memory]\n", "classes: {store: {class, paths}}"),
+    ("name: mine\nversion: 1\nextends: cli\nfiles: {projects.yaml: two.yaml}\n",
+     "what it appends goes under the brain's own entry (brain), which must be the registry's last"),
 ])
 def test_a_bad_extension_plans_nothing(fresh, tmp_path, capsys, manifest, says):
-    tpl = _own(tmp_path, manifest, {"more.md": "  - [unclosed\n"})
+    tpl = _own(tmp_path, manifest, {"more.md": "  - [unclosed\n",
+                                    "two.yaml": "{name}:\n  root: .\nlib:\n  root: ../lib\n"})
     assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl)]) == 2
     assert says in capsys.readouterr().out and list(fresh.iterdir()) == []
+
+
+def test_a_profile_over_an_existing_brain_says_what_it_does_not_append(fresh, capsys):
+    """brain init never writes over a file: on a brain that exists, the plan names the fragments a kept file misses,
+    so the owner adds the boundary's rule and the standards selection by hand."""
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--apply"]) == 0
+    capsys.readouterr()
+    assert cli.main(["init", str(fresh), "--template", "cli"]) == 0
+    out = capsys.readouterr().out
+    assert "keep     boundary.yaml (exists; the template appends boundary-github.yaml to it: add that by hand" in out
+    assert "keep     projects.yaml (exists; the template appends standards.yaml to it" in out
+    assert "keep     CLAUDE.md (exists)" in out
+
+
+def test_the_templates_name_no_one_and_code_takes_no_variable():
+    """Every template's files carry no name, only the variables brain init renders; code and CI files none at all
+    (an f-string's {name} would be rendered away, as the harness's once was)."""
+    allowed = {"owner", "owner_q", "name", "title_q", "stage"}
+    for spec in init.known_templates() + ["_project", "_software"]:
+        tpl = init.load_template(spec, ("test",))
+        for rel, source in tpl.files.items():
+            text = tpl.text(rel)
+            found = set(re.findall(r"\{(owner|owner_q|name|title_q|stage)\}", text))
+            assert "Ada" not in text and found <= allowed, (spec, rel)
+            if rel.endswith((".py", ".yml")) or source.endswith(".tmpl"):
+                assert not found, (spec, rel, found)
+
+
+def test_the_engine_s_own_tests_never_collect_a_template():
+    """A template's Python files end in .tmpl: pytest packages/brain (the engine's CI) must not load them as tests or
+    as a conftest."""
+    folder = init.TEMPLATES
+    assert not [p.name for d in folder.iterdir() if d.is_dir() for p in d.iterdir() if p.name.endswith(".py")]

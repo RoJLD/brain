@@ -412,8 +412,8 @@ Each one is the generic brain (its files unchanged), plus:
 
 - the standards selection in `projects.yaml`: `standards: {profiles: [<profile>], stage: <--stage, default
   prototype>}`, so `brain standards list --applicable`, `brain standards check` and `brain brief` read what applies;
-- the CI jobs, `.github/workflows/ci.yml`: the tests with their coverage (JUnit and Cobertura reports, a floor that
-  rises with the stage) and compat-prev, the last tag's tests on the PR's code;
+- the CI jobs, `.github/workflows/ci.yml`: the tests with their coverage (JUnit and Cobertura reports, a floor of
+  50 % the owner raises as the stage moves) and compat-prev, the last tag's tests on the PR's code;
 - the test harness, `tests/conftest.py`: a virtual clock (`clock`), fault injection (`faults.fail(module, "name",
   after=N)`) and the old formats' fixtures (`old_formats("fmt")`, `fixtures/formats/<format>/v<N>/older.*`), with its
   own tests, so the CI is green from the first commit;

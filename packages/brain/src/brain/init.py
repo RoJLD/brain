@@ -122,12 +122,16 @@ class Template:
 
     def text(self, rel: str) -> str:
         """The text of the brain's path ``rel``: its file, from the template that gives it, then what the templates
-        append to it."""
+        append to it, each on a line of its own."""
         source = self.files[rel]
         out = (self.origin.get(rel, self.folder) / source).read_text(encoding="utf-8") if source else ""
         for folder, extra in self.appends.get(rel, []):
-            out += (folder / extra).read_text(encoding="utf-8")
+            out += ("" if not out or out.endswith("\n") else "\n") + (folder / extra).read_text(encoding="utf-8")
         return out
+
+    def appended(self, rel: str) -> str:
+        """What the templates append to ``rel``, named (for a plan that keeps the file)."""
+        return ", ".join(extra for _, extra in self.appends.get(rel, []))
 
 
 def _version(text: str) -> tuple[int, ...]:
@@ -242,9 +246,11 @@ def load_template(spec: str = DEFAULT_TEMPLATE, _chain: tuple[str, ...] = ()) ->
     missing = [r for r in REQUIRED if r not in fs]
     if missing:
         raise InitError(f"--template {spec}: {MANIFEST}: files misses what config.json names: {', '.join(missing)}")
+    if not isinstance(data.get("classes") or {}, dict):
+        raise InitError(f"--template {spec}: {MANIFEST}: classes: {{store: {{class, paths}}}}")
     declared = {**(base.classes if base else {}), **(data.get("classes") or {})}
     _, errors = classes.stores(config.Config(None, Path("."), {"classes": {"stores": declared}}))
-    if not isinstance(data.get("classes") or {}, dict) or errors:
+    if errors:
         raise InitError(f"--template {spec}: {MANIFEST}: classes: " + ("; ".join(errors) or "{store: {class, paths}}"))
     own_graphs = "graphs" in data or base is None
     graphs = graphs_of(spec, data.get("graphs")) if own_graphs else [dict(g) for g in base.graphs]
@@ -394,6 +400,18 @@ def config_text(owner: str, kind: str = "person", tenant: str | None = None, tie
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
+def _appended_yaml(tpl: Template, rel: str, text: str, name: str) -> None:
+    """A YAML file with what the template appends still reads as YAML; an append to the registry lands under the
+    brain's own entry, the last one (the fragment is indented as its keys)."""
+    try:
+        data = graph.load_yaml(text)
+    except Exception as exc:   # the template's fragment, not the owner's input
+        raise InitError(f"--template {tpl.name}: {rel} with what it appends is not YAML ({exc})") from exc
+    if rel == "projects.yaml" and (not isinstance(data, dict) or list(data)[-1:] != [name]):
+        raise InitError(f"--template {tpl.name}: projects.yaml: what it appends goes under the brain's own entry "
+                        f"({name}), which must be the registry's last")
+
+
 def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
               tpl: Template | None = None, stage: str = DEFAULT_STAGE) -> dict[str, str]:
     """{path relative to the brain: text} for every file brain init writes but the store and the Claude files:
@@ -407,10 +425,7 @@ def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
     for rel in tpl.files:
         out[rel] = re.sub(r"\{(owner|owner_q|name|title_q|stage)\}", lambda m: values[m.group(1)], tpl.text(rel))
         if rel in tpl.appends and rel.endswith((".yaml", ".yml")):
-            try:
-                graph.load_yaml(out[rel])
-            except Exception as exc:   # the template's fragment, not the owner's input
-                raise InitError(f"--template {tpl.name}: {rel} with what it appends is not YAML ({exc})") from exc
+            _appended_yaml(tpl, rel, out[rel], name)
     return out
 
 
@@ -487,8 +502,10 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
     steps, created = [], set()
     for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage).items():
         p = root / rel
-        if p.exists():
-            steps.append(Step("keep", p, why="exists"))
+        if p.exists():   # never written over: what the template appends to it is the owner's to add
+            more = tpl.appended(rel)
+            steps.append(Step("keep", p, why=f"exists; the template appends {more} to it: add that by hand, as "
+                                             "the new file would hold it" if more else "exists"))
         else:
             steps.append(Step("create", p, text))
             created.add(rel)
