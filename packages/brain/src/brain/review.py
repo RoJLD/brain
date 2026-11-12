@@ -239,25 +239,45 @@ def _pins_at(repo: Path, mb: str, head: str, rel: str):
     return old + [r for r in new if str(r.get("decision") or "") not in a], changed
 
 
-def pins_gate(repo: Path, base: str, head: str, body: str | None) -> tuple[list[dict], list[str]]:
-    """(the pinned decisions the change base..head touches, what blocks it: brain.pins.verdict on the PR body), at the
-    file level; ([], []) for a repo in no registered project or a project without pins. When the pins live in the
-    changed repo, they are read at the merge base (the head adds its new ones, and a row the change edits or removes
-    counts as touched) and the decision logs at the head: a PR can neither drop its own pin nor hide its REVERSAL."""
+def _project_of(repo: Path):
+    """(project, repo entry, checkout) of a registered project's repo, else None (scout.resolve, quiet)."""
     import contextlib
     import io
     from types import SimpleNamespace
 
-    from . import pins, projects, scout
+    from . import projects, scout
     from .inventory import AuditError
     try:
         with contextlib.redirect_stderr(io.StringIO()):   # scout's "in no registered project" is not this gate's
             p, _, c, top, registered = scout.resolve(SimpleNamespace(repo_dir=str(repo), project=None), None)
     except (AuditError, OSError, ValueError, projects.RepoError):
+        return None
+    return (p, c, top) if registered else None
+
+
+def _logs_at(repo: Path, head: str, p, top: Path) -> list[tuple[str, str]]:
+    """The project's decision logs as the head holds them, with their kind."""
+    out = []
+    for log in p.decision_logs or [p.decisions]:
+        lr = _rel(Path(log), top) if log else None
+        text = _show(repo, head, lr) if lr else None
+        out.append((text or "", "sdr" if Path(log).name == "scientific_decisions.md" else "adr"))
+    return out
+
+
+def pins_gate(repo: Path, base: str, head: str, body: str | None) -> tuple[list[dict], list[str]]:
+    """(the pinned decisions the change base..head touches, what blocks it: brain.pins.verdict on the PR body), at the
+    file level; ([], []) for a repo in no registered project or a project without pins. When the pins live in the
+    changed repo, they are read at the merge base (the head adds its new ones, and a row the change edits or removes
+    counts as touched) and the decision logs at the head: a PR can neither drop its own pin nor hide its REVERSAL."""
+    from . import pins, scout
+    found = _project_of(repo)
+    if found is None:
         return [], []
-    f = pins.path_of(p) if registered else None
-    rel = _rel(f, top) if f else None
-    if f is None or (rel is None and not f.is_file()):
+    p, c, top = found
+    f = pins.path_of(p)
+    rel = _rel(f, top)
+    if rel is None and not f.is_file():
         return [], []
     mb = _git(repo, "merge-base", base, head).strip()
     rows, edited, decided = None, set(), None
@@ -265,12 +285,7 @@ def pins_gate(repo: Path, base: str, head: str, body: str | None) -> tuple[list[
         rows, edited = _pins_at(repo, mb, head, rel)
         if rows is None:
             return [], []
-        logs = []
-        for log in p.decision_logs or [p.decisions]:
-            lr = _rel(Path(log), top) if log else None
-            text = _show(repo, head, lr) if lr else None
-            logs.append((text or "", "sdr" if Path(log).name == "scientific_decisions.md" else "adr"))
-        decided = pins.decisions_of(p, logs=logs)
+        decided = pins.decisions_of(p, logs=_logs_at(repo, head, p, top))
     files = {x for _, old, new in scout.changed(top, mb, head) for x in (old, new) if x}
     touched = pins.touched(p, files, {c.name, top.name, (paths.main_checkout(top) or top).name}, pins=rows,
                            decided=decided, changed_rows=edited)

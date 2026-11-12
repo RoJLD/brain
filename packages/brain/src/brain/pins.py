@@ -207,6 +207,20 @@ def _dump(pins: list[dict]) -> str:
     return HEAD + body
 
 
+def _row(decision: str, mine: list[dict], touches: list[str], holds: str, day: str) -> tuple[dict, str]:
+    """(the decision's row, 'pinned' or 'extended'): a new one, or its rows merged with ``touches`` added; a holds
+    line that differs is refused (an override is a new ADR)."""
+    if not mine:
+        return {"decision": decision, "holds": " ".join(str(holds).split()), "touches": list(dict.fromkeys(touches)),
+                "since": day}, "pinned"
+    old = str(mine[0].get("holds") or "").strip()
+    if holds and " ".join(holds.split()) != " ".join(old.split()):
+        raise PinError(f"{decision} holds {old!r}: a holds line is never edited; an override is a new ADR (brain adr "
+                       f"new --reverses {decision}), pinned in its turn")
+    merged = [t for p in mine for t in (p.get("touches") or [])]
+    return dict(mine[0], touches=list(dict.fromkeys([*merged, *touches]))), "extended"
+
+
 def add(project, decision: str, touches: list[str], holds: str = "", day: str = "") -> tuple[dict, str]:
     """Pin ``decision`` (or add ``touches`` to its pin, every row of it merged into one); returns (the pin, 'pinned'
     or 'extended'). :class:`PinError` on a decision that cannot be pinned, a malformed row, a file with entries that
@@ -216,19 +230,7 @@ def add(project, decision: str, touches: list[str], holds: str = "", day: str = 
     if dropped and dropped[0]:
         raise PinError(f"{path_of(project)}: {dropped[0]} entry(ies) that are not pins: fix the file by hand first")
     known = decisions_of(project)
-    mine = [p for p in pins if p.get("decision") == decision]
-    if mine:
-        old = str(mine[0].get("holds") or "").strip()
-        if holds and " ".join(holds.split()) != " ".join(old.split()):
-            raise PinError(f"{decision} holds {old!r}: a holds line is never edited; an override is a new ADR (brain "
-                           f"adr new --reverses {decision}), pinned in its turn")
-        merged = [t for p in mine for t in (p.get("touches") or [])]
-        new = dict(mine[0], touches=list(dict.fromkeys([*merged, *touches])))
-        verb = "extended"
-    else:
-        new = {"decision": decision, "holds": " ".join(str(holds).split()), "touches": list(dict.fromkeys(touches)),
-               "since": day}
-        verb = "pinned"
+    new, verb = _row(decision, [p for p in pins if p.get("decision") == decision], touches, holds, day)
     bad = problems(new) or ([why_not(new, known)] if why_not(new, known) else [])
     if bad:
         raise PinError(f"{decision}: {'; '.join(bad)}")
