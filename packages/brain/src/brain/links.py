@@ -6,8 +6,8 @@ schema has the types, ``brain check`` warns when those files are stale, and ``br
 test.links checks from the same derivation.
 
 Nodes:
-- Doc: a section of a doc of the docs set (inventory.is_doc: READMEs, docs/** but specs and plans, runbooks), cut at
-  its level-1 and level-2 headings, or of a spec (docs/specs/**.md), cut down to level 3; a doc with no heading is one
+- Doc: a section of a doc of the docs set (inventory.is_doc: READMEs, docs/** but specs and plans, runbooks; never
+  a frozen store's files, tests/fixtures/stores/**), cut at its level-1 and level-2 headings, or of a spec (docs/specs/**.md), cut down to level 3; a doc with no heading is one
   node. Id ``doc:<repo>:<path>::<key>`` (a numbered heading's number, else its words in ASCII, 40 characters at
   most), anchor ``<path>#<GitHub slug>`` (``#user-content-<slug>`` for a slug that starts with a date);
   props.paths: the repo files the section names. A spec section is part_of the Spec node anchored at its file.
