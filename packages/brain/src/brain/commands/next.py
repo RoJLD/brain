@@ -15,7 +15,8 @@ ORDER = 56   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 56   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain next [--explain] [--json]   the current wave (the lowest release not closed): its quick wins (size S, high
-                 value) first, its items carried from an earlier wave, then those that can start, what waits on {owner}
+                 value) first, its quick-win slot (a fifth of its places: what fills it, the candidates outside the
+                 wave while a place is free), its items carried from an earlier wave, then those that can start, what waits on {owner}
                  (props.open, external_blocker, pending DDRs), the other open ones, the first round of its lots (brain
                  wave plan), then the next wave; zero token, from the graph (its view: plan_graph.md). Each group is
                  ranked by {owner}'s priority (confirmed before proposed), then {owner}'s order (props.order), then
