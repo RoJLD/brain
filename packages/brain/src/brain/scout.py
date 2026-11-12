@@ -35,7 +35,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import audit, feature_coverage, graph, inventory, norms, paths, projects, schemadiff, structure
+from . import audit, docsgraph, feature_coverage, graph, inventory, links, norms, paths, projects, schemadiff, structure
 from .inventory import AuditError, git
 
 ORDER = {"entry": 0, "prod": 1, "other": 2, "": 3}
@@ -268,6 +268,25 @@ def _structure(args, p: projects.Project, c: projects.Repo, top: Path, rows: lis
             + schemadiff.signals(c.name, rows, base_tree, new_tree, body, schemadiff.strict(root)))
 
 
+def _reread(p: projects.Project, cfgs: list, c: projects.Repo, top: Path, rows: list, base_rev: str,
+            new_rev: str) -> list[dict]:
+    """The docs to re-read (brain.docsgraph, info lines): in a store of the changed repo whose links graph is written,
+    a doc the change does not touch that cites a node the change edits."""
+    main = (paths.main_checkout(top) or top).resolve()
+    touched = {x for row in rows for x in row[1:] if x}
+    for store in p.stores:
+        s = Path(store).resolve()
+        rel = next((s.relative_to(b).as_posix() for b in (top.resolve(), main) if s.is_relative_to(b)), None)
+        if rel is None:
+            continue
+        here = top / rel
+        if not docsgraph.applies(here) or not any(t.startswith(f"{rel}/nodes/") for t in touched):
+            return []
+        cat = docsgraph.load(top, here, c.name, links.anchor_roots(cfgs, c.name))
+        return docsgraph.reread(top, rel, base_rev, new_rev, touched, cat)
+    return []
+
+
 def _tagged(out: list[dict], tag: str) -> int:
     return sum(1 for f in out if f["tag"] == tag)
 
@@ -341,7 +360,8 @@ def main(args, root: Path | None) -> int:
     limit = args.limit if args.limit is not None else c.scout_limit
     out = classify(touched, deleted, added, c.name, new, base, renamed, limit, script_exts,
                    feature_coverage.strict(root))
-    out = sorted(out + _structure(args, p, c, top, rows, base_tree, new_tree, base_rev, new_rev, root), key=_rank)
+    out = sorted(out + _structure(args, p, c, top, rows, base_tree, new_tree, base_rev, new_rev, root)
+                 + _reread(p, cfgs, c, top, rows, base_rev, new_rev), key=_rank)
     n_new = sum(1 for f in out if f["tag"] == "NEW")
     n_left = sum(1 for f in out if f["tag"] == "LEFT")
     n_defer = sum(1 for f in out if f["tag"] == "DEFER")

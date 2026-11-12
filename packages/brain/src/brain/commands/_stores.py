@@ -13,8 +13,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, features, graph, links,
-                lint, markers, milestones, modulemap, modules, neutral, permissions, projects, public, readme, records,
+from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, docsgraph, features, graph,
+                links, lint, markers, milestones, modulemap, modules, neutral, permissions, projects, public, readme, records,
                 reference, render, scopes, skew, specs, stacks, tidy, tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
@@ -103,6 +103,46 @@ def _view_clash(args, project: projects.Project, root: Path, store: Path) -> str
     return clashes.get((project.name, _store_label(project.root, store)), "")
 
 
+def _docs_view(project: projects.Project, root: Path, store: Path) -> str:
+    """The documentation graph's view of ``store``, relative to ``root``: beside the store's other views."""
+    return _store_label(root, projects.views_dir(project, store) / docsgraph.FILE)
+
+
+def _docs_catalogue(project: projects.Project, root: Path, store: Path) -> docsgraph.Catalogue:
+    """The documentation graph of ``store`` (brain.docsgraph): the root's repo, the project's other checkouts here."""
+    try:
+        cfgs = projects.repos_of(project)
+    except projects.RepoError:
+        cfgs = []
+    own = next((c.name for c in cfgs if c.path.resolve() == root.resolve()), projects._repo_folder(root).lower())
+    return docsgraph.catalogue(root, store, own, links.anchor_roots(cfgs, own))
+
+
+def _write_docs_view(project: projects.Project, root: Path, store: Path) -> None:
+    """brain sync, its one writer: the documentation graph of a store whose links graph is written."""
+    if docsgraph.applies(store):
+        view = _docs_view(project, root, store)
+        if docsgraph.write(root, view, docsgraph.render(_docs_catalogue(project, root, store))):
+            print(f"view: {view} written")
+
+
+def _docs_checks(project: projects.Project, root: Path, store: Path, stale: views.Stale) -> list[str]:
+    """brain check's warnings on the documentation graph: a declared link without its reason or not between two
+    docs, the docs to re-read (doc.stale, one line per doc); its view, when stale, joins ``stale``."""
+    if not docsgraph.applies(store):
+        return []
+    cat = _docs_catalogue(project, root, store)
+    view = _docs_view(project, root, store)
+    if docsgraph.is_stale_view(root, view, docsgraph.render(cat)):
+        stale.add(view)
+    by_doc: dict[str, int] = {}
+    for d in cat.docs.values():
+        if d.stale:
+            by_doc[d.path if d.repo == cat.repo else f"{d.repo}: {d.path}"] = len(d.stale)
+    return cat.warnings + [f"doc.stale: {name}: {n} section(s) cite a node changed after its last commit: re-read "
+                           f"it ({view})" for name, n in sorted(by_doc.items())]
+
+
 def _store_checks(project: projects.Project, root: Path, store: Path, stale: views.Stale) -> int:
     """The checks of the store itself, whichever project at the root it belongs to: milestones, the waves and eras
     (1 on an error), the module map, the specs ready to turn active, the hard-rule ratio; its stale views join
@@ -111,6 +151,8 @@ def _store_checks(project: projects.Project, root: Path, store: Path, stale: vie
         print(line)
     rc = _plan_checks(project, root, store, stale)
     for line in _module_warnings(project, root, store, stale):   # every open item has its module (wi-brain-module-map)
+        print(f"warning: {line}")
+    for line in _docs_checks(project, root, store, stale):   # the docs to re-read (wi-brain-docs-graph)
         print(f"warning: {line}")
     for r in specs.readiness(root, store):
         if r.ready:
@@ -235,6 +277,7 @@ def _sync_views(args, project: projects.Project, root: Path, store: Path, layout
         return 1   # after the links: FEATURES.md shows them
     _write_module_view(project, root, store)
     _write_plan_view(project, root, store)
+    _write_docs_view(project, root, store)   # after the links graph: its Doc nodes and documented_in edges
     _write_reference(project, root, store)
     if scopes.view_applies(root) and scopes.write_view(root):   # a brain's own root, once a tree is declared
         print(f"view: {scopes.VIEW} written")

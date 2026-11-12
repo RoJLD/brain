@@ -28,6 +28,7 @@ branch into a branch, in each worktree; the PR GitHub merges is then clean.
    notes/audit.md merge=brain
    notes/modules_graph.md merge=brain
    notes/plan_graph.md merge=brain
+   notes/docs_graph.md merge=brain
    notes/graph/nodes/*.yaml merge=brain
    notes/graph/edges/*.yaml merge=brain
    FEATURES.md merge=brain
