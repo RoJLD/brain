@@ -1034,10 +1034,11 @@ show`, `adr show`, `spec show`, `next`, `check`) and the memory (a note read, a 
 carries by a reviewed PR). Every tool call passes the engine's guards before it runs, strictly, since other clients
 run no Claude Code hook (`brain.mcpguards`), and every answer passes the secret scan. It speaks stdio (the client
 launches it) or, with `--http`, Streamable HTTP on a loopback address only, each request carrying the machine's token
-(`brain ipc token --init` makes it once; it is never printed). `packages/brain/container/` defines its image (a user
-that is not root, the port published on 127.0.0.1 only). Nothing runs it on its own: a service or a remote endpoint is
-the owner's decision. `brain health ipc` checks every local service the Brain starts: loopback only, the token where
-the service can check one (the collector's is opt-in, config.json `ipc.require_token`), no container as root
+(`brain ipc token --init` makes it once; only `brain ipc otel-headers` prints it, for Claude Code's OTLP export).
+`packages/brain/container/` defines its image (a user that is not root, the port published on 127.0.0.1 only).
+Nothing runs it on its own: a service or a remote endpoint is the owner's decision. `brain health ipc` checks every
+local service the Brain starts: loopback only, the token where the service can check one (the collector's is opt-in,
+config.json `ipc.require_token`, its export's header given by `brain ipc otel-headers`), no container as root
 ([`docs/mcp.md`](docs/mcp.md), « The Brain's other local services »).
 
 ## The Claude Code hooks

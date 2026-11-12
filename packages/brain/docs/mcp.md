@@ -60,8 +60,9 @@ command in the brain's root; `memory_propose` is a Write of its note's path. In 
    read (anything but a shell call or a file write: starting an agent or a session, say): a guard that exists only as
    a Claude hook is ported, or its tool is refused.
 2. **The owner's gestures.** The `brain` commands only the owner runs are refused whatever the tool: `decision
-   answer`, `queue done`, `schedule install`, `ipc` (`token`, `otel-headers`), `vault`, `identity`, `update`, `init`, `up`, `down`,
-   `bundle apply`, `permissions grant`, `session-archive`, and any `--arm` (or a prefix argparse expands to it). A
+   answer`, `queue done`, `schedule install`, `ipc` (`token`, `otel-headers`), `vault`, `identity`, `update`,
+   `init`, `up`, `down`, `bundle apply`, `permissions grant`, `session-archive`, and any `--arm` (or a prefix argparse
+   expands to it). A
    command behind an option that is not `--root`, `--project` or `--store` spelled in full (`--proj=P`, which
    argparse would expand) is refused: it could not be read.
 3. **The secret scan of a write's arguments.** A string argument of a write tool that matches a secret pattern is
@@ -134,12 +135,11 @@ One token per machine for every local service the Brain starts (`brain.ipcauth`)
   an existing usable token is kept. A rotation is the file's deletion, then `--init`, then each client updated. The
   server reads the file on each request: the old token is refused at once, with no restart (and while there is no
   file, every request is).
-
 - `brain ipc otel-headers`: the headers of Claude Code's OTLP export, for its `otelHeadersHelper` setting (below,
   « The Brain's other local services »).
 
-The token is never printed (but by `brain ipc otel-headers`, to the helper that runs it), never in a log line (the server logs the request line and the status only) and never in
-the image.
+The token is printed only by `brain ipc otel-headers`, to the helper that runs it; it is never in a log line (the
+server logs the request line and the status only) and never in the image.
 
 ## The Brain's other local services (`wi-brain-local-ipc-auth`)
 
@@ -164,9 +164,9 @@ Claude Code's export then needs the header. **`brain ipc otel-headers`** gives i
 setting runs a command at startup and every 29 minutes (`CLAUDE_CODE_OTEL_HEADERS_HELPER_DEBOUNCE_MS`) and sends the
 JSON object it prints as the export's headers. The command prints `{"Authorization": "Bearer <token>"}`, read from
 the token file each time (a rotation reaches the export at its next refresh), and nothing else; without a usable
-token it prints nothing on stdout, names the fix on stderr and exits 1, so the export fails visibly instead of going
-out unauthenticated. The owner points the setting at it in their user settings (`~/.claude/settings.json`), never a
-session:
+token it prints nothing on stdout, names the fix on stderr and exits 1: Claude Code then exports nothing and warns
+once (`otelHeadersHelper failed; telemetry is not being exported`, also in `/status`). The owner points the setting
+at it in their user settings (`~/.claude/settings.json`), never a session:
 
 ```json
 {"otelHeadersHelper": "brain ipc otel-headers"}
@@ -174,16 +174,16 @@ session:
 
 - The helper works with the `http/protobuf` and `http/json` protocols (`OTEL_EXPORTER_OTLP_PROTOCOL`); with `grpc`,
   Claude Code sends only the static `OTEL_EXPORTER_OTLP_HEADERS`.
-- A session never runs `brain ipc otel-headers`: it prints a key, so the owner guard refuses it (category `keys`, as
-  `gh auth token`), and so does the MCP server (`ipc` is an owner's gesture).
+- It prints a key, so a session does not run it: the owner guard refuses it whatever runs it (category `keys`, as
+  `gh auth token`), and so does the MCP server (`ipc` is an owner's gesture). This is a layer, not a wall: the
+  guards do not yet refuse a session that reads the token file itself.
 - Without the helper, the static fallback is `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <token>` in Claude
   Code's environment. Its limit: the token then sits in clear in that environment (every child process inherits it,
   and a rotation means editing it again), where the helper keeps it in the token file.
 
-On a Linux host the
-secret is the token file itself, mode 0600 and owned by the owner: give the collector's user (10001 in its image)
-read access with an ACL, `setfacl -m u:10001:r <BRAIN_HOME>/ipc/token`. `brain health ipc` accepts a group bit or an
-ACL entry, and refuses a token readable by every user.
+On a Linux host the secret is the token file itself, mode 0600 and owned by the owner: give the collector's user
+(10001 in its image) read access with an ACL, `setfacl -m u:10001:r <BRAIN_HOME>/ipc/token`. `brain health ipc`
+accepts a group bit or an ACL entry, and refuses a token readable by every user.
 
 **`brain health ipc`** (and `brain health --all`) reads, starts nothing, and says on one line each:
 - the token file (usable; on POSIX not readable by every user);

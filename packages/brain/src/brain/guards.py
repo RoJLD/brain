@@ -1641,7 +1641,9 @@ def _owner_command(words: list[str], cwd: str, shell: str, command: str) -> tupl
         return None
     if (prog == "brain" or "brain" in low[1:3]) and "--apply" in low and             any(x == "schedule" and y == "install" for x, y in zip(low, low[1:])):
         return "scheduled", "brain schedule install --apply (it creates, changes or removes scheduled tasks)"
-    if (prog == "brain" or "brain" in low[1:3]) and any(x == "ipc" and y == "otel-headers" for x, y in zip(low, low[1:])):
+    # whatever runs it (brain.cmd, python -mbrain, python -m brain.cli, a wrapper) and a word the guard cannot resolve
+    # after ipc ($x, %x%, a backquote), as _root_override reads brain handover root
+    if any(x == "ipc" and (y == "otel-headers" or any(c in y for c in "$`%")) for x, y in zip(low, low[1:])):
         return "keys", "brain ipc otel-headers (it prints the machine's token: Claude Code's otelHeadersHelper runs it)"
     return _subcommand(prog, args)
 

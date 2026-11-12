@@ -152,7 +152,7 @@ def render(bundle: str, comps: list[stacks.Stack]) -> tuple[dict, dict[str, byte
 
 # The machine's token for a component that requires it (wi-brain-local-ipc-auth): opt-in, config.json
 # ipc.require_token, because it newly refuses a client that sends none (Claude Code's OTLP export then needs
-# OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>", which the owner sets).
+# its headers: the owner's otelHeadersHelper setting runs brain ipc otel-headers, docs/mcp.md).
 TOKEN_SECRET = "brain_ipc_token"
 TOKEN_MOUNT = f"/run/secrets/{TOKEN_SECRET}"
 TOKEN_CONFIGS = {"otel-collector": "otelcol.yaml"}   # the component and the configuration file that checks it
