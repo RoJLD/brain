@@ -69,6 +69,17 @@ def test_docs_set_leaves_out_specs_plans_changelogs_and_journals():
     assert [p for p in keep + drop if inventory.is_doc(p)] == keep
 
 
+def test_a_frozen_store_is_no_doc():
+    """A brain an older engine wrote, frozen under tests/fixtures/stores (wi-brain-old-store-fixture), is data a test
+    reads: its READMEs document nothing of this repo. Any other fixture's README still counts."""
+    data = ["tests/fixtures/stores/v0.3.1/brain/README.md", "packages/x/tests/fixtures/stores/v1/README.md",
+            "tests/unit/fixtures/stores/a/README.md"]
+    kept = ["tests/fixtures/README.md", "tests/fixtures/a/README.md", "fixtures/stores/README.md",
+            "docs/fixtures/stores/README.md", "src/fixtures/stores/tests/README.md", "tests/stores/fixtures/README.md"]
+    assert [p for p in data + kept if inventory.frozen_store(p)] == data
+    assert [p for p in data + kept if inventory.is_doc(p)] == kept
+
+
 def _modules(files, tops=("p",)):
     t = mem(files)
     rf = inventory.collect(t, "demo")

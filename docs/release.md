@@ -137,6 +137,7 @@ One branch, `chore/release-X.Y.Z`, one PR that moves the version and nothing els
 | `packages/brain/src/brain/adapters/claude/hooks/common.sh` | `brain_version` |
 | `README.md`, `packages/brain/README.md`, `docs/install.md`, `docs/pilot.md` | the install lines and what the new tag brings |
 | `packages/brain/installer/stranger_test.py` | the default `--ref`, and the usage line |
+| `packages/brain/tests/fixtures/stores/vP/` | the brain `vP` wrote, frozen (« The fixture freeze » below) |
 | `CHANGELOG.md`, `packages/brain/CHANGELOG.md` | the fragments compiled into `## X.Y.Z — YYYY-MM-DD`, and `## X.Y.Z — YYYY-MM-DD — theme` in the brain's (`python packages/brain/installer/changelog.py compile X.Y.Z --theme "..." --write`, which deletes them); a distribution with no fragment still gets its section, in one line opening « No change » |
 | the `### Upgrade` section, `packages/brain/CHANGELOG.md` | see below |
 
@@ -154,13 +155,25 @@ after a list continues it, and anything else (a closing paragraph such as « Not
 line before it, so it never reads as the last step's continuation.
 
 **The fixture freeze.** `packages/brain/tests/fixtures/formats/<format>/v<N>/` holds what the readers are tested on, and
-it only grows: an `older` file is what a released engine wrote, and is never edited. By hand for now (a `brain fixtures freeze` command is planned,
-wi-brain-old-store-fixture):
+it only grows: an `older` file is what a released engine wrote, and is never edited. By hand:
 
 - a format whose `v` moved adds its folder `v<N>` with `older` and `newer` files, and a migration (`formats.md`);
 - a new format adds its folder and its entry in `SCHEMAS` (`packages/brain/installer/release_check.py`), and the upgrade
   test places it, or fails;
 - an additive change under the same `v` extends the `newer` file only.
+
+And by a script, **the old store** (wi-brain-old-store-fixture): the brain `vP`'s engine writes through its own
+commands, frozen under `packages/brain/tests/fixtures/stores/vP/`, on which the tests run every store-reading command
+of this checkout (`packages/brain/docs/formats.md`, « The old stores »). The version PR adds it; `release-check`
+refuses a version PR without it:
+
+```bash
+python packages/brain/installer/freeze_store.py vP      # installs vP in a fresh venv, writes the brain, freezes it
+pytest packages/brain/tests/test_old_stores.py
+```
+
+A test that fails there is a change that breaks a brain `vP` made: fix it, or it is a format that moves (a minor
+version, with its `### Upgrade` step).
 
 **The jobs on this PR.** All of them run on every pull request; two matter here (`release-preview`, « The release
 preview », only says what `release-check` will judge):
@@ -169,8 +182,8 @@ preview », only says what `release-check` will judge):
   is not the last tag's. It fails when a registered schema changed since the last tag and this version's section has no
   `### Upgrade` with something in it, when the two `__version__`, the pin, `brain_version` and the two dated sections
   do not agree, when the brain's section names no theme, when its `### Upgrade` leaves out a standard step, when a
-  patch breaks the version policy (a schema change, a step beyond the standard ones), or when a section of either
-  CHANGELOG repeats an entry an earlier one released. Run it before pushing:
+  patch breaks the version policy (a schema change, a step beyond the standard ones), when a section of either
+  CHANGELOG repeats an entry an earlier one released, or when no store of `vP` is frozen (« The fixture freeze »). Run it before pushing:
   `python packages/brain/installer/release_check.py`, with `--store <the store that plans the releases>` where
   one does (section 1, the closure rule: CI runs it without, as it holds no owner's store; a `--store` it cannot
   read is exit 2).
