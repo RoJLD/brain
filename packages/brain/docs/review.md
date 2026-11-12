@@ -74,7 +74,8 @@ refuted line is kept in the note but not counted); **when** it was found (`befor
 `after`); whether a script now **covers** that family (`covered`, `uncovered`). A finding line is a bullet at the
 line's start with the severity and at least one other word; a nested bullet, a lone severity (`- Low: ...`) or a
 line with any other word before its colon is prose. `key=value` takes the same values (`lens=install`, `when=after`);
-the family's letters may be written in either case (`a.b` is `A.b`). `brain review stamp` says when the note's confirmed lines and `--findings` differ.
+the family's letters may be written in either case (`a.b` is `A.b`). `brain review stamp` says when the note's
+confirmed lines and `--findings` differ.
 
 ### The error score
 
