@@ -11,10 +11,10 @@ import help_dump
 from brain import audit, cli, commands, inventory
 from brain.commands import _registry
 from brain.commands import audit as audit_cmd
-from brain.commands import (bundle, capture, check, code_map, collisions, decision, docgraph, down, handover, health,
-                            impact, index, init, ipc, mcp, memory, merge_check, merge_driver, milestone, perf, probes,
-                            quiet,
-                            refresh, resume, retro, review, schedule, schema, sessions, spec, timed, up, update)
+from brain.commands import (bundle, capture, catalogue, check, code_map, collisions, decision, docgraph, down,
+                            handover, health, impact, index, init, ipc, mcp, memory, merge_check, merge_driver,
+                            milestone, perf, probes, quiet, refresh, resume, retro, review, schedule, schema,
+                            sessions, spec, timed, up, update)
 from brain.commands import merge_ready
 from brain.commands import test as test_cmd
 from test_audit import README, _measure
@@ -58,7 +58,7 @@ def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeyp
 EARLY = {capture, memory, timed, perf, init, merge_driver, merge_check, sessions, schedule, update, audit_cmd, impact,
          index, up, down, health, bundle, quiet, review, probes, schema, test_cmd, merge_ready, mcp, ipc,
          handover}
-BOTH = {decision, resume, check, docgraph}
+BOTH = {decision, resume, check, docgraph, catalogue}
 ROOTED = {code_map, collisions, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
 
 
