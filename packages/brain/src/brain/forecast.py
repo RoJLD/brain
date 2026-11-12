@@ -313,13 +313,7 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
                and (st.nodes.get(e["to"]) or {}).get("type") == "Milestone"}
     pool = cost.history(led)
     gates, delays = decision_gates(p.root)
-    open_ids = [n["id"] for n in work if n.get("status") in resume.WORK_OPEN]
-    dependents = Counter(d for i in open_ids for d in deps.get(i, []) if status.get(d) in resume.WORK_OPEN)
-    feature_value: dict[str, float] = {}
-    for e in st.edges:
-        if e.get("type") == "delivers" and e["from"] in status:
-            v = str(((st.nodes.get(e["to"]) or {}).get("props") or {}).get("value") or "")
-            feature_value[e["from"]] = feature_value.get(e["from"], 0.0) + SCORE["feature"].get(v, 0.0)
+    ranker = ranking.Ranker(st.nodes, st.edges)   # the value brain next ranks by (features, milestone, unblocks)
 
     def estimate(nid: str) -> dict:
         tgt = cost.target_of(led, nid) if nid in led.items else {"class": "standard", "theme": "", "milestone": "",
@@ -352,8 +346,7 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
                    ddr=sorted(gates.get(nid, [])),
                    why=_gate_text(s, props))
         effort = (est["hours"] or {}).get("median") or 1.0
-        value = (SCORE["base"] + feature_value.get(nid, 0.0) + (SCORE["milestone"] if row["milestone"] else 0.0)
-                 + SCORE["unblocks"] * dependents.get(nid, 0))
+        value = ranker.score(nid).value
         row["score"] = round(value / max(effort, 0.25), 4)
         items.append(row)
     milestones = []

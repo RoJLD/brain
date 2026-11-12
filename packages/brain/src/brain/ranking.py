@@ -10,8 +10,8 @@ shows each score's parts; the cockpit's frontier sorts by it and shows the size,
   and ``props.value_reason``; the override wins, is marked and counted (if it is frequent, the weights are wrong).
 - **Effort**, the active hours the item's size stands for (``brain.sizing.HOURS``); an item without a size counts as
   ``DEFAULT_SIZE`` and is marked so.
-- **Quick wins**: open items of size S whose value is high (an override ``high``, or a derived value at or above
-  ``HIGH``).
+- **Quick wins**: carried or startable items of size S whose value is high (an override ``high``, or a derived value
+  at or above ``HIGH``), named on a line of their own at the top of the wave (the rows keep the rank's order).
 
 Every number here is a written setting, not a hidden constant (spec-brain-psychohistory 4.3); ``brain forecast``
 breaks its ties with the same ``SCORE``.
@@ -82,20 +82,20 @@ class Ranker:
 
     def __init__(self, nodes: dict, edges) -> None:
         self.nodes = nodes
-        self.features: dict[str, list[str]] = {}
-        self.moves: dict[str, list[str]] = {}
-        dependents: Counter = Counter()
+        self.features: dict[str, set[str]] = {}
+        self.moves: dict[str, set[str]] = {}
+        waiting: dict[str, set[str]] = {}   # target -> the open items that wait on it (one count per item)
         for e in edges:
             src, dst, etype = str(e.get("from")), str(e.get("to")), e.get("type")
             target = nodes.get(dst) or {}
             if etype == "delivers" and target.get("type") == "Feature":
-                self.features.setdefault(src, []).append(dst)
+                self.features.setdefault(src, set()).add(dst)
             elif etype == "part_of" and target.get("type") == "Milestone" \
                     and str(_props(target).get("kind") or "") not in TIMEBOXES:
-                self.moves.setdefault(src, []).append(dst)
+                self.moves.setdefault(src, set()).add(dst)
             elif etype in ("depends_on", "gated_by") and (nodes.get(src) or {}).get("status") in OPEN:
-                dependents[dst] += 1
-        self.dependents = dependents
+                waiting.setdefault(dst, set()).add(src)
+        self.dependents = Counter({k: len(v) for k, v in waiting.items()})
         self._memo: dict[str, Score] = {}
 
     def score(self, nid: str) -> Score:
@@ -114,8 +114,8 @@ class Ranker:
         override = str(p.get("value") or "").lower()   # an item's; a Feature's value is its own, not an override
         override = override if override in VALUE and node.get("type") == "WorkItem" else ""
         value = VALUE[override] if override else sum(parts.values())
-        size = str(p.get("size") or "").upper()
-        size = size if size in sizing.SIZES else ""
+        size = str(p.get("size") or "")
+        size = size if size in sizing.SIZES else ""   # off the scale (brain check warns): DEFAULT_SIZE's effort
         hours = sizing.HOURS[size or DEFAULT_SIZE]
         return Score(nid, round(value, 4), parts, override, size, hours, round(value / hours, 4))
 
@@ -140,7 +140,8 @@ class Ranker:
 def order_of(node: dict) -> float | None:
     """The owner's explicit order (props.order, a number: lower first), None when there is none or it is text."""
     order = _props(node).get("order")
-    return order if isinstance(order, (int, float)) and not isinstance(order, bool) else None
+    ok = isinstance(order, (int, float)) and not isinstance(order, bool) and math.isfinite(order)
+    return order if ok else None
 
 
 def _props(node: dict) -> dict:

@@ -76,14 +76,14 @@ STORE = """\
 - {id: wave-1.0.0, type: Milestone, status: pending, title: "Wave 1.0.0", props: {kind: wave, release: 1.0.0}}
 - {id: feat-hi, type: Feature, status: have, title: "Hi", props: {value: high}}
 - {id: ms-road, type: Milestone, status: pending, title: "Road"}
-- {id: wi-slow, type: WorkItem, status: todo, title: "Slow", props: {priority: P1, size: XL, size_reason: x}}
-- {id: wi-fast, type: WorkItem, status: todo, title: "Fast", props: {priority: P1, size: S, size_reason: x}}
+- {id: wi-a-slow, type: WorkItem, status: todo, title: "Slow", props: {priority: P1, size: XL, size_reason: x}}
+- {id: wi-z-fast, type: WorkItem, status: todo, title: "Fast", props: {priority: P1, size: S, size_reason: x}}
 """
 EDGES_YAML = """\
-- {from: wi-slow, to: wave-1.0.0, type: part_of}
-- {from: wi-fast, to: wave-1.0.0, type: part_of}
-- {from: wi-fast, to: feat-hi, type: delivers}
-- {from: wi-fast, to: ms-road, type: part_of}
+- {from: wi-a-slow, to: wave-1.0.0, type: part_of}
+- {from: wi-z-fast, to: wave-1.0.0, type: part_of}
+- {from: wi-z-fast, to: feat-hi, type: delivers}
+- {from: wi-z-fast, to: ms-road, type: part_of}
 """
 
 
@@ -93,15 +93,15 @@ def test_brain_next_lists_quick_wins_first_and_explains(store, capsys):
     (store / "edges" / "plan.yaml").write_text(EDGES_YAML, encoding="utf-8")
     assert cli.main(["--root", str(root), "next", "--explain"]) == 0
     out = capsys.readouterr().out
-    assert "  quick wins (size S, high value), first: wi-fast" in out
-    assert out.index("wi-fast [todo]") < out.index("wi-slow [todo]")
+    assert "  quick wins (size S, high value), first: wi-z-fast" in out
+    assert out.index("wi-z-fast [todo]") < out.index("wi-a-slow [todo]")
     assert "        score 16.67 = value 5 (base 1 + features 3 + milestone 1) / 0.3 h (S)" in out
     assert "        score 0.25 = value 1 (base 1) / 4 h (XL)" in out
     assert cli.main(["--root", str(root), "next"]) == 0
     assert "score " not in capsys.readouterr().out   # the parts only with --explain
     assert cli.main(["--root", str(root), "next", "--json"]) == 0
     cur = json.loads(capsys.readouterr().out)["current"]
-    assert cur["quick_wins"] == ["wi-fast"] and cur["value_overrides"] == []
+    assert cur["quick_wins"] == ["wi-z-fast"] and cur["value_overrides"] == []
     assert cur["startable"][0]["rank"]["score"] == 16.6667
 
 
@@ -109,13 +109,43 @@ def test_the_cockpit_frontier_takes_the_rank_and_shows_the_parts(store):
     from brain import cockpit, resume
     (store / "nodes" / "plan.yaml").write_text(STORE, encoding="utf-8")
     (store / "edges" / "plan.yaml").write_text(EDGES_YAML, encoding="utf-8")
-    rows = [r for r in cockpit.frontier_rows(resume.Store.load(store)) if r["id"] in ("wi-fast", "wi-slow")]
-    assert [r["id"] for r in rows] == ["wi-fast", "wi-slow"]
+    rows = [r for r in cockpit.frontier_rows(resume.Store.load(store)) if r["id"] in ("wi-z-fast", "wi-a-slow")]
+    assert [r["id"] for r in rows] == ["wi-z-fast", "wi-a-slow"]
     fast = {**rows[0], "project": "demo"}
     assert (fast["size"], fast["value"], fast["score"], fast["quick_win"], fast["order"]) == ("S", "high", 16.6667,
                                                                                              True, None)
     chosen = {"shown": ["Id", "Size", "Value", "Score"]}
-    assert cockpit.cells("frontier", fast, chosen=chosen) == ("wi-fast", "S", "high (quick win)", "16.6667")
+    assert cockpit.cells("frontier", fast, chosen=chosen) == ("wi-z-fast", "S", "high (quick win)", "16.6667")
     by_score = sorted([{"priority": "P2", "score": 1.0}, {"priority": "P1", "score": 0.5}],
                       key=cockpit.SORT_KEYS["frontier"]["score"])
     assert [r["score"] for r in by_score] == [1.0, 0.5]
+
+
+def test_the_edge_cases_of_the_rank():
+    nodes = {n["id"]: n for n in [
+        _node("t"), _node("a", priority_proposed="P1?"), _node("b", priority="P1"), _node("c", priority="P2"),
+        _node("w"), _node("n", priority="P1", order=float("nan")), _node("s", priority="P1", size="s")]}
+    edges = [{"from": "w", "to": "t", "type": "depends_on"}, {"from": "w", "to": "t", "type": "gated_by"},
+             {"from": "w", "to": "t", "type": "depends_on"}]
+    r = ranking.Ranker(nodes, edges)
+    assert r.score("t").parts["unblocks"] == 0.5   # one item waiting, however many edges
+    assert r.ranked(["c", "a", "b"]) == ["b", "a", "c"]   # a proposed P1? after a confirmed P1, before P2
+    assert ranking.order_of(nodes["n"]) is None   # a NaN order is no order
+    assert (r.score("s").size, r.score("s").hours) == ("", 0.8)   # off the scale: brain check warns, M's effort
+
+
+def test_the_owners_order_and_value_show_in_next_and_the_cockpit(store, capsys):
+    from brain import cockpit, resume
+    root = store.parents[1]
+    text = STORE.replace("props: {priority: P1, size: XL, size_reason: x}",
+                         "props: {priority: P1, size: XL, size_reason: x, order: 1, value: low, value_reason: later}")
+    (store / "nodes" / "plan.yaml").write_text(text, encoding="utf-8")
+    (store / "edges" / "plan.yaml").write_text(EDGES_YAML, encoding="utf-8")
+    assert cli.main(["--root", str(root), "next", "--explain"]) == 0
+    out = capsys.readouterr().out
+    assert out.index("wi-a-slow [todo]") < out.index("wi-z-fast [todo]")   # the owner's order before the score
+    assert "value set by" in out and "on 1 open item(s) (props.value): wi-a-slow" in out
+    rows = [r for r in cockpit.frontier_rows(resume.Store.load(store)) if r["id"] in ("wi-a-slow", "wi-z-fast")]
+    assert [r["id"] for r in rows] == ["wi-a-slow", "wi-z-fast"]
+    rows = [{**r, "project": "demo"} for r in reversed(rows)]
+    assert [r["id"] for r in sorted(rows, key=cockpit.SORT_KEYS["frontier"]["priority"])] == ["wi-a-slow", "wi-z-fast"]
