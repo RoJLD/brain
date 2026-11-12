@@ -125,6 +125,12 @@ def _git(top: Path, *args: str) -> str:
     return r.stdout if r.returncode == 0 else ""
 
 
+def _when(stamp: str) -> datetime:
+    """A git ISO date (%cI): Python 3.10's fromisoformat reads no trailing Z, so it becomes +00:00."""
+    stamp = stamp.strip()
+    return datetime.fromisoformat(stamp[:-1] + "+00:00" if stamp.endswith("Z") else stamp)
+
+
 def _chunks(paths: list[str]) -> list[list[str]]:
     """``paths`` in groups that keep a git command line short (Windows caps it near 32k characters)."""
     return [paths[i:i + CHUNK] for i in range(0, len(paths), CHUNK)]
@@ -138,7 +144,7 @@ def last_commits(top: Path, paths: list[str]) -> dict[str, tuple[datetime, str]]
         for line in _git(top, "log", "--format=%x00%cI %H", "--name-only", "--", *group).splitlines():
             if line.startswith("\x00"):
                 stamp, _, sha = line[1:].strip().partition(" ")
-                when = (datetime.fromisoformat(stamp), sha)
+                when = (_when(stamp), sha)
             elif line.strip() and when is not None and line.strip() not in out:
                 out[line.strip()] = when
     return out
@@ -258,7 +264,7 @@ def first_parents(top: Path) -> list[tuple[datetime, str]]:
     for line in _git(top, "log", "--first-parent", "--format=%cI %H", "HEAD").splitlines():
         when, _, sha = line.partition(" ")
         if sha:
-            out.append((datetime.fromisoformat(when), sha))
+            out.append((_when(when), sha))
     return out
 
 

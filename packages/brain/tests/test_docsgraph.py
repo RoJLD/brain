@@ -259,3 +259,9 @@ def test_brain_docgraph_emit(repo, make_repo, monkeypatch, capsys):
     import json
     doc = json.loads(out.read_text(encoding="utf-8"))
     assert docgraph.validate(doc)[0] == [] and doc["generated"]["by"].startswith("brain ")
+
+
+def test_a_git_date_with_a_trailing_z_reads_on_every_python():
+    """Python 3.10's fromisoformat refuses a trailing Z, which git's %cI may print: it is read as +00:00."""
+    utc = datetime.fromisoformat("2026-10-01T12:00:00+00:00")
+    assert docsgraph._when("2026-10-01T12:00:00Z") == utc == docsgraph._when(" 2026-10-01T14:00:00+02:00\n")
