@@ -117,39 +117,28 @@ def containers(root=None) -> list[dict] | None:
     return data if isinstance(data, list) else None
 
 
+def _wide(ports: dict) -> list[str]:
+    """The bindings of ``docker inspect``'s NetworkSettings.Ports on an address that is not loopback."""
+    return sorted(f"{b.get('HostIp') or '0.0.0.0'}:{b.get('HostPort')}->{p}"
+                  for p, binds in ports.items() for b in (binds or [])
+                  if not ipcauth.is_loopback(b.get("HostIp") or ""))
+
+
 def judge_container(c: dict) -> list[tuple[str, str]]:
     """(FAIL|warning|OK, what) of one inspected container: its published ports, its user."""
     name = str(c.get("Name") or "?").lstrip("/")
-    ports = ((c.get("NetworkSettings") or {}).get("Ports") or {})
-    wide = sorted(f"{b.get('HostIp') or '0.0.0.0'}:{b.get('HostPort')}->{p}"
-                  for p, binds in ports.items() for b in (binds or [])
-                  if not ipcauth.is_loopback(b.get("HostIp") or ""))
-    out = []
-    if wide:
-        out.append(("FAIL", f"container {name} publishes beyond loopback: {', '.join(wide)}"))
+    wide = _wide((c.get("NetworkSettings") or {}).get("Ports") or {})
     user = str((c.get("Config") or {}).get("User") or "")
+    out = [("FAIL", f"container {name} publishes beyond loopback: {', '.join(wide)}")] if wide else []
     if user.split(":")[0] in ("", "0", "root"):
         out.append(("warning", f"container {name} runs as root (user {user or 'unset'})"))
-    if not out:
-        out.append(("OK", f"container {name}: ports on loopback only, user {user}"))
-    return out
+    return out or [("OK", f"container {name}: ports on loopback only, user {user}")]
 
 
-def health(cfg, named: bool = True, out=None, root=None) -> int:
-    """``brain health ipc``: the lines above; exit 1 on a FAIL."""
-    s = settings(cfg)
-    lines: list[tuple[str, str]] = []
-    state, what = token_state()
-    if state == "OFF" and s["require_token"]:
-        state, what = "FAIL", f"{what}; config.json ipc.require_token names {', '.join(s['require_token'])}"
-    lines.append((state, what))
-    mcp = probe_mcp(s["mcp_port"])
-    lines.append(mcp)
-    if not named and state == "OFF" and mcp[0] == "OFF":
-        return 0   # --all on a machine that never made the token and serves nothing: silent, Docker not asked
+def service_lines(s: dict, root=None) -> list[tuple[str, str]]:
+    """The containers' lines, then what takes requests without the token."""
     found = containers(root)
-    if found is None:
-        lines.append(("warning", "docker does not answer: the containers are not checked"))
+    lines = [] if found is not None else [("warning", "docker does not answer: the containers are not checked")]
     for c in found or []:
         lines += judge_container(c)
     unknown = [n for n in s["require_token"] if n not in TOKEN_SERVICES]
@@ -161,6 +150,19 @@ def health(cfg, named: bool = True, out=None, root=None) -> int:
                                  "[otel-collector], then brain bundle apply)"))
     if index_containers(root):
         lines.append(("warning", "GitNexus has no authentication of its own: its port stays on loopback"))
-    for st, what in lines:
-        print(f"{CHECK} {st} {what}" if st != "warning" else f"{CHECK} warning: {what}", file=out, flush=True)
+    return lines
+
+
+def health(cfg, named: bool = True, out=None, root=None) -> int:
+    """``brain health ipc``: the lines above; exit 1 on a FAIL."""
+    s = settings(cfg)
+    state, what = token_state()
+    if state == "OFF" and s["require_token"]:
+        state, what = "FAIL", f"{what}; config.json ipc.require_token names {', '.join(s['require_token'])}"
+    mcp = probe_mcp(s["mcp_port"])
+    if not named and state == "OFF" and mcp[0] == "OFF":
+        return 0   # --all on a machine that never made the token and serves nothing: silent, Docker not asked
+    lines = [(state, what), mcp, *service_lines(s, root)]
+    for st, line in lines:
+        print(f"{CHECK} {st} {line}" if st != "warning" else f"{CHECK} warning: {line}", file=out, flush=True)
     return 1 if any(st == "FAIL" for st, _ in lines) else 0
