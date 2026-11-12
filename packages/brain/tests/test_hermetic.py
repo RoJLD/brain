@@ -1,5 +1,5 @@
 """wi-brain-hermetic-tests: the suite's environment is an allow list (conftest.py). Every variable the engine reads is
-either cleared for the tests (its family: BRAIN_*, CLAUDE*, GIT_*, RESEARCH_GRAPH_*, or a token or the editor),
+either cleared for the tests (its family: BRAIN_*, CLAUDE*, GIT_*, RESEARCH_GRAPH_*, OTEL_*, or a token or the editor),
 pinned by the conftest, or examined here and passed through with its reason; git reads an empty global
 configuration; no test calls monkeypatch.undo()."""
 

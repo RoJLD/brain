@@ -14,14 +14,16 @@ GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT
            "GIT_COMMITTER_EMAIL": "t@example.invalid", "GIT_CONFIG_NOSYSTEM": "1"}
 
 # The hermetic environment (wi-brain-hermetic-tests): an allow list, not a deny list. Every variable of the families
-# the engine reads (BRAIN_*, CLAUDE*, GIT_*, RESEARCH_GRAPH_*) is cleared for the whole run, and again before each
-# test, unless this file pins it (PINNED, SESSION_PINS) or a test sets it; so is a token that would reach the owner's
-# GitHub account (CLEARED). A new variable of a family is cleared the day the engine starts reading it, where a deny
-# list let it through (CLAUDE_CODE_HOST_SESSION_ID failed test_resume from a desktop-app session, CLAUDECODE test_tui's
-# actions). git reads an empty global configuration (its default ignore and attributes files too) and no system one, so
-# a user's diff.noprefix, alias or *.log ignore never reaches a test. tests/test_hermetic.py lists the variables the
-# engine reads and fails on one this file leaves set unexamined.
-FAMILIES = ("BRAIN_", "CLAUDE", "GIT_", "RESEARCH_GRAPH_")
+# the engine reads (BRAIN_*, CLAUDE*, GIT_*, RESEARCH_GRAPH_*, OTEL_*) is cleared for the whole run, and again before
+# each test, unless this file pins it (PINNED, SESSION_PINS) or a test sets it; so is a token that would reach the
+# owner's GitHub account (CLEARED). A new variable of a family is cleared the day the engine starts reading it, where a
+# deny list let it through (CLAUDE_CODE_HOST_SESSION_ID failed test_resume from a desktop-app session, CLAUDECODE
+# test_tui's actions). git reads an empty global configuration (its default ignore and attributes files too) and no
+# system one, so a user's diff.noprefix, alias or *.log ignore never reaches a test. tests/test_hermetic.py lists the
+# variables the engine reads and fails on one this file leaves set unexamined.
+# OTEL_*: the OpenTelemetry export's settings (brain.ipchealth renders and checks Claude Code's), and a shell's
+# OTEL_EXPORTER_OTLP_HEADERS may carry the machine's token: none reaches a test
+FAMILIES = ("BRAIN_", "CLAUDE", "GIT_", "RESEARCH_GRAPH_", "OTEL_")
 # a token that would reach the owner's GitHub account, the editor a test would open on the owner's screen
 CLEARED = frozenset({"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "EDITOR", "VISUAL"})
 RUNNER = frozenset({"BRAIN_TEST_ROOT", "BRAIN_TEST_WORKERS"})   # the suite's own knobs, read by this file alone

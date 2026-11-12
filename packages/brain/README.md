@@ -1591,8 +1591,8 @@ They read only fixtures, never a real brain's graph, records or rendered files: 
 `brain check` and `brain audit`.
 
 Their environment is an allow list, not a deny list (`conftest.py`, `wi-brain-hermetic-tests`): every variable of the
-families the engine reads (`BRAIN_*`, `CLAUDE*`, `GIT_*`, `RESEARCH_GRAPH_*`), a GitHub token and the editor are
-cleared for the run and again before each test, unless the conftest pins them (`BRAIN_HOME`, `BRAIN_CONFIG`,
+families the engine reads (`BRAIN_*`, `CLAUDE*`, `GIT_*`, `RESEARCH_GRAPH_*`, `OTEL_*`), a GitHub token and the editor
+are cleared for the run and again before each test, unless the conftest pins them (`BRAIN_HOME`, `BRAIN_CONFIG`,
 `CLAUDE_CONFIG_DIR`, ...) or a test sets them; `BRAIN_TEST_ROOT` and `BRAIN_TEST_WORKERS` are kept, and an opt-in
 such as `BRAIN_TEST_KEYSTORE=wincred` (the real Credential Manager's round trip) is cleared too but kept aside for the
 one test that reads it (`conftest.opted_in`). git reads no system configuration and a global one that only points its
