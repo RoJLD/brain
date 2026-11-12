@@ -119,9 +119,19 @@ plus `include`, minus `exclude`. `profiles` and `stage` go together; a project m
 - `brain check --all` (and a brain's own `brain check`) checks every project's `standards:` the same way.
 - `brain brief` lists the project's applicable standards as the invariants of the item's session.
 
-The other consumers (the review lenses, the audit's standards check, the rules text, CI templates) come with
-`wi-brain-standards-registry-consumers`; the languages' adapters are « Language adapters » below
-(`wi-brain-lang-adapters`).
+The other consumers (`wi-brain-standards-registry-consumers`) read the project's applicable rows by enforcement
+level; a project without `standards:` gets none of them, and one whose catalogs cannot be read whole gets none
+either (`brain standards lenses|rules|ci` exit 2, `standards.gap` is listed as not measured, `brain review prep`
+writes its packet without the lens and says why):
+
+| Level | Consumer | What it gives |
+|---|---|---|
+| `review-lens` | `brain review prep` (`brain standards lenses`) | a **standards** lens in the review packet, one question per row: does the change keep it ([review.md](review.md)) |
+| `check`, `measure` with an `adapter` | `brain standards ci [--write FILE] [--json]` | a GitHub Actions skeleton: one step per slot and repo whose language the row covers or whose `tools:` declares the slot, run in that repo's folder, the row ids and the usual tool of its language in the step's `env` (`brain.langs.DEFAULTS`), a `run:` that fails until it is filled, the report paths `tools:` declares uploaded as an artifact (`lang.report` reads them in the registered checkout, not there). The engine runs no tool |
+| any | `brain audit`'s `standards.gap` | P2, never in the scout, measured only for a project that declares `standards:`: a row whose check covers neither the repo's language nor a slot its `tools:` declares (the gaps of `brain standards check`, one finding per row and repo); fixed by declaring the repo's tool or waiving the row (`exclude`, with its reason) |
+| `rule` | `brain standards rules [--write FILE] [--json]` | a markdown section, « Standards that need judgement », by domain: the rules text a project's rules carry (only what a tool cannot hold) |
+
+The languages' adapters are « Language adapters » below (`wi-brain-lang-adapters`).
 
 ## Language adapters
 

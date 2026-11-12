@@ -62,6 +62,7 @@ class Packet:
     folder: str
     scout_rc: int | None = None
     notes: list[str] = field(default_factory=list)
+    standards: list[str] = field(default_factory=list)   # the standards lens: the project's review-lens rows
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -118,14 +119,17 @@ def _readme(p: Packet) -> str:
     asks = {name: ask for name, ask, _ in LENSES}
     lines = [f"# Review packet: {p.head[:12]} (base {p.base[:12]})", "",
              "Written by `brain review prep` at zero token. The procedure is the engine's docs/review.md:", "",
-             f"1. One agent per lens below, in parallel, each given `diff.patch`, `files/` and `scout.txt`, asked "
+             "1. One agent per lens below, in parallel, each given `diff.patch`, `files/` and `scout.txt`, asked "
              "for findings with a file, a line and a concrete failure scenario.",
              "2. Deduplicate the findings (same defect, same place).",
              "3. Two skeptics per distinct finding, each asked to refute it; keep what neither refutes.",
              "4. Fix each kept finding with a test that fails before the fix, or contest it with evidence in the PR.",
              f"5. `brain review stamp {p.head} --findings N --fixed M --contested K --note review.md`.", "",
              f"## Lenses ({len(p.lenses)})", ""]
-    lines += [f"- **{name}**: {asks[name]}" for name in p.lenses]
+    lines += [f"- **{name}**: {asks[name]}" for name in p.lenses if name in asks]
+    if p.standards:   # wi-brain-standards-registry-consumers: brain standards lenses
+        lines += [f"- **standards**: does the change keep each of the project's review-lens standards "
+                  f"({len(p.standards)}, brain standards lenses)?"] + [f"  - {s}" for s in p.standards]
     lines += ["", f"## Files ({len(p.files)})", ""] + [f"- `{f}`" for f in p.files]
     if p.scout_rc is not None:
         lines += ["", f"## Scout: exit {p.scout_rc} (`scout.txt`)"]
@@ -133,8 +137,10 @@ def _readme(p: Packet) -> str:
     return "\n".join(lines) + "\n"
 
 
-def prep(repo: Path, target: str = "", out: Path | None = None, scout: bool = True) -> Packet:
-    """Write the packet of ``target`` into ``out`` (default: <BRAIN_HOME>/reviews/<head>)."""
+def prep(repo: Path, target: str = "", out: Path | None = None, scout: bool = True,
+         standards: list[str] | None = None) -> Packet:
+    """Write the packet of ``target`` into ``out`` (default: <BRAIN_HOME>/reviews/<head>); ``standards``, the
+    project's review-lens rows (brain.standards.lenses), make the standards lens."""
     base, head = resolve(repo, target)
     files = [f for f in _git(repo, "diff", "--name-only", f"{base}..{head}").splitlines() if f]
     folder = out or folder_for(head)
@@ -142,7 +148,9 @@ def prep(repo: Path, target: str = "", out: Path | None = None, scout: bool = Tr
         shutil.rmtree(folder / "files")
     (folder / "files").mkdir(parents=True, exist_ok=True)
     (folder / "diff.patch").write_text(_git(repo, "diff", f"{base}..{head}"), encoding="utf-8", newline="\n")
-    p = Packet(base, head, files, lenses_for(files), str(folder))
+    p = Packet(base, head, files, lenses_for(files), str(folder), standards=list(standards or []))
+    if p.standards:
+        p.lenses.append("standards")
     for f in files:
         r = subprocess.run(["git", "show", f"{head}:{f}"], cwd=repo, capture_output=True)
         if r.returncode:   # deleted at the head

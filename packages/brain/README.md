@@ -315,6 +315,13 @@ what check, the languages that check covers and how the Brain itself meets it, i
 brain's local ones). A project opts in with `projects.yaml` `standards: {profiles, stage, include, exclude,
 catalogs}`; `brain standards list|show|check` reads them, `brain check --all` checks each project's opt-in, and
 `brain brief` lists the project's standards as its invariants. A project without the key follows none.
+The other consumers read the same applicable rows, by enforcement level: `brain review prep` adds a **standards**
+lens of the `review-lens` rows to its packet (`brain standards lenses`); `brain audit` measures `standards.gap` (P2,
+never in the scout), a row whose check covers neither a repo's language nor a slot its `tools:` declares;
+`brain standards rules [--write FILE]` prints the `rule` rows as a section of rules text (only what needs
+judgement); `brain standards ci [--write FILE]` prints a GitHub Actions skeleton from the `check` and `measure`
+rows with an adapter, one step per slot and repo in its folder, each failing until it is filled with the project's
+own tool.
 
 ### Language adapters
 
