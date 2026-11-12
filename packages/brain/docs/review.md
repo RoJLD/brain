@@ -21,16 +21,17 @@ It writes `<BRAIN_HOME>/reviews/<head>/` (or `--out DIR`):
 | `packet.json` | the base, the head, the files and the lenses |
 | `README.md` | the lenses and these steps |
 
-The lenses are chosen from what the diff touches: **correctness** and **scope** always; **security** for a guard, a hook, a
-secret or public path, the permissions; **compatibility** for a schema, a format, the state files, the registry or a
-template; **install and upgrade** for the installer, `brain update` or the release; **procedure** for a procedure or
-the rules; **tests** for the tests; **docs** for Markdown, the docs and the changelog fragments. A repo of a
-project that declares `standards:` (projects.yaml) also gets a **standards** lens: one question per applicable
-`review-lens` standard, does the change keep it (`brain standards lenses`, docs/standards.md).
+The lenses are chosen from what the diff touches: **correctness** and **scope** always; **security** for a guard, a
+hook, a secret or public path, the permissions; **compatibility** for a schema, a format, the state files, the registry
+or a template; **install and upgrade** for the installer, `brain update` or the release; **procedure** for a procedure
+or the rules; **tests** for the tests; **docs** for Markdown, the docs and the changelog fragments. A repo of a project
+that declares `standards:` (projects.yaml) also gets a **standards** lens: one question per applicable `review-lens`
+standard, does the change keep it (`brain standards lenses`, docs/standards.md).
 
-The **scope** lens (`wi-brain-review-scope-lens`, the owner's TR-3) asks what the item does not need: a changed line
-beyond it, a refactor or a rename on the way, a flag or an option nobody asked for. Such a change leaves the PR as a
-follow-up item (`brain item add`), unless the item cannot be done without it, which the finding's answer says.
+The **scope** lens (`wi-brain-review-scope-lens`, the owner's TR-3 of 2026-11-11) asks what the item does not need:
+a changed line beyond it, a refactor or a rename on the way, a flag or an option nobody asked for. Such a change leaves
+the PR as a follow-up item (`brain item add`), unless the item cannot be done without it, which the finding's answer
+says.
 
 ## 2. The agents, then the skeptics
 

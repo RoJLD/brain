@@ -29,11 +29,13 @@ from . import paths
 FOLDER = "reviews"
 MAX_FILE = 400_000   # a touched file larger than this is listed, not copied
 
-# The lenses, each chosen by the surfaces a diff touches: (name, what it asks, path patterns). "correctness" always.
+# The lenses, each chosen by the surfaces a diff touches: (name, what it asks, path patterns).
+# "correctness" and "scope" always.
 LENSES = [
     ("correctness", "what input, state or timing makes a changed line wrong; what the diff removes and where the "
                     "invariant it kept is held now; every caller of a changed function", ()),
-    # wi-brain-review-scope-lens (TR-3): always, like correctness; what it finds leaves the PR as a follow-up item.
+    # wi-brain-review-scope-lens (the owner's TR-3 of 2026-11-11): always, like correctness; what it finds leaves the
+    # PR as a follow-up item.
     ("scope", "a changed line the item does not need, a refactor, a rename or a flag beyond it: each becomes a "
               "follow-up item (brain item add) and leaves this PR, unless the item cannot be done without it", ()),
     ("security", "what a guard lets through that it refused, a secret or a private name that could leave, a command "
@@ -96,7 +98,7 @@ def resolve(repo: Path, target: str) -> tuple[str, str]:
 
 
 def lenses_for(files: list[str]) -> list[str]:
-    """The lenses the touched ``files`` call for, in LENSES' order; correctness always."""
+    """The lenses the touched ``files`` call for, in LENSES' order; correctness and scope always."""
     out = []
     for name, _, patterns in LENSES:
         if not patterns or any(re.search(p, f) for p in patterns for f in files):

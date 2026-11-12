@@ -26,7 +26,8 @@ def test_prep_writes_the_packet_with_the_lenses_the_surfaces_call_for(pr, brain_
     folder = review.folder_for(head)
     assert p.folder == str(folder) and p.head == head
     assert sorted(p.files) == ["README.md", "docs/guards.md", "src/brain/guards.py", "tests/test_guards.py"]
-    assert p.lenses == ["correctness", "scope", "security", "tests", "docs"]   # no schema, installer or procedure touched
+    # no schema, installer or procedure touched
+    assert p.lenses == ["correctness", "scope", "security", "tests", "docs"]
     assert (folder / "files" / "src" / "brain" / "guards.py").read_text(encoding="utf-8") == "x = 2\n"
     assert not (folder / "files" / "README.md").exists()   # deleted at the head
     assert "+x = 2" in (folder / "diff.patch").read_text(encoding="utf-8")
