@@ -187,8 +187,8 @@ preview », only says what `release-check` will judge):
   `python packages/brain/installer/release_check.py`, with `--store <the store that plans the releases>` where
   one does (section 1, the closure rule: CI runs it without, as it holds no owner's store; a `--store` it cannot
   read is exit 2).
-  It reads files, not meanings: a section can be there and wrong, and `permissions.yaml`, whose keys are constants in
-  `brain.permissions`, has no file for it to compare. What a schema change narrows (a property removed, a field
+  It reads files, not meanings: a section can be there and wrong (`permissions.yaml`'s keys are constants of
+  `brain.permissions`, described by `permissions.schema.json`, which a test keeps in step). What a schema change narrows (a property removed, a field
   newly required...) is `brain schema diff`'s, on every PR (CI's advisory `schema-diff` job;
   `packages/brain/docs/formats.md`, « The schema diff »): a narrowing that reaches the version PR unresolved by a
   `Compat:` line is a format that moves. This list still applies.

@@ -210,6 +210,28 @@ def test_permissions_yaml(which, tmp_path, monkeypatch, read_mode):
     assert permissions.check()[0] == refusal(permissions.FILE)
 
 
+def test_the_permissions_schema_says_what_brain_permissions_reads():
+    """wi-brain-permissions-schema: permissions.schema.json describes brain.permissions' keys (its constants), so a
+    change of either without the other fails here, and brain schema diff sees the format move."""
+    s = schema.load("permissions")
+    assert set(s["properties"]) == set(permissions.SECTIONS)
+    assert set(s["$defs"]["rule"]["properties"]) == permissions.RULE_KEYS
+    assert set(s["properties"]["never"]["additionalProperties"]["properties"]) == permissions.NEVER_KEYS
+    assert s["properties"]["v"] == {"const": 1, "description": "The format's version."}
+    for name, extra in (("machines", {"profile"}), ("tenants", {"projects"}), ("sessions", {"project", "parent"})):
+        assert set(s["properties"][name]["additionalProperties"]["properties"]) == {"title"} | extra, name
+
+
+@pytest.mark.parametrize("which", ["older", "newer"])
+def test_the_permissions_fixtures_match_the_schema(which):
+    """The older file validates strict; the newer one's additive keys are noted in read mode, never errors."""
+    data = yaml.safe_load(fixture("permissions", which).read_text(encoding="utf-8"))
+    errors, unknown = schema.validate("permissions", data, schema.READ)
+    assert errors == [] and bool(unknown) == (which == "newer")
+    assert (schema.check("permissions", data)[0] == []) == (which == "older")
+    assert schema.check("permissions", {**data, "v": 2})[0] == [refusal("permissions")]
+
+
 def _packs(root: Path, which: str) -> neutral.Source:
     (root / neutral.FOLDER).mkdir(parents=True, exist_ok=True)
     shutil.copyfile(fixture("packs", which), root / neutral.FOLDER / neutral.PACKS)

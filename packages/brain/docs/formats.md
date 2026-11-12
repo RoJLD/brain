@@ -384,8 +384,10 @@ and a resolved one as justified. With config.json `audit.schema_diff_strict: tru
 line, to fix or resolve in the PR, and `brain schema diff` exits 1 on it (or with `--strict`): a release never newly
 refuses what passed. CI's advisory `schema-diff` job runs it on every pull request against its target's tip (this
 PR's change alone, and its own commits' Compat: lines), with the PR's body as it was at the push (an edited body is
-read at the next push, or by re-running the job), into the job's summary. `permissions.yaml` has no schema file (its keys are constants of `brain.permissions`):
-the diff does not see it.
+read at the next push, or by re-running the job), into the job's summary. `permissions.yaml`'s keys are constants of
+`brain.permissions`; `schemas/permissions.schema.json` describes them (wi-brain-permissions-schema), a test keeps the
+two in step, and the diff compares it like any schema. `brain.permissions` still reads the file itself: the schema
+refuses nothing at run time.
 
 ## The upgrade test (`compat-prev`)
 
