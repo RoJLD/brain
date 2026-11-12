@@ -253,6 +253,13 @@ of named checks every producer and reader mean the same way. Any program may emi
 command, the Brain's doc graph); `brain docgraph validate FILE...` checks a document against the schema
 (`schemas/docgraph.schema.json`) and `brain docgraph checks` lists the named checks. Neither needs a brain.
 
+A brain reads the documents of the projects it only reads (`access: read`) without writing to them:
+`brain docgraph pin PROJECT --from CLONE --ref REF --file PATH` copies the project's document from a local clone at a
+commit (`git show`, never a checkout), validated, to `docgraph/PROJECT.json`, committed by PR; `brain docgraph join`
+reads the brain's own graph, those pinned copies and the documents the brain keeps for itself as one graph, ids
+namespaced by project (`item:example/25`), and runs the named checks again across it, where an edge of one document
+reaches a node of another. The technical reference gives each pinned project a page (`docs/reference/read/`).
+
 ### Generated READMEs
 
 A repo opts in by holding `readme.yaml` at its root (`schemas/readme.schema.json`): the text only a person writes, what
