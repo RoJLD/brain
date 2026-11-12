@@ -690,22 +690,29 @@ will propose are its later slices.
 CLASS] [--title TEXT] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`), a plan
 then `--apply`, instead of a hand edit of the file:
 - `--read`: a project the brain reads and never writes (its entry: `title`, `access: read`, `parent`, `classes`);
-- `--existing DIR`: an instance that has its own brain, registered without a copy: its `root`, relative to the
-  registry's checkout (its main checkout when the command runs in a worktree), and `stores` when `--store` names
-  another than `notes/graph`; a folder without that store, or the root of a registered project, is refused;
+- `--existing DIR`: an instance that has its own brain, registered without a copy: its `root` and `stores` when
+  `--store` names another than `notes/graph`; a folder without that store, or the root of a registered project, is
+  refused;
 - `--template T --dir DIR`: a new project's brain written first by `brain init DIR --template T --name NAME` (its own
-  plan in the plan; with `--apply` a logged step), then registered as `--existing` would.
+  plan in the plan; with `--apply` a logged step), then registered as `--existing` would; refused on a machine without
+  its pointer, which `brain init` would point at the new project.
+
+A root is written relative to the registry's main checkout (the registry outlives the worktree it is edited in) and
+checked to read back to the folder from the worktree too; it is written absolute when no relative path does, and a
+folder inside the worktree is refused.
 
 `--parent` places it in the scope tree (a container of `scopes.yaml` or a project), `--floor` writes `classes: {floor:
 CLASS}`, and the plan says what `public.deny.repos` gains when `public.deny_from_tree` is on. Before writing, the
 registry as it would be is checked by `brain check`'s own registry and tree checks: an error the entry would add (an
 unknown parent, a type that does not accept it) refuses the write, one already there is left to `brain check`. The
-name is an id of the tree, kebab-case and new among the projects and containers. The entry is appended at the end of
-the file, its comments and order kept, and the write is logged as the owner's step in
-`<BRAIN_HOME>/ledger/setup-<month>.jsonl`, as `brain init`'s steps are. The registry is the one at `--root` (else the
-nearest `projects.yaml` above the current folder, or `$BRAIN_PROJECTS`), never the pointer's brain from another
-folder: a brain's registry changes by a branch and a PR of that brain, so run it in a worktree of it, then `brain
-sync` and `brain check`.
+name is an id of the tree, kebab-case from a letter and new among the projects and containers. The entry is appended
+at the end of the file, its comments, order and line endings kept (a file whose end does not take a block entry, a
+flow mapping or a document end marker, is refused), and the write is logged as the owner's step in
+`<BRAIN_HOME>/ledger/setup-<month>.jsonl`, as `brain init`'s steps are. The registry is the one at `--root`, else
+`$BRAIN_PROJECTS`, else the nearest `projects.yaml` above the current folder, never the pointer's brain from another
+folder; its config.json and scopes.yaml are read beside it, whatever `$CLAUDE_BRAIN_DIR`, `$BRAIN_PERSONAL` or
+`$BRAIN_CONFIG` name. `--project` is refused: a brain's registry changes by a branch and a PR of that brain, so run it
+in a worktree of it, then `brain sync` and `brain check`.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.

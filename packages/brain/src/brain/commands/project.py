@@ -19,7 +19,7 @@ USAGE = """\
                  answers change there (written by a PR of that brain, never here)
   brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE]
                  [--floor CLASS] [--title TEXT] [--apply]   a project registered in this brain's projects.yaml
-                 (--root, else the nearest above; $BRAIN_PROJECTS): read only (title, access: read), an existing
+                 (--root, else $BRAIN_PROJECTS, else the nearest above): read only (title, access: read), an existing
                  instance (its root, relative to the registry's checkout) or a new one written by brain init from a
                  template; --parent places it in the scope tree, --floor marks its class floor (public.deny_from_tree
                  then denies its names); the plan shows the entry and what the deny list gains; --apply checks the
