@@ -257,8 +257,8 @@ def load(root: Path, store: Path, repo: str, roots: dict[str, Path] | None = Non
     cat = Catalogue(repo=repo)
     gen_nodes, gen_edges = links.files(store)
     gen = _dicts(gen_nodes)
-    cat.nodes = {str(n.get("id")): n for n in [*(n for f in _hand_files(store / "nodes") for n in _dicts(f)), *gen]}
-    for n in (n for n in gen if n.get("type") == "Doc"):
+    cat.nodes = {str(n.get("id")): n for n in [*_hand_nodes(store), *gen]}
+    for n in gen:
         _add_section(cat, n, str(n.get("repo") or repo))
     cat.docs = {k: d for k, d in cat.docs.items() if d.sections}   # a path named that is no doc of the graph
     for e in _edges_of(gen_edges, "documented_in"):
@@ -268,6 +268,10 @@ def load(root: Path, store: Path, repo: str, roots: dict[str, Path] | None = Non
             _declare(cat, str(e.get("from")), str(e.get("to")), str((e.get("props") or {}).get("reason") or ""))
     _read_files(cat, {repo: root, **(roots or {})})
     return cat
+
+
+def _hand_nodes(store: Path) -> list[dict]:
+    return [n for f in _hand_files(store / "nodes") for n in _dicts(f)]
 
 
 def _dicts(f: Path) -> list[dict]:
@@ -285,8 +289,8 @@ def _edges_of(f: Path, etype: str) -> list[dict]:
 
 def _add_section(cat: Catalogue, n: dict, repo: str) -> None:
     """A Doc node joins its file's entry; the docs its section names (props.paths) are cited by that file."""
-    path, sid = _anchor_path(n), str(n["id"])
-    if not path:
+    path, sid = _anchor_path(n), str(n.get("id"))
+    if n.get("type") != "Doc" or not path:
         return
     doc = cat.docs.setdefault(f"{repo}:{path}", Doc(repo, path))
     doc.sections.append(sid)
