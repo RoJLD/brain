@@ -90,6 +90,7 @@ next save.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import signal
@@ -100,7 +101,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (__version__, alerts, audit, config, decisions, defaults, digest, paths, perf, plan, projects, queue,
-               quiet, resume, sessions, stateio, status, transcript, usage)
+               quiet, ranking, resume, sessions, stateio, status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
 FRAMES = {"exec": "health"}  # a frame drawn from another panel's data, not a read of its own: the health tab's fourth
@@ -448,16 +449,24 @@ def frontier_rows(st: resume.Store, today: datetime | None = None) -> list[dict]
     for e in sorted(st.edges, key=lambda e: str(e.get("to"))):
         if e.get("type") == "part_of" and (st.nodes.get(e["to"]) or {}).get("type") == "Milestone":
             part_of.setdefault(e["from"], e["to"])
-    rows = []
+    rows, ranker = [], ranking.Ranker(st.nodes, st.edges)
     for n in status.frontier(st):
         props = n.get("props") or {}
         since = (_DATE_RE.findall(str(props.get("idea") or "")) or [""])[0]
         proposed = props.get("milestone_proposed")
+        sc = ranker.score(n["id"])
         rows.append({"id": n["id"], "priority": _priority(n), "title": " ".join(str(n.get("title") or "").split()),
                      "milestone": part_of.get(n["id"]) or (f"{proposed}?" if proposed else ""),
                      "unblocks": unblocks(st, n["id"], down), "since": since,
-                     "age_days": _days(since, today) if since else None})
-    return sorted(rows, key=lambda r: (*_rank(r["priority"]), r["id"]))
+                     "age_days": _days(since, today) if since else None, "size": sc.size, "value": sc.level,
+                     "score": sc.score, "quick_win": sc.quick_win, "explain": sc.explain(),
+                     "order": ranking.order_of(n)})
+    return sorted(rows, key=lambda r: (*_rank(r["priority"]), _order(r), -r["score"], r["id"]))
+
+
+def _order(row: dict) -> float:
+    """The owner's explicit order of a frontier row (props.order, lower first), none last."""
+    return math.inf if row.get("order") is None else row["order"]
 
 
 def _rank(priority: str) -> tuple[int, bool]:
@@ -736,7 +745,7 @@ class Cockpit:
 
 SORTS = {"sessions": ("state", "age", "project", "context", "cost", "ctx", "role"),
          "queue": ("band", "score", "unblocks", "age", "kind", "project"),
-         "frontier": ("priority", "unblocks", "milestone", "age", "project")}
+         "frontier": ("priority", "score", "unblocks", "milestone", "age", "project")}
 FILTERS = {"sessions": {"state": ("open", ALL, *STATES)},  # open: not ended
            "queue": {"kind": (ALL, *queue.KINDS), "band": (ALL, *queue.BANDS)},
            "frontier": {"priority": (ALL, "P0-P1", "P0-P2", "none"), "milestone": (ALL, "none")}}
@@ -745,7 +754,8 @@ SORT_COLUMNS = {"sessions": {"State": "state", "Last": "age", "Project": "projec
                              "Role": "role", "Cost": "cost"},
                 "queue": {"Band": "band", "Score": "score", "Unblocks": "unblocks", "Age": "age", "Kind": "kind",
                           "Project": "project"},
-                "frontier": {"P": "priority", "Unblocks": "unblocks", "Milestone": "milestone", "Age": "age",
+                "frontier": {"P": "priority", "Score": "score", "Unblocks": "unblocks", "Milestone": "milestone",
+                             "Age": "age",
                              "Project": "project"}}
 
 
@@ -769,7 +779,9 @@ SORT_KEYS = {
               "age": lambda e: (_age_first(e.get("age_days")), -e.get("unblocks", 0)),
               "kind": lambda e: (e.get("kind") or "", e.get("category") or "", -e.get("unblocks", 0)),
               "project": lambda e: (e["project"], -e.get("unblocks", 0))},
-    "frontier": {"priority": lambda i: _rank(i["priority"]),
+    # the rank of brain next (brain.ranking): priority, the owner's order, then value over effort
+    "frontier": {"priority": lambda i: (*_rank(i["priority"]), _order(i), -(i.get("score") or 0)),
+                 "score": lambda i: (-(i.get("score") or 0), *_rank(i["priority"])),
                  "unblocks": lambda i: (-i.get("unblocks", 0), *_rank(i["priority"])),
                  "milestone": lambda i: (i.get("milestone", "").rstrip("?") or "~", i.get("milestone", "").endswith("?"),
                                          *_rank(i["priority"])),
@@ -1032,7 +1044,9 @@ HELP = {
                    "detail": "research_graph milestone <id>; brain milestone suggest"},
     "frontier": {"what": "The startable todo items (every depends_on and gated_by satisfied) by priority, a proposed "
                          "priority marked ?, with the milestone each is part of (or proposed for, ?), the open items "
-                         "and milestones it unblocks, and the age of its idea.",
+                         "and milestones it unblocks, and the age of its idea; the column chooser adds its size, "
+                         "value and score (value over effort, brain next --explain), and the default order is brain "
+                         "next's: priority, the owner's order, then the score.",
                  "from": "the graph (brain.status.frontier, brain.cockpit.frontier_rows)",
                  "read": "when a graph file changes",
                  "detail": "research_graph work-frontier; brain item set <id> priority=P1"},
@@ -1496,7 +1510,8 @@ COLUMNS = {
     "milestones": ("Project", "Done", "Progress", "Milestone", "Title"),
     "frontier": ("P", "Project", "Unblocks", "Milestone", "Age", "Id", "Title"),
 }
-EXTRA_COLUMNS = {"sessions": ("Cost", "App id", "Id", "Branch")}  # offered by the column chooser, hidden by default
+# offered by the column chooser, hidden by default
+EXTRA_COLUMNS = {"sessions": ("Cost", "App id", "Id", "Branch"), "frontier": ("Size", "Value", "Score")}
 TITLE_WIDTHS = (0, 40, 60, 80, 100)  # the longest a table's title may be, the rest in the detail; 0: no limit
 
 
@@ -1523,6 +1538,9 @@ def _extra_cells(name: str, r: dict) -> tuple[str, ...]:
     if name == "sessions":
         return (usage.usd(r.get("cost_usd")), sessions.short(r.get("host_id") or "") or "-", r["session_id"][:8],
                 r.get("branch") or "-")
+    if name == "frontier":   # brain.ranking's parts: brain next --explain
+        return (r.get("size") or "-", (r.get("value") or "-") + (" (quick win)" if r.get("quick_win") else ""),
+                f"{r['score']:g}" if r.get("score") is not None else "-")
     return ()
 
 

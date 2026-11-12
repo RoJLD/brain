@@ -151,7 +151,14 @@ def append_ars(root: Path, ars: list[dict], have: set[str] | None = None) -> lis
 
 def write(root: Path, kind: str, rec: dict, replace: bool = False) -> Path | None:
     """Validate and write one record; None when an AR with that id is already there. A rewrite keeps the fields of
-    the file it replaces that this engine does not know, and never replaces a record a newer brain wrote."""
+    the file it replaces that this engine does not know, and never replaces a record a newer brain wrote. A DDR is
+    refused under config.json engine.min (brain.skew.below_min)."""
+    if kind == "ddr":
+        from . import skew
+
+        low = skew.below_min(root)
+        if low:
+            raise SystemExit(f"brain: no DDR written: {low}")
     carry: frozenset[str] = frozenset()
     if kind != "ar" and replace:
         try:
