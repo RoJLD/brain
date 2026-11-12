@@ -115,6 +115,7 @@ END_SLACK_S = 120  # a transcript written later than this after its session's en
 TAIL_BYTES = 256 * 1024
 REFRESH_S = 2.0  # Q7: the fallback re-read every 2 s
 INTERVAL_MIN = 0.25  # the shortest refresh or probe interval (brain tui --refresh, --probe; the Settings tab)
+INTERVAL_MAX = 86400.0  # and the longest a saved one may be: a day
 PROBE_S = 300.0
 AUDIT_TOP = 12
 PERF_DAYS = 7
@@ -1133,7 +1134,7 @@ def load_state(path: Path | None = None) -> dict:
         out["settings"] = {k: got[k] for k in ("theme", "tz", "lang") if isinstance(got.get(k), str) and got[k]
                            and (k != "tz" or got[k] in TZS) and (k != "lang" or got[k] in LANGS)}
         out["settings"].update({k: float(got[k]) for k in ("refresh", "probe")   # seconds (the Settings tab)
-                                if type(got.get(k)) in (int, float) and got[k] >= INTERVAL_MIN})
+                                if type(got.get(k)) in (int, float) and INTERVAL_MIN <= got[k] <= INTERVAL_MAX})
         if isinstance(got.get("titles"), dict):
             titles = {k: v.strip() for k, v in got["titles"].items()
                       if k in (*PANELS, *FRAMES) and isinstance(v, str) and v.strip()}
@@ -1949,7 +1950,8 @@ def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, o
             if cp.refresh(probe=probe):
                 width = max(min(os.get_terminal_size(out.fileno()).columns, 160), 60) if out.isatty() else WIDTH
                 out.write(("\x1b[2J\x1b[H" if out.isatty() else "")
-                          + "\n".join(render(cp.snapshot(), width, views, search, tz, tab)) + "\n")
+                          + "\n".join(render(cp.snapshot(), width, views, search, tz, tab,
+                                              getattr(cp, "root", None))) + "\n")
                 out.flush()
             n += 1
             if ticks and n >= ticks:

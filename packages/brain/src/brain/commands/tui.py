@@ -102,7 +102,7 @@ def cmd_tui(args, root: Path) -> int:
         print(detail.as_json(d) if args.json else "\n".join(detail.lines(d)))
         return 0
     if not interactive:
-        cp.refresh(probe=not args.quick)
+        cp.refresh(probe=not args.quick and args.tab != "settings")   # the settings read no probe
         snap = cp.snapshot()
         print(json.dumps(snap, ensure_ascii=False, indent=1, sort_keys=True) if args.json
               else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz, tab=args.tab,

@@ -147,7 +147,7 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 `tui.json` keeps the keys this engine does not know at each level it names (the top level, `panels`, `tabs`,
 `columns`, `settings`, `settings.titles`): a newer brain's panel view, tab or setting survives a save of this one. Its
 `settings` are `theme`, `tz` (`local`, `utc`), `lang` (`en`, `fr`), `titles` (a free title per panel), and `refresh`
-and `probe` (seconds, 0.25 at least; a value of another type or shorter is left out), all edited by the cockpit's
+and `probe` (seconds, from 0.25 to 86400; a value of another type or out of that range is left out), all edited by the cockpit's
 settings tab. A
 key it knows is its own: a title the owner removed is removed. `budget/<session>.json` is written by the hook's Python
 only (bash reads its `.mark`), once per check, never per tool call: the backup and the synced write cost about 10 ms

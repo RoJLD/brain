@@ -66,7 +66,8 @@ class SettingsTab:
             return  # not on screen: read when shown
         state = {"scope": self.scope, "settings": self.settings}
         rows = settings_.collect(getattr(self.cockpit, "root", None), state, tuple(sorted(self.available_themes)),
-                                 pages=(self.setting_page,))[self.setting_page]
+                                 pages=(self.setting_page,),
+                                 running={"refresh": self.refresh_s, "probe": self.probe_s})[self.setting_page]
         self.setting_rows = {s.key: s for s in rows}
         table = self._q("#settings-table", DataTable)
         if not table.columns:
@@ -85,6 +86,9 @@ class SettingsTab:
         if keep in keys:
             table.move_cursor(row=keys.index(keep), scroll=False)
         pages = self._q("#settings-pages", OptionList)
+        for i, page in enumerate(settings_.PAGES):  # their words in the language now
+            if str(pages.get_option_at_index(i).prompt) != settings_.page_label(page):
+                pages.replace_option_prompt_at_index(i, settings_.page_label(page))
         if pages.highlighted != settings_.PAGES.index(self.setting_page):
             pages.highlighted = settings_.PAGES.index(self.setting_page)
 
@@ -153,15 +157,23 @@ class SettingsTab:
         self.start_action(detail.Action(kind="apply", label=w.title, project="brain", ref=w.id, cwd=Path(cwd),
                                         steps=[apply or plan], preview=plan if apply else None, plan=notes))
 
+    def _is_set(self, key: str) -> bool:
+        if key.startswith("titles."):
+            return key.split(".", 1)[1] in (self.settings.get("titles") or {})
+        return key in self.settings
+
     def set_setting(self, s: settings_.Setting, text: str) -> None:
-        """A cockpit setting from its dialog: checked, saved to tui.json and applied now ('' sets its default)."""
+        """A cockpit setting from its dialog: checked, saved to tui.json and applied now ('' sets its default). A
+        setting not set and saved as the default it shows stays unset: a later default (a language, a name) applies."""
+        if not self._is_set(s.key) and text.strip() == s.value:
+            return
         try:
             value = settings_.parse(s.key, text, s.choices)
         except ValueError as exc:
             self.notify(str(exc), title=s.key, severity="error")
             return
         self.settings = {"tz": "local", **settings_.edited(self.settings, s.key, value)}
-        self._save()  # first: the language and the titles are read from tui.json (cockpit.settings)
+        saved = self._save()  # first: the language and the titles are read from tui.json (cockpit.settings)
         if s.key == "theme":
             self.theme = self.settings.get("theme") or s.default
         elif s.key == "refresh":
@@ -174,7 +186,11 @@ class SettingsTab:
         self._layout()  # the titles, the bar and the language; the settings read again
         self.draw(set(cockpit.PANELS))  # the times in the timezone, the titles
         shown = self.setting_rows.get(s.key)
-        self.notify(f"{s.key}: {shown.value if shown else text}", title="saved to tui.json")
+        if saved:
+            self.notify(f"{s.key}: {shown.value if shown else text}", title="saved to tui.json")
+        else:  # a newer brain's tui.json, or a write that failed: applied for this launch, not remembered
+            self.notify(f"{s.key}: applied until the cockpit closes, not saved: "
+                        f"{cockpit.state_refusal() or 'tui.json could not be written'}", title=s.key, severity="error")
 
     def _restart_timer(self) -> None:
         if self.timer is not None:
