@@ -116,8 +116,8 @@ def test_the_items_wave_now_and_the_groups(plan_root):
     rep = waves.wave_report(plan, "wave-1.1.0")
     ids = {k: [r["id"] for r in rep[k]] for k in ("carried", "startable", "waiting", "other", "closed")}
     assert ids == {"carried": ["wi-carried"], "startable": ["wi-start", "wi-start-p3"],
-                   "waiting": ["wi-ddr", "wi-ext", "wi-open-q"], "other": ["wi-after", "wi-doing"],
-                   "closed": ["wi-done"]}
+                   "waiting": ["wi-ddr", "wi-ext", "wi-open-q"], "other": ["wi-doing", "wi-after"],
+                   "closed": ["wi-done"]}   # wi-doing unblocks wi-next-after: a higher score (brain.ranking)
     waits = {r["id"]: r["waits_on_owner"] for r in rep["waiting"]}
     assert waits["wi-open-q"] == ["open: which option?"]
     assert waits["wi-ext"] == ["external: Ada signs the form"]
@@ -301,8 +301,8 @@ def test_close_carries_drops_and_reaches_the_wave(plan_root, capsys):
     assert waves.problems(plan) == []
     rep = waves.next_report(plan)
     assert rep["current"]["release"] == "1.2.0" and rep["next"] is None
-    assert [r["id"] for r in rep["current"]["carried"]] == ["wi-start", "wi-start-p3", "wi-after", "wi-carried",
-                                                             "wi-ddr", "wi-doing"]   # carried first, by priority
+    assert [r["id"] for r in rep["current"]["carried"]] == ["wi-start", "wi-start-p3", "wi-doing", "wi-after",
+                                                             "wi-carried", "wi-ddr"]   # by priority, then score
     assert [r["id"] for r in rep["current"]["startable"]] == ["wi-next"]
 
 
@@ -366,11 +366,11 @@ def test_the_commands_say_their_lines_in_the_help(capsys):
     assert next_cmd.run is next_cmd.cmd_next and wave_cmd.run is wave_cmd.cmd_wave
     for sub in ("add", "close", "check", "import", "plan"):
         assert f"brain wave {sub}" in wave_cmd.USAGE
-    assert "brain next [--json]" in next_cmd.USAGE
+    assert "brain next [--explain] [--json]" in next_cmd.USAGE
     with pytest.raises(SystemExit):
         cli.main(["--help"])
     out = capsys.readouterr().out
-    assert "brain wave close X.Y.Z" in out and "brain next [--json]" in out and "{owner}" not in out
+    assert "brain wave close X.Y.Z" in out and "brain next [--explain] [--json]" in out and "{owner}" not in out
 
 
 # --- the review of #82: a closed wave holds no open item, the waves an item went through, the era's count ---
