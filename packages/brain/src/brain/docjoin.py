@@ -202,6 +202,22 @@ def _subjects(f: dict) -> list:
     return f["subjects"] if isinstance(f.get("subjects"), list) else []
 
 
+def _from_source(s: Source, names: set[str]) -> tuple[list[dict], list[dict], list[dict]]:
+    """A document's nodes, edges and findings, namespaced by ``s.name`` (its findings marked ``by``)."""
+    ns = s.name
+    nodes = [_joined_node(n, ns) for n in docgraph._list(s.doc, "nodes") if isinstance(n, dict)]
+    edges = [{**e, "from": _end(e.get("from"), ns, names), "to": _end(e.get("to"), ns, names), "project": ns}
+             for e in docgraph._list(s.doc, "edges") if isinstance(e, dict)]
+    found = [{**f, "subjects": [_end(x, ns, names) for x in _subjects(f)], "by": ns}
+             for f in docgraph._list(s.doc, "checks") if isinstance(f, dict)]
+    return nodes, edges, found
+
+
+def _source_line(s: Source) -> dict:
+    gen = s.doc.get("generated") if isinstance(s.doc.get("generated"), dict) else {}
+    return {"ref": s.ref, "by": str(gen.get("by", "")), "pinned": isinstance(s.doc.get(PINNED), dict)}
+
+
 def join(srcs: list[Source], by: str, now: datetime | None = None) -> dict:
     """The valid documents of ``srcs`` as one docgraph/v1 document, ids namespaced, then the checks of :data:`RUN`
     run across it (:func:`run_checks`)."""
@@ -209,16 +225,11 @@ def join(srcs: list[Source], by: str, now: datetime | None = None) -> dict:
     names = {s.name for s in ok}
     nodes, edges, producers = [], [], []
     for s in ok:
-        nodes += [_joined_node(n, s.name) for n in docgraph._list(s.doc, "nodes") if isinstance(n, dict)]
-        edges += [{**e, "from": _end(e.get("from"), s.name, names), "to": _end(e.get("to"), s.name, names),
-                   "project": s.name} for e in docgraph._list(s.doc, "edges") if isinstance(e, dict)]
-        producers += [{**f, "subjects": [_end(x, s.name, names) for x in _subjects(f)], "by": s.name}
-                      for f in docgraph._list(s.doc, "checks") if isinstance(f, dict)]
+        n, e, p = _from_source(s, names)
+        nodes, edges, producers = nodes + n, edges + e, producers + p
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = {"schema": docgraph.ID,
-           "generated": {"at": stamp, "by": by,
-                         "sources": {s.name: {"ref": s.ref, "by": str((s.doc.get("generated") or {}).get("by", "")),
-                                              "pinned": isinstance(s.doc.get(PINNED), dict)} for s in ok}},
+           "generated": {"at": stamp, "by": by, "sources": {s.name: _source_line(s) for s in ok}},
            "nodes": nodes, "edges": edges}
     found = run_checks(doc)
     seen = {(f["id"], tuple(f["subjects"])) for f in found}
