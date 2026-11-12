@@ -259,8 +259,8 @@ def permission_settings(root: Path | None = None) -> list[Setting]:
 def setup_settings(root: Path | None = None) -> list[Setting]:
     """The setup wizards (brain.wizards), one per row: Enter in the cockpit runs one, its commands logged."""
     from . import wizards
-    return [Setting("setup", w.id, w.title, w.what, w.command() + (f"; yours: {w.owner}" if w.owner else ""),
-                    "wizard") for w in wizards.wizards(root)]
+    return [Setting("setup", w.id, f"{w.title}: {w.what}", "brain.wizards: run here after a confirmation",
+                    w.command() + (f"; yours: {w.owner}" if w.owner else ""), "wizard") for w in wizards.wizards(root)]
 
 
 READERS = {"cockpit": None, "identity": identity_settings, "brain": brain_settings,
