@@ -44,7 +44,7 @@ def test_check_refuses_a_mount_that_would_hold_a_way_in(tmp_path, monkeypatch, s
                                             "  tenant: {export: 3, keys: x}\nworse: {title: 7, tenant: [a]}\n")
     assert list(projects.load()) == ["demo"]  # loading tolerates them, and still skips them
     errors = projects.check()
-    assert ("tenant bad: a tenant mount is opaque and holds title and tenant only, not ledgers, root, stores (the "
+    assert ("tenant bad: a tenant mount is opaque and holds title, tenant and parent only, not ledgers, root, stores (the "
             "operator never reads into another brain)") in errors
     assert "tenant bad: tenant: unknown key(s) keys (known: export)" in errors
     assert "tenant bad: tenant.export is a path" in errors

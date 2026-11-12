@@ -43,13 +43,12 @@ a notes service): ``clear``, ``sealed`` (only through ``brain vault seal``) or `
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import boundary, config, graph, paths, projects
+from . import boundary, config, paths, projects
 
 CLASSES = ("public", "private", "confidential", "sealed", "resident", "secret")
 TENANT = "tenant:"                      # tenant:<id>, a hosted team's store: sealed to its own recipients only
@@ -434,25 +433,16 @@ def remote_exit(root: Path, cfg: config.Config) -> str:
 
 # --- the scope tree (spec-brain-scope-tree §3.9, §3.13): read when present ---
 def scopes_file(cfg: config.Config) -> Path | None:
-    """$BRAIN_SCOPES, else config.json's scopes, else scopes.yaml beside the registry; None when there is none."""
-    env = os.environ.get("BRAIN_SCOPES")
-    if env:
-        f = Path(env).expanduser()
-    elif isinstance(cfg.data.get("scopes"), str):
-        f = cfg.root / cfg.data["scopes"]
-    else:
-        f = cfg.root / SCOPES
-    return f if f.is_file() else None
+    """$BRAIN_SCOPES, else config.json's scopes, else scopes.yaml beside config.json; None when there is none
+    (brain.scopes, the tree's one reader)."""
+    from . import scopes
+    return scopes.scopes_file(cfg)
 
 
 def scope_nodes(cfg: config.Config) -> dict[str, dict]:
-    """{node id: its mapping} from scopes.yaml (``scopes:``), {} when there is no tree yet."""
-    f = scopes_file(cfg)
-    if not f:
-        return {}
-    data = graph.load_yaml_file(f) or {}
-    nodes = data.get("scopes") if isinstance(data, dict) else None
-    return {str(k): (v if isinstance(v, dict) else {}) for k, v in nodes.items()} if isinstance(nodes, dict) else {}
+    """{node id: its mapping} from scopes.yaml (``scopes:``), {} when there is no tree yet (brain.scopes)."""
+    from . import scopes
+    return scopes.nodes_of(cfg)
 
 
 def own_project(cfg: config.Config) -> str:

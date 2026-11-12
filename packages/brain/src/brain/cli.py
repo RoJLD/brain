@@ -5,7 +5,8 @@ $BRAIN_ROOT, else the nearest folder above with notes/graph/schema.yaml (a workt
 name). --project with --root: that project's layout at that root (a worktree). --project goes before or after the
 subcommand. Every view takes --project NAME or --all (every registered project), not both: status, projects, resume,
 digest, queue, decision pending, batch and view, milestone suggest, spec activate, notify status, alerts, lint rules,
-audit, sync, check, refresh, tui, usage, forecast (cost takes --project);
+audit, sync, check, refresh, tui, usage, forecast (cost takes --project); status takes --scope REF too, a node of
+the scope tree and its subtree (brain scopes);
 health, index, up and down take --project to narrow them to that project's stacks and repos (their names are global);
 perf reads every project unless --project; timed and memory are machine-wide. A text value written @FILE is read from
 FILE; a journal line '-' reads stdin.
