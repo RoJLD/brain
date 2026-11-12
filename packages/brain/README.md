@@ -66,15 +66,22 @@ Linux). It prints a plan; `-Apply` does it. The launcher is replaced even while 
 the scheduled tasks this machine installed, the Claude Code plugin and its marketplace (through the `claude` CLI, or
 its commands named when the CLI is not found), the launcher on the PATH (`<BRAIN_HOME>\bin` out of the user PATH; the
 `~/.local/bin/brain` link elsewhere) and the engine's install stores in `BRAIN_HOME` (the venv, the slots, the tags'
-clones). The venv the command runs from is left, with the command that removes it once it has exited. The data stays.
+clones). The venv the command runs from, and `bin` when it was started from there, are left, with the command that
+removes them once it has exited (Windows holds a running program's files; close the Claude Code sessions first, whose
+hooks run the command). The data stays. It names what it leaves outside `BRAIN_HOME`, with the command that removes
+it: the personal brain's merge driver (`git config --remove-section merge.brain`), and the rules and settings the
+installer added to Claude Code's `settings.json`.
 
-`--purge` adds every other entry of `BRAIN_HOME`, this machine's device key in its keystore and `BRAIN_HOME` itself
-once empty. A derived store (a cache, an index, a view) goes; a store nothing else keeps (format `truth-local` or
-`log`: the ledger, the session records, the vault, the machine's token...), a name no store covers and the device key
-are held until you confirm their recovery copy: `--confirm-recovery ledger vault keystore`, or `all` (`brain vault
-seal` and `brain spool push` make one; the purge cannot tell that a copy elsewhere is whole, so it asks). It never
-touches Claude Code's transcripts, the personal brain's repo, or a path outside `BRAIN_HOME` but the launcher's link
-(a store that is a link or a junction has only its link removed).
+`--purge` adds every other entry of `BRAIN_HOME`, this machine's device key (and the previous one of a rotation not
+finished) and `BRAIN_HOME` itself once empty. A derived store (a cache, an index, a view) goes; a store nothing else
+keeps (format `truth-local` or `log`: the ledger, the session records, the vault, the machine's token...), a name no
+store covers and the device keys are held until you confirm their recovery copy: `--confirm-recovery ledger vault
+keystore`, or `all` for the registry's stores and the keys (a name no store covers is confirmed by its own name;
+`brain vault seal` and `brain spool push` make a copy; the purge cannot tell that a copy elsewhere is whole, so it
+asks). It refuses a `BRAIN_HOME` that is not a brain's: a filesystem root, your home or a folder above it, one that
+holds Claude Code's transcripts or the personal brain, one that holds none of the engine's stores. It never touches
+Claude Code's transcripts, the personal brain's repo, or a path outside `BRAIN_HOME` but the launcher's link (a store
+that is a link or a junction has only its link removed). A step that fails is reported; the others still run.
 
 ```bash
 brain uninstall                                        # the plan: the install

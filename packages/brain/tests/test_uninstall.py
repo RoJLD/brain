@@ -104,12 +104,98 @@ def test_a_confirmed_recovery_releases_its_store_and_all_empties_brain_home():
     home = _home("ledger", "vault", "mystery", files=("tui.json",))
     by = _by(_plan(purge=True, confirmed={"ledger", "mystery"}))
     assert by[("store", "ledger")] == by[("store", "mystery")] == "remove" and by[("store", "vault")] == "held"
+    assert _by(_plan(purge=True, confirmed={"all"}))[("store", "mystery")] == "held"   # all: the registry's only
     ks = keystore.Memory()
     ks.set("device", "AGE-SECRET-KEY-TEST")
-    steps = _plan(purge=True, confirmed={"all"}, keystore_backend=ks)
-    assert _by(steps)[("keystore", "keystore")] == "remove"
+    ks.set("device-previous", "AGE-SECRET-KEY-OLD")   # a rotation not finished: its previous key too
+    steps = _plan(purge=True, confirmed={"all", "mystery"}, keystore_backend=ks)
+    assert [s.action for s in steps if s.kind == "keystore"] == ["remove", "remove"]
     assert all(o in ("", "done") for _, o in uninstall.apply(steps))
-    assert not home.exists() and ks.get("device") is None
+    assert not home.exists() and ks.get("device") is None and ks.get("device-previous") is None
+
+
+def test_brain_home_is_kept_with_what_is_left_in_it_and_said():
+    home = _home("ledger", "cache")
+    out = {s.kind: o for s, o in uninstall.apply(_plan(purge=True))}
+    assert out["home"].startswith("kept: not empty (ledger)") and home.is_dir()
+
+
+@pytest.mark.parametrize("where", ["root", "user-home", "transcripts", "personal", "stranger"])
+def test_a_brain_home_that_is_not_a_brains_is_refused(tmp_path, monkeypatch, capsys, where):
+    """BRAIN_HOME set to the wrong folder would lose everything in it: nothing is planned there."""
+    target = {"root": Path(Path.cwd().anchor), "user-home": Path.home().parent, "transcripts": tmp_path,
+              "personal": tmp_path / "up", "stranger": tmp_path / "docs"}[where]
+    if where == "personal":
+        (tmp_path / "up" / "brain").mkdir(parents=True)
+        monkeypatch.setenv("BRAIN_PERSONAL", str(tmp_path / "up" / "brain"))
+        (tmp_path / "up" / "venv").mkdir()
+    if where == "stranger":
+        (target / "Documents").mkdir(parents=True)
+    monkeypatch.setenv("BRAIN_HOME", str(target))   # tmp_path holds claude-config/projects (the conftest's)
+    steps = _plan(purge=True, confirmed={"all"})
+    assert [s.action for s in steps] == ["refused"], steps
+    assert cli.main(["uninstall", "--purge", "--confirm-recovery", "all", "--apply"]) == 2
+    assert "nothing planned" in capsys.readouterr().err
+    if where == "stranger":
+        assert (target / "Documents").is_dir()
+
+
+def test_the_launchers_folder_this_command_started_from_is_left(monkeypatch):
+    home = _home("bin", "venv")
+    monkeypatch.setattr(sys, "argv", [str(home / "bin" / "brain.exe"), "uninstall"])
+    by = _by(_plan())
+    assert by[("store", "bin")] == "left" and by[("store", "venv")] == "remove"
+
+
+def test_a_step_that_raises_fails_alone_and_the_rest_still_runs():
+    class Broken(keystore.Memory):
+        name = "wincred"
+
+        def delete(self, key):
+            raise keystore.KeystoreError("the Credential Manager refused")
+    ks = Broken()
+    ks.set("device", "AGE-SECRET-KEY-TEST")
+    home = _home("cache")
+    try:
+        out = [(s.kind, o) for s, o in uninstall.apply(_plan(purge=True, confirmed={"keystore"}, keystore_backend=ks))]
+    finally:
+        keystore.Memory.data.clear()
+    assert ("keystore", "failed: KeystoreError: the Credential Manager refused") in out
+    assert ("store", "done") in out and not (home / "cache").exists()
+
+
+def test_a_mounted_identity_file_is_left_where_it_is():
+    class File(keystore.Memory):
+        name = "file"
+    ks = File()
+    ks.set("device", "AGE-SECRET-KEY-TEST")
+    try:
+        steps = [s for s in _plan(purge=True, confirmed={"all"}, keystore_backend=ks) if s.kind == "keystore"]
+    finally:
+        keystore.Memory.data.clear()
+    assert [s.action for s in steps] == ["left"] and "read only" in steps[0].line
+
+
+def test_the_merge_driver_is_named_with_its_command(tmp_path, monkeypatch):
+    root = tmp_path / "personal"
+    root.mkdir()
+    monkeypatch.setattr(paths, "personal_root", lambda: root)
+    _home("venv")
+
+    def run(argv):
+        found = argv[-2:] == ["--get", "merge.brain.driver"]
+        return subprocess.CompletedProcess(argv, 0 if found else 1, "brain merge-driver %O %A %B\n" if found else "", "")
+    step = next(s for s in _plan(run=run) if s.kind == "merge")
+    assert step.action == "left" and f"git -C {root} config --remove-section merge.brain" in step.line
+    assert any(s.kind == "settings" and s.action == "keep" for s in _plan(run=run))
+
+
+def test_a_store_inside_another_is_named_with_it_and_confirmed_by_it(capsys):
+    _home("stacks")
+    step = next(s for s in _plan(purge=True) if s.name == "stacks")
+    assert step.action == "held" and "with collector" in step.line
+    assert cli.main(["uninstall", "--purge", "--confirm-recovery", "collector"]) == 2
+    assert "names no store here: collector" in capsys.readouterr().err
 
 
 def test_the_device_key_is_held_until_confirmed():
