@@ -272,6 +272,20 @@ def _cost_text(cost: dict) -> str:
     return ", ".join(f"{COST_WORDS[k][0]} {v:g} {COST_WORDS[k][1]}" for k, v in cost.items() if k in COST_WORDS)
 
 
+def _module_row(m: dict, r: dict) -> Setting:
+    """One module of the catalogue (``m``) with its state on this machine (``r``, brain mod list's row)."""
+    what = [x for x in (_cost_text(m.get("cost") or {}),
+                        f"needs {', '.join(m['depends_on'])}" if m.get("depends_on") else "",
+                        f"requires {', '.join(m['requires'])}" if m.get("requires") else "",
+                        f"else: {m['fallback']}" if m.get("fallback") else "") if x]
+    switchable = m.get("class") != "core" and r.get("state") not in (None, "auto")
+    return Setting("modules", m["id"], f"{r.get('state', '?')} ({r.get('source', '-')})",
+                   "; ".join(what) or str(m.get("description") or m.get("name") or ""),
+                   f"brain mod enable|disable {m['id']} (a plan, then --apply)" if switchable
+                   else "always on (core, or used whenever it is found): brain mod show " + m["id"],
+                   "module" if switchable else "")
+
+
 def module_settings(root: Path | None = None) -> list[Setting]:
     """The Modules page (wi-brain-modules-tab, SIGMA-15): each module of the brain's catalogue (catalogue/v1, brain
     catalogue emit) with its state on this machine and where it comes from (brain mod list), its cost, what it needs and
@@ -280,19 +294,7 @@ def module_settings(root: Path | None = None) -> list[Setting]:
     from . import catalogue, mod
     doc = catalogue.emit(root, by="brain tui")
     states = {r["id"]: r for r in mod.rows(root)}
-    out = []
-    for m in doc["modules"]:
-        r = states.get(m["id"], {})
-        what = [x for x in (_cost_text(m.get("cost") or {}),
-                            f"needs {', '.join(m['depends_on'])}" if m.get("depends_on") else "",
-                            f"requires {', '.join(m['requires'])}" if m.get("requires") else "",
-                            f"else: {m['fallback']}" if m.get("fallback") else "") if x]
-        switchable = m.get("class") != "core" and r.get("state") not in (None, "auto")
-        out.append(Setting("modules", m["id"], f"{r.get('state', '?')} ({r.get('source', '-')})",
-                           "; ".join(what) or str(m.get("description") or m.get("name") or ""),
-                           f"brain mod enable|disable {m['id']} (a plan, then --apply)" if switchable
-                           else "always on (core, or used whenever it is found): brain mod show " + m["id"],
-                           "module" if switchable else ""))
+    out = [_module_row(m, states.get(m["id"], {})) for m in doc["modules"]]
     for x in doc["distributions"]:
         out.append(Setting("modules", f"distribution {x['id']}", f"{x.get('name', '')} ({x.get('kind', '')}"
                            + (", bundled)" if x.get("bundled") else ", downloaded when a module needs it)"),
