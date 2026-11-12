@@ -13,13 +13,16 @@ ORDER = 170   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 520   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain cost estimate ITEM|TEXT|@FILE|- [--class trivial|standard|strategic] [--record] [--json]   cost, output,
-                 context peak, active time and sessions (median, p25-p75) from the finished items most alike, times
-                 the class's calibration; --record writes props.cost_estimate on the item
+                 context peak, active time and sessions (median, p25-p75) from the finished items most alike (the
+                 same size first when that lowers the backtests' error), times the class's calibration; --record
+                 writes props.cost_estimate on the item
   brain cost review [ITEM] [--since WHEN] [--until WHEN] [--record] [--json]   actual against the recorded (else
-                 backtest) estimate and the brief's budget, and the token-free signals that explain the gap;
+                 backtest) estimate and the brief's budget, the token-free signals that explain the gap, and the
+                 judged size against the size its active time falls in;
                  --record writes props.cost_review (not for an item no session of the token ledger served)
   brain cost audit [--since WHEN] [--until WHEN] [--top N] [--write] [--json]   the window's estimates off by more
-                 than x1.5 and why, the calibration per class, the costliest sessions, the script candidates;
+                 than x1.5 and why, the calibration per class, the sizes against the actuals (misses per size and
+                 class, thresholds proposed, the size key kept or not), the costliest sessions, the script candidates;
                  --write: <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md, and the week's forecast snapshot
                  <BRAIN_HOME>/forecast/<project>/<day>.json (the Monday task's command)
   brain cost estimate|review|audit ... --scope REF   the items and sessions of the projects of a node's subtree in

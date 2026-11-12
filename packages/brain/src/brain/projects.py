@@ -132,9 +132,14 @@ KEYS = {
     "formats": "its persisted formats, a list of {id, glob, repo, class, version, schema, fixtures, check, timeout}: "
                "the declarations checked by brain check, the check: commands run only by brain formats check "
                "(brain.formats)",
+    "lifecycle": "its lifecycle (spec-brain-product-lifecycle LC-1), {typologies, stage, shape, profile, since, "
+                 "paused}: typologies (the typology catalog's ids, brain typologies) give its items' clauses of done "
+                 "(brain item clauses, brain item close); the other keys are kept as declared and read by "
+                 "wi-brain-lifecycle-stage",
     "migrations": "the scout's glob check, a list of {when, add, repo}: a change of a when file comes with a new file "
                   "of each add glob (a migration, a fixture), else brain audit --diff finds it (brain.formats)",
 }
+LIFECYCLE_KEYS = ("typologies", "stage", "shape", "profile", "since", "paused")   # LC-1; typologies read so far
 ACCESS = ("write", "read")
 READ_ONLY_KEYS = {"title", "access", "parent", "classes"}
 # the decision logs research_graph covers for a store given none (research_graph.validate.DEFAULT_DECISIONS; not
@@ -176,6 +181,7 @@ class Project:
     registry_dir: Path | None = None  # the registry's folder: where its standards.catalogs are read from
     formats: object = None           # its formats: as declared (brain.formats.formats_of)
     migrations: object = None        # its migrations: as declared (brain.formats.migrations_of)
+    lifecycle: dict = field(default_factory=dict)   # its lifecycle: as declared (LC-1; typologies read)
 
 
 @dataclass
@@ -243,7 +249,8 @@ def _project(name: str, entry: dict, root: Path) -> Project:
                    ledgers={str(k): root / v for k, v in ledgers.items() if isinstance(v, str) and v},
                    shared_ids=dict(e["shared_ids"]) if isinstance(e.get("shared_ids"), dict) else {},
                    plugin=e.get("plugin"), standards=e.get("standards"), formats=e.get("formats"),
-                   migrations=e.get("migrations"))
+                   migrations=e.get("migrations"),
+                   lifecycle=dict(e["lifecycle"]) if isinstance(e.get("lifecycle"), dict) else {})
 
 
 def _resolve_root(rel: str, base: Path) -> Path:
@@ -776,6 +783,8 @@ def check(root: Path | None = None) -> list[str]:
         errors += [f"{where}: {e}" for e in project_limits(entry)[1]]
         if "standards" in entry:
             errors += _standards_errors(where, entry["standards"], registry_file(root), engine)
+        if "lifecycle" in entry:
+            errors += _lifecycle_errors(where, entry["lifecycle"], root)
         errors += formats.errors(where, entry)
     loaded, refused = _load(root)
     for _, why in refused.values():
@@ -790,6 +799,24 @@ def check(root: Path | None = None) -> list[str]:
             errors += formats.check_project(f"project {p.name}", {"formats": p.formats, "migrations": p.migrations},
                                             {r.name: r.path for r in repos}, repos[0].name if repos else "")
     return errors + list(view_clashes(holders(root)).values())
+
+
+def _lifecycle_errors(where: str, value, root: Path | None) -> list[str]:
+    """A project's lifecycle: a mapping; its typologies a list of the typology catalog's ids (an unknown id a note in
+    read mode, an error in strict mode); an unknown key a note in read mode."""
+    from . import config, typologies
+    where = f"{where}: lifecycle"
+    if not isinstance(value, dict):
+        return [f"{where} is a mapping of {', '.join(LIFECYCLE_KEYS)}"]
+    unknown = sorted(set(map(str, value)) - set(LIFECYCLE_KEYS))
+    errors = schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (known: {', '.join(LIFECYCLE_KEYS)})"
+                             ) if unknown else []
+    typs = value.get("typologies")
+    if typs is None:
+        return errors
+    if not (isinstance(typs, list) and all(isinstance(t, str) and t for t in typs)):
+        return errors + [f"{where}: typologies is a list of typology ids (brain typologies)"]
+    return errors + typologies.unknown(f"{where}.typologies", typs, typologies.load(config.load(root)))
 
 
 def _standards_errors(where: str, value, registry: Path | None, engine: list) -> list[str]:
@@ -812,6 +839,41 @@ def _standards_errors(where: str, value, registry: Path | None, engine: list) ->
     errors += [f"{where}: {e}" for e in standards.duplicates(engine + local)]
     ids = {r.id for c in engine + local for r in c.rows}
     return errors + standards.selection_errors(where, value, ids if not errors else None)
+
+
+def repo_tokens(root: Path | None = None) -> set[str]:
+    """The ``<repo>`` tokens a CodeRef may name (``code:<repo>:<path>``), lowercased
+    (wi-brain-audit-unregistered-coderef): every repo of every project the registry loads, cloned on this machine or
+    not, by its name and its main checkout's folder; for a project whose ``repos:`` does not read (projects.check says
+    it), its name and its declared paths' folders; and the name of each entry the walk skips (a read-only project, a
+    tenant mount), whose repos the brain never audits. ``root``: as :func:`load` takes it (a project's
+    ``registry_dir`` names the registry it came from)."""
+    out: set[str] = set()
+    for p in load(root).values():
+        try:
+            rs = repos_of(p)
+        except RepoError:
+            declared = [e.get("path") if isinstance(e, dict) else e for e in (p.repos if isinstance(p.repos, list)
+                                                                                else [])]
+            out |= {p.name.lower(), p.root.name.lower()} | {Path(x).name.lower() for x in declared
+                                                             if isinstance(x, str) and x}
+            continue
+        out |= {r.name.lower() for r in rs} | {r.folder.lower() for r in rs if r.folder}
+    out |= {str(name).lower() for name, entry in raw(root).items() if is_read_only(entry) or is_mount(entry)}
+    return out
+
+
+def code_refs(store: Path) -> list[tuple[str, str]]:
+    """(id, status) of each CodeRef node of a store, read from its node files."""
+    out: list[tuple[str, str]] = []
+    for f in sorted((store / "nodes").glob("*.yaml")):
+        if "CodeRef" not in f.read_text(encoding="utf-8", errors="replace"):
+            continue
+        data = graph.load_yaml_file(f)
+        for n in data if isinstance(data, list) else []:
+            if isinstance(n, dict) and n.get("type") == "CodeRef" and n.get("id"):
+                out.append((str(n["id"]), str(n.get("status", ""))))
+    return out
 
 
 def node_ids(store: Path) -> dict[str, str]:

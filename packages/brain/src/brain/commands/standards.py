@@ -55,7 +55,7 @@ def _matches(row: standards.Row, args) -> bool:
     if getattr(args, "stage", "") and not standards.required_at(row, args.stage):
         return False
     profile = getattr(args, "profile", "")
-    return not profile or profile in row.profiles or "any" in row.profiles
+    return not profile or bool(set(standards.kinds(profile)) & set(row.profiles)) or "any" in row.profiles
 
 
 def _chosen(args, p, rows: list[standards.Row], sel) -> list[tuple[standards.Row, str]]:

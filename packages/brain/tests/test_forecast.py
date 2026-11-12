@@ -112,7 +112,7 @@ def test_deferred_items_stay_out_of_every_date_and_are_shown_apart(project):
     text = "\n".join(forecast.render(res, show_items=True))
     assert "1 deferred item(s) out" in text and "1 item(s) in the icebox, out of every date" in text
     assert "wi-thaw" in text and "not dated: after a deferred item" in text
-    assert "ms-y" in text and "its trigger names 4 weeks, in a row (not modelled)" in text
+    assert "ms-y" in text and "its trigger names 4 weeks, in a row with no gate (not modelled)" in text
 
 
 def test_a_growing_backlog_has_no_date_and_its_frozen_scope_is_apart():

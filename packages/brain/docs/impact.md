@@ -15,7 +15,9 @@ brain code-map [--project P]      # the CodeRefs resolved in the code index, and
 ## The chain
 
 1. **The change.** The files from the base to the working tree, untracked files included, and their hunks
-   (`git diff -U0`), read as the scout reads them.
+   (`git diff -U0`), read as the scout reads them. The hunks go through the engine's one diff reader (`brain.diffs`,
+   see the guards runbook, « How the guards read a diff »): your `diff.noprefix`, `diff.relative` or
+   `diff.suppressBlankEmpty` changes nothing, and a deleted line `-- x` is never a header.
 2. **The symbols touched.** GitNexus's code index holds the repo at its indexed commit (`brain index`). The hunks of
    the diff from that commit, on the files the change touches, are matched to the indexed symbols whose lines they
    overlap: the query GitNexus's `detect_changes` runs, sent through its MCP `cypher` tool. `detect_changes` itself

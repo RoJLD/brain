@@ -30,16 +30,13 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import codeindex, codemap, inventory, paths, projects, scout
+from . import codeindex, codemap, diffs, inventory, paths, projects, scout
 from .inventory import AuditError, git
 
-HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-HEADS = (("--- ", "old"), ("+++ ", "new"), ("rename from ", "old"), ("rename to ", "new"))
 DEPTH = 2
 MIN_CONFIDENCE = 0.8   # GitNexus's CALLS guessed from a name alone (scope-resolution) score 0.5-0.55: left out
 OPEN_ITEMS = ("todo", "doing", "blocked")
@@ -111,54 +108,21 @@ class Report:
 
 # --- 1. the change ---
 
-def _span(start: int, count: int) -> tuple[int, int] | None:
-    """The lines one side of a hunk covers; an insertion (count 0) touches the line it follows."""
-    if count:
-        return start, start + count - 1
-    return (start, start) if start else None
-
-
-def _head(c: Change, line: str) -> bool:
-    """Read a ---, +++ or rename line into ``c``: whether it was one."""
-    for prefix, side in HEADS:
-        if line.startswith(prefix):
-            value = line[len(prefix):].rstrip("\t")
-            setattr(c, side, "" if value == "/dev/null" else value[2:] if prefix[0] in "-+" else value)
-            return True
-    return False
-
-
-def _hunk(c: Change, line: str) -> None:
-    m = HUNK.match(line)
-    if m:
-        o = _span(int(m.group(1)), int(m.group(2) if m.group(2) is not None else 1))
-        n = _span(int(m.group(3)), int(m.group(4) if m.group(4) is not None else 1))
-        c.old_lines += [o] if o else []
-        c.new_lines += [n] if n else []
-
-
 def hunks(top: Path, a: str, b: str = "", files=None) -> dict[str, Change]:
     """{path: its Change} of ``git diff -U0`` from ``a`` to ``b`` (the working tree when ''), renames found; keyed by
     the new path, the old one for a deletion. ``files``: only the changes with one of these paths (filtered here,
-    never given to git: a large change would pass the Windows command line's limit). The a/ and b/ prefixes are
-    asked for, whatever the user's diff.noprefix or diff.mnemonicPrefix; a file's header lines are read before its
-    first hunk only, since a deleted line '-- x' reads '--- x' in the body."""
-    out = git(top, "-c", "core.quotepath=off", "diff", "-U0", "--no-color", "--no-ext-diff", "-M", "--src-prefix=a/",
-              "--dst-prefix=b/", a, *([b] if b else []), "--")
-    changes: list[Change] = []
-    body = False
-    for line in out.splitlines():
-        if line.startswith("diff --git "):
-            changes.append(Change("M"))
-            body = False
-        elif changes and line.startswith("@@"):
-            body = True
-            _hunk(changes[-1], line)
-        elif changes and not body:
-            _head(changes[-1], line)
+    never given to git: a large change would pass the Windows command line's limit). Read by the engine's one diff
+    parser (brain.diffs), the user's git config that reshapes a patch neutralised."""
+    out = git(top, *diffs.argv("diff", "-U0", "-M", a, *([b] if b else []), "--"))
     keep = None if files is None else set(files)
-    return {c.new or c.old: _status(c) for c in changes
-            if (c.new or c.old) and (keep is None or {c.old, c.new} & keep)}
+    found: dict[str, Change] = {}
+    for f in diffs.parse(out):
+        if not f.path or (keep is not None and not {f.old, f.new} & keep):
+            continue
+        c = Change("M", f.old, f.new, [s for h in f.hunks if (s := h.old_span())],
+                   [s for h in f.hunks if (s := h.new_span())])
+        found[f.path] = _status(c)
+    return found
 
 
 def _status(c: Change) -> Change:

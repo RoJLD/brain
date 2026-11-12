@@ -452,3 +452,14 @@ def test_an_open_item_close_to_the_lesson_is_linked_not_duplicated(lstore):
     assert "wi-demo-merge-stale-main" not in graph.node_index(lstore)
     led = [e["to"] for e in graph.load_yaml_list(lstore / lessons.EDGES) if e["type"] == "led_to"]
     assert led == ["wi-demo-stale-guard"]
+
+
+def test_the_wave_retro_carries_the_review_error_score(demo, brain_home):
+    """wi-brain-review-error-score: the wave's score and the trend, from the stamps placed in it."""
+    from brain import review
+    p, store = demo
+    review.stamp("a" * 40, 3, 3, note="- high correctness A.c fixed: one path only", wave="0.3.2", pr="5")
+    w = lessons.wave_retro(cost.Ledger([], [p]), "wave-0.3.2", store)
+    text = "\n".join(lessons.render_wave(w))
+    assert "review error score, wave 0.3.2: 1 PR(s) reviewed, 3 confirmed finding(s), 3.0 per PR" in text
+    assert "the reviews stay complete: 1 wave(s) scored, 3 needed" in text

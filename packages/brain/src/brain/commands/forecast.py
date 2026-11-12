@@ -16,7 +16,9 @@ USAGE = """\
   brain forecast [--project P | --all] [--runs N] [--seed S] [--items] [--no-scan] [--json]   when each milestone
                  and the whole backlog will be done: a Monte Carlo of futures (a shared estimate error from the
                  backtests, a lognormal per item from its p25-p75, the capacity of past days, the proposals' keep rate,
-                 the owner's answer delays, an event-queue scheduler by priority, order, then the default score), p10-p90
+                 the owner's answer and action delays, the gates written on the nodes (props.gate: calendar, count,
+                 external, hardware, go_nogo; docs/gates.md), an event-queue scheduler by priority, order, then the
+                 default score; an alert when an item's p80 passes its due date), p10-p90
                  under the honesty bar: uncalibrated until 5 reached milestones are judged, no date beyond 6 weeks,
                  none for a backlog that grows faster than it empties, the deferred items and the inflow apart; --items
                  per item p10 . p50 . p80 . p90; --json reproducible (seed, input digests, code version); every run
