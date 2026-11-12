@@ -204,7 +204,8 @@ def _stamp_refusal(slug: str, sha: str, cfg: config.Config) -> str:
         return (f"was stamped by brain {key.get('engine')}, not this brain {now['engine']} (if a rerun does not clear "
                 "it, the hook and the brain command run different engine copies: brain sync)")
     if key.get("rules") != now["rules"]:
-        return "was stamped under other rules (config.json public.deny, allow, patterns or refuse changed since)"
+        return ("was stamped under other rules (config.json public.deny, allow, patterns or refuse changed since, or "
+                "the scope tree that public.deny_from_tree reads)")
     if key.get("gitleaks") is not now["gitleaks"]:
         return ("was stamped without gitleaks, which is now on the PATH (if the check says gitleaks failed, fix it "
                 "or take it off the PATH)" if now["gitleaks"] else
