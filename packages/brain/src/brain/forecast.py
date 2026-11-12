@@ -523,10 +523,7 @@ def _plan(model: dict) -> dict:
     for i in model["items"]:
         visit(i["id"])
     dated = [i for i in model["items"] if i["id"] not in why]
-    held = {m["id"]: next((g["undated"] for g in m.get("gates") or [] if g.get("undated")), "")
-               or next((f"after an item not dated: {g['after']}" for g in m.get("gates") or []
-                        if g.get("after") and (g["after"] in why or g["after"] in deferred)), "")
-            for m in model["milestones"]}
+    held = {m["id"]: _held(m, set(why) | deferred) for m in model["milestones"]}
 
     def key(i: dict) -> tuple:
         return (0 if i["status"] == "doing" else 1, PRIORITY_RANK.get(i["priority"], 4), 1 if i["proposed"] else 0,
@@ -535,6 +532,14 @@ def _plan(model: dict) -> dict:
     dated.sort(key=key)
     return {"dated": dated, "undated": {i: why[i] for i in sorted(why)},
             "milestones": {m: w for m, w in sorted(held.items()) if w}}
+
+
+def _held(m: dict, undated: set[str]) -> str:
+    """Why a milestone's own gates hold it undated ('' when they do not): a gate the forecast cannot date, or a
+    calendar counted from an item not dated."""
+    gs = m.get("gates") or []
+    return (next((g["undated"] for g in gs if g.get("undated")), "")
+            or next((f"after an item not dated: {g['after']}" for g in gs if g.get("after") in undated), ""))
 
 
 def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
