@@ -235,6 +235,15 @@ questions) and an index with the decisions no module holds; `brain sync` keeps i
 `--public` renders a public repo's neutral reference by feature domain, from its features only (this repo's own is
 [docs/reference/](../../docs/reference/README.md)). See [docs/views.md](docs/views.md).
 
+### The documentation graph's contract
+
+`docgraph/v1` ([docs/docgraph.md](docs/docgraph.md)) is the neutral, public format of a documentation graph: its
+decisions, documents and sections, milestones, criteria, items, changes, tests, threats and modules, typed edges named
+as the Brain names them, a source on every node and derived edge, declared links with their reason, and the findings
+of named checks every producer and reader mean the same way. Any program may emit it (a repository's own docs
+command, the Brain's doc graph); `brain docgraph validate FILE...` checks a document against the schema
+(`schemas/docgraph.schema.json`) and `brain docgraph checks` lists the named checks. Neither needs a brain.
+
 ### Generated READMEs
 
 A repo opts in by holding `readme.yaml` at its root (`schemas/readme.schema.json`): the text only a person writes, what
@@ -307,9 +316,24 @@ in a store that holds a wave or an era; any other `props.kind` on a milestone is
 `brain sync` writes `notes/plan_graph.md` (beside the store's other views; only for a store with a wave or an era,
 and `brain sync` is its one writer): the tree era > milestone > wave > items, each item with its status and what waits
 on the owner (its `props.open`, its `external_blocker`, the pending DDRs on it), each wave's carried items first,
-then the startable ones. `brain next [--json]` prints its first part at zero token: the current wave (the lowest
-release not closed), its items carried from an earlier wave, its startable items, what waits on the owner, the other
-open ones, then the next wave.
+then the startable ones. `brain next [--explain] [--json]` prints its first part at zero token: the current wave (the
+lowest release not closed), its quick wins, its items carried from an earlier wave, its startable items, what waits on
+the owner, the other open ones, then the next wave.
+
+Each group, here and in the view, is ranked (`brain.ranking`): the owner's priority first (a confirmed one before the
+same one proposed), then the owner's explicit order (`props.order`, a number, lower first), then WSJF, value over
+effort. The value is derived from the graph by default: a base of 1, plus the value of the features the item delivers
+(`delivers` edges; a feature's `props.value` high 3, medium 2, low 1), plus 1 when it moves a milestone of the roadmap
+(`part_of` a milestone that is not a wave or an era), plus 0.5 per open item that depends on it. The owner overrides
+it with `props.value` (high 5, medium 3, low 1 on that scale) and `props.value_reason`; `--explain` lists the items
+whose value the owner set, so that frequent overrides show the weights are wrong. The effort is the hours of the
+item's size (« Item sizes »), an unsized item counting as M. A quick win is a carried or startable item of size S
+whose value is high (the owner's, or a derived value of 4 or more); the wave's quick wins are named on a line of their
+own at its top, the rows keeping the rank's order. `brain forecast` derives an item's value the same way. `--explain` puts
+each score's parts under its item: `score 12.5 = value 3.75 (base 1 + features 2 + unblocks 0.75) / 0.3 h (S)`. The
+cockpit's frontier takes the same order by default, sorts by score on demand, and its column chooser adds the size,
+the value and the score. Every number is a written setting of `brain.ranking` (`SCORE`, `VALUE`, `HIGH`), which
+`brain forecast` shares for its tie-breaks.
 
 The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
 X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending
@@ -808,6 +832,31 @@ personal brain. `--project P` alone resolves to the git worktree the cwd is in w
 repo P's root is in (so a sub-session in a worktree never writes to the main checkout); an explicit `--root` wins, and
 a cwd in another repo (a code repo of P, say) or a plain folder keeps the registry's root. Machine-local state (ledgers, sessions, the resume pack, the vault) lives in `BRAIN_HOME`
 (`~/.brain`), never in a repo.
+
+### This machine: its identity and its facts
+
+One name for the machine everywhere (`brain.machine`): `$BRAIN_MACHINE`, else the host name, lowercase and
+`[a-z0-9-]` (the memory sync, the profile and the schedules read it; the permissions' `machines:` stay host names). It is tied to the OS install
+by an anchor, `sha256(install id || OS family)` of `MachineGuid`, `/etc/machine-id` or `IOPlatformUUID` (never the raw
+id), kept at first sight in `<BRAIN_HOME>/machine.json`. `brain doctor` prints the identity's state and, while the
+owner's `config.json` lacks it, the `hosts` line to add (`"hosts": {"<name>": {"anchor": "..."}}`): a name on another
+install (reused), two names on one install (a cloned image), a renamed machine, a copied `BRAIN_HOME` or an unreadable
+id is a doubt, said with its question; while it lasts the memory sync exports nothing (the machine's branch), and
+imports as before.
+
+Each fact is true, false or unknown: an unknown fact satisfies neither `FACT` nor `not FACT` in a `recommend_when`,
+and a requirement unknown counts as missing. `brain doctor` probes ECC memory (WMI on Windows, EDAC on Linux) and a
+battery, flattens `ecc`, `battery` and `encrypted` (BRAIN_HOME's volume), and prints each fact's source, the first that
+knows it: an infra agent's recent report (`inventory.agent_json`, only when the `infra-node` capability is on: off by
+default, `brain profile set --with infra-node`), the local probe, a nodes file another tool keeps (`inventory.nodes_file`:
+read at a git ref of a local checkout, never its working copy, through a table of field paths; a version it does not
+know is refused loudly), the facts declared in `config.json` `hosts.<name>`, else unknown. `<BRAIN_HOME>/facts.json`
+keeps the last ones with their source. A machine's `profile.json` overrides `config.json` `tier.components` key by
+key (a switch it does not name keeps the brain's default).
+
+`config.json` `engine.min` (optional, beside `engine.pin`) is the oldest engine that may write the shared formats:
+below it the memory sync exports nothing (it still imports), the DDRs are not written and `brain check` says so; the
+machine still reads.
 
 ### Projects the brain only reads, projects that share a root
 

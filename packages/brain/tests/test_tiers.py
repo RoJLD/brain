@@ -37,7 +37,8 @@ app:
 {extra}"""
 
 BIG = {"os": "windows", "memory_gb": 63.9, "gpu": True, "gpu_vram_gb": 16.0, "cpu_cores": 16, "docker": True,
-       "container_runtime": True, "git": True, "bash": True, "textual": True, "gh": True, "gitleaks": False}
+       "container_runtime": True, "git": True, "bash": True, "textual": True, "gh": True, "gitleaks": False,
+       "wsl": False}
 SMALL = {"os": "linux", "memory_gb": 3.8, "gpu": False, "gpu_vram_gb": 0.0, "cpu_cores": 2, "git": True,
          "bash": True}
 
@@ -131,8 +132,8 @@ def test_the_machine_file_wins_over_config_which_wins_over_the_built_in_base(bra
     assert (ch.base, ch.source, ch.components) == ("lite", "config", {"tui": True})
     path, written = tiers.write(tiers.Choice("recommended", {"docker": True}, machine="box1"))
     assert written and path == tiers.machine_file()
-    ch = tiers.choice(None)
-    assert (ch.base, ch.source, ch.components) == ("recommended", "machine", {"docker": True})
+    ch = tiers.choice(None)   # the machine's components merged key by key over config.json's (R25)
+    assert (ch.base, ch.source, ch.components) == ("recommended", "machine", {"tui": True, "docker": True})
     data = json.loads(path.read_text(encoding="utf-8"))
     path.write_text(json.dumps({**data, "machine": "other"}), encoding="utf-8")
     ch = tiers.choice(None)
@@ -156,7 +157,7 @@ def test_set_freezes_recommended_and_a_second_apply_changes_nothing(brain):
     off = tiers.Choice("default", {"gitnexus": True, "docker": False}, machine="box1")
     assert tiers.active(reg, off)[1] == ["gitnexus needs docker, which the overrides turn off"]
     assert tiers.plan(reg, cur, "lite", ["all"], [], None).components == {
-        "docker": True, "gitnexus": True, "tui": True}
+        "docker": True, "gitnexus": True, "tui": True, "infra-node": True}
 
 
 @pytest.mark.parametrize("with_, without, message", [

@@ -928,6 +928,28 @@ def test_an_optional_record_key_still_moves_the_format(repo, capsys):
     assert rc == 1 and "a format that moves is a minor version" in text and ar in text
 
 
+def test_docgraph_grows_by_an_optional_key_in_a_patch(repo, capsys):
+    """docgraph/v1 is read tolerantly (the owner, 2026-11-12): an optional key added within v1 is a patch's; a key
+    made required still moves the format."""
+    dg = "packages/brain/src/brain/schemas/docgraph.schema.json"
+    assert "docgraph" in release_check.ADDITIVE
+    write(repo, dg, '{"properties": {"schema": {"const": "docgraph/v1"}}, "required": ["schema"]}\n')
+    commit(repo)
+    git(repo, "tag", "-f", "v0.2.5")
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    write(repo, dg, '{"properties": {"schema": {"const": "docgraph/v1"}, "extra": {"type": "string"}}, '
+                    '"required": ["schema"]}\n')
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 0 and "grown by optional keys" in text and dg in text, text
+    write(repo, dg, '{"properties": {"schema": {"const": "docgraph/v1"}, "extra": {"type": "string"}}, '
+                    '"required": ["schema", "extra"]}\n')
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1 and "a format that moves is a minor version" in text and dg in text
+
+
 def test_moved_schemas_errs_towards_a_minor(repo):
     """A config schema new since the tag, one that does not parse, a required list reordered, a scalar of another type:
     each moves the format (never a patch by mistake)."""

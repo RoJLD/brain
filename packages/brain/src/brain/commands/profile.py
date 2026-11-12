@@ -16,7 +16,9 @@ USAGE_ORDER = 250   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain profile [--json] [--quick]   (alias brain doctor) this machine's facts at zero token, each probe with its
                  own timeout (CPU, memory, GPUs and their VRAM, the inference backend, disks and BRAIN_HOME's size,
-                 tools, container runtime, Kubernetes context, disk encryption), the active profile and its overrides,
+                 tools, container runtime, Kubernetes context, disk encryption, ECC memory, a battery), the
+                 machine's identity (its name and OS install anchor, a doubt said with its question), each fact's
+                 source (agent, probed, nodes file, declared, unknown), the active profile and its overrides,
                  each capability's and stack's state (on, to install, fallback, missing, off, unavailable, planned),
                  the Recommended profile computed for this machine and what it would add; --json: the machines
                  brick's inventory fields and a brain block, for the cockpit (schemas/status.schema.json, the status
@@ -48,7 +50,7 @@ def cmd_profile(args, root: Path) -> int:
         print(f"brain profile: {e}", file=sys.stderr)
     ch = tiers.choice(root)
     base = getattr(args, "base", None)
-    facts = (probe.facts(probe.collect(quick=True, roots=[root]))
+    facts = (tiers.machine_facts(root, probe.collect(quick=True, roots=[root]), reg, ch)
              if sub in ("list", "show") or base == "recommended" else None)
     if sub == "list":
         data = tiers.profiles(reg, ch, facts)

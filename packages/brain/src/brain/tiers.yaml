@@ -181,3 +181,11 @@ capabilities:
     requires: [container_runtime]
     resources: {ram_mb: 4096, disk_gb: 10}
     fallback: the markdown views and the cockpit
+  infra-node:
+    title: the machine facts of an infra agent's report (inventory.agent_json), read before the local probe
+    class: extra
+    profile: custom
+    provides: [agent facts]
+    requires: []
+    resources: {}
+    fallback: the local probe (brain doctor), then the nodes file and the hosts declared in config.json
