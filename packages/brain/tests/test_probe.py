@@ -144,7 +144,8 @@ def test_the_report_is_the_published_status_document(windows, monkeypatch):
 def _shape(value, depth: int = 0):
     """The keys of a document down to its second level (the leaves' values vary by machine)."""
     if isinstance(value, dict) and depth < 2:
-        return {k: _shape(v, depth + 1) for k, v in value.items() if k not in ("tools", "probes")}
+        # hardware: an optional key of the brain block since 0.4.0 (wi-brain-machine-facts), absent from older.json
+        return {k: _shape(v, depth + 1) for k, v in value.items() if k not in ("tools", "probes", "hardware")}
     return type(value).__name__ if depth < 2 else None
 
 
