@@ -114,7 +114,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `outbox` | `$BRAIN_HOME/outbox` | sealed | truth-local | the outbound calls that failed, waiting to be sent again (`brain.outbox`) |
 | `personal` | `$BRAIN_HOME/personal.json` | sealed | truth-local | the pointer to the personal brain |
 | `profile` | `$BRAIN_HOME/profile.json` | sealed | truth-local | the machine's frozen tier profile |
-| `venv`, `bin`, `engine-clones` | `$BRAIN_HOME/venv`, `bin`, `engine` | sealed | install | the command's environment, its launcher, the tags' clones |
+| `venv`, `venvs`, `bin`, `engine-clones` | `$BRAIN_HOME/venv`, `venvs`, `bin`, `engine` | sealed | install | the command's environment (once `brain update` ran blue-green: a link to the active slot of `venvs`, one venv per engine version), its launcher, the tags' clones |
 
 An undeclared store's default is never looser than `sealed` (`secret` for the secrets): no store is ever without a
 class. A store meant to be looser (the telemetry outbox, meant to be shared) is declared so by the owner. To declare
