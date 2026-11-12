@@ -34,7 +34,6 @@ import re
 import socket
 import stat
 import urllib.error
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -201,6 +200,10 @@ ENABLE_VAR = "CLAUDE_CODE_ENABLE_TELEMETRY"
 HELPER_KEY = "otelHeadersHelper"
 HELPER = "brain ipc otel-headers"   # the launcher's folder is on the user PATH (install.ps1)
 OTEL_NAME = re.compile(r"^OTEL_[A-Z0-9_]+$")
+URL = re.compile(r"^https?://[^/@\s\\]+(/[^@\s\\]*)?$")
+LOOPBACK_URL = re.compile(r"^https?://(127(\.\d{1,3}){3}|localhost|\[::1\])(:\d{1,5})?(/[^@\s\\]*)?$", re.I)
+ENDPOINT_VAR = re.compile(r"^OTEL_EXPORTER_OTLP(_[A-Z]+)?_ENDPOINT$")   # the export's, or one signal's
+PROTOCOL_VAR = re.compile(r"^OTEL_EXPORTER_OTLP(_[A-Z]+)?_PROTOCOL$")
 
 
 def telemetry(cfg) -> dict:
@@ -219,14 +222,16 @@ def telemetry(cfg) -> dict:
     return out
 
 
-def export_settings(cfg) -> dict:
+def export_settings(cfg, current: dict | None = None) -> dict:
     """What Claude Code's user settings need for its OTLP export, from config.json ``adapters.claude.telemetry``:
     ``{"enabled", "env": {name: value}, "otelHeadersHelper": command or None, "errors": [...]}``. The helper is
     wanted when ``headers_helper`` is always, or auto while ``ipc.require_token`` names otel-collector. Refused (an
-    error, nothing to write): a helper with the grpc protocol (Claude Code then sends only the static headers), a
-    helper with an endpoint off loopback (the machine's token would leave it), an extra variable that is not OTEL_*,
-    that names the headers (the token goes through the helper, never in clear in settings.json) or that a key of the
-    section already sets."""
+    error, nothing to write): an endpoint with a user part, a backslash or a space; a helper with the grpc protocol
+    (Claude Code then sends only the static headers) or an endpoint off loopback (the machine's token would leave
+    it); an extra variable that is not OTEL_*, that names the headers (the token goes through the helper, never in
+    clear in settings.json) or that a key of the section already sets. ``current``: the user settings as they are;
+    since the installer only adds, the helper is judged against the export they would then make (a value already
+    there wins over the section's: an endpoint off loopback or grpc kept there refuses the helper too)."""
     t = telemetry(cfg)
     res = {"enabled": bool(t["enabled"]), "env": {}, HELPER_KEY: None, "errors": []}
     if not res["enabled"]:
@@ -237,13 +242,15 @@ def export_settings(cfg) -> dict:
                                 *(("exporters", x, tuple(EXPORTERS)) for x in t["exporters"])):
         if value not in allowed:
             errors.append(f"adapters.claude.telemetry.{key} {value!r}: one of {', '.join(allowed)}")
-    if not re.match(r"^https?://[^/\s]+", endpoint):
-        errors.append(f"adapters.claude.telemetry.endpoint {endpoint!r}: an http:// or https:// URL")
+    if not URL.match(endpoint):
+        errors.append(f"adapters.claude.telemetry.endpoint {endpoint!r}: an http:// or https:// URL, with no user "
+                      "part, backslash or space")
     env = {ENABLE_VAR: "1", **{EXPORTERS[x]: "otlp" for x in t["exporters"] if x in EXPORTERS},
            "OTEL_EXPORTER_OTLP_PROTOCOL": protocol, "OTEL_EXPORTER_OTLP_ENDPOINT": endpoint}
     _extra_env(t["env"], env, errors)
     if mode == "always" or (mode == "auto" and "otel-collector" in settings(cfg)["require_token"]):
-        errors += _helper_errors(protocol, endpoint)
+        have = (current or {}).get("env") if isinstance((current or {}).get("env"), dict) else {}
+        errors += helper_errors({**env, **{k: str(v) for k, v in have.items()}})
         res[HELPER_KEY] = HELPER
     res["env"] = env
     return res
@@ -263,17 +270,24 @@ def _extra_env(extra: dict, env: dict, errors: list[str]) -> None:
             env[name] = value
 
 
-def _helper_errors(protocol: str, endpoint: str) -> list[str]:
-    """Why otelHeadersHelper cannot go with this export: grpc (Claude Code sends only the static headers), an
-    endpoint off loopback (the helper sends the machine's token there)."""
+def loopback_url(url: str) -> bool:
+    """An http(s) URL whose host is this machine's loopback, read strictly: 127.x.x.x, localhost or [::1], an
+    optional port and path, no user part, backslash or space (where two URL parsers may disagree on the host, the
+    token could go to the other one's)."""
+    return bool(LOOPBACK_URL.match(url))
+
+
+def helper_errors(env: dict) -> list[str]:
+    """Why otelHeadersHelper cannot go with the export ``env`` makes (Claude Code's settings env, with what the
+    installer would add): grpc for any signal (Claude Code then sends only the static headers), an endpoint off
+    loopback for any signal (the helper sends the machine's token there). Unset, Claude Code's own defaults are
+    loopback and http."""
     errors = []
-    if protocol == "grpc":
-        errors.append("adapters.claude.telemetry: otelHeadersHelper works with http/protobuf and http/json only "
-                      "(with grpc Claude Code sends only the static headers)")
-    host = urllib.parse.urlsplit(endpoint).hostname if endpoint.startswith(("http://", "https://")) else None
-    if not ipcauth.is_loopback(host):
-        errors.append(f"adapters.claude.telemetry.endpoint {endpoint}: off loopback, the machine's token would "
-                      "leave it (otelHeadersHelper sends it)")
+    for name in sorted(k for k in env if PROTOCOL_VAR.match(k) and str(env[k]).strip() == "grpc"):
+        errors.append(f"{name} grpc: otelHeadersHelper works with http/protobuf and http/json only (with grpc Claude "
+                      "Code sends only the static headers)")
+    for name in sorted(k for k in env if ENDPOINT_VAR.match(k) and not loopback_url(str(env[k]).strip())):
+        errors.append(f"{name} off loopback: the machine's token would leave it (otelHeadersHelper sends it)")
     return errors
 
 
@@ -299,17 +313,28 @@ def export_lines(s: dict, path: Path | None = None) -> list[tuple[str, str]]:
         return [("OK", f"Claude Code's export is off in {f}: nothing for the collector to refuse")]
     helper = data.get(HELPER_KEY)
     if isinstance(helper, str) and helper.strip():
-        if str(env.get("OTEL_EXPORTER_OTLP_PROTOCOL", "")).strip() == "grpc":
-            return [("FAIL", f"Claude Code's export uses grpc in {f}: otelHeadersHelper is not sent with it, the "
-                             "collector refuses the export (http/protobuf: config.json adapters.claude.telemetry)")]
-        if "otel-headers" not in helper:
-            return [("warning", f"Claude Code's otelHeadersHelper in {f} runs {helper!r}, not {HELPER}")]
-        return [("OK", f"Claude Code's export carries the token ({HELPER_KEY} in {f})")]
+        return [_helper_line(f, helper, env)]
+    endpoint = str(env.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")).strip()
+    if endpoint and not loopback_url(endpoint):
+        return [("OK", f"Claude Code's export goes off loopback in {f}, not to the collector: nothing for it to "
+                       "refuse")]
     if "authorization" in str(env.get("OTEL_EXPORTER_OTLP_HEADERS", "")).lower():
         return [("warning", f"Claude Code's export carries the token in clear in {f} (OTEL_EXPORTER_OTLP_HEADERS): "
                             f"{HELPER_KEY} keeps it in the token file")]
     return [("FAIL", f"the collector requires the token and Claude Code's settings {f} carry no {HELPER_KEY}: its "
                      "export is refused (config.json adapters.claude.telemetry, then install.ps1 -Apply)")]
+
+
+def _helper_line(f: Path, helper: str, env: dict) -> tuple[str, str]:
+    """The line of an export that has an otelHeadersHelper: FAIL when the export cannot take it (grpc, an endpoint
+    off loopback), a warning when it runs another command, else OK."""
+    errors = helper_errors({k: str(v) for k, v in env.items()})
+    if errors:
+        return ("FAIL", f"Claude Code's {HELPER_KEY} in {f} goes with an export that cannot take it: "
+                        f"{'; '.join(errors)} (config.json adapters.claude.telemetry)")
+    if "otel-headers" not in helper:
+        return ("warning", f"Claude Code's otelHeadersHelper in {f} runs {helper!r}, not {HELPER}")
+    return ("OK", f"Claude Code's export carries the token ({HELPER_KEY} in {f})")
 
 
 def health(cfg, named: bool = True, out=None, root=None) -> int:

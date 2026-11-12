@@ -199,10 +199,14 @@ The brain records them; the installer writes them. config.json `adapters.claude.
 | `env` | none | other `OTEL_*` variables, as strings (`OTEL_METRIC_EXPORT_INTERVAL`, say) |
 | `headers_helper` | `auto`: when `ipc.require_token` names `otel-collector` (or `always`, `never`) | `otelHeadersHelper` = `brain ipc otel-headers` |
 
-`brain ipc claude-settings [--json]` renders them (it prints no secret). It refuses, exit 1 and nothing for the
-installer to write: the helper with `grpc` (Claude Code would not send it), the helper with an endpoint off loopback
-(the machine's token would leave it), an `env` name that is not `OTEL_*`, one that names headers (the token goes
-through the helper, never in clear in `settings.json`), or one the section's own keys set.
+`brain ipc claude-settings [--json] [--settings FILE]` renders them (it prints no secret). It refuses, exit 1 and
+nothing for the installer to write: an endpoint with a user part, a backslash or a space (two URL parsers could read
+two hosts there); the helper with `grpc` (Claude Code would not send it) or with an endpoint off loopback (the
+machine's token would leave it; loopback is read strictly: `127.x.x.x`, `localhost`, `[::1]`); an `env` name that is
+not `OTEL_*`, one that names headers (the token goes through the helper, never in clear in `settings.json`), or one
+the section's own keys set. Since the installer only adds, the helper is judged against the export Claude Code's user
+settings would then make: an endpoint off loopback (`OTEL_EXPORTER_OTLP_ENDPOINT` or a signal's own,
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` say) or a `grpc` protocol already there, and kept, refuses it too.
 
 `install.ps1` (its telemetry step, after the permissions) adds them to `~/.claude/settings.json`
 (`$CLAUDE_CONFIG_DIR` when set): the plan says each one it would set, `-Apply` writes them. Additions only: a key
@@ -210,6 +214,9 @@ already there with another value is kept and said, its value never printed (one 
 nothing is removed; turning the section off writes nothing and takes nothing out. `settings.json` is handled as the
 permissions step handles it (refused when it is not a JSON object, kept as it was in `settings.json.bak`). An
 installed brain command older than `brain ipc claude-settings` only says so.
+
+An engine older than this one does not know the section: in strict mode (CI) `brain config --check` refuses it as an
+unknown key, so a personal brain moves `engine.pin` to a release that has it before (or with) the section.
 
 The order of the collector's switch (the owner's): `brain ipc token --init`, the section with `enabled: true` and
 `install.ps1 -Apply` (the helper is written once `ipc.require_token` names the collector, so both in one change of
@@ -228,8 +235,9 @@ accepts a group bit or an ACL entry, and refuses a token readable by every user.
 - which services take requests without the token (the collector while not opted in, GitNexus);
 - when the collector requires the token, Claude Code's export as its user settings say it: on with no
   `otelHeadersHelper` is a FAIL (the collector refuses the export: the section above, then `install.ps1 -Apply`), the
-  helper with `grpc` too, the token in clear in `OTEL_EXPORTER_OTLP_HEADERS` a warning, the export off OK. Project or
-  managed settings are not read.
+  helper with `grpc` or with an endpoint off loopback too (it would not be sent, or would send the token away), the
+  token in clear in `OTEL_EXPORTER_OTLP_HEADERS` a warning; the export off, or one that goes off loopback without the
+  helper (another backend's, not the collector's), is OK. Project or managed settings are not read.
 
 Exit 1 on a FAIL. A required token that is missing is a FAIL. Under `--all`, a machine that never made the token and
 requires none gets no line: nothing is probed and Docker is not asked, so `--all` says what it said before. Its

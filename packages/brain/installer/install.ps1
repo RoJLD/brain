@@ -679,12 +679,14 @@ function Update-Permissions {
 }
 # --- end of the permissions step ---
 
-# --- the telemetry step (tests/test_ipchealth.py runs it alone) ---
+# --- the telemetry step (tests/test_ipc_telemetry.py runs it alone) ---
 function Set-ClaudeTelemetry {
     # Claude Code's OTLP export (wi-brain-install-claude-telemetry): what config.json adapters.claude.telemetry wants in
     # the user settings, as the installed brain command renders it (brain ipc claude-settings --json: env
     # CLAUDE_CODE_ENABLE_TELEMETRY and OTEL_*, and otelHeadersHelper when the collector requires the token). Additions
-    # only: a key missing is added, one already there with another value is kept and said, nothing is removed.
+    # only: a key missing is added, one already there with another value is kept and said, nothing is removed. The
+    # helper is judged against the export the settings would then make (--settings): a kept endpoint off loopback or a
+    # kept grpc refuses it, since the helper would send the machine's token there or not at all.
     if (-not (Test-Path $venv_python)) {
         "telemetry Claude Code's OTLP export settings from config.json adapters.claude.telemetry, once the command is installed (-Apply)"
         return
@@ -692,7 +694,7 @@ function Set-ClaudeTelemetry {
     $ErrorActionPreference = 'Continue'
     $console = [Console]::OutputEncoding
     [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false   # the brain command writes UTF-8 to a pipe
-    $out = & $venv_python -I -m brain --root $repo ipc claude-settings --json 2>$null
+    $out = & $venv_python -I -m brain --root $repo ipc claude-settings --json --settings $settings_path 2>$null
     $code = $LASTEXITCODE
     [Console]::OutputEncoding = $console
     $ErrorActionPreference = 'Stop'

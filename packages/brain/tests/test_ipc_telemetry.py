@@ -67,7 +67,12 @@ def test_the_schema_refuses_an_unknown_key_or_value_of_the_section(tmp_path, mon
 @pytest.mark.parametrize("telemetry, error", [
     ({"protocol": "grpc", "headers_helper": "always"}, "otelHeadersHelper works with http/protobuf and http/json"),
     ({"endpoint": "https://collector.example.invalid:4318", "headers_helper": "always"},
-     "off loopback, the machine's token would leave it"),
+     "off loopback: the machine's token would leave it"),
+    # Python's urlsplit reads 127.0.0.1 here, the WHATWG parser Claude Code's exporter uses reads evil.example
+    ({"endpoint": "http://evil.example" + chr(92) + "@127.0.0.1:4318", "headers_helper": "always"},
+     "off loopback: the machine's token would leave it"),
+    ({"endpoint": "http://evil.example" + chr(92) + "@127.0.0.1:4318"}, "no user part, backslash or space"),
+    ({"endpoint": "http://user@127.0.0.1:4318"}, "no user part, backslash or space"),
     ({"env": {"OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer x"}}, "never in clear in settings.json"),
     ({"env": {"OTEL_EXPORTER_OTLP_METRICS_HEADERS": "a=b"}}, "never in clear in settings.json"),
     ({"env": {"PATH": "x"}}, "only OTEL_* variables"),
@@ -80,10 +85,46 @@ def test_a_section_that_would_leak_the_token_or_cannot_work_is_refused(tmp_path,
 
 
 def test_a_loopback_endpoint_by_name_or_address_takes_the_helper(tmp_path, monkeypatch):
-    for endpoint in ("http://localhost:4318", "http://127.0.0.1:4318", "http://[::1]:4318"):
+    for endpoint in ("http://localhost:4318", "http://127.0.0.1:4318", "http://[::1]:4318", "http://127.0.0.1:4318/"):
         res = ipchealth.export_settings(_config(tmp_path, monkeypatch, {"enabled": True, "endpoint": endpoint,
                                                                         "headers_helper": "always"}))
         assert res["errors"] == [] and res["otelHeadersHelper"] == HELPER, endpoint
+    for endpoint in ("http://127.1:4318", "http://0x7f.0.0.1:4318", "http://localhost.example:4318"):
+        assert not ipchealth.loopback_url(endpoint), endpoint
+
+
+@pytest.mark.parametrize("kept, error", [
+    ({"OTEL_EXPORTER_OTLP_ENDPOINT": "https://api.vendor.example"}, "OTEL_EXPORTER_OTLP_ENDPOINT off loopback"),
+    ({"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://api.vendor.example/v1/metrics"},
+     "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT off loopback"),
+    ({"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"}, "OTEL_EXPORTER_OTLP_PROTOCOL grpc"),
+    ({"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "grpc"}, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL grpc"),
+])
+def test_the_helper_is_refused_over_a_value_the_settings_keep(tmp_path, monkeypatch, kept, error):
+    """The installer only adds: a remote endpoint or grpc already in Claude Code's settings stays, and the helper
+    added beside it would send the machine's token off the machine, or never."""
+    cfg = _config(tmp_path, monkeypatch, {"enabled": True}, {"require_token": ["otel-collector"]})
+    assert ipchealth.export_settings(cfg, {"env": {}})["errors"] == []
+    res = ipchealth.export_settings(cfg, {"env": kept, "otelHeadersHelper": "x"})
+    assert any(error in e for e in res["errors"]), res["errors"]
+    without = ipchealth.export_settings(_config(tmp_path, monkeypatch, {"enabled": True}), {"env": kept})
+    assert without["errors"] == []   # no helper wanted: the owner's own export is theirs
+
+
+def test_the_command_judges_the_settings_it_is_given(tmp_path, monkeypatch, capsys):
+    _config(tmp_path, monkeypatch, {"enabled": True}, {"require_token": ["otel-collector"]})
+    f = tmp_path / "settings.json"
+    f.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://api.vendor.example"}}), encoding="utf-8")
+    assert cli.main(["ipc", "claude-settings", "--json", "--settings", str(f)]) == 1
+    assert "off loopback" in json.loads(capsys.readouterr().out)["errors"][0]
+    f.write_text("{not json", encoding="utf-8")   # unreadable: the installer refuses it, not judged here
+    assert cli.main(["ipc", "claude-settings", "--json", "--settings", str(f)]) == 0
+    capsys.readouterr()
+    default = Path(os.environ["CLAUDE_CONFIG_DIR"]) / "settings.json"   # no --settings: Claude Code's user settings
+    default.parent.mkdir(parents=True, exist_ok=True)
+    default.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"}}), encoding="utf-8")
+    assert cli.main(["ipc", "claude-settings", "--json"]) == 1
+    assert "grpc" in capsys.readouterr().out
 
 
 def test_the_command_prints_the_settings_and_no_secret(tmp_path, monkeypatch, capsys):
@@ -112,7 +153,11 @@ def test_the_command_prints_the_settings_and_no_secret(tmp_path, monkeypatch, ca
     ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": "1"}}, "FAIL", "carry no otelHeadersHelper"),
     ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": "1"}, "otelHeadersHelper": HELPER}, "OK", "export carries the token"),
     ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": "1", "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"},
-      "otelHeadersHelper": HELPER}, "FAIL", "uses grpc"),
+      "otelHeadersHelper": HELPER}, "FAIL", "OTEL_EXPORTER_OTLP_PROTOCOL grpc"),
+    ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": "1", "OTEL_EXPORTER_OTLP_ENDPOINT": "https://api.vendor.example"},
+      "otelHeadersHelper": HELPER}, "FAIL", "off loopback: the machine's token would leave it"),
+    ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": "1", "OTEL_EXPORTER_OTLP_ENDPOINT": "https://api.vendor.example",
+              "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer vendor"}}, "OK", "not to the collector"),
     ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": "true", "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer x"}},
      "warning", "token in clear"),
     ({"env": {"CLAUDE_CODE_ENABLE_TELEMETRY": "1"}, "otelHeadersHelper": "/bin/other"}, "warning", "not brain ipc"),
@@ -173,7 +218,7 @@ WANT = ('{"enabled": true, "env": {"CLAUDE_CODE_ENABLE_TELEMETRY": "1", "OTEL_EX
 def test_the_installer_documents_and_calls_the_step():
     text = INSTALLER.read_text(encoding="utf-8-sig")
     assert "if ($claude_steps) { Set-ClaudeTelemetry }" in text and "      telemetry    " in text
-    assert "ipc claude-settings --json" in _telemetry_block()
+    assert "ipc claude-settings --json --settings $settings_path" in _telemetry_block()
 
 
 @pytest.mark.skipif(os.name != "nt" or not shutil.which("powershell.exe"), reason="Windows PowerShell")

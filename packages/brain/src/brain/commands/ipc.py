@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 from .. import config, ipcauth, ipchealth
 from ._common import root_of
@@ -21,12 +22,13 @@ USAGE = """\
                                   requires the token (config.json ipc.require_token); the helper's only output: a
                                   session never runs it (the owner guard, keys); exit 1, nothing on stdout, without a
                                   usable token
-  brain ipc claude-settings [--json]
+  brain ipc claude-settings [--json] [--settings FILE]
                                   what Claude Code's user settings need for its OTLP export, from config.json
                                   adapters.claude.telemetry: env CLAUDE_CODE_ENABLE_TELEMETRY and OTEL_*, and
                                   otelHeadersHelper (brain ipc otel-headers) when the collector requires the token
                                   (ipc.require_token); install.ps1 adds them (additions only); prints no secret; exit 1
-                                  on an error of the section (the helper off loopback or with grpc, a headers variable)
+                                  on an error of the section, or of the export the user settings (--settings) would
+                                  make with it: the helper off loopback or with grpc, a value kept there included
 """
 NO_PROJECT = {"ipc"}   # its parsers that take no --project after them
 
@@ -41,6 +43,8 @@ def register(sub, ctx) -> None:
     cs = ip.add_parser("claude-settings", help="what Claude Code's user settings need for its OTLP export, from "
                                                "config.json adapters.claude.telemetry (install.ps1 adds them)")
     cs.add_argument("--json", action="store_true", help="one JSON object: enabled, env, otelHeadersHelper, errors")
+    cs.add_argument("--settings", help="Claude Code's user settings the helper is judged against (default "
+                                       "$CLAUDE_CONFIG_DIR or ~/.claude, settings.json): a value there is kept")
 
 
 def otel_headers() -> int:
@@ -58,8 +62,15 @@ def otel_headers() -> int:
 
 def claude_settings(args) -> int:
     """The settings of Claude Code's OTLP export (brain.ipchealth.export_settings), as JSON for the installer or as
-    lines; exit 1 on an error of config.json adapters.claude.telemetry."""
-    res = ipchealth.export_settings(config.load(root_of(args)))
+    lines; exit 1 on an error of config.json adapters.claude.telemetry, or of the export the user settings would make
+    with them (the installer only adds: a value already there is kept). Settings that cannot be read are not judged
+    here: the installer refuses them."""
+    f = Path(args.settings) if args.settings else ipchealth.claude_settings_file()
+    try:
+        current = json.loads(f.read_text(encoding="utf-8-sig")) if f.is_file() else None
+    except (OSError, ValueError):
+        current = None
+    res = ipchealth.export_settings(config.load(root_of(args)), current if isinstance(current, dict) else None)
     if args.json:
         print(json.dumps(res, ensure_ascii=False))
         return 1 if res["errors"] else 0
