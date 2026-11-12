@@ -1983,14 +1983,50 @@ def _is_roots(target) -> bool:
     return _real(target) in (_real(roots_file()), _real(roots_file().parent))
 
 
+_INTERPRETER = re.compile(r"^(?:python[0-9.]*w?|pythonw|py|pypy[0-9.]*|ipython[0-9.]*|bash|sh|zsh|dash|pwsh"
+                          r"|powershell|cmd|uv|uvx|pipx|xargs)(?:\.exe)?$")
+_PYTHON = re.compile(r"^(?:python[0-9.]*w?|pythonw|py|pypy[0-9.]*|ipython[0-9.]*)(?:\.exe)?$")
+_HOOK_FILE = re.compile(r"^midsession\.(?:py|sh)$")
+_HOOK_CODE = re.compile(r"(?<![\w])(?:brain\.)?midsession(?![\w.])|\bauto_root\b|\bhook_main\b|brain\.midsession\b")
+
+
+def _root_hook(low: list[str]) -> bool:
+    """Whether a simple command runs the chain root's hook entry (wi-brain-handover-auto-root): an interpreter
+    (python, bash, cmd, a wrapper) given a file named midsession.py or .sh, ``-m brain.midsession``, or Python code
+    (a -c word) that imports or calls it. Reading or testing it (grep, cat, pytest -k auto_root) is not. It holds
+    against a mistake: a renamed copy or code built at run time is a script calling the engine, out of its reach."""
+    if not low:
+        return False
+    prog = re.split(r"[\\/]", low[0])[-1]
+    if not (_INTERPRETER.match(prog) or prog in (".", "source")):
+        return False
+    python = any(_PYTHON.match(re.split(r"[\\/]", w)[-1]) for w in low)
+    return any(_hook_word(low, i, python) for i in range(1, len(low)))
+
+
+def _hook_word(low: list[str], i: int, python: bool) -> bool:
+    """Whether the word ``low[i]`` names the hook's entry: a path to it (no space: not a -c's code), its module after
+    -m, or Python code after -c that imports or calls it."""
+    w = low[i]
+    if not any(c.isspace() for c in w) and _HOOK_FILE.match(re.split(r"[\\/]", w)[-1]):
+        return True
+    module = w[2:] if w.startswith("-m") and len(w) > 2 else (low[i + 1] if w == "-m" and i + 1 < len(low) else "")
+    return module in ("brain.midsession", "brain.succession") or (python and low[i - 1] == "-c" and
+                                                                   bool(_HOOK_CODE.search(w)))
+
+
 def _root_override(cmds, shell: str) -> str | None:
     """What marks a chain root for a session (wi-brain-handover-command): any command whose words hold ``handover``
     then ``root`` (quoted or not) or a word the guard cannot resolve (``$x``, ``%x%``, a backquote), whatever runs it
-    (brain, python -I -m brain, a wrapper); or a shell write into its file or the folder that holds it."""
+    (brain, python -I -m brain, a wrapper); the hook entry that marks a root at a first prompt (midsession.py,
+    brain.midsession, brain.succession.auto_root: wi-brain-handover-auto-root) run by an interpreter; or a shell write
+    into its file or the folder that holds it."""
     for words, _, _, _ in actions(cmds, shell):
         low = [w.lower() for w in words]
         if any(a == "handover" and (b == "root" or any(c in b for c in "$`%")) for a, b in zip(low, low[1:])):
             return "brain handover root"
+        if _root_hook(low):
+            return "the chain root's hook entry (midsession.py) run by hand"
     for what, target in shell_writes(cmds, shell):
         if _is_roots(target):   # an unresolved target counts by its folder: a write judged in the marks' folder
             return f"{what} into {target}"
