@@ -1,51 +1,50 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/RoJLD/brain/schemas/permissions.schema.json",
+  "$id": "brain/schemas/permissions.schema.json",
   "title": "permissions.yaml",
-  "description": "The permission hierarchy of a brain (brain.permissions, docs/permissions.md): its sections and a rule's keys, as brain.permissions reads them. It describes the format for brain schema diff and the fixtures (wi-brain-permissions-schema); brain.permissions still reads the file itself (its keys are its constants: SECTIONS, RULE_KEYS, NEVER_KEYS), and a test keeps the two in step. What it cannot say in this subset (exactly one of allow, ask or deny; one level at a time) brain.permissions checks.",
-  "type": "object",
-  "required": ["v"],
+  "description": "The permission hierarchy of a brain (brain.permissions, docs/permissions.md): its sections and a rule's keys, as brain.permissions reads them. It describes the format for brain schema diff and the fixtures (wi-brain-permissions-schema); brain.permissions still reads the file itself (its keys are its constants: SECTIONS, RULE_KEYS, NEVER_KEYS), and a test keeps the two in step. It is never stricter than the module: a section left empty (null) is accepted, as an empty file is; what this subset cannot say (v once the file holds anything, exactly one of allow, ask or deny, one level at a time, a non-empty title) brain.permissions checks.",
+  "type": ["object", "null"],
   "additionalProperties": false,
   "properties": {
     "v": {"const": 1, "description": "The format's version."},
     "never": {
-      "type": "object",
+      "type": ["object", "null"],
       "description": "The categories no level may allow, extended by this file: category -> its patterns, why, deny rules and probes.",
       "additionalProperties": {
-        "type": "object",
+        "type": ["object", "null"],
         "additionalProperties": false,
         "properties": {"why": {}, "find": {}, "names": {}, "deny": {}, "probes": {}}
       }
     },
-    "profiles": {"type": "object", "additionalProperties": {"$ref": "#/$defs/titled"}},
+    "profiles": {"type": ["object", "null"], "additionalProperties": {"$ref": "#/$defs/titled"}},
     "machines": {
-      "type": "object",
+      "type": ["object", "null"],
       "additionalProperties": {
         "type": "object", "required": ["title"], "additionalProperties": false,
-        "properties": {"title": {"$ref": "#/$defs/text"}, "profile": {"type": "string"}}
+        "properties": {"title": {"type": "string"}, "profile": {"type": ["string", "null"]}}
       }
     },
     "tenants": {
-      "type": "object",
+      "type": ["object", "null"],
       "additionalProperties": {
         "type": "object", "required": ["title"], "additionalProperties": false,
-        "properties": {"title": {"$ref": "#/$defs/text"}, "projects": {"type": "array", "items": {"type": "string"}}}
+        "properties": {"title": {"type": "string"}, "projects": {"type": ["array", "null"], "items": {"type": "string"}}}
       }
     },
     "sessions": {
-      "type": "object",
+      "type": ["object", "null"],
       "additionalProperties": {
         "type": "object", "required": ["title"], "additionalProperties": false,
-        "properties": {"title": {"$ref": "#/$defs/text"}, "project": {"type": "string"}, "parent": {"type": "string"}}
+        "properties": {"title": {"type": "string"}, "project": {"type": ["string", "null"]},
+                       "parent": {"type": ["string", "null"]}}
       }
     },
-    "rules": {"type": "array", "items": {"$ref": "#/$defs/rule"}}
+    "rules": {"type": ["array", "null"], "items": {"$ref": "#/$defs/rule"}}
   },
   "$defs": {
-    "text": {"type": "string", "minLength": 1},
     "titled": {
       "type": "object", "required": ["title"], "additionalProperties": false,
-      "properties": {"title": {"$ref": "#/$defs/text"}}
+      "properties": {"title": {"type": "string"}}
     },
     "rule": {
       "type": "object",
@@ -54,8 +53,7 @@
       "properties": {
         "allow": {"type": "string"}, "ask": {"type": "string"}, "deny": {"type": "string"},
         "profile": {}, "machine": {}, "tenant": {}, "project": {}, "session": {},
-        "why": {"type": "string"}, "by": {}, "from": {}, "date": {}, "until": {}, "while": {}, "asked_by": {},
-        "for": {}
+        "why": {}, "by": {}, "from": {}, "date": {}, "until": {}, "while": {}, "asked_by": {}, "for": {}
       }
     }
   }

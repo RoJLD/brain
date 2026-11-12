@@ -140,7 +140,7 @@ def changed_schemas(repo: Path, tag: str) -> list[str]:
 # wi-brain-release-schema-additive): every file an older engine wrote stays valid under the new schema, so an owner
 # has nothing to do. Only config.json's: a record schema (ar, ddr, sr, event) is read by the engines of other machines,
 # which would refuse the new key in a record this one writes.
-ADDITIVE = ("config",)
+ADDITIVE = ("config", "permissions")   # permissions.yaml: one brain's file, an older engine notes a new key
 # The keys of a JSON schema that only describe it: a change of them moves no format.
 PROSE = ("description", "title", "$comment", "examples")
 
@@ -498,8 +498,8 @@ def grown_lines(repo: Path, tag: str, grown: list[str]) -> list[str]:
     new, optional = [p for p in grown if p in added], [p for p in grown if p not in added]
     lines = []
     if new:
-        lines.append(f"new registered formats since {tag}, held by no brain yet (compatible with a patch): "
-                     f"{', '.join(new)}")
+        lines.append(f"new schemas since {tag}, a new format or the first schema of one, no reader changed "
+                     f"(compatible with a patch): {', '.join(new)}")
     if optional:
         lines.append(f"registered schemas grown by optional keys only since {tag} (compatible with a patch): "
                      f"{', '.join(optional)}")

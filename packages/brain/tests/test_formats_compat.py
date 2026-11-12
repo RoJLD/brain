@@ -222,6 +222,26 @@ def test_the_permissions_schema_says_what_brain_permissions_reads():
         assert set(s["properties"][name]["additionalProperties"]["properties"]) == {"title"} | extra, name
 
 
+@pytest.mark.parametrize("text", [
+    "", "v: 1\nrules:\n", "v: 1\nnever:\nprofiles:\nmachines:\ntenants:\nsessions:\n",
+    "v: 1\nnever: {money: }\n", "v: 1\nprofiles: {lite: {title: L}}\nmachines: {m: {title: M, profile: }}\n",
+    "v: 1\ntenants: {t: {title: T, projects: }}\nsessions: {s: {title: S, parent: }}\n",
+    'v: 1\nrules:\n  - {deny: "Bash(rm -rf *)", why: "never wipe a folder", project: mine, until: 2027-01-01}\n',
+])
+def test_what_brain_permissions_accepts_the_schema_accepts(text, tmp_path, monkeypatch):
+    """Never stricter than the module: each file brain.permissions accepts, strict, validates (the review of
+    wi-brain-permissions-schema: empty sections and null values)."""
+    root = tmp_path / "brain"
+    root.mkdir()
+    (root / "projects.yaml").write_text("mine: {root: .}\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(root / "projects.yaml"))
+    f = root / permissions.FILE
+    f.write_text(text, encoding="utf-8")
+    monkeypatch.setenv(permissions.ENV, str(f))
+    assert permissions.check() == []
+    assert schema.check("permissions", yaml.safe_load(text) or {})[0] == []   # an empty file is read as {}
+
+
 @pytest.mark.parametrize("which", ["older", "newer"])
 def test_the_permissions_fixtures_match_the_schema(which):
     """The older file validates strict; the newer one's additive keys are noted in read mode, never errors."""

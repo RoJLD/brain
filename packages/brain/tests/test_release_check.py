@@ -965,7 +965,7 @@ def test_a_whole_new_format_is_a_patchs(repo, capsys):
         assert release_check.new_formats(repo, "v0.2.5") == {"widgets"}
         rc, text = run(repo, capsys)
         assert rc == 0, text
-        assert f"new registered formats since v0.2.5, held by no brain yet (compatible with a patch): {widgets}" in text
+        assert f"new schemas since v0.2.5, a new format or the first schema of one, no reader changed (compatible with a patch): {widgets}" in text
         assert "grown by optional keys" not in text
     finally:
         release_check.SCHEMAS.clear()
@@ -990,7 +990,7 @@ def test_a_first_schema_of_a_format_registered_without_one_is_a_patchs(repo, cap
     assert release_check.new_formats(repo, "v0.2.5") == {"permissions"}
     rc, out = run(repo, capsys)
     assert rc == 0, out
-    assert f"new registered formats since v0.2.5, held by no brain yet (compatible with a patch): {perms}" in out
+    assert f"new schemas since v0.2.5, a new format or the first schema of one, no reader changed (compatible with a patch): {perms}" in out
     git(repo, "tag", "-f", "v0.2.6")
     write(repo, perms, '{"properties": {"v": {"const": 1}}, "required": ["v", "rules"]}\n')
     commit(repo)
