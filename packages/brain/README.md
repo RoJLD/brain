@@ -88,7 +88,8 @@ install, the commits pip recorded are checked against the one the signed tag nam
 `true`, the owner's opt-in, which refuses an unsigned tag (`brain update --yes` then exits 1). The installer does the same
 ([docs/identity.md](docs/identity.md), « Signed releases »).
 
-The cockpit (`brain tui`) has one tab per question, each on its key: `0` the overview, `1` the queue, `2` the sessions,
+The cockpit (`brain tui`) runs once per machine (`<BRAIN_HOME>/locks/cockpit.lock`: a second interactive cockpit is
+refused, `--once`, `--json` and `--detail` read beside it). It has one tab per question, each on its key: `0` the overview, `1` the queue, `2` the sessions,
 `3` the frontier, `4` the milestones, `8` health (alerts on top; audit debt, stacks and index, and the exec times).
 The overview shows one card per tab, what counts in it in a few lines: the band now, the sessions asking, the nearest
 milestones, what can start, the open alerts. Enter or a click opens its tab, already filtered as the card says, whatever your
@@ -330,6 +331,22 @@ prerequisite comes a round earlier, the lots that unblock the most first, at mos
 master's and `N` PRs verified at once (3) a round. It prints the rounds, the predicted conflicts, the hot files shared
 and the items with no known surface (each a lot of its own, unchecked), with what the memory guard and the last quota
 forecast say now; it refuses nothing. `brain next` shows the current wave's first round.
+
+### Item sizes
+
+Every work item carries a size, the judgement of the session that writes it: `props.size` (`S`, `M`, `L`, `XL`) and
+`props.size_reason` (one line). The scale, until the recalibration against the actuals moves it: S under about 0.3 h
+of active time, M up to about 0.8 h, L up to about 2 h, XL beyond (to be split when possible); `brain.sizing.HOURS`
+holds it as the hours the ranking reads. `brain item add ID --title T --size M --size-reason "..."` gives both (a size
+without its reason is refused), `brain item set ID size=L size_reason=...` changes them (any case; a size off the
+scale is refused). `brain item add` stamps a work item `props.created` (today) and, without `--size`, prints the
+`brain item set` line that sizes it (`--prop size=m` follows the same rules as `--size`). `brain check` warns, never
+fails, on an open item stamped `created` that carries no size, on an open item whose size is off the scale (a hand
+edit; an edit that leaves the size alone is not refused), and on an open item with a size but no `size_reason`. The
+proposals the engine writes itself (a lesson's prevention item, an audit's debt item) carry no stamp: the session that
+adopts one sizes it. Items written before the rule carry no stamp: a
+session sizes them once, in batches, reading each one (a script cannot guess a size: the free signals predict an
+item's cost poorly).
 
 ### Reading a brain
 
@@ -681,7 +698,9 @@ unbalanced quote is refused by `brain check --all`. `brain schedule list` shows 
 or its install, the later, is older than two cadences of the machine's awake time (a machine asleep or off misses
 no pass); the SessionStart health hook says so in one line and `brain status`'s alerts row shows
 it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and says so in one line; the alerts go
-at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped.
+at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped. One pass runs at a time
+per machine (`<BRAIN_HOME>/locks/alerts-pass.lock`, `brain.shutdown`): a pass that starts while another runs (a
+logon pass beside the 15-minute one) is skipped, exit 0.
 
 ### Dependency probes: loud fallbacks
 
@@ -1102,6 +1121,15 @@ def run(args, root: Path) -> int:
 - `run(args, root)` gets the project's root: `--root`, else `--project`'s, else the nearest folder above with a graph
   store. A command that must run before any root is resolved (a hook, a machine-wide command, a repo that may hold
   no graph store) defines `early(args)`: its exit code, or `None` to go on to `run`.
+- Every command runs under `brain.shutdown.graceful()`: SIGINT (Ctrl+C), SIGTERM, SIGHUP and SIGBREAK (Ctrl+Break
+  on Windows) stop it with `Stopped` (a `KeyboardInterrupt`), so its `finally` and `with` blocks run and its locks
+  are released; one that arrives inside `brain.shutdown.critical()` (each ledger line, each atomic state write)
+  waits for the write to end, and one that arrives while the write fails still stops it. stderr names the signal;
+  then, on POSIX, the command dies by the signal itself, so a shell sees 128 + its number (130 for Ctrl+C, 143 for
+  SIGTERM) and stops a loop on it; on Windows it exits 128 + the number (149 for Ctrl+Break). `main([...])` called
+  from Python returns that code instead. `brain timed` passes a signal sent to brain alone to its command (POSIX),
+  and the text cockpit quits with 0 on Ctrl+C. A long command's own write that must not be cut goes in `critical()`, or through
+  `stateio.write_atomic`; `taskkill /F` and SIGKILL cannot be trapped.
 - `NO_PROJECT = {"hello"}`: no `--project` is added after its subcommand (the hooks', machine-wide commands).
 - `RUNS_VIA = {"hello wave": "wired: the session-start hook runs brain.hello"}`: a subcommand that may never run
   from the CLI and is no gap, with how it is reached: `wired: ...` (a hook, another command or a schedule runs its

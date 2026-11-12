@@ -39,6 +39,7 @@ import functools
 import json
 import os
 import random
+import signal
 import subprocess
 import sys
 import threading
@@ -47,7 +48,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # schema, secretscan, shlex, shutil and socket are imported where used: a hook imports this module (brain.selftime)
-from . import paths
+from . import paths, shutdown
 
 LOCK_NAME = "exec.lock"
 LOCK_TIMEOUT = 5.0
@@ -267,7 +268,9 @@ def append_text(f: Path, text: str) -> bool:
     data = text.encode("utf-8")
     fd = os.open(f, os.O_RDWR | os.O_APPEND | os.O_CREAT | _BINARY, 0o644)
     try:
-        with locked(d) as got:  # only the write is held: closing a written file can take ms (an antivirus scan)
+        # only the write is held: closing a written file can take ms (an antivirus scan); a signal waits for the
+        # line to be whole (brain.shutdown.critical)
+        with shutdown.critical(), locked(d) as got:
             size = os.fstat(fd).st_size
             if size:
                 os.lseek(fd, size - 1, os.SEEK_SET)
@@ -371,7 +374,15 @@ def _execute(command: list[str], shell: bool) -> tuple[int | None, str | None]:
         return 126, f"cannot run: {type(exc).__name__}"
     try:
         return proc.wait(), None
-    except KeyboardInterrupt:  # the console sent it to the command too: let it finish, then kill it
+    except KeyboardInterrupt as exc:  # the console sent Ctrl+C to the command too: let it finish, then kill it
+        signum = getattr(exc, "signum", None)
+        # POSIX: a signal sent to brain alone (kill, a hang-up) is passed on; on Windows the console sends
+        # Ctrl+Break to the command too, and nothing else reaches a process to be trapped
+        if signum is not None and signum != signal.SIGINT and os.name != "nt":
+            try:
+                proc.send_signal(signum)
+            except (OSError, ValueError):
+                pass
         try:
             return proc.wait(timeout=INTERRUPT_GRACE), "interrupted"
         except (subprocess.TimeoutExpired, KeyboardInterrupt):
