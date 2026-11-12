@@ -12,6 +12,12 @@ zero token, from the same files the guard reads:
   chain root), started by a coordinator by name or by a chain root, its note written in the last 6 hours, its
   successors (the coordinators it started, live, detached), and its predecessor (the session that started it), which
   the incoming coordinator archives first (a session's own archive is refused);
+- :func:`write_brief` writes, beside the note, the successor's brief (``<note>.brief.txt``, read by no guard: its
+  first line carries the word ``ultracode``, the owner's decision of 2026-11-12, so that ultracode is on at every
+  hand-over: the keyword in a session's first message turns it on there), to paste as start_session's prompt;
+- :func:`wait` waits, bounded, for the successor's first turn (a transcript: live) before Remote Control on for it: a
+  session started seconds ago has none yet, and an engine before 0.4.0 refuses it as unknown; on a refusal that says
+  ``is unknown``, the procedure waits again and retries once;
 - :func:`mark_root` and :func:`clear_root` are the owner's, in their own terminal (refused in a Claude Code session's
   shell; the guard refuses ``brain handover root`` and a write into the file or its folder to a session, like
   ``brain usage allow``: it holds against a mistake, not against a script that calls the engine): a chain root is a
@@ -34,6 +40,10 @@ from pathlib import Path
 from . import guards, paths, sessions
 
 NAME_SAFE = re.compile(r"[^a-z0-9-]+")
+BRIEF_SUFFIX = ".brief.txt"   # beside the note; not *.md: the guard never reads it as a note
+WAIT_S = 120       # brain handover wait's default bound, in seconds (the procedure's « about two minutes »)
+WAIT_MAX_S = 600   # its longest: a starting successor counts for guards.HANDOVER_START_S (ten minutes)
+POLL_S = 3.0
 
 
 class SuccessionError(Exception):
@@ -84,6 +94,32 @@ def write_note(body: str = "", *, host: str | None = None, name: str | None = No
         raise SuccessionError(f"{f} is {other}'s note: pass another --id, or remove it if it is stale")
     f.write_text(text, encoding="utf-8")
     os.utime(f, (now, now))
+    return f
+
+
+def brief_text(host: str, name: str, successor: str, note: Path, body: str = "") -> str:
+    """The successor's brief: its first line carries ``ultracode`` (ultracode on at every hand-over), then the note
+    to read, the predecessor to archive first, the next steps; ``body`` follows."""
+    head = (f"ultracode: you are {successor or 'the next Brain coordinator'}, taking over from {host} "
+            f"({name or 'chain root'}).")
+    steps = [head, "",
+             f"1. Read the hand-over note {note.as_posix()} first; brain handover check --id <your id> reads the "
+             "guard's conditions.",
+             f"2. Archive your predecessor before anything else: archive_session {host} (the desktop app adds a "
+             "session field: resend the same call once; refused while its Remote Control is on or it still works).",
+             "3. Then the note's next steps: the open PRs, the running sessions and what waits on the owner."]
+    tail = "\n" + body.rstrip() + "\n" if body.strip() else ""
+    return "\n".join(steps) + "\n" + tail
+
+
+def write_brief(note: Path, *, successor: str, host: str | None = None, name: str | None = None, body: str = "",
+                env=None) -> Path:
+    """Write the successor's brief beside ``note`` (``<note stem>.brief.txt``); the guard reads only ``*.md``."""
+    host = _own_id(host, env)
+    if name is None:
+        name = str(sessions.app_meta(host).get("name") or "")
+    f = note.with_name(note.stem + BRIEF_SUFFIX)
+    f.write_text(brief_text(host, name, successor, note, body), encoding="utf-8")
     return f
 
 
@@ -153,6 +189,34 @@ def check(host: str | None = None, *, successor: str = "", now: float | None = N
             "parent_ok": parent_ok, "note": str(note or ""), "note_age_min": age,
             "successors": succ, "successor": target, "why": why, "ok": not why,
             "on": not on_why, "on_why": on_why, "off": not off_why, "off_why": off_why}
+
+
+def wait(successor: str, host: str | None = None, *, timeout: float = WAIT_S, poll: float = POLL_S, env=None,
+         clock=time.monotonic, sleep=time.sleep) -> dict:
+    """Wait, at most ``timeout`` seconds, for the successor's first turn: {id, successor, state, waited_s, ok, why}.
+    ``ok`` once it has a transcript and is live (Remote Control on for it then passes any engine's guard); not ``ok``
+    at once when it is not this session's coordinator successor or is archived, ended or unknown beyond its start
+    window; not ``ok`` with state ``starting`` when the bound passed first (an engine from 0.4.0 still lets on through
+    while it starts)."""
+    host = _own_id(host, env)
+    if not sessions.HOST_RE.match(successor or ""):
+        raise SuccessionError(f"{successor!r} is not an app id (local_<uuid>)")
+    timeout = max(0.0, min(float(timeout), WAIT_MAX_S))
+    t0 = clock()
+    while True:
+        _, meta, _ = _app(host)
+        tm = meta(successor)
+        st, how = guards.successor_state_of(tm, time.time()) if tm else ("unknown", "not in the app's files yet")
+        why = _target_why(host, successor, tm, time.time()) if tm else ""
+        waited = round(clock() - t0, 1)
+        if tm and not why and st in guards.RC_LIVE:
+            return {"id": host, "successor": successor, "state": st, "waited_s": waited, "ok": True, "why": ""}
+        if tm and why and st != "starting":
+            return {"id": host, "successor": successor, "state": st, "waited_s": waited, "ok": False, "why": why}
+        if waited >= timeout:
+            return {"id": host, "successor": successor, "state": "starting" if tm else st, "waited_s": waited,
+                    "ok": False, "why": f"no first turn after {int(timeout)} s" + (f" ({how})" if how else "")}
+        sleep(min(poll, max(0.1, timeout - waited)))
 
 
 NOT_MARKED = "NOT a coordinator by name, nor a marked root"
