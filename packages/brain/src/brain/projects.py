@@ -36,9 +36,9 @@ pass, a daily canary), inline or as a YAML file relative to the root, for ``brai
 schedule step (brain.schedule).
 
 An entry with ``access: read`` is a project the brain **reads and never writes** (another repo's own sessions write
-it): it holds ``title``, ``access`` and ``parent`` (its place in the scope tree) only, the shape of a mount, so
-no root, store, ledger, guard or rendered rule reaches into it. :func:`load` never returns one, :func:`get` refuses one
-(every ``--project``), :func:`readonly` lists them, and ``brain projects``, ``brain status --all`` and the registry's
+it): it holds ``title``, ``access``, ``parent`` (its place in the scope tree) and ``classes`` only, the shape of a
+mount, so no root, store, ledger, guard or rendered rule reaches into it. :func:`load` never returns one, :func:`get`
+refuses one (every ``--project``), :func:`readonly` lists them, and ``brain projects``, ``brain status --all`` and the registry's
 check count them. ``access: write`` is the default, the brain writing the project by PR; any other value is an error,
 and the entry is not loaded until it is one (the key narrows: a typo never opens a way in). A brain older than the one
 that knows the key reads such an entry as a full project, so it lands in a registry only once every machine runs it.
@@ -57,9 +57,10 @@ its root keeps research_graph's defaults (notes/, notes/decisions.md), so nothin
 
 An entry with a ``tenant`` key is a **mount**, not a project: an HMaaS tenant is another brain, with its own root,
 registry and keys, mounted opaque in the operator's registry (wi-brain-hmaas-multitenant, spec-brain-hmaas §6;
-SCOPE-6). It holds ``title``, ``tenant`` and ``parent`` (its place in the scope tree) only, ``{export: <path>}``
-naming where the tenant drops its contract export (relative to ``$BRAIN_HOME``). :func:`load` never returns a mount, so no command reads into it; :func:`get`
-refuses one; :func:`mounts` lists them, and ``brain status --all`` counts them without opening anything.
+SCOPE-6). It holds ``title``, ``tenant``, ``parent`` (its place in the scope tree) and ``classes`` only,
+``{export: <path>}`` naming where the tenant drops its contract export (relative to ``$BRAIN_HOME``). :func:`load`
+never returns a mount, so no command reads into it; :func:`get` refuses one; :func:`mounts` lists them, and
+``brain status --all`` counts them without opening anything.
 
 A relative root is read from the registry's folder, else from its main checkout's when the registry sits in a git
 worktree (a worktree under a scratchpad has no ``../demo`` beside it). The registry is found through
@@ -113,22 +114,27 @@ KEYS = {
     "plugin": "its command plugin, whose subcommands brain <project> ... runs: an entry point name of the group "
               "brain.plugins, or module:attr (brain.plugins)",
     "tenant": "makes the entry a tenant mount: another brain, opaque, that no command reads into; {export: where the "
-              "tenant drops its contract export, relative to BRAIN_HOME}; a mount holds title, tenant and parent only",
+              "tenant drops its contract export, relative to BRAIN_HOME}; a mount holds title, tenant, parent and "
+              "classes only",
     "access": "write (the default: the brain writes the project, by PR) or read (it reads the project and never "
-              "writes it: an entry of title, access and parent only, which no command loads, names or writes into)",
+              "writes it: an entry of title, access, parent and classes only, which no command loads, names or "
+              "writes into)",
     "parent": "its place in the scope tree: a container of scopes.yaml, another project (a sub-project), or global "
               "(the default); brain scopes shows the tree, brain check --all checks it (brain.scopes)",
+    "classes": "{floor: <class>}: the project's own class floor in the scope tree (DENY-1): its stores are at least "
+               "that class (brain classes), and a floor of private or stricter puts its name and repos in "
+               "public.deny.repos when public.deny_from_tree is on (brain.scopes)",
     "standards": "its opt-in to the standards registry, {profiles, stage, include, exclude: {id: reason}, catalogs}: "
                  "the rows it follows (brain standards; docs/standards.md); without it, none",
 }
 ACCESS = ("write", "read")
-READ_ONLY_KEYS = {"title", "access", "parent"}
+READ_ONLY_KEYS = {"title", "access", "parent", "classes"}
 # the decision logs research_graph covers for a store given none (research_graph.validate.DEFAULT_DECISIONS; not
 # imported: a guard reads this module on every call)
 GRAPH_DECISIONS = ("notes/scientific_decisions.md", "notes/decisions.md")
 # What a mount's tenant: mapping may hold (wi-brain-tenant-export reads the export; a mount only says where it lands).
 TENANT_KEYS = {"export": "the file the tenant's contract export is dropped into: absolute, ~, or relative to BRAIN_HOME"}
-MOUNT_KEYS = {"title", "tenant", "parent"}
+MOUNT_KEYS = {"title", "tenant", "parent", "classes"}
 REPO_KEYS = {"path", "name", "entry", "roots", "waive", "item", "lang", "scout_limit", "tools"}
 AUDIT_KEYS = {"spec", "max_lines", "complexity"}
 REPO_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]*")
@@ -299,7 +305,7 @@ def guarded(root: Path | None = None) -> list[Project]:
     are not loaded yet, and every entry the walk skips as read only (``access: read``) or as invalid (an access value
     check() refuses, :func:`bad_access`) that still names a local path. A refusal to load never lifts a guard: a typo
     in ``access``, or ``access: read`` added to a project that has a production checkout, keeps its checkouts refused
-    to edits while brain check is red. A valid read-only entry (title, access, parent) names no path: it adds nothing."""
+    to edits while brain check is red. A valid read-only entry (title, access, parent, classes) names no path."""
     loaded, refused = _load(root)
     out = list(loaded.values()) + [p for p, _ in refused.values()]
     f = registry_file(root)
@@ -648,7 +654,7 @@ def _check_mount(where: str, entry: dict) -> list[str]:
     errors = []
     extra = sorted(set(map(str, entry)) - MOUNT_KEYS)
     if extra:
-        errors.append(f"{where}: a tenant mount is opaque and holds title, tenant and parent only, not "
+        errors.append(f"{where}: a tenant mount is opaque and holds title, tenant, parent and classes only, not "
                       f"{', '.join(extra)} (the operator never reads into another brain)")
     if "title" in entry and not isinstance(entry["title"], str):
         errors.append(f"{where}: title is a string")
@@ -669,8 +675,8 @@ def _check_read_only(where: str, entry: dict) -> list[str]:
     errors = []
     extra = sorted(set(map(str, entry)) - READ_ONLY_KEYS)
     if extra:
-        errors.append(f"{where}: a read-only project holds title, access and parent only, not {', '.join(extra)} "
-                      "(each is a way to write or read into it)")
+        errors.append(f"{where}: a read-only project holds title, access, parent and classes only, not "
+                      f"{', '.join(extra)} (each is a way to write or read into it)")
     if "title" in entry and not isinstance(entry["title"], str):
         errors.append(f"{where}: title is a string")
     return errors

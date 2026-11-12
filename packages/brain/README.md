@@ -792,6 +792,21 @@ stay. Without `scopes.yaml` and `parent:`, every project sits under Global and n
 reads `parent:` and `scope_types` as unknown keys (a note; refused in strict mode, CI) and refuses `parent:` on a
 read-only entry or a mount: add them once every machine and the brain repo's CI run the release that knows them.
 
+**The deny list from the tree.** With `config.json` `public.deny_from_tree: true`, `public.deny.repos` gains, after the
+hand list, the name of every project whose class floor along its chain is `private` or stricter (a container's
+`classes: {floor: private}` covers its whole subtree, sub-projects, read-only projects and mounts included; a
+project marked on its own entry, `classes: {floor: private}` in `projects.yaml`, read-only entries and mounts too,
+counts as well, and its floor also binds its stores in `brain classes`) and the
+names of its repos (`brain audit`'s, and their folders), a repo of `public.repos` left out: a private project placed in
+the tree is denied by `brain check --public` and the public guard without a hand edit, and the hand list keeps the
+people, users, hosts and paths. `brain scopes --deny` prints the generated terms. With it on, a `scopes.yaml` or a
+registry that cannot be read, a tree file named but missing, no tree at all, or an error of the tree's check (an
+unknown parent, a floor that is no class) makes the public and secrets guards refuse: the list would miss terms. A
+term is a whole word matched without case: a private project or repo named after a common word (`data`) would block
+the engine's own text, so rename it, or keep it out of a private subtree. Off by default. An older engine reads the key
+as unknown and generates nothing: keep the repos in the hand list until every machine and the brain repo's CI run the
+release that knows it.
+
 ### Edges between stores
 
 An edge of a store may name a node another store of the registry holds (every store of every registered project on
