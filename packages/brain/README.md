@@ -420,6 +420,13 @@ cockpit's frontier takes the same order by default, sorts by score on demand, an
 the value and the score. Every number is a written setting of `brain.ranking` (`SCORE`, `VALUE`, `HIGH`), which
 `brain forecast` shares for its tie-breaks.
 
+What holds a node without being work is written as data, `props.gate` ([`docs/gates.md`](docs/gates.md)): a calendar
+count of days (from a date or an item's end, with a reset rule), a counter to reach (`ddr.answered`, `items.done`, or
+one's own pace), another project's item (`<project>:<id>`), a machine with its ready range, a Go/NoGo. `brain
+forecast` draws each one, and reads the owner's pending blocking DDRs and pending action DDRs as gates of the items
+they name; `brain check` warns on a trigger that names a duration with no gate, on an `after_external` that does not
+resolve and on a `due` date without its `due_source`; `brain queue` ends with what each gate holds.
+
 The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
 X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending
 wave, created beside the closed one when that release has none yet) or drops it, then reaches the wave; it refuses
