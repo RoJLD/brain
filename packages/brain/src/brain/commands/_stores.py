@@ -13,9 +13,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, docsgraph, features, graph,
-                links, lint, markers, milestones, modulemap, modules, neutral, permissions, projects, public, readme, records,
-                reference, render, scopes, skew, specs, stacks, tidy, tiers, vault, views, waves)
+from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, docsgraph, features,
+                graph, links, lint, markers, milestones, modulemap, modules, neutral, permissions, projects, public, readme,
+                records, reference, render, scopes, sizing, skew, specs, stacks, tidy, tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -148,6 +148,8 @@ def _store_checks(project: projects.Project, root: Path, store: Path, stale: vie
     (1 on an error), the module map, the specs ready to turn active, the hard-rule ratio; its stale views join
     ``stale``."""
     for line in milestones.orphan_lines(store, root):
+        print(line)
+    for line in sizing.check_lines(store):   # every item written since the rule has a size (wi-brain-item-size)
         print(line)
     rc = _plan_checks(project, root, store, stale)
     for line in _module_warnings(project, root, store, stale):   # every open item has its module (wi-brain-module-map)
