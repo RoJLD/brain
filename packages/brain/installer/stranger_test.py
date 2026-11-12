@@ -293,7 +293,7 @@ def where(root: Path, home: Path) -> dict[str, list[Path]]:
             "projects": found(root, "projects.yaml"), "members": found(root, "members.yaml"),
             "readme": found(root, "readme.yaml"), "sr": found(root, "records/sr/*/*.yaml"),
             "standards": found(root, "standards/*.yaml"), "template": [], "status": [], "docgraph": [],
-            "catalogue": [],
+            "catalogue": [], "reference": found(root, "docs/reference.yaml"),
             "modules": found(root, "notes/graph/modules.yaml")}
 
 
@@ -568,6 +568,8 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
     shutil.copyfile(fixture("permissions", "older"), root / "permissions.yaml")
     shutil.copyfile(fixture("members", "older"), root / "members.yaml")
     shutil.copyfile(fixture("readme", "older"), root / "readme.yaml")   # opt-in: no command writes it
+    (root / "docs").mkdir(exist_ok=True)   # the reference's prose (wi-brain-reference-arc42): opt-in, by hand too
+    shutil.copyfile(fixture("reference", "older"), root / "docs" / "reference.yaml")
     shutil.copyfile(fixture("modules", "older"), root / "notes" / "graph" / "modules.yaml")   # written by hand
     (root / "standards").mkdir(exist_ok=True)   # a local standards catalog (brain.standards): opt-in too
     shutil.copyfile(fixture("standards", "older"), root / "standards" / "local.yaml")

@@ -6,7 +6,7 @@ import json
 import shutil
 from pathlib import Path
 
-from brain import cli, features, graph, projects, reference
+from brain import arc42, cli, features, graph, projects, reference
 from brain.commands._stores import _write_reference
 from conftest import git_init, run_git
 
@@ -144,6 +144,118 @@ def test_the_public_render_is_by_domain_and_leaks_nothing_private(tmp_path, monk
         assert private not in text, private
     full = "\n".join(reference.render(root, store).values())   # the private one names them: the test can fail
     assert "Ada Quill" in full and "adr-" in full and "K1" in full
+
+
+PROSE = Path(__file__).parent / "fixtures" / "formats" / "reference" / "v1" / "older.yaml"
+
+
+def _arc42(tmp_path, monkeypatch):
+    """The fixture with docs/reference.yaml, a milestone and its trigger, a test, a hook, a lesson, a blocked item, a
+    debt item, and a read-only project in the registry."""
+    root, store = _brain(tmp_path, monkeypatch)
+    (root / "docs").mkdir(exist_ok=True)
+    shutil.copyfile(PROSE, root / "docs" / "reference.yaml")
+    (store / "nodes" / "arc42.yaml").write_text(
+        "- {id: ms-tea, type: Milestone, status: pending, title: First cup, props: {trigger: \"a cup at 95 degrees\"}}\n"
+        "- {id: ms-later, type: Milestone, status: pending, title: Later, props: {trigger: \"two kettles\"}}\n"
+        "- {id: test-boil, type: Test, status: active, title: tests/test_boil.py}\n"
+        "- {id: hook-guard, type: Hook, status: active, title: The pour guard}\n"
+        "- {id: les-spill, type: Lesson, status: open, title: A spill on the table}\n"
+        "- {id: wi-stuck, type: WorkItem, status: blocked, title: Stuck item, props: {repo: lab}}\n"
+        "- {id: wi-debt-lab, type: WorkItem, status: todo, title: The lab's debt, props: {repo: lab}}\n",
+        encoding="utf-8")
+    (store / "edges" / "arc42.yaml").write_text(
+        "- {from: wi-boil, to: ms-tea, type: part_of}\n- {from: wi-pour, to: ms-tea, type: part_of}\n"
+        "- {from: wi-boil, to: test-boil, type: tested_by}\n- {from: rule-pour-slow, to: hook-guard, type: enforced_by}\n"
+        "- {from: rule-pour-slow, to: adr-2026-10-02-old-pour, type: decided_by}\n", encoding="utf-8")
+    reg = root / "projects.yaml"   # the repo's own registry: the reference's section 3 reads it
+    reg.write_text("lab:\n  root: .\n  title: the tea lab\n  stacks: {kettle: {start: boil}}\n"
+                   "shop: {title: a shop read only, access: read}\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    return root, store
+
+
+def test_the_readme_holds_the_twelve_arc42_sections_from_the_graph_and_the_yaml(tmp_path, monkeypatch):
+    """wi-brain-reference-arc42: each section from its source (spec 5.1), every statement with its status and id,
+    the prose from docs/reference.yaml; the module page opens with its own prose."""
+    root, store = _arc42(tmp_path, monkeypatch)
+    files = reference.render(root, store)
+    text = files["README.md"]
+    titles = [line for line in text.splitlines() if line.startswith("## ")]
+    assert titles == [f"## {t}" for _, t in arc42.SECTIONS]
+    section = {t: text.split(f"## {t}\n", 1)[1].split("\n## ", 1)[0] for _, t in arc42.SECTIONS}
+    s1 = section["1. Introduction and goals"]
+    assert s1.startswith("\nA kettle that boils water") and "Milestones ahead: 2 (0 reached)." in s1
+    assert "- `ms-tea` (pending) First cup — reached when: a cup at 95 degrees" in s1
+    assert ("- `rule-pour-slow` (active) Pour slowly, as Ada does — decided by `adr-2026-10-02-old-pour`; enforced by "
+            "`hook-guard`") in section["2. Constraints"]
+    s3 = section["3. Context and scope"]
+    assert "| `lab` (this one) | write | lab | the tea lab |" in s3 and "| `shop` | read | - | a shop read only |" in s3
+    s4 = section["4. Solution strategy"]
+    assert "One small core" in s4 and "- `adr-2026-10-09-reversal-boil`: REVERSAL: boil at 95" in s4
+    assert "| [K1](modules/K1.md) | kettle-core | K | 2 | 1 | 1 | 5 |" in section["5. Building blocks"]
+    assert "### Hooks: 1" in section["6. Runtime view"] and "- `hook-guard` (active) The pour guard" in text
+    assert "- `kettle`" in section["7. Deployment view"]
+    assert "- `spec-kettle` (active) Ada Quill's kettle spec" in section["8. Cross-cutting concepts"]
+    s9 = section["9. Architecture decisions"]
+    assert "### K1 kettle-core: 5 (2 more on [its page](modules/K1.md))" in s9 and "### Unplaced decisions: 0" in s9
+    s10 = section["10. Quality requirements"]
+    assert "goals with no test: 1." in s10
+    assert "- `ms-tea` (pending) First cup — reached when: a cup at 95 degrees; items 1 done of 2; tests: " \
+           "`test-boil`" in s10 and "tests: **none**" in s10
+    s11 = section["11. Risks and technical debt"]
+    assert "- `wi-stuck` (blocked) Stuck item" in s11 and "- `wi-debt-lab` (todo) The lab's debt" in s11
+    assert "- `les-spill` (open) A spill on the table" in s11 and "- `ddr-2026-10-10-weigh-unit` (pending)" in s11
+    assert "| Brew | One run of the kettle, from cold water to a cup. |" in section["12. Glossary"]
+    assert "What the kettle must never do." in section["2. Constraints"]
+    assert files["modules/K1.md"].split("\n")[4] == "The kettle's core, which boils and pours."
+    assert reference.render(root, store) == files   # no date of its own
+
+
+def test_a_reference_yaml_missing_a_required_field_fails_the_render_and_the_check(tmp_path, monkeypatch, capsys):
+    root, store = _arc42(tmp_path, monkeypatch)
+    assert reference.load_prose(root)[1] == []
+    assert cli.main(["reference", "--write"]) == 0
+    (root / "docs" / "reference.yaml").write_text("v: 1\nstrategy: s\nglossary: []\n", encoding="utf-8")
+    assert any("goals" in e for e in reference.load_prose(root)[1])
+    assert cli.main(["reference"]) == 1 and "error: docs/reference.yaml:" in capsys.readouterr().err
+    assert cli.main(["reference", "--write"]) == 1   # nothing written over the last good render
+    (root / "docs" / "reference.yaml").write_text("- a list\n", encoding="utf-8")
+    assert reference.load_prose(root)[1] == ["docs/reference.yaml: not a mapping (its fields: v, goals, strategy, "
+                                             "glossary...)"]
+    good = (root / "docs" / "reference" / "README.md").read_text(encoding="utf-8")
+    _write_reference(_lab(), root, store)   # brain sync: never over the last good render
+    assert (root / "docs" / "reference" / "README.md").read_text(encoding="utf-8") == good
+    assert "breaks its schema: docs/reference not written" in capsys.readouterr().out
+    assert cli.main(["check"]) == 1 and "error: docs/reference.yaml: not a mapping" in capsys.readouterr().out
+    (root / "docs" / "reference.yaml").unlink()   # no YAML: the skeleton with its facts, said
+    text = reference.render(root, store)["README.md"]
+    assert "_Not written yet: `goals` in `docs/reference.yaml`._" in text and cli.main(["reference"]) == 1
+
+
+def test_section_3_reads_the_repos_own_registry_only(tmp_path, monkeypatch):
+    """A registry that lives elsewhere (another brain tracks the repo) never reaches the repo's reference: the same
+    graph gives the same files on every machine."""
+    root, store = _brain(tmp_path, monkeypatch)   # its registry is outside the repo
+    text = reference.render(root, store)["README.md"]
+    assert "No project registry (`projects.yaml`) at this repo's root" in text and "| `lab`" not in text
+    assert "No stack declared" in text
+
+
+def test_out_without_public_checks_the_roots_own_yaml(tmp_path, monkeypatch, capsys):
+    root, store = _arc42(tmp_path, monkeypatch)
+    (root / "docs" / "reference.yaml").write_text("v: 1\nstrategy: s\nglossary: []\n", encoding="utf-8")
+    out = tmp_path / "elsewhere" / "docs" / "reference"
+    assert cli.main(["reference", "--out", str(out), "--write"]) == 1 and not out.exists()
+
+
+def test_the_public_render_takes_the_public_repos_own_prose(tmp_path, monkeypatch):
+    root, store = _brain(tmp_path, monkeypatch)
+    prose = {"v": 1, "goals": "Measure tea.", "strategy": "Small parts.", "glossary": [{"term": "Cup", "means": "x"}]}
+    text = reference.render_public(store, "lab", prose=prose)["README.md"]
+    assert "## Goals\n\nMeasure tea." in text and "## Strategy\n\nSmall parts." in text and "| Cup | x |" in text
+    assert "## Building blocks, by feature domain" in text
+    assert "## Goals" not in reference.render_public(store, "lab")["README.md"]
 
 
 def test_cli_write_check_and_sync_once_opted_in(tmp_path, monkeypatch, capsys):
