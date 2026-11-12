@@ -633,32 +633,62 @@ def private_nodes(tree: Tree) -> list[str]:
 
 def private_terms(cfg: config.Config) -> list[str]:
     """The terms config.json public.deny.repos gains when ``public.deny_from_tree`` is on: the name of every private
-    project (:func:`private_nodes`) and of each of its repos (brain audit's names and their folders), sorted; a term
-    that names a repo of public.repos is left out (that repo is public), as is one shorter than two characters."""
+    project (:func:`private_nodes`) and of each of its repos (brain audit's names and their folders), sorted, once
+    each whatever its case; a term that names a repo of public.repos is left out (that repo is public), as is one
+    shorter than two characters. A project whose repos cannot be resolved keeps its own name (brain check --all says
+    why)."""
     tree = load(cfg.root, cfg)
     loaded = projects.load(cfg.root)
     pub = cfg.data.get("public") if isinstance(cfg.data.get("public"), dict) else {}
     public = {str(r).rsplit("/", 1)[-1].lower() for r in pub.get("repos") or [] if isinstance(r, str)}
-    terms: set[str] = set()
+    terms: dict[str, str] = {}
     for name in private_nodes(tree):
-        terms.add(name)
+        found = [name]
         p = loaded.get(name)
         try:
-            repos = projects.repos_of(p) if p is not None else []
-        except projects.RepoError:   # brain check --all names it; the project's own name is still denied
-            repos = []
-        terms.update(t for r in repos for t in (r.name, r.folder) if t)
-    return sorted((t for t in terms if len(t) >= 2 and t.lower() not in public), key=str.lower)
+            found += [t for r in (projects.repos_of(p) if p is not None else []) for t in (r.name, r.folder) if t]
+        except (ValueError, OSError):   # RepoError, a path on another drive: the name is still denied
+            pass
+        for t in found:
+            terms.setdefault(t.lower(), t)
+    return sorted((t for k, t in terms.items() if len(t) >= 2 and k not in public), key=str.lower)
+
+
+def named_file(cfg: config.Config) -> Path | None:
+    """The scope tree's file as $BRAIN_SCOPES or config.json scopes names it, found or not; None when neither names
+    one (the default scopes.yaml beside config.json)."""
+    env = os.environ.get(ENV)
+    if env:
+        return Path(env).expanduser()
+    if isinstance(cfg.data.get("scopes"), str) and cfg.data["scopes"]:
+        return cfg.root / cfg.data["scopes"]
+    return None
 
 
 def deny_unexpected(cfg: config.Config) -> str:
-    """Why the generated deny list cannot be trusted (the public guard then refuses, COMPAT-4): the scope tree or the
-    registry cannot be read while public.deny_from_tree is on; '' otherwise."""
+    """Why the generated deny list cannot be trusted while public.deny_from_tree is on (the public and secrets guards
+    then refuse, COMPAT-4), '' otherwise: a tree file named but missing, or not readable; no tree at all; a registry
+    that is not a readable mapping; an error of the tree's check (an unknown parent, a floor that is no class: a node
+    the list would miss); the generation itself failing."""
+    why = ": public.deny_from_tree cannot generate the deny list: fix it (brain check --all), or turn it off"
+    named = named_file(cfg)
+    if named is not None and not named.is_file():
+        return f"the scope tree's file {named} does not exist{why}"
     _, _, problems = raw(cfg)
     if problems:
-        return f"{problems[0]}: public.deny_from_tree cannot generate the deny list: fix it (brain check --all)"
+        return problems[0] + why
     try:
-        projects.raw(cfg.root)
-    except Exception as exc:  # noqa: BLE001 - any failure to read the registry is a reason to refuse, said as one
-        return f"{projects.REGISTRY} cannot be read ({exc}): public.deny_from_tree cannot generate the deny list"
+        reg = projects.registry_file(cfg.root)
+        data = graph.load_yaml_file(reg) if reg is not None and reg.is_file() else {}
+        if data is not None and not isinstance(data, dict):
+            return f"{projects.REGISTRY} is a {type(data).__name__}, not a mapping{why}"
+        tree = load(cfg.root, cfg)
+        if not tree.present:
+            return f"no scope tree ({FILE} or a parent: in {projects.REGISTRY}){why}"
+        errors, _ = check(cfg.root, cfg)
+        if errors:
+            return f"the scope tree has {len(errors)} error(s), the first: {errors[0]}{why}"
+        private_terms(cfg)
+    except Exception as exc:  # noqa: BLE001 - any failure to build the list is a reason to refuse, said as one
+        return f"the deny list could not be generated ({type(exc).__name__}: {exc}){why}"
     return ""

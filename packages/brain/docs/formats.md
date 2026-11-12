@@ -261,7 +261,7 @@ N2). It is a cache, so it carries every input it depends on:
 |---|---|
 | `v` | 2 (0.2.5 and older wrote none) |
 | `key.engine` | the engine version that checked |
-| `key.rules` | sha256 of config.json's `public.deny` (as brain.config reads it), `allow`, `patterns` and `refuse`, in a canonical form: key order and spacing do not count |
+| `key.rules` | sha256 of config.json's `public.deny` (as brain.config reads it, the terms `public.deny_from_tree` generates from the scope tree included), `allow`, `patterns` and `refuse`, in a canonical form: key order and spacing do not count |
 | `key.gitleaks` | whether gitleaks read the history (with no commit to read: whether it was on the PATH) |
 | `at`, `repo`, `remote`, `files`, `commits`, `gitleaks` | what the check read, for the owner |
 

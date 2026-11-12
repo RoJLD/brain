@@ -278,7 +278,8 @@ def test_deny_from_tree_is_off_by_default(brain):
 
 def test_deny_from_tree_adds_the_private_subtree_and_its_repos(brain):
     brain("alpha: {root: ., parent: finance}\nbeta: {root: ../beta, parent: alpha}\n"
-          "gamma: {root: ../gamma, parent: pro}\nupstream: {title: an upstream, access: read, parent: acme}\nhandmade: {root: ../beta, parent: acme}\n")
+          "gamma: {root: ../gamma, parent: pro}\nupstream: {title: an upstream, access: read, parent: acme}\n"
+          "handmade: {root: ../beta, parent: acme}\n")
     _tree(brain.root, TREE + "  open: {type: folder, classes: {floor: public}}\n")
     cfg = _config(brain.root, deny_from_tree=True, repos=["someone/root"])
     assert scopes.private_nodes(scopes.load(brain.root)) == ["alpha", "beta", "upstream", "handmade"]
@@ -318,3 +319,47 @@ def test_brain_scopes_deny_lists_the_generated_terms(brain, capsys):
     _config(brain.root, deny_from_tree=True)
     assert cli.main(["--root", str(brain.root), "scopes", "--deny", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == {"deny_from_tree": True, "repos": ["beta"]}
+
+
+def test_a_repo_that_cannot_be_resolved_keeps_the_name_and_case_counts_once(brain, monkeypatch):
+    brain("alpha: {root: .}\nbeta: {root: ../beta, parent: acme}\ngamma: {root: ../gamma, parent: acme}\n")
+    _tree(brain.root)
+    cfg = _config(brain.root, deny_from_tree=True)
+
+    def repos_of(p):
+        if p.name == "beta":   # a production checkout on another drive: os.path.relpath raises
+            raise ValueError("path is on mount 'E:', start on mount 'C:'")
+        return [projects.Repo("gamma", p.root, folder="Gamma"), projects.Repo("svc", p.root, folder="SVC")]
+    monkeypatch.setattr(projects, "repos_of", repos_of)
+    assert scopes.private_terms(cfg) == ["beta", "gamma", "svc"]   # never raised into the guard; once each
+    assert config.unexpected(cfg) == ""
+
+
+@pytest.mark.parametrize("case, want", [
+    ("floor", "the scope tree has 1 error(s), the first: scope acme: classes.floor is one of"),
+    ("parent", "the scope tree has 1 error(s), the first: project beta: its parent 'acmee' is no node"),
+    ("named", "does not exist: public.deny_from_tree cannot generate the deny list"),
+    ("none", "no scope tree (scopes.yaml or a parent: in projects.yaml)"),
+    ("list", "projects.yaml is a list, not a mapping"),
+    ("raises", "the deny list could not be generated (RuntimeError: boom)"),
+])
+def test_generation_on_refuses_whatever_would_make_the_list_miss_terms(brain, monkeypatch, case, want):
+    brain("alpha: {root: .}\nbeta: {root: ../beta, parent: acme}\ngamma: {root: ../gamma}\n")
+    _tree(brain.root)
+    cfg = _config(brain.root, deny_from_tree=True)
+    assert config.unexpected(cfg) == ""
+    if case == "floor":
+        _tree(brain.root, TREE.replace("floor: confidential", "floor: Private"))
+    elif case == "parent":
+        brain("alpha: {root: .}\nbeta: {root: ../beta, parent: acmee}\ngamma: {root: ../gamma}\n")
+    elif case == "named":
+        monkeypatch.setenv("BRAIN_SCOPES", str(brain.root / "moved.yaml"))
+    elif case == "none":
+        (brain.root / scopes.FILE).unlink()
+        brain("alpha: {root: .}\nbeta: {root: ../beta}\ngamma: {root: ../gamma}\n")
+    elif case == "list":
+        (brain.root / "projects.yaml").write_text("- alpha\n", encoding="utf-8")
+    else:
+        monkeypatch.setattr(scopes, "private_terms", lambda cfg: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert want in config.unexpected(config.load(brain.root))
+    assert config.unexpected(_config(brain.root)) == ""   # off: the hand list alone, nothing refused
