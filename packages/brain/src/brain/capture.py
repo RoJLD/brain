@@ -36,7 +36,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import actions, midsession, paths, plan, schema, secretscan, transcript
+from . import actions, midsession, paths, plan, schema, secretscan, timing, transcript
 from . import answers as answers_lane
 
 SR_V = 1     # sessions/<id>.json (schemas/sr.schema.json)
@@ -48,12 +48,10 @@ def _now() -> str:
 
 
 def _append(name: str, record: dict) -> None:
-    d = paths.ledger_dir()
-    d.mkdir(parents=True, exist_ok=True)
+    """One line in ``ledger/<name>-<month>.jsonl``, under the ledger's lock (brain.timing.append: sessions' hooks
+    write at once)."""
     month = (record.get("at") or _now())[:7]
-    line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
-    with open(d / f"{name}-{month}.jsonl", "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(line)
+    timing.append(paths.ledger_dir() / f"{name}-{month}.jsonl", record)
 
 
 def _recent_ids(name: str, n: int = 400) -> set[str]:
