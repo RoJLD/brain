@@ -1,5 +1,5 @@
 """wi-brain-tui-settings: the settings as data (brain.settings), the remembered intervals and the text view; the
-Settings tab of the Textual app is test_tui_tabs'."""
+Settings tab of the Textual app is test_tui_settings'."""
 
 import json
 
@@ -119,3 +119,18 @@ def test_brain_tui_prints_the_settings_and_starts_with_the_remembered_intervals(
     assert cockpit.load_state()["settings"]["refresh"] == 5.0  # for that launch only
     assert cli.main(["tui", "--project", "demo", "--plain", "--reset"]) == 0
     assert seen == {"r": cockpit.REFRESH_S, "p": cockpit.PROBE_S}
+
+
+def test_a_broken_config_says_so_and_the_running_interval_is_named(tmp_path, monkeypatch):
+    bad = tmp_path / "config.json"
+    bad.write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(bad))
+    rows = _by_key(settings.identity_settings())
+    assert rows["config.json"].value.startswith("not readable: ") and "brain config --check" in rows["config.json"].change
+    run = _by_key(settings.cockpit_settings({"settings": {"refresh": 5.0}}, running={"refresh": 1.0, "probe": 300.0}))
+    assert run["refresh"].value == "5 s" and run["refresh"].change.startswith("this launch runs 1 s; ")
+    assert run["probe"].change.startswith(settings.HERE)  # the same as saved: nothing said
+    with pytest.raises(ValueError, match="between 250 ms and 1440 min"):
+        settings.parse("probe", "48h")
+    cockpit.save_state({"settings": {"refresh": 1e9}})
+    assert cockpit.load_state()["settings"] == {}  # longer than a day: left out

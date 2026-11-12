@@ -76,6 +76,7 @@ from textual.markup import escape
 from textual.widgets import DataTable, Footer, Header, Input, Label, Select, Static, Tab, Tabs
 
 from . import cockpit, detail, handover, paths, update
+from . import settings as settings_
 from .tui_palette import PaletteAndColumns, same_cell, styled
 from .tui_screens import AnswerScreen, ConfirmScreen, DetailScreen, LinkScreen, PanelHelp, ResultScreen, ViewScreen
 from .tui_settings import SETTING_ACTIONS, SettingsFrame, SettingsTab
@@ -690,13 +691,13 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
 
     # --- the view: scope, search, sort, filters ---
 
-    def _save(self) -> None:
-        cockpit.save_state({"scope": self.scope, "panels": self.views, "settings": self.settings, "tab": self.tab,
+    def _save(self) -> bool:
+        return cockpit.save_state({"scope": self.scope, "panels": self.views, "settings": self.settings, "tab": self.tab,
                             "tabs": {t: {"view": v} for t, v in self.tab_views.items()}, "columns": self.chosen})
 
     def watch_theme(self, theme: str) -> None:
         """The theme picked in the command palette becomes the default one (saved with the settings)."""
-        if self.is_mounted and theme != self.settings.get("theme"):
+        if self.is_mounted and theme != self.settings.get("theme", settings_.DEFAULT_THEME):  # its default: unset
             self.settings["theme"] = theme
             self._save()
 

@@ -44,7 +44,7 @@ def test_the_settings_tab_edits_the_cockpit_and_only_names_the_brain_s_commands(
         await pilot.press("enter")  # submitted: refused, nothing changes
         await pilot.pause(0.1)
         assert app.refresh_s == 2.0 and "refresh" not in cockpit.load_state()["settings"]
-        assert ("refresh", "'100ms': 250 ms at least") in notified
+        assert ("refresh", "'100ms': between 250 ms and 1440 min") in notified
         await pilot.press("enter")
         app.screen.query_one("#setting-value", Input).value = "5s"
         await pilot.press("enter")
@@ -89,4 +89,37 @@ def test_the_settings_frame_holds_the_pages_then_their_settings():
         await pilot.press("left", "down", "down", "down", "down")  # the last page: Setup
         await pilot.pause(0.1)
         assert app.setting_page == "setup" and "checks" in _settings(app)
+    _run(check)
+
+
+def test_a_default_saved_unchanged_stays_unset_and_the_pages_follow_the_language():
+    """The review of wi-brain-tui-settings: Save on a setting not set writes nothing (the queue's title still follows
+    the name and the language); the theme's Default leaves the theme unset; the pages' words follow the language."""
+    async def check(app, pilot, fake):
+        await pilot.press("comma")
+        await pilot.pause(0.1)
+        for key in ("titles.queue", "refresh", "theme"):
+            _cursor_on(app, key)
+            await pilot.press("enter")
+            await pilot.click("#save")
+            await pilot.pause(0.1)
+        state = cockpit.load_state().get("settings") or {}
+        assert "titles" not in state and "refresh" not in state and "theme" not in state
+        _cursor_on(app, "theme")
+        await pilot.press("enter")
+        app.screen.query_one("#setting-value", Select).value = "nord"
+        await pilot.click("#save")
+        await pilot.pause(0.1)
+        assert app.theme == "nord" and cockpit.load_state()["settings"]["theme"] == "nord"
+        await pilot.press("enter")
+        await pilot.click("#default")
+        await pilot.pause(0.1)
+        assert app.theme == "textual-dark" and "theme" not in cockpit.load_state()["settings"]  # not written back
+        _cursor_on(app, "lang")
+        await pilot.press("enter")
+        app.screen.query_one("#setting-value", Select).value = "fr"
+        await pilot.click("#save")
+        await pilot.pause(0.1)
+        pages = app.query_one("#settings-pages", tui_settings.SettingsPages)
+        assert str(pages.get_option_at_index(4).prompt) == "Mise en place" and "1 File d'Ada" in _bar(app)
     _run(check)

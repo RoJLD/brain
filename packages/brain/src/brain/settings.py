@@ -31,6 +31,7 @@ PAGE_LABELS = {"cockpit": {"en": "Cockpit", "fr": "Cockpit"}, "identity": {"en":
                "setup": {"en": "Setup", "fr": "Mise en place"}}
 HERE = "here: Enter"  # how a cockpit setting changes: in the screen itself
 REFRESH_MIN = cockpit.INTERVAL_MIN
+DEFAULT_THEME = "textual-dark"   # Textual's own
 LANG_ENV = "BRAIN_LANG"
 NO_COMMAND = ("no brain config set: brain init (the setup wizard), or a commit in the personal brain's repo "
               "(config.json)")
@@ -47,10 +48,6 @@ class Setting:
     choices: tuple = field(default_factory=tuple)
     default: str = ""           # what applies when it is not set
 
-    def as_dict(self) -> dict:
-        return {"page": self.page, "key": self.key, "value": self.value, "source": self.source,
-                "change": self.change, "edit": self.edit, "choices": list(self.choices), "default": self.default}
-
 
 def page_label(page: str) -> str:
     return PAGE_LABELS[page][cockpit.lang()]
@@ -62,16 +59,17 @@ def _seconds(s) -> str:
 
 # --- the cockpit's own settings: tui.json ---
 
-def cockpit_settings(state: dict | None = None, themes: tuple = ()) -> list[Setting]:
+def cockpit_settings(state: dict | None = None, themes: tuple = (), running: dict | None = None) -> list[Setting]:
     """tui.json's settings as the cockpit reads them (``state``: :func:`brain.cockpit.load_state`'s answer, read when
-    None); ``themes``: the theme names the app offers (the text view does not know them)."""
+    None); ``themes``: the theme names the app offers (the text view does not know them); ``running``: the intervals
+    this launch runs, said beside the saved ones when they differ (--refresh, --probe, + and -)."""
     state = cockpit.load_state() if state is None else state
     got = state.get("settings") or {}
     where = f"{cockpit.state_path()} settings"
     env_lang = os.environ.get(LANG_ENV)
     out = [
-        Setting("cockpit", "theme", got.get("theme") or "textual-dark", f"{where}.theme",
-                f"{HERE}, or ctrl+p's theme picker", "choice", tuple(themes), "textual-dark"),
+        Setting("cockpit", "theme", got.get("theme") or DEFAULT_THEME, f"{where}.theme",
+                f"{HERE}, or ctrl+p's theme picker", "choice", tuple(themes), DEFAULT_THEME),
         Setting("cockpit", "tz", got.get("tz") or "local", f"{where}.tz",
                 f"{HERE}, or t; brain tui --tz for one launch", "choice", cockpit.TZS, "local"),
         Setting("cockpit", "lang", cockpit.lang(),
@@ -85,6 +83,10 @@ def cockpit_settings(state: dict | None = None, themes: tuple = ()) -> list[Sett
         Setting("cockpit", "scope", state.get("scope") or "(the folder's project)", f"{cockpit.state_path()} scope",
                 "p, the project selector: the next start shows the last one"),
     ]
+    for s in out:  # the interval this launch runs, when it is not the saved one
+        now = (running or {}).get(s.key)
+        if now is not None and _seconds(now) != s.value:
+            s.change = f"this launch runs {_seconds(now)}; " + s.change
     titles = got.get("titles") or {}
     for name in (*cockpit.PANELS, *cockpit.FRAMES):
         default = cockpit.queue_title() if name == "queue" else cockpit.TITLES[name]
@@ -94,7 +96,8 @@ def cockpit_settings(state: dict | None = None, themes: tuple = ()) -> list[Sett
 
 
 def _number(v, default: float) -> float:
-    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= REFRESH_MIN else default
+    ok = isinstance(v, (int, float)) and not isinstance(v, bool) and REFRESH_MIN <= v <= cockpit.INTERVAL_MAX
+    return float(v) if ok else default
 
 
 def parse(key: str, text: str, choices: tuple = ()) -> object:
@@ -105,8 +108,8 @@ def parse(key: str, text: str, choices: tuple = ()) -> object:
         return None
     if key in ("refresh", "probe"):
         seconds = cockpit.duration(text)
-        if seconds < REFRESH_MIN:
-            raise ValueError(f"{text!r}: {_seconds(REFRESH_MIN)} at least")
+        if seconds < REFRESH_MIN or seconds > cockpit.INTERVAL_MAX:
+            raise ValueError(f"{text!r}: between {_seconds(REFRESH_MIN)} and {_seconds(cockpit.INTERVAL_MAX)}")
         return seconds
     allowed = {"tz": cockpit.TZS, "lang": cockpit.LANGS}.get(key, choices if key == "theme" else ())
     if allowed and text not in allowed:
@@ -145,7 +148,9 @@ def identity_settings(root: Path | None = None) -> list[Setting]:
     cfg = config.load(root)
     where = str(cfg.file) if cfg.file else f"no {config.FILE} (the defaults)"
     ident = cfg.data.get("identity") if isinstance(cfg.data.get("identity"), dict) else {}
-    return [
+    broken = [Setting("identity", "config.json", f"not readable: {cfg.error}; the defaults apply", where,
+                      "fix the file by hand; brain config --check says what is wrong")] if cfg.error else []
+    return broken + [
         Setting("identity", "identity.owner", config.owner(cfg), f"{where} identity.owner"
                 + ("" if ident.get("owner") else " (unset: its first store's owner)"),
                 f"{NO_COMMAND}; it is the id every answer records (--by): a record never changes for display"),
@@ -261,12 +266,12 @@ READERS = {"cockpit": None, "identity": identity_settings, "brain": brain_settin
 
 
 def collect(root: Path | None = None, state: dict | None = None, themes: tuple = (),
-            pages: tuple = PAGES) -> dict[str, list[Setting]]:
+            pages: tuple = PAGES, running: dict | None = None) -> dict[str, list[Setting]]:
     """Each page's settings; a page whose read fails gives one row that says why."""
     out: dict[str, list[Setting]] = {}
     for page in pages:
         try:
-            out[page] = cockpit_settings(state, themes) if page == "cockpit" else READERS[page](root)
+            out[page] = cockpit_settings(state, themes, running) if page == "cockpit" else READERS[page](root)
         except Exception as exc:  # one page never stops the others
             out[page] = [Setting(page, "read failed", f"{type(exc).__name__}: {exc}", "", "brain check --all")]
     return out
