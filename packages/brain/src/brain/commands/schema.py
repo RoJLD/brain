@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .. import schemadiff, scout, structure
 from ..inventory import AuditError, git, git_tree, work_tree
+from ._common import root_of
 
 ORDER = 535   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 535   # its usage lines' place in brain --help's epilog
@@ -66,6 +67,12 @@ def cmd_schema(args, root: Path | None) -> int:
     return 1 if strict and any(not d.resolved for d in found) else 0
 
 
+def early(args) -> int:
+    """Any repo, a brain or not (CI's checkout of the engine holds no graph store): before find_root, the owner's
+    opt-in read from --root when given, else from the config discovery (brain.config)."""
+    return cmd_schema(args, root_of(args))
+
+
 def register(sub, ctx) -> None:
     sc = sub.add_parser("schema", help="the formats' schemas: diff, what a change narrows since a tag "
                                        "(brain.schemadiff)")
@@ -79,6 +86,3 @@ def register(sub, ctx) -> None:
     di.add_argument("--strict", action="store_true", help="exit 1 on an unresolved narrowing (default: the "
                                                           "owner's config.json audit.schema_diff_strict)")
     di.add_argument("--json", action="store_true", help="stable keys")
-
-
-run = cmd_schema

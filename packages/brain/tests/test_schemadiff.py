@@ -277,6 +277,18 @@ def test_the_owners_opt_in_makes_it_strict(lab, capsys, strict_config):
     assert rc == 1 and data["strict"]
 
 
+def test_it_runs_in_a_repo_with_no_brain(lab, capsys, monkeypatch):
+    """CI's checkout of the engine holds no graph store and no personal brain: the diff never asks for one."""
+    from brain import paths
+
+    def no_brain(*a, **k):
+        raise SystemExit("brain: no notes/graph/schema.yaml above the current folder")
+    monkeypatch.setattr(paths, "find_root", no_brain)
+    write(lab, SCHEMA, edit(kind__enum=["a"]))
+    rc, data = diff(capsys, lab)
+    assert rc == 0 and data["schemas"][0]["path"] == SCHEMA
+
+
 def test_a_tag_that_does_not_exist_is_a_usage_error(lab, capsys):
     assert cli.main(["schema", "diff", "--against", "v9", "--repo-dir", str(lab)]) == 2
 
