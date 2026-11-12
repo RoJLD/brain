@@ -28,6 +28,23 @@ def pytest_cmdline_main(config):
         config.option.dist = "worksteal"
 
 
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_auto_num_workers(config):
+    """``BRAIN_TEST_WORKERS``: the worker count ``-n auto`` means (unset: xdist's own, one per core). Measured on a
+    16-thread Windows machine, 24 and 32 workers ran no faster than 16 (wi-brain-test-speed-2): process creation, not
+    the CPU, bounds the suite there; the variable is for a machine where it differs. An explicit ``-n N`` wins."""
+    raw = os.environ.get("BRAIN_TEST_WORKERS", "").strip()
+    if not raw:
+        return None
+    try:
+        workers = int(raw)
+    except ValueError:
+        raise pytest.UsageError(f"BRAIN_TEST_WORKERS={raw!r}: a whole number of workers (0: one process)") from None
+    if workers < 0:
+        raise pytest.UsageError(f"BRAIN_TEST_WORKERS={raw!r}: a whole number of workers (0: one process)")
+    return workers
+
+
 @pytest.fixture(autouse=True)
 def brain_home(tmp_path, monkeypatch):
     """Every test writes its ledger to a temporary BRAIN_HOME, never ~/.brain."""

@@ -1077,8 +1077,15 @@ They read only fixtures, never a real brain's graph, records or rendered files: 
 and environment, so no test shares state with another. With `-n` and no `--dist`, `conftest.py` picks xdist's
 `worksteal` scheduling (pytest-xdist 3.5 or later): a worker that runs out of tests takes some still queued on a busy
 one, so the run no longer ends on one or two workers while the others idle; `--dist load` gives the old scheduling
-back. A git repository in a test is a copy of a template made once per worker (`conftest.git_init`, the `git_repo` and `make_repo` fixtures), not a `git init`. The test that calls the
-real docker client is marked `docker`: the CI runs it apart, on one process (`pytest packages/brain -m docker`).
+back. A git repository in a test is a copy of a template made once per worker (`conftest.git_init`, the `git_repo`
+and `make_repo` fixtures), not a `git init`. The test that calls the real docker client is marked `docker`: the CI
+runs it apart, on one process (`pytest packages/brain -m docker`).
+
+`BRAIN_TEST_WORKERS=N` sets how many workers `-n auto` starts (unset: one per core; an explicit `-n N` wins; anything
+but a whole number is refused). More workers than cores rarely help: on Windows the suite is bound by process creation
+(it starts some ten thousand git processes, and an on-access antivirus scans each one), not by the CPU. On a
+16-thread machine, 24 and 32 workers ran no faster than 16, and 24 workers starting at once once timed out a worker's
+start.
 
 ## Releasing
 

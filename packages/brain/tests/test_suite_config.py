@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import conftest
+import pytest
 
 
 class _Config:
@@ -42,3 +43,17 @@ def test_the_hook_runs_before_xdist_turns_no_dist_into_load(pytestconfig):
     ours = next(i for i, p in enumerate(order)
                 if Path(getattr(p, "__file__", "") or ".").resolve() == Path(conftest.__file__).resolve())
     assert ours < order.index(xdist)
+
+
+def test_brain_test_workers_sets_what_n_auto_means(monkeypatch):
+    """BRAIN_TEST_WORKERS: the count -n auto starts; unset or blank: xdist's own (None); anything but a whole number
+    is a usage error, not a silent default."""
+    monkeypatch.delenv("BRAIN_TEST_WORKERS", raising=False)
+    assert conftest.pytest_xdist_auto_num_workers(None) is None
+    for raw, workers in (("24", 24), (" 8 ", 8), ("0", 0), ("", None)):
+        monkeypatch.setenv("BRAIN_TEST_WORKERS", raw)
+        assert conftest.pytest_xdist_auto_num_workers(None) == workers
+    for raw in ("many", "-2", "1.5"):
+        monkeypatch.setenv("BRAIN_TEST_WORKERS", raw)
+        with pytest.raises(pytest.UsageError, match="a whole number of workers"):
+            conftest.pytest_xdist_auto_num_workers(None)
