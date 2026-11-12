@@ -617,11 +617,16 @@ def run(args, root: Path | None) -> Report:
 
     if registered:
         _graph(rep, p, repo_match, hit, changes, root)
-        changed = {ch.new for ch in changes if ch.new} | {ch.old for ch in changes if ch.old}
-        refs = {t.ref for t in hit} if rep.mode == "gitnexus" else None   # a symbol's pin: only once GitNexus says
-        known = {cid for cid, _ in codemap.active_refs(p)} if refs is not None else set()
-        rep.pins = pins.touched(p, changed, {c.name, folder}, refs, known)
+        rep.pins = _pinned(rep, p, changes, hit, {c.name, folder})
     return rep
+
+
+def _pinned(rep: Report, p: projects.Project, changes: list[Change], hit: list[Touched], repos: set[str]) -> list:
+    """The pinned decisions the change touches (brain.pins); a pinned symbol counts only once GitNexus says it."""
+    changed = {ch.new for ch in changes if ch.new} | {ch.old for ch in changes if ch.old}
+    refs = {t.ref for t in hit} if rep.mode == "gitnexus" else None
+    known = {cid for cid, _ in codemap.active_refs(p)} if refs is not None else set()
+    return pins.touched(p, changed, repos, refs, known)
 
 
 # --- the text view ---
@@ -668,6 +673,14 @@ def _test_lines(rep: Report) -> list[str]:
     return out
 
 
+def _pin_lines(rep: Report) -> list[str]:
+    if not rep.pins:
+        return []
+    return [f"[ ] pinned decisions this change touches ({len(rep.pins)}): the PR body says Keeps <id> or "
+            "Overrides <id>: why (an override is a new ADR)"] + [
+        f"    {x['id']} ({x['day'] or '?'}): holds {x['holds']} ({', '.join(x['hits'][:3])})" for x in rep.pins]
+
+
 def render(rep: Report) -> list[str]:
     out = _head_lines(rep)
     if not rep.files:
@@ -682,10 +695,7 @@ def render(rep: Report) -> list[str]:
     out += _test_lines(rep)
     out.append(f"[ ] open items that deliver these features ({len(rep.items)}):")
     out += [f"    {i['id']} ({i['status']}): {i['title'][:90]}" for i in rep.items]
-    if rep.pins:
-        out.append(f"[ ] pinned decisions this change touches ({len(rep.pins)}): the PR body says Keeps <id> or "
-                   "Overrides <id>: why (an override is a new ADR)")
-        out += [f"    {x['id']} ({x['day'] or '?'}): holds {x['holds']} ({', '.join(x['hits'][:3])})" for x in rep.pins]
+    out += _pin_lines(rep)
     if rep.ddrs:
         out.append(f"[ ] decisions pending on them ({len(rep.ddrs)}):")
         out += [f"    {d['id']} ({d['status']}): {d['title'][:90]}" for d in rep.ddrs]

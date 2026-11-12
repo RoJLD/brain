@@ -114,17 +114,8 @@ def problems(pin: dict) -> list[str]:
 
 def decisions_of(project) -> dict[str, Decision]:
     """The project's ADRs and SDRs (with the REVERSAL that supersedes each, if any) and its DDRs."""
-    from . import decisions as ddrs  # reads loads the logs; decisions the records
-    from . import reads
-    out: dict[str, Decision] = {}
-    entries = reads.adr_entries(project)
-    for e in entries:
-        out[e["id"]] = Decision(e["id"], e["day"], e["title"], "sdr" if e["id"].startswith("sdr-") else "adr")
-    for e in entries:
-        if e["title"].upper().startswith("REVERSAL"):
-            for old in _SUPERSEDES_RE.findall(e["text"]):
-                if old in out and not out[old].superseded_by:
-                    out[old].status, out[old].superseded_by = "superseded", e["id"]
+    from . import decisions as ddrs   # the records
+    out = _adrs(project)
     try:
         rows = ddrs.load(Path(project.root))
     except (OSError, ValueError):
@@ -134,6 +125,19 @@ def decisions_of(project) -> dict[str, Decision]:
         if did:
             out[did] = Decision(did, str((d.get("answer") or {}).get("at") or "")[:10], str(d.get("title") or ""),
                                 "ddr", str(d.get("status") or ""))
+    return out
+
+
+def _adrs(project) -> dict[str, Decision]:
+    """The ADRs and SDRs of the project's logs, each superseded one with the REVERSAL that supersedes it."""
+    from . import reads   # the logs
+    entries = reads.adr_entries(project)
+    out = {e["id"]: Decision(e["id"], e["day"], e["title"], "sdr" if e["id"].startswith("sdr-") else "adr")
+           for e in entries}
+    for e in (x for x in entries if x["title"].upper().startswith("REVERSAL")):
+        for old in _SUPERSEDES_RE.findall(e["text"]):
+            if old in out and not out[old].superseded_by:
+                out[old].status, out[old].superseded_by = "superseded", e["id"]
     return out
 
 

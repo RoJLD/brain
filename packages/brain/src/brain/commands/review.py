@@ -55,11 +55,17 @@ def cmd_review(args, root: Path | None = None) -> int:
             print(f"review: {f.stem[:12]} stamped ({args.findings} finding(s), {args.fixed} fixed, {args.contested} "
                   f"contested): {f}")
             return 0
-        rec = review.check(args.head, repo)
-        touched, blocks = _pins(args, repo)
+        return _check(args, repo)
     except (review.ReviewError, OSError) as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
+
+
+def _check(args, repo: Path) -> int:
+    """brain review check: the stamp of the head, then the pinned decisions the change touches (with the PR body,
+    each kept or overridden)."""
+    rec = review.check(args.head, repo)
+    touched, blocks = _pins(args, repo)
     if rec is None:
         print(f"review: {args.head} not reviewed (brain review prep, docs/review.md, then brain review stamp)")
     else:
@@ -78,7 +84,7 @@ def _pins(args, repo: Path) -> tuple[list[dict], list[str]]:
     body, base = None, args.base or ""
     if args.pr:
         r = subprocess.run(["gh", "pr", "view", str(args.pr), "--json", "body,baseRefName"], cwd=repo,
-                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         if r.returncode:
             raise review.ReviewError(f"PR {args.pr}: {(r.stderr or r.stdout).strip()}")
         info = json.loads(r.stdout)
