@@ -227,3 +227,46 @@ def test_section_and_sentences():
     assert brief.section(text, "never") == ["- a", "", "### sub", "- b"]
     assert brief.never_list(["Never do x. Then y. Never do z.\n- Ada decides: money."], ["Ada"]) == \
         ["Never do x.", "Never do z.", "Ada decides: money."]
+
+
+def test_brief_writes_the_failure_modes_of_the_items_surfaces_then_its_own(project, monkeypatch, tmp_path):
+    """wi-brain-brief-failure-modes: the section from the item's named files, title and props, the public engine when
+    a repo it touches is public, its props.invariants last; a fixed line when the table sees nothing."""
+    from brain import public
+    extra = project.root / "notes" / "graph" / "nodes" / "extra.yaml"
+    extra.write_text('- {id: wi-f, type: WorkItem, status: todo, title: "The cost score per project, in '
+                     'schemas/size.json", props: {priority: P1, invariants: ["a size never moves backwards"]}}\n',
+                     encoding="utf-8")
+    text = brief.render(brief.build(project, "wi-f"))
+    sec = brief.section(text, "Invariants and failure modes to test")
+    assert sec[0].startswith("- **a store, a schema or a persisted format** (schemas/size.json): the store as the "
+                             "previous release wrote it")
+    assert [x.split("**")[1] for x in sec] == ["a store, a schema or a persisted format", "a heuristic or a metric",
+                                               "a counted or guarded set", "the item's own"]
+    assert sec[-1] == "- **the item's own** (props.invariants): a size never moves backwards"
+    assert text.index("## How to start") < text.index("## Invariants and failure modes") < text.index("## To decide")
+    # the public engine: a repo of the project in config.json public.repos
+    cfg = tmp_path / "brain" / "config.json"
+    cfg.write_text('{"v": 1, "identity": {"owner": "Ada"}, "rules": ["rules.md"], "public": {"repos": ["ada/eng"]}}',
+                   encoding="utf-8")
+    monkeypatch.setattr(public, "remote_of", lambda repo, c, name="": ("origin", "ada/eng"))
+    # wi-f names no CodeRef: no repo, no public line (the review of the repo gives it)
+    assert "the public engine" not in brief.render(brief.build(project, "wi-f"))
+    edges = project.root / "notes" / "graph" / "edges" / "extra.yaml"
+    edges.write_text("- {from: wi-f, to: feat-a, type: delivers}\n", encoding="utf-8")
+    assert "- **the public engine**: no private id" in brief.render(brief.build(project, "wi-f"))   # code:main:...
+    cfg_ = config.load(project.root)
+    # a CodeRef's token is the repo's folder or its name, case ignored; another repo's token is not this one
+    assert brief.touches_public(project, cfg_, {"MAIN"}) and not brief.touches_public(project, cfg_, {"other"})
+    assert not brief.touches_public(project, cfg_, set())
+    # nothing matched: the line that says so
+    monkeypatch.setattr(public, "remote_of", lambda repo, c, name="": ("origin", "ada/other"))
+    assert brief.build(project, "wi-d").failure_modes == [
+        "- no surface of the table matched (brain.failuremodes): the review reads the state logic; record the item's "
+        "own in props.invariants (brain item set)"]
+    # brain review prep --item: the diff's files and a removed test join the item's
+    st, node, _ = brief._find(project, "wi-d")
+    lines = brief.failure_modes(project, st, node, config.load(project.root), ["src/brain/guards.py"],
+                                ["-def test_old(): pass"], public=True)
+    assert [x.split("**")[1] for x in lines] == ["a guard or a gate", "a test removed or a check moved",
+                                                 "the public engine"]   # the reviewed repo is public
