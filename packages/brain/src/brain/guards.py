@@ -2000,15 +2000,18 @@ def _root_hook(low: list[str]) -> bool:
     if not (_INTERPRETER.match(prog) or prog in (".", "source")):
         return False
     python = any(_PYTHON.match(re.split(r"[\\/]", w)[-1]) for w in low)
-    for i, w in enumerate(low[1:], 1):
-        if not any(c.isspace() for c in w) and _HOOK_FILE.match(re.split(r"[\\/]", w)[-1]):   # a path, not a -c's
-            return True
-        module = w[2:] if w.startswith("-m") and len(w) > 2 else (low[i + 1] if w == "-m" and i + 1 < len(low) else "")
-        if module in ("brain.midsession", "brain.succession"):
-            return True
-        if python and low[i - 1] == "-c" and _HOOK_CODE.search(w):
-            return True
-    return False
+    return any(_hook_word(low, i, python) for i in range(1, len(low)))
+
+
+def _hook_word(low: list[str], i: int, python: bool) -> bool:
+    """Whether the word ``low[i]`` names the hook's entry: a path to it (no space: not a -c's code), its module after
+    -m, or Python code after -c that imports or calls it."""
+    w = low[i]
+    if not any(c.isspace() for c in w) and _HOOK_FILE.match(re.split(r"[\\/]", w)[-1]):
+        return True
+    module = w[2:] if w.startswith("-m") and len(w) > 2 else (low[i + 1] if w == "-m" and i + 1 < len(low) else "")
+    return module in ("brain.midsession", "brain.succession") or (python and low[i - 1] == "-c" and
+                                                                   bool(_HOOK_CODE.search(w)))
 
 
 def _root_override(cmds, shell: str) -> str | None:
