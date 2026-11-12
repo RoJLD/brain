@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from brain import cli, cockpit, cost, digest, graph, projects, status, usage
+from brain import cli, cockpit, cost, digest, graph, projects, sizing, status, usage
 
 ITEMS = """
 - {id: wi-a, type: WorkItem, status: done, title: "Ledger A", props: {theme: "3.9", pr: "engine #7",
@@ -259,12 +259,12 @@ def test_status_and_digest_show_the_cost(project):
 # --- wi-brain-size-calibration: sizes checked against actuals ---
 
 def test_the_scale_and_a_judged_size_against_the_active_time():
-    assert [cost.size_of(h) for h in (0.1, 0.3, 0.31, 0.8, 2.0, 2.01)] == ["S", "S", "M", "M", "L", "XL"]
+    assert [sizing.size_of(h) for h in (0.1, 0.3, 0.31, 0.8, 2.0, 2.01)] == ["S", "S", "M", "M", "L", "XL"]
     one_hour = {"size": "M", "active_s": 3600}
-    assert cost.size_check(one_hour) == {"judged": "M", "actual": "L", "hours": 1.0, "verdict": "under"}
-    assert cost.size_check(dict(one_hour, size="L"))["verdict"] == "hit"
-    assert cost.size_check(dict(one_hour, size="XL"))["verdict"] == "over"
-    assert cost.size_check({"active_s": 3600}) is None and cost.size_check(dict(one_hour, size="")) is None
+    assert sizing.size_check(one_hour) == {"judged": "M", "actual": "L", "hours": 1.0, "verdict": "under"}
+    assert sizing.size_check(dict(one_hour, size="L"))["verdict"] == "hit"
+    assert sizing.size_check(dict(one_hour, size="XL"))["verdict"] == "over"
+    assert sizing.size_check({"active_s": 3600}) is None and sizing.size_check(dict(one_hour, size="")) is None
 
 
 def test_review_and_audit_say_the_size_against_the_actual(project):

@@ -51,7 +51,6 @@ from . import config, graph, paths, projects, queue, resume, sizing, usage
 
 MIN_SIMILAR = 3
 OFF = 1.5  # an actual above OFF x its estimate, or below estimate / OFF, is off
-VERDICTS = ("hit", "under", "over")   # a judged size against the actual (brain.sizing's scale)
 SEQ_SESSIONS = 3  # a sequence in this many sessions is a script candidate
 ORCHESTRATOR = 2  # a session that started this many sub-sessions coordinates: it serves no item itself
 # Steps that read, filter or edit: a sequence needs two other steps to be a script candidate (grep > head > sed is
@@ -447,58 +446,6 @@ def explain(a: dict, pool: list[dict]) -> list[str]:
     return [t for _, t in sorted(out, key=lambda x: -x[0])]
 
 
-def size_of(hours: float) -> str:
-    """The size an active time falls in on the scale (brain.sizing.HOURS: each size's upper bound; XL beyond L)."""
-    return next((s for s in sizing.SIZES[:-1] if hours <= sizing.HOURS[s]), sizing.SIZES[-1])
-
-
-def size_check(a: dict) -> dict | None:
-    """An item's judged size against its actual: {judged, actual, hours, verdict: hit, under (the work was bigger
-    than judged) or over}; None without a judged size."""
-    if not a.get("size"):
-        return None
-    hours = (a.get("active_s") or 0) / 3600
-    got = size_of(hours)
-    order = sizing.SIZES.index
-    verdict = "hit" if got == a["size"] else "under" if order(got) > order(a["size"]) else "over"
-    return {"judged": a["size"], "actual": got, "hours": round(hours, 2), "verdict": verdict}
-
-
-def sizes(items: list[dict], everything: list[dict]) -> dict:
-    """The sizes against the actuals: ``items`` (the window's finished items) each checked and grouped by size and
-    class (n, hits, under, over, median hours and cost), and the thresholds ``everything`` (the whole history)
-    proposes: each size's p75 of active hours among the items judged that size (MIN_SIMILAR at least), beside the
-    scale's."""
-    rows = [dict(c, id=a["id"], cls=a["class"], cost=a["cost"]) for a in items for c in [size_check(a)] if c]
-    return {"items": rows, "table": _size_table(rows), "thresholds": _thresholds(everything),
-            "misses": sum(r["verdict"] != "hit" for r in rows)}
-
-
-def _size_table(rows: list[dict]) -> list[dict]:
-    """The checked items grouped by judged size and class: n, hits, under, over, median hours and cost."""
-    groups: dict[tuple[str, str], list[dict]] = {}
-    for r in rows:
-        groups.setdefault((r["judged"], r["cls"]), []).append(r)
-    order = sizing.SIZES.index
-    return [{"size": s, "class": c, "n": len(g), **{v: sum(r["verdict"] == v for r in g) for v in VERDICTS},
-             "hours": round(statistics.median(r["hours"] for r in g), 2),
-             "cost": round(statistics.median(r["cost"] for r in g), 2)}
-            for (s, c), g in sorted(groups.items(), key=lambda kv: (order(kv[0][0]), kv[0][1]))]
-
-
-def _thresholds(everything: list[dict]) -> list[dict]:
-    """Each size's upper bound now and the one the history proposes: the p75 of the active hours of the items
-    judged that size (MIN_SIMILAR at least, else None)."""
-    checked = [x for x in (size_check(a) for a in everything) if x]
-    out = []
-    for s in sizing.SIZES[:-1]:
-        hours = [x["hours"] for x in checked if x["judged"] == s]
-        q = usage.quantiles(hours) if len(hours) >= MIN_SIMILAR else {"n": 0}
-        out.append({"size": s, "now": sizing.HOURS[s], "n": len(hours),
-                    "proposed": round(q["p75"], 2) if q["n"] else None})
-    return out
-
-
 def review(led: Ledger, item_id: str) -> dict:
     it = led.items.get(item_id)
     if not it:
@@ -515,7 +462,7 @@ def review(led: Ledger, item_id: str) -> dict:
             "estimate": est_usd, "source": "recorded" if rec.get("usd") else "backtest" if est_usd else "",
             "ratio": a["cost"] / est_usd if est_usd else None,
             "budget_use": a["peak"] / a["budget"] if a.get("budget") else None,
-            "why": explain(a, same), "pool": len(same), "size": size_check(a)}
+            "why": explain(a, same), "pool": len(same), "size": sizing.size_check(a)}
 
 
 def verdict(ratio: float | None) -> str:
@@ -858,7 +805,7 @@ def audit(led: Ledger, since: str, until: str, top: int = TOP) -> dict:
     rows = led.window(since, until)
     errs = [abs(math.log(t["ratio"])) for t in tests if t["ratio"] > 0]
     return {"since": since, "until": until, "reviews": reviews, "off": off, "calibration": cal,
-            "sizes": sizes([rv["item"] for rv in reviews], history(led)),
+            "sizes": sizing.sizes([rv["item"] for rv in reviews], history(led)),
             "size_key": {k: v for k, v in key.items() if k != "tests"},
             "backtests": {"n": len(tests), "within": sum(1 for t in tests if verdict(t["ratio"]) == "within"),
                           "median_factor": round(math.exp(statistics.median(errs)), 3) if errs else None},
@@ -890,7 +837,7 @@ def render_audit(au: dict, project: str, generated: str) -> str:
         lines.append(f"- {'every class' if k == '*' else k or 'no class'}: x{c['factor']} over {c['n']} item(s)")
     if not au["calibration"]:
         lines.append(f"- not enough finished items yet ({MIN_SIMILAR} per class)")
-    lines += _render_sizes(au.get("sizes"), au.get("size_key"))
+    lines += sizing.render_sizes(au.get("sizes"), au.get("size_key"))
     lines += ["", "## Where the cost went", ""]
     lines += [f"- {r['key']}: {usage.usd(r['total'])} ({_pct(r['share'])})" for r in au["phases"]]
     lines += ["", "## Costliest sessions", ""]
@@ -900,41 +847,6 @@ def render_audit(au: dict, project: str, generated: str) -> str:
     lines += [f"- `{r['key']}`: {r['count']} times in {r['sessions']} sessions, {usage.usd(r['total'])}"
               for r in au["sequences"]] or ["- none"]
     return "\n".join(lines) + "\n"
-
-
-def _render_sizes(sz: dict | None, key: dict | None) -> list[str]:
-    """The audit's « Sizes against actuals » (wi-brain-size-calibration)."""
-    lines = ["", "## Sizes against actuals (props.size against the active time)", ""]
-    if not sz or not sz["items"]:
-        return lines + ["- no finished item of the window carries a size"]
-    lines.append(f"{len(sz['items'])} sized item(s), {sz['misses']} miss(es) (the scale: "
-                 + ", ".join(f"{s} up to {h} h" for s, h in sizing.HOURS.items() if s != sizing.SIZES[-1])
-                 + f", {sizing.SIZES[-1]} beyond).")
-    lines += [f"- {r['size']} {r['class'] or 'no class'}: {r['n']} item(s), {r['hit']} hit, {r['under']} under-sized, "
-              f"{r['over']} over-sized; median {r['hours']} h, {usage.usd(r['cost'])}" for r in sz["table"]]
-    lines += [f"  - {r['id']}: {r['judged']} judged, {r['hours']} h is {r['actual']}" for r in sz["items"]
-              if r["verdict"] != "hit"]
-    return lines + _threshold_lines(sz["thresholds"], key)
-
-
-def _threshold(t: dict) -> str:
-    if t["proposed"] is None:
-        return f"- {t['size']}: now {t['now']} h, proposed - ({t['n']} item(s), {MIN_SIMILAR} needed)"
-    return f"- {t['size']}: now {t['now']} h, proposed {t['proposed']} h ({t['n']} item(s))"
-
-
-def _threshold_lines(thresholds: list[dict], key: dict | None) -> list[str]:
-    """The thresholds the history proposes, whether they rise with the size, and the size key's verdict."""
-    lines = ["", "Thresholds proposed (each size's p75 of active hours among the items judged it, whole history):"]
-    lines += [_threshold(t) for t in thresholds]
-    got = [t["proposed"] for t in thresholds if t["proposed"] is not None]
-    if any(b <= a for a, b in zip(got, got[1:])):
-        lines.append("- the proposals do not rise with the size: the judged sizes do not separate the active time "
-                     "yet (judge again from the misses above before moving the scale)")
-    if key and key.get("with") is not None:
-        lines.append(f"- the size as the estimator's first key: {'kept' if key['kept'] else 'left out'} (backtests' "
-                     f"error x{key['with']} with it, x{key['without']} without)")
-    return lines
 
 
 def audit_path(project: str, since: str, until: str) -> Path:
