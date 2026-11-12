@@ -68,7 +68,7 @@ def test_every_name_the_engine_writes_under_brain_home_has_a_class():
     assert unresolved == []
     assert {"ledger", "usage", "cache", "budget", "announce", "handover", "features", "forecast", "memory-sync",
             "venv", "bin", "secrets", "stacks", "tui.json", "update.json", "personal.json", "profile.json",
-            "code-index.json", "public-check", "reviews", "code-map"} <= set(names)
+            "code-index.json", "public-check", "reviews", "code-map", "merge-ready"} <= set(names)
     every = classes.effective([])
     unknown = {n: sorted(w) for n, w in names.items() if not classes.store_of(every, f"$BRAIN_HOME/{n}")}
     assert unknown == {}, f"names written under BRAIN_HOME without a class (add them to ENGINE_STORES): {unknown}"
