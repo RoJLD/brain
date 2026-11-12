@@ -245,3 +245,36 @@ def test_wait_refuses_an_archived_successor_and_a_bad_id(lab, capsys):
     assert not r["ok"] and r["state"] == "archived"
     assert cli.main(["handover", "wait", "--id", F, "--successor", "nope"]) == 2
     assert "is not an app id" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kw, why", [({"name": "worker-g"}, "is not a Brain coordinator"),
+                                     ({"parent": X}, "was not started by this session")])
+def test_wait_refuses_at_once_a_starting_session_that_is_no_successor(lab, kw, why, capsys):
+    rc.starting(lab, **kw)
+    r = succession.wait(G, F, timeout=60, clock=lambda: 0.0, sleep=lambda s: pytest.fail("no wait"))
+    assert not r["ok"] and why in r["why"]
+    assert cli.main(["handover", "wait", "--id", F, "--successor", G]) == 1
+    assert "retry once" not in capsys.readouterr().out   # the guard refuses it: no hint that it would pass
+
+
+def test_wait_names_an_id_the_app_does_not_know(lab):
+    unknown = "local_77777777-0000-4000-8000-777777777777"
+    r = succession.wait(unknown, F, timeout=0)
+    assert not r["ok"] and r["state"] == "unknown" and "not in the desktop app's session files" in r["why"]
+
+
+def test_wait_says_a_live_successor_not_detached(lab, capsys):
+    lab.put(G, parent=F, name="coordinator-g", detached=None)
+    lab.turn(G, "idle")
+    assert cli.main(["handover", "wait", "--id", F, "--successor", G]) == 0
+    assert "detach it" in capsys.readouterr().out
+    assert succession.wait(G, F)["detached"] is False
+
+
+def test_a_note_written_again_without_a_successor_drops_the_old_brief(lab, capsys):
+    assert cli.main(["handover", "write", "--id", F, "--successor", "coordinator-g"]) == 0
+    note = guards.handover_note(F)
+    brief = note.with_name(note.stem + succession.BRIEF_SUFFIX)
+    assert brief.exists()
+    assert cli.main(["handover", "write", "--id", F]) == 0
+    assert not brief.exists() and "brief beside it removed" in capsys.readouterr().out

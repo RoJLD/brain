@@ -19,7 +19,7 @@ USAGE = """\
   brain handover wait --successor ID [--id ID] [--timeout S] [--json]   wait, bounded (default 120 s, at most 600),
                  for the successor's first turn before Remote Control on for it; exit 0 once it is live, 1 when the
                  bound passed with it still starting or when it is no successor of this session (archived, another's,
-                 not a coordinator), 2 when the app's files cannot be read
+                 not a coordinator), 2 when the app's files cannot be read or an id is malformed
   brain handover check [--id ID] [--successor ID] [--json]   the guard's conditions before Remote Control: a
                  coordinator by name (or a chain root), started by one (or by a root), its note under 6 h old, its
                  successors live and detached; and its predecessor, which the incoming coordinator archives first;
@@ -38,6 +38,8 @@ def _write(args) -> int:
     if args.successor:   # the successor's brief, its first line with ultracode (on at every hand-over)
         b = succession.write_brief(f, host=args.id, successor=args.successor)
         print(f"successor's brief written: {b} (its first line carries ultracode: start the successor with it)")
+    elif succession.drop_brief(f):
+        print("the earlier successor's brief beside it removed (no --successor this time)")
     print("next: brain handover check, then the start (its brief first), brain handover wait --successor <its id>, "
           "Remote Control on for it, the children told, Remote Control off on yourself (the coordinator-handover "
           "procedure)")
@@ -49,11 +51,12 @@ def _wait(args) -> int:
     if args.json:
         print(json.dumps(r, indent=1, sort_keys=True))
     elif r["ok"]:
-        print(f"{r['successor']} is {r['state']} after {r['waited_s']} s: turn Remote Control on for it now")
+        print(f"{r['successor']} is {r['state']} after {r['waited_s']} s: turn Remote Control on for it now"
+              + ("" if r["detached"] else "; detach it (detach_session) before Remote Control off on yourself"))
     else:
         print(f"{r['successor']} ({r['state']}): {r['why']}" + (
             "; Remote Control on still passes while it starts (engine 0.4.0 and later): on a refusal that says it "
-            "is unknown, wait again and retry once" if r["state"] == "starting" else ""))
+            "is unknown, wait again and retry once" if r["why"].startswith("no first turn") else ""))
     return 0 if r["ok"] else 1
 
 

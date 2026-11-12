@@ -123,6 +123,16 @@ def write_brief(note: Path, *, successor: str, host: str | None = None, name: st
     return f
 
 
+def drop_brief(note: Path) -> bool:
+    """Remove the successor's brief beside ``note`` (a note written again without a successor): whether one was."""
+    f = note.with_name(note.stem + BRIEF_SUFFIX)
+    try:
+        f.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def _first_id(f: Path) -> str:
     """The first app id of an existing note's opening (whose note it is), '' when there is none."""
     try:
@@ -193,7 +203,8 @@ def check(host: str | None = None, *, successor: str = "", now: float | None = N
 
 def wait(successor: str, host: str | None = None, *, timeout: float = WAIT_S, poll: float = POLL_S, env=None,
          clock=time.monotonic, sleep=time.sleep) -> dict:
-    """Wait, at most ``timeout`` seconds, for the successor's first turn: {id, successor, state, waited_s, ok, why}.
+    """Wait, at most ``timeout`` seconds, for the successor's first turn: {id, successor, state, waited_s, ok, why,
+    detached} (``detached``: Remote Control off on this session needs it too).
     ``ok`` once it has a transcript and is live (Remote Control on for it then passes any engine's guard); not ``ok``
     at once when it is not this session's coordinator successor or is archived, ended or unknown beyond its start
     window; not ``ok`` with state ``starting`` when the bound passed first (an engine from 0.4.0 still lets on through
@@ -209,13 +220,16 @@ def wait(successor: str, host: str | None = None, *, timeout: float = WAIT_S, po
         st, how = guards.successor_state_of(tm, time.time()) if tm else ("unknown", "not in the app's files yet")
         why = _target_why(host, successor, tm, time.time()) if tm else ""
         waited = round(clock() - t0, 1)
+        r = {"id": host, "successor": successor, "state": st, "waited_s": waited, "ok": False, "why": why,
+             "detached": bool(tm) and tm.get("detached") is True}
         if tm and not why and st in guards.RC_LIVE:
-            return {"id": host, "successor": successor, "state": st, "waited_s": waited, "ok": True, "why": ""}
-        if tm and why and st != "starting":
-            return {"id": host, "successor": successor, "state": st, "waited_s": waited, "ok": False, "why": why}
+            return {**r, "ok": True}
+        if why:   # not this session's coordinator successor, archived, ended, beyond its start window: at once
+            return r
         if waited >= timeout:
-            return {"id": host, "successor": successor, "state": "starting" if tm else st, "waited_s": waited,
-                    "ok": False, "why": f"no first turn after {int(timeout)} s" + (f" ({how})" if how else "")}
+            got = f"no first turn after {int(timeout)} s ({how})" if tm else \
+                f"not in the desktop app's session files after {int(timeout)} s (a wrong id?)"
+            return {**r, "state": "starting" if tm else "unknown", "why": got}
         sleep(min(poll, max(0.1, timeout - waited)))
 
 
