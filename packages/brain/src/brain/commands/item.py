@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 
 from .. import crossstore, graph, milestones, reads
@@ -15,9 +16,12 @@ USAGE = """\
                  its props in full, its edges both ways, the ids its props name, its blockers, the ADRs that decide it
                  (direct and inherited) and its specs, the DDRs that name it; --history: its changes from git (a
                  replay of the store's history: a minute on a store of thousands of nodes and commits)
-  brain item add ID --title T [--priority P1 [--reason R]] [--spec S] [--after ID]... [--milestone M] [--adr A]
-                 [--prop k=v]...         without --milestone, prints the milestone the signals suggest
-  brain item set ID key=value...
+  brain item add ID --title T [--priority P1 [--reason R]] [--size S|M|L|XL --size-reason R] [--spec S]
+                 [--after ID]... [--milestone M] [--adr A] [--prop k=v]...   without --milestone, prints the
+                 milestone the signals suggest; a WorkItem is stamped props.created (today) and should carry a size,
+                 the writing session's judgement (S under ~0.3 h of active time, M ~0.8 h, L ~2 h, XL beyond: to
+                 split); brain check warns on an open item written without one (brain.sizing)
+  brain item set ID key=value...   size=S|M|L|XL size_reason=... sizes an item (any case)
   brain item close ID --pr "repo #N" [--outcome TEXT]
   brain item link FROM TYPE TO [--prop k=v]...   an edge (with props: enforced_by's scope); one end may be another
                  store's id (a store of the registry: research_graph shows it with its store's label)
@@ -31,6 +35,14 @@ def cmd_item(args, root: Path) -> int:
         if args.item_cmd == "add":
             props = {k: v for k, v in {"priority": args.priority, "priority_reason": args.reason, "theme": args.theme,
                                        "idea": args.idea}.items() if v}
+            if args.size_reason and not args.size:
+                raise graph.GraphError("--size-reason without --size")
+            if args.size:
+                if not args.size_reason:
+                    raise graph.GraphError("--size needs its --size-reason (one line: why this size)")
+                props.update(size=args.size.upper(), size_reason=args.size_reason)
+            if args.type == "WorkItem":
+                props["created"] = date.today().isoformat()   # since the size rule (brain.sizing)
             props.update(_kv(args.prop))
             node = graph.add_item(store, args.id, args.title, node_type=args.type, status=args.status, props=props,
                                   spec=args.spec, after=args.after, milestone=args.milestone, adr=args.adr,
@@ -55,6 +67,9 @@ def cmd_item(args, root: Path) -> int:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
     print(f"{args.item_cmd}: {node['id']} [{node['status']}]; then brain sync and brain check")
+    if args.item_cmd == "add" and args.type == "WorkItem" and not (node.get("props") or {}).get("size"):
+        print(f"size: none; give one (brain item set {node['id']} size=S|M|L|XL size_reason=...): S under ~0.3 h of "
+              "active time, M ~0.8 h, L ~2 h, XL beyond (to split)")
     if args.item_cmd == "add" and args.type == "WorkItem" and not args.milestone \
             and milestones.PROPOSED not in (node.get("props") or {}):
         _print_suggestion(store, node["id"])
@@ -113,6 +128,10 @@ def register(sub, ctx) -> None:
     add.add_argument("--status", default="todo")
     add.add_argument("--priority")
     add.add_argument("--reason", help="props.priority_reason: why this priority")
+    add.add_argument("--size", type=str.upper, choices=graph.SIZES,
+                     help="props.size, the writing session's judgement: S under ~0.3 h of active time, M ~0.8 h, "
+                          "L ~2 h, XL beyond (to split)")
+    add.add_argument("--size-reason", help="props.size_reason: one line, why this size (required with --size)")
     add.add_argument("--theme")
     add.add_argument("--idea")
     add.add_argument("--spec", help="specified_by edge")

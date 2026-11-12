@@ -329,6 +329,19 @@ master's and `N` PRs verified at once (3) a round. It prints the rounds, the pre
 and the items with no known surface (each a lot of its own, unchecked), with what the memory guard and the last quota
 forecast say now; it refuses nothing. `brain next` shows the current wave's first round.
 
+### Item sizes
+
+Every work item carries a size, the judgement of the session that writes it: `props.size` (`S`, `M`, `L`, `XL`) and
+`props.size_reason` (one line). The scale, until the recalibration against the actuals moves it: S under about 0.3 h
+of active time, M up to about 0.8 h, L up to about 2 h, XL beyond (to be split when possible); `brain.sizing.HOURS`
+holds it as the hours the ranking reads. `brain item add ID --title T --size M --size-reason "..."` gives both (a size
+without its reason is refused), `brain item set ID size=L size_reason=...` changes them (any case; a size off the
+scale is refused). `brain item add` stamps a work item `props.created` (today) and, without `--size`, prints the
+`brain item set` line that sizes it. `brain check` warns, never fails, on an open item stamped `created` that carries
+no size, and on an open item with a size but no `size_reason`. Items written before the rule carry no stamp: a
+session sizes them once, in batches, reading each one (a script cannot guess a size: the free signals predict an
+item's cost poorly).
+
 ### Reading a brain
 
 Sessions read a brain through its commands, not its files: the graph's YAML, the decision log, the journal and the

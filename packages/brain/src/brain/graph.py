@@ -34,6 +34,17 @@ class GraphError(Exception):
     pass
 
 
+# props.size of an item, the session's judgement when it writes it (wi-brain-item-size; brain.sizing has the scale)
+SIZES = ("S", "M", "L", "XL")
+
+
+def _check_size(node: dict) -> None:
+    """GraphError when the node's props.size is not one of SIZES."""
+    size = (node.get("props") or {}).get("size")
+    if size is not None and size not in SIZES:
+        raise GraphError(f"{node['id']}: size {size!r} is not one of {', '.join(SIZES)}")
+
+
 def _yaml():
     try:
         import yaml
@@ -234,6 +245,7 @@ def add_item(store: Path, nid: str, title: str, *, node_type: str = "WorkItem", 
     if props:
         node["props"] = props
     _check_status(store, node)
+    _check_size(node)
     edges = []
     for target, etype in ([(spec, "specified_by")] + [(a, "depends_on") for a in after or []]
                           + [(milestone, "part_of"), (adr, "decided_by")]):
@@ -326,7 +338,7 @@ def unlink(store: Path, src: str, dst: str) -> tuple[dict, Path]:
 
 def set_item(store: Path, nid: str, assignments: list[str]) -> dict:
     """``key=value`` pairs: status, title, anchor and type set the node; ``props.<k>`` or any other key sets a
-    prop; an empty value removes the prop."""
+    prop; an empty value removes the prop. A size is one of SIZES (given in any case)."""
     def change(node: dict) -> None:
         for a in assignments:
             if "=" not in a:
@@ -337,6 +349,8 @@ def set_item(store: Path, nid: str, assignments: list[str]) -> dict:
                 node[key] = value
                 continue
             key = key[6:] if key.startswith("props.") else key
+            if key == "size":
+                value = value.strip().upper()
             props = node.setdefault("props", {})
             if value == "":
                 props.pop(key, None)
@@ -344,6 +358,7 @@ def set_item(store: Path, nid: str, assignments: list[str]) -> dict:
                 props[key] = value
             if not props:
                 node.pop("props")
+        _check_size(node)
     return _edit(store, nid, change)
 
 
