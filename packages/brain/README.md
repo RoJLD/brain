@@ -1102,8 +1102,11 @@ def run(args, root: Path) -> int:
 - Every command runs under `brain.shutdown.graceful()`: SIGINT (Ctrl+C), SIGTERM, SIGHUP and SIGBREAK (Ctrl+Break
   on Windows) stop it with `Stopped` (a `KeyboardInterrupt`), so its `finally` and `with` blocks run and its locks
   are released; one that arrives inside `brain.shutdown.critical()` (each ledger line, each atomic state write)
-  waits for the write to end. The exit is 128 + the signal's number (130 for Ctrl+C, 143 for SIGTERM) and stderr
-  names the signal. A long command's own write that must not be cut goes in `critical()`, or through
+  waits for the write to end, and one that arrives while the write fails still stops it. stderr names the signal;
+  then, on POSIX, the command dies by the signal itself, so a shell sees 128 + its number (130 for Ctrl+C, 143 for
+  SIGTERM) and stops a loop on it; on Windows it exits 128 + the number (149 for Ctrl+Break). `main([...])` called
+  from Python returns that code instead. `brain timed` passes a signal sent to brain alone to its command (POSIX),
+  and the text cockpit quits with 0 on Ctrl+C. A long command's own write that must not be cut goes in `critical()`, or through
   `stateio.write_atomic`; `taskkill /F` and SIGKILL cannot be trapped.
 - `NO_PROJECT = {"hello"}`: no `--project` is added after its subcommand (the hooks', machine-wide commands).
 - What several commands share is in `_common.py` (the text options, the project, its store and scope) and

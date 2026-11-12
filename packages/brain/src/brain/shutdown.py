@@ -6,8 +6,8 @@ A command stopped by a signal finishes or rolls back the write it is in, then st
   reseal, among them): SIGINT (Ctrl+C), SIGTERM, SIGHUP (POSIX) and SIGBREAK (Ctrl+Break on Windows) raise
   :class:`Stopped` in the main thread, a ``KeyboardInterrupt``, so every ``finally`` and ``with`` on the way out runs: a
   lock is released, an atomic write's temporary file goes (the file is left as it was: rolled back). Without it SIGTERM,
-  SIGHUP and SIGBREAK end the process at once, and nothing on the way out runs. The command exits 128 + the signal's
-  number (130 for Ctrl+C) and says which signal stopped it. ``TerminateProcess`` (``taskkill /F``, the Task Manager)
+  SIGHUP and SIGBREAK end the process at once, and nothing on the way out runs. The command says which signal stopped
+  it, then dies by it on POSIX (:func:`die`: the shell sees 128 + its number) or exits 128 + its number on Windows. ``TerminateProcess`` (``taskkill /F``, the Task Manager)
   and SIGKILL cannot be trapped: the atomic writes are what keeps a file whole then.
 - :func:`critical`: a signal that arrives inside it waits until it ends (the write finishes), then stops the command.
   The engine's writers hold one around their write: ``brain.timing.append_text`` (every ledger line),
@@ -27,6 +27,7 @@ import contextlib
 import json
 import os
 import signal
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,7 +72,7 @@ def _main_thread() -> bool:
     return threading.current_thread() is threading.main_thread()
 
 
-def _handler(signum, frame):  # noqa: ARG001 - signal.signal's signature
+def _handler(signum, _frame):
     if _depth[0]:
         if signum not in _pending:
             _pending.append(signum)
@@ -118,10 +119,26 @@ def critical():
         yield
     finally:
         _depth[0] -= 1
-    if not _depth[0] and _pending:
-        signum = _pending.pop(0)
-        _pending.clear()
-        raise Stopped(signum)
+        if not _depth[0] and _pending:
+            signum = _pending.pop(0)
+            _pending.clear()
+            # the write raised meanwhile (a PermissionError a caller would catch): the stop still wins, chained to
+            # it; an interrupt already on its way stands
+            if not isinstance(sys.exc_info()[1], KeyboardInterrupt):
+                raise Stopped(signum)
+
+
+def die(exc: Stopped) -> None:
+    """POSIX: end the process by the signal itself, its default action restored, once the way out has run: a shell
+    stops a loop on a child killed by SIGINT, a supervisor counts a SIGTERM death as a stop, not a failure. Windows
+    has no such death: the caller returns ``exc.exit_code``."""
+    if os.name == "nt":
+        return
+    try:
+        signal.signal(exc.signum, signal.SIG_DFL)
+        os.kill(os.getpid(), exc.signum)
+    except (OSError, ValueError):
+        pass
 
 
 def locks_dir() -> Path:

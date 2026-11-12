@@ -48,6 +48,58 @@ def test_a_signal_inside_a_write_waits_for_its_end():
     assert done == ["inner", "outer"] and exc.value.exit_code == 130
 
 
+def test_a_signal_inside_a_write_that_raises_still_stops_the_command():
+    """The write failed (a PermissionError a caller catches): the deferred signal is not lost."""
+    with pytest.raises(shutdown.Stopped) as exc:
+        with shutdown.graceful():
+            try:
+                with shutdown.critical():
+                    signal.raise_signal(signal.SIGTERM)
+                    raise PermissionError("the target is held")
+            except OSError:
+                pytest.fail("the stop was swallowed with the write's error")
+    assert isinstance(exc.value.__context__, PermissionError) and not shutdown._pending
+
+
+def test_the_text_cockpit_quits_on_ctrl_c_and_stops_on_sigterm(monkeypatch):
+    from brain import cockpit
+
+    class Cp:
+        def refresh(self, probe):
+            signal.raise_signal(self.sig)
+            return False
+
+    cp = Cp()
+    with shutdown.graceful():
+        cp.sig = signal.SIGINT
+        assert cockpit.watch(cp, refresh_s=0.01) == 0
+        cp.sig = signal.SIGTERM
+        with pytest.raises(shutdown.Stopped):
+            cockpit.watch(cp, refresh_s=0.01)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX: a signal sent to brain alone is passed to the command")
+def test_brain_timed_passes_a_sigterm_to_its_command(brain_home, monkeypatch):
+    sent = []
+
+    class Proc:
+        def __init__(self, *a, **kw):
+            self.n = 0
+
+        def wait(self, timeout=None):
+            self.n += 1
+            if self.n == 1:
+                raise shutdown.Stopped(signal.SIGTERM)
+            return 128 + signal.SIGTERM
+
+        def send_signal(self, sig):
+            sent.append(sig)
+
+    monkeypatch.setattr(timing.subprocess, "Popen", Proc)
+    assert timing._execute(["python", "-c", "pass"], False)[1] == "interrupted"
+    assert sent == [signal.SIGTERM]
+
+
 def test_critical_outside_graceful_only_counts():
     with shutdown.critical():
         pass
@@ -117,10 +169,19 @@ def dispatch(args):
     return 0
 
 cli._dispatch = dispatch
-sys.exit(cli.main(["status"]))
+sys.argv = ["brain", "status"]   # a real run (argv None), as the brain command
+sys.exit(cli.main())
 """
 
 
+def _no_console() -> bool:
+    if os.name != "nt":
+        return False
+    import ctypes
+    return not ctypes.windll.kernel32.GetConsoleWindow()
+
+
+@pytest.mark.skipif(_no_console(), reason="Ctrl+Break needs a console (a detached or scheduled run has none)")
 def test_a_real_signal_from_outside_runs_the_way_out(brain_home, tmp_path):
     """Ctrl+Break on Windows (SIGBREAK, which ends a process at once by default), SIGTERM elsewhere."""
     script, out = tmp_path / "child.py", tmp_path / "out.txt"
@@ -133,10 +194,15 @@ def test_a_real_signal_from_outside_runs_the_way_out(brain_home, tmp_path):
     while not out.with_suffix(".ready").exists() and child.poll() is None and time.monotonic() < deadline:
         time.sleep(0.05)
     sig = signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGTERM
-    os.kill(child.pid, sig)
-    _, err = child.communicate(timeout=60)
-    expected = signal.SIGBREAK if os.name == "nt" else signal.SIGTERM
-    assert child.returncode == 128 + expected, err
+    try:
+        os.kill(child.pid, sig)
+        _, err = child.communicate(timeout=60)
+    finally:
+        if child.poll() is None:
+            child.kill()
+    # Windows: exit 128 + SIGBREAK; POSIX: a death by the signal itself (brain.shutdown.die), as a shell expects
+    expected = 128 + signal.SIGBREAK if os.name == "nt" else -signal.SIGTERM
+    assert child.returncode == expected, err
     assert out.read_text(encoding="utf-8") == "cleaned up"
 
 

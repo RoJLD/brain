@@ -39,6 +39,7 @@ import functools
 import json
 import os
 import random
+import signal
 import subprocess
 import sys
 import threading
@@ -373,7 +374,15 @@ def _execute(command: list[str], shell: bool) -> tuple[int | None, str | None]:
         return 126, f"cannot run: {type(exc).__name__}"
     try:
         return proc.wait(), None
-    except KeyboardInterrupt:  # the console sent it to the command too: let it finish, then kill it
+    except KeyboardInterrupt as exc:  # the console sent Ctrl+C to the command too: let it finish, then kill it
+        signum = getattr(exc, "signum", None)
+        # POSIX: a signal sent to brain alone (kill, a hang-up) is passed on; on Windows the console sends
+        # Ctrl+Break to the command too, and nothing else reaches a process to be trapped
+        if signum is not None and signum != signal.SIGINT and os.name != "nt":
+            try:
+                proc.send_signal(signum)
+            except (OSError, ValueError):
+                pass
         try:
             return proc.wait(timeout=INTERRUPT_GRACE), "interrupted"
         except (subprocess.TimeoutExpired, KeyboardInterrupt):

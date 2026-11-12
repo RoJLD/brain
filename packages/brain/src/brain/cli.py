@@ -95,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
     for stream in (sys.stdout, sys.stderr):
         _utf8(stream)
+    real_run = argv is None
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     commands = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction)).choices
@@ -113,6 +114,9 @@ def main(argv: list[str] | None = None) -> int:
             return _dispatch(args)
     except shutdown.Stopped as exc:
         print(f"brain: stopped by {exc.name}; the write in progress was finished or rolled back", file=sys.stderr)
+        if real_run:   # the brain command itself, not a caller of main(): on POSIX it dies by the signal
+            sys.stderr.flush()
+            shutdown.die(exc)
         return exc.exit_code
 
 
