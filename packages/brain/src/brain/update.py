@@ -346,11 +346,8 @@ def _stamps_root(root: Path | None) -> str | None:
     is left for the push guard to refuse; None otherwise."""
     from . import public
 
-    try:
-        cfg = config.load(root)
-        return str(cfg.root) if cfg.root and public.public_repos(cfg) else None
-    except Exception:  # noqa: BLE001 - by design: the plan never raises; no stamps step then
-        return None
+    cfg = config.load(root)   # never raises: an unreadable config.json is a Config with an error and no data
+    return str(cfg.root) if cfg.root and public.public_repos(cfg) else None
 
 
 def _verified(root: Path | None, repo: str, tag: str, verify) -> dict:
@@ -558,9 +555,13 @@ def _sync(python: str, root: Path, runner) -> tuple[int, list[str]]:
     return 0, [f"synced   brain sync in {root}"]
 
 
-def _refresh_stamps(python: str, root: Path, runner) -> list[str]:
-    """brain check --public --refresh run by the venv's engine, the one just installed (a stamp is valid only under
-    the engine that made it): its lines; a failure is said, never an install failure (the push guard names the fix)."""
+def _refresh_stamps(p: dict, runner) -> list[str]:
+    """The plan's stamps step: brain check --public --refresh run by the venv's engine, the one just installed (a
+    stamp is valid only under the engine that made it), in the brain's root: its lines; [] when the plan has no such
+    step; a failure is said, never an install failure (the push guard names the fix)."""
+    if not p.get("stamps"):
+        return []
+    python, root = p["python"], Path(p["stamps"])
     hand = f"run brain check --public --history in each public checkout (brain check --public --refresh, in {root})"
     try:
         done = runner([python, "-m", "brain", "--root", str(root), "check", "--public", "--refresh"],
@@ -603,8 +604,7 @@ def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
                        "installer")
         except OSError as exc:
             return 1, [*out, f"launcher {dst}: {exc} (rerun installer/install.ps1 -Apply)"]
-    if p.get("stamps"):
-        out += _refresh_stamps(p["python"], Path(p["stamps"]), runner)
+    out += _refresh_stamps(p, runner)
     code = 0
     if pin_writes(p):
         code, moved = move_pin(p, runner)

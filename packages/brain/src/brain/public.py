@@ -550,11 +550,7 @@ def checkouts(cfg: config.Config, root: Path | None = None) -> tuple[list[tuple[
     seen: set[str] = set()
     if not public_repos(cfg):
         return out, notes
-    try:
-        registry = projects.load(root or cfg.root)
-    except Exception as exc:  # noqa: BLE001 - a registry that cannot be read is said, never raised (the installer)
-        return out, [f"the registry could not be read: {type(exc).__name__}: {exc}"]
-    for p in registry.values():
+    for p in projects.load(root or cfg.root).values():
         try:
             repos = projects.repos_of(p)
         except projects.RepoError as exc:
