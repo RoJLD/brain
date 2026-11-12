@@ -50,7 +50,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from . import graph, net, outbox, paths, projects, quiet, secretscan, stateio
+from . import graph, net, outbox, paths, projects, quiet, secretscan, stateio, timing
 from .config import owner_of   # brain.config's: this module's own config() reads the notify configuration
 
 LEVELS = ("info", "warn", "error", "critical")
@@ -455,9 +455,7 @@ def _audit(lines: list[dict], now: datetime) -> None:
     d.mkdir(parents=True, exist_ok=True)
     f = d / f"{now:%Y-%m}.jsonl"
     new = not f.exists()
-    with open(f, "a", encoding="utf-8") as fh:
-        for line in lines:
-            fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+    timing.append_lines(f, lines)   # one locked write (brain.timing)
     if new:   # a month's first line: the months past the retention go (brain.stateio)
         stateio.prune_months(d.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl"), stateio.LOG_RETENTION["notify"], now)
 
