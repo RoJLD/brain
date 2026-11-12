@@ -183,6 +183,15 @@ function Test-TagSignature([string]$url, [string]$tag, [string]$allowed) {
         $result.commit = "$(& git -C $tmp rev-parse --verify "$ref^{commit}" 2>$null)".Trim()
         if (-not $kind -or -not $result.commit) { $result.why = "git could not read the fetched $tag"; return $result }
         if ($kind -ne 'tag') { $result.status = 'unsigned'; $result.why = "$tag is a lightweight tag: no signature"; return $result }
+        # the signature covers the tag object, not the ref's name: an older release's signed tag object pushed under
+        # this name would verify, so the object must name the tag itself, and a commit
+        $header = @(& git -C $tmp cat-file tag $ref 2>$null | ForEach-Object { "$_" } | Select-Object -First 6)
+        if ($header -cnotcontains "tag $tag" -or $header -cnotcontains 'type commit') {
+            $named = ($header | Where-Object { $_ -like 'tag *' } | Select-Object -First 1) -replace '^tag ', ''
+            $result.status = 'misnamed'
+            $result.why = "refs/tags/$tag holds the tag object of $(if ($named) { $named } else { 'something else' }), not of $tag"
+            return $result
+        }
         $file = (Resolve-Path -LiteralPath $allowed).Path -replace '\\', '/'
         $said = @(& git -C $tmp -c "gpg.ssh.allowedSignersFile=$file" -c gpg.ssh.program=ssh-keygen verify-tag --raw $ref 2>&1 | ForEach-Object { "$_" }) -join "`n"
         $code = $LASTEXITCODE

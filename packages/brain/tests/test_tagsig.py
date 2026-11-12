@@ -125,6 +125,18 @@ def test_another_key_an_unsigned_and_a_lightweight_tag_do_not_verify(engine):
 
 
 @needs_ssh
+def test_an_older_signed_tag_pushed_under_the_pins_name_does_not_verify(engine):
+    """The signature covers the tag object, not the ref's name: v2.0.0 pointed at v1.0.0's signed tag object (an
+    account that can push but holds no key, rolling the machines back) is misnamed, never verified
+    (wi-brain-install-verify-tag's review)."""
+    repo, pub, commit = engine
+    git(repo, "update-ref", "refs/tags/v2.0.0", git(repo, "rev-parse", "refs/tags/v1.0.0"))
+    v = tagsig.verify_remote(repo.as_uri(), "v2.0.0", allowed(pub))
+    assert v["status"] == tagsig.MISNAMED and v["commit"] == commit
+    assert "the tag object of v1.0.0, not of v2.0.0" in v["why"]
+
+
+@needs_ssh
 def test_a_decision_signature_namespace_does_not_verify_a_tag(engine):
     repo, pub, _ = engine
     wrong = sshsig.allowed_signers({"ada": [pub]}, sshsig.NAMESPACE)   # brain-decision, not git
@@ -160,6 +172,8 @@ def test_verify_tag_that_cannot_run_is_unverifiable_not_a_foreign_key():
     def runner(cmd, **kw):
         if "verify-tag" in cmd:
             raise OSError("ssh-keygen vanished")
+        if cmd[-3:-1] == ["cat-file", "tag"]:   # the tag object's header: v1.0.0 itself, of a commit
+            return subprocess.CompletedProcess(cmd, 0, "object c0ffee\ntype commit\ntag v1.0.0\n\nmsg\n", "")
         out = {"cat-file": "tag\n", "rev-parse": "c0ffee\n"}.get(next((a for a in cmd if a in ("cat-file",
                                                                                                "rev-parse")), ""), "")
         return subprocess.CompletedProcess(cmd, 0, out, "")
@@ -322,6 +336,8 @@ def test_the_installer_verifies_as_the_engine_does(engine, tmp_path, monkeypatch
     assert ps_verify(url, "v0.8.0", f)["status"] == "unsigned"
     assert ps_verify(url, "v9.9.9", f)["status"] == "unverifiable"
     assert ps_verify(url, "v1.0.0", tmp_path / "none")["status"] == "no-signers"
+    git(repo, "update-ref", "refs/tags/v2.0.0", git(repo, "rev-parse", "refs/tags/v1.0.0"))   # an older signed tag
+    assert ps_verify(url, "v2.0.0", f)["status"] == "misnamed"
     cfg = tmp_path / "gitconfig-owner"   # an owner's signing program that cannot verify: git's ssh-keygen does
     cfg.write_text('[gpg "ssh"]\n\tprogram = C:/nonexistent/op-ssh-sign.exe\n', encoding="utf-8")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))

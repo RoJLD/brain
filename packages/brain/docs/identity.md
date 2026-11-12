@@ -161,13 +161,20 @@ install (wi-brain-release-signing). The engine verifies; it never signs.
   clone before any of its code runs, the installer's plan included, with no network:
 
   ```bash
-  git -C <clone> rev-parse --show-prefix                       # empty: the folder is the clone's top
-  git -C <clone> cat-file -t refs/tags/<pin>                   # tag: an annotated tag (a lightweight one is unsigned)
-  git -C <clone> rev-parse HEAD "refs/tags/<pin>^{commit}"     # the same commit twice
-  git -C <clone> status --porcelain --untracked-files=no       # empty: no tracked file changed (a __pycache__ is fine)
-  git -C <clone> -c gpg.ssh.allowedSignersFile=<brain>/allowed_signers -c gpg.ssh.program=ssh-keygen \
-      verify-tag --raw refs/tags/<pin>                         # Good "git" signature for <releaser>
+  g="git --no-replace-objects -C <clone> -c core.fsmonitor=false"   # nothing of the clone runs or substitutes
+  $g rev-parse --show-prefix                       # empty: the folder is the clone's top
+  $g cat-file -t refs/tags/<pin>                   # tag: an annotated tag (a lightweight one is unsigned)
+  $g cat-file tag refs/tags/<pin>                  # its header says "type commit" and "tag <pin>" (not an older tag's)
+  $g rev-parse HEAD "refs/tags/<pin>^{commit}"     # the same commit twice
+  $g ls-files -v                                   # every line starts "H " (no skip-worktree, no assume-unchanged)
+  $g status --porcelain --untracked-files=no       # empty: no tracked file changed
+  $g -c gpg.ssh.allowedSignersFile=<brain>/allowed_signers -c gpg.ssh.program=ssh-keygen \
+      verify-tag --raw refs/tags/<pin>             # Good "git" signature for <releaser>
   ```
+
+  The signature covers the tag object, not the ref's name, hence the header: an account that can push but holds no
+  key could otherwise point `refs/tags/<pin>` at an older release's signed tag object. The checks cover the tracked
+  files; an untracked file put into the clone (a `.pyc` beside the sources) is not.
 
   A fresh clone is checked in its temporary folder before it takes its place; a cached one on every run. Under
   `engine.verify_tags` a clone that fails one of these is refused before it runs (and a fresh one removed, so nothing
