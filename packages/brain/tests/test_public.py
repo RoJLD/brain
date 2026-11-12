@@ -312,3 +312,115 @@ def test_a_newer_or_pathological_stamp_is_refused_never_raised(pub):
     assert "unreadable stamp" in public.stamp_refusal("acme/engine", head, config.load())
     (reason,) = [r for _, r in _push(pub)]
     assert "rerun brain check --public --history" in reason
+
+
+# --- the stamps refreshed after an engine change (wi-brain-public-stamp-refresh) ---
+
+@pytest.fixture
+def registry(pub, tmp_path, monkeypatch, make_repo):
+    """Ada's registry: her brain spans the public engine's checkout, a second checkout of it with uncommitted work, a
+    third with a finding, and a private repo; gitleaks off."""
+    dirty = make_repo("engine-dirty", {"README.md": "# engine\n"})
+    run_git(dirty, "remote", "add", "origin", "git@github.com:acme/engine.git")
+    (dirty / "README.md").write_text("# engine, changed\n", encoding="utf-8")
+    leak = make_repo("engine-leak", {"src/a.py": "# written on box1\n"})
+    run_git(leak, "remote", "add", "origin", "https://github.com/acme/engine")
+    private = make_repo("ada-private", {"notes.md": "Ada's notes\n"})
+    run_git(private, "remote", "add", "origin", "https://github.com/ada/ada-private.git")
+    reg = tmp_path / "ada-brain" / "projects.yaml"
+    reg.write_text("ada:\n  root: .\n  repos: [., ../engine, ../engine-dirty, ../engine-leak, ../ada-private,"
+                   " ../missing]\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    monkeypatch.setattr(public, "gitleaks_exe", lambda: None)
+    return {"clean": pub, "dirty": dirty, "leak": leak, "private": private}
+
+
+def test_the_public_checkouts_are_the_registrys_repos_with_a_public_remote(registry):
+    found, notes = public.checkouts(config.load())
+    assert [(p.name, slug) for p, slug in found] == [("engine", "acme/engine"), ("engine-dirty", "acme/engine"),
+                                                    ("engine-leak", "acme/engine")]
+    assert not notes
+
+
+def test_refresh_stamps_the_clean_checkouts_and_names_the_others(registry, capsys):
+    head = run_git(registry["clean"], "rev-parse", "HEAD").strip()
+    assert cli.main(["check", "--public", "--refresh"]) == 1   # the leaking checkout is refused
+    out = capsys.readouterr().out
+    assert f"stamped  acme/engine {registry['clean']}: HEAD {head[:8]}" in out
+    assert public.stamp_refusal("acme/engine", head, config.load()) == ""
+    assert f"skip     acme/engine {registry['dirty']}: 1 tracked file(s) not committed" in out
+    assert f"refused  acme/engine {registry['leak']}: 1 finding(s)" in out
+    assert "ada-private" not in out
+    leak_head = run_git(registry["leak"], "rev-parse", "HEAD").strip()
+    dirty_head = run_git(registry["dirty"], "rev-parse", "HEAD").strip()
+    assert not public.stamped("acme/engine", leak_head) and not public.stamped("acme/engine", dirty_head)
+
+
+def test_refresh_leaves_a_valid_stamp_and_redoes_one_of_another_engine(registry, monkeypatch, capsys):
+    """The case it exists for: after an engine change the push guard refuses the old engine's stamps; the refresh run
+    by the new engine stamps HEAD again, and a second run has nothing to do."""
+    import brain
+
+    run_git(registry["leak"], "remote", "set-url", "origin", "https://github.com/ada/scratch.git")   # not public now
+    assert cli.main(["check", "--public", "--refresh"]) == 0
+    capsys.readouterr()
+    assert cli.main(["check", "--public", "--refresh"]) == 0
+    assert capsys.readouterr().out.count("same     acme/engine") == 1
+    monkeypatch.setattr(brain, "__version__", "9.9.9")   # the new engine
+    head = run_git(registry["clean"], "rev-parse", "HEAD").strip()
+    assert "not this brain 9.9.9" in public.stamp_refusal("acme/engine", head, config.load())
+    assert _push(registry["clean"])
+    assert cli.main(["check", "--public", "--refresh"]) == 0
+    assert capsys.readouterr().out.count("stamped  acme/engine") == 1
+    assert public.stamp_refusal("acme/engine", head, config.load()) == "" and not _push(registry["clean"])
+
+
+def test_refresh_without_public_repos_or_checkouts_says_so(pub, tmp_path, monkeypatch):
+    reg = tmp_path / "ada-brain" / "projects.yaml"
+    reg.write_text("ada:\n  root: .\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    code, lines = public.refresh()
+    assert code == 0 and lines == ["stamps   no local checkout of acme/engine in the registry"]
+    cfg = tmp_path / "ada-brain" / config.FILE
+    cfg.write_text(json.dumps({**PUBLIC, "public": {"deny": PUBLIC["public"]["deny"]}}), encoding="utf-8")
+    assert public.refresh() == (0, ["stamps   config.json public.repos lists no public repo: nothing to refresh"])
+
+
+def test_a_bad_repos_entry_is_noted_never_raised(pub, tmp_path, monkeypatch):
+    reg = tmp_path / "ada-brain" / "projects.yaml"
+    reg.write_text("ada:\n  root: .\n  repos: [{name: x}]\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    code, lines = public.refresh()
+    assert code == 0 and lines[0].startswith("stamps   note: project ada:") and "not refreshed" in lines[0]
+
+
+def test_one_checkout_git_cannot_read_never_stops_the_others(registry, monkeypatch):
+    """A timeout (or a broken index) in one checkout is that checkout's failed line; the others are still refreshed;
+    a checkout with no commit is skipped; a malformed public.repos reads as none (brain update's plan never raises)."""
+    real = public.dirty
+
+    def dirty(repo):
+        if repo.name == "engine-dirty":
+            raise subprocess.TimeoutExpired(["git", "status"], 60)
+        return real(repo)
+
+    monkeypatch.setattr(public, "dirty", dirty)
+    code, lines = public.refresh()
+    assert code == 1
+    assert any(ln.startswith("failed   acme/engine") and "TimeoutExpired" in ln for ln in lines)
+    assert any(ln.startswith("stamped  acme/engine") for ln in lines)
+    (registry["clean"] / ".git" / "refs" / "heads" / "main").unlink()   # no commit on its branch any more
+    assert any(ln.startswith("skip") and "no commit yet" in ln for ln in public.refresh()[1])
+    assert public.public_repos(config.Config(None, Path("."), {"public": {"repos": True}})) == []
+
+
+INSTALLER = Path(__file__).resolve().parents[1] / "installer" / "install.ps1"
+
+
+def test_the_installer_refreshes_the_stamps_after_the_command_and_never_fails_on_them():
+    text = INSTALLER.read_text(encoding="utf-8-sig")
+    step = text[text.index("function Update-Stamps {"):text.index("# --- end of the stamps step ---")]
+    assert "Invoke-Brain check --public --refresh" in step and "throw" not in step
+    assert "$script:brain_code -eq 2" in step   # an older command only says so
+    assert "if ($repo -and -not $SkipCommand) { Update-Stamps }" in text
+    assert text.index("if ($repo) { Set-Schedules }") < text.index("Update-Stamps }")
