@@ -15,10 +15,11 @@ USAGE_ORDER = 161
 USAGE = """\
   brain merge-ready PR [--repo-dir D] [--slug OWNER/NAME] [--remote R] [--no-fetch] [--json]   the merge gate: the
                         PR open and not a draft; the base and its head fetched again, main not moved under a file the
-                        PR touches; brain merge-check on a head that merged main; every CI check green on the head;
+                        PR touches; brain merge-check on the head against that merge base; every CI check green on it;
                         the review's stamp for the head with no finding open; for a public repo, the public check's
-                        stamp; nothing private in the PR's body. Exit 0 and a stamp under <BRAIN_HOME>/merge-ready,
-                        else exit 1 and what blocks (2: gh or git failed)
+                        stamp; nothing private in the PR's title and body. Exit 0, a stamp under
+                        <BRAIN_HOME>/merge-ready and the head to merge (gh pr merge --match-head-commit), else exit 1
+                        and what blocks (2: gh or git failed)
 """
 
 
@@ -35,7 +36,11 @@ def early(args) -> int:
         return 2
     out = g.to_json()
     if g.ready:
-        out["stamp"] = str(mergeready.stamp(g))
+        try:
+            out["stamp"] = str(mergeready.stamp(g))
+        except OSError as exc:
+            print(f"brain merge-ready: ready, but the stamp was not written: {exc}", file=sys.stderr)
+            return 2
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=1))
     else:
