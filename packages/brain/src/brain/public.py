@@ -267,7 +267,7 @@ def scan_lines(path: str, lines, r: Rules, commit: str = "") -> list[Finding]:
                 if rx.search(flat):
                     out.append(Finding("denied", path, n, f"{cat} term {term!r}", commit))
         out += [Finding("secret", path, n, f"looks like a secret ({name})", commit)
-                for name in secretscan.find_in_line(line)[:1]]
+                for name in secretscan.find_in_line(line, path)[:1]]
         if allowed or ALLOW_MARK in line:
             continue
         out += [Finding("pattern", path, n, what, commit) for what in _generic(line)]
@@ -486,7 +486,7 @@ def render(data: dict, stamped_at: Path | None = None) -> list[str]:
              f"{data['files']} file(s)" + (f", {data['commits']} commit(s) not on {data['remote'] or 'a remote'}"
                                           if data["history"] and not data["engine"] else "")]
     c = data["counts"]
-    lines.append("  " + ", ".join(f"{k} {c[k]}" for k in CHECKS))
+    lines.append("  " + ", ".join(f"{k} {c[k]}" for k in (*CHECKS, *(["text"] if "text" in c else []))))
     lines += ["  " + Finding(**f).text() for f in data["findings"]]
     if data["unread"]:
         lines.append(f"  not read (binary, over 1 MB or missing; their names were checked): {len(data['unread'])}")
@@ -629,13 +629,43 @@ def _refresh_one(repo: Path, slug: str, cfg: config.Config) -> tuple[bool, str]:
     return True, f"refused  {slug} {repo}: {why}; brain check --public --history there names them"
 
 
-def main(repo: Path, *, history: bool = False, remote: str = "", engine: bool = False, as_json: bool = False) -> int:
+def private_text(data: dict, cfg: config.Config) -> None:
+    """``--private-text`` (brain.privatetext): the tree's files compared with the personal brain's rules and notes by
+    windows of 8 words, its findings (check ``text``) added to ``data``; never stamped, never in the stamp's key."""
+    from . import privatetext
+    idx = privatetext.index(cfg)
+    repo, r = Path(data["repo"]), rules(cfg)
+    found = []
+    for path in boundary.tracked(repo):
+        if r.allowed(path) or path in data["unread"]:
+            continue
+        try:
+            text = (repo / path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        found += [asdict(Finding("text", path, line, f"8 words or more of {src}")) for line, src in
+                  privatetext.scan(text, idx)]
+    data["findings"] += found
+    data["counts"]["text"] = len(found)
+    data["notes"].append(f"private text: {len(idx)} window(s) of 8 words from {len(privatetext.sources(cfg))} rules "
+                         "and notes file(s) compared")
+
+
+def main(repo: Path, *, history: bool = False, remote: str = "", engine: bool = False, as_json: bool = False,
+         text: bool = False) -> int:
     try:
         data = check(repo, history=history, remote=remote, engine=engine)
     except PublicError as exc:
         print(f"brain check --public: {exc}")
         return 2
     cfg = config.load()
+    if text:   # before a tag: the private text too, and no stamp from this run
+        private_text(data, cfg)
+        if as_json:
+            print(json.dumps({**data, "stamp": None}, ensure_ascii=False, indent=1, sort_keys=True))
+        else:
+            print("\n".join(render(data)))
+        return 1 if data["findings"] or data.get("gitleaks_failed") else 0
     where = stamp(data, cfg) if is_public(data["slug"], cfg) else None
     if as_json:
         print(json.dumps({**data, "stamp": where.as_posix() if where else None}, ensure_ascii=False, indent=1,

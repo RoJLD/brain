@@ -225,6 +225,7 @@ git switch main
 git pull --ff-only
 git log -1 --oneline                                  # the merge of chore/release-X.Y.Z
 brain check --public --history                        # the stamp the push guard reads
+brain check --public --private-text                   # no sentence of your rules or notes in the engine
 git tag -s vX.Y.Z -m "brain X.Y.Z and research-graph X.Y.Z — theme: what it brings"   # your key's passphrase
 git -c gpg.ssh.allowedSignersFile=<your brain>/allowed_signers verify-tag vX.Y.Z      # Good "git" signature for <you>
 git push origin vX.Y.Z

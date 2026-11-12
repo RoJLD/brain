@@ -2857,8 +2857,8 @@ def _run(args: list[str], cwd: str, timeout: float = 10, env: dict[str, str] | N
     return subprocess.run(args, cwd=cwd, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
 
 
-def _secret_names(line: str) -> list[str]:
-    return secretscan.find_in_line(line)
+def _secret_names(line: str, path: str = "") -> list[str]:
+    return secretscan.find_in_line(line, path)
 
 
 def scan_diff(diff: str) -> list[str]:
@@ -2871,7 +2871,7 @@ def scan_diff(diff: str) -> list[str]:
             m = re.search(r"\+(\d+)", raw)
             line = int(m.group(1)) if m else 0
         elif raw.startswith("+"):
-            names = _secret_names(raw[1:])
+            names = _secret_names(raw[1:], path)
             if names:
                 hits.append(f"{path}:{line} ({names[0]})")
             line += 1
@@ -2880,7 +2880,7 @@ def scan_diff(diff: str) -> list[str]:
 
 def scan_text(path: str, text: str) -> list[str]:
     return [f"{path}:{i} ({names[0]})" for i, line in enumerate(text.splitlines(), 1)
-            if (names := _secret_names(line))]
+            if (names := _secret_names(line, path))]
 
 
 def gitleaks(repo: str) -> list[str] | None:
@@ -2956,6 +2956,9 @@ def commit_secrets(repo: str, specs: list[str], every_tracked: bool, untracked: 
     staged = gitleaks(repo)
     if staged is None:
         staged = scan_diff(_git_out(repo, "diff", "--cached", "-U0", "--no-color", "--no-ext-diff"))
+    else:   # gitleaks honours gitleaks:allow everywhere: the strict folders are read by the built-in scan too
+        staged += scan_diff(_git_out(repo, "diff", "--cached", "-U0", "--no-color", "--no-ext-diff", "--",
+                                     *(f":(top){d}" for d in secretscan.STRICT)))
     hits = list(staged)
     if specs or every_tracked:
         hits += scan_diff(_git_out(repo, "diff", "HEAD", "-U0", "--no-color", "--no-ext-diff", "--", *specs))

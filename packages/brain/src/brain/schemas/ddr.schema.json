@@ -111,7 +111,9 @@
         "items": {"type": "array", "items": {"type": "string", "pattern": "^(wi|ms)-"}},
         "specs": {"type": "array", "items": {"type": "string"}},
         "session": {"type": "string", "pattern": "^sr-", "description": "The SR of the session that asked."},
-        "project": {"type": "string"}
+        "project": {"type": "string"},
+        "rules": {"type": "array", "items": {"type": "string"}, "description": "The owner's rules it is about (a rules file and section): its notification is a pointer only (wi-brain-secretscan-hardening)."},
+        "notes": {"type": "array", "items": {"type": "string"}, "description": "The owner's notes it is about: its notification is a pointer only."}
       }
     }
   },

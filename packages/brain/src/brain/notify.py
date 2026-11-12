@@ -51,7 +51,7 @@ from pathlib import Path
 from typing import Mapping
 
 from . import graph, net, outbox, paths, projects, quiet, secretscan, stateio, timing
-from .config import owner_of   # brain.config's: this module's own config() reads the notify configuration
+from .config import owner_of  # brain.config's: this module's own config() reads the notify configuration
 
 LEVELS = ("info", "warn", "error", "critical")
 MODES = ("first", "all")
@@ -641,8 +641,22 @@ def notify(project: str | projects.Project, level: str, body: str, *, title: str
     return send(cfg, Message(p.name, level, body, title, source, key, link), only=only, dry_run=dry_run, force=force)
 
 
+POINTER = ("Decision waiting", "A blocking decision waits for you: answer it at the terminal (brain decision batch).")
+
+
+def private_subject(ddr: dict) -> bool:
+    """Whether a DDR is about the owner's rules or notes (``links.rules`` or ``links.notes``): its notification is a
+    pointer only (wi-brain-secretscan-hardening, spec-brain-one-brain §6)."""
+    links = ddr.get("links") if isinstance(ddr.get("links"), dict) else {}
+    return bool(links.get("rules") or links.get("notes"))
+
+
 def decision_message(project: str, ddr: dict) -> tuple[str, str]:
-    """The title and text of a blocking DDR's notification: the question, the options, the command that answers."""
+    """The title and text of a blocking DDR's notification: the question, the options, the command that answers. A
+    DDR about a rule or a note (:func:`private_subject`) sends :data:`POINTER` alone: never its question, its options,
+    a rule's text, its id, its project nor the host."""
+    if private_subject(ddr):
+        return POINTER
     lines = [_cut(" ".join(str(ddr.get("question", "")).split()), 400), ""]
     for i, o in enumerate(ddr.get("options") or [], 1):
         lines.append(f"{i}. {o.get('label', '')}" + (" (recommended)" if i == 1 else ""))

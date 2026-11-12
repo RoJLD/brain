@@ -1114,6 +1114,24 @@ the engine's own text, so rename it, or keep it out of a private subtree. Off by
 as unknown and generates nothing: keep the repos in the hand list until every machine and the brain repo's CI run the
 release that knows it.
 
+**The secret scan, hardened** (`wi-brain-secretscan-hardening`, brain.secretscan), before the first machine snapshot.
+A PEM private key matches as a whole block, from its `BEGIN` line to its `END` line (to the text's end when it has
+none): a ledger's line drop takes the key's body too. The fleet's token formats are known: ntfy (`tk_`), Tailscale
+(`tskey-`), GitLab (`glpat-`), PyPI (`pypi-`) and npm (`npm_`). A unit (a note, a rules file, a snapshot's unit) is
+refused whole on a match (`secretscan.clean_unit`), never sent with its matching lines dropped. `gitleaks:allow` waives
+nothing under `machines/` and `memory/`, the folders committed in clear: the commit guard reads them with the built-in
+scan even when gitleaks (which honours the mark) is on the PATH, and `brain check --public` refuses there too. A
+blocking decision about the owner's rules or notes (`brain decision ask --rule FILE#SECTION --note PATH`, stored as
+`links.rules` and `links.notes`) is notified as a pointer only, « A blocking decision waits for you »: never its
+question, options, a rule's text, its id, its project or the host.
+
+**The private text before a tag.** `brain check --public --private-text` also compares the tracked files with the
+personal brain's own text, its rules (`config.json` `rules`) and its notes (the Markdown under `memory`), by windows of
+8 words, lowercased, so case, punctuation and line breaks hide nothing: a sentence copied from a rule or a note is a
+`text` finding (the file, its line, the source), even when it names no denied term. A file under `public.allow` is not
+read. It runs before each tag (docs/release.md, « 3. The tag »), never stamps, and its findings are not part of the
+push guard's stamp.
+
 ### Edges between stores
 
 An edge of a store may name a node another store of the registry holds (every store of every registered project on

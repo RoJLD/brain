@@ -94,7 +94,8 @@ def ask(root: Path, *, title: str, question: str, options: list[str], why: str, 
         blocks: str = "", multi: bool = False, blocking: bool = False, due: str = "", recommend: str = "",
         items: list[str] | None = None, specs: list[str] | None = None, adrs: list[str] | None = None,
         project: str = "", session: str = "", slug: str = "", dry_run: bool = False,
-        low_stakes: bool = False) -> tuple[dict, Path | None]:
+        low_stakes: bool = False, rules: list[str] | None = None,
+        notes: list[str] | None = None) -> tuple[dict, Path | None]:
     """Write a pending decision. Refused without 2 to 4 options, without the reason of the recommendation, or when
     the recommended option is not the first. ``low_stakes``: decided by default 24 h later without an answer
     (brain.defaults), refused on the topics a default never decides."""
@@ -117,7 +118,8 @@ def ask(root: Path, *, title: str, question: str, options: list[str], why: str, 
     ddr["status"] = "pending"
     w = who(session)
     ddr["asked"] = {"at": at, "by": asker(w), **w, "via": "cli"}
-    links = {k: v for k, v in {"adrs": adrs, "items": items, "specs": specs}.items() if v}
+    links = {k: v for k, v in {"adrs": adrs, "items": items, "specs": specs, "rules": rules, "notes": notes}.items()
+             if v}
     if project:
         links["project"] = project
     if links:
