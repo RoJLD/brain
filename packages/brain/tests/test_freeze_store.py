@@ -25,6 +25,7 @@ def fake(fz, monkeypatch, tmp_path, failed: str = "", path_in: str = ""):
     No machine term (this machine's names are not the test's to see)."""
     scripts = tmp_path / "venv" / "Scripts"
     monkeypatch.setattr(fz, "machine", lambda: {})
+    monkeypatch.setattr(fz, "FORMATS_OUT", tmp_path / "formats-out")   # never this checkout's frozen formats
     monkeypatch.setattr(fz.st, "install", lambda work, ref, source, pre_tag: (scripts, [
         {"step": "install", "cmd": f"pip install {ref}", "rc": 0, "ok": True, "out": ""}]))
 
@@ -111,6 +112,52 @@ def test_a_store_naming_this_checkout_is_found(fz, tmp_path):
     for i, text in enumerate([str(fz.CHECKOUT / "x.jsonl"), str(fz.CHECKOUT).upper(), fz.CHECKOUT.resolve().as_uri()]):
         (tmp_path / f"f{i}.md").write_text(text, encoding="utf-8")
     assert fz.named(tmp_path, tmp_path / "elsewhere") == ["f0.md", "f1.md", "f2.md"]
+
+
+def test_each_format_is_frozen_from_the_brain_neutralized(fz, monkeypatch, tmp_path, capsys):
+    """--only-formats: the formats the tag wrote, under <format>/v<N>/<tag>.<ext>, its machine names replaced, the
+    JSONL ones cut to their first lines; status (a machine's inventory) never; the store not touched."""
+    fake(fz, monkeypatch, tmp_path)
+    monkeypatch.setattr(fz, "machine", lambda: {"BOXA12": "host-a"})
+    real = fz.st.run_steps
+
+    def with_formats(steps, env, root):
+        out = real(steps, env, root)
+        (root / "config.json").write_text('{"v": 1, "public": {"deny": {"hosts": ["BOXA12"]}}}\n', encoding="utf-8")
+        ledger = root.parent / "home" / ".brain" / "ledger" / "engine"
+        ledger.mkdir(parents=True)
+        (ledger / "exec-2026-11.jsonl").write_text("".join(f'{{"v":1,"host":"BOXA12","n":{i}}}\n' for i in range(9)),
+                                                   encoding="utf-8")
+        return out
+    monkeypatch.setattr(fz.st, "run_steps", with_formats)
+    monkeypatch.setattr(fz, "engine_text", lambda *a: None)
+    out, stores = tmp_path / "formats", tmp_path / "stores"
+    assert fz.main(["v0.3.1", "--only-formats", "--formats-out", str(out), "--out", str(stores),
+                    "--work", str(tmp_path / "work")]) == 0
+    assert (out / "config" / "v1" / "v0.3.1.json").read_text(encoding="utf-8") == \
+        '{"v": 1, "public": {"deny": {"hosts": ["host-a"]}}}\n'
+    lines = (out / "event" / "v1" / "v0.3.1.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == fz.LINES and all('"host":"host-a"' in x for x in lines)
+    assert not (out / "status").exists() and not stores.exists()
+    assert "skip status       a machine's inventory: never frozen" in capsys.readouterr().out
+
+
+def test_the_version_a_file_states():
+    assert fz_version('{"v":2,"kind":"x"}\n{"v":1}\n') == 2
+    assert fz_version("# a header\nv: 3\nrules: []\n") == 3
+    assert fz_version("name: generic\nversion: 1\n") == 1
+
+
+def fz_version(text: str) -> int:
+    spec = importlib.util.spec_from_file_location("freeze_store_v", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.version_of(text)
+
+
+def test_reuse_needs_a_previous_freeze(fz, tmp_path, capsys):
+    assert fz.main(["v0.3.1", "--only-formats", "--reuse", "--work", str(tmp_path)]) == 2
+    assert "no engine and brain of a previous freeze" in capsys.readouterr().err
 
 
 def test_a_frozen_store_is_never_replaced_without_force(fz, monkeypatch, tmp_path, capsys):
