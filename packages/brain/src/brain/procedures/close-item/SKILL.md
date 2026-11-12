@@ -127,6 +127,11 @@ nobody asks it again.
   included: it is finished first, or its report says what is left. **Never another session that is running
   (mid-turn)**: a coordinator waits for its child's turn to end. The self-archive is the one mid-turn archive allowed:
   the merging session makes it as the final tool call of its turn, nothing after it.
+- **No background task left**: stop the session's background tasks (TaskStop) before its cleanup deletes their
+  logs or venvs, and before the archive: the app refuses to archive a session with live work, and a background wait
+  whose log is gone never ends on its own (wave 0.3.2). A background wait has a deadline and exits when its file or
+  process is gone (`timeout`, `kill -0 $pid || exit 1`, `[ -e run.log ] || exit 1`); the waithint hook names one
+  that has none.
 - **The tools**: in the Claude desktop app, its session-management archive tool; elsewhere, tell the owner which
   session to archive.
 - **The token-free net**: the owner's app setting `auto_archive_inactive_days = 7` (Claude desktop app, Settings,

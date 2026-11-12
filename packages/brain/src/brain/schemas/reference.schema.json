@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/reference.schema.json",
+  "title": "docs/reference.yaml, the prose of a generated technical reference",
+  "description": "A repo's docs/reference.yaml (wi-brain-reference-arc42): the text only a person writes in the technical reference, an arc42 skeleton generated from the graph (brain reference). It holds the goals, the solution strategy and the decisions it names as key, the glossary, a short intro per section and per module; everything else in docs/reference/ is facts from the graph. A required field missing fails brain reference and brain check. A repo without this file gets the skeleton with its facts only.",
+  "type": "object",
+  "required": ["v", "goals", "strategy", "glossary"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1},
+    "goals": {"type": "string", "minLength": 1, "description": "Section 1, introduction and goals: what the system is for and its main quality goals (Markdown)."},
+    "strategy": {"type": "string", "minLength": 1, "description": "Section 4, solution strategy: the few choices that shape the rest (Markdown)."},
+    "key_decisions": {
+      "type": "array",
+      "description": "Section 4: the decisions the strategy rests on, by id (an ADR or a DDR of the graph); one the graph does not hold is reported.",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "glossary": {
+      "type": "array",
+      "description": "Section 12: the terms a reader meets, each with what it means (an empty list says there is none yet).",
+      "items": {
+        "type": "object",
+        "required": ["term", "means"],
+        "additionalProperties": false,
+        "properties": {
+          "term": {"type": "string", "minLength": 1},
+          "means": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "sections": {
+      "type": "object",
+      "description": "A short intro per section, by its key, shown above the section's facts.",
+      "additionalProperties": false,
+      "properties": {
+        "constraints": {"type": "string"},
+        "context": {"type": "string"},
+        "building_blocks": {"type": "string"},
+        "runtime": {"type": "string"},
+        "deployment": {"type": "string"},
+        "concepts": {"type": "string"},
+        "decisions": {"type": "string"},
+        "quality": {"type": "string"},
+        "risks": {"type": "string"}
+      }
+    },
+    "modules": {
+      "type": "object",
+      "description": "A short prose per module, by its id in the store's modules.yaml, shown at the top of its page.",
+      "additionalProperties": {"type": "string"}
+    }
+  }
+}

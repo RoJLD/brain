@@ -151,8 +151,9 @@ def find_adr(text: str, ref: str, kind: str = "adr") -> tuple[str, str, str]:
     return found[-1]
 
 
-FIELDS = [("context", "Context"), ("decision", "Decision"), ("why", "Why"), ("revisit", "Revisit if"),
-          ("why_not_script", "Why not a script")]
+FIELDS = [("context", "Context"), ("decision", "Decision"), ("scope", "Scope"), ("why", "Why"),
+          ("target", "Target compatibility"), ("revisit", "Revisit if"), ("why_not_script", "Why not a script")]
+OPTIONAL = ("scope", "target", "why_not_script")   # written when given: a one-way door's two fields, a rule's why
 REVERSAL_FIELDS = [("supersedes", "Supersedes"), ("trigger", "Trigger"), ("context", "Context"),
                    ("decision", "New decision"), ("why", "Why"), ("migration", "Migration"),
                    ("revisit", "Revisit if")]
@@ -178,6 +179,16 @@ def _field(label: str, value: str, width: int) -> list[str]:
     return out
 
 
+def _parts(old: str, spec: list, fields: dict, width: int) -> tuple[list[str], list[str]]:
+    """(the fields left TODO, each field's text) of an ADR: a required one missing is written TODO; an optional one
+    (:data:`OPTIONAL`) only when given, and reported when given as TODO."""
+    todo = [k for k, _ in spec if k not in fields and k not in OPTIONAL]
+    todo += [k for k in OPTIONAL if fields.get(k) == TODO]
+    parts = ["\n".join(_field(_label(old, label), fields.get(key, TODO), width)) for key, label in spec
+             if key not in OPTIONAL or key in fields]
+    return todo, parts
+
+
 def adr_new(path: Path, title: str, fields: dict, day: str | None = None, reverses: str = "",
             kind: str = "adr", width: int = WIDTH) -> dict:
     """Append a dated ADR to a decision log: ``## <day> — <title>`` and its fields (a missing one is written TODO).
@@ -196,17 +207,11 @@ def adr_new(path: Path, title: str, fields: dict, day: str | None = None, revers
         title = title or f"REVERSAL: {ADR_SUFFIX_RE.sub('', o_title)}"
         fields.setdefault("supersedes", f"{o_day} — {o_title} (`{supersedes}`)")
         spec = REVERSAL_FIELDS
-        if fields.get("why_not_script"):
-            spec = spec + [FIELDS[-1]]
+        spec = spec + [f for f in FIELDS if f[0] in OPTIONAL and fields.get(f[0])]
     if not title.strip():
         raise NotesError("adr new: a title is needed")
     title = " ".join(title.split())
-    todo = [k for k, _ in spec if k not in fields and k != "why_not_script"]
-    parts = []
-    for key, label in spec:
-        if key == "why_not_script" and key not in fields:
-            continue
-        parts.append("\n".join(_field(_label(old, label), fields.get(key, TODO), width)))
+    todo, parts = _parts(old, spec, fields, width)
     new = old.rstrip() + "\n" + f"\n## {day} — {title}\n\n" + "\n\n".join(parts) + "\n"
     _append(path, old, new, nl)
     return {"id": adr_id(day, title, existing, kind), "title": title, "supersedes": supersedes, "todo": todo}

@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import __version__, docgraph, docjoin, docsgraph
+from .. import __version__, docgraph, docjoin, docsgraph, targets
 
 ORDER = 47   # its place in brain --help's list of commands (brain.commands), after brain docs
 USAGE_ORDER = 34   # its usage lines' place in brain --help's epilog
@@ -94,7 +94,8 @@ def _emitted(args, root: Path) -> tuple[str, dict] | None:
     project = _project(args, root)
     cat = _docs_catalogue(project, root, store)
     ref = docsgraph._git(root, "rev-parse", "HEAD").strip()
-    return project.name, docsgraph.to_docgraph(cat, f"brain {__version__}", repo=cat.repo, ref=ref)
+    doc = docsgraph.to_docgraph(cat, f"brain {__version__}", repo=cat.repo, ref=ref)
+    return project.name, targets.add_to(doc, store, root, project.decision_logs or [project.decisions])
 
 
 def _pin(args, root: Path) -> int:

@@ -45,7 +45,9 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 GIT_TIMEOUT = 60
 EXEMPT_KINDS = ("generated", "dated-spec")
 RUN = ("criterion.no-item", "item.no-criterion", "test.uncarried", "test.carried-twice", "threat.untested",
-       "depends.cross-phase", "phase.review-incomplete", "cycle", "proposed.cited-as-decided", "doc.stale")
+       "depends.cross-phase", "phase.review-incomplete", "cycle", "proposed.cited-as-decided", "doc.stale",
+       "decision.target-unreferenced")
+NEED_CLOSED = ("done", "closed", "dropped", "superseded")
 CYCLE_TYPES = ("depends_on", "part_of", "supersedes")
 PRODUCER_KEPT = ("doc.stale",)   # a check the join runs whose producers' findings it keeps beside its own
 REF = "@"                        # <type>:@<namespace>/<native id>: another document's node
@@ -333,7 +335,7 @@ def run_checks(doc: dict) -> list[dict]:
     """The findings of the checks of :data:`RUN` over ``doc`` (a joined document, or any docgraph/v1 one)."""
     g = _graph(doc)
     found: list[dict] = []
-    for check in (_criteria, _tests, _cross_phase, _reviews, _cycles, _decided, _stale):
+    for check in (_criteria, _tests, _cross_phase, _reviews, _cycles, _decided, _stale, _targets):
         found += check(g)
     return found
 
@@ -404,6 +406,52 @@ def _decided(g: _Graph) -> list[dict]:
     return [_finding("proposed.cited-as-decided", [nid, d], f"decided by {d}, which is still proposed")
             for nid in sorted(g.nodes) for d in g.out[("decided_by", nid)]
             if g.nodes.get(d, {}).get("type") == "decision" and g.nodes[d].get("status") == "proposed"]
+
+
+def _modules(n: dict) -> set[tuple[str, str]]:
+    """A node's modules (its optional ``module`` key, one or a list), each with its project: a module id means
+    something within one project only."""
+    mods = n.get("module")
+    mods = [mods] if isinstance(mods, str) else mods if isinstance(mods, list) else []
+    return {(str(n.get("project") or ""), str(m)) for m in mods if m}
+
+
+def _linked(g: _Graph) -> dict[str, set[str]]:
+    """Each node's neighbours by a declared link (``origin: declared``, but contradicts and constrains): what
+    « touches » means beside a shared module."""
+    linked: dict[str, set[str]] = defaultdict(set)
+    for e in g.edges:
+        a, b = e.get("from"), e.get("to")
+        if (e.get("origin") == "declared" and e.get("type") not in ("constrains", "contradicts")
+                and isinstance(a, str) and isinstance(b, str)):
+            linked[a].add(b)
+            linked[b].add(a)
+    return linked
+
+
+def _targets(g: _Graph) -> list[dict]:
+    """decision.target-unreferenced: a decision (not marked ``door: two-way``) that touches an open need (a shared
+    module, or a declared link between them) without a constrains edge to it."""
+    needs = [n for n in g.of("need") if n.get("status") not in NEED_CLOSED]
+    if not needs:
+        return []
+    by_module: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for n in needs:
+        for m in _modules(n):
+            by_module[m].add(n["id"])
+    need_ids = {n["id"] for n in needs}
+    linked = _linked(g)
+    found = []
+    for d in g.of("decision"):
+        if d.get("door") == "two-way":
+            continue
+        touched = {x for m in _modules(d) for x in by_module.get(m, ())} | (linked[d["id"]] & need_ids)
+        left = sorted(touched - set(g.out[("constrains", d["id"])]))
+        if left:
+            more = f" (+{len(left) - 5})" if len(left) > 5 else ""
+            found.append(_finding("decision.target-unreferenced", [d["id"], *left[:5]],
+                                  f"touches {len(left)} need(s) without citing them: {', '.join(left[:5])}{more}"))
+    return found
 
 
 def _stale_pair(e: dict, nodes: dict) -> tuple[str, str] | None:

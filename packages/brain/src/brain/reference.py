@@ -1,8 +1,11 @@
 """The technical reference (wi-brain-technical-reference, first slice of spec-brain-architecture-docs): a generated
 ``docs/reference/`` per project, never edited by hand, the entry point that spares a reader the whole decision log.
 
-- **README.md**: the modules of the store's registry (``modules.yaml``, brain.modules), each with its features,
-  decisions in force and items, and the decisions no module holds (« unplaced », counted: a debt line).
+- **README.md**: the twelve arc42 sections (brain.arc42, wi-brain-reference-arc42), each from its source in the
+  graph, the prose a person writes from ``docs/reference.yaml`` (:func:`load_prose`, ``schemas/reference.schema.json``:
+  a required field missing fails ``brain reference`` and ``brain check``); its section 5 is the modules of the store's
+  registry (``modules.yaml``, brain.modules), each with its features, decisions in force and items, and its section 9
+  the decisions by module and those no module holds (« unplaced », counted: a debt line).
 - **modules/<id>.md**, one per module: what it does (its features, have and planned), the decisions in force on each of
   its nodes, the rules its items deliver, its specs, its items done and open, its open questions.
 
@@ -33,9 +36,11 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import docjoin, features, graph, modules, records
+from . import arc42, docjoin, features, graph, modules, projects, records, schema
 
 DIR = "docs/reference"
+YAML = "docs/reference.yaml"   # the prose a person writes (schemas/reference.schema.json)
+KIND = "reference"             # its name in brain.schema.SCHEMAS
 MODULES_DIR = "modules"
 DOMAINS_DIR = "domains"
 READ_DIR = "read"   # the pages of the projects the brain only reads
@@ -262,15 +267,23 @@ def _asked_about(m: Model, d: dict, mid: str) -> bool:
     return any(module_of(m, x) == mid for x in _about(d))
 
 
-def render_module(m: Model, mod: dict, store_label: str) -> str:
+def _module_intro(prose: dict | None, mid: str) -> str:
+    """A module's own prose (docs/reference.yaml ``modules.<id>``), or ""."""
+    texts = (prose or {}).get("modules")
+    return str(texts.get(mid) or "").strip() if isinstance(texts, dict) else ""
+
+
+def render_module(m: Model, mod: dict, store_label: str, prose: dict | None = None) -> str:
     mid = str(mod["id"])
     own = _members(m, mid)
     feats = sorted((n for n in own if m.nodes[n].get("type") == features.TYPE), key=lambda f: _status_rank(m, f))
     items = {n for n in own if m.nodes[n].get("type") == "WorkItem"}
     note = f" {_cell(mod['note'])}" if mod.get("note") else ""
+    intro = _module_intro(prose, mid)
     out = [f"# {mid} {_cell(mod.get('name'))}".rstrip(), "",
-           f"{MARKER} from `{store_label}` (its modules.yaml, its nodes and the DDR records). Do not edit: change the "
-           "graph, then brain sync.", "",
+           f"{MARKER} from `{store_label}` (its modules.yaml, its nodes and the DDR records) and `{YAML}`. Do not "
+           "edit: change the graph or the YAML, then brain sync.", "",
+           *([intro, ""] if intro else []),
            f"Brick {mod.get('brick') or '?'}, phase {mod.get('phase') or '?'}, {mod.get('status', 'tree')}.{note}"]
     out += _list("## What it does", [f"- **{_title(m, f)}** `{f}` ({m.nodes[f].get('status')})" for f in feats],
                  "No feature yet.")
@@ -303,36 +316,65 @@ def _index_row(m: Model, mod: dict, placed: dict[str, list[Unit]]) -> str:
             f"{len(placed.get(mid, []))} |")
 
 
-def render_index(m: Model, store_label: str) -> str:
+def render_index(m: Model, store_label: str, prose: dict | None = None, ctx: dict | None = None) -> str:
+    """docs/reference/README.md: the twelve arc42 sections (brain.arc42), the module pages as section 5."""
     out = ["# Technical reference", "",
-           f"{MARKER} from `{store_label}`: one page per module of its registry (`modules.yaml`), with what it does, "
-           "the decisions in force on its nodes (the newest answered DDR, the earlier ones folded; an ADR no DDR went "
-           "to by its title), its rules, specs, items and open questions. Do not edit: change the graph, then brain "
-           "sync. The decision log stays the history.", ""]
-    if not m.registry:
-        return "\n".join(out + ["No module registry (`modules.yaml`) in this store: no module page."]) + "\n"
-    placed = _placed(m)
-    order = sorted(m.registry, key=lambda x: (str(x.get("brick") or "?"), len(str(x["id"])), str(x["id"])))
-    out += ["| Module | Name | Brick | Features | Items done | Items open | Decisions |", "|---|---|---|---|---|---|---|"]
-    out += [_index_row(m, mod, placed) for mod in order]
-    left = sorted(placed[UNPLACED], key=lambda u: (u.date, u.id), reverse=True)
-    out += ["", f"## Unplaced decisions: {len(left)}", "",
-            "Decisions about no node of a module (no item, spec or feature with a module): a debt line, placed by "
-            "giving their nodes a module (`brain item set <id> props.module=<module>`).", ""]
-    out += [f"- {_unit_line(u)}" for u in left] or ["None."]
+           f"{MARKER} from `{store_label}` and `{YAML}`: the twelve arc42 sections, each from its source in the graph "
+           "(every statement with its status and its id), the prose from the YAML; one page per module of the "
+           "registry (`modules.yaml`) with what it does, the decisions in force on its nodes (the newest answered "
+           "DDR, the earlier ones folded; an ADR no DDR went to by its title), its rules, specs, items and open "
+           "questions. Do not edit: change the graph or the YAML, then brain sync. The decision log stays the "
+           "history.", "",
+           "Sections: " + " · ".join(f"[{t}](#{_slug(t)})" for _, t in arc42.SECTIONS)]
+    ctx = {"placed": _placed(m), **(ctx or {})}
+    out += arc42.sections(m, prose or {}, ctx)
     return "\n".join(out) + "\n"
+
+
+# --- the prose: docs/reference.yaml ---
+
+def load_prose(root: Path) -> tuple[dict, list[str]]:
+    """(docs/reference.yaml as a mapping, what it breaks of its schema): ({}, []) when the repo has none (the
+    skeleton then shows its facts only); an unreadable file is ({}, [why])."""
+    f = Path(root) / YAML
+    if not f.is_file():
+        return {}, []
+    try:
+        data = graph.load_yaml(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError, graph._yaml().YAMLError) as exc:
+        return {}, [f"{YAML}: cannot be read ({exc})"]
+    if not isinstance(data, dict):
+        return {}, [f"{YAML}: not a mapping (its fields: v, goals, strategy, glossary...)"]
+    return data, [f"{YAML}: {e}" for e in schema.schema_errors(KIND, data, schema.mode())]
+
+
+def _context(root: Path, store: Path) -> dict:
+    """What section 3 and 7 read beyond the store, from the repo's own registry only (arc42.own_registry): its
+    projects, the first one registered at this root (the owner), and its stacks."""
+    raw = arc42.own_registry(root)
+    here = next((str(n) for n, e in raw.items() if isinstance(e, dict) and not projects.is_read_only(e)
+                 and _at(root, e.get("root"))), "")
+    return {"registry": arc42.registry(raw), "project": here, "stacks": arc42.stacks(raw.get(here) or {})}
+
+
+def _at(root: Path, value) -> bool:
+    """Whether a registry entry's root (relative to the registry, which is at ``root``) is ``root``."""
+    if not isinstance(value, str) or not value:
+        return False
+    p = Path(value)
+    return (p if p.is_absolute() else Path(root) / p).resolve() == Path(root).resolve()
 
 
 def render(root: Path, store: Path, store_label: str = "notes/graph") -> dict[str, str]:
     """{path relative to docs/reference/: text} of the project's reference."""
     m = load(root, store)
-    out = {"README.md": render_index(m, store_label)}
+    prose, _ = load_prose(root)
+    read = render_read(root)   # the projects the brain only reads: section 3's last part, a page each
+    ctx = {**_context(root, store), "read": read.pop("README.md", "")}
+    out = {"README.md": render_index(m, store_label, prose, ctx)}
     for mod in m.registry:
-        out[f"{MODULES_DIR}/{page_name(str(mod['id']))}"] = render_module(m, mod, store_label)
-    read = render_read(root)
-    if read:
-        out["README.md"] += "\n" + read.pop("README.md")
-        out.update(read)
+        out[f"{MODULES_DIR}/{page_name(str(mod['id']))}"] = render_module(m, mod, store_label, prose)
+    out.update(read)
     return out
 
 
@@ -346,7 +388,7 @@ def render_read(root: Path) -> dict[str, str]:
     if not pinned:
         return {}
     joined = docjoin.join(srcs, "brain reference")
-    rows = ["## Projects read only", "",
+    rows = ["### Projects read only", "",
             f"From their pinned docgraph/v1 documents (`{docjoin.DIR}/<project>.json`, `brain docgraph pin`), joined "
             "with the brain's own documents; never written back.", "",
             "| Project | Ref | Producer | Decisions | Items open | Findings |", "|---|---|---|---|---|---|"]
@@ -403,9 +445,26 @@ def _read_page(s: docjoin.Source, mine: list[dict], found: list[dict], by: str) 
 
 # --- the neutral render (the engine's public repo) ---
 
-def render_public(store: Path, repo: str, default_repo: str = "") -> dict[str, str]:
+def _public_prose(prose: dict | None) -> list[str]:
+    """The public repo's own prose (its docs/reference.yaml): goals, strategy, glossary; checked by :func:`denied`
+    like the rest of the render."""
+    prose = prose or {}
+    out = []
+    for key, title in (("goals", "Goals"), ("strategy", "Strategy")):
+        if str(prose.get(key) or "").strip():
+            out += [f"## {title}", "", str(prose[key]).strip(), ""]
+    terms = [g for g in prose.get("glossary") or [] if isinstance(g, dict) and g.get("term")]
+    if terms:
+        out += ["## Glossary", "", "| Term | Means |", "|---|---|"]
+        out += [f"| {_cell(g['term'])} | {_cell(g.get('means'))} |"
+                for g in sorted(terms, key=lambda g: str(g["term"]).lower())] + [""]
+    return out
+
+
+def render_public(store: Path, repo: str, default_repo: str = "", prose: dict | None = None) -> dict[str, str]:
     """{path: text} of the neutral reference of ``repo``: by feature domain, from its features only (public titles
-    and ids, the repo's own code and docs); no module, spec, ADR, DDR, item nor rule."""
+    and ids, the repo's own code and docs), headed by the goals, strategy and glossary of the public repo's own
+    docs/reference.yaml when it has one; no module, spec, ADR, DDR, item nor rule."""
     fm = features.load_store(store, default_repo)
     repo = repo.lower()
     feats = sorted(f for f in fm.features if fm.repo.get(f) == repo)
@@ -416,10 +475,12 @@ def render_public(store: Path, repo: str, default_repo: str = "") -> dict[str, s
             f"{MARKER} from the features of this repo ({PUBLIC_NOTE}: their neutral titles, this repo's own code "
             "and docs, nothing of the brain that tracks it). Do not edit: it is rendered again into a checkout of this "
             f"repo (`brain reference --public --repo {repo} --out <checkout>/{DIR} --write`).", ""]
+    head += _public_prose(prose)
     if not feats:
         return {"README.md": "\n".join(head + ["No feature yet."]) + "\n"}
     out = {}
-    index = head + ["| Domain | Features | have | partial | planned | Ids |", "|---|---|---|---|---|---|"]
+    index = head + (["## Building blocks, by feature domain", ""] if prose else []) + [
+        "| Domain | Features | have | partial | planned | Ids |", "|---|---|---|---|---|---|"]
     for d in sorted(by_domain):
         fs = by_domain[d]
         st = [str(fm.features[f].get("status")) for f in fs]

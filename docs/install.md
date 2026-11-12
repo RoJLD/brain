@@ -87,6 +87,10 @@ git commit -m "my brain"
 brain check                                                # graph-check OK, boundary ... public scan green
 ```
 
+To choose your modules at the same time (who you are, your machine, adjust: three screens, offline), add
+`--interactive`; it ends on the same choice as one command (`--preset default --with tui`, say), each step of which is
+a `brain` command it shows, then runs and logs at `--apply`.
+
 `brain init` writes the generic template: `config.json` (you, the engine's tag, the Lite profile, and the names that
 must never reach a public repo: yours, this machine's user and host), `projects.yaml`, the backlog graph
 (`notes/graph`), the decision log and the journal, starter rules (`rules/global.md`: edit them, they are yours),

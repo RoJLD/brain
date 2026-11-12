@@ -24,7 +24,9 @@ It writes `<BRAIN_HOME>/reviews/<head>/` (or `--out DIR`):
 The lenses are chosen from what the diff touches: **correctness** always; **security** for a guard, a hook, a
 secret or public path, the permissions; **compatibility** for a schema, a format, the state files, the registry or a
 template; **install and upgrade** for the installer, `brain update` or the release; **procedure** for a procedure or
-the rules; **tests** for the tests; **docs** for Markdown, the docs and the changelog fragments.
+the rules; **tests** for the tests; **docs** for Markdown, the docs and the changelog fragments. A repo of a
+project that declares `standards:` (projects.yaml) also gets a **standards** lens: one question per applicable
+`review-lens` standard, does the change keep it (`brain standards lenses`, docs/standards.md).
 
 ## 2. The agents, then the skeptics
 

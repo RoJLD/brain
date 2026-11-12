@@ -107,7 +107,7 @@ def test_the_newer_data_reaches_every_file_of_a_format(st, tmp_path):
     assert '"cpu_s":0.4' in (ledger / "exec-2026-11.jsonl").read_text(encoding="utf-8")
     # the formats it reached no file of fail the step: the rollback would test nothing of them
     assert not step["ok"] and "reached no file: ar v1, ddr v1, members v1, modules v1, packs v1, permissions v1, " \
-        "projects v1, readme v1, sr v1, standards v1" in step["out"]
+        "projects v1, readme v1, reference v1, sr v1, standards v1" in step["out"]
 
 
 def test_the_newer_data_reaches_the_module_registry(st, tmp_path):
@@ -147,6 +147,20 @@ def test_the_newer_data_reaches_readme_yaml(st, tmp_path):
     step = st.add_newer(root, home)
     assert "readme: readme.yaml +keys" in step["out"], step["out"]
     assert "badges" in yaml.safe_load((root / "readme.yaml").read_text(encoding="utf-8"))
+
+
+def test_the_newer_data_reaches_the_references_yaml(st, tmp_path):
+    """docs/reference.yaml (wi-brain-reference-arc42) has its place, docs/ at the brain's root: the newer keys reach
+    it."""
+    import yaml
+    root, home = tmp_path / "brain", tmp_path / "home"
+    (root / "docs").mkdir(parents=True)
+    f = root / "docs" / "reference.yaml"
+    f.write_text(st.fixture("reference", "older").read_text(encoding="utf-8"), encoding="utf-8")
+    assert st.where(root, home)["reference"] == [f]
+    step = st.add_newer(root, home)
+    assert "reference: reference.yaml +keys" in step["out"], step["out"]
+    assert yaml.safe_load(f.read_text(encoding="utf-8"))["audience"] == ["makers", "drinkers"]
 
 
 def test_the_newer_data_reaches_a_local_standards_catalog(st, tmp_path):
