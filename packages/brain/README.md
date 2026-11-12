@@ -779,9 +779,9 @@ government, association, unit, office, team, folder, project, tenant); `config.j
 type or one its parent does not accept, and a class floor under an ancestor's (a guard only tightens); it warns past six
 levels. `brain scopes [--scope REF] [--depth N] [--archived] [--lang fr] [--types] [--json]` prints the tree with the
 projects under each node, and `brain sync` writes `notes/scopes_graph.md` (generated, never edited). `brain status
---scope REF` shows the projects of a node's subtree, with the totals when it holds several (`brain resume` and `brain
-digest` take it too, one pack or digest per project): REF is an id, a path of
-ids (`pro/acme`), `global` (as `--all`), `.` (the project of the folder) or `..` (its parent); `--project` and `--all`
+--scope REF` shows the projects of a node's subtree, with the totals when it holds several, and so do `brain resume`,
+`digest`, `queue`, `tui`, `usage`, `cost`, `audit` and `permissions` (with `--requests`, `permissions --scope` keeps its
+older meaning, a level's start): REF is an id, a path of ids (`pro/acme`), `global` (as `--all`), `.` (the project of the folder) or `..` (its parent); `--project` and `--all`
 stay. Without `scopes.yaml` and `parent:`, every project sits under Global and nothing changes. An older engine
 reads `parent:` and `scope_types` as unknown keys (a note; refused in strict mode, CI) and refuses `parent:` on a
 read-only entry or a mount: add them once every machine and the brain repo's CI run the release that knows them.
@@ -1083,7 +1083,7 @@ with `plugin: null`, behaves as before, and a plugin that cannot load fails its 
 From a checkout of this repo, with research-graph from the same checkout:
 
 ```bash
-pip install -e . && pip install --no-deps -e packages/brain && pip install pyyaml pytest pytest-xdist
+pip install -e . && pip install --no-deps -e packages/brain && pip install pyyaml pytest "pytest-xdist>=3.5"
 pytest packages/brain -n auto
 ```
 
@@ -1093,8 +1093,10 @@ They read only fixtures, never a real brain's graph, records or rendered files: 
 `brain check` and `brain audit`.
 
 `-n auto` runs them in parallel, one pytest-xdist worker per core: each test has its own temporary folder, `BRAIN_HOME`
-and environment, so no test shares state with another. A git repository in a test is a copy of a template made once
-per worker (`conftest.git_init`, the `git_repo` and `make_repo` fixtures), not a `git init`. The test that calls the
+and environment, so no test shares state with another. With `-n` and no `--dist`, `conftest.py` picks xdist's
+`worksteal` scheduling (pytest-xdist 3.5 or later): a worker that runs out of tests takes some still queued on a busy
+one, so the run no longer ends on one or two workers while the others idle; `--dist load` gives the old scheduling
+back. A git repository in a test is a copy of a template made once per worker (`conftest.git_init`, the `git_repo` and `make_repo` fixtures), not a `git init`. The test that calls the
 real docker client is marked `docker`: the CI runs it apart, on one process (`pytest packages/brain -m docker`).
 
 ## Releasing

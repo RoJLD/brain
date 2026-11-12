@@ -10,7 +10,8 @@ from ._common import _whole, root_of
 ORDER = 360   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 410   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain audit [--all] [--repo R]... [-v] [--json] [--trend [N]] [--fail-on P] [--write [--force]] [--items]
+  brain audit [--all | --scope REF] [--repo R]... [-v] [--json] [--trend [N]] [--fail-on P] [--write [--force]]
+                 [--items]
                  what misses the standard per repo and module (zero token): P0 false statements, P1 gaps on
                  production paths; a section per repo lists the commands and modules no feature names (feature
                  coverage, info); --write: under config.json views.strict, another engine than engine.pin writes
@@ -29,6 +30,8 @@ def register(sub, ctx) -> None:
     au = sub.add_parser("audit", help="what misses the standard per repo and module, at zero token (brain.audit); "
                                       "--diff: the scout on a change (brain.scout)")
     au.add_argument("--all", action="store_true", help="every registered project, then the milestone line")
+    au.add_argument("--scope", help="the projects of a node's subtree in the scope tree (brain scopes): an "
+                    "id, a path of ids, global (= --all), . or ..")
     au.add_argument("--repo", action="append", help="only this repo of the project (repeatable)")
     au.add_argument("-v", "--verbose", action="store_true", help="every finding, info included")
     au.add_argument("--json", action="store_true", help="stable keys, no timestamp")
