@@ -16,13 +16,15 @@ across the joined graph, where an edge of one document may reach a node of anoth
   document's node by its joined id.
 - **Namespaces.** Every node id becomes ``<type>:<namespace>/<native id>`` (``item:example/25``), the namespace being
   the project's name (the file's stem); a node's ``phase`` becomes ``<namespace>/<phase>``. An edge end or a finding's
-  subject whose native part starts with a namespace of the join (``item:example/25`` in another document) already
-  names a joined node and is kept as it is. The joined graph is itself a docgraph/v1 document: ids stay prefixed by
-  their type and unique.
-- **The checks, run again** (:data:`RUN`) over the joined graph, each finding marked ``by: join``; a producer's own
-  findings are kept, marked ``by: <namespace>``, unless the join found the same one. The checks that need what a
-  document does not carry (a decision's text and history, its numbering, the citations of a reported node, the
-  register of needs) are listed as not run.
+  subject written ``<type>:@<namespace>/<native id>`` (``criterion:@example/S2-13`` in the brain's own document) names
+  another document's node; the ``@`` keeps it apart from a native id that merely starts like a namespace. The joined
+  graph is itself a docgraph/v1 document: ids stay prefixed by their type and unique.
+- **The checks, run again** (:data:`RUN`) over the joined graph, each finding marked ``by: join``, which replaces the
+  producers' findings of the same checks (an edge of another document may settle them), doc.stale apart: a producer's
+  is kept beside the join's (its history knows what dates cannot show). The producers' findings of the other checks
+  are kept, marked ``by: <namespace>``. The checks that need what a document does not carry (a decision's text and
+  history, its numbering, the citations of a reported node, the register of needs) are listed as not run, unless a
+  producer reported them.
 """
 
 from __future__ import annotations
@@ -45,6 +47,8 @@ EXEMPT_KINDS = ("generated", "dated-spec")
 RUN = ("criterion.no-item", "item.no-criterion", "test.uncarried", "test.carried-twice", "threat.untested",
        "depends.cross-phase", "phase.review-incomplete", "cycle", "proposed.cited-as-decided", "doc.stale")
 CYCLE_TYPES = ("depends_on", "part_of", "supersedes")
+PRODUCER_KEPT = ("doc.stale",)   # a check the join runs whose producers' findings it keeps beside its own
+REF = "@"                        # <type>:@<namespace>/<native id>: another document's node
 
 
 @dataclass
@@ -113,10 +117,11 @@ def pin(root: Path, project: str, checkout: Path, ref: str, file: str,
     """Read ``file`` at ``ref`` from the clone ``checkout`` of the read project ``project`` and write its pinned copy
     to ``<root>/docgraph/<project>.json``. (the copy's path or None, errors, notes): nothing is written on an error.
     Only git's read commands run in the clone (rev-parse, show): its working tree and refs are never touched."""
+    file = file.replace("\\", "/").lstrip("/")   # git's <rev>:<path> takes forward slashes only
     refused = _refused(root, project, checkout, ref, file)
     if refused:
         return None, [refused], []
-    sha, doc, error = _read_at(checkout, ref, file.lstrip("/"))
+    sha, doc, error = _read_at(checkout, ref, file)
     if error:
         return None, [error], []
     where = f"{project}@{sha[:12]}:{file}"
@@ -126,7 +131,7 @@ def pin(root: Path, project: str, checkout: Path, ref: str, file: str,
     if PINNED in doc:
         notes.append(f"{where}: its own {PINNED!r} key is replaced by the pin")
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    doc[PINNED] = {"ref": sha, "file": file.lstrip("/"), "at": stamp}
+    doc[PINNED] = {"ref": sha, "file": file, "at": stamp}
     out = Path(root) / DIR / f"{project}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
@@ -135,14 +140,16 @@ def pin(root: Path, project: str, checkout: Path, ref: str, file: str,
 
 # --- reading ----------------------------------------------------------------------------------------------------------
 
-def sources(root: Path, own: tuple[str, dict] | None = None) -> list[Source]:
+def sources(root: Path, own: tuple[str, dict] | None = None, own_name: str = "") -> list[Source]:
     """The documents of the join: the brain's own graph (``own``: its namespace and its emitted document), then every
     ``docgraph/*.json`` under ``root``, each validated. A read project's copy without its pin, a file whose name is
-    not a namespace, or one named as the brain's own project: errors, the document left out of the join."""
+    not a namespace, or one named as the brain's own project (``own``'s, else ``own_name``): errors, the document
+    left out of the join."""
     read_only = set(projects.readonly(root))
     out: list[Source] = []
     if own:
         name, doc = own
+        own_name = name
         errors, notes = docgraph.validate(doc, where=f"{name} (emitted)")
         out.append(Source(name, "(emitted)", doc, errors, notes, emitted=True))
     folder = Path(root) / DIR
@@ -152,7 +159,7 @@ def sources(root: Path, own: tuple[str, dict] | None = None) -> list[Source]:
         if not NAME_RE.match(f.stem):
             src.errors.append(f"{src.path}: its name is its namespace: lower-case letters, digits, - and _")
             continue
-        if own and f.stem == own[0]:
+        if own_name and f.stem == own_name:
             src.errors.append(f"{src.path}: {f.stem!r} is the brain's own project, whose graph is emitted")
             continue
         try:
@@ -168,9 +175,10 @@ def sources(root: Path, own: tuple[str, dict] | None = None) -> list[Source]:
     return out
 
 
-def check_lines(root: Path) -> list[str]:
-    """brain check's warnings on the documents under ``docgraph/``: one line per document left out of the join."""
-    return [f"docgraph: {e}" for s in sources(root) for e in s.errors[:3]]
+def check_lines(root: Path, own_name: str = "") -> list[str]:
+    """brain check's warnings on the documents under ``docgraph/``: one line per document left out of the join
+    (``own_name``: the brain's own project, whose graph is emitted, never read from a file)."""
+    return [f"docgraph: {e}" for s in sources(root, own_name=own_name) for e in s.errors[:3]]
 
 
 # --- joining ----------------------------------------------------------------------------------------------------------
@@ -180,14 +188,15 @@ def _node_id(nid: str, ns: str) -> str:
     return f"{t}:{ns}/{native}" if sep else f"{ns}/{nid}"
 
 
-def _end(nid, ns: str, names: set[str]):
-    """An edge end or a subject: a joined id already (another document's node) is kept, any other is namespaced."""
+def _end(nid, ns: str):
+    """An edge end or a subject: ``<type>:@<namespace>/<native id>`` names another document's node (its joined id),
+    any other id is the document's own, namespaced by ``ns``. The ``@`` marks it: a native id may start like a
+    namespace (``document:docs/a.md`` beside a document named ``docs``)."""
     if not isinstance(nid, str):
         return nid
     t, sep, native = nid.partition(":")
-    head, slash, _ = native.partition("/")
-    if sep and slash and head in names:
-        return nid
+    if sep and native.startswith(REF) and "/" in native:
+        return f"{t}:{native[len(REF):]}"
     return _node_id(nid, ns)
 
 
@@ -202,15 +211,23 @@ def _subjects(f: dict) -> list:
     return f["subjects"] if isinstance(f.get("subjects"), list) else []
 
 
-def _from_source(s: Source, names: set[str]) -> tuple[list[dict], list[dict], list[dict]]:
+def _from_source(s: Source) -> tuple[list[dict], list[dict], list[dict]]:
     """A document's nodes, edges and findings, namespaced by ``s.name`` (its findings marked ``by``)."""
     ns = s.name
     nodes = [_joined_node(n, ns) for n in docgraph._list(s.doc, "nodes") if isinstance(n, dict)]
-    edges = [{**e, "from": _end(e.get("from"), ns, names), "to": _end(e.get("to"), ns, names), "project": ns}
+    edges = [{**e, "from": _end(e.get("from"), ns), "to": _end(e.get("to"), ns), "project": ns}
              for e in docgraph._list(s.doc, "edges") if isinstance(e, dict)]
-    found = [{**f, "subjects": [_end(x, ns, names) for x in _subjects(f)], "by": ns}
+    found = [{**f, "subjects": [_end(x, ns) for x in _subjects(f)], "by": ns}
              for f in docgraph._list(s.doc, "checks") if isinstance(f, dict)]
     return nodes, edges, found
+
+
+def _kept(producers: list[dict], found: list[dict]) -> list[dict]:
+    """The producers' findings the join keeps: those of the checks it does not run, and doc.stale (a producer may know
+    from its history what the join's dates cannot show) unless the join found the same one."""
+    seen = {(f["id"], frozenset(map(str, f["subjects"]))) for f in found}
+    return [f for f in producers if (f.get("id") not in RUN or f.get("id") in PRODUCER_KEPT)
+            and (f.get("id"), frozenset(map(str, f["subjects"]))) not in seen]
 
 
 def _source_line(s: Source) -> dict:
@@ -222,21 +239,20 @@ def join(srcs: list[Source], by: str, now: datetime | None = None) -> dict:
     """The valid documents of ``srcs`` as one docgraph/v1 document, ids namespaced, then the checks of :data:`RUN`
     run across it (:func:`run_checks`)."""
     ok = [s for s in srcs if s.ok]
-    names = {s.name for s in ok}
     nodes, edges, producers = [], [], []
     for s in ok:
-        n, e, p = _from_source(s, names)
+        n, e, p = _from_source(s)
         nodes, edges, producers = nodes + n, edges + e, producers + p
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = {"schema": docgraph.ID,
            "generated": {"at": stamp, "by": by, "sources": {s.name: _source_line(s) for s in ok}},
            "nodes": nodes, "edges": edges}
     found = run_checks(doc)
-    seen = {(f["id"], tuple(f["subjects"])) for f in found}
-    kept = [f for f in producers if (f.get("id"), tuple(f["subjects"])) not in seen]
+    kept = _kept(producers, found)
+    reported = {str(f.get("id")) for f in kept}   # a producer ran it: never also listed as not run
     doc["checks"] = found + kept
     doc["checks_run"] = list(RUN)
-    doc["checks_not_run"] = [c for c in docgraph.CHECK_IDS if c not in RUN]
+    doc["checks_not_run"] = [c for c in docgraph.CHECK_IDS if c not in RUN and c not in reported]
     return doc
 
 
@@ -250,6 +266,17 @@ def _when(value) -> datetime | None:
     except ValueError:
         return None
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _later(a, b) -> bool:
+    """Whether ``a`` is after ``b``, compared at the coarser of their two granularities (a date against a date-time
+    compares the days: a node changed the day a document was is not later than it)."""
+    wa, wb = _when(a), _when(b)
+    if wa is None or wb is None:
+        return False
+    if len(str(a)) <= 10 or len(str(b)) <= 10:
+        return wa.date() > wb.date()
+    return wa > wb
 
 
 def _native(nid: str) -> str:
@@ -320,7 +347,8 @@ def _criteria(g: _Graph) -> list[dict]:
     return found + [_finding("item.no-criterion", [i["id"]], f"its phase {g.phase[i['id']]} has criteria; it serves "
                                                               "none")
                     for i in g.of("item") if g.phase[i["id"]] in with_criteria and i.get("kind") != "review"
-                    and not any(g.nodes.get(t, {}).get("type") == "criterion" for t in g.out[("serves", i["id"])])]
+                    and not any(g.nodes.get(t, {}).get("type") == "criterion" and g.phase.get(t) == g.phase[i["id"]]
+                                for t in g.out[("serves", i["id"])])]
 
 
 def _tests(g: _Graph) -> list[dict]:
@@ -403,8 +431,7 @@ def _stale(g: _Graph) -> list[dict]:
         pair = _stale_pair(e, g.nodes)
         if pair is None:
             continue
-        dw, ow = _when(g.nodes[pair[0]].get("updated")), _when(g.nodes[pair[1]].get("updated"))
-        if dw and ow and ow > dw:
+        if _later(g.nodes[pair[1]].get("updated"), g.nodes[pair[0]].get("updated")):
             what = "cites" if e["type"] == "documented_in" else "depends on"
             found.append(_finding("doc.stale", list(pair), f"{what} {pair[1]}, which changed after it"))
     return found

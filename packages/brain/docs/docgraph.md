@@ -178,19 +178,25 @@ brain docgraph join --out joined.json --json
   (lower-case letters, digits, `-` and `_`).
 - **Namespaces.** In the joined graph every node id is `<type>:<namespace>/<native id>` (`item:example/25`), the
   namespace being the project's name, and a node's `phase` is `<namespace>/<phase>`; every node and edge gains
-  `project`. A document's edge end or finding subject whose native part starts with another namespace of the join
-  (`criterion:example/S2-13` in the brain's own document) names that document's node: this is how a private
-  document links to a read project's nodes. The joined graph is itself a `docgraph/v1` document.
-- **The checks, run again.** Across the joined graph `join` runs `criterion.no-item`, `item.no-criterion`,
-  `test.uncarried`, `test.carried-twice`, `threat.untested`, `depends.cross-phase`, `phase.review-incomplete`, `cycle`
-  (one finding per loop of `depends_on`, `part_of` or `supersedes` edges), `proposed.cited-as-decided` and `doc.stale`
-  (from the nodes' `updated` dates; generated documents and dated specs exempt). Its findings say `by: join`; a
-  producer's own findings are kept with `by: <namespace>` unless the join found the same one. The checks that need what
-  a document does not carry (a decision's text, history and numbering, the citations of a reported node, the register
-  of needs) are in `checks_not_run`. It exits 1 when a document is left out or an error is found.
+  `project`. A document's edge end or finding subject written `<type>:@<namespace>/<native id>`
+  (`criterion:@example/S2-13` in the brain's own document) names that other document's node: this is how a private
+  document links to a read project's nodes. Any other id is the document's own, even one that starts like a
+  namespace (`document:docs/a.md` beside a document named `docs`). The joined graph is itself a `docgraph/v1`
+  document.
+- **The checks, run again.** Across the joined graph `join` runs `criterion.no-item`, `item.no-criterion` (an item
+  serving no criterion of its own phase; a phase's exit review is exempt), `test.uncarried`, `test.carried-twice`,
+  `threat.untested`, `depends.cross-phase`, `phase.review-incomplete`, `cycle` (one finding per loop of `depends_on`,
+  `part_of` or `supersedes` edges), `proposed.cited-as-decided` and `doc.stale` (from the nodes' `updated` dates,
+  compared by day when either is a date; generated documents and dated specs exempt). Its findings say `by: join` and
+  replace the producers' findings of the same checks, since an edge of another document may settle them; a producer's
+  `doc.stale` is kept beside the join's (its history knows what dates cannot show). A producer's findings of the other
+  checks are kept with `by: <namespace>`. The checks that need what a document does not carry (a decision's text,
+  history and numbering, the citations of a reported node, the register of needs) are in `checks_not_run`, unless a
+  producer reported them. It exits 1 when a document is left out or an error is found.
 - **The reference.** `brain reference` gives each pinned project a page, `docs/reference/read/<project>.md` (the ref
-  it was read at, its decisions with their status and source, milestones, modules, items by status, the findings of
-  the join on its nodes), and a row in its README.
+  it was read at, its decisions with their status and source, milestones, modules, items by status, the findings on
+  its nodes of the checks run across the pinned copies and the brain's own documents under `docgraph/`: the brain's
+  emitted graph, read from git, is `brain docgraph join`'s only), and a row in its README.
 
 ## Evolution
 

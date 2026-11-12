@@ -6,7 +6,7 @@ section: Added
   show`, never a checkout), validated, to `docgraph/PROJECT.json` under the brain's root with the commit it was read
   at (`pinned`), committed by PR; the registry entry is unchanged. `brain docgraph join` reads the brain's own graph,
   the pinned copies and the documents the brain keeps for itself as one docgraph/v1 graph, ids namespaced by project
-  (`item:example/25`; an edge may name another document's node by that id), and runs ten named checks again across
-  it, the producers' own findings kept; exit 1 when a document is left out or an error is found. `brain check` in a
+  (`item:example/25`; an edge names another document's node as `item:@example/25`), and runs ten named checks again
+  across it, the producers' findings of the other checks kept; exit 1 when a document is left out or an error is found. `brain check` in a
   brain's own root warns on a document under `docgraph/` the join leaves out, and `brain reference` gives each pinned
   project a page under `docs/reference/read/`.

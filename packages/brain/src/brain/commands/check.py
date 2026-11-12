@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .. import docjoin, public
-from ._common import _scope, _store, root_of
+from ._common import _project, _scope, _store, root_of
 from ._stores import _check_store, _each_store, _merge_marks, _registry_scope, _registry_too, check_registry
 
 ORDER = 120   # its place in brain --help's list of commands (brain.commands)
@@ -50,7 +50,7 @@ def cmd_check(args, root: Path) -> int:
     if _registry_too(args, root):   # a brain's own root: its own data too, as refresh checks it
         print("== registry")
         rc = check_registry(root, _registry_scope(root)) or rc
-        for line in docjoin.check_lines(root):   # a document under docgraph/ the join leaves out (wi-brain-docgraph-read)
+        for line in docjoin.check_lines(root, _project(args, root).name):   # a document under docgraph/ the join leaves out (wi-brain-docgraph-read)
             print(f"warning: {line}")
     return rc
 

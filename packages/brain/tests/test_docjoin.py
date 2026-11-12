@@ -95,7 +95,7 @@ def test_brain_docgraph_pin_and_join(tmp_path, monkeypatch, store, capsys):
     assert "pinned at " + sha[:12] in capsys.readouterr().out
     # the brain's own document: its item serves the read project's criterion, named by its joined id
     (root / "docgraph" / "mine.json").write_text(json.dumps(_doc(
-        [_n("item:7", phase="S1")], [_e("item:7", "criterion:upstream/S1-1", "serves")])), encoding="utf-8")
+        [_n("item:7", phase="S1")], [_e("item:7", "criterion:@upstream/S1-1", "serves")])), encoding="utf-8")
     out = tmp_path / "joined.json"
     assert cli.main([*argv, "join", "--no-own", "--out", str(out)]) == 0
     text = capsys.readouterr().out
@@ -125,33 +125,64 @@ def test_a_read_projects_copy_without_its_pin_and_a_bad_name_are_left_out(tmp_pa
 
 # --- joining ----------------------------------------------------------------------------------------------------------
 
-def test_join_namespaces_ids_keeps_joined_ends_and_the_producers_findings():
+def test_join_namespaces_ids_keeps_marked_ends_and_the_producers_findings():
     a = docjoin.Source("alpha", "docgraph/alpha.json", _doc(
         [_n("item:1", phase="S1"), _n("document:docs/a.md#x")],
-        [_e("item:1", "item:2", "depends_on"), _e("item:1", "test:beta/9", "carries")],
+        [_e("item:1", "item:2", "depends_on"), _e("item:1", "test:@beta/9", "carries"),
+         _e("item:1", "document:docs/a.md#x", "documented_in")],
         [{"id": "example.own-check", "severity": "info", "subjects": ["item:1"], "message": "m"}]))
     b = docjoin.Source("beta", "docgraph/beta.json", _doc([_n("test:9")]))
+    docs = docjoin.Source("docs", "docgraph/docs.json", _doc([_n("item:9")]))   # a namespace like a native id's head
     bad = docjoin.Source("gamma", "docgraph/gamma.json", None, ["no"])
-    j = docjoin.join([a, b, bad], "brain test")
-    assert [n["id"] for n in j["nodes"]] == ["item:alpha/1", "document:alpha/docs/a.md#x", "test:beta/9"]
+    j = docjoin.join([a, b, docs, bad], "brain test")
+    assert [n["id"] for n in j["nodes"]] == ["item:alpha/1", "document:alpha/docs/a.md#x", "test:beta/9",
+                                             "item:docs/9"]
     assert j["nodes"][0]["phase"] == "alpha/S1" and j["nodes"][0]["project"] == "alpha"
     assert [(e["from"], e["to"]) for e in j["edges"]] == [("item:alpha/1", "item:alpha/2"),
-                                                          ("item:alpha/1", "test:beta/9")]
+                                                          ("item:alpha/1", "test:beta/9"),
+                                                          ("item:alpha/1", "document:alpha/docs/a.md#x")]
     own = [f for f in j["checks"] if f["id"] == "example.own-check"]
     assert own == [{"id": "example.own-check", "severity": "info", "subjects": ["item:alpha/1"], "message": "m",
                     "by": "alpha"}]
-    assert set(j["generated"]["sources"]) == {"alpha", "beta"}            # gamma is left out
-    assert not [f for f in j["checks"] if f["id"] == "test.uncarried"]  # carried from the other document
+    assert set(j["generated"]["sources"]) == {"alpha", "beta", "docs"}   # gamma is left out
+    assert not [f for f in j["checks"] if f["id"] == "test.uncarried" and f["subjects"] == ["test:beta/9"]]
     assert j["checks_run"] == list(docjoin.RUN)
     assert set(j["checks_run"]) | set(j["checks_not_run"]) == set(docgraph.CHECK_IDS)
     assert docgraph.validate(j)[0] == []
 
 
-def test_a_finding_the_join_repeats_is_kept_once():
-    a = docjoin.Source("alpha", "p", _doc([_n("criterion:c")], [], [
-        {"id": "criterion.no-item", "severity": "error", "subjects": ["criterion:c"], "message": "producer's"}]))
-    found = [f for f in docjoin.join([a], "t")["checks"] if f["id"] == "criterion.no-item"]
-    assert len(found) == 1 and found[0]["by"] == "join"
+def test_the_join_replaces_the_producers_findings_of_its_checks_and_stays_valid():
+    """A finding of a check the join runs is the join's (another document may settle it); one of a check it does not
+    run is kept, and that check is then not listed as not run: the joined document validates."""
+    a = docjoin.Source("alpha", "p", _doc([_n("criterion:c"), _n("item:1"), _n("decision:d")],
+                                          [_e("item:1", "item:2", "depends_on")], [
+        {"id": "criterion.no-item", "severity": "error", "subjects": ["criterion:c"], "message": "producer's"},
+        {"id": "depends.cross-phase", "severity": "warning", "subjects": ["item:1"], "message": "producer's"},
+        {"id": "decision.modified-after-accept", "severity": "warning", "subjects": ["decision:d"], "message": "m"},
+        {"id": "doc.stale", "severity": "warning", "subjects": ["item:1"], "message": "from its history"}]))
+    b = docjoin.Source("beta", "q", _doc([_n("item:1")]))
+    a.doc["edges"][0]["to"] = "item:@beta/1"   # the dependency the producer could not see, held by another document
+    j = docjoin.join([a, b], "t")
+    by = sorted((f["id"], f["by"]) for f in j["checks"])
+    assert by == [("criterion.no-item", "join"), ("decision.modified-after-accept", "alpha"),
+                  ("doc.stale", "alpha")]
+    assert "decision.modified-after-accept" not in j["checks_not_run"]
+    assert docgraph.validate(j)[0] == []
+
+
+def test_pin_takes_a_windows_path(tmp_path, monkeypatch, store):
+    root = _registry(tmp_path, monkeypatch, store)
+    up, sha = _clone(tmp_path, _doc([_n("item:1")]))
+    out, errors, _ = docjoin.pin(root, "upstream", up, sha, "docs\\docs-graph.json")
+    assert errors == [] and json.loads(out.read_text(encoding="utf-8"))["pinned"]["file"] == "docs/docs-graph.json"
+
+
+def test_brain_check_names_a_document_named_as_the_brains_own_project(tmp_path, monkeypatch, store):
+    root = _registry(tmp_path, monkeypatch, store)
+    (root / "docgraph").mkdir()
+    (root / "docgraph" / "demo.json").write_text(json.dumps(_doc([])), encoding="utf-8")
+    assert docjoin.check_lines(root) == []
+    assert "'demo' is the brain's own project" in docjoin.check_lines(root, "demo")[0]
 
 
 # --- the checks -------------------------------------------------------------------------------------------------------
@@ -193,6 +224,18 @@ def test_each_check_run_again_finds_its_case():
         ("proposed.cited-as-decided", ("item:2", "decision:d")),
         ("doc.stale", ("document:a", "item:5")),          # the generated one is exempt
     ])
+
+
+def test_item_no_criterion_wants_a_criterion_of_its_own_phase_and_dates_compare_by_day():
+    doc = _doc([_n("criterion:a", phase="S1"), _n("criterion:b", phase="S2"), _n("item:1", phase="S1"),
+                _n("document:d", kind="how-to", updated="2026-01-01"), _n("item:2", updated="2026-01-01T10:00:00Z"),
+                _n("item:3", updated="2026-01-02T00:00:00Z")],
+               [_e("item:1", "criterion:b", "serves"), _e("item:2", "document:d", "documented_in"),
+                _e("item:3", "document:d", "documented_in")])
+    ids = _ids(doc)
+    assert ("item.no-criterion", ("item:1",)) in ids               # it serves S2's, not S1's
+    assert ("doc.stale", ("document:d", "item:3")) in ids          # the next day
+    assert ("doc.stale", ("document:d", "item:2")) not in ids      # the same day
 
 
 def test_the_checks_hold_quietly_on_the_fixtures():
