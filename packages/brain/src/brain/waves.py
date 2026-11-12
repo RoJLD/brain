@@ -32,7 +32,7 @@ from datetime import date
 from functools import cached_property
 from pathlib import Path
 
-from . import config, decisions, graph, records
+from . import config, decisions, graph, ranking, records
 
 WAVE, ERA = "wave", "era"
 KINDS = (WAVE, ERA)
@@ -76,6 +76,12 @@ class Plan:
     members: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))   # milestone -> its part_of
     deps: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))      # item -> its prerequisites
     ddrs: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))      # item -> pending DDRs on it
+    edges: list[dict] = field(default_factory=list)   # part_of, depends_on, gated_by and delivers: the rank's input
+
+    @cached_property
+    def ranker(self) -> ranking.Ranker:
+        """The frontier's rank and each item's score (brain.ranking)."""
+        return ranking.Ranker(self.nodes, self.edges)
 
     @cached_property
     def waves(self) -> list[str]:
@@ -197,6 +203,8 @@ def load(store: Path, root: Path | None = None) -> Plan:
             if not isinstance(e, dict) or not e.get("from"):
                 continue
             src, dst, etype = str(e["from"]), str(e.get("to")), e.get("type")
+            if etype in ("part_of", "depends_on", "gated_by", "delivers"):
+                plan.edges.append(e)
             if etype == "part_of" and (nodes.get(dst) or {}).get("type") == "Milestone":
                 plan.parents[src].append(dst)
                 plan.members[dst].append(src)
@@ -341,9 +349,9 @@ def closure_problems(plan: Plan, version: str) -> list[str]:
 # --- brain next and the view ---
 
 def _rank(plan: Plan, nid: str) -> tuple:
-    p = _props(plan.nodes[nid])
-    pr = str(p.get("priority") or p.get("priority_proposed") or "")
-    return PRIORITY.get(pr, 9), nid
+    """The owner's priority (a confirmed one before the same proposed), the owner's order, then value over effort
+    (brain.ranking)."""
+    return plan.ranker.key(nid)
 
 
 def _sorted(plan: Plan, ids) -> list[str]:
@@ -377,6 +385,9 @@ def wave_report(plan: Plan, wid: str) -> dict:
            "open": len(items) - len(groups["closed"])}
     out.update({k: [_row(plan, i) for i in _sorted(plan, ids)] for k, ids in groups.items()})
     out["carried_out"] = [_row(plan, i) for i in plan.carried_out(wid)]
+    ready = [r for k in ("carried", "startable") for r in out[k]]
+    out["quick_wins"] = [r["id"] for r in ready if r["rank"]["quick_win"]]
+    out["value_overrides"] = plan.ranker.overrides([i for i in items if plan.status(i) in OPEN])
     return out
 
 
@@ -387,7 +398,8 @@ def _row(plan: Plan, nid: str) -> dict:
     return {"id": nid, "title": str(n.get("title") or ""), "status": plan.status(nid),
             "priority": str(p.get("priority") or ""), "waits_on_owner": plan.owner_waits(nid),
             "after": plan.blockers(nid), "carried_from": plan.label(came) if came else "",
-            "carried_to": (plan.label(now) if now else str(p["carried_to"])) if moved else ""}
+            "carried_to": (plan.label(now) if now else str(p["carried_to"])) if moved else "",
+            "rank": plan.ranker.score(nid).as_dict()}
 
 
 def pending_waves(plan: Plan) -> list[str]:
@@ -427,7 +439,8 @@ GROUPS = (("carried", "carried from an earlier wave, first"), ("startable", "sta
           ("waiting", "waits on {owner}"), ("other", "other open"))
 
 
-def render_next(rep: dict) -> list[str]:
+def render_next(rep: dict, explain: bool = False) -> list[str]:
+    """brain next's text; ``explain``: each carried and startable item's score parts under it (brain.ranking)."""
     owner = rep["owner"]
     cur = rep["current"]
     if cur is None and rep.get("waves"):
@@ -437,10 +450,18 @@ def render_next(rep: dict) -> list[str]:
         return ["No open wave: a Milestone with props.kind wave and props.release X.Y.Z (brain wave import proposes "
                 "them from the items' props.wave)"]
     out = [_wave_head(cur)]
+    if cur.get("quick_wins"):
+        out.append(f"  quick wins (size S, high value), first: {', '.join(cur['quick_wins'])}")
     for key, label in GROUPS:
         if cur[key]:
             out.append(f"  {label.format(owner=owner)}:")
-            out += [f"    {_row_text(r, owner)}" for r in cur[key]]
+            for r in cur[key]:
+                out.append(f"    {_row_text(r, owner)}")
+                if explain and key in ("carried", "startable"):
+                    out.append(f"        {r['rank']['explain']}")
+    if explain and cur.get("value_overrides"):
+        out.append(f"  value set by {owner} on {len(cur['value_overrides'])} open item(s) (props.value): "
+                   f"{', '.join(cur['value_overrides'])}")
     if not cur["open"]:
         out.append(f"  nothing open: close it with its version PR (brain wave close {cur['release']})")
     nxt = rep["next"]
