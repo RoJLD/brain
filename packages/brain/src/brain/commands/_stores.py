@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, features, graph, links,
                 lint, markers, milestones, modulemap, modules, neutral, permissions, projects, public, readme, records,
-                reference, render, skew, specs, stacks, tidy, tiers, vault, views, waves)
+                reference, render, scopes, skew, specs, stacks, tidy, tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -236,6 +236,8 @@ def _sync_views(args, project: projects.Project, root: Path, store: Path, layout
     _write_module_view(project, root, store)
     _write_plan_view(project, root, store)
     _write_reference(project, root, store)
+    if scopes.view_applies(root) and scopes.write_view(root):   # a brain's own root, once a tree is declared
+        print(f"view: {scopes.VIEW} written")
     if ddrs:
         _queue_changed(root, args)
         queued.append(True)
@@ -423,6 +425,7 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
         print(f"waived: classes: {w}")
     errors += [f"classes: {e}" for e in data_classes.errors] + [f"vault: {e}" for e in vault.check(root)]
     errors += [f"tiers: {e}" for e in tiers.check(root)]
+    errors += _scopes_check(root)
     errors += [f"alerts: {e}" for e in alerts.check(projects.load(root))]
     from .. import schedule
     errors += [f"schedules: {e}" for e in schedule.check(projects.load(root))]
@@ -451,6 +454,17 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     print(f"registry: {len(projs)} project(s), {ids['stores']} store(s), "
           + (f"{len(errors)} error(s)" if errors else "ids unique") + (f"; {read_only} read only" if read_only else ""))
     return 1 if errors else 0
+
+
+def _scopes_check(root: Path | None) -> list[str]:
+    """The scope tree's errors (brain.scopes), its warnings printed; its generated view stale is a warning (brain
+    sync writes it). Nothing for a brain without a tree."""
+    errors, warnings = scopes.check(root)
+    if root is not None and not errors and scopes.view_applies(root) and scopes.view_stale(root):
+        warnings.append(f"{scopes.VIEW} is stale (brain sync writes it)")
+    for w in warnings:
+        print(f"warning: scopes: {w}")
+    return [f"scopes: {e}" for e in errors]
 
 
 def _cross_store(projs: list[projects.Project], every: bool) -> list[str]:

@@ -188,6 +188,18 @@
       }
     },
     "scopes": {"type": "string", "minLength": 1, "description": "The scope tree's file (spec-brain-scope-tree 3.13), relative to this file; default scopes.yaml beside it when there is one ($BRAIN_SCOPES names another). brain classes reads its class floors, brain vault the recipients its nodes add."},
+    "scope_types": {
+      "type": "object",
+      "description": "The scope tree's type catalogue for this brain (SCOPE-4, brain.scopes): {type id: {en, fr, children}} merged over the engine's defaults (sphere, company, institution, government, association, unit, office, team, folder, project, tenant). An id already known is renamed (its labels change, never its id: filters keep the id); a new id adds a type. brain scopes --types lists them.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "en": {"type": "string", "minLength": 1, "description": "The English label (the default)."},
+          "fr": {"type": "string", "minLength": 1, "description": "The French label."},
+          "children": {"type": "array", "items": {"type": "string"}, "description": "The types a node of this type accepts as children; absent: any."}
+        }
+      }
+    },
     "classes": {
       "type": "object", "required": ["stores"], "additionalProperties": false,
       "description": "The data class of every store and where it may go (brain classes, brain check --all refuse a store without a class and a destination its class forbids). docs/data-classes.md; the matrix: brain classes --matrix.",

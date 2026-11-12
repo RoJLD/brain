@@ -15,8 +15,8 @@ from ._common import _scope
 ORDER = 310   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 350   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain digest [--project P | --all] [--since WHEN] [--until WHEN] [--budget N] [--write] [--offline] [--json]
-                 the digest: what happened in a window, newest first, from the graph (milestones reached, items
+  brain digest [--project P | --all | --scope REF] [--since WHEN] [--until WHEN] [--budget N] [--write] [--offline]
+                 [--json] the digest: what happened in a window, newest first, from the graph (milestones reached, items
                  closed), the ADRs, the DDRs, the SRs, gh (merged PRs; --offline skips them) and the journal; WHEN is
                  YYYY-MM-DD, today, yesterday, last-week, last-month or a reached milestone's id (default: last-week
                  to today); --budget lowers the sections from full text to one line each to counts, the journal
@@ -29,7 +29,8 @@ def cmd_digest(args, root: Path) -> int:
     """The digest of the project (or of every registered project with --all) over a window; printed (the records
     with --json), and kept in <BRAIN_HOME>/digest/<project>/ with --write. A window that does not resolve (a
     milestone not reached, unknown in that project) fails that project only."""
-    scope = _scope(args, root) if args.all else [getattr(args, "project_obj", None) or resume.project_for(root)]
+    many = args.all or bool(args.scope)   # --scope REF: the projects of a node's subtree (brain.scopes)
+    scope = _scope(args, root) if many else [getattr(args, "project_obj", None) or resume.project_for(root)]
     texts, data, rc = [], [], 0
     for p in scope:
         if not p.root.is_dir():
@@ -48,7 +49,7 @@ def cmd_digest(args, root: Path) -> int:
         texts.append(text)
         data.append(d)
     if args.json:
-        print(json.dumps(data if args.all else (data[0] if data else None), ensure_ascii=False, indent=1))
+        print(json.dumps(data if many else (data[0] if data else None), ensure_ascii=False, indent=1))
     else:
         print("\n".join(texts), end="")
     return rc
@@ -59,6 +60,8 @@ def register(sub, ctx) -> None:
                                        "merged PRs, session records, journal), newest first, at zero token")
     dg.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
     dg.add_argument("--all", action="store_true", help="every project of the registry, one digest each")
+    dg.add_argument("--scope", help="the projects of a node's subtree in the scope tree (brain scopes): an id, a path "
+                    "of ids, global (= --all), . or ..; one digest each")
     dg.add_argument("--since", default="last-week", help=f"first day included: {digest.WHEN} (the day it was "
                                                          "reached); default last-week, seven days before today")
     dg.add_argument("--until", default="today", help="last day included, same forms (default today)")
