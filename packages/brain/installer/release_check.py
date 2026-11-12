@@ -62,9 +62,9 @@ SRC = f"{BRAIN}/src/brain"
 FIXTURES = f"{BRAIN}/tests/fixtures/formats"
 
 # What a format's shape is written in, per format; a folder of FIXTURES must be a key here
-# (tests/test_release_check.py), so a format registered there is checked here. permissions.yaml has no file of its own:
-# its keys are constants of brain.permissions, and a file's diff cannot tell them from the rest of the module
-# (brain schema diff, wi-brain-schema-diff, compares schema files: it does not see it either).
+# (tests/test_release_check.py), so a format registered there is checked here. permissions.yaml's keys are constants
+# of brain.permissions; its schema (wi-brain-permissions-schema) describes them, kept in step by a test, so that a
+# change of the format shows here and in brain schema diff.
 # the project templates brain init writes from (wi-brain-project-templates), bases first
 PROFILE_TEMPLATES = ("_project", "_software", "cli", "local-client", "service", "data-pipeline", "research")
 # "store" is not a format with a fixture yet: what `brain init` wrote once and keeps afterwards, so that a brain never
@@ -86,7 +86,7 @@ SCHEMAS = {
     "template": (f"{SRC}/templates/generic/template.yaml",
                  # the project templates (wi-brain-project-templates): extends and append, bases first
                  *(f"{SRC}/templates/{t}/template.yaml" for t in PROFILE_TEMPLATES)),
-    "permissions": (),
+    "permissions": (f"{SRC}/schemas/permissions.schema.json",),   # described, read by brain.permissions itself
     "store": ("src/research_graph/templates/schema.yaml", f"{SRC}/templates/schemas/default.yaml",
               f"{SRC}/templates/generic/boundary.yaml", f"{SRC}/templates/generic/gitattributes",
               # what a profile's template adds to the brain's boundary and its registry entry
@@ -141,7 +141,7 @@ def changed_schemas(repo: Path, tag: str) -> list[str]:
 # wi-brain-release-schema-additive): every file an older engine wrote stays valid under the new schema, so an owner
 # has nothing to do. Only config.json's: a record schema (ar, ddr, sr, event) is read by the engines of other machines,
 # which would refuse the new key in a record this one writes.
-ADDITIVE = ("config",)
+ADDITIVE = ("config", "permissions")   # permissions.yaml: one brain's file, an older engine notes a new key
 # The keys of a JSON schema that only describe it: a change of them moves no format.
 PROSE = ("description", "title", "$comment", "examples")
 
@@ -182,9 +182,9 @@ def _at_tag(repo: Path, tag: str, path: str) -> bool:
 REGISTRY = f"{BRAIN}/installer/release_check.py"
 
 
-def formats_at(repo: Path, tag: str) -> set[str] | None:
-    """The format names ``tag`` registered: the keys of :data:`SCHEMAS` in that tag's own copy of this file; None
-    when it cannot tell (no such file, or no literal SCHEMAS in it)."""
+def _registry_at(repo: Path, tag: str) -> dict[str, bool] | None:
+    """{format name: whether ``tag`` gave it schema files} from :data:`SCHEMAS` in that tag's own copy of this file;
+    None when it cannot tell (no such file, or no literal SCHEMAS in it)."""
     try:
         tree = ast.parse(git(repo, "show", f"{tag}:{REGISTRY}"))
     except (CannotTell, SyntaxError, ValueError):
@@ -192,19 +192,30 @@ def formats_at(repo: Path, tag: str) -> set[str] | None:
     for node in tree.body:
         if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
                 and any(isinstance(t, ast.Name) and t.id == "SCHEMAS" for t in node.targets)):
-            return {k.value for k in node.value.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            return {k.value: not (isinstance(v, (ast.Tuple, ast.List)) and not v.elts)
+                    for k, v in zip(node.value.keys, node.value.values, strict=False)
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)}
     return None
 
 
+def formats_at(repo: Path, tag: str) -> set[str] | None:
+    """The format names ``tag`` registered: the keys of :data:`SCHEMAS` in that tag's own copy of this file; None
+    when it cannot tell (no such file, or no literal SCHEMAS in it)."""
+    found = _registry_at(repo, tag)
+    return None if found is None else set(found)
+
+
 def new_formats(repo: Path, tag: str) -> set[str]:
-    """The formats this version adds: a name ``tag`` did not register (:func:`formats_at`) none of whose files exists
-    at ``tag``. No brain holds a file of one yet and an older engine never reads it, so adding one asks nothing of an
-    owner (the owner's decision of 2026-11-10, wi-brain-release-schema-additive). A format the tag registered whose
-    files are renamed is not new: it moves. When the tag's registry cannot be read, no format is new."""
-    known = formats_at(repo, tag)
+    """The formats this version adds a schema to: a name ``tag`` did not register (:func:`formats_at`), or one it
+    registered with no schema file (permissions.yaml until wi-brain-permissions-schema), none of whose files exists at
+    ``tag``. No brain holds a file of a new format yet and an older engine never reads it; a first schema of a
+    format describes it and changes no reader. Either asks nothing of an owner (the owner's decision of 2026-11-10,
+    wi-brain-release-schema-additive). A format the tag registered whose files are renamed is not new: it moves.
+    When the tag's registry cannot be read, no format is new."""
+    known = _registry_at(repo, tag)
     if known is None:
         return set()
-    return {name for name, group in SCHEMAS.items() if group and name not in known
+    return {name for name, group in SCHEMAS.items() if group and not known.get(name, False)
             and all((repo / p).exists() and not _at_tag(repo, tag, p) for p in group)}
 
 
@@ -488,8 +499,8 @@ def grown_lines(repo: Path, tag: str, grown: list[str]) -> list[str]:
     new, optional = [p for p in grown if p in added], [p for p in grown if p not in added]
     lines = []
     if new:
-        lines.append(f"new registered formats since {tag}, held by no brain yet (compatible with a patch): "
-                     f"{', '.join(new)}")
+        lines.append(f"new schemas since {tag}, a new format or the first schema of one, no reader changed "
+                     f"(compatible with a patch): {', '.join(new)}")
     if optional:
         lines.append(f"registered schemas grown by optional keys only since {tag} (compatible with a patch): "
                      f"{', '.join(optional)}")
