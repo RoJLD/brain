@@ -363,3 +363,30 @@ def test_generation_on_refuses_whatever_would_make_the_list_miss_terms(brain, mo
         monkeypatch.setattr(scopes, "private_terms", lambda cfg: (_ for _ in ()).throw(RuntimeError("boom")))
     assert want in config.unexpected(config.load(brain.root))
     assert config.unexpected(_config(brain.root)) == ""   # off: the hand list alone, nothing refused
+
+
+def test_a_project_marked_private_on_its_own_entry_is_denied(brain):
+    """DENY-1, the owner's answer: a class floor on the project entry, read-only entries and mounts too."""
+    brain("alpha: {root: .}\nbeta: {root: ../beta, classes: {floor: private}}\ngamma: {root: ../gamma}\n"
+          "upstream: {title: an upstream, access: read, classes: {floor: confidential}}\n"
+          "team: {title: hosted, tenant: {}, classes: {floor: public}}\n")
+    assert projects.check(brain.root) == []
+    assert scopes.check(brain.root) == ([], [])   # parent: is not needed: the floor is the node's own
+    cfg = _config(brain.root, deny_from_tree=True)
+    assert scopes.private_terms(cfg) == ["beta", "upstream"]
+    assert config.unexpected(cfg) == ""
+
+
+def test_a_project_floor_binds_its_stores_and_never_loosens_its_container(brain):
+    from brain import classes
+    brain("alpha: {root: .}\nbeta: {root: ../beta, parent: acme, classes: {floor: private}}\n"
+          "gamma: {root: ../gamma, classes: {floor: sealed}}\n")
+    _tree(brain.root)
+    errors, _ = scopes.check(brain.root)
+    assert errors == ["project beta: its class floor private is under confidential, the floor acme sets above it: "
+                      "a guard only tightens going down (remove it, or raise it)"]
+    cfg = config.load(brain.root)
+    assert classes.floor(cfg, "gamma") == ("sealed", "gamma") and classes.floor(cfg, "beta") == ("confidential", "acme")
+    brain("alpha: {root: .}\nbeta: {root: ../beta, classes: {floor: Private}}\ngamma: {root: ../gamma}\n")
+    assert scopes.check(brain.root)[0] == ["project beta: classes.floor is one of public, private, confidential, "
+                                           "sealed, resident, secret, not 'Private'"]

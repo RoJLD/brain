@@ -98,8 +98,9 @@ class Tree:
 
     @property
     def present(self) -> bool:
-        """A tree is declared: a scopes.yaml, or a parent: in the registry. Without one, every project is flat."""
-        return self.file is not None or any(n.parent != GLOBAL for n in self.nodes.values())
+        """A tree is declared: a scopes.yaml, a parent: or a project's own classes: in the registry. Without one,
+        every project is flat."""
+        return self.file is not None or any(n.parent != GLOBAL or "classes" in n.data for n in self.nodes.values())
 
     def chain(self, nid: str) -> list[str]:
         """The ancestors of ``nid``, nearest first, up to (not including) Global; a cycle or an unknown parent ends
@@ -434,23 +435,21 @@ def floor(tree: Tree, nid: str) -> tuple[str, str]:
 def _floor_errors(tree: Tree) -> list[str]:
     from .classes import CLASSES, RANK
     errors = []
-    for n in tree.nodes.values():
-        if n.kind != "container":
-            continue
+    for n in tree.nodes.values():   # a container's floor (scopes.yaml), or a project's own (projects.yaml, DENY-1)
         cls = n.data.get("classes")
         if cls is None:
             continue
         if not isinstance(cls, dict) or set(map(str, cls)) - {"floor"}:
-            errors.append(f"scope {n.id}: classes is {{floor: <class>}}")
+            errors.append(f"{_where(n)}: classes is {{floor: <class>}}")
             continue
         mine = cls.get("floor")
         if mine not in CLASSES:
-            errors.append(f"scope {n.id}: classes.floor is one of {', '.join(CLASSES)}, not {mine!r}")
+            errors.append(f"{_where(n)}: classes.floor is one of {', '.join(CLASSES)}, not {mine!r}")
             continue
         above = [(x, c) for x, c in floors(tree, n.id)[1:] if c in CLASSES and RANK[c] > RANK[mine]]
         if above:
             x, c = above[0]
-            errors.append(f"scope {n.id}: its class floor {mine} is under {c}, the floor {x} sets above it: a guard "
+            errors.append(f"{_where(n)}: its class floor {mine} is under {c}, the floor {x} sets above it: a guard "
                           "only tightens going down (remove it, or raise it)")
     return errors
 

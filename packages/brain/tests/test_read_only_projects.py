@@ -36,7 +36,7 @@ def test_a_read_only_project_is_never_loaded_and_cannot_be_named(tmp_path, monke
         with pytest.raises(SystemExit, match="is read only"):
             cli.main(argv)
     assert projects.check() == []
-    assert "access" in projects.KEYS and projects.READ_ONLY_KEYS == {"title", "access", "parent"}
+    assert "access" in projects.KEYS and projects.READ_ONLY_KEYS == {"title", "access", "parent", "classes"}
 
 
 def test_check_refuses_a_read_only_entry_that_would_hold_a_way_in_and_an_unknown_access(tmp_path, monkeypatch, store):
@@ -45,7 +45,7 @@ def test_check_refuses_a_read_only_entry_that_would_hold_a_way_in_and_an_unknown
               "  repos: [.]\n  access: read\nodd: {root: ../odd, access: maybe}\n"
               "plain: {root: ., access: write}\n")
     errors = projects.check()
-    assert ("project upstream: a read-only project holds title, access and parent only, not journal, production, repos, root, "
+    assert ("project upstream: a read-only project holds title, access, parent and classes only, not journal, production, repos, root, "
             "stores (each is a way to write or read into it)") in errors
     assert "project odd: access is read or write, not 'maybe'" in errors
     assert not any(e.startswith("project plain") for e in errors)  # access: write is the default, said
