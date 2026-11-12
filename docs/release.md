@@ -169,8 +169,11 @@ refuses a version PR without it:
 
 ```bash
 python packages/brain/installer/freeze_store.py vP      # installs vP in a fresh venv, writes the brain, freezes it
-pytest packages/brain/tests/test_old_stores.py
+pytest packages/brain/tests/test_old_stores.py packages/brain/tests/test_formats_frozen.py
 ```
+
+The same run freezes each format's file as `vP` wrote it, `tests/fixtures/formats/<format>/v<N>/vP.<ext>`
+(`packages/brain/docs/formats.md`, « Fixtures »).
 
 A test that fails there is a change that breaks a brain `vP` made: fix it, or it is a format that moves (a minor
 version, with its `### Upgrade` step).

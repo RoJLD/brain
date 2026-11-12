@@ -25,6 +25,7 @@ def fake(fz, monkeypatch, tmp_path, failed: str = "", path_in: str = ""):
     No machine term (this machine's names are not the test's to see)."""
     scripts = tmp_path / "venv" / "Scripts"
     monkeypatch.setattr(fz, "machine", lambda: {})
+    monkeypatch.setattr(fz, "FORMATS_OUT", tmp_path / "formats-out")   # never this checkout's frozen formats
     monkeypatch.setattr(fz.st, "install", lambda work, ref, source, pre_tag: (scripts, [
         {"step": "install", "cmd": f"pip install {ref}", "rc": 0, "ok": True, "out": ""}]))
 
@@ -111,6 +112,105 @@ def test_a_store_naming_this_checkout_is_found(fz, tmp_path):
     for i, text in enumerate([str(fz.CHECKOUT / "x.jsonl"), str(fz.CHECKOUT).upper(), fz.CHECKOUT.resolve().as_uri()]):
         (tmp_path / f"f{i}.md").write_text(text, encoding="utf-8")
     assert fz.named(tmp_path, tmp_path / "elsewhere") == ["f0.md", "f1.md", "f2.md"]
+
+
+def test_each_format_is_frozen_from_the_brain_neutralized(fz, monkeypatch, tmp_path, capsys):
+    """--only-formats: the formats the tag wrote, under <format>/v<N>/<tag>.<ext>, its machine names replaced, the
+    JSONL ones cut to their first lines; status (a machine's inventory) never; the store not touched."""
+    fake(fz, monkeypatch, tmp_path)
+    monkeypatch.setattr(fz, "machine", lambda: {"BOXA12": "host-a"})
+    real = fz.st.run_steps
+
+    def with_formats(steps, env, root):
+        out = real(steps, env, root)
+        (root / "config.json").write_text('{"v": 1, "public": {"deny": {"hosts": ["BOXA12"]}}}\n', encoding="utf-8")
+        ledger = root.parent / "home" / ".brain" / "ledger" / "engine"
+        ledger.mkdir(parents=True)
+        (ledger / "exec-2026-11.jsonl").write_text("".join(f'{{"v":1,"host":"BOXA12","n":{i}}}\n' for i in range(9)),
+                                                   encoding="utf-8")
+        return out
+    monkeypatch.setattr(fz.st, "run_steps", with_formats)
+    monkeypatch.setattr(fz, "engine_text", lambda *a: None)
+    out, stores = tmp_path / "formats", tmp_path / "stores"
+    assert fz.main(["v0.3.1", "--only-formats", "--formats-out", str(out), "--out", str(stores),
+                    "--work", str(tmp_path / "work")]) == 0
+    assert (out / "config" / "v1" / "v0.3.1.json").read_text(encoding="utf-8") == \
+        '{"v": 1, "public": {"deny": {"hosts": ["host-a"]}}}\n'
+    lines = (out / "event" / "v1" / "v0.3.1.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == fz.LINES and all('"host":"host-a"' in x for x in lines)
+    assert not (out / "status").exists() and not stores.exists()
+    assert "skip status       a machine's inventory: never frozen" in capsys.readouterr().out
+
+
+def test_the_version_a_file_states():
+    assert fz_version('{"v":2,"kind":"x"}\n{"v":1}\n') == 2
+    assert fz_version("# a header\nv: 3\nrules: []\n") == 3
+    assert fz_version("name: generic\nversion: 1\n") == 1
+
+
+def fz_version(text: str) -> int:
+    spec = importlib.util.spec_from_file_location("freeze_store_v", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.version_of(text)
+
+
+def kept_freeze(fz, monkeypatch, tmp_path, ok: bool = True) -> Path:
+    """A work folder as a previous freeze kept it: a venv, a brain, a ledger; engine_is says whether it is the tag."""
+    work = tmp_path / "work"
+    (work / "venv" / ("Scripts" if fz.os.name == "nt" else "bin")).mkdir(parents=True)
+    (work / "ada-brain").mkdir()
+    (work / "ada-brain" / "config.json").write_text('{"v": 1, "x": "/no/path"}\n', encoding="utf-8")
+    monkeypatch.setattr(fz, "machine", lambda: {})
+    monkeypatch.setattr(fz, "engine_text", lambda *a: None)
+    monkeypatch.setattr(fz.st, "engine_is", lambda *a: {"ok": ok})
+    return work
+
+
+def test_reuse_freezes_the_formats_of_the_kept_engine_only_if_it_is_the_tag(fz, monkeypatch, tmp_path, capsys):
+    work = kept_freeze(fz, monkeypatch, tmp_path)
+    out = tmp_path / "formats"
+    args = ["v0.3.1", "--only-formats", "--reuse", "--work", str(work), "--formats-out", str(out)]
+    assert fz.main(args) == 0 and (out / "config" / "v1" / "v0.3.1.json").is_file()
+    (out / "config" / "v1" / "v0.3.1.json").write_text("kept\n", encoding="utf-8")
+    assert fz.main(args) == 0 and (out / "config" / "v1" / "v0.3.1.json").read_text(encoding="utf-8") == "kept\n"
+    assert fz.main([*args, "--force"]) == 0 and "kept" not in (out / "config" / "v1" / "v0.3.1.json").read_text(
+        encoding="utf-8")
+    monkeypatch.setattr(fz.st, "engine_is", lambda *a: {"ok": False})     # another tag's freeze
+    assert fz.main(["v0.2.4", *args[1:]]) == 2 and "is not v0.2.4" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        fz.main(["v0.3.1", "--reuse", "--work", str(work)])               # --reuse writes no store
+
+
+@pytest.mark.parametrize("config,why", [
+    ("{work}", "config: names this machine (a path)"),
+    ('{{"v": 7}}', "config: v7 has no hand-written pair"),
+])
+def test_a_format_refused_freezes_nothing(fz, monkeypatch, tmp_path, capsys, config, why):
+    work = kept_freeze(fz, monkeypatch, tmp_path)
+    (work / "ada-brain" / "config.json").write_text(config.format(work=work) + "\n", encoding="utf-8")
+    ledger = work / "home" / ".brain" / "ledger"
+    ledger.mkdir(parents=True)
+    (ledger / "exec-2026-11.jsonl").write_text('{"v":1}\n', encoding="utf-8")
+    out = tmp_path / "formats"
+    assert fz.main(["v0.3.1", "--only-formats", "--reuse", "--work", str(work), "--formats-out", str(out)]) == 1
+    assert why in capsys.readouterr().err and not out.exists()   # the event file neither: all checked first
+
+
+def test_a_full_hostname_is_replaced_whole(fz, monkeypatch):
+    monkeypatch.setattr(fz.socket, "gethostname", lambda: "boxa12.corp.example.com")
+    monkeypatch.setattr(fz.getpass, "getuser", lambda: "root")
+    terms = fz.machine()
+    assert list(terms) == ["boxa12.corp.example.com", "boxa12"]
+    text = '{"host":"boxa12.corp.example.com"} on boxa12'
+    for term, invented in terms.items():
+        text = fz._term(term).sub(invented, text)
+    assert text == '{"host":"host-a"} on host-a'
+
+
+def test_reuse_needs_a_previous_freeze(fz, tmp_path, capsys):
+    assert fz.main(["v0.3.1", "--only-formats", "--reuse", "--work", str(tmp_path)]) == 2
+    assert "no engine and brain of a previous freeze" in capsys.readouterr().err
 
 
 def test_a_frozen_store_is_never_replaced_without_force(fz, monkeypatch, tmp_path, capsys):
