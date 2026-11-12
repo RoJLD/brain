@@ -104,27 +104,32 @@ branch, the scout's base) to the working tree, untracked files included, and als
 (`<store>/coverage/<repo>.json`, or `--map FILE`) measured: what changed since the evidence was taken is run again.
 Each changed path selects:
 
-- a test module: itself; a `conftest.py`: every test module under its folder;
-- a Python module the map measured: the test modules that ran one of its functions, and those that import it; when
-  its module level changed (anything but the function bodies and the docstrings: a constant, an import, a signature,
-  a decorator), the same for every module that imports it, transitively;
-- a Python file the map never measured (a new module, a script, a test helper): the test modules that import or name
-  it, and the answer **widens**: a module loaded by name, a fixture read by path, are invisible to the map;
-- any other file (docs, data, configuration): the test modules whose text names it, and the answer widens: coverage
-  sees no file a test reads. `--inert GLOB` (repeatable) declares the paths no test reads.
+- a test module of the suite: itself; a `conftest.py`: every test module under its folder;
+- a Python module the map measured: the test modules that ran one of its functions or import it, and the same for
+  every module that imports it, transitively (a call made at import time runs in no test's context, so the map alone
+  would miss it); a `conftest.py` that imports one of those modules selects its folder (a fixture's lines count for
+  the one test that set it up);
+- a Python file the map never measured (a new module, a script, a test helper), one outside the package roots, or a
+  deleted one: the test modules that import or name it, and the answer **widens**: a module loaded by name, a
+  fixture read by path, are invisible to the map;
+- any other file (docs, data, configuration, a shell or PowerShell test pytest does not collect): the test modules
+  whose text names it, and the answer widens: coverage sees no file a test reads. `--inert GLOB` (repeatable)
+  declares the paths no test reads.
 
-The answer also widens with no map, a map measured on a dirty tree, or one whose commit is not in HEAD's history. A
-test module the map never saw (new, or one that only starts processes: a subprocess's lines carry no test context)
-is selected whenever the change touches a Python module. Static evidence (an import, a name in a test's text) only
-ever adds a test; nothing is dropped on it alone.
+The answer also widens with no map, a map measured on a dirty tree, one whose commit this checkout lacks or that
+shares no history with HEAD (a map of a newer main is fine: the diff from its commit covers both sides), or package
+roots that cannot be read. When the change touches a Python file, two kinds of test modules are selected whatever
+the map says: those it never saw (new ones, and those that only start processes), and those that start a Python
+process (`sys.executable`, `-m brain`): a child's lines carry no test context. Static evidence (an import, a name in
+a test's text) only ever adds a test; nothing is dropped on it alone.
 
 **Shadow mode** (the default, report-only): the selection runs; a widened answer is printed with its reasons and left
 to the CI's whole suite, which stays the merge gate. Each run appends a line to
 `<BRAIN_HOME>/ledger/targeted-tests.jsonl` (the head, the base, the map's commit, the selection, whether it widened,
 pytest's exit), so that a later comparison with the CI's failures measures what the selection would have missed
 before it gates anything. `--strict` applies the fail-safe here: a widened answer runs the whole suite. `--list`
-prints only, `--json` gives the selection (and the run) as JSON. The exit code is pytest's (5, nothing collected,
-counts as 0).
+prints only, `--json` gives the selection (and the run) as JSON on stdout, pytest's report then going to stderr. The
+exit code is pytest's (5, nothing collected, counts as 0).
 
 The selection is only as fresh as the map: refresh it from the CI's `coverage-data` artifact of a recent `main` run
 (above, « In the CI »); a map far behind main still answers, but its diff is wide and so is the selection.

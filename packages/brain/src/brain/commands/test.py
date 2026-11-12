@@ -59,7 +59,7 @@ def early(args) -> int:
         return 0
     tests = sel.suite if args.strict and not sel.complete else sorted(sel.tests)
     extra = [a for a in (args.pytest_args or []) if a != "--"]
-    rc = targeted.run(top, tests, args.python, args.workers, extra) if tests else 0
+    rc = targeted.run(top, tests, args.python, args.workers, extra, quiet_stdout=args.json) if tests else 0
     _report(args, sel, tests, rc)
     return rc
 

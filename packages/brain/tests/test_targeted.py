@@ -49,22 +49,56 @@ def test_a_function_body_change_selects_the_tests_that_ran_it(make_repo):
     assert sel.tests == {"tests/test_other.py": "ran src/p/other.py"}
 
 
-def test_a_module_level_change_selects_its_importers_tests_too(make_repo):
+def test_a_change_selects_its_importers_tests_too(make_repo):
     repo = make_repo("lab", FILES)
     summary = _map(_head(repo))
-    make_repo.write(repo, {"src/p/core.py": CORE.replace("LIMIT = 3", "LIMIT = 4")})
+    # use.py calls into core at import (DOUBLE = core.LIMIT * 2): that line runs in no test's context, so a change
+    # to core, at its module level or in a body, runs the tests of what imports it
+    for edit in (CORE.replace("LIMIT = 3", "LIMIT = 4"), CORE.replace("return LIMIT", "return LIMIT + 0")):
+        make_repo.write(repo, {"src/p/core.py": edit})
+        sel = _select(repo, summary)
+        assert sel.complete, sel.widen
+        assert set(sel.tests) == {"tests/test_core.py", "tests/test_use.py"}
+        assert sel.tests["tests/test_use.py"] == "ran src/p/use.py (imports a changed module)"
+
+
+def test_a_conftest_that_imports_a_changed_module_selects_its_folder(make_repo):
+    repo = make_repo("lab", {**FILES, "tests/conftest.py": "from p import other\n"})
+    summary = _map(_head(repo))
+    make_repo.write(repo, {"src/p/other.py": OTHER.replace("return 1", "return 2")})
     sel = _select(repo, summary)
-    assert sel.complete, sel.widen
-    # use.py reads core.LIMIT at import: a test that runs only use.double is touched by core's module level
-    assert set(sel.tests) == {"tests/test_core.py", "tests/test_use.py"}
-    assert "imports a changed module level" in sel.tests["tests/test_use.py"]
+    assert set(sel.tests) == set(sel.suite)
 
 
-def test_a_docstring_or_body_only_change_is_not_a_module_level_one():
-    assert targeted.skeleton(OTHER) == targeted.skeleton(OTHER.replace('"""Other."""', '"""Else."""')
-                                                          .replace("return 1", "return 2"))
-    assert targeted.skeleton(CORE) != targeted.skeleton(CORE.replace("LIMIT = 3", "LIMIT = 4"))
-    assert targeted.skeleton("def f(a=1):\n    pass\n") != targeted.skeleton("def f(a=2):\n    pass\n")
+def test_a_deleted_module_widens_and_runs_what_imported_it(make_repo):
+    repo = make_repo("lab", FILES)
+    summary = _map(_head(repo))
+    make_repo.write(repo, {"src/p/core.py": None, "tests/test_core.py": None})
+    sel = _select(repo, summary)
+    assert not sel.complete and "src/p/core.py: deleted" in sel.widen[0]
+    assert sel.tests == {}   # use.py imports core, but no test module imports p.core any more: the widening says it
+    make_repo.write(repo, {"tests/test_left.py": "from p import core\n"})
+    assert "tests/test_left.py" in _select(repo, summary).tests
+
+
+def test_a_test_file_pytest_does_not_collect_widens(make_repo):
+    repo = make_repo("lab", {**FILES, "tests/bin/fake.sh": "echo 1\n",
+                             "tests/test_fake.py": "def test_f():\n    assert 'bin/fake.sh'\n"})
+    summary = _map(_head(repo))
+    make_repo.write(repo, {"tests/bin/fake.sh": "echo 2\n"})
+    sel = _select(repo, summary)
+    assert not sel.complete and sel.tests == {"tests/test_fake.py": "names fake.sh"}
+
+
+def test_a_test_that_starts_python_runs_with_any_python_change(make_repo):
+    spawn = "import subprocess, sys\n\n\ndef test_cli():\n    subprocess.run([sys.executable, '-m', 'p'])\n"
+    repo = make_repo("lab", {**FILES, "tests/test_cli.py": spawn})
+    summary = _map(_head(repo))
+    summary["test_modules"].append("tests/test_cli.py")
+    make_repo.write(repo, {"src/p/other.py": OTHER.replace("return 1", "return 2")})
+    assert _select(repo, summary).tests["tests/test_cli.py"] == "starts a Python process"
+    make_repo.write(repo, {"src/p/other.py": OTHER, "tests/test_docs.py": FILES["tests/test_docs.py"] + "\n"})
+    assert "tests/test_cli.py" not in _select(repo, summary).tests   # no Python module changed
 
 
 def test_a_changed_test_runs_itself_only(make_repo):
@@ -118,7 +152,7 @@ def test_no_map_a_dirty_map_or_a_foreign_commit_widens(make_repo):
     assert "no coverage map" in _select(repo, None).widen[0]
     assert "dirty" in _select(repo, _map(_head(repo), dirty=True)).widen[0]
     sel = _select(repo, _map("0123456789abcdef0123456789abcdef01234567"))
-    assert "not in HEAD's history" in sel.widen[0]
+    assert "unknown here" in sel.widen[0]
     assert sel.tests == {"tests/test_other.py": "ran src/p/other.py"}   # still run first
 
 

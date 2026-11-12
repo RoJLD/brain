@@ -6,19 +6,20 @@ The change: from merge-base(BASE, HEAD) (the scout's base, brain.scout.base_of) 
 included, and also from the commit the map measured (what changed since the evidence was taken has to be re-run too).
 Each changed path:
 
-- a test module: itself;
-- a ``conftest.py``: every test module under its folder;
-- a Python module the map measured: the test modules that ran one of its functions, and the test modules that import
-  it; when its module level changed (anything but the function bodies and the docstrings: a constant, a signature, a
-  decorator, an import), the same for every module that imports it, transitively;
-- a Python file the map never measured (a new module, a script, a test helper): the test modules that import or name
-  it, and the answer widens (a module loaded by name, a fixture read by path, are invisible to both);
-- any other file (docs, data, configuration): the test modules whose text names it, and the answer widens: coverage
-  sees no file a test reads (``--inert GLOB`` declares the paths no test reads, such as a changelog fragment).
+- a test module of the suite: itself; a ``conftest.py``: every test module under its folder;
+- a Python module the map measured: the test modules that ran one of its functions or import it, and the same for
+  every module that imports it, transitively (a call made at import time runs in no test's context); the conftests
+  that import one of those modules select their folder (a fixture's lines count for the one test that set it up);
+- a Python file the map never measured (a new module, a script, a test helper), one outside the package roots, or a
+  deleted one: the test modules that import or name it, and the answer widens (a module loaded by name, a fixture
+  read by path, are invisible to both);
+- any other file (docs, data, configuration, a shell or PowerShell test): the test modules whose text names it, and
+  the answer widens: coverage sees no file a test reads (``--inert GLOB`` declares the paths no test reads).
 
-The answer also widens with no map, a map measured on a dirty tree, or one whose commit is not in HEAD's history. A
-test module the map never saw (new, or one that only starts processes: a subprocess's lines carry no test context)
-is selected whenever the change touches a Python module.
+The answer also widens with no map, a map measured on a dirty tree, one whose commit this checkout lacks or that
+shares no history with HEAD, or package roots that cannot be read. When the change touches a Python file, the test
+modules the map never saw and those that start a Python process (``sys.executable``, ``-m brain``: a child's lines
+carry no test context) are selected too.
 
 Shadow mode, report-only (the default, spec-brain-three-repos 1.2): the selection runs, a widened answer is reported
 and left to the CI's whole suite, the merge gate; each run is a line of ``<BRAIN_HOME>/ledger/targeted-tests.jsonl``
@@ -28,7 +29,6 @@ selection gate. ``--strict`` applies the fail-safe for real: a widened answer ru
 
 from __future__ import annotations
 
-import ast
 import fnmatch
 import json
 import os
@@ -96,40 +96,6 @@ def map_path(store: Path, repo: str) -> Path:
     return store / testcov.FOLDER / f"{repo.lower()}.json"
 
 
-class _Skeleton(ast.NodeTransformer):
-    """A module with its function bodies and docstrings dropped: what runs at import."""
-
-    @staticmethod
-    def _undoc(body: list) -> list:
-        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
-                and isinstance(body[0].value.value, str):
-            return body[1:]
-        return body
-
-    def _fn(self, node):
-        node.body = [ast.Pass()]
-        return node
-
-    visit_FunctionDef = visit_AsyncFunctionDef = _fn
-
-    def visit_ClassDef(self, node):
-        node.body = self._undoc(node.body) or [ast.Pass()]
-        self.generic_visit(node)
-        return node
-
-
-def skeleton(text: str | None) -> str | None:
-    """What of a module runs at import, as an AST dump (positions left out); None when it does not parse."""
-    if text is None:
-        return None
-    try:
-        mod = ast.parse(text)
-    except (SyntaxError, ValueError):
-        return None
-    mod.body = _Skeleton._undoc(mod.body)
-    return ast.dump(_Skeleton().visit(mod), include_attributes=False)
-
-
 def _imports(text: str, dotted: str, is_pkg: bool) -> set[str]:
     """The dotted names a module imports (each ``from M import n`` as M and M.n), relative imports resolved."""
     out: set[str] = set()
@@ -178,12 +144,11 @@ def changed_paths(top: Path, rev: str) -> set[str]:
     return out
 
 
-def _ancestor(top: Path, a: str, b: str) -> bool:
-    return inventory._run_git(top, ["merge-base", "--is-ancestor", a, b])[0] == 0
-
-
-def _known(top: Path, rev: str) -> bool:
-    return inventory._run_git(top, ["cat-file", "-e", f"{rev}^{{commit}}"])[0] == 0
+def _related(top: Path, rev: str) -> bool:
+    """``rev`` is a commit this checkout has, sharing history with HEAD (the diff from it to the working tree is then
+    every path the evidence may be wrong about, whichever side moved)."""
+    return inventory._run_git(top, ["cat-file", "-e", f"{rev}^{{commit}}"])[0] == 0 \
+        and bool(git(top, "merge-base", rev, "HEAD", allow=(0, 1)).strip())
 
 
 def suite_of(tree: inventory.Tree) -> list[str]:
@@ -202,10 +167,14 @@ def _map_revs(top: Path, summary: dict | None, sel: Selection) -> list[str]:
     if summary.get("dirty"):
         sel.widen.append(f"the map was measured on a dirty tree at {sel.map_commit[:7]}")
         return []
-    if not sel.map_commit or not _known(top, sel.map_commit) or not _ancestor(top, sel.map_commit, "HEAD"):
-        sel.widen.append(f"the map's commit {sel.map_commit[:7] or '?'} is not in HEAD's history")
+    if not sel.map_commit or not _related(top, sel.map_commit):
+        sel.widen.append(f"the map's commit {sel.map_commit[:7] or '?'} is unknown here or shares no history with "
+                         "HEAD")
         return []
     return [sel.map_commit]
+
+
+SPAWNS = re.compile(r"sys\.executable|[\"']-m[\"'],\s*[\"']brain[\"']|brain\.exe")
 
 
 class _Selector:
@@ -213,21 +182,20 @@ class _Selector:
 
     def __init__(self, top: Path, tree: inventory.Tree, sel: Selection, summary: dict | None, revs: list[str],
                  roots: list[str] | None):
-        self.tree, self.sel = tree, sel
+        self.top, self.tree, self.sel, self.roots = top, tree, sel, roots
         self.files = (summary or {}).get("files") or {}
         self.mapped = set((summary or {}).get("test_modules") or [])
         lay = inventory.layout(tree, roots)
+        self.no_roots = lay.roots is None
         self.mods = inventory.module_index(tree, lay)[0] if lay.roots is not None else {}
         self.dotted = {p: d for d, p in self.mods.items()}
         self.ev = inventory.evidence(tree, sel.suite)
-        self.olds = [inventory.git_tree(top, rev) for rev in revs]   # each end's text, one cat-file per end
-        for o in self.olds:
-            o.prefetch([p for p in sel.changed if p.endswith(".py")])
-        self.level: set[str] = set()   # source modules whose module level changed
+        self.base_rev = revs[0]
+        self.measured: set[str] = set()   # the changed modules the map measured, still here
         self.touched_py = False
 
-    def by_import(self, path: str, why: str) -> None:
-        for t in self.ev.imports.get(self.dotted.get(path, ""), ()):
+    def by_import(self, path: str, why: str, dotted: str = "") -> None:
+        for t in self.ev.imports.get(dotted or self.dotted.get(path, ""), ()):
             self.sel.add(t, why)
 
     def by_name(self, path: str) -> int:
@@ -240,47 +208,80 @@ class _Selector:
         return len(hits)
 
     def path(self, p: str) -> None:
-        if inventory.is_test(p):
-            if p in self.tree.files:
-                self.sel.add(p, "changed here")
+        here = p in self.tree.files
+        if p in self.sel.suite or (not here and p.endswith(".py") and inventory.is_test(p)):
+            if here:
+                self.sel.add(p, "changed here")   # a deleted test module: nothing left to run
         elif posixpath.basename(p) == "conftest.py":
-            d = posixpath.dirname(p)
-            for t in self.sel.suite:
-                if not d or t.startswith(d + "/"):
-                    self.sel.add(t, f"under {p}")
+            self.under(p, f"under {p}")
         elif not p.endswith(".py"):
             n = self.by_name(p)
             self.sel.widen.append(f"{p}: a file coverage cannot see ({n} test module(s) name it)")
-        elif p not in self.files:
+        else:
             self.touched_py = True
+            self.python(p, here)
+
+    def python(self, p: str, here: bool) -> None:
+        """A Python file: a measured module's tests, its importers' (brain.targeted's docstring); else it widens."""
+        if not here:
+            self.gone(p)
+        elif p not in self.files:
             self.by_import(p, f"imports {p}")
             self.by_name(p)
             self.sel.widen.append(f"{p}: never measured by the map")
+        elif p not in self.dotted:
+            self.sel.widen.append(f"{p}: outside the package roots, its importers unknown")
         else:
-            self.touched_py = True
-            self.module(p)
+            for t in (self.files[p].get("tests") or {}):
+                self.sel.add(t, f"ran {p}")
+            self.by_import(p, f"imports {p}")
+            self.measured.add(p)
 
-    def module(self, p: str) -> None:
-        """A module the map measured: the tests that ran it or import it; its module level compared at each end."""
-        for t in (self.files[p].get("tests") or {}):
+    def gone(self, p: str) -> None:
+        """A deleted Python file: the tests that ran it, and those that import or name its old module, run; its
+        importers are no longer measured, so the answer widens."""
+        for t in ((self.files.get(p) or {}).get("tests") or {}):
             self.sel.add(t, f"ran {p}")
-        self.by_import(p, f"imports {p}")
-        now = (self.tree.text(p) or "") if p in self.tree.files else None
-        sk = skeleton(now)
-        if now is None or any(skeleton(o.text(p)) != sk for o in self.olds):
-            self.level.add(p)
+        old = inventory.git_tree(self.top, self.base_rev)
+        lay = inventory.layout(old, self.roots)
+        mods = inventory.module_index(old, lay)[0] if lay.roots is not None else {}
+        dotted = next((d for d, q in mods.items() if q == p), "")
+        if dotted:
+            self.by_import(p, f"imports the deleted {dotted}", dotted)
+        self.by_name(p)
+        self.sel.widen.append(f"{p}: deleted, what still imports it is not mapped")
+
+    def under(self, conftest: str, why: str) -> None:
+        d = posixpath.dirname(conftest)
+        for t in self.sel.suite:
+            if not d or t.startswith(d + "/"):
+                self.sel.add(t, why)
 
     def finish(self) -> None:
-        """A changed module level's importers, transitively; the test modules the map never saw."""
-        why = "(imports a changed module level)"
-        for q in sorted(closure(self.level, importers(self.tree, self.mods)) - self.level) if self.level else ():
-            for t in ((self.files.get(q) or {}).get("tests") or {}):
-                self.sel.add(t, f"ran {q} {why}")
-            self.by_import(q, f"imports {q} {why}")
-        if self.touched_py and self.mapped:
-            for t in self.sel.suite:
-                if t not in self.mapped:
-                    self.sel.add(t, "not in the map")
+        """What runs a changed module without the map knowing: its importers, transitively (a call at import time
+        carries no test context), the conftests that import one of them (a fixture's lines count for one test
+        only), the test modules that start Python processes (a child's lines carry no test context), and those the
+        map never saw."""
+        if self.touched_py and self.no_roots:
+            self.sel.widen.append("the repo's package roots are unknown: no importer can be read")
+        if self.measured:
+            why = "(imports a changed module)"
+            reach = closure(self.measured, importers(self.tree, self.mods))
+            for q in sorted(reach - self.measured):
+                for t in ((self.files.get(q) or {}).get("tests") or {}):
+                    self.sel.add(t, f"ran {q} {why}")
+                self.by_import(q, f"imports {q} {why}")
+            names = {self.dotted[q] for q in reach if q in self.dotted}
+            for c in sorted(p for p in self.tree.files if posixpath.basename(p) == "conftest.py"):
+                if _imports(self.tree.text(c) or "", "", False) & names:
+                    self.under(c, f"under {c}, which imports a changed module")
+        if not self.touched_py:
+            return
+        for t in self.sel.suite:
+            if self.mapped and t not in self.mapped:
+                self.sel.add(t, "not in the map")
+            elif SPAWNS.search(self.tree.text(t) or ""):
+                self.sel.add(t, "starts a Python process")
 
 
 def select(top: Path, repo: str, base: str, base_rev: str, summary: dict | None, roots: list[str] | None = None,
@@ -333,14 +334,23 @@ def _handle(stream):
 
 
 def run(top: Path, tests: list[str], python: str = "", workers: str = "", extra: list[str] | None = None,
-        echo=print) -> int:
-    """pytest on ``tests``; the worst exit code (5, nothing collected, counts as 0)."""
+        echo=print, quiet_stdout: bool = False) -> int:
+    """pytest on ``tests``; the worst exit code (5, nothing collected, counts as 0). ``quiet_stdout``: pytest's report
+    on stderr (stdout is JSON)."""
     worst = 0
+    out = sys.stderr if quiet_stdout else sys.stdout
+
+    def say(line: str) -> None:
+        if quiet_stdout:
+            print(line, file=sys.stderr)
+        else:
+            echo(line)
     for cwd, cmd in commands(top, tests, python, workers, extra):
         shown = " ".join(cmd[3:])
-        echo(f"brain test: {posixpath.relpath(cwd.as_posix(), top.as_posix())}: pytest "
-             f"{shown if len(shown) < 300 else shown[:300] + '...'}")
-        rc = subprocess.run(cmd, cwd=cwd, env=dict(os.environ), stdout=_handle(sys.stdout),
+        line = (f"brain test: {posixpath.relpath(cwd.as_posix(), top.as_posix())}: pytest "
+                f"{shown if len(shown) < 300 else shown[:300] + '...'}")
+        say(line)
+        rc = subprocess.run(cmd, cwd=cwd, env=dict(os.environ), stdout=_handle(out),
                             stderr=_handle(sys.stderr)).returncode
         worst = max(worst, 0 if rc == 5 else rc)
     return worst
@@ -351,7 +361,7 @@ def record(sel: Selection, mode: str, ran: int, rc: int | None) -> Path:
     f = paths.ledger_dir() / LEDGER
     f.parent.mkdir(parents=True, exist_ok=True)
     line = {"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "mode": mode, "repo": sel.repo,
-            "head": sel.head, "base_rev": sel.base_rev, "map_commit": sel.map_commit, "complete": sel.complete,
+            "head": sel.head, "base": sel.base, "base_rev": sel.base_rev, "map_commit": sel.map_commit, "complete": sel.complete,
             "widen": sel.widen, "selected": sorted(sel.tests), "suite_size": len(sel.suite), "ran": ran, "rc": rc}
     with f.open("a", encoding="utf-8", newline="\n") as out:
         out.write(json.dumps(line, ensure_ascii=False, sort_keys=True) + "\n")
