@@ -24,6 +24,8 @@ def _venv(folder: Path, launcher: bytes, base: Path | None = None) -> Path:
     (scripts / ("brain.exe" if slots.WINDOWS else "brain")).write_bytes(launcher)
     site = folder / ("Lib/site-packages" if slots.WINDOWS else "lib/python3.12/site-packages")
     (site / "textual-1.0.0.dist-info").mkdir(parents=True)
+    (site / "pip").mkdir()
+    (site / "pip" / "__init__.py").write_text("", encoding="utf-8")
     if base:
         (folder / "pyvenv.cfg").write_text(f"home = {base.parent}\nexecutable = {base}\nversion = 3.12.0\n",
                                            encoding="utf-8")
@@ -131,7 +133,7 @@ def test_a_healthy_version_is_switched_in(machine):
     assert (slots.slot("v0.2.2") / "pyvenv.cfg").is_file()   # the old one kept, for a way back
     assert any(d.startswith("switched ") for d in done)
     if slots.WINDOWS:
-        assert (machine / "bin" / "brain.exe").read_bytes() == b"launcher 0.2.3"
+        assert (machine / "bin" / "brain.exe").read_bytes() == b"launcher 0.2.2"   # left: it runs venv's Python
     smoke = [c for c in ran if "doctor" in c or "-c" in c]
     assert smoke and all(Path(c[0]) == slots.python_of(slots.slot("v0.2.3")) for c in smoke)   # run by the new one
 
@@ -195,6 +197,75 @@ def test_the_smoke_runs_doctor_in_the_brains_root_and_the_real_guards(machine, t
         [str(c) for c in cmd] for cmd in ran]
     ran.clear()
     assert slots.smoke(Path("py"), "0.2.3", None, _runner(ran)) == [] and not any("doctor" in c for c in ran)
+
+
+def test_a_half_made_slot_is_made_anew_and_the_active_one_never_installed_over(machine, tmp_path):
+    """A slot an interrupted try left (its python but no pip) is removed and made again; a slot that is the active
+    one is refused (review of wi-brain-update-blue-green)."""
+    half = slot_dir = slots.slot("v0.2.3")
+    (half / ("Scripts" if slots.WINDOWS else "bin")).mkdir(parents=True)
+    slots.python_of(half).write_bytes(b"python")   # no pip: half made
+    ran = []
+    assert slots.create(slot_dir, tmp_path / "base", "brain", _runner(ran)) == []
+    assert ran[0][1:3] == ["-m", "venv"] and slots._has_pip(slot_dir)
+    slots.switch(slot_dir, aside_for="v0.2.2")
+    said = slots.create(slot_dir, tmp_path / "base", "brain", _runner([]))
+    assert said and "is the active one" in said[0]
+
+
+def test_stale_links_of_an_interrupted_switch_are_cleared_and_a_failed_cleanup_is_no_failure(machine, monkeypatch):
+    a = _venv(slots.slot("v0.2.3"), b"a")
+    stale = machine / "venv.switch-99999.tmp"
+    slots.make_link(a, stale)
+    slots.switch(a, aside_for="v0.2.2")
+    assert not slots.is_link(stale) and a.is_dir()   # the link cleared, its target kept
+    b = _venv(slots.slot("v0.2.4"), b"b")
+    real_remove = slots.remove_link
+
+    def remove(link):
+        if ".prev-" in link.name:
+            raise OSError("in use")
+        real_remove(link)
+
+    monkeypatch.setattr(slots, "remove_link", remove)
+    assert Path(os.path.realpath(slots.switch(b))) == Path(os.path.realpath(a))   # done, not an error
+    assert Path(os.path.realpath(slots.active_path())) == Path(os.path.realpath(b))
+
+
+def test_base_python_takes_the_same_minor_version_first(tmp_path, monkeypatch):
+    monkeypatch.setattr(slots, "WINDOWS", False)
+    bindir = tmp_path / "usr-bin"
+    bindir.mkdir()
+    for name in ("python3", "python3.10"):
+        (bindir / name).write_bytes(b"")
+    venv = tmp_path / "v"
+    venv.mkdir()
+    (venv / "pyvenv.cfg").write_text(f"home = {bindir}\nversion = 3.10.12\n", encoding="utf-8")
+    assert slots.base_python(venv) == bindir / "python3.10"
+
+
+def test_brain_python_instead_of_the_venv_installs_in_place(machine, monkeypatch, tmp_path):
+    """$BRAIN_PYTHON stands for a missing <BRAIN_HOME>/venv: no slot, no link made from nothing."""
+    other = _venv(tmp_path / "elsewhere", b"x", tmp_path / "python312" / ("python.exe" if slots.WINDOWS else
+                                                                           "python3"))
+    import shutil
+
+    shutil.rmtree(machine / "venv")
+    monkeypatch.setenv("BRAIN_PYTHON", str(slots.python_of(other)))
+    p = _plan()
+    assert p["python"] == str(slots.python_of(other)) and p["slot"] is None
+
+
+@pytest.mark.skipif(not slots.WINDOWS, reason="a file held open blocks a rename on Windows only")
+def test_a_slot_a_process_holds_is_kept_whole(machine):
+    for v in ("v0.1.0", "v0.2.0", "v0.2.1"):
+        _venv(slots.slot(v), v.encode())
+    slots.switch(_venv(slots.slot("v0.2.3"), b"x"), aside_for="v0.2.2")
+    with open(slots.slot("v0.1.0") / "held.txt", "w", encoding="utf-8"):
+        said = slots.prune([])
+    assert any(s.startswith("kept     ") and "v0.1.0" in s for s in said)
+    assert (slots.slot("v0.1.0") / "pyvenv-held").exists() is False and (slots.slot("v0.1.0") / "held.txt").is_file()
+    assert any(s.startswith("pruned") and "v0.2.0" in s for s in said)
 
 
 def test_the_venvs_store_is_declared():

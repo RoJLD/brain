@@ -88,9 +88,9 @@ in a venv of its own, `<BRAIN_HOME>/venvs/vX.Y.Z`, made from the interpreter the
 anything the running brain uses changes, that version passes a health gate run by itself: `brain --version`,
 `brain --root <the brain> doctor --quick`, and the guards letting `git status` pass. Only then `<BRAIN_HOME>/venv`
 (the path the hooks, the installer and the shim read) becomes a link to the new slot (a directory junction on
-Windows, a symlink elsewhere: a rename, which a running brain survives), and the launcher on the PATH is copied from
-it. A watchdog then runs `brain --version` through both; if one fails, the link and the launcher go back to the
-previous slot. The first such update finds `venv` a real folder and moves it, whole, into `venvs/v<its version>`, so
+Windows, a symlink elsewhere: a rename, which a running brain survives); the launcher on the PATH, which runs
+`<BRAIN_HOME>/venv`'s Python, follows it. A watchdog then runs `brain --version` through the link and the launcher;
+if one fails, the link goes back to the previous slot. The first such update finds `venv` a real folder and moves it, whole, into `venvs/v<its version>`, so
 it stays the way back. Three slots are kept (the active one and the previous one always). A venv whose `pyvenv.cfg`
 names no base interpreter is updated in place, as before. The installer is unchanged: it installs into
 `<BRAIN_HOME>/venv`, the active slot.

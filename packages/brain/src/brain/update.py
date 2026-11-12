@@ -352,6 +352,8 @@ def _plan_slot(out: dict, py: Path, root: Path | None) -> None:
     the install goes in place as before (``slot`` None)."""
     from . import slots
 
+    if py != slots.python_of(slots.active_path()):   # $BRAIN_PYTHON, not <BRAIN_HOME>/venv: in place, as before
+        return
     base = slots.base_python(py.parent.parent)
     if base is None:
         return
@@ -359,8 +361,6 @@ def _plan_slot(out: dict, py: Path, root: Path | None) -> None:
     out["slot"], out["base"] = str(dest), str(base)
     cfg = config.load(root)
     out["root"] = str(cfg.root) if cfg.file else None
-    if out["launcher"]:
-        out["launcher"][0] = str(slots.launcher_of(dest))
 
 
 def _stamps_root(root: Path | None) -> str | None:
@@ -442,7 +442,10 @@ def lines(p: dict) -> list[str]:
         steps.append(f"install  brain {p['tag']} into {Path(p['python']).parent.parent} "
                      f"(pip install \"{p['spec']}\"; in place: its pyvenv.cfg names no base interpreter for a slot)")
     if p.get("spec"):
-        if p.get("launcher"):
+        if p.get("launcher") and p.get("slot"):
+            steps.append(f"launcher {p['launcher'][1]} left as it is: it runs {Path(p['python']).parent.parent}'s "
+                         "Python, so it follows the switch")
+        elif p.get("launcher"):
             steps.append(f"launcher {p['launcher'][0]} -> {p['launcher'][1]} (swapped in even while a brain runs)")
         if p.get("stamps"):
             steps.append(f"stamps   brain check --public --refresh by brain {p['tag']}: each local checkout of a "
@@ -663,16 +666,16 @@ def _blue_green(p: dict, runner) -> tuple[bool, list[str]]:
     except OSError as exc:
         return True, [*out, f"switch   refused ({exc}): brain {was} still runs; close the cockpit and try again"]
     out.append(f"switched {slots.active_path()} -> {dest}" + (f" (was {before})" if before else ""))
-    said, failed = _swap_launcher(p.get("launcher"))
-    out += said
-    bad = [] if failed else slots.watch(version, Path(p["launcher"][1]) if p.get("launcher") else None, runner)
-    if failed or bad:
+    # the launcher on the PATH is left: the installer's runs <BRAIN_HOME>/venv's Python, so it follows the link (a
+    # slot's own launcher would tie sys.executable, and the schedules it installs, to a slot a prune removes later)
+    bad = slots.watch(version, Path(p["launcher"][1]) if p.get("launcher") else None, runner)
+    if bad:
         return True, [*out, *bad, *_switch_back(p, before)]
     return False, [*out, *slots.prune([before])]
 
 
 def _switch_back(p: dict, before: Path | None) -> list[str]:
-    """The watchdog's way back: the link and the launcher to the slot that was active."""
+    """The watchdog's way back: the link to the slot that was active (the launcher follows it)."""
     from . import slots
 
     if before is None:
@@ -681,8 +684,7 @@ def _switch_back(p: dict, before: Path | None) -> list[str]:
         slots.switch(before)
     except OSError as exc:
         return [f"back     could not switch back to {before} ({exc}): rerun the installer (install.ps1 -Apply)"]
-    said, _ = _swap_launcher(p.get("launcher"), slots.launcher_of(before))
-    return [f"back     {slots.active_path()} -> {before}: brain {p['installed']} runs again", *said]
+    return [f"back     {slots.active_path()} -> {before}: brain {p['installed']} runs again"]
 
 
 def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:

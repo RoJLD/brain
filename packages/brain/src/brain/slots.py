@@ -5,11 +5,13 @@ ddr-2026-11-12-blue-green-engine-slots, « venvs and a link »).
 of its own, ``<BRAIN_HOME>/venvs/vX.Y.Z`` (:data:`SLOTS`), runs the **health gate** there (:func:`smoke`: the
 version, ``brain doctor --quick``, the guards' import and a harmless command they must let pass), and only then
 **switches**: ``<BRAIN_HOME>/venv``, the path every reader already follows (the hooks, the installer, the
-transitional shim), becomes a link to the new slot (a directory junction on Windows, a symlink elsewhere), and the
-launcher on the PATH is copied from it. After the switch the **watchdog** (:func:`watch`) runs the version through
-``<BRAIN_HOME>/venv`` and through the launcher; if either fails, the link and the launcher go back to the previous
-slot. The previous slots are kept (:data:`KEEP` in all, the active one included), so switching back later is the
-same rename (:func:`switch`).
+transitional shim), becomes a link to the new slot (a directory junction on Windows, a symlink elsewhere). The
+launcher on the PATH is left as it is: the installer's runs ``<BRAIN_HOME>/venv``'s Python, so it follows the link (a
+slot's own launcher would tie ``sys.executable``, and what records it, such as the schedules, to a slot a prune
+removes later). After the switch the **watchdog** (:func:`watch`) runs the version through ``<BRAIN_HOME>/venv`` and
+through the launcher; if either fails, the link goes back to the previous slot. The previous slots are kept
+(:data:`KEEP` in all, the active one included), so switching back later is the same rename (:func:`switch`); a slot
+a running process still holds a file of is never pruned (it cannot be renamed aside first).
 
 - **The switch** is a rename of a link, never of a venv's files: a Python running through the old link (a hook, the
   cockpit, ``brain update`` itself) keeps running. On Windows a junction cannot replace another in one call, so the
@@ -18,8 +20,9 @@ same rename (:func:`switch`).
   Python on the PATH, as it does for a machine without the command. On Linux and macOS ``os.replace`` swaps the
   symlink atomically.
 - **The first update** of a machine finds ``venv`` a real folder (the installer's). It is renamed, whole, into
-  ``venvs/v<its version>`` (a rename of the folder works while a Python runs from it on Windows too, measured), then
-  the link takes its place: that slot is the one the watchdog switches back to.
+  ``venvs/v<its version>`` (a rename of the folder works while a Python runs from it on Windows, measured; not while
+  a process holds a file open inside it: then the switch is refused, nothing changed, and the plan says to close the
+  cockpit and try again), then the link takes its place: that slot is the one the watchdog switches back to.
 - The **installer** keeps working unchanged: it reads and installs into ``<BRAIN_HOME>/venv``, which a link makes the
   active slot; a reinstall there is an install in place, without this gate.
 - Nothing here runs without the owner's gesture: :func:`brain.update.apply` calls it, from ``brain update --yes`` or
@@ -125,9 +128,8 @@ def switch(to: Path, *, aside_for: str = "") -> Path | None:
     folder was moved into: ``venvs/<aside_for>``), None when there was nothing. Raises OSError, with everything as it
     was, when a rename is refused."""
     venv = active_path()
+    _clear_stale_links()
     tmp = venv.with_name(f"{ACTIVE}.switch-{os.getpid()}.tmp")
-    if tmp.exists() or is_link(tmp):
-        remove_link(tmp)
     make_link(to, tmp)
     try:
         if is_link(venv):
@@ -140,7 +142,10 @@ def switch(to: Path, *, aside_for: str = "") -> Path | None:
                 except OSError:
                     os.rename(aside, venv)
                     raise
-                remove_link(aside)
+                try:   # the switch is done: a link left aside is cleared by the next switch, never an error now
+                    remove_link(aside)
+                except OSError:
+                    pass
             else:
                 os.replace(tmp, venv)
             return before
@@ -163,6 +168,17 @@ def switch(to: Path, *, aside_for: str = "") -> Path | None:
             remove_link(tmp)
 
 
+def _clear_stale_links() -> None:
+    """The links an interrupted switch left beside venv (``venv.switch-*.tmp``, ``venv.prev-*.tmp``): links only,
+    never a folder."""
+    for p in home().glob(f"{ACTIVE}.*-*.tmp"):
+        if is_link(p) and (p.name.startswith(f"{ACTIVE}.switch-") or p.name.startswith(f"{ACTIVE}.prev-")):
+            try:
+                remove_link(p)
+            except OSError:
+                pass
+
+
 # --- the base interpreter, a slot's creation ---
 
 def base_python(venv: Path) -> Path | None:
@@ -182,7 +198,9 @@ def base_python(venv: Path) -> Path | None:
     if exe and exe.is_file():
         return exe
     home_dir = Path(keys["home"]) if keys.get("home") else None
-    for name in ("python.exe",) if WINDOWS else ("python3", "python"):
+    minor = ".".join((keys.get("version") or keys.get("version_info") or "").split(".")[:2])
+    names = ("python.exe",) if WINDOWS else (*((f"python{minor}",) if minor else ()), "python3", "python")
+    for name in names:   # the same minor version first: /usr/bin/python3 may be another one
         if home_dir and (home_dir / name).is_file():
             return home_dir / name
     return None
@@ -202,13 +220,19 @@ def _said(proc) -> str:
 
 
 def create(dest: Path, base: Path, spec: str, runner=subprocess.run) -> list[str]:
-    """A new slot: ``base -m venv dest`` (when it is not one yet), then pip installs ``spec`` into it. [] when done,
-    else the lines that say what failed (the slot is left for the next try; it is not active)."""
+    """A new slot: ``base -m venv dest`` (made again when an earlier try left it half made: no pip in it), then pip
+    installs ``spec`` into it. [] when done, else the lines that say what failed. Never the active slot."""
     py = python_of(dest)
+    live = active()
+    if live and os.path.normcase(os.path.realpath(live)) == os.path.normcase(os.path.realpath(dest)):
+        return [f"slot     {dest} is the active one: nothing installed over it"]
+    if dest.exists() and not (py.is_file() and _has_pip(dest)):
+        _remove_tree(dest)   # a half-made slot (venv or ensurepip interrupted): made anew
     if not py.is_file():
         dest.parent.mkdir(parents=True, exist_ok=True)
         made = _run([str(base), "-m", "venv", str(dest)], runner, timeout=600)
         if made.returncode != 0 or not py.is_file():
+            _remove_tree(dest)
             return [f"slot     {base} -m venv {dest} failed (exit {made.returncode}): {_said(made)}"]
     got = _run([str(py), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", spec], runner, timeout=1800)
     if got.returncode != 0:
@@ -283,12 +307,41 @@ def prune(keep_also: list[Path | None], keep: int = KEEP) -> list[str]:
         if os.path.normcase(os.path.realpath(p)) in spare or kept < keep:
             kept += 1
             continue
+        # renamed aside first: a slot a running process still holds a file of cannot be renamed, so it is kept whole
+        # rather than half deleted under that process
+        trash = p.with_name(f".{p.name}.pruned-{os.getpid()}")
         try:
-            shutil.rmtree(p, **({"onexc": _writable} if sys.version_info >= (3, 12) else {"onerror": _writable}))
-            out.append(f"pruned   {p} (an older slot; {keep} kept)")
+            os.rename(p, trash)
         except OSError as exc:
-            out.append(f"kept     {p}: could not be removed ({exc}); brain update tries again next time")
+            out.append(f"kept     {p}: in use ({exc}); brain update tries again next time")
+            continue
+        _remove_tree(trash)
+        out.append(f"pruned   {p} (an older slot; {keep} kept)")
+    for left in d.glob(".v*.pruned-*"):   # what an earlier prune could not finish (a file that was still loaded)
+        if left.is_dir() and not is_link(left):
+            _remove_tree(left)
     return out
+
+
+def _has_pip(venv: Path) -> bool:
+    return any(any(sp.glob("pip/__init__.py")) for sp in (venv / "Lib" / "site-packages",
+                                                          *venv.glob("lib/python3*/site-packages")) if sp.is_dir())
+
+
+def _remove_tree(p: Path) -> None:
+    """A folder of this module's own (a slot that is not active, a half-made one, one pruned); never a link (its
+    target is never touched): what cannot be removed now is left."""
+    if is_link(p) or not p.exists():
+        return
+    shutil.rmtree(p, ignore_errors=False, **({"onexc": _ignore_writable} if sys.version_info >= (3, 12)
+                                             else {"onerror": _ignore_writable}))
+
+
+def _ignore_writable(func, path, *_):
+    try:
+        _writable(func, path)
+    except OSError:
+        pass   # a file still loaded (a .pyd): left, cleared by a later prune
 
 
 def _writable(func, path, *_):

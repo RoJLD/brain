@@ -252,8 +252,8 @@ Python 3.10+ and git; then section 2 by hand (or `pwsh` from Homebrew) and secti
 
 - **Upgrade with `brain update`** (a version that has it: `brain update --help` answers): it prints the plan (the
   new version, what its CHANGELOG says, its install into `~/.brain\venvs\vX.Y.Z` beside the running one, the health
-  check run by it, then the switch of `~/.brain\venv` and the launcher, switched back if the new version does not
-  answer) and installs it when you answer `y`; `brain update --check` only prints it. A failed check switches
+  check run by it, then the switch of `~/.brain\venv`, a link the launcher follows, switched back if the new version
+  does not answer) and installs it when you answer `y`; `brain update --check` only prints it. A failed check switches
   nothing: the version you had keeps running. The cockpit's title bar shows the installed version and, when a
   newer one is out, « brain X · Y available »; `u` opens the same plan. In a brain without an installer of its own
   (one from `brain init`: no `engine.installer` in `config.json`), the same `y` also moves `engine.pin` to the new
