@@ -16,7 +16,7 @@ v: 1
 done:
   - {id: documented, text: "documented: what it changes is said where its readers look (docs, runbook, notes)"}
   - {id: verified, text: "verified: checked as its kind checks (a test, a review, a measure), the check recorded"}
-  - {id: linked, text: "linked in the project's graph: its item, spec, decisions and what it delivers"}
+  - {id: linked, text: "linked in the graph: its item, its spec, its decisions and what it delivers"}
   - {id: integrated, text: "integrated: merged and applied where it is used"}
   - {id: recorded, text: "recorded: ticked in the backlog with its evidence and date, historised in the journal"}
 entries:
@@ -27,9 +27,9 @@ entries:
     description: a code product, whatever its form
     done:
       - {id: pr, evidence: pr, text: "merged by a pull request, after local verification (tests, linters)"}
-      - {id: test, text: "a test for the changed behaviour whenever one can be written"}
-      - {id: same-pr-docs, text: "README, docs, runbook, CHANGELOG and the script's help updated in the same PR as any
-          change of behaviour, commands, configuration, setup or data"}
+      - {id: test, text: "a test of the new behaviour wherever one can be written"}
+      - {id: same-pr-docs, text: "the same PR updates the README, the docs, the runbook, the CHANGELOG and the script's help for
+          any change of behaviour, commands, configuration, setup or data"}
       - {id: scout, text: "the modules it touches left at the standard: brain audit --diff's NEW and LEFT lines fixed"}
       - {id: worktree, text: "its worktree removed and its session archived once merged and verified"}
     sub:

@@ -7,7 +7,7 @@ argument-hint: "[item id, PR link or short description]"
 # Close an item (definition of done)
 
 The owner's rule (their rules for every project): an item is done only when it is documented, tested, linked in the project's graph, merged and applied,
-ticked in the project's backlog, historised in its journal, its session archived and its worktree removed, and memory
+ticked with its PR in the backlog, written up in the journal, its worktree removed and its session archived, and memory
 updated when a durable fact changed. Walk the steps below in order for the item in `$ARGUMENTS` (or the item this
 session worked on), check each one yourself, and do what is missing. Stop at the first step you cannot complete and
 say why; the retro (step 2b) never stops the close.
@@ -35,8 +35,8 @@ describe it: README, `docs/`, runbook, CHANGELOG of a released package, the scri
 (`gh pr diff <n>`) and list what changed against what was documented. Missing documentation goes into the same PR
 before merge, or a follow-up PR if it is already merged.
 
-The same PR carries a test for the changed behaviour whenever one can be written, and the links of what it touches
-in the project's graph (its item, spec and ADR, and code references for new modules). Missing ones are added the
+The same PR carries a test of the new behaviour wherever one can be written, and the graph links of what it
+touches (the item, its spec and ADR, and code references for new modules). Missing ones are added the
 same way.
 
 A repo that holds `readme.yaml` has a generated README (`brain docs`): never edit its `README.md`, change
@@ -68,8 +68,8 @@ a `Root cause:` line for a symptom fix, a `Justified: <unit>: <reason>` line for
 - Applied: where the change runs somewhere (a production checkout, a scheduled task, an installed copy), that place
   is updated the project's way (for example `git pull --ff-only` in the production checkout, then the project's setup
   command) and checked on its next real run when there is one.
-- The owner decides repository visibility, new scheduled tasks or services, and anything touching money, keys or
-  accounts: ask instead of applying those.
+- New scheduled tasks or services, a repository's visibility, money, keys and accounts stay the owner's call: ask
+  instead of applying those.
 
 ## 2b. Retro, before the item is ticked
 

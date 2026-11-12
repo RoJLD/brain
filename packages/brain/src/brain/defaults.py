@@ -5,7 +5,7 @@ A session may mark a decision low-stakes when it asks it (``brain decision ask -
 
 - the asking session applies the recommendation at once, provisionally; the DDR stays pending, the owner may answer
   it as any other;
-- 24 h without an answer make it final (:func:`finalize`, run by ``brain refresh`` before it writes any view, and
+- after 24 h with no answer it becomes final (:func:`finalize`, run by ``brain refresh`` before it writes any view, and
   ``brain decision defaulted --apply``): the recommendation is recorded as its answer, ``by: default``, ``via: default``, at the deadline (the
   same record on every branch that writes it), and the hooks announce it like any answer not integrated yet; a DDR
   whose answer the question tool captured before the deadline (the machine's answer ledger, brain.answers) is left
@@ -20,7 +20,7 @@ A session may mark a decision low-stakes when it asks it (``brain decision ask -
 - any default stays reversible: ``brain decision answer ID <option> --again``.
 
 The mark is refused, at ``ask`` and by ``brain check`` (``brain record check``), on a decision whose text touches
-money, keys, visibility, publication, accounts, arming, rules or scheduled tasks (:data:`REFUSED`, by words, also
+keys, money, accounts, visibility, publication, rules, arming or scheduled tasks (:data:`REFUSED`, by words, also
 inside hyphenated and snake_case compounds, and amounts with a currency sign: a false alarm only keeps the decision
 with the owner). The text is the title, question, context, blocks, options, the recommendation's why and the linked
 ids. Only the mark itself needs judgement.

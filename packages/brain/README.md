@@ -772,8 +772,8 @@ graph and the kanban show it answered) or `brain decision defaulted --apply` rec
 answer, `by: default`, `via: default`, at the deadline, and the hooks announce it with « by
 default »; a DDR whose answer the question tool captured on this machine before the deadline stays pending for
 `brain decision answer --captured`. The mark is refused, at the ask and by `brain check`, on a decision whose text
-(the recommendation's why and the linked ids included) names money, keys, visibility, publication, accounts, arming,
-rules or scheduled tasks (`brain.defaults.REFUSED`, by words, inside `-`/`_` compounds too, and amounts such as `40€`
+(the recommendation's why and the linked ids included) names keys, money, accounts, visibility, publication, rules,
+arming or scheduled tasks (`brain.defaults.REFUSED`, by words, inside `-`/`_` compounds too, and amounts such as `40€`
 or `$50`: a false alarm only keeps the decision with the owner; `brain check` applies it to pending DDRs, never to one already answered). A stamp without a zone is read as UTC. `brain
 decision defaulted` is the owner's review list (the defaults to review, the provisional ones, the reversed ones:
 answered otherwise than the default after the deadline; `--seen` marks them read, from the owner's terminal only,

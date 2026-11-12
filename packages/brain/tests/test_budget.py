@@ -1,4 +1,4 @@
-"""wi-brain-budget-watch: the budget watch hook (brain.budget, hooks/budget.sh; COST-1: warn once at 80 % and once
+"""wi-brain-budget-watch: the budget watch hook (brain.budget, hooks/budget.sh; COST-1: warn at 80 % and again
 at 100 % of the brief's context budget or the item's recorded estimate, the session decides, nothing blocks)."""
 
 import io

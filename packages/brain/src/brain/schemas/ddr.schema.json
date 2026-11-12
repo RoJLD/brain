@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "brain/schemas/ddr.schema.json",
   "title": "DDR, decision discussion record",
-  "description": "A question put to the owner: its context, 2 to 4 options with their consequences, a recommendation first with its reason, single or multiple choice, 'other' always possible, their answer, then the read and applied stamps of the model in charge. The ADR keeps the decision that comes out of it when the answer changes a rule, a process or the architecture (Q4). One YAML file per DDR: records/ddr/<id>.yaml.",
+  "description": "A question put to the owner: its context, 2 to 4 options, each with what it leads to, the recommended one first with why, single or multiple choice, 'other' always possible, their answer, then the read and applied stamps of the model in charge. The ADR keeps the decision that comes out of it when the answer changes a rule, a process or the architecture (Q4). One YAML file per DDR: records/ddr/<id>.yaml.",
   "type": "object",
   "required": ["v", "id", "title", "question", "status", "asked"],
   "additionalProperties": false,
@@ -81,7 +81,7 @@
       "type": "object",
       "required": ["option", "after"],
       "additionalProperties": false,
-      "description": "Marked low-stakes when asked (brain decision ask --low-stakes, wi-brain-decision-default): the recommendation is applied at once, provisionally, and recorded as the answer by default once 'after' passes without one; brain check refuses the mark on money, keys, visibility, publication, accounts, arming, rules and scheduled tasks.",
+      "description": "Marked low-stakes when asked (brain decision ask --low-stakes, wi-brain-decision-default): the recommendation is applied at once, provisionally, and recorded as the answer by default once 'after' passes without one; brain check refuses the mark on keys, money, accounts, visibility, publication, rules, arming and scheduled tasks.",
       "properties": {
         "option": {"type": "string", "description": "The recommendation the default takes."},
         "after": {"type": "string", "format": "date-time", "description": "When it becomes final: 24 h after it was asked."},

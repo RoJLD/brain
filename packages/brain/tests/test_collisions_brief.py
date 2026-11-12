@@ -33,7 +33,7 @@ RULES = """\
 
 ## Definition of done
 
-An item is done when it is tested and merged.
+Done means tested and merged.
 
 ## Never
 
@@ -154,7 +154,7 @@ def test_brief_holds_the_graph_and_the_rules(project):
     assert "- specified_by -> spec-s (Spec, active; docs/spec.md#top): The spec" in text
     assert "- <- depends_on from wi-e (WorkItem, todo): After A" in text
     assert "Waits on claude/feature" in text and "src/app.py" in text
-    assert "An item is done when it is tested and merged." in text
+    assert "Done means tested and merged." in text
     assert "- Never tag.\n- Never add an attribution line." in text
     assert "Never in other sections" not in text
     assert "## To decide (the coordinator)" in text
@@ -163,8 +163,8 @@ def test_brief_holds_the_graph_and_the_rules(project):
 def test_brief_never_list_without_a_never_section(project, tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_CONFIG", str(FIXTURES / "brain" / "config.json"))   # Ada's fixture: no such sections
     b = brief.build(project, "wi-d", coordinator="local_x", budget="600k")
-    assert b.never == ["- Ada decides: repository visibility, new scheduled tasks or services, anything touching "
-                       "money, keys or accounts.", "- Never type a secret: Ada adds keys herself."]
+    assert b.never == ["- Ada decides: a repo's visibility, new scheduled tasks or services, anything with money, "
+                       "keys or accounts.", "- Never type a secret: Ada adds keys herself."]
     assert "no 'Definition of done' section" in "; ".join(b.warnings)
     text = brief.render(b)
     assert "**Open questions (props.open):**\n- open: which way?" in text and "600k" in text
