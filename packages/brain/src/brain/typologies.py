@@ -32,6 +32,7 @@ brain written by a later catalog is read by this engine. ``brain typologies`` li
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -132,7 +133,9 @@ class Catalog:
         return out
 
 
+@functools.lru_cache(maxsize=1)
 def _read() -> dict:
+    """typologies.yaml parsed once per process (never mutated: :func:`engine` builds fresh objects from it)."""
     try:
         data = yaml.safe_load(FILE.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
@@ -240,6 +243,8 @@ def _spec_errors(where: str, tid: str, spec: dict, given: dict, base: Catalog) -
               if lang in spec and not (isinstance(spec[lang], str) and spec[lang].strip())]
     if not _vision_ok(spec.get("vision")):
         errors.append(f"{where}: vision is a list of the Vision's module ids (J1, K4...)")
+    elif spec.get("vision") is not None and (spec.get("parent") or base.typologies.get(tid, Typology(tid, {})).parent):
+        errors.append(f"{where}: vision is an entry's; a sub-profile takes its entry's")
     parent = spec.get("parent")
     if parent is not None and tid in base.typologies:
         errors.append(f"{where}: an engine id keeps its place; parent is for a brain's own sub-profile")
