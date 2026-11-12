@@ -3,6 +3,8 @@ research extend the generic brain (through the bases _project and _software) wit
 its stage, the CI jobs, the test harness, the format registry's skeleton, the issue and ADR templates and the graph's
 layers; the generic template's files are unchanged."""
 
+import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -137,6 +139,96 @@ def test_a_profile_over_an_existing_brain_says_what_it_does_not_append(fresh, ca
     assert "keep     boundary.yaml (exists; the template appends boundary-github.yaml to it: add that by hand" in out
     assert "keep     projects.yaml (exists; the template appends standards.yaml to it" in out
     assert "keep     CLAUDE.md (exists)" in out
+
+
+# What each engine template writes (its files rendered at --stage mvp, its graphs and their schemas, its classes),
+# hashed. spec-brain-typology-packs E1 bis moved the issue template from _project to _software and made research take
+# parts of _software instead of extending it, every output unchanged. A deliberate change of a template's output bumps
+# its version and updates its digest here, in the same PR.
+DIGESTS = {"cli": "4a317f0a9ebddd02", "data-pipeline": "56ef5812c2b459cb", "generic": "769d3e1b34d00278",
+           "local-client": "1fca86a520d976cb", "research": "a25779d06d892300", "service": "b403064d7769f8dd"}
+
+
+def _digest(name: str) -> str:
+    tpl = init.load_template(name)
+    out = init.files_for("Ada", "person", None, "lite", "brain", tpl, stage="mvp")
+    out.pop("config.json")
+    blob = json.dumps({"files": out, "graphs": tpl.graphs, "classes": tpl.classes,
+                       "schemas": [init.graph_schema(g, "Ada", tpl) for g in tpl.graphs]}, sort_keys=True)
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def test_every_template_writes_what_it_wrote_before_the_typology_doors():
+    assert {name: _digest(name) for name in init.known_templates()} == DIGESTS
+
+
+def test_the_project_base_writes_nothing_of_a_code_host():
+    """_project, the generic project base, writes no .github/ file and no boundary rule for it: a project that is not
+    code, or not on GitHub, extends it alone; the issue template and the .github/ rule are _software's."""
+    base = init.load_template("_project", ("test",))
+    assert not [rel for rel in base.files if rel.startswith(".github/")] and base.appends == {}
+    assert "docs/templates/adr.md" in base.files
+    software = init.load_template("_software", ("test",))
+    assert ".github/ISSUE_TEMPLATE/task.md" in software.files and "boundary.yaml" in software.appends
+
+
+def test_research_takes_parts_of_the_software_base_instead_of_extending_it():
+    """research extends _project and names what it takes from _software: a path _software adds later reaches it only
+    when it says so; it never takes _software's graphs (its own layers, no features layer)."""
+    tpl = init.load_template("research")
+    assert tpl.extends == ("_project", "generic")
+    assert set(tpl.takes["_software"]) == set(SOFTWARE) - {"docs/templates/adr.md"} | {"boundary.yaml"}
+    assert "features" not in tpl.graphs[0]["layers"]
+    assert [extra for _, extra in tpl.appends["boundary.yaml"]] == ["boundary-github.yaml"]
+
+
+@pytest.mark.parametrize("takes, says", [
+    ("{_software: [docs/nowhere.md]}", "takes _software: 'docs/nowhere.md': not a path _software itself writes"),
+    ("{astrology: [x.md]}", "takes 'astrology': one of the engine's templates"),
+    ("{_project: [docs/templates/adr.md]}", "takes '_project': the template itself or one it extends"),
+    ("[_software]", "takes maps one of the engine's templates to the brain's paths"),
+    ("{_software: []}", "takes maps one of the engine's templates to the brain's paths"),
+    ("{_software: [boundary.yaml, boundary.yaml]}", "the brain's paths taken from it, each once"),
+    ("{_software: [boundary.yaml]}\nextends: research", "takes _software: 'boundary.yaml': its base takes it already"),
+])
+def test_a_bad_take_plans_nothing(fresh, tmp_path, capsys, takes, says):
+    manifest = f"name: mine\nversion: 1\ntakes: {takes}\n"
+    tpl = _own(tmp_path, manifest if "extends" in manifest else manifest + "extends: _project\n", {})
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl)]) == 2
+    assert says in capsys.readouterr().out and list(fresh.iterdir()) == []
+
+
+def test_a_taken_append_needs_the_file_it_goes_to(fresh, tmp_path, capsys):
+    """A template of no base that writes no boundary.yaml cannot take _software's boundary fragment: the error names
+    the take, not an append the owner never wrote."""
+    files = {r: "x.md" for r in init.REQUIRED}
+    tpl = _own(tmp_path, "name: mine\nversion: 1\ntakes: {_software: [boundary.yaml]}\nfiles: "
+               + json.dumps(files) + "\n", {"x.md": "x\n"})
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl)]) == 2
+    assert ("takes _software: boundary.yaml: what _software appends there needs a file the template does not write"
+            in capsys.readouterr().out)
+
+
+def test_a_template_of_ones_own_takes_the_ci_alone(fresh, tmp_path, capsys):
+    tpl = _own(tmp_path, "name: mine\nversion: 1\nextends: _project\ntakes: {_software: [.github/workflows/ci.yml]}\n",
+               {})
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl), "--apply"]) == 0
+    assert (fresh / ".github" / "workflows" / "ci.yml").is_file()
+    assert not (fresh / ".github" / "ISSUE_TEMPLATE").exists() and not (fresh / "tests").exists()
+
+
+def test_an_unknown_typology_or_stage_id_in_a_template_s_selection_is_tolerated(fresh, tmp_path, capsys):
+    """spec-brain-typology-packs E1: the profiles' names and the stages a template selects follow one typology
+    catalog still to come (wi-brain-typology-catalog); an id this engine does not know, written by a template of a
+    later catalog, is a note in read mode (an error only in strict mode, CI), never a refusal to start the brain."""
+    tpl = _own(tmp_path, "name: mine\nversion: 1\nextends: _project\nappend: {projects.yaml: standards.yaml}\n",
+               {"standards.yaml": "  standards:\n    profiles: [film]\n    stage: pre-production\n"})
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl), "--apply"]) == 0
+    selection = yaml.safe_load((fresh / "projects.yaml").read_text(encoding="utf-8"))["brain"]["standards"]
+    notes: list[str] = []
+    assert standards.selection_errors("brain", selection, strict=False, notes=notes) == []
+    assert any("profile 'film'" in n for n in notes) and any("stage 'pre-production'" in n for n in notes)
+    assert standards.selection_errors("brain", selection, strict=True)
 
 
 def test_the_templates_name_no_one_and_code_takes_no_variable():

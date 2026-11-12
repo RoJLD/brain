@@ -91,7 +91,7 @@ SCHEMAS = {
     "store": ("src/research_graph/templates/schema.yaml", f"{SRC}/templates/schemas/default.yaml",
               f"{SRC}/templates/generic/boundary.yaml", f"{SRC}/templates/generic/gitattributes",
               # what a profile's template adds to the brain's boundary and its registry entry
-              f"{SRC}/templates/_project/boundary-github.yaml",
+              f"{SRC}/templates/_software/boundary-github.yaml",
               *(f"{SRC}/templates/{t}/standards.yaml" for t in PROFILE_TEMPLATES if not t.startswith("_"))),
 }
 
