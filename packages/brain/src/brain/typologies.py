@@ -302,12 +302,26 @@ def item_typologies(props: dict | None, project_lifecycle=None) -> tuple[list[st
     return [], ""
 
 
+def effective(cat: Catalog, typs) -> tuple[list[str], str]:
+    """(the kinds whose clauses an item takes, why when it is not ``typs``): ``typs``; none declared, or one the
+    catalog does not know (a misspelling must not drop a clause), the rule before the catalog: software's (DONE-1)."""
+    if not typs:
+        return ["software"], "no typology declared: the rule before the catalog"
+    unknown = [t for t in typs if not cat.known(t)]
+    if unknown:
+        return ["software"], f"{', '.join(unknown)} not in the typology catalog: the rule before the catalog"
+    return list(typs), ""
+
+
+def item_clauses(cat: Catalog, typs) -> list[Clause]:
+    """An item's definition of done: the generic sentence, then the clauses of its effective kinds."""
+    return cat.done_clauses(effective(cat, typs)[0])
+
+
 def requires(cat: Catalog, typs) -> list[Clause]:
     """The clauses whose evidence brain item close requires for an item of kinds ``typs`` (a ``pr`` clause:
-    --pr). An item whose project declares no typology keeps the rule before the catalog, --pr required (DONE-1): the
-    software clauses' ``pr``."""
-    clauses = cat.done_clauses(typs) if typs else cat.done_clauses(["software"])
-    return [c for c in clauses if c.evidence]
+    --pr), :func:`effective`'s kinds: none declared or one unknown keeps the rule before the catalog (DONE-1)."""
+    return [c for c in item_clauses(cat, typs) if c.evidence]
 
 
 def describe(cat: Catalog, lang: str = "en") -> dict:

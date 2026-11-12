@@ -124,3 +124,30 @@ def test_the_other_lifecycle_keys_are_kept_as_declared(brain, monkeypatch):
     assert projects.check(brain.root) == []   # read mode: a later catalog's id, noted
     data = yaml.safe_load((brain.root / "projects.yaml").read_text(encoding="utf-8"))
     assert data["demo"]["lifecycle"]["typologies"] == ["video-x"]   # kept as written
+
+
+def test_a_misspelled_typology_keeps_the_rule_before_the_catalog(brain, capsys):
+    """A misspelling never drops a clause: an id the catalog does not know reads as none declared (--pr)."""
+    graph.set_item(brain.store, "wi-one", ["typology=softwar"])
+    assert _close(brain, "wi-one", "--evidence", "x") == 2
+    assert "softwar not in the typology catalog: the rule before the catalog" in capsys.readouterr().err
+    brain("  lifecycle: {typologies: [strategy, softwre]}\n")
+    assert _close(brain, "wi-two", "--evidence", "x") == 2
+    cat = typologies.engine()
+    assert typologies.effective(cat, ["strategy"]) == (["strategy"], "")
+    assert [c.id for c in typologies.requires(cat, ["strategy", "softwre"])] == ["pr"]
+
+
+def test_blank_evidence_proves_nothing(brain, capsys):
+    brain("  lifecycle: {typologies: [strategy]}\n")
+    assert _close(brain, "wi-one", "--evidence", "  ") == 2
+    assert "--evidence TEXT" in capsys.readouterr().err and "evidence" not in _props(brain, "wi-one")
+
+
+def test_an_unreadable_catalog_is_an_error_not_a_traceback(brain, monkeypatch, capsys):
+    def broken(cfg=None):
+        raise typologies.CatalogError("typologies.yaml: not readable")
+    monkeypatch.setattr(typologies, "load", broken)
+    assert _close(brain, "wi-one", "--evidence", "x") == 1
+    assert "not readable" in capsys.readouterr().err
+    assert cli.main(["--root", str(brain.root), "item", "clauses", "wi-one"]) == 1

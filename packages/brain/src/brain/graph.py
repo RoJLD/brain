@@ -376,8 +376,9 @@ def close_item(store: Path, nid: str, pr: str, outcome: str = "", today: str | N
         props = node.setdefault("props", {})
         if pr:
             props["pr"] = pr
-        if evidence:
-            props["evidence"] = "; ".join(e.strip() for e in evidence if e.strip())
+        proofs = [e.strip() for e in evidence or [] if e.strip()]
+        if proofs:
+            props["evidence"] = "; ".join(proofs)
         props["done" if status == "done" else status] = f"{today or date.today().isoformat()} {outcome}".strip()
     return _edit(store, nid, change)
 

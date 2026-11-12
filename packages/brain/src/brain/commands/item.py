@@ -6,7 +6,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from .. import config, crossstore, graph, milestones, reads, typologies
+from .. import config, crossstore, graph, milestones, projects, reads, typologies
 from ._common import _kv, _print_json, _project, _read_stores, _store
 
 ORDER = 20   # its place in brain --help's list of commands (brain.commands)
@@ -62,8 +62,8 @@ def cmd_item(args, root: Path) -> int:
                 print(f"brain: {refused}", file=sys.stderr)
                 return 2
             node = graph.close_item(store, args.id, args.pr, args.outcome or "", status=args.status,
-                                    evidence=args.evidence)
-    except graph.GraphError as exc:
+                                    evidence=_evidence(args))
+    except (graph.GraphError, typologies.CatalogError) as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
     print(f"{args.item_cmd}: {node['id']} [{node['status']}]; then brain sync and brain check")
@@ -72,28 +72,37 @@ def cmd_item(args, root: Path) -> int:
     return 0
 
 
-def _clauses_of(args, root: Path, store: Path) -> tuple[list[typologies.Clause], list[str], str]:
-    """(the item's clauses of done, its typologies, where they come from) (brain.typologies.item_typologies)."""
+def _evidence(args) -> list[str]:
+    """--evidence's values, blanks left out (a blank proves nothing)."""
+    return [e.strip() for e in args.evidence or [] if e.strip()]
+
+
+def _clauses_of(args, root: Path, store: Path) -> tuple[list[typologies.Clause], list[str], str, str]:
+    """(the item's clauses of done, its typologies, where they come from, why the rule before the catalog applies)
+    (brain.typologies.item_typologies, effective). The project's lifecycle counts only when the store is its own: a
+    --store of another project's reads the item's own props.typology alone."""
     found = graph.node_index(store).get(args.id)
     if found is None:
         raise graph.GraphError(f"{args.id}: unknown node")
-    typs, source = typologies.item_typologies(found[1].get("props"), _project(args, root).lifecycle)
+    project = _project(args, root)
+    mine = store.resolve() in {s.resolve() for s in projects.stores_of(project)}
+    typs, source = typologies.item_typologies(found[1].get("props"), project.lifecycle if mine else None)
     cat = typologies.load(config.load(root))
-    return cat.done_clauses(typs or ["software"]), typs, source
+    return typologies.item_clauses(cat, typs), typs, source, typologies.effective(cat, typs)[1]
 
 
 def _close_refused(args, root: Path, store: Path) -> str:
     """Why ``brain item close`` refuses: neither --pr nor --evidence; a done item that takes a PR clause without
     --pr. "" when it closes."""
-    if not args.pr and not args.evidence:
+    if not args.pr and not _evidence(args):
         return f"{args.id}: --pr \"repo #N\" or --evidence TEXT (what proves it is {args.status})"
     if args.status != "done" or args.pr:
         return ""
-    clauses, typs, source = _clauses_of(args, root, store)
+    clauses, typs, source, why = _clauses_of(args, root, store)
     need = [c for c in clauses if c.evidence == "pr"]
     if not need:
         return ""
-    by = f"{', '.join(typs)} ({source})" if typs else "no typology declared: the rule before the catalog"
+    by = why or f"{', '.join(typs)} ({source})"
     return (f"{args.id}: its kind, {by}, takes {need[0].typology}'s clause « {need[0].text} »: --pr \"repo #N\" "
             "(brain item clauses lists them; another kind closes with --evidence)")
 
@@ -101,19 +110,19 @@ def _close_refused(args, root: Path, store: Path) -> str:
 def cmd_clauses(args, root: Path) -> int:
     """``brain item clauses``: the item's definition of done, generic then by typology."""
     try:
-        clauses, typs, source = _clauses_of(args, root, _store(args, root))
-    except graph.GraphError as exc:
+        clauses, typs, source, why = _clauses_of(args, root, _store(args, root))
+    except (graph.GraphError, typologies.CatalogError) as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
     if args.json:
-        _print_json({"id": args.id, "typologies": typs, "source": source,
+        _print_json({"id": args.id, "typologies": typs, "source": source, "fallback": why,
                      "requires": sorted({c.evidence for c in clauses if c.evidence}),
                      "clauses": [{"id": c.id, "text": c.text, "typology": c.typology, "evidence": c.evidence}
                                  for c in clauses]})
         return 0
-    print(f"{args.id}: " + (f"{', '.join(typs)} ({source})" if typs
-                            else "no typology declared (props.typology, the project's lifecycle.typologies): software's "
-                                 "clauses, the rule before the catalog"))
+    head = f"{', '.join(typs)} ({source})" if typs else "no typology declared (props.typology, the project's " \
+                                                        "lifecycle.typologies)"
+    print(f"{args.id}: {head}" + (f"; {why}: software's clauses" if why else ""))
     for c in clauses:
         print(f"  [{c.typology or 'generic'}] {c.id}: {c.text}" + ("  (brain item close --pr)" if c.evidence else ""))
     return 0
@@ -232,7 +241,8 @@ def register(sub, ctx) -> None:
     un.add_argument("to")
     cl = it.add_parser("close")
     cl.add_argument("id")
-    cl.add_argument("--pr", help='e.g. "brain #13": required for an item that takes a PR clause (brain item clauses)')
+    cl.add_argument("--pr", help='e.g. "brain #13": required to close as done an item that takes a PR clause (brain '
+                                 'item clauses)')
     cl.add_argument("--evidence", action="append", help="what proves it when not a PR: a render id, a document's "
                                                         "version, a DDR... (repeatable)")
     cl.add_argument("--outcome", help="one line: what was done and checked")
