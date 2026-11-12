@@ -144,15 +144,15 @@ def match(files: list[str] | None = None, texts: list[str] | None = None,
     files = [f for f in (f.replace("\\", "/") for f in files or []) if _source(f)]
     texts = [t for t in texts or [] if t]
     gone = removed_tests(list(diff or []))
-    out = []
-    for s in SURFACES:
-        why = next((f for f in files if any(re.search(p, f) for p in s.paths)), "")
-        if not why:
-            why = _hit(s.words, texts + (gone if s.on_diff else []), re.I)
-            why = f"« {why} »" if why else ""
-        if why:
-            out.append((s, why))
-    return out
+    found = [(s, _why(s, files, texts + (gone if s.on_diff else []))) for s in SURFACES]
+    return [(s, why) for s, why in found if why]
+
+
+def _why(s: Surface, files: list[str], texts: list[str]) -> str:
+    """What calls surface ``s``: the first file its paths match, else the words its patterns find, else ''."""
+    path = next((f for f in files if any(re.search(p, f) for p in s.paths)), "")
+    words = "" if path else _hit(s.words, texts, re.I)
+    return path or (f"« {words} »" if words else "")
 
 
 def own(props: dict | None) -> list[str]:
