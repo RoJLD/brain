@@ -1209,9 +1209,7 @@ def scope(args, root: Path | None) -> list[projects.Project]:
     if getattr(args, "scope", None):   # a node of the scope tree: the projects of its subtree (brain.scopes)
         return _tree_scope(args, root)
     if args.all:
-        if args.project:
-            raise AuditError("--project or --all, not both")
-        return list(_registered(root).values())
+        return _every(args, root)
     if args.project:
         reg = _registered(root)
         if args.project not in reg:
@@ -1229,6 +1227,13 @@ def scope(args, root: Path | None) -> list[projects.Project]:
                 if any(r.path.resolve() == main.resolve() for r in projects.repos_of(p)):
                     return [p]
     return [projects.for_root(root or paths.find_root())]
+
+
+def _every(args, root: Path | None) -> list[projects.Project]:
+    """--all: every registered project, refused with --project."""
+    if args.project:
+        raise AuditError("--project or --all, not both")
+    return list(_registered(root).values())
 
 
 def _tree_scope(args, root: Path | None) -> list[projects.Project]:

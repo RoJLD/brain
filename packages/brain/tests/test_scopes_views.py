@@ -8,20 +8,23 @@ import pytest
 
 from brain import audit, cli, cockpit, cost, permissions, queue
 
-from test_scopes import _tree, brain  # noqa: F401 - the fixture, shared
+import test_scopes
+
+_tree = test_scopes._tree
+brain = test_scopes.brain   # the fixture, shared with test_scopes
 
 
 class Picked(Exception):
     """Raised by a stand-in once it has seen the projects a view was given."""
 
 
-def _layout(brain):  # noqa: F811 - the fixture's name
+def _layout(brain):
     brain("alpha: {root: ., parent: pro}\nbeta: {root: ../beta, parent: acme}\ngamma: {root: ../gamma}\n")
     _tree(brain.root)
     return str(brain.root)
 
 
-def test_queue_scope_shows_the_subtree_groups_and_their_totals(brain, monkeypatch, capsys):  # noqa: F811
+def test_queue_scope_shows_the_subtree_groups_and_their_totals(brain, monkeypatch, capsys):
     root = _layout(brain)
     seen = {}
 
@@ -39,7 +42,7 @@ def test_queue_scope_shows_the_subtree_groups_and_their_totals(brain, monkeypatc
     assert "group beta" in out and "group gamma" not in out and "scope acme: 0 waiting on" in out
 
 
-def test_tui_scope_hands_the_cockpit_the_subtree(brain, monkeypatch):  # noqa: F811
+def test_tui_scope_hands_the_cockpit_the_subtree(brain, monkeypatch):
     root = _layout(brain)
 
     def cockpit_(projs, every=False, **k):
@@ -53,7 +56,7 @@ def test_tui_scope_hands_the_cockpit_the_subtree(brain, monkeypatch):  # noqa: F
     assert got.value.args == (["alpha", "beta", "gamma"], True)   # global is --all
 
 
-def test_usage_and_cost_scope_read_the_subtree_sessions(brain, monkeypatch):  # noqa: F811
+def test_usage_and_cost_scope_read_the_subtree_sessions(brain, monkeypatch):
     root = _layout(brain)
 
     def load(projs, root, **k):
@@ -68,7 +71,7 @@ def test_usage_and_cost_scope_read_the_subtree_sessions(brain, monkeypatch):  # 
         assert got.value.args == (["beta", "alpha"],)
 
 
-def test_audit_scope_selects_the_subtree(brain):  # noqa: F811
+def test_audit_scope_selects_the_subtree(brain):
     _layout(brain)
     args = argparse.Namespace(scope="pro", all=False, project=None)
     assert [p.name for p in audit.scope(args, brain.root)] == ["beta", "alpha"]
@@ -78,7 +81,7 @@ def test_audit_scope_selects_the_subtree(brain):  # noqa: F811
         audit.scope(argparse.Namespace(scope="nowhere", all=False, project=None), brain.root)
 
 
-def test_permissions_scope_lists_each_project_and_keeps_its_requests_meaning(brain, monkeypatch, capsys):  # noqa: F811
+def test_permissions_scope_lists_each_project_and_keeps_its_requests_meaning(brain, monkeypatch, capsys):
     root = _layout(brain)
     named = []
     monkeypatch.setattr(permissions, "show", lambda model, ctx: {"project": ctx.project, "files": []})
@@ -94,7 +97,7 @@ def test_permissions_scope_lists_each_project_and_keeps_its_requests_meaning(bra
     assert picked["scope"] == "project"   # with --requests: a level's start, as before
 
 
-def test_the_cockpit_queue_of_a_scope_keeps_its_projects_rows(brain, monkeypatch):  # noqa: F811
+def test_the_cockpit_queue_of_a_scope_keeps_its_projects_rows(brain, monkeypatch):
     from brain import projects, status
     _layout(brain)
     monkeypatch.setattr(queue, "collect", lambda projs, only=None, **k: [{"project": p.name} for p in projs]
@@ -105,7 +108,7 @@ def test_the_cockpit_queue_of_a_scope_keeps_its_projects_rows(brain, monkeypatch
     assert [r["project"] for r in status.queue_rows([reg["gamma"]], False, brain.root)] == ["gamma"]
 
 
-def test_global_is_all_and_one_of_scope_project_all(brain, monkeypatch, capsys):  # noqa: F811
+def test_global_is_all_and_one_of_scope_project_all(brain, monkeypatch, capsys):
     root = _layout(brain)
     group = {"entries": [], "counts": {kind: 0 for kind in queue.KINDS}, "bands": {}}
     monkeypatch.setattr(queue, "collect", lambda projs, only=None, **k: [{"project": p.name, **group} for p in projs]
