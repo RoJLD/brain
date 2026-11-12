@@ -385,10 +385,15 @@ def wave_report(plan: Plan, wid: str) -> dict:
            "open": len(items) - len(groups["closed"])}
     out.update({k: [_row(plan, i) for i in _sorted(plan, ids)] for k, ids in groups.items()})
     out["carried_out"] = [_row(plan, i) for i in plan.carried_out(wid)]
-    ready = [r for k in ("carried", "startable") for r in out[k]]
-    out["quick_wins"] = [r["id"] for r in ready if r["rank"]["quick_win"]]
-    out["value_overrides"] = plan.ranker.overrides([i for i in items if plan.status(i) in OPEN])
-    return out
+    return out | _ranked(plan, out, items)
+
+
+def _ranked(plan: Plan, out: dict, items: list[str]) -> dict:
+    """A wave's quick wins (its carried and startable items of size S and high value, in rank order) and the open
+    items whose value the owner set (brain.ranking)."""
+    ready = out["carried"] + out["startable"]
+    return {"quick_wins": [r["id"] for r in ready if r["rank"]["quick_win"]],
+            "value_overrides": plan.ranker.overrides([i for i in items if plan.status(i) in OPEN])}
 
 
 def _row(plan: Plan, nid: str) -> dict:
@@ -439,6 +444,24 @@ GROUPS = (("carried", "carried from an earlier wave, first"), ("startable", "sta
           ("waiting", "waits on {owner}"), ("other", "other open"))
 
 
+def _current_lines(cur: dict, owner: str, explain: bool) -> list[str]:
+    """The current wave's head, its quick wins, its groups in rank order (with --explain, each carried or startable
+    item's score under it, then the values the owner set)."""
+    out = [_wave_head(cur)]
+    if cur.get("quick_wins"):
+        out.append(f"  quick wins (size S, high value), first: {', '.join(cur['quick_wins'])}")
+    for key, label in GROUPS:
+        if cur[key]:
+            out.append(f"  {label.format(owner=owner)}:")
+            parts = explain and key in ("carried", "startable")
+            for r in cur[key]:
+                out += [f"    {_row_text(r, owner)}"] + ([f"        {r['rank']['explain']}"] if parts else [])
+    if explain and cur.get("value_overrides"):
+        out.append(f"  value set by {owner} on {len(cur['value_overrides'])} open item(s) (props.value): "
+                   f"{', '.join(cur['value_overrides'])}")
+    return out
+
+
 def render_next(rep: dict, explain: bool = False) -> list[str]:
     """brain next's text; ``explain``: each carried and startable item's score parts under it (brain.ranking)."""
     owner = rep["owner"]
@@ -449,19 +472,7 @@ def render_next(rep: dict, explain: bool = False) -> list[str]:
     if cur is None:
         return ["No open wave: a Milestone with props.kind wave and props.release X.Y.Z (brain wave import proposes "
                 "them from the items' props.wave)"]
-    out = [_wave_head(cur)]
-    if cur.get("quick_wins"):
-        out.append(f"  quick wins (size S, high value), first: {', '.join(cur['quick_wins'])}")
-    for key, label in GROUPS:
-        if cur[key]:
-            out.append(f"  {label.format(owner=owner)}:")
-            for r in cur[key]:
-                out.append(f"    {_row_text(r, owner)}")
-                if explain and key in ("carried", "startable"):
-                    out.append(f"        {r['rank']['explain']}")
-    if explain and cur.get("value_overrides"):
-        out.append(f"  value set by {owner} on {len(cur['value_overrides'])} open item(s) (props.value): "
-                   f"{', '.join(cur['value_overrides'])}")
+    out = _current_lines(cur, owner, explain)
     if not cur["open"]:
         out.append(f"  nothing open: close it with its version PR (brain wave close {cur['release']})")
     nxt = rep["next"]
