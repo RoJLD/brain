@@ -61,7 +61,7 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import __version__, config, cost, graph, paths, projects, ranking, records, resume
+from . import __version__, config, cost, diffs, graph, paths, projects, ranking, records, resume
 from . import gates as gate_data
 
 FORMAT = 1            # the JSON's layout
@@ -131,26 +131,25 @@ def flow(store: Path, today: date) -> dict:
     try:
         top = Path(_git(store, "rev-parse", "--show-toplevel").strip())
         rel = Path(store).resolve().relative_to(top.resolve()).as_posix()
-        log = _git(top, "log", "--first-parent", "--reverse", "-p", "-U0", "--no-color", "--format=@@C %cI",
-                   "--", f"{rel}/nodes" if rel != "." else "nodes")
+        log = _git(top, *diffs.argv("log", "--first-parent", "--reverse", "-p", "-U0", "--format=%x00%cI",
+                                    "--", f"{rel}/nodes" if rel != "." else "nodes"))
     except (ForecastError, OSError, ValueError, subprocess.TimeoutExpired):
         return {"days": 0, "created": 0, "closed": 0}
     created: dict[str, date] = {}
     closed: dict[str, date] = {}
     first, day, matched = None, None, False
-    for line in log.splitlines():
-        if line.startswith("@@C "):
-            ts = _ts(line[4:].strip())
-            day = ts.astimezone(timezone.utc).date() if ts else day
-            first = first or day
-            continue
-        m = _LINE_RE.match(line)
-        if m and day:
-            matched = True
-            nid, status = m.groups()
-            created.setdefault(nid, day)
-            if status in CLOSED:
-                closed.setdefault(nid, day)
+    for when, files in diffs.log_records(log):   # brain.diffs: the engine's one reader
+        ts = _ts(when)
+        day = ts.astimezone(timezone.utc).date() if ts else day
+        first = first or day
+        for line in diffs.lines(files, "+"):
+            m = _LINE_RE.match(line)
+            if m and day:
+                matched = True
+                nid, status = m.groups()
+                created.setdefault(nid, day)
+                if status in CLOSED:
+                    closed.setdefault(nid, day)
     if not matched and first:
         created, closed = _timeline_flow(store)
     if not first:
