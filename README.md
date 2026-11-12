@@ -86,6 +86,10 @@ with its `generator`, `projected`), `node_types` (each with a line that says wha
 `required_props`, `ids`, `commands`, `views`, `checks`, `projection` (its GitNexus template and colours), `lifecycle`
 (the typologies that may take it, the stages that propose it) and `examples`: fictitious nodes and edges, ids
 `example-*` (or a fictitious repo `example` where the engine fixes an id's shape: `repo-example`, `code:example:...`).
+The `lifecycle` ids (`software`, `api-cli`, `research`, ...; `explore`, `build`, `launch`, `deliver`; `*` for any)
+follow one typology catalog still to come (`wi-brain-typology-catalog`), shared with the `brain` command's project
+templates and the standards' profiles and stages; an id this engine does not know is tolerated: a layer that names
+one is read, and `layers propose` with one proposes the layers open to any typology at any stage.
 
 ```bash
 research_graph layers                                   # the catalogue; * marks the --store's layers

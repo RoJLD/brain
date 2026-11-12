@@ -107,14 +107,14 @@ def context(m, prose: dict, ctx: dict) -> list[str]:
     out = _intro(prose, "context")
     reg = ctx.get("registry") or {}
     if not reg:
-        return out + ["No project registry (`projects.yaml`) at this repo's root: its context is the registry of the "
-                      "brain that tracks it."]
-    out += ["| Project | Access | Repos | Title |", "|---|---|---|---|"]
-    for name, row in reg.items():
-        mark = " (this one)" if name == ctx.get("project") else ""
-        out.append(f"| `{name}`{mark} | {row['access']} | {', '.join(row['repos']) or '-'} | "
-                   f"{_ref()._cell(row['title'])} |")
-    return out
+        out += ["No project registry (`projects.yaml`) at this repo's root: its context is the registry of the brain "
+                "that tracks it."]
+    else:
+        out += ["| Project | Access | Repos | Title |", "|---|---|---|---|"]
+        out += [f"| `{name}`{' (this one)' if name == ctx.get('project') else ''} | {row['access']} | "
+                f"{', '.join(row['repos']) or '-'} | {_ref()._cell(row['title'])} |" for name, row in reg.items()]
+    read = str(ctx.get("read") or "").rstrip("\n")   # the read projects' pinned documents (brain.docjoin)
+    return out + (["", *read.split("\n")] if read else [])
 
 
 def own_registry(root: Path) -> dict:

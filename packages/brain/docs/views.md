@@ -119,7 +119,7 @@ its source; every statement carries its status and its id, its source in the gra
 |---|---|
 | 1. Introduction and goals | `goals`; the pending milestones and their triggers (`props.trigger`) |
 | 2. Constraints | the `Rule` nodes, the decisions that set them (`decided_by`, else « without a decision ») and what enforces them (`enforced_by`, else « by judgement ») |
-| 3. Context and scope | the repo's own registry (`projects.yaml` at its root, read as declared: the reference never depends on a machine's other brains): each project, its access, its repos by name and its title, the one registered at this root marked; a repo whose registry lives elsewhere says so |
+| 3. Context and scope | the repo's own registry (`projects.yaml` at its root, read as declared: the reference never depends on a machine's other brains): each project, its access, its repos by name and its title, the one registered at this root marked; a repo whose registry lives elsewhere says so; then the projects read only, from their pinned docgraph/v1 documents ([docgraph.md](docgraph.md)) |
 | 4. Solution strategy | `strategy`; the decisions `key_decisions` names (one the graph does not hold is said) |
 | 5. Building blocks | the modules and their pages |
 | 6. Runtime view | the `Hook`, `Workflow`, `Skill`, `Plugin` and `McpServer` nodes |
