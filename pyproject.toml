@@ -25,7 +25,7 @@ version = {attr = "research_graph.__version__"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-research_graph = ["templates/*"]
+research_graph = ["templates/*", "templates/layers/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

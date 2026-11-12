@@ -1,0 +1,24 @@
+# DDR (decision discussion record). Schema: brain/schemas/ddr.schema.json
+v: 1
+id: ddr-2026-11-12-pick-a-colour
+kind: decision
+title: Pick a colour
+question: Which colour?
+options:
+- label: Teal
+  consequences: calm
+- label: Red
+  consequences: loud
+recommendation:
+  option: Teal
+  why: calm
+multi_select: false
+other_allowed: true
+blocking: false
+status: pending
+asked:
+  at: '2026-11-12T11:00:34Z'
+  by: unknown
+  via: cli
+links:
+  project: brain

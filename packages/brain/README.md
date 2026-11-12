@@ -167,7 +167,9 @@ a symptom fix (an added `type: ignore` or `noqa`, a skipped test, an `except` th
 retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root cause: ...` and
 `Justified: <unit>: <reason>` are read from the PR body (`--pr-body FILE`, `-` for stdin) and the range's commit
 messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
-`audit: {max_lines: 1000, complexity: 15}`.
+`audit: {max_lines: 1000, complexity: 15}`. A frozen store (a brain an older engine wrote, under `tests/fixtures/stores/`
+in any test folder) is data a test reads, not code or docs: the shape signals and the docs set leave it out; any
+other fixture, a fake binary a test runs included, is reviewed.
 
 The scout also reads four cheap norms in the AST of each Python file a change touches (`brain.norms`):
 `norm.timeout` (a `subprocess.run`, `call`, `check_call`, `check_output` or `urlopen` without `timeout=`, a
@@ -377,8 +379,10 @@ claude plugin install brain-core@brain
 A template is data and a manifest, never code: `template.yaml` gives its `name`, `version`, the `engine` versions that
 can render it (`">=0.2.2"`), a `title`, its `graphs` (a list of `{name, store, schema}`, the brain's main store
 first, each started by `research_graph init`, every later one with its board and roadmap beside its store and no
-decision log, also when the first exists already; `schema: default` only for now) and its `files` (`{the brain's path:
-the template's file}`, `""` for an empty one), rendered with `{owner}`, `{owner_q}` (quoted for YAML or JSON),
+decision log, also when the first exists already; `schema: default`, the brain's base, or `layers: [records,
+research, ...]`, its schema composed from research_graph's catalogue of layers with what they require and the
+template's own layers, `layers/<name>.yaml` in its folder: `research_graph layers`) and its `files` (`{the brain's
+path: the template's file}`, `""` for an empty one), rendered with `{owner}`, `{owner_q}` (quoted for YAML or JSON),
 `{name}` and `{title_q}`. It must write what config.json names (`projects.yaml`, `rules/global.md`,
 `source/packs.yaml`, `memory/`, `records/`); the engine writes config.json, the graph stores and the Claude
 marketplace itself. `--template DIR` takes a folder of your own holding one. A template is public data; the owner's
@@ -775,12 +779,27 @@ government, association, unit, office, team, folder, project, tenant); `config.j
 type or one its parent does not accept, and a class floor under an ancestor's (a guard only tightens); it warns past six
 levels. `brain scopes [--scope REF] [--depth N] [--archived] [--lang fr] [--types] [--json]` prints the tree with the
 projects under each node, and `brain sync` writes `notes/scopes_graph.md` (generated, never edited). `brain status
---scope REF` shows the projects of a node's subtree, with the totals when it holds several (`brain resume` and `brain
-digest` take it too, one pack or digest per project): REF is an id, a path of
-ids (`pro/acme`), `global` (as `--all`), `.` (the project of the folder) or `..` (its parent); `--project` and `--all`
+--scope REF` shows the projects of a node's subtree, with the totals when it holds several, and so do `brain resume`,
+`digest`, `queue`, `tui`, `usage`, `cost`, `audit` and `permissions` (with `--requests`, `permissions --scope` keeps its
+older meaning, a level's start): REF is an id, a path of ids (`pro/acme`), `global` (as `--all`), `.` (the project of the folder) or `..` (its parent); `--project` and `--all`
 stay. Without `scopes.yaml` and `parent:`, every project sits under Global and nothing changes. An older engine
 reads `parent:` and `scope_types` as unknown keys (a note; refused in strict mode, CI) and refuses `parent:` on a
 read-only entry or a mount: add them once every machine and the brain repo's CI run the release that knows them.
+
+**The deny list from the tree.** With `config.json` `public.deny_from_tree: true`, `public.deny.repos` gains, after the
+hand list, the name of every project whose class floor along its chain is `private` or stricter (a container's
+`classes: {floor: private}` covers its whole subtree, sub-projects, read-only projects and mounts included; a
+project marked on its own entry, `classes: {floor: private}` in `projects.yaml`, read-only entries and mounts too,
+counts as well, and its floor also binds its stores in `brain classes`) and the
+names of its repos (`brain audit`'s, and their folders), a repo of `public.repos` left out: a private project placed in
+the tree is denied by `brain check --public` and the public guard without a hand edit, and the hand list keeps the
+people, users, hosts and paths. `brain scopes --deny` prints the generated terms. With it on, a `scopes.yaml` or a
+registry that cannot be read, a tree file named but missing, no tree at all, or an error of the tree's check (an
+unknown parent, a floor that is no class) makes the public and secrets guards refuse: the list would miss terms. A
+term is a whole word matched without case: a private project or repo named after a common word (`data`) would block
+the engine's own text, so rename it, or keep it out of a private subtree. Off by default. An older engine reads the key
+as unknown and generates nothing: keep the repos in the hand list until every machine and the brain repo's CI run the
+release that knows it.
 
 ### Edges between stores
 
