@@ -273,16 +273,21 @@ def unused_features(store: Path | None, known: dict[str, str], ran: Counter,
     by_module: dict[str, list[str]] = {}
     for unit, module in known.items():
         by_module.setdefault(module, []).append(unit)
+    used = (lambda u: ran_count(u, ran) or u in (via or {}))   # it ran, or is reached another way
     out = []
     for fid, node in sorted(m.features.items()):
         if node.get("status") != "have" and (node.get("props") or {}).get("status") != "have":
             continue
-        mods = {re.sub(r"\.py(::.*)?$", "", ref.rsplit("/commands/", 1)[1]) for ref in m.code(fid)
-                if "/commands/" in ref}
-        cmds = sorted(u for mod in mods for u in by_module.get(mod, []))
-        if cmds and not any(ran_count(u, ran) or u in (via or {}) for u in cmds):
+        cmds = _feature_commands(m, fid, by_module)
+        if cmds and not any(used(u) for u in cmds):
             out.append({"feature": fid, "commands": cmds})
     return out
+
+
+def _feature_commands(m, fid: str, by_module: dict[str, list[str]]) -> list[str]:
+    """The units of the command modules a feature's implemented_by names (commands/<module>.py)."""
+    mods = {re.sub(r"\.py(::.*)?$", "", ref.rsplit("/commands/", 1)[1]) for ref in m.code(fid) if "/commands/" in ref}
+    return sorted(u for mod in mods for u in by_module.get(mod, []))
 
 
 def _subsessions(since: datetime, until: datetime) -> int | None:
@@ -312,23 +317,30 @@ def report(known: dict[str, str], ran: Counter, sessions: dict, since: datetime,
         rows.append({"command": unit, "module": known[unit], "runs": n, "by_session": min(t, n) if n else t,
                      "otherwise": max(n - t, 0)})
     rows.sort(key=lambda r: (-r["runs"], r["command"]))
-    silent = [r["command"] for r in rows if not ran_count(r["command"], ran) and not r["by_session"]]
-    never = [c for c in silent if c not in via]
-    reached = [{"command": c, "via": via[c]} for c in silent if c in via]
-    proposals = (_by_hand(sessions, hints_on) + _coordination(ran, subsessions)
-                 + [{"kind": "wire", "count": len(f["commands"]),
-                     "what": f"{f['feature']} is have, and its commands never ran: {', '.join(f['commands'])}",
-                     "propose": "wire it (a hook, a procedure), document it, or mark it partial or retire it"}
-                    for f in feats or []])
-    if never:
-        proposals.append({"kind": "wire", "count": len(never),
-                          "what": f"{len(never)} command(s) never ran in the period",
-                          "propose": "each wired (a hook, a schedule, a procedure), documented, or retired"})
+    never, reached = _silent(rows, ran, via)
+    proposals = _by_hand(sessions, hints_on) + _coordination(ran, subsessions) + _wire(feats or [], never)
     return {"since": since.isoformat(timespec="seconds"), "until": until.isoformat(timespec="seconds"),
             "sessions": sessions.get("sessions", 0), "subsessions": subsessions, "commands": rows, "never_run": never,
             "reached_otherwise": reached, "reads": sessions.get("reads") or {}, "edits": sessions.get("edits") or {},
             "features": feats or [],
             "proposals": proposals}
+
+
+def _silent(rows: list[dict], ran: Counter, via: dict[str, str]) -> tuple[list[str], list[dict]]:
+    """The units that never ran: (those that are a gap, those reached another way with how: RUNS_VIA)."""
+    silent = [r["command"] for r in rows if not ran_count(r["command"], ran) and not r["by_session"]]
+    return [c for c in silent if c not in via], [{"command": c, "via": via[c]} for c in silent if c in via]
+
+
+def _wire(feats: list[dict], never: list[str]) -> list[dict]:
+    """The wire proposals: each have feature whose commands never ran, then the commands that never ran."""
+    out = [{"kind": "wire", "count": len(f["commands"]),
+            "what": f"{f['feature']} is have, and its commands never ran: {', '.join(f['commands'])}",
+            "propose": "wire it (a hook, a procedure), document it, or mark it partial or retire it"} for f in feats]
+    if never:
+        out.append({"kind": "wire", "count": len(never), "what": f"{len(never)} command(s) never ran in the period",
+                    "propose": "each wired (a hook, a schedule, a procedure), documented, or retired"})
+    return out
 
 
 def _by_hand(sessions: dict, hints_on: bool) -> list[dict]:
