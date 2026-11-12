@@ -13,6 +13,19 @@ GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT
            "GIT_COMMITTER_EMAIL": "t@example.invalid", "GIT_CONFIG_NOSYSTEM": "1"}
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_cmdline_main(config):
+    """``-n N`` with no ``--dist``: pytest-xdist's worksteal, not its default load (wi-brain-test-speed-2). load hands
+    each worker a fixed share up front, so the suite ends on the one or two workers left with the git-heavy tests
+    while the others idle; worksteal lets an idle worker take tests still queued on a busy one. Runs before xdist's
+    own hook, which turns ``dist`` from "no" to "load"; an explicit ``--dist`` is kept, ``-n 0`` stays one process.
+    A conftest hook rather than ``--dist`` in addopts: a run from the repo root reads the root's pytest config, whose
+    research-graph job has no xdist."""
+    if config.pluginmanager.hasplugin("xdist") and config.getoption("dist", "no") == "no" \
+            and config.getoption("numprocesses", None) not in (None, 0):
+        config.option.dist = "worksteal"
+
+
 @pytest.fixture(autouse=True)
 def brain_home(tmp_path, monkeypatch):
     """Every test writes its ledger to a temporary BRAIN_HOME, never ~/.brain."""

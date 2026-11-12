@@ -1033,7 +1033,7 @@ with `plugin: null`, behaves as before, and a plugin that cannot load fails its 
 From a checkout of this repo, with research-graph from the same checkout:
 
 ```bash
-pip install -e . && pip install --no-deps -e packages/brain && pip install pyyaml pytest pytest-xdist
+pip install -e . && pip install --no-deps -e packages/brain && pip install pyyaml pytest "pytest-xdist>=3.5"
 pytest packages/brain -n auto
 ```
 
@@ -1043,8 +1043,10 @@ They read only fixtures, never a real brain's graph, records or rendered files: 
 `brain check` and `brain audit`.
 
 `-n auto` runs them in parallel, one pytest-xdist worker per core: each test has its own temporary folder, `BRAIN_HOME`
-and environment, so no test shares state with another. A git repository in a test is a copy of a template made once
-per worker (`conftest.git_init`, the `git_repo` and `make_repo` fixtures), not a `git init`. The test that calls the
+and environment, so no test shares state with another. With `-n` and no `--dist`, `conftest.py` picks xdist's
+`worksteal` scheduling (pytest-xdist 3.5 or later): a worker that runs out of tests takes some still queued on a busy
+one, so the run no longer ends on one or two workers while the others idle; `--dist load` gives the old scheduling
+back. A git repository in a test is a copy of a template made once per worker (`conftest.git_init`, the `git_repo` and `make_repo` fixtures), not a `git init`. The test that calls the
 real docker client is marked `docker`: the CI runs it apart, on one process (`pytest packages/brain -m docker`).
 
 ## Releasing
