@@ -153,16 +153,33 @@ def _modules_at(store: Path, top: Path, sha: str, store_at: Path) -> None:
 
 # --- the sections it adds ---------------------------------------------------------------------------------------------
 
+def _decisions_moved(now: reference.Model, before: reference.Model) -> tuple[list, list[str]]:
+    """(the units taken since, newest first; the ids reversed since)."""
+    old = {u.id: u for u in before.units}
+    taken = sorted((u for u in now.units if u.id not in old), key=lambda u: (u.date, u.id), reverse=True)
+    return taken, sorted(u.id for u in now.units if u.superseded and u.id in old and not old[u.id].superseded)
+
+
+def _of_type(m: reference.Model, ntype: str) -> dict:
+    return {nid: n for nid, n in m.nodes.items() if n.get("type") == ntype}
+
+
+def _features_moved(now: reference.Model, before: reference.Model) -> list[tuple[str, str, str]]:
+    """(feature, its status before or « new », now) of the features whose status changed."""
+    return sorted((f, before.nodes.get(f, {}).get("status") or "new", n.get("status"))
+                  for f, n in _of_type(now, "Feature").items() if before.nodes.get(f, {}).get("status") != n.get("status"))
+
+
+def _done_since(now: reference.Model, before: reference.Model) -> list[str]:
+    return sorted(i for i, n in _of_type(now, "WorkItem").items()
+                  if n.get("status") == DONE and before.nodes.get(i, {}).get("status") != DONE)
+
+
 def changes(now: reference.Model, before: reference.Model, since: str) -> list[str]:
     """« Changes since <since> »: decisions taken and reversed, features whose status changed, items done, modules
     added."""
-    old_units = {u.id: u for u in before.units}
-    taken = sorted((u for u in now.units if u.id not in old_units), key=lambda u: (u.date, u.id), reverse=True)
-    reversed_ = sorted(u.id for u in now.units if u.superseded and u.id in old_units and not old_units[u.id].superseded)
-    feats = sorted((f, before.nodes.get(f, {}).get("status") or "new", n.get("status")) for f, n in now.nodes.items()
-                   if n.get("type") == "Feature" and before.nodes.get(f, {}).get("status") != n.get("status"))
-    done = sorted(i for i, n in now.nodes.items() if n.get("type") == "WorkItem" and n.get("status") == DONE
-                  and before.nodes.get(i, {}).get("status") != DONE)
+    taken, reversed_ = _decisions_moved(now, before)
+    feats, done = _features_moved(now, before), _done_since(now, before)
     mods = sorted({str(x["id"]) for x in now.registry} - {str(x["id"]) for x in before.registry})
     out = ["", f"## Changes since {since}", ""]
     out += _sub(f"Decisions taken: {len(taken)}", [f"- {reference._unit_line(u)}" for u in taken])
@@ -177,30 +194,42 @@ def _sub(title: str, lines: list[str]) -> list[str]:
     return [f"### {title}", ""] + (lines or ["None."]) + [""]
 
 
-def target(m: reference.Model, mid: str) -> list[str]:
-    """The target view of a pending milestone: the items and features planned in it (``part_of``, nested
-    milestones followed), the features its items deliver too."""
+def _planned_in(m: reference.Model, mid: str) -> set[str]:
+    """What is part_of ``mid``, nested milestones followed."""
     members, todo = set(), [mid]
     while todo:
         cur = todo.pop()
         for e in m.edges:
-            if e.get("type") == "part_of" and str(e["to"]) == cur and str(e["from"]) not in members:
-                members.add(str(e["from"]))
-                if m.nodes.get(str(e["from"]), {}).get("type") == "Milestone":
-                    todo.append(str(e["from"]))
-    items = sorted(x for x in members if m.nodes.get(x, {}).get("type") == "WorkItem")
+            src = str(e["from"])
+            if e.get("type") == "part_of" and str(e["to"]) == cur and src not in members:
+                members.add(src)
+                if m.nodes.get(src, {}).get("type") == "Milestone":
+                    todo.append(src)
+    return members
+
+
+def _features_in(m: reference.Model, members: set[str], items: list[str]) -> list[str]:
+    """The features planned in a milestone: part_of it, or delivered by its items."""
     feats = {x for x in members if m.nodes.get(x, {}).get("type") == "Feature"}
     feats |= {str(e["to"]) for e in m.edges if e.get("type") == "delivers" and str(e["from"]) in items
               and m.nodes.get(str(e["to"]), {}).get("type") == "Feature"}
+    return sorted(feats)
+
+
+def target(m: reference.Model, mid: str) -> list[str]:
+    """The target view of a pending milestone: the items and features planned in it (``part_of``, nested
+    milestones followed), the features its items deliver too."""
+    members = _planned_in(m, mid)
+    items = sorted(x for x in members if m.nodes.get(x, {}).get("type") == "WorkItem")
+    feats = _features_in(m, members, items)
     trig = (m.nodes.get(mid, {}).get("props") or {}).get("trigger")
     out = ["", f"## Target: at the end of {mid}", ""]
     out += [f"Reached when: {reference._short(trig, 200)}", ""] if trig else []
     out += _sub(f"Features: {len(feats)}", [f"- `{f}` ({m.nodes[f].get('status')}) {reference._title(m, f)}"
-                                           for f in sorted(feats)])
-    left = [i for i in items if m.nodes[i].get("status") != DONE]
-    return out + _sub(f"Items: {len(items) - len(left)} done, {len(left)} left",
-                      [f"- [{'x' if m.nodes[i].get('status') == DONE else ' '}] `{i}` {reference._title(m, i)}"
-                       for i in items])
+                                           for f in feats])
+    done = [i for i in items if m.nodes[i].get("status") == DONE]
+    return out + _sub(f"Items: {len(done)} done, {len(items) - len(done)} left",
+                      [f"- [{'x' if i in done else ' '}] `{i}` {reference._title(m, i)}" for i in items])
 
 
 # --- the whole render -------------------------------------------------------------------------------------------------
