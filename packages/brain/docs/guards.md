@@ -64,9 +64,11 @@ What it reads, at zero token:
   can change (`set_session_title`); a title starting « Coordination du Brain » only protects a live session from the
   `archive` case. `coordinator-report` is no coordinator.
 - **A chain root**: a session the owner started (its app file names no parent) whose id the owner marked with
-  `brain handover root <id>` in their own terminal (`<BRAIN_HOME>/handover/roots.json`; the guard refuses the command
-  and any write into that file to every session, like `brain usage allow`). A root hands over without a coordinator's
-  name, and its first successor's parent condition holds through it (wi-brain-handover-command). A marked id whose
+  `brain handover root <id>` in their own terminal (`<BRAIN_HOME>/handover/roots.json`; the guard refuses to a
+  session any command with `handover root` in its words and any write into that file or its folder, whatever the
+  spelling, like `brain usage allow`; a roots.json reached through a link marks nothing). A root hands over without a coordinator's
+  name, and the coordinators it starts pass the parent condition through it until the owner clears the mark
+  (wi-brain-handover-command). A marked id whose
   app file names a parent is no root.
 - **Live on this machine**: `running`, `idle`, `asking` or `stale`; not archived, and not `unknown` (no transcript).
 - **Detached**: the app's `lineageDetached` (`brain.sessions` reads it as `detached`).

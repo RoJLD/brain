@@ -709,8 +709,8 @@ those conditions before the calls, at zero token, from the files the guard reads
 - **`brain handover root [ID] [--reason TEXT] [--clear]`**: the owner's, in their own terminal (refused in a Claude
   Code session's shell, and by the guard to every session, like `brain usage allow`): a session the owner started
   (no parent in the app's files) marked a chain root, `<BRAIN_HOME>/handover/roots.json`. A root hands over without a
-  coordinator's name, and its first successor's parent condition holds through it; a marked id that a session
-  started is no root. No ID lists the marks.
+  coordinator's name, and the coordinators it starts pass the parent condition through it, until `--clear`; a
+  marked id that a session started, or that the app's files do not know, is no root. No ID lists the marks.
 
 ## Lessons
 

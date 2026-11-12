@@ -1765,9 +1765,13 @@ def roots_file() -> Path:
 
 
 def chain_roots() -> dict[str, dict]:
-    """{app id: {at, reason}} of the chain roots the owner marked; {} when the file is missing or unreadable."""
+    """{app id: {at, reason}} of the chain roots the owner marked; {} when the file is missing or unreadable, or when
+    it or its folder is a link (the mark is a regular file where the engine writes it)."""
+    f = roots_file()
+    if os.path.normcase(os.path.realpath(f)) != os.path.normcase(os.path.abspath(f)):
+        return {}
     try:
-        data = json.loads(roots_file().read_text(encoding="utf-8"))
+        data = json.loads(f.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     rows = data.get("roots") if isinstance(data, dict) else None
@@ -1917,21 +1921,31 @@ def _usage_override(cmds, shell: str) -> str | None:
     return None
 
 
+NTFS_STREAM = re.compile(r"(?<=[^\\/:]):[^\\/]*$")   # file.json::$DATA, file.json:name: the file itself on NTFS
+
+
+def _real(target) -> str:
+    """A path as the file system resolves it: its NTFS stream suffix dropped, links followed, case folded."""
+    text = NTFS_STREAM.sub("", str(target)) if os.name == "nt" else str(target)
+    return os.path.normcase(os.path.realpath(os.path.abspath(text)))
+
+
 def _is_roots(target) -> bool:
-    """Whether ``target`` is the file of the chain roots the owner marked (roots_file)."""
-    return os.path.normcase(os.path.abspath(str(target))) == os.path.normcase(os.path.abspath(str(roots_file())))
+    """Whether ``target`` is the file of the chain roots the owner marked (roots_file), or the folder that holds it (a
+    copy, move, link or removal into or of it): any spelling the file system resolves to them (review of the PR)."""
+    return _real(target) in (_real(roots_file()), _real(roots_file().parent))
 
 
 def _root_override(cmds, shell: str) -> str | None:
-    """What marks a chain root for a session: brain handover root (python -m brain too), or a shell write into its
-    file (wi-brain-handover-command)."""
+    """What marks a chain root for a session (wi-brain-handover-command): any command whose words hold ``handover``
+    then ``root`` (quoted or not) or a word the guard cannot resolve (``$x``, ``%x%``, a backquote), whatever runs it
+    (brain, python -I -m brain, a wrapper); or a shell write into its file or the folder that holds it."""
     for words, _, _, _ in actions(cmds, shell):
         low = [w.lower() for w in words]
-        if (_prog(words[0]) == "brain" or "brain" in low[1:3]) and any(
-                a == "handover" and b == "root" for a, b in zip(low, low[1:])):
+        if any(a == "handover" and (b == "root" or any(c in b for c in "$`%")) for a, b in zip(low, low[1:])):
             return "brain handover root"
     for what, target in shell_writes(cmds, shell):
-        if not isinstance(target, Unresolved) and _is_roots(target):
+        if _is_roots(target):   # an unresolved target counts by its folder: a write judged in the marks' folder
             return f"{what} into {target}"
     return None
 
@@ -1976,7 +1990,8 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
         if target and _is_usage_allow(target):
             return ("override", f"{tool} refused: {target} lifts the usage guard; brain usage allow is "
                                 f"{config.owner_of()}'s, in their own terminal", None)
-        if target and _is_roots(target):
+        raw = str(inp.get(EDIT_TOOLS[tool]) or "")   # a tool's path is literal: file.json::$DATA holds no variable
+        if target and (_is_roots(target) or _is_roots(os.path.join(cwd, raw))):
             return ("override", f"{tool} refused: {target} marks the coordinators' chain roots; brain handover root "
                                 f"is {config.owner_of()}'s, in their own terminal", None)
         if target and _autostart(target) and "scheduled" in owner_categories():

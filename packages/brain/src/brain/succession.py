@@ -13,9 +13,11 @@ zero token, from the same files the guard reads:
   successors (the coordinators it started, live, detached), and its predecessor (the session that started it), which
   the incoming coordinator archives first (a session's own archive is refused);
 - :func:`mark_root` and :func:`clear_root` are the owner's, in their own terminal (refused in a Claude Code session's
-  shell; the guard refuses ``brain handover root`` and a write into the file to every session): a chain root is a
+  shell; the guard refuses ``brain handover root`` and a write into the file or its folder to a session, like
+  ``brain usage allow``: it holds against a mistake, not against a script that calls the engine): a chain root is a
   session the owner started (no parent in the app's files) and marked, ``<BRAIN_HOME>/handover/roots.json``. A root may
-  hand over without a name or a coordinator parent, and its first successor's parent condition holds through it.
+  hand over without a name or a coordinator parent, and the coordinators it starts pass the parent
+  condition through it, until the owner clears the mark.
 
 The standard library and brain only.
 """
@@ -50,10 +52,11 @@ def _own_id(host: str | None, env=None) -> str:
     return host
 
 
-def note_name(name: str, now: float) -> str:
-    """``coordinator-<YYYY-MM-DD>-<name>.md``, the name made safe (a root has none: ``root``)."""
-    slug = NAME_SAFE.sub("-", (name or "root").lower()).strip("-") or "root"
-    slug = slug.removeprefix("coordinator-").removeprefix("coordinateur-") or "root"
+def note_name(name: str, now: float, host: str = "") -> str:
+    """``coordinator-<YYYY-MM-DD>-<name>.md``, the name made safe; a session without a name (a root) takes
+    ``root-<the first 8 hex digits of its app id>``, so that two of them never share a file."""
+    slug = NAME_SAFE.sub("-", (name or "").lower()).strip("-").removeprefix("coordinator-")
+    slug = slug or "root-" + (host.removeprefix("local_")[:8] or "x")
     return f"coordinator-{datetime.fromtimestamp(now, timezone.utc):%Y-%m-%d}-{slug}.md"
 
 
@@ -73,12 +76,34 @@ def write_note(body: str = "", *, host: str | None = None, name: str | None = No
     text = "\n".join(lines) + "\n\n" + (body.rstrip() + "\n" if body.strip() else "")
     d = paths.brain_home() / guards.HANDOVER_DIR
     d.mkdir(parents=True, exist_ok=True)
-    f = d / note_name(name, now)
+    f = d / note_name(name, now, host)
     if len(text.encode("utf-8")) > guards.HANDOVER_MAX:
         raise SuccessionError(f"the note is over {guards.HANDOVER_MAX} bytes: the guard would not read it; shorten it")
+    other = _first_id(f)
+    if other and other != host:
+        raise SuccessionError(f"{f} is {other}'s note: pass another --id, or remove it if it is stale")
     f.write_text(text, encoding="utf-8")
     os.utime(f, (now, now))
     return f
+
+
+def _first_id(f: Path) -> str:
+    """The first app id of an existing note's opening (whose note it is), '' when there is none."""
+    try:
+        m = guards.LOCAL_ID.search(f.read_text(encoding="utf-8", errors="replace")[:guards.HANDOVER_HEAD])
+    except OSError:
+        return ""
+    return m.group(0) if m else ""
+
+
+def read_body(path: str) -> str:
+    """A note's body from a file: UTF-8 (a BOM allowed), or UTF-16 with its BOM (PowerShell 5.1's ``>``)."""
+    raw = Path(path).read_bytes()
+    try:
+        text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise SuccessionError(f"{path} is neither UTF-8 nor UTF-16 with a BOM") from exc
+    return text.replace("\r\n", "\n")
 
 
 def _app(host: str) -> tuple[dict, object, dict]:
@@ -166,7 +191,7 @@ def lines(r: dict) -> list[str]:
 def _refused(env=None) -> str:
     env = os.environ if env is None else env
     return ("the chain root is the owner's mark, in their own terminal: not from a Claude Code session's shell "
-            "(CLAUDECODE is set)" if env.get("CLAUDECODE") else "")
+            "(CLAUDECODE is set)" if "CLAUDECODE" in env else "")
 
 
 def _load_roots() -> dict:
@@ -197,6 +222,8 @@ def mark_root(host: str, reason: str = "", *, now: float | None = None, env=None
     if not sessions.HOST_RE.match(host or ""):
         raise SuccessionError(f"{host!r} is not an app id (local_<uuid>)")
     m = sessions.app_meta(host)
+    if not m:
+        raise SuccessionError(f"{host} is not in the desktop app's session files on this machine")
     if m.get("parent"):
         raise SuccessionError(f"{host} was started by {m['parent']}, not by the owner: no chain root")
     now = time.time() if now is None else now

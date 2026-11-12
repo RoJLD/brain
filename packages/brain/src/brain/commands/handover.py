@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 
 from .. import succession
 
@@ -18,15 +17,16 @@ USAGE = """\
   brain handover check [--id ID] [--successor ID] [--json]   the guard's conditions before Remote Control: a
                  coordinator by name (or a chain root), started by one (or by a root), its note under 6 h old, its
                  successors live and detached; and its predecessor, which the incoming coordinator archives first;
-                 exit 1 when the hand-over would be refused, 2 when the app's files cannot be read
+                 exit 1 when this session may not hand over (with --successor: or Remote Control on for it would be
+                 refused), 2 when the app's files cannot be read
   brain handover root [ID] [--reason TEXT] [--clear]   {owner}'s, in their own terminal: mark the session they started
-                 as a coordinators' chain root (it hands over without a name; its successor's parent condition holds);
-                 no ID: the marked roots
+                 as a coordinators' chain root (it hands over without a name; the coordinators it starts pass the
+                 parent condition), until --clear; no ID: the marked roots
 """
 
 
 def _write(args) -> int:
-    body = sys.stdin.read() if args.from_ == "-" else Path(args.from_).read_text(encoding="utf-8") if args.from_ else ""
+    body = sys.stdin.read() if args.from_ == "-" else succession.read_body(args.from_) if args.from_ else ""
     f = succession.write_note(body, host=args.id, successor=args.successor or "")
     print(f"hand-over note written: {f}")
     print("next: brain handover check, then the start, Remote Control on for the successor, the children told, "
@@ -37,10 +37,12 @@ def _write(args) -> int:
 def _check(args) -> int:
     r = succession.check(args.id, successor=args.successor or "")
     print(json.dumps(r, indent=1, sort_keys=True) if args.json else "\n".join(succession.lines(r)))
-    return 0 if r["ok"] else 1
+    return 0 if r["ok"] and (r["on"] or not args.successor) else 1
 
 
 def _root(args) -> int:
+    if not args.host and args.clear:
+        raise succession.SuccessionError("--clear needs the root's ID")
     if not args.host:
         rows = succession.roots()
         for h, r in sorted(rows.items()):
@@ -51,7 +53,8 @@ def _root(args) -> int:
         print(f"{args.host}: " + ("mark removed" if succession.clear_root(args.host) else "was not marked"))
         return 0
     succession.mark_root(args.host, args.reason or "")
-    print(f"{args.host}: marked a coordinators' chain root (it may hand over; its successor's parent condition holds)")
+    print(f"{args.host}: marked a coordinators' chain root (it may hand over; the coordinators it starts pass "
+          "the parent condition)")
     return 0
 
 
