@@ -378,33 +378,38 @@ class Server:
         return out
 
     def read_resource(self, uri: str) -> str:
-        if not isinstance(uri, str) or not uri.startswith("brain://"):
+        """A resource's text; RpcError RESOURCE_NOT_FOUND for a URI that names nothing this server serves (only
+        what resources() lists, or an ADR: never a path outside them)."""
+        kind, _, rest = uri[len("brain://"):].partition("/") if isinstance(uri, str) and uri.startswith("brain://") \
+            else ("", "", "")
+        reader = {"rules": self._rules, "procedures": self._procedure, "decisions": self._decisions}.get(kind)
+        text = reader(rest) if reader else None
+        if text is None:
             raise RpcError(RESOURCE_NOT_FOUND, f"resource not found: {uri}")
-        kind, _, rest = uri[len("brain://"):].partition("/")
-        src = self.source() if kind in ("rules", "procedures") else None
-        if kind == "rules":
-            rf = src.rule_files.get(unquote(rest))
-            if rf is not None:
-                return rf.render()
-        elif kind == "procedures":
-            name, _, rel = rest.partition("/")
-            proc = src.procedures.get(unquote(name))
-            f = proc.files.get(unquote(rel)) if proc else None
-            if f is not None:
-                return f.read_text(encoding="utf-8", errors="replace")
-        elif kind == "decisions" and not rest:
-            f = self.root / DECISIONS
-            if f.is_file():
-                rows = [f"- {d} — {t}" for d, t in ADR_HEADING.findall(f.read_text(encoding="utf-8"))]
-                return "# The decision log\n\n" + "\n".join(rows) + "\n"
-        elif kind == "decisions":
+        return text
+
+    def _rules(self, rest: str) -> str | None:
+        rf = self.source().rule_files.get(unquote(rest))
+        return rf.render() if rf is not None else None
+
+    def _procedure(self, rest: str) -> str | None:
+        name, _, rel = rest.partition("/")
+        proc = self.source().procedures.get(unquote(name))
+        f = proc.files.get(unquote(rel)) if proc else None
+        return f.read_text(encoding="utf-8", errors="replace") if f is not None else None
+
+    def _decisions(self, rest: str) -> str | None:
+        if rest:   # one ADR, through brain adr show
             ref = unquote(rest)
             if ref.lstrip().startswith("-") or len(ref) > 300:
                 raise RpcError(INVALID_PARAMS, "not a valid ADR reference")
             text, failed = self.brain(["adr", "show", ref])
-            if not failed:
-                return text
-        raise RpcError(RESOURCE_NOT_FOUND, f"resource not found: {uri}")
+            return None if failed else text
+        f = self.root / DECISIONS
+        if not f.is_file():
+            return None
+        rows = [f"- {d} — {t}" for d, t in ADR_HEADING.findall(f.read_text(encoding="utf-8"))]
+        return "# The decision log\n\n" + "\n".join(rows) + "\n"
 
     def prompts(self) -> list[dict]:
         return [{"name": name, "title": str(p.meta.get("name") or name),
