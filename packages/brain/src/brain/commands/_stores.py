@@ -506,6 +506,7 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     for s in ids["stale"]:
         print(f"warning: shared_ids of {s}: no longer in two stores (remove it)")
     errors += _cross_store(projs, every)
+    errors += _unregistered_code_refs(root, projs, every)
     for line in render.registry_warnings(neutral.brain_root(root), projs) + _uncloned(root):
         print(f"warning: {line}")
     for e in errors:
@@ -536,6 +537,28 @@ def _cross_store(projs: list[projects.Project], every: bool) -> list[str]:
     for line in rep.dangling if not every else []:
         print(f"warning: edge {line} (its store's check refuses it)")
     return [f"edge {line}" for line in rep.dangling] if every else []
+
+
+def _unregistered_code_refs(root: Path | None, projs: list[projects.Project], every: bool) -> list[str]:
+    """The active CodeRefs of the registry's stores whose repo no project registers
+    (wi-brain-audit-unregistered-coderef): errors with ``every`` (check --all), else warned. brain audit reports
+    them as coderef.dangling (P0); nothing would measure them otherwise."""
+    known = projects.repo_tokens(root)
+    found, read = [], set()
+    for p in projs:
+        for store in p.stores:
+            key = str(store.resolve()).lower()
+            if key in read or not (store / "nodes").is_dir():
+                continue
+            read.add(key)
+            for cid, status in projects.code_refs(store):
+                repo = cid[5:].partition(":")[0] if cid.startswith("code:") else ""
+                if status == "active" and repo and repo.lower() not in known:
+                    found.append(f"CodeRef {cid} ({p.name}): its repo {repo} is in no project's repos: (register "
+                                 "it, point the CodeRef at a registered repo, or retire it)")
+    for line in found if not every else []:
+        print(f"warning: {line}")
+    return found if every else []
 
 
 def _uncloned(root: Path | None) -> list[str]:

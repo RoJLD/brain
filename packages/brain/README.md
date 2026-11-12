@@ -1101,6 +1101,12 @@ refused it). `brain check --all` reads every edge of every store and refuses one
 store of the registry on this machine (the store's own check refuses it too, as before), and counts the edges between
 stores; a brain's own root, checking its registry without `--all`, warns of it.
 
+A CodeRef (`code:<repo>:<path>`) names a repo by its name or its checkout's folder. An active one whose repo no
+project of the registry lists in its `repos:` (cloned here or not) is never measured: `brain check --all` refuses it,
+a brain's own root without `--all` warns of it, and `brain audit` reports it as `coderef.dangling` (P0, ruleset 11).
+A CodeRef of a repo another project registers, or of the project's own repo not cloned on this machine, stays « not
+measured here » (wi-brain-audit-unregistered-coderef).
+
 ## The Brain as an MCP server
 
 `brain mcp serve` serves the Brain to any MCP client ([`docs/mcp.md`](docs/mcp.md), `brain.mcpserver`): its rules,

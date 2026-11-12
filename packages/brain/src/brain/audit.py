@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
+import yaml
+
 from . import (
     config,
     feature_coverage,
@@ -53,7 +55,7 @@ from . import (
 from .inventory import AuditError
 from .mergedriver import HEAD_LINES
 
-RULESET = 10   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+RULESET = 11   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
 #               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
 #               (wi-brain-test-links-auto); 5: cmd.registry (wi-brain-cli-registry); 6: feature.coverage, info in
 #               the full audit, NEW in the scout for an added command or module (wi-brain-audit-feature-coverage); 7: the scout's norm lints
@@ -63,7 +65,9 @@ RULESET = 10   # 2: doc.links and test.links measured (wi-brain-doc-test-links);
 #               repos[].tools (wi-brain-lang-adapters); 9: doc.links and doc.dead-ref skip the technical
 #               reference's generated pages (wi-brain-reference-scout); 10: standards.gap, an applicable standard
 #               whose check covers neither a repo's language nor a tool it declares (wi-brain-standards-registry-
-#               consumers), measured only for a project that declares standards:
+#               consumers), measured only for a project that declares standards:; 11: coderef.dangling for an
+#               active CodeRef of a repo no project registers, P0 instead of not measured
+#               (wi-brain-audit-unregistered-coderef)
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "
@@ -99,7 +103,8 @@ CHECKS = {c.id: c for c in (
     Check("readme.exists", "P0", "new+left", "a tracked root README.md with 10 non-blank lines or more"),
     Check("doc.dead-ref", "P0", "new+left", "a doc names a module (-m) or a repo file that does not exist (a "
           "page of the technical reference aside)"),
-    Check("coderef.dangling", "P0", "new+left", "an active CodeRef points at a missing file or symbol"),
+    Check("coderef.dangling", "P0", "new+left", "an active CodeRef points at a missing file or symbol, or at a repo "
+          "no project of the registry registers"),
     Check("test.module", "class", "new+left", "a Python module with no test evidence"),
     Check("test.script", "class", "new+left", "a script no test runs"),
     Check("cmd.documented", "class", "new+left", "a console script or command module the docs never name"),
@@ -617,6 +622,16 @@ def _test_dir(rf: inventory.RepoFacts) -> str:
     return "tests" if "tests" in dirs or not dirs else dirs[0]
 
 
+def _repo_tokens(p: projects.Project, cfgs: list[projects.Repo]) -> set[str]:
+    """The repo tokens a CodeRef may name: the project's own repos (cloned here or not) and every repo of the
+    registry (projects.repo_tokens); a registry that does not load leaves the project's own."""
+    own = {c.name.lower() for c in cfgs} | {c.folder.lower() for c in cfgs if c.folder}
+    try:
+        return own | projects.repo_tokens(p.root)
+    except (OSError, ValueError, yaml.YAMLError):
+        return own
+
+
 def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inventory.Tree],
             only: set[str] | None = None, layered: set[str] | None = None,
             extra_dirs: dict[str, set] | None = None, linked: dict | None = None,
@@ -629,6 +644,7 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
     ``coverage``, each repo's coverage summary (test.coverage: a summary committed since is a rule of today).
     ``extra_dirs``: more top-level folders whose paths a doc names are checked (the scout passes the base tree's, so
     a folder a change empties still has its dead references)."""
+    registered = _repo_tokens(p, cfgs)   # before the filter: a repo of the project not cloned here is registered
     cfgs = [c for c in cfgs if c.name in trees]
     fm, flabel, fhome = _feature_model(p, cfgs, trees)
     fpublic, fstrict = _public_repos(p, cfgs) if fm is not None else (set(), False)
@@ -676,8 +692,14 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
                                                                 f"malformed CodeRef id: {exc}", "fix the id"))
                 continue
             target = facts.get(repo.lower())
-            if target is None:
+            if target is None and repo.lower() in registered:   # another project's repo, or one not cloned here
                 unregistered.setdefault(st.repo, []).append(repo)
+                continue
+            if target is None:   # no project registers it: nothing will ever measure it (P0, ruleset 11)
+                dangling.setdefault(st.repo, []).append(finding(
+                    st.repo, "coderef.dangling", cid, f"{repo} is a repo no project registers (projects.yaml repos:)",
+                    f"point it at a registered repo (code:<repo>:<path>), register the repo in a project's repos:, "
+                    f"or retire it (status: retired) in {st.repo}/{st.path}"))
                 continue
             t = target.tree
             file = f"src/{path}" if t.has(f"src/{path}") else path
@@ -909,8 +931,8 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
     if rf.layout.roots is None:
         pending.insert(0, {"check": "test.module", "owner": rf.layout.why})
     if unregistered:
-        pending.append({"check": "coderef.dangling", "owner": f"CodeRefs of unregistered repos: "
-                                                              f"{', '.join(unregistered)}"})
+        pending.append({"check": "coderef.dangling", "owner": f"CodeRefs of repos not measured here (another "
+                                                              f"project's, or not cloned): {', '.join(unregistered)}"})
     found.sort(key=lambda f: (f["severity"] if f["severity"] != "info" else "P9", f["check"], f["unit"]))
     counts = {s: sum(1 for f in found if f["severity"] == s) for s in SEVERITIES + ("info",)}
     classes = {k: sum(1 for u in rf.units if u.cls == k) for k in ("entry", "prod", "other")}
