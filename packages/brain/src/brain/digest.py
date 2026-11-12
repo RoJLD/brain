@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import actions, cost, decisions, notes, paths, projects, resume
+from . import actions, cost, decisions, diffs, notes, paths, projects, resume
 
 BUDGET = 4000  # tokens; 0: no limit
 WIDTH = resume.WIDTH
@@ -150,18 +150,17 @@ def git_closures(root: Path, store: Path, since: str = "", until: str = "") -> d
         rel = store.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
         return {}
-    args = ["log", "--format=%x00%cs", "-p", "-U0", "--no-color", "--no-renames", "--no-ext-diff"]
+    args = diffs.argv("log", "--format=%x00%cs", "-p", "-U0", "--no-renames")
     if since:
         args.append(f"--since={date.fromisoformat(since) - timedelta(days=1)}T00:00:00")
     if until:
         args.append(f"--until={date.fromisoformat(until) + timedelta(days=2)}T00:00:00")
     out = actions.git(root, *args, "--", f"{rel}/nodes", timeout=60)
     found: dict[str, tuple[str, str]] = {}
-    for chunk in out.split("\x00")[1:]:
-        day, _, diff = chunk.partition("\n")
+    for day, files in diffs.log_records(out):   # brain.diffs: a hunk's lines by its counts
         before: dict[str, str] = {}
         after: dict[str, tuple[str, str]] = {}
-        for ln in diff.splitlines():
+        for ln in diffs.lines(files):
             m = _GIT_NODE_RE.match(ln)
             if m and m.group(1) == "-":
                 before[m.group(2)] = m.group(4)

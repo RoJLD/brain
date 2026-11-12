@@ -279,7 +279,7 @@ def test_projects_yaml_keys(tmp_path, monkeypatch, read_mode):
     older = projects.check(root)
     shutil.copyfile(fixture("projects", "newer"), f)
     assert projects.check(root) == older
-    assert projects.raw(root)["mine"]["lifecycle"] == {"stage": "beta"}   # a newer brain's key (formats: is known)
+    assert projects.raw(root)["mine"]["expertise"] == ["cad"]   # a newer brain's key (lifecycle and formats: known)
     p = projects.load(root)["mine"]
     assert [r.lang for r in projects.repos_of(p)] == ["py"]
     # access: read and a second project at a shared root (0.3.0): additive, read by this engine as their own
@@ -287,7 +287,7 @@ def test_projects_yaml_keys(tmp_path, monkeypatch, read_mode):
     assert list(projects.readonly(root)) == ["upstream"]
     monkeypatch.setenv("BRAIN_STRICT", "1")
     assert projects.check(root) == older + [
-        "project mine: unknown key(s) lifecycle (brain projects --keys lists them)",
+        "project mine: unknown key(s) expertise (brain projects --keys lists them)",
         f"project mine: repos[0]: unknown key(s) ci (known: {', '.join(sorted(projects.REPO_KEYS))})"]
     with pytest.raises(projects.RepoError, match=r"repos\[0\]: unknown key\(s\) ci"):
         projects.repos_of(p)

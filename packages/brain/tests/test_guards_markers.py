@@ -10,7 +10,7 @@ import pytest
 from conftest import run_git
 from test_guards import bash, pwsh
 
-from brain import cli, graph, guards, markers, paths
+from brain import cli, diffs, graph, guards, markers, paths
 
 OURS, THEIRS, MID, BASE = "<" * 7 + " HEAD", ">" * 7 + " claude/other", "=" * 7, "|" * 7 + " base"
 CONFLICT = f"- {{id: wi-a, status: todo}}\n{OURS}\n- {{id: wi-b, status: doing}}\n{MID}\n" \
@@ -170,8 +170,8 @@ def test_a_path_with_a_space_keeps_its_heading(repo):
         (repo / name).write_text(f"# Guide\n\nLicense\n{MID}\n", encoding="utf-8")
     run_git(repo, "add", "-A")
     assert bash(repo, 'git commit -m "docs"') is None
-    assert markers.diff_path("+++ b/docs/User guide/index.md\t") == "docs/User guide/index.md"
-    assert markers.diff_path('+++ "b/caf\\303\\251 notes.md"\t') == "café notes.md"
+    assert diffs.header_path("b/docs/User guide/index.md\t", ("b/",)) == "docs/User guide/index.md"
+    assert diffs.header_path('"b/caf\\303\\251 notes.md"\t', ("b/",)) == "café notes.md"
     assert markers.scan_diff(f'+++ "b/caf\\303\\251 notes.md"\t\n@@ -0,0 +1,2 @@\n+License\n+{MID}\n') == []
 
 

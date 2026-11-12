@@ -254,7 +254,7 @@ def test_the_brief_lists_the_invariants_only_for_a_project_that_opts_in(engine, 
     (store / "nodes" / "items.yaml").write_text(yaml.safe_dump([
         {"id": "wi-a", "type": "WorkItem", "title": "A", "status": "todo"}]), encoding="utf-8")
     text = brief.render(brief.build(projects.get("demo"), "wi-a", coordinator="local_c", collisions_report=_NoReport()))
-    assert "## Invariants" not in text
+    assert "## Invariants: the project's standards" not in text   # the failure modes are always there
     registry("  standards: {profiles: [cli], stage: mvp}\n")
     b = brief.build(projects.get("demo"), "wi-a", coordinator="local_c", collisions_report=_NoReport())
     assert b.invariants == ["- `sw-atomic-writes` (persistence, check, proposed): sw-atomic-writes holds.",

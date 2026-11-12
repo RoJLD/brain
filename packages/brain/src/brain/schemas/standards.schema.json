@@ -28,7 +28,7 @@
         "title": {"type": "string", "description": "A short name, for the lists."},
         "statement": {"type": "string", "minLength": 1, "description": "What a project that follows it does, as one or two sentences that can be checked."},
         "why": {"type": "string", "description": "What goes wrong without it."},
-        "profiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/slug"}, "description": "The kinds of project it applies to (brain.standards.PROFILES), or [any]."},
+        "profiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/slug"}, "description": "The kinds of project it applies to: ids of the typology catalog (brain.typologies; brain.standards.PROFILES are its sub-profiles and entries), or [any]. A project of a sub-profile meets a row named for its entry."},
         "stage": {"type": "string", "description": "The stage from which it is required: prototype, mvp, v1 or scale (brain.standards.STAGES)."},
         "enforcement": {"type": "string", "description": "How it is enforced, from the cheapest: check (a machine check that blocks), measure (a number that trends), test-template (a test the brief asks for), review-lens (a question of the review), rule (judgement only)."},
         "check": {"type": "string", "minLength": 1, "description": "What enforces it: the tool, lint, test, measure or review question."},

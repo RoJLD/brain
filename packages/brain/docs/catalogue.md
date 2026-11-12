@@ -10,8 +10,8 @@ settings tab reads one and plans from it, so one Modules screen serves every cat
 off (a capability of the engine, a plug-in, a model, a service), a `brick` any group of modules, a `distribution`
 anything that ships them (the install itself, a package, an archive, a container image). The facts a module requires
 are those of the machine status document (`brain.status/v1`, [formats.md](formats.md#external-formats)); the
-typology ids a module or a preset names are the typology catalogue's (still to come), and an id a reader does not
-know is kept, never refused.
+typology ids a module or a preset names are the typology catalog's ([typologies.md](typologies.md)), and an id a
+reader does not know is kept, never refused.
 
 The schema is [`schemas/catalogue.schema.json`](../src/brain/schemas/catalogue.schema.json); the rules a schema cannot
 say are `brain.catalogue.validate`'s. Two invented documents, one of each side of the version, are in
