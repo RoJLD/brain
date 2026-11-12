@@ -801,7 +801,15 @@ those conditions before the calls, at zero token, from the files the guard reads
 
 - **`brain handover write [--from FILE|-] [--successor NAME] [--id ID]`**: the note,
   `<BRAIN_HOME>/handover/coordinator-<date>-<name>.md`, whose first line is `From <app id> (<name>), <date> UTC` (the
-  guard reads the first app id of its opening as whose note it is), then the successor's name and the body.
+  guard reads the first app id of its opening as whose note it is), then the successor's name and the body. With
+  `--successor`, the successor's brief beside it, `<note>.brief.txt` (never read as a note): its first line carries
+  the word `ultracode`, so ultracode is on at every hand-over (the keyword in a session's first message turns it on
+  there), then the note to read and the predecessor to archive first.
+- **`brain handover wait --successor ID [--id ID] [--timeout S] [--json]`**: before Remote Control on for the
+  successor, a bounded wait (default 120 s, at most 600) for its first turn, polling the app's files: exit 0 once it
+  is live, 1 when the bound passed with it still starting (the guard of 0.4.0 lets `on` through while it starts; on a
+  refusal that says it is unknown, wait again and retry once) or when it is no successor of this session (archived,
+  another's, not a coordinator), 2 when the app's files cannot be read.
 - **`brain handover check [--id ID] [--successor ID] [--json]`**: each condition (a coordinator by name or a chain
   root, started by one, its note under 6 hours old, its successors live and detached), whether `on` and `off` would
   pass, and the predecessor, which an incoming coordinator archives first (a session's own archive is refused); exit
@@ -1101,10 +1109,11 @@ show`, `adr show`, `spec show`, `next`, `check`) and the memory (a note read, a 
 carries by a reviewed PR). Every tool call passes the engine's guards before it runs, strictly, since other clients
 run no Claude Code hook (`brain.mcpguards`), and every answer passes the secret scan. It speaks stdio (the client
 launches it) or, with `--http`, Streamable HTTP on a loopback address only, each request carrying the machine's token
-(`brain ipc token --init` makes it once; it is never printed). `packages/brain/container/` defines its image (a user
-that is not root, the port published on 127.0.0.1 only). Nothing runs it on its own: a service or a remote endpoint is
-the owner's decision. `brain health ipc` checks every local service the Brain starts: loopback only, the token where
-the service can check one (the collector's is opt-in, config.json `ipc.require_token`), no container as root
+(`brain ipc token --init` makes it once; only `brain ipc otel-headers` prints it, for Claude Code's OTLP export).
+`packages/brain/container/` defines its image (a user that is not root, the port published on 127.0.0.1 only).
+Nothing runs it on its own: a service or a remote endpoint is the owner's decision. `brain health ipc` checks every
+local service the Brain starts: loopback only, the token where the service can check one (the collector's is opt-in,
+config.json `ipc.require_token`, its export's header given by `brain ipc otel-headers`), no container as root
 ([`docs/mcp.md`](docs/mcp.md), « The Brain's other local services »).
 
 ## The Claude Code hooks

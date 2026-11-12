@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import pytest
 import test_guards_remote_control as rc
 from test_guards import bash, decide, payload, pwsh
-from test_guards_remote_control import E, F, G, K, call, refused
+from test_guards_remote_control import E, F, G, K, X, call, refused
 
 from brain import cli, guards, sessions, succession
 
@@ -173,3 +173,108 @@ def test_write_reads_a_utf16_body(lab, tmp_path, capsys):
     assert "État: ok" in guards.handover_note(F).read_text(encoding="utf-8")
     body.write_bytes(b"\x93\xff\x00bad")
     assert cli.main(["handover", "write", "--id", F, "--from", str(body)]) == 2
+
+
+# --- the successor's brief with ultracode, and the wait for its first turn (the owner's decision of 2026-11-12) ---
+
+def test_write_with_a_successor_writes_its_brief_with_ultracode_first(lab, capsys):
+    assert cli.main(["handover", "write", "--id", F, "--successor", "coordinator-g"]) == 0
+    out = capsys.readouterr().out
+    note = guards.handover_note(F)
+    brief = note.with_name(note.stem + succession.BRIEF_SUFFIX)
+    assert str(brief) in out and "ultracode" in out
+    text = brief.read_text(encoding="utf-8")
+    first = text.splitlines()[0]
+    assert first.startswith("ultracode") and "coordinator-g" in first and F in first and "(coordinator-f)" in first
+    assert f"archive_session {F}" in text and note.as_posix() in text
+    assert not brief.name.endswith(".md") and guards.handover_note(F) == note   # the guard never reads it as a note
+
+
+def test_write_without_a_successor_writes_no_brief(lab):
+    note = succession.write_note("x", host=F)
+    assert not list(note.parent.glob(f"*{succession.BRIEF_SUFFIX}"))
+
+
+def test_wait_returns_at_once_for_a_live_successor(lab, capsys):
+    assert cli.main(["handover", "wait", "--id", F, "--successor", G]) == 0
+    assert f"{G} is idle after" in capsys.readouterr().out
+
+
+def test_wait_polls_a_starting_successor_until_its_first_turn(lab):
+    rc.starting(lab)
+    t = [0.0]
+    polls = []
+
+    def sleep(s):
+        polls.append(s)
+        t[0] += s
+        if len(polls) == 2:
+            lab.turn(G, "running")   # its first turn: the transcript is written
+
+    r = succession.wait(G, F, timeout=60, poll=3, clock=lambda: t[0], sleep=sleep)
+    assert r["ok"] and r["state"] == "running" and len(polls) == 2 and r["waited_s"] == 6.0
+
+
+def test_wait_is_bounded_and_says_a_starting_successor_still_passes(lab, capsys):
+    rc.starting(lab)
+    t = [0.0]
+
+    def sleep(s):
+        t[0] += s
+
+    r = succession.wait(G, F, timeout=10, poll=3, clock=lambda: t[0], sleep=sleep)
+    assert not r["ok"] and r["state"] == "starting" and "no first turn after 10 s" in r["why"]
+    assert cli.main(["handover", "wait", "--id", F, "--successor", G, "--timeout", "0"]) == 1
+    out = capsys.readouterr().out
+    assert "(starting)" in out and "wait again and retry once" in out
+    t[0] = 0.0
+    assert succession.wait(G, F, timeout=10 ** 6, poll=100, clock=lambda: t[0], sleep=sleep)["why"].startswith(
+        f"no first turn after {succession.WAIT_MAX_S} s")   # the bound is capped
+    assert t[0] == succession.WAIT_MAX_S
+
+
+@pytest.mark.parametrize("target, why", [(K, "is not a Brain coordinator"), (X, "was not started by this session")])
+def test_wait_refuses_at_once_what_is_no_successor(lab, target, why):
+    r = succession.wait(target, F, timeout=60, clock=lambda: 0.0, sleep=lambda s: pytest.fail("no wait"))
+    assert not r["ok"] and why in r["why"]
+
+
+def test_wait_refuses_an_archived_successor_and_a_bad_id(lab, capsys):
+    lab.put(G, parent=F, name="coordinator-g", archived=True, detached=True)
+    r = succession.wait(G, F, timeout=60, clock=lambda: 0.0, sleep=lambda s: pytest.fail("no wait"))
+    assert not r["ok"] and r["state"] == "archived"
+    assert cli.main(["handover", "wait", "--id", F, "--successor", "nope"]) == 2
+    assert "is not an app id" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kw, why", [({"name": "worker-g"}, "is not a Brain coordinator"),
+                                     ({"parent": X}, "was not started by this session")])
+def test_wait_refuses_at_once_a_starting_session_that_is_no_successor(lab, kw, why, capsys):
+    rc.starting(lab, **kw)
+    r = succession.wait(G, F, timeout=60, clock=lambda: 0.0, sleep=lambda s: pytest.fail("no wait"))
+    assert not r["ok"] and why in r["why"]
+    assert cli.main(["handover", "wait", "--id", F, "--successor", G]) == 1
+    assert "retry once" not in capsys.readouterr().out   # the guard refuses it: no hint that it would pass
+
+
+def test_wait_names_an_id_the_app_does_not_know(lab):
+    unknown = "local_77777777-0000-4000-8000-777777777777"
+    r = succession.wait(unknown, F, timeout=0)
+    assert not r["ok"] and r["state"] == "unknown" and "not in the desktop app's session files" in r["why"]
+
+
+def test_wait_says_a_live_successor_not_detached(lab, capsys):
+    lab.put(G, parent=F, name="coordinator-g", detached=None)
+    lab.turn(G, "idle")
+    assert cli.main(["handover", "wait", "--id", F, "--successor", G]) == 0
+    assert "detach it" in capsys.readouterr().out
+    assert succession.wait(G, F)["detached"] is False
+
+
+def test_a_note_written_again_without_a_successor_drops_the_old_brief(lab, capsys):
+    assert cli.main(["handover", "write", "--id", F, "--successor", "coordinator-g"]) == 0
+    note = guards.handover_note(F)
+    brief = note.with_name(note.stem + succession.BRIEF_SUFFIX)
+    assert brief.exists()
+    assert cli.main(["handover", "write", "--id", F]) == 0
+    assert not brief.exists() and "brief beside it removed" in capsys.readouterr().out

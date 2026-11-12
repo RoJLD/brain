@@ -41,7 +41,7 @@ from . import guards, paths, secretscan
 
 # brain's own commands only the owner runs, as their leading words (after the global options); "--arm" anywhere
 OWNER_GESTURES: tuple[tuple[str, ...], ...] = (
-    ("decision", "answer"), ("queue", "done"), ("schedule", "install"), ("ipc", "token"), ("vault",),
+    ("decision", "answer"), ("queue", "done"), ("schedule", "install"), ("ipc",), ("vault",),
     ("identity",), ("update",), ("init",), ("up",), ("down",), ("bundle", "apply"), ("permissions", "grant"),
     ("session-archive",),
 )

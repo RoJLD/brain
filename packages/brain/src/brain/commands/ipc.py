@@ -1,6 +1,10 @@
-"""``brain ipc``: the machine's token for the Brain's local services (brain.ipcauth): where it is, made once."""
+"""``brain ipc``: the machine's token for the Brain's local services (brain.ipcauth): where it is, made once, and the
+headers Claude Code's OTLP export sends with it."""
 
 from __future__ import annotations
+
+import json
+import sys
 
 from .. import ipcauth
 
@@ -11,6 +15,11 @@ USAGE = """\
                                   whether it holds a usable token; --init makes it when there is none (32 random
                                   bytes, the file readable by its owner only); never prints the token: a client reads
                                   the file ($BRAIN_IPC_TOKEN_FILE names another); exit 1 without a usable token
+  brain ipc otel-headers          the OTLP export's headers for Claude Code's otelHeadersHelper setting, one JSON
+                                  object {"Authorization": "Bearer <token>"} on stdout, for the collector that
+                                  requires the token (config.json ipc.require_token); the helper's only output: a
+                                  session never runs it (the owner guard, keys); exit 1, nothing on stdout, without a
+                                  usable token
 """
 NO_PROJECT = {"ipc"}   # its parsers that take no --project after them
 
@@ -20,9 +29,26 @@ def register(sub, ctx) -> None:
                                     "it").add_subparsers(dest="ipc_cmd", required=True)
     tk = ip.add_parser("token", help="the token's file and whether it is usable; never prints the token")
     tk.add_argument("--init", action="store_true", help="make the token when there is none (an existing one is kept)")
+    ip.add_parser("otel-headers", help="the OTLP export's headers (Authorization: Bearer) as JSON, for Claude Code's "
+                                       "otelHeadersHelper; exit 1 without a usable token")
+
+
+def otel_headers() -> int:
+    """Claude Code's otelHeadersHelper contract: a JSON object of string headers on stdout, nothing else. Without a
+    usable token: nothing on stdout (the export fails visibly rather than going out unauthenticated), the fix on
+    stderr, exit 1."""
+    tok = ipcauth.read()
+    if tok is None:
+        print(f"brain ipc otel-headers: no usable token in {ipcauth.token_file()} (the owner makes it with brain ipc "
+              "token --init)", file=sys.stderr)
+        return 1
+    sys.stdout.write(json.dumps({"Authorization": f"Bearer {tok}"}) + "\n")
+    return 0
 
 
 def early(args) -> int:
+    if args.ipc_cmd == "otel-headers":
+        return otel_headers()
     if args.init:
         f, made = ipcauth.init()
         print(f"{f}: {'made' if made else 'kept (a usable token was already there)'}")
