@@ -173,7 +173,7 @@ is the owner's act: `install.ps1 -Apply` writes it, with the same policy in Powe
 ### The log class: rotation and retention
 
 A log is appended to, never rewritten. A JSON-lines ledger (the exec, capture, guards, queue, answers and cockpit
-ledgers, the quota readings, the notify audit) is appended by `brain.timing.append_text`: one write, under an
+ledgers, the quota readings, the session starts, the notify audit and its held messages) is appended by `brain.timing.append_text`: one write, under an
 exclusive lock on `exec.lock` in its folder, a last line left without its newline closed first (on Windows the C
 runtime's append is a seek then a write, so two writers without the lock lose and mix lines); a signal that
 arrives during the write waits for its end (`brain.shutdown.critical`), as it does during `stateio.write_atomic`. The single-instance
