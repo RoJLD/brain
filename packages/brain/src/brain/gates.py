@@ -37,6 +37,7 @@ from __future__ import annotations
 import calendar as _cal
 import math
 import re
+from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -102,34 +103,32 @@ def _num(v) -> float | None:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
+def _chance(p) -> bool:
+    return p is None or (_num(p) is not None and 0 <= p < 1)
+
+
+# Each kind's rules: (well formed?, the message when not).
+_RULES = {
+    "calendar": ((lambda g: (_num(g.get("days")) or 0) > 0, "a calendar gate needs days: N (N > 0)"),
+                 (lambda g: _chance(g.get("reset_daily")), "reset_daily is a chance a day, 0 <= p < 1")),
+    "count": ((lambda g: bool(g.get("of")), "a count gate needs of: <counter>"),
+              (lambda g: _num(g.get("at_least")) is not None, "a count gate needs at_least: N"),
+              (lambda g: not g.get("of") or g["of"] in COUNTERS or _num(g.get("per_day")) is not None,
+               f"the counter is not measured ({', '.join(COUNTERS)}): give current and per_day")),
+    "external": ((lambda g: bool(parse_ref(g.get("ref"))), "an external gate needs ref: <project>:<id>"),),
+    "hardware": ((lambda g: bool(g.get("machine")), "a hardware gate needs machine: <name>"),
+                 (lambda g: g.get("ready") is None or bool(ready_range(g["ready"])),
+                  "ready is a day or a range YYYY-MM[-DD]..YYYY-MM[-DD]")),
+    "go_nogo": (),
+}
+
+
 def problems(g: dict) -> list[str]:
-    """What is wrong with one gate ('' list when it is well formed); the external ref is resolved apart."""
+    """What is wrong with one gate ([] when it is well formed); the external ref is resolved apart."""
     kind = g.get("kind")
     if kind not in KINDS:
         return [f"kind {kind!r} is not one of {', '.join(KINDS)}"]
-    out = []
-    if kind == "calendar":
-        if not (_num(g.get("days")) or 0) > 0:
-            out.append("a calendar gate needs days: N (N > 0)")
-        p = g.get("reset_daily")
-        if p is not None and not (_num(p) is not None and 0 <= p < 1):
-            out.append("reset_daily is a chance a day, 0 <= p < 1")
-    elif kind == "count":
-        if not g.get("of"):
-            out.append("a count gate needs of: <counter>")
-        if _num(g.get("at_least")) is None:
-            out.append("a count gate needs at_least: N")
-        if g.get("of") and g.get("of") not in COUNTERS and _num(g.get("per_day")) is None:
-            out.append(f"the counter {g.get('of')!r} is not measured ({', '.join(COUNTERS)}): give current and per_day")
-    elif kind == "external":
-        if not parse_ref(g.get("ref")):
-            out.append("an external gate needs ref: <project>:<id>")
-    elif kind == "hardware":
-        if not g.get("machine"):
-            out.append("a hardware gate needs machine: <name>")
-        if g.get("ready") is not None and not ready_range(g.get("ready")):
-            out.append("ready is a day or a range YYYY-MM[-DD]..YYYY-MM[-DD]")
-    return out
+    return [msg for ok, msg in _RULES[kind] if not ok(g)]
 
 
 def label(g: dict) -> str:
@@ -208,6 +207,72 @@ def counter(name: str, ddrs: list[dict], work: list[dict], flow: dict, today: da
 
 # --- prepared for the futures ---
 
+@dataclass
+class _Ctx:
+    today: date
+    resolver: Resolver
+    nodes: dict
+    ddrs: list
+    work: list
+    flow: dict
+
+
+def _calendar(g: dict, c: _Ctx) -> dict:
+    days, reset = float(g["days"]), float(g.get("reset_daily") or 0.0)
+    src = g.get("from")
+    start = _day(src) if src else None
+    if src and not start:
+        n = c.nodes.get(str(src))
+        if not n:
+            return {"undated": f"calendar from an unknown item: {src}"}
+        if n.get("status") != "done":
+            return {"after": str(src), "days": days, "reset": reset}
+        start = _day((n.get("props") or {}).get("done")) or c.today
+    left = max(0.0, days - ((c.today - start).days if start else 0))
+    return {"days": left, "reset": reset} if left else {"passed": True}
+
+
+def _count(g: dict, c: _Ctx) -> dict:
+    current, per_day = _num(g.get("current")), _num(g.get("per_day"))
+    measured = counter(g["of"], c.ddrs, c.work, c.flow, c.today)
+    if measured:
+        current = measured[0] if current is None else current
+        per_day = measured[1] if per_day is None else per_day
+    left = float(g["at_least"]) - (current or 0.0)
+    if left <= 0:
+        return {"passed": True}
+    if not per_day or per_day <= 0:
+        return {"undated": f"a count without a pace: {g['of']} {current or 0:g} of {g['at_least']}"}
+    d = left / per_day
+    return {"lo": d, "hi": d} if d <= MAX_DAYS else {"undated": f"a count beyond ten years: {g['of']}"}
+
+
+def _external(g: dict, c: _Ctx) -> dict:
+    st = c.resolver.status(g["ref"])
+    if st == "done":
+        return {"passed": True}
+    why = c.resolver.why_not(g["ref"]) or st
+    return {"undated": f"after another project: {g['ref']} ({why})"}
+
+
+def _hardware(g: dict, c: _Ctx) -> dict:
+    rng = ready_range(g.get("ready"))
+    if not rng:
+        return {"undated": f"hardware not dated: {g['machine']}"}
+    lo, hi = (rng[0] - c.today).days, (rng[1] - c.today).days + 1
+    return {"lo": max(0, lo), "hi": hi} if hi > 0 else {"passed": True}
+
+
+def _go_nogo(g: dict, c: _Ctx) -> dict:
+    ddr = next((d for d in c.ddrs if d.get("id") == g["ddr"]), None) if g.get("ddr") else None
+    answered = ddr and ddr.get("status") != "pending" and (ddr.get("answer") or {}).get("at")
+    return {"passed": True} if answered else {"decision": True}
+
+
+_PREPARE = {"calendar": _calendar, "count": _count, "external": _external, "hardware": _hardware,
+            "go_nogo": _go_nogo}
+
+
 def prepare(g: dict, *, today: date, resolver: Resolver, nodes: dict, ddrs: list[dict], work: list[dict],
             flow: dict) -> dict:
     """One gate as the forecast draws it, plain data: ``{"label", "kind", ...}`` with ``passed`` (true: it holds
@@ -221,52 +286,7 @@ def prepare(g: dict, *, today: date, resolver: Resolver, nodes: dict, ddrs: list
     bad = problems(g)
     if bad:
         return {**out, "undated": f"a malformed gate: {bad[0]}"}
-    kind = g["kind"]
-    if kind == "calendar":
-        days, reset = float(g["days"]), float(g.get("reset_daily") or 0.0)
-        src = g.get("from")
-        start = _day(src) if src and _day(src) else None
-        if src and not start:
-            n = nodes.get(str(src))
-            if not n:
-                return {**out, "undated": f"calendar from an unknown item: {src}"}
-            if n.get("status") != "done":
-                return {**out, "after": str(src), "days": days, "reset": reset}
-            start = _day((n.get("props") or {}).get("done")) or today
-        left = max(0.0, days - ((today - start).days if start else 0))
-        return {**out, "passed": True} if not left else {**out, "days": left, "reset": reset}
-    if kind == "count":
-        measured = counter(g["of"], ddrs, work, flow, today)
-        current = _num(g.get("current"))
-        per_day = _num(g.get("per_day"))
-        if measured:
-            current = measured[0] if current is None else current
-            per_day = measured[1] if per_day is None else per_day
-        left = float(g["at_least"]) - (current or 0.0)
-        if left <= 0:
-            return {**out, "passed": True}
-        if not per_day or per_day <= 0:
-            return {**out, "undated": f"a count without a pace: {g['of']} {current or 0:g} of {g['at_least']}"}
-        d = left / per_day
-        return {**out, "lo": d, "hi": d} if d <= MAX_DAYS else \
-            {**out, "undated": f"a count beyond ten years: {g['of']}"}
-    if kind == "external":
-        st = resolver.status(g["ref"])
-        if st in ("done",):
-            return {**out, "passed": True}
-        why = resolver.why_not(g["ref"])
-        return {**out, "undated": f"after another project: {g['ref']}" + (f" ({why})" if why else f" ({st})")}
-    if kind == "hardware":
-        rng = ready_range(g.get("ready"))
-        if not rng:
-            return {**out, "undated": f"hardware not dated: {g['machine']}"}
-        lo, hi = (rng[0] - today).days, (rng[1] - today).days + 1
-        return {**out, "passed": True} if hi <= 0 else {**out, "lo": max(0, lo), "hi": max(0, hi)}
-    # go_nogo
-    ddr = next((d for d in ddrs if d.get("id") == g.get("ddr")), None) if g.get("ddr") else None
-    if ddr and ddr.get("status") != "pending" and (ddr.get("answer") or {}).get("at"):
-        return {**out, "passed": True}
-    return {**out, "decision": True}
+    return {**out, **_PREPARE[g["kind"]](g, _Ctx(today, resolver, nodes, ddrs, work, flow))}
 
 
 def draw(p: dict, rng, delays_h: list[float]) -> tuple[float, float]:
@@ -301,49 +321,56 @@ def _ids(ids: list[str]) -> str:
     return ", ".join(ids[:LIST_MAX]) + more
 
 
+def _gate_findings(nid: str, gs: list[dict], index: dict, resolver: Resolver) -> list[tuple[str, str]]:
+    """(group, text) of what is wrong with a node's gates."""
+    out = []
+    for g in gs:
+        bad = problems(g)
+        if bad:
+            out.append(("malformed", f"{nid} ({bad[0]})"))
+        elif g["kind"] == "external" and resolver.why_not(g["ref"]):
+            out.append(("external", f"{nid} ({g['ref']}: {resolver.why_not(g['ref'])})"))
+        elif g["kind"] == "calendar" and g.get("from") and not _day(g["from"]) and str(g["from"]) not in index:
+            out.append(("malformed", f"{nid} (calendar from {g['from']}: no such item)"))
+    return out
+
+
+def _findings(n: dict, index: dict, resolver: Resolver) -> list[tuple[str, str]]:
+    """(group, text) of what ``brain check`` says about one open node."""
+    props = n.get("props") or {}
+    gs = of(props)
+    out = _gate_findings(n["id"], gs, index, resolver)
+    if props.get("gate") is not None and not gs:
+        out.append(("malformed", f"{n['id']} (gate is not a mapping or a list of them)"))
+    words = sorted({w.group(0).lower() for w in DURATION_RE.finditer(str(props.get("trigger") or ""))})
+    if words and not gs:
+        out.append(("timed", f"{n['id']} ({', '.join(words)})"))
+    why = resolver.why_not(props["after_external"]) if props.get("after_external") else ""
+    if why:
+        out.append(("unresolved", f"{n['id']} ({why})"))
+    if props.get("due") is not None and not props.get("due_source"):
+        out.append(("undue", n["id"]))
+    return out
+
+
+# brain check's line for each group of findings, in this order.
+_LINES = (("malformed", "malformed gate(s) (docs/gates.md)"),
+          ("timed", "trigger(s) name a duration with no gate (props.gate {kind: calendar, days: N}, docs/gates.md)"),
+          ("external", "external gate(s) that do not resolve"),
+          ("unresolved", "after_external that do not resolve to <project>:<id> (or a gate {kind: external, ref: "
+                         "<project>:<id>})"),
+          ("undue", "due date(s) without their source (props.due_source: the pilot, a legal step, hardware, a third "
+                    "party)"))
+
+
 def check_lines(store: Path, root: Path | None = None, resolver: Resolver | None = None) -> list[str]:
     """``brain check``'s warnings about gates and deadlines on the open items and pending milestones."""
     index = {k: n for k, (_, n) in graph.node_index(store, generated=False).items()}
-    nodes = [n for n in index.values() if n.get("status") in OPEN.get(n.get("type"), ())]
     resolver = resolver or Resolver(root)
-    malformed, timed, external, unresolved, undue = [], [], [], [], []
-    for n in sorted(nodes, key=lambda x: x["id"]):
-        props = n.get("props") or {}
-        gs = of(props)
-        if props.get("gate") is not None and not gs:
-            malformed.append(f"{n['id']} (gate is not a mapping or a list of them)")
-        for g in gs:
-            bad = problems(g)
-            if bad:
-                malformed.append(f"{n['id']} ({bad[0]})")
-            elif g.get("kind") == "external":
-                why = resolver.why_not(g["ref"])
-                if why:
-                    external.append(f"{n['id']} ({g['ref']}: {why})")
-            elif g.get("kind") == "calendar" and g.get("from") and not _day(g["from"]) and \
-                    str(g["from"]) not in index:
-                malformed.append(f"{n['id']} (calendar from {g['from']}: no such item)")
-        words = sorted({w.group(0).lower() for w in DURATION_RE.finditer(str(props.get("trigger") or ""))})
-        if words and not gs:
-            timed.append(f"{n['id']} ({', '.join(words)})")
-        if props.get("after_external"):
-            why = resolver.why_not(props["after_external"])
-            if why:
-                unresolved.append(f"{n['id']} ({why})")
-        if props.get("due") is not None and not props.get("due_source"):
-            undue.append(n["id"])
-    lines = []
-    if malformed:
-        lines.append(f"warning: {len(malformed)} malformed gate(s) (docs/gates.md): {_ids(malformed)}")
-    if timed:
-        lines.append(f"warning: {len(timed)} trigger(s) name a duration with no gate (props.gate {{kind: calendar, "
-                     f"days: N}}, docs/gates.md): {_ids(timed)}")
-    if external:
-        lines.append(f"warning: {len(external)} external gate(s) that do not resolve: {_ids(external)}")
-    if unresolved:
-        lines.append(f"warning: {len(unresolved)} after_external that do not resolve to <project>:<id> (or a gate "
-                     f"{{kind: external, ref: <project>:<id>}}): {_ids(unresolved)}")
-    if undue:
-        lines.append(f"warning: {len(undue)} due date(s) without their source (props.due_source: the pilot, a legal "
-                     f"step, hardware, a third party): {_ids(undue)}")
-    return lines
+    groups: dict[str, list[str]] = {}
+    for nid in sorted(index):
+        n = index[nid]
+        if n.get("status") in OPEN.get(n.get("type"), ()):
+            for group, text in _findings(n, index, resolver):
+                groups.setdefault(group, []).append(text)
+    return [f"warning: {len(groups[k])} {what}: {_ids(groups[k])}" for k, what in _LINES if groups.get(k)]

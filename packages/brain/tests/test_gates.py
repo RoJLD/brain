@@ -5,10 +5,11 @@ each gate holds. spec-brain-psychohistory §3.4, spec-brain-sizing-prioritizatio
 import random
 from datetime import date
 
-from test_forecast import NOW, ledger, model
-from test_forecast import project as project  # noqa: F401  (the fixture)
-
+import test_forecast
 from brain import forecast, gates, queue
+from test_forecast import NOW, ledger, model
+
+project = test_forecast.project   # the forecast's store and ledger fixture
 
 TODAY = NOW.date()
 
