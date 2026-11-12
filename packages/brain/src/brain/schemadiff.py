@@ -54,7 +54,7 @@ def is_schema(path: str) -> bool:
     """A schema the diff compares: a JSON Schema, or a graph store's (or a template's) schema.yaml."""
     low = path.lower()
     base = low.rsplit("/", 1)[-1]
-    if inventory.skipped(path) or inventory.fixture_data(path):
+    if inventory.skipped(path) or inventory.frozen_store(path):
         return False
     return base.endswith(".schema.json") or base == "schema.yaml" or (
         "/templates/schemas/" in f"/{low}" and base.endswith((".yaml", ".yml")))
@@ -89,60 +89,90 @@ def _num(x) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
-def json_narrowed(old, new, where: str = "") -> list[str]:
-    """What ``new`` refuses that ``old`` accepted, keyword by keyword, as ``<where>: <what>`` lines."""
-    if not (isinstance(old, dict) and isinstance(new, dict)):
-        return [] if old == new else [f"{where or '/'}: the schema replaced"]
-    at = where or "/"
+def _children(old: dict, new: dict, where: str) -> list[str]:
+    """The named subschemas (properties, $defs, patternProperties): one removed narrows, one kept is compared."""
     out: list[str] = []
     for key in ("properties", "$defs", "patternProperties"):
         o, n = old.get(key) or {}, new.get(key) or {}
-        if isinstance(o, dict) and isinstance(n, dict):
-            for name in o:
-                if name not in n:
-                    out.append(f"{where}/{name}: removed" if key == "properties" else f"{at}: {key} {name} removed")
-                else:
-                    out += json_narrowed(o[name], n[name], f"{where}/{name}" if key == "properties"
-                                         else f"{where}/{key}/{name}")
-    req = set(new.get("required") or []) - set(old.get("required") or [])
-    out += [f"{where}/{name}: newly required" for name in sorted(req)]
-    if "enum" in new:
-        if "enum" not in old:
-            out.append(f"{at}: an enum added")
-        else:
-            lost = [v for v in old["enum"] if v not in new["enum"]]
-            if lost:
-                out.append(f"{at}: enum narrowed (no longer {', '.join(map(json.dumps, lost))})")
+        if not (isinstance(o, dict) and isinstance(n, dict)):
+            continue
+        for name in o:
+            sub = f"{where}/{name}" if key == "properties" else f"{where}/{key}/{name}"
+            out += json_narrowed(o[name], n[name], sub) if name in n else [
+                f"{where}/{name}: removed" if key == "properties" else f"{where or '/'}: {key} {name} removed"]
+    return out
+
+
+def _required(old: dict, new: dict, where: str) -> list[str]:
+    return [f"{where}/{name}: newly required"
+            for name in sorted(set(new.get("required") or []) - set(old.get("required") or []))]
+
+
+def _enum(old: dict, new: dict, where: str) -> list[str]:
+    if "enum" not in new:
+        return []
+    if "enum" not in old:
+        return [f"{where or '/'}: an enum added"]
+    lost = [v for v in old["enum"] if v not in new["enum"]]
+    return [f"{where or '/'}: enum narrowed (no longer {', '.join(map(json.dumps, lost))})"] if lost else []
+
+
+def _type(old: dict, new: dict, where: str) -> list[str]:
     t0, t1 = _types(old), _types(new)
-    if t1 is not None and (t0 is None or t0 - t1):
-        out.append(f"{at}: type narrowed ({'any' if t0 is None else '|'.join(sorted(t0))} -> {'|'.join(sorted(t1))})")
-    if "const" in new and (old.get("const", object()) != new["const"]):
-        out.append(f"{at}: const {json.dumps(old['const']) if 'const' in old else 'added'} -> "
-                   f"{json.dumps(new['const'])}")
+    if t1 is None or (t0 is not None and not t0 - t1):
+        return []
+    return [f"{where or '/'}: type narrowed ({'any' if t0 is None else '|'.join(sorted(t0))} -> {'|'.join(sorted(t1))})"]
+
+
+def _const(old: dict, new: dict, where: str) -> list[str]:
+    if "const" not in new or old.get("const", object()) == new["const"]:
+        return []
+    return [f"{where or '/'}: const {json.dumps(old['const']) if 'const' in old else 'added'} -> "
+            f"{json.dumps(new['const'])}"]
+
+
+def _additional(old: dict, new: dict, where: str) -> list[str]:
     ap0, ap1 = old.get("additionalProperties", True), new.get("additionalProperties", True)
     if ap1 is False and ap0 is not False:
-        out.append(f"{at}: closed (additionalProperties false)")
-    elif isinstance(ap0, dict) and isinstance(ap1, dict):
-        out += json_narrowed(ap0, ap1, f"{where}/*")
+        return [f"{where or '/'}: closed (additionalProperties false)"]
+    return json_narrowed(ap0, ap1, f"{where}/*") if isinstance(ap0, dict) and isinstance(ap1, dict) else []
+
+
+def _bounds(old: dict, new: dict, where: str) -> list[str]:
+    out = []
     for key in LOWER + UPPER:
         o, n = old.get(key), new.get(key)
         if _num(n) and (not _num(o) or (n > o if key in LOWER else n < o)):
-            out.append(f"{at}: {key} {o if _num(o) else 'added'} -> {n}")
-    for key in EXACT:
-        if key in new and old.get(key) != new[key]:
-            out.append(f"{at}: {key} {'changed' if key in old else 'added'}")
-    if "items" in new:
-        if isinstance(old.get("items"), dict):
-            out += json_narrowed(old["items"], new["items"], f"{where}[]")
-        elif "items" not in old:
-            out.append(f"{at}: items constrained")
+            out.append(f"{where or '/'}: {key} {o if _num(o) else 'added'} -> {n}")
+    return out + [f"{where or '/'}: {key} {'changed' if key in old else 'added'}"
+                  for key in EXACT if key in new and old.get(key) != new[key]]
+
+
+def _items(old: dict, new: dict, where: str) -> list[str]:
+    if "items" not in new:
+        return []
+    if isinstance(old.get("items"), dict):
+        return json_narrowed(old["items"], new["items"], f"{where}[]")
+    return [] if "items" in old else [f"{where or '/'}: items constrained"]
+
+
+def _all_of(old: dict, new: dict, where: str) -> list[str]:
     o_all, n_all = old.get("allOf") or [], new.get("allOf") or []
-    for i, entry in enumerate(n_all):
-        if i >= len(o_all):
-            out.append(f"{at}: an allOf entry added")
-        else:
-            out += json_narrowed(o_all[i], entry, f"{where}/allOf[{i}]")
+    out = [f"{where or '/'}: an allOf entry added"] * max(0, len(n_all) - len(o_all))
+    for i, (o, n) in enumerate(zip(o_all, n_all, strict=False)):
+        out += json_narrowed(o, n, f"{where}/allOf[{i}]")
     return out
+
+
+KEYWORDS = (_children, _required, _enum, _type, _const, _additional, _bounds, _items, _all_of)
+
+
+def json_narrowed(old, new, where: str = "") -> list[str]:
+    """What ``new`` refuses that ``old`` accepted, keyword by keyword (:data:`KEYWORDS`), as ``<where>: <what>``
+    lines."""
+    if not (isinstance(old, dict) and isinstance(new, dict)):
+        return [] if old == new else [f"{where or '/'}: the schema replaced"]
+    return [line for check in KEYWORDS for line in check(old, new, where)]
 
 
 def version(schema) -> int | None:
@@ -157,29 +187,38 @@ def _list(x) -> list:
     return list(x) if isinstance(x, list) else []
 
 
+def _lost(old, new) -> list[str]:
+    """The values of the list ``old`` that the list ``new`` lacks, as text."""
+    return [str(x) for x in _list(old) if x not in _list(new)]
+
+
+def _maps(old: dict, new: dict, key: str) -> tuple[dict, dict]:
+    o, n = old.get(key) or {}, new.get(key) or {}
+    return (o, n) if isinstance(o, dict) and isinstance(n, dict) else ({}, {})
+
+
+def _by_type(old: dict, new: dict) -> list[str]:
+    """status_by_type: a type's status removed, or a type that took any status given a list."""
+    sb0, sb1 = _maps(old, new, "status_by_type")
+    known = _list(old.get("node_types"))
+    out = [f"status_by_type.{t}: {', '.join(_lost(sb0[t], s))} removed" for t, s in sb1.items()
+           if t in sb0 and _lost(sb0[t], s)]
+    return out + [f"status_by_type.{t}: its statuses restricted to {', '.join(map(str, _list(s)))}"
+                  for t, s in sb1.items() if t not in sb0 and t in known]
+
+
+def _required_props(old: dict, new: dict) -> list[str]:
+    rp0, rp1 = _maps(old, new, "required_props")
+    known = _list(old.get("node_types"))
+    return [f"required_props.{t}: {', '.join(_lost(props, rp0.get(t)))} newly required" for t, props in rp1.items()
+            if t in known and _lost(props, rp0.get(t))]
+
+
 def store_narrowed(old: dict, new: dict) -> list[str]:
     """What a graph store's schema.yaml change refuses that the old one accepted."""
-    out = []
-    for key in ("node_types", "edge_types", "statuses"):
-        lost = [x for x in _list(old.get(key)) if x not in _list(new.get(key))]
-        if lost:
-            out.append(f"{key}: {', '.join(map(str, lost))} removed")
-    sb0, sb1 = old.get("status_by_type") or {}, new.get("status_by_type") or {}
-    if isinstance(sb0, dict) and isinstance(sb1, dict):
-        for t, statuses in sb1.items():
-            if t in sb0:
-                lost = [s for s in _list(sb0[t]) if s not in _list(statuses)]
-                if lost:
-                    out.append(f"status_by_type.{t}: {', '.join(map(str, lost))} removed")
-            elif t in _list(old.get("node_types")):
-                out.append(f"status_by_type.{t}: its statuses restricted to {', '.join(map(str, _list(statuses)))}")
-    rp0, rp1 = old.get("required_props") or {}, new.get("required_props") or {}
-    if isinstance(rp0, dict) and isinstance(rp1, dict):
-        for t, props in rp1.items():
-            added = [p for p in _list(props) if p not in _list(rp0.get(t))]
-            if added and t in _list(old.get("node_types")):
-                out.append(f"required_props.{t}: {', '.join(map(str, added))} newly required")
-    return out
+    out = [f"{key}: {', '.join(_lost(old.get(key), new.get(key)))} removed"
+           for key in ("node_types", "edge_types", "statuses") if _lost(old.get(key), new.get(key))]
+    return out + _by_type(old, new) + _required_props(old, new)
 
 
 # --- one file, a change, the Compat: line ----------------------------------------------------------------------------
@@ -262,7 +301,7 @@ def diffs(rows: list[tuple[str, str, str]], base: inventory.Tree, new: inventory
     """The schema files of a change (the scout's rows: status, old path, new path), compared and resolved."""
     lines = compat(body)
     out = []
-    for status, old, path in rows:
+    for _, old, path in rows:
         was = old or path
         if not (is_schema(was) or is_schema(path or "")):
             continue

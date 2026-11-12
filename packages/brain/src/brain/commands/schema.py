@@ -32,33 +32,38 @@ def _top(args) -> Path:
     return Path(git(d, "rev-parse", "--show-toplevel").strip()).resolve()
 
 
+def _text(args, found: list, body: str, tree, strict: bool) -> None:
+    lines = schemadiff.compat(body)
+    for d in found:
+        bump = f"  (v{d.v[0]} -> v{d.v[1]})" if d.v[0] != d.v[1] else ""
+        print(f"{'resolved' if d.resolved else 'narrows':<9}{d.path}{bump}")
+        for line in d.narrowed:
+            print(f"           {line}")
+        print(f"           -> {d.resolved or schemadiff.why_not(d, lines, tree)}")
+    unresolved = sum(1 for d in found if not d.resolved)
+    verdict = (f"{unresolved} unresolved" if unresolved else "none unresolved") + (", strict" if strict else "")
+    print(f"schema diff {args.against}..worktree: {len(found)} schema(s) narrowed, {verdict}")
+
+
 def cmd_schema(args, root: Path | None) -> int:
     try:
         top = _top(args)
         base_rev = git(top, "rev-parse", "--verify", f"{args.against}^{{commit}}").strip()
-        rows = scout.changed(top, base_rev)
         body = structure.body_of(top, base_rev, "", scout._pr_body(args.pr_body or ""))
-        found = schemadiff.diffs(rows, git_tree(top, base_rev), work_tree(top), body)
+        tree = work_tree(top)
+        found = schemadiff.diffs(scout.changed(top, base_rev), git_tree(top, base_rev), tree, body)
     except AuditError as exc:
         print(f"brain schema diff: {exc}", file=sys.stderr)
         return 2
     strict = args.strict or schemadiff.strict(root)
-    open_ = [d for d in found if not d.resolved]
     if args.json:
         print(json.dumps({"against": args.against, "base": base_rev, "strict": strict,
                           "compat": [f"{k} {i}".strip() for k, i in schemadiff.compat(body)],
                           "schemas": [{"path": d.path, "narrowed": d.narrowed, "v": list(d.v), "resolved": d.resolved}
                                       for d in found]}, ensure_ascii=False, indent=1, sort_keys=True))
     else:
-        for d in found:
-            print(f"{'resolved' if d.resolved else 'narrows':<9}{d.path}" + (f"  (v{d.v[0]} -> v{d.v[1]})"
-                                                                            if d.v[0] != d.v[1] else ""))
-            for line in d.narrowed:
-                print(f"           {line}")
-            print(f"           -> {d.resolved or schemadiff.why_not(d, schemadiff.compat(body), work_tree(top))}")
-        verdict = (f"{len(open_)} unresolved" if open_ else "none unresolved") + (", strict" if strict else "")
-        print(f"schema diff {args.against}..worktree: {len(found)} schema(s) narrowed, {verdict}")
-    return 1 if open_ and strict else 0
+        _text(args, found, body, tree, strict)
+    return 1 if strict and any(not d.resolved for d in found) else 0
 
 
 def register(sub, ctx) -> None:
