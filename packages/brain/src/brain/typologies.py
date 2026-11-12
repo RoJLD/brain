@@ -37,9 +37,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
-
-from . import config, schema
+from . import config, graph, schema
 
 FILE = Path(__file__).with_name("typologies.yaml")
 VERSION = 1
@@ -137,8 +135,8 @@ class Catalog:
 def _read() -> dict:
     """typologies.yaml parsed once per process (never mutated: :func:`engine` builds fresh objects from it)."""
     try:
-        data = yaml.safe_load(FILE.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
+        data = graph.load_yaml(FILE.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - unreadable or not YAML: a broken install, said as one error
         raise CatalogError(f"{FILE.name}: not readable ({exc})") from None
     if not isinstance(data, dict) or data.get("v") != VERSION:
         raise CatalogError(f"{FILE.name}: a mapping with v: {VERSION}")
