@@ -58,8 +58,8 @@ their default.
 | standards catalog | the engine's `src/brain/catalogs/*.yaml`; a brain's local ones that `projects.yaml` `standards.catalogs` names ([standards.md](standards.md)) | `v` (`standards.schema.json`) | a note, the row kept; a vocabulary value this engine does not know (a profile, stage, enforcement...) too (in strict mode, CI: `brain standards check` and `brain check --all` report it) | refused: its rows are not read |
 | DDR signature | `records/ddr/<id>.sig`, beside its record | none: an SSH signature (namespace `brain-decision`) over the answer's payload | - | - (an older engine ignores the file and reads the record as before) |
 | permissions.yaml | the brain's root | `v` (`permissions.schema.json`, described: read by `brain.permissions`) | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
-| packs.yaml | `source/packs.yaml` | `v` | a note | refused |
-| template.yaml | a template's folder | `engine:` range | a note (in CI: refused), `extends` and `append` (wi-brain-project-templates) included: a template that uses them names the engine that knows them in `engine:`; a graph's keys are strict: a graph's `layers` (wi-brain-graph-templates) is refused by an older engine, so a template that uses it names the engine that knows it in `engine:` | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |
+| packs.yaml | `source/packs.yaml` | `v` | a note, a top-level key and a pack's key alike (a pack's since 0.4.0: an older engine refuses a pack key it does not know, so a brain writes a new pack key, `typologies` or `layers` for instance, only once its machines run 0.4.0 or later); the key is kept and the pack rendered as without it (in strict mode, CI: refused). A pack key whose value is a mapping is read as a target's own fields (`claude:`...): kept, with no note | refused |
+| template.yaml | a template's folder | `engine:` range | a note (in CI: refused), `extends` and `append` (wi-brain-project-templates) and `takes` (spec-brain-typology-packs E1 bis) included: a template that uses them names the engine that knows them in `engine:`; a graph's keys are strict: a graph's `layers` (wi-brain-graph-templates) is refused by an older engine, so a template that uses it names the engine that knows it in `engine:` | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |
 | graph layer | research_graph's `templates/layers/<name>.yaml` (the catalogue); a template's own `layers/<name>.yaml` | `version`, per layer, recorded in a store's `templates:` | refused (`research_graph layers` names the known keys) | - (a layer's version is compared by `brain template upgrade`, a later item) |
 | schema.yaml `templates:`, `endpoints:` | a store's `schema.yaml`, when composed from layers (`research_graph layers`) | none: the store's schema | both optional; an older engine ignores them (its `check` then verifies no endpoints) | - |
 | projects.yaml | the brain's root | none yet | a project key (`KEYS`; `standards` since 0.3.2, `parent` and `classes` since 0.3.3, its own keys a note too), a `repos:` key (`REPO_KEYS`; `tools` since 0.3.2, its slots, keys and formats a note too): a note, kept. `access` is a key that **narrows**: a brain that does not know it (0.2.8 and before) keeps the note (in CI: refused, so a brain repo whose CI runs 0.2.8 goes red) and reads an `access: read` entry as a full project, at the registry's root with the default store, journal and decision log, so such an entry lands in a registry only once every machine runs brain 0.3.0 or later | - |
@@ -323,6 +323,16 @@ Its fixtures, `tests/fixtures/formats/docgraph/v1/`, are a first producer's docu
 of its own, a need and a producer's own check (`newer`); `tests/test_docgraph.py` reads both clean. A brain holds no
 file of it (the upgrade test's `NOT_STORED`).
 
+**Out and in: the module catalogue.** `catalogue/v1` ([catalogue.md](catalogue.md), wi-brain-catalogue-contract) is a
+catalogue of modules (bricks, modules, distributions, presets) any program may emit and an installer or a settings
+tab reads, published as `schemas/catalogue.schema.json` (registered in `SCHEMAS`, `catalogue`). Versioned by its id
+(`schema: catalogue/v1`) like the documentation graph, it allows a key it does not name at every level, and a key it
+names keeps its type and its values: a new class, status or preset kind is `catalogue/v2`, which `brain catalogue
+validate` refuses as a later contract. Its fixtures, `tests/fixtures/formats/catalogue/v1/`, are a first producer's
+catalogue (`older`) and another's with keys of its own, a persona, a typology id no catalogue holds yet and a soft
+dependency on another catalogue's module (`newer`); `tests/test_catalogue.py` reads both clean. A brain holds no file
+of it (`brain catalogue emit` prints one: the upgrade test's `NOT_STORED`).
+
 ## The validator's keywords
 
 `brain.schema` validates with the standard library only, so the capture hooks can validate what they write. It
@@ -346,8 +356,8 @@ Beside that pair, **each released engine's own file** (wi-brain-format-fixture-f
 old stores » below), never edited. `tests/test_formats_frozen.py` reads each one strict, as CI does: what N-1 wrote,
 N reads with no note and no error. ar, config, ddr, event (the first lines of an exec ledger file), packs, projects,
 sr and template are frozen from v0.2.4 and v0.3.1, then the last tag's at each version PR; the formats no command
-writes (permissions, members, readme, modules, standards, docgraph) keep their hand-written pair only, and the status
-document too: `brain doctor --json` prints the machine's own inventory, which a public fixture never holds.
+writes (permissions, members, readme, modules, standards, docgraph, catalogue) keep their hand-written pair only, and
+the status document too: `brain doctor --json` prints the machine's own inventory, which a public fixture never holds.
 
 ### The old stores
 

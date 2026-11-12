@@ -1,12 +1,22 @@
 # A research project (hypotheses, experiments, verdicts, with its code and data): brain init --template research
-# [--stage prototype|mvp|v1|scale]. The software base (the CI jobs, the test harness, the format registry, the issue
-# and ADR templates, the code layers of the graph) and the engine's standards for the research profile at the
-# project's stage (projects.yaml standards:, brain standards list --applicable).
+# [--stage prototype|mvp|v1|scale]. The project base, the parts of the software base it uses (the CI jobs, the test
+# harness, the format registry, the issue template), its own graph layers and the engine's standards for the research
+# profile at the project's stage (projects.yaml standards:, brain standards list --applicable). It takes those parts
+# by name instead of extending _software, so what _software adds later reaches it only when it says so.
 name: research
 version: 1
 engine: ">=0.3.2"
-title: "A research project: the software base and the research profile's standards"
-extends: _software
+title: "A research project: the parts of the software base it uses and the research profile's standards"
+extends: _project
+takes:                     # an engine template: the brain's paths whose files (or appends) it takes from that one
+  _software:
+    - .github/workflows/ci.yml
+    - .github/ISSUE_TEMPLATE/task.md
+    - tests/conftest.py
+    - tests/test_harness.py
+    - docs/formats.md
+    - fixtures/formats/README.md
+    - boundary.yaml
 graphs:                    # the brain's main store, by layers (research_graph layers)
   - name: work
     store: notes/graph

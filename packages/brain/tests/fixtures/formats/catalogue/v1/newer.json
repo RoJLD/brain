@@ -1,0 +1,28 @@
+{
+  "schema": "catalogue/v1",
+  "generated": {"at": "2026-06-01T12:00:00Z", "by": "other-tool 2.4.1", "from": ["manifests/"],
+                "channel": "a key of this producer's own"},
+  "name": "kettle",
+  "homepage": "https://example.org/kettle",
+  "bricks": [
+    {"id": "K", "name": "the kettle", "colour": "a brick key of this producer's own"}
+  ],
+  "modules": [
+    {"id": "kettle-core", "name": "Kettle core", "brick": "K", "class": "core", "status": "built",
+     "components": ["boil", "pour"], "licence": "MIT", "distributions": ["base"], "maturity": "stable"},
+    {"id": "kettle-tea", "name": "Kettle tea", "brick": "K", "class": "extra", "status": "built",
+     "depends_on": ["kettle-core"], "uses": ["teapot-sync"], "typologies": ["household", "a-typology-to-come"],
+     "requires": ["env:KETTLE_TEA_KEY"], "cost": {"disk_mb": 2, "download_mb": 1},
+     "fallback": "plain water", "distributions": ["tea-pack"], "since": "2026-05-01"}
+  ],
+  "distributions": [
+    {"id": "base", "name": "the kettle install", "kind": "base", "bundled": true, "mirror": "a key of its own"},
+    {"id": "tea-pack", "name": "the tea pack", "kind": "package", "bundled": false,
+     "source": {"url": "https://example.org/kettle/tea-1.2.0.zip", "size_mb": 1, "mirrors": []}}
+  ],
+  "presets": [
+    {"id": "lite", "name": "Lite", "kind": "base", "modules": ["kettle-core"]},
+    {"id": "tea-lover", "name": "Tea lover", "kind": "persona", "base": "lite", "modules": ["kettle-tea"],
+     "typologies": ["household"], "icon": "a persona key of its own"}
+  ]
+}
