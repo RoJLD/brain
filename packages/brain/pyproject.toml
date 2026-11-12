@@ -33,7 +33,7 @@ where = ["src"]
 include = ["brain", "brain.commands"]   # brain.commands: the command registry (one module per command)
 
 [tool.setuptools.package-data]
-brain = ["schemas/*.json", "tiers.yaml", "catalogs/*.yaml", "compose/*/*", "procedures/*/*", "templates/*",
+brain = ["schemas/*.json", "tiers.yaml", "typologies.yaml", "catalogs/*.yaml", "compose/*/*", "procedures/*/*", "templates/*",
          "templates/*/*",
          "adapters/claude/allow-rules.txt", "adapters/claude/hooks/*"]
 

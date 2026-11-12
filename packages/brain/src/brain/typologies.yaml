@@ -1,0 +1,90 @@
+# The typology catalog (wi-brain-typology-catalog, spec-brain-typology-packs E1, TYPO-3): the kinds of project, one
+# vocabulary for the graph layers' lifecycle ids (research_graph), the project templates' profiles (brain init) and the
+# standards' profiles (brain standards). brain.typologies reads it; docs/typologies.md is its contract.
+#
+# Ids are stable and English, never renamed nor reused: a brain renames their labels and adds its own ids in
+# config.json `typologies`. An entry is a kind of project, with the Vision's modules it maps to (`vision`: J1 the
+# engineering studio, J2 research, J3 creation, K3 venture, K4 enterprise); a sub-profile is a narrower kind of one
+# entry and takes what its entry takes (a layer, a standards row or a pack named for the entry), plus what names it.
+# An id this engine does not know is a note in read mode, an error only in strict mode (CI).
+v: 1
+entries:
+  software:
+    en: Software
+    fr: Logiciel
+    vision: [J1]
+    description: a code product, whatever its form
+    sub:
+      library: {en: Library, fr: Bibliothèque, description: a library other code imports}
+      cli: {en: Command-line tool, fr: Outil en ligne de commande, description: a command-line tool}
+      local-client: {en: Local client, fr: Client local,
+                     description: "a program on the user's machine that owns local data (a desktop or mobile client)"}
+      service: {en: Service, fr: Service, description: a resident process others call over the network}
+      data-pipeline: {en: Data pipeline, fr: Pipeline de données,
+                      description: a job that moves or transforms data on a schedule}
+      api-cli: {en: API or CLI product, fr: Produit API ou CLI, description: "a product used through its API or command line"}
+      ai-ml: {en: AI and machine learning, fr: IA et apprentissage automatique,
+              description: "a product built on trained models, their data and their evaluation"}
+      infra: {en: Infrastructure, fr: Infrastructure, description: "hosts, networks and the services that run them"}
+      embedded: {en: Embedded system, fr: Système embarqué, description: an embedded or low-level system}
+  research:
+    en: Research
+    fr: Recherche
+    vision: [J2]
+    description: "a research project: hypotheses, tests and documents"
+    sub:
+      trading: {en: Trading research, fr: Recherche en trading,
+                description: "research on markets: strategies, backtests and their pre-registration"}
+  hardware-cad:
+    en: Hardware and CAD
+    fr: Matériel et CAO
+    vision: [J1]
+    description: "a physical product: parts, assemblies, drawings and their verification"
+    sub:
+      hardware: {en: Hardware, fr: Matériel, description: an electronic or mechanical device}
+      engineering-product: {en: Engineering product, fr: Produit d'ingénierie,
+                            description: "a physical or hardware product: requirements, verification, validation"}
+  creation:
+    en: Creation
+    fr: Création
+    vision: [J3]
+    description: "a creative work: design, audio, video, 3D, games or writing"
+  strategy:
+    en: Strategy
+    fr: Stratégie
+    vision: [K3, K4]
+    description: "a strategy project: decisions, assumptions, KPIs"
+  marketing:
+    en: Marketing
+    fr: Marketing
+    vision: [K4]
+    description: "a marketing project: claims, campaigns, consent"
+  organisation:
+    en: Organisation
+    fr: Organisation
+    vision: [K4]
+    description: "an organisation or programme that coordinates projects: its gates, contracts and decisions"
+  compliance:
+    en: Compliance
+    fr: Conformité
+    vision: [K4]
+    description: "a compliance project: a gap analysis, then a certification"
+# The lifecycle's stages (spec-brain-product-lifecycle LC-2): `living` a product that loops, `finite` a project that
+# ends. A layer may inject a stage of its own (research's preregistration-backtest): the layer's, not the catalog's.
+stages:
+  explore: {en: Explore, fr: Explorer, shapes: [living, finite]}
+  build: {en: Build, fr: Construire, shapes: [living, finite]}
+  launch: {en: Launch, fr: Lancer, shapes: [living]}
+  grow: {en: Grow, fr: Croître, shapes: [living]}
+  mature: {en: Mature, fr: Mûrir, shapes: [living]}
+  sunset: {en: Sunset, fr: Décliner, shapes: [living]}
+  retired: {en: Retired, fr: Retiré, shapes: [living]}
+  deliver: {en: Deliver, fr: Livrer, shapes: [finite]}
+  closed: {en: Closed, fr: Clos, shapes: [finite]}
+# The standards' stages (brain.standards.STAGES, brain init --stage) mapped to the lifecycle's: a code product's
+# maturity read as the stage the layers propose at.
+standards_stages:
+  prototype: explore
+  mvp: build
+  v1: launch
+  scale: grow
