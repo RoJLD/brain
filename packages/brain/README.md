@@ -555,6 +555,11 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
   when the branch is behind or lost something.
+- **`brain merge-ready PR`**: the merge gate, before `gh pr merge`: the PR open and not a draft, main not moved under
+  a file it touches since their merge base, `brain merge-check` on a head that merged main, every CI check green on
+  the head, the review's stamp for the head with no finding open, the public check's stamp for a public repo, nothing
+  private in the PR's body; exit 0 and a stamp, else the list of what blocks
+  ([`docs/merge-driver.md`](docs/merge-driver.md)).
 - **`brain collisions [--all] [--frontier] [--json]`**: the files each open branch and worktree changes, crossed with
   each startable item's predicted surface (its features' CodeRefs, its module, the files it names): the items that
   can start now, and those that wait on a branch and its session.

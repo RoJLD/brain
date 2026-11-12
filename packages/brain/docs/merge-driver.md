@@ -106,6 +106,36 @@ git add -A && git commit     # the merge, with the refreshed views
 brain merge-check            # then push
 ```
 
+### The merge gate: `brain merge-ready <pr>`
+
+Before `gh pr merge`, whoever merges asks `brain merge-ready <pr>` (zero token: git, and gh for the PR). Every check
+runs, and the answer is exit 0 or the list of what blocks (exit 1; 2 when gh or git fails):
+
+- **open**: the PR is open, not a draft, and GitHub sees no conflict with the base;
+- **fresh**: the base and the PR's head are fetched again (`--no-fetch`: as last fetched; the head from
+  `refs/pull/<n>/head`, else its branch); main must not have moved, since their merge base, under a file the PR
+  touches (the lesson les-brain-stale-base-ci: a green CI on a stale base is not the merged tree; merge main, the CI
+  runs again). A PR behind main on other files only is fresh;
+- **merge-check**: when the head has merged the base, `brain merge-check` on that head (above): nothing main brought
+  since the merge base is lost;
+- **ci**: every check GitHub reports on the head completed green (success, neutral or skipped); one still running or
+  failed blocks, and so does a head with no check at all;
+- **review**: `brain review stamp` recorded the review of this very head ([review.md](review.md)), with no finding left
+  open (findings minus fixed minus contested);
+- **public**: for a repo of `config.json` `public.repos`, `brain check --public --history` stamped this head and the
+  stamp is still valid (the push guard's own question); n/a for another repo;
+- **body**: the PR's body holds nothing `brain check --public` refuses (a term of `public.deny`, a secret, an e-mail
+  address or a home folder).
+
+A green answer writes `<BRAIN_HOME>/merge-ready/<owner>/<repo>/<head sha>.json`; a push after it is a new head, asked
+again.
+
+```bash
+brain merge-ready 152                      # from a checkout of the PR's repo: what blocks, or READY
+brain merge-ready 152 --repo-dir ../brain --json    # the checks as JSON, and the stamp's path when ready
+gh pr merge 152 --merge                    # only once it says READY
+```
+
 ### Checking it on a repo's history
 
 `brain merge-driver replay` merges past merges again with `git merge-tree` (nothing is checked out, the working tree
