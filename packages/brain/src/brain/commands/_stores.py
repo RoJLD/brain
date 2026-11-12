@@ -56,6 +56,17 @@ def _reference_applies(project: projects.Project, root: Path, store: Path) -> bo
     return projects.uses_defaults(project, store) and reference.private_render(root / reference.DIR)
 
 
+def _reference_prose_check(project: projects.Project, root: Path, store: Path) -> int:
+    """brain check: the reference's prose (docs/reference.yaml) holds its required fields, once the reference is kept
+    (1 on an error, as the README's YAML)."""
+    if not _reference_applies(project, root, store):
+        return 0
+    errors = reference.load_prose(root)[1]
+    for e in errors:
+        print(f"error: {e} (schemas/reference.schema.json; then brain reference --write)")
+    return 1 if errors else 0
+
+
 def _write_reference(project: projects.Project, root: Path, store: Path) -> None:
     """docs/reference/ written again (brain.reference) once the owner opted in: a brain without it gets none."""
     if _reference_applies(project, root, store):
@@ -360,6 +371,7 @@ def _check_store(args, root: Path, store: Path) -> int:
     rc = _store_checks(project, root, store, stale) or rc
     readmes = _readme_checks(args, project, root, store)   # opt-in: a repo with readme.yaml (wi-brain-readme-sync)
     rc = (1 if readmes[0] else 0) or rc
+    rc = _reference_prose_check(project, root, store) or rc   # docs/reference.yaml (wi-brain-reference-arc42)
     if where.where == "default":   # the views only the default branch must hold fresh (brain.views)
         if _records_view(root, store):
             for f in records.graph_stale(root, store):

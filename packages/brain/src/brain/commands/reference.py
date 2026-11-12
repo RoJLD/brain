@@ -15,14 +15,19 @@ ORDER = 46   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 33   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain reference [--write [--force]] [--public --repo R --out DIR]   the technical reference: docs/reference/
-                 README.md and modules/<id>.md per module of the store's modules.yaml (what it does from its
+                 README.md, the twelve arc42 sections from the graph (goals and milestones, constraints from the
+                 rules, context from the registry, strategy and its key decisions, building blocks, runtime,
+                 deployment, concepts, the decisions by module, quality from the milestones' triggers and tests,
+                 risks and debt, glossary), the prose from docs/reference.yaml (exit 1 when a required field is
+                 missing), and modules/<id>.md per module of the store's modules.yaml (what it does from its
                  features, the decisions in force on its nodes from the answered DDRs, earlier ones folded, an ADR no
-                 DDR went to by its title; its rules, specs, items done and open, open questions), and the decisions
-                 no module holds; no --write: exit 1 when docs/reference/ is not the render; a page there that is not
-                 generated is never overwritten. Once written, brain sync keeps it current (the owner's opt-in).
-                 --public: a public repo's neutral reference by feature domain (its features' public titles, its own
-                 code and docs), into --out (a checkout's docs/reference), written only when brain check --public
-                 would refuse none of it; --force: write under views.strict with another engine than the pin
+                 DDR went to by its title; its rules, specs, items done and open, open questions); no --write: exit 1
+                 when docs/reference/ is not the render; a page there that is not generated is never overwritten.
+                 Once written, brain sync keeps it current (the owner's opt-in). --public: a public repo's neutral
+                 reference by feature domain (its features' public titles, its own code and docs, the goals,
+                 strategy and glossary of its own docs/reference.yaml), into --out (a checkout's docs/reference),
+                 written only when brain check --public would refuse none of it; --force: write under views.strict
+                 with another engine than the pin
 """
 
 
@@ -33,7 +38,8 @@ def _target(args, root: Path) -> Path:
 def files_for(args, root: Path) -> dict[str, str]:
     store = _store(args, root)
     if getattr(args, "public", False):
-        return reference.render_public(store, args.repo or _root_repo(args, root), _root_repo(args, root))
+        prose = reference.load_prose(_target(args, root).parent.parent)[0]   # the checkout's own docs/reference.yaml
+        return reference.render_public(store, args.repo or _root_repo(args, root), _root_repo(args, root), prose)
     return reference.render(root, store, _store_label(root, store))
 
 
@@ -43,6 +49,11 @@ def cmd_reference(args, root: Path) -> int:
         return 1
     files = files_for(args, root)
     base = _target(args, root)
+    prose_errors = reference.load_prose(base.parent.parent)[1]   # <repo>/docs/reference.yaml
+    for line in prose_errors:   # a required field missing: the render is refused, as the README's YAML's
+        print(f"error: {line} (schemas/reference.schema.json)", file=sys.stderr)
+    if prose_errors:
+        return 1
     denied = reference.denied(files, config.load(root)) if args.public else []
     for line in denied:   # what brain check --public would refuse: never written into a public repo
         print(f"brain: the public reference: {line} (brain features set <feature> public_title=... or public_id=...)",
