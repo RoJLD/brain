@@ -379,3 +379,81 @@ def test_an_error_in_the_guard_fails_closed_for_security_settings(lab, monkeypat
     monkeypatch.setattr(guards, "remote_control", lambda payload: (None, "x"))
     reason = decide(call(lab, R, False, tool=tool, mode="plan"))
     assert reason and "the guard failed, so it refuses" in reason
+
+
+# --- the chain root the owner marked (wi-brain-handover-command) ---
+
+NO_ROOT = "this session is not a Brain coordinator (the name its starter gave it), nor a chain root"
+
+
+def _mark(*hosts):
+    """The owner's mark, as brain handover root writes it in their own terminal (no CLAUDECODE)."""
+    from brain import succession
+    for h in hosts:
+        succession.mark_root(h, "test", env={})
+
+
+@pytest.fixture
+def chain(lab, monkeypatch):
+    """O, a root the owner started (no parent, no name), started C1 (coordinator-c1, detached), which started C2
+    (coordinator-c2, detached): the first two hand-overs of a new chain."""
+    o, c1, c2 = (f"local_{c * 8}-0000-4000-8000-{c * 12}" for c in "123")
+    for h in (o, c1, c2):
+        monkeypatch.setitem(CLI, h, f"{h[6:14]}-cli0-4000-8000-000000000000")
+    lab.put(o, title="Coordinateur Brain handover")
+    lab.put(c1, parent=o, name="coordinator-c1", detached=True)
+    lab.put(c2, parent=c1, name="coordinator-c2", detached=True)
+    for h, kind in ((o, "running"), (c1, "running"), (c2, "idle")):
+        lab.turn(h, kind)
+    return o, c1, c2
+
+
+def test_an_unmarked_root_does_not_hand_over(lab, chain):
+    o, c1, _ = chain
+    lab.note(host=o)
+    refused(lab, call(lab, c1, True, caller=o), NO_ROOT)
+    refused(lab, call(lab, "self", False, caller=o), NO_ROOT)
+
+
+def test_a_marked_root_hands_over_without_a_name(lab, chain):
+    o, c1, _ = chain
+    _mark(o)
+    lab.note(host=o)
+    assert decide(call(lab, c1, True, caller=o)) is None
+    assert decide(call(lab, "self", False, caller=o)) is None
+    assert [r["case"] for r in rows(lab)] == ["handover-on", "handover-off"]
+
+
+def test_the_first_successor_of_a_marked_root_hands_over(lab, chain):
+    o, c1, c2 = chain
+    lab.note(host=c1)
+    refused(lab, call(lab, c2, True, caller=c1), "this session was not started by a Brain coordinator")
+    _mark(o)
+    assert decide(call(lab, c2, True, caller=c1)) is None
+    assert decide(call(lab, "self", False, caller=c1)) is None
+
+
+def test_a_marked_session_that_a_session_started_is_no_root(lab, chain, monkeypatch):
+    """The mark is for a session the owner started: a marked id whose app file names a parent counts for nothing."""
+    from brain import succession
+    _, c1, _ = chain
+    with pytest.raises(succession.SuccessionError, match="not by the owner"):
+        succession.mark_root(K, env={})
+    guards.roots_file().parent.mkdir(parents=True, exist_ok=True)
+    guards.roots_file().write_text(json.dumps({"v": 1, "roots": {K: {}, c1: {}}}), encoding="utf-8")   # forged
+    q = "local_78787878-0000-4000-8000-787878787878"
+    monkeypatch.setitem(CLI, q, "78787878-cli0-4000-8000-000000000000")
+    lab.put(q, parent=K, name="coordinator-q", detached=True)
+    lab.turn(q, "idle")
+    lab.note(host=K)
+    refused(lab, call(lab, q, True, caller=K), "this session is not a Brain coordinator")
+    assert guards.chain_root(c1, guards.app_reader(sessions.app_index())(c1)) is False
+
+
+@pytest.mark.parametrize("text", ["not json", json.dumps({"roots": ["x"]}), json.dumps({"roots": {"o": {}}})])
+def test_a_broken_mark_file_marks_no_root(lab, chain, text):
+    o, c1, _ = chain
+    lab.note(host=o)
+    guards.roots_file().parent.mkdir(parents=True, exist_ok=True)
+    guards.roots_file().write_text(text, encoding="utf-8")
+    refused(lab, call(lab, c1, True, caller=o), NO_ROOT)
