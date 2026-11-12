@@ -47,7 +47,9 @@ An item's typologies are its `props.typology` (an id, or ids separated by commas
 `lifecycle.typologies` in `projects.yaml` (LC-1's key; its other keys are kept as declared). `brain item clauses ID`
 prints its clauses. `brain item close ID` takes `--pr "repo #N"` or `--evidence TEXT` (repeatable: a render id, a
 document's version, a DDR); `--pr` is required for a done item that takes a clause whose evidence is a PR, and for an
-item whose project declares no typology, as before the catalog (DONE-1). The clauses live in the catalog until the
+item that declares no typology, or one the catalog does not know (a misspelling never drops a clause), as before the
+catalog (DONE-1). Only the store's own project's `lifecycle` counts (`--store` of another project's: the item's
+`props.typology` alone). A blank `--evidence` proves nothing. The clauses live in the catalog until the
 typology packs carry them (`wi-brain-typology-packs`).
 
 ## Stages
