@@ -213,6 +213,20 @@
         }
       }
     },
+    "typologies": {
+      "type": "object",
+      "description": "The typology catalog's labels and this brain's own ids (wi-brain-typology-catalog, brain.typologies, docs/typologies.md): {typology id: {en, fr, description, vision, parent}} merged over the engine's catalog (typologies.yaml). An engine id is renamed (its labels change, never its id nor its place); a new id adds an entry, or with parent a sub-profile of that entry. brain typologies lists them.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "en": {"type": "string", "minLength": 1, "description": "The English label (the default)."},
+          "fr": {"type": "string", "minLength": 1, "description": "The French label."},
+          "description": {"type": "string", "description": "What a project of this kind is."},
+          "vision": {"type": "array", "items": {"type": "string"}, "description": "An entry's column to the Vision's modules (J1, J2, J3, K3, K4...)."},
+          "parent": {"type": "string", "minLength": 1, "description": "For a brain's own sub-profile: its entry."}
+        }
+      }
+    },
     "classes": {
       "type": "object", "required": ["stores"], "additionalProperties": false,
       "description": "The data class of every store and where it may go (brain classes, brain check --all refuse a store without a class and a destination its class forbids). docs/data-classes.md; the matrix: brain classes --matrix.",

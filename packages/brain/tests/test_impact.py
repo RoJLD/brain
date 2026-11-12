@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from brain import cli, impact
+from brain import cli, diffs, impact
 from conftest import run_git
 from test_codemap import CORE, LAB, FakeGitNexus, _sha
 
@@ -280,7 +280,7 @@ def test_hunks_cover_both_sides_and_an_insertion_touches_the_line_it_follows(lab
     c = h["src/lab/core.py"]
     assert (c.status, c.old, c.new) == ("M", "src/lab/core.py", "src/lab/core.py")
     assert c.old_lines == [(1, 2), (10, 10)] and c.new_lines == [(9, 9)]   # go's two lines gone, a line added
-    assert impact._span(0, 0) is None and impact._span(5, 0) == (5, 5) and impact._span(5, 2) == (5, 6)
+    assert diffs._span(0, 0) is None and diffs._span(5, 0) == (5, 5) and diffs._span(5, 2) == (5, 6)
 
 
 def test_a_change_outside_any_coderef_lists_only_the_docs_it_edits(lab, make_repo, monkeypatch, capsys):

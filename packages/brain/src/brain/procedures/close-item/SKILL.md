@@ -103,7 +103,10 @@ one-line outcome. New follow-ups become new items, not notes in the old one. Run
 check commands when it has them. In the same PR as the work when possible.
 Where the `brain` command serves the project (a research_graph store registered in the brain's `projects.yaml`),
 use it rather than editing the YAML: `brain [--project P] item close <id> --pr "<repo> #<n>" --outcome "..."`, then
-`brain refresh`.
+`brain refresh`. The item's definition of done is the generic sentence plus the clauses of its typologies (`brain
+item clauses <id>`: its `props.typology`, else the project's `lifecycle.typologies`): a code item takes the software
+clauses (a PR, a test, the docs in the same PR, the scout, the worktree) and closes with `--pr`; an item of another
+kind closes with `--evidence "<a render id, a document's version, a DDR>"` instead.
 
 ## 4. Historised
 

@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from . import diffs
+
 MARKER = re.compile(r"^(?:<{7}|\|{7}|>{7}) |^={7}\r?$")
 SIDE = re.compile(r"^(?:<{7}|\|{7}|>{7}) ")   # the markers no text shares: a file with one has no ======= heading
 # A ======= under a line of text is a heading there: Markdown (Quarto's and R Markdown's too) and reStructuredText,
@@ -85,51 +87,25 @@ def scan_lines(path: str, lines) -> list[str]:
     return _kept(found, sided)
 
 
-ESCAPES = {"t": "\t", "n": "\n", "r": "\r", "a": "\a", "b": "\b", "f": "\f", "v": "\v"}
-
-
-def _unquote(text: str) -> str:
-    """A path git C-quoted (core.quotePath: "caf\\303\\251 notes.md", its \\" and \\\\), without its escapes."""
-    out, i = bytearray(), 0
-    while i < len(text):
-        if text[i] == "\\" and re.match(r"[0-7]{3}", text[i + 1:i + 4]):
-            out.append(int(text[i + 1:i + 4], 8) & 0xFF)
-            i += 4
-        elif text[i] == "\\" and i + 1 < len(text):
-            out += ESCAPES.get(text[i + 1], text[i + 1]).encode()
-            i += 2
-        else:
-            out += text[i].encode()
-            i += 1
-    return out.decode("utf-8", "replace")
-
-
-def diff_path(header: str) -> str:
-    """The path of a unified diff's ``+++ `` line: without the TAB git adds after a path with a space (for GNU
-    patch), unquoted when git C-quoted it, without its b/ prefix."""
-    path = header[4:].rstrip("\r\n").rstrip("\t")
-    if len(path) > 1 and path.startswith('"') and path.endswith('"'):
-        path = _unquote(path[1:-1])
-    return path[2:] if path.startswith("b/") else path
-
-
 def scan_diff(diff: str) -> list[str]:
     """``path:line`` for each marker an added line of a unified diff brings (one line of context or more, so the line
-    above a ``=======`` is known; a binary file shows no lines)."""
-    found, sided, path, line, previous, fence = [], set(), "", 0, None, None
-    for raw in diff.splitlines():
-        if raw.startswith("+++ "):
-            path, fence = diff_path(raw), None
-        elif raw.startswith("@@"):
-            m = re.search(r"\+(\d+)", raw)
-            line, previous, fence = (int(m.group(1)) if m else 0), None, None   # a fence opened above: unknown
-        elif raw.startswith(("+", " ")) and not raw.startswith("+++"):
-            text = raw[1:]
-            fence, example = fence_step(text, fence, path)
-            if raw[0] == "+" and MARKER.match(text) and not exempt(path) and not example:
-                found.append((path, line, text.startswith("=") and heading(text, previous, path)))
-                sided |= {path} if SIDE.match(text) else set()
-            previous, line = text, line + 1
+    above a ``=======`` is known; a binary file shows no lines). The diff is read by brain.diffs, the engine's one
+    reader: a hunk's lines by its counts, never a header guessed from a content line."""
+    found, sided = [], set()
+    for f in diffs.parse(diff):
+        path = f.new
+        if not path:
+            continue
+        for h in f.hunks:
+            previous, fence = None, None   # a fence opened above the hunk: unknown
+            for ln in h.lines:
+                if ln.kind == "-":
+                    continue
+                fence, example = fence_step(ln.text, fence, path)
+                if ln.kind == "+" and MARKER.match(ln.text) and not exempt(path) and not example:
+                    found.append((path, ln.new, ln.text.startswith("=") and heading(ln.text, previous, path)))
+                    sided |= {path} if SIDE.match(ln.text) else set()
+                previous = ln.text
     return _kept(found, sided)
 
 
