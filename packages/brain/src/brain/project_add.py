@@ -1,0 +1,315 @@
+"""``brain project add``: a project registered in a brain's ``projects.yaml`` by a command, a plan then ``--apply``
+(wi-brain-project-add; the personal-brain boundary design, the scope tree's ``--parent``). Three ways in:
+
+- ``--read``: a project the brain reads and never writes, its entry ``title``, ``access: read``, ``parent`` and
+  ``classes`` only (no root: brain.projects' read-only entries);
+- ``--existing DIR``: a standalone instance registered without a copy, its entry a ``root`` relative to the
+  registry's checkout (its main checkout when the registry is read from a worktree), the folder holding its graph
+  store (``--store``, default ``notes/graph``);
+- ``--template T --dir DIR``: a new project's brain written by ``brain init DIR --template T --name NAME`` (its own
+  step, run and logged), then registered like ``--existing``.
+
+``--parent NODE`` places it in the scope tree (a container of ``scopes.yaml`` or a project), ``--floor CLASS`` marks it
+with ``classes: {floor: CLASS}`` (a private project's names join ``public.deny.repos`` when ``public.deny_from_tree``
+is on), ``--title`` gives its one line.
+
+The plan shows the entry, where it is written and what the tree and the generated deny list gain; nothing is written
+without ``--apply``. Before writing, the registry as it would be is checked by the same checks ``brain check`` runs
+(brain.projects.check, brain.scopes.check): an error they would add refuses the write, one already there is left to
+``brain check``. The entry is appended to the end of ``projects.yaml``, its comments and order kept. Each write is
+logged as the owner's step in ``<BRAIN_HOME>/ledger/setup-<month>.jsonl`` (brain.firstrun's ledger: the command, its
+exit code, its duration and what it wrote).
+
+The registry acted on is the brain at ``--root`` (else the nearest folder above the current one that holds a
+``projects.yaml``), or ``$BRAIN_PROJECTS``: never the pointer's brain from another folder. A brain's own registry is
+changed by a branch and a PR of that brain, as any edit of it: the command writes in the checkout it runs in.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import re
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+import yaml
+
+from . import config, graph, paths, projects, scopes
+
+NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")   # an id of the tree: kebab-case, unique among projects and containers
+STORE = projects.DEFAULTS["stores"][0]
+VIA = "project-add"
+
+
+class AddError(ValueError):
+    """An answer the command cannot take: nothing is planned or written (exit 2)."""
+
+
+@dataclass
+class Plan:
+    name: str
+    registry: Path
+    entry: dict
+    init: list[str] | None = None     # brain init's step, with --template
+    new_terms: list[str] | None = None   # what public.deny.repos gains, when public.deny_from_tree is on
+
+    def text(self) -> str:
+        return block(self.name, self.entry)
+
+
+def block(name: str, entry: dict) -> str:
+    """The entry as appended to projects.yaml: a block mapping, keys in the order given."""
+    return yaml.safe_dump({name: entry}, sort_keys=False, allow_unicode=True, width=120, default_flow_style=False)
+
+
+def registry_of(root: Path | None) -> Path:
+    """The registry acted on: $BRAIN_PROJECTS, else ``projects.yaml`` at --root or the nearest folder above the
+    current one; AddError when there is none (brain init writes it)."""
+    env = os.environ.get("BRAIN_PROJECTS")
+    if env:
+        f = Path(env).expanduser()
+    else:
+        start = Path(root).resolve() if root else Path.cwd().resolve()
+        f = next((d / projects.REGISTRY for d in (start, *start.parents) if (d / projects.REGISTRY).is_file()),
+                 start / projects.REGISTRY)
+    if not f.is_file():
+        raise AddError(f"no {projects.REGISTRY} at {f.parent} or above: brain init writes a brain's registry "
+                       "(--root names the brain)")
+    return f
+
+
+def _base(registry: Path) -> Path:
+    """Where a relative root is read from: the registry's checkout, its main checkout when it is a worktree (as
+    brain.projects resolves a root that the worktree lacks)."""
+    here = registry.parent.resolve()
+    main = paths.main_checkout(here)
+    return main.resolve() if main else here
+
+
+def relative_root(folder: Path, registry: Path) -> str:
+    """The folder as the entry's root: relative to the registry's base, with forward slashes; absolute when it is on
+    another drive."""
+    base, folder = _base(registry), folder.resolve()
+    try:
+        rel = os.path.relpath(folder, base)
+    except ValueError:   # another drive (Windows)
+        return folder.as_posix()
+    return Path(rel).as_posix()
+
+
+def _raw(registry: Path) -> dict:
+    try:
+        data = graph.load_yaml(registry.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001 - said, never written over
+        raise AddError(f"{registry}: not readable YAML ({exc}); brain check says why") from None
+    if not isinstance(data, dict):
+        raise AddError(f"{registry} is a {type(data).__name__}, not a mapping")
+    return data
+
+
+def _check_name(name: str, registry: Path, cfg: config.Config) -> None:
+    if not NAME.match(name):
+        raise AddError(f"{name!r}: a project's name is an id of the scope tree, kebab-case (a-z, 0-9, -)")
+    if name == scopes.GLOBAL:
+        raise AddError(f"{name!r} is the tree's root")
+    if name in _raw(registry):
+        raise AddError(f"{name} is registered already in {registry} (an existing entry changes by an edit and a PR)")
+    if name in scopes.nodes_of(cfg):
+        raise AddError(f"{name} is a container of the scope tree already (ids are unique across projects and "
+                       "containers)")
+
+
+def _check_folder(folder: Path, store: str, registry: Path) -> None:
+    if not folder.is_dir():
+        raise AddError(f"--existing {folder}: no such folder")
+    if not (folder / store).is_dir():
+        raise AddError(f"--existing {folder}: no graph store at {store} (--store PATH names another; brain init "
+                       f"{folder} writes a brain; --read registers a project the brain only reads)")
+    for p in projects.load(registry.parent).values():
+        if os.path.normcase(str(p.root.resolve())) == os.path.normcase(str(folder.resolve())):
+            raise AddError(f"--existing {folder}: the root of {p.name} already (a second project at one root "
+                           "declares its own stores: an edit of its entry)")
+
+
+def entry_for(args, registry: Path) -> dict:
+    """The new entry from the options, keys in the registry's usual order."""
+    e: dict = {}
+    if args.read:
+        if args.title:
+            e["title"] = args.title
+        e["access"] = "read"
+    else:
+        folder = Path(args.existing or args.dir)
+        e["root"] = relative_root(folder, registry)
+        if args.title:
+            e["title"] = args.title
+        if args.store and Path(args.store).as_posix() != STORE:
+            e["stores"] = [Path(args.store).as_posix()]
+    if args.parent:
+        e["parent"] = args.parent
+    if args.floor:
+        e["classes"] = {"floor": args.floor}
+    return e
+
+
+@contextlib.contextmanager
+def _registry_as(path: Path):
+    """$BRAIN_PROJECTS set to ``path`` for the checks, then restored."""
+    old = os.environ.get("BRAIN_PROJECTS")
+    os.environ["BRAIN_PROJECTS"] = str(path)
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("BRAIN_PROJECTS", None)
+        else:
+            os.environ["BRAIN_PROJECTS"] = old
+
+
+def _errors(registry: Path, cfg: config.Config) -> tuple[set[str], list[str]]:
+    """What brain check would say of the registry at ``registry``: its errors and the generated deny terms."""
+    with _registry_as(registry):
+        errs = set(projects.check(cfg.root)) | set(scopes.check(cfg.root, cfg)[0])
+        try:
+            terms = scopes.private_terms(cfg)
+        except Exception:  # noqa: BLE001 - a tree that cannot be read: its errors say why
+            terms = []
+    return errs, terms
+
+
+def candidate(registry: Path, name: str, entry: dict) -> str:
+    """The registry's text with the entry appended."""
+    text = registry.read_text(encoding="utf-8")
+    sep = "" if not text or text.endswith("\n") else "\n"
+    return text + sep + block(name, entry)
+
+
+def checked(registry: Path, name: str, entry: dict, cfg: config.Config) -> list[str]:
+    """The deny terms the entry adds when public.deny_from_tree is on; AddError naming the errors the entry would add
+    to brain check's (those already there are left to brain check)."""
+    before, terms_before = _errors(registry, cfg)
+    tmp = registry.with_name(f".{registry.name}.{os.getpid()}.add")
+    try:
+        tmp.write_text(candidate(registry, name, entry), encoding="utf-8", newline="\n")
+        after, terms_after = _errors(tmp, cfg)
+    finally:
+        tmp.unlink(missing_ok=True)
+    new = sorted(e.replace(str(tmp), str(registry)) for e in after - before)
+    if new:
+        raise AddError("the entry would add to brain check: " + "; ".join(new[:3])
+                       + (f" (+{len(new) - 3})" if len(new) > 3 else ""))
+    return sorted(set(terms_after) - set(terms_before), key=str.lower) if config.deny_from_tree(cfg) else []
+
+
+def plan(args) -> Plan:
+    modes = [m for m in ("read", "existing", "template") if getattr(args, m)]
+    if len(modes) != 1:
+        raise AddError("one of --read, --existing DIR or --template T (with --dir DIR)")
+    if args.template and not args.dir:
+        raise AddError("--template T writes a new project's brain: --dir DIR names its folder")
+    if args.dir and not args.template:
+        raise AddError("--dir goes with --template (--existing DIR registers a folder that holds a brain)")
+    if args.read and args.store:
+        raise AddError("--store: a read-only project has no store")
+    registry = registry_of(getattr(args, "root", None))
+    cfg = config.load(registry.parent)
+    _check_name(args.name, registry, cfg)
+    if args.floor and args.floor not in _classes():
+        raise AddError(f"--floor {args.floor}: one of {', '.join(_classes())}")
+    store = Path(args.store).as_posix() if args.store else STORE
+    if args.existing:
+        _check_folder(Path(args.existing), store, registry)
+    if args.template and Path(args.dir).exists() and any(Path(args.dir).iterdir()):
+        raise AddError(f"--dir {args.dir}: not empty (--existing registers a folder that holds a brain)")
+    entry = entry_for(args, registry)
+    init = None
+    if args.template:
+        init = ["brain", "init", str(Path(args.dir)), "--template", args.template, "--name", args.name,
+                "--owner", config.owner_of(registry.parent)]
+        terms = _template_terms(registry, args.name, entry, cfg)
+    else:
+        terms = checked(registry, args.name, entry, cfg)
+    return Plan(args.name, registry, entry, init, terms)
+
+
+def _template_terms(registry: Path, name: str, entry: dict, cfg: config.Config) -> list[str]:
+    """With --template the folder is written by brain init first: its root is checked then (an entry naming a store
+    not there yet would read as an error of the plan); the plan checks the placement on a read-only stand-in."""
+    stand_in = {k: v for k, v in entry.items() if k in projects.READ_ONLY_KEYS}
+    stand_in["access"] = "read"
+    return checked(registry, name, stand_in, cfg)
+
+
+def _classes() -> tuple[str, ...]:
+    from .classes import CLASSES
+    return CLASSES
+
+
+def render(p: Plan, apply: bool) -> list[str]:
+    lines = [f"brain project add {p.name}: its entry in {p.registry}" + ("" if apply else " (plan: --apply writes it)")]
+    if p.init:
+        lines.append(f"  first: {' '.join(p.init)} --apply (a logged step: its own plan above)")
+    lines += ["  " + line for line in p.text().rstrip("\n").splitlines()]
+    where = p.entry.get("parent", scopes.GLOBAL)
+    lines.append(f"  in the scope tree: under {where}" + (f", class floor {p.entry['classes']['floor']}"
+                                                          if "classes" in p.entry else ""))
+    if p.new_terms:
+        lines.append(f"  public.deny.repos gains (public.deny_from_tree): {', '.join(p.new_terms)}")
+    return lines
+
+
+def write(p: Plan) -> None:
+    p.registry.write_text(candidate(p.registry, p.name, p.entry), encoding="utf-8", newline="\n")
+
+
+def log(registry: Path, words: list[str], code: int, seconds: float, output: str) -> Path:
+    from . import firstrun
+    return firstrun.log({"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "event": "setup-step",
+                         "via": VIA, "by": config.owner_of(registry.parent), "command": firstrun.shown(words),
+                         "cwd": str(registry.parent), "exit": code, "seconds": round(seconds, 2),
+                         "output": output[-firstrun.OUTPUT_MAX:]})
+
+
+def words_of(args) -> list[str]:
+    """The command as the owner typed it, for the ledger."""
+    w = ["brain", "project", "add", args.name]
+    for flag, value in (("--existing", args.existing), ("--template", args.template), ("--dir", args.dir),
+                        ("--store", args.store), ("--parent", args.parent), ("--floor", args.floor),
+                        ("--title", args.title)):
+        if value:
+            w += [flag, str(value)]
+    return w + (["--read"] if args.read else []) + ["--apply"]
+
+
+def main(args) -> int:
+    t0 = time.monotonic()
+    try:
+        p = plan(args)
+    except AddError as exc:
+        print(f"brain project add: {exc}")
+        return 2
+    if p.init and not args.apply:
+        from . import cli
+        cli.main(p.init[1:])   # brain init's own plan, written nowhere
+    print("\n".join(render(p, args.apply)))
+    if not args.apply:
+        return 0
+    if p.init:
+        from . import firstrun
+        res = firstrun.run([*p.init, "--apply"], p.registry.parent, by=config.owner_of(p.registry.parent))
+        print(res["output"])
+        if res["exit"] != 0:
+            print(f"brain project add: brain init exited {res['exit']}: nothing registered")
+            return res["exit"]
+        try:
+            p.new_terms = checked(p.registry, p.name, p.entry, config.load(p.registry.parent))
+        except AddError as exc:
+            print(f"brain project add: {exc} (the brain at {args.dir} is written; register it with --existing)")
+            return 2
+    write(p)
+    f = log(p.registry, words_of(args), 0, time.monotonic() - t0, p.text())
+    print(f"wrote {p.name} in {p.registry}; logged in {f}; then brain sync and brain check (a PR of this brain)")
+    return 0

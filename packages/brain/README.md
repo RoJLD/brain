@@ -686,6 +686,27 @@ the standards' stage, the template) and writes nothing: an existing registry cha
 offers it as « A new project » (without `--owner`, the owner of this machine's personal brain). The languages and tools, the data classes and the pack, procedures and permissions it
 will propose are its later slices.
 
+`brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
+CLASS] [--title TEXT] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`), a plan
+then `--apply`, instead of a hand edit of the file:
+- `--read`: a project the brain reads and never writes (its entry: `title`, `access: read`, `parent`, `classes`);
+- `--existing DIR`: an instance that has its own brain, registered without a copy: its `root`, relative to the
+  registry's checkout (its main checkout when the command runs in a worktree), and `stores` when `--store` names
+  another than `notes/graph`; a folder without that store, or the root of a registered project, is refused;
+- `--template T --dir DIR`: a new project's brain written first by `brain init DIR --template T --name NAME` (its own
+  plan in the plan; with `--apply` a logged step), then registered as `--existing` would.
+
+`--parent` places it in the scope tree (a container of `scopes.yaml` or a project), `--floor` writes `classes: {floor:
+CLASS}`, and the plan says what `public.deny.repos` gains when `public.deny_from_tree` is on. Before writing, the
+registry as it would be is checked by `brain check`'s own registry and tree checks: an error the entry would add (an
+unknown parent, a type that does not accept it) refuses the write, one already there is left to `brain check`. The
+name is an id of the tree, kebab-case and new among the projects and containers. The entry is appended at the end of
+the file, its comments and order kept, and the write is logged as the owner's step in
+`<BRAIN_HOME>/ledger/setup-<month>.jsonl`, as `brain init`'s steps are. The registry is the one at `--root` (else the
+nearest `projects.yaml` above the current folder, or `$BRAIN_PROJECTS`), never the pointer's brain from another
+folder: a brain's registry changes by a branch and a PR of that brain, so run it in a worktree of it, then `brain
+sync` and `brain check`.
+
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
 A team uses `--kind team` (and `--tenant ID` for a hosted brain). The step-by-step guide from an empty machine is
