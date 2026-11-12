@@ -113,20 +113,14 @@ def _source_names_something(src) -> bool:
     return isinstance(src, dict) and bool(src.get("path") or src.get("tracker"))
 
 
-def validate(doc: dict, where: str = "docgraph") -> tuple[list[str], list[str]]:
-    """(errors, notes) of ``doc`` against docgraph/v1. Errors: the schema's, a later version (refused alone: its other
-    keys may mean something else), an id used twice or not prefixed by its type, a source that names no file and no
-    tracker object, a check both run and not run, a finding of a check said not run. Notes: what a reader keeps without
-    judging: an edge or a finding that names an id the document does not hold (the checks report it), a finding of a
-    check this engine does not name (the producer's own)."""
-    refused = newer(doc)
-    if refused:
-        return [f"{where}: {refused}"], []
-    errors = [e.replace(KIND, where, 1) if e.startswith(KIND) else e
-              for e in schema.validate(KIND, doc, schema.STRICT)[0]]
-    notes: list[str] = []
-    nodes = doc.get("nodes") if isinstance(doc.get("nodes"), list) else []
-    edges = doc.get("edges") if isinstance(doc.get("edges"), list) else []
+def _list(doc: dict, key: str) -> list:
+    """``doc[key]`` when it is a list (the schema reports any other value), else []."""
+    value = doc.get(key)
+    return value if isinstance(value, list) else []
+
+
+def _nodes(nodes: list, where: str, errors: list[str]) -> set[str]:
+    """The ids of the document's nodes; an id used twice or not prefixed by its type, a source naming nothing: errors."""
     seen: set[str] = set()
     for i, n in enumerate(nodes):
         if not isinstance(n, dict):
@@ -139,20 +133,24 @@ def validate(doc: dict, where: str = "docgraph") -> tuple[list[str], list[str]]:
             errors.append(f"{where}.nodes[{i}]: id {nid!r} is not prefixed by its type {ntype!r}")
         if "source" in n and not _source_names_something(n["source"]):
             errors.append(f"{where}.nodes[{i}].source: names no path and no tracker")
+    return seen
+
+
+def _edges(edges: list, seen: set[str], where: str, errors: list[str], notes: list[str]) -> None:
     for i, e in enumerate(edges):
         if not isinstance(e, dict):
             continue
         if "source" in e and not _source_names_something(e["source"]):
             errors.append(f"{where}.edges[{i}].source: names no path and no tracker")
-        for end in ("from", "to"):
-            if isinstance(e.get(end), str) and e[end] not in seen:
-                notes.append(f"{where}.edges[{i}].{end}: {e[end]!r} is not a node of the document")
-    run = set(doc.get("checks_run") or []) if isinstance(doc.get("checks_run"), list) else set()
-    not_run = set(doc.get("checks_not_run") or []) if isinstance(doc.get("checks_not_run"), list) else set()
-    for cid in sorted(run & not_run):
-        errors.append(f"{where}: check {cid!r} is both run and not run")
-    findings = doc.get("checks") if isinstance(doc.get("checks"), list) else []
-    for i, f in enumerate(findings):
+        notes.extend(f"{where}.edges[{i}].{end}: {e[end]!r} is not a node of the document"
+                     for end in ("from", "to") if isinstance(e.get(end), str) and e[end] not in seen)
+
+
+def _findings(doc: dict, seen: set[str], where: str, errors: list[str], notes: list[str]) -> None:
+    run = {c for c in _list(doc, "checks_run") if isinstance(c, str)}
+    not_run = {c for c in _list(doc, "checks_not_run") if isinstance(c, str)}
+    errors.extend(f"{where}: check {cid!r} is both run and not run" for cid in sorted(run & not_run))
+    for i, f in enumerate(_list(doc, "checks")):
         if not isinstance(f, dict):
             continue
         cid = str(f.get("id", ""))
@@ -160,9 +158,26 @@ def validate(doc: dict, where: str = "docgraph") -> tuple[list[str], list[str]]:
             errors.append(f"{where}.checks[{i}]: a finding of {cid!r}, which the document says was not run")
         if cid and cid not in CHECK_IDS:
             notes.append(f"{where}.checks[{i}]: {cid!r} is the producer's own check (not a named one)")
-        for s in f.get("subjects") or []:
-            if isinstance(s, str) and s not in seen:
-                notes.append(f"{where}.checks[{i}]: subject {s!r} is not a node of the document")
+        subjects = f.get("subjects") if isinstance(f.get("subjects"), list) else []
+        notes.extend(f"{where}.checks[{i}]: subject {s!r} is not a node of the document"
+                     for s in subjects if isinstance(s, str) and s not in seen)
+
+
+def validate(doc: dict, where: str = "docgraph") -> tuple[list[str], list[str]]:
+    """(errors, notes) of ``doc`` against docgraph/v1. Errors: the schema's, a later version (refused alone: its other
+    keys may mean something else), an id used twice or not prefixed by its type, a source that names no file and no
+    tracker object, a check both run and not run, a finding of a check said not run. Notes: what a reader keeps without
+    judging: an edge or a finding that names an id the document does not hold (the checks report it), a finding of a
+    check this engine does not name (the producer's own)."""
+    refused = newer(doc)
+    if refused:
+        return [f"{where}: {refused}"], []
+    errors = [e.replace(KIND, where, 1) if e.startswith(KIND) else e
+              for e in schema.validate(KIND, doc, schema.STRICT)[0]]
+    notes: list[str] = []
+    seen = _nodes(_list(doc, "nodes"), where, errors)
+    _edges(_list(doc, "edges"), seen, where, errors, notes)
+    _findings(doc, seen, where, errors, notes)
     return errors, notes
 
 
@@ -174,8 +189,9 @@ def summary(doc: dict) -> dict:
             if isinstance(x, dict):
                 out[str(x.get(key))] = out.get(str(x.get(key)), 0) + 1
         return dict(sorted(out.items()))
-    nodes, edges, findings = (doc.get(k) if isinstance(doc.get(k), list) else [] for k in ("nodes", "edges", "checks"))
-    return {"schema": doc.get("schema"), "by": (doc.get("generated") or {}).get("by"),
+    nodes, edges, findings = (_list(doc, k) for k in ("nodes", "edges", "checks"))
+    generated = doc.get("generated") if isinstance(doc.get("generated"), dict) else {}
+    return {"schema": doc.get("schema"), "by": generated.get("by"),
             "nodes": count(nodes, "type"), "edges": count(edges, "type"), "origins": count(edges, "origin"),
             "findings": count(findings, "severity"),
-            "checks_run": len(doc.get("checks_run") or []), "checks_not_run": len(doc.get("checks_not_run") or [])}
+            "checks_run": len(_list(doc, "checks_run")), "checks_not_run": len(_list(doc, "checks_not_run"))}

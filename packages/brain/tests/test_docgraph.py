@@ -101,6 +101,17 @@ def test_another_contract_is_an_error():
     assert any("must be 'docgraph/v1'" in e for e in docgraph.validate(doc)[0])
 
 
+def test_a_malformed_document_is_reported_never_a_crash():
+    """The schema reports the wrong types; the rules after it read past them (an unhashable check id, a subject list
+    that is a string, a node that is not an object)."""
+    doc = {"schema": "docgraph/v1", "generated": "now", "nodes": [3, {"id": "x"}], "edges": {"a": 1},
+           "checks": [{"id": "cycle", "severity": "error", "subjects": "item:1"}, "x"],
+           "checks_run": [{"id": "cycle"}], "checks_not_run": "cycle"}
+    errors, _ = docgraph.validate(doc)
+    assert errors and all(isinstance(e, str) for e in errors)
+    assert docgraph.summary(doc)["by"] is None
+
+
 def test_summary_counts():
     s = docgraph.summary(fixture("older"))
     assert s["nodes"]["decision"] == 3 and s["edges"]["contradicts"] == 1
