@@ -111,6 +111,15 @@ def _templates() -> tuple:
         return ("generic",)
 
 
+def _kinds() -> tuple:
+    """The kinds brain project new offers with a template (brain.project_new.offered); () when unreadable."""
+    try:
+        from . import project_new, typologies
+        return tuple(project_new.offered(typologies.engine()))
+    except Exception:  # the catalog or the templates unreadable: the wizard without choices, never an error
+        return ()
+
+
 def wizards(root: Path | None = None) -> list[Wizard]:
     """The setup wizards, in the order a new brain walks them."""
     return [
@@ -130,6 +139,15 @@ def wizards(root: Path | None = None) -> list[Wizard]:
                "a project's entry in projects.yaml: a branch and a PR in the personal brain, never an edit here",
                plan=["brain", "projects"], owner="a branch in the personal brain's repo, the project's entry added to "
                "projects.yaml, a PR; brain check --all before it merges"),
+        Wizard("project-new", "A new project",
+               "a new project's brain from what it produces (a kind of the typology catalog: code products and "
+               "research first) and its stage: the plan in the folder typed, then --apply (brain init, its registry "
+               "entry recording lifecycle: {typologies, stage})",
+               plan=["brain", "project", "new", ASK_DIR, "--kind", "{choice}"],
+               apply=["brain", "project", "new", ASK_DIR, "--kind", "{choice}", "--apply"],
+               choices=_kinds(), placeholder="KIND", ask="the new project's folder (a path; it must not hold a brain "
+                                                       "yet)",
+               notes=["--stage prototype|mvp|v1|scale and more --kind: brain project new in a terminal"]),
         Wizard("notify-ntfy", "Notifications: ntfy",
                "the ntfy channel's steps: its topic set by the owner as an environment variable, named in "
                "projects.yaml, never typed here", plan=["brain", "notify", "setup", "ntfy"], scoped=True),
