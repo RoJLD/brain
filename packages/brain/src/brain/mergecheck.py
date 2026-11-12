@@ -212,8 +212,9 @@ def _node_losses(path: str, texts: list[str], ours: str, result: str) -> tuple[l
     """A node file's lost fields (``both``: the branch changed the field too, a « check it by eye ») and lost ids."""
     changed, gone = lost_nodes(*texts, ours, result)
     o, m = _nodes(ours), _nodes(texts[1])
-    return ([{"path": path, "line": 0, "text": f"{nid} {k}: {v}", "both": o.get(nid, {}).get(k) != m.get(nid, {}).get(k)}
-             for nid, k, v in changed], [{"path": path, "id": nid} for nid in gone])
+    lost = [{"path": path, "line": 0, "text": f"{nid} {k}: {v}",
+             "both": o.get(nid, {}).get(k) != m.get(nid, {}).get(k)} for nid, k, v in changed]
+    return lost, [{"path": path, "id": nid} for nid in gone]
 
 
 FETCH_TIMEOUT = 20   # seconds the push guard gives git fetch; past it, the base as last fetched
