@@ -8,7 +8,6 @@ import json
 
 import pytest
 import yaml
-
 from brain import cli, graph, projects, typologies
 
 

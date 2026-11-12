@@ -153,19 +153,24 @@ def engine() -> Catalog:
     """The engine's catalog, as typologies.yaml gives it."""
     data = _read()
     cat = Catalog()
-    for eid, spec in (data.get("entries") or {}).items():
-        spec = spec or {}
-        cat.typologies[eid] = Typology(eid, _labels(spec), str(spec.get("description") or ""),
-                                       tuple(spec.get("vision") or ()))
-        for sid, sub in (spec.get("sub") or {}).items():
-            sub = sub or {}
-            cat.typologies[sid] = Typology(sid, _labels(sub), str(sub.get("description") or ""), parent=eid)
+    entries = data.get("entries") or {}
+    for eid, spec in entries.items():
+        _add_entry(cat, eid, spec or {})
     cat.stages = {str(k): dict(v or {}) for k, v in (data.get("stages") or {}).items()}
     cat.standards_stages = {str(k): str(v) for k, v in (data.get("standards_stages") or {}).items()}
     cat.done = [_clause(c) for c in data.get("done") or []]
-    cat.clauses = {eid: [_clause(c, eid) for c in (spec or {}).get("done") or []]
-                   for eid, spec in (data.get("entries") or {}).items() if (spec or {}).get("done")}
     return cat
+
+
+def _add_entry(cat: Catalog, eid: str, spec: dict) -> None:
+    """An entry of typologies.yaml: itself, its sub-profiles and its clauses of done."""
+    cat.typologies[eid] = Typology(eid, _labels(spec), str(spec.get("description") or ""),
+                                   tuple(spec.get("vision") or ()))
+    for sid, sub in (spec.get("sub") or {}).items():
+        sub = sub or {}
+        cat.typologies[sid] = Typology(sid, _labels(sub), str(sub.get("description") or ""), parent=eid)
+    if spec.get("done"):
+        cat.clauses[eid] = [_clause(c, eid) for c in spec["done"]]
 
 
 def _clause(c: dict, typology: str = "") -> Clause:
