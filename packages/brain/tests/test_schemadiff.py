@@ -37,7 +37,7 @@ def edit(**changes):
     ({"n__type": "integer"}, "/n: type narrowed (integer|null -> integer)"),
     ({"tags__type": "array", "id__type": "integer"}, "/id: type narrowed (string -> integer)"),
     ({"v__const": 2}, "/v: const 1 -> 2"),
-    ({"additionalProperties": False}, "/: closed (additionalProperties false)"),
+    ({"additionalProperties": False}, "/*: closed"),
     ({"n__minimum": 1}, "/n: minimum 0 -> 1"),
     ({"n__maximum": 9}, "/n: maximum 10 -> 9"),
     ({"id__pattern": "^y-"}, "/id: pattern changed"),
@@ -63,13 +63,55 @@ def test_what_only_widens_is_no_narrowing(new):
     assert schemadiff.json_narrowed(OBJ, edit(**new) if "properties" not in new else {**OBJ, **new}) == []
 
 
-def test_a_bumped_v_is_the_format_moving_not_a_narrowing_of_its_own():
+def test_a_bumped_v_is_the_format_moving():
+    """A v bumped is a narrowing of its own (the old files no longer validate), said once, never as a const."""
     d = schemadiff.compare("x/ddr.schema.json", json.dumps(OBJ), json.dumps(edit(v__const=2, kind__enum=["a"])))
-    assert d.v == (1, 2) and d.narrowed == ['/kind: enum narrowed (no longer "b")']
+    assert d.v == (1, 2) and d.narrowed == [
+        '/kind: enum narrowed (no longer "b")', "/v: v1 -> v2: the files of v1 no longer validate (the format moves)"]
+    alone = schemadiff.compare("x/ddr.schema.json", json.dumps(OBJ), json.dumps(edit(v__const=2)))
+    assert alone.narrowed == ["/v: v1 -> v2: the files of v1 no longer validate (the format moves)"]
     assert schemadiff.compare("x/ddr.schema.json", None, json.dumps(OBJ)).narrowed == []      # a new schema
     assert schemadiff.compare("x/ddr.schema.json", json.dumps(OBJ), None).narrowed == ["the schema removed"]
     broken = schemadiff.compare("x/ddr.schema.json", json.dumps(OBJ), "{not json")
     assert broken.error and broken.narrowed == [broken.error]
+
+
+@pytest.mark.parametrize("old,new", [
+    ({"type": "object", "properties": {"a": {"type": 5}}}, {"type": "object", "properties": {"a": {"type": 6}}}),
+    ({"properties": {"a": {"required": True}}}, {"properties": {"a": {"required": False}}}),     # draft 03
+    ({"enum": None}, {"enum": ["x"]}),
+    ({"properties": []}, {"properties": {"a": {}}}),
+    ({"allOf": {"x": 1}}, {"allOf": [{"required": ["a"]}]}),
+])
+def test_an_odd_schema_never_crashes(old, new):
+    """The scout runs on every registered repo: a schema of an unexpected shape is a narrowing it cannot weigh, or
+    none, never a traceback."""
+    d = schemadiff.compare("x/a.schema.json", json.dumps(old), json.dumps(new))
+    assert isinstance(d.narrowed, list)
+
+
+def test_what_the_engines_schemas_hide_in_conditions_and_refs_is_found():
+    """The ar, ddr and event schemas carry their conditional fields in allOf[].then.required; sr points at $defs."""
+    ddr = json.loads((schema.SCHEMA_DIR / "ddr.schema.json").read_text(encoding="utf-8"))
+    i, entry = next((i, e) for i, e in enumerate(ddr["allOf"]) if "then" in e and "required" in e["then"])
+    tighter = json.loads(json.dumps(ddr))
+    tighter["allOf"][i]["then"]["required"] = [*entry["then"]["required"], "zz_new"]
+    assert f"/allOf[{i}]/then/zz_new: newly required" in schemadiff.json_narrowed(ddr, tighter)
+    assert schemadiff.json_narrowed({"$ref": "#/$defs/a"}, {"$ref": "#/$defs/b"}) == ["/: $ref #/$defs/a -> #/$defs/b"]
+    assert schemadiff.json_narrowed({}, {"additionalProperties": {"type": "string"}}) == [
+        "/*: type narrowed (any -> string)"]
+    assert schemadiff.json_narrowed({"anyOf": [{}, {}]}, {"anyOf": [{}]}) == ["/: anyOf changed"]
+    assert schemadiff.json_narrowed({}, {"uniqueItems": True}) == ["/: uniqueItems added"]
+    assert schemadiff.json_narrowed({"items": [{}, {}]}, {"items": [{}, {"type": "string"}]}) == [
+        "[][1]: type narrowed (any -> string)"]
+
+
+@pytest.mark.parametrize("old,new", [
+    ({"type": "integer"}, {"type": "number"}),
+    (False, {}), ({"type": "string"}, True), ({}, {"items": True}),
+])
+def test_a_widening_of_types_and_booleans_is_no_narrowing(old, new):
+    assert schemadiff.json_narrowed(old, new) == []
 
 
 STORE = ("node_types: [WorkItem, Lesson]\nedge_types: [depends_on, led_to]\nstatuses: [todo, done, open]\n"
@@ -83,9 +125,18 @@ STORE = ("node_types: [WorkItem, Lesson]\nedge_types: [depends_on, led_to]\nstat
     (STORE.replace("status_by_type:\n", "status_by_type:\n  Lesson: [open]\n"),
      "status_by_type.Lesson: its statuses restricted to open"),
     (STORE.replace("Lesson: [trigger]", "Lesson: [trigger, check]"), "required_props.Lesson: check newly required"),
+
 ])
 def test_a_store_schema_narrowed(new, expected):
     assert expected in schemadiff.compare("notes/graph/schema.yaml", STORE, new).narrowed
+
+
+def test_a_type_whose_statuses_were_open_given_a_list_narrows():
+    """status_by_type.T null (any status) then a list: the other statuses are refused."""
+    old = STORE.replace("status_by_type:\n", "status_by_type:\n  Lesson:\n")
+    new = STORE.replace("status_by_type:\n", "status_by_type:\n  Lesson: [open]\n")
+    assert "status_by_type.Lesson: its statuses restricted to open" in schemadiff.compare("s/schema.yaml", old,
+                                                                                          new).narrowed
 
 
 def test_a_store_schema_that_only_grows_narrows_nothing():
@@ -125,6 +176,30 @@ def test_the_compat_lines_are_read():
             "compat: additive\nNot a Compat: line in prose\n")
     assert schemadiff.compat(body) == [("migration", "mig-ddr-v2"), ("breaking", "adr-2026-11-12-drop-x"),
                                        ("additive", "")]
+    # a word is no id: such a line resolves nothing
+    assert schemadiff.compat("Compat: breaking changes to ddr\nCompat: migration TBD\n") == [
+        ("breaking", ""), ("migration", "")]
+
+
+def test_only_an_adr_or_a_migration_with_its_fixture_resolves(tmp_path):
+    from brain import inventory
+    tree = inventory.Tree(tmp_path, {"tests/fixtures/formats/ddr/v2/older.yaml": ""})
+    d = schemadiff.compare("s/ddr.schema.json", json.dumps(OBJ), json.dumps(edit(v__const=2)))
+    for body in ("Compat: additive", "Compat: breaking changes", "Compat: migration TBD"):
+        assert not schemadiff.resolve(schemadiff.Diff(d.path, list(d.narrowed), d.v), schemadiff.compat(body),
+                                      tree).resolved, body
+    assert schemadiff.resolve(d, schemadiff.compat("Compat: migration mig-ddr-v2"), tree).resolved
+
+
+def test_a_renamed_schema_narrows_for_its_readers(tmp_path):
+    from brain import inventory
+    text = json.dumps(OBJ)
+    base = inventory.Tree(tmp_path, {"s/ddr.schema.json": ""})
+    new = inventory.Tree(tmp_path, {"s/ddr2.schema.json": ""})
+    base.text = lambda p: text      # the same content under another name
+    new.text = lambda p: text
+    (d,) = schemadiff.diffs([("R100", "s/ddr.schema.json", "s/ddr2.schema.json")], base, new, "")
+    assert d.narrowed == ["renamed from s/ddr.schema.json"]
 
 
 # --- the command and the scout, on a repo ---------------------------------------------------------------------------
@@ -214,7 +289,10 @@ def scout(capsys, repo) -> dict:
 
 def test_the_scout_shows_a_narrowing_as_info_by_default(lab, capsys):
     write(lab, SCHEMA, edit(additionalProperties=False))
-    assert scout(capsys, lab)[SCHEMA] == "info"
+    got = scout(capsys, lab)
+    assert got[SCHEMA] == "info"
+    write(lab, SCHEMA, json.dumps(OBJ, indent=1) + "\n")      # the same change set but the narrowing: same exit
+    assert scout(capsys, lab)["rc"] == got["rc"]            # never blocking: info changes no exit code
 
 
 def test_the_scout_makes_it_new_under_the_opt_in_unless_resolved(lab, capsys, strict_config):

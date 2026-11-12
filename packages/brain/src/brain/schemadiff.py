@@ -10,12 +10,17 @@ would no longer satisfy is a **narrowing**:
   value or appeared, a ``type`` that lost one or appeared, a ``const`` added or changed, ``additionalProperties``
   closed, a bound tightened or added (``minimum``, ``minLength``, ``minItems`` up; ``maximum``, ``maxLength``,
   ``maxItems`` down), a ``pattern`` or ``format`` added or changed (the comparison cannot tell a wider pattern: it errs
-  towards a narrowing), an ``allOf`` entry added;
+  towards a narrowing), an ``allOf`` entry added, a ``$ref`` changed, the format's ``v`` moved (its files no longer
+  validate), and each keyword it does not weigh (``anyOf``, ``oneOf``, ``not``, ``if``, ``uniqueItems``...) added or
+  changed; the subschemas are walked (``properties``, ``$defs``, ``items``, ``additionalProperties``, ``allOf``,
+  ``then``, ``else``, ``contains``), a boolean one as ``{}`` (true) or nothing (false);
 - schema.yaml: a node type, an edge type or a status removed, a status of a type removed (``status_by_type``, or a
-  type given a list it had not), a prop newly required (``required_props``).
+  type given a list it had not), a prop newly required (``required_props``);
+- either: the file removed or renamed (its readers look it up by its path), or one that cannot be read or compared
+  (never a crash).
 
-Adding is never a narrowing: an optional property, a type, a status, a value. Prose (``description``, ``title``,
-``$comment``, ``examples``) is not compared.
+Adding is never a narrowing: an optional property, a type (``integer`` widened to ``number`` included), a status, a
+value. Prose (``description``, ``title``, ``$comment``, ``examples``) is not compared.
 
 A narrowing is resolved, not refused, when the PR says how an owner gets over it, on its **Compat: line** (in the PR
 body or a commit message of the range, read as the scout reads ``Root cause:``):
@@ -23,8 +28,10 @@ body or a commit message of the range, read as the scout reads ``Root cause:``):
 - ``Compat: migration <id>``, with the format's ``v`` bumped (its ``properties.v.const``) and a fixture of the new
   version (``fixtures/formats/<format>/v<N>/``, ``<format>`` the file's name without ``.schema.json``) in the change's
   tree: the format moves, as the norm says (a rename or a removal bumps ``v`` and ships its migration);
-- ``Compat: breaking <adr-id>``: the decision that drops the reader is named (a reader is dropped only by an ADR).
+- ``Compat: breaking <adr-id>``: the decision that drops the reader is named (a reader is dropped only by an ADR):
+  an id ``adr-...``, for every narrowing of the change.
 
+A ``migration`` id with no hyphen (``TBD``) or a ``breaking`` line naming no ``adr-`` id resolves nothing, and
 ``Compat: additive`` with a narrowing found says the opposite of the diff: the narrowing stays. An unresolved
 narrowing is a ``schema.narrowed`` finding of the scout (``brain audit --diff``): an info line, never blocking, unless
 the owner opts in with config.json ``audit.schema_diff_strict`` (then NEW, to fix or resolve in the PR); a patch never
@@ -78,15 +85,29 @@ class Diff:
 
 # --- JSON Schema -----------------------------------------------------------------------------------------------------
 
+# The keywords the checks below read; any other keyword that a change adds or changes counts as a narrowing (the
+# comparison errs towards one: anyOf, oneOf, not, uniqueItems, dependentRequired... a rule it cannot weigh).
+HANDLED = {"properties", "$defs", "patternProperties", "required", "enum", "type", "const", "additionalProperties",
+           "items", "allOf", "then", "else", "contains", "$ref", *LOWER, *UPPER, *EXACT, *PROSE}
+
+
 def _types(s: dict) -> set[str] | None:
+    """The types a schema allows (None: any); a ``type`` that is neither a string nor a list allows nothing known."""
     t = s.get("type")
     if t is None:
         return None
-    return {t} if isinstance(t, str) else {x for x in t if isinstance(x, str)}
+    if isinstance(t, str):
+        return {t}
+    return {x for x in t if isinstance(x, str)} if isinstance(t, list) else set()
 
 
 def _num(x) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _norm(s):
+    """A subschema as a mapping: ``true`` is ``{}`` (anything), ``false`` stays False (nothing); other values kept."""
+    return {} if s is True else s
 
 
 def _children(old: dict, new: dict, where: str) -> list[str]:
@@ -95,6 +116,7 @@ def _children(old: dict, new: dict, where: str) -> list[str]:
     for key in ("properties", "$defs", "patternProperties"):
         o, n = old.get(key) or {}, new.get(key) or {}
         if not (isinstance(o, dict) and isinstance(n, dict)):
+            out += [] if o == n else [f"{where or '/'}: {key} changed"]
             continue
         for name in o:
             sub = f"{where}/{name}" if key == "properties" else f"{where}/{key}/{name}"
@@ -103,25 +125,36 @@ def _children(old: dict, new: dict, where: str) -> list[str]:
     return out
 
 
+def _names(x) -> set[str]:
+    return {v for v in x if isinstance(v, str)} if isinstance(x, list) else set()
+
+
 def _required(old: dict, new: dict, where: str) -> list[str]:
-    return [f"{where}/{name}: newly required"
-            for name in sorted(set(new.get("required") or []) - set(old.get("required") or []))]
+    return [f"{where}/{name}: newly required" for name in sorted(_names(new.get("required")) -
+                                                                 _names(old.get("required")))]
 
 
 def _enum(old: dict, new: dict, where: str) -> list[str]:
     if "enum" not in new:
         return []
+    o, n = old.get("enum"), new.get("enum")
+    if not isinstance(n, list) or ("enum" in old and not isinstance(o, list)):
+        return [] if o == n else [f"{where or '/'}: enum changed"]
     if "enum" not in old:
         return [f"{where or '/'}: an enum added"]
-    lost = [v for v in old["enum"] if v not in new["enum"]]
+    lost = [v for v in o if v not in n]
     return [f"{where or '/'}: enum narrowed (no longer {', '.join(map(json.dumps, lost))})"] if lost else []
 
 
 def _type(old: dict, new: dict, where: str) -> list[str]:
     t0, t1 = _types(old), _types(new)
-    if t1 is None or (t0 is not None and not t0 - t1):
+    if t1 is None:
         return []
-    return [f"{where or '/'}: type narrowed ({'any' if t0 is None else '|'.join(sorted(t0))} -> {'|'.join(sorted(t1))})"]
+    lost = (t0 - t1 - ({"integer"} if "number" in t1 else set())) if t0 is not None else {"any"}
+    if not lost:
+        return []
+    return [f"{where or '/'}: type narrowed ({'any' if t0 is None else '|'.join(sorted(t0))} -> "
+            f"{'|'.join(sorted(t1)) or repr(new.get('type'))})"]
 
 
 def _const(old: dict, new: dict, where: str) -> list[str]:
@@ -131,11 +164,25 @@ def _const(old: dict, new: dict, where: str) -> list[str]:
             f"{json.dumps(new['const'])}"]
 
 
-def _additional(old: dict, new: dict, where: str) -> list[str]:
-    ap0, ap1 = old.get("additionalProperties", True), new.get("additionalProperties", True)
-    if ap1 is False and ap0 is not False:
-        return [f"{where or '/'}: closed (additionalProperties false)"]
-    return json_narrowed(ap0, ap1, f"{where}/*") if isinstance(ap0, dict) and isinstance(ap1, dict) else []
+def _sub(key: str, label: str):
+    """A keyword whose value is one subschema (additionalProperties, items as one schema, then, else, contains):
+    absent is anything, as ``true``; compared as a schema."""
+    def check(old: dict, new: dict, where: str) -> list[str]:
+        if key not in new:
+            return []
+        o, n = _norm(old.get(key, True)), _norm(new[key])
+        if isinstance(o, list) or isinstance(n, list):      # items as a tuple (draft 2019 and before)
+            return _tuple(o, n, f"{where}{label}") if isinstance(o, list) and isinstance(n, list) else (
+                [] if o == n else [f"{where or '/'}: {key} changed"])
+        return json_narrowed(o, n, f"{where}{label}")
+    return check
+
+
+def _tuple(old: list, new: list, where: str) -> list[str]:
+    out = [f"{where}: {len(new) - len(old)} tuple item(s) added"] if len(new) > len(old) else []
+    for i, (o, n) in enumerate(zip(old, new, strict=False)):
+        out += json_narrowed(_norm(o), _norm(n), f"{where}[{i}]")
+    return out
 
 
 def _bounds(old: dict, new: dict, where: str) -> list[str]:
@@ -148,28 +195,40 @@ def _bounds(old: dict, new: dict, where: str) -> list[str]:
                   for key in EXACT if key in new and old.get(key) != new[key]]
 
 
-def _items(old: dict, new: dict, where: str) -> list[str]:
-    if "items" not in new:
+def _ref(old: dict, new: dict, where: str) -> list[str]:
+    if "$ref" not in new or old.get("$ref") == new["$ref"]:
         return []
-    if isinstance(old.get("items"), dict):
-        return json_narrowed(old["items"], new["items"], f"{where}[]")
-    return [] if "items" in old else [f"{where or '/'}: items constrained"]
+    return [f"{where or '/'}: $ref {old.get('$ref', 'added')} -> {new['$ref']}"]
 
 
 def _all_of(old: dict, new: dict, where: str) -> list[str]:
-    o_all, n_all = old.get("allOf") or [], new.get("allOf") or []
+    o_all, n_all = old.get("allOf"), new.get("allOf")
+    o_all, n_all = (o_all if isinstance(o_all, list) else []), (n_all if isinstance(n_all, list) else [])
     out = [f"{where or '/'}: an allOf entry added"] * max(0, len(n_all) - len(o_all))
     for i, (o, n) in enumerate(zip(o_all, n_all, strict=False)):
-        out += json_narrowed(o, n, f"{where}/allOf[{i}]")
+        out += json_narrowed(_norm(o), _norm(n), f"{where}/allOf[{i}]")
     return out
 
 
-KEYWORDS = (_children, _required, _enum, _type, _const, _additional, _bounds, _items, _all_of)
+def _others(old: dict, new: dict, where: str) -> list[str]:
+    """Any keyword :data:`HANDLED` does not weigh, added or changed (``if`` among them: a new condition)."""
+    return [f"{where or '/'}: {key} {'changed' if key in old else 'added'}"
+            for key in sorted(set(new) - HANDLED) if old.get(key, object()) != new[key]]
+
+
+KEYWORDS = (_children, _required, _enum, _type, _const, _sub("additionalProperties", "/*"), _bounds,
+            _sub("items", "[]"), _sub("then", "/then"), _sub("else", "/else"), _sub("contains", "/contains"),
+            _ref, _all_of, _others)
 
 
 def json_narrowed(old, new, where: str = "") -> list[str]:
     """What ``new`` refuses that ``old`` accepted, keyword by keyword (:data:`KEYWORDS`), as ``<where>: <what>``
-    lines."""
+    lines. A boolean subschema counts as ``{}`` (true) or nothing (false)."""
+    old, new = _norm(old), _norm(new)
+    if old is False or new == {}:
+        return []                           # nothing was accepted, or anything is
+    if new is False:
+        return [f"{where or '/'}: closed (false: nothing accepted)"]
     if not (isinstance(old, dict) and isinstance(new, dict)):
         return [] if old == new else [f"{where or '/'}: the schema replaced"]
     return [line for check in KEYWORDS for line in check(old, new, where)]
@@ -204,7 +263,8 @@ def _by_type(old: dict, new: dict) -> list[str]:
     out = [f"status_by_type.{t}: {', '.join(_lost(sb0[t], s))} removed" for t, s in sb1.items()
            if t in sb0 and _lost(sb0[t], s)]
     return out + [f"status_by_type.{t}: its statuses restricted to {', '.join(map(str, _list(s)))}"
-                  for t, s in sb1.items() if t not in sb0 and t in known]
+                  for t, s in sb1.items() if isinstance(s, list) and t in known
+                  and (t not in sb0 or not isinstance(sb0[t], list))]
 
 
 def _required_props(old: dict, new: dict) -> list[str]:
@@ -244,21 +304,42 @@ def compare(path: str, before: str | None, after: str | None) -> Diff:
         d.error = f"cannot be read: {str(exc).splitlines()[0] if str(exc) else type(exc).__name__}"
         d.narrowed = [d.error]
         return d
+    try:
+        _narrow(d, path, old, new)
+    except Exception as exc:   # a schema of an unexpected shape: what it narrows cannot be told, never a crash
+        d.error = f"cannot be compared: {type(exc).__name__}: {exc}"
+        d.narrowed = [d.error]
+    return d
+
+
+def _narrow(d: Diff, path: str, old, new) -> None:
     if path.lower().endswith(".json"):
         d.v = (version(old), version(new))
-        d.narrowed = [x for x in json_narrowed(old, new) if not (x.startswith("/v: const") and _bumped(d.v))]
+        moved = None not in d.v and d.v[0] != d.v[1]     # both state an integer v: the format's version moved
+        d.narrowed = [x for x in json_narrowed(old, new) if not (moved and x.startswith("/v: const"))] + (
+            [f"/v: v{d.v[0]} -> v{d.v[1]}: the files of v{d.v[0]} no longer validate (the format moves)"]
+            if moved else [])
     elif isinstance(old, dict) and isinstance(new, dict):
         d.narrowed = store_narrowed(old, new)
-    return d
 
 
 def _bumped(v: tuple[int | None, int | None]) -> bool:
     return v[0] is not None and v[1] is not None and v[1] > v[0]
 
 
+ADR_ID = re.compile(r"^adr-[\w.-]+$", re.IGNORECASE)                 # a decision log's id: adr-<date>-<slug>
+MIGRATION_ID = re.compile(r"^[a-z][\w.]*-[\w.-]+$", re.IGNORECASE)   # an id, never a word (TBD, changes)
+
+
 def compat(body: str) -> list[tuple[str, str]]:
-    """The Compat: lines of a PR body and commit messages: (kind, its id), kind additive, migration or breaking."""
-    return [(m.group(1).lower(), m.group(2)) for m in COMPAT.finditer(body or "")]
+    """The Compat: lines of a PR body and commit messages: (kind, its id), kind additive, migration or breaking; an
+    id that is not one (``breaking`` naming no ``adr-...``, a ``migration`` id with no hyphen such as TBD) is ''."""
+    out = []
+    for m in COMPAT.finditer(body or ""):
+        kind, ident = m.group(1).lower(), m.group(2)
+        ok = {"breaking": ADR_ID, "migration": MIGRATION_ID}.get(kind)
+        out.append((kind, ident if ok and ok.match(ident) else ""))
+    return out
 
 
 def has_fixture(tree: inventory.Tree, fmt: str, v: int) -> bool:
@@ -308,6 +389,8 @@ def diffs(rows: list[tuple[str, str, str]], base: inventory.Tree, new: inventory
         before = base.text(was) if base.has(was) else None
         after = new.text(path) if path and new.has(path) else None
         d = compare(path or was, before, after)
+        if old and path and old != path:     # its readers look it up by its path: a rename is a removal for them
+            d.narrowed.insert(0, f"renamed from {old}")
         if d.narrowed:
             out.append(resolve(d, lines, new))
     return out
