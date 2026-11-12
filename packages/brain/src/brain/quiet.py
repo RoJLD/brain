@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from . import paths
+from . import paths, timing
 
 STATE = "quiet.json"
 HELD = "held.jsonl"
@@ -153,8 +153,7 @@ def hold(msg, now: datetime) -> None:
     folder().mkdir(parents=True, exist_ok=True)
     row = {"at": _iso(now), "project": msg.project, "level": msg.level, "source": msg.source, "key": msg.key,
            "title": msg.heading(), "body": msg.body.strip()[:600]}
-    with open(folder() / HELD, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    timing.append(folder() / HELD, row)   # under the folder's lock: notify.send may run in several sessions
 
 
 def summary_text(rows: list[dict]) -> tuple[str, str]:

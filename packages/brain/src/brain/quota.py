@@ -57,7 +57,7 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, cost, paths, projects, resume, stateio, usage
+from . import config, cost, paths, projects, resume, stateio, timing, usage
 
 WINDOWS = {"week": timedelta(days=7), "5h": timedelta(hours=5)}
 FACTOR_DAYS = 28
@@ -179,8 +179,7 @@ def observe(pct: float, window: str = "week", at: datetime | None = None, resets
     f = readings_file()
     f.parent.mkdir(parents=True, exist_ok=True)
     stateio.rotate_log(f, now, keep=stateio.LOG_RETENTION["quota"])
-    with open(f, "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    timing.append(f, rec)
     return rec
 
 
