@@ -10,6 +10,7 @@ the session ids and the hygiene line."""
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -506,6 +507,8 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     for s in ids["stale"]:
         print(f"warning: shared_ids of {s}: no longer in two stores (remove it)")
     errors += _cross_store(projs, every)
+    for line in _moved_names(root):
+        print(f"warning: moved: {line}")
     for line in render.registry_warnings(neutral.brain_root(root), projs) + _uncloned(root):
         print(f"warning: {line}")
     for e in errors:
@@ -536,6 +539,23 @@ def _cross_store(projs: list[projects.Project], every: bool) -> list[str]:
     for line in rep.dangling if not every else []:
         print(f"warning: edge {line} (its store's check refuses it)")
     return [f"edge {line}" for line in rep.dangling] if every else []
+
+
+def _moved_names(root: Path | None) -> list[str]:
+    """The brain's instructions, memory notes, skills and scripts that name a prefix config.json's table of moves says
+    moved (brain.moves, wi-brain-moved-paths): warnings, with the new prefix."""
+    from .. import moves
+    cfg = config.load(root)
+    table = moves.table(cfg)
+    if not table or cfg.file is None:
+        return []
+    try:
+        out = subprocess.run(["git", "-C", str(cfg.root), "ls-files", "-z"], capture_output=True, timeout=60,
+                             stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    tracked = [t for t in out.stdout.decode("utf-8", "replace").split("\0") if t] if out.returncode == 0 else []
+    return moves.scan_root(cfg.root, tracked, table)
 
 
 def _uncloned(root: Path | None) -> list[str]:

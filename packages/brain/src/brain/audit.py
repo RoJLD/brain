@@ -43,6 +43,7 @@ from . import (
     inventory,
     langs,
     links,
+    moves,
     paths,
     projects,
     public,
@@ -53,7 +54,7 @@ from . import (
 from .inventory import AuditError
 from .mergedriver import HEAD_LINES
 
-RULESET = 10   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+RULESET = 11   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
 #               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
 #               (wi-brain-test-links-auto); 5: cmd.registry (wi-brain-cli-registry); 6: feature.coverage, info in
 #               the full audit, NEW in the scout for an added command or module (wi-brain-audit-feature-coverage); 7: the scout's norm lints
@@ -63,7 +64,8 @@ RULESET = 10   # 2: doc.links and test.links measured (wi-brain-doc-test-links);
 #               repos[].tools (wi-brain-lang-adapters); 9: doc.links and doc.dead-ref skip the technical
 #               reference's generated pages (wi-brain-reference-scout); 10: standards.gap, an applicable standard
 #               whose check covers neither a repo's language nor a tool it declares (wi-brain-standards-registry-
-#               consumers), measured only for a project that declares standards:
+#               consumers), measured only for a project that declares standards:; 11: doc.dead-ref for a doc
+#               line naming a prefix config.json moved: says moved (wi-brain-moved-paths)
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "
@@ -98,7 +100,7 @@ class Check:
 CHECKS = {c.id: c for c in (
     Check("readme.exists", "P0", "new+left", "a tracked root README.md with 10 non-blank lines or more"),
     Check("doc.dead-ref", "P0", "new+left", "a doc names a module (-m) or a repo file that does not exist (a "
-          "page of the technical reference aside)"),
+          "page of the technical reference aside), or a prefix config.json's table of moves says moved"),
     Check("coderef.dangling", "P0", "new+left", "an active CodeRef points at a missing file or symbol"),
     Check("test.module", "class", "new+left", "a Python module with no test evidence"),
     Check("test.script", "class", "new+left", "a script no test runs"),
@@ -629,6 +631,7 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
     ``coverage``, each repo's coverage summary (test.coverage: a summary committed since is a rule of today).
     ``extra_dirs``: more top-level folders whose paths a doc names are checked (the scout passes the base tree's, so
     a folder a change empties still has its dead references)."""
+    moved = _moved(p)
     cfgs = [c for c in cfgs if c.name in trees]
     fm, flabel, fhome = _feature_model(p, cfgs, trees)
     fpublic, fstrict = _public_repos(p, cfgs) if fm is not None else (set(), False)
@@ -705,7 +708,7 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
         if only is not None and c.name not in only:
             continue
         ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm, "trees": trees,
-               "project": p,
+               "project": p, "moved": moved,
                "flabel": flabel, "fhome": fhome, "fpublic": fpublic, "fstrict": fstrict, "coverage": coverage.get(c.name),
                "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
         out_repos.append(_repo_result(c, rf, idx, tops, mod_evidence, facts, dangling.get(c.name, []),
@@ -781,6 +784,27 @@ def _sum(repos: list[dict]) -> dict:
     return {s: sum(r.get("counts", {}).get(s, 0) for r in repos) for s in SEVERITIES + ("info",)}
 
 
+def _moved(p: projects.Project) -> list:
+    """config.json's table of moves (brain.moves), read from the project's brain; [] when it does not load."""
+    try:
+        return moves.table(config.load(p.root))
+    except (OSError, ValueError):
+        return []
+
+
+def _moved_refs(name: str, t, docs, moved: list) -> list[dict]:
+    """doc.dead-ref for each doc line that names a prefix config.json's table of moves says moved
+    (wi-brain-moved-paths): once per doc and old prefix, with the new one to write."""
+    found, seen = [], set()
+    for d in docs if moved else []:
+        for _, n, m in moves.scan_text(d, t.text(d) or "", moved):
+            if (d, m.old) not in seen:
+                seen.add((d, m.old))
+                found.append(finding(name, "doc.dead-ref", f"{d}#{m.old}", f"{d}:{n} names {m.old}: {m.says()}",
+                                     f"write {m.new}"))
+    return found
+
+
 def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index, tops: set, mod_evidence: dict,
                  facts: dict, dangling: list, unregistered: list, covered: dict, layered: set,
                  missing: list, extra_dirs: set = frozenset(), ctx: dict | None = None) -> dict:
@@ -839,6 +863,7 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
                 else:
                     found.append(finding(name, "doc.dead-ref", f"{d}#{ref}", f"{d} names {ref}: no such file",
                                          "fix or remove the reference"))
+    found += _moved_refs(name, t, (d for d in rf.docs if not generated_doc(t, d)), (ctx or {}).get("moved") or [])
     found += dangling
     # test.module, test.script
     ev = rf.evidence
