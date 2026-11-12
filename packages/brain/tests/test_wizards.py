@@ -75,3 +75,20 @@ def test_the_setup_page_lists_the_wizards_and_never_a_secret(monkeypatch):
 def test_a_wizard_without_a_choice_runs_its_plan_as_is(wid):
     w = wizards.by_id()[wid]
     assert not w.choices and not w.ask and w.words("plan") == w.plan
+
+
+def test_a_new_brains_folder_is_an_absolute_path_never_an_option():
+    """Review of wi-brain-tui-setup: the folder typed goes into brain init's plan, run before any yes."""
+    assert wizards.folder('"D:\\brains\\new"') == "D:\\brains\\new" or wizards.folder('"/srv/new"') == "/srv/new"
+    assert wizards.folder("  '/srv/new brain'  ") == str(__import__("pathlib").PurePath("/srv/new brain"))
+    for wrong in ("--apply", "-x", "new-brain", "./x", "", '""'):
+        with pytest.raises(ValueError):
+            wizards.folder(wrong)
+
+
+def test_the_notification_and_index_wizards_run_for_the_project_shown():
+    ws = wizards.by_id()
+    assert ws["notify-status"].words("plan", project="demo") == ["brain", "--project", "demo", "notify", "status"]
+    assert ws["code-index"].words("apply", project="demo") == ["brain", "--project", "demo", "index", "--stale"]
+    assert ws["first-run"].words("plan", "lite", project="demo") == ["brain", "profile", "set", "lite"]  # the machine's
+    cli.build_parser().parse_args(ws["notify-status"].words("plan", project="demo")[1:])

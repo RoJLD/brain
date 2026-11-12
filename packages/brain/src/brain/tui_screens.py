@@ -472,6 +472,9 @@ class ConfirmScreen(ModalScreen):
         self.query_one("#plan", Static).update(Text(head + "\n" + (r["output"] or "(no output)"),
                                                      style="" if r["exit"] == 0 else "red"))
         run = self.query_one("#run", Button)
+        if self.a.gated and r["exit"] != 0:  # a wizard's apply waits for a plan that passes: Cancel only
+            self.query_one("#cancel", Button).focus()
+            return
         run.disabled = False
         run.focus()
 

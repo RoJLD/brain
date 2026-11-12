@@ -119,9 +119,11 @@ The Setup page holds the setup wizards (`brain.wizards`), one per row, in the or
 run (the profile Lite, Default or Recommended), the stacks to enable, the modules, a project to add, the notification
 channels (ntfy, Telegram and its chats, the routes), the permissions, the machines and their facts, the code index, a
 new brain from a domain template, Claude Code's settings and the checks. Each wizard is the brain's own commands,
-never a hidden edit: Enter asks its choice when it has one (and the folder of a new brain), then shows its exact
-command with its plan already run (`brain profile set default`), and `y` runs the apply (`... --apply`) as the
-owner's, logged in `<BRAIN_HOME>/ledger/cockpit-<month>.jsonl`, refused in a Claude Code session's shell. What stays
+never a hidden edit: Enter asks its choice when it has one (and the folder of a new brain, an absolute path), then
+shows its exact command. A wizard that writes shows its plan already run (`brain profile set default`), and `y` runs
+the apply (`... --apply`), never after a plan that failed; a wizard that reads runs its one command on `y`. Each runs
+as the owner's, logged in `<BRAIN_HOME>/ledger/cockpit-<month>.jsonl`, refused in a Claude Code session's shell; the
+notification and code index wizards run for the project the cockpit shows. What stays
 the owner's stays a plan with its command: Claude Code's settings (`install.ps1 -Apply`, in your own terminal), a
 project added to `projects.yaml` and a permission granted (a branch and a PR). A secret is never typed in the cockpit:
 you set it as an environment variable (or in the system keyring), and the wizards name it, never show it.

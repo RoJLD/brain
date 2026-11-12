@@ -156,6 +156,7 @@ def test_a_setup_wizard_is_refused_in_a_sessions_shell(monkeypatch):
         await pilot.pause(0.1)
         assert not isinstance(app.screen, tui_screens.ConfirmScreen)
         assert any("not from a Claude Code session's shell" in m for m in notified)
+    _run(check)
 
 
 def test_a_default_saved_unchanged_stays_unset_and_the_pages_follow_the_language():

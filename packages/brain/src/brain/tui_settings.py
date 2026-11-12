@@ -146,16 +146,26 @@ class SettingsTab:
     def _wizard_ask(self, w, choice: str) -> None:
         if w.ask:
             self.push_screen(AskScreen(w.title, w.ask),
-                             lambda typed: self._wizard_run(w, choice, typed) if typed else None)
+                             lambda typed: self._wizard_folder(w, choice, typed) if typed else None)
         else:
             self._wizard_run(w, choice, "")
 
+    def _wizard_folder(self, w, choice: str, typed: str) -> None:
+        try:
+            folder = wizards.folder(typed)
+        except ValueError as exc:  # a word that is not a folder (an option, a relative path): nothing runs
+            self.notify(str(exc), title=w.title, severity="error")
+            return
+        self._wizard_run(w, choice, folder)
+
     def _wizard_run(self, w, choice: str, typed: str) -> None:
-        plan, apply = w.words("plan", choice, typed), w.words("apply", choice, typed)
+        project = self.scope if self.scope != cockpit.ALL and "," not in self.scope else ""
+        plan, apply = w.words("plan", choice, typed, project), w.words("apply", choice, typed, project)
         notes = [w.what, *w.notes] + ([f"Yours, in your own terminal: {w.owner}."] if w.owner else [])
         cwd = getattr(self.cockpit, "root", None) or Path.cwd()
-        self.start_action(detail.Action(kind="apply", label=w.title, project="brain", ref=w.id, cwd=Path(cwd),
-                                        steps=[apply or plan], preview=plan if apply else None, plan=notes))
+        self.start_action(detail.Action(kind="apply", label=w.title, project=project or "brain", ref=w.id,
+                                        cwd=Path(cwd), steps=[apply or plan], preview=plan if apply else None,
+                                        plan=notes, gated=True))
 
     def _is_set(self, key: str) -> bool:
         if key.startswith("titles."):
