@@ -205,14 +205,18 @@ def test_the_modules_page_turns_a_module_on_by_its_plan_then_its_apply(monkeypat
         app.setting_page = "modules"
         app._draw_settings()
         await pilot.pause(0.1)
-        _cursor_on(app, "plane")
+        _cursor_on(app, "infra-node")  # built, off
         await pilot.press("enter")
         assert isinstance(app.screen, tui_screens.ChoiceScreen)
         await pilot.press("enter")  # enable
         await pilot.pause(0.3)
-        assert app.screen.steps == [["brain", "mod", "enable", "plane", "--apply"]]
-        assert ran == [("plan", [["brain", "mod", "enable", "plane"]])]
+        assert app.screen.steps == [["brain", "mod", "enable", "infra-node", "--apply"]]
+        assert ran == [("plan", [["brain", "mod", "enable", "infra-node"]])]
         await pilot.press("n")
+        _cursor_on(app, "plane")  # planned: brain mod would refuse it, nothing offered
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, tui_screens.ChoiceScreen)
         _cursor_on(app, "rules")
         await pilot.press("enter")  # core: its command said, nothing to choose
         await pilot.pause(0.1)

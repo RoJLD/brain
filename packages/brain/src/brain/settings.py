@@ -272,18 +272,35 @@ def _cost_text(cost: dict) -> str:
     return ", ".join(f"{COST_WORDS[k][0]} {v:g} {COST_WORDS[k][1]}" for k, v in cost.items() if k in COST_WORDS)
 
 
-def _module_row(m: dict, r: dict) -> Setting:
-    """One module of the catalogue (``m``) with its state on this machine (``r``, brain mod list's row)."""
+FIXED = {"core": "always on (a core capability): brain mod show {id}",
+         "auto": "used whenever it is found, never switched: brain mod show {id}",
+         "planned": "planned, not built yet: brain mod show {id}"}
+
+
+def _module_row(m: dict, r: dict, fixed: str) -> Setting:
+    """One module of the catalogue (``m``) with its state on this machine (``r``, brain mod list's row); ``fixed``: why
+    it cannot be switched (core, auto, planned), '' when it can."""
     what = [x for x in (_cost_text(m.get("cost") or {}),
                         f"needs {', '.join(m['depends_on'])}" if m.get("depends_on") else "",
                         f"requires {', '.join(m['requires'])}" if m.get("requires") else "",
                         f"else: {m['fallback']}" if m.get("fallback") else "") if x]
-    switchable = m.get("class") != "core" and r.get("state") not in (None, "auto")
-    return Setting("modules", m["id"], f"{r.get('state', '?')} ({r.get('source', '-')})",
+    state = "planned" if fixed == "planned" else r.get("state", "?")
+    return Setting("modules", m["id"], f"{state} ({r.get('source', '-')})",
                    "; ".join(what) or str(m.get("description") or m.get("name") or ""),
-                   f"brain mod enable|disable {m['id']} (a plan, then --apply)" if switchable
-                   else "always on (core, or used whenever it is found): brain mod show " + m["id"],
-                   "module" if switchable else "")
+                   FIXED[fixed].format(id=m["id"]) if fixed
+                   else f"brain mod enable|disable {m['id']} (a plan, then --apply)", "" if fixed else "module")
+
+
+def _fixed(m, reg: dict) -> str:
+    """Why brain mod would refuse to switch a module (brain.mod's own checks): a core capability, nothing it can
+    switch (auto), a capability not built yet; '' when it can be switched."""
+    from . import mod
+    caps = [reg[c] for c in m.capabilities if c in reg]
+    if any(c.cls == "core" for c in caps):
+        return "core"
+    if any(c.status != "built" for c in caps):
+        return "planned"
+    return "" if mod.switched(m, reg) else "auto"
 
 
 def module_settings(root: Path | None = None) -> list[Setting]:
@@ -291,10 +308,16 @@ def module_settings(root: Path | None = None) -> list[Setting]:
     catalogue emit) with its state on this machine and where it comes from (brain mod list), its cost, what it needs and
     its fallback; then the distributions, read-only. Enter on a module: turn it on or off (brain.wizards'
     module wizard: brain mod enable|disable, a plan then --apply)."""
-    from . import catalogue, mod
+    from . import catalogue, mod, tiers
     doc = catalogue.emit(root, by="brain tui")
     states = {r["id"]: r for r in mod.rows(root)}
-    out = [_module_row(m, states.get(m["id"], {})) for m in doc["modules"]]
+    reg, _ = tiers.registry(root)
+    cat = mod.catalogue(root, reg)
+    out = [] if any(m.from_registry for m in cat.values()) else [
+        Setting("modules", "registry", "none: each capability is its own module", "modules.yaml (brain modules)",
+                "a modules registry groups the capabilities into modules (brain modules --check)")]
+    out += [_module_row(m, states.get(m["id"], {}), _fixed(cat[m["id"]], reg) if m["id"] in cat else "core")
+            for m in doc["modules"]]
     for x in doc["distributions"]:
         out.append(Setting("modules", f"distribution {x['id']}", f"{x.get('name', '')} ({x.get('kind', '')}"
                            + (", bundled)" if x.get("bundled") else ", downloaded when a module needs it)"),

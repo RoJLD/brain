@@ -824,6 +824,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
         if results and (a.kind == "apply" or not ok):
             self.push_screen(ResultScreen(f"{a.label} {a.ref}", results))
         self._side_acted()
+        self._draw_settings()  # a module switched, a profile set: the page says it now
         self.tick(force=True)  # the panels read again: the DDR answered, the stamp written
 
     def _hand_over(self, a, steps: list[list[str]]) -> None:
