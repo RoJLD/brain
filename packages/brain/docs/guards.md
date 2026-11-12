@@ -47,8 +47,8 @@ app's own server; any other prefix gets the plain refusal) passes in exactly the
 | Case | Call | The guard checks |
 |---|---|---|
 | `archive` | `enabled: false` on another session, just before archiving it | the caller started it; it is `idle` or `ended` (its transcript's tail); it is no live coordinator (by name or title) |
-| `handover-on` | `enabled: true` on another session | the caller is a coordinator started by a coordinator; it started the target; the target is a coordinator, live (or starting) on this machine; the caller's hand-over note exists |
-| `handover-off` | `enabled: false` on `self` (or its own id) | the caller is a coordinator started by a coordinator; its hand-over note exists; it started a coordinator that is detached and live (or starting) on this machine |
+| `handover-on` | `enabled: true` on another session | the caller is a coordinator started by a coordinator or by a chain root, or a chain root; it started the target; the target is a coordinator, live (or starting) on this machine; the caller's hand-over note exists |
+| `handover-off` | `enabled: false` on `self` (or its own id) | the caller is a coordinator started by a coordinator or by a chain root, or a chain root; its hand-over note exists; it started a coordinator that is detached and live (or starting) on this machine |
 
 What it reads, at zero token:
 
@@ -63,6 +63,13 @@ What it reads, at zero token:
   `coordinateur-<x>` (one to three letters or digits) or `coordination-du-brain[-…]`. Never its title, which a session
   can change (`set_session_title`); a title starting « Coordination du Brain » only protects a live session from the
   `archive` case. `coordinator-report` is no coordinator.
+- **A chain root**: a session the owner started (its app file names no parent) whose id the owner marked with
+  `brain handover root <id>` in their own terminal (`<BRAIN_HOME>/handover/roots.json`; the guard refuses to a
+  session any command with `handover root` in its words and any write into that file or its folder, whatever the
+  spelling, like `brain usage allow`; a roots.json reached through a link marks nothing). A root hands over without a coordinator's
+  name, and the coordinators it starts pass the parent condition through it until the owner clears the mark
+  (wi-brain-handover-command). A marked id whose
+  app file names a parent is no root.
 - **Live on this machine**: `running`, `idle`, `asking` or `stale`; not archived, and not `unknown` (no transcript).
   A successor `unknown` because it has no transcript yet still counts, as starting, for `handover-on` and
   `handover-off` when its own app file's `createdAt` is at most 10 minutes old (`HANDOVER_START_S`): the outgoing
@@ -90,8 +97,9 @@ procedural mark (the ADR's « une fois sa note écrite »), not a credential. Th
 starts a child, so a session that starts a `coordinator-x` which starts a `coordinator-y` has built the mark; the
 guard checks one hop of lineage, not the whole chain back to the owner. While its note is under 6 hours old, a
 coordinator may turn Remote Control on for any coordinator it started, not only one. After a new root coordinator
-(started by the owner, so unnamed), the first two handovers stay the owner's gesture: the root has no name, and its
-first successor's parent is no coordinator by name.
+(started by the owner, so unnamed), the first two handovers stay the owner's gesture unless the owner marks the root
+(`brain handover root <id>`, once per chain): the root has no name, and its first successor's parent is no
+coordinator by name. `brain handover check` reads the same conditions before the calls and names the one that fails.
 
 ## The third-party guard
 

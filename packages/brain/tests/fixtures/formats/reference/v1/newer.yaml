@@ -1,0 +1,9 @@
+# docs/reference.yaml with a newer brain's additive keys: a top-level key, a glossary entry's key and a section's key.
+v: 1
+goals: A kettle that boils water the same way every time.
+strategy: One small core, the rest as plug-ins.
+glossary:
+  - {term: Brew, means: "One run of the kettle, from cold water to a cup.", see: [K1]}
+sections:
+  stakeholders: Who cares about the kettle.
+audience: [makers, drinkers]

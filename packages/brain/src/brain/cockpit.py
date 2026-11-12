@@ -79,8 +79,10 @@ Each table's columns can be chosen (``columns``, ``cells``: shown or hidden, the
 
 Read-only: nothing here writes a record or a ledger, and nothing calls a model. The one file written is the screen's
 own state, ``<BRAIN_HOME>/tui.json`` (the scope, each panel's view, the last tab and each tab's view, and the settings:
-theme, timezone, each table's columns; ``save_state``), by the interactive views. Its settings also hold, set by hand: ``lang`` (en, fr: the queue's title, « File d'Ada »;
-$BRAIN_LANG wins) and ``titles`` (a free title per panel, ``{"queue": "Ma file"}``), read by every view (``title``).
+theme, timezone, each table's columns; ``save_state``), by the interactive views. Its settings also hold ``lang`` (en,
+fr: the queue's title, « File d'Ada »; $BRAIN_LANG wins), ``titles`` (a free title per panel, ``{"queue": "Ma file"}``),
+read by every view (``title``), and ``refresh`` and ``probe`` (seconds; ``--refresh`` and ``--probe`` win for one
+launch): the Settings tab edits them (the comma, brain.settings; wi-brain-tui-settings), and they may be set by hand.
 tui.json is a truth-local file (brain.stateio): ``v`` 1, a backup beside it and an atomic write; the keys this engine
 does not know (at the top level, in panels, tabs, columns, settings and titles: a newer brain's) are kept through a
 save; one a newer brain wrote is read but never written (« brain update »), and an unreadable one is set aside by the
@@ -112,6 +114,8 @@ STALE_S = 15 * 60
 END_SLACK_S = 120  # a transcript written later than this after its session's end: resumed, not ended
 TAIL_BYTES = 256 * 1024
 REFRESH_S = 2.0  # Q7: the fallback re-read every 2 s
+INTERVAL_MIN = 0.25  # the shortest refresh or probe interval (brain tui --refresh, --probe; the Settings tab)
+INTERVAL_MAX = 86400.0  # and the longest a saved one may be: a day
 PROBE_S = 300.0
 AUDIT_TOP = 12
 PERF_DAYS = 7
@@ -1071,6 +1075,15 @@ HELP = {
              "from": "brain.perf, as brain perf",
              "read": "at each probe",
              "detail": "brain perf"},
+    "settings": {"what": "Each setting, its value, the file or variable it comes from and how it changes, page by page "
+                         "(the pages on the left): Cockpit, the screen's own settings in tui.json (theme, timezone, "
+                         "language, refresh and probe intervals, each panel's free title), edited here with Enter; "
+                         "Identity, Brain and Permissions, the brain's settings, each changed only by the command it "
+                         "names; Setup, the commands that set a brain up, one per step. A secret is named, never shown.",
+                 "from": "brain.settings: tui.json, config.json, projects.yaml, the profile (brain.tiers), "
+                         "permissions.yaml and the environment, read when the tab opens and on r",
+                 "read": "when the tab opens, after an edit and on r",
+                 "detail": "brain tui --once --tab settings"},
     "overview": {"what": "One card per tab: what counts in it, at a glance. Enter or a click opens that tab, already "
                          "filtered as its card says (band now, the sessions asking), whatever the owner's filters and "
                          "search; a filter that is never saved and goes when the tab is left. v shows the grid of every "
@@ -1104,7 +1117,7 @@ def state_path() -> Path:
 
 def load_state(path: Path | None = None) -> dict:
     """The scope, the panels' views, the last tab and each tab's view, each table's columns and the settings (``theme``,
-    ``tz``) the interactive cockpit last showed; {} without them (the file missing, unreadable or not this shape). A tab,
+    ``tz``, ``lang``, ``titles``, ``refresh`` and ``probe`` in seconds) the interactive cockpit last showed; {} without them (the file missing, unreadable or not this shape). A tab,
     a view or a column this engine does not have is left out. Read-only: an unreadable file is not moved (the next
     :func:`save_state` sets it aside), and one a newer brain wrote is read as it is."""
     st = stateio.load(path or state_path(), known=STATE_V, aside=False)
@@ -1120,6 +1133,8 @@ def load_state(path: Path | None = None) -> dict:
         got = data["settings"]
         out["settings"] = {k: got[k] for k in ("theme", "tz", "lang") if isinstance(got.get(k), str) and got[k]
                            and (k != "tz" or got[k] in TZS) and (k != "lang" or got[k] in LANGS)}
+        out["settings"].update({k: float(got[k]) for k in ("refresh", "probe")   # seconds (the Settings tab)
+                                if type(got.get(k)) in (int, float) and INTERVAL_MIN <= got[k] <= INTERVAL_MAX})
         if isinstance(got.get("titles"), dict):
             titles = {k: v.strip() for k, v in got["titles"].items()
                       if k in (*PANELS, *FRAMES) and isinstance(v, str) and v.strip()}
@@ -1139,7 +1154,8 @@ def _known_keys() -> dict:
     """The keys of tui.json this engine knows, by level (None: a value it owns whole); every other key is kept."""
     return {"cockpit": None, "scope": None, "tab": None, "panels": dict.fromkeys(SORTS), "tabs": dict.fromkeys(TABS),
             "columns": dict.fromkeys(COLUMNS),
-            "settings": {"theme": None, "tz": None, "lang": None, "titles": dict.fromkeys((*PANELS, *FRAMES))}}
+            "settings": {"theme": None, "tz": None, "lang": None, "refresh": None, "probe": None,
+                         "titles": dict.fromkeys((*PANELS, *FRAMES))}}
 
 
 def _unknown(old: dict, known: dict) -> dict:
@@ -1608,7 +1624,8 @@ CARD_LINES = 4  # a card's lines at most (UX-19: 3 to 5, with its frame)
 CARD_ORDER = ("queue", "sessions", "milestones", "frontier", "health", "resources", "lessons", "ideas", "features")
 VIEW_LABELS = {"cards": {"en": "Cards", "fr": "Cartes"}, "grid": {"en": "Grid", "fr": "Grille"},
                "digest": {"en": "Digest", "fr": "Digest"},
-               "list": {"en": "List", "fr": "Liste"}, "frames": {"en": "Frames", "fr": "Cadres"}}
+               "list": {"en": "List", "fr": "Liste"}, "frames": {"en": "Frames", "fr": "Cadres"},
+               "pages": {"en": "Pages", "fr": "Pages"}}
 
 
 def _alerts_open(panels: dict) -> str:
@@ -1739,7 +1756,7 @@ TABS = {
     "settings": {"key": ",", "label": {"en": "Settings", "fr": "Réglages"},
                  "question": {"en": "How are the cockpit and the brain set?",
                               "fr": "Comment le cockpit et le Brain sont-ils réglés ?"},
-                 "views": {}, "arrives": "the settings pages"},
+                 "views": {"pages": ("settings",)}},
 }
 
 
@@ -1868,11 +1885,12 @@ def bar_status(changed: str | None, probe_in: float | None, probing: bool = Fals
 
 
 def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None, search: str = "",
-           tz: str | None = None, tab: str | None = None) -> list[str]:
+           tz: str | None = None, tab: str | None = None, root: Path | None = None) -> list[str]:
     """The text view: every panel, one after the other; ``views`` (each table panel's view, {} its defaults) and
     ``search`` narrow the sessions, the queue and the frontier (None: everything, in the panels' order); ``tz``
     shows the header's times in that timezone (None: as recorded, UTC); ``tab`` prints that tab's panels and frames
-    alone, the overview's cards for the overview. The header names the installed version."""
+    alone, the overview's cards for the overview, the settings' pages for the settings (those of the brain at ``root``).
+    The header names the installed version."""
     p = snap["panels"]
 
     def stamp(iso):
@@ -1884,6 +1902,9 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
         for card in cards(snap, wait="not probed yet"):
             out += ["", card["title"], *(_line("  ", x, width) for x in card["lines"])]
         return out
+    if tab == "settings":
+        from . import settings as settings_
+        return out + settings_.lines(settings_.collect(root), width)
 
     def v(name):
         return None if views is None else views.get(name, {})
@@ -1929,7 +1950,8 @@ def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, o
             if cp.refresh(probe=probe):
                 width = max(min(os.get_terminal_size(out.fileno()).columns, 160), 60) if out.isatty() else WIDTH
                 out.write(("\x1b[2J\x1b[H" if out.isatty() else "")
-                          + "\n".join(render(cp.snapshot(), width, views, search, tz, tab)) + "\n")
+                          + "\n".join(render(cp.snapshot(), width, views, search, tz, tab,
+                                              getattr(cp, "root", None))) + "\n")
                 out.flush()
             n += 1
             if ticks and n >= ticks:

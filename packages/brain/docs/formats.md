@@ -54,6 +54,7 @@ their default.
 | config.json | the brain's root | `v` (`config.schema.json`) | a note on stderr; the file is kept as written | refused |
 | members.yaml | the brain's root, beside config.json ([identity.md](identity.md)) | `v` (`members.schema.json`) | ignored, the file kept as written (in strict mode, CI: reported by `brain check` with the other identity findings) | refused |
 | readme.yaml | a repo's root, opt-in ([views.md](views.md), « Generated READMEs ») | `v` (`readme.schema.json`) | ignored, the file kept as written (in strict mode, CI: `brain docs check` and `brain check` report it) | refused |
+| docs/reference.yaml | a repo's `docs/`, opt-in ([views.md](views.md), « The technical reference ») | `v` (`reference.schema.json`) | ignored, the file kept as written (in strict mode, CI: `brain reference` and `brain check` report it) | refused |
 | modules.yaml | a store (or the one `config.json` `modules.store` names, [modules.md](modules.md)) | none: a YAML list; each entry that carries the map (`realized_by` or `map_review`) is checked against `modules.schema.json` | an entry's other field is free; a realisation's unknown key is a note (in strict mode, CI: `brain modules --check` refuses it, `brain check` warns) | - (no `v`: a change of the schema moves the format) |
 | standards catalog | the engine's `src/brain/catalogs/*.yaml`; a brain's local ones that `projects.yaml` `standards.catalogs` names ([standards.md](standards.md)) | `v` (`standards.schema.json`) | a note, the row kept; a vocabulary value this engine does not know (a profile, stage, enforcement...) too (in strict mode, CI: `brain standards check` and `brain check --all` report it) | refused: its rows are not read |
 | DDR signature | `records/ddr/<id>.sig`, beside its record | none: an SSH signature (namespace `brain-decision`) over the answer's payload | - | - (an older engine ignores the file and reads the record as before) |
@@ -145,7 +146,10 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 | `session-archive/index.json` | `v` 1 (`sessionarchive.INDEX_V`) | `brain session-archive run` refuses before reading a transcript (exit 2; `--dry-run` only reads it); `status` and `brain health session-archive` still read it |
 
 `tui.json` keeps the keys this engine does not know at each level it names (the top level, `panels`, `tabs`,
-`columns`, `settings`, `settings.titles`): a newer brain's panel view, tab or setting survives a save of this one. A
+`columns`, `settings`, `settings.titles`): a newer brain's panel view, tab or setting survives a save of this one. Its
+`settings` are `theme`, `tz` (`local`, `utc`), `lang` (`en`, `fr`), `titles` (a free title per panel), and `refresh`
+and `probe` (seconds, from 0.25 to 86400; a value of another type or out of that range is left out), all edited by the cockpit's
+settings tab. A
 key it knows is its own: a title the owner removed is removed. `budget/<session>.json` is written by the hook's Python
 only (bash reads its `.mark`), once per check, never per tool call: the backup and the synced write cost about 10 ms
 there; the prune of states older than `KEEP_DAYS` takes their `.bak` and set-aside copies too.
@@ -356,8 +360,9 @@ Beside that pair, **each released engine's own file** (wi-brain-format-fixture-f
 old stores » below), never edited. `tests/test_formats_frozen.py` reads each one strict, as CI does: what N-1 wrote,
 N reads with no note and no error. ar, config, ddr, event (the first lines of an exec ledger file), packs, projects,
 sr and template are frozen from v0.2.4 and v0.3.1, then the last tag's at each version PR; the formats no command
-writes (permissions, members, readme, modules, standards, docgraph, catalogue) keep their hand-written pair only, and
-the status document too: `brain doctor --json` prints the machine's own inventory, which a public fixture never holds.
+writes (permissions, members, readme, reference, modules, standards, docgraph, catalogue) keep their hand-written pair
+only, and the status document too: `brain doctor --json` prints the machine's own inventory, which a public fixture
+never holds.
 
 ### The old stores
 
