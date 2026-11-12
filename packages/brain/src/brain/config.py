@@ -231,8 +231,9 @@ def check(root: Path | None = None) -> list[str]:
             if who != ident["owner"]:
                 errors.append(f"{FILE}: identity.owner {ident['owner']!r}, but {store}/schema.yaml says owner: {who}")
     # what the schema cannot say of a probe: each kind's keys, durations, the program
-    from . import depprobes
+    from . import depprobes, typologies
     errors += depprobes.check(cfg)
+    errors += typologies.check(cfg)   # a brain's labels and own ids of the typology catalog
     return errors
 
 

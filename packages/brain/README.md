@@ -583,9 +583,11 @@ graph, whose layers are its own). `--template` does not take a base. The CI and 
 another language replaces their steps and keeps the jobs.
 
 The profiles' names and the stages `--stage` selects are typology and stage ids, as are the graph layers'
-`lifecycle` ids (`research_graph layers`): they follow one typology catalog still to come
-(`wi-brain-typology-catalog`), which maps the profiles to the layers' typologies and the standards' stages to the
-layers' (`explore`, `build`, ...). An id this engine does not know in a brain's `standards:` selection, written by a
+`lifecycle` ids (`research_graph layers`): they follow the typology catalog ([docs/typologies.md](docs/typologies.md),
+`brain typologies`), whose entries (`software`, `research`, `hardware-cad`, `creation`, `strategy`, `marketing`,
+`organisation`, `compliance`) each map to the Vision's modules; the profiles are sub-profiles of `software` (and
+`research` an entry), a sub-profile takes what its entry takes, and the standards' stages map to the layers'
+(`prototype` → `explore`, `mvp` → `build`, `v1` → `launch`, `scale` → `grow`). An id this engine does not know in a brain's `standards:` selection, written by a
 template of a later catalog, is tolerated: a note in read mode, an error only in strict mode (CI) (`--stage` itself
 takes this engine's stages).
 
@@ -1069,6 +1071,14 @@ older meaning, a level's start): REF is an id, a path of ids (`pro/acme`), `glob
 stay. Without `scopes.yaml` and `parent:`, every project sits under Global and nothing changes. An older engine
 reads `parent:` and `scope_types` as unknown keys (a note; refused in strict mode, CI) and refuses `parent:` on a
 read-only entry or a mount: add them once every machine and the brain repo's CI run the release that knows them.
+
+A container's `lifecycle.typologies` (spec-brain-product-lifecycle LC-1; the rest of the key waits on
+`wi-brain-lifecycle-stage`) names ids of the typology catalog: `brain typologies [--lang fr] [--json]` lists its
+entries (each with its column to the Vision's modules, J1 to K4) and their sub-profiles, the lifecycle's stages and the
+standards' stages mapped to them; `brain typologies show ID [--stage S]` shows one id and the graph layers a project of
+that kind is proposed at a stage. `config.json` `typologies` renames labels (`{"software": {"fr": "Produit
+logiciel"}}`) and adds a brain's own ids (`{"podcast": {"en": "Podcast", "parent": "creation"}}`); an id the catalog
+does not know is a note in read mode, an error in strict mode (CI) ([docs/typologies.md](docs/typologies.md)).
 
 **The deny list from the tree.** With `config.json` `public.deny_from_tree: true`, `public.deny.repos` gains, after the
 hand list, the name of every project whose class floor along its chain is `private` or stricter (a container's
