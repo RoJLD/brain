@@ -232,15 +232,20 @@ def _path_list(name, rels) -> bool:
         and len(set(rels)) == len(rels)
 
 
-def _take(where: str, name: str, rels: list[str], skip: tuple[str, ...], before: tuple[str, ...]) -> tuple[dict, list]:
-    """What ``takes`` gets from the engine template ``name``: ({rel: (folder, source)}, [(rel, folder, source, name)]),
-    each path from that template's own ``files`` or ``append``. ``skip``: the template itself and those it extends;
-    ``before``: the paths of ``name`` its base already took (taken twice, an append would be appended twice)."""
+def _takeable(where: str, name: str, skip: tuple[str, ...]) -> None:
+    """``name`` is one of the engine's templates, neither the template itself nor one it extends."""
     if not (BASE_RE.fullmatch(name) and (TEMPLATES / name / MANIFEST).is_file()):
         raise InitError(f"{where} {name!r}: one of the engine's templates "
                         f"({', '.join(sorted(d.name for d in TEMPLATES.iterdir() if (d / MANIFEST).is_file()))})")
     if name in skip:
         raise InitError(f"{where} {name!r}: the template itself or one it extends (it has all of it already)")
+
+
+def _take(where: str, name: str, rels: list[str], skip: tuple[str, ...], before: tuple[str, ...]) -> tuple[dict, list]:
+    """What ``takes`` gets from the engine template ``name``: ({rel: (folder, source)}, [(rel, folder, source, name)]),
+    each path from that template's own ``files`` or ``append``. ``skip``: the template itself and those it extends;
+    ``before``: the paths of ``name`` its base already took (taken twice, an append would be appended twice)."""
+    _takeable(where, name, skip)
     again = [rel for rel in rels if rel in before]
     if again:
         raise InitError(f"{where} {name}: {again[0]!r}: its base takes it already")
