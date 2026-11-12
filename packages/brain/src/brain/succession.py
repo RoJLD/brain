@@ -126,8 +126,8 @@ def _target_why(host: str, target: str, tm: dict, now: float) -> str:
         return f"{target} was not started by this session"
     if not guards._coordinator(tm):
         return f"{target} is not a Brain coordinator (the name this session gave it)"
-    st = "archived" if tm.get("archived") else sessions.state_of(tm, {}, now)
-    return "" if st in guards.RC_LIVE else f"{target} is {st or 'unknown'}"
+    st, how = guards.successor_state_of(tm, now)   # a successor with no transcript yet counts while starting
+    return "" if st in guards.RC_LIVE + ("starting",) else f"{target} is {st}" + (f": {how}" if how else "")
 
 
 def check(host: str | None = None, *, successor: str = "", now: float | None = None, env=None) -> dict:

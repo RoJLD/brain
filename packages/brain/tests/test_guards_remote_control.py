@@ -29,9 +29,11 @@ def lab(tmp_path, monkeypatch, brain_home):
     projects = tmp_path / "claude-config" / "projects" / "E--lab"
     projects.mkdir(parents=True)
 
-    def put(host, parent=None, name=None, title="A session", archived=False, detached=None, cli=None):
-        data = {"sessionId": host, "cliSessionId": cli or CLI[host], "title": title, "createdAt": 1_000,
+    def put(host, parent=None, name=None, title="A session", archived=False, detached=None, cli=None, created=1_000):
+        data = {"sessionId": host, "cliSessionId": cli or CLI[host], "title": title,
                 "lastActivityAt": int(time.time() * 1000), "isArchived": archived}
+        if created is not None:
+            data["createdAt"] = created
         if parent:
             data["spawnedFrom"] = {"sessionId": parent, "taskId": "task_1", "name": name, "sideSession": True}
         if detached is not None:
@@ -281,6 +283,82 @@ def test_a_successor_unknown_on_this_machine_does_not_count(lab, tmp_path):
     (tmp_path / "claude-config" / "projects" / "E--lab" / f"{CLI[G]}.jsonl").unlink()
     refused(lab, call(lab, "self", False), "it has started no live coordinator to succeed it, detached")
     refused(lab, call(lab, G, True), f"{G} is unknown")
+
+
+# --- a successor just started, with no transcript yet (wi-brain-rc-handover-starting) ---
+
+def starting(lab, host=G, age_s=4.0, created=None, name="coordinator-g", parent=F, detached=True,
+             title="Coordination du Brain — coordinateur G"):
+    """``host`` started ``age_s`` ago by its app file's createdAt (or ``created`` as is), its transcript not written."""
+    lab.put(host, parent=parent, name=name, title=title, detached=detached,
+            created=created if created is not None else int((time.time() - age_s) * 1000))
+    (lab.cwd / "claude-config" / "projects" / "E--lab" / f"{CLI[host]}.jsonl").unlink(missing_ok=True)
+
+
+def test_on_for_a_successor_just_started_passes(lab):
+    """The outgoing coordinator turns it on seconds after start_session: the app has its file, not yet a transcript."""
+    lab.note()
+    starting(lab)
+    assert decide(call(lab, G, True)) is None
+    [row] = rows(lab)
+    assert (row["decision"], row["case"]) == ("allowed", "handover-on")
+    assert "has no transcript yet and was created" in row["reason"]
+
+
+def test_on_for_a_successor_just_inside_the_start_window_passes(lab):
+    lab.note()
+    starting(lab, age_s=guards.HANDOVER_START_S - 30)
+    assert decide(call(lab, G, True)) is None
+
+
+@pytest.mark.parametrize("age_s", [guards.HANDOVER_START_S + 60, 30 * 24 * 3600, -3600])   # too old, or in the future
+def test_on_for_an_unknown_successor_outside_the_start_window_is_refused(lab, age_s):
+    lab.note()
+    starting(lab, age_s=age_s)
+    refused(lab, call(lab, G, True), f"{G} is unknown: no transcript yet and was created")
+
+
+@pytest.mark.parametrize("created", ["2026-11-12T10:00:00Z", True, 0, -5, float("nan"), float("inf"), "missing"])
+def test_on_for_an_unknown_successor_whose_creation_time_cannot_be_read_is_refused(lab, created):
+    lab.note()
+    starting(lab)
+    f = next((lab.cwd / "appdata").rglob(f"{G}.json"))
+    data = json.loads(f.read_text(encoding="utf-8"))
+    if created == "missing":
+        del data["createdAt"]
+    else:
+        data["createdAt"] = created
+    f.write_text(json.dumps(data), encoding="utf-8")
+    refused(lab, call(lab, G, True), f"{G} is unknown: no transcript yet and its creation time cannot be read")
+
+
+def test_off_on_itself_with_a_successor_just_started_passes(lab):
+    lab.note()
+    starting(lab)
+    assert decide(call(lab, "self", False)) is None
+    [row] = rows(lab)
+    assert (row["decision"], row["case"]) == ("allowed", "handover-off")
+    assert f"{G} (starting: has no transcript yet and was created" in row["reason"]
+
+
+@pytest.mark.parametrize("kw", [{"age_s": guards.HANDOVER_START_S + 60}, {"detached": None}])
+def test_off_on_itself_with_an_old_or_attached_starting_successor_is_refused(lab, kw):
+    lab.note()
+    starting(lab, **kw)
+    refused(lab, call(lab, "self", False), "it has started no live coordinator to succeed it, detached")
+
+
+def test_starting_widens_nothing_else(lab):
+    """A just-started session that is no coordinator, or not the caller's, gets nothing; nor does the archive case
+    take a starting session for a finished one; nor does a session turn its own on."""
+    lab.note()
+    starting(lab, host=K, name="rc-guard", title="Build the guard")
+    refused(lab, call(lab, K, True), f"{K} is not a Brain coordinator")
+    refused(lab, call(lab, K, False), f"{K} is unknown, not finished")
+    starting(lab, host=X, name="coordinator-x", parent=E)
+    refused(lab, call(lab, X, True), f"{X} was not started by this session")
+    starting(lab, host=F, name="coordinator-f", parent=E, detached=None)
+    refused(lab, call(lab, F, True), "a session never turns its own Remote Control on")
 
 
 @pytest.mark.parametrize("kw", [
