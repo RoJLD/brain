@@ -172,7 +172,10 @@ is the owner's act: `install.ps1 -Apply` writes it, with the same policy in Powe
 
 ### The log class: rotation and retention
 
-A log is appended to, never rewritten. `brain.stateio.rotate_log` runs before a line is appended: a log last written
+A log is appended to, never rewritten. A JSON-lines ledger (the exec, capture, guards, queue, answers and cockpit
+ledgers, the quota readings, the session starts, the notify audit and its held messages) is appended by `brain.timing.append_text`: one write, under an
+exclusive lock on `exec.lock` in its folder, a last line left without its newline closed first (on Windows the C
+runtime's append is a seek then a write, so two writers without the lock lose and mix lines). `brain.stateio.rotate_log` runs before a line is appended: a log last written
 in an earlier month (UTC) moves aside as `<stem>-<YYYY-MM><suffix>`, one past 1 MB the same way under this month
 (`-<n>` when that name is taken), then the monthly files past the class's retention go (`prune_months`). Hooks rotate
 at the same time without a lock: the move never replaces an existing file (a rename that refuses one on Windows, a

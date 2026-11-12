@@ -58,7 +58,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import midsession, paths, stateio
+from . import midsession, paths, stateio, timing
 
 GUARD = "usage"
 DEFAULTS = {"enabled": True, "warn": 80.0, "critical": 95.0, "sessions": 8, "brainstorms": 2, "memory": 97.0,
@@ -620,8 +620,7 @@ def _record(payload: dict, check: str, decision: str, reason: str) -> None:
     rec = {"at": at, "event": "guard", "guard": GUARD, "check": check, "decision": decision, "reason": reason,
            "tool": payload.get("tool_name"), "session_id": payload.get("session_id"),
            "tool_use_id": payload.get("tool_use_id"), "cwd": payload.get("cwd")}
-    with open(d / f"guards-{at[:7]}.jsonl", "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+    timing.append(d / f"guards-{at[:7]}.jsonl", rec)  # the guards ledger's lock (brain.timing)
 
 
 def _note_start(payload: dict, s: dict) -> None:
@@ -633,8 +632,7 @@ def _note_start(payload: dict, s: dict) -> None:
     stateio.rotate_log(f, keep=stateio.LOG_RETENTION["starts"])
     rec = {"at": s["now"], "brainstorm": True, "title": str(inp.get("title") or ""), "project": s["project"],
            "by": payload.get("session_id")}
-    with open(f, "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    timing.append(f, rec)
 
 
 def master_note(session: str) -> str:
