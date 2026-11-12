@@ -57,7 +57,7 @@ their default.
 | modules.yaml | a store (or the one `config.json` `modules.store` names, [modules.md](modules.md)) | none: a YAML list; each entry that carries the map (`realized_by` or `map_review`) is checked against `modules.schema.json` | an entry's other field is free; a realisation's unknown key is a note (in strict mode, CI: `brain modules --check` refuses it, `brain check` warns) | - (no `v`: a change of the schema moves the format) |
 | standards catalog | the engine's `src/brain/catalogs/*.yaml`; a brain's local ones that `projects.yaml` `standards.catalogs` names ([standards.md](standards.md)) | `v` (`standards.schema.json`) | a note, the row kept; a vocabulary value this engine does not know (a profile, stage, enforcement...) too (in strict mode, CI: `brain standards check` and `brain check --all` report it) | refused: its rows are not read |
 | DDR signature | `records/ddr/<id>.sig`, beside its record | none: an SSH signature (namespace `brain-decision`) over the answer's payload | - | - (an older engine ignores the file and reads the record as before) |
-| permissions.yaml | the brain's root | `v` | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
+| permissions.yaml | the brain's root | `v` (`permissions.schema.json`, described: read by `brain.permissions`) | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
 | packs.yaml | `source/packs.yaml` | `v` | a note | refused |
 | template.yaml | a template's folder | `engine:` range | a note (in CI: refused), `extends` and `append` (wi-brain-project-templates) included: a template that uses them names the engine that knows them in `engine:`; a graph's keys are strict: a graph's `layers` (wi-brain-graph-templates) is refused by an older engine, so a template that uses it names the engine that knows it in `engine:` | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |
 | graph layer | research_graph's `templates/layers/<name>.yaml` (the catalogue); a template's own `layers/<name>.yaml` | `version`, per layer, recorded in a store's `templates:` | refused (`research_graph layers` names the known keys) | - (a layer's version is compared by `brain template upgrade`, a later item) |
@@ -317,6 +317,14 @@ the refusal of a higher `v`. A new format, or a new version of one, adds its pai
 the `newer` file only (the `projects` one holds an `access: read` entry and a second project at a shared root since
 0.3.0).
 
+Beside that pair, **each released engine's own file** (wi-brain-format-fixture-freeze): `<format>/v<N>/<tag>.<ext>`
+(`ar/v1/v0.3.1.jsonl`), written by that tag through its own commands and frozen by `installer/freeze_store.py` (« The
+old stores » below), never edited. `tests/test_formats_frozen.py` reads each one strict, as CI does: what N-1 wrote,
+N reads with no note and no error. ar, config, ddr, event (the first lines of an exec ledger file), packs, projects,
+sr and template are frozen from v0.2.4 and v0.3.1, then the last tag's at each version PR; the formats no command
+writes (permissions, members, readme, modules, standards) keep their hand-written pair only, and the status document
+too: `brain doctor --json` prints the machine's own inventory, which a public fixture never holds.
+
 ### The old stores
 
 A reader tested on its format alone can still refuse a whole brain an older engine made: brain #33's `brain lesson
@@ -346,6 +354,50 @@ the reads write nothing. The engine is public: the machine's user and host names
 format's schema files (`SCHEMAS` in `installer/release_check.py`): a version PR that changed one since the last tag and
 has no `### Upgrade` in its CHANGELOG section fails, and so does a patch version that changed one at all (a format that
 moves is a minor version, « The version policy »). A new folder here adds its entry there, or a test fails.
+
+## The schema diff
+
+`release-check` sees that a schema file changed; `brain schema diff` says what the change narrows, so that a breaking
+format change is seen on the PR that makes it, not at the version PR (wi-brain-schema-diff; spec-brain-data-compat
+N6). It compares, between a tag and the working tree, every schema the change touches: the JSON Schemas
+(`*.schema.json`) and the graph stores' `schema.yaml` (a store's, or a template's), in any repo. A **narrowing** is
+what a file valid before would no longer satisfy:
+
+- a JSON Schema: a property removed, a field newly `required`, an `enum` that lost a value (or appeared), a `type`
+  that lost one (or appeared), a `const` added or changed, `additionalProperties` closed or constrained, a bound
+  tightened or added, a `pattern` or `format` added or changed (a wider pattern cannot be told: it counts), an
+  `allOf` entry added, a `$ref` changed, the format's `v` moved, and any keyword it does not weigh (`anyOf`, `oneOf`,
+  `not`, `if`, `uniqueItems`...) added or changed. It walks the subschemas: `properties`, `$defs`, `items`,
+  `additionalProperties`, `allOf`, `then`, `else` (the engine's records keep their conditional fields there);
+- a `schema.yaml`: a node type, an edge type or a status removed, a status of a type removed, a prop newly required;
+- either: the file removed or renamed (a reader looks it up by its path), or one it cannot read or compare (said,
+  never a crash).
+
+What only widens is no narrowing (an optional property, a type, `integer` to `number`, a status, a value, `false` to
+a schema), and prose (`description`, `title`, `$comment`, `examples`) is not compared. A narrowing is resolved by the
+PR's **Compat: line**, in its body or a commit message of the range, read as the scout reads `Root cause:`:
+
+```text
+Compat: migration mig-ddr-v2          v bumped (properties.v.const) and fixtures/formats/ddr/v2/ in the change's tree
+Compat: breaking adr-2026-11-12-x     an adr- id: the decision that drops the reader, for every narrowing of the PR
+Compat: additive                      what the PR claims: a narrowing found stays unresolved
+```
+
+A `migration` id with no hyphen (`TBD`) or a `breaking` line with no `adr-` id resolves nothing.
+
+```bash
+brain schema diff --against v0.3.2 [--pr-body FILE|-] [--strict] [--json]
+```
+
+The scout (`brain audit --diff`) shows each unresolved narrowing as a `schema.narrowed` info line, never blocking,
+and a resolved one as justified. With config.json `audit.schema_diff_strict: true` (the owner's opt-in) it is a NEW
+line, to fix or resolve in the PR, and `brain schema diff` exits 1 on it (or with `--strict`): a release never newly
+refuses what passed. CI's advisory `schema-diff` job runs it on every pull request against its target's tip (this
+PR's change alone, and its own commits' Compat: lines), with the PR's body as it was at the push (an edited body is
+read at the next push, or by re-running the job), into the job's summary. `permissions.yaml`'s keys are constants of
+`brain.permissions`; `schemas/permissions.schema.json` describes them (wi-brain-permissions-schema), a test keeps the
+two in step, and the diff compares it like any schema. `brain.permissions` still reads the file itself: the schema
+refuses nothing at run time.
 
 ## The upgrade test (`compat-prev`)
 
