@@ -167,7 +167,9 @@ a symptom fix (an added `type: ignore` or `noqa`, a skipped test, an `except` th
 retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root cause: ...` and
 `Justified: <unit>: <reason>` are read from the PR body (`--pr-body FILE`, `-` for stdin) and the range's commit
 messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
-`audit: {max_lines: 1000, complexity: 15}`.
+`audit: {max_lines: 1000, complexity: 15}`. A frozen store (a brain an older engine wrote, under `tests/fixtures/stores/`
+in any test folder) is data a test reads, not code or docs: the shape signals and the docs set leave it out; any
+other fixture, a fake binary a test runs included, is reviewed.
 
 The scout also reads four cheap norms in the AST of each Python file a change touches (`brain.norms`):
 `norm.timeout` (a `subprocess.run`, `call`, `check_call`, `check_output` or `urlopen` without `timeout=`, a

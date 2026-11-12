@@ -23,7 +23,9 @@ changelog fragments are checked (below). On a version PR, it fails when:
   wave this version names (a milestone of kind wave, ``props.release``) still holds an open item that is neither
   carried to a later wave (``props.carried_to``) nor dropped, or is not reached yet (``brain wave close``,
   brain.waves). That one check imports brain and research_graph from this checkout (``packages/brain/src``, ``src``)
-  and needs PyYAML; a store with no wave of this version passes it.
+  and needs PyYAML; a store with no wave of this version passes it;
+- the brain the last tag's engine wrote is not frozen under ``packages/brain/tests/fixtures/stores/<tag>/``
+  (``installer/freeze_store.py <tag>``; :func:`old_store`): the release's tests run every store-reading command on it.
 
 On any PR, a version PR or not, it fails on a malformed changelog fragment, a ``## Unreleased`` section, and a standard
 step that the pending Upgrade fragments ask twice (:func:`standard_step_copies`).
@@ -415,6 +417,24 @@ def sections(repo: Path, version: str, upgrade: str | None) -> list[str]:
     return problems
 
 
+STORES = f"{BRAIN}/tests/fixtures/stores"
+
+
+def old_store(repo: Path, tag: str) -> list[str]:
+    """The fixture freeze of a version PR (docs/release.md, « The fixture freeze »; wi-brain-old-store-fixture): the
+    brain the last tag's engine wrote, frozen under ``STORES/<tag>/``, so that the release's tests ran this checkout
+    on the store an owner upgrades from. Nothing when it is there."""
+    info = repo / STORES / tag / "freeze.json"
+    try:
+        frozen = json.loads(info.read_text(encoding="utf-8")).get("tag") == tag
+    except (OSError, ValueError, AttributeError):
+        frozen = False
+    if frozen and (repo / STORES / tag / "brain" / "config.json").is_file():
+        return []
+    return [f"{STORES}/{tag}/: no store of {tag} frozen: the version PR freezes the brain the last tag wrote "
+            f"(python {BRAIN}/installer/freeze_store.py {tag}; docs/release.md, « The fixture freeze »)"]
+
+
 def wave_closure(repo: Path, store: Path, version: str) -> list[str]:
     """The closure rule (docs/release.md, « 1. Before the version PR »): what the wave named by ``version`` in
     ``store`` still holds open, by brain.waves of this checkout. :class:`CannotTell` when it cannot be read."""
@@ -500,6 +520,7 @@ def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], l
                             f"section ## {version} has no ### Upgrade with something in it: number the standard "
                             f"steps and what an owner does beyond them (docs/release.md, « The standard steps »)")
     problems += sections(repo, version, upgrade)
+    problems += old_store(repo, tag)
     if is_patch(tag, version):
         said.append(f"a patch of {tag}: it may hold no schema that moves and no Upgrade step beyond the standard ones")
     problems += policy(tag, version, changed, upgrade)
