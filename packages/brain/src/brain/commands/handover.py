@@ -25,42 +25,43 @@ USAGE = """\
 """
 
 
+def _write(args) -> int:
+    body = sys.stdin.read() if args.from_ == "-" else Path(args.from_).read_text(encoding="utf-8") if args.from_ else ""
+    f = succession.write_note(body, host=args.id, successor=args.successor or "")
+    print(f"hand-over note written: {f}")
+    print("next: brain handover check, then the start, Remote Control on for the successor, the children told, "
+          "Remote Control off on yourself (the private brain's coordinator-handover skill)")
+    return 0
+
+
+def _check(args) -> int:
+    r = succession.check(args.id, successor=args.successor or "")
+    print(json.dumps(r, indent=1, sort_keys=True) if args.json else "\n".join(succession.lines(r)))
+    return 0 if r["ok"] else 1
+
+
+def _root(args) -> int:
+    if not args.host:
+        rows = succession.roots()
+        for h, r in sorted(rows.items()):
+            print(f"{h}  {r.get('at', '')}  {r.get('title', '')}  {r.get('reason', '')}".rstrip())
+        print("" if rows else "no chain root marked", end="\n" if not rows else "")
+        return 0
+    if args.clear:
+        print(f"{args.host}: " + ("mark removed" if succession.clear_root(args.host) else "was not marked"))
+        return 0
+    succession.mark_root(args.host, args.reason or "")
+    print(f"{args.host}: marked a coordinators' chain root (it may hand over; its successor's parent condition holds)")
+    return 0
+
+
 def early(args) -> int:
+    """Exit 2 on a refusal or what cannot be read: the app's files, an id, the owner's mark from a session."""
     try:
-        if args.ho_cmd == "write":
-            body = ""
-            if args.from_ == "-":
-                body = sys.stdin.read()
-            elif args.from_:
-                body = Path(args.from_).read_text(encoding="utf-8")
-            f = succession.write_note(body, host=args.id, successor=args.successor or "")
-            print(f"hand-over note written: {f}")
-            print("next: brain handover check, then the start, Remote Control on for the successor, the children "
-                  "told, Remote Control off on yourself (the private brain's coordinator-handover skill)")
-            return 0
-        if args.ho_cmd == "check":
-            r = succession.check(args.id, successor=args.successor or "")
-            print(json.dumps(r, indent=1, sort_keys=True) if args.json else "\n".join(succession.lines(r)))
-            return 0 if r["ok"] else 1
-        if args.ho_cmd == "root":
-            if not args.host:
-                rows = succession.roots()
-                for h, r in sorted(rows.items()):
-                    print(f"{h}  {r.get('at', '')}  {r.get('title', '')}  {r.get('reason', '')}".rstrip())
-                if not rows:
-                    print("no chain root marked")
-                return 0
-            if args.clear:
-                print(f"{args.host}: " + ("mark removed" if succession.clear_root(args.host) else "was not marked"))
-                return 0
-            succession.mark_root(args.host, args.reason or "")
-            print(f"{args.host}: marked a coordinators' chain root (it may hand over; its successor's parent "
-                  "condition holds)")
-            return 0
+        return {"write": _write, "check": _check, "root": _root}[args.ho_cmd](args)
     except (succession.SuccessionError, OSError) as exc:
         print(f"brain handover {args.ho_cmd}: {exc}", file=sys.stderr)
         return 2
-    return 2
 
 
 def register(sub, ctx) -> None:

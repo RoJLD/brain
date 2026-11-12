@@ -81,13 +81,8 @@ def write_note(body: str = "", *, host: str | None = None, name: str | None = No
     return f
 
 
-def check(host: str | None = None, *, successor: str = "", now: float | None = None, env=None) -> dict:
-    """Each condition of the hand-over for session ``host`` (this one by default), as the guard reads them:
-    {id, name, root, coordinator, parent, parent_name, parent_ok, note, note_age_min, successors, successor, why, ok,
-    on, off}. ``ok``: the session may hand over (``why`` is '' then); ``on``: Remote Control on for ``successor`` (else
-    the first successor found) would pass; ``off``: off on itself would pass."""
-    now = time.time() if now is None else now
-    host = _own_id(host, env)
+def _app(host: str) -> tuple[dict, object, dict]:
+    """(index, meta, the session's own app file), or SuccessionError when the app's files cannot tell."""
     index = sessions.app_index()
     if index is None:
         raise SuccessionError("the desktop app's session files are not on this machine")
@@ -95,51 +90,72 @@ def check(host: str | None = None, *, successor: str = "", now: float | None = N
     me = meta(host)
     if not me:
         raise SuccessionError(f"{host} is not in the desktop app's session files (or its file is in two folders)")
+    return index, meta, me
+
+
+def _target_why(host: str, target: str, tm: dict, now: float) -> str:
+    """'' when Remote Control on for ``target`` (its app file ``tm``) passes the target's conditions, else why not."""
+    if not target:
+        return "it has started no coordinator to succeed it"
+    if not tm or tm.get("parent") != host:
+        return f"{target} was not started by this session"
+    if not guards._coordinator(tm):
+        return f"{target} is not a Brain coordinator (the name this session gave it)"
+    st = "archived" if tm.get("archived") else sessions.state_of(tm, {}, now)
+    return "" if st in guards.RC_LIVE else f"{target} is {st or 'unknown'}"
+
+
+def check(host: str | None = None, *, successor: str = "", now: float | None = None, env=None) -> dict:
+    """Each condition of the hand-over for session ``host`` (this one by default), as the guard reads them:
+    {id, name, root, coordinator, parent, parent_name, parent_ok, note, note_age_min, successors, successor, why, ok,
+    on, on_why, off, off_why}. ``ok``: the session may hand over (``why`` is '' then); ``on``: Remote Control on for
+    ``successor`` (else the first successor found) would pass; ``off``: off on itself would pass."""
+    now = time.time() if now is None else now
+    host = _own_id(host, env)
+    index, meta, me = _app(host)
     parent = str(me.get("parent") or "")
     pm = meta(parent) if parent else {}
     note = guards.handover_note(host, now)
     why = guards.handover_why(host, me, meta, now)
     succ = guards.successors(host, index, meta, now)
     target = successor or (succ[0] if succ else "")
-    tm = meta(target) if target else {}
-    st = ("archived" if tm.get("archived") else sessions.state_of(tm, {}, now)) if tm else ""
-    on_why = why or ("" if target else "it has started no coordinator to succeed it") or \
-        ("" if tm and tm.get("parent") == host else f"{target} was not started by this session") or \
-        ("" if guards._coordinator(tm) else f"{target} is not a Brain coordinator (the name this session gave it)") or \
-        ("" if st in guards.RC_LIVE else f"{target} is {st or 'unknown'}")
+    on_why = why or _target_why(host, target, meta(target) if target else {}, now)
     off_why = why or ("" if succ else "it has started no live coordinator to succeed it, detached")
     return {"id": host, "name": me.get("name") or "", "root": guards.chain_root(host, me),
             "coordinator": guards._coordinator(me), "parent": parent, "parent_name": pm.get("name") or "",
             "parent_ok": bool(pm) and (guards._coordinator(pm) or guards.chain_root(parent, pm)),
-            "note": str(note) if note else "",
-            "note_age_min": round((now - note.stat().st_mtime) / 60) if note else None,
+            "note": str(note or ""), "note_age_min": round((now - note.stat().st_mtime) / 60) if note else None,
             "successors": succ, "successor": target, "why": why, "ok": not why,
             "on": not on_why, "on_why": on_why, "off": not off_why, "off_why": off_why}
+
+
+NOT_MARKED = "NOT a coordinator by name, nor a marked root"
+
+
+def _started_line(r: dict) -> str:
+    if r["root"]:
+        return "started by   the owner (a chain root: the parent condition is lifted)"
+    if r["parent"]:
+        return (f"started by   {r['parent']} ({r['parent_name'] or 'no name'}): "
+                + ("ok" if r["parent_ok"] else NOT_MARKED))
+    return f"started by   the owner, unmarked: the owner marks it in their own terminal (brain handover root {r['id']})"
+
+
+def _call_line(r: dict, case: str, call: str) -> str:
+    return f"{case:<13}" + (f"ok ({call})" if r[case] else "refused: " + r[case + "_why"])
 
 
 def lines(r: dict) -> list[str]:
     """The check, for a person: one line per condition, then what the incoming coordinator does first."""
     who = r["name"] or ("chain root" if r["root"] else "no name")
-    out = [f"session      {r['id']} ({who}): "
-           + ("a chain root the owner marked" if r["root"] else
-              "a coordinator by name" if r["coordinator"] else "NOT a coordinator by name, nor a marked root")]
-    if r["root"]:
-        out.append("started by   the owner (a chain root: the parent condition is lifted)")
-    elif r["parent"]:
-        out.append(f"started by   {r['parent']} ({r['parent_name'] or 'no name'}): "
-                   + ("ok" if r["parent_ok"] else "NOT a coordinator by name, nor a marked root"))
-    else:
-        out.append("started by   the owner, unmarked: the owner marks it in their own terminal "
-                   f"(brain handover root {r['id']})")
-    out.append(f"note         {r['note']} ({r['note_age_min']} min old)" if r["note"] else
-               f"note         NONE of {r['id']} in {guards.HANDOVER_DIR}/ in the last "
-               f"{guards.HANDOVER_NOTE_S // 3600} h (brain handover write)")
-    out.append("successors   " + (", ".join(r["successors"]) if r["successors"] else
-                                  "none (a coordinator it started, live and detached)"))
-    out.append(f"on           {'ok' if r['on'] else 'refused: ' + r['on_why']}"
-               + (f" (set_remote_control {r['successor']} enabled true)" if r["on"] else ""))
-    out.append(f"off          {'ok' if r['off'] else 'refused: ' + r['off_why']}"
-               + (" (set_remote_control self enabled false)" if r["off"] else ""))
+    kind = "a chain root the owner marked" if r["root"] else "a coordinator by name" if r["coordinator"] else NOT_MARKED
+    note = (f"{r['note']} ({r['note_age_min']} min old)" if r["note"] else
+            f"NONE of {r['id']} in {guards.HANDOVER_DIR}/ in the last {guards.HANDOVER_NOTE_S // 3600} h "
+            "(brain handover write)")
+    out = [f"session      {r['id']} ({who}): {kind}", _started_line(r), f"note         {note}",
+           "successors   " + (", ".join(r["successors"]) or "none (a coordinator it started, live and detached)"),
+           _call_line(r, "on", f"set_remote_control {r['successor']} enabled true"),
+           _call_line(r, "off", "set_remote_control self enabled false")]
     if r["parent"]:
         out.append(f"predecessor  {r['parent']}: an incoming coordinator archives it first (archive_session; its "
                    "Remote Control off, its work finished)")

@@ -1,4 +1,3 @@
-# ruff: noqa: F811 (the lab fixtures, imported from test_guards_remote_control)
 """brain handover write|check|root (wi-brain-handover-command, brain.succession): the coordinator's hand-over note,
 its own app id first; the guard's conditions read before the Remote Control calls, and the predecessor to archive;
 the chain root, the owner's mark in their own terminal, refused to a session. On the invented sessions of
@@ -8,10 +7,13 @@ import json
 from datetime import datetime, timezone
 
 import pytest
+import test_guards_remote_control as rc
 from test_guards import bash, decide, payload, pwsh
-from test_guards_remote_control import E, F, G, K, call, chain, lab, refused  # noqa: F401 (fixtures)
+from test_guards_remote_control import E, F, G, K, call, refused
 
 from brain import cli, guards, sessions, succession
+
+lab, chain = rc.lab, rc.chain   # the lab's fixtures: invented sessions in the desktop app's files
 
 
 def test_write_puts_the_sessions_own_id_first_and_the_guard_reads_it(lab, monkeypatch):
