@@ -132,7 +132,8 @@ from typing import NamedTuple
 
 from . import config, diffs, markers, midsession, paths, projects, public, secretscan, timing
 
-GUARDS = ("production", "attribution", "secrets", "markers", "owner", "power", "third-party", "public", "branches")
+GUARDS = ("production", "attribution", "secrets", "markers", "owner", "power", "third-party", "public", "branches",
+          "merges")
 ALLOW_ENV = "BRAIN_GUARD_ALLOW"
 EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 SHELL_TOOLS = ("Bash", "PowerShell")
@@ -3514,6 +3515,33 @@ def check_branches(cmds: list[tuple[list[str], str]]) -> str | None:
     return None
 
 
+# --- a merge resolution made against a stale main (wi-brain-merge-stale-main-2) ----------------------------------
+
+def check_merge_stale(cmds: list[tuple[list[str], str]]) -> str | None:
+    """A git push of a branch whose merge of the base (origin's default branch) lost what it merged or what a fresh
+    base holds, or was resolved against a base that has moved since on a watched file the branch changes too
+    (brain.mergecheck.stale: it fetches the base again, bounded). A tag, a deletion and a branch with no merge of the
+    base pass; so does a repo with no such base."""
+    from . import mergecheck, resume
+    for _, d, args in _pushes(cmds):
+        _, refspecs, flags = _push_target(args)
+        top = _git_out(d, "rev-parse", "--show-toplevel").strip()
+        if not top:
+            continue
+        try:
+            project = resume.project_for(Path(top))
+        except (OSError, ValueError):
+            project = None
+        project = project if project is not None and getattr(project, "registered", False) else None
+        for ref, sha in _push_commits(d, refspecs, flags):
+            if ref.startswith("refs/tags/"):
+                continue
+            why = mergecheck.stale(Path(top), sha, project)
+            if why:
+                return f"git push refused: {ref} ({sha[:8]}): {why}"
+    return None
+
+
 # --- the hook ----------------------------------------------------------------------------------------------------
 
 def refusals(payload: dict, strict: bool = False):
@@ -3557,7 +3585,8 @@ def refusals(payload: dict, strict: bool = False):
                               ("markers", "markers", lambda: check_markers(cmds)),
                               ("public", "public", lambda: check_public(cmds)),
                               ("public", "commit", lambda: check_public_commit(cmds)),
-                              ("branches", "name", lambda: check_branches(cmds))):
+                              ("branches", "name", lambda: check_branches(cmds)),
+                              ("merges", "stale", lambda: check_merge_stale(cmds))):
         try:
             out = run()
         except Exception as exc:  # one check's error lets the others run (and goes to ledger/errors.log)
