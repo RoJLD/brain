@@ -32,6 +32,24 @@ A sub-profile takes what its entry takes, plus what names it: a project of kind 
 `software` as well as those of profile `cli`; a sibling's (`service`) it does not meet. `*` (a layer) and `any` (a
 standards row) are every kind.
 
+## The definition of done by typology
+
+The definition of done comes in two layers (`wi-brain-done-by-typology`, spec-brain-typology-packs E2): the generic
+sentence, every item's whatever its kind (`documented`, `verified`, `linked`, `integrated`, `recorded`), then the
+clauses of each entry an item's typologies belong to (a sub-profile takes its entry's):
+
+- `software` (the software pack's): `pr` (merged by a pull request, after local verification), `test`,
+  `same-pr-docs` (README, docs, CHANGELOG and the script's help in the same PR), `scout`, `worktree`;
+- `research`: `preregistered`, `verdict`, `reproducible`;
+- the other entries: the generic sentence only, until a real project of that kind writes its clauses.
+
+An item's typologies are its `props.typology` (an id, or ids separated by commas), else its project's
+`lifecycle.typologies` in `projects.yaml` (LC-1's key; its other keys are kept as declared). `brain item clauses ID`
+prints its clauses. `brain item close ID` takes `--pr "repo #N"` or `--evidence TEXT` (repeatable: a render id, a
+document's version, a DDR); `--pr` is required for a done item that takes a clause whose evidence is a PR, and for an
+item whose project declares no typology, as before the catalog (DONE-1). The clauses live in the catalog until the
+typology packs carry them (`wi-brain-typology-packs`).
+
 ## Stages
 
 The lifecycle's stages (spec-brain-product-lifecycle LC-2): `explore`, `build`, `launch`, `grow`, `mature`, `sunset`,
