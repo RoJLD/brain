@@ -73,3 +73,102 @@ def test_stamp_refuses_counts_that_do_not_add_up_and_an_unknown_target(pr, brain
         review.stamp(head[:8], 1, 1)
     assert cli.main(["review", "prep", "nope..HEAD", "--repo", str(repo), "--no-scout"]) == 1
     assert "git fetch first" in capsys.readouterr().err
+
+
+# --- the error score (wi-brain-review-error-score) ---
+
+NOTE = """Review of the item: three lenses, two skeptics each.
+- high correctness A.b fixed: a rotation cut between two writes leaves a plain copy
+- fixed A.e docs medium: the runbook says it refuses
+- severity=low lens=tests cause=C outcome=contested when=after covered: the owner's git config read
+- low scope refuted: the rename is the item's own
+- Refuted: a claim nobody upheld
+- high risk: prose, not a finding line
+1. medium: a numbered line is prose too
+"""
+
+
+def test_the_notes_finding_lines_in_any_order_and_prose_left_out():
+    rows = review.parse_note(NOTE)
+    assert [(r["severity"], r["lens"], r["cause"], r["outcome"], r["when"], r["covered"]) for r in rows] == [
+        ("high", "correctness", "A.b", "fixed", "before", ""), ("medium", "docs", "A.e", "fixed", "before", ""),
+        ("low", "tests", "C", "contested", "after", "covered"), ("low", "scope", "", "refuted", "before", "")]
+    assert rows[0]["text"] == "a rotation cut between two writes leaves a plain copy"
+    assert len(review.confirmed(rows)) == 3   # a refuted line is kept, not counted
+    assert review.parse_note("- install medium: the upgrade step")[0]["lens"] == "install and upgrade"
+    assert review.parse_note("") == [] and review.parse_note("- G high: an unknown family") == []
+
+
+def _rec(head, findings, wave="", pr="", at="2026-11-01T10:00:00+00:00", rows=()):
+    return {"v": 1, "head": head, "at": at, "findings": findings, "fixed": findings, "contested": 0, "open": 0,
+            "note": "", "wave": wave, "pr": pr, "rows": list(rows)}
+
+
+def test_score_counts_each_pr_once_by_its_latest_stamp_and_orders_the_waves():
+    rows = review.parse_note(NOTE)
+    recs = [_rec("a" * 40, 9, "0.3.9", "10", at="2026-11-01T10:00:00+00:00"),
+            _rec("b" * 40, 4, "0.3.9", "10", at="2026-11-01T12:00:00+00:00", rows=rows),   # PR 10 again: this one
+            _rec("c" * 40, 2, "0.3.10", "11"), _rec("d" * 40, 6, "0.3.10", "12"), _rec("e" * 40, 1)]
+    sc = review.score(recs)
+    assert [(w["wave"], w["prs"], w["findings"], w["per_pr"]) for w in sc["waves"]] == [
+        ("0.3.9", 1, 4, 4.0), ("0.3.10", 2, 8, 4.0)]   # 0.3.10 after 0.3.9: release order, not text
+    t = sc["total"]
+    assert (t["prs"], t["findings"], t["rows"], sc["unplaced"]) == (4, 13, 3, 1)
+    assert t["severity"] == {"high": 1, "medium": 1, "low": 1} and t["cause"] == {"A.b": 1, "A.e": 1, "C": 1}
+    assert t["after"] == 1 and t["covered"] == 1
+    assert sc["lighten"] == {"ok": False, "why": "2 wave(s) scored, 3 needed"}
+    text = "\n".join(review.score_lines(sc, "0.3.9"))
+    assert "review error score, wave 0.3.9: 1 PR(s) reviewed, 4 confirmed finding(s), 4.0 per PR" in text
+    assert "by root cause: A.b 1, A.e 1, C 1; 1 found after the merge, 1 a script now covers" in text
+    assert "per wave: 0.3.9 4.0 (1 PR), 0.3.10 4.0 (2 PR)" in text and "1 stamp(s) placed in no wave" in text
+    assert "the reviews stay complete: 2 wave(s) scored, 3 needed" in text
+
+
+def test_the_reviews_lighten_only_once_the_score_falls_over_two_waves_in_a_row():
+    def trend(*per):
+        return [{"wave": f"0.{i}.0", "per_pr": p} for i, p in enumerate(per)]
+    assert review.lighten(trend(9, 7, 5))["ok"]
+    assert review.lighten(trend(3, 9, 7, 5))["why"] == "findings per PR 0.1.0 9 -> 0.2.0 7 -> 0.3.0 5: fell over two waves"
+    for per in ((9, 5, 5), (9, 4, 6), (5, 7, 3), (9, 7)):
+        assert not review.lighten(trend(*per))["ok"], per
+
+
+def test_stamp_places_the_review_and_says_when_the_note_and_the_counts_differ(pr, brain_home, tmp_path, capsys,
+                                                                              monkeypatch):
+    from types import SimpleNamespace
+
+    from brain import standards, waves
+    repo, base, head = pr
+    note = tmp_path / "review.md"
+    note.write_text(NOTE, encoding="utf-8")
+    plan = SimpleNamespace(wave_of=lambda nid: "wave-0.4.1" if nid == "wi-x" else None, label=lambda w: "0.4.1")
+    monkeypatch.setattr(standards, "project_of_repo", lambda r: SimpleNamespace(stores=[tmp_path]))
+    monkeypatch.setattr(waves, "applies", lambda store: True)
+    monkeypatch.setattr(waves, "load", lambda store: plan)
+    assert cli.main(["review", "stamp", head, "--findings", "4", "--fixed", "4", "--note", str(note), "--pr", "7",
+                     "--item", "wi-x", "--stream", "lot review", "--repo", str(repo)]) == 0
+    out = capsys.readouterr()
+    assert "wave 0.4.1" in out.out and "the note describes 3 confirmed finding line(s), --findings says 4" in out.err
+    rec = review.check(head)
+    assert (rec["pr"], rec["item"], rec["wave"], rec["stream"], len(rec["rows"])) == ("7", "wi-x", "0.4.1",
+                                                                                      "lot review", 4)
+    # an item no plan places, and --wave given: the stamp says what it was told
+    assert cli.main(["review", "stamp", base, "--findings", "0", "--fixed", "0", "--item", "wi-y", "--wave", "0.4.2",
+                     "--repo", str(repo)]) == 0
+    assert review.check(base)["wave"] == "0.4.2" and "pr" not in review.check(base)
+    capsys.readouterr()
+    assert cli.main(["review", "score", "--json"]) == 0
+    sc = json.loads(capsys.readouterr().out)
+    assert [w["wave"] for w in sc["waves"]] == ["0.4.1", "0.4.2"] and sc["total"]["prs"] == 2
+    assert cli.main(["review", "score", "--wave", "0.4.1"]) == 0
+    assert "review error score, wave 0.4.1: 1 PR(s) reviewed, 4 confirmed" in capsys.readouterr().out
+
+
+def test_an_older_stamp_without_rows_or_place_still_counts(brain_home):
+    f = review.stamp_file("f" * 40)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"v": 1, "head": "f" * 40, "at": "2026-11-03T10:00:00+00:00", "findings": 11,
+                             "fixed": 11, "contested": 0, "open": 0, "note": "11 kept"}), encoding="utf-8")
+    (f.parent / "broken.json").write_text("{", encoding="utf-8")
+    sc = review.score()
+    assert sc["total"]["prs"] == 1 and sc["total"]["findings"] == 11 and sc["unplaced"] == 1 and sc["waves"] == []
