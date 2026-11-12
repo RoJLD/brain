@@ -1982,18 +1982,33 @@ def _is_roots(target) -> bool:
     return _real(target) in (_real(roots_file()), _real(roots_file().parent))
 
 
-_INTERPRETER = re.compile(r"^(?:python[0-9.]*w?|py|pythonw|bash|sh|zsh|dash|pwsh|powershell|uv|pipx)(?:\.exe)?$")
-_ROOT_HOOK = re.compile(r"(?:^|[\\/])midsession\.(?:py|sh)$|^brain\.midsession$|auto_root|midsession\.hook_main"
-                        r"|_auto_root")
+_INTERPRETER = re.compile(r"^(?:python[0-9.]*w?|pythonw|py|pypy[0-9.]*|ipython[0-9.]*|bash|sh|zsh|dash|pwsh"
+                          r"|powershell|cmd|uv|uvx|pipx|xargs)(?:\.exe)?$")
+_PYTHON = re.compile(r"^(?:python[0-9.]*w?|pythonw|py|pypy[0-9.]*|ipython[0-9.]*)(?:\.exe)?$")
+_HOOK_FILE = re.compile(r"^midsession\.(?:py|sh)$")
+_HOOK_CODE = re.compile(r"(?<![\w])(?:brain\.)?midsession(?![\w.])|\bauto_root\b|\bhook_main\b|brain\.midsession\b")
 
 
 def _root_hook(low: list[str]) -> bool:
-    """Whether a simple command runs the chain root's hook entry: an interpreter (python, bash, a wrapper) given
-    midsession.py or .sh, ``-m brain.midsession``, or code that names auto_root; reading the file (grep, cat) is not."""
+    """Whether a simple command runs the chain root's hook entry (wi-brain-handover-auto-root): an interpreter
+    (python, bash, cmd, a wrapper) given a file named midsession.py or .sh, ``-m brain.midsession``, or Python code
+    (a -c word) that imports or calls it. Reading or testing it (grep, cat, pytest -k auto_root) is not. It holds
+    against a mistake: a renamed copy or code built at run time is a script calling the engine, out of its reach."""
     if not low:
         return False
     prog = re.split(r"[\\/]", low[0])[-1]
-    return bool(_INTERPRETER.match(prog) or prog in (".", "source")) and any(_ROOT_HOOK.search(w) for w in low[1:])
+    if not (_INTERPRETER.match(prog) or prog in (".", "source")):
+        return False
+    python = any(_PYTHON.match(re.split(r"[\\/]", w)[-1]) for w in low)
+    for i, w in enumerate(low[1:], 1):
+        if not any(c.isspace() for c in w) and _HOOK_FILE.match(re.split(r"[\\/]", w)[-1]):   # a path, not a -c's
+            return True
+        module = w[2:] if w.startswith("-m") and len(w) > 2 else (low[i + 1] if w == "-m" and i + 1 < len(low) else "")
+        if module in ("brain.midsession", "brain.succession"):
+            return True
+        if python and low[i - 1] == "-c" and _HOOK_CODE.search(w):
+            return True
+    return False
 
 
 def _root_override(cmds, shell: str) -> str | None:

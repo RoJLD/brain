@@ -53,7 +53,7 @@ POLL_S = 3.0
 
 # The words that make a first prompt ask for a coordinator (HANDOVER-1: an extension point, reviewed when a prompt that
 # asked for one was missed, or a mark came without the owner asking).
-ROOT_WORDS = re.compile(r"(?i)\bcoordinat(?:or|ors|eur|eurs|rice|ion)\b")
+ROOT_WORDS = re.compile(r"(?i)\bcoordinat(?:or|eur|rice)s?\b|\bcoordination du brain\b|\bbrain coordination\b")
 AUTO_REASON = "first prompt (UserPromptSubmit hook, HANDOVER-1)"
 
 
@@ -343,20 +343,20 @@ def roots() -> dict:
 
 def first_prompt(transcript) -> bool:
     """Whether the transcript holds no turn yet: no assistant message and at most one prompt (this one, when Claude
-    Code wrote it before the hook ran); a transcript not written yet is a first prompt."""
+    Code wrote it before the hook ran; a skill's or slash command's expansion, isMeta, is not a prompt). A transcript
+    that cannot be read is not a first prompt: the mark fails closed."""
     prompts = 0
     try:
         with open(transcript, encoding="utf-8", errors="replace") as f:
             for line in f:
-                if '"assistant"' in line and '"type":"assistant"' in line.replace(" ", ""):
+                flat = line.replace(" ", "")
+                if '"type":"assistant"' in flat:
                     return False
-                if '"type":"user"' in line.replace(" ", "") and '"tool_result"' not in line:
+                if '"type":"user"' in flat and '"tool_result"' not in line and '"isMeta":true' not in flat:
                     prompts += 1
                     if prompts > 1:
                         return False
-    except FileNotFoundError:
-        return True
-    except OSError:
+    except (OSError, TypeError, ValueError):
         return False
     return True
 
@@ -373,8 +373,12 @@ def auto_root(payload: dict, *, env=None, now: float | None = None) -> dict | No
     m = sessions.app_meta(host)
     if not m or m.get("parent"):   # unknown to the app, or started by another session: not the owner's
         return None
-    transcript = payload.get("transcript_path")
-    if transcript and not first_prompt(transcript):   # a turn already ran: not the session's first prompt
+    if m.get("turns"):   # the app counts a completed turn: not the session's first prompt
+        return None
+    # the session's own transcript, found from its id (never the payload's path, which a hand run would choose): it
+    # exists before the first prompt (the SessionStart lines); none found fails closed
+    transcript = paths.find_transcript(str(payload.get("session_id") or ""))
+    if transcript is None or not first_prompt(transcript):
         return None
     data = _load_roots()
     if host in data["roots"]:

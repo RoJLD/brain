@@ -214,17 +214,29 @@ def read_payload(stdin=None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _auto_root(data: dict) -> None:
-    """The chain root marked by its first prompt (brain.succession.auto_root, HANDOVER-1); brain.succession loaded only
-    for a prompt that names a coordinator. Never fails: an error goes to the errors log, the announcement goes on."""
-    if "coordinat" not in str(data.get("prompt") or "").lower():
-        return
+ROOT_CHECKED = ".root"   # <BRAIN_HOME>/announce/<session>.root: the session's first prompt was judged for the mark
+
+
+def _auto_root(data: dict) -> str:
+    """The chain root marked by its first prompt (brain.succession.auto_root, HANDOVER-1): the line shown to the
+    owner when it marked the session ('' otherwise). brain.succession is loaded only for a prompt that names a
+    coordinator; once judged, ``<session>.root`` lets midsession.sh keep its fast path for the session's later
+    prompts. Never fails: an error goes to the errors log, the announcement goes on."""
+    sid = str(data.get("session_id") or "")
+    if "coordinat" not in str(data.get("prompt") or "").lower() or not _SID_RE.match(sid):
+        return ""
     try:
         from . import succession
-        succession.auto_root(data)
+        row = succession.auto_root(data)
+        mark = paths.brain_home() / DIR / f"{sid}{ROOT_CHECKED}"
+        mark.parent.mkdir(parents=True, exist_ok=True)
+        mark.write_text("judged\n", encoding="utf-8")
     except Exception as exc:   # the mark never blocks a prompt: logged
         from .capture import _log_error
         _log_error("handover-auto-root", exc)
+        return ""
+    return ("Brain: this session is marked a coordinators' chain root (its first prompt asked for a coordinator, "
+            "HANDOVER-1); to undo it: brain handover root --clear, in your own terminal") if row else ""
 
 
 def hook_main(argv: list[str], stdin=None) -> int:
@@ -232,12 +244,16 @@ def hook_main(argv: list[str], stdin=None) -> int:
     error goes to <BRAIN_HOME>/ledger/errors.log."""
     try:
         data = read_payload(stdin)
-        _auto_root(data)
+        marked = _auto_root(data)
         text = check(data)
+        out = {}
         if text:
-            event = argv[0] if argv else "UserPromptSubmit"
-            print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}},
-                             ensure_ascii=True))
+            out["hookSpecificOutput"] = {"hookEventName": argv[0] if argv else "UserPromptSubmit",
+                                         "additionalContext": text}
+        if marked:   # shown to the owner, not to the model: the mark widens what the session may do
+            out["systemMessage"] = marked
+        if out:
+            print(json.dumps(out, ensure_ascii=True))
     except BaseException as exc:  # noqa: BLE001 - a hook never blocks a prompt, SystemExit included
         from .capture import _log_error
         _log_error("midsession-announce", exc)

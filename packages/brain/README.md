@@ -855,9 +855,10 @@ those conditions before the calls, at zero token, from the files the guard reads
   marked id that a session started, or that the app's files do not know, is no root. No ID lists the marks. The mark
   is automatic since wi-brain-handover-auto-root (HANDOVER-1): the first prompt of a session the owner started, when
   it asks for a coordinator (`brain.succession.ROOT_WORDS`: coordinator, coordinateur, coordination...), marks it
-  through the UserPromptSubmit hook (`midsession`), its reason naming the hook; a later prompt, a session another
-  session started, or a prompt that names none marks nothing, and the guard refuses a session that runs the hook's
-  entry by hand. `brain handover root` stays the fallback.
+  through the UserPromptSubmit hook (`midsession`), its reason naming the hook, and the owner is told; it judges the
+  session's own transcript and the app's count of completed turns, so a later prompt, a session another session
+  started, or a prompt that names none marks nothing, and the guard refuses a session that runs the hook's entry by
+  hand. `brain handover root` stays the fallback, `--clear` the undo.
 
 ## Lessons
 

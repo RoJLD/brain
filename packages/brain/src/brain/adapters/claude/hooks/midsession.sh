@@ -16,8 +16,9 @@ sid= cwd=
 [[ $payload =~ $re_sid ]] && sid=${BASH_REMATCH[1]}
 [[ $payload =~ $re_cwd ]] && cwd=${BASH_REMATCH[1]}
 mark="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}/announce/$sid.mark"
-# a prompt that names a coordinator goes to Python: its first prompt may mark a chain root (brain.succession.auto_root)
-shopt -s nocasematch; asks=; [[ $payload == *coordinat* ]] && asks=1; shopt -u nocasematch
+# a prompt that names a coordinator goes to Python, until the session's first one was judged (<session>.root): it may
+# mark a chain root (brain.succession.auto_root)
+shopt -s nocasematch; asks=; [[ $payload == *coordinat* && ! -f ${mark%.mark}.root ]] && asks=1; shopt -u nocasematch
 if [[ -n $sid && -f $mark && -z $asks ]]; then
   newer=1
   {

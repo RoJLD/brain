@@ -71,8 +71,11 @@ What it reads, at zero token:
   (wi-brain-handover-command). A marked id whose
   app file names a parent is no root. The first prompt of an owner-started session that asks for a coordinator marks
   it with no gesture (wi-brain-handover-auto-root: the UserPromptSubmit hook, `brain.succession.auto_root`); the
-  guard refuses a session that runs that hook's entry by hand: an interpreter (python, bash, a wrapper) given
-  `midsession.py` or `.sh`, `-m brain.midsession`, or code that names `auto_root` (reading the file is not refused).
+  guard refuses a session that runs that hook's entry by hand: an interpreter (python, bash, cmd, a wrapper) given a
+  file named `midsession.py` or `.sh`, `-m brain.midsession`, or a `python -c` code that imports or calls it
+  (`brain.midsession`, `hook_main`, `auto_root`); reading or testing it is not refused. It holds against a mistake:
+  a renamed copy or code built at run time is out of its reach, and the mark itself judges the session's own
+  transcript (found from its id) and the app's count of completed turns, never what the payload says.
 - **Live on this machine**: `running`, `idle`, `asking` or `stale`; not archived, and not `unknown` (no transcript).
   A successor `unknown` because it has no transcript yet still counts, as starting, for `handover-on` and
   `handover-off` when its own app file's `createdAt` is at most 10 minutes old (`HANDOVER_START_S`): the outgoing
