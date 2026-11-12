@@ -128,6 +128,8 @@ def test_perf_usage_splits_each_commands_runs_and_proposes_for_each_gap(tmp_path
     assert rows["brain status"] == {"command": "brain status", "module": "status", "runs": 3, "by_session": 1,
                                     "otherwise": 2}
     assert rows["brain item show"]["otherwise"] == 0 and "brain brief" in rep["never_run"]
+    reached = {r["command"]: r["via"] for r in rep["reached_otherwise"]}   # main passes the modules' RUNS_VIA
+    assert reached["brain capture"].startswith("wired: ") and "brain capture" not in rep["never_run"]
     assert "brain status" not in rep["never_run"] and rep["sessions"] == 2
     kinds = [(p["kind"], p["what"]) for p in rep["proposals"]]
     assert ("hint", "1 hand read(s) of the journal: brain journal last [N] answers") in kinds
@@ -157,3 +159,34 @@ def test_a_have_feature_whose_commands_never_ran(tmp_path, monkeypatch, known):
     got = adoption.unused_features(tmp_path, units, Counter({"brain status": 4}))
     assert got == [{"feature": "feat-a", "commands": ["brain brief"]}]
     assert adoption.unused_features(None, units, Counter()) == []
+
+
+def test_runs_via_names_real_units_and_says_how(known):
+    """wi-brain-adoption-gaps: each RUNS_VIA entry is a unit of the registry, wired or on demand, so a command a hook
+    or another command runs without the CLI, or one the owner runs when its occasion comes, is no gap."""
+    units, _ = known
+    via = adoption.runs_via()
+    assert "brain capture" in via and "brain memory sync" in via and "brain vault seal" in via
+    assert all(u in units for u in via), sorted(set(via) - set(units))
+    from brain.commands import _registry as registry
+    for m in registry.load():   # a module accounts for its own commands only
+        name = m.__name__.rsplit(".", 1)[-1]
+        assert all(units[f"brain {k}"] == name for k in getattr(m, "RUNS_VIA", None) or {}), name
+    assert all(v.startswith(("wired: ", "on demand: ")) for v in via.values())
+    assert "brain cost review" not in via   # wired by close-item's step 2b: it must show when it never runs
+
+
+def test_a_command_reached_another_way_is_listed_apart_not_a_gap(tmp_path, monkeypatch, known):
+    units, _ = known
+    via = {"brain brief": "wired: a test's hook"}
+    rep = adoption.report(units, Counter({"brain status": 1}), {}, NOW - timedelta(days=28), NOW, via=via)
+    assert "brain brief" not in rep["never_run"] and "brain impact" in rep["never_run"]
+    assert {"command": "brain brief", "via": "wired: a test's hook"} in rep["reached_otherwise"]
+    assert any(p["kind"] == "wire" and p["count"] == len(rep["never_run"]) for p in rep["proposals"])
+    text = "\n".join(adoption.render(rep))
+    assert "reached another way (RUNS_VIA, not a gap):\n  brain brief: wired: a test's hook" in text
+    m = features.Model(features={"feat-a": {"id": "feat-a", "status": "have"}}, nodes={},
+                       out={"feat-a": [("implemented_by", "code:brain:packages/brain/src/brain/commands/brief.py")]})
+    monkeypatch.setattr(features, "load_store", lambda store: m)
+    assert adoption.unused_features(tmp_path, units, Counter(), via) == []
+    assert adoption.unused_features(tmp_path, units, Counter()) == [{"feature": "feat-a", "commands": ["brain brief"]}]

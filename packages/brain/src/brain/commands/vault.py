@@ -10,6 +10,13 @@ from .. import config, keystore, rotation, vault
 
 ORDER = 250   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 290   # its usage lines' place in brain --help's epilog
+RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
+    "vault device": "on demand: an owner's gesture of the vault's setup, rotation or recovery (docs/vault.md)",
+    "vault drill": "on demand: an owner's gesture of the vault's setup, rotation or recovery (docs/vault.md)",
+    "vault open": "on demand: an owner's gesture of the vault's setup, rotation or recovery (docs/vault.md)",
+    "vault reseal": "on demand: an owner's gesture of the vault's setup, rotation or recovery (docs/vault.md)",
+    "vault seal": "on demand: an owner's gesture of the vault's setup, rotation or recovery (docs/vault.md)",
+}
 USAGE = """\
   brain vault status [--json]   adapters (age, gpg), the keystore, this machine's device key (public facts), every
                  recipient with its fingerprint and last canary, the last seal per store, and the steps left to the

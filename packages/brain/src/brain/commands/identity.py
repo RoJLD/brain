@@ -11,6 +11,11 @@ from ._common import _project
 
 ORDER = 255   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 295   # its usage lines' place in brain --help's epilog
+RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
+    "identity attach": "on demand: the owner signs answers by hand where members.yaml exists (docs/identity.md)",
+    "identity payload": "on demand: the owner signs answers by hand where members.yaml exists (docs/identity.md)",
+    "identity unsigned": "on demand: the owner signs answers by hand where members.yaml exists (docs/identity.md)",
+}
 USAGE = """\
   brain identity check   members.yaml (people, public keys, accounts, organizations, memberships: its schema and
                  references) and the owner-decides answers (money, keys, accounts, visibility, heirs, scheduled

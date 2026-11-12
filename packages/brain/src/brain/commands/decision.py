@@ -11,6 +11,10 @@ from ._common import _notify_project, _now, _on_main, _project, _queue_changed, 
 
 ORDER = 90   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 90   # its usage lines' place in brain --help's epilog
+RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
+    "decision announce": "wired: the SessionStart hook announce.sh runs hooks/announce.py, not the CLI",
+    "decision view": "wired: brain sync and each command that changes the queue write its view",
+}
 USAGE = """\
   brain decision ask --title T --question Q --option "A: consequences"... --why W [--multi] [--blocking] ...
                  [--low-stakes]: applied at once, provisionally, final by default 24 h later without an answer;
