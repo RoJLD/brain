@@ -420,6 +420,16 @@ claude plugin marketplace add ~/my-brain
 claude plugin install brain-core@brain
 ```
 
+**Choose your modules at the start** (the three screens, offline and with no telemetry; `brain.firstrun`):
+`brain init ~/my-brain --owner "Your name" --interactive` asks who you are (a preset of the catalogue: Lite, Default,
+Recommended, or a persona of a private catalogue, `--catalogue FILE`), shows your machine (what runs here and what is
+recommended, from the probe), then lets you adjust (each module's box, its cost, its dependencies, what it pulls;
+what the machine does not hold is refused). It ends on the same choice as one command (`--preset ID --with MODULE
+--without MODULE`), which plans it without the screens. The choice is brain commands (`brain profile set BASE`, then
+`brain mod disable|enable ID`, each `--apply`): the plan shows them, `--apply` runs them in order and logs each one
+in `<BRAIN_HOME>/ledger/setup-<month>.jsonl`. What must be downloaded (a pip extra) is named, never fetched. The
+catalogue is `brain catalogue emit`'s ([docs/catalogue.md](docs/catalogue.md)).
+
 `brain init` writes, from a template (`--template`, default `generic`: `src/brain/templates/generic/`) and
 `research_graph init`, never over an existing file. `--owner` may be left out in a folder that already has a
 `config.json` (its `identity.owner`). The generic template:
