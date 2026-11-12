@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # UserPromptSubmit: announce the decisions answered or newly asked in the project's queue (records/ddr of its main
 # checkout) since the session started or since the last announce (hooks/midsession.py, brain.midsession), as hook
-# context; prints nothing when none was.
+# context; prints nothing when none was. The first prompt of an owner-started session that asks for a coordinator
+# marks it a chain root (brain.succession.auto_root, HANDOVER-1).
 # Fast path in bash builtins (no process started): when the session's folder is the one in its mark
 # (<BRAIN_HOME>/announce/<session>.mark: the folder, the queue, the pending DDRs) and neither the queue folder (a DDR
 # added or removed) nor a pending DDR (an answer) is newer than the mark, it stops.
@@ -15,7 +16,9 @@ sid= cwd=
 [[ $payload =~ $re_sid ]] && sid=${BASH_REMATCH[1]}
 [[ $payload =~ $re_cwd ]] && cwd=${BASH_REMATCH[1]}
 mark="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}/announce/$sid.mark"
-if [[ -n $sid && -f $mark ]]; then
+# a prompt that names a coordinator goes to Python: its first prompt may mark a chain root (brain.succession.auto_root)
+shopt -s nocasematch; asks=; [[ $payload == *coordinat* ]] && asks=1; shopt -u nocasematch
+if [[ -n $sid && -f $mark && -z $asks ]]; then
   newer=1
   {
     IFS= read -r marked_cwd

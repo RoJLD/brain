@@ -16,6 +16,9 @@ prints nothing when none was.
   past bash's own start, flat as archived DDRs pile up. Python compares each file's (mtime, size) with the mark and
   reads only the files that changed, line by line (``decisions._top``, no YAML parser).
 - A decision this session asked itself is not announced back as asked; its answer is.
+- The first prompt of a session the owner started, when it asks for a coordinator, marks the session a chain root
+  (brain.succession.auto_root, wi-brain-handover-auto-root): ``midsession.sh`` leaves its fast path for a prompt that
+  names a coordinator.
 """
 
 from __future__ import annotations
@@ -211,11 +214,25 @@ def read_payload(stdin=None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _auto_root(data: dict) -> None:
+    """The chain root marked by its first prompt (brain.succession.auto_root, HANDOVER-1); brain.succession loaded only
+    for a prompt that names a coordinator. Never fails: an error goes to the errors log, the announcement goes on."""
+    if "coordinat" not in str(data.get("prompt") or "").lower():
+        return
+    try:
+        from . import succession
+        succession.auto_root(data)
+    except Exception as exc:  # noqa: BLE001 - the mark never blocks a prompt
+        from .capture import _log_error
+        _log_error("handover-auto-root", exc)
+
+
 def hook_main(argv: list[str], stdin=None) -> int:
     """UserPromptSubmit hook: the hook JSON on stdin, the announcement as additionalContext on stdout. Never fails: an
     error goes to <BRAIN_HOME>/ledger/errors.log."""
     try:
         data = read_payload(stdin)
+        _auto_root(data)
         text = check(data)
         if text:
             event = argv[0] if argv else "UserPromptSubmit"

@@ -23,7 +23,12 @@ zero token, from the same files the guard reads:
   ``brain usage allow``: it holds against a mistake, not against a script that calls the engine): a chain root is a
   session the owner started (no parent in the app's files) and marked, ``<BRAIN_HOME>/handover/roots.json``. A root may
   hand over without a name or a coordinator parent, and the coordinators it starts pass the parent
-  condition through it, until the owner clears the mark.
+  condition through it, until the owner clears the mark;
+- :func:`auto_root` marks it with no gesture of the owner's (wi-brain-handover-auto-root, HANDOVER-1): the
+  UserPromptSubmit hook (``hooks/midsession.py``) calls it on each prompt, and it writes the mark only for the first
+  prompt of a session no other session started (its app file names no parent, its transcript holds no turn yet)
+  when that prompt asks for a coordinator (``ROOT_WORDS``, a list the engine reviews when a prompt is missed). The
+  guard refuses a session that runs the hook's entry by hand; ``brain handover root`` stays the fallback.
 
 The standard library and brain only.
 """
@@ -44,6 +49,12 @@ BRIEF_SUFFIX = ".brief.txt"   # beside the note; not *.md: the guard never reads
 WAIT_S = 120       # brain handover wait's default bound, in seconds (the procedure's « about two minutes »)
 WAIT_MAX_S = 600   # its longest: a starting successor counts for guards.HANDOVER_START_S (ten minutes)
 POLL_S = 3.0
+
+
+# The words that make a first prompt ask for a coordinator (HANDOVER-1: an extension point, reviewed when a prompt that
+# asked for one was missed, or a mark came without the owner asking).
+ROOT_WORDS = re.compile(r"(?i)\bcoordinat(?:or|ors|eur|eurs|rice|ion)\b")
+AUTO_REASON = "first prompt (UserPromptSubmit hook, HANDOVER-1)"
 
 
 class SuccessionError(Exception):
@@ -328,3 +339,48 @@ def clear_root(host: str, *, env=None) -> bool:
 def roots() -> dict:
     """The marked chain roots: {app id: {at, reason, title}}."""
     return guards.chain_roots()
+
+
+def first_prompt(transcript) -> bool:
+    """Whether the transcript holds no turn yet: no assistant message and at most one prompt (this one, when Claude
+    Code wrote it before the hook ran); a transcript not written yet is a first prompt."""
+    prompts = 0
+    try:
+        with open(transcript, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if '"assistant"' in line and '"type":"assistant"' in line.replace(" ", ""):
+                    return False
+                if '"type":"user"' in line.replace(" ", "") and '"tool_result"' not in line:
+                    prompts += 1
+                    if prompts > 1:
+                        return False
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def auto_root(payload: dict, *, env=None, now: float | None = None) -> dict | None:
+    """The chain root marked by its first prompt (HANDOVER-1): the row written into roots.json, None when the prompt
+    is not a first prompt of an owner-started session asking for a coordinator, or the session is marked already.
+    Run by the UserPromptSubmit hook, never by a session (the guard refuses its entry run by hand)."""
+    if not ROOT_WORDS.search(str(payload.get("prompt") or "")):
+        return None
+    host = sessions.host_for(str(payload.get("session_id") or ""), env)
+    if not host:
+        return None
+    m = sessions.app_meta(host)
+    if not m or m.get("parent"):   # unknown to the app, or started by another session: not the owner's
+        return None
+    transcript = payload.get("transcript_path")
+    if transcript and not first_prompt(transcript):   # a turn already ran: not the session's first prompt
+        return None
+    data = _load_roots()
+    if host in data["roots"]:
+        return None
+    now = time.time() if now is None else now
+    data["roots"][host] = {"at": _iso(now) + " UTC", "reason": AUTO_REASON, "title": str(m.get("title") or "")[:120]}
+    data["v"] = 1
+    _save_roots(data)
+    return data["roots"][host]

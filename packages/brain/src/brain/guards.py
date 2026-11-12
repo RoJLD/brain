@@ -1982,14 +1982,32 @@ def _is_roots(target) -> bool:
     return _real(target) in (_real(roots_file()), _real(roots_file().parent))
 
 
+_INTERPRETER = re.compile(r"^(?:python[0-9.]*w?|py|pythonw|bash|sh|zsh|dash|pwsh|powershell|uv|pipx)(?:\.exe)?$")
+_ROOT_HOOK = re.compile(r"(?:^|[\\/])midsession\.(?:py|sh)$|^brain\.midsession$|auto_root|midsession\.hook_main"
+                        r"|_auto_root")
+
+
+def _root_hook(low: list[str]) -> bool:
+    """Whether a simple command runs the chain root's hook entry: an interpreter (python, bash, a wrapper) given
+    midsession.py or .sh, ``-m brain.midsession``, or code that names auto_root; reading the file (grep, cat) is not."""
+    if not low:
+        return False
+    prog = re.split(r"[\\/]", low[0])[-1]
+    return bool(_INTERPRETER.match(prog) or prog in (".", "source")) and any(_ROOT_HOOK.search(w) for w in low[1:])
+
+
 def _root_override(cmds, shell: str) -> str | None:
     """What marks a chain root for a session (wi-brain-handover-command): any command whose words hold ``handover``
     then ``root`` (quoted or not) or a word the guard cannot resolve (``$x``, ``%x%``, a backquote), whatever runs it
-    (brain, python -I -m brain, a wrapper); or a shell write into its file or the folder that holds it."""
+    (brain, python -I -m brain, a wrapper); the hook entry that marks a root at a first prompt (midsession.py,
+    brain.midsession, brain.succession.auto_root: wi-brain-handover-auto-root) run by an interpreter; or a shell write
+    into its file or the folder that holds it."""
     for words, _, _, _ in actions(cmds, shell):
         low = [w.lower() for w in words]
         if any(a == "handover" and (b == "root" or any(c in b for c in "$`%")) for a, b in zip(low, low[1:])):
             return "brain handover root"
+        if _root_hook(low):
+            return "the chain root's hook entry (midsession.py) run by hand"
     for what, target in shell_writes(cmds, shell):
         if _is_roots(target):   # an unresolved target counts by its folder: a write judged in the marks' folder
             return f"{what} into {target}"
