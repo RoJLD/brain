@@ -33,7 +33,8 @@ USAGE = """\
                         (brain formats check, opt-in: never on a plain brain check)
   brain check --public [--repo DIR] [--remote NAME] [--history] [--engine] [--json]   before a push to a public repo
                         (config.json public.repos), at zero token: no denied term (public.deny), secret, e-mail or home
-                        folder, data or sealed file, nor a domain's patterns (public.patterns, public.refuse) in the
+                        folder, data or sealed file, nor a domain's patterns (public.patterns, public.refuse), nor the personal graph's
+                        decision ids and titles or another project's ids (brain.privateids) in the
                         tracked files, and with --history in the commits not on the remote yet (gitleaks too when on
                         the PATH); green with --history, it stamps HEAD for the public guard on git push, keyed by
                         the engine version, the rules' hash and gitleaks (a change of any: rerun it); --engine:

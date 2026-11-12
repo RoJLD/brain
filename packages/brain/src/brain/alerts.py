@@ -35,7 +35,7 @@ running task is never missed. ``brain alerts --notify`` is the pass a scheduled 
 with the last pass (``$BRAIN_HOME/alerts/state.json``), sends each new alert, each one whose level rose and each one
 whose send failed through ``brain notify`` at its level with its key, sends ``resolved`` at info for a delivered one
 that closed, and appends each change to ``$BRAIN_HOME/alerts/alert-<yyyy-mm>.jsonl`` (the history, same schema).
-Nothing leaves the machine without a ``notify:`` route (none until ddr-2026-11-02-ntfy-server is answered), and
+Nothing leaves the machine without a ``notify:`` route (none until the owner has chosen the notification server), and
 ``$BRAIN_NOTIFY=off`` sends nothing (the tests run so). A route whose channels all lack their variable (an unset
 ``$BRAIN_NTFY_TOPIC``) sends nothing either: the pass says so in one line, records ``unset``, and sends those alerts
 at the first pass that finds the variable set. Each pass also records itself (``_pass`` in the state: when, where,

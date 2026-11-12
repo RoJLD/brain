@@ -2,7 +2,7 @@
 (wi-brain-milestone-autolink).
 
 An orphan is an open work item (todo, doing, blocked) attached to no milestone: no ``part_of`` edge to a Milestone,
-so the roadmap does not see it. The owner's ADR of 2026-11-01 ("Jalons : toujours proposer, jamais rattacher seul"):
+so the roadmap does not see it. The owner's decision of 2026-11-01 (milestones: always propose, never attach alone):
 a suggestion is only a proposal, ``props.milestone_proposed`` with ``props.milestone_reason``, shown ``ms-x?`` like a
 proposed priority; ``apply`` writes the ``part_of`` edges once the owner has validated, the way research_graph's
 ``priorities apply`` does; a new milestone goes through the decision queue (``add``).

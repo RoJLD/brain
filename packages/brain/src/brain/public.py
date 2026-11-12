@@ -22,6 +22,10 @@ repo. It refuses, one finding per line, exit code 1:
   match, a data venue's derived columns say) and ``public.refuse`` (``{glob: reason}`` of files that must not be
   there, the research-IP paths of a split).
 
+- ``graph``: the personal graph's ids and ADR titles (brain.privateids, wi-brain-public-private-ids): an ADR's or a
+  DDR's id, any id of another project than the public repo's own (``wi-``, ``adr-``, ``feat-``, ``ddr-``, ``spec-``,
+  ``les-``, as a store of the registry holds it), an ADR's title on its first 8 words.
+
 ``public.allow`` (``{glob: reason}``) excepts a file from every check but ``secret`` (a licence keeps its author's
 name). The tracked files are read at HEAD's working tree; ``--history`` adds the lines and the files of every commit
 not on the remote yet (``HEAD --not --remotes=<remote>``: the whole history before a first push), their messages
@@ -55,12 +59,12 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import boundary, config, paths, secretscan
+from . import boundary, config, paths, privateids, secretscan
 
 STAMPS = "public-check"
 STAMP_V = 2  # none: no v and no key (up to 0.2.5); 2: keyed by the engine, the rules and gitleaks
 NO_STAMP = "has no green brain check --public"
-CHECKS = ("denied", "secret", "pattern", "file", "domain")
+CHECKS = ("denied", "secret", "pattern", "file", "domain", "graph")
 MAX_FILE = 1_000_000
 ALLOW_MARK = "public-check:allow"
 
@@ -223,12 +227,15 @@ class Rules:
     patterns: list[tuple[str, re.Pattern]]
     refuse: list[tuple[str, re.Pattern, str]]
     errors: list[str]
+    graph: privateids.Index | None = None   # the personal graph's ids and ADR titles (rules(cfg, slug))
 
     def allowed(self, path: str) -> bool:
         return any(rx.match(path) for rx in self.allow)
 
 
-def rules(cfg: config.Config) -> Rules:
+def rules(cfg: config.Config, slug: str = "") -> Rules:
+    """The rules of config.json, and the personal graph's ids a public repo ``slug`` refuses (brain.privateids; read
+    when config.json names a public repo: the registry's every store)."""
     pub = cfg.data.get("public") if isinstance(cfg.data.get("public"), dict) else {}
     patterns, errors = [], []
     for name, rx in (pub.get("patterns") or {}).items() if isinstance(pub.get("patterns"), dict) else []:
@@ -238,8 +245,10 @@ def rules(cfg: config.Config) -> Rules:
             errors.append(f"config.json public.patterns {name}: {exc}")
     refuse = [(g, boundary.glob_regex(g), str(why)) for g, why in (pub.get("refuse") or {}).items()] \
         if isinstance(pub.get("refuse"), dict) else []
+    graph = privateids.index(cfg.root, slug) if public_repos(cfg) else None
+    errors += graph.errors if graph is not None else []
     return Rules([(cat, t, boundary.term_regex(t)) for cat, t in config.deny_terms(cfg)],
-                 [boundary.glob_regex(g) for g in config.allowed(cfg)], patterns, refuse, errors)
+                 [boundary.glob_regex(g) for g in config.allowed(cfg)], patterns, refuse, errors, graph or None)
 
 
 def _generic(line: str) -> list[str]:
@@ -266,6 +275,8 @@ def scan_lines(path: str, lines, r: Rules, commit: str = "") -> list[Finding]:
             for cat, term, rx in r.terms:
                 if rx.search(flat):
                     out.append(Finding("denied", path, n, f"{cat} term {term!r}", commit))
+            if r.graph:
+                out += [Finding("graph", path, n, what, commit) for what in privateids.find(line, r.graph)]
         out += [Finding("secret", path, n, f"looks like a secret ({name})", commit)
                 for name in secretscan.find_in_line(line)[:1]]
         if allowed or ALLOW_MARK in line:
@@ -422,8 +433,7 @@ def check(repo: Path, cfg: config.Config | None = None, *, history: bool = False
         raise PublicError(f"{repo}: not a git checkout")
     repo = Path(top)
     head = _out(repo, "rev-parse", "--verify", "HEAD")
-    r = rules(cfg)
-    notes = list(r.errors)
+    notes: list[str] = []
     if engine:
         try:
             files = boundary.report(repo, cfg)["by_side"]["engine"]
@@ -436,6 +446,8 @@ def check(repo: Path, cfg: config.Config | None = None, *, history: bool = False
         if not is_public(slug, cfg):
             notes.append(f"{slug or 'this checkout'} is not in config.json public.repos: checked all the same, "
                          "not stamped")
+    r = rules(cfg, slug)
+    notes = list(r.errors) + notes
     if not config.deny_terms(cfg):
         notes.append("config.json has no public.deny: no private term is looked for")
     found, unread = scan_tree(repo, files, r)

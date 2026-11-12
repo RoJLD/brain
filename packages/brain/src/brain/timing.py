@@ -10,7 +10,7 @@ decorator that projects import; ``brain perf`` (brain.perf) reads it back::
   @timed("cycle L4", project="quant")      # @timed(): the task is module.function
   def layer_4(): ...
 
-One event schema (``schemas/event.schema.json``), shared with a project's ops error events (wi-ops-error-catalog):
+One event schema (``schemas/event.schema.json``), shared with a project's ops error events (its error catalogue):
 ``{"v": 1, "kind": "exec", "at", "host", "project", "task", "version", "start", "end", "duration_s", "exit", ...}``;
 an error event has the same envelope with ``kind: "error"``, ``code`` and ``severity``. ``at`` is when it happened (an
 exec event's end) and picks the file: ``$BRAIN_HOME/ledger/<kind>-<yyyy-mm>.jsonl``, so ``exec-<yyyy-mm>.jsonl``.
