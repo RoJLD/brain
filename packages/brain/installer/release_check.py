@@ -81,6 +81,7 @@ SCHEMAS = {
     "sr": (f"{SRC}/schemas/sr.schema.json",),
     "status": (f"{SRC}/schemas/status.schema.json",),   # the status document brain doctor --json prints (brain.probe)
     "docgraph": (f"{SRC}/schemas/docgraph.schema.json",),   # a documentation graph, docgraph/v1 (brain.docgraph)
+    "catalogue": (f"{SRC}/schemas/catalogue.schema.json",),   # a module catalogue, catalogue/v1 (brain.catalogue)
     "packs": (f"{SRC}/templates/generic/packs.yaml",),
     "projects": (f"{SRC}/templates/generic/projects.yaml",),
     "template": (f"{SRC}/templates/generic/template.yaml",
@@ -142,7 +143,8 @@ def changed_schemas(repo: Path, tag: str) -> list[str]:
 # has nothing to do. Only config.json's: a record schema (ar, ddr, sr, event) is read by the engines of other machines,
 # which would refuse the new key in a record this one writes.
 ADDITIVE = ("config", "permissions",   # permissions.yaml: one brain's file, an older engine notes a new key
-            "docgraph")   # docgraph/v1, read tolerantly: an optional key within v1 is a patch (the owner, 2026-11-12)
+            "docgraph",   # docgraph/v1, read tolerantly: an optional key within v1 is a patch (the owner, 2026-11-12)
+            "catalogue")  # catalogue/v1, read by the same rule as docgraph/v1
 # The keys of a JSON schema that only describe it: a change of them moves no format.
 PROSE = ("description", "title", "$comment", "examples")
 

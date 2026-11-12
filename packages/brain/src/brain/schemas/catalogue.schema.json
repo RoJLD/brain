@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/catalogue.schema.json",
+  "title": "catalogue/v1, a module catalogue",
+  "description": "A neutral, public contract for a catalogue of modules (brain.catalogue; packages/brain/docs/catalogue.md): its bricks (groups of modules), its modules with their hard and soft dependencies, what a machine needs to run each one, its estimated cost (RAM, disk, VRAM), its fallback and its licence; the distributions that ship them; and the presets an installer offers (base presets, and personas when a catalogue declares them). Any program may emit it (the Brain's brain catalogue emit, a product's own module manager); an installer or a settings tab reads it. Read tolerantly: a key this schema does not name is allowed at every level, so a producer may add one in v1 and a reader ignores it; a key it names keeps its type and its values. A new value of an enum, a new required key or a change of a named key's meaning is a new id (catalogue/v2). tests/fixtures/formats/catalogue/v1/ holds a document of each side.",
+  "type": "object",
+  "required": ["schema", "generated", "modules"],
+  "properties": {
+    "schema": {"const": "catalogue/v1", "description": "The contract's id."},
+    "generated": {
+      "type": "object",
+      "required": ["at", "by"],
+      "description": "Who emitted the document, when, and from what.",
+      "properties": {
+        "at": {"type": "string", "format": "date-time"},
+        "by": {"type": "string", "minLength": 1, "description": "The producer and its version, e.g. example-tool 0.1.0."},
+        "from": {"type": "array", "items": {"type": "string"}, "description": "What the producer read (its registry, its manifests...), for a reader to know the catalogue's sources."}
+      }
+    },
+    "name": {"type": "string", "description": "The catalogue's name: the product or the brain whose modules it lists."},
+    "bricks": {"type": "array", "items": {"$ref": "#/$defs/brick"}, "description": "The groups the modules belong to (a module's brick names one)."},
+    "modules": {"type": "array", "items": {"$ref": "#/$defs/module"}},
+    "distributions": {"type": "array", "items": {"$ref": "#/$defs/distribution"}, "description": "What ships the modules: a package, an archive, an image, the base install itself."},
+    "presets": {"type": "array", "items": {"$ref": "#/$defs/preset"}, "description": "The starting points an installer offers: the base presets, then the personas when the catalogue declares them."}
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$", "description": "A stable id, unique in its list; a label is renamed, an id never."},
+    "ids": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+    "brick": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"type": "string"},
+        "description": {"type": "string"}
+      }
+    },
+    "cost": {
+      "type": "object",
+      "description": "What the module costs on a machine, estimated (0 or absent: nothing worth counting).",
+      "properties": {
+        "ram_mb": {"type": "number", "minimum": 0, "description": "Resident memory while it runs, in MiB."},
+        "disk_mb": {"type": "number", "minimum": 0, "description": "Disk it takes once installed, data excluded, in MiB."},
+        "vram_gb": {"type": "number", "minimum": 0, "description": "GPU memory it needs, in GiB."},
+        "download_mb": {"type": "number", "minimum": 0, "description": "What adding it downloads, in MiB (0 when it ships with the base install)."}
+      }
+    },
+    "module": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"type": "string", "minLength": 1},
+        "description": {"type": "string"},
+        "brick": {"$ref": "#/$defs/id", "description": "The brick it belongs to: an id of bricks."},
+        "class": {"enum": ["core", "extra", "service"], "description": "core: always on, no dependency beyond the base install; extra: an optional package or tool, no resident process; service: a resident process, local or remote."},
+        "status": {"enum": ["built", "planned"], "description": "planned: listed so a reader sees what comes, never installable nor in a preset."},
+        "auto": {"type": "boolean", "description": "Used whenever it is found, whatever the preset: no switch turns it on or off."},
+        "ai": {"type": "boolean", "description": "The module runs a model: what a preset that forbids AI leaves out."},
+        "components": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "What turning it on turns on, in the producer's own terms (the Brain: its capabilities)."},
+        "depends_on": {"$ref": "#/$defs/ids", "description": "The modules it needs (hard): turned on with it; an id of modules."},
+        "uses": {"$ref": "#/$defs/ids", "description": "The modules it reads when they are on (soft): its fallback otherwise; never pulled. An id another catalogue holds is allowed (a note)."},
+        "requires": {"type": "array", "items": {"type": "string", "pattern": "^(env:[A-Z_][A-Z0-9_]*|[a-z][a-z0-9_-]*)$"}, "description": "Facts of the machine that must hold for it to run: a tool found (docker, git...), gpu, container_runtime, env:NAME; the facts' names are brain.status/v1's (docs/catalogue.md)."},
+        "recommend_when": {"type": "array", "items": {"type": "string", "pattern": "^(not\\s+)?[A-Za-z0-9_:.-]+(\\s*(>=|<=|==|!=|>|<)\\s*\\S+)?$"}, "description": "Clauses that must all hold for a recommended preset to add it: a fact (docker), its negation (not wsl), or a comparison (memory_gb >= 7)."},
+        "cost": {"$ref": "#/$defs/cost"},
+        "fallback": {"type": "string", "description": "What replaces it when it is off or missing."},
+        "licence": {"type": "string", "description": "Its licence: an SPDX expression, or a name."},
+        "distributions": {"$ref": "#/$defs/ids", "description": "The distributions it needs installed: ids of distributions."},
+        "typologies": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The project typologies it serves: ids of the typology catalogue; an id a reader does not know is kept (a note), never refused."}
+      }
+    },
+    "distribution": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "description": "What it is, in the producer's words: base (the install itself), package, extra, archive, image..."},
+        "version": {"type": "string"},
+        "licence": {"type": "string"},
+        "bundled": {"type": "boolean", "description": "true: it comes with the base install, adding a module it ships downloads nothing."},
+        "source": {
+          "type": "object",
+          "description": "Where it is fetched from and how it is checked; a reader with no network installs it from a copy with the same digest.",
+          "properties": {
+            "url": {"type": "string"},
+            "size_mb": {"type": "number", "minimum": 0},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "signature": {"type": "string", "description": "Where its signature is, or the signature itself; how it is checked is the producer's."}
+          }
+        }
+      }
+    },
+    "preset": {
+      "type": "object",
+      "required": ["id", "name", "modules"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"type": "string", "minLength": 1},
+        "description": {"type": "string"},
+        "kind": {"enum": ["base", "persona"], "description": "base: one of the catalogue's starting points (the Brain: lite, default, recommended); persona: a profile of user a catalogue declares, built on a base."},
+        "base": {"$ref": "#/$defs/id", "description": "For a persona, the base preset it starts from: an id of a preset of kind base."},
+        "modules": {"$ref": "#/$defs/ids", "description": "The modules it turns on, whatever the machine."},
+        "when_fits": {"$ref": "#/$defs/ids", "description": "The modules it adds on a machine that holds their requires and recommend_when."},
+        "typologies": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The project typologies it suits: ids of the typology catalogue; an unknown id is kept (a note)."}
+      }
+    }
+  }
+}

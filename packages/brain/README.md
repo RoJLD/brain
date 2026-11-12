@@ -883,6 +883,14 @@ nothing. `explain` shows the scopes' `capabilities` (require, forbid) as declare
 enforcement comes later. `brain init` writes an empty `modules` key. An auto capability is never switched (its
 module shows auto); a capability two modules list follows the first of them a layer names (keys in order).
 
+**The module catalogue** (`brain catalogue`, `brain.catalogue`): `catalogue/v1` ([docs/catalogue.md](docs/catalogue.md))
+is the neutral, public format of a catalogue of modules: its bricks, its modules with their hard and soft
+dependencies, requirements, estimated cost (RAM, disk, VRAM), fallback and licence, the distributions that ship them
+and the presets an installer offers (Lite, Default, Recommended; the personas a private catalogue declares). Any
+program may emit it; `brain catalogue emit [--out FILE]` prints the brain's own (`brain mod`'s modules, the engine and
+its extras, the three bases) and `brain catalogue validate FILE...` checks any document against the schema
+(`schemas/catalogue.schema.json`), with no brain needed.
+
 `config.json` `engine.min` (optional, beside `engine.pin`) is the oldest engine that may write the shared formats:
 below it the memory sync exports nothing (it still imports), the DDRs are not written and `brain check` says so; the
 machine still reads.
