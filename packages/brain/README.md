@@ -417,9 +417,10 @@ Each one is the generic brain (its files unchanged), plus:
   own tests, so the CI is green from the first commit;
 - the format registry's skeleton, `docs/formats.md` (tolerant readers, strict writers; a format that moves is a minor
   version);
-- the issue template, `.github/ISSUE_TEMPLATE/task.md` (reference, context, acceptance, dependencies, an estimate
-  marked (e) with its author and date, the exit criterion served, a proposed owner), and the ADR template,
-  `docs/templates/adr.md` (scope, target compatibility, a precise « Revisit if »);
+- the issue template, a task form in the brain's GitHub issue templates (reference, context, acceptance,
+  dependencies, an estimate marked (e) with its author and date, the exit criterion served, a proposed owner), and
+  the ADR template among its docs' templates (scope, target compatibility, a precise « Revisit if »): the template
+  `_project`'s `issue-task.md` and `adr.md`;
 - the boundary's rule for `.github/**` (the engine side: nothing private in it).
 
 The bases `_project` (the issue and ADR templates) and `_software` (the CI, the harness, the format registry, the
