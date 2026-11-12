@@ -1,0 +1,17 @@
+# The base of the code products' templates (cli, local-client, service, data-pipeline, research extend it; brain init
+# --template does not take a base): the project base, plus the CI jobs (the tests with their coverage, compat-prev),
+# the test harness (a virtual clock, fault injection, the old formats' fixtures), the format registry's skeleton, and
+# a graph of the code layers (research_graph layers).
+name: _software
+version: 1
+engine: ">=0.3.2"
+title: "A code product's brain: CI (coverage, compat-prev), a test harness, a format registry, the code layers"
+extends: _project
+graphs:                    # the brain's main store: the base, and the code, docs-and-tests and features layers
+  - {name: work, store: notes/graph, layers: [work, decisions, records, lessons, code, docs_tests, features]}
+files:
+  .github/workflows/ci.yml: ci.yml
+  tests/conftest.py: conftest.py.tmpl     # .tmpl: the engine's own pytest and ruff leave them alone
+  tests/test_harness.py: test_harness.py.tmpl
+  docs/formats.md: formats.md
+  fixtures/formats/README.md: formats-fixtures-README.md

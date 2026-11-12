@@ -180,7 +180,8 @@ a project's code yet: the registry says what applies, and `brain standards check
   through `adapter`; `languages` says which languages it covers without one. Running the declared commands
   (`wi-brain-lang-adapters-exec`) adds a key to a slot's entry (an older engine notes it), never a change of
   `report` or `format`.
-- The project templates (`wi-brain-project-templates`) write a `standards:` selection for a profile and stage.
+- The project templates (`wi-brain-project-templates`: `brain init --template cli|local-client|service|data-pipeline|research
+  --stage S`) write a `standards:` selection for their profile at that stage.
 - Left open: packs (a named set of ids), which a later key can add to the selection (an older engine notes an
   unknown key and keeps the file), and a row's per-stage severity (a later `v`).
 

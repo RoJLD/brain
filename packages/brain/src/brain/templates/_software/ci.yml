@@ -1,0 +1,60 @@
+# The CI of this project (a project template of the brain): the tests with their coverage, and compat-prev, the last
+# release's tests on this commit. Python first: another language replaces the steps and keeps the jobs.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          pip install pytest pytest-cov pyyaml
+          if [ -f pyproject.toml ]; then pip install -e .; fi
+      - name: Tests and coverage
+        # Raise the floor as the stage moves (brain standards list --applicable names the coverage standard). The
+        # reports are those projects.yaml repos[].tools may name, which brain audit reads (lang.report).
+        run: >-
+          pytest --cov --cov-report=term --cov-report=xml:reports/coverage.xml --junitxml=reports/junit.xml
+          --cov-fail-under=50
+      - name: Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: reports/
+          retention-days: 14
+
+  compat-prev:
+    # The last release's tests on this commit's code: what the last tag promised still holds. A test that has to
+    # change is a change of behaviour, so a minor version, said in the PR. Nothing to compare before the first tag.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The last tag
+        id: prev
+        run: echo "tag=$(git describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
+      - name: Its tests on this code
+        if: steps.prev.outputs.tag != ''
+        run: |
+          tag="${{ steps.prev.outputs.tag }}"
+          if ! git cat-file -e "$tag:tests" 2>/dev/null; then echo "$tag has no tests/: nothing to compare"; exit 0; fi
+          rm -rf tests && git checkout "$tag" -- tests     # its tests only, none added since
+          git checkout "$tag" -- fixtures 2>/dev/null || true
+          pip install pytest pyyaml
+          if [ -f pyproject.toml ]; then pip install -e .; fi
+          pytest

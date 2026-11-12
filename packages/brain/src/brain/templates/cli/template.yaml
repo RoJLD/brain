@@ -1,0 +1,10 @@
+# A command-line tool: brain init --template cli [--stage prototype|mvp|v1|scale]. The software base (the CI jobs, the
+# test harness, the format registry, the issue and ADR templates, the code layers of the graph) and the engine's
+# standards for the cli profile at the project's stage (projects.yaml standards:, brain standards list --applicable).
+name: cli
+version: 1
+engine: ">=0.3.2"
+title: "A command-line tool: the software base and the cli profile's standards"
+extends: _software
+append:                    # the project's standards selection, under its entry in projects.yaml
+  projects.yaml: standards.yaml

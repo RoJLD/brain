@@ -375,7 +375,7 @@ def test_a_bad_template_plans_nothing(fresh, tmp_path, capsys, manifest, why):
 
 def test_an_unknown_template_names_the_engines(fresh, capsys):
     assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", "quant"]) == 2
-    assert "not one of the engine's (generic)" in capsys.readouterr().out
+    assert "not one of the engine's (cli, data-pipeline, generic, local-client, research, service)" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("spec, version, fits", [(">=0.2.1", "0.2.1", True), (">=0.2.1", "0.2.0", False),
