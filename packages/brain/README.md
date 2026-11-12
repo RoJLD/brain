@@ -1075,9 +1075,9 @@ They read only fixtures, never a real brain's graph, records or rendered files: 
 
 `-n auto` runs them in parallel, one pytest-xdist worker per CPU thread: each test has its own temporary folder,
 `BRAIN_HOME` and environment, so no test shares state with another. With `-n` and no `--dist`, `conftest.py` picks
-xdist's `worksteal` scheduling (pytest-xdist 3.5 or later): a worker that runs out of tests takes some still queued on a busy
-one, so the run no longer ends on one or two workers while the others idle; `--dist load` gives the old scheduling
-back. A git repository in a test is a copy of a template made once per worker (`conftest.git_init`, the `git_repo`
+xdist's `worksteal` scheduling (pytest-xdist 3.5 or later): a worker that runs out of tests takes some still queued
+on a busy one, so the run no longer ends on one or two workers while the others idle; `--dist load` gives the old
+scheduling back. A git repository in a test is a copy of a template made once per worker (`conftest.git_init`, the `git_repo`
 and `make_repo` fixtures), not a `git init`. The test that calls the real docker client is marked `docker`: the CI
 runs it apart, on one process (`pytest packages/brain -m docker`).
 
@@ -1089,14 +1089,16 @@ bound by process creation (it starts some ten thousand git processes, and an on-
 not by the CPU. On a 16-thread machine, 24 and 32 workers ran no faster than 16, and on one run 24 workers starting
 together timed out a worker's start.
 
-`BRAIN_TEST_ROOT=<folder>` puts the suite's temporary files under one folder: pytest's temporary folders under
-`<folder>/tmp` (pytest keeps its numbering and its last three runs there; an explicit `--basetemp` wins) and the venvs
-the harness tests build under `<folder>/venvs`. Unset, they go to the system's temp folder as before. A short folder
-outside the user profile (`C:\brain-tests` on Windows, say) keeps pip's paths in those venvs under Windows' length
-limit, and is one place to exclude from an on-access antivirus scan: the tests write and delete tens of thousands of
-small files, and a scan of each one slows the suite (about 10 % measured with the temporary folders excluded). The
-engine never changes the antivirus: the owner adds that exclusion by hand, if wanted, and the processes the tests start
-(git, bash, python) are still scanned.
+`BRAIN_TEST_ROOT=<folder>` (made absolute; outside the checkout) moves the bulk of the suite's temporary files under
+one folder: pytest's temporary folders, where the tests write their repos, brains and homes, under `<folder>/tmp`
+(pytest keeps its numbering and its last three runs there; an explicit `--basetemp` wins), and the venvs the harness
+tests build under `<folder>/venvs`. Unset, they go to the system's temp folder as before. The few scratch files the
+engine itself, git and pip make still go to the system's temp folder. A short folder outside the user profile
+(`C:\brain-tests` on Windows, say) keeps pip's paths in those venvs under Windows' length limit, and is one place to
+exclude from an on-access antivirus scan: the tests write and delete tens of thousands of small files, and a scan of
+each one slows the suite (about 10 % measured with pytest's temporary folders excluded). The engine never changes the
+antivirus: the owner adds that exclusion by hand, if wanted, and the processes the tests start (git, bash, python) are
+still scanned.
 
 ## Releasing
 

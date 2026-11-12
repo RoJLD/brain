@@ -34,7 +34,7 @@ def test_root_dir(kind: str) -> Path | None:
     raw = os.environ.get("BRAIN_TEST_ROOT", "").strip()
     if not raw:
         return None
-    d = Path(raw) / kind
+    d = Path(raw).expanduser().resolve() / kind   # absolute: subprocesses run from other folders
     d.mkdir(parents=True, exist_ok=True)
     return d
 

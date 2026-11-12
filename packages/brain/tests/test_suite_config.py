@@ -71,9 +71,18 @@ def _temp(monkeypatch, root=None, basetemp=None, temproot=None):
     return os.environ.get("PYTEST_DEBUG_TEMPROOT")
 
 
+def _unset_after(monkeypatch, *names):
+    """Each of ``names`` comes back as it was after the test, absent included: monkeypatch.delenv records nothing for
+    a variable that is absent, and temp_under_test_root writes os.environ itself."""
+    for name in names:
+        monkeypatch.setenv(name, "x")
+        monkeypatch.delenv(name)
+
+
 def test_brain_test_root_holds_pytests_temp_folders(tmp_path, monkeypatch):
-    """BRAIN_TEST_ROOT: pytest's temp root is <root>/tmp (made); unset or blank: the system's, untouched; an explicit
-    --basetemp or PYTEST_DEBUG_TEMPROOT wins."""
+    """BRAIN_TEST_ROOT: pytest's temp root is <root>/tmp (made, absolute); unset or blank: the system's, untouched; an
+    explicit --basetemp or PYTEST_DEBUG_TEMPROOT wins."""
+    _unset_after(monkeypatch, "BRAIN_TEST_ROOT", "PYTEST_DEBUG_TEMPROOT")
     root = tmp_path / "brain-tests"
     assert _temp(monkeypatch) is None
     assert _temp(monkeypatch, root="  ") is None
@@ -82,8 +91,19 @@ def test_brain_test_root_holds_pytests_temp_folders(tmp_path, monkeypatch):
     assert _temp(monkeypatch, root=root, temproot=tmp_path / "mine") == str(tmp_path / "mine")
     monkeypatch.setenv("BRAIN_TEST_ROOT", str(root))
     assert conftest.test_root_dir("venvs") == root / "venvs" and (root / "venvs").is_dir()
+    monkeypatch.chdir(tmp_path)   # a relative root is made absolute: subprocesses run from other folders
+    monkeypatch.setenv("BRAIN_TEST_ROOT", "rel")
+    assert conftest.test_root_dir("venvs") == (tmp_path / "rel" / "venvs").resolve()
     monkeypatch.delenv("BRAIN_TEST_ROOT")
     assert conftest.test_root_dir("venvs") is None
+
+
+def test_the_cmdline_hook_moves_the_temp_root(tmp_path, monkeypatch):
+    """pytest_cmdline_main itself applies BRAIN_TEST_ROOT (the hook pytest runs before any temp folder exists)."""
+    _unset_after(monkeypatch, "BRAIN_TEST_ROOT", "PYTEST_DEBUG_TEMPROOT")
+    monkeypatch.setenv("BRAIN_TEST_ROOT", str(tmp_path / "root"))
+    _dist("no", 16)
+    assert os.environ.get("PYTEST_DEBUG_TEMPROOT") == str(tmp_path / "root" / "tmp")
 
 
 def test_pytest_asks_brain_test_workers_before_xdist(pytestconfig, monkeypatch):
