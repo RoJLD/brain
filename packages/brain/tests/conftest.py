@@ -96,6 +96,9 @@ def brain_home(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_CONFIG", str(BRAIN))
     monkeypatch.delenv("CLAUDE_BRAIN_DIR", raising=False)
     monkeypatch.delenv("BRAIN_PERSONAL", raising=False)  # and no machine's personal brain: the pointer is in home
+    # the machine's token is the temporary BRAIN_HOME's, and no test runs as if inside the MCP server's container
+    monkeypatch.delenv("BRAIN_IPC_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("BRAIN_MCP_CONTAINER", raising=False)
     # the tests run as the owner's own terminal unless they say otherwise, even from an agent's shell (brain.answers)
     # (nor the desktop app's session id: brain.sessions stamps it, so a run from a session would differ)
     for var in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION", "CLAUDE_CODE_SESSION_ID",

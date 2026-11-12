@@ -965,6 +965,17 @@ refused it). `brain check --all` reads every edge of every store and refuses one
 store of the registry on this machine (the store's own check refuses it too, as before), and counts the edges between
 stores; a brain's own root, checking its registry without `--all`, warns of it.
 
+## The Brain as an MCP server
+
+`brain mcp serve` serves the Brain to any MCP client ([`docs/mcp.md`](docs/mcp.md), `brain.mcpserver`): its rules,
+procedures and decision log as resources, the procedures as prompts, and tools over the graph (`brain items`, `item
+show`, `adr show`, `spec show`, `next`, `check`) and the memory (a note read, a note proposed, which the memory sync
+carries by a reviewed PR). Every answer passes the secret scan. It speaks stdio (the client launches it) or, with
+`--http`, Streamable HTTP on a loopback address only, each request carrying the machine's token
+(`brain ipc token --init` makes it once; it is never printed). `packages/brain/container/` defines its image (a user
+that is not root, the port published on 127.0.0.1 only). Nothing runs it on its own: a service or a remote endpoint is
+the owner's decision.
+
 ## The Claude Code hooks
 
 `src/brain/adapters/claude/hooks/` is package data: `hooks.json` and a `.sh` launcher per hook, each running its `.py`
