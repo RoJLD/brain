@@ -1,0 +1,15 @@
+# A service (a server, an API, a worker that runs unattended): brain init --template service [--stage
+# prototype|mvp|v1|scale]. The software base (the CI jobs, the test harness, the format registry, the issue and ADR
+# templates, the code layers of the graph) and the engine's standards for the service profile at the project's stage
+# (projects.yaml standards:, brain standards list --applicable).
+name: service
+version: 1
+engine: ">=0.3.2"
+title: "A service: the software base and the service profile's standards"
+extends: _software
+graphs:                    # the brain's main store, by layers (research_graph layers)
+  - name: work
+    store: notes/graph
+    layers: [work, decisions, records, lessons, code, docs_tests, features, operations, fleet]
+append:                    # the project's standards selection, under its entry in projects.yaml
+  projects.yaml: standards.yaml

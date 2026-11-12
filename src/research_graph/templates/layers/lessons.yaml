@@ -1,0 +1,34 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+name: lessons
+version: 1
+title: "The lessons: what a finished item, PR or incident taught, and what checks it happens no more"
+requires: [work]
+mode: written
+node_types:
+  Lesson: "what an item, a PR or an incident taught: its trigger, the anti-pattern, the check that tells it recurred"
+edge_types:
+  learned_from:
+    - {from: [Lesson], to: "*", why: "a lesson -> the item, ADR or record it was learned from"}
+  enforced_by:
+    - {from: [Lesson], to: "*", why: "a lesson -> the hook, test or workflow that checks it at zero token"}
+  led_to:
+    - {from: [Lesson], to: [WorkItem], why: "a lesson -> the item that fixes it"}
+statuses: [open, enforced, resolved, regressed, archived]
+status_by_type:
+  Lesson: [open, enforced, resolved, regressed, archived]
+required_props:
+  Lesson: [trigger, anti_pattern, check]
+ids: {Lesson: "les-<slug>"}
+commands: ["brain lesson add|seen|list", "brain retro"]
+views: ["brain retro (the lessons a close asks for)"]
+checks: ["a Lesson without its trigger, anti_pattern or check (research_graph check)"]
+projection: {gitnexus: research-graph, colors: {Lesson: "#e11d48"}}
+lifecycle: {typologies: ["*"], proposed_at: ["*"]}
+examples:
+  nodes:
+    - {id: example-les-a-wait-without-bound, type: Lesson, status: open, title: "A wait without a bound",
+       props: {trigger: "a background wait never ends", anti_pattern: "a loop with no deadline",
+               check: "every wait names its deadline"}}
+  edges:
+    - {from: example-les-a-wait-without-bound, to: example-wi-first, type: learned_from}
+    - {from: example-les-a-wait-without-bound, to: example-wi-second, type: led_to}

@@ -20,6 +20,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import conftest
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "installer" / "stranger_test.py"
@@ -134,9 +135,10 @@ def last_tag() -> str:
 
 
 def rerun(*args: str, source: bool = True) -> tuple[int, dict, str]:
-    """The harness run in a new short folder (pip's paths in the venv stay under Windows' limit), on a copy of this
-    checkout of its own: pip builds a checkout in place, so two runs at once on the same one break each other."""
-    work = Path(tempfile.mkdtemp(prefix="nc-"))
+    """The harness run in a new short folder (pip's paths in the venv stay under Windows' limit), under
+    <BRAIN_TEST_ROOT>/venvs when it is set, else the temp folder, on a copy of this checkout of its own: pip builds a
+    checkout in place, so two runs at once on the same one break each other."""
+    work = Path(tempfile.mkdtemp(prefix="nc-", dir=conftest.test_root_dir("venvs")))
     try:
         copy = work / "src" / REPO.name                  # the same folder name: the harness's engine check reads it
         if source:

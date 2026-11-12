@@ -1,0 +1,3 @@
+  standards:   # the engine's standards for a research project at its stage (brain standards list --applicable)
+    profiles: [research]
+    stage: {stage}

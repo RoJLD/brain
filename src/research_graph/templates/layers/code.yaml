@@ -1,0 +1,31 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+# The code graph itself (imports, symbols) stays in GitNexus: this layer only points at the code.
+name: code
+version: 1
+title: "The code: the repositories and the files or symbols a node is implemented by"
+requires: []
+mode: written
+node_types:
+  Repo: "a repository, repo-<name>: every CodeRef names one"
+  CodeRef: "a file or Python symbol of a repo, code:<repo>:<path>[::<symbol>]; receives only implemented_by"
+edge_types:
+  implemented_by:
+    - {from: "*", to: [CodeRef], why: "a node -> the code that implements it (the only edge into a CodeRef)"}
+  depends_on: {why: "a repo -> a repo it needs"}
+statuses: [active, planned, retired]
+status_by_type:
+  Repo: [active, planned, retired]
+  CodeRef: [active, planned, retired]
+ids: {Repo: "repo-<name>", CodeRef: "code:<repo>:<path>[::<symbol>]"}
+commands: ["research_graph code <id>", "research_graph code-check"]
+views: []
+checks: ["a malformed CodeRef id or an edge out of a CodeRef (research_graph check)",
+         "an active CodeRef whose file or symbol is gone (research_graph code-check)"]
+projection: {gitnexus: research-graph, colors: {Repo: "#334155", CodeRef: "#475569"}}
+lifecycle: {typologies: [software, api-cli, ai-ml, infra, research], proposed_at: [build]}
+examples:
+  nodes:
+    - {id: repo-example, type: Repo, status: active, title: "A fictitious repository"}
+    - {id: "code:example:src/example/board.py", type: CodeRef, status: planned, title: "The board's renderer"}
+  edges:
+    - {from: example-wi-first, to: "code:example:src/example/board.py", type: implemented_by}
