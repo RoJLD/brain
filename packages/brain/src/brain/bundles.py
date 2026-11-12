@@ -160,6 +160,12 @@ AUTH_HEADER = ("# Rendered by brain bundle apply with the machine's token requir
                "# every OTLP receiver checks Authorization: Bearer against the secret the compose file mounts.\n")
 
 
+def _token_ok() -> bool:
+    """The machine's token is usable (brain.ipcauth's own test: not merely a file that is not empty)."""
+    from . import ipcauth
+    return ipcauth.read() is not None
+
+
 def require_token() -> list[str]:
     """config.json ``ipc.require_token``: the components that require the machine's token (none by default)."""
     from . import config, ipchealth
@@ -298,10 +304,12 @@ def plan(reg: dict[str, stacks.Stack], bundle: str, root: Path | None = None) ->
     for s in stacks.plan(reg, [c.name for c in comps]):  # dependencies first
         if s.bundle != bundle:
             continue
-        missing = [p.secrets[n] for n in (services.get(s.name) or {}).get("secrets") or []
-                   if n in p.secrets and not _secret_ok(Path(p.secrets[n]))]
+        named = [n for n in (services.get(s.name) or {}).get("secrets") or [] if n in p.secrets]
+        missing = [p.secrets[n] for n in named if n != TOKEN_SECRET and not _secret_ok(Path(p.secrets[n]))]
         waits = [d for d in s.depends_on if d in p.waiting]
-        if missing:
+        if TOKEN_SECRET in named and not _token_ok():
+            p.waiting[s.name] = f"the machine's token {p.secrets[TOKEN_SECRET]} (brain ipc token --init)"
+        elif missing:
             p.waiting[s.name] = f"its secret file {', '.join(missing)} (the owner fills it)"
         elif waits:
             p.waiting[s.name] = f"{', '.join(waits)}"

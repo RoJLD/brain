@@ -159,17 +159,21 @@ With `ipc.require_token: [otel-collector]`, `brain bundle apply` renders:
 
 Claude Code's export then needs the header: the owner sets
 `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <token>` in its environment (never a session). On a Linux host the
-secret is the token file itself: the collector's user (10001 in its image) must be able to read it.
+secret is the token file itself, mode 0600 and owned by the owner: give the collector's user (10001 in its image)
+read access with an ACL, `setfacl -m u:10001:r <BRAIN_HOME>/ipc/token`. `brain health ipc` accepts a group bit or an
+ACL entry, and refuses a token readable by every user.
 
 **`brain health ipc`** (and `brain health --all`) reads, starts nothing, and says on one line each:
-- the token file (usable; readable by its owner only, on POSIX);
-- the MCP server: a request without the token must get 401 (`ipc.mcp_port`, default 8791; nothing answering: OFF);
+- the token file (usable; on POSIX not readable by every user);
+- the MCP server: a request without the token must get 401 (`ipc.mcp_port`, default 8791; nothing answering: OFF;
+  another program answering while the machine has no token: OFF too, since no MCP server can run without one);
 - each running container of the Brain's Compose projects (`brain-sovereign`, `brain-mcp`) and of the code index:
   a port published beyond loopback is a FAIL, a container running as root a warning (Qdrant's image does);
 - which services take requests without the token (the collector while not opted in, GitNexus).
 
 Exit 1 on a FAIL. A required token that is missing is a FAIL. Under `--all`, a machine that never made the token and
-serves nothing on the MCP port gets no line, and Docker is not asked.
+requires none gets no line: nothing is probed and Docker is not asked, so `--all` says what it said before. Its
+containers are then not inspected either: `brain health ipc`, named, always inspects them.
 
 ## The container
 
