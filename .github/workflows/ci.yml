@@ -171,6 +171,35 @@ jobs:
       - name: Would the next release be a patch?
         run: python packages/brain/installer/release_check.py --preview --base "origin/${{ github.base_ref }}"
 
+  schema-diff:
+    # The schema diff (wi-brain-schema-diff; packages/brain/docs/formats.md, « The schema diff »): on every PR, what the
+    # schemas this PR touches narrow, against its target's tip (a property removed, a field newly required,
+    # an enum or a type narrowed, a store's type or status removed), resolved or not by the Compat: line of the PR body
+    # as it was at the push (an edited body is read at the next push or a re-run) or of its own commits, in the job's
+    # summary. Advisory, as the owner's opt-in audit.schema_diff_strict is off by default: the job never fails the PR,
+    # but its step fails, visibly, when the diff cannot run (pipefail).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: What do the schemas narrow?
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE: origin/${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          pip install -q -e . && pip install -q --no-deps -e packages/brain && pip install -q pyyaml
+          # HEAD is the PR merged into its target's tip ($BASE): the diff from $BASE is this PR's change alone, and the
+          # commits read for a Compat: line are this PR's
+          printf '%s\n' "$PR_BODY" | brain schema diff --against "$BASE" --pr-body - | tee -a "$GITHUB_STEP_SUMMARY"
+
   release-check:
     # The version PR's check (docs/release.md; spec-brain-data-compat, gate item 6), before any tag: a registered schema
     # changed since the last tag with no ### Upgrade in this version's CHANGELOG section, or a place left at the old
