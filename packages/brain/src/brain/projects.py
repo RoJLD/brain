@@ -18,7 +18,10 @@ subcommands ``brain <project> ...`` runs: an entry point of the group brain.plug
 wi-brain-scope-tree): a container of scopes.yaml, another project, or global (the default). ``standards`` opts the
 project in to the standards registry (brain.standards, docs/standards.md): its profiles and stage select the rows it
 follows, ``include`` and ``exclude`` adjust them, ``catalogs`` names the brain's local catalogs (relative to the
-registry's folder, as ``root`` is); a project without it follows none.
+registry's folder, as ``root`` is); a project without it follows none. ``formats`` registers the project's own
+persisted formats (glob, repo, class, version, schema, fixtures, a ``check`` command in any language) and
+``migrations`` the scout's glob check (a change of a ``when`` file adds a file of each ``add`` glob): their
+declarations are checked here, the commands run only by ``brain formats check`` (brain.formats, PF-1).
 
 ``production`` lists the checkouts a service or a scheduled task runs from, relative to the root (no default): the
 core plugin's guards refuse tool edits and git changes there (brain.guards). ``stacks`` declares the project's stacks,
@@ -126,6 +129,11 @@ KEYS = {
                "public.deny.repos when public.deny_from_tree is on (brain.scopes)",
     "standards": "its opt-in to the standards registry, {profiles, stage, include, exclude: {id: reason}, catalogs}: "
                  "the rows it follows (brain standards; docs/standards.md); without it, none",
+    "formats": "its persisted formats, a list of {id, glob, repo, class, version, schema, fixtures, check, timeout}: "
+               "the declarations checked by brain check, the check: commands run only by brain formats check "
+               "(brain.formats)",
+    "migrations": "the scout's glob check, a list of {when, add, repo}: a change of a when file comes with a new file "
+                  "of each add glob (a migration, a fixture), else brain audit --diff finds it (brain.formats)",
 }
 ACCESS = ("write", "read")
 READ_ONLY_KEYS = {"title", "access", "parent", "classes"}
@@ -166,6 +174,8 @@ class Project:
     shares_root_with: str = ""       # the project registered first at this root, which owns it ('': this one does)
     standards: object = None         # its standards: opt-in as declared (brain.standards.selection); None: none
     registry_dir: Path | None = None  # the registry's folder: where its standards.catalogs are read from
+    formats: object = None           # its formats: as declared (brain.formats.formats_of)
+    migrations: object = None        # its migrations: as declared (brain.formats.migrations_of)
 
 
 @dataclass
@@ -232,7 +242,8 @@ def _project(name: str, entry: dict, root: Path) -> Project:
                    title=str(e.get("title") or ""), journals=journals, decision_logs=logs,
                    ledgers={str(k): root / v for k, v in ledgers.items() if isinstance(v, str) and v},
                    shared_ids=dict(e["shared_ids"]) if isinstance(e.get("shared_ids"), dict) else {},
-                   plugin=e.get("plugin"), standards=e.get("standards"))
+                   plugin=e.get("plugin"), standards=e.get("standards"), formats=e.get("formats"),
+                   migrations=e.get("migrations"))
 
 
 def _resolve_root(rel: str, base: Path) -> Path:
@@ -716,6 +727,7 @@ def check(root: Path | None = None) -> list[str]:
     an access that is not read or write, a read-only project that holds more than its title, a store listed twice, a
     project at a shared root that is not loaded (:func:`_claims`), two stores that write their views in one folder.
     Stacks and code_index entries are checked by their own loaders (brain.stacks, brain.codeindex)."""
+    from . import formats   # here: a guard reads this module on every call
     errors = []
     engine: list = []   # the engine's standards catalogs, read once for every project that opts in
     for name, entry in raw(root).items():
@@ -764,14 +776,19 @@ def check(root: Path | None = None) -> list[str]:
         errors += [f"{where}: {e}" for e in project_limits(entry)[1]]
         if "standards" in entry:
             errors += _standards_errors(where, entry["standards"], registry_file(root), engine)
+        errors += formats.errors(where, entry)
     loaded, refused = _load(root)
     for _, why in refused.values():
         errors += why
     for p in loaded.values():
         try:
-            repos_of(p)
+            repos = repos_of(p)
         except RepoError as exc:
             errors.append(str(exc))
+            continue
+        if p.formats is not None or p.migrations is not None:   # its repos known: their names, then its checkouts
+            errors += formats.check_project(f"project {p.name}", {"formats": p.formats, "migrations": p.migrations},
+                                            {r.name: r.path for r in repos}, repos[0].name if repos else "")
     return errors + list(view_clashes(holders(root)).values())
 
 

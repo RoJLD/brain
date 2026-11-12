@@ -171,6 +171,9 @@ ENGINE_STORES = {
     "reviews": Known("$BRAIN_HOME/reviews", "sealed", "truth-local", "the reviews' findings and stamps"),
     "merge-ready": Known("$BRAIN_HOME/merge-ready", "sealed", "derived",
                          "the merge gate's stamps, per repo and head (brain merge-ready)"),
+    "formats": Known("$BRAIN_HOME/formats", "sealed", "derived",
+                     "the projects' format checks' last pass or fail, keyed by the hashes of their command and files "
+                     "(brain formats check)"),
     "backup": Known("$BRAIN_HOME/backup", "sealed", "truth-local",
                      "copies before a write-back: a work tree's settings files, <project>-<key>/<folder>, 10 each"),
     "spool": Known("$BRAIN_HOME/spool", "sealed", "truth-local",

@@ -1,3 +1,3 @@
-mine: {root: ., title: Mine, repos: [{path: ., lang: py, ci: github}], formats: {alloc: {glob: "*.json"}}}
+mine: {root: ., title: Mine, repos: [{path: ., lang: py, ci: github}], lifecycle: {stage: beta}}
 upstream: {title: A project the brain reads and never writes, access: read}
 prog: {root: ., title: Prog, stores: [prog/graph], journal: prog/journal.md, decisions: prog/decisions.md}

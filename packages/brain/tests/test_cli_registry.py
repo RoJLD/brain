@@ -12,7 +12,7 @@ from brain import audit, cli, commands, inventory
 from brain.commands import _registry
 from brain.commands import audit as audit_cmd
 from brain.commands import (bundle, capture, catalogue, check, code_map, collisions, decision, docgraph, down,
-                            handover, health, impact, index, init, ipc, mcp, memory, merge_check, merge_driver,
+                            formats, handover, health, impact, index, init, ipc, mcp, memory, merge_check, merge_driver,
                             milestone, perf, probes, quiet, refresh, resume, retro, review, schedule, schema,
                             sessions, spec, timed, up, update)
 from brain.commands import merge_ready
@@ -59,7 +59,7 @@ EARLY = {capture, memory, timed, perf, init, merge_driver, merge_check, sessions
          index, up, down, health, bundle, quiet, review, probes, schema, test_cmd, merge_ready, mcp, ipc,
          handover}
 BOTH = {decision, resume, check, docgraph, catalogue}
-ROOTED = {code_map, collisions, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
+ROOTED = {code_map, collisions, formats, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
 
 
 def test_the_commands_that_run_before_a_root_is_resolved_keep_their_phase():

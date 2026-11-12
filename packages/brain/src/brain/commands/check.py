@@ -28,7 +28,9 @@ USAGE = """\
                         every project (an id shared on purpose is waived under shared_ids:), and the edges between
                         stores (an edge may name another store's id: one whose end is in no store is an error with
                         --all, a warning in a brain's own root without it); at a root several projects share, each
-                        one's stores (the root's own checks are its owner's)
+                        one's stores (the root's own checks are its owner's). The registry's check judges the
+                        projects' formats: and migrations: declarations; --formats then runs their check: commands
+                        (brain formats check, opt-in: never on a plain brain check)
   brain check --public [--repo DIR] [--remote NAME] [--history] [--engine] [--json]   before a push to a public repo
                         (config.json public.repos), at zero token: no denied term (public.deny), secret, e-mail or home
                         folder, data or sealed file, nor a domain's patterns (public.patterns, public.refuse) in the
@@ -44,6 +46,15 @@ USAGE = """\
 
 
 def cmd_check(args, root: Path) -> int:
+    rc = _cmd_check(args, root)
+    if getattr(args, "formats", False):   # opt-in (PF-1): the projects' format checks, after the rest
+        from .formats import run_scope
+        print("== formats")
+        rc = run_scope(_scope(args, root, root_shared=True)) or rc
+    return rc
+
+
+def _cmd_check(args, root: Path) -> int:
     _merge_marks(root, "brain refresh regenerates them")
     if args.all:
         return _each_store(args, root, sync=False, check=True)
@@ -67,6 +78,8 @@ def register(sub, ctx) -> None:
     ck.add_argument("--all", action="store_true", help="every project of the registry, then the registry's keys, "
                                                        "repos, stacks and code_index, the ids across every store and "
                                                        "the edges between stores (one to an id in no store: an error)")
+    ck.add_argument("--formats", action="store_true", help="then run the projects' format checks (projects.yaml "
+                                                           "formats: check:, as brain formats check does): opt-in")
     ck.add_argument("--public", action="store_true", help="before a push to a public repo: no private term, secret, "
                                                           "personal data, data file or domain pattern (brain.public)")
     ck.add_argument("--repo", help="--public: the checkout to check (default: --root, else the current folder)")
