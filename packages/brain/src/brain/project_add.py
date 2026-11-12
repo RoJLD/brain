@@ -103,7 +103,7 @@ def relative_root(folder: Path, registry: Path) -> str:
 def _raw(registry: Path) -> dict:
     try:
         data = graph.load_yaml(registry.read_text(encoding="utf-8")) or {}
-    except Exception as exc:  # noqa: BLE001 - said, never written over
+    except (yaml.YAMLError, OSError, ValueError) as exc:   # said, never written over
         raise AddError(f"{registry}: not readable YAML ({exc}); brain check says why") from None
     if not isinstance(data, dict):
         raise AddError(f"{registry} is a {type(data).__name__}, not a mapping")
@@ -175,7 +175,7 @@ def _errors(registry: Path, cfg: config.Config) -> tuple[set[str], list[str]]:
         errs = set(projects.check(cfg.root)) | set(scopes.check(cfg.root, cfg)[0])
         try:
             terms = scopes.private_terms(cfg)
-        except Exception:  # noqa: BLE001 - a tree that cannot be read: its errors say why
+        except (yaml.YAMLError, OSError, ValueError):   # a tree that cannot be read: its errors say why
             terms = []
     return errs, terms
 
@@ -204,9 +204,9 @@ def checked(registry: Path, name: str, entry: dict, cfg: config.Config) -> list[
     return sorted(set(terms_after) - set(terms_before), key=str.lower) if config.deny_from_tree(cfg) else []
 
 
-def plan(args) -> Plan:
-    modes = [m for m in ("read", "existing", "template") if getattr(args, m)]
-    if len(modes) != 1:
+def _check_options(args) -> None:
+    """The options' combinations: one way in, --dir with --template only, no store for a read-only project."""
+    if len([m for m in ("read", "existing", "template") if getattr(args, m)]) != 1:
         raise AddError("one of --read, --existing DIR or --template T (with --dir DIR)")
     if args.template and not args.dir:
         raise AddError("--template T writes a new project's brain: --dir DIR names its folder")
@@ -214,16 +214,24 @@ def plan(args) -> Plan:
         raise AddError("--dir goes with --template (--existing DIR registers a folder that holds a brain)")
     if args.read and args.store:
         raise AddError("--store: a read-only project has no store")
+    if args.floor and args.floor not in _classes():
+        raise AddError(f"--floor {args.floor}: one of {', '.join(_classes())}")
+
+
+def _check_target(args, registry: Path) -> None:
+    """The folder: an existing instance holds its store; a template's folder is new or empty."""
+    if args.existing:
+        _check_folder(Path(args.existing), Path(args.store).as_posix() if args.store else STORE, registry)
+    if args.template and Path(args.dir).exists() and any(Path(args.dir).iterdir()):
+        raise AddError(f"--dir {args.dir}: not empty (--existing registers a folder that holds a brain)")
+
+
+def plan(args) -> Plan:
+    _check_options(args)
     registry = registry_of(getattr(args, "root", None))
     cfg = config.load(registry.parent)
     _check_name(args.name, registry, cfg)
-    if args.floor and args.floor not in _classes():
-        raise AddError(f"--floor {args.floor}: one of {', '.join(_classes())}")
-    store = Path(args.store).as_posix() if args.store else STORE
-    if args.existing:
-        _check_folder(Path(args.existing), store, registry)
-    if args.template and Path(args.dir).exists() and any(Path(args.dir).iterdir()):
-        raise AddError(f"--dir {args.dir}: not empty (--existing registers a folder that holds a brain)")
+    _check_target(args, registry)
     entry = entry_for(args, registry)
     init = None
     if args.template:
