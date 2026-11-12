@@ -91,6 +91,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `probes` | `$BRAIN_HOME/probes` | sealed | derived | the dependency probes' last run |
 | `notify` | `$BRAIN_HOME/notify` | sealed | truth-local | the notifications' state, the quiet hours |
 | `secrets` | `$BRAIN_HOME/secrets` | **secret** | truth-local | the stack bundles' secret files |
+| `ipc` | `$BRAIN_HOME/ipc` | **secret** | truth-local | the machine's token for the Brain's local services (`brain ipc token`) |
 | `collector` | `$BRAIN_HOME/stacks/sovereign/data/otel-collector` | sealed | log | the telemetry collector's data |
 | `stacks` | `$BRAIN_HOME/stacks` | sealed | truth-local | the rendered stack bundles and their data |
 | `telemetry` | `$BRAIN_HOME/telemetry` | sealed | truth-local | the telemetry consent record and the report outbox |
