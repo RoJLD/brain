@@ -478,6 +478,13 @@ brain spec show REF [--section N | --toc] [--json]   # a Spec node, a Doc id (do
 brain journal last [N] [--titles] [--json]     # the last N dated entries (default 1; 0: all)
 ```
 
+An item closes with its evidence: `brain item close ID --pr "repo #N"` for a code item, `--evidence TEXT`
+(repeatable: a render id, a document's version, a DDR) for another kind. The definition of done comes in two layers
+(`wi-brain-done-by-typology`): a generic sentence for every item (documented, verified, linked, integrated, recorded),
+then the clauses of its typologies ([docs/typologies.md](docs/typologies.md)): its `props.typology`, else its
+project's `lifecycle.typologies` in `projects.yaml`. `brain item clauses ID [--json]` prints them; `--pr` is required
+for an item that takes a PR clause (the software pack's), and for a project that declares no typology, as before.
+
 `brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
 no wave whose free-text `props.wave` names that release. `brain spec show --section` takes a heading's number (`2.1`),
 its key (the last part of a Doc id) or the start of its title, and prints it down to the next heading of its level.

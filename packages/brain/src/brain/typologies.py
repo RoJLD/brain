@@ -11,7 +11,11 @@ The engine's catalog is ``typologies.yaml`` beside this module (docs/typologies.
   plus what names it (:meth:`Catalog.meets`);
 - **stages**: the lifecycle's (LC-2: ``explore``, ``build``, ``launch``... for a living product, ``deliver`` and
   ``closed`` for a finite project), and ``standards_stages``, the standards' stages (``prototype``, ``mvp``, ``v1``,
-  ``scale``) mapped to them (:meth:`Catalog.stage`).
+  ``scale``) mapped to them (:meth:`Catalog.stage`);
+- **the definition of done** in two layers (wi-brain-done-by-typology): ``done``, the generic sentence, and an
+  entry's ``done``, its clauses (the software pack's: a PR, a test, the docs in the same PR, the scout, the
+  worktree), which an item takes by its typologies (:func:`item_typologies`, :meth:`Catalog.done_clauses`); a clause
+  whose ``evidence`` is ``pr`` makes ``brain item close`` require --pr (:func:`requires`).
 
 Ids are stable and English, never renamed nor reused. A brain renames the labels, and adds its own entries or
 sub-profiles, in config.json ``typologies`` (SCOPE-4's rule for a renamable catalogue, as ``scope_types``)::
@@ -42,7 +46,9 @@ ID = re.compile(r"^[a-z][a-z0-9-]*$")
 ANY = ("*", "any")   # what a layer (*) or a standards row (any) names for every kind of project
 LANGS = ("en", "fr")
 VISION = re.compile(r"^[A-Z][0-9]+$")   # a module id of the Vision (J1, K4...)
-ENTRY_KEYS = {"en", "fr", "description", "vision", "sub"}
+ENTRY_KEYS = {"en", "fr", "description", "vision", "sub", "done"}
+CLAUSE_KEYS = {"id", "text", "evidence"}
+EVIDENCE = ("pr",)   # a clause's evidence brain item close requires: --pr
 SUB_KEYS = {"en", "fr", "description"}
 CONFIG_KEYS = {"en", "fr", "description", "vision", "parent"}
 STAGE_KEYS = {"en", "fr", "shapes"}
@@ -67,10 +73,21 @@ class Typology:
 
 
 @dataclass
+class Clause:
+    """A clause of the definition of done: the generic sentence's (``typology`` "") or an entry's."""
+    id: str
+    text: str
+    typology: str = ""
+    evidence: str = ""   # pr: brain item close requires --pr for an item that takes it
+
+
+@dataclass
 class Catalog:
     typologies: dict[str, Typology] = field(default_factory=dict)
     stages: dict[str, dict] = field(default_factory=dict)
     standards_stages: dict[str, str] = field(default_factory=dict)
+    done: list[Clause] = field(default_factory=list)                  # the generic sentence
+    clauses: dict[str, list[Clause]] = field(default_factory=dict)   # an entry's own clauses
 
     def entries(self) -> list[Typology]:
         return [t for t in self.typologies.values() if not t.parent]
@@ -102,6 +119,17 @@ class Catalog:
         (``mvp`` -> ``build``), else ``sid`` as given (a layer's own stage, a later catalog's)."""
         return sid if sid in self.stages else self.standards_stages.get(sid, sid)
 
+    def done_clauses(self, typs) -> list[Clause]:
+        """The definition of done of an item of kinds ``typs``: the generic sentence, then the clauses of each one's
+        entry, once each (a sub-profile takes its entry's; an unknown id adds none)."""
+        out, seen = list(self.done), set()
+        for tid in typs:
+            entry = self.entry(tid)
+            if entry and entry not in seen:
+                seen.add(entry)
+                out += self.clauses.get(entry, [])
+        return out
+
 
 @functools.lru_cache(maxsize=1)
 def _read() -> dict:
@@ -123,16 +151,28 @@ def engine() -> Catalog:
     """The engine's catalog, as typologies.yaml gives it."""
     data = _read()
     cat = Catalog()
-    for eid, spec in (data.get("entries") or {}).items():
-        spec = spec or {}
-        cat.typologies[eid] = Typology(eid, _labels(spec), str(spec.get("description") or ""),
-                                       tuple(spec.get("vision") or ()))
-        for sid, sub in (spec.get("sub") or {}).items():
-            sub = sub or {}
-            cat.typologies[sid] = Typology(sid, _labels(sub), str(sub.get("description") or ""), parent=eid)
+    entries = data.get("entries") or {}
+    for eid, spec in entries.items():
+        _add_entry(cat, eid, spec or {})
     cat.stages = {str(k): dict(v or {}) for k, v in (data.get("stages") or {}).items()}
     cat.standards_stages = {str(k): str(v) for k, v in (data.get("standards_stages") or {}).items()}
+    cat.done = [_clause(c) for c in data.get("done") or []]
     return cat
+
+
+def _add_entry(cat: Catalog, eid: str, spec: dict) -> None:
+    """An entry of typologies.yaml: itself, its sub-profiles and its clauses of done."""
+    cat.typologies[eid] = Typology(eid, _labels(spec), str(spec.get("description") or ""),
+                                   tuple(spec.get("vision") or ()))
+    for sid, sub in (spec.get("sub") or {}).items():
+        sub = sub or {}
+        cat.typologies[sid] = Typology(sid, _labels(sub), str(sub.get("description") or ""), parent=eid)
+    if spec.get("done"):
+        cat.clauses[eid] = [_clause(c, eid) for c in spec["done"]]
+
+
+def _clause(c: dict, typology: str = "") -> Clause:
+    return Clause(str(c.get("id")), " ".join(str(c.get("text") or "").split()), typology, str(c.get("evidence") or ""))
 
 
 def load(cfg: config.Config | None = None) -> Catalog:
@@ -241,6 +281,47 @@ def layers(cat: Catalog, tid: str, stage: str) -> list[str]:
     return sorted(names)
 
 
+# --- the definition of done by typology (wi-brain-done-by-typology) --------------------------------------------------
+
+def item_typologies(props: dict | None, project_lifecycle=None) -> tuple[list[str], str]:
+    """(an item's typologies, where they come from): its ``props.typology`` (an id, or ids separated by commas or
+    spaces), else its project's ``lifecycle.typologies`` (projects.yaml), else ([], "")."""
+    given = (props or {}).get("typology")
+    if isinstance(given, list):
+        own = [str(t) for t in given if str(t).strip()]
+    else:
+        own = str(given or "").replace(",", " ").split()
+    if own:
+        return own, "props.typology"
+    lc = project_lifecycle if isinstance(project_lifecycle, dict) else {}
+    typs = lc.get("typologies")
+    if isinstance(typs, list) and typs:
+        return [str(t) for t in typs if isinstance(t, str) and t], "lifecycle.typologies"
+    return [], ""
+
+
+def effective(cat: Catalog, typs) -> tuple[list[str], str]:
+    """(the kinds whose clauses an item takes, why when it is not ``typs``): ``typs``; none declared, or one the
+    catalog does not know (a misspelling must not drop a clause), the rule before the catalog: software's (DONE-1)."""
+    if not typs:
+        return ["software"], "no typology declared: the rule before the catalog"
+    unknown = [t for t in typs if not cat.known(t)]
+    if unknown:
+        return ["software"], f"{', '.join(unknown)} not in the typology catalog: the rule before the catalog"
+    return list(typs), ""
+
+
+def item_clauses(cat: Catalog, typs) -> list[Clause]:
+    """An item's definition of done: the generic sentence, then the clauses of its effective kinds."""
+    return cat.done_clauses(effective(cat, typs)[0])
+
+
+def requires(cat: Catalog, typs) -> list[Clause]:
+    """The clauses whose evidence brain item close requires for an item of kinds ``typs`` (a ``pr`` clause:
+    --pr), :func:`effective`'s kinds: none declared or one unknown keeps the rule before the catalog (DONE-1)."""
+    return [c for c in item_clauses(cat, typs) if c.evidence]
+
+
 def describe(cat: Catalog, lang: str = "en") -> dict:
     """The catalog with stable keys: what ``brain typologies --json`` prints."""
     def one(t: Typology) -> dict:
@@ -256,7 +337,8 @@ def describe(cat: Catalog, lang: str = "en") -> dict:
             "sub_profiles": [one(t) for t in cat.typologies.values() if t.parent],
             "stages": [{"id": s, "label": (spec.get(lang) or spec.get("en") or s), "shapes": spec.get("shapes", [])}
                        for s, spec in cat.stages.items()],
-            "standards_stages": dict(cat.standards_stages)}
+            "standards_stages": dict(cat.standards_stages),
+            "done": {"generic": [c.id for c in cat.done], **{e: [c.id for c in cs] for e, cs in cat.clauses.items()}}}
 
 
 def self_check() -> list[str]:
@@ -273,7 +355,22 @@ def self_check() -> list[str]:
                if not _stage_ok(spec)]
     errors += [f"standards stage {k}: maps to {v!r}, no stage" for k, v in (data.get("standards_stages") or {}).items()
                if v not in stages]
+    errors += _clauses_errors("done", data.get("done"), required=True)
+    errors += [e for eid, spec in (data.get("entries") or {}).items() if isinstance(spec, dict)
+               for e in _clauses_errors(f"entry {eid}: done", spec.get("done"))]
     return errors
+
+
+def _clauses_errors(where: str, clauses, required: bool = False) -> list[str]:
+    if clauses is None and not required:
+        return []
+    if not (isinstance(clauses, list) and clauses):
+        return [f"{where}: a list of clauses {{id, text, evidence}}"]
+    ids = [c.get("id") for c in clauses if isinstance(c, dict)]
+    errors = [f"{where}: clause {c!r}: id and text, evidence one of {', '.join(EVIDENCE)}" for c in clauses
+              if not (isinstance(c, dict) and set(c) <= CLAUSE_KEYS and c.get("id") and c.get("text")
+                      and c.get("evidence", "pr") in EVIDENCE)]
+    return errors + [f"{where}: clause {i!r} twice" for i in set(ids) if ids.count(i) > 1]
 
 
 def _entry_errors(eid, spec, seen: set[str]) -> list[str]:
