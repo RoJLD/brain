@@ -88,10 +88,11 @@ def test_the_brain_pages_name_each_place_and_never_a_secret(tmp_path, monkeypatc
     assert brain["scope_types"].value == "1 renamed or added"
     assert brain["claude settings"].change.startswith("a plan only")  # install.ps1 -Apply is the owner's
     assert "brain profile set" in brain["profile"].change
-    assert not any(s.edit for page in ("identity", "brain", "permissions", "setup") for s in pages[page])
+    assert not any(s.edit for page in ("identity", "brain", "permissions") for s in pages[page])  # shown, never edited
+    assert {s.edit for s in pages["setup"]} == {"wizard"}  # the setup page runs its wizards (brain.wizards)
     text = "\n".join(settings.lines(pages))
     assert "a-secret-topic-value" not in text and "Identity (4)" in text and "  identity.owner: Ada" in text
-    assert "brain notify setup ntfy|telegram|email" in text  # the setup page: one command per step
+    assert "change: brain notify setup ntfy" in text  # the setup page: one wizard per row, its commands
 
 
 def test_a_page_that_cannot_be_read_says_why_and_the_others_still_read(monkeypatch):
@@ -134,3 +135,16 @@ def test_a_broken_config_says_so_and_the_running_interval_is_named(tmp_path, mon
         settings.parse("probe", "48h")
     cockpit.save_state({"settings": {"refresh": 1e9}})
     assert cockpit.load_state()["settings"] == {}  # longer than a day: left out
+
+
+def test_the_modules_page_lists_the_catalogue_with_each_state_and_turns_only_the_switchable():
+    """wi-brain-modules-tab (SIGMA-15): each module of the catalogue, its state and source, its cost and needs; a
+    core module is always on; the distributions read-only."""
+    rows = _by_key(settings.collect(pages=("modules",))["modules"])
+    assert rows["rules"].value.startswith("on") and not rows["rules"].edit  # core
+    assert rows["rules"].change.startswith("always on (a core capability)")
+    assert rows["tui"].edit == "module" and "brain mod enable|disable tui" in rows["tui"].change
+    assert rows["plane"].value.startswith("planned") and not rows["plane"].edit  # brain mod would refuse it
+    assert rows["backlog"].source.startswith("disk 30 MB")
+    assert rows["distribution base"].value.startswith("the brain engine") and not rows["distribution base"].edit
+    assert settings.page_label("modules") == "Modules"

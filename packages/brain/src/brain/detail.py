@@ -91,6 +91,7 @@ class Action:
     note: bool = False  # done: an optional note says what was done
     preview: list[str] | None = None  # apply: the plan run first, its output shown in the confirmation
     handover: bool = False  # an engine install: run by a window once the cockpit exits, then it relaunches (brain.handover)
+    gated: bool = False  # apply: a plan that fails keeps Run off (the setup wizards: never an apply after a failed plan)
 
 
 # --- what a row is ---

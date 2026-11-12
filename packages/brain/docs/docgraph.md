@@ -186,12 +186,17 @@ brain docgraph join --out joined.json --json
 - **The checks, run again.** Across the joined graph `join` runs `criterion.no-item`, `item.no-criterion` (an item
   serving no criterion of its own phase; a phase's exit review is exempt), `test.uncarried`, `test.carried-twice`,
   `threat.untested`, `depends.cross-phase`, `phase.review-incomplete`, `cycle` (one finding per loop of `depends_on`,
-  `part_of` or `supersedes` edges), `proposed.cited-as-decided` and `doc.stale` (from the nodes' `updated` dates,
-  compared by day when either is a date; generated documents and dated specs exempt). Its findings say `by: join` and
+  `part_of` or `supersedes` edges), `proposed.cited-as-decided`, `doc.stale` (from the nodes' `updated` dates,
+  compared by day when either is a date; generated documents and dated specs exempt) and
+  `decision.target-unreferenced` (a decision not marked `door: two-way` that touches an open need, by a shared
+  `module` within one project or by a declared link between them (`origin: declared`, but `contradicts`), without a
+  `constrains` edge to it; `module` is an optional
+  key, a module id or a list of them, and `door` one of `one-way` and `two-way`: see
+  [adr-target.md](adr-target.md)). Its findings say `by: join` and
   replace the producers' findings of the same checks, since an edge of another document may settle them; a producer's
   `doc.stale` is kept beside the join's (its history knows what dates cannot show). A producer's findings of the other
   checks are kept with `by: <namespace>`. The checks that need what a document does not carry (a decision's text,
-  history and numbering, the citations of a reported node, the register of needs) are in `checks_not_run`, unless a
+  history and numbering, the citations of a reported node) are in `checks_not_run`, unless a
   producer reported them. It exits 1 when a document is left out or an error is found.
 - **The reference.** `brain reference` gives each pinned project a page, `docs/reference/read/<project>.md` (the ref
   it was read at, its decisions with their status and source, milestones, modules, items by status, the findings on

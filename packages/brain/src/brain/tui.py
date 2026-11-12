@@ -15,7 +15,8 @@ Keys (the footer shows those of the focused panel, ? lists them all):
   Settings its pages on the left (Cockpit, Identity, Brain, Permissions, Setup; brain.settings), each setting on the
            right with its value, where it comes from and how it changes; Enter on a Cockpit setting edits it (tui.json:
            theme, timezone, language, refresh and probe intervals, a panel's free title), on a brain setting says the
-           command that changes it: nothing else is written from there
+           command that changes it: nothing else is written from there; on a Setup wizard (brain.wizards) it asks its
+           choice, shows its plan run, then applies on y, each command logged as the owner's
   ctrl+pageup, ctrl+pagedown    the previous and the next tab (a click on the bar too, its tooltips name each tab)
   v        the tab's next view (the overview: its cards, its grid, its digest); a click on its word in the toolbar too
   Enter    on a card, its tab, already filtered as the card says (a click too); the arrows move between the cards
@@ -827,6 +828,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
         if results and (a.kind == "apply" or not ok):
             self.push_screen(ResultScreen(f"{a.label} {a.ref}", results))
         self._side_acted()
+        self._draw_settings()  # a module switched, a profile set: the page says it now
         self.tick(force=True)  # the panels read again: the DDR answered, the stamp written
 
     def _hand_over(self, a, steps: list[list[str]]) -> None:

@@ -1,0 +1,19 @@
+# docs/reference.yaml as brain 0.4.0 reads it (wi-brain-reference-arc42): the required fields and each optional one.
+v: 1
+goals: A kettle that boils water the same way every time.
+strategy: One small core, the rest as plug-ins.
+key_decisions: [adr-2026-10-09-reversal-boil]
+glossary:
+  - {term: Brew, means: "One run of the kettle, from cold water to a cup."}
+sections:
+  constraints: What the kettle must never do.
+  context: Who and what the kettle talks to.
+  building_blocks: The modules of the kettle.
+  runtime: A brew, step by step.
+  deployment: Where the kettle runs.
+  concepts: Temperatures and timers.
+  decisions: Why the kettle is as it is.
+  quality: How the kettle is judged.
+  risks: What could go wrong.
+modules:
+  K1: The kettle's core, which boils and pours.

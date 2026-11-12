@@ -105,12 +105,37 @@ it they write with any engine, as before.
 ## The technical reference
 
 `brain reference` (`brain.reference`, `wi-brain-technical-reference`) writes a project's technical reference into
-`docs/reference/`: `README.md`, the index of the modules of the store's registry (`modules.yaml`, or the one `config.json` `modules.store` names, [modules.md](modules.md))
-with their features, items and decisions, then the decisions no module holds (« unplaced », counted: a debt line);
-and `modules/<id>.md` per module: what it does (its features, have first), the decisions in force on each of its
+`docs/reference/`: `README.md`, an arc42 skeleton (below), whose section 5 is the index of the modules of the store's
+registry (`modules.yaml`, or the one `config.json` `modules.store` names, [modules.md](modules.md)) with their
+features, items and decisions; and `modules/<id>.md` per module: what it does (its features, have first), the decisions in force on each of its
 nodes, the rules its items deliver, its specs, its items done and open, and its open questions (the pending DDRs about
 its nodes). A node's module is its `props.module`; a module page reads the features and done items too, which is why
 they carry one ([modules.md](modules.md)).
+
+**The arc42 sections** (`brain.arc42`, `wi-brain-reference-arc42`). `README.md` holds the twelve sections, each from
+its source; every statement carries its status and its id, its source in the graph:
+
+| Section | From |
+|---|---|
+| 1. Introduction and goals | `goals`; the pending milestones and their triggers (`props.trigger`) |
+| 2. Constraints | the `Rule` nodes, the decisions that set them (`decided_by`, else « without a decision ») and what enforces them (`enforced_by`, else « by judgement ») |
+| 3. Context and scope | the repo's own registry (`projects.yaml` at its root, read as declared: the reference never depends on a machine's other brains): each project, its access, its repos by name and its title, the one registered at this root marked; a repo whose registry lives elsewhere says so; then the projects read only, from their pinned docgraph/v1 documents ([docgraph.md](docgraph.md)) |
+| 4. Solution strategy | `strategy`; the decisions `key_decisions` names (one the graph does not hold is said) |
+| 5. Building blocks | the modules and their pages |
+| 6. Runtime view | the `Hook`, `Workflow`, `Skill`, `Plugin` and `McpServer` nodes |
+| 7. Deployment view | the stacks that registry declares for this project (`stacks`: their names, or the file that holds them) |
+| 8. Cross-cutting concepts | the specs in force |
+| 9. Architecture decisions | per module, its decisions newest first (three, the rest on its page), then the unplaced ones, all of them (a debt line) |
+| 10. Quality requirements | each milestone with a trigger, its items (`part_of`) and their tests (`tested_by`, theirs and their features'); the goals with no test counted |
+| 11. Risks and technical debt | blocked items, open debt items (a `debt` segment in their id, `wi-debt-x`), open lessons, open questions (the pending DDRs) |
+| 12. Glossary | `glossary` |
+
+**The prose**, `docs/reference.yaml` (`schemas/reference.schema.json`, the README YAML's mechanism): `v`, `goals`,
+`strategy` and `glossary` (an empty list says there is no term yet) are required; `key_decisions`, `sections` (a short
+intro per section: `constraints`, `context`, `building_blocks`, `runtime`, `deployment`, `concepts`, `decisions`,
+`quality`, `risks`) and `modules` (a short prose per module id, at the top of its page) are optional. A required field
+missing, or a file that does not read as a mapping, fails `brain reference` (nothing written), `brain check` (once
+the reference is kept) and keeps `brain sync` from writing over the last good render (a warning). Without the file, the skeleton shows its facts and says which prose is not written yet.
 
 The decisions in force: the unit is the answered DDR (its question, the chosen option, who answered and when), with the
 ADR it went to; an ADR no DDR went to shows by its title; an ADR some DDR went to (a batch of answers) never by its
@@ -132,8 +157,10 @@ history.
 - `brain reference --public --repo R --out <checkout>/docs/reference --write`: the neutral reference of a public repo,
   by feature domain (`README.md`, `domains/<domain>.md`), drawn only from that repo's features (their `public_title`
   and `public_id`, the repo's own code, linked from the repo's root, and its own docs): no module, spec, ADR, DDR, item
-  nor rule of the private brain. A line `brain check --public` would refuse is said, and then nothing is written (exit
-  1): set the feature's `public_title` or `public_id`. The engine's own is `docs/reference/` in its repo.
+  nor rule of the private brain, headed by the goals, strategy and glossary of the public repo's own
+  `docs/reference.yaml` when it holds one. A line `brain check --public` would refuse is said, and then nothing is
+  written (exit 1): set the feature's `public_title` or `public_id`. The engine's own is `docs/reference/` in its
+  repo.
 
 The reference has no date and sorts what it lists: the same graph gives the same files.
 

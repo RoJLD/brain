@@ -34,7 +34,9 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   three exceptions (wi-brain-guard-rc-archive, remote_control): off on a finished session the caller started; at a
   handover between Brain coordinators, on for the coordinator the caller started to succeed it and off on itself,
   once its hand-over note is in <BRAIN_HOME>/handover/ (a successor with no transcript yet counts as starting for
-  HANDOVER_START_S after its app file's createdAt); each one passes logged as decision allowed with its case.
+  HANDOVER_START_S after its app file's createdAt; a chain root the owner marked, brain handover root, hands over
+  without a name; brain handover root and a write into its file are the owner's); each one passes logged as
+  decision allowed with its case.
 - ``power`` (wi-brain-power-guard, TOPO-2): no act on a machine or the cluster: machine (shutdown, reboot, sleep,
   Stop-Computer, systemctl and loginctl power verbs, boot arming by bcdedit, efibootmgr or ipmitool), node (the verbs
   but reads of the platform's node lifecycle CLIs, config.json's power.node_clis, a kubectl-<name> one as kubectl
@@ -1716,6 +1718,7 @@ HANDOVER_DIR = "handover"    # <BRAIN_HOME>/handover/: the coordinators' hand-ov
 HANDOVER_NOTE_S = 6 * 3600   # a hand-over note counts this long after it was last written
 HANDOVER_HEAD = 2000         # the note's opening, whose first app id says whose note it is
 HANDOVER_MAX = 512_000       # a bigger file is not read
+HANDOVER_ROOTS = "roots.json"   # <BRAIN_HOME>/handover/roots.json: the chain roots the owner marked
 LOCAL_ID = re.compile(r"(?<![\w-])local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\w-])")
 RC_FINISHED = ("idle", "ended")   # the states of a finished session (brain.sessions.state_of)
 RC_LIVE = ("running", "idle", "asking", "stale")   # a successor's: not archived, ended or unknown on this machine
@@ -1772,6 +1775,92 @@ def handover_note(host_id: str, now: float | None = None) -> Path | None:
     return None
 
 
+def roots_file() -> Path:
+    """The chain roots the owner marked (``brain handover root``, in their own terminal): sessions may not write it."""
+    return paths.brain_home() / HANDOVER_DIR / HANDOVER_ROOTS
+
+
+def chain_roots() -> dict[str, dict]:
+    """{app id: {at, reason}} of the chain roots the owner marked; {} when the file is missing or unreadable, or when
+    it or its folder is a link (the mark is a regular file where the engine writes it)."""
+    f = roots_file()
+    if os.path.normcase(os.path.realpath(f)) != os.path.normcase(os.path.abspath(f)):
+        return {}
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    rows = data.get("roots") if isinstance(data, dict) else None
+    if not isinstance(rows, dict):
+        return {}
+    from . import sessions
+    return {h: r for h, r in rows.items() if sessions.HOST_RE.match(str(h)) and isinstance(r, dict)}
+
+
+def chain_root(host: str, node: dict) -> bool:
+    """Whether a session is a chain root: the owner marked its id (roots.json) and the app's files name no session
+    that started it (the owner did). A marked id whose file names a parent is no root: a session started it."""
+    return bool(node) and not node.get("parent") and host in chain_roots()
+
+
+def app_reader(index: dict):
+    """meta(host): one session's own app file, read again now (the index may be cached), {} when the index does not
+    know it, when it is in two account folders, or when the file names another id."""
+    from . import sessions
+    dirs = sessions.app_dirs()
+
+    def meta(host: str) -> dict:
+        if host not in index or sum((d / f"{host}.json").is_file() for d in dirs) != 1:
+            return {}
+        m = sessions.app_meta(host)
+        return {**m, "source": "app"} if m.get("host_id") == host else {}
+    return meta
+
+
+def handover_why(caller: str, me: dict, meta, now: float | None = None) -> str:
+    """'' when ``caller`` (its app file ``me``) may hand over, else the first condition that fails: a coordinator by
+    name started by a coordinator by name or by a chain root, or a chain root itself (wi-brain-handover-command: the
+    parent condition is lifted for a root, which the owner started); its hand-over note written."""
+    root = chain_root(caller, me)
+    if not root and not _coordinator(me):
+        return ("this session is not a Brain coordinator (the name its starter gave it), nor a chain root the owner "
+                "marked (brain handover root)")
+    parent = str(me.get("parent") or "")
+    if not root and not (parent and (_coordinator(meta(parent)) or chain_root(parent, meta(parent)))):
+        return ("this session was not started by a Brain coordinator (the name its starter gave it), nor by a "
+                "chain root the owner marked (brain handover root)")
+    if handover_note(caller, now) is None:
+        return (f"no hand-over note of {caller} (its first app id) in {HANDOVER_DIR}/ written in the last "
+                f"{HANDOVER_NOTE_S // 3600} h")
+    return ""
+
+
+def successor_state_of(m: dict, now: float | None = None) -> tuple[str, str]:
+    """(a successor's state, or ``starting`` for an unknown one created in the last HANDOVER_START_S; what is known of
+    an unknown one's start, '' otherwise)."""
+    from . import sessions
+    st = "archived" if m.get("archived") else sessions.state_of(m, {}, now)
+    if st != "unknown":
+        return st, ""
+    age = _created_age(m, now)
+    if age is None:
+        return st, "no transcript yet and its creation time cannot be read"
+    if not 0 <= age <= HANDOVER_START_S:
+        return st, (f"no transcript yet and was created {int(age)} s ago, beyond the {HANDOVER_START_S // 60} min "
+                    "a starting successor gets")
+    return "starting", f"has no transcript yet and was created {int(age)} s ago"
+
+
+def successors(caller: str, index: dict, meta, now: float | None = None) -> list[str]:
+    """The coordinators ``caller`` started that are detached and live (or starting) on this machine: its
+    successors."""
+
+    def ok(m: dict) -> bool:
+        return bool(m) and m.get("parent") == caller and _coordinator(m) and m.get("detached") is True and \
+            successor_state_of(m, now)[0] in RC_LIVE + ("starting",)
+    return [h for h, m in sorted(index.items()) if m.get("parent") == caller and ok(meta(h))]
+
+
 def remote_control(payload: dict, now: float | None = None) -> tuple[str | None, str]:
     """(case, why) for a set_remote_control call: ``archive`` (off on a finished session the caller started),
     ``handover-on`` (on for the coordinator the caller started to succeed it) or ``handover-off`` (off on the caller
@@ -1799,13 +1888,7 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
     own = sessions.here()["host_id"]
     if own and own != caller:
         return None, "this session's app id and its transcript's disagree"
-    dirs = sessions.app_dirs()
-
-    def meta(host: str) -> dict:   # one session's own file, read again now (the index may be cached); one file only
-        if host not in index or sum((d / f"{host}.json").is_file() for d in dirs) != 1:
-            return {}
-        m = sessions.app_meta(host)
-        return {**m, "source": "app"} if m.get("host_id") == host else {}
+    meta = app_reader(index)
 
     def mine(m: dict) -> bool:
         return bool(m) and m.get("parent") == caller
@@ -1814,35 +1897,14 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
         return "archived" if m.get("archived") else sessions.state_of(m, {}, now)
 
     def successor_state(m: dict) -> tuple[str, str]:
-        """(its state, or ``starting`` for an unknown one created in the last HANDOVER_START_S; what is known of an
-        unknown one's start, '' otherwise)."""
-        st = state(m)
-        if st != "unknown":
-            return st, ""
-        age = _created_age(m, now)
-        if age is None:
-            return st, "no transcript yet and its creation time cannot be read"
-        if not 0 <= age <= HANDOVER_START_S:
-            return st, (f"no transcript yet and was created {int(age)} s ago, beyond the {HANDOVER_START_S // 60} min "
-                        "a starting successor gets")
-        return "starting", f"has no transcript yet and was created {int(age)} s ago"
-
-    def live(m: dict) -> bool:
-        return successor_state(m)[0] in RC_LIVE + ("starting",)
+        return successor_state_of(m, now)
 
     me = meta(caller)
     if not me or me.get("session") != sid:
         return None, "this session's own app file cannot be read, or names another transcript"
 
     def handover() -> str:   # '' when the caller is a coordinator at its handover, else why not
-        if not _coordinator(me):
-            return "this session is not a Brain coordinator (the name its starter gave it)"
-        if not me.get("parent") or not _coordinator(meta(str(me["parent"]))):
-            return "this session was not started by a Brain coordinator (the name its starter gave it)"
-        if handover_note(caller, now) is None:
-            return (f"no hand-over note of {caller} (its first app id) in {HANDOVER_DIR}/ written in the last "
-                    f"{HANDOVER_NOTE_S // 3600} h")
-        return ""
+        return handover_why(caller, me, meta, now)
 
     if target in ("self", caller):
         if enabled:
@@ -1850,10 +1912,7 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
         why = handover()
         if why:
             return None, why
-
-        def successor(m: dict) -> bool:
-            return mine(m) and _coordinator(m) and m.get("detached") is True and live(m)
-        succ = [h for h, m in sorted(index.items()) if m.get("parent") == caller and successor(meta(h))]
+        succ = successors(caller, index, meta, now)
         if not succ:
             return None, "it has started no live coordinator to succeed it, detached"
         named = [f"{h} (starting: {why})" if st == "starting" else h
@@ -1904,6 +1963,35 @@ def _usage_override(cmds, shell: str) -> str | None:
     return None
 
 
+NTFS_STREAM = re.compile(r"(?<=[^\\/:]):[^\\/]*$")   # file.json::$DATA, file.json:name: the file itself on NTFS
+
+
+def _real(target) -> str:
+    """A path as the file system resolves it: its NTFS stream suffix dropped, links followed, case folded."""
+    text = NTFS_STREAM.sub("", str(target)) if os.name == "nt" else str(target)
+    return os.path.normcase(os.path.realpath(os.path.abspath(text)))
+
+
+def _is_roots(target) -> bool:
+    """Whether ``target`` is the file of the chain roots the owner marked (roots_file), or the folder that holds it (a
+    copy, move, link or removal into or of it): any spelling the file system resolves to them (review of the PR)."""
+    return _real(target) in (_real(roots_file()), _real(roots_file().parent))
+
+
+def _root_override(cmds, shell: str) -> str | None:
+    """What marks a chain root for a session (wi-brain-handover-command): any command whose words hold ``handover``
+    then ``root`` (quoted or not) or a word the guard cannot resolve (``$x``, ``%x%``, a backquote), whatever runs it
+    (brain, python -I -m brain, a wrapper); or a shell write into its file or the folder that holds it."""
+    for words, _, _, _ in actions(cmds, shell):
+        low = [w.lower() for w in words]
+        if any(a == "handover" and (b == "root" or any(c in b for c in "$`%")) for a, b in zip(low, low[1:])):
+            return "brain handover root"
+    for what, target in shell_writes(cmds, shell):
+        if _is_roots(target):   # an unresolved target counts by its folder: a write judged in the marks' folder
+            return f"{what} into {target}"
+    return None
+
+
 def _request(category: str, what: str, top, shell: str, cwd: str = "") -> dict:
     """The action put to the owner: its category, what it is, and the exact command with its folder: the outermost
     command that holds it (``top``: words and folder), quoted for the session's shell, or the call's whole text."""
@@ -1944,6 +2032,10 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
         if target and _is_usage_allow(target):
             return ("override", f"{tool} refused: {target} lifts the usage guard; brain usage allow is "
                                 f"{config.owner_of()}'s, in their own terminal", None)
+        raw = str(inp.get(EDIT_TOOLS[tool]) or "")   # a tool's path is literal: file.json::$DATA holds no variable
+        if target and (_is_roots(target) or _is_roots(os.path.join(cwd, raw))):
+            return ("override", f"{tool} refused: {target} marks the coordinators' chain roots; brain handover root "
+                                f"is {config.owner_of()}'s, in their own terminal", None)
         if target and _autostart(target) and "scheduled" in owner_categories():
             req = {"ref": _ref(f"{tool}\0{target}"), "category": "scheduled", "what": f"{tool} {target}",
                    "command": None, "cwd": cwd, "shell": None}
@@ -1968,6 +2060,10 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     if what:
         return ("override", f"{what} refused: it lifts the usage guard (brain.governor), which is "
                             f"{config.owner_of()}'s to do in their own terminal", None)
+    what = _root_override(cmds, sub)
+    if what:
+        return ("override", f"{what} refused: it marks a coordinators' chain root, which lets a session switch "
+                            f"Remote Control; that mark is {config.owner_of()}'s, in their own terminal", None)
     cats = owner_categories()
 
     def refusal(cat, what, top, remote=""):

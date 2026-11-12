@@ -82,6 +82,7 @@ SCHEMAS = {
     "status": (f"{SRC}/schemas/status.schema.json",),   # the status document brain doctor --json prints (brain.probe)
     "docgraph": (f"{SRC}/schemas/docgraph.schema.json",),   # a documentation graph, docgraph/v1 (brain.docgraph)
     "catalogue": (f"{SRC}/schemas/catalogue.schema.json",),   # a module catalogue, catalogue/v1 (brain.catalogue)
+    "reference": (f"{SRC}/schemas/reference.schema.json",),   # a repo's docs/reference.yaml (brain.reference)
     "packs": (f"{SRC}/templates/generic/packs.yaml",),
     "projects": (f"{SRC}/templates/generic/projects.yaml",),
     "template": (f"{SRC}/templates/generic/template.yaml",

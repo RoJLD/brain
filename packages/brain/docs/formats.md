@@ -54,6 +54,7 @@ their default.
 | config.json | the brain's root | `v` (`config.schema.json`) | a note on stderr; the file is kept as written | refused |
 | members.yaml | the brain's root, beside config.json ([identity.md](identity.md)) | `v` (`members.schema.json`) | ignored, the file kept as written (in strict mode, CI: reported by `brain check` with the other identity findings) | refused |
 | readme.yaml | a repo's root, opt-in ([views.md](views.md), « Generated READMEs ») | `v` (`readme.schema.json`) | ignored, the file kept as written (in strict mode, CI: `brain docs check` and `brain check` report it) | refused |
+| docs/reference.yaml | a repo's `docs/`, opt-in ([views.md](views.md), « The technical reference ») | `v` (`reference.schema.json`) | ignored, the file kept as written (in strict mode, CI: `brain reference` and `brain check` report it) | refused |
 | modules.yaml | a store (or the one `config.json` `modules.store` names, [modules.md](modules.md)) | none: a YAML list; each entry that carries the map (`realized_by` or `map_review`) is checked against `modules.schema.json` | an entry's other field is free; a realisation's unknown key is a note (in strict mode, CI: `brain modules --check` refuses it, `brain check` warns) | - (no `v`: a change of the schema moves the format) |
 | standards catalog | the engine's `src/brain/catalogs/*.yaml`; a brain's local ones that `projects.yaml` `standards.catalogs` names ([standards.md](standards.md)) | `v` (`standards.schema.json`) | a note, the row kept; a vocabulary value this engine does not know (a profile, stage, enforcement...) too (in strict mode, CI: `brain standards check` and `brain check --all` report it) | refused: its rows are not read |
 | DDR signature | `records/ddr/<id>.sig`, beside its record | none: an SSH signature (namespace `brain-decision`) over the answer's payload | - | - (an older engine ignores the file and reads the record as before) |
@@ -359,8 +360,9 @@ Beside that pair, **each released engine's own file** (wi-brain-format-fixture-f
 old stores » below), never edited. `tests/test_formats_frozen.py` reads each one strict, as CI does: what N-1 wrote,
 N reads with no note and no error. ar, config, ddr, event (the first lines of an exec ledger file), packs, projects,
 sr and template are frozen from v0.2.4 and v0.3.1, then the last tag's at each version PR; the formats no command
-writes (permissions, members, readme, modules, standards, docgraph, catalogue) keep their hand-written pair only, and
-the status document too: `brain doctor --json` prints the machine's own inventory, which a public fixture never holds.
+writes (permissions, members, readme, reference, modules, standards, docgraph, catalogue) keep their hand-written pair
+only, and the status document too: `brain doctor --json` prints the machine's own inventory, which a public fixture
+never holds.
 
 ### The old stores
 

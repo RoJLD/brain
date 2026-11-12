@@ -31,10 +31,13 @@ USAGE = """\
                  (its pages: Cockpit, the screen's own settings in tui.json, edited there with Enter: theme,
                  timezone, language, refresh and probe intervals, each panel's free title; Identity, Brain,
                  Permissions, each brain setting with its file and the command that changes it, never edited there;
-                 Setup, the commands that set a brain up), then a plugged project's tabs and panels, as its plugin
-                 declares them (COCKPIT, brain.plugin_panels: a tab by its name, no number, before the settings; its
-                 tables sorted, filtered, searched and saved as the others, read at the first read and at each
-                 probe), ctrl+pageup and ctrl+pagedown the previous and next, Escape back to the overview;
+                 Modules, each module of the catalogue with its state, cost and needs, turned on or off by
+                 brain mod's plan then its apply on y;
+                 Setup, the setup wizards: a choice, the plan run, then the apply on y, each command logged as
+                 {owner}'s), then a plugged project's tabs and panels, as its plugin declares them (COCKPIT,
+                 brain.plugin_panels: a tab by its name, no number, before the settings; its tables sorted, filtered,
+                 searched and saved as the others, read at the first read and at each probe), ctrl+pageup and
+                 ctrl+pagedown the previous and next, Escape back to the overview;
                  Escape first clears the search and closes a full view; the bar shows the queue's band now, the
                  sessions asking and the open alerts, and is reduced to its
                  numbers under 120 columns or 30 rows, where the cards take one column and the grid is not offered;

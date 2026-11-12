@@ -113,8 +113,29 @@ title; a wrong value is refused, an empty one sets the default back, and each ch
 settings (`identity.display_name` and the owner, `$BRAIN_HOME`, the personal pointer, `config.json`, the registry, the
 engine pin, the profile, the stacks, the notification routes, the code index, the scope types, `permissions.yaml`,
 Claude Code's settings) are only shown with the command that changes each: Enter says it, nothing is written from
-there, and a secret is named, never shown. The Setup page lists the commands that set a brain up, one per step.
-`brain tui --once --tab settings` prints the same pages (`brain.settings`).
+there, and a secret is named, never shown. `brain tui --once --tab settings` prints the same pages (`brain.settings`).
+
+The Modules page (SIGMA-15) lists each module of the brain's catalogue (`brain catalogue emit`, catalogue/v1) with its
+state on this machine and where it comes from (`brain mod list`: the preset, `config.json`, `profile.json`, pulled),
+its cost (RAM, disk, VRAM, download), what it needs and its fallback, then the distributions. Enter on a module that
+can be switched asks on or off (and off with what needs it, `--cascade`), shows `brain mod`'s plan (the dependencies
+pulled, what turns on and off, its cost), then `y` writes this machine's `profile.json` (`--apply`), logged as the
+owner's. Off keeps the module's data and configuration: only the profile changes. A core module is always on. Adding
+or removing a distribution, uninstalling a module with a sealed archive of its data, and refusing a module the machine
+cannot hold arrive later.
+
+The Setup page holds the setup wizards (`brain.wizards`), one per row, in the order a new brain walks them: the first
+run (the profile Lite, Default or Recommended), the stacks to enable, the modules, a project to add, the notification
+channels (ntfy, Telegram and its chats, the routes), the permissions, the machines and their facts, the code index, a
+new brain from a domain template, Claude Code's settings and the checks. Each wizard is the brain's own commands,
+never a hidden edit: Enter asks its choice when it has one (and the folder of a new brain, an absolute path), then
+shows its exact command. A wizard that writes shows its plan already run (`brain profile set default`), and `y` runs
+the apply (`... --apply`), never after a plan that failed; a wizard that reads runs its one command on `y`. Each runs
+as the owner's, logged in `<BRAIN_HOME>/ledger/cockpit-<month>.jsonl`, refused in a Claude Code session's shell; the
+notification and code index wizards run for the project the cockpit shows. What stays
+the owner's stays a plan with its command: Claude Code's settings (`install.ps1 -Apply`, in your own terminal), a
+project added to `projects.yaml` and a permission granted (a branch and a PR). A secret is never typed in the cockpit:
+you set it as an environment variable (or in the system keyring), and the wizards name it, never show it.
 
 From 140 columns, on a tab that is one list, a row's detail sits right of the list and follows the cursor: it reads
 once the cursor rests, and remembers each row until its panel changes. Enter gives it the focus, where it scrolls and `o`
@@ -241,9 +262,11 @@ graph gives the same file.
 
 ### The technical reference
 
-`brain reference --write` writes `docs/reference/`: one page per module of the store's registry (what it does, the
-decisions in force on its nodes from the answered DDRs, earlier ones folded, its rules, specs, items and open
-questions) and an index with the decisions no module holds; `brain sync` keeps it current once the folder exists.
+`brain reference --write` writes `docs/reference/`: an arc42 skeleton, its twelve sections from the graph (goals and
+milestones, constraints, context, strategy, building blocks, runtime, deployment, concepts, decisions by module,
+quality from the milestones' triggers and tests, risks and debt, glossary) with the prose of the repo's reference YAML,
+and one page per module of the store's registry (what it does, the decisions in force on its nodes from the answered
+DDRs, earlier ones folded, its rules, specs, items and open questions); `brain sync` keeps it current once the folder exists.
 `--public` renders a public repo's neutral reference by feature domain, from its features only (this repo's own is
 [docs/reference/](../../docs/reference/README.md)). See [docs/views.md](docs/views.md).
 
@@ -415,6 +438,8 @@ brain items [--status S]... [--all] [--priority P]... [--wave X.Y.Z|ID] [--miles
             [--text WORDS] [--type T]... [--repo R] [--limit N] [--json]
 brain adr show REF [--titles] [--json]         # the ADR REF names (id, title, or the start of its id), else the ADRs
                                                # that decide the node REF (a rule, an item, a spec), with their text
+brain adr target [--needs] [--json]            # the one-way-door ADRs against the register of future needs
+                                               # (docs/adr-target.md: Scope, Target compatibility; advisory)
 brain spec show REF [--section N | --toc] [--json]   # a Spec node, a Doc id (doc:<repo>:<path>::<key>) or a path
 brain journal last [N] [--titles] [--json]     # the last N dated entries (default 1; 0: all)
 ```
@@ -722,6 +747,26 @@ past 80 % with unarchived children keeps its alert until the master or all of it
 the app does not know, ended; archiving one child of several keeps it, with one live child fewer) or its watch state
 is pruned (14 days), by design: those children still spend; the governor reminds a master past 80 % that calls
 `start_session`, and lets the call through: nothing blocks a new session.
+
+### The coordinators' hand-over
+
+A coordinator hands over to the coordinator it starts: a hand-over note, then Remote Control on for the successor and
+off on itself, two calls the guard lets through only when its conditions hold ([`docs/guards.md`](docs/guards.md),
+Remote Control's three exceptions). `brain handover` (`brain.succession`, machine-wide) scripts the note and checks
+those conditions before the calls, at zero token, from the files the guard reads:
+
+- **`brain handover write [--from FILE|-] [--successor NAME] [--id ID]`**: the note,
+  `<BRAIN_HOME>/handover/coordinator-<date>-<name>.md`, whose first line is `From <app id> (<name>), <date> UTC` (the
+  guard reads the first app id of its opening as whose note it is), then the successor's name and the body.
+- **`brain handover check [--id ID] [--successor ID] [--json]`**: each condition (a coordinator by name or a chain
+  root, started by one, its note under 6 hours old, its successors live and detached), whether `on` and `off` would
+  pass, and the predecessor, which an incoming coordinator archives first (a session's own archive is refused); exit
+  1 when the hand-over would be refused, 2 when the app's files cannot be read.
+- **`brain handover root [ID] [--reason TEXT] [--clear]`**: the owner's, in their own terminal (refused in a Claude
+  Code session's shell, and by the guard to every session, like `brain usage allow`): a session the owner started
+  (no parent in the app's files) marked a chain root, `<BRAIN_HOME>/handover/roots.json`. A root hands over without a
+  coordinator's name, and the coordinators it starts pass the parent condition through it, until `--clear`; a
+  marked id that a session started, or that the app's files do not know, is no root. No ID lists the marks.
 
 ## Lessons
 
