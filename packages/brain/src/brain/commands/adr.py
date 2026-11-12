@@ -43,17 +43,24 @@ def cmd_show(args, root: Path) -> int:
     return 0
 
 
+def _one_way(args, fields: dict) -> dict:
+    """``fields`` with a one-way door's Target compatibility (``--target``, ``--leaves-open``); one of Scope and Target
+    given alone, the other is written TODO. ValueError on a malformed ``--target``."""
+    fields = {**fields, "target": targets.target_text(args.target or [], _text(args.leaves_open) or "")}
+    if fields["scope"] or fields["target"]:
+        fields.update(scope=fields["scope"] or notes.TODO, target=fields["target"] or notes.TODO)
+    return fields
+
+
 def cmd_adr(args, root: Path) -> int:
     path = Path(args.file).resolve() if args.file else _project(args, root).decisions
     fields = {k: _text(getattr(args, k)) for k in ("context", "decision", "why", "revisit", "why_not_script",
                                                     "trigger", "migration", "scope")}
     try:
-        fields["target"] = targets.target_text(args.target or [], _text(args.leaves_open) or "")
+        fields = _one_way(args, fields)
     except ValueError as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
-    if fields["scope"] or fields["target"]:   # a one-way door states both: the one left out is written TODO
-        fields = {**fields, "scope": fields["scope"] or notes.TODO, "target": fields["target"] or notes.TODO}
     store = _store(args, root)
     try:
         if not (store / "schema.yaml").is_file():   # checked before anything is written, as every edge is

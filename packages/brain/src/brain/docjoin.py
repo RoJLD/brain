@@ -416,6 +416,17 @@ def _modules(n: dict) -> set[tuple[str, str]]:
     return {(str(n.get("project") or ""), str(m)) for m in mods if m}
 
 
+def _linked(g: _Graph) -> dict[str, set[str]]:
+    """Each node's neighbours by any edge but constrains (a declared link touches)."""
+    linked: dict[str, set[str]] = defaultdict(set)
+    for e in g.edges:
+        a, b = e.get("from"), e.get("to")
+        if e.get("type") != "constrains" and isinstance(a, str) and isinstance(b, str):
+            linked[a].add(b)
+            linked[b].add(a)
+    return linked
+
+
 def _targets(g: _Graph) -> list[dict]:
     """decision.target-unreferenced: a decision (not marked ``door: two-way``) that touches an open need (a shared
     module, or any edge between them) without a constrains edge to it."""
@@ -427,12 +438,7 @@ def _targets(g: _Graph) -> list[dict]:
         for m in _modules(n):
             by_module[m].add(n["id"])
     need_ids = {n["id"] for n in needs}
-    linked: dict[str, set[str]] = defaultdict(set)
-    for e in g.edges:
-        a, b = e.get("from"), e.get("to")
-        if e.get("type") != "constrains" and isinstance(a, str) and isinstance(b, str):
-            linked[a].add(b)
-            linked[b].add(a)
+    linked = _linked(g)
     found = []
     for d in g.of("decision"):
         if d.get("door") == "two-way":

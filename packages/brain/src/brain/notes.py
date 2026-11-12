@@ -179,6 +179,16 @@ def _field(label: str, value: str, width: int) -> list[str]:
     return out
 
 
+def _parts(old: str, spec: list, fields: dict, width: int) -> tuple[list[str], list[str]]:
+    """(the fields left TODO, each field's text) of an ADR: a required one missing is written TODO; an optional one
+    (:data:`OPTIONAL`) only when given, and reported when given as TODO."""
+    todo = [k for k, _ in spec if (k not in fields or fields[k] == TODO) and k not in OPTIONAL]
+    todo += [k for k in OPTIONAL if fields.get(k) == TODO]
+    parts = ["\n".join(_field(_label(old, label), fields.get(key, TODO), width)) for key, label in spec
+             if key not in OPTIONAL or key in fields]
+    return todo, parts
+
+
 def adr_new(path: Path, title: str, fields: dict, day: str | None = None, reverses: str = "",
             kind: str = "adr", width: int = WIDTH) -> dict:
     """Append a dated ADR to a decision log: ``## <day> — <title>`` and its fields (a missing one is written TODO).
@@ -201,13 +211,7 @@ def adr_new(path: Path, title: str, fields: dict, day: str | None = None, revers
     if not title.strip():
         raise NotesError("adr new: a title is needed")
     title = " ".join(title.split())
-    todo = [k for k, _ in spec if (k not in fields or fields[k] == TODO) and k not in OPTIONAL]
-    todo += [k for k in OPTIONAL if fields.get(k) == TODO]
-    parts = []
-    for key, label in spec:
-        if key in OPTIONAL and key not in fields:
-            continue
-        parts.append("\n".join(_field(_label(old, label), fields.get(key, TODO), width)))
+    todo, parts = _parts(old, spec, fields, width)
     new = old.rstrip() + "\n" + f"\n## {day} — {title}\n\n" + "\n\n".join(parts) + "\n"
     _append(path, old, new, nl)
     return {"id": adr_id(day, title, existing, kind), "title": title, "supersedes": supersedes, "todo": todo}
