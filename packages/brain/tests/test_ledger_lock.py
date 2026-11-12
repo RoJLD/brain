@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import brain
-from brain import answers, capture, detail, governor, guards, notify, queue, quota, timing, usage
+from brain import answers, capture, detail, governor, guards, notify, queue, quiet, quota, timing, usage
 
 PLUGIN = Path(brain.__file__).resolve().parent / "adapters" / "claude"
 
@@ -76,10 +76,12 @@ def test_every_ledger_writer_goes_through_the_lock(brain_home, spy):
     notify._audit([{"at": AT, "n": 1}, {"at": AT, "n": 2}], datetime(2026, 11, 12, tzinfo=timezone.utc))
     governor._note_start({"tool_input": {"title": "t"}, "session_id": "s1"},
                          {"brainstorm": True, "now": AT, "project": "p"})
+    quiet.hold(notify.Message("demo", "error", "body", host="pc"), datetime(2026, 11, 12, tzinfo=timezone.utc))
     names = [name for name, _ in spy]
     assert names == ["ar-2026-11.jsonl", "guards-2026-11.jsonl", "guards-2026-11.jsonl", "answers-2026-11.jsonl",
                      "answers-2026-12.jsonl", "queue-2026-11.jsonl", "queue-2026-11.jsonl",
-                     f"{detail.LOG}-2026-11.jsonl", "2026-11.jsonl", "starts.jsonl"]
+                     f"{detail.LOG}-2026-11.jsonl", "2026-11.jsonl", "starts.jsonl",
+                     quiet.HELD]
     assert dict(spy)["2026-11.jsonl"] == 2   # the notify audit's lines in one write
     assert (brain_home / "ledger" / "exec.lock").exists() and (brain_home / "notify" / "exec.lock").exists()
 

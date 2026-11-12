@@ -257,7 +257,7 @@ def append_text(f: Path, text: str) -> bool:
     """Append ``text`` (whole lines, each ending with its newline) to ``f`` in one write under the lock of ``f``'s
     folder (``<folder>/exec.lock``, the folder made when missing): every append-only ledger of the brain goes through
     it (the exec ledger, the capture ledgers ar, ddr, events, the guards, queue, answers and cockpit ledgers, the quota
-    readings, the notify audit; wi-brain-ledger-append-lock), so that writers at once, sessions' hooks and commands,
+    readings, the governor's session starts, the notify audit and its held messages; wi-brain-ledger-append-lock), so that writers at once, sessions' hooks and commands,
     neither lose nor mix a line. A last line left without its newline is closed first. Whether the lock was had: a
     writer that could not get it within LOCK_TIMEOUT writes anyway and says so in ledger/errors.log."""
     if not text:
