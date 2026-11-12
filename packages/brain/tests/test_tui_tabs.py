@@ -565,3 +565,32 @@ def test_run_gives_the_app_its_tab_and_views(monkeypatch):
     monkeypatch.setattr(tui, "CockpitApp", App)
     assert tui.run(FakeCockpit(), tab="health", tabs={"overview": {"view": "digest"}}) == 0
     assert seen["args"][-3:] == ("health", {"overview": {"view": "digest"}}, None)
+
+
+def test_a_plugged_projects_tab_shows_its_panel_as_one_of_the_cockpits_tables(monkeypatch):
+    """wi-brain-command-plugins-cockpit: a plugin's tab, by its name and with no number, holds its declared panel; the
+    cockpit's keys work on it (s sorts) with no Textual code of the plugin's."""
+    from brain import plugin_panels
+    notes = []
+    panels, tabs = plugin_panels.parse("demo", "demo_cli:", {"panels": {"runs": {
+        "title": "Runs", "rows": "runs.json", "columns": [{"key": "id", "title": "Id"}, {"key": "n", "title": "N"}],
+        "sorts": ["n", "id"]}}}, notes)
+    cockpit.plug(plugin_panels.Plugged(panels, tabs, ["demo: a note"]))
+    monkeypatch.setitem(PANELS, "demo-runs", {"projects": [{"project": "demo", "rows": [
+        {"id": "a", "n": 2, "project": "demo"}, {"id": "b", "n": 1, "project": "demo"}]}]})
+
+    async def check(app, pilot, fake):
+        assert _bar(app)[-1] == "demo"
+        app.draw({"demo-runs"})
+        app.action_tab("demo")
+        await pilot.pause(0.1)
+        assert [n for n in tui.frames() if app.query_one(f"#{n}").display] == ["demo-runs"]
+        assert _ids(app, "demo-runs") == ["b", "a"]  # its default sort: n
+        assert app.focused is app.query_one("#demo-runs")
+        await pilot.press("s")
+        assert app.views["demo-runs"]["sort"] == "id" and _ids(app, "demo-runs") == ["a", "b"]
+        assert "Runs (2)" in app.query_one("#demo-runs").border_title
+    try:
+        _run(check)
+    finally:
+        cockpit.plug(plugin_panels.Plugged())

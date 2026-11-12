@@ -77,6 +77,11 @@ From 140 columns, on a tab that is one list, a row's detail sits beside it (``de
 Each table's columns can be chosen (``columns``, ``cells``: shown or hidden, their order, the longest a title may be;
 ``EXTRA_COLUMNS``, hidden by default) and are kept in ``tui.json``; ``palette`` is the command palette's entries, in data.
 
+A plugged project's panels and tabs (wi-brain-command-plugins-cockpit, brain.plugin_panels) join these tables at the
+start (``plug``): each panel ``<project>-<panel>`` gets its columns, sorts, filters, help and title from its plugin's
+``COCKPIT`` declaration, and each of its tabs is placed after Resources, with no number; its rows are read when it is
+first shown and at each probe (``PLUGGED``, ``refresh``).
+
 Read-only: nothing here writes a record or a ledger, and nothing calls a model. The one file written is the screen's
 own state, ``<BRAIN_HOME>/tui.json`` (the scope, each panel's view, the last tab and each tab's view, and the settings:
 theme, timezone, each table's columns; ``save_state``), by the interactive views. Its settings also hold, set by hand: ``lang`` (en, fr: the queue's title, « File d'Ada »;
@@ -100,8 +105,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import (__version__, alerts, audit, config, decisions, defaults, digest, paths, perf, plan, projects, queue,
-               quiet, ranking, resume, sessions, stateio, status, transcript, usage)
+from . import (__version__, alerts, audit, config, decisions, defaults, digest, paths, perf, plan, plugin_panels,
+               projects, queue, quiet, ranking, resume, sessions, stateio, status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
 FRAMES = {"exec": "health"}  # a frame drawn from another panel's data, not a read of its own: the health tab's fourth
@@ -707,9 +712,21 @@ class Cockpit:
                 failed |= self._failed(PROBE_PANELS, exc)
             finally:
                 self.progress = None
+        for name in [n for n in PLUGGED if probe or n not in self.panels]:  # a plugin's: first shown, then probed
+            try:
+                self._set(**{name: self._plugged(name)})
+                read |= self._read_ok({name})
+            except Exception as exc:  # its last content kept, its error shown
+                failed |= self._failed((name,), exc)
         if read:
             self.read_at = transcript.iso(datetime.now(timezone.utc))
         return read | failed
+
+    def _plugged(self, name: str) -> dict:
+        """A plugged panel's rows for the projects of the scope its plugin belongs to (brain.plugin_panels.rows)."""
+        p = PLUGGED[name]
+        return {"projects": [{"project": x.name, "rows": plugin_panels.rows(p, x)}
+                             for x in self.found if x.name == p.project]}
 
     def _read_ok(self, panels) -> set[str]:
         at = transcript.iso(datetime.now(timezone.utc))
@@ -809,11 +826,14 @@ def entries(name: str, panel: dict | None) -> list[dict]:
     panel = panel or {}
     if name == "sessions":
         return list(panel.get("rows") or [])
-    key = {"queue": "entries", "frontier": "items", "milestones": "pending", "alerts": "alerts"}[name]
+    key = "rows" if name in PLUGGED else {"queue": "entries", "frontier": "items", "milestones": "pending",
+                                          "alerts": "alerts"}[name]
     return [{**r, "project": g["project"]} for g in panel.get("projects") or [] for r in g.get(key) or []]
 
 
 def _keep(name: str, r: dict, v: dict) -> bool:
+    if name in PLUGGED:  # a plugin's filter: the field's value as shown
+        return all(v[f] in (ALL, plugin_panels.cell(r.get(f))) for f in FILTERS[name])
     if name == "sessions":
         return v["state"] == ALL or (r["state"] != "ended" if v["state"] == "open" else r["state"] == v["state"])
     if name == "queue":
@@ -826,6 +846,9 @@ def _keep(name: str, r: dict, v: dict) -> bool:
 
 def haystack(name: str, r: dict) -> str:
     """What the search looks in: the row's ids, project, title and the words shown with them."""
+    if name in PLUGGED:
+        return " ".join([r["project"], r["id"], *(plugin_panels.cell(r.get(k)) for k, _ in PLUGGED[name].columns)]
+                        ).lower()
     keys = {"sessions": ("session_id", "host_id", "name", "role", "parent_name", "project", "state", "step", "title",
                          "branch", "model"),
             "queue": ("id", "kind", "category", "band", "project", "title", "recommended", "detail"),
@@ -1233,7 +1256,8 @@ def queue_title(name: str | None = None, language: str | None = None) -> str:
 def title(name: str) -> str:
     """A panel's title: the person's free title (tui.json settings.titles.<panel>), else the queue's
     :func:`queue_title` or the panel's name."""
-    return (settings().get("titles") or {}).get(name) or (queue_title() if name == "queue" else TITLES[name])
+    own = PLUGGED[name].title[lang()] if name in PLUGGED else None
+    return (settings().get("titles") or {}).get(name) or own or (queue_title() if name == "queue" else TITLES[name])
 
 
 def save_state(state: dict, path: Path | None = None) -> bool:
@@ -1545,6 +1569,8 @@ def _extra_cells(name: str, r: dict) -> tuple[str, ...]:
 
 
 def _cells(name: str, r: dict, tz: str | None = None) -> tuple[str, ...]:
+    if name in PLUGGED:
+        return (r["project"], *(plugin_panels.cell(r.get(k)) for k, _ in PLUGGED[name].columns or (("id", "Id"),)))
     if name == "sessions":
         return (r["state"], session_text(r), r.get("role") or "solo", r.get("parent_name") or "-", kids_text(r),
                 r["project"], r["step"] or "-", model_text(r), str(r.get("effort") or "-"), ctx_text(r),
@@ -1594,6 +1620,8 @@ def heading(name: str, panel: dict | None) -> str:
              "frontier": frontier_lines, "audit": audit_lines, "health": health_lines, "exec": exec_lines}
     if name == "digest":
         return title("digest") if panel else f"{title('digest')}: not probed yet"
+    if name in PLUGGED:
+        return f"{title(name)} ({len(entries(name, panel))})" if panel else f"{title(name)}: not read yet"
     if name in TABS and name not in lines:  # a tab's own help (the overview's cards)
         return tab_title(name)
     return lines[name](panel if name in PROBE_PANELS else panel or {})[0]
@@ -1780,7 +1808,7 @@ def tab_count(name: str, snap: dict) -> str:
 def tab_label(name: str, snap: dict) -> str:
     """A tab's entry in the bar: its key, its name and its count."""
     count = tab_count(name, snap)
-    return f"{TABS[name]['key']} {tab_title(name)}" + (f" {count}" if count else "")
+    return " ".join(x for x in (TABS[name]["key"], tab_title(name), count) if x)  # a plugin's tab: no key
 
 
 def tab_labels(snap: dict, active: str, columns: int, rows: int) -> dict[str, str]:
@@ -1789,7 +1817,7 @@ def tab_labels(snap: dict, active: str, columns: int, rows: int) -> dict[str, st
     full = {n: tab_label(n, snap) for n in built_tabs()}
     if not narrow(columns, rows) and sum(len(x) + TAB_PADDING for x in full.values()) <= columns:
         return full
-    return {n: x if n == active else TABS[n]["key"] for n, x in full.items()}
+    return {n: x if n == active else TABS[n]["key"] or x for n, x in full.items()}  # a plugin's tab: its name
 
 
 def tab_views(name: str, is_narrow: bool = False) -> tuple[str, ...]:
@@ -1897,7 +1925,76 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
                         ("digest", digest_lines(p.get("digest"), width))):
         if name in (tab_panels(tab) if tab else PANELS):
             out += ["", *lines, *(_line("  ", s, width) for s in states(name, snap, v(name), search, tz))]
+    for name in PLUGGED:  # a plugin's panels: with its tab, or with every panel
+        if name in (tab_panels(tab) if tab else PLUGGED):
+            out += ["", *plugged_lines(name, p.get(name), width, v(name), search),
+                    *(_line("  ", s, width) for s in states(name, snap, v(name), search, tz))]
     return out
+
+
+def plugged_lines(name: str, panel: dict | None, width: int = WIDTH, view: dict | None = None,
+                  search: str = "") -> list[str]:
+    """A plugin's panel in the text view: its heading, then its columns' titles and its rows, as its table shows them."""
+    cols = columns(name)
+    rows = [cells(name, r) for r in shown(name, panel, view, search)]
+    widths = [max([len(c), *(len(r[i]) for r in rows)]) for i, c in enumerate(cols)]
+    out = [_noted(heading(name, panel), name, panel, view, search)]
+    out += [("  " + "  ".join(x.ljust(w) for x, w in zip(row, widths)).rstrip())[:width]  # aligned, never collapsed
+            for row in ([cols] if rows else []) + rows]
+    return out
+
+
+# --- a plugged project's panels and tabs (brain.plugin_panels, wi-brain-command-plugins-cockpit) ---
+
+PLUGGED: dict = {}      # <project>-<panel> -> plugin_panels.Panel
+PLUG_NOTES: list = []   # what the plugins' declarations left out or tolerated
+_TABLES = ("SORTS", "FILTERS", "SORT_KEYS", "SORT_COLUMNS", "COLUMNS", "EMPTY_COLUMN", "NOTHING", "HELP", "TITLES")
+
+
+def plug(plugged: plugin_panels.Plugged) -> None:
+    """The plugins' panels and tabs into the cockpit's tables, those of an earlier plug taken out first: each panel's
+    columns (the project's first), sorts (then the project), filters, help and title, and each tab placed after
+    Resources, before the settings, with no key."""
+    g = globals()
+    for name in list(PLUGGED):
+        for table in _TABLES:
+            g[table].pop(name, None)
+    PLUGGED.clear()
+    PLUG_NOTES[:] = list(plugged.notes)
+    for name, p in plugged.panels.items():
+        PLUGGED[name] = p
+        cols = p.columns or (("id", "Id"),)
+        COLUMNS[name] = ("Project", *(t for _, t in cols))
+        SORTS[name] = tuple(dict.fromkeys((*p.sorts, "project")))
+        FILTERS[name] = dict(p.filters)
+        SORT_KEYS[name] = {k: plugin_panels.sort_key(k) for k in SORTS[name]}
+        SORT_COLUMNS[name] = {"Project": "project", **{t: k for k, t in cols if k in SORTS[name]}}
+        EMPTY_COLUMN[name] = cols[-1][1]
+        NOTHING[name] = f"No row of {p.project}'s plugin in {{scope}}"
+        TITLES[name] = p.title["en"]
+        HELP[name] = {"what": p.help or f"What {p.project}'s plugin shows: {p.title['en']}.",
+                      "from": f"{p.project}'s plugin ({p.ref}): " + (f"the file {p.rows_file} under its root"
+                                                                     if p.rows_file else f"{p.read}, given its root"),
+                      "read": "when the panel is first shown, then at each probe (--probe, 5 min, and r)",
+                      "detail": f"brain {p.project} --help"}
+    kept = [(n, t) for n, t in TABS.items() if not t.get("plugin")]
+    at = next((i for i, (n, _) in enumerate(kept) if n == "settings"), len(kept))
+    plugged_tabs = [(n, {"key": "", "label": t.label, "question": t.question, "views": {"list": t.panels},
+                         "plugin": t.project}) for n, t in plugged.tabs.items() if n not in dict(kept)]
+    TABS.clear()
+    TABS.update(kept[:at] + plugged_tabs + kept[at:])
+
+
+def plug_registry(root: Path | None = None) -> list[str]:
+    """The plugins of the registry's projects plugged (``plug``); their notes. A registry that cannot be read plugs
+    nothing."""
+    try:
+        reg = projects.load(root).values()
+    except Exception as exc:  # no registry, or a broken one: the built-in panels alone
+        plug(plugin_panels.Plugged())
+        return [f"the plugins' panels are not read: {type(exc).__name__}: {exc}"]
+    plug(plugin_panels.load(reg))
+    return list(PLUG_NOTES)
 
 
 def states(name: str, snap: dict, view: dict | None = None, search: str = "", tz: str | None = None) -> list[str]:

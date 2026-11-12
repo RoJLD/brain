@@ -1261,6 +1261,27 @@ with `plugin: null`, behaves as before, and a plugin that cannot load fails its 
 (the command wins).
 `brain status --project demo` and `brain status --all` show the project as any other.
 
+The plugin also brings its cockpit panels and tabs, as data (`brain.plugin_panels`): a `COCKPIT` mapping beside the
+object it names (or in its module; a callable that returns it works too). Each panel names where its rows come from
+(`rows`: a JSON file under the project's root, a list of objects or `{"rows": [...]}`; or `read`: a `module:attr`
+callable given the project's root), its columns, its sorts (the first the default), its filters, the field that
+names a row and its help:
+
+```python
+COCKPIT = {"v": 1, "panels": {"runs": {
+    "title": {"en": "Runs", "fr": "Exécutions"}, "rows": "out/runs.json",
+    "columns": [{"key": "id", "title": "Id"}, {"key": "state", "title": "State"}, {"key": "score", "title": "Score"}],
+    "sorts": ["score", "state"], "filters": {"state": ["all", "ok", "failed"]}, "help": "The last runs."}}}
+```
+
+`brain tui` reads the registry's plugins at its start and draws each panel (`demo-runs`) as one of its own tables: the
+project selector, the search, the sorts and filters (`s`, `o`, `f`, `--sort demo-runs:state`), the saved views, the
+column chooser, the palette, a row's detail and `--once` work on it. Its tab, `demo` (or one per entry of `tabs`), comes
+after Resources with no number: a click, the palette or `ctrl+pagedown` reaches it, and `--tab demo` starts there. Its
+rows are read when it is first shown and at each probe (`r` reads them again); a file or a read that fails keeps its
+last rows and shows the error. Nothing of it is Textual code. A key this engine does not know is kept and noted, a
+plugin that cannot be loaded is noted (a notification, or stderr with `--once`), and the other panels go on.
+
 ## Tests
 
 From a checkout of this repo, with research-graph from the same checkout:
