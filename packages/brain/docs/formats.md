@@ -60,7 +60,8 @@ their default.
 | permissions.yaml | the brain's root | `v` | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
 | packs.yaml | `source/packs.yaml` | `v` | a note | refused |
 | template.yaml | a template's folder | `engine:` range | a note (in CI: refused) | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |
-| projects.yaml | the brain's root | none yet | a project key (`KEYS`; `standards` since 0.3.2, its own keys a note too), a `repos:` key (`REPO_KEYS`; `tools` since 0.3.2, its slots, keys and formats a note too): a note, kept. `access` is a key that **narrows**: a brain that does not know it (0.2.8 and before) keeps the note (in CI: refused, so a brain repo whose CI runs 0.2.8 goes red) and reads an `access: read` entry as a full project, at the registry's root with the default store, journal and decision log, so such an entry lands in a registry only once every machine runs brain 0.3.0 or later | - |
+| projects.yaml | the brain's root | none yet | a project key (`KEYS`; `standards` since 0.3.2, `parent` and `classes` since 0.3.3, its own keys a note too), a `repos:` key (`REPO_KEYS`; `tools` since 0.3.2, its slots, keys and formats a note too): a note, kept. `access` is a key that **narrows**: a brain that does not know it (0.2.8 and before) keeps the note (in CI: refused, so a brain repo whose CI runs 0.2.8 goes red) and reads an `access: read` entry as a full project, at the registry's root with the default store, journal and decision log, so such an entry lands in a registry only once every machine runs brain 0.3.0 or later | - |
+| scopes.yaml | beside config.json (config.json `scopes`, `$BRAIN_SCOPES`; [the README](../README.md#the-scope-tree)) | `v` | a container's unknown key: a note, kept (in strict mode, CI: `brain check --all` reports it); the keys the inheritance resolver will read (`rules`, `notify`, `quiet`, `capabilities`, `never`, `budgets`, `members`, `language`) are accepted as declared | refused |
 
 AR lines are parsed one by one (`brain.records.parse_ar`): a line that is not a JSON object (a conflict marker, a
 truncated write, a byte that is not UTF-8) or that its schema refuses is an error of `brain record check`; a line a newer brain wrote (a higher
@@ -260,7 +261,7 @@ N2). It is a cache, so it carries every input it depends on:
 |---|---|
 | `v` | 2 (0.2.5 and older wrote none) |
 | `key.engine` | the engine version that checked |
-| `key.rules` | sha256 of config.json's `public.deny` (as brain.config reads it), `allow`, `patterns` and `refuse`, in a canonical form: key order and spacing do not count |
+| `key.rules` | sha256 of config.json's `public.deny` (as brain.config reads it, the terms `public.deny_from_tree` generates from the scope tree included), `allow`, `patterns` and `refuse`, in a canonical form: key order and spacing do not count |
 | `key.gitleaks` | whether gitleaks read the history (with no commit to read: whether it was on the PATH) |
 | `at`, `repo`, `remote`, `files`, `commits`, `gitleaks` | what the check read, for the owner |
 
@@ -313,6 +314,29 @@ back through the engine and compares them, field for field (AR lines byte for by
 the refusal of a higher `v`. A new format, or a new version of one, adds its pair; an additive change extends
 the `newer` file only (the `projects` one holds an `access: read` entry and a second project at a shared root since
 0.3.0).
+
+### The old stores
+
+A reader tested on its format alone can still refuse a whole brain an older engine made: brain #33's `brain lesson
+add` refused every store made before it, and its tests used only stores its own code wrote. So
+`tests/fixtures/stores/<tag>/brain/` holds a brain as a released engine wrote it, through that engine's own commands,
+as an invented owner (wi-brain-old-store-fixture): brain init, the first commit, a milestone, three items (one
+depending on another, one closed), a decision, a journal line, a lesson where the engine had the type, an AR, an SR
+and the generated views. `freeze.json` beside it names the tag, the engine and each step with its exit code (a command
+the engine lacked is recorded, not run again). They are frozen, never edited: v0.2.4 (before the Lesson type) and
+v0.3.1 to start, then the last tag's at each version PR.
+
+```bash
+python packages/brain/installer/freeze_store.py v0.3.2     # installs the tag in a fresh venv and an isolated home
+```
+
+`tests/test_old_stores.py` copies each, commits it, moves the pin and runs `brain sync` as `brain update` does, then
+runs this checkout strict on it: `brain check` (before the sync, its one failure may be the plugin to render again;
+after it, none), `brain record check`, `brain item` (show, add, set, close), `brain items`, `brain lesson` (list, and
+add: taken where the store has the Lesson type, refused with the way to add it where it has not), `brain retro`, and
+the reads write nothing. The engine is public: the machine's user and host names that brain init writes into
+`public.deny` are replaced by invented ones (`host-a`, `ada-l`), and a store that still names one, or the work folder
+(an absolute path of the machine that froze it), is refused by the script.
 
 ## At a release
 
