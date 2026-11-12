@@ -31,6 +31,8 @@ USAGE = """\
                  (its pages: Cockpit, the screen's own settings in tui.json, edited there with Enter: theme,
                  timezone, language, refresh and probe intervals, each panel's free title; Identity, Brain,
                  Permissions, each brain setting with its file and the command that changes it, never edited there;
+                 Modules, each module of the catalogue with its state, cost and needs, turned on or off by
+                 brain mod's plan then its apply on y;
                  Setup, the setup wizards: a choice, the plan run, then the apply on y, each command logged as
                  {owner}'s), ctrl+pageup and ctrl+pagedown the previous and next,
                  Escape back to the overview;

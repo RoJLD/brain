@@ -135,3 +135,16 @@ def test_a_broken_config_says_so_and_the_running_interval_is_named(tmp_path, mon
         settings.parse("probe", "48h")
     cockpit.save_state({"settings": {"refresh": 1e9}})
     assert cockpit.load_state()["settings"] == {}  # longer than a day: left out
+
+
+def test_the_modules_page_lists_the_catalogue_with_each_state_and_turns_only_the_switchable():
+    """wi-brain-modules-tab (SIGMA-15): each module of the catalogue, its state and source, its cost and needs; a
+    core module is always on; the distributions read-only."""
+    rows = _by_key(settings.collect(pages=("modules",))["modules"])
+    assert rows["rules"].value.startswith("on") and not rows["rules"].edit  # core
+    assert rows["rules"].change.startswith("always on (a core capability)")
+    assert rows["tui"].edit == "module" and "brain mod enable|disable tui" in rows["tui"].change
+    assert rows["plane"].value.startswith("planned") and not rows["plane"].edit  # brain mod would refuse it
+    assert rows["backlog"].source.startswith("disk 30 MB")
+    assert rows["distribution base"].value.startswith("the brain engine") and not rows["distribution base"].edit
+    assert settings.page_label("modules") == "Modules"
