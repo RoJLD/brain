@@ -534,6 +534,13 @@ def in_tests(path: str) -> bool:
     return any(p in TEST_DIRS for p in path.split("/")[:-1])
 
 
+def fixture_data(path: str) -> bool:
+    """A file under a ``fixtures`` folder of a test folder (tests/fixtures/**): data a test reads, such as a brain an
+    older engine wrote and froze (wi-brain-old-store-fixture), never a doc or code a change is reviewed on."""
+    parts = path.split("/")[:-1]
+    return any(p in TEST_DIRS and "fixtures" in parts[i + 1:] for i, p in enumerate(parts))
+
+
 def is_test(path: str) -> bool:
     base = path.rsplit("/", 1)[-1]
     if skipped(path) or base in ("conftest.py", "__init__.py"):
@@ -547,12 +554,12 @@ def is_test(path: str) -> bool:
 
 def is_doc(path: str) -> bool:
     """The docs set: READMEs at any depth, docs/**, runbooks; not specs or plans (docs/specs, docs/*/plans...),
-    changelogs or journals."""
+    changelogs, journals or a test's fixture data (:func:`fixture_data`)."""
     low = path.lower()
     base = low.rsplit("/", 1)[-1]
     dirs = low.split("/")[:-1]
     if not low.endswith(".md") or skipped(path) or (dirs[:1] == ["docs"] and {"specs", "plans"} & set(dirs)) \
-            or base.startswith(("changelog", "journal")):
+            or base.startswith(("changelog", "journal")) or fixture_data(path):
         return False
     return base == "readme.md" or low.startswith("docs/") or "runbook" in base
 

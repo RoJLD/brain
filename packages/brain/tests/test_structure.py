@@ -136,6 +136,18 @@ def test_each_symptom_fix_needs_a_root_cause_line(make_repo, tmp_path, monkeypat
     assert tags[("symptom.cause", rel)] == "justified"
 
 
+def test_a_tests_fixture_data_is_not_reviewed_as_code(make_repo, tmp_path, monkeypatch, capsys):
+    """A frozen brain's rendered hooks (wi-brain-old-store-fixture) carry their engine's noqa and retries: data a
+    test reads, never a change's symptom fix or its size. The same file outside the fixtures is reviewed."""
+    lab = _setup(make_repo, tmp_path, monkeypatch)
+    hook = "import os  # noqa: F401\n" + WIDE + "".join(f"Z{i} = {i}\n" for i in range(50))
+    _write(lab, "tests/fixtures/stores/v1/brain/plugins/x/hooks/guard.py", hook)
+    _write(lab, "src/lab/guard.py", hook)
+    rc, tags, _ = _signals(capsys, lab)
+    assert not [u for _, u in tags if "fixtures" in u]
+    assert tags[("symptom.cause", "src/lab/guard.py")] == "NEW" and rc == 1
+
+
 def test_no_symptom_from_text_that_only_looks_like_one(make_repo, tmp_path, monkeypatch, capsys):
     lab = _setup(make_repo, tmp_path, monkeypatch)
     _write(lab, "src/lab/core.py", 'HELP = "add # noqa or time.sleep(1)"\n\ndef go():\n    pass\n')

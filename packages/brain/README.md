@@ -167,7 +167,9 @@ a symptom fix (an added `type: ignore` or `noqa`, a skipped test, an `except` th
 retry, a longer timeout) with no `Root cause:` line are NEW too. The lines `Root cause: ...` and
 `Justified: <unit>: <reason>` are read from the PR body (`--pr-body FILE`, `-` for stdin) and the range's commit
 messages; a justified finding is shown and never blocks. The thresholds are the project's, in `projects.yaml`:
-`audit: {max_lines: 1000, complexity: 15}`.
+`audit: {max_lines: 1000, complexity: 15}`. A test's fixture data (a file under a `fixtures` folder of a `tests`
+folder, such as a brain an older engine wrote and froze) is data, not code or docs: the shape signals and the docs
+set leave it out.
 
 The scout also reads four cheap norms in the AST of each Python file a change touches (`brain.norms`):
 `norm.timeout` (a `subprocess.run`, `call`, `check_call`, `check_output` or `urlopen` without `timeout=`, a

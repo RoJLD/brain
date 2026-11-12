@@ -409,12 +409,18 @@ def _file(repo: str, old: str, path: str, before: str | None, after: str, ctx: d
     return out
 
 
+def _reviewed(path: str, new: inventory.Tree) -> bool:
+    """A file the change leaves whose shape is reviewed: not deleted, and not a test's fixture data (data a test
+    reads, such as a frozen brain's rendered hooks: inventory.fixture_data)."""
+    return bool(path) and not inventory.fixture_data(path) and new.text(path) is not None
+
+
 def signals(repo: str, rows: list[tuple[str, str, str]], base: inventory.Tree, new: inventory.Tree, limits: dict,
             body: str, decision_texts: list[str]) -> list[dict]:
     """The structure findings of a change: ``rows`` the scout's (status, old path, new path), ``limits`` from
     :func:`thresholds`, ``body`` the PR body and commit messages, ``decision_texts`` the project's decision logs (a
     decision log the change itself edits counts too)."""
-    pairs = [(old or path, path) for _, old, path in rows if path and new.text(path) is not None]
+    pairs = [(old or path, path) for _, old, path in rows if _reviewed(path, new)]
     edited = [new.text(p) or "" for _, p in pairs if DECISION_FILE.search(p)]
     ctx = {**limits, "moved": _moved(rows, base, new), "decisions": decision_texts + edited,
            "root_cause": bool(ROOT_CAUSE.search(body))}

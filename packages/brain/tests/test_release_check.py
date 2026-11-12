@@ -71,6 +71,12 @@ def changelogs(repo: Path, version: str, brain_body: str = STANDARD_UPGRADE, the
                            "## 0.2.5 — 2026-11-04\n\n### Upgrade\n\n1. An old step.\n")
 
 
+def frozen(repo: Path, tag: str) -> None:
+    """The brain ``tag``'s engine wrote, as installer/freeze_store.py leaves it (its freeze.json and config.json)."""
+    write(repo, f"{release_check.STORES}/{tag}/freeze.json", f'{{"tag": "{tag}", "engine": "{tag[1:]}"}}\n')
+    write(repo, f"{release_check.STORES}/{tag}/brain/config.json", '{"v": 1}\n')
+
+
 @pytest.fixture
 def repo(tmp_path):
     """A repo tagged v0.2.5, with a schema of each kind and an ordinary module."""
@@ -84,6 +90,7 @@ def repo(tmp_path):
     write(here, STORE_SCHEMA, "node_types: []\n")
     write(here, OTHER, "x = 1\n")
     write(here, release_check.REGISTRY, Path(release_check.__file__).read_text(encoding="utf-8"))  # the tag's SCHEMAS
+    frozen(here, "v0.2.5")   # the old-store fixture of the tag (test_a_version_pr_without_the_last_tags_store_fails)
     git(here, "add", "-A")
     git(here, "commit", "-qm", "first")
     git(here, "tag", "v0.2.5")
@@ -157,6 +164,34 @@ def test_a_version_pr_without_a_schema_change_needs_only_the_standard_steps(repo
     rc, text = run(repo, capsys)
     assert rc == 0, text
     assert "no registered schema changed" in text
+
+
+@pytest.mark.parametrize("left", ["folder", "other tag", "no brain"])
+def test_a_version_pr_without_the_last_tags_store_fails(repo, capsys, left):
+    """The fixture freeze (wi-brain-old-store-fixture): the brain the last tag wrote is frozen in the version PR, so
+    the release's tests ran this checkout on the store an owner upgrades from."""
+    import shutil
+    stores = repo / release_check.STORES
+    shutil.rmtree(stores / "v0.2.5")
+    if left == "other tag":
+        frozen(repo, "v0.2.4")
+    elif left == "no brain":
+        write(repo, f"{release_check.STORES}/v0.2.5/freeze.json", '{"tag": "v0.2.5"}\n')
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    commit(repo)
+    rc, text = run(repo, capsys)
+    assert rc == 1 and "no store of v0.2.5 frozen" in text and "installer/freeze_store.py v0.2.5" in text
+    frozen(repo, "v0.2.5")
+    assert run(repo, capsys)[0] == 0                   # the working tree is read: frozen, not committed yet
+
+
+def test_any_other_pr_needs_no_frozen_store(repo, capsys):
+    import shutil
+    shutil.rmtree(repo / release_check.STORES)
+    write(repo, OTHER, "x = 2\n")
+    commit(repo)
+    assert run(repo, capsys)[0] == 0
 
 
 def test_a_store_schema_counts_too(repo, capsys):
@@ -619,7 +654,8 @@ def test_ci_runs_the_job_on_pull_requests():
 def test_the_release_page_says_each_step():
     page = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
     for needed in ("### Upgrade", "release-check", "compat-prev", "release-tag", "git tag -s", "engine.pin",
-                   "brain check --public --history", "tests/fixtures/formats", "brain_version"):
+                   "brain check --public --history", "tests/fixtures/formats", "brain_version",
+                   "installer/freeze_store.py vP", "tests/fixtures/stores/vP/"):
         assert needed in page, needed
 
 
