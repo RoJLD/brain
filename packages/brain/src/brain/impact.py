@@ -13,7 +13,7 @@ The chain:
 3. The CodeRefs: the code map (brain.codemap) names the CodeRefs of each touched symbol and caller; a file's CodeRef
    is touched by any change to the file; a symbol the index cannot place is looked up by the AST of both sides.
 4. The graph: the nodes that rely on those CodeRefs (research_graph's reliance: implemented_by, part_of, depends_on,
-   ...: Features, WorkItems, the quant layers), and around them the Doc sections that document them or name a changed
+   ...: Features, WorkItems, the domain layers), and around them the Doc sections that document them or name a changed
    file, the Test modules that test them (tested_by: brain sync's links, later wi-brain-test-links-auto's) or cover
    the touched code and the CI jobs that run those, the ADRs and SDRs linked to them (the current one of a superseded
    chain), their specs, the open items that deliver them and the DDRs pending on those.

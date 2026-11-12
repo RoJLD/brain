@@ -508,6 +508,9 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     errors += _cross_store(projs, every)
     for line in render.registry_warnings(neutral.brain_root(root), projs) + _uncloned(root):
         print(f"warning: {line}")
+    from .. import denylist   # a declared private name no deny list holds (wi-brain-public-deny-derived)
+    for line in denylist.check_lines(root):
+        print(f"warning: {line}")
     for e in errors:
         print(f"error: {e}")
     read_only = len(projects.readonly(root))

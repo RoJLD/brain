@@ -22,7 +22,7 @@ ITEMS = """
 - {id: wi-ice, type: WorkItem, status: deferred, title: "Build iced", props: {priority: P3, theme: "3.9"}}
 - {id: wi-thaw, type: WorkItem, status: todo, title: "Build after the iced", props: {priority: P2, theme: "3.9"}}
 - {id: wi-ext, type: WorkItem, status: todo, title: "Build external", props: {priority: P2, theme: "3.9",
-   after_external: "quant wi-z"}}
+   after_external: "acme wi-z"}}
 """
 EDGES = """
 - {from: wi-p1, to: ms-x, type: part_of}
@@ -95,7 +95,7 @@ def test_a_fixed_seed_gives_the_same_output_and_the_json_carries_it(project):
     assert set(res["inputs"]) == {"store_commit", "store_digest", "model_digest", "settings_digest"}
     assert res["inputs"]["store_digest"].startswith("sha256:") and res["inputs"]["model_digest"].startswith("sha256:")
     ids = {i["id"] for i in res["items"]}
-    assert ids == {"wi-one", "wi-two", "wi-p1", "wi-p2", "wi-after"}  # wi-ext waits on quant, wi-thaw on the ice
+    assert ids == {"wi-one", "wi-two", "wi-p1", "wi-p2", "wi-after"}  # wi-ext waits on acme, wi-thaw on the ice
     p1, after = (next(i for i in res["items"] if i["id"] == k) for k in ("wi-p1", "wi-after"))
     assert after["days"]["p10"] >= p1["days"]["p10"] and set(p1["days"]) == {"p10", "p50", "p80", "p90"}
 
@@ -105,7 +105,7 @@ def test_deferred_items_stay_out_of_every_date_and_are_shown_apart(project):
     assert "wi-ice" not in {i["id"] for i in res["items"]}
     assert res["deferred"]["items"] == 1 and res["deferred"]["ids"] == ["wi-ice"] and res["deferred"]["hours"] > 0
     undated = {u["id"]: u["why"] for u in res["gates"]["undated"]}
-    assert undated == {"wi-thaw": "after a deferred item: wi-ice", "wi-ext": "after another project: quant wi-z"}
+    assert undated == {"wi-thaw": "after a deferred item: wi-ice", "wi-ext": "after another project: acme wi-z"}
     ms = {m["id"]: m for m in res["milestones"]}
     assert ms["ms-x"]["deferred"] == ["wi-ice"] and ms["ms-x"]["open"] == 2 and ms["ms-x"]["dates"]
     assert ms["ms-y"]["shown"] == "undated" and ms["ms-y"]["dates"] is None  # its only item waits on another project

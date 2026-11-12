@@ -184,8 +184,9 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
   2026-11-04 REVERSAL of the internal-error policy, for these checks only). They refuse every `git commit` and
   `git push`, whatever the repo, while the configuration they read is unexpected, the reason naming the fix:
   `config.json` unreadable or not an object (fix it: `brain config --check`), `public` or one of its keys (`repos`, `deny`, `allow`,
-  `patterns`, `refuse`, `deny_from_tree`) of another type (`brain config --keys`), with `public.deny_from_tree` on a
-  `scopes.yaml` or a `projects.yaml` that cannot be read (the generated deny list would miss terms), a `v` that is not a whole number, or above the one the engine reads (`brain update`), `$BRAIN_CONFIG` naming no file, or no
+  `patterns`, `refuse`, `deny_from_tree`, `derive`, `public_names`) of another type (`brain config --keys`), with `public.deny_from_tree` on a
+  `scopes.yaml` or a `projects.yaml` that cannot be read (the generated deny list would miss terms), a registry
+  `public.derive` reads that raises (brain.denylist: the derived terms would be missing), a `v` that is not a whole number, or above the one the engine reads (`brain update`), `$BRAIN_CONFIG` naming no file, or no
   `config.json` found although `$BRAIN_PERSONAL` or `<BRAIN_HOME>/personal.json` names a personal brain (a renamed or
   moved folder: point the pointer at the main checkout, `install.ps1 -Apply`). An unknown key never refuses (a newer
   brain's, kept). `guard.sh` refuses them as well when it finds no Python, or the one it finds cannot import brain (a

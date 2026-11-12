@@ -150,9 +150,19 @@ def classify(rules: list[Rule], files: list[str]) -> dict:
             "stale": [r.glob for i, r in enumerate(rules) if i not in used], "errors": errors}
 
 
+SEPARATORS = re.compile(r"[-_ ]+")
+
+
+def term_body(term: str) -> str:
+    """The regex of ``term`` without its word boundaries: case aside, ``/`` and ``\\`` alike, and its separators
+    (``-``, ``_``, a space) in every spelling, none included (wi-brain-public-deny-derived): ``acme-lab`` also
+    matches ``acme_lab``, ``Acme Lab`` and ``acmelab``."""
+    parts = [re.escape(p) for p in SEPARATORS.split(term.replace("\\", "/").strip()) if p]
+    return "[-_ ]?".join(parts) if parts else re.escape(term)
+
+
 def term_regex(term: str) -> re.Pattern:
-    t = re.escape(term.replace("\\", "/"))
-    return re.compile(rf"(?i)(?<![A-Za-z0-9_]){t}(?![A-Za-z0-9_])")
+    return re.compile(rf"(?i)(?<![A-Za-z0-9_]){term_body(term)}(?![A-Za-z0-9_])")
 
 
 def readiness(root: Path, cfg: config.Config, files: list[str]) -> dict:

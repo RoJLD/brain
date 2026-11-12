@@ -4,9 +4,9 @@ indexed in the local GitNexus, on demand, and ``brain health`` saying when an in
 projects.yaml declares the repos to index under each project's ``code_index:``, relative to the project's root, and
 the stack that indexes them under its ``index:``::
 
-  quant:
+  acme:
     root: ../demo
-    code_index: [., ../quant-marketdata, {path: ../hedge-fund, branch: master}]   # branch: default origin/HEAD's
+    code_index: [., ../acme-data, {path: ../trade-desk, branch: master}]   # branch: default origin/HEAD's
     stacks:
       gitnexus:
         ...
