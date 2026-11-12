@@ -617,6 +617,18 @@ The profiles' names and the stages `--stage` selects are typology and stage ids,
 template of a later catalog, is tolerated: a note in read mode, an error only in strict mode (CI) (`--stage` itself
 takes this engine's stages).
 
+`brain project new DIR --kind K [--kind K]... [--stage S] [--template T] [--apply]` is the new-project wizard's
+first slice (`wi-brain-project-wizard`): what the project produces (ids of the typology catalog: code products and
+research first, STD-5; `strategy`, `creation`... are named and not offered yet), its stage, then a plan (the kinds
+with their entries and the Vision's modules, the layers they are proposed at that stage and those the template's graph
+lacks, then `brain init`'s plan) and `--apply`: the project's brain written by `brain init` from the first kind's
+profile template (`trading` takes `research`'s; `--template` names another), its registry entry recording
+`lifecycle: {typologies, stage}` (the lifecycle's stage: `mvp` reads as `build`), which `brain item clauses` reads.
+Run again in a folder that holds that brain, the plan shows what the answers change in its entry (typologies, stage,
+the standards' stage, the template) and writes nothing: an existing registry changes by a branch and a PR. The cockpit's Setup page
+offers it as « A new project » (without `--owner`, the owner of this machine's personal brain). The languages and tools, the data classes and the pack, procedures and permissions it
+will propose are its later slices.
+
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
 A team uses `--kind team` (and `--tenant ID` for a hosted brain). The step-by-step guide from an empty machine is
