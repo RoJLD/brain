@@ -33,18 +33,8 @@ def cmd_item(args, root: Path) -> int:
     store = _store(args, root)
     try:
         if args.item_cmd == "add":
-            props = {k: v for k, v in {"priority": args.priority, "priority_reason": args.reason, "theme": args.theme,
-                                       "idea": args.idea}.items() if v}
-            if args.size_reason and not args.size:
-                raise graph.GraphError("--size-reason without --size")
-            if args.size:
-                if not args.size_reason:
-                    raise graph.GraphError("--size needs its --size-reason (one line: why this size)")
-                props.update(size=args.size.upper(), size_reason=args.size_reason)
-            if args.type == "WorkItem":
-                props["created"] = date.today().isoformat()   # since the size rule (brain.sizing)
-            props.update(_kv(args.prop))
-            node = graph.add_item(store, args.id, args.title, node_type=args.type, status=args.status, props=props,
+            node = graph.add_item(store, args.id, args.title, node_type=args.type, status=args.status,
+                                  props=_add_props(args),
                                   spec=args.spec, after=args.after, milestone=args.milestone, adr=args.adr,
                                   anchor=args.anchor, file=args.file, edges_file=args.edges_file,
                                   foreign=_foreign(root, store, [args.spec, *(args.after or []), args.milestone,
@@ -67,13 +57,32 @@ def cmd_item(args, root: Path) -> int:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
     print(f"{args.item_cmd}: {node['id']} [{node['status']}]; then brain sync and brain check")
-    if args.item_cmd == "add" and args.type == "WorkItem" and not (node.get("props") or {}).get("size"):
+    if args.item_cmd == "add" and args.type == "WorkItem":
+        _after_add(args, store, node)
+    return 0
+
+
+def _after_add(args, store: Path, node: dict) -> None:
+    """A new WorkItem's hints: the line that sizes it when it has no size, the milestone the signals suggest."""
+    props = node.get("props") or {}
+    if not props.get("size"):
         print(f"size: none; give one (brain item set {node['id']} size=S|M|L|XL size_reason=...): S under ~0.3 h of "
               "active time, M ~0.8 h, L ~2 h, XL beyond (to split)")
-    if args.item_cmd == "add" and args.type == "WorkItem" and not args.milestone \
-            and milestones.PROPOSED not in (node.get("props") or {}):
+    if not args.milestone and milestones.PROPOSED not in props:
         _print_suggestion(store, node["id"])
-    return 0
+
+
+def _add_props(args) -> dict:
+    """brain item add's props: priority and its reason, theme, idea, the size and its reason (both or neither), a
+    WorkItem's created stamp (since the size rule: brain.sizing), then the --prop pairs."""
+    props = {k: v for k, v in {"priority": args.priority, "priority_reason": args.reason, "theme": args.theme,
+                               "idea": args.idea, "size": args.size, "size_reason": args.size_reason}.items() if v}
+    if bool(args.size) != bool(args.size_reason):
+        raise graph.GraphError("--size needs its --size-reason (one line: why this size), and the reverse")
+    if args.type == "WorkItem":
+        props["created"] = date.today().isoformat()
+    props.update(_kv(args.prop))
+    return props
 
 
 def cmd_show(args, root: Path) -> int:
