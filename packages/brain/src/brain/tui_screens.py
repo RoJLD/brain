@@ -77,6 +77,60 @@ class ViewScreen(ModalScreen):
         self.dismiss(None)
 
 
+class SettingScreen(ModalScreen):
+    """One of the cockpit's own settings (brain.settings, the Settings tab's Cockpit page): a choice or a value typed;
+    Save keeps it (the text typed or picked), Default removes it, Escape changes nothing. The app checks the value
+    (brain.settings.parse) and saves tui.json."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    CSS = """
+    SettingScreen { align: center middle; }
+    #setting { width: 72; max-width: 100%; height: auto; border: round $accent; padding: 1 2; background: $surface; }
+    #setting .field { margin-top: 1; color: $text-muted; }
+    #setting-buttons { height: auto; margin-top: 1; }
+    #setting-buttons Button { margin-right: 1; }
+    """
+
+    def __init__(self, setting, current: str) -> None:
+        super().__init__()
+        self.setting, self.current = setting, current
+
+    def compose(self) -> ComposeResult:
+        s = self.setting
+        with Vertical(id="setting"):
+            yield Label(Text(f"{s.key}: {s.value}", style="bold"))
+            yield Label(Text(f"from {s.source}"), classes="field")
+            if s.edit == "choice" and s.choices:
+                options = list(s.choices) if self.current in s.choices else [*s.choices, self.current]
+                yield Select([(c, c) for c in options], value=self.current, allow_blank=False, id="setting-value")
+            else:
+                hint = "500ms, 2s, 5m..." if s.edit == "duration" else "empty: the default"
+                yield Input(value=self.current, placeholder=hint, id="setting-value")
+            yield Label(Text(f"default: {s.default}"), classes="field")
+            with Horizontal(id="setting-buttons"):
+                yield Button("Save", variant="primary", id="save")
+                yield Button("Default", id="default")
+                yield Button("Cancel", id="cancel")
+
+    def _value(self) -> str:
+        widget = self.query_one("#setting-value")
+        return str(widget.value) if widget.value not in (None, Select.BLANK) else ""
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(("set", self._value()))
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            self.dismiss(("set", self._value()))
+        elif event.button.id == "default":
+            self.dismiss(("set", ""))
+        else:
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class ColumnsScreen(ModalScreen):
     """One table's columns: space shows or hides the one under the cursor, Up and Down (shift+up, shift+down) move it, and
     a limit for its titles; Apply keeps them, Reset brings the defaults back, Escape changes nothing."""
