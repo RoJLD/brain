@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, graph, init, typologies
+from . import config, graph, init, paths, typologies
 
 OFFERED = ("software", "research")   # STD-5: the entries the wizard offers first
 
@@ -114,16 +114,22 @@ def summary(cat: typologies.Catalog, a: Answers) -> list[str]:
 
 
 def existing(root: Path, name: str) -> dict | None:
-    """The project's entry in the folder's projects.yaml when it already holds a brain, else None."""
+    """The project's entry in the folder's projects.yaml when it already holds a brain (its config.json's template
+    under ``_template``), else None; WizardError for a registry that cannot be read, or one without config.json."""
     f = root / "projects.yaml"
-    if not (root / config.FILE).is_file() or not f.is_file():
+    if not f.is_file():
         return None
+    if not (root / config.FILE).is_file():
+        raise WizardError(f"{root} holds a projects.yaml and no config.json: not a new project's folder, nor a brain")
     try:
         data = graph.load_yaml(f.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001 - unreadable or not YAML: read as no entry (brain check says why)
-        return None
+    except Exception as exc:  # noqa: BLE001 - unreadable or not YAML: said, never written over
+        raise WizardError(f"{f}: not readable YAML ({exc}); brain check says why") from None
     entry = data.get(name) if isinstance(data, dict) else None
-    return entry if isinstance(entry, dict) else {}
+    entry = dict(entry) if isinstance(entry, dict) else {}
+    tpl = config.load(root).data.get("template")
+    entry["_template"] = tpl.get("name") if isinstance(tpl, dict) else None
+    return entry
 
 
 def changes(entry: dict, a: Answers) -> list[str]:
@@ -131,7 +137,8 @@ def changes(entry: dict, a: Answers) -> list[str]:
     lc = entry.get("lifecycle") if isinstance(entry.get("lifecycle"), dict) else {}
     std = entry.get("standards") if isinstance(entry.get("standards"), dict) else {}
     pairs = [("lifecycle.typologies", lc.get("typologies"), a.kinds),
-             ("lifecycle.stage", lc.get("stage"), a.lifecycle_stage)]
+             ("lifecycle.stage", lc.get("stage"), a.lifecycle_stage),
+             ("template", entry.get("_template"), a.template)]
     if std:
         pairs.append(("standards.stage", std.get("stage"), a.stage))
     return [f"  {key}: {old if old is not None else '(none)'} -> {new}" for key, old, new in pairs
@@ -143,11 +150,11 @@ def main(args) -> int:
     try:
         cat = typologies.load(config.load(root))
         a = resolve(cat, list(dict.fromkeys(args.kinds or [])), args.stage, args.template)
+        entry = existing(root, args.name)
     except (WizardError, typologies.CatalogError) as exc:
         print(f"brain project new: {exc}")
         return 2
     print("\n".join(summary(cat, a)))
-    entry = existing(root, args.name)
     if entry is not None:
         diff = changes(entry, a)
         print(f"{root} already holds the brain of {args.name}: " + ("the answers change its entry in projects.yaml:"
@@ -158,9 +165,22 @@ def main(args) -> int:
     return init.main(ns)
 
 
+def owner_of(args) -> str:
+    """--owner, else the owner of this machine's personal brain (its pointer's config.json): the cockpit's wizard
+    gives no --owner."""
+    if args.owner:
+        return args.owner
+    there = paths.pointer_root()
+    return init.owner_in(there) if there is not None else ""
+
+
 def _init_args(args, a: Answers):
     """brain init's arguments for the answers: the template, the stage, the name, the owner, and the lifecycle."""
     import argparse
-    return argparse.Namespace(dir=args.dir, owner=args.owner, template=a.template, kind="person", tenant=None,
+    words = ["brain", "project", "new", str(args.dir), *[w for k in a.kinds for w in ("--kind", k)], "--stage",
+             a.stage, *(["--template", args.template] if args.template else []),
+             *(["--name", args.name] if args.name != "brain" else [])]
+    return argparse.Namespace(dir=args.dir, owner=owner_of(args), template=a.template, kind="person", tenant=None,
                               tier=None, name=args.name, stage=a.stage, preset=None, with_=None, without=None,
-                              catalogue=None, interactive=False, apply=args.apply, lifecycle=a.lifecycle())
+                              catalogue=None, interactive=False, apply=args.apply, lifecycle=a.lifecycle(),
+                              plan_hint=f"(plan only: {' '.join(words)} --apply writes it)")

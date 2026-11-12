@@ -504,7 +504,23 @@ def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
             _appended_yaml(tpl, rel, out[rel], name)
     if lifecycle and "projects.yaml" in out:   # brain project new's answers, under the brain's own entry (the last)
         out["projects.yaml"] = out["projects.yaml"].rstrip("\n") + "\n" + lifecycle_line(lifecycle)
+        _lifecycle_landed(tpl, out["projects.yaml"], name, lifecycle)
     return out
+
+
+def _lifecycle_landed(tpl: Template, text: str, name: str, lifecycle: dict) -> None:
+    """The lifecycle line reads as YAML under the brain's own entry, the registry's last (a template of its own may
+    write its entry otherwise): InitError, nothing planned, when it does not."""
+    try:
+        data = graph.load_yaml(text)
+    except Exception as exc:  # noqa: BLE001 - the template's projects.yaml with the line: said as one error
+        raise InitError(f"--template {tpl.name}: projects.yaml with the lifecycle line is not YAML ({exc})") from exc
+    entry = data.get(name) if isinstance(data, dict) else None
+    got = entry.get("lifecycle") if isinstance(entry, dict) else None
+    if list(data or {})[-1:] != [name] or not isinstance(got, dict) or got.get("typologies") != lifecycle.get(
+            "typologies"):
+        raise InitError(f"--template {tpl.name}: projects.yaml: the lifecycle line goes under the brain's own entry "
+                        f"({name}), indented two spaces, which must be the registry's last")
 
 
 def lifecycle_line(lifecycle: dict) -> str:
@@ -845,6 +861,9 @@ def main(args) -> int:
     print("\n".join(show(root, steps)))
     same = _show_modules(root, args, owner, tier, mod) if mod else []
     if not args.apply:
+        if getattr(args, "plan_hint", ""):   # brain project new's own words
+            print(args.plan_hint)
+            return 0
         print("(plan only: brain init --apply writes it)" + ("" if mod else "; the modules: brain init "
               "--interactive (who you are, your machine, adjust), or --preset lite|default|recommended"))
         return 0
