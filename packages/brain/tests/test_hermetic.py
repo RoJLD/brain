@@ -15,7 +15,9 @@ import pytest
 TESTS = Path(__file__).resolve().parent
 ENGINE = TESTS.parent / "src"                       # packages/brain/src: the brain package and its hooks
 GRAPH = TESTS.parents[2] / "src" / "research_graph"   # research-graph, which the brain command runs in process
-NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+INSTALLER = TESTS.parent / "installer"               # the release and install scripts the tests import
+ROOTS = (ENGINE, GRAPH, INSTALLER)
+NAME = re.compile(r"^(?=.*[A-Z])[A-Za-z][A-Za-z0-9_]*$")   # SystemRoot as well as PATH: Windows ignores the case
 SHELL_VAR = re.compile(r"\$\{?([A-Z][A-Z0-9_]*)")
 
 # The variables the engine reads that the hermetic environment leaves as the machine has them, each examined: a new
@@ -27,7 +29,6 @@ PASSTHROUGH = {
     "HOME": "the user's home: every path the engine derives from it is pinned (BRAIN_HOME, CLAUDE_CONFIG_DIR, ...)",
     "USERPROFILE": "the same on Windows",
     "APPDATA": "Windows' roaming folder: the keystore's and the cockpit's defaults, overridden where a test reads them",
-    "LOCALAPPDATA": "pinned by brain_home to a temporary folder (the desktop app's sessions)",
     "XDG_CONFIG_HOME": "the POSIX config folder, read as HOME is",
     "USER": "the account's name, for a default display name: never a path to the owner's data",
     "USERNAME": "the same on Windows",
@@ -35,6 +36,9 @@ PASSTHROUGH = {
     "USERDOMAIN": "the Windows domain, part of the machine's facts (brain doctor)",
     "COMPUTERNAME": "the machine's name (brain.machine): the tests pass their own where they compare it",
     "HOSTNAME": "the same in bash (the hooks)",
+    "PROGRAMFILES": "where the stranger test finds Git for Windows' bash",
+    "SYSTEMROOT": "Windows' own folder, for a child process (brain.depprobes, the stranger test)",
+    "GITHUB_STEP_SUMMARY": "the CI's step summary (release_check): the tests pass --summary",
     "CI": "the read mode's default: BRAIN_STRICT, pinned, wins over it; the tests about it set it themselves",
     "COLUMNS": "the terminal's width for argparse's help: brain.readme sets it while it renders",
     "PYTHONPATH": "passed to the venv a test builds (brain.detail): the checkout under test",
@@ -89,20 +93,21 @@ def _python_reads(tree) -> set[str]:
 def engine_reads() -> dict[str, list[str]]:
     """{variable: [files]} of what the engine's Python modules and shell hooks read from the environment."""
     reads: dict[str, list[str]] = {}
-    for root in (ENGINE, GRAPH):
+    for root in ROOTS:
         for f in sorted(root.rglob("*.py")):
             for name in _python_reads(ast.parse(f.read_text(encoding="utf-8"), str(f))):
                 reads.setdefault(name, []).append(f.name)
         for f in sorted(root.rglob("*.sh")):
             for name in set(SHELL_VAR.findall(f.read_text(encoding="utf-8"))):
                 reads.setdefault(name, []).append(f.name)
-    return reads
+    return {n.upper(): files for n, files in reads.items()}   # Windows reads a variable whatever its case
 
 
 def test_the_scan_sees_what_the_engine_reads():
     """The scan itself: the variables of the incidents behind the allow list, read through each form it knows."""
+    assert all(root.is_dir() for root in ROOTS), ROOTS   # a moved root would scan nothing and pass
     reads = engine_reads()
-    for name in ("BRAIN_HOME", "CLAUDE_CODE_HOST_SESSION_ID", "CLAUDE_CONFIG_DIR", "BRAIN_GUARD_ALLOW",
+    for name in ("SYSTEMROOT", "GITHUB_STEP_SUMMARY", "BRAIN_HOME", "CLAUDE_CODE_HOST_SESSION_ID", "CLAUDE_CONFIG_DIR", "BRAIN_GUARD_ALLOW",
                  "CLAUDE_PLUGIN_ROOT", "BRAIN_PERSONAL", "LOCALAPPDATA", "CI", "COLUMNS"):
         assert name in reads, name
     assert _python_reads(ast.parse('import os\nos.environ.get("A_1"); os.getenv("B"); env["C"]; "D" in os.environ\n'
@@ -140,23 +145,45 @@ def test_the_environment_is_cleared_by_families_not_by_names():
                    "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/tmp/empty.gitconfig"}
 
 
-def test_a_variable_set_without_monkeypatch_does_not_reach_the_next_test(monkeypatch):
-    os.environ["BRAIN_LEAKED_BY_A_TEST"] = "1"   # what a careless test does; the next test's brain_home clears it
-    monkeypatch.setenv("BRAIN_LEAKED_BY_A_TEST", "1")   # and this one's teardown restores it as it found it
+def test_a_variable_set_without_monkeypatch_is_cleared_before_the_next_test(monkeypatch):
+    """What brain_home does before each test: a variable a careless test set in os.environ itself is gone."""
+    with monkeypatch.context() as m:
+        os.environ["BRAIN_LEAKED_BY_A_TEST"] = "1"
+        assert "BRAIN_LEAKED_BY_A_TEST" in conftest.clear_leftovers(m)   # with the pins, set again after it
+        assert "BRAIN_LEAKED_BY_A_TEST" not in os.environ and os.environ["GIT_CONFIG_NOSYSTEM"] == "1"
+    os.environ.pop("BRAIN_LEAKED_BY_A_TEST", None)   # the context put it back as it found it
 
 
-def test_the_leak_of_the_previous_test_is_gone():
-    assert "BRAIN_LEAKED_BY_A_TEST" not in os.environ
+def test_an_owners_opt_in_survives_the_clearing_aside():
+    """BRAIN_TEST_KEYSTORE=wincred still runs test_wincred_round_trip, without leaving the engine its bypass."""
+    env = {"BRAIN_TEST_KEYSTORE": "wincred"}
+    conftest.hermetic_environment(env, "/tmp/g")
+    assert "BRAIN_TEST_KEYSTORE" not in env and env[conftest.OPT_IN_PREFIX + "BRAIN_TEST_KEYSTORE"] == "wincred"
+    assert not conftest.hermetic(conftest.OPT_IN_PREFIX + "BRAIN_TEST_KEYSTORE")
 
 
 def test_git_reads_an_empty_global_configuration(tmp_path):
-    """A user's diff.noprefix, alias or hook path never reaches a test: git sees no global and no system file."""
-    gitconfig = Path(os.environ["GIT_CONFIG_GLOBAL"])
-    assert gitconfig.is_file() and gitconfig.read_text(encoding="utf-8") == ""
+    """A user's diff.noprefix, alias or hook path never reaches a test: git sees no system file and a global one that
+    only points its default ignore and attributes files ($XDG_CONFIG_HOME/git/ignore: *.log, say) at an empty one."""
     res = subprocess.run(["git", "config", "--list", "--show-scope"], cwd=tmp_path, capture_output=True, text=True,
                          timeout=60)
-    scopes = {line.split("\t", 1)[0] for line in res.stdout.splitlines() if line.strip()}
-    assert not scopes & {"global", "system"}, res.stdout
+    lines = [line.split("\t", 1) for line in res.stdout.splitlines() if line.strip()]
+    assert not [x for x in lines if x[0] == "system"], res.stdout
+    found = dict(x[1].split("=", 1) for x in lines if x[0] == "global")
+    assert set(found) == {"core.excludesfile", "core.attributesfile"}, res.stdout
+    assert found["core.attributesfile"] == found["core.excludesfile"]
+    assert Path(found["core.excludesfile"]).read_text(encoding="utf-8") == ""
+    xdg = tmp_path / "xdg"   # a user's default ignore file, which git reads without any setting
+    (xdg / "git").mkdir(parents=True)
+    (xdg / "git" / "ignore").write_text("*.log\n", encoding="utf-8")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.log").write_text("x", encoding="utf-8")
+    env = {**os.environ, "XDG_CONFIG_HOME": str(xdg)}
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True, timeout=60, env=env)
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True, timeout=60,
+                            env=env).stdout
+    assert "?? a.log" in status, status
 
 
 def _undo_calls(tree) -> list[int]:

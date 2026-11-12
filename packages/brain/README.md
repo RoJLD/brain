@@ -1455,10 +1455,13 @@ They read only fixtures, never a real brain's graph, records or rendered files: 
 Their environment is an allow list, not a deny list (`conftest.py`, `wi-brain-hermetic-tests`): every variable of the
 families the engine reads (`BRAIN_*`, `CLAUDE*`, `GIT_*`, `RESEARCH_GRAPH_*`), a GitHub token and the editor are
 cleared for the run and again before each test, unless the conftest pins them (`BRAIN_HOME`, `BRAIN_CONFIG`,
-`CLAUDE_CONFIG_DIR`, ...) or a test sets them; `BRAIN_TEST_ROOT` and `BRAIN_TEST_WORKERS` are kept. git reads an empty
-global configuration and no system one, so a user's `diff.noprefix` or alias never reaches a test. So the suite gives
-the same result from a terminal, a Claude Code session or CI. `tests/test_hermetic.py` lists the variables the
-engine's modules and hooks read and fails on one the conftest leaves as the machine has it without a reason
+`CLAUDE_CONFIG_DIR`, ...) or a test sets them; `BRAIN_TEST_ROOT` and `BRAIN_TEST_WORKERS` are kept, and an opt-in
+such as `BRAIN_TEST_KEYSTORE=wincred` (the real Credential Manager's round trip) is cleared too but kept aside for the
+one test that reads it (`conftest.opted_in`). git reads no system configuration and a global one that only points its
+default ignore and attributes files at an empty one, so a user's `diff.noprefix`, alias or `*.log` ignore never
+reaches a test. So the suite gives the same result from a terminal, a Claude Code session or CI.
+`tests/test_hermetic.py` lists the variables the engine's modules, hooks and installer scripts read (whatever their
+case) and fails on one the conftest leaves as the machine has it without a reason
 (`PASSTHROUGH`: `PATH`, `HOME`, ...), and on any `monkeypatch.undo()` in the tests (it drops the conftest's whole
 environment: `monkeypatch.context()` undoes only what it set).
 
