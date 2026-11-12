@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from brain import cli, docgraph, docjoin, notes, targets
 
 LOG = """# Decisions

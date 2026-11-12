@@ -403,6 +403,8 @@ brain items [--status S]... [--all] [--priority P]... [--wave X.Y.Z|ID] [--miles
             [--text WORDS] [--type T]... [--repo R] [--limit N] [--json]
 brain adr show REF [--titles] [--json]         # the ADR REF names (id, title, or the start of its id), else the ADRs
                                                # that decide the node REF (a rule, an item, a spec), with their text
+brain adr target [--needs] [--json]            # the one-way-door ADRs against the register of future needs
+                                               # (docs/adr-target.md: Scope, Target compatibility; advisory)
 brain spec show REF [--section N | --toc] [--json]   # a Spec node, a Doc id (doc:<repo>:<path>::<key>) or a path
 brain journal last [N] [--titles] [--json]     # the last N dated entries (default 1; 0: all)
 ```
