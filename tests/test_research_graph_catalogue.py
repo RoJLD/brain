@@ -16,7 +16,7 @@ from research_graph import layers
 from research_graph.cli import main
 from research_graph.code_layer import structure_errors
 from research_graph.loader import load_store
-from research_graph.schema import load_schema, parse_schema
+from research_graph.schema import parse_schema
 from research_graph.validate import check_wiring, endpoint_errors
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,7 +124,8 @@ def test_the_rendered_schema_reads_back_and_stays_in_width():
     text = layers.render(data, layers.header_for(layers.resolve(names)))
     assert yaml.safe_load(text) == data
     assert max(len(line) for line in text.splitlines()) <= layers.WIDTH
-    assert load_schema  # the loader takes it: parse_schema ran in compose
+    assert parse_schema(yaml.safe_load(text)).endpoints["tests"] == ((frozenset({"Experiment"}),
+                                                                      frozenset({"Hypothesis"})),)
 
 
 # --- the endpoints research_graph check verifies -----------------------------------------------------------------
@@ -235,6 +236,64 @@ def test_a_block_style_schema_takes_the_additions_in_its_own_style(tmp_path):
     assert data["status_by_type"]["Feature"] == ["have", "partial", "planned", "no"]
     assert data["endpoints"]["implemented_by"] == [{"from": "*", "to": ["CodeRef"]}]
     assert "part_of" not in data["endpoints"]   # already there, unchecked: a layer never starts checking old edges
+
+
+def test_what_propose_says_to_add_is_added_to_a_composed_store(tmp_path, capsys):
+    """A store made of layers declares endpoints; a later layer that shares an edge name (decided_by, part_of)
+    grows that edge's pairs: the command propose prints runs, and the store checks."""
+    store = _init(tmp_path / "me", "--layers", "work,decisions")
+    args = ["--store", str(store), "--repo-root", str(tmp_path / "me")]
+    capsys.readouterr()
+    assert main(args + ["layers", "propose", "--typology", "software", "--stage", "build"]) == 0
+    command = capsys.readouterr().out.strip().splitlines()[-1]
+    names = command.split("layers add ", 1)[1].split(" (a plan")[0].split()
+    assert {"code", "docs_tests", "features"} <= set(names)
+    assert main(args + ["layers", "add", *names, "research", "--write"]) == 0, capsys.readouterr().err
+    data = yaml.safe_load((store / "schema.yaml").read_text(encoding="utf-8"))
+    assert {"from": "*", "to": ["ADR"]} in data["endpoints"]["decided_by"]
+    assert {"from": "*", "to": ["SDR"]} in data["endpoints"]["decided_by"]
+    assert {"from": ["Feature"], "to": ["Feature"]} in data["endpoints"]["part_of"]
+    assert main(args + ["check"]) == 0
+
+
+def test_a_block_entry_of_endpoints_takes_the_new_pairs_as_items(tmp_path):
+    text = BLOCK + ("endpoints:\n  part_of:\n    - {from: [WorkItem, Milestone], to: [Milestone]}   # the work's\n"
+                    "  specified_by: {from: '*', to: [Spec]}\n")
+    store = _store(tmp_path, text)
+    plan = layers.add_plan(store, ["features"])
+    assert plan.problems == []
+    after = plan.after.replace("\r\n", "\n")
+    assert "    - {from: [WorkItem, Milestone], to: [Milestone]}   # the work's\n    - {from: [Feature], to: [Feature]}" \
+        in after
+    assert "  specified_by: {from: '*', to: [Spec]}" in after   # an entry the layer leaves alone keeps its form
+
+
+def test_lists_at_the_margin_and_crlf_files_keep_their_style(tmp_path):
+    """PyYAML's own dump puts list items at the margin; a Windows editor writes CRLF: both stay as they are."""
+    data = yaml.safe_load(BLOCK)
+    text = yaml.safe_dump(data, sort_keys=False).replace("\n", "\r\n")
+    store = tmp_path / "graph"
+    _store(tmp_path, "")
+    (store / "schema.yaml").write_bytes(text.encode("utf-8"))
+    plan = layers.add_plan(store, ["ideas"])
+    assert plan.problems == []
+    assert "\r\n- Idea\r\n" in plan.after and "\n" not in plan.after.replace("\r\n", "")
+    layers.write(plan)
+    assert (store / "schema.yaml").read_bytes().count(b"\r\n") == plan.after.count("\r\n")
+    assert yaml.safe_load(plan.after)["layers"]["ideas"] == ["Idea"]
+
+
+def test_text_that_cannot_take_the_additions_is_a_problem_never_a_traceback(tmp_path):
+    store = _store(tmp_path, BLOCK)
+    assert "could not be placed" in layers._rehearse(store, "node_types: [unclosed\n", {"node_types": ["x"]})[0]
+
+
+def test_a_store_layer_with_a_catalogue_name_and_other_types_is_a_problem(tmp_path):
+    text = BLOCK.replace("node_types:\n", "node_types:\n  - Bench\n").replace(
+        "layers:\n  work: [WorkItem, Milestone, Spec]\n", "layers:\n  work: [WorkItem, Milestone, Spec]\n  research: [Bench]\n")
+    store = _store(tmp_path, text)
+    plan = layers.add_plan(store, ["research"])
+    assert plan.added == [] and "the store has a layer of that name without the catalogue's types" in plan.problems[0]
 
 
 def test_a_long_flow_list_wraps_under_its_first_item():

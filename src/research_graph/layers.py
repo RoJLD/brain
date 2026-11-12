@@ -390,7 +390,7 @@ def proposed(typology: str, stage: str) -> list[Layer]:
 
 # --- editing a schema's text ---------------------------------------------------------------------------------------
 
-_TOP = re.compile(r"^[^\s#]")
+_TOP = re.compile(r"^(?!-\s|-$)[^\s#]")   # a top-level key: not a comment, nor a list item at the margin
 
 
 def _block(lines: list[str], key: str) -> tuple[int, int] | None:
@@ -490,15 +490,50 @@ def _append_map(lines: list[str], key: str, entries: list[tuple[str, object]]) -
     lines[last + 1:last + 1] = [ln for k, v in entries for ln in _entry(pad, k, v)]
 
 
+def _grow_entry(lines: list[str], key: str, entry: str, value: list) -> None:
+    """The entry ``entry`` of the top-level mapping ``key`` now holds ``value`` (its old items first): a value on the
+    entry's line is written again, a block list gets the new items after its own."""
+    start, end = _block(lines, key) or (None, None)
+    pat = re.compile(rf"^(\s+){re.escape(entry)}\s*:")
+    i = next((k for k in range(start + 1, end) if pat.match(lines[k])), None) if start is not None else None
+    if i is None:
+        raise LayerError(f"schema.yaml: {key}: no entry {entry}")
+    pad = pat.match(lines[i]).group(1)
+    stop = next((k for k in range(i + 1, end) if lines[k].strip() and not lines[k].lstrip().startswith("#")
+                 and len(lines[k]) - len(lines[k].lstrip()) <= len(pad)), end)
+    if _value(lines[i]):
+        lines[i:stop] = _entry(pad, entry, value)
+        return
+    items = [k for k in range(i + 1, stop) if lines[k].lstrip().startswith("- ")]
+    if not items:
+        raise LayerError(f"schema.yaml: {key}: {entry} is not a list")
+    item_pad = lines[items[0]][:len(lines[items[0]]) - len(lines[items[0]].lstrip())]
+    lines[items[-1] + 1:items[-1] + 1] = [f"{item_pad}- {flow(x)}" for x in value[len(items):]]
+
+
+def _grow_endpoints_text(lines: list[str], old: dict, new: dict) -> None:
+    """The endpoints the store declares that gain pairs (an edge type two layers share), grown in the text."""
+    for et in [et for et, value in new.items() if et in old and _listed(value) != _listed(old[et])]:
+        _grow_entry(lines, "endpoints", et, _listed(new[et]))
+
+
 def edited(text: str, data: dict, want: dict) -> str:
-    """``text`` with what ``want`` adds to ``data`` appended, key by key, in the text's own style."""
+    """``text`` with what ``want`` adds to ``data`` appended, key by key, in the text's own style (its line ends
+    kept)."""
     lines = text.splitlines()
     for key in LIST_KEYS:
-        _append_list(lines, key, [flow(x) for x in want.get(key) or [] if x not in (data.get(key) or [])],
-                     block=key == "templates")
+        _append_list(lines, key, [flow(x) for x in _new_items(data, want, key)], block=key == "templates")
     for key in MAP_KEYS:
-        _append_map(lines, key, [(k, v) for k, v in (want.get(key) or {}).items() if k not in (data.get(key) or {})])
-    return "\n".join(lines) + ("\n" if text.endswith("\n") or not text else "")
+        _append_map(lines, key, [(k, want[key][k]) for k in _new_items(data, want, key)])
+    _grow_endpoints_text(lines, data.get("endpoints") or {}, want.get("endpoints") or {})
+    nl = "\r\n" if "\r\n" in text else "\n"
+    return nl.join(lines) + (nl if text.endswith("\n") or not text else "")
+
+
+def _new_items(data: dict, want: dict, key: str) -> list:
+    """What ``want`` holds under ``key`` that ``data`` does not: list items, or a mapping's keys."""
+    have = data.get(key) or ()
+    return [x for x in want.get(key) or () if x not in have]
 
 
 # --- adding a layer: a plan, then its write --------------------------------------------------------------------
@@ -540,23 +575,22 @@ def _edge_split(data: dict, new: list[Layer]) -> tuple[set[str], list[str]]:
     return {et for et in edges if et not in old or et in checked}, sorted(edges & old - checked)
 
 
-def _wanted(data: dict, have: dict, new: list[Layer]) -> tuple[dict, list[str], list[str]]:
-    """The schema data once ``new`` is added, the edge types left unchecked (in the store without endpoints: a layer
-    never starts checking old edges), and the problems (endpoints the store declares that the layer would grow)."""
-    checked = set(data.get("endpoints") or {})
+def _wanted(data: dict, have: dict, new: list[Layer]) -> tuple[dict, list[str]]:
+    """The schema data once ``new`` is added, and the edge types left unchecked (in the store without endpoints: a
+    layer never starts checking old edges). An edge type the store checks already gets the new pairs: more pairs only
+    allow more, so no edge that passed is refused."""
     ends_for, left = _edge_split(data, new)
     base = data if "templates" in data else {**data, "templates": [catalogue()[n].ref() for n in have["exact"]]}
-    want = merged(base, new, ends_for)
-    grown = [et for et in checked if _listed(want["endpoints"][et]) != _listed(data["endpoints"][et])]
-    problems = [f"endpoints of {et}: already declared, the layer adds {flow(want['endpoints'][et])}: add them by hand"
-                for et in grown]
-    return want, left, problems
+    return merged(base, new, ends_for), left
 
 
 def _rehearse(store: Path, after: str, want: dict) -> list[str]:
     """The planned text read back and the store loaded with it: what would break."""
-    got = yamlio.loads(after) or {}
-    if {k: got.get(k) for k in want} != want:
+    try:
+        got = yamlio.loads(after) or {}
+    except yaml.YAMLError:
+        got = None
+    if not isinstance(got, dict) or {k: got.get(k) for k in want} != want:
         return ["the additions could not be placed in schema.yaml's text: edit it by hand; the composition is:\n"
                 + render(want)]
     try:
@@ -566,13 +600,16 @@ def _rehearse(store: Path, after: str, want: dict) -> list[str]:
         return [f"the store does not load with the planned schema: {exc}"]
 
 
-def _to_add(data: dict, have: dict, names, extra) -> tuple[list[Layer], list[str]]:
-    """The layers ``names`` adds (with what they require) that the store lacks, and a line for each one named that
-    it holds already."""
-    present = set(have["present"]) | set(data.get("layers") or {})
+def _to_add(data: dict, have: dict, names, extra) -> tuple[list[Layer], list[str], list[str]]:
+    """The layers ``names`` adds (with what they require) that the store lacks, a line for each one named that it
+    holds already, and the problems: a layer of the store's with a catalogue layer's name but not its types."""
+    present, own = set(have["present"]), set(data.get("layers") or {})
     wanted = resolve(names, extra)
-    return ([la for la in wanted if la.name not in present],
-            [f"layer {n}: already in the store" for n in names if n in present])
+    return ([la for la in wanted if la.name not in present | own],
+            [f"layer {n}: already in the store" for n in names if n in present],
+            [f"layer {la.name}: the store has a layer of that name without the catalogue's types "
+             f"({', '.join(la.node_types)}): rename the store's layer first" for la in wanted
+             if la.name in own - present])
 
 
 def add_plan(store: str | Path, names, extra: dict[str, Layer] | None = None) -> Plan:
@@ -580,17 +617,17 @@ def add_plan(store: str | Path, names, extra: dict[str, Layer] | None = None) ->
     the additions appended, read back and the store loaded with it; ``problems`` say why it cannot be written."""
     store = Path(store)
     try:
-        before = (store / "schema.yaml").read_text(encoding="utf-8")
-    except OSError as exc:
+        before = (store / "schema.yaml").read_bytes().decode("utf-8")   # its line ends as they are (CRLF kept)
+    except (OSError, UnicodeDecodeError) as exc:
         raise LayerError(f"{store / 'schema.yaml'}: {exc}") from exc
     plan = Plan(store, before, after=before)
     data = yamlio.loads(before) or {}
     have = store_layers(data)
-    new, plan.lines = _to_add(data, have, names, extra)
+    new, plan.lines, plan.problems = _to_add(data, have, names, extra)
     plan.problems += _clashes(data, new)
     if not new or plan.problems:
         return plan
-    want, left, plan.problems = _wanted(data, have, new)
+    want, left = _wanted(data, have, new)
     try:
         plan.after = edited(before, data, want)
     except LayerError as exc:

@@ -84,6 +84,7 @@
             "paths": {"$ref": "#/$defs/terms", "description": "Local paths."}
           }
         },
+        "deny_from_tree": {"type": "boolean", "description": "true: deny.repos gains, after the hand list, the name of every project of the scope tree whose class floor along its chain is private or stricter (scopes.yaml classes.floor) and the names of its repos, a repo of public.repos left out (wi-brain-deny-from-tree, brain.scopes); a newly placed private project is denied without a hand edit. A scope tree or registry that cannot be read then makes the public guard refuse. Default false: the hand list alone."},
         "allow": {"type": "object", "additionalProperties": {"type": "string", "minLength": 15}, "description": "{glob: reason of 15 characters or more}: files where a denied term is expected, a licence's author say; brain check --public excepts them from every check but secrets."},
         "patterns": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}, "description": "{name: regular expression}: what no line of a public repo may match, a domain's own (a data venue's derived columns); brain check --public, from the domain's template."},
         "refuse": {"type": "object", "additionalProperties": {"type": "string", "minLength": 15}, "description": "{glob: reason of 15 characters or more}: files a public repo must not hold, a domain's own (the research-IP paths of a split); brain check --public."}
@@ -188,6 +189,18 @@
       }
     },
     "scopes": {"type": "string", "minLength": 1, "description": "The scope tree's file (spec-brain-scope-tree 3.13), relative to this file; default scopes.yaml beside it when there is one ($BRAIN_SCOPES names another). brain classes reads its class floors, brain vault the recipients its nodes add."},
+    "scope_types": {
+      "type": "object",
+      "description": "The scope tree's type catalogue for this brain (SCOPE-4, brain.scopes): {type id: {en, fr, children}} merged over the engine's defaults (sphere, company, institution, government, association, unit, office, team, folder, project, tenant). An id already known is renamed (its labels change, never its id: filters keep the id); a new id adds a type. brain scopes --types lists them.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "en": {"type": "string", "minLength": 1, "description": "The English label (the default)."},
+          "fr": {"type": "string", "minLength": 1, "description": "The French label."},
+          "children": {"type": "array", "items": {"type": "string"}, "description": "The types a node of this type accepts as children; absent: any."}
+        }
+      }
+    },
     "classes": {
       "type": "object", "required": ["stores"], "additionalProperties": false,
       "description": "The data class of every store and where it may go (brain classes, brain check --all refuse a store without a class and a destination its class forbids). docs/data-classes.md; the matrix: brain classes --matrix.",

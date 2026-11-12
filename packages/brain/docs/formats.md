@@ -62,7 +62,8 @@ their default.
 | template.yaml | a template's folder | `engine:` range | a note (in CI: refused); a graph's keys are strict: a graph's `layers` (wi-brain-graph-templates) is refused by an older engine, so a template that uses it names the engine that knows it in `engine:` | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |
 | graph layer | research_graph's `templates/layers/<name>.yaml` (the catalogue); a template's own `layers/<name>.yaml` | `version`, per layer, recorded in a store's `templates:` | refused (`research_graph layers` names the known keys) | - (a layer's version is compared by `brain template upgrade`, a later item) |
 | schema.yaml `templates:`, `endpoints:` | a store's `schema.yaml`, when composed from layers (`research_graph layers`) | none: the store's schema | both optional; an older engine ignores them (its `check` then verifies no endpoints) | - |
-| projects.yaml | the brain's root | none yet | a project key (`KEYS`; `standards` since 0.3.2, its own keys a note too), a `repos:` key (`REPO_KEYS`; `tools` since 0.3.2, its slots, keys and formats a note too): a note, kept. `access` is a key that **narrows**: a brain that does not know it (0.2.8 and before) keeps the note (in CI: refused, so a brain repo whose CI runs 0.2.8 goes red) and reads an `access: read` entry as a full project, at the registry's root with the default store, journal and decision log, so such an entry lands in a registry only once every machine runs brain 0.3.0 or later | - |
+| projects.yaml | the brain's root | none yet | a project key (`KEYS`; `standards` since 0.3.2, `parent` and `classes` since 0.3.3, its own keys a note too), a `repos:` key (`REPO_KEYS`; `tools` since 0.3.2, its slots, keys and formats a note too): a note, kept. `access` is a key that **narrows**: a brain that does not know it (0.2.8 and before) keeps the note (in CI: refused, so a brain repo whose CI runs 0.2.8 goes red) and reads an `access: read` entry as a full project, at the registry's root with the default store, journal and decision log, so such an entry lands in a registry only once every machine runs brain 0.3.0 or later | - |
+| scopes.yaml | beside config.json (config.json `scopes`, `$BRAIN_SCOPES`; [the README](../README.md#the-scope-tree)) | `v` | a container's unknown key: a note, kept (in strict mode, CI: `brain check --all` reports it); the keys the inheritance resolver will read (`rules`, `notify`, `quiet`, `capabilities`, `never`, `budgets`, `members`, `language`) are accepted as declared | refused |
 
 AR lines are parsed one by one (`brain.records.parse_ar`): a line that is not a JSON object (a conflict marker, a
 truncated write, a byte that is not UTF-8) or that its schema refuses is an error of `brain record check`; a line a newer brain wrote (a higher
@@ -262,7 +263,7 @@ N2). It is a cache, so it carries every input it depends on:
 |---|---|
 | `v` | 2 (0.2.5 and older wrote none) |
 | `key.engine` | the engine version that checked |
-| `key.rules` | sha256 of config.json's `public.deny` (as brain.config reads it), `allow`, `patterns` and `refuse`, in a canonical form: key order and spacing do not count |
+| `key.rules` | sha256 of config.json's `public.deny` (as brain.config reads it, the terms `public.deny_from_tree` generates from the scope tree included), `allow`, `patterns` and `refuse`, in a canonical form: key order and spacing do not count |
 | `key.gitleaks` | whether gitleaks read the history (with no commit to read: whether it was on the PATH) |
 | `at`, `repo`, `remote`, `files`, `commits`, `gitleaks` | what the check read, for the owner |
 

@@ -24,7 +24,7 @@ class Schema:
     required_props: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # edge type -> its allowed (source types, target types) pairs, None for any type; an edge type not listed is not
     # checked (research_graph check, validate.endpoint_errors). A type the store lacks never matches: it is there for
-    # when its layer joins. Optional (research-graph 0.4; an older engine ignores it).
+    # when its layer joins. Optional (research-graph 0.3.3; an older engine ignores it).
     endpoints: dict[str, tuple[tuple[frozenset[str] | None, frozenset[str] | None], ...]] = field(default_factory=dict)
     # the catalogue's layers that composed this schema, [{layer, version}] (research_graph layers). Optional.
     templates: tuple[tuple[str, int], ...] = ()

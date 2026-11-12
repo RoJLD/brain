@@ -43,13 +43,12 @@ a notes service): ``clear``, ``sealed`` (only through ``brain vault seal``) or `
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import boundary, config, graph, paths, projects
+from . import boundary, config, paths, projects
 
 CLASSES = ("public", "private", "confidential", "sealed", "resident", "secret")
 TENANT = "tenant:"                      # tenant:<id>, a hosted team's store: sealed to its own recipients only
@@ -434,25 +433,20 @@ def remote_exit(root: Path, cfg: config.Config) -> str:
 
 # --- the scope tree (spec-brain-scope-tree §3.9, §3.13): read when present ---
 def scopes_file(cfg: config.Config) -> Path | None:
-    """$BRAIN_SCOPES, else config.json's scopes, else scopes.yaml beside the registry; None when there is none."""
-    env = os.environ.get("BRAIN_SCOPES")
-    if env:
-        f = Path(env).expanduser()
-    elif isinstance(cfg.data.get("scopes"), str):
-        f = cfg.root / cfg.data["scopes"]
-    else:
-        f = cfg.root / SCOPES
-    return f if f.is_file() else None
+    """$BRAIN_SCOPES, else config.json's scopes, else scopes.yaml beside config.json; None when there is none
+    (brain.scopes, the tree's one reader)."""
+    from . import scopes
+    return scopes.scopes_file(cfg)
 
 
 def scope_nodes(cfg: config.Config) -> dict[str, dict]:
-    """{node id: its mapping} from scopes.yaml (``scopes:``), {} when there is no tree yet."""
-    f = scopes_file(cfg)
-    if not f:
-        return {}
-    data = graph.load_yaml_file(f) or {}
-    nodes = data.get("scopes") if isinstance(data, dict) else None
-    return {str(k): (v if isinstance(v, dict) else {}) for k, v in nodes.items()} if isinstance(nodes, dict) else {}
+    """{node id: its mapping} from scopes.yaml (``scopes:``), {} when there is no tree yet (brain.scopes). A file that
+    cannot be read raises ClassError: a floor or a scoped recipient is never dropped in silence (fail closed)."""
+    from . import scopes
+    _, _, problems = scopes.raw(cfg)
+    if problems:
+        raise ClassError(f"{problems[0]}: its class floors and scoped recipients cannot be read")
+    return scopes.nodes_of(cfg)
 
 
 def own_project(cfg: config.Config) -> str:
@@ -468,28 +462,23 @@ def own_project(cfg: config.Config) -> str:
 
 def scope_chain(cfg: config.Config, project: str, nodes: dict[str, dict] | None = None) -> list[str]:
     """The node ids above a project, nearest first, up to (not including) global: its ``parent:`` in the registry,
-    then each node's ``parent``. [] without a tree or a parent."""
+    then each node's, a parent project's included (a sub-project inherits the floors and recipients above its
+    parent: brain.scopes.Tree.chain). [] without a tree or a parent."""
     nodes = scope_nodes(cfg) if nodes is None else nodes
     if not nodes or not project:
         return []
-    try:
-        entry = projects.raw(cfg.root).get(project) or {}
-    except Exception:  # noqa: BLE001
-        entry = {}
-    node = entry.get("parent") if isinstance(entry, dict) else None
-    chain: list[str] = []
-    while isinstance(node, str) and node and node != "global" and node not in chain:
-        chain.append(node)
-        node = (nodes.get(node) or {}).get("parent")
-    return chain
+    from . import scopes
+    return scopes.load(cfg.root, cfg).chain(project)
 
 
 def floor(cfg: config.Config, project: str, nodes: dict[str, dict] | None = None) -> tuple[str, str]:
-    """(the strictest class floor along the project's scope chain, the node that sets it), ('', '') without one."""
+    """(the strictest class floor along the project's scope chain, its own entry's included (projects.yaml classes:
+    {floor}, DENY-1), and the node that sets it), ('', '') without one."""
     nodes = scope_nodes(cfg) if nodes is None else nodes
+    from . import scopes
+    tree = scopes.load(cfg.root, cfg)
     best, where = "", ""
-    for node in scope_chain(cfg, project, nodes):
-        f = ((nodes.get(node) or {}).get("classes") or {}).get("floor")
+    for node, f in scopes.floors(tree, project) if project in tree.nodes else []:
         if f in CLASSES and (not best or RANK[f] > RANK[best]):
             best, where = f, node
     return best, where
@@ -576,9 +565,14 @@ def _refuse(rep: Report, s: Store, exit_: str, line: str, advice: str = "") -> N
 
 
 def _floors(cfg: config.Config, rep: Report, by_name: dict[str, Store]) -> None:
-    nodes = scope_nodes(cfg)
-    if not nodes:
-        rep.notes.append("no scope tree (scopes.yaml): no class floor to check")
+    try:
+        nodes = scope_nodes(cfg)
+    except ClassError as exc:
+        rep.errors.append(str(exc))
+        return
+    from . import scopes
+    if not nodes and not any("classes" in n.data for n in scopes.load(cfg.root, cfg).nodes.values()):
+        rep.notes.append("no scope tree (scopes.yaml) and no project floor: no class floor to check")
         return
     own = own_project(cfg)
     for s in by_name.values():

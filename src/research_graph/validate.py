@@ -454,7 +454,7 @@ def _ends(allowed) -> str:
 def endpoint_errors(graph: nx.DiGraph, schema) -> list[str]:
     """BLOCKING when the schema declares them (``endpoints``, research_graph layers): an edge whose source or target
     type is outside every (from, to) pair its type allows. An edge type without pairs is not checked; an end whose
-    type is unknown (another store's node without one) is not checked; an overlay's edges follow its own schema."""
+    type is unknown (another store's node without one) is not checked; an overlay's edges are not checked here (its own check validates its store)."""
     rules = getattr(schema, "endpoints", None) or {}
     problems: list[str] = []
     for s, d, e in graph.edges(data=True) if rules else ():

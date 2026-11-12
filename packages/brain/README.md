@@ -753,6 +753,52 @@ and `brain check --all` says what to declare). A first entry the brain skips for
 cover every project registered there, and `--store prog/graph` runs as the project that lists that store.
 `examples/projects.yaml` has both.
 
+### The scope tree
+
+Projects can sit in a tree (`brain.scopes`): Global at the root, the brain itself; containers (a sphere, an
+organisation, a unit, a folder) and projects under it, projects inside projects, one parent each. A project's place is
+the `parent:` key of its entry in `projects.yaml` (a read-only project and a tenant mount take it too); the containers
+are declared once in `scopes.yaml`, beside `config.json` (config.json `scopes` names another file, `$BRAIN_SCOPES`
+another path):
+
+```yaml
+v: 1
+scopes:
+  pro:     {type: sphere, title: Professional}
+  acme:    {type: company, title: ACME SA, parent: pro, classes: {floor: confidential}}
+  finance: {type: unit, title: Finance, parent: acme, also_under: [ops]}   # also_under: a shortcut, display only
+```
+
+A container has a `type`, and `title`, `parent` (default global) and `status` (`active` or `archived`); `classes:
+{floor}` is read by `brain classes` and `brain vault`. Types are ids with labels (sphere, company, institution,
+government, association, unit, office, team, folder, project, tenant); `config.json` `scope_types` renames one
+(`{"unit": {"en": "Department"}}`, the id kept), adds one, and may say which `children` a type accepts. `brain check
+--all` (and a brain's own root) refuses an unknown parent, a cycle, an id used by a project and a container, an unknown
+type or one its parent does not accept, and a class floor under an ancestor's (a guard only tightens); it warns past six
+levels. `brain scopes [--scope REF] [--depth N] [--archived] [--lang fr] [--types] [--json]` prints the tree with the
+projects under each node, and `brain sync` writes `notes/scopes_graph.md` (generated, never edited). `brain status
+--scope REF` shows the projects of a node's subtree, with the totals when it holds several (`brain resume` and `brain
+digest` take it too, one pack or digest per project): REF is an id, a path of
+ids (`pro/acme`), `global` (as `--all`), `.` (the project of the folder) or `..` (its parent); `--project` and `--all`
+stay. Without `scopes.yaml` and `parent:`, every project sits under Global and nothing changes. An older engine
+reads `parent:` and `scope_types` as unknown keys (a note; refused in strict mode, CI) and refuses `parent:` on a
+read-only entry or a mount: add them once every machine and the brain repo's CI run the release that knows them.
+
+**The deny list from the tree.** With `config.json` `public.deny_from_tree: true`, `public.deny.repos` gains, after the
+hand list, the name of every project whose class floor along its chain is `private` or stricter (a container's
+`classes: {floor: private}` covers its whole subtree, sub-projects, read-only projects and mounts included; a
+project marked on its own entry, `classes: {floor: private}` in `projects.yaml`, read-only entries and mounts too,
+counts as well, and its floor also binds its stores in `brain classes`) and the
+names of its repos (`brain audit`'s, and their folders), a repo of `public.repos` left out: a private project placed in
+the tree is denied by `brain check --public` and the public guard without a hand edit, and the hand list keeps the
+people, users, hosts and paths. `brain scopes --deny` prints the generated terms. With it on, a `scopes.yaml` or a
+registry that cannot be read, a tree file named but missing, no tree at all, or an error of the tree's check (an
+unknown parent, a floor that is no class) makes the public and secrets guards refuse: the list would miss terms. A
+term is a whole word matched without case: a private project or repo named after a common word (`data`) would block
+the engine's own text, so rename it, or keep it out of a private subtree. Off by default. An older engine reads the key
+as unknown and generates nothing: keep the repos in the hand list until every machine and the brain repo's CI run the
+release that knows it.
+
 ### Edges between stores
 
 An edge of a store may name a node another store of the registry holds (every store of every registered project on
