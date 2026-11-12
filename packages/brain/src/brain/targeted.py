@@ -193,6 +193,96 @@ def suite_of(tree: inventory.Tree) -> list[str]:
                   and (posixpath.basename(p).startswith("test_") or inventory.in_tests(p)))
 
 
+def _map_revs(top: Path, summary: dict | None, sel: Selection) -> list[str]:
+    """[the map's commit] when its evidence can be read against HEAD, else [] and why the answer widens."""
+    if not summary or not summary.get("test_modules"):
+        sel.widen.append("no coverage map (brain coverage --write, or --map FILE)")
+        return []
+    sel.map_commit = str(summary.get("commit") or "")
+    if summary.get("dirty"):
+        sel.widen.append(f"the map was measured on a dirty tree at {sel.map_commit[:7]}")
+        return []
+    if not sel.map_commit or not _known(top, sel.map_commit) or not _ancestor(top, sel.map_commit, "HEAD"):
+        sel.widen.append(f"the map's commit {sel.map_commit[:7] or '?'} is not in HEAD's history")
+        return []
+    return [sel.map_commit]
+
+
+class _Selector:
+    """One selection's evidence, and its rule for each kind of changed path."""
+
+    def __init__(self, top: Path, tree: inventory.Tree, sel: Selection, summary: dict | None, revs: list[str],
+                 roots: list[str] | None):
+        self.tree, self.sel = tree, sel
+        self.files = (summary or {}).get("files") or {}
+        self.mapped = set((summary or {}).get("test_modules") or [])
+        lay = inventory.layout(tree, roots)
+        self.mods = inventory.module_index(tree, lay)[0] if lay.roots is not None else {}
+        self.dotted = {p: d for d, p in self.mods.items()}
+        self.ev = inventory.evidence(tree, sel.suite)
+        self.olds = [inventory.git_tree(top, rev) for rev in revs]   # each end's text, one cat-file per end
+        for o in self.olds:
+            o.prefetch([p for p in sel.changed if p.endswith(".py")])
+        self.level: set[str] = set()   # source modules whose module level changed
+        self.touched_py = False
+
+    def by_import(self, path: str, why: str) -> None:
+        for t in self.ev.imports.get(self.dotted.get(path, ""), ()):
+            self.sel.add(t, why)
+
+    def by_name(self, path: str) -> int:
+        """The test modules whose text names the file (its whole name); how many."""
+        name = posixpath.basename(path)
+        named = re.compile(r"(?<![\w.-])" + re.escape(name) + r"(?![\w-])")
+        hits = [t for t in self.sel.suite if named.search(self.tree.text(t) or "")]
+        for t in hits:
+            self.sel.add(t, f"names {name}")
+        return len(hits)
+
+    def path(self, p: str) -> None:
+        if inventory.is_test(p):
+            if p in self.tree.files:
+                self.sel.add(p, "changed here")
+        elif posixpath.basename(p) == "conftest.py":
+            d = posixpath.dirname(p)
+            for t in self.sel.suite:
+                if not d or t.startswith(d + "/"):
+                    self.sel.add(t, f"under {p}")
+        elif not p.endswith(".py"):
+            n = self.by_name(p)
+            self.sel.widen.append(f"{p}: a file coverage cannot see ({n} test module(s) name it)")
+        elif p not in self.files:
+            self.touched_py = True
+            self.by_import(p, f"imports {p}")
+            self.by_name(p)
+            self.sel.widen.append(f"{p}: never measured by the map")
+        else:
+            self.touched_py = True
+            self.module(p)
+
+    def module(self, p: str) -> None:
+        """A module the map measured: the tests that ran it or import it; its module level compared at each end."""
+        for t in (self.files[p].get("tests") or {}):
+            self.sel.add(t, f"ran {p}")
+        self.by_import(p, f"imports {p}")
+        now = (self.tree.text(p) or "") if p in self.tree.files else None
+        sk = skeleton(now)
+        if now is None or any(skeleton(o.text(p)) != sk for o in self.olds):
+            self.level.add(p)
+
+    def finish(self) -> None:
+        """A changed module level's importers, transitively; the test modules the map never saw."""
+        why = "(imports a changed module level)"
+        for q in sorted(closure(self.level, importers(self.tree, self.mods)) - self.level) if self.level else ():
+            for t in ((self.files.get(q) or {}).get("tests") or {}):
+                self.sel.add(t, f"ran {q} {why}")
+            self.by_import(q, f"imports {q} {why}")
+        if self.touched_py and self.mapped:
+            for t in self.sel.suite:
+                if t not in self.mapped:
+                    self.sel.add(t, "not in the map")
+
+
 def select(top: Path, repo: str, base: str, base_rev: str, summary: dict | None, roots: list[str] | None = None,
            inert: list[str] | None = None) -> Selection:
     """The test modules the change from ``base_rev`` to the working tree of ``top`` touches, by the coverage map
@@ -200,87 +290,14 @@ def select(top: Path, repo: str, base: str, base_rev: str, summary: dict | None,
     tree = inventory.work_tree(top)
     sel = Selection(repo=repo, head=git(top, "rev-parse", "HEAD").strip(), base=base, base_rev=base_rev,
                     suite=suite_of(tree))
-    revs = [base_rev]
-    if not summary or not summary.get("test_modules"):
-        sel.widen.append("no coverage map (brain coverage --write, or --map FILE)")
-    else:
-        sel.map_commit = str(summary.get("commit") or "")
-        if summary.get("dirty"):
-            sel.widen.append(f"the map was measured on a dirty tree at {sel.map_commit[:7]}")
-        elif not sel.map_commit or not _known(top, sel.map_commit) or not _ancestor(top, sel.map_commit, "HEAD"):
-            sel.widen.append(f"the map's commit {sel.map_commit[:7] or '?'} is not in HEAD's history")
-        else:
-            revs.append(sel.map_commit)
-    changed: set[str] = set()
-    for rev in revs:
-        changed |= changed_paths(top, rev)
+    revs = [base_rev, *_map_revs(top, summary, sel)]
+    changed = set().union(*(changed_paths(top, rev) for rev in revs))
     sel.inert = sorted(p for p in changed if any(fnmatch.fnmatchcase(p, g) for g in inert or ()))
-    changed -= set(sel.inert)
-    sel.changed = sorted(changed)
-    files = (summary or {}).get("files") or {}
-    mapped = set((summary or {}).get("test_modules") or [])
-    lay = inventory.layout(tree, roots)
-    mods = inventory.module_index(tree, lay)[0] if lay.roots is not None else {}
-    dotted = {p: d for d, p in mods.items()}
-    ev = inventory.evidence(tree, sel.suite)
-    olds = [inventory.git_tree(top, rev) for rev in revs]   # each end's text, read in one cat-file per end
-    for o in olds:
-        o.prefetch([p for p in sel.changed if p.endswith(".py")])
-    level: set[str] = set()      # source modules whose module level changed
-    touched_py = False
-
-    def by_import(path: str, why: str) -> None:
-        for t in ev.imports.get(dotted.get(path, ""), ()):
-            sel.add(t, why)
-
-    def by_name(path: str) -> int:
-        base_name = posixpath.basename(path)
-        named = re.compile(r"(?<![\w.-])" + re.escape(base_name) + r"(?![\w-])")
-        n = 0
-        for t in sel.suite:
-            if named.search(tree.text(t) or ""):
-                sel.add(t, f"names {base_name}")
-                n += 1
-        return n
-
+    sel.changed = sorted(changed - set(sel.inert))
+    s = _Selector(top, tree, sel, summary, revs, roots)
     for p in sorted(sel.changed, key=lambda q: not inventory.is_test(q)):   # a changed test says so first
-        name = posixpath.basename(p)
-        if inventory.is_test(p):
-            if p in tree.files:
-                sel.add(p, "changed here")
-            continue
-        if name == "conftest.py":
-            d = posixpath.dirname(p)
-            for t in sel.suite:
-                if not d or t.startswith(d + "/"):
-                    sel.add(t, f"under {p}")
-            continue
-        if not p.endswith(".py"):
-            n = by_name(p)
-            sel.widen.append(f"{p}: a file coverage cannot see ({n} test module(s) name it)")
-            continue
-        touched_py = True
-        if p not in files:
-            by_import(p, f"imports {p}")
-            by_name(p)
-            sel.widen.append(f"{p}: never measured by the map")
-            continue
-        for t in (files[p].get("tests") or {}):
-            sel.add(t, f"ran {p}")
-        by_import(p, f"imports {p}")
-        now = (tree.text(p) or "") if p in tree.files else None
-        sk = skeleton(now)
-        if now is None or any(skeleton(o.text(p)) != sk for o in olds):
-            level.add(p)
-    if level:
-        for q in sorted(closure(level, importers(tree, mods)) - level):
-            for t in ((files.get(q) or {}).get("tests") or {}):
-                sel.add(t, f"ran {q} (imports a changed module level)")
-            by_import(q, f"imports {q} (imports a changed module level)")
-    if touched_py and mapped:
-        for t in sel.suite:
-            if t not in mapped:
-                sel.add(t, "not in the map")
+        s.path(p)
+    s.finish()
     return sel
 
 
@@ -305,6 +322,16 @@ def commands(top: Path, tests: list[str], python: str = "", workers: str = "",
                                          *(extra or [])]) for cfg, mods in sorted(groups.items())]
 
 
+def _handle(stream):
+    """The stream's file descriptor, flushed, for a child to write to: without one, a child started with no window
+    (brain.nowindow, a session's shell) writes pytest's report nowhere. None when the stream has none (a capture)."""
+    try:
+        stream.flush()
+        return stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
 def run(top: Path, tests: list[str], python: str = "", workers: str = "", extra: list[str] | None = None,
         echo=print) -> int:
     """pytest on ``tests``; the worst exit code (5, nothing collected, counts as 0)."""
@@ -313,7 +340,8 @@ def run(top: Path, tests: list[str], python: str = "", workers: str = "", extra:
         shown = " ".join(cmd[3:])
         echo(f"brain test: {posixpath.relpath(cwd.as_posix(), top.as_posix())}: pytest "
              f"{shown if len(shown) < 300 else shown[:300] + '...'}")
-        rc = subprocess.run(cmd, cwd=cwd, env=dict(os.environ)).returncode
+        rc = subprocess.run(cmd, cwd=cwd, env=dict(os.environ), stdout=_handle(sys.stdout),
+                            stderr=_handle(sys.stderr)).returncode
         worst = max(worst, 0 if rc == 5 else rc)
     return worst
 

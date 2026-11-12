@@ -165,6 +165,7 @@ def test_brain_test_changed_lists_runs_and_records(make_repo, tmp_path, capsys, 
     assert ran[-1] == ["tests/test_docs.py", "tests/test_other.py"]
     assert cli.main(["test", "--changed", "--repo-dir", str(repo), "--map", str(m), "--strict"]) == 0
     assert len(ran[-1]) == 4
-    led = [json.loads(x) for x in (targeted.paths.ledger_dir() / targeted.LEDGER).read_text().splitlines()]
+    led = [json.loads(x) for x in (targeted.paths.ledger_dir() / targeted.LEDGER).read_text(
+        encoding="utf-8").splitlines()]
     assert [x["mode"] for x in led] == ["shadow", "shadow", "strict"]
     assert led[1]["complete"] is False and led[2]["ran"] == 4

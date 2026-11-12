@@ -25,44 +25,56 @@ USAGE = """\
 """
 
 
-def early(args) -> int:
-    """Its repo may be any checkout of a registered one (a worktree): resolved like the scout's (brain.scout)."""
-    from .. import projects, scout, targeted
-    if args.changed is None:
-        raise SystemExit("brain test: --changed (the only selection there is)")
-    root = root_of(args)
+def _map(args, p, c, registered) -> dict | None:
+    """--map's coverage summary, else the project's store's (--store's) for the repo, else None."""
+    from .. import projects, targeted
+    if args.map:
+        return targeted.load_map(Path(args.map))
+    stores = [Path(args.store).resolve()] if args.store else projects.stores_of(p) if registered else []
+    return targeted.load_map(targeted.map_path(stores[0], c.name)) if stores else None
+
+
+def _selection(args):
+    """(the selection, the checkout): the repo resolved like the scout's (a worktree of a registered one too)."""
+    from .. import scout, targeted
     try:
-        p, _, c, top, registered = scout.resolve(args, root)
+        p, _, c, top, registered = scout.resolve(args, root_of(args))
         base, base_rev = scout.base_of(top, args.changed or "")
     except AuditError as exc:
         raise SystemExit(f"brain test: {exc}") from None
-    if args.map:
-        summary = targeted.load_map(Path(args.map))
-    elif registered and (args.store or projects.stores_of(p)):
-        store = Path(args.store).resolve() if args.store else projects.stores_of(p)[0]
-        summary = targeted.load_map(targeted.map_path(store, c.name))
-    else:
-        summary = None
-    sel = targeted.select(top, c.name, base, base_rev, summary, c.roots, args.inert)
-    if args.json and args.list:
-        _print_json(sel.to_json())
-        return 0
-    print("\n".join(targeted.lines(sel)))
+    return targeted.select(top, c.name, base, base_rev, _map(args, p, c, registered), c.roots, args.inert), top
+
+
+def early(args) -> int:
+    """brain test --changed (brain.targeted): the selection printed, then run (shadow mode, or --strict)."""
+    from .. import targeted
+    if args.changed is None:
+        raise SystemExit("brain test: --changed (the only selection there is)")
+    sel, top = _selection(args)
+    if not args.json:
+        print("\n".join(targeted.lines(sel)))
     if args.list:
+        if args.json:
+            _print_json(sel.to_json())
         return 0
-    strict = args.strict and not sel.complete
-    tests = sel.suite if strict else sorted(sel.tests)
+    tests = sel.suite if args.strict and not sel.complete else sorted(sel.tests)
     extra = [a for a in (args.pytest_args or []) if a != "--"]
     rc = targeted.run(top, tests, args.python, args.workers, extra) if tests else 0
-    if not tests:
-        print("brain test: no test module to run")
+    _report(args, sel, tests, rc)
+    return rc
+
+
+def _report(args, sel, tests: list[str], rc: int) -> None:
+    """The run's line in the shadow ledger, and what it means."""
+    from .. import targeted
     led = targeted.record(sel, "strict" if args.strict else "shadow", len(tests), rc)
+    if not tests:
+        print("brain test: no test module to run", file=sys.stderr)
     if not sel.complete and not args.strict:
         print(f"brain test: shadow mode: the whole suite is the answer; the CI runs it before the merge "
               f"(--strict runs it here); recorded in {led}", file=sys.stderr)
     if args.json:
         _print_json({**sel.to_json(), "ran": len(tests), "rc": rc})
-    return rc
 
 
 def register(sub, ctx) -> None:
