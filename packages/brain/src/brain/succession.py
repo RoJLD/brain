@@ -115,16 +115,17 @@ def check(host: str | None = None, *, successor: str = "", now: float | None = N
     index, meta, me = _app(host)
     parent = str(me.get("parent") or "")
     pm = meta(parent) if parent else {}
+    parent_ok = bool(pm) and (guards._coordinator(pm) or guards.chain_root(parent, pm))
     note = guards.handover_note(host, now)
+    age = round((now - note.stat().st_mtime) / 60) if note else None
     why = guards.handover_why(host, me, meta, now)
     succ = guards.successors(host, index, meta, now)
-    target = successor or (succ[0] if succ else "")
+    target = successor or next(iter(succ), "")
     on_why = why or _target_why(host, target, meta(target) if target else {}, now)
-    off_why = why or ("" if succ else "it has started no live coordinator to succeed it, detached")
+    off_why = why or ("it has started no live coordinator to succeed it, detached" * (not succ))
     return {"id": host, "name": me.get("name") or "", "root": guards.chain_root(host, me),
             "coordinator": guards._coordinator(me), "parent": parent, "parent_name": pm.get("name") or "",
-            "parent_ok": bool(pm) and (guards._coordinator(pm) or guards.chain_root(parent, pm)),
-            "note": str(note or ""), "note_age_min": round((now - note.stat().st_mtime) / 60) if note else None,
+            "parent_ok": parent_ok, "note": str(note or ""), "note_age_min": age,
             "successors": succ, "successor": target, "why": why, "ok": not why,
             "on": not on_why, "on_why": on_why, "off": not off_why, "off_why": off_why}
 
