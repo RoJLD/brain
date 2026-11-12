@@ -28,7 +28,7 @@ def test_both_sides_of_the_version_hold_to_the_contract(which):
     assert errors == []
     if which == "newer":
         assert any("'teapot-sync' is not a module of the catalogue (another catalogue's?)" in n for n in notes)
-        assert any("presets[tea-lover]: pulls kettle-core" in n for n in notes)
+        assert not any("pulls" in n for n in notes)       # kettle-core is in its base, lite
     else:
         assert notes == []
 
@@ -139,6 +139,35 @@ def test_a_typology_id_no_catalogue_holds_is_kept_never_refused():
     doc["modules"][0]["typologies"] = ["a-typology-no-engine-knows"]
     doc["presets"][0]["typologies"] = ["another"]
     assert catalogue.validate(doc) == ([], [])
+
+
+def test_a_long_chain_and_a_huge_version_are_never_a_crash():
+    doc = fixture("older")
+    doc["modules"] = [{"id": f"m{i}", "name": "m", "depends_on": [f"m{i + 1}"] if i < 3000 else []}
+                      for i in range(3001)]
+    doc["presets"] = []
+    assert catalogue.validate(doc)[0] == []
+    doc["modules"][-1]["depends_on"] = ["m0"]
+    assert any("a cycle of hard dependencies: m0 -> m1" in e for e in catalogue.validate(doc)[0])
+    huge = {**fixture("older"), "schema": "catalogue/v" + "9" * 5000}
+    assert any("must be 'catalogue/v1'" in e for e in catalogue.validate(huge)[0])
+
+
+def test_a_number_that_is_not_finite_is_an_error():
+    doc = fixture("older")
+    _mod(doc, "kettle-meter")["cost"]["ram_mb"] = float("nan")
+    assert any("cost.ram_mb: nan is not a finite number" in e for e in catalogue.validate(doc)[0])
+
+
+def test_a_persona_without_base_and_a_planned_preset_module():
+    doc = fixture("older")
+    doc["presets"].append({"id": "solo", "name": "Solo", "kind": "persona", "modules": ["kettle-meter"]})
+    errors, notes = catalogue.validate(doc)
+    assert errors == []
+    assert any("presets[solo]: a persona with no base preset" in n for n in notes)
+    assert any("presets[solo]: pulls kettle-core" in n for n in notes)
+    doc["presets"][0]["modules"].append("kettle-cloud")
+    assert any("presets[lite].modules: 'kettle-cloud' is planned" in e for e in catalogue.validate(doc)[0])
 
 
 def test_another_contract_is_an_error():
@@ -310,6 +339,60 @@ def test_with_a_registry_its_modules_bricks_and_dependencies_are_the_catalogue(e
     assert [b["id"] for b in doc["bricks"]] == ["A", "M"]
     assert {p["id"]: p.get("when_fits") for p in doc["presets"]}["recommended"] == ["M2"]
     assert doc["generated"]["from"][-1] == "modules.yaml"
+
+
+RAUTO = """\
+  rauto:
+    title: an auto capability of profile recommended
+    class: extra
+    profile: recommended
+    auto: true
+    provides: [rauto]
+    requires: []
+    resources: {}
+    fallback: nothing
+"""
+
+
+def test_a_module_mixing_profiles_follows_recommended(engine, tmp_path):
+    """when_fits as tiers.recommend: a module of a recommended and a custom capability is not added, nor one whose
+    only recommended capability is auto; one of Default's and a recommended one is."""
+    (tmp_path / "tiers.yaml").write_text(TIERS + RAUTO, encoding="utf-8")
+    (engine / "notes" / "graph" / "modules.yaml").write_text("""\
+- {id: R1, name: mixed, capabilities: [agent, viewer]}
+- {id: R2, name: auto-rec, capabilities: [viewer, rauto]}
+- {id: R3, name: good, capabilities: [store, agent]}
+""", encoding="utf-8")
+    doc = catalogue.emit(engine, "brain test")
+    assert {p["id"]: p.get("when_fits") for p in doc["presets"]}["recommended"] == ["R3"]
+
+
+def test_a_cycle_the_registry_makes_is_reported_as_the_registrys(engine, capsys):
+    """Two modules that depend on each other make a cycle: emit exits 1 and says the registry is to fix."""
+    (engine / "notes" / "graph" / "modules.yaml").write_text("""\
+- {id: M1, name: one, capabilities: [base], depends_on: [M2]}
+- {id: M2, name: two, capabilities: [store], depends_on: [M1]}
+""", encoding="utf-8")
+    assert any("a cycle of hard dependencies" in e for e in catalogue.validate(catalogue.emit(engine, "t"))[0])
+    assert cli.main(["--root", str(engine), "catalogue", "emit"]) == 1
+    assert "fix the module registry" in capsys.readouterr().err
+
+
+def test_a_requirement_its_extra_installs_is_not_the_machines(engine, tmp_path):
+    """The store's pip extra installs textual: only git is the machine's to hold."""
+    (tmp_path / "tiers.yaml").write_text(TIERS.replace("profile: default\n    provides: [store]\n    requires: []",
+                                                       "profile: default\n    provides: [store]\n"
+                                                       "    requires: [textual, git]"), encoding="utf-8")
+    store = next(m for m in catalogue.emit(engine, "t")["modules"] if m["id"] == "store")
+    assert store["requires"] == ["git"]
+
+
+def test_a_broken_resource_is_never_a_crash_nor_below_zero():
+    class E:
+        def __init__(self, r):
+            self.resources = r
+    assert catalogue._cost([E({"disk_gb": None, "ram_mb": -5}), E({"ram_mb": 10, "disk_gb": 0.5})]) == {
+        "disk_mb": 512, "ram_mb": 10}
 
 
 def test_the_engines_own_catalogue_holds_to_the_contract(tmp_path, monkeypatch):

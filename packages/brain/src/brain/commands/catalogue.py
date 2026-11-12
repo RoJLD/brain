@@ -68,8 +68,11 @@ def run(args, root: Path) -> int:
     """emit: the brain's catalogue as a catalogue/v1 document."""
     doc = catalogue.emit(root, f"brain {__version__}")
     errors, _ = catalogue.validate(doc, where="emit")
-    for e in errors:   # the engine's own document holds to the contract: a failure here is the engine's bug
+    for e in errors:   # a registry the contract refuses (a cycle its grouping makes, an id with a space...)
         print(f"error: {e}", file=sys.stderr)
+    if errors:
+        print("brain catalogue emit: the catalogue does not hold to catalogue/v1: fix the module registry "
+              "(modules.yaml) or tiers.yaml it is read from", file=sys.stderr)
     text = json.dumps(doc, indent=1, ensure_ascii=False) + "\n"
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8", newline="\n")

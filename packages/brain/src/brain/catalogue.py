@@ -16,6 +16,7 @@ the ones it does not know; a new enum value, a new required key or a change of a
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,7 +26,7 @@ from . import schema
 ID = "catalogue/v1"
 KIND = "catalogue"          # its name in brain.schema.SCHEMAS
 VERSION = 1
-ID_RE = re.compile(r"^catalogue/v(\d+)$")
+ID_RE = re.compile(r"^catalogue/v([0-9]{1,6})\Z")   # bounded: a 5,000-digit version is no crash
 LISTS = ("bricks", "modules", "distributions", "presets")
 CLASSES = ("core", "extra", "service")
 PRESET_KINDS = ("base", "persona")
@@ -83,30 +84,39 @@ def _ids(doc: dict, key: str, where: str, errors: list[str]) -> dict[str, dict]:
 
 
 def _cycle(edges: dict[str, list[str]]) -> list[str]:
-    """One cycle of ``edges`` (its ids, the first repeated last), [] when there is none."""
+    """One cycle of ``edges`` (its ids, the first repeated last), [] when there is none. Iterative: a chain of
+    thousands of modules is no recursion error."""
     state: dict[str, int] = {}
-    stack: list[str] = []
-
-    def visit(n: str) -> list[str]:
-        state[n] = 1
-        stack.append(n)
-        for d in edges.get(n, ()):
-            if state.get(d) == 1:
-                return stack[stack.index(d):] + [d]
-            if d in edges and not state.get(d):
-                found = visit(d)
-                if found:
-                    return found
-        stack.pop()
-        state[n] = 2
-        return []
-
-    for n in sorted(edges):
-        if not state.get(n):
-            found = visit(n)
-            if found:
-                return found
+    for start in sorted(edges):
+        if state.get(start):
+            continue
+        path, its = [start], [iter(edges.get(start, ()))]
+        state[start] = 1
+        while path:
+            d = next(its[-1], None)
+            if d is None:
+                state[path.pop()] = 2
+                its.pop()
+            elif state.get(d) == 1:
+                return path[path.index(d):] + [d]
+            elif d in edges and not state.get(d):
+                state[d] = 1
+                path.append(d)
+                its.append(iter(edges.get(d, ())))
     return []
+
+
+def _finite(value, path: str, errors: list[str]) -> None:
+    """A number that is not finite (NaN, Infinity: JSON parsers accept them) is an error wherever it is."""
+    todo = [(value, path)]
+    while todo:
+        v, at = todo.pop()
+        if isinstance(v, float) and not math.isfinite(v):
+            errors.append(f"{at}: {v} is not a finite number")
+        elif isinstance(v, dict):
+            todo += [(x, f"{at}.{k}") for k, x in v.items()]
+        elif isinstance(v, list):
+            todo += [(x, f"{at}[{i}]") for i, x in enumerate(v)]
 
 
 def _missing(at: str, ids: list[str], known: dict, what: str) -> list[str]:
@@ -121,7 +131,8 @@ def _module_refs(mid: str, m: dict, lists: dict, at: str, errors: list[str], not
     notes += [f"{n} (another catalogue's?)" for n in _missing(f"{at}.uses", uses, lists["modules"], "module")]
     if mid in deps or mid in uses:
         errors.append(f"{at}: depends on or uses itself")
-    errors += [f"{at}: {d!r} is both a hard (depends_on) and a soft (uses) dependency" for d in sorted({*deps} & {*uses})]
+    errors += [f"{at}: {d!r} is both a hard (depends_on) and a soft (uses) dependency"
+               for d in sorted({*deps} & {*uses})]
     brick = m.get("brick")
     errors += _missing(f"{at}.brick", [brick] if isinstance(brick, str) else [], lists["bricks"], "brick")
     errors += _missing(f"{at}.distributions", _strs(m.get("distributions")), lists["distributions"], "distribution")
@@ -162,7 +173,8 @@ def _presets(presets: dict, mods: dict, where: str, errors: list[str], notes: li
         if p.get("kind") == "persona" and not isinstance(base, str):
             notes.append(f"{at}: a persona with no base preset (an installer starts it from nothing)")
         listed = _strs(p.get("modules"))
-        pulled = sorted({d for m in listed if m in mods for d in _closure(m, mods)} - set(listed))
+        held = set(listed) | (set(_strs(presets[base].get("modules"))) if _is_base(presets.get(base)) else set())
+        pulled = sorted({d for m in listed if m in mods for d in _closure(m, mods)} - held)
         if pulled:
             notes.append(f"{at}: pulls {', '.join(pulled)} (hard dependencies its modules need)")
 
@@ -193,6 +205,7 @@ def validate(doc: dict, where: str = "catalogue") -> tuple[list[str], list[str]]
     errors: list[str] = []
     contract = schema.load(KIND)   # versioned by its id: a top-level v is a producer's own key, never a refusal
     schema._validate(doc, contract, contract, where, errors)
+    _finite(doc, where, errors)
     notes: list[str] = []
     lists = {k: _ids(doc, k, where, errors) for k in LISTS}
     _modules(lists, where, errors, notes)
@@ -232,8 +245,10 @@ def _cost(entries: list) -> dict:
     out: dict[str, float] = {}
     for e in entries:
         for k, v in (e.resources or {}).items():
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or not v > 0:
+                continue   # a stack's tier is only shape-checked by brain check --all: never a crash, never below 0
             key, val = ("disk_mb", v * 1024) if k == "disk_gb" else (k, v)
-            if key in COST and isinstance(v, (int, float)) and not isinstance(v, bool):
+            if key in COST:
                 out[key] = out.get(key, 0) + val
     return {k: (int(v) if float(v).is_integer() else v) for k, v in sorted(out.items()) if v}
 
@@ -264,7 +279,9 @@ def _said(m, entry: dict, caps: list) -> dict:
 
 def _needs(caps: list, licence: str) -> dict:
     """What the machine needs and pays: requirements, the clauses that recommend it, the cost, the fallback."""
-    return {"requires": _union(e.requires for e in caps), "recommend_when": _union(e.recommend_when for e in caps),
+    from . import probe
+    brought = [[r for r in e.requires if not (e.pip and r in probe.MODULES)] for e in caps]   # its extra installs it
+    return {"requires": _union(brought), "recommend_when": _union(e.recommend_when for e in caps),
             "cost": _cost(caps), "fallback": "; ".join(sorted({e.fallback for e in caps if e.fallback})),
             "licence": licence}
 
@@ -290,12 +307,16 @@ def _presets_of(cat: dict, reg: dict) -> list[dict]:
         return [m.id for m in cat.values()
                 if (sw := mod.switched(m, reg)) and all(c in keep for c in sw)]
 
-    def fits(m) -> bool:
-        caps = [reg[c] for c in m.capabilities]
-        return (bool(mod.switched(m, reg)) and any(e.profile == "recommended" for e in caps)
-                and all(e.status == "built" for e in caps))
+    keep = tiers.preset(reg, "default")
+    eligible = {e.id for e in reg.values() if e.profile == "recommended" and e.status == "built" and not e.auto}
+    eligible = {c for c in eligible if all(d in keep or d in eligible for d in reg[c].depends_on)}   # recommend's rule
 
-    default = modules_of(tiers.preset(reg, "default"))
+    def fits(m) -> bool:
+        """As tiers.recommend: every switched capability in Default or recommendable, one of them recommendable."""
+        sw = mod.switched(m, reg)
+        return bool(sw) and all(c in keep or c in eligible for c in sw) and any(c in eligible for c in sw)
+
+    default = modules_of(keep)
     out = [{"id": base, "name": tiers.NAMES[base], "kind": "base", "modules": modules_of(tiers.preset(reg, base))}
            for base in tiers.BASES]
     out[-1]["when_fits"] = [m.id for m in cat.values() if m.id not in default and fits(m)]   # recommended

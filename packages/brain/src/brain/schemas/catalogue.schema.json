@@ -60,13 +60,13 @@
         "components": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "What turning it on turns on, in the producer's own terms (the Brain: its capabilities)."},
         "depends_on": {"$ref": "#/$defs/ids", "description": "The modules it needs (hard): turned on with it; an id of modules."},
         "uses": {"$ref": "#/$defs/ids", "description": "The modules it reads when they are on (soft): its fallback otherwise; never pulled. An id another catalogue holds is allowed (a note)."},
-        "requires": {"type": "array", "items": {"type": "string", "pattern": "^(env:[A-Z_][A-Z0-9_]*|[a-z][a-z0-9_-]*)$"}, "description": "Facts of the machine that must hold for it to run: a tool found (docker, git...), gpu, container_runtime, env:NAME; the facts' names are brain.status/v1's (docs/catalogue.md)."},
+        "requires": {"type": "array", "items": {"type": "string", "pattern": "^(env:[A-Z_][A-Z0-9_]*|[a-z][a-z0-9_-]*)$"}, "description": "Facts of the machine that must hold for it to run, beyond what its distributions bring: a tool found (docker, git...), gpu, container_runtime, env:NAME; the facts' names are brain.status/v1's (docs/catalogue.md)."},
         "recommend_when": {"type": "array", "items": {"type": "string", "pattern": "^(not\\s+)?[A-Za-z0-9_:.-]+(\\s*(>=|<=|==|!=|>|<)\\s*\\S+)?$"}, "description": "Clauses that must all hold for a recommended preset to add it: a fact (docker), its negation (not wsl), or a comparison (memory_gb >= 7)."},
         "cost": {"$ref": "#/$defs/cost"},
         "fallback": {"type": "string", "description": "What replaces it when it is off or missing."},
         "licence": {"type": "string", "description": "Its licence: an SPDX expression, or a name."},
         "distributions": {"$ref": "#/$defs/ids", "description": "The distributions it needs installed: ids of distributions."},
-        "typologies": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The project typologies it serves: ids of the typology catalogue; an id a reader does not know is kept (a note), never refused."}
+        "typologies": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The project typologies it serves: ids of the typology catalogue; an id a reader does not know is kept, never refused."}
       }
     },
     "distribution": {
@@ -100,9 +100,9 @@
         "description": {"type": "string"},
         "kind": {"enum": ["base", "persona"], "description": "base: one of the catalogue's starting points (the Brain: lite, default, recommended); persona: a profile of user a catalogue declares, built on a base."},
         "base": {"$ref": "#/$defs/id", "description": "For a persona, the base preset it starts from: an id of a preset of kind base."},
-        "modules": {"$ref": "#/$defs/ids", "description": "The modules it turns on, whatever the machine."},
+        "modules": {"$ref": "#/$defs/ids", "description": "The modules it turns on, whatever the machine; for a persona, those beyond its base preset's."},
         "when_fits": {"$ref": "#/$defs/ids", "description": "The modules it adds on a machine that holds their requires and recommend_when."},
-        "typologies": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The project typologies it suits: ids of the typology catalogue; an unknown id is kept (a note)."}
+        "typologies": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The project typologies it suits: ids of the typology catalogue; an unknown id is kept, never refused."}
       }
     }
   }

@@ -74,7 +74,7 @@ brain catalogue emit --out catalogue.json   # the brain's own catalogue
 | `components` | what turning it on turns on, in the producer's own terms (the Brain: its capabilities) |
 | `depends_on` | the modules it needs (hard): turned on with it |
 | `uses` | the modules it reads when they are on (soft): its fallback otherwise, never pulled |
-| `requires` | facts of the machine that must hold for it to run: a tool found (`docker`, `git`), `gpu`, `container_runtime`, `env:NAME` |
+| `requires` | facts of the machine that must hold for it to run, beyond what its distributions bring: a tool found (`docker`, `git`), `gpu`, `container_runtime`, `env:NAME` |
 | `recommend_when` | clauses that must all hold for a recommended preset to add it: a fact (`docker`), its negation (`not wsl`), or a comparison (`memory_gb >= 7`) |
 | `cost` | estimated: `ram_mb` (resident memory, MiB), `disk_mb` (installed, data excluded, MiB), `vram_gb` (GPU memory, GiB), `download_mb` (what adding it downloads, MiB) |
 | `fallback` | what replaces it when it is off or missing |
@@ -105,10 +105,10 @@ a network to read or to plan.
 
 | Key | Meaning |
 |---|---|
-| `id`, `name`, `modules` (required) | its stable id, its label, the modules it turns on whatever the machine |
+| `id`, `name`, `modules` (required) | its stable id, its label, the modules it turns on whatever the machine (for a persona, those beyond its base's) |
 | `description` | who it is for |
 | `kind` | `base` (one of the catalogue's starting points) or `persona` (a profile of user a catalogue declares) |
-| `base` | for a persona, the base preset it starts from |
+| `base` | for a persona, the base preset it starts from: the persona turns on the base's modules, then its own |
 | `when_fits` | the modules it adds on a machine that holds their `requires` and `recommend_when` |
 | `typologies` | the project typologies it suits |
 
@@ -133,7 +133,12 @@ entries that list the engine's capabilities, else one module per capability, [mo
 - the presets `lite`, `default` and `recommended` (`brain profile`'s bases): each lists the modules whose switched
   capabilities its base brings; `recommended` adds, in `when_fits`, the built modules of profile recommended.
 
-The document is validated as it is emitted: an error there is the engine's bug (exit 1).
+The document is validated as it is emitted (exit 1 on an error): what the contract refuses there comes from the
+registry it is read from (two modules whose capabilities depend on each other's, which makes a cycle; an id or a brick
+with a space), and the registry is fixed. A requirement a module's pip extra installs (`textual` for the cockpit) is
+not one the machine must hold: it is left out of `requires`. `when_fits` follows `brain profile`'s Recommended: a
+module whose switched capabilities are all in Default or recommendable (built, not auto, their dependencies in), one
+of them recommendable.
 
 ## Evolution
 
