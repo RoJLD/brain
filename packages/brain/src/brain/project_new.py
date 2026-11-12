@@ -19,9 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
-
-from . import config, init, typologies
+from . import config, graph, init, typologies
 
 OFFERED = ("software", "research")   # STD-5: the entries the wizard offers first
 
@@ -121,8 +119,8 @@ def existing(root: Path, name: str) -> dict | None:
     if not (root / config.FILE).is_file() or not f.is_file():
         return None
     try:
-        data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
+        data = graph.load_yaml(f.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 - unreadable or not YAML: read as no entry (brain check says why)
         return None
     entry = data.get(name) if isinstance(data, dict) else None
     return entry if isinstance(entry, dict) else {}
