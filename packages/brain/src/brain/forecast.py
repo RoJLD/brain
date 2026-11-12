@@ -56,7 +56,7 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import __version__, config, cost, graph, paths, projects, records, resume
+from . import __version__, config, cost, graph, paths, projects, ranking, records, resume
 
 FORMAT = 1            # the JSON's layout
 MODEL_V = 1           # the method's version: a snapshot says which one made it
@@ -75,11 +75,11 @@ SIGMA_MIN = 0.15      # the narrowest lognormal of an item
 MAX_DAYS = 3650       # a future not done in ten years stops there
 INVALID_SCOPE = 0.20  # a saved forecast is invalidated once the open items moved by more (PSY-2, point 6)
 QUANTILES = (("p10", 0.1), ("p50", 0.5), ("p80", 0.8), ("p90", 0.9))
-# The default score (COST-5) that orders the items the owner's priority and order leave tied, until brain next
-# (wi-brain-prioritization) owns it: value / effort, value = base + the value of the features the item delivers
-# + the milestone it moves + the open items it unblocks, effort = its estimated active hours. A written setting, not
-# a hidden constant (spec 4.3).
-SCORE = {"base": 1.0, "feature": {"high": 3.0, "medium": 2.0, "low": 1.0}, "milestone": 1.0, "unblocks": 0.5}
+# The default score (COST-5) that orders the items the owner's priority and order leave tied: value / effort, value
+# = base + the value of the features the item delivers + the milestone it moves + the open items it unblocks, effort
+# = its estimated active hours here (brain next's rank, brain.ranking, which owns SCORE, takes it from the size). A
+# written setting, not a hidden constant (spec 4.3).
+SCORE = ranking.SCORE
 PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 DEFERRED = "deferred"
 CLOSED = ("done", "dropped")
@@ -313,13 +313,7 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
                and (st.nodes.get(e["to"]) or {}).get("type") == "Milestone"}
     pool = cost.history(led)
     gates, delays = decision_gates(p.root)
-    open_ids = [n["id"] for n in work if n.get("status") in resume.WORK_OPEN]
-    dependents = Counter(d for i in open_ids for d in deps.get(i, []) if status.get(d) in resume.WORK_OPEN)
-    feature_value: dict[str, float] = {}
-    for e in st.edges:
-        if e.get("type") == "delivers" and e["from"] in status:
-            v = str(((st.nodes.get(e["to"]) or {}).get("props") or {}).get("value") or "")
-            feature_value[e["from"]] = feature_value.get(e["from"], 0.0) + SCORE["feature"].get(v, 0.0)
+    ranker = ranking.Ranker(st.nodes, st.edges)   # the value brain next ranks by (features, milestone, unblocks)
 
     def estimate(nid: str) -> dict:
         tgt = cost.target_of(led, nid) if nid in led.items else {"class": "standard", "theme": "", "milestone": "",
@@ -352,8 +346,7 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
                    ddr=sorted(gates.get(nid, [])),
                    why=_gate_text(s, props))
         effort = (est["hours"] or {}).get("median") or 1.0
-        value = (SCORE["base"] + feature_value.get(nid, 0.0) + (SCORE["milestone"] if row["milestone"] else 0.0)
-                 + SCORE["unblocks"] * dependents.get(nid, 0))
+        value = ranker.score(nid).value
         row["score"] = round(value / max(effort, 0.25), 4)
         items.append(row)
     milestones = []

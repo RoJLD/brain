@@ -412,7 +412,7 @@ def test_the_queue_sorts_by_score(brain_home, capsys, monkeypatch):
         assert set(cockpit.SORT_COLUMNS[name].values()) <= set(keys)
     assert cockpit.parse_view(["queue:-score"]) == {"queue": {"sort": "score", "reverse": True}}
     assert cockpit.view_of("queue", {"sort": "score"})["sort"] == "score"
-    cockpit.save_state({"panels": {"queue": {"sort": "score", "reverse": True}, "frontier": {"sort": "score"}}})
+    cockpit.save_state({"panels": {"queue": {"sort": "score", "reverse": True}, "frontier": {"sort": "band"}}})
     state = cockpit.load_state()["panels"]
     assert (state["queue"]["sort"], state["queue"]["reverse"]) == ("score", True)  # tui.json keeps it
     assert state["frontier"]["sort"] == "priority"  # a sort the panel does not know: its default

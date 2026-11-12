@@ -235,6 +235,15 @@ questions) and an index with the decisions no module holds; `brain sync` keeps i
 `--public` renders a public repo's neutral reference by feature domain, from its features only (this repo's own is
 [docs/reference/](../../docs/reference/README.md)). See [docs/views.md](docs/views.md).
 
+### The documentation graph's contract
+
+`docgraph/v1` ([docs/docgraph.md](docs/docgraph.md)) is the neutral, public format of a documentation graph: its
+decisions, documents and sections, milestones, criteria, items, changes, tests, threats and modules, typed edges named
+as the Brain names them, a source on every node and derived edge, declared links with their reason, and the findings
+of named checks every producer and reader mean the same way. Any program may emit it (a repository's own docs
+command, the Brain's doc graph); `brain docgraph validate FILE...` checks a document against the schema
+(`schemas/docgraph.schema.json`) and `brain docgraph checks` lists the named checks. Neither needs a brain.
+
 ### Generated READMEs
 
 A repo opts in by holding `readme.yaml` at its root (`schemas/readme.schema.json`): the text only a person writes, what
@@ -307,9 +316,24 @@ in a store that holds a wave or an era; any other `props.kind` on a milestone is
 `brain sync` writes `notes/plan_graph.md` (beside the store's other views; only for a store with a wave or an era,
 and `brain sync` is its one writer): the tree era > milestone > wave > items, each item with its status and what waits
 on the owner (its `props.open`, its `external_blocker`, the pending DDRs on it), each wave's carried items first,
-then the startable ones. `brain next [--json]` prints its first part at zero token: the current wave (the lowest
-release not closed), its items carried from an earlier wave, its startable items, what waits on the owner, the other
-open ones, then the next wave.
+then the startable ones. `brain next [--explain] [--json]` prints its first part at zero token: the current wave (the
+lowest release not closed), its quick wins, its items carried from an earlier wave, its startable items, what waits on
+the owner, the other open ones, then the next wave.
+
+Each group, here and in the view, is ranked (`brain.ranking`): the owner's priority first (a confirmed one before the
+same one proposed), then the owner's explicit order (`props.order`, a number, lower first), then WSJF, value over
+effort. The value is derived from the graph by default: a base of 1, plus the value of the features the item delivers
+(`delivers` edges; a feature's `props.value` high 3, medium 2, low 1), plus 1 when it moves a milestone of the roadmap
+(`part_of` a milestone that is not a wave or an era), plus 0.5 per open item that depends on it. The owner overrides
+it with `props.value` (high 5, medium 3, low 1 on that scale) and `props.value_reason`; `--explain` lists the items
+whose value the owner set, so that frequent overrides show the weights are wrong. The effort is the hours of the
+item's size (« Item sizes »), an unsized item counting as M. A quick win is a carried or startable item of size S
+whose value is high (the owner's, or a derived value of 4 or more); the wave's quick wins are named on a line of their
+own at its top, the rows keeping the rank's order. `brain forecast` derives an item's value the same way. `--explain` puts
+each score's parts under its item: `score 12.5 = value 3.75 (base 1 + features 2 + unblocks 0.75) / 0.3 h (S)`. The
+cockpit's frontier takes the same order by default, sorts by score on demand, and its column chooser adds the size,
+the value and the score. Every number is a written setting of `brain.ranking` (`SCORE`, `VALUE`, `HIGH`), which
+`brain forecast` shares for its tie-breaks.
 
 The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
 X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending
