@@ -285,7 +285,8 @@ lens of the `review-lens` rows to its packet (`brain standards lenses`); `brain 
 never in the scout), a row whose check covers neither a repo's language nor a slot its `tools:` declares;
 `brain standards rules [--write FILE]` prints the `rule` rows as a section of rules text (only what needs
 judgement); `brain standards ci [--write FILE]` prints a GitHub Actions skeleton from the `check` and `measure`
-rows with an adapter, one step per slot and repo, each failing until it is filled with the project's own tool.
+rows with an adapter, one step per slot and repo in its folder, each failing until it is filled with the project's
+own tool.
 
 ### Language adapters
 

@@ -3,6 +3,7 @@ prep, brain standards lenses), the audit's standards.gap, the rules text (brain 
 (brain standards ci), each read from a project's applicable rows; a project without standards: gets none of them."""
 
 import json
+from pathlib import Path
 
 import pytest
 import test_standards as ts
@@ -48,10 +49,51 @@ def test_lenses_rules_and_ci_read_the_applicable_rows_by_level(consumers, capsys
     plan = standards.ci_plan(p, {"demo": "py", "web": "ts"}, {})
     assert plan == {"lint": {"rows": ["tm-lint"], "repos": {"demo": ""}},
                     "coverage": {"rows": ["tm-cov"], "repos": {"demo": "", "web": ""}}}
-    yml = yaml.safe_load(standards.ci_yaml(p, plan, {"demo": "py", "web": "ts"}))
-    names = [s.get("name") for s in yml["jobs"]["standards"]["steps"]]
-    assert names == [None, "lint (demo)", "coverage (demo)", "coverage (web)", "Reports"]
-    assert all("&& false" in s["run"] for s in yml["jobs"]["standards"]["steps"][1:4])   # fails until filled
+    yml = yaml.safe_load(standards.ci_yaml(p, plan, {"demo": "py", "web": "ts"}, {"demo": ".", "web": "web"}))
+    steps = yml["jobs"]["standards"]["steps"]
+    assert [s.get("name") for s in steps] == [None, "lint (demo)", "coverage (demo)", "coverage (web)", "Reports"]
+    assert all(s["run"].endswith("&& false") for s in steps[1:4])   # fails until filled
+    assert "working-directory" not in steps[1] and steps[3]["working-directory"] == "web"
+    assert steps[1]["env"] == {"STANDARDS": "tm-lint", "USUAL_TOOL": "ruff check --output-format sarif -o ruff.sarif"}
+
+
+def test_the_ci_yaml_quotes_whatever_a_name_or_a_path_holds(consumers):
+    import shlex
+    p = consumers()
+    odd = {"my: repo #1": "py"}
+    plan = {"lint": {"rows": ["tm-lint"], "repos": {"my: repo #1": "reports\\o'brien \"x\".sarif"}}}
+    text = standards.ci_yaml(p, plan, odd, {"my: repo #1": "sub dir/x"})
+    steps = yaml.safe_load(text)["jobs"]["standards"]["steps"]
+    assert steps[1]["name"] == "lint (my: repo #1)" and steps[1]["working-directory"] == "sub dir/x"
+    words = shlex.split(steps[1]["run"])
+    assert words[:2] == ["echo", "fill in the lint tool of my: repo #1, writing reports\\o'brien \"x\".sarif"]
+    assert "sub dir/x/reports\\o'brien \"x\".sarif" in steps[2]["with"]["path"]
+
+
+def test_rules_text_gives_each_domain_one_heading(consumers, engine):
+    _catalog(engine, "zz", [_row("zz-arch", domain="architecture", profiles=["cli"], stage="prototype",
+                                 enforcement="rule", languages=["any"]),
+                            _row("zz-test", domain="testing", profiles=["cli"], stage="prototype",
+                                 enforcement="rule", languages=["any"])])
+    text = standards.rules_text(consumers())
+    assert text.count("### architecture") == 1 and text.index("### architecture") < text.index("### testing")
+
+
+def test_catalogs_that_cannot_be_read_whole_feed_no_consumer(consumers, registry, capsys, pr_repo, monkeypatch):
+    registry("  standards: {profiles: [cli], stage: mvp, catalogs: [standards/missing.yaml]}\n"
+             "  repos: [{path: ., lang: ts}]\n")
+    p = projects.get("demo")
+    with pytest.raises(standards.StandardsError, match="cannot be read whole"):
+        standards.lenses(p)
+    for sub in ("lenses", "rules", "ci"):
+        assert cli.main(["--project", "demo", "standards", sub]) == 2, sub
+        assert "cannot be read whole" in capsys.readouterr().err
+    web = projects.repos_of(p)[0]
+    assert audit.standards_gap({"cfg": web, "project": p}).startswith("its standards cannot be measured")
+    monkeypatch.setattr(standards, "project_of_repo", lambda repo: p)
+    monkeypatch.chdir(pr_repo)
+    assert cli.main(["review", "prep", "HEAD~1..HEAD", "--no-scout"]) == 0   # the packet, without the lens
+    assert "no standards lens" in capsys.readouterr().err
 
 
 def test_a_declared_tool_names_its_report_and_covers_another_language(consumers):
@@ -104,11 +146,18 @@ def test_review_prep_adds_the_standards_lens(pr_repo, brain_home):
     assert "standards" not in plain.lenses
 
 
-def test_the_project_of_a_repo(consumers, tmp_path):
+def test_the_project_of_a_repo(consumers, registry, tmp_path, monkeypatch):
     p = consumers()
     assert standards.project_of_repo(p.root).name == "demo"
-    assert standards.project_of_repo(tmp_path / "elsewhere") is None or \
-        standards.project_of_repo(tmp_path / "elsewhere").name != "demo"
+    web = Path(p.root) / "web"
+    web.mkdir(exist_ok=True)
+    assert standards.project_of_repo(web).name == "demo"           # a repo demo's repos: lists
+    (tmp_path / "elsewhere").mkdir()
+    assert standards.project_of_repo(tmp_path / "elsewhere") is None
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("demo: {root: ., repos: [\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(bad))
+    assert standards.project_of_repo(tmp_path / "elsewhere") is None   # a broken registry: no lens, no crash
 
 
 @pytest.fixture

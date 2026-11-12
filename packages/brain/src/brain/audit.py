@@ -406,7 +406,10 @@ def standards_gap(ctx: dict) -> list[dict] | str:
     """standards.gap (brain.standards): the project's applicable standards whose check covers neither this repo's
     language nor a slot of its own tools (the same gaps as brain standards check, one finding per row)."""
     c = ctx["cfg"]
-    chosen = standards.chosen_for(ctx.get("project"))
+    try:
+        chosen = standards.chosen_for(ctx.get("project"))
+    except standards.StandardsError as exc:
+        return f"its standards cannot be measured: {exc}"
     if not chosen:
         return ("no applicable standard (projects.yaml standards:, or its catalogs cannot be read: brain standards "
                 "check)")

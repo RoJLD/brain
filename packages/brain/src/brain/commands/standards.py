@@ -35,7 +35,8 @@ USAGE = """\
                  project: lenses, its review-lens rows, the questions brain review prep adds as the standards lens;
                  rules, its rule rows as a markdown section of rules text (only what needs judgement); ci, a GitHub
                  Actions skeleton from its check and measure rows with an adapter, one step per slot and repo (the
-                 usual tool of its language as a comment; the engine runs no tool). Nothing when it declares none
+                 usual tool of its language in the step's env; the engine runs no tool). Nothing when it declares
+                 none; exit 2 when its catalogs cannot be read whole
 """
 
 
@@ -207,14 +208,21 @@ def _cmd_ci(args, root: Path) -> int:
     notes: list[str] = []
     langs, slots = _languages(p, notes)
     try:
-        tools = {r.name: dict(r.tools) for r in projects.repos_of(p)}
+        repos = projects.repos_of(p)
     except projects.RepoError:
-        tools = {name: {} for name in slots}
+        repos = []
+    tools = {r.name: dict(r.tools) for r in repos} or {name: {} for name in slots}
+    dirs = {}
+    for r in repos:   # each step runs in its repo's folder, when the repo is inside the project's root
+        try:
+            dirs[r.name] = Path(r.path).resolve().relative_to(Path(p.root).resolve()).as_posix()
+        except ValueError:
+            pass
     plan = standards.ci_plan(p, langs, tools)
     if args.json:
-        _print_json({"project": p.name, "plan": plan, "notes": notes})
+        _print_json({"project": p.name, "plan": plan, "dirs": dirs, "notes": notes})
     elif plan:
-        _out(standards.ci_yaml(p, plan, langs), args)
+        _out(standards.ci_yaml(p, plan, langs, dirs), args)
     else:
         print(f"no check or measure standard with an adapter applies to {p.name} (brain standards list --applicable)")
     for n in notes:
