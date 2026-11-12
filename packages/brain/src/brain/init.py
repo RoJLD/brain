@@ -481,6 +481,15 @@ def render_claude(root: Path) -> tuple[int, list[str]]:
     return 0, []
 
 
+def _file_step(path: Path, text: str, appended: str) -> Step:
+    """A file of the template: created, or kept when it exists (never written over); a kept file names what the
+    template appends to it, for the owner to add by hand."""
+    if not path.exists():
+        return Step("create", path, text)
+    return Step("keep", path, why=f"exists; the template appends {appended} to it: add that by hand, as the new file "
+                                  "would hold it" if appended else "exists")
+
+
 def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = None, tier: str = "lite",
          name: str = "brain", template_spec: str = DEFAULT_TEMPLATE, stage: str = DEFAULT_STAGE) -> list[Step]:
     """What brain init would do in ``root``, file by file, in order (the owner: ``owner``, else the one of the
@@ -501,13 +510,8 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
     root = Path(root).resolve()
     steps, created = [], set()
     for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage).items():
-        p = root / rel
-        if p.exists():   # never written over: what the template appends to it is the owner's to add
-            more = tpl.appended(rel)
-            steps.append(Step("keep", p, why=f"exists; the template appends {more} to it: add that by hand, as "
-                                             "the new file would hold it" if more else "exists"))
-        else:
-            steps.append(Step("create", p, text))
+        steps.append(_file_step(root / rel, text, tpl.appended(rel)))
+        if steps[-1].action == "create":
             created.add(rel)
     for i, g in enumerate(tpl.graphs):
         schema = root / g["store"] / "schema.yaml"
