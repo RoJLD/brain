@@ -3329,7 +3329,7 @@ def commit_public(repo: str, specs: list[str], every_tracked: bool,
     if not public.is_public(slug, cfg):
         return "", []
     untracked = specs if untracked is None else untracked
-    r = public.rules(cfg)
+    r = public.rules(cfg, slug)
     texts = [_git_out(repo, *diffs.argv("diff", "-U0", "--no-renames", "--cached"))]
     if specs or every_tracked:
         texts.append(_git_out(repo, *diffs.argv("diff", "-U0", "--no-renames", "HEAD", "--", *specs)))

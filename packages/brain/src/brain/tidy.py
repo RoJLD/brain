@@ -1,5 +1,5 @@
 """``brain tidy``: the local branches, worktrees and, with --remote, remote branches a project's repos no longer need,
-listed, then removed with --apply, at zero token (wi-brain-tidy, ADR "brain tidy et le garde des noms de branche").
+listed, then removed with --apply, at zero token (wi-brain-tidy, the owner's decision of 2026-11-03).
 
 For each repo of the project (its ``repos:``, root and production checkouts, each git repository once):
 

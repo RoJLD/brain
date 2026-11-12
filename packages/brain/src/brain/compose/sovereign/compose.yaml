@@ -1,4 +1,4 @@
-# The Brain's sovereign stack (wi-brain-sovereign-stack; ADR "La pile souveraine du Brain"): an OpenTelemetry
+# The Brain's sovereign stack (wi-brain-sovereign-stack; the owner's decision of 2026-11-02): an OpenTelemetry
 # collector, Prometheus, Loki, Grafana and Qdrant, local first. This is the template: brain bundle apply renders it into
 # <BRAIN_HOME>/stacks/sovereign/ (each component's data where its placement says, the Grafana password file the
 # owner fills), and brain up <component> runs it. Edit this file, then brain bundle plan / apply; never the rendered copy.

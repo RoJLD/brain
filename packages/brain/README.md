@@ -34,7 +34,7 @@ What it does, every command reading files and git, never a model:
   workflow; a command a session types into the owner's Terminal panel, `run_in_terminal`, meets the same shell
   guards), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
-  shapes, data files) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
+  shapes, data files, the personal graph's decision ids and titles and the other projects' ids) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
   deny rules and gitleaks as now. After an upgrade, `brain update` and the installer's `-Apply` re-check the
   registry's public checkouts with the new engine (`brain check --public --refresh`), so each one's HEAD is stamped
   again; a checkout with uncommitted work is skipped and named, and another local branch still asks its own check.
@@ -1220,6 +1220,17 @@ by: rerun `brain check --public --history` before the next push. A registry that
 conflict marker in `projects.yaml`, `members.yaml` or a module registry) never yields a shorter list: the public and
 secrets guards refuse, as for a configuration they cannot trust, and `brain check --public` stops (exit code 2).
 
+**The personal graph's ids** (`wi-brain-public-private-ids`, brain.privateids). When `config.json` names a public
+repo, `brain check --public` and the public commit guard also refuse, as the `graph` check, what the registry's stores
+hold of the owner's graph: an ADR's or a DDR's id (the owner's decisions and answers) whatever its project; any other
+id of the shapes `wi-`, `adr-`, `feat-`, `ddr-`, `spec-` and `les-` of a project that is not the public repo's own (the
+projects with a repo named as the public repo, whose items, features, specs and lessons the engine cites on purpose:
+its CHANGELOG, its docstrings, FEATURES.md); and an ADR's title of 4 words or more, matched on its first 8 words
+whatever the case and the punctuation (a title quoted whole, or cut where a view truncates it). An id no store holds
+passes (a test's invented `adr-2026-01-01-x`), as does a file under `public.allow`. A store that does not load is said
+in the check's notes, its ids unchecked. The ids are not part of the stamp's key: a new item every few minutes would
+void every stamp, and a line checked before an id existed cannot hold it.
+
 **The secret scan, hardened** (`wi-brain-secretscan-hardening`, brain.secretscan), before the first machine snapshot.
 A PEM private key matches as a whole block, from its `BEGIN` line to its `END` line (to the text's end when it has
 none): a ledger's line drop takes the key's body too. The fleet's token formats are known: ntfy (`tk_`), Tailscale
@@ -1613,6 +1624,19 @@ The tests run as an invented owner, Ada (`tests/fixtures/brain/config.json`, set
 through `BRAIN_CONFIG`), with a temporary `BRAIN_HOME`; they need git, and bash for the hooks (Git Bash on Windows).
 They read only fixtures, never a real brain's graph, records or rendered files: what checks a brain's own data is
 `brain check` and `brain audit`.
+
+Their environment is an allow list, not a deny list (`conftest.py`, `wi-brain-hermetic-tests`): every variable of the
+families the engine reads (`BRAIN_*`, `CLAUDE*`, `GIT_*`, `RESEARCH_GRAPH_*`, `OTEL_*`), a GitHub token and the editor
+are cleared for the run and again before each test, unless the conftest pins them (`BRAIN_HOME`, `BRAIN_CONFIG`,
+`CLAUDE_CONFIG_DIR`, ...) or a test sets them; `BRAIN_TEST_ROOT` and `BRAIN_TEST_WORKERS` are kept, and an opt-in
+such as `BRAIN_TEST_KEYSTORE=wincred` (the real Credential Manager's round trip) is cleared too but kept aside for the
+one test that reads it (`conftest.opted_in`). git reads no system configuration and a global one that only points its
+default ignore and attributes files at an empty one, so a user's `diff.noprefix`, alias or `*.log` ignore never
+reaches a test. So the suite gives the same result from a terminal, a Claude Code session or CI.
+`tests/test_hermetic.py` lists the variables the engine's modules, hooks and installer scripts read (whatever their
+case) and fails on one the conftest leaves as the machine has it without a reason
+(`PASSTHROUGH`: `PATH`, `HOME`, ...), and on any `monkeypatch.undo()` in the tests (it drops the conftest's whole
+environment: `monkeypatch.context()` undoes only what it set).
 
 `-n auto` runs them in parallel, one pytest-xdist worker per CPU thread: each test has its own temporary folder,
 `BRAIN_HOME` and environment, so no test shares state with another. With `-n` and no `--dist`, `conftest.py` picks

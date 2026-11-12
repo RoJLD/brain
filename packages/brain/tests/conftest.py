@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -11,6 +12,90 @@ FIXTURES = Path(__file__).parent / "fixtures"
 BRAIN = FIXTURES / "brain" / "config.json"  # the owner the tests run as: Ada
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t",
            "GIT_COMMITTER_EMAIL": "t@example.invalid", "GIT_CONFIG_NOSYSTEM": "1"}
+
+# The hermetic environment (wi-brain-hermetic-tests): an allow list, not a deny list. Every variable of the families
+# the engine reads (BRAIN_*, CLAUDE*, GIT_*, RESEARCH_GRAPH_*, OTEL_*) is cleared for the whole run, and again before
+# each test, unless this file pins it (PINNED, SESSION_PINS) or a test sets it; so is a token that would reach the
+# owner's GitHub account (CLEARED). A new variable of a family is cleared the day the engine starts reading it, where a
+# deny list let it through (CLAUDE_CODE_HOST_SESSION_ID failed test_resume from a desktop-app session, CLAUDECODE
+# test_tui's actions). git reads an empty global configuration (its default ignore and attributes files too) and no
+# system one, so a user's diff.noprefix, alias or *.log ignore never reaches a test. tests/test_hermetic.py lists the
+# variables the engine reads and fails on one this file leaves set unexamined.
+# OTEL_*: the OpenTelemetry export's settings (brain.ipchealth renders and checks Claude Code's), and a shell's
+# OTEL_EXPORTER_OTLP_HEADERS may carry the machine's token: none reaches a test
+FAMILIES = ("BRAIN_", "CLAUDE", "GIT_", "RESEARCH_GRAPH_", "OTEL_")
+# a token that would reach the owner's GitHub account, the editor a test would open on the owner's screen
+CLEARED = frozenset({"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "EDITOR", "VISUAL"})
+RUNNER = frozenset({"BRAIN_TEST_ROOT", "BRAIN_TEST_WORKERS"})   # the suite's own knobs, read by this file alone
+PINNED = frozenset({"BRAIN_HOME", "BRAIN_SELFTIME", "BRAIN_NOTIFY", "BRAIN_STRICT", "BRAIN_PERMISSIONS",
+                    "BRAIN_CONFIG", "CLAUDE_CONFIG_DIR", "LOCALAPPDATA"})   # set before each test by brain_home
+SESSION_PINS = frozenset({"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"})   # set for the run by pytest_configure
+# An owner's opt-in to a test that is skipped otherwise, read by that test through opted_in(): cleared like the rest
+# (BRAIN_TEST_KEYSTORE also lets the engine reach the real keystore under pytest), its value kept aside under
+# OPT_IN_PREFIX, a name the engine never reads, which xdist's workers inherit.
+OPT_INS = ("BRAIN_TEST_KEYSTORE",)
+OPT_IN_PREFIX = "HERMETIC_OPT_IN_"
+_GIT_FILES: list[str] = []
+
+
+def hermetic(name: str) -> bool:
+    """Whether the hermetic environment clears ``name`` unless it is pinned (case-insensitive, as Windows reads it)."""
+    up = name.upper()
+    return (up.startswith(FAMILIES) or up in CLEARED) and up not in RUNNER
+
+
+def opted_in(name: str) -> str:
+    """The value the owner gave an opt-in of :data:`OPT_INS` when the run started ('' when none)."""
+    return os.environ.get(OPT_IN_PREFIX + name, "")
+
+
+def hermetic_environment(env, gitconfig: str) -> list[str]:
+    """Clears from ``env`` (os.environ, or a dict in a test) every variable :func:`hermetic` names, an opt-in kept
+    aside first, then points git at ``gitconfig`` with no system configuration; returns the names cleared."""
+    for name in OPT_INS:
+        if env.get(name):
+            env[OPT_IN_PREFIX + name] = env[name]
+    cleared = sorted(k for k in env if hermetic(k))
+    for k in cleared:
+        del env[k]
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = gitconfig
+    return cleared
+
+
+def clear_leftovers(monkeypatch) -> list[str]:
+    """Before each test: a variable of the families set since the run started (os.environ itself, not monkeypatch)
+    cleared again, the run's git pins kept; the names cleared."""
+    left = [k for k in os.environ if hermetic(k) and k.upper() not in SESSION_PINS]
+    for k in left:
+        monkeypatch.delenv(k)
+    return left
+
+
+def _empty_git_files() -> str:
+    """The run's global git configuration: no setting but the user's default ignore and attributes files
+    ($XDG_CONFIG_HOME/git/ignore, git/attributes, which git reads without a setting) pointed at an empty file."""
+    paths = []
+    for suffix in (".gitconfig", ".empty"):
+        fd, path = tempfile.mkstemp(prefix="brain-tests-", suffix=suffix)
+        os.close(fd)
+        paths.append(path)
+    empty = Path(paths[1]).as_posix()
+    Path(paths[0]).write_text(f"[core]\n\texcludesFile = {empty}\n\tattributesFile = {empty}\n", encoding="utf-8")
+    _GIT_FILES[:] = paths
+    return paths[0]
+
+
+def pytest_configure(config):
+    """The run's hermetic environment, before any test module is imported (one reads a variable at import) and before
+    xdist starts its workers, which inherit it (and each clear it again: a worker loads this file too)."""
+    hermetic_environment(os.environ, _empty_git_files())
+
+
+def pytest_unconfigure(config):
+    for path in _GIT_FILES:
+        Path(path).unlink(missing_ok=True)
+    _GIT_FILES.clear()
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -75,13 +160,14 @@ def pytest_xdist_auto_num_workers(config):
 
 @pytest.fixture(autouse=True)
 def brain_home(tmp_path, monkeypatch):
-    """Every test writes its ledger to a temporary BRAIN_HOME, never ~/.brain."""
+    """Every test writes its ledger to a temporary BRAIN_HOME, never ~/.brain, in the hermetic environment: a variable
+    of the families an earlier test set without monkeypatch (os.environ itself, a child's leftover) is cleared again,
+    so none reaches this one (the agent's session ids, BRAIN_ROOT, BRAIN_CAPTURE, BRAIN_PERSONAL, CLAUDE_BRAIN_DIR,
+    BRAIN_IPC_TOKEN_FILE, BRAIN_MCP_CONTAINER...: the tests run as the owner's own terminal, on no machine's brain)."""
+    clear_leftovers(monkeypatch)
     home = tmp_path / "brain-home"
     monkeypatch.setenv("BRAIN_HOME", str(home))
-    monkeypatch.delenv("BRAIN_ROOT", raising=False)
-    monkeypatch.delenv("BRAIN_CAPTURE", raising=False)
     monkeypatch.setenv("BRAIN_SELFTIME", "0")  # the engine's own events: only test_selftime turns them on
-    monkeypatch.delenv("BRAIN_HOOK_T0", raising=False)
     monkeypatch.setenv("BRAIN_NOTIFY", "off")  # no test sends a real notification (test_notify fakes the transports)
     # the checks read strictly, as in CI, whether or not the suite runs there; the tolerant tests set BRAIN_STRICT=0
     monkeypatch.setenv("BRAIN_STRICT", "1")
@@ -94,17 +180,6 @@ def brain_home(tmp_path, monkeypatch):
     # no test reads this checkout's config.json unless it says so: the tests' brain is Ada's (fixtures/brain), so a
     # view that still names someone else fails
     monkeypatch.setenv("BRAIN_CONFIG", str(BRAIN))
-    monkeypatch.delenv("CLAUDE_BRAIN_DIR", raising=False)
-    monkeypatch.delenv("BRAIN_PERSONAL", raising=False)  # and no machine's personal brain: the pointer is in home
-    monkeypatch.delenv("BRAIN_PROJECTS", raising=False)  # nor a registry the shell names
-    # the machine's token is the temporary BRAIN_HOME's, and no test runs as if inside the MCP server's container
-    monkeypatch.delenv("BRAIN_IPC_TOKEN_FILE", raising=False)
-    monkeypatch.delenv("BRAIN_MCP_CONTAINER", raising=False)
-    # the tests run as the owner's own terminal unless they say otherwise, even from an agent's shell (brain.answers)
-    # (nor the desktop app's session id: brain.sessions stamps it, so a run from a session would differ)
-    for var in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION", "CLAUDE_CODE_SESSION_ID",
-                "CLAUDE_SESSION_ID", "CLAUDE_CODE_HOST_SESSION_ID"):
-        monkeypatch.delenv(var, raising=False)
     from brain import update  # no test reads the engine's tags or its CHANGELOG on GitHub: offline unless it fakes them
 
     def offline(*args, **kwargs):

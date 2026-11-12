@@ -3,6 +3,7 @@ import subprocess
 import sys
 import uuid
 
+import conftest
 import pytest
 
 from brain import keystore
@@ -54,7 +55,7 @@ def test_a_value_never_goes_on_a_command_line(cls, monkeypatch):
     assert all("value-3" not in " ".join(a) for a, _ in calls)
 
 
-@pytest.mark.skipif(sys.platform != "win32" or os.environ.get("BRAIN_TEST_KEYSTORE") != "wincred",
+@pytest.mark.skipif(sys.platform != "win32" or conftest.opted_in("BRAIN_TEST_KEYSTORE") != "wincred",
                     reason="writes the real Credential Manager: BRAIN_TEST_KEYSTORE=wincred on Windows")
 def test_wincred_round_trip():
     ks = keystore.WinCred()

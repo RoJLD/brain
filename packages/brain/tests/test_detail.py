@@ -176,10 +176,10 @@ def test_milestone_session_and_alert(demo, brain_home):
 def test_anchor_line(tmp_path):
     f = tmp_path / "s.md"
     f.write_text("# Title\n\n### 4.6 Le détail (drill-down) — P1\n\n## 10. Les réponses d'Ada\n\n"
-                 "## 2026-11-02 — Le cockpit : un sélecteur de projet, des filtres\n", encoding="utf-8")
+                 "## 2026-11-02 — Le tableau : un sélecteur de dossier, des vues\n", encoding="utf-8")
     assert detail.anchor_line(f, "4.6") == 3 and detail.anchor_line(f, "10") == 5
     assert detail.anchor_line(f, "46-le-détail-drill-down--p1") == 3  # GitHub's anchor
-    assert detail.anchor_line(f, "2026-11-02-le-cockpit-un-s-lecteur-de") == 7  # the engine's, cut
+    assert detail.anchor_line(f, "2026-11-02-le-tableau-un-s-lecteur-de") == 7  # the engine's, cut
     assert detail.anchor_line(f, "top") == 1 and detail.anchor_line(f, "nowhere") is None
     assert detail.anchor_line(tmp_path / "gone.md", "x") is None
 
