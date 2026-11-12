@@ -854,6 +854,20 @@ know is refused loudly), the facts declared in `config.json` `hosts.<name>`, els
 keeps the last ones with their source. A machine's `profile.json` overrides `config.json` `tier.components` key by
 key (a switch it does not name keeps the brain's default).
 
+**Modules** (`brain mod`, `brain.mod`): the module face of `brain profile`, on the same files. A module of the
+store's registry (`modules.yaml`, or the one `config.json` `modules.store` names) that lists the engine's
+`capabilities` turns them on and off together; without such a registry each capability is its own module. The layers,
+in order: the base preset, `config.json` `tier.components` (every machine's default, by a PR), `profile.json` (this
+machine), both accepting module ids, expanded to their capabilities (a capability named directly wins), then the hard
+dependencies pulled. A capability declares `depends_on` (hard: pulled when it is on) and `uses` (soft: a provider it
+reads, its `fallback` otherwise) in `tiers.yaml`; a module depends on another by its registry entry's `depends_on` or
+through its capabilities'. `brain mod list | show ID | explain ID` read; `brain mod enable ID [--apply]` pulls the hard
+dependencies and shows the cost, `brain mod disable ID [--cascade] [--apply]` is refused while a module that is on
+needs it (`--cascade` turns those off too); `--apply` writes this machine's `profile.json`, a second apply changes
+nothing. `explain` shows the scopes' `capabilities` (require, forbid) as declared: the scope tree reserves the key, its
+enforcement comes later. `brain init` writes an empty `modules` key. An auto capability is never switched (its
+module shows auto); a capability two modules list follows the first of them a layer names (keys in order).
+
 `config.json` `engine.min` (optional, beside `engine.pin`) is the oldest engine that may write the shared formats:
 below it the memory sync exports nothing (it still imports), the DDRs are not written and `brain check` says so; the
 machine still reads.
