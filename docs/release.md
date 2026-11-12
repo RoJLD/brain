@@ -169,8 +169,11 @@ refuses a version PR without it:
 
 ```bash
 python packages/brain/installer/freeze_store.py vP      # installs vP in a fresh venv, writes the brain, freezes it
-pytest packages/brain/tests/test_old_stores.py
+pytest packages/brain/tests/test_old_stores.py packages/brain/tests/test_formats_frozen.py
 ```
+
+The same run freezes each format's file as `vP` wrote it, `tests/fixtures/formats/<format>/v<N>/vP.<ext>`
+(`packages/brain/docs/formats.md`, « Fixtures »).
 
 A test that fails there is a change that breaks a brain `vP` made: fix it, or it is a format that moves (a minor
 version, with its `### Upgrade` step).
@@ -188,7 +191,10 @@ preview », only says what `release-check` will judge):
   one does (section 1, the closure rule: CI runs it without, as it holds no owner's store; a `--store` it cannot
   read is exit 2).
   It reads files, not meanings: a section can be there and wrong, and `permissions.yaml`, whose keys are constants in
-  `brain.permissions`, has no file for it to compare (wi-brain-schema-diff compares keys). This list still applies.
+  `brain.permissions`, has no file for it to compare. What a schema change narrows (a property removed, a field
+  newly required...) is `brain schema diff`'s, on every PR (CI's advisory `schema-diff` job;
+  `packages/brain/docs/formats.md`, « The schema diff »): a narrowing that reaches the version PR unresolved by a
+  `Compat:` line is a format that moves. This list still applies.
 - **`compat-prev`** installs `vP`, writes every registered format, installs this checkout over it, runs the store plan,
   `brain sync`, `brain check` and the Lite scenario, rolls back to `vP` and comes back. The pin of a tag not cut yet does
   no harm: it installs from the checkout.

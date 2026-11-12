@@ -185,6 +185,14 @@ an `info` line by default (shown, never blocking), a NEW line under `config.json
 moved into it from a file that no longer defines their function, make one DEFER line per file and norm to the repo's
 debt item, fixed by batches (never blocking).
 
+And it reads what a change of a schema narrows (`brain.schemadiff`, wi-brain-schema-diff): a JSON Schema
+(`*.schema.json`) or a graph store's `schema.yaml` whose new version refuses what the old one accepted (a property
+removed, a field newly required, an enum or a type narrowed, a bound tightened, a type or a status removed). A
+`schema.narrowed` line is an `info` line by default, a NEW line under `config.json` `audit.schema_diff_strict: true`,
+and justified when the PR's `Compat:` line resolves it (`Compat: migration <id>` with the format's `v` bumped and its
+fixture, or `Compat: breaking <adr-id>`). `brain schema diff --against <tag>` prints the same over a tag's range
+([`docs/formats.md`](docs/formats.md), « The schema diff »).
+
 ### Feature coverage
 
 A shipped capability cannot miss the feature matrix (`FEATURES.md`): in a package whose `commands/` lists its own

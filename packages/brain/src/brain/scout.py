@@ -35,7 +35,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import audit, feature_coverage, graph, inventory, norms, paths, projects, structure
+from . import audit, feature_coverage, graph, inventory, norms, paths, projects, schemadiff, structure
 from .inventory import AuditError, git
 
 ORDER = {"entry": 0, "prod": 1, "other": 2, "": 3}
@@ -258,12 +258,14 @@ def _decision_texts(p: projects.Project) -> list[str]:
 
 def _structure(args, p: projects.Project, c: projects.Repo, top: Path, rows: list, base_tree: inventory.Tree,
                new_tree: inventory.Tree, base_rev: str, new_rev: str, root: Path | None) -> list[dict]:
-    """The structure signals of the change (brain.structure), with the project's thresholds and decision logs, and
-    its norm lints (brain.norms, NEW under the owner's opt-in)."""
+    """The structure signals of the change (brain.structure), with the project's thresholds and decision logs, its
+    norm lints (brain.norms, NEW under the owner's opt-in) and what its schemas narrow (brain.schemadiff, NEW under
+    the owner's opt-in too)."""
     body = structure.body_of(top, base_rev, new_rev, _pr_body(getattr(args, "pr_body", None) or ""))
-    return structure.signals(c.name, rows, base_tree, new_tree, structure.thresholds(p.audit), body,
-                             _decision_texts(p)) + norms.signals(c.name, rows, base_tree, new_tree, body,
-                                                                 norms.strict(root))
+    shape = structure.signals(c.name, rows, base_tree, new_tree, structure.thresholds(p.audit), body,
+                              _decision_texts(p))
+    return (shape + norms.signals(c.name, rows, base_tree, new_tree, body, norms.strict(root))
+            + schemadiff.signals(c.name, rows, base_tree, new_tree, body, schemadiff.strict(root)))
 
 
 def _tagged(out: list[dict], tag: str) -> int:
