@@ -346,28 +346,37 @@ def test_a_dead_job_s_lock_is_alerted_and_broken(world, brain_home, monkeypatch)
 
 def test_hook_scripts_end_to_end(world, brain_home, tmp_path):
     """The real detached job: memory.sh SessionEnd returns at once, the job pushes the branch afterwards; then the
-    SessionStart hook prints the alert as JSON."""
+    SessionStart hook prints the alert as JSON.
+
+    The job's gh waits for a gate the test opens only once the hook has returned: the hook returning while the job
+    still waits proves it detached, with no bound on seconds that a loaded machine overran (it once took more than
+    the 10 s it allowed, wi-brain-test-speed-2). A hook that ran the job itself would block on the gate past its 60 s
+    timeout."""
     bash = _bash()
     if not bash:
         pytest.skip("no bash")
+    gate = tmp_path / "gate"
     fake = tmp_path / "fake_gh.py"
-    fake.write_text("import sys\nargs = sys.argv[1:]\n"
+    fake.write_text("import pathlib, sys, time\nargs = sys.argv[1:]\n"
+                    f"gate, end = pathlib.Path({str(gate)!r}), time.monotonic() + 120\n"
+                    "while not gate.exists() and time.monotonic() < end:\n    time.sleep(0.05)\n"
                     "if args[:2] == ['pr', 'list']: print('[]')\n"
                     "elif args[:2] == ['pr', 'create']: print('https://github.com/o/r/pull/7')\n", encoding="utf-8")
     (world.mem / "b.md").write_text("b\n", encoding="utf-8")
     env = dict(os.environ, BRAIN_HOME=str(brain_home), BRAIN_PYTHON=sys.executable,
                BRAIN_GH=json.dumps([sys.executable, str(fake)]), BRAIN_MEMORY_REPO="o/r",
                CLAUDE_PLUGIN_ROOT=str(PLUGIN))
-    started = time.monotonic()
     out = subprocess.run([bash, str(PLUGIN / "hooks" / "memory.sh"), "SessionEnd"], input="{}", capture_output=True,
                          text=True, env=env, timeout=60)
     assert out.returncode == 0 and out.stdout == ""
-    assert time.monotonic() - started < 10
     last = brain_home / "memory-sync" / "last.json"
-    for _ in range(120):
+    assert not last.exists(), last.read_text(encoding="utf-8")   # the job waits on gh: it has not finished
+    gate.write_text("", encoding="utf-8")
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
         if last.exists() and not (brain_home / "memory-sync" / "run.json").exists():
             break
-        time.sleep(0.5)
+        time.sleep(0.05)
     result = json.loads(last.read_text(encoding="utf-8"))
     assert result["result"] == "ok" and result["pr"] == "https://github.com/o/r/pull/7", result
     assert world.show(result["branch"], "memory/K/b.md") == "b\n"

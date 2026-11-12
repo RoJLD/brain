@@ -26,3 +26,19 @@ def test_a_lock_in_the_template_is_not_copied(tmp_path):
         assert (repo / ".git" / "HEAD").is_file()
     finally:
         lock.unlink()
+
+
+def test_head_sha_reads_the_loose_ref_and_falls_back_to_git(make_repo):
+    """make_repo.commit returns HEAD's sha without a git process when the branch's ref is a loose file; a packed ref,
+    a detached HEAD and another branch give the same answer as git rev-parse (wi-brain-test-speed-2)."""
+    repo = make_repo("r", {"a.txt": "a\n"})
+    def rev_parse():
+        return conftest.run_git(repo, "rev-parse", "HEAD").strip()
+    first = make_repo.commit(repo, {"a.txt": "b\n"})
+    assert first == rev_parse() == conftest.head_sha(repo)
+    conftest.run_git(repo, "pack-refs", "--all")   # the loose ref is gone: rev-parse answers
+    assert not (repo / ".git" / "refs" / "heads" / "main").exists() and conftest.head_sha(repo) == first
+    conftest.run_git(repo, "checkout", "-q", "-b", "feat")
+    assert make_repo.commit(repo, {"a.txt": "c\n"}) == rev_parse() != first
+    conftest.run_git(repo, "checkout", "-q", "--detach", first)
+    assert conftest.head_sha(repo) == first
