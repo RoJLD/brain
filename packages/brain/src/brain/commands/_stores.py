@@ -510,6 +510,7 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     for s in ids["stale"]:
         print(f"warning: shared_ids of {s}: no longer in two stores (remove it)")
     errors += _cross_store(projs, every)
+    errors += _unregistered_code_refs(root, projs, every)
     for line in _moved_names(root):
         print(f"warning: moved: {line}")
     for line in render.registry_warnings(neutral.brain_root(root), projs) + _uncloned(root):
@@ -561,6 +562,32 @@ def _moved_names(root: Path | None) -> list[str]:
     if out is None or out.returncode:
         return [f"not checked: {top} is not a git checkout (its tracked files are what is read)"]
     return moves.scan_root(Path(top), [t for t in out.stdout.decode("utf-8", "replace").split("\0") if t], table)
+
+
+def _unregistered_code_refs(root: Path | None, projs: list[projects.Project], every: bool) -> list[str]:
+    """The active CodeRefs of the registry's stores whose repo no project registers
+    (wi-brain-audit-unregistered-coderef): errors with ``every`` (check --all), else warned. brain audit reports
+    them as coderef.dangling (P0); nothing would measure them otherwise."""
+    from ..inventory import parse_code_ref
+    known = projects.repo_tokens(root)
+    found, read = [], set()
+    for p in projs:
+        for store in p.stores:
+            key = projects._norm(store)
+            if key in read or not (store / "nodes").is_dir():
+                continue
+            read.add(key)
+            for cid, status in projects.code_refs(store):
+                try:
+                    repo = parse_code_ref(cid)[0]
+                except ValueError:
+                    continue   # malformed: the store's own check refuses it
+                if status == "active" and repo.lower() not in known:
+                    found.append(f"CodeRef {cid} ({p.name}): its repo {repo} is in no project's repos: (register "
+                                 "it, point the CodeRef at a registered repo, or retire it)")
+    for line in found if not every else []:
+        print(f"warning: {line}")
+    return found if every else []
 
 
 def _uncloned(root: Path | None) -> list[str]:
