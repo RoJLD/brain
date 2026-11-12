@@ -59,6 +59,29 @@ Linux). It prints a plan; `-Apply` does it. The launcher is replaced even while 
 .\packages\brain\installer\install.ps1 -Apply -Personal D:\me\brain   # and this personal brain's setup
 ```
 
+### Uninstall
+
+`brain uninstall` prints every trace of the brain on this machine that its store registry knows (`brain.uninstall`,
+`wi-brain-uninstall-purge`); `--apply` removes them, in your own terminal (refused in a Claude Code session's shell):
+the scheduled tasks this machine installed, the Claude Code plugin and its marketplace (through the `claude` CLI, or
+its commands named when the CLI is not found), the launcher on the PATH (`<BRAIN_HOME>\bin` out of the user PATH; the
+`~/.local/bin/brain` link elsewhere) and the engine's install stores in `BRAIN_HOME` (the venv, the slots, the tags'
+clones). The venv the command runs from is left, with the command that removes it once it has exited. The data stays.
+
+`--purge` adds every other entry of `BRAIN_HOME`, this machine's device key in its keystore and `BRAIN_HOME` itself
+once empty. A derived store (a cache, an index, a view) goes; a store nothing else keeps (format `truth-local` or
+`log`: the ledger, the session records, the vault, the machine's token...), a name no store covers and the device key
+are held until you confirm their recovery copy: `--confirm-recovery ledger vault keystore`, or `all` (`brain vault
+seal` and `brain spool push` make one; the purge cannot tell that a copy elsewhere is whole, so it asks). It never
+touches Claude Code's transcripts, the personal brain's repo, or a path outside `BRAIN_HOME` but the launcher's link
+(a store that is a link or a junction has only its link removed).
+
+```bash
+brain uninstall                                        # the plan: the install
+brain uninstall --purge                                # and the data: what goes, what is held
+brain uninstall --purge --confirm-recovery all --apply # everything, once the recovery copies are confirmed
+```
+
 ### Updates
 
 `brain update` (since 0.2.4) reads the latest release tag of the engine's public repo (`config.json` `engine.repo`,
