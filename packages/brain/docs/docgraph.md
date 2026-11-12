@@ -22,7 +22,8 @@ brain docgraph validate docs-graph.json     # exit 1 when it does not hold to th
 brain docgraph checks                       # the named checks and what each means
 ```
 
-Neither needs a brain: they run wherever the engine is installed.
+Neither needs a brain: they run wherever the engine is installed. A brain emits its own documentation graph with
+`brain docgraph emit` ([docs-graph.md](docs-graph.md)).
 
 ## A document
 

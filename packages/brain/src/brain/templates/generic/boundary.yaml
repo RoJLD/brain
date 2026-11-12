@@ -20,6 +20,7 @@ rules:
   - {glob: "notes/audit.md", side: generated, why: "brain audit --write"}
   - {glob: "notes/modules_graph.md", side: generated, why: "brain sync (brain modules --write)"}
   - {glob: "notes/plan_graph.md", side: generated, why: "brain sync (brain.waves: eras, milestones, waves)"}
+  - {glob: "notes/docs_graph.md", side: generated, why: "brain sync (brain.docsgraph: the documentation graph)"}
   - {glob: "AGENTS.md", side: generated, why: "brain render --target agents"}
   # --- the Claude Code rendering ---
   - {glob: ".claude-plugin/**", side: claude, init: "brain init", why: "the local marketplace"}
