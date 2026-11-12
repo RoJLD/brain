@@ -12,7 +12,7 @@ CORPUS = json.loads((Path(__file__).parent / "fixtures" / "scrub" / "corpus.json
 WIN, LINUX, EMAIL = "C:\\Users\\" + "bob", "/home/" + "alice", "ada" + "@" + "corp.io"
 VALUES = {"win": WIN, "winfwd": WIN.replace("\\", "/"), "linux": LINUX, "email": EMAIL,
           "ghp": "ghp_" + "a" * 36, "hf": "hf_" + "a1b2c3d4e5" * 3 + "f6g7", "pw": "pass" + "word=Hunter2!",
-          "creds": "u:" + "p4ss", "pem": "-----BEGIN OPENSSH " + "PRIVATE KEY-----"}
+          "creds": "u:" + "p4ss", "pem": "-----BEGIN OPENSSH " + "PRIVATE KEY-----", "name": "zelda", "w": "word"}
 NAMES = {"host_names": CORPUS["hosts"], "user_names": CORPUS["users"]}
 
 
@@ -24,7 +24,7 @@ def _fill(text: str) -> str:
 
 @pytest.mark.parametrize("case", CORPUS["cases"], ids=[c["why"] for c in CORPUS["cases"]])
 def test_the_corpus(case):
-    assert scrub.text(_fill(case["in"]), **NAMES) == case["out"]
+    assert scrub.text(_fill(case["in"]), **NAMES) == _fill(case["out"])
 
 
 def test_every_case_of_the_corpus_is_idempotent():
@@ -34,8 +34,29 @@ def test_every_case_of_the_corpus_is_idempotent():
 
 
 def test_objects_keep_their_keys_and_scrub_their_strings():
-    got = scrub.obj({"user": "bob", "lines": [f"at {WIN}\\x.py", 3], "n": 1}, host_names=[], user_names=["bob"])
+    got = scrub.obj({"user": "zelda", "lines": [f"at {WIN}\\x.py", 3], "n": 1}, host_names=[], user_names=["zelda"],
+                    home_paths=[])
     assert got == {"user": "<user>", "lines": ["at ~\\x.py", 3], "n": 1}
+
+
+def test_the_users_own_home_is_caught_whole_even_with_a_space():
+    home = "C:\\Users\\" + "Zelda Quill"
+    assert scrub.text(f"open {home}\\proj\\x.py", host_names=[], user_names=[], home_paths=[home]) == \
+        "open ~\\proj\\x.py"
+
+
+@pytest.mark.parametrize("line", ["C:" + "\\" * 60 + "nothing", "pass" * 20000, "a" * 50000 + "://"])
+def test_a_long_line_is_scrubbed_in_linear_time(line):
+    import time
+    start = time.perf_counter()
+    scrub.text(line, **NAMES, home_paths=[])
+    assert time.perf_counter() - start < 1.0
+
+
+def test_an_outbound_record_keeps_what_routes_it():
+    rec = scrub.record({"project": "kestrel-site", "key": "probe:kestrel-backup", "only": ["kestrel-ntfy"],
+                        "body": "kestrel is down", "level": "error"})
+    assert rec["project"] == "kestrel-site" and rec["key"] == "probe:kestrel-backup" and rec["only"] == ["kestrel-ntfy"]
 
 
 def test_the_names_come_from_the_machine_and_the_fleet(tmp_path, monkeypatch):

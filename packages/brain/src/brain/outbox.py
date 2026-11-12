@@ -72,8 +72,8 @@ def put(kind: str, key: str, payload: dict, why: str = "", *, now: datetime | No
     state = stateio.load(path())
     if key in state.data:
         return ""
-    # kept to leave later: scrubbed as it would leave now (brain.scrub), the sending host's own field aside
-    payload = {k: (v if k == "host" else scrub.obj(v)) for k, v in payload.items()}
+    # kept to leave later: its free text scrubbed as it would leave now (brain.scrub); what routes it as it is
+    payload, why = scrub.record(payload), scrub.text(why)
     state.data[key] = {"kind": kind, "payload": payload, "at": _iso(now), "tries": 0,
                        "next": _iso(now + timedelta(seconds=wait(1))), "why": why[:200]}
     try:

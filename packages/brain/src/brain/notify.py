@@ -510,7 +510,9 @@ def send(cfg: Config, msg: Message, *, only: list[str] | None = None, dry_run: b
     env = os.environ if env is None else env
     now = now or datetime.now(timezone.utc)
     # what leaves the machine is scrubbed (wi-brain-privacy-scrub): the free text, never the sending host's own field
-    msg = dataclasses.replace(msg, body=scrub.text(msg.body), title=scrub.text(msg.title), link=scrub.text(msg.link))
+    names = scrub.names()
+    msg = dataclasses.replace(msg, body=scrub.text(msg.body, **names), title=scrub.text(msg.title, **names),
+                              link=scrub.text(msg.link, **names))
     if msg.level not in LEVELS:
         raise NotifyError(f"unknown level {msg.level!r} (levels: {', '.join(LEVELS)})")
     switch = (env.get(SWITCH) or "").strip().lower()

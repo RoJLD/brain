@@ -1129,11 +1129,15 @@ release that knows it.
 
 **One privacy scrub** (`wi-brain-privacy-scrub`, brain.scrub) for what leaves the machine, beside the secret scan's
 line drop: a line of `ledger/errors.log` (a crash report included), a notification's title, text and link, and what
-the outbox keeps to send later. It replaces a secret's match by `<secret>` (URL credentials keep their scheme and
-host), an e-mail address by `<email>` (a no-reply or example one is kept), a home folder with its user name
-(`C:\Users\name`, `/Users/name`, `/home/name`) by `~` with the rest of the path kept, this machine's and the fleet's
-names (`$BRAIN_MACHINE`, the host name, `config.json` `hosts` and their `aliases`) by `<host>`, and the login by
-`<user>`. A notification's own sending-host field is kept, so the owner still reads where it comes from. The corpus
+the outbox keeps to send later (its free text: body, title, link, message, reason; never what routes it, a project, a
+key, a level or a channel). It replaces a secret's match by `<secret>` (URL credentials keep their scheme and host; a
+password after its word, quoted or in JSON), an e-mail address by `<email>` (a no-reply or example one is kept), the
+user's own home folder (whole, a name with a space included) and any home folder with its user name
+(`C:\Users\name`, `/Users/name`, `/home/name`, WSL's `/mnt/c/Users/name`, a share's `c$\Users\name`) by `~` with the
+rest of the path kept, this machine's and the fleet's names (`$BRAIN_MACHINE`, the host name, `config.json` `hosts` and
+their `aliases`, whatever the case) by `<host>`, and the login (its case kept) by `<user>`. A name of 3 characters or
+fewer and a common word (`root`, `admin`, `runner`, `dev`...) are never replaced. A notification's own sending-host
+field is kept, so the owner still reads where it comes from. Every pattern is linear on a long line. The corpus
 `tests/fixtures/scrub/corpus.json` holds each case, its input and its expected output.
 
 ### Edges between stores
