@@ -429,6 +429,12 @@ def check(repo: Path, cfg: config.Config | None = None, *, history: bool = False
     top = _out(repo, "rev-parse", "--show-toplevel")
     if not top:
         raise PublicError(f"{repo}: not a git checkout")
+    from . import denylist
+    try:   # a registry that cannot be read: no check under a shorter list (the guards refuse too)
+        denylist.terms(cfg)
+    except denylist.DeriveError as exc:
+        raise PublicError(f"the deny terms cannot be derived from the registries: {exc}; fix it (brain check "
+                          "--all), or narrow config.json public.derive") from exc
     repo = Path(top)
     head = _out(repo, "rev-parse", "--verify", "HEAD")
     r = rules(cfg)

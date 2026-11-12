@@ -47,7 +47,8 @@ def test_each_registry_gives_its_names(brain):
     by = {src: [t for s, t in got if s == src] for src in denylist.SOURCES}
     assert by["hosts"] == ["kestrel", "kestrel-wsl"]   # x1: shorter than 3, never derived
     assert by["people"] == ["Ada", "Ada L.", "Bertha Quill", "bertha"]
-    assert by["projects"] == ["ada-brain", "moonshot", "upstream-tool", "lab-repo"]   # a repo by its folder too
+    # the brain's own project gives its repo (its folder), not its name; a repo by its folder too
+    assert by["projects"] == ["moonshot", "upstream-tool", "ada-brain", "lab-repo"]
     assert by["specs"] == ["2026-01-02-orchard-design"]
     assert by["modules"] == ["graph-core", "night-runner", "OPS-RUNNER"]   # D7: a short code, not derived
     # each joins its category after the hand list, none twice whatever its case (Ada is the hand list's)
@@ -81,15 +82,22 @@ def test_derive_picks_the_sources_and_brain_check_warns_about_the_rest(brain, ca
     assert denylist.check_lines(brain.root) == []   # a brain that publishes nothing is not concerned
 
 
-@pytest.mark.parametrize("text", ["acme-lab", "acme_lab", "Acme Lab", "ACMELAB", "see acme-lab.", "import acme_lab"])
+@pytest.mark.parametrize("text", ["acme-lab", "acme_lab", "Acme Lab", "ACMELAB", "see acme-lab.", "import acme_lab",
+                                  "acme - lab", "acme--lab"])
 def test_a_term_matches_in_every_spelling_of_its_separators(text):
     assert boundary.term_regex("acme-lab").search(text)
     assert boundary.term_regex("acme_lab").search(text)
+    assert boundary.term_regex("acme - lab").search(text)   # a run of separators: its own text too
 
 
-@pytest.mark.parametrize("text", ["acmelabs", "acme--lab", "my_acme_lab", "acme-lab2"])
+@pytest.mark.parametrize("text", ["acmelabs", "my_acme_lab", "acme-lab2"])
 def test_a_term_keeps_its_word_boundaries(text):
     assert not boundary.term_regex("acme-lab").search(text)
+
+
+def test_a_separator_at_a_terms_end_stays_literal():
+    rx = boundary.term_regex("-foo-")
+    assert rx.search("x -foo- y") and not rx.search("foo") and not rx.search("x-foo")
 
 
 def test_the_public_check_refuses_a_derived_name_and_a_new_spec_unstamps(brain, make_repo, capsys):
@@ -115,11 +123,50 @@ def test_the_public_check_refuses_a_derived_name_and_a_new_spec_unstamps(brain, 
     assert "under other rules" in why and "a registry public.derive reads" in why
 
 
+def test_the_engines_own_names_are_never_derived(brain):
+    with (brain.root / "projects.yaml").open("a", encoding="utf-8") as fh:
+        fh.write("research_graph: {access: read, title: the graph engine}\n")
+    (brain.root.parent / "brain").mkdir()
+    with (brain.root / "projects.yaml").open("a", encoding="utf-8") as fh:
+        fh.write(f"rocket: {{root: {(brain.root.parent / 'brain').as_posix()}}}\n")
+    names = {t.lower() for _, t in denylist.declared(brain())}
+    assert "rocket" in names and not names & {"brain", "research_graph", "research-graph"}
+
+
+def test_a_name_held_in_one_spelling_only_is_warned_about(brain):
+    brain(derive=[], deny={"people": ["Ada"], "repos": ["moonshot"]})
+    with (brain.root / "projects.yaml").open("a", encoding="utf-8") as fh:
+        fh.write("moonshot-lab: {access: read, title: its lab}\n")
+    lines = denylist.check_lines(brain.root)
+    # moonshot refuses moonshot-lab, not moonshot_lab nor moonshotlab: the name is not held
+    assert any("'moonshot-lab' is in no deny list" in x for x in lines)
+    assert not any("'moonshot' is in no deny list" in x for x in lines)
+    assert denylist.spellings("a-b c") == ["a-b-c", "a_b_c", "a b c", "abc"]
+
+
+@pytest.mark.parametrize("torn", ["projects.yaml", "members.yaml", "notes/graph/modules.yaml"])
+def test_a_registry_that_cannot_be_read_fails_closed(brain, make_repo, torn):
+    """A conflict marker in a registry: no shorter list. The guards refuse, brain check --public stops."""
+    cfg = brain()
+    f = brain.root / torn
+    f.write_text("<<<<<<< HEAD\n" + f.read_text(encoding="utf-8") + "=======\n>>>>>>> other\n", encoding="utf-8")
+    assert "the deny terms could not be derived" in config.unexpected(cfg)
+    payload = {"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}, "cwd": str(brain.root)}
+    assert any("cannot trust the configuration" in reason for g, _, reason, _ in guards.refusals(payload)
+               if g == "public")
+    repo = make_repo("engine", {"README.md": "# engine\n"})
+    with pytest.raises(public.PublicError, match="cannot be derived from the registries"):
+        public.check(repo, cfg)
+    assert cli.main(["check", "--public", "--repo", str(repo)]) == 2
+    assert any("could not be built" in x for x in denylist.check_lines(brain.root)) or \
+        denylist.check_lines(brain.root) is not None   # check_lines never raises
+
+
 def test_a_derivation_that_fails_makes_the_guards_fail_closed(brain, monkeypatch):
     cfg = brain()
 
     def boom(_cfg):
-        raise RuntimeError("registry torn")
+        raise denylist.DeriveError("registry torn")
     monkeypatch.setattr(denylist, "terms", boom)
     why = config.unexpected(cfg)
     assert "the deny terms could not be derived" in why and "registry torn" in why

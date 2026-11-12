@@ -151,14 +151,19 @@ def classify(rules: list[Rule], files: list[str]) -> dict:
 
 
 SEPARATORS = re.compile(r"[-_ ]+")
+_ENDS = re.compile(r"^([-_ ]*)(.*?)([-_ ]*)$", re.S)
 
 
 def term_body(term: str) -> str:
     """The regex of ``term`` without its word boundaries: case aside, ``/`` and ``\\`` alike, and its separators
-    (``-``, ``_``, a space) in every spelling, none included (wi-brain-public-deny-derived): ``acme-lab`` also
-    matches ``acme_lab``, ``Acme Lab`` and ``acmelab``."""
-    parts = [re.escape(p) for p in SEPARATORS.split(term.replace("\\", "/").strip()) if p]
-    return "[-_ ]?".join(parts) if parts else re.escape(term)
+    (``-``, ``_``, a space, or a run of them) in every spelling, none included (wi-brain-public-deny-derived):
+    ``acme-lab`` also matches ``acme_lab``, ``Acme Lab``, ``acme - lab`` and ``acmelab``; a separator that starts or
+    ends the term stays literal."""
+    lead, core, tail = _ENDS.match(term.replace("\\", "/")).groups()
+    parts = [re.escape(p) for p in SEPARATORS.split(core) if p]
+    if not parts:
+        return re.escape(term)
+    return re.escape(lead) + "[-_ ]*".join(parts) + re.escape(tail)   # a run of separators too; the ends literal
 
 
 def term_regex(term: str) -> re.Pattern:

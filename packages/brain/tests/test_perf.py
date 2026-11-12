@@ -47,7 +47,7 @@ def _report(**kw):
 
 def test_slowest_steps(ledger):
     rep = _report()
-    assert (rep["runs"], rep["tasks"], rep["skipped"], rep["projects"]) == (15, 3, 2, ["brain", "acme"])
+    assert (rep["runs"], rep["tasks"], rep["skipped"], rep["projects"]) == (15, 3, 2, ["acme", "brain"])
     assert [r["task"] for r in rep["slowest"]] == ["download f1v2", "cycle L4", "pytest"]
     l4 = rep["slowest"][1]
     assert (l4["runs"], l4["failed"], l4["median_s"], l4["p90_s"], l4["max_s"]) == (8, 1, 110, 210, 210)

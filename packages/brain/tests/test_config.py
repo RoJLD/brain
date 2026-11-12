@@ -44,11 +44,11 @@ def test_a_good_config_is_described_and_passes(tmp_path, monkeypatch):
     d = config.describe(config.load(root))
     assert d["owner"] == "Ada" and d["kind"] == "team" and d["tenant"] == "ada-lab"
     assert d["engine"] == {"repo": "someone/brain", "pin": "v0.2.0"} and d["public_repos"] == ["someone/brain"]
-    # the registry's project mine is derived (brain.denylist), Ada already denied by hand
-    assert d["deny"] == {"people": 1, "users": 0, "hosts": 1, "repos": 1, "paths": 0}
+    # mine, the brain's own project, gives its repo's folder, brain: the engine's own name, never derived
+    assert d["deny"] == {"people": 1, "users": 0, "hosts": 1, "repos": 0, "paths": 0}
     assert d["derive"] == ["hosts", "people", "projects", "specs", "modules"] and d["public_names"] == []
     assert d["secrets"] == ["NTFY_TOKEN"] and d["allow"] == ["LICENSE"]
-    assert config.deny_terms(config.load(root)) == [("people", "Ada"), ("hosts", "box1"), ("repos", "mine")]
+    assert config.deny_terms(config.load(root)) == [("people", "Ada"), ("hosts", "box1")]
 
 
 def test_the_contract_is_checked(tmp_path, monkeypatch):

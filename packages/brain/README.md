@@ -1093,13 +1093,15 @@ registry's projects, read-only ones too, and their repos by name and folder), `s
 `docs/specs`) and `modules` (the module registries' names, and ids of 4 characters or more: a short code such as `D7`
 names nothing). Each joins its category after the hand list. `config.json` `public.derive` picks the sources (a list;
 absent, all of them; `[]`, none); `public.public_names` (`{name: reason}`) keeps a public name of a registry out (a
-third-party tool a project reads, an engine capability a module is named after); the names of `public.repos`'s
-owners and repos, and a name shorter than 3 characters, are never derived. `brain check --all` (and a brain's own
-root) warns about each declared name no deny list holds, when `public.derive` leaves its source out. A term, by hand or
-derived, matches in every spelling of its separators: `acme-lab` also refuses `acme_lab`, `Acme Lab` and `acmelab`
-(a Python module named after a hyphenated repo). A new spec, machine or module changes the rules the stamps are keyed
-by: rerun `brain check --public --history` before the next push. A derivation that fails (a registry that raises)
-makes the public and secrets guards refuse, as a configuration they cannot trust.
+third-party tool a project reads, an engine capability a module is named after); the engine's own names (`brain`,
+`research-graph`), the names of `public.repos`'s owners and repos, and a name shorter than 3 characters are never
+derived, in any spelling; a project rooted at the brain's own root gives its repos, not its name. `brain check --all` (and a brain's own
+root) warns about each declared name no deny list holds in every spelling, when `public.derive` leaves its source
+out. A term, by hand or derived, matches in every spelling of its separators: `acme-lab` also refuses `acme_lab`,
+`Acme Lab`, `acme - lab` and `acmelab` (a Python module named after a hyphenated repo). A new spec, machine or module changes the rules the stamps are keyed
+by: rerun `brain check --public --history` before the next push. A registry that cannot be read (a YAML error, a
+conflict marker in `projects.yaml`, `members.yaml` or a module registry) never yields a shorter list: the public and
+secrets guards refuse, as for a configuration they cannot trust, and `brain check --public` stops (exit code 2).
 
 ### Edges between stores
 
