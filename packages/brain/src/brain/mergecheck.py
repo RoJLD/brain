@@ -202,8 +202,11 @@ def check(repo: Path, project: projects.Project | None = None, base: str = "", f
         if kind == "append":
             out["lost"] += [{"path": path, "line": n, "text": t} for n, t in lost_lines(*texts, result)]
             continue
-        changed, gone = lost_nodes(*texts, _show(repo, s["ours"], path), result)
-        out["lost"] += [{"path": path, "line": 0, "text": f"{nid} {k}: {v}"} for nid, k, v in changed]
+        ours = _show(repo, s["ours"], path)
+        changed, gone = lost_nodes(*texts, ours, result)
+        o, m = _nodes(ours), _nodes(texts[1])
+        out["lost"] += [{"path": path, "line": 0, "text": f"{nid} {k}: {v}",
+                         "both": o.get(nid, {}).get(k) != m.get(nid, {}).get(k)} for nid, k, v in changed]
         out["lost_ids"] += [{"path": path, "id": nid} for nid in gone]
     return out
 
@@ -243,13 +246,14 @@ def _changed(repo: Path, a: str, b: str) -> set[str]:
 
 
 def _lost(r: dict) -> list[str]:
-    """What a check lost that the push guard refuses: a node id, or a line of an append-only file. A field both
-    sides changed (line 0) stays brain merge-check's « check it by eye »."""
-    return [x["id"] for x in r["lost_ids"]] + [f"{x['path']}: {str(x['text'])[:60]}" for x in r["lost"] if x["line"]]
+    """What a check lost that the push guard refuses: a node id, a line of an append-only file, a node field only
+    main changed. A field both sides changed stays brain merge-check's « check it by eye »."""
+    return [x["id"] for x in r["lost_ids"]] + [f"{x['path']}: {str(x['text'])[:60]}" for x in r["lost"]
+                                               if x["line"] or not x.get("both")]
 
 
 def stale(repo: Path, head: str, project: projects.Project | None = None, base: str = "",
-          fetch: bool = True, pushed: str = "") -> str:
+          fetch: bool = True, pushed: str = "", fetched: list | None = None) -> str:
     """Why a push of ``head`` would carry a merge resolution made against a stale base, or '' (no merge of the base
     on the branch that ``pushed``, the remote branch, lacks; or nothing lost or moved under it). In order: the
     resolution lost a line or a node of what it merged; it lost one of a fresh base (when not behind); the base has
@@ -258,6 +262,8 @@ def stale(repo: Path, head: str, project: projects.Project | None = None, base: 
     if not _rev(repo, base) or not merged_base(repo, _rev(repo, base), head, pushed)[0]:
         return ""   # no merge of the base as last fetched: none of a fresher one either, and no fetch paid
     why_fetch = _fetch(repo, base) if fetch else ""
+    if fetch and fetched is not None:
+        fetched.append(base)   # the caller's other refs need no fetch
     base_sha = _rev(repo, base)
     m, p2 = merged_base(repo, base_sha, head, pushed)
     if not m:

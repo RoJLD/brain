@@ -3527,7 +3527,13 @@ def _tag(d: str, ref: str) -> bool:
 
 def _pushed_ref(d: str, remote: str, refspecs: list[str], src: str) -> str:
     """The remote-tracking ref of the branch a push of ``src`` updates (refs/remotes/<remote>/<dest>), '' when the
-    remote has no such branch yet."""
+    remote has no such branch yet. With no refspec naming a destination, git's own answer (``<src>@{push}``: the
+    branch's pushRemote or remote, push.default, branch.<b>.merge) when it has one."""
+    if not any(":" in spec for spec in refspecs) and not (remote and remote not in _remotes(d)):
+        named = remote and remote != _push_remote(d)
+        push = "" if named else _git_out(d, "rev-parse", "--symbolic-full-name", f"{src}@{{push}}").strip()
+        if push.startswith("refs/remotes/"):
+            return push
     dest = src
     for spec in refspecs:
         a, _, b = spec.lstrip("+").partition(":")
@@ -3538,6 +3544,17 @@ def _pushed_ref(d: str, remote: str, refspecs: list[str], src: str) -> str:
     dest = dest.removeprefix("refs/heads/")
     ref = f"refs/remotes/{remote}/{dest}"
     return ref if dest and _git_out(d, "rev-parse", "--verify", "--quiet", ref).strip() else ""
+
+
+def _remotes(d: str) -> set[str]:
+    return set(_git_out(d, "remote").split())
+
+
+def _push_remote(d: str) -> str:
+    """The remote a bare git push of the current branch goes to: its pushRemote, else its remote, else origin."""
+    branch = _git_out(d, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    return _git_out(d, "config", f"branch.{branch}.pushRemote").strip() or \
+        _git_out(d, "config", f"branch.{branch}.remote").strip() or "origin"
 
 
 def check_merge_stale(cmds: list[tuple[list[str], str]]) -> str | None:
@@ -3551,18 +3568,18 @@ def check_merge_stale(cmds: list[tuple[list[str], str]]) -> str | None:
         top = _git_out(d, "rev-parse", "--show-toplevel").strip()
         if not top:
             continue
-        remote = remote if remote and not re.search(r"[:/\\]", remote) else "origin"
+        remote = remote if remote and not re.search(r"[:/\\]", remote) else _push_remote(d)
         try:
             project = resume.project_for(Path(top))
         except (OSError, ValueError):
             project = None
         project = project if project is not None and getattr(project, "registered", False) else None
-        fetch = True
+        fetched: list[str] = []   # once a ref fetched the base, the push's other refs read it fresh
         for ref, sha in _push_commits(d, refspecs, flags):
             if _tag(d, ref):
                 continue
-            why = mergecheck.stale(Path(top), sha, project, fetch=fetch, pushed=_pushed_ref(d, remote, refspecs, ref))
-            fetch = False   # the base is fresh for the push's other refs
+            why = mergecheck.stale(Path(top), sha, project, fetch=not fetched,
+                                   pushed=_pushed_ref(d, remote, refspecs, ref), fetched=fetched)
             if why:
                 return f"git push refused: {ref} ({sha[:8]}): {why}"
     return None

@@ -82,6 +82,8 @@ def test_a_resolution_against_a_stale_local_main_is_refused(two):
     run_git(ours, "branch", "-q", "-f", "main", "origin/main")   # the local main, as last fetched
     _land(theirs, make_repo, {LOG: _log("theirs", "later")})   # ours has not fetched it
     _merge(ours, make_repo, "main", _log("ours", "theirs"))
+    first = _push(ours, "git push origin main feat")   # main has no merge: feat still gets the fetch (review, A)
+    assert first and "has moved since" in first
     reason = _push(ours)
     assert "resolved CHANGELOG.md against a commit of origin/main" in reason and "has moved since" in reason
     _merge(ours, make_repo, "origin/main", _log("ours", "theirs", "later"))   # the guard fetched it
@@ -107,10 +109,12 @@ def test_a_merge_already_on_the_remote_branch_is_not_checked_again(two):
     _land(theirs, make_repo, {LOG: _log("theirs")})
     run_git(ours, "fetch", "-q")
     _merge(ours, make_repo, "origin/main", _log("ours", "theirs"))
-    run_git(ours, "push", "-q", "origin", "feat")   # checked when it went
+    run_git(ours, "push", "-q", "-u", "origin", "feat:feat-remote")   # checked when it went, under another name
+    run_git(ours, "config", "push.default", "upstream")
     _land(theirs, make_repo, {LOG: _log("theirs", "later")})
     make_repo.commit(ours, {"src/a.py": "x = 3\n"})
-    assert _push(ours) is None   # merge-ready reads main moving under the PR, not this guard
+    assert _push(ours, "git push") is None   # its upstream, read by git (review, B)
+    assert _push(ours, "git push origin feat:feat-remote") is None   # merge-ready reads main moving under the PR
 
 
 def test_tags_and_a_deletion_pass_and_the_hook_names_the_guard(two):
@@ -133,3 +137,12 @@ def test_a_failed_fetch_reads_the_base_as_last_fetched(two, monkeypatch):
     run_git(ours, "merge", "-q", "origin/main", "-X", "ours", "-m", "merge")
     monkeypatch.setattr(mergecheck, "_fetch", lambda repo, base: "timed out")
     assert "(git fetch failed: timed out; origin/main as last fetched)" in _push(ours)
+
+
+def test_a_field_only_main_changed_is_refused_one_both_changed_is_not():
+    """Review, C: a node field main changed that the resolution reverts is lost; one the branch changed too stays
+    brain merge-check's « check it by eye »."""
+    lost = {"path": "graph/nodes/work.yaml", "line": 0, "text": "wi-a status: done"}
+    assert mergecheck._lost({"lost_ids": [], "lost": [{**lost, "both": False}]}) == [
+        "graph/nodes/work.yaml: wi-a status: done"]
+    assert mergecheck._lost({"lost_ids": [], "lost": [{**lost, "both": True}]}) == []
