@@ -47,9 +47,11 @@ brain review check <head>        # exit 0 once that head is reviewed
 The stamp is keyed by the head's full sha, in `<BRAIN_HOME>/reviews/stamps/`: a push after the review is a new head,
 reviewed again. Its counts are the error score's record (`wi-brain-review-error-score`), and `brain review check` is
 the merge gate's question (`wi-brain-merge-gate`). `--pr` names the PR (with the repo's `owner/name` from its origin
-remote), so that a PR stamped on several heads counts once, by its latest stamp; `--item` names the item it delivers,
-whose wave (`brain.waves`, in the repo's registered project) places the stamp, else `--wave X.Y.Z`; `--stream` the
-lot or stream it belongs to.
+remote, else its folder's name), so that a PR stamped on several heads counts once, by its latest stamp: a head
+stamped again after a fix carries the whole review's counts, not what is left of it. A stamp without `--pr` is one
+review of one head (the command says so when `--item` comes without it). `--item` names the item it delivers, whose
+wave (`brain.waves`, in the repo's registered project) places the stamp, else `--wave X.Y.Z`; `--stream` the lot or
+stream it belongs to.
 
 ### The note's finding lines
 
@@ -69,8 +71,10 @@ the **lens** (its first word: `correctness`, `scope`, `security`, `compatibility
 against code; `B` shared append points; `C` the environment; `D` the child-coordinator blind spots; `E` unsafe write
 defaults; `F` hand-typed facts and coarse controls); the **outcome** (`fixed`, `contested`, `open`, `refuted`: a
 refuted line is kept in the note but not counted); **when** it was found (`before` the merge, the default, or
-`after`); whether a script now **covers** that family (`covered`, `uncovered`). A line with any other word before
-its colon is prose, not a finding. `brain review stamp` says when the note's confirmed lines and `--findings` differ.
+`after`); whether a script now **covers** that family (`covered`, `uncovered`). A finding line is a bullet at the
+line's start with the severity and at least one other word; a nested bullet, a lone severity (`- Low: ...`) or a
+line with any other word before its colon is prose. `key=value` takes the same values (`lens=install`, `when=after`);
+the family's letters may be written in either case (`a.b` is `A.b`). `brain review stamp` says when the note's confirmed lines and `--findings` differ.
 
 ### The error score
 
@@ -83,5 +87,8 @@ Each PR counts once, by its latest stamp: its confirmed findings (`--findings`),
 lens and root cause, those found after the merge and those a script now covers. Per wave, in release order, the
 findings per PR. The owner's rule (2026-11-03): the reviews stay complete, three or four lenses and two skeptics per
 finding, until the findings per PR fall over two waves in a row (the last three scored waves, each lower than the
-one before); `brain review score` says which holds. `brain retro --wave W` prints the wave's score and the trend, and
+one before, or at zero); `brain review score` says which holds. Every scored wave counts, the one in progress too:
+the coordinator reads the verdict at a wave's retro. The totals count a stamp without `--pr` once per head (the
+stamps written before `--pr` existed), so their findings per PR read low; the waves' trend counts only placed
+stamps. `brain retro --wave W` prints the wave's score and the trend, and
 the cockpit's health tab the totals, the last three waves and the verdict.

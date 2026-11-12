@@ -46,12 +46,18 @@ def _wave_of(repo: Path, item: str) -> str:
 
 
 def _slug(repo: Path) -> str:
-    """The repo's owner/name from its origin remote, '' without one."""
+    """The repo's owner/name from its origin remote, else its folder's name (two repos' PR 7 stay apart)."""
     from .. import public
     try:
-        return public.repo_slug(review._git(repo, "remote", "get-url", "origin").strip())
+        slug = public.repo_slug(review._git(repo, "remote", "get-url", "origin").strip())
     except review.ReviewError:
-        return ""
+        slug = ""
+    if slug:
+        return slug
+    try:
+        return Path(review._git(repo, "rev-parse", "--show-toplevel").strip()).name
+    except review.ReviewError:
+        return repo.name
 
 
 def _stamp(args, repo: Path) -> int:
@@ -64,6 +70,9 @@ def _stamp(args, repo: Path) -> int:
     rows = review.confirmed(review.parse_note(note))
     print(f"review: {f.stem[:12]} stamped ({args.findings} finding(s), {args.fixed} fixed, {args.contested} "
           f"contested{f', wave {wave}' if wave else ''}): {f}")
+    if args.item and not args.pr:
+        print("review: --item without --pr: this stamp counts as one review of this head; pass --pr so that the PR "
+              "counts once, by its latest stamp", file=sys.stderr)
     if note and len(rows) != args.findings:
         print(f"review: the note describes {len(rows)} confirmed finding line(s), --findings says {args.findings} "
               "(docs/review.md, « The note's finding lines »: the score's lens and cause counts read the lines)",

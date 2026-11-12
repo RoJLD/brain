@@ -31,15 +31,15 @@ FOLDER = "reviews"
 MAX_FILE = 400_000   # a touched file larger than this is listed, not copied
 
 # The error score (wi-brain-review-error-score): a review note's finding lines, « - high correctness A.b fixed: ... »
-FINDING = re.compile(r"^\s*[-*]\s+([^:]+?):\s+(.*)$")
+FINDING = re.compile(r"^[-*]\s+([^:]+?):\s+(.*)$")   # a bullet at the line's start: a nested one is prose
 SEVERITIES = ("high", "medium", "low")
 VOCABULARY = {"severity": SEVERITIES, "outcome": ("fixed", "contested", "open", "refuted"),
               "when": ("before", "after"), "covered": ("covered", "uncovered")}
 # The root-cause families of the waves retro of 2026-11-03: A (the brief: a. data from before, b. failure and
 # degraded paths, c. an invariant held in one path only, d. a contract assumed, e. text against code), B shared append
 # points, C the environment, D the child-coordinator blind spots, E unsafe write defaults, F hand-typed facts.
-CAUSE = re.compile(r"A(\.[a-e])?|[B-F]")
-FIELDS = ("severity", "lens", "cause", "outcome", "when", "covered")
+CAUSE = re.compile(r"A(\.[a-e])?|[B-F]", re.I)
+ROW = {"severity": "", "lens": "", "cause": "", "outcome": "", "when": "before", "covered": ""}   # a row's fields
 PLACES = ("pr", "item", "stream", "wave", "repo_slug")   # where a stamp is placed for the score
 FALLS = 2   # the reviews lighten once the findings per PR fall over this many waves in a row
 
@@ -215,34 +215,47 @@ def _lens_words() -> dict[str, str]:
 
 
 def _token(tok: str, lenses: dict[str, str]) -> tuple[str, str] | None:
-    """(field, value) of one token of a finding line, None when it is no known token."""
+    """(field, value) of one token of a finding line, None when it is no known token; ``key=value`` is read as its
+    value alone and must name that field (``lens=install`` is « install and upgrade », ``when=soon`` nothing)."""
     if "=" in tok:
         k, _, v = tok.partition("=")
-        return (k, v) if k in FIELDS and v else None
+        got = _token(v, lenses) if "=" not in v else None
+        return got if got and got[0] == k else None
     low = tok.lower()
     for name, words in VOCABULARY.items():
         if low in words:
             return name, low
     if CAUSE.fullmatch(tok):
-        return "cause", tok
+        return "cause", tok[0].upper() + tok[1:].lower()   # a.b is A.b
     return ("lens", lenses[low]) if low in lenses else None
 
 
 def parse_note(note: str) -> list[dict]:
-    """The note's finding lines: ``- <severity> [lens] [cause] [outcome] [before|after] [covered|uncovered]: text``,
-    the tokens in any order (``key=value`` too), the severity required; a line with a word that is no token is prose,
-    not a finding. Each row: severity, lens, cause, outcome, when (default before), covered, text."""
+    """The note's finding lines: ``- <severity> <lens|cause|outcome|...>...: text`` at the line's start, the tokens in
+    any order (``key=value`` too), the severity and at least one other token required; a nested bullet, a lone
+    severity word or a line with a word that is no token is prose, not a finding. Each row: severity, lens, cause,
+    outcome, when (default before), covered, text."""
     lenses, rows = _lens_words(), []
     for line in (note or "").splitlines():
         m = FINDING.match(line)
         got = [_token(t, lenses) for t in m.group(1).split()] if m else [None]
         row = dict(x for x in got if x)
-        if None in got or row.get("severity") not in SEVERITIES:
+        if None in got or len(got) < 2 or row.get("severity") not in SEVERITIES:
             continue
-        rows.append({"severity": row["severity"], "lens": row.get("lens", ""), "cause": row.get("cause", ""),
-                     "outcome": row.get("outcome", ""), "when": row.get("when", "before"),
-                     "covered": row.get("covered", ""), "text": m.group(2).strip()})
+        rows.append({**ROW, **row, "text": m.group(2).strip()})
     return rows
+
+
+def _normal(rec: dict) -> dict | None:
+    """A stamp as the score reads it, whatever engine or hand wrote it: None without a head or an integer count;
+    its rows a list of complete rows, its place strings, its open an integer."""
+    if not isinstance(rec, dict) or not rec.get("head") or not isinstance(rec.get("findings"), int):
+        return None
+    rows = rec.get("rows") if isinstance(rec.get("rows"), list) else []
+    rows = [{**ROW, **{k: str(v) for k, v in r.items() if k in ROW}} for r in rows if isinstance(r, dict)]
+    opened = rec.get("open")
+    return {**rec, "head": str(rec["head"]), "rows": rows, "open": opened if isinstance(opened, int) else 0,
+            **{k: str(rec[k]) for k in PLACES if rec.get(k) not in (None, "")}}
 
 
 def confirmed(rows: list[dict]) -> list[dict]:
@@ -256,26 +269,31 @@ def stamps() -> list[dict]:
     out = []
     for f in sorted(folder.glob("*.json")) if folder.is_dir() else []:
         try:
-            rec = json.loads(f.read_text(encoding="utf-8"))
+            rec = _normal(json.loads(f.read_text(encoding="utf-8")))
         except (OSError, ValueError):
             continue
-        if isinstance(rec, dict) and isinstance(rec.get("findings"), int) and rec.get("head"):
+        if rec:
             out.append(rec)
     return sorted(out, key=lambda r: str(r.get("at") or ""))
 
 
 def _pr_key(rec: dict) -> str:
-    """A PR's key: its repo and number, else its item, else its head (one review per head, a push reviewed again)."""
+    """A PR's key: its repo (owner/name, else its folder) and number; without --pr, its head: a stamp without a PR
+    is one review of one head, never merged with another PR's of the same item."""
     if rec.get("pr"):
         return f"{rec.get('repo_slug') or ''}#{rec['pr']}"
-    return rec.get("item") or rec["head"]
+    return rec["head"]
 
 
 def per_pr(recs: list[dict]) -> list[dict]:
-    """The latest stamp of each PR: a head stamped again after a fix carries the PR's whole review."""
+    """The latest stamp of each PR: a head stamped again after a fix carries the PR's whole review (its counts are
+    the review's, not what is left of it: docs/review.md). A head stamped once without --pr and again with it counts
+    once, as the PR."""
+    with_pr = {r["head"] for r in recs if r.get("pr")}
     latest: dict[str, dict] = {}
     for r in recs:
-        latest[_pr_key(r)] = r
+        if r.get("pr") or r["head"] not in with_pr:
+            latest[_pr_key(r)] = r
     return list(latest.values())
 
 
@@ -299,7 +317,7 @@ def score(recs: list[dict] | None = None) -> dict:
     PRs, confirmed findings, findings per PR and the rows' severity, lens, root-cause family, found after the merge
     and covered by a script; then the owner's rule: the reviews lighten only once the findings per PR fall over two
     waves in a row."""
-    prs = per_pr(stamps() if recs is None else recs)
+    prs = per_pr(stamps() if recs is None else [x for x in map(_normal, recs) if x])
     waves: dict[str, list[dict]] = {}
     for r in prs:
         waves.setdefault(r.get("wave") or "", []).append(r)
@@ -309,11 +327,12 @@ def score(recs: list[dict] | None = None) -> dict:
 
 def lighten(trend: list[dict]) -> dict:
     """The owner's rule of 2026-11-03: the reviews stay complete until the findings per PR fall over two waves in a
-    row (the last three scored waves, each lower than the one before)."""
+    row (the last three scored waves, each lower than the one before, or at zero: a clean wave after a clean one is
+    no rise). Every scored wave counts, the one in progress too: the coordinator reads the verdict at a wave's retro."""
     last = [t for t in trend if t["per_pr"] is not None][-(FALLS + 1):]
     if len(last) <= FALLS:
         return {"ok": False, "why": f"{len(last)} wave(s) scored, {FALLS + 1} needed"}
-    ok = all(b["per_pr"] < a["per_pr"] for a, b in zip(last, last[1:]))
+    ok = all(b["per_pr"] < a["per_pr"] or b["per_pr"] == 0 for a, b in zip(last, last[1:]))
     seq = " -> ".join(f"{t['wave']} {t['per_pr']}" for t in last)
     return {"ok": ok, "why": f"findings per PR {seq}: {'fell' if ok else 'did not fall'} over two waves"}
 
@@ -331,7 +350,8 @@ def _tally_lines(t: dict) -> list[str]:
 
 def score_lines(sc: dict, wave: str = "") -> list[str]:
     """The error score as text: the totals (or one wave's), the trend per wave, the rule's verdict."""
-    t = next((w for w in sc["waves"] if w["wave"] == wave), None) if wave else sc["total"]
+    name = wave.removeprefix("wave-")   # a wave named by its id or its release, either way
+    t = next((w for w in sc["waves"] if w["wave"].removeprefix("wave-") == name), None) if wave else sc["total"]
     head = f"review error score{f', wave {wave}' if wave else ''}: "
     if t and t["prs"]:
         body = _tally_lines(t)
@@ -341,8 +361,8 @@ def score_lines(sc: dict, wave: str = "") -> list[str]:
     if sc["waves"]:
         lines.append("  per wave: " + ", ".join(f"{w['wave']} {w['per_pr']} ({w['prs']} PR)" for w in sc["waves"]))
     if sc["unplaced"]:
-        lines.append(f"  {sc['unplaced']} stamp(s) placed in no wave (stamped without --item or --wave; one without "
-                     "--pr counts once per head)")
+        lines.append(f"  {sc['unplaced']} stamp(s) placed in no wave (stamped without --item or --wave); the totals "
+                     "count a stamp without --pr once per head, so a PR reviewed on several heads counts several times")
     verdict = "the reviews may lighten" if sc["lighten"]["ok"] else "the reviews stay complete"
     return lines + [f"  {verdict}: {sc['lighten']['why']}"]
 

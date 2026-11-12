@@ -186,3 +186,53 @@ def test_the_health_tab_shows_the_review_error_score(brain_home):
     lines = cockpit.health_lines({"projects": [], "reviews": cockpit.review_summary()}, width=200)
     assert ("  review error score: 6.0 confirmed finding(s) per PR over 3 PR(s); per wave 0.4.0 9.0, 0.4.1 6.0, "
             "0.4.2 3.0; the reviews may lighten") in lines
+
+
+def test_the_grammar_after_the_review_prose_stays_prose_and_values_are_one_vocabulary():
+    """The review of wi-brain-review-error-score: a lone severity, a nested bullet, a value off the vocabulary are
+    prose; a family in lower case and a lens as key=value read as the bare words do."""
+    note = ("- Low: a tradeoff, not a finding\n  - medium docs: a nested bullet\n- low when=soon: off the vocabulary\n"
+            "- high correctness a.b fixed: lower case\n- medium lens=install: as a key\n")
+    rows = review.parse_note(note)
+    assert [(r["severity"], r["lens"], r["cause"]) for r in rows] == [("high", "correctness", "A.b"),
+                                                                     ("medium", "install and upgrade", "")]
+
+
+def test_a_stamp_no_engine_wrote_is_read_with_defaults_or_left_out(brain_home):
+    folder = review.stamp_file("a" * 40).parent
+    folder.mkdir(parents=True, exist_ok=True)
+    recs = {"a": {"head": "a" * 40, "findings": 1, "rows": [{"severity": "low"}], "wave": 5},
+            "b": {"head": "b" * 40, "findings": 2, "rows": "x", "open": None, "pr": 9},
+            "c": {"head": "c" * 40, "findings": "two"}, "d": ["not", "a", "stamp"]}
+    for k, rec in recs.items():
+        (folder / f"{k}.json").write_text(json.dumps(rec), encoding="utf-8")
+    sc = review.score()
+    assert sc["total"]["prs"] == 2 and sc["total"]["findings"] == 3 and sc["total"]["severity"] == {"low": 1}
+    assert [w["wave"] for w in sc["waves"]] == ["5"]
+    from brain import cockpit
+    assert cockpit.review_summary()["total"]["prs"] == 2
+
+
+def test_a_pr_stamped_with_and_without_its_number_counts_once_and_two_repos_stay_apart():
+    recs = [_rec("a" * 40, 5, at="2026-11-01T10:00:00+00:00"), dict(_rec("a" * 40, 5, pr="7"), repo_slug="o/one"),
+            dict(_rec("b" * 40, 3, pr="7"), repo_slug="o/two")]
+    assert sorted(r["findings"] for r in review.per_pr(recs)) == [3, 5]
+    recs = [dict(_rec("c" * 40, 1), item="wi-x"), dict(_rec("d" * 40, 2), item="wi-x")]   # two PRs of one item
+    assert review.score(recs)["total"]["findings"] == 3
+
+
+def test_a_clean_wave_after_a_clean_one_is_no_rise_and_a_waves_id_names_it_too():
+    trend = [{"wave": w, "per_pr": p} for w, p in (("0.1.0", 2), ("0.2.0", 0), ("0.3.0", 0))]
+    assert review.lighten(trend)["ok"]
+    sc = review.score([_rec("e" * 40, 2, "wave-3", "1")])
+    assert "review error score, wave 3: 1 PR(s) reviewed" in "\n".join(review.score_lines(sc, "3"))
+
+
+def test_stamp_names_the_repo_by_its_folder_without_a_github_remote(pr, brain_home, capsys):
+    repo, base, head = pr
+    assert cli.main(["review", "stamp", head, "--findings", "0", "--fixed", "0", "--pr", "3", "--item", "wi-x",
+                     "--repo", str(repo)]) == 0
+    assert review.check(head)["repo_slug"] == repo.name and "pr" in review.check(head)
+    assert cli.main(["review", "stamp", base, "--findings", "0", "--fixed", "0", "--item", "wi-x",
+                     "--repo", str(repo)]) == 0
+    assert "--item without --pr" in capsys.readouterr().err

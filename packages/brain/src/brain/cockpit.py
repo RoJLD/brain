@@ -498,7 +498,7 @@ def review_summary() -> dict:
     {} when it cannot be read."""
     try:
         sc = review.score()
-    except OSError:
+    except Exception:  # noqa: BLE001 - a stamp no engine wrote never takes the health probe down
         return {}
     return {"total": sc["total"], "waves": sc["waves"][-3:], "lighten": sc["lighten"]}
 
