@@ -1,5 +1,6 @@
 import json
 import shutil
+from datetime import date
 
 import yaml
 
@@ -57,7 +58,8 @@ def test_cli_project_journal_adr_and_item(tmp_path, monkeypatch, store, capsys):
     assert {"from": "wi-new", "to": "adr-2026-11-01-rule-adr", "type": "decided_by"} in edges
     assert {"from": "adr-2026-11-02-reversal-rule", "to": "adr-2026-11-01-rule-adr", "type": "supersedes"} in edges
     nodes = {n["id"]: n for n in yaml.safe_load((store / "nodes" / "work.yaml").read_text(encoding="utf-8"))}
-    assert nodes["wi-new"]["props"] == {"priority": "P1", "priority_reason": "because"}
+    assert nodes["wi-new"]["props"] == {"priority": "P1", "priority_reason": "because",
+                                        "created": date.today().isoformat()}   # since the size rule (brain.sizing)
     assert "fields left TODO" in capsys.readouterr().out
 
 
