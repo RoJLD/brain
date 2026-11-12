@@ -109,9 +109,17 @@ def _closure(start: str, edges: dict[str, set[str]]) -> list[str]:
     return seen
 
 
-def state(m: Module, on: set[str]) -> str:
-    n = sum(c in on for c in m.capabilities)
-    return "on" if n == len(m.capabilities) else "off" if n == 0 else f"partly on ({n}/{len(m.capabilities)})"
+def switched(m: Module, reg: dict) -> list[str]:
+    """The module's capabilities a profile turns on and off (an auto one is used whenever it is found)."""
+    return [c for c in m.capabilities if c in reg and not reg[c].auto]
+
+
+def state(m: Module, on: set[str], reg: dict | None = None) -> str:
+    caps = switched(m, reg) if reg is not None else m.capabilities
+    if not caps:
+        return "auto"
+    n = sum(c in on for c in caps)
+    return "on" if n == len(caps) else "off" if n == 0 else f"partly on ({n}/{len(caps)})"
 
 
 def _layer(m: Module, comps: dict) -> bool | None:
@@ -134,7 +142,7 @@ def rows(root: Path | None) -> list[dict]:
                   else "config.json" if _layer(m, ch.inherited) is not None
                   else "preset" if any(c in keep for c in m.capabilities)
                   else "pulled" if any(c in on for c in m.capabilities) else "-")
-        out.append({"id": m.id, "name": m.name, "state": state(m, on), "source": source,
+        out.append({"id": m.id, "name": m.name, "state": state(m, on, reg), "source": source,
                     "capabilities": m.capabilities,
                     "fallback": "; ".join(sorted({reg[c].fallback for c in m.capabilities if reg[c].fallback}))})
     return out
@@ -148,13 +156,15 @@ def show(root: Path | None, ref: str) -> dict:
     caps = [{"id": c, "class": reg[c].cls, "profile": reg[c].profile, "requires": reg[c].requires,
              "resources": reg[c].resources, "fallback": reg[c].fallback, "depends_on": reg[c].depends_on,
              "uses": reg[c].uses, "on": c in on} for c in m.capabilities]
-    return {"id": m.id, "name": m.name, "state": state(m, on), "capabilities": caps,
+    return {"id": m.id, "name": m.name, "state": state(m, on, reg), "capabilities": caps,
             "depends_on": sorted(needs(cat, reg)[m.id]), "uses": m.uses,
             "realized_by": [{k: r.get(k) for k in ("project", "kind", "state") if isinstance(r, dict)}
                             for r in m.realized_by]}
 
 
 def _check_enable(m: Module, reg: dict) -> None:
+    if not switched(m, reg):
+        raise ModError(f"{m.id} is used whenever it is found (auto): no profile turns it on or off")
     for c in m.capabilities:
         if reg[c].status != "built":
             raise ModError(f"{m.id}: {c} is planned ({reg[c].item}), not built yet")
@@ -164,10 +174,18 @@ def _fallbacks(m: Module, reg: dict) -> str:
     return "; ".join(sorted({reg[c].fallback for c in m.capabilities if reg[c].fallback}))
 
 
-def _enable(m: Module, cat: dict, edges: dict, on: set[str], own: dict) -> list[str]:
-    pulled = [d for d in _closure(m.id, edges) if state(cat[d], on) != "on"]
-    for mid in [m.id, *pulled]:
-        own[mid] = True
+def _set(own: dict, cat: dict, mids: list[str], value: bool) -> None:
+    """The modules set in the machine's overrides, their capabilities named directly there dropped (a capability named
+    directly wins over its module: left, it would undo the switch)."""
+    for mid in mids:
+        for c in cat[mid].capabilities:
+            own.pop(c, None)
+        own[mid] = value
+
+
+def _enable(m: Module, cat: dict, edges: dict, on: set[str], own: dict, reg: dict) -> list[str]:
+    pulled = [d for d in _closure(m.id, edges) if state(cat[d], on, reg) not in ("on", "auto")]
+    _set(own, cat, [m.id, *pulled], True)
     return ([f"enable {m.id} ({', '.join(m.capabilities)})"]
             + [f"  pulls {d} ({', '.join(cat[d].capabilities)}): {m.id} needs it" for d in pulled]
             + [f"  uses {u} when it is on, its fallback otherwise" for u in m.uses])
@@ -176,11 +194,13 @@ def _enable(m: Module, cat: dict, edges: dict, on: set[str], own: dict) -> list[
 def _disable(m: Module, cat: dict, edges: dict, on: set[str], own: dict, reg: dict, cascade: bool) -> list[str]:
     if any(reg[c].cls == "core" for c in m.capabilities):
         raise ModError(f"{m.id} is core: every profile has it")
-    users = [x for x in cat if x != m.id and m.id in _closure(x, edges) and state(cat[x], on) != "off"]
+    if not switched(m, reg):
+        raise ModError(f"{m.id} is used whenever it is found (auto): no profile turns it on or off")
+    users = [x for x in cat if x != m.id and m.id in _closure(x, edges)
+             and state(cat[x], on, reg) not in ("off", "auto")]
     if users and not cascade:
         raise ModError(f"{m.id} is needed by {', '.join(users)}, which are on: --cascade turns them off too")
-    for mid in [m.id, *users]:
-        own[mid] = False
+    _set(own, cat, [m.id, *users], False)
     return ([f"disable {m.id} ({', '.join(m.capabilities)}): {_fallbacks(m, reg) or 'nothing replaces it'}"]
             + [f"  cascade: disable {u}, which needs it" for u in users])
 
@@ -188,14 +208,7 @@ def _disable(m: Module, cat: dict, edges: dict, on: set[str], own: dict, reg: di
 def _keep_differences(own: dict, cat: dict, reg: dict, cur: tiers.Choice, grp: dict) -> dict:
     """The machine's overrides kept where they differ from the default (the preset, then config.json's)."""
     keep = tiers.preset(reg, cur.base)
-    default = {**{c: c in keep for c in reg}, **tiers.expand(cur.inherited, grp)}
-
-    def by_default(k: str) -> bool:
-        if k in cat and cat[k].from_registry:
-            return all(default.get(c, False) for c in cat[k].capabilities)
-        return default.get(k, False)
-
-    return {k: v for k, v in sorted(own.items()) if v != by_default(k)}
+    return {k: v for k, v in sorted(own.items()) if v != tiers.default_of(k, keep, cur.inherited, grp)}
 
 
 def plan(root: Path | None, ref: str, enable: bool, cascade: bool = False) -> tuple[tiers.Choice, list[str]]:
@@ -208,12 +221,12 @@ def plan(root: Path | None, ref: str, enable: bool, cascade: bool = False) -> tu
     own = dict(cur.own if cur.own is not None else cur.components)
     if enable:
         _check_enable(m, reg)
-        lines = _enable(m, cat, edges, on, own)
+        lines = _enable(m, cat, edges, on, own, reg)
     else:
         lines = _disable(m, cat, edges, on, own, reg, cascade)
     own = _keep_differences(own, cat, reg, cur, grp)
     new = tiers.Choice(cur.base, own, "machine", cur.machine, computed_from=dict(cur.computed_from), own=own,
-                       inherited=cur.inherited)
+                       inherited=cur.inherited, groups=grp)
     after, _ = tiers.active(reg, tiers.Choice(cur.base, {**tiers.expand(cur.inherited, grp), **tiers.expand(own, grp)}))
     gain, loss = sorted(after - on), sorted(on - after)
     cost = {k: v for k in tiers.RESOURCES if (v := sum((reg[e].resources or {}).get(k, 0) for e in gain))}
@@ -242,9 +255,8 @@ def explain(root: Path | None, ref: str) -> list[str]:
     m = resolve(cat, ref)
     on, _ = tiers.active(reg, ch)
     keep = tiers.preset(reg, ch.base)
-    named = tiers.expand({**ch.inherited, **(ch.own or {})}, groups(root))
-    pulled = [c for c in m.capabilities if c in on and c not in keep and named.get(c) is not True]
-    return ([f"{m.id} ({m.name}): {state(m, on)}",
+    pulled = [c for c in m.capabilities if c in on and c not in keep and ch.components.get(c) is not True]
+    return ([f"{m.id} ({m.name}): {state(m, on, reg)}",
              f"  engine     base {ch.base}: "
              + ", ".join(f"{c} {'on' if c in keep else 'off'}" for c in m.capabilities),
              _layer_line("config     config.json tier.components", m, ch.inherited),

@@ -92,6 +92,7 @@ class Choice:
     warnings: list = field(default_factory=list)
     own: dict | None = None    # the machine file's own components (components holds them merged over config.json's)
     inherited: dict = field(default_factory=dict)   # config.json's components, the default a machine overrides
+    groups: dict = field(default_factory=dict)      # {module id: its capabilities} (brain.mod.groups)
 
 
 # The registry.
@@ -226,9 +227,10 @@ def check(root: Path | None) -> list[str]:
     except stacks.StackError:
         pass
     tier = config.load(root).data.get("tier")
+    groups = _groups(root)
     for eid in (tier.get("components") or {}) if isinstance(tier, dict) else {}:
-        if eid not in reg:
-            errs.append(f"{config.FILE}: tier.components names {eid!r}, no capability or stack of that name")
+        if eid not in reg and eid not in groups:
+            errs.append(f"{config.FILE}: tier.components names {eid!r}, no capability, stack or module of that name")
     return errs
 
 
@@ -346,7 +348,7 @@ def _groups(root: Path | None) -> dict[str, list[str]]:
     from . import mod
     try:
         return mod.groups(root)
-    except (OSError, ValueError, KeyError, TypeError):   # an unreadable registry: the components as they are
+    except Exception:  # noqa: BLE001 - a broken modules.yaml (a YAML error too) never breaks the profile
         return {}
 
 
@@ -375,12 +377,12 @@ def choice(root: Path | None) -> Choice:
                 inherited, groups = _config_components(root), _groups(root)
                 return Choice(data["base"], {**expand(inherited, groups), **expand(own, groups)}, "machine", name,
                               str(data.get("applied") or ""), data.get("computed_from") or {}, warnings, own,
-                              inherited)
+                              inherited, groups)
     tier = config.load(root).data.get("tier")
     if isinstance(tier, dict) and tier.get("base", BUILT_IN) in ("lite", "default"):
-        comps = _config_components(root)
-        return Choice(tier.get("base", BUILT_IN), expand(comps, _groups(root)), "config", name, warnings=warnings,
-                      own={}, inherited=comps)
+        comps, groups = _config_components(root), _groups(root)
+        return Choice(tier.get("base", BUILT_IN), expand(comps, groups), "config", name, warnings=warnings,
+                      own={}, inherited=comps, groups=groups)
     return Choice(BUILT_IN, {}, "built-in", name, warnings=warnings, own={})
 
 
@@ -388,7 +390,7 @@ def active(reg: dict[str, Entry], ch: Choice) -> tuple[set[str], list[str]]:
     """The entries the choice turns on, with the dependencies of its stacks, and what is wrong in it."""
     on = preset(reg, ch.base)
     warnings = []
-    for eid, want in ch.components.items():
+    for eid, want in expand(ch.components, ch.groups).items():
         e = reg.get(eid)
         if not e:
             warnings.append(f"unknown component {eid!r} in the overrides (ignored)")
@@ -463,9 +465,19 @@ def plan(reg: dict[str, Entry], current: Choice, base: str | None, with_: list[s
             raise TierError(f"{eid} is core: every profile has it")
         comps[eid] = value
     keep = preset(reg, base)   # an override is kept where it differs from the default: the base, then config.json
-    comps = {k: v for k, v in sorted(comps.items()) if v != current.inherited.get(k, k in keep)}
+    comps = {k: v for k, v in sorted(comps.items()) if v != default_of(k, keep, current.inherited, current.groups)}
     return Choice(base, comps, "machine", current.machine or probe.machine(), computed_from=frozen,
-                  own=comps, inherited=current.inherited)
+                  own=comps, inherited=current.inherited, groups=current.groups)
+
+
+def default_of(key: str, keep: set[str], inherited: dict, groups: dict) -> bool:
+    """What a component key is without the machine's override: config.json's value, else the base preset's; a module
+    id is on when all its capabilities are."""
+    if key in inherited:
+        return bool(inherited[key])
+    flat = expand(inherited, groups)
+    caps = groups.get(key) or [key]
+    return all(flat.get(c, c in keep) for c in caps)
 
 
 def write(ch: Choice) -> tuple[Path, bool]:
@@ -762,7 +774,8 @@ def render_plan(reg: dict[str, Entry], old: Choice, new: Choice, apply: bool, wr
     if drops:
         lines.append(f"extras   {', '.join(drops)} no longer wanted: left installed (pip uninstall removes them)")
     lines += [f"warning  {m}" for m in warnings]
-    if old.source == "machine" and (old.base, old.components) == (new.base, new.components):
+    mine = old.own if old.own is not None else old.components
+    if old.source == "machine" and (old.base, mine) == (new.base, new.components):
         lines.append(f"same     {path}: nothing to change")
     elif not apply:
         lines.append(f"plan     {path} is written by --apply (plan only)")

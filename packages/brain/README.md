@@ -841,7 +841,8 @@ through its capabilities'. `brain mod list | show ID | explain ID` read; `brain 
 dependencies and shows the cost, `brain mod disable ID [--cascade] [--apply]` is refused while a module that is on
 needs it (`--cascade` turns those off too); `--apply` writes this machine's `profile.json`, a second apply changes
 nothing. `explain` shows the scopes' `capabilities` (require, forbid) as declared: the scope tree reserves the key, its
-enforcement comes later. `brain init` writes an empty `modules` key.
+enforcement comes later. `brain init` writes an empty `modules` key. An auto capability is never switched (its
+module shows auto); a capability two modules list follows the first of them a layer names (keys in order).
 
 `config.json` `engine.min` (optional, beside `engine.pin`) is the oldest engine that may write the shared formats:
 below it the memory sync exports nothing (it still imports), the DDRs are not written and `brain check` says so; the

@@ -42,12 +42,22 @@ capabilities:
     resources: {}
     fallback: the text view
     uses: [agent]
+  finder:
+    title: a tool used whenever it is found
+    class: extra
+    profile: custom
+    auto: true
+    provides: [finder]
+    requires: []
+    resources: {}
+    fallback: nothing found
 """
 MODULES = """\
 - {id: M1, name: core-mod, brick: M, phase: MVP, status: tree, capabilities: [base]}
 - {id: M2, name: agent-mod, brick: M, phase: MVP, status: tree, capabilities: [agent]}
 - {id: M3, name: viewer-mod, brick: M, phase: MVP, status: tree, capabilities: [viewer], uses: [M2]}
 - {id: M4, name: store-mod, brick: M, phase: MVP, status: tree, capabilities: [store]}
+- {id: M5, name: finder-mod, brick: M, phase: MVP, status: tree, capabilities: [finder]}
 """
 
 
@@ -79,7 +89,7 @@ def _on(root):
 
 
 def test_the_registry_groups_capabilities_and_a_capability_named_directly_wins(brain):
-    assert mod.groups(brain) == {"M1": ["base"], "M2": ["agent"], "M3": ["viewer"], "M4": ["store"]}
+    assert mod.groups(brain) == {"M1": ["base"], "M2": ["agent"], "M3": ["viewer"], "M4": ["store"], "M5": ["finder"]}
     assert tiers.expand({"M3": True, "viewer": False}, mod.groups(brain)) == {"viewer": False}
     _config(brain, {"M3": True})
     assert "viewer" in _on(brain)
@@ -126,7 +136,7 @@ def test_the_machine_overrides_config_and_explain_shows_each_layer(brain):
 def test_without_a_registry_each_capability_is_a_module(brain):
     (brain / "notes" / "graph" / "modules.yaml").unlink()
     cat = mod.catalogue(brain)
-    assert set(cat) == {"base", "store", "agent", "viewer"} and mod.groups(brain) == {}
+    assert set(cat) == {"base", "store", "agent", "viewer", "finder"} and mod.groups(brain) == {}
     assert cat["viewer"].uses == ["agent"]
     assert "pulls store" in mod.plan(brain, "agent", True)[1][1]
 
@@ -149,3 +159,58 @@ def test_the_cli(brain, capsys):
     assert cli.main(["--root", str(brain), "mod", "disable", "M1"]) == 2
     assert cli.main(["--root", str(brain), "mod", "show", "M2", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["depends_on"] == ["M4"]
+
+
+# --- the review's cases ---
+
+def _profile(components):
+    tiers.machine_file().parent.mkdir(parents=True, exist_ok=True)
+    tiers.machine_file().write_text(json.dumps({"v": 1, "machine": "box1", "base": "default",
+                                                "components": components}), encoding="utf-8")
+
+
+def test_brain_check_accepts_a_module_id_in_tier_components(brain):
+    _config(brain, {"M2": True, "nope": True})
+    errors = " | ".join(tiers.check(brain))
+    assert "'M2'" not in errors and "names 'nope', no capability, stack or module" in errors
+
+
+def test_profile_set_keeps_a_module_override_and_reads_it(brain, capsys):
+    _config(brain, {"M4": True})
+    tiers.write(mod.plan(brain, "M4", False)[0])
+    reg, _ = tiers.registry(brain)
+    later = tiers.plan(reg, tiers.choice(brain), None, ["viewer"], [], None)
+    assert later.components == {"M4": False, "viewer": True}
+    text = "\n".join(tiers.render_plan(reg, tiers.choice(brain), later, False, False, tiers.machine_file()))
+    assert "unknown component" not in text and "off      store" not in text
+
+
+def test_enable_wins_over_a_capability_the_machine_named_directly(brain):
+    _config(brain, {"agent": True})
+    _profile({"agent": False})
+    assert "agent" not in _on(brain)
+    tiers.write(mod.plan(brain, "M2", True)[0])
+    assert "agent" in _on(brain)
+    assert "agent" not in json.loads(tiers.machine_file().read_text(encoding="utf-8"))["components"]
+
+
+def test_an_auto_module_is_neither_enabled_nor_disabled(brain):
+    rows = {r["id"]: r for r in mod.rows(brain)}
+    assert rows["M5"]["state"] == "auto"
+    for enable in (True, False):
+        with pytest.raises(mod.ModError, match="auto"):
+            mod.plan(brain, "M5", enable)
+
+
+def test_a_broken_registry_never_breaks_the_profile(brain):
+    (brain / "notes" / "graph" / "modules.yaml").write_text("- {id: M1, capabilities: [base\n  - : :\n",
+                                                             encoding="utf-8")
+    _config(brain, {"agent": True})
+    assert "agent" in _on(brain)
+
+
+def test_explain_says_profile_json_turned_it_on_not_pulled(brain):
+    _config(brain, {"agent": False})
+    _profile({"M2": True})
+    text = "\n".join(mod.explain(brain, "M2"))
+    assert "profile.json: on" in text and "pulled     nothing" in text
