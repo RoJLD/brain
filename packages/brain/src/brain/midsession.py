@@ -222,7 +222,7 @@ def _auto_root(data: dict) -> None:
     try:
         from . import succession
         succession.auto_root(data)
-    except Exception as exc:  # noqa: BLE001 - the mark never blocks a prompt
+    except Exception as exc:   # the mark never blocks a prompt: logged
         from .capture import _log_error
         _log_error("handover-auto-root", exc)
 
