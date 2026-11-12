@@ -12,7 +12,8 @@ Setup.
   selector last showed (``p``).
 - **Identity**, **Brain**, **Permissions**: the brain's settings, each shown with its place and the command that
   changes it, and changed only through it: nothing here writes them. A secret is named, never shown.
-- **Setup**: the commands that set a brain up, one per step (the wizards of wi-brain-tui-setup chain them).
+- **Setup**: the setup wizards (brain.wizards, wi-brain-tui-setup), one per row: each chains the brain's own
+  commands, a plan before an apply, run in the cockpit after the owner's confirmation and logged.
 
 Read-only and at zero token: a page whose read fails gives one row that says why, never an exception.
 """
@@ -25,9 +26,10 @@ from pathlib import Path
 
 from . import cockpit, config, paths, projects
 
-PAGES = ("cockpit", "identity", "brain", "permissions", "setup")
+PAGES = ("cockpit", "identity", "brain", "modules", "permissions", "setup")
 PAGE_LABELS = {"cockpit": {"en": "Cockpit", "fr": "Cockpit"}, "identity": {"en": "Identity", "fr": "Identité"},
-               "brain": {"en": "Brain", "fr": "Brain"}, "permissions": {"en": "Permissions", "fr": "Permissions"},
+               "brain": {"en": "Brain", "fr": "Brain"}, "modules": {"en": "Modules", "fr": "Modules"},
+               "permissions": {"en": "Permissions", "fr": "Permissions"},
                "setup": {"en": "Setup", "fr": "Mise en place"}}
 HERE = "here: Enter"  # how a cockpit setting changes: in the screen itself
 REFRESH_MIN = cockpit.INTERVAL_MIN
@@ -44,7 +46,7 @@ class Setting:
     value: str                  # as shown; a secret's value never
     source: str                 # the file and its key, or the environment variable
     change: str                 # HERE, or the command that changes it
-    edit: str = ""              # cockpit settings: choice, text or duration; '' read-only
+    edit: str = ""              # cockpit settings: choice, text or duration; the Setup page: wizard; '' read-only
     choices: tuple = field(default_factory=tuple)
     default: str = ""           # what applies when it is not set
 
@@ -255,23 +257,76 @@ def permission_settings(root: Path | None = None) -> list[Setting]:
     ]
 
 
-SETUP_STEPS = (
-    ("first run", "brain profile set lite|default|recommended", "the profile: a plan, then --apply"),
-    ("modules", "brain mod list", "the modules on or off: brain mod enable|disable MODULE, a plan then --apply"),
-    ("a project", "brain projects", "a project added to projects.yaml: a branch and a PR in the personal brain"),
-    ("notifications", "brain notify setup ntfy|telegram|email", "a channel's steps; its secret entered by the owner, "
-                                                                 "named in projects.yaml, never typed here"),
-    ("permissions", "brain permissions", "the rules; a grant by PR (brain permissions grant)"),
-    ("code index", "brain index", "each repo's state, then brain index REPO"),
-    ("checks", "brain check --all", "the configuration, the registry and the stores"),
-)
-
-
 def setup_settings(root: Path | None = None) -> list[Setting]:
-    return [Setting("setup", step, what, "", cmd) for step, cmd, what in SETUP_STEPS]
+    """The setup wizards (brain.wizards), one per row: Enter in the cockpit runs one, its commands logged."""
+    from . import wizards
+    return [Setting("setup", w.id, f"{w.title}: {w.what}", "brain.wizards: run here after a confirmation",
+                    w.command() + (f"; yours: {w.owner}" if w.owner else ""), "wizard") for w in wizards.wizards(root)]
 
 
-READERS = {"cockpit": None, "identity": identity_settings, "brain": brain_settings,
+COST_WORDS = {"ram_mb": ("RAM", "MB"), "disk_mb": ("disk", "MB"), "vram_gb": ("VRAM", "GB"),
+              "download_mb": ("download", "MB")}
+
+
+def _cost_text(cost: dict) -> str:
+    return ", ".join(f"{COST_WORDS[k][0]} {v:g} {COST_WORDS[k][1]}" for k, v in cost.items() if k in COST_WORDS)
+
+
+FIXED = {"core": "always on (a core capability): brain mod show {id}",
+         "auto": "used whenever it is found, never switched: brain mod show {id}",
+         "planned": "planned, not built yet: brain mod show {id}"}
+
+
+def _module_row(m: dict, r: dict, fixed: str) -> Setting:
+    """One module of the catalogue (``m``) with its state on this machine (``r``, brain mod list's row); ``fixed``: why
+    it cannot be switched (core, auto, planned), '' when it can."""
+    what = [x for x in (_cost_text(m.get("cost") or {}),
+                        f"needs {', '.join(m['depends_on'])}" if m.get("depends_on") else "",
+                        f"requires {', '.join(m['requires'])}" if m.get("requires") else "",
+                        f"else: {m['fallback']}" if m.get("fallback") else "") if x]
+    state = "planned" if fixed == "planned" else r.get("state", "?")
+    return Setting("modules", m["id"], f"{state} ({r.get('source', '-')})",
+                   "; ".join(what) or str(m.get("description") or m.get("name") or ""),
+                   FIXED[fixed].format(id=m["id"]) if fixed
+                   else f"brain mod enable|disable {m['id']} (a plan, then --apply)", "" if fixed else "module")
+
+
+def _fixed(m, reg: dict) -> str:
+    """Why brain mod would refuse to switch a module (brain.mod's own checks): a core capability, nothing it can
+    switch (auto), a capability not built yet; '' when it can be switched."""
+    from . import mod
+    caps = [reg[c] for c in m.capabilities if c in reg]
+    if any(c.cls == "core" for c in caps):
+        return "core"
+    if any(c.status != "built" for c in caps):
+        return "planned"
+    return "" if mod.switched(m, reg) else "auto"
+
+
+def module_settings(root: Path | None = None) -> list[Setting]:
+    """The Modules page (wi-brain-modules-tab, SIGMA-15): each module of the brain's catalogue (catalogue/v1, brain
+    catalogue emit) with its state on this machine and where it comes from (brain mod list), its cost, what it needs and
+    its fallback; then the distributions, read-only. Enter on a module: turn it on or off (brain.wizards'
+    module wizard: brain mod enable|disable, a plan then --apply)."""
+    from . import catalogue, mod, tiers
+    doc = catalogue.emit(root, by="brain tui")
+    states = {r["id"]: r for r in mod.rows(root)}
+    reg, _ = tiers.registry(root)
+    cat = mod.catalogue(root, reg)
+    out = [] if any(m.from_registry for m in cat.values()) else [
+        Setting("modules", "registry", "none: each capability is its own module", "modules.yaml (brain modules)",
+                "a modules registry groups the capabilities into modules (brain modules --check)")]
+    out += [_module_row(m, states.get(m["id"], {}), _fixed(cat[m["id"]], reg) if m["id"] in cat else "core")
+            for m in doc["modules"]]
+    for x in doc["distributions"]:
+        out.append(Setting("modules", f"distribution {x['id']}", f"{x.get('name', '')} ({x.get('kind', '')}"
+                           + (", bundled)" if x.get("bundled") else ", downloaded when a module needs it)"),
+                           "brain catalogue emit", "the engine's install: brain update; an extra by brain profile "
+                           "set and the installer (adding or removing a distribution from here arrives later)"))
+    return out
+
+
+READERS = {"cockpit": None, "identity": identity_settings, "brain": brain_settings, "modules": module_settings,
            "permissions": permission_settings, "setup": setup_settings}
 
 

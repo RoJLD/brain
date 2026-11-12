@@ -29,7 +29,8 @@ def styled(name: str, r: dict, cols: tuple, cells: tuple) -> tuple:
     master's row past 70, 80, 90 % of its budget in that step's."""
     word = STYLE_COLUMN.get(name)
     step = MASTER_STYLES.get(r.get("ctx_step"), "") if name == "sessions" else ""
-    return tuple(Text(str(cell), style=STYLES[name].get(cell, "") if c == word else step) for c, cell in zip(cols, cells))
+    styles = STYLES.get(name, {})  # a plugin's panel: no colour of its own
+    return tuple(Text(str(cell), style=styles.get(cell, "") if c == word else step) for c, cell in zip(cols, cells))
 
 
 def same_cell(new, old) -> bool:

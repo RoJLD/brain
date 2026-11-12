@@ -34,6 +34,8 @@ owner. In DIR (default: the current folder), which becomes the owner's private r
   file that exists and differs is kept (``brain render --target claude --write`` replaces it);
 - ``notes/journal.md``, neutral starter rules ``rules/global.md``, ``CLAUDE.md``, ``.gitignore``, ``memory/`` and
   ``records/``;
+- with ``--preset``, ``--with``, ``--without``, ``--catalogue`` or ``--interactive``, the three screens of the modules
+  (brain.firstrun: who you are, your machine, adjust) and their brain commands, run and logged after the files;
 - the machine's pointer ``<BRAIN_HOME>/personal.json`` when the machine has none (the installer writes it too, and
   ``install.ps1 -Personal`` moves it).
 
@@ -679,34 +681,103 @@ def identity_hint(missing: list[str], owner: str, kind: str = "person") -> str:
             "identity unknown\"): " + "; ".join(cmds[k] for k in missing if k in cmds))
 
 
-def main(args) -> int:
-    root = Path(args.dir or ".").resolve()
-    spec = getattr(args, "template", None) or DEFAULT_TEMPLATE
-    try:
-        steps = plan(root, args.owner or "", kind=args.kind, tenant=args.tenant, tier=args.tier, name=args.name,
-                     stage=getattr(args, "stage", None) or DEFAULT_STAGE,
-                     template_spec=spec)
-        tpl = load_template(spec)
-    except InitError as exc:
-        print(f"brain init: {exc}")
-        return 2
-    owner = " ".join((args.owner or owner_in(root)).split())
-    print(f"brain init: {root} for {owner} ({args.kind}, {args.tier}), template {tpl.name} v{tpl.version}, engine "
-          f"{ENGINE_REPO}@v{__version__}")
-    print("\n".join(show(root, steps)))
-    if not args.apply:
-        print("(plan only: brain init --apply writes it)")
+def wants_modules(args) -> bool:
+    """The three screens are asked for: a preset, a box, a private catalogue or --interactive."""
+    return bool(getattr(args, "preset", None) or getattr(args, "with_", None) or getattr(args, "without", None)
+                or getattr(args, "catalogue", None) or getattr(args, "interactive", False))
+
+
+def _tier(args, base: str | None = None) -> str:
+    """config.json tier.base: --tier, else the chosen preset's engine base (a persona's base) when it is lite or
+    default (recommended is this machine's, frozen by brain profile set: default), else lite."""
+    if getattr(args, "tier", None):
+        return args.tier
+    return base if base in TIERS else "default" if base else "lite"
+
+
+def command_line(root: Path, args, owner: str, tier: str, preset: str, with_: list[str],
+                 without: list[str]) -> list[str]:
+    """The one brain init command that makes the same choice with no screen: what --interactive ends on."""
+    words = ["brain", "init", str(root), "--owner", owner]
+    if args.kind != "person":
+        words += ["--kind", args.kind]
+    for flag, value, default in (("--tenant", args.tenant, None), ("--template", getattr(args, "template", None),
+                                                                     DEFAULT_TEMPLATE),
+                                 ("--name", args.name, "brain"), ("--stage", getattr(args, "stage", None),
+                                                                  DEFAULT_STAGE),
+                                 ("--catalogue", getattr(args, "catalogue", None), None)):
+        if value and value != default:
+            words += [flag, str(value)]
+    if getattr(args, "tier", None):
+        words += ["--tier", tier]
+    words += ["--preset", preset] + [w for m in with_ for w in ("--with", m)] + [w for m in without
+                                                                              for w in ("--without", m)]
+    return words + ["--apply"]
+
+
+def _screens(root: Path, args, out=print) -> tuple:
+    """The three screens (brain.firstrun) and the choice they make, with its steps: printed, or asked at each
+    screen with --interactive."""
+    from . import firstrun
+    extra = Path(args.catalogue) if getattr(args, "catalogue", None) else None
+    cat, notes = firstrun.catalogue_for(root, extra)
+    facts = firstrun.facts_of(root)
+    preset, with_, without = (getattr(args, "preset", None) or "lite", list(getattr(args, "with_", None) or []),
+                              list(getattr(args, "without", None) or []))
+    if getattr(args, "interactive", False):
+        preset, with_, without = firstrun.interactive(cat, facts, preset, with_, without, out=out)
+        args.preset, args.with_, args.without = preset, with_, without
+    ch = firstrun.choose(cat, preset, facts, with_, without)
+    ch.notes = notes + ch.notes
+    screens = [] if getattr(args, "interactive", False) else (
+        firstrun.render_presets(cat, facts) + firstrun.render_machine(cat, facts)
+        + firstrun.render_adjust(cat, ch, facts))
+    return ch, firstrun.steps(root, ch), screens, cat
+
+
+def _show_modules(root: Path, args, owner: str, tier: str, mod: tuple) -> list[str]:
+    """The screens, the plan's brain commands and the one command that makes the same choice; --interactive then asks
+    whether to apply. The command, for the log."""
+    from . import firstrun
+    ch, mod_steps, screens, _ = mod
+    same = command_line(root, args, owner, tier, ch.preset, getattr(args, "with_", None) or [],
+                        getattr(args, "without", None) or [])
+    print("\n".join(screens + firstrun.render_plan(mod_steps)))
+    print(f"the same, without the screens: {firstrun.shown(same)}")
+    if getattr(args, "interactive", False) and not args.apply:
+        try:
+            args.apply = firstrun.ASK("apply? [y/N] ").strip().lower() in ("y", "yes", "o", "oui")
+        except (EOFError, KeyboardInterrupt):
+            args.apply = False
+    return same
+
+
+def _run_modules(root: Path, mod: tuple, owner: str) -> int:
+    """The module steps in order, each logged; 1 when one fails (the next ones are not run); none when the machine is
+    already as chosen (a second apply writes nothing)."""
+    from . import firstrun
+    ch, mod_steps, _, cat = mod
+    if firstrun.already(root, cat, ch):
+        print("modules: this machine is already as chosen: no step run")
         return 0
-    code = apply(root, steps, owner)
-    errors = config.check(root)
-    for e in errors:
-        print(f"error: {e}")
-    if code or errors:
-        return code or 1
+    done = firstrun.apply(root, mod_steps, by=owner)
+    for r in done:
+        print(f"{'ok' if r['exit'] == 0 else 'FAILED'} ({r['exit']}): {r['command']}")
+        if r["exit"] != 0 and r["output"]:
+            print("  " + r["output"][-800:].replace("\n", "\n  "))
+    if any(r["exit"] != 0 for r in done):
+        return 1
+    if ch.fetch:
+        print(f"to download (not done here: offline): {', '.join(ch.fetch)}; the installer brings them "
+              "(install.ps1 reads brain profile render)")
+    return 0
+
+
+def _next_steps(root: Path, owner: str, kind: str) -> None:
     print("next: git init and commit (a private repo of your own, never a public one); brain check; brain profile "
           "(this machine's profile); brain item add --help (your first item); brain journal add --title ...; "
           "brain sync after an edit (brain refresh --on-main: sync and check, in this checkout)")
-    hint = identity_hint(git_identity_missing(root), owner, args.kind)
+    hint = identity_hint(git_identity_missing(root), owner, kind)
     if hint:
         print(hint)
     names = claude_names(root)
@@ -715,4 +786,60 @@ def main(args) -> int:
           f"{names['plugin']}@{names['marketplace']} (brain sync renders the plugin again after an engine upgrade)")
     print(f"      the vault, before anything leaves this machine: brain classes (each store's class), brain vault "
           f"status (your device key, your recovery key, the daily canary); the runbook: {vault.RUNBOOK}")
+
+
+def _apply_files(root: Path, steps: list[Step], owner: str, same: list[str]) -> int:
+    """The files, then config.json checked; with the modules, brain init's own step logged (``same``: its command)."""
+    from . import firstrun
+    code = apply(root, steps, owner)
+    errors = config.check(root)
+    for e in errors:
+        print(f"error: {e}")
+    if same:
+        firstrun.log_init(root, same, code or (1 if errors else 0), by=owner)
+    return code or (1 if errors else 0)
+
+
+def _planned(root: Path, args) -> tuple:
+    """(the file steps, the template, the owner, the tier, the modules' (choice, steps, screens, catalogue) or None):
+    the screens first, so the tier is the chosen preset's base."""
+    spec = getattr(args, "template", None) or DEFAULT_TEMPLATE
+    mod = _screens(root, args) if wants_modules(args) else None
+    tier = _tier(args, mod[0].base if mod else None)
+    steps = plan(root, args.owner or "", kind=args.kind, tenant=args.tenant, tier=tier, name=args.name,
+                 stage=getattr(args, "stage", None) or DEFAULT_STAGE, template_spec=spec)
+    owner = " ".join((args.owner or owner_in(root)).split())
+    return steps, load_template(spec), owner, tier, mod
+
+
+def main(args) -> int:
+    from . import firstrun
+    root = Path(args.dir or ".").resolve()
+    if getattr(args, "interactive", False) and not firstrun.tty():
+        print("brain init: --interactive needs a terminal; --preset ID [--with ID]... [--without ID]... makes the same "
+              "choice without the screens")
+        return 2
+    try:
+        steps, tpl, owner, tier, mod = _planned(root, args)
+    except (InitError, firstrun.SetupError) as exc:
+        print(f"brain init: {exc}")
+        return 2
+    except (EOFError, KeyboardInterrupt):
+        print()
+        print("brain init: cancelled, nothing written")
+        return 2
+    print(f"brain init: {root} for {owner} ({args.kind}, {tier}), template {tpl.name} v{tpl.version}, engine "
+          f"{ENGINE_REPO}@v{__version__}")
+    print("\n".join(show(root, steps)))
+    same = _show_modules(root, args, owner, tier, mod) if mod else []
+    if not args.apply:
+        print("(plan only: brain init --apply writes it)" + ("" if mod else "; the modules: brain init "
+              "--interactive (who you are, your machine, adjust), or --preset lite|default|recommended"))
+        return 0
+    code = _apply_files(root, steps, owner, same)
+    if code:
+        return code
+    if mod and _run_modules(root, mod, owner):
+        return 1
+    _next_steps(root, owner, args.kind)
     return 0

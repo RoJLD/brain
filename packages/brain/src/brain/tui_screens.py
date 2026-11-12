@@ -131,6 +131,57 @@ class SettingScreen(ModalScreen):
         self.dismiss(None)
 
 
+class ChoiceScreen(ModalScreen):
+    """A wizard's choice (brain.wizards): Enter picks one, Escape none."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    CSS = """
+    ChoiceScreen { align: center middle; }
+    #choice { width: 64; max-width: 100%; height: auto; max-height: 80%; border: round $accent; padding: 1 2;
+              background: $surface; }
+    """
+
+    def __init__(self, title: str, labels: list[str]) -> None:
+        super().__init__()
+        self.title_text, self.labels = title, labels
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="choice"):
+            yield Label(Text(self.title_text, style="bold"))
+            yield OptionList(*(Text(x) for x in self.labels), id="choices")
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self.dismiss(event.option_index)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class AskScreen(ModalScreen):
+    """A word a wizard asks before its plan (a folder): Enter keeps it, Escape or an empty one cancels."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    CSS = """
+    AskScreen { align: center middle; }
+    #ask { width: 72; max-width: 100%; height: auto; border: round $accent; padding: 1 2; background: $surface; }
+    """
+
+    def __init__(self, title: str, prompt: str) -> None:
+        super().__init__()
+        self.title_text, self.prompt = title, prompt
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="ask"):
+            yield Label(Text(self.title_text, style="bold"))
+            yield Input(placeholder=self.prompt, id="ask-value")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class ColumnsScreen(ModalScreen):
     """One table's columns: space shows or hides the one under the cursor, Up and Down (shift+up, shift+down) move it, and
     a limit for its titles; Apply keeps them, Reset brings the defaults back, Escape changes nothing."""
@@ -421,6 +472,9 @@ class ConfirmScreen(ModalScreen):
         self.query_one("#plan", Static).update(Text(head + "\n" + (r["output"] or "(no output)"),
                                                      style="" if r["exit"] == 0 else "red"))
         run = self.query_one("#run", Button)
+        if self.a.gated and r["exit"] != 0:  # a wizard's apply waits for a plan that passes: Cancel only
+            self.query_one("#cancel", Button).focus()
+            return
         run.disabled = False
         run.focus()
 

@@ -30,7 +30,14 @@ def cmd_review(args, root: Path | None = None) -> int:
     repo = Path(args.repo).resolve() if args.repo else Path.cwd()
     try:
         if args.review_cmd == "prep":
-            p = review.prep(repo, args.target or "", Path(args.out) if args.out else None, scout=not args.no_scout)
+            from .. import standards
+            proj, rows = standards.project_of_repo(repo), []
+            try:
+                rows = standards.lenses(proj) if proj is not None else []
+            except standards.StandardsError as exc:   # the packet without the standards lens, said
+                print(f"review: no standards lens: {exc}", file=sys.stderr)
+            p = review.prep(repo, args.target or "", Path(args.out) if args.out else None, scout=not args.no_scout,
+                            standards=rows)
             if args.json:
                 print(json.dumps(p.__dict__, indent=2))
             else:

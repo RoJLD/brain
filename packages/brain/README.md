@@ -113,8 +113,29 @@ title; a wrong value is refused, an empty one sets the default back, and each ch
 settings (`identity.display_name` and the owner, `$BRAIN_HOME`, the personal pointer, `config.json`, the registry, the
 engine pin, the profile, the stacks, the notification routes, the code index, the scope types, `permissions.yaml`,
 Claude Code's settings) are only shown with the command that changes each: Enter says it, nothing is written from
-there, and a secret is named, never shown. The Setup page lists the commands that set a brain up, one per step.
-`brain tui --once --tab settings` prints the same pages (`brain.settings`).
+there, and a secret is named, never shown. `brain tui --once --tab settings` prints the same pages (`brain.settings`).
+
+The Modules page (SIGMA-15) lists each module of the brain's catalogue (`brain catalogue emit`, catalogue/v1) with its
+state on this machine and where it comes from (`brain mod list`: the preset, `config.json`, `profile.json`, pulled),
+its cost (RAM, disk, VRAM, download), what it needs and its fallback, then the distributions. Enter on a module that
+can be switched asks on or off (and off with what needs it, `--cascade`), shows `brain mod`'s plan (the dependencies
+pulled, what turns on and off, its cost), then `y` writes this machine's `profile.json` (`--apply`), logged as the
+owner's. Off keeps the module's data and configuration: only the profile changes. A core module is always on. Adding
+or removing a distribution, uninstalling a module with a sealed archive of its data, and refusing a module the machine
+cannot hold arrive later.
+
+The Setup page holds the setup wizards (`brain.wizards`), one per row, in the order a new brain walks them: the first
+run (the profile Lite, Default or Recommended), the stacks to enable, the modules, a project to add, the notification
+channels (ntfy, Telegram and its chats, the routes), the permissions, the machines and their facts, the code index, a
+new brain from a domain template, Claude Code's settings and the checks. Each wizard is the brain's own commands,
+never a hidden edit: Enter asks its choice when it has one (and the folder of a new brain, an absolute path), then
+shows its exact command. A wizard that writes shows its plan already run (`brain profile set default`), and `y` runs
+the apply (`... --apply`), never after a plan that failed; a wizard that reads runs its one command on `y`. Each runs
+as the owner's, logged in `<BRAIN_HOME>/ledger/cockpit-<month>.jsonl`, refused in a Claude Code session's shell; the
+notification and code index wizards run for the project the cockpit shows. What stays
+the owner's stays a plan with its command: Claude Code's settings (`install.ps1 -Apply`, in your own terminal), a
+project added to `projects.yaml` and a permission granted (a branch and a PR). A secret is never typed in the cockpit:
+you set it as an environment variable (or in the system keyring), and the wizards name it, never show it.
 
 From 140 columns, on a tab that is one list, a row's detail sits right of the list and follows the cursor: it reads
 once the cursor rests, and remembers each row until its panel changes. Enter gives it the focus, where it scrolls and `o`
@@ -296,6 +317,13 @@ what check, the languages that check covers and how the Brain itself meets it, i
 brain's local ones). A project opts in with `projects.yaml` `standards: {profiles, stage, include, exclude,
 catalogs}`; `brain standards list|show|check` reads them, `brain check --all` checks each project's opt-in, and
 `brain brief` lists the project's standards as its invariants. A project without the key follows none.
+The other consumers read the same applicable rows, by enforcement level: `brain review prep` adds a **standards**
+lens of the `review-lens` rows to its packet (`brain standards lenses`); `brain audit` measures `standards.gap` (P2,
+never in the scout), a row whose check covers neither a repo's language nor a slot its `tools:` declares;
+`brain standards rules [--write FILE]` prints the `rule` rows as a section of rules text (only what needs
+judgement); `brain standards ci [--write FILE]` prints a GitHub Actions skeleton from the `check` and `measure`
+rows with an adapter, one step per slot and repo in its folder, each failing until it is filled with the project's
+own tool.
 
 ### Language adapters
 
@@ -444,6 +472,16 @@ brain item add wi-first --title "My first item"
 claude plugin marketplace add ~/my-brain
 claude plugin install brain-core@brain
 ```
+
+**Choose your modules at the start** (the three screens, offline and with no telemetry; `brain.firstrun`):
+`brain init ~/my-brain --owner "Your name" --interactive` asks who you are (a preset of the catalogue: Lite, Default,
+Recommended, or a persona of a private catalogue, `--catalogue FILE`), shows your machine (what runs here and what is
+recommended, from the probe), then lets you adjust (each module's box, its cost, its dependencies, what it pulls;
+what the machine does not hold is refused). It ends on the same choice as one command (`--preset ID --with MODULE
+--without MODULE`), which plans it without the screens. The choice is brain commands (`brain profile set BASE`, then
+`brain mod disable|enable ID`, each `--apply`): the plan shows them, `--apply` runs them in order and logs each one
+in `<BRAIN_HOME>/ledger/setup-<month>.jsonl`. What must be downloaded (a pip extra) is named, never fetched. The
+catalogue is `brain catalogue emit`'s ([docs/catalogue.md](docs/catalogue.md)).
 
 `brain init` writes, from a template (`--template`, default `generic`: `src/brain/templates/generic/`) and
 `research_graph init`, never over an existing file. `--owner` may be left out in a folder that already has a
@@ -1082,6 +1120,24 @@ not registered and no call pays its cost (the script ships either way, `brain.re
 set the key, run `brain sync` and restart the sessions; while it is on, `BRAIN_READ_HINT=0` turns it off in a
 session.
 
+**The background waiter's hint** (`waithint.sh`, `brain.waithint`, PreToolUse on Bash and PowerShell;
+wi-brain-stuck-waiters) never refuses either: a call run in the background whose `until` or `while` loop has no
+bound gets one line of hook context: bound it (`timeout 1800 bash -c 'until ...'`), make it exit when its file or
+process is gone (`[ -e run.log ] || exit 1`, `kill -0 $pid || exit 1`), and stop the session's background tasks
+before deleting their logs or venvs. A bound is a `timeout N` wrapper or a `-Timeout` parameter, a counter (`seq`, a
+variable compared), a clock (`$SECONDS`, `date +%s`, a Stopwatch, `Get-Date`), a process check (`kill -0`, `ps -p`,
+`pgrep`, `Get-Process`, `Wait-Process`) or a check that the file is still there which leaves the loop (`|| exit`,
+`then break`, `{ break }`); a loop whose own condition waits for a file to appear or compares a count read from a log
+is no bound, and a `while read` loop is no wait. The word `until` or `while` in a quoted text or a comment can still
+draw the line (a hint: it costs one line). In wave 0.3.2 two such loops spun on logs their sessions had deleted, and
+the sessions could not be archived (lesson les-brain-unbounded-background-waiter). Claude Code matches a hook's `if` condition against each simple
+command of the call, never the loop's keyword, so it starts this hook only when one of them names `sleep`
+(`Bash(*sleep*)`, `PowerShell(*leep*)`: what a wait loop's body runs; a busy loop with no sleep is not seen); its bash
+then stops at once for a call not run in the background or with no `until` or `while`; a foreground call is bounded
+by the tool's own timeout, a Monitor by its own. Always registered;
+`BRAIN_WAIT_HINT=0` turns it off. The brief's after-merge lines and close-item's step 5 say the same: no background
+task left at the cleanup or the archive.
+
 Two guards keep what a session brings in and what it records clean (the runbook: [`docs/guards.md`](docs/guards.md)):
 
 - **Third-party kits** (`guard.sh shell`, check `third-party`): a session never installs or runs a third-party kit. A
@@ -1325,6 +1381,28 @@ with `plugin: null`, behaves as before, and a plugin that cannot load fails its 
 --all` reports a value that is not a string and a project named like one of brain's commands, whose plugin never runs
 (the command wins).
 `brain status --project demo` and `brain status --all` show the project as any other.
+
+The plugin also brings its cockpit panels and tabs, as data (`brain.plugin_panels`): a `COCKPIT` mapping beside the
+object it names (or in its module; a callable that returns it works too). Each panel names where its rows come from
+(`rows`: a JSON file under the project's root, a list of objects or `{"rows": [...]}`; or `read`: a `module:attr`
+callable given the project's root), its columns, its sorts (the first the default), its filters, the field that
+names a row and its help:
+
+```python
+COCKPIT = {"v": 1, "panels": {"runs": {
+    "title": {"en": "Runs", "fr": "Exécutions"}, "rows": "out/runs.json",
+    "columns": [{"key": "id", "title": "Id"}, {"key": "state", "title": "State"}, {"key": "score", "title": "Score"}],
+    "sorts": ["score", "state"], "filters": {"state": ["all", "ok", "failed"]}, "help": "The last runs."}}}
+```
+
+`brain tui` reads the registry's plugins at its start and draws each panel (`demo-runs`) as one of its own tables: the
+project selector, the search, the sorts and filters (`s`, `o`, `f`, `--sort demo-runs:state`), the saved views, the
+column chooser, the palette, a row's detail and `--once` work on it. Its tab, `demo` (or one per entry of `tabs`), comes
+after Resources with no number: a click, the palette or `ctrl+pagedown` reaches it, and `--tab demo` starts there. Its
+rows are read at the cockpit's first read (until one passes) and at each probe (`r` reads them again); a file or a
+read that fails keeps its last rows and shows the error, and is read again at the next probe. A name another project's
+plugin has already, or one of the cockpit's own tabs, is noted and left out. Nothing of it is Textual code. A key this engine does not know is kept and noted, a
+plugin that cannot be loaded is noted (a notification, or stderr with `--once`), and the other panels go on.
 
 ## Tests
 

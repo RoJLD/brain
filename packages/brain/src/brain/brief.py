@@ -58,6 +58,10 @@ AFTER_MERGE = (
     "call of your turn. Finish, or report what is left.",
     "- The token-free net: the owner's app setting `auto_archive_inactive_days = 7` archives a session left inactive "
     "for 7 days. The owner sets it; no session changes the app's settings.",
+    "- Waits and cleanup: wait in the foreground with a bound, or in the background with a deadline and an exit when "
+    "the file or process you wait on is gone (`timeout`, `kill -0`, `[ -e log ] || exit 1`; never an unbounded "
+    "`until` loop); stop your background tasks (TaskStop) before deleting their logs or venvs, and before the archive: "
+    "the app refuses to archive a session with live work (wi-brain-stuck-waiters).",
 )
 NEVER = "Never"
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")

@@ -47,12 +47,13 @@ from . import (
     projects,
     public,
     readme,
+    standards,
     testcov,
 )
 from .inventory import AuditError
 from .mergedriver import HEAD_LINES
 
-RULESET = 9   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+RULESET = 10   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
 #               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
 #               (wi-brain-test-links-auto); 5: cmd.registry (wi-brain-cli-registry); 6: feature.coverage, info in
 #               the full audit, NEW in the scout for an added command or module (wi-brain-audit-feature-coverage); 7: the scout's norm lints
@@ -60,7 +61,9 @@ RULESET = 9   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 
 #               adds, NEW under config.json audit.norm_lints_strict, DEFER for a touched file's old ones
 #               (wi-brain-norm-lints); 8: lang.report, a repo's own tools' reports read where it declares
 #               repos[].tools (wi-brain-lang-adapters); 9: doc.links and doc.dead-ref skip the technical
-#               reference's generated pages (wi-brain-reference-scout)
+#               reference's generated pages (wi-brain-reference-scout); 10: standards.gap, an applicable standard
+#               whose check covers neither a repo's language nor a tool it declares (wi-brain-standards-registry-
+#               consumers), measured only for a project that declares standards:
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "
@@ -112,6 +115,9 @@ CHECKS = {c.id: c for c in (
     # opt-in (wi-brain-lang-adapters): measured only for a repo that declares repos[].tools (brain.langs)
     Check("lang.report", "P2", "never", "a report a repo's own tool writes (repos[].tools) is missing or unreadable, "
           f"or says no test ran, failed tests, lint, type or format findings, or coverage under {COVERAGE_FLOOR:g} %"),
+    # opt-in (wi-brain-standards-registry-consumers): measured only for a project that declares standards:
+    Check("standards.gap", "P2", "never", "an applicable standard (projects.yaml standards:, brain.standards) whose "
+          "check covers neither the repo's language nor an adapter slot its repos[].tools declares"),
     Check("doc.links", "P2", "new+left", "a doc no section of which documents a graph node, or a spec no Spec node "
           "anchors (a page of the technical reference aside)"),
     Check("test.links", "P2", "never", "a test module no graph node is tested_by (no Hook, and no node implemented_by "
@@ -136,7 +142,8 @@ CHECKS = {c.id: c for c in (
 class Pending:
     owner: str        # the item that will measure it
     blocks: bool      # it would carry P0 or P1: the milestone waits on it
-    applies: str      # every, code, python, commands, ts, no-code-layer, tools (a repo that declares repos[].tools)
+    applies: str      # every, code, python, commands, ts, no-code-layer, tools (a repo that declares repos[].tools),
+    #                   standards (a project that declares standards:)
     run: object = None   # a generator's PR sets it (its own ADR): the check is then measured; run(ctx) returns the
     #                      findings, or why this repo cannot be measured (listed as not measured)
 
@@ -395,9 +402,27 @@ def lang_report(ctx: dict) -> list[dict] | str:
     return [f for f in out if f]
 
 
+def standards_gap(ctx: dict) -> list[dict] | str:
+    """standards.gap (brain.standards): the project's applicable standards whose check covers neither this repo's
+    language nor a slot of its own tools (the same gaps as brain standards check, one finding per row)."""
+    c = ctx["cfg"]
+    try:
+        chosen = standards.chosen_for(ctx.get("project"))
+    except standards.StandardsError as exc:
+        return f"its standards cannot be measured: {exc}"
+    if not chosen:
+        return ("no applicable standard (projects.yaml standards:, or its catalogs cannot be read: brain standards "
+                "check)")
+    return [finding(c.name, "standards.gap", gap.split(":", 1)[0], gap,
+                    "declare the repo's own tool for the row's adapter slot (projects.yaml repos[].tools, "
+                    "brain.langs), or waive the row with its reason (standards.exclude)")
+            for gap in standards.gaps(chosen, {c.name: c.lang}, {c.name: set(c.tools)})]
+
+
 PENDING = {
     "readme.yaml": Pending("wi-brain-readme-sync", True, "every", readme_yaml),
     "lang.report": Pending("wi-brain-lang-adapters", False, "tools", lang_report),
+    "standards.gap": Pending("wi-brain-standards-registry-consumers", False, "standards", standards_gap),
     # the README against its render: brain docs check and brain check (a generated view, the default branch's to hold)
     "readme.generated": Pending("wi-brain-readme-sync", True, "every"),
     "help.quoted": Pending("wi-brain-readme-sync", True, "every", help_quoted),
@@ -680,6 +705,7 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
         if only is not None and c.name not in only:
             continue
         ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm, "trees": trees,
+               "project": p,
                "flabel": flabel, "fhome": fhome, "fpublic": fpublic, "fstrict": fstrict, "coverage": coverage.get(c.name),
                "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
         out_repos.append(_repo_result(c, rf, idx, tops, mod_evidence, facts, dangling.get(c.name, []),
@@ -868,7 +894,9 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
     # not measured
     applies = {"every": True, "code": has_code, "python": bool(modules), "commands": any(
         u.kind == "command" for u in rf.units), "ts": c.lang == "ts", "no-code-layer": bool(modules)
-        and name not in layered, "tools": bool(c.tools)}
+        and name not in layered, "tools": bool(c.tools),
+        "standards": ctx is not None and standards.selection(getattr(ctx.get("project"), "standards", None))
+        is not None}
     pending = []
     for k, v in PENDING.items():
         if not applies[v.applies]:

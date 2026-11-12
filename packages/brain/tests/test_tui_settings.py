@@ -80,15 +80,82 @@ def test_the_settings_frame_holds_the_pages_then_their_settings():
         pages = frame.query_one("#settings-pages", tui_settings.SettingsPages)
         assert pages.option_count == len(tui_settings.settings_.PAGES)
         assert [str(pages.get_option_at_index(i).prompt) for i in range(pages.option_count)] == [
-            "Cockpit", "Identity", "Brain", "Permissions", "Setup"]
+            "Cockpit", "Identity", "Brain", "Modules", "Permissions", "Setup"]
         assert app.check_action("edit_setting", ()) is False  # off the tab: its keys are off
         await pilot.press("comma")
         assert app.check_action("edit_setting", ()) is True
         table = app.query_one("#settings-table", DataTable)
         assert tuple(str(c.label) for c in table.ordered_columns) == tui_settings.SETTING_COLUMNS
-        await pilot.press("left", "down", "down", "down", "down")  # the last page: Setup
+        await pilot.press("left", "down", "down", "down", "down", "down")  # the last page: Setup
         await pilot.pause(0.1)
         assert app.setting_page == "setup" and "checks" in _settings(app)
+    _run(check)
+
+
+def _setup_page(app):
+    app.setting_page = "setup"
+    app._draw_settings()
+
+
+def test_a_setup_wizard_picks_then_plans_then_applies_each_step_logged(monkeypatch):
+    """wi-brain-tui-setup: Enter on a wizard of the Setup page: its choice, then the confirmation of its exact command
+    with its plan run first, then the apply on the owner's yes, through brain.detail's runner (logged, refused in a
+    session's shell)."""
+    ran = []
+
+    def run(a, steps, runner=None, env=None):
+        ran.append((a.ref, a.kind, steps))
+        return [{"command": " ".join(s), "exit": 0, "seconds": 0, "output": "ok"} for s in steps]
+    monkeypatch.setattr(tui.detail, "run", run)
+
+    async def check(app, pilot, fake):
+        await pilot.press("comma")
+        _setup_page(app)
+        await pilot.pause(0.1)
+        _cursor_on(app, "first-run")
+        await pilot.press("enter")
+        assert isinstance(app.screen, tui_screens.ChoiceScreen)
+        await pilot.press("down", "enter")  # default
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, tui_screens.ConfirmScreen)
+        assert app.screen.steps == [["brain", "profile", "set", "default", "--apply"]]
+        assert ran == [("first-run", "plan", [["brain", "profile", "set", "default"]])]  # the plan first, shown
+        await pilot.press("y")
+        await pilot.pause(0.3)
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.1)
+        assert ran[-1] == ("first-run", "apply", [["brain", "profile", "set", "default", "--apply"]])
+        assert isinstance(app.screen, tui_screens.ResultScreen)  # what it printed
+        await pilot.press("escape")
+        _cursor_on(app, "instance")
+        await pilot.press("enter")
+        await pilot.press("enter")  # the first template
+        await pilot.pause(0.1)
+        assert isinstance(app.screen, tui_screens.AskScreen)
+        await pilot.press("escape")  # no folder: nothing runs
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, tui_screens.ConfirmScreen) and len(ran) == 2
+        _cursor_on(app, "checks")
+        await pilot.press("enter")  # a read: its one command, no plan to run first
+        await pilot.pause(0.2)
+        assert app.screen.steps == [["brain", "check", "--all"]] and app.screen.a.preview is None
+        await pilot.press("n")
+    _run(check)
+
+
+def test_a_setup_wizard_is_refused_in_a_sessions_shell(monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+
+    async def check(app, pilot, fake):
+        notified, notify = [], app.notify
+        app.notify = lambda message, **kw: notified.append(message) or notify(message, **kw)
+        await pilot.press("comma")
+        _setup_page(app)
+        _cursor_on(app, "checks")
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, tui_screens.ConfirmScreen)
+        assert any("not from a Claude Code session's shell" in m for m in notified)
     _run(check)
 
 
@@ -121,5 +188,37 @@ def test_a_default_saved_unchanged_stays_unset_and_the_pages_follow_the_language
         await pilot.click("#save")
         await pilot.pause(0.1)
         pages = app.query_one("#settings-pages", tui_settings.SettingsPages)
-        assert str(pages.get_option_at_index(4).prompt) == "Mise en place" and "1 File d'Ada" in _bar(app)
+        assert str(pages.get_option_at_index(5).prompt) == "Mise en place" and "1 File d'Ada" in _bar(app)
+    _run(check)
+
+
+def test_the_modules_page_turns_a_module_on_by_its_plan_then_its_apply(monkeypatch):
+    ran = []
+
+    def run(a, steps, runner=None, env=None):
+        ran.append((a.kind, steps))
+        return [{"command": " ".join(s), "exit": 0, "seconds": 0, "output": "ok"} for s in steps]
+    monkeypatch.setattr(tui.detail, "run", run)
+
+    async def check(app, pilot, fake):
+        await pilot.press("comma")
+        app.setting_page = "modules"
+        app._draw_settings()
+        await pilot.pause(0.1)
+        _cursor_on(app, "infra-node")  # built, off
+        await pilot.press("enter")
+        assert isinstance(app.screen, tui_screens.ChoiceScreen)
+        await pilot.press("enter")  # enable
+        await pilot.pause(0.3)
+        assert app.screen.steps == [["brain", "mod", "enable", "infra-node", "--apply"]]
+        assert ran == [("plan", [["brain", "mod", "enable", "infra-node"]])]
+        await pilot.press("n")
+        _cursor_on(app, "plane")  # planned: brain mod would refuse it, nothing offered
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, tui_screens.ChoiceScreen)
+        _cursor_on(app, "rules")
+        await pilot.press("enter")  # core: its command said, nothing to choose
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, tui_screens.ChoiceScreen)
     _run(check)
