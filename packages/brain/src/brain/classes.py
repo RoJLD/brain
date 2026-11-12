@@ -187,6 +187,8 @@ ENGINE_STORES = {
                       "the pointer to this machine's personal brain"),
     "profile": Known("$BRAIN_HOME/profile.json", "sealed", "truth-local", "this machine's frozen tier profile"),
     "venv": Known("$BRAIN_HOME/venv", "sealed", "install", "the brain command's own Python environment"),
+    "venvs": Known("$BRAIN_HOME/venvs", "sealed", "install",
+                   "brain update's slots, one venv per engine version; venv links to the active one (brain.slots)"),
     "bin": Known("$BRAIN_HOME/bin", "sealed", "install", "the brain command's launcher, alone on the PATH"),
     "engine-clones": Known("$BRAIN_HOME/engine", "sealed", "install",
                            "the engine tags' clones an installer or a shim keeps"),

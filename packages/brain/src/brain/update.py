@@ -38,6 +38,11 @@ After the install, when config.json lists public repos, the new engine runs ``br
 history and stamped again, since the push guard refuses a stamp of another engine; one with uncommitted work is
 skipped and named. Its findings are said, never an install failure.
 
+The install is blue-green (brain.slots, wi-brain-update-blue-green): the tag goes into a slot of its own,
+``<BRAIN_HOME>/venvs/vX.Y.Z``, beside the running one; its health gate runs there; only then ``<BRAIN_HOME>/venv``
+(a link) and the launcher switch to it, and a watchdog switches them back when the new version does not answer
+through them. A venv whose pyvenv.cfg names no base interpreter is updated in place, as before.
+
 :func:`apply` runs it: only from ``brain update --yes``, the terminal's yes or the cockpit's confirmation (which runs
 ``brain update --yes`` in a window), the owner's gesture; never from a Claude Code session's shell, never on its own.
 """
@@ -305,7 +310,7 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=No
     out = {"installed": installed, "latest": latest, "tag": f"v{latest}" if latest else None, "repo": repo,
            "checked": info.get("checked"), "source": info.get("source"), "changelog": None, "python": str(py),
            "spec": None, "launcher": None, "pin": None, "signature": None, "verify_tags": False, "blocked": "",
-           "stamps": None}
+           "stamps": None, "slot": None, "base": None, "root": None}
     target = f"v{latest}" if info.get("newer") else f"v{installed}"
     pin = info.get("pin")
     editable = paths.installed_checkout()
@@ -337,7 +342,25 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=No
     pair = launcher(py)
     out["launcher"] = [str(pair[0]), str(pair[1])] if pair else None
     out["stamps"] = _stamps_root(root)
+    _plan_slot(out, py, root)
     return out
+
+
+def _plan_slot(out: dict, py: Path, root: Path | None) -> None:
+    """The blue-green install (brain.slots, wi-brain-update-blue-green): the new version's slot beside the active
+    one, made from the interpreter the active venv was made from; without one (a venv whose pyvenv.cfg names none),
+    the install goes in place as before (``slot`` None)."""
+    from . import slots
+
+    base = slots.base_python(py.parent.parent)
+    if base is None:
+        return
+    dest = slots.slot(out["tag"])
+    out["slot"], out["base"] = str(dest), str(base)
+    cfg = config.load(root)
+    out["root"] = str(cfg.root) if cfg.file else None
+    if out["launcher"]:
+        out["launcher"][0] = str(slots.launcher_of(dest))
 
 
 def _stamps_root(root: Path | None) -> str | None:
@@ -408,9 +431,17 @@ def lines(p: dict) -> list[str]:
     steps = []
     if p.get("signature") and p.get("spec"):
         steps.append(f"verify   {tagsig.line(p['signature'], bool(p.get('verify_tags')))}")
-    if p.get("spec"):
+    if p.get("spec") and p.get("slot"):
+        steps.append(f"install  brain {p['tag']} into {p['slot']}, beside brain {p['installed']} "
+                     f"({p['base']} -m venv, then pip install \"{p['spec']}\")")
+        steps.append(f"check    run by {p['tag']} before any switch: brain --version, brain doctor --quick, and the "
+                     "guards letting git status pass")
+        steps.append(f"switch   {Path(p['python']).parent.parent} -> {p['slot']} (a link renamed, even while a "
+                     f"brain runs); then brain --version through it and the launcher, else back to {p['installed']}")
+    elif p.get("spec"):
         steps.append(f"install  brain {p['tag']} into {Path(p['python']).parent.parent} "
-                     f"(pip install \"{p['spec']}\")")
+                     f"(pip install \"{p['spec']}\"; in place: its pyvenv.cfg names no base interpreter for a slot)")
+    if p.get("spec"):
         if p.get("launcher"):
             steps.append(f"launcher {p['launcher'][0]} -> {p['launcher'][1]} (swapped in even while a brain runs)")
         if p.get("stamps"):
@@ -578,6 +609,82 @@ def _refresh_stamps(p: dict, runner) -> list[str]:
     return said or [f"stamps   brain check --public --refresh said nothing (exit {done.returncode})"]
 
 
+def _in_place(p: dict, runner) -> tuple[bool, list[str]]:
+    """The install over the active venv (a venv whose base interpreter is unknown): pip, the commits checked, the
+    launcher swapped in. (failed, lines)."""
+    cmd = [p["python"], "-m", "pip", "install", "--quiet", "--disable-pip-version-check", p["spec"]]
+    try:
+        proc = runner(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return True, [f"pip install failed: {exc}"]
+    said = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    if proc.returncode != 0:
+        return True, [f"pip install \"{p['spec']}\" failed with exit code {proc.returncode}", *said.splitlines()[-20:]]
+    out = [f"installed brain {p['tag']} into {Path(p['python']).parent.parent}", *_moved_since_verified(p)]
+    if out[-1].startswith("refused"):
+        return True, out
+    said, failed = _swap_launcher(p.get("launcher"))
+    return failed, out + said
+
+
+def _swap_launcher(pair, src: Path | None = None) -> tuple[list[str], bool]:
+    """The launcher on the PATH copied from ``src`` (default: the plan's): (lines, failed)."""
+    if not pair:
+        return [], False
+    src, dst = src or Path(pair[0]), Path(pair[1])
+    try:
+        return ([f"{set_launcher(src, dst)} {dst}"] if src.is_file() else
+                [f"launcher {src} missing: rerun the installer"]), False
+    except OSError as exc:
+        return [f"launcher {dst}: {exc} (rerun installer/install.ps1 -Apply)"], True
+
+
+def _blue_green(p: dict, runner) -> tuple[bool, list[str]]:
+    """The new version in its own slot beside the active one (brain.slots): made and installed there, its commits
+    checked, the health gate run by it; only then the switch of ``<BRAIN_HOME>/venv`` and the launcher, the watchdog
+    after it, and back to the previous slot when the watchdog fails. Until the switch nothing the running brain uses
+    has changed. (failed, lines)."""
+    from . import slots
+
+    dest, version, was = Path(p["slot"]), p["latest"], p["installed"]
+    new_py = slots.python_of(dest)
+    said = slots.create(dest, Path(p["base"]), p["spec"], runner)
+    if said:
+        return True, [*said, f"kept     brain {was}: nothing switched"]
+    out = [f"installed brain {p['tag']} into {dest}, beside brain {was}", *_moved_since_verified({**p,
+                                                                                                "python": str(new_py)})]
+    if out[-1].startswith("refused"):
+        return True, [*out, f"kept     brain {was}: nothing switched"]
+    bad = slots.smoke(new_py, version, Path(p["root"]) if p.get("root") else None, runner)
+    if bad:
+        return True, [*out, *bad, f"kept     brain {was}: not switched; {dest} is left as it is, for a look"]
+    try:
+        before = slots.switch(dest, aside_for=f"v{was}")
+    except OSError as exc:
+        return True, [*out, f"switch   refused ({exc}): brain {was} still runs; close the cockpit and try again"]
+    out.append(f"switched {slots.active_path()} -> {dest}" + (f" (was {before})" if before else ""))
+    said, failed = _swap_launcher(p.get("launcher"))
+    out += said
+    bad = [] if failed else slots.watch(version, Path(p["launcher"][1]) if p.get("launcher") else None, runner)
+    if failed or bad:
+        return True, [*out, *bad, *_switch_back(p, before)]
+    return False, [*out, *slots.prune([before])]
+
+
+def _switch_back(p: dict, before: Path | None) -> list[str]:
+    """The watchdog's way back: the link and the launcher to the slot that was active."""
+    from . import slots
+
+    if before is None:
+        return ["back     no slot was active before: rerun the installer (install.ps1 -Apply)"]
+    try:
+        slots.switch(before)
+    except OSError as exc:
+        return [f"back     could not switch back to {before} ({exc}): rerun the installer (install.ps1 -Apply)"]
+    said, _ = _swap_launcher(p.get("launcher"), slots.launcher_of(before))
+    return [f"back     {slots.active_path()} -> {before}: brain {p['installed']} runs again", *said]
+
+
 def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
     """Run a plan's install and launcher steps, then its pin step: moved, committed and synced for a brain without
     an installer of its own (:func:`move_pin`), shown only for one with (a reviewed PR): (exit code, what was done).
@@ -588,24 +695,9 @@ def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
         return 1, [p.get("blocked") or "nothing to apply"]
     if p.get("blocked"):
         return 1, [p["blocked"]]
-    cmd = [p["python"], "-m", "pip", "install", "--quiet", "--disable-pip-version-check", p["spec"]]
-    try:
-        proc = runner(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return 1, [f"pip install failed: {exc}"]
-    said = ((proc.stdout or "") + (proc.stderr or "")).strip()
-    if proc.returncode != 0:
-        return 1, [f"pip install \"{p['spec']}\" failed with exit code {proc.returncode}", *said.splitlines()[-20:]]
-    out = [f"installed brain {p['tag']} into {Path(p['python']).parent.parent}", *_moved_since_verified(p)]
-    if out[-1].startswith("refused"):
+    failed, out = (_blue_green if p.get("slot") else _in_place)(p, runner)
+    if failed:
         return 1, out
-    if p.get("launcher"):
-        src, dst = Path(p["launcher"][0]), Path(p["launcher"][1])
-        try:
-            out.append(f"{set_launcher(src, dst)} {dst}" if src.is_file() else f"launcher {src} missing: rerun the "
-                       "installer")
-        except OSError as exc:
-            return 1, [*out, f"launcher {dst}: {exc} (rerun installer/install.ps1 -Apply)"]
     out += _refresh_stamps(p, runner)
     code = 0
     if pin_writes(p):

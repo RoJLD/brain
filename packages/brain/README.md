@@ -83,6 +83,18 @@ It runs only on the owner's yes: `y` at its prompt, or `--yes`; never from a Cla
 told to run it in the owner's own terminal. `brain update --check` prints the plan and changes nothing; `--json`
 gives its data. A checkout installed editable is not updated by pip (`git pull` there).
 
+**Blue-green** (`brain.slots`, wi-brain-update-blue-green): the new version is installed **beside** the running one,
+in a venv of its own, `<BRAIN_HOME>/venvs/vX.Y.Z`, made from the interpreter the active venv was made from. Before
+anything the running brain uses changes, that version passes a health gate run by itself: `brain --version`,
+`brain --root <the brain> doctor --quick`, and the guards letting `git status` pass. Only then `<BRAIN_HOME>/venv`
+(the path the hooks, the installer and the shim read) becomes a link to the new slot (a directory junction on
+Windows, a symlink elsewhere: a rename, which a running brain survives), and the launcher on the PATH is copied from
+it. A watchdog then runs `brain --version` through both; if one fails, the link and the launcher go back to the
+previous slot. The first such update finds `venv` a real folder and moves it, whole, into `venvs/v<its version>`, so
+it stays the way back. Three slots are kept (the active one and the previous one always). A venv whose `pyvenv.cfg`
+names no base interpreter is updated in place, as before. The installer is unchanged: it installs into
+`<BRAIN_HOME>/venv`, the active slot.
+
 Before the install, the plan verifies the tag's signature (since 0.3.2, STD-3): `git verify-tag` against the
 `releaser` keys of the brain's `members.yaml` (else `allowed_signers`, the file generated from them); after the
 install, the commits pip recorded are checked against the one the signed tag names. The plan says
