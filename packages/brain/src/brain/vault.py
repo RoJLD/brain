@@ -443,7 +443,10 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> list[st
     if not isinstance(cfg.data["vault"], dict):
         return ["vault: a mapping (adapter, min_recipients, recipients, tenants)"]
     _, errors = recipients(cfg)
-    nodes = classes.scope_nodes(cfg)
+    try:
+        nodes = classes.scope_nodes(cfg)
+    except classes.ClassError as exc:
+        return errors + [str(exc)]
     recs = (_block(cfg).get("recipients") or {})
     for node, d in nodes.items():
         for n in ((d.get("vault") or {}) if isinstance(d.get("vault"), dict) else {}).get("recipients") or []:
@@ -464,7 +467,10 @@ def for_store(cfg: config.Config, store: classes.Store) -> list[Recipient]:
     tenants = _block(cfg).get("tenants") or {}
     if store.kind == "tenant":
         return [recs[n] for n in tenants.get(store.cls[len(classes.TENANT):]) or [] if n in recs]
-    nodes = classes.scope_nodes(cfg)
+    try:
+        nodes = classes.scope_nodes(cfg)
+    except classes.ClassError as exc:   # a scoped recipient unread would count as the root's: nothing is sealed
+        raise VaultError(str(exc)) from None
 
     def node_recipients(d: dict) -> list[str]:
         v = d.get("vault") if isinstance(d.get("vault"), dict) else {}

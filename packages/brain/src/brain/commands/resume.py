@@ -13,7 +13,7 @@ from ._common import _scope
 ORDER = 300   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 310   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain resume [--project P | --all] [--budget N] [--write] [--offline] [--health] [--notes DIR]...
+  brain resume [--project P | --all | --scope REF] [--budget N] [--write] [--offline] [--health] [--notes DIR]...
                  the resume pack: the project's present state from the graph, records, journal and git, ordered from
                  stable to volatile (milestones, frontier and P0/P1, decisions, open PRs, journal, hand-over notes,
                  then the date); --budget cuts from the volatile end (default 3000 tokens, 0: no limit); --write
@@ -24,7 +24,8 @@ USAGE = """\
 def cmd_resume(args, root: Path) -> int:
     """The resume pack of the project (a worktree of a registered checkout keeps the project's name), or of every
     registered project with --all; printed, and kept in <BRAIN_HOME>/resume/<project>.md with --write."""
-    scope = _scope(args, root) if args.all else [getattr(args, "project_obj", None) or resume.project_for(root)]
+    many = args.all or bool(args.scope)   # --scope REF: the projects of a node's subtree (brain.scopes)
+    scope = _scope(args, root) if many else [getattr(args, "project_obj", None) or resume.project_for(root)]
     texts = []
     for p in scope:
         if not p.root.is_dir():
@@ -43,6 +44,8 @@ def register(sub, ctx) -> None:
     rs = sub.add_parser("resume", help="the resume pack: the project's present state, stable to volatile, at zero "
                                        "token (on demand; the SessionStart hook says how old the written one is)")
     rs.add_argument("--all", action="store_true", help="every project of the registry, one pack each")
+    rs.add_argument("--scope", help="the projects of a node's subtree in the scope tree (brain scopes): an id, a path "
+                    "of ids, global (= --all), . or ..; one pack each")
     rs.add_argument("--budget", type=int, default=resume.BUDGET,
                     help=f"tokens (~{resume.CHARS_PER_TOKEN} characters each), cut from the volatile end; 0: no limit "
                          f"(default {resume.BUDGET})")
