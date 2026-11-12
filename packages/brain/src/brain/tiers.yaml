@@ -21,6 +21,9 @@
 #                   profile cannot turn it off
 #   install         what install.ps1 installs for it: {pip: EXTRA}, an extra of pyproject.toml
 #   status          built (default) or planned, with the item that builds it
+#   depends_on      capabilities it needs (hard): turned on with it, and brain mod disable refuses to turn one off while
+#                   it is on (--cascade turns it off too)
+#   uses            capabilities it reads when they are on (soft): its fallback otherwise; never pulled
 capabilities:
   rules:
     title: the owner's rules injected into every session and subagent, and the answered decisions announced

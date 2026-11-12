@@ -44,7 +44,7 @@ BASES = ("lite", "default", "recommended")
 NAMES = {"lite": "Lite", "default": "Défaut", "recommended": "Recommandé", "custom": "Personnalisable"}
 BUILT_IN = "default"
 STACK_KEYS = ("class", "profile", "provides", "requires", "resources", "fallback", "recommend_when")
-KEYS = set(STACK_KEYS) | {"title", "auto", "install", "status", "item"}
+KEYS = set(STACK_KEYS) | {"title", "auto", "install", "status", "item", "depends_on", "uses"}
 RESOURCES = ("ram_mb", "disk_mb", "disk_gb", "vram_gb")
 CLAUSE = re.compile(r"^(not\s+)?([A-Za-z0-9_:.-]+)(?:\s*(>=|<=|==|!=|>|<)\s*(\S+))?$")
 REQUIREMENT = re.compile(r"^(env:[A-Z_][A-Z0-9_]*|[a-z][a-z0-9_-]*)$")
@@ -73,7 +73,8 @@ class Entry:
     status: str = "built"
     item: str = ""
     project: str = ""
-    depends_on: list = field(default_factory=list)
+    depends_on: list = field(default_factory=list)   # hard: pulled when it is on (a stack's, or a capability's)
+    uses: list = field(default_factory=list)         # soft: a provider it reads when on, its fallback otherwise
 
     @property
     def declared(self) -> bool:
@@ -119,7 +120,7 @@ def _shape(eid: str, d: dict, where: str, stack: bool) -> list[str]:
         errs.append(f"{where}: a core entry has no fallback")
     if "recommend_when" in d and d.get("profile") != "recommended":
         errs.append(f"{where}: recommend_when is for profile recommended only")
-    for k in ("provides", "requires", "recommend_when"):
+    for k in ("provides", "requires", "recommend_when", "depends_on", "uses"):
         if k in d and not (isinstance(d[k], list) and all(isinstance(x, str) and x.strip() for x in d[k])):
             errs.append(f"{where}: {k} is a list of strings")
     for r in d.get("requires") or [] if isinstance(d.get("requires"), list) else []:
@@ -173,7 +174,12 @@ def capabilities(path: Path = FILE) -> tuple[dict[str, Entry], list[str]]:
             errs.append(f"{where}: a capability is a mapping")
             continue
         errs += _shape(str(eid), d, where, stack=False)
-        out[str(eid)] = _entry(str(eid), d, "capability")
+        deps = [str(x) for x in d.get("depends_on") or []] if isinstance(d.get("depends_on"), list) else []
+        uses = [str(x) for x in d.get("uses") or []] if isinstance(d.get("uses"), list) else []
+        out[str(eid)] = _entry(str(eid), d, "capability", depends_on=deps, uses=uses)
+    for e in out.values():
+        errs += [f"{path.name}: {e.id}: {k} names {x!r}, no capability of that name"
+                 for k in ("depends_on", "uses") for x in getattr(e, k) if x not in out]
     return out, errs
 
 
@@ -318,6 +324,26 @@ def _config_components(root: Path | None) -> dict:
     return {str(k): bool(v) for k, v in comps.items()} if isinstance(comps, dict) else {}
 
 
+def expand(comps: dict, groups: dict[str, list[str]]) -> dict:
+    """One layer's components with each module id replaced by its capabilities (``groups``: brain.mod.groups); a
+    capability the layer names directly wins over its module's value."""
+    out = {}
+    for k, v in comps.items():
+        if k in groups:
+            for c in groups[k]:
+                out.setdefault(c, v)
+    out.update({k: v for k, v in comps.items() if k not in groups})
+    return out
+
+
+def _groups(root: Path | None) -> dict[str, list[str]]:
+    from . import mod
+    try:
+        return mod.groups(root)
+    except (OSError, ValueError, KeyError, TypeError):   # an unreadable registry: the components as they are
+        return {}
+
+
 def choice(root: Path | None) -> Choice:
     """This machine's choice: $BRAIN_HOME/profile.json (written for this machine), else config.json's tier, else the
     built-in base."""
@@ -340,13 +366,15 @@ def choice(root: Path | None) -> Choice:
                 # the machine's override merged key by key over config.json's components (a key it names wins;
                 # one it does not name keeps the brain's default, the infra-node switch say: R25)
                 own = {str(k): bool(v) for k, v in (data.get("components") or {}).items()}
-                inherited = _config_components(root)
-                return Choice(data["base"], {**inherited, **own}, "machine", name, str(data.get("applied") or ""),
-                              data.get("computed_from") or {}, warnings, own, inherited)
+                inherited, groups = _config_components(root), _groups(root)
+                return Choice(data["base"], {**expand(inherited, groups), **expand(own, groups)}, "machine", name,
+                              str(data.get("applied") or ""), data.get("computed_from") or {}, warnings, own,
+                              inherited)
     tier = config.load(root).data.get("tier")
     if isinstance(tier, dict) and tier.get("base", BUILT_IN) in ("lite", "default"):
         comps = _config_components(root)
-        return Choice(tier.get("base", BUILT_IN), comps, "config", name, warnings=warnings, own={}, inherited=comps)
+        return Choice(tier.get("base", BUILT_IN), expand(comps, _groups(root)), "config", name, warnings=warnings,
+                      own={}, inherited=comps)
     return Choice(BUILT_IN, {}, "built-in", name, warnings=warnings, own={})
 
 
