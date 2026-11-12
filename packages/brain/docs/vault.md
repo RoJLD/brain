@@ -90,6 +90,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `alerts` | `$BRAIN_HOME/alerts` | sealed | truth-local | the alerts already raised |
 | `machine.json` | `$BRAIN_HOME/machine.json` | sealed | truth-local | this machine's first sight: name, OS install anchor (a sha256), local id |
 | `facts.json` | `$BRAIN_HOME/facts.json` | sealed | derived | the machine's last facts with their source |
+| `locks` | `$BRAIN_HOME/locks` | sealed | derived | the single-instance locks (the cockpit, the alerts pass) and their holder's pid |
 | `probes` | `$BRAIN_HOME/probes` | sealed | derived | the dependency probes' last run |
 | `notify` | `$BRAIN_HOME/notify` | sealed | truth-local | the notifications' state, the quiet hours |
 | `secrets` | `$BRAIN_HOME/secrets` | **secret** | truth-local | the stack bundles' secret files |

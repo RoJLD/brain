@@ -149,6 +149,8 @@ ENGINE_STORES = {
                           "this machine's first sight: its name, OS install anchor (a sha256) and local id"),
     "facts.json": Known("$BRAIN_HOME/facts.json", "sealed", "derived",
                         "the machine's last facts with their source (brain doctor)"),
+    "locks": Known("$BRAIN_HOME/locks", "sealed", "derived",
+                   "the single-instance locks (the cockpit, the alerts pass) and their holder's pid (brain.shutdown)"),
     "probes": Known("$BRAIN_HOME/probes", "sealed", "derived", "the dependency probes' last run (brain.depprobes)"),
     "notify": Known("$BRAIN_HOME/notify", "sealed", "truth-local",
                      "the notifications' state, the quiet hours and their audit (YYYY-MM.jsonl, a log kept 6 months)"),
