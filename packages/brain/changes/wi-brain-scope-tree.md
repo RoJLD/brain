@@ -5,5 +5,6 @@ section: Added
   `scopes`, `$BRAIN_SCOPES`) or under another project; `config.json` `scope_types` renames or adds a type of the
   catalogue. `brain check --all` checks the tree (a known parent, no cycle, ids unique across projects and containers,
   a known and accepted type, a class floor never under an ancestor's, a warning past six levels); `brain scopes`
-  prints it; `brain status --scope REF` shows a node's subtree (`global` is `--all`); `brain sync` writes
+  prints it; `brain status --scope REF` shows a node's subtree (`global` is `--all`), and so do `brain resume` and
+  `brain digest`; `brain sync` writes
   `notes/scopes_graph.md`. Without `scopes.yaml` and `parent:`, everything stays flat under Global, as before.

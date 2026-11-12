@@ -168,6 +168,19 @@ def test_brain_scopes_and_status_scope(brain, monkeypatch, capsys):
         cli.main(["--root", root, "status", "--scope", "acme"])
 
 
+def test_resume_and_digest_take_scope(brain, monkeypatch, capsys):
+    from brain import digest, resume
+    brain("alpha: {root: ., parent: pro}\nbeta: {root: ../beta, parent: acme}\ngamma: {root: ../gamma}\n")
+    _tree(brain.root)
+    monkeypatch.setattr(resume, "build", lambda p, **k: f"pack {p.name}\n")
+    assert cli.main(["--root", str(brain.root), "resume", "--scope", "pro"]) == 0
+    assert capsys.readouterr().out == "pack beta\n\npack alpha\n"   # depth first, the containers' subtrees first
+    monkeypatch.setattr(digest, "gather", lambda p, since, until, offline=False: {"project": p.name})
+    monkeypatch.setattr(digest, "render", lambda p, d, budget=0: "")
+    assert cli.main(["--root", str(brain.root), "digest", "--scope", "acme", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == [{"project": "beta"}]   # a list, as with --all
+
+
 def test_status_scope_on_a_multi_project_node_adds_the_totals(brain):
     brain("alpha: {root: ., parent: pro}\nbeta: {root: ../beta, parent: pro}\ngamma: {root: ../gamma}\n")
     _tree(brain.root)
