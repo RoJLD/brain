@@ -1,0 +1,13 @@
+# The base of the project templates: a base, which brain init --template does not take (its name starts with "_");
+# the profiles' templates extend it, through _software. The generic brain, plus an issue template and an ADR template
+# for the project's own work and decisions, and the boundary's rule for the files it puts under .github/.
+name: _project
+version: 1
+engine: ">=0.3.2"
+title: "A project's brain: the generic brain, an issue template and an ADR template"
+extends: generic
+files:                     # the brain's path: the template's file (added to generic's)
+  .github/ISSUE_TEMPLATE/task.md: issue-task.md
+  docs/templates/adr.md: adr.md
+append:                    # the brain's path: a fragment appended to the file the base writes there
+  boundary.yaml: boundary-github.yaml
