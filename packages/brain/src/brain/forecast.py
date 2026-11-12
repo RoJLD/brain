@@ -137,7 +137,7 @@ def flow(store: Path, today: date) -> dict:
         ts = _ts(when)
         day = ts.astimezone(timezone.utc).date() if ts else day
         first = first or day
-        for line in ("+" + x.text for f in files for h in f.hunks for x in h.lines if x.kind == "+"):
+        for line in diffs.lines(files, "+"):
             m = _LINE_RE.match(line)
             if m and day:
                 matched = True

@@ -160,7 +160,7 @@ def git_closures(root: Path, store: Path, since: str = "", until: str = "") -> d
     for day, files in diffs.log_records(out):   # brain.diffs: a hunk's lines by its counts
         before: dict[str, str] = {}
         after: dict[str, tuple[str, str]] = {}
-        for ln in (x.kind + x.text for f in files for h in f.hunks for x in h.lines if x.kind != " "):
+        for ln in diffs.lines(files):
             m = _GIT_NODE_RE.match(ln)
             if m and m.group(1) == "-":
                 before[m.group(2)] = m.group(4)

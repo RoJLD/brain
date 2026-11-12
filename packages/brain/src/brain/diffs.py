@@ -170,6 +170,16 @@ def _git_line_paths(rest: str, prefixes: tuple[str, ...]) -> tuple[str, str]:
     return first.removeprefix(src), second.removeprefix(dst)
 
 
+def _git_file(raw: str, prefixes: tuple[str, ...]) -> FileDiff:
+    """The file a ``diff --git`` (its two names) or ``diff --cc`` (one name) line opens."""
+    if raw.startswith("diff --git "):
+        f = FileDiff()
+        f.old, f.new = _git_line_paths(raw[len("diff --git "):], prefixes)
+        return f
+    name = _plain_name(raw.split(" ", 2)[2])
+    return FileDiff(old=name, new=name, combined=True)
+
+
 class _Reader:
     def __init__(self, prefixes: tuple[str, ...]):
         self.prefixes = prefixes
@@ -193,23 +203,21 @@ class _Reader:
         if self.in_hunk() and self.body(raw):
             return
         if raw.startswith(_FILE_STARTS):
-            combined = not raw.startswith("diff --git ")
-            f = FileDiff(combined=combined)
-            if not combined:
-                f.old, f.new = _git_line_paths(raw[len("diff --git "):], self.prefixes)
-            else:
-                name = raw.split(" ", 2)[2]
-                f.old = f.new = _plain_name(name)
-            self.start(f)
+            self.start(_git_file(raw, self.prefixes))
         elif raw.startswith("@") and self.cur is not None and (m := _HUNK.match(raw)):
             self.hunk(m)
-        elif raw.startswith("--- ") and not (self.headers and not self.saw_minus and not self.saw_plus) or \
-                raw.startswith("+++ ") and not (self.headers and not self.saw_plus):
+        elif self.opens_plain(raw):
             self.start(FileDiff())   # a plain unified diff (no diff --git line, maybe no ---): its header opens a file
             self.header(raw)
         elif self.cur is not None and self.headers:
             self.header(raw)
         # anything else (a commit's header in git log -p, '\ No newline at end of file') is not the patch's
+
+    def opens_plain(self, raw: str) -> bool:
+        """A ---/+++ line outside a hunk that is not the next header of the file being read."""
+        if raw.startswith("--- "):
+            return not (self.headers and not self.saw_minus and not self.saw_plus)
+        return raw.startswith("+++ ") and not (self.headers and not self.saw_plus)
 
     def header(self, raw: str) -> None:
         f = self.cur
@@ -262,7 +270,8 @@ class _Reader:
             self.left_old, self.left_new = [], 0
             return False
         text = raw[cols:]
-        h = self.cur.hunks[-1]   # type: ignore[union-attr]
+        assert self.cur is not None   # a hunk is open, so a file is
+        h = self.cur.hunks[-1]
         if "-" in marks:
             h.lines.append(Line("-", self.old_no if marks[0] == "-" else None, None, text))
             if marks[0] == "-":
@@ -297,6 +306,12 @@ def parse(text: str, prefixes: tuple[str, ...] = PREFIXES) -> list[FileDiff]:
     for raw in text.split("\n"):
         r.feed(raw[:-1] if raw.endswith("\r") else raw)
     return r.done()
+
+
+def lines(files: list[FileDiff], kinds: str = "+-") -> list[str]:
+    """Each line of ``files``' hunks whose kind is in ``kinds``, written back with its mark (``+text``, ``-text``):
+    for a reader that matches a pattern on the patch's lines."""
+    return [ln.kind + ln.text for f in files for h in f.hunks for ln in h.lines if ln.kind in kinds]
 
 
 def log_records(text: str, prefixes: tuple[str, ...] = PREFIXES) -> list[tuple[str, list[FileDiff]]]:

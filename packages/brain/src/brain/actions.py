@@ -221,7 +221,7 @@ def added_adrs(d: str | Path, sha: str) -> list[dict]:
     out = []
     for fname, kind in (("notes/decisions.md", "adr"), ("notes/scientific_decisions.md", "sdr")):
         diff = git(d, *diffs.argv("show", "--format=", "-U0", sha, "--", fname))
-        for line in ("+" + text for f in diffs.parse(diff) for _, text in f.added()):
+        for line in diffs.lines(diffs.parse(diff), "+"):
             m = _ADR_HEAD_RE.match(line)
             if m:
                 date, title = m.group(1), m.group(2)
