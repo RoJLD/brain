@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from brain import cli, cockpit, cost, digest, graph, projects, status, usage
+from brain import cli, cockpit, cost, digest, graph, projects, sizing, status, usage
 
 ITEMS = """
 - {id: wi-a, type: WorkItem, status: done, title: "Ledger A", props: {theme: "3.9", pr: "engine #7",
@@ -254,3 +254,78 @@ def test_status_and_digest_show_the_cost(project):
     part = digest._cost(s)
     assert part.key == "cost" and "costliest items" in part.levels[0][0]
     assert digest._cost({"sessions": 0}) is None
+
+
+# --- wi-brain-size-calibration: sizes checked against actuals ---
+
+def test_the_scale_and_a_judged_size_against_the_active_time():
+    assert [sizing.size_of(h) for h in (0.1, 0.3, 0.31, 0.8, 2.0, 2.01)] == ["S", "S", "M", "M", "L", "XL"]
+    one_hour = {"size": "M", "active_s": 3600}
+    assert sizing.size_check(one_hour) == {"judged": "M", "actual": "L", "hours": 1.0, "verdict": "under"}
+    assert sizing.size_check(dict(one_hour, size="L"))["verdict"] == "hit"
+    assert sizing.size_check(dict(one_hour, size="XL"))["verdict"] == "over"
+    assert sizing.size_check({"active_s": 3600}) is None and sizing.size_check(dict(one_hour, size="")) is None
+
+
+def test_review_and_audit_say_the_size_against_the_actual(project):
+    led = _history(project)   # every session is 1 h active: L on the scale
+    for i, s in (("wi-a", "S"), ("wi-b", "L"), ("wi-c", "M"), ("wi-d", "big")):   # "big": off the scale, no size
+        led.items[i].props["size"] = s
+    rv = cost.review(led, "wi-a")
+    assert rv["size"] == {"judged": "S", "actual": "L", "hours": 1.0, "verdict": "under"}
+    assert "  size S judged; 1.00 h active is L: under-sized" in cost.render_review(rv)
+    assert " sessions=1 size=S/L" in cost.review_text(rv, "2026-11-02")
+    assert cost.review(led, "wi-d")["size"] is None
+    au = cost.audit(led, "2026-10-01", "2026-11-03")
+    sz = au["sizes"]
+    assert sz["misses"] == 2 and [r["id"] for r in sz["items"]] == ["wi-a", "wi-b", "wi-c"]
+    assert [(r["size"], r["n"], r["hit"], r["under"]) for r in sz["table"]] == [("S", 1, 0, 1), ("M", 1, 0, 1),
+                                                                                ("L", 1, 1, 0)]
+    assert [t["proposed"] for t in sz["thresholds"]] == [None, None, None]   # one item per size: none proposed
+    # three sized items: the key is measured; no size tier reaches three items before an item, so it changes nothing
+    assert au["size_key"]["n"] == 3 and not au["size_key"]["kept"]
+    assert au["size_key"]["with"] == au["size_key"]["without"] == au["backtests"]["median_factor"]
+    text = cost.render_audit(au, "demo", "2026-11-02 12:00 UTC")
+    assert "## Sizes against actuals" in text and "3 sized item(s), 2 miss(es)" in text
+    assert "  - wi-a: S judged, 1.0 h is L" in text and "- S: now 0.3 h, proposed - (1 item(s), 3 needed)" in text
+
+
+def _sized(project, n=8):
+    """n finished items in turn S (10 dollars, 0.2 h) and L (100 dollars, 1.5 h), one a day: the size tells the
+    cost apart, the class and theme do not."""
+    nodes, rows = [], []
+    for k in range(n):
+        size, usd, active = ("S", 10.0, 720) if k % 2 == 0 else ("L", 100.0, 5400)
+        nodes.append(f'- {{id: wi-s{k}, type: WorkItem, status: done, title: "Sized {k}", props: {{theme: "4.1", '
+                     f'size: {size}, done: "2026-10-{10 + k} ok"}}}}\n')
+        rows.append(row(f"z{k}", f"2026-10-{10 + k}", usd=usd, active_s=active, closed=[f"wi-s{k}"]))
+    nodes.append('- {id: wi-new, type: WorkItem, status: todo, title: "New", props: {theme: "4.1", size: S}}\n')
+    with (project.stores[0] / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
+        f.write("".join(nodes))
+    return ledger(project, rows)
+
+
+def test_the_size_is_the_first_key_only_while_it_lowers_the_backtests_error(project, monkeypatch):
+    led = _sized(project)
+    key = cost.size_key(led)
+    assert key["kept"] and key["with"] < key["without"] and key["n"] == 8
+    est = cost.estimate(led, cost.target_of(led, "wi-new"), "2026-10-30")
+    assert est["basis"] == "size+class" and {i for i, _ in est["similar"]} == {"wi-s0", "wi-s2", "wi-s4", "wi-s6"}
+    assert est["size_key"]["kept"] and "size key kept: backtests' error x" in "\n".join(cost.render_estimate(est))
+    # a brief's text carries its size as « - size: L »
+    assert cost.target_of(led, "Brief.\n- size: L\n**Task class:** standard")["size"] == "L"
+    for text in ("a font-size: m rule", "Batch size: S.", "- size: Large", "- size: m"):   # not a size line
+        assert cost.target_of(led, text)["size"] == ""
+    # the two backtests cover the same items; the errors compared are the sized items'
+    assert {t["id"] for t in cost.backtests(led)} == {t["id"] for t in cost.backtests(led, size_key=True)}
+    # the estimate records the size judged at the start, and the backtests read it, not a size judged again later
+    assert " size=S usd=" in cost.estimate_text(est)
+    led.items["wi-s0"].props.update(size="L", cost_estimate="2026-10-09 class=standard size=S usd=10.00")
+    assert cost.actual(led.items["wi-s0"])["size"] == "S"
+    au = cost.audit(led, "2026-10-01", "2026-11-01")
+    assert [(t["size"], t["proposed"]) for t in au["sizes"]["thresholds"]] == [("S", 0.2), ("M", None), ("L", 1.5)]
+    # the key that does not lower the error is left out: the estimator falls back to class and theme
+    monkeypatch.setattr(cost, "backtest_error", lambda tests: 2.0)
+    key = cost.size_key(led)
+    assert not key["kept"] and key["with"] == key["without"] == 2.0
+    assert cost.estimate(led, cost.target_of(led, "wi-new"), "2026-10-30")["basis"] == "class+theme"
