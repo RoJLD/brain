@@ -189,7 +189,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
         Binding("ctrl+pageup", "prev_tab", "Previous tab", show=False, priority=True),  # a table's own page left, right
         Binding("ctrl+pagedown", "next_tab", "Next tab", show=False, priority=True),
         *(Binding("comma" if t["key"] == "," else t["key"], f"tab('{name}')", cockpit.TABS[name]["label"]["en"],
-                  show=False) for name, t in cockpit.TABS.items() if name != "overview"),
+                  show=False) for name, t in cockpit.TABS.items() if name != "overview" and t["key"]),  # a plugin's: none
     ]
 
     def __init__(self, cp, refresh: float = cockpit.REFRESH_S, probe: float = cockpit.PROBE_S,
@@ -353,7 +353,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
             tab = self._q(f"#tab-{name}", Tab)
             if tab.label_text != label:
                 tab.label = Content(label)
-            tip = f"{cockpit.tab_title(name)} ({cockpit.TABS[name]['key']}): {cockpit.tab_question(name)}"
+            key = cockpit.TABS[name]["key"]
+            tip = f"{cockpit.tab_title(name)}{f' ({key})' if key else ''}: {cockpit.tab_question(name)}"
             if tab.tooltip != tip:  # its word and its key, whatever the bar shows of it
                 tab.tooltip = tip
 

@@ -130,3 +130,55 @@ def test_brain_tui_prints_a_plugged_tab_and_names_what_it_left_out(orbit, capsys
         cli.main(["tui", "--project", "demo", "--once", "--tab", "nowhere"])
     assert cli.main(["tui", "--project", "demo", "--once", "--quick", "--sort", "demo-runs:-state"]) == 0
     assert "Runs (3) [sort state reversed]" in capsys.readouterr().out  # the views work on it too
+
+
+def test_the_review_of_the_plugin_panels_bad_data_never_stops_the_cockpit(orbit, tmp_path):
+    """A declaration of the wrong shape, a plugin that exits at its import, a name clash, an id Textual refuses, a cell
+    that is not JSON: each noted or shown, never a crash."""
+    notes = []
+    panels, tabs = plugin_panels.parse("3d lab", "x:", {"panels": {"runs": {"rows": "r.json", "sorts": 3}},
+                                                      "tabs": [{"id": "t", "panels": 3}]}, notes)
+    assert list(panels) == ["plugin-3d-lab-runs"] and list(tabs) == ["plugin-3d-lab"]  # a digit first: prefixed
+    assert plugin_panels.name_of("tab", "queue") == "plugin-tab-queue"  # never the bar's own tab-queue
+    assert plugin_panels.cell([object()]).startswith('["<object object')
+    (tmp_path / "lib" / "exits_cli.py").write_text("import sys\nsys.exit(3)\n", encoding="utf-8")
+    (tmp_path / "lib" / "twin_cli.py").write_text("COCKPIT = " + repr(DECL) + "\n", encoding="utf-8")
+    projs = [type("P", (), {"name": n, "plugin": ref, "root": orbit})()
+             for n, ref in (("demo", "orbit_cli:main"), ("bad", "exits_cli:"), ("Demo", "twin_cli:"))]
+    got = plugin_panels.load([*projs[:1], *projs[1:]])
+    assert list(got.panels) == ["demo-runs"]
+    assert any(n.startswith("bad: plugin 'exits_cli:': SystemExit") for n in got.notes)
+    assert any("panel demo-runs is another project's already" in n for n in got.notes)
+    cockpit.plug(plugin_panels.Plugged(*plugin_panels.parse("settings", "x:", DECL, [])))
+    assert any("its tab settings is one of the cockpit's own" in n for n in cockpit.PLUG_NOTES)
+
+
+def test_a_plugged_tab_binds_no_key_and_the_app_imports_after_a_plug(orbit):
+    """The review: the app's bindings are built at its import, after brain tui plugged the registry's panels."""
+    import os
+    import subprocess
+    import sys
+    pytest.importorskip("textual")
+    code = ("from brain import cockpit; cockpit.plug_registry(); assert 'demo' in cockpit.TABS; "
+            "from brain import tui; print(len(tui.CockpitApp.BINDINGS))")
+    src = str(__import__("pathlib").Path(cockpit.__file__).parents[1])
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [src, *sys.path]))}
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+
+
+def test_a_failing_plugin_read_waits_for_the_next_probe(orbit):
+    cockpit.plug_registry()
+    (orbit / "out" / "runs.json").write_text("not json", encoding="utf-8")
+    cp = cockpit.Cockpit([projects.load()["demo"]])
+    calls = []
+    real = plugin_panels.rows
+    plugin_panels.rows = lambda *a, **k: calls.append(1) or real(*a, **k)
+    try:
+        cp.refresh()
+        cp.refresh()
+        assert len(calls) == 1 and "demo-runs" in cp.snapshot()["errors"]
+        cp.refresh(probe=True)
+        assert len(calls) == 2
+    finally:
+        plugin_panels.rows = real

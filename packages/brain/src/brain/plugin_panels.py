@@ -29,7 +29,9 @@ Each panel becomes ``<project>-<panel>`` in the cockpit's tables (brain.cockpit'
 ``<project>`` (or ``<project>-<tab>``), placed after Resources with no number: a click, the palette or ctrl+pagedown
 reach it. A key or a value this engine does not know is kept and noted (``notes``), never an error; a plugin that
 cannot be loaded, or a declaration it cannot read, is noted and leaves the other panels as they are. The rows are read
-once when the panel shows and at each probe (r reads them again), in the reading thread: zero token.
+at the cockpit's first read (until one passes) and at each probe (r reads them again), in the reading thread: zero
+token. A name another project's plugin has already, or one of the cockpit's own tabs, is noted and left out; a name
+that starts with a digit or as one of the cockpit's widget ids takes ``plugin-`` before it.
 """
 
 from __future__ import annotations
@@ -80,8 +82,18 @@ class Plugged:
     notes: list = field(default_factory=list)    # what was left out or tolerated, and why
 
 
+RESERVED = ("tab-", "card-", "cards-", "side-", "settings-")   # the cockpit's own widget ids start so
+
+
 def slug(text: str) -> str:
     return _ID_RE.sub("-", str(text).lower()).strip("-") or "x"
+
+
+def name_of(*parts: str) -> str:
+    """A panel's or a tab's name in the cockpit, a widget id too: its parts slugged; ``plugin-`` before one that starts
+    with a digit or as one of the cockpit's own ids."""
+    name = "-".join(slug(x) for x in parts)
+    return f"plugin-{name}" if name[0].isdigit() or name.startswith(RESERVED) else name
 
 
 def _texts(value, default: str) -> dict:
@@ -122,7 +134,7 @@ def parse(project: str, ref: str, decl, notes: list) -> tuple[dict, dict]:
         if t is not None:
             tabs[t.name] = t
     if panels and not tabs:  # one tab, named by the project, with every panel
-        name = slug(project)
+        name = name_of(project)
         tabs[name] = Tab(name, project, _texts(None, project), _texts(None, f"What {project}'s plugin shows"),
                          tuple(panels))
     return panels, tabs
@@ -141,8 +153,9 @@ def _panel(project: str, ref: str, own: str, spec, notes: list) -> Panel | None:
         return None
     cols = _columns(spec.get("columns"))
     keys = [k for k, _ in cols]
-    sorts = tuple(s for s in spec.get("sorts") or [] if s in keys) or tuple(keys[:1])
-    return Panel(f"{slug(project)}-{slug(own)}", project, own, _texts(spec.get("title"), own), cols, sorts,
+    given = spec.get("sorts") if isinstance(spec.get("sorts"), list) else []
+    sorts = tuple(s for s in given if s in keys) or tuple(keys[:1])
+    return Panel(name_of(project, own), project, own, _texts(spec.get("title"), own), cols, sorts,
                  _filters(spec.get("filters")), str(spec.get("id") or "id"), rows, read,
                  str(spec.get("help") or ""), ref)
 
@@ -155,13 +168,19 @@ def _source(spec: dict) -> tuple[str, str]:
 
 
 def _columns(given) -> tuple:
-    """((key, title), ...) from a list of {key, title} or of keys; anything else left out."""
-    cols = []
+    """((key, title), ...) from a list of {key, title} or of keys; anything else left out. A title the cockpit has
+    already (Project, or another column's) gets its key after it: the cells are found by title."""
+    cols, seen = [], {"Project"}
     for c in given if isinstance(given, list) else []:
         if isinstance(c, dict) and isinstance(c.get("key"), str):
-            cols.append((c["key"], str(c.get("title") or c["key"])))
+            key, title = c["key"], str(c.get("title") or c["key"])
         elif isinstance(c, str):
-            cols.append((c, c))
+            key, title = c, c
+        else:
+            continue
+        title = f"{title} ({key})" if title in seen else title
+        seen.add(title)
+        cols.append((key, title))
     return tuple(cols)
 
 
@@ -180,12 +199,12 @@ def _tab(project: str, spec, panels: dict, notes: list) -> Tab | None:
         return None
     for k in sorted(set(spec) - TAB_KEYS):
         notes.append(f"{project}: tab {spec['id']!r}: key {k!r} unknown to this engine: kept, not used")
-    own = [f"{slug(project)}-{slug(p)}" for p in spec.get("panels") or []]
-    shown = tuple(p for p in own if p in panels)
+    listed = spec.get("panels") if isinstance(spec.get("panels"), list) else []
+    shown = tuple(p for p in (name_of(project, str(x)) for x in listed) if p in panels)
     if not shown:
         notes.append(f"{project}: tab {spec['id']!r} names no panel it declares: left out")
         return None
-    name = f"{slug(project)}-{slug(spec['id'])}"
+    name = name_of(project, str(spec["id"]))
     return Tab(name, project, _texts(spec.get("label"), str(spec["id"])),
                _texts(spec.get("question"), f"What {project}'s plugin shows"), shown)
 
@@ -200,17 +219,24 @@ def load(projs, resolve=None) -> Plugged:
         ref = p.plugin.strip() if isinstance(getattr(p, "plugin", None), str) else ""
         if not ref:
             continue
-        try:
+        try:  # a plugin that exits at its import, or a declaration of the wrong shape: noted, the cockpit goes on
             decl = declaration(resolve(ref))
-        except Exception as exc:  # a plugin's own error: noted, the cockpit goes on
-            out.notes.append(f"{p.name}: plugin {ref!r}: {exc}")
+            panels, tabs = parse(p.name, ref, decl, out.notes) if decl is not None else ({}, {})
+        except (Exception, SystemExit) as exc:
+            out.notes.append(f"{p.name}: plugin {ref!r}: {type(exc).__name__}: {exc}")
             continue
-        if decl is None:
-            continue
-        panels, tabs = parse(p.name, ref, decl, out.notes)
-        out.panels.update(panels)
-        out.tabs.update(tabs)
+        _add(out, panels, tabs, p.name)
     return out
+
+
+def _add(out: Plugged, panels: dict, tabs: dict, project: str) -> None:
+    """A project's panels and tabs added; one whose name another project's already has is noted and left out."""
+    for kind, got, have in (("panel", panels, out.panels), ("tab", tabs, out.tabs)):
+        for name, x in got.items():
+            if name in have:
+                out.notes.append(f"{project}: {kind} {name} is another project's already: left out")
+            else:
+                have[name] = x
 
 
 def rows(panel: Panel, project, resolve=None) -> list[dict]:
@@ -250,5 +276,5 @@ def cell(value) -> str:
     if isinstance(value, float):
         return f"{value:g}"
     if isinstance(value, (list, dict)):
-        return json.dumps(value, ensure_ascii=False)
+        return json.dumps(value, ensure_ascii=False, default=str)  # a date in it: as text, never a crash
     return str(value)

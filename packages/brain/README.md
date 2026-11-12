@@ -1278,8 +1278,9 @@ COCKPIT = {"v": 1, "panels": {"runs": {
 project selector, the search, the sorts and filters (`s`, `o`, `f`, `--sort demo-runs:state`), the saved views, the
 column chooser, the palette, a row's detail and `--once` work on it. Its tab, `demo` (or one per entry of `tabs`), comes
 after Resources with no number: a click, the palette or `ctrl+pagedown` reaches it, and `--tab demo` starts there. Its
-rows are read when it is first shown and at each probe (`r` reads them again); a file or a read that fails keeps its
-last rows and shows the error. Nothing of it is Textual code. A key this engine does not know is kept and noted, a
+rows are read at the cockpit's first read (until one passes) and at each probe (`r` reads them again); a file or a
+read that fails keeps its last rows and shows the error, and is read again at the next probe. A name another project's
+plugin has already, or one of the cockpit's own tabs, is noted and left out. Nothing of it is Textual code. A key this engine does not know is kept and noted, a
 plugin that cannot be loaded is noted (a notification, or stderr with `--once`), and the other panels go on.
 
 ## Tests

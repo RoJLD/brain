@@ -539,6 +539,7 @@ class Cockpit:
         self.progress: dict | None = None  # the probe running: {what, n, total}
         self.last_ok: dict[tuple, str] = {}  # (project, stacks|code_index, name) -> its last OK measure
         self.dep_probes: dict | None = None  # this machine's dependency probes, from the last probe (brain.depprobes)
+        self.plugged_tried: set[str] = set()  # the plugins' panels read once since the last scope or probe
         self.lock = threading.Lock()
 
     @property
@@ -572,6 +573,7 @@ class Cockpit:
         self.panel_at = {k: v for k, v in self.panel_at.items() if k == "sessions"}
         self._probed_panels()
         self.dirty = set(PANELS)
+        self.plugged_tried = set()  # the plugins' panels of the new scope: read at the next tick
 
     def needs_probe(self) -> bool:
         """A project in scope that no probe measured yet."""
@@ -721,7 +723,8 @@ class Cockpit:
         """The plugins' panels read when first shown, then at each probe; a failed one added to ``failed``, its last
         content kept."""
         read = set()
-        for name in [n for n in PLUGGED if probe or n not in self.panels]:
+        for name in [n for n in PLUGGED if probe or n not in self.plugged_tried]:
+            self.plugged_tried.add(name)  # a failing read waits for the next probe, as the probed panels do
             try:
                 self._set(**{name: self._plugged(name)})
                 read |= self._read_ok({name})
@@ -1156,7 +1159,7 @@ def load_state(path: Path | None = None) -> dict:
                            and (k != "tz" or got[k] in TZS) and (k != "lang" or got[k] in LANGS)}
         if isinstance(got.get("titles"), dict):
             titles = {k: v.strip() for k, v in got["titles"].items()
-                      if k in (*PANELS, *FRAMES) and isinstance(v, str) and v.strip()}
+                      if k in (*PANELS, *FRAMES, *PLUGGED) and isinstance(v, str) and v.strip()}
             if titles:
                 out["settings"]["titles"] = titles
     return out
@@ -1173,7 +1176,8 @@ def _known_keys() -> dict:
     """The keys of tui.json this engine knows, by level (None: a value it owns whole); every other key is kept."""
     return {"cockpit": None, "scope": None, "tab": None, "panels": dict.fromkeys(SORTS), "tabs": dict.fromkeys(TABS),
             "columns": dict.fromkeys(COLUMNS),
-            "settings": {"theme": None, "tz": None, "lang": None, "titles": dict.fromkeys((*PANELS, *FRAMES))}}
+            "settings": {"theme": None, "tz": None, "lang": None,
+                         "titles": dict.fromkeys((*PANELS, *FRAMES, *PLUGGED))}}
 
 
 def _unknown(old: dict, known: dict) -> dict:
@@ -1998,13 +2002,16 @@ def _plug_panel(name: str, p: plugin_panels.Panel) -> None:
     HELP[name] = {"what": p.help or f"What {p.project}'s plugin shows: {p.title['en']}.",
                   "from": f"{p.project}'s plugin ({p.ref}): " + (f"the file {p.rows_file} under its root"
                                                                  if p.rows_file else f"{p.read}, given its root"),
-                  "read": "when the panel is first shown, then at each probe (--probe, 5 min, and r)",
+                  "read": "at the cockpit's first read, then at each probe (--probe, 5 min, and r)",
                   "detail": f"brain {p.project} --help"}
 
 
 def _plug_tabs(tabs: dict) -> None:
-    """The plugins' tabs after Resources, before the settings, with no key; an earlier plug's taken out."""
+    """The plugins' tabs after Resources, before the settings, with no key; an earlier plug's taken out; one named as
+    one of the cockpit's own tabs is noted and left out (its panels stay in the palette and --tab of their own)."""
     kept = [(n, t) for n, t in TABS.items() if not t.get("plugin")]
+    PLUG_NOTES.extend(f"{t.project}: its tab {n} is one of the cockpit's own: left out" for n, t in tabs.items()
+                      if n in dict(kept))
     at = next((i for i, (n, _) in enumerate(kept) if n == "settings"), len(kept))
     plugged_tabs = [(n, {"key": "", "label": t.label, "question": t.question, "views": {"list": t.panels},
                          "plugin": t.project}) for n, t in tabs.items() if n not in dict(kept)]
