@@ -456,7 +456,9 @@ marketplace itself. `--template DIR` takes a folder of your own holding one. A t
 records live in their own brain. A template may `extends` one of the engine's (its files, appends, graphs and classes,
 to which it adds or replaces its own: a file of the same path, its `graphs` when it gives some) and `append` a
 fragment of its own to a file the base writes (`{the brain's path: the fragment}`; a YAML file must still read as
-YAML).
+YAML). It may also `takes` parts of another engine template instead of extending all of it (`{the template: [the
+brain's paths]}`: each path's file, or the fragment it appends there, from that template's own manifest, never its
+chain, graphs or classes), so what that template adds later reaches it only when it names it.
 
 ### A project's brain, by profile
 
@@ -488,13 +490,23 @@ Each one is the generic brain (its files unchanged), plus:
   version);
 - the issue template, a task form in the brain's GitHub issue templates (reference, context, acceptance,
   dependencies, an estimate marked (e) with its author and date, the exit criterion served, a proposed owner), and
-  the ADR template among its docs' templates (scope, target compatibility, a precise « Revisit if »): the template
-  `_project`'s `issue-task.md` and `adr.md`;
+  the ADR template among its docs' templates (scope, target compatibility, a precise « Revisit if »): `_software`'s
+  `issue-task.md` and `_project`'s `adr.md`;
 - the boundary's rule for `.github/**` (the engine side: nothing private in it).
 
-The bases `_project` (the issue and ADR templates) and `_software` (the CI, the harness, the format registry, the
-code layers) are what the profiles extend; `--template` does not take a base. The CI and the harness are Python's
-first: another language replaces their steps and keeps the jobs.
+The bases `_project` (the ADR template: nothing of a code host, so a project that is not code, or not on GitHub, extends
+it alone) and `_software` (the CI, the issue template and the `.github/**` rule, the harness, the format registry,
+the code layers) are what the profiles build on: `cli`, `local-client`, `service` and `data-pipeline` extend
+`_software`; `research` extends `_project` and `takes` the parts of `_software` it uses (all its files today, not its
+graph, whose layers are its own). `--template` does not take a base. The CI and the harness are Python's first:
+another language replaces their steps and keeps the jobs.
+
+The profiles' names and the stages `--stage` selects are typology and stage ids, as are the graph layers'
+`lifecycle` ids (`research_graph layers`): they follow one typology catalog still to come
+(`wi-brain-typology-catalog`), which maps the profiles to the layers' typologies and the standards' stages to the
+layers' (`explore`, `build`, ...). An id this engine does not know in a brain's `standards:` selection, written by a
+template of a later catalog, is tolerated: a note in read mode, an error only in strict mode (CI) (`--stage` itself
+takes this engine's stages).
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.

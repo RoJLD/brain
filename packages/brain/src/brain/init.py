@@ -43,7 +43,10 @@ the template's file, or "" for an empty one}, ``graphs``: the graph stores it st
 or {name, store, layers} whose first is the brain's main store; ``schema: default`` is the brain's base of work,
 decisions and records (``templates/schemas/default.yaml``); ``layers: [work, decisions, records, research, ...]``
 composes the schema from research_graph's catalogue of layers (``research_graph layers``), a name it does not hold
-being the template's own layer, ``layers/<name>.yaml`` in its folder), never code (wi-brain-domain-templates). The
+being the template's own layer, ``layers/<name>.yaml`` in its folder), never code (wi-brain-domain-templates). A
+template may ``extends`` one of the engine's, ``append`` a fragment to a file it writes, and ``takes`` named paths of
+another engine template instead of extending all of it (``research`` takes parts of ``_software``; ``_project``, the
+generic project base, writes nothing of a code host). The
 plan is a list of steps, local only: a later step (the owner's repos and data store, created on their keystroke:
 wi-brain-init-stores) joins it without changing the others.
 """
@@ -67,7 +70,7 @@ DEFAULT_TEMPLATE = "generic"
 # a name the identity hint may print inside double quotes: no $, backtick, backslash or quote for a shell to expand
 SHELL_SAFE_NAME = re.compile(r"[\w .'-]+")
 MANIFEST = "template.yaml"
-TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs", "classes", "extends", "append"}
+TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs", "classes", "extends", "append", "takes"}
 # an engine template's folder: a name one may give, or a base (``_name``) only other templates extend
 BASE_RE = re.compile(r"_?[a-z0-9][a-z0-9_.-]*")
 MAX_EXTENDS = 6   # a template's chain of bases: an owner's, a profile, _software, _project, generic, and one more
@@ -116,6 +119,8 @@ class Template:
     appends: dict = field(default_factory=dict)     # the brain's path -> [(folder, source)] appended, bases first
     extends: tuple[str, ...] = ()                   # the engine's templates it builds on, the nearest first
     layer_folders: tuple = ()                       # where its own layers are looked for (layers/<name>.yaml)
+    takes: dict = field(default_factory=dict)       # an engine template -> the brain's paths taken from it, its chain's
+                                                    # and its own
 
     def read(self, source: str) -> str:
         return (self.folder / source).read_text(encoding="utf-8") if source else ""
@@ -221,11 +226,87 @@ def _base(spec: str, data: dict, chain: tuple[str, ...]) -> Template | None:
     return load_template(ext, chain + (ext,))
 
 
+def _path_list(name, rels) -> bool:
+    """A template's name and its paths: a list of strings, one at least, each once."""
+    return isinstance(name, str) and isinstance(rels, list) and bool(rels) and all(isinstance(x, str) for x in rels) \
+        and len(set(rels)) == len(rels)
+
+
+def _takeable(where: str, name: str, skip: tuple[str, ...]) -> None:
+    """``name`` is one of the engine's templates, neither the template itself nor one it extends."""
+    if not (BASE_RE.fullmatch(name) and (TEMPLATES / name / MANIFEST).is_file()):
+        raise InitError(f"{where} {name!r}: one of the engine's templates "
+                        f"({', '.join(sorted(d.name for d in TEMPLATES.iterdir() if (d / MANIFEST).is_file()))})")
+    if name in skip:
+        raise InitError(f"{where} {name!r}: the template itself or one it extends (it has all of it already)")
+
+
+def _take(where: str, name: str, rels: list[str], skip: tuple[str, ...], before: tuple[str, ...]) -> tuple[dict, list]:
+    """What ``takes`` gets from the engine template ``name``: ({rel: (folder, source)}, [(rel, folder, source, name)]),
+    each path from that template's own ``files`` or ``append``. ``skip``: the template itself and those it extends;
+    ``before``: the paths of ``name`` its base already took (taken twice, an append would be appended twice)."""
+    _takeable(where, name, skip)
+    again = [rel for rel in rels if rel in before]
+    if again:
+        raise InitError(f"{where} {name}: {again[0]!r}: its base takes it already")
+    folder, other = _manifest(name)
+    _head(name, other)
+    files, appends = _paths(name, folder, other, "files"), _paths(name, folder, other, "append")
+    stray = [rel for rel in rels if rel not in files and rel not in appends]
+    if stray:
+        raise InitError(f"{where} {name}: {stray[0]!r}: not a path {name} itself writes or appends to (its own: "
+                        f"{', '.join(sorted(set(files) | set(appends)))})")
+    return ({rel: (folder, files[rel]) for rel in rels if rel in files},
+            [(rel, folder, appends[rel], name) for rel in rels if rel in appends])
+
+
+def _takes(spec: str, declared, skip: tuple[str, ...], before: dict) -> tuple[dict, list]:
+    """``takes``: {one of the engine's templates: [the brain's paths]}, each path's file and append from that
+    template's own manifest (never its chain, its graphs or its classes: what it extends comes by ``extends``), so a
+    template uses parts of a base without inheriting all of it. -> ({rel: (folder, source)}, [(rel, folder, source,
+    template)]), in the order given; ``before``: what the base already took, by template."""
+    files: dict = {}
+    appends: list = []
+    if declared is None:
+        return files, appends
+    where = f"--template {spec}: {MANIFEST}: takes"
+    if not (isinstance(declared, dict) and all(_path_list(k, v) for k, v in declared.items())):
+        raise InitError(f"{where} maps one of the engine's templates to the brain's paths taken from it, each once")
+    for name, rels in declared.items():
+        got, more = _take(where, name, rels, skip, before.get(name, ()))
+        files.update(got)
+        appends += more
+    return files, appends
+
+
+def _layered(spec: str, data: dict, folder, base: Template | None, skip: tuple[str, ...]) -> tuple[dict, ...]:
+    """(files, origin, appends, takes): the base's, then what the template takes, then its own (its own files win;
+    its own appends come last)."""
+    base = base or Template("", 1, "", None)
+    taken, taken_appends = _takes(spec, data.get("takes"), skip, base.takes)
+    own = _paths(spec, folder, data, "files")
+    fs = {**base.files, **{rel: s for rel, (_, s) in taken.items()}, **own}
+    origin = {**base.origin, **{rel: f for rel, (f, _) in taken.items()}, **{rel: folder for rel in own}}
+    appends = {rel: list(v) for rel, v in base.appends.items()}
+    for rel, there, source, name in taken_appends + [(r, folder, s, "") for r, s in
+                                                     _paths(spec, folder, data, "append").items()]:
+        if rel not in fs:
+            why = (f"takes {name}: {rel}: what {name} appends there needs a file the template does not write" if name
+                   else f"append {rel}: not a file the template writes")
+            raise InitError(f"--template {spec}: {MANIFEST}: {why}")
+        appends.setdefault(rel, []).append((there, source))
+    takes = dict(base.takes)
+    for name, rels in (data.get("takes") or {}).items():
+        takes[name] = tuple(dict.fromkeys(takes.get(name, ()) + tuple(rels)))
+    return fs, origin, appends, takes
+
+
 def load_template(spec: str = DEFAULT_TEMPLATE, _chain: tuple[str, ...] = ()) -> Template:
     """The template ``spec`` names: one of the package's (``templates/<name>``), else a folder holding a
     template.yaml. Its manifest is checked, and the engine it asks for. A template that ``extends`` one of the
     engine's takes its files, appends, graphs and classes, and adds or replaces its own (a file of the same path, its
-    graphs when it gives some)."""
+    graphs when it gives some); one that ``takes`` paths of another engine template gets those files and appends
+    after its base's, before its own."""
     spec = spec or DEFAULT_TEMPLATE
     if not _chain and spec.startswith("_") and (TEMPLATES / spec / MANIFEST).is_file():
         raise InitError(f"--template {spec}: a base the engine's templates extend, not one to start from (one of "
@@ -235,14 +316,8 @@ def load_template(spec: str = DEFAULT_TEMPLATE, _chain: tuple[str, ...] = ()) ->
     base = _base(spec, data, _chain or (spec,))
     if base is None and not isinstance(data.get("files"), dict):
         raise InitError(f"--template {spec}: {MANIFEST}: files maps the brain's path to the template's file")
-    own = _paths(spec, folder, data, "files")
-    fs = {**(base.files if base else {}), **own}
-    origin = {**(base.origin if base else {}), **{rel: folder for rel in own}}
-    appends = {rel: list(v) for rel, v in (base.appends if base else {}).items()}
-    for rel, source in _paths(spec, folder, data, "append").items():
-        if rel not in fs:
-            raise InitError(f"--template {spec}: {MANIFEST}: append {rel}: not a file the template writes")
-        appends.setdefault(rel, []).append((folder, source))
+    extended = ((data["extends"],) + base.extends) if base else ()
+    fs, origin, appends, takes = _layered(spec, data, folder, base, (_chain or (spec,)) + extended)
     missing = [r for r in REQUIRED if r not in fs]
     if missing:
         raise InitError(f"--template {spec}: {MANIFEST}: files misses what config.json names: {', '.join(missing)}")
@@ -255,9 +330,8 @@ def load_template(spec: str = DEFAULT_TEMPLATE, _chain: tuple[str, ...] = ()) ->
     own_graphs = "graphs" in data or base is None
     graphs = graphs_of(spec, data.get("graphs")) if own_graphs else [dict(g) for g in base.graphs]
     tpl = Template(data["name"], data["version"], str(data.get("title") or ""), folder, str(data.get("engine") or ""),
-                   fs, graphs, declared, origin, appends,
-                   ((data["extends"],) + base.extends) if base else (),
-                   (folder,) + (base.layer_folders if base else ()))
+                   fs, graphs, declared, origin, appends, extended,
+                   (folder,) + (base.layer_folders if base else ()), takes)
     for i, g in enumerate(tpl.graphs):   # each graph's layers compose: the catalogue's and the template's own
         if g.get("layers"):
             try:
