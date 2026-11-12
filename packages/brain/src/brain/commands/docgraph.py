@@ -1,24 +1,27 @@
 """``brain docgraph``: the documentation graph's contract, docgraph/v1 (brain.docgraph; docs/docgraph.md). ``validate``
-checks documents any program emitted against it; ``checks`` lists the named checks and what each means. Neither needs
-a brain: they run anywhere the engine is installed.
+checks documents any program emitted against it; ``checks`` lists the named checks and what each means: neither
+needs a brain. ``emit`` writes the project's own documentation graph (brain.docsgraph) as a docgraph/v1 document.
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-from .. import docgraph
+from .. import __version__, docgraph, docsgraph
 
 ORDER = 47   # its place in brain --help's list of commands (brain.commands), after brain docs
 USAGE_ORDER = 34   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain docgraph validate FILE... [--json] | checks [--json]   the documentation graph's neutral contract,
+  brain docgraph validate FILE... [--json] | checks [--json] | emit [--out FILE]   the documentation graph's contract,
                  docgraph/v1 (docs/docgraph.md): validate reads each document (any producer's) against the schema and
                  the rules a schema cannot say (ids unique and prefixed by their type, a source naming a file or a
                  tracker object, checks run and not run apart), notes what a reader keeps without judging (an edge to
                  an id the document does not hold, a producer's own check) and exits 1 when one is invalid or written
-                 for a later version; checks lists the named checks, their subject, severity and meaning
+                 for a later version; checks lists the named checks, their subject, severity and meaning; emit
+                 prints the project's documentation graph (brain.docsgraph: its doc sections, the nodes they cite,
+                 the declared links, doc.stale and cycle run) as a docgraph/v1 document (--out: a file)
 """
 
 
@@ -71,6 +74,30 @@ def early(args):
     return None
 
 
+def run(args, root: Path) -> int:
+    """emit: the project's documentation graph as a docgraph/v1 document."""
+    from ._common import _project, _store
+    from ._stores import _docs_catalogue
+    store = _store(args, root)
+    if not docsgraph.applies(store):
+        print(f"brain docgraph emit: {store} has no links graph (a schema with the Doc type, then brain sync)")
+        return 1
+    cat = _docs_catalogue(_project(args, root), root, store)
+    ref = docsgraph._git(root, "rev-parse", "HEAD").strip()
+    doc = docsgraph.to_docgraph(cat, f"brain {__version__}", repo=cat.repo, ref=ref)
+    errors, _ = docgraph.validate(doc, where="emit")
+    for e in errors:   # the engine's own document holds to the contract: a failure here is the engine's bug
+        print(f"error: {e}", file=sys.stderr)
+    text = json.dumps(doc, indent=1, ensure_ascii=False) + "\n"
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8", newline="\n")
+        print(f"{args.out}: {len(doc['nodes'])} node(s), {len(doc['edges'])} edge(s), "
+              f"{len(doc['checks'])} finding(s)")
+    else:
+        sys.stdout.write(text)
+    return 1 if errors or any(f["severity"] == "error" for f in doc["checks"]) else 0
+
+
 def register(sub, ctx) -> None:
     dg = sub.add_parser("docgraph", help="the documentation graph's contract, docgraph/v1: validate documents, list "
                                          "the named checks (brain.docgraph)")
@@ -82,3 +109,6 @@ def register(sub, ctx) -> None:
     dc = ds.add_parser("checks", help="the named checks: id, subject, severity, meaning, what a producer needs to run "
                                       "it")
     dc.add_argument("--json", action="store_true", help="stable keys")
+    de = ds.add_parser("emit", help="the project's documentation graph as a docgraph/v1 document; exit 1 on an error "
+                                    "finding (a cycle of declared links)")
+    de.add_argument("--out", default="", help="write it to this file instead of printing it")

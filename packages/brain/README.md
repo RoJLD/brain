@@ -235,6 +235,15 @@ questions) and an index with the decisions no module holds; `brain sync` keeps i
 `--public` renders a public repo's neutral reference by feature domain, from its features only (this repo's own is
 [docs/reference/](../../docs/reference/README.md)). See [docs/views.md](docs/views.md).
 
+### The documentation graph
+
+`brain sync` also writes `notes/docs_graph.md` for a store with the `Doc` type ([docs/docs-graph.md](docs/docs-graph.md)):
+every doc file with its kind (Diataxis, generated and dated specs apart), last commit, declared owner, the nodes it
+cites and the docs that cite it; the links declared between docs (`depends_on` with `props.reason`); and the docs to
+re-read (`doc.stale`): a hand-written doc whose cited node or declared parent changed after its last commit, by
+section. `brain check` warns on them, the scout (`brain audit --diff`) names the docs a change should have re-read,
+and `brain docgraph emit` writes the graph as a [docgraph/v1](docs/docgraph.md) document.
+
 ### The documentation graph's contract
 
 `docgraph/v1` ([docs/docgraph.md](docs/docgraph.md)) is the neutral, public format of a documentation graph: its
