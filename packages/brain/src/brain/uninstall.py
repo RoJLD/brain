@@ -160,7 +160,10 @@ class WindowsUserPath:
 
 
 def _same_dir(a: str, b: Path) -> bool:
-    return os.path.normcase(os.path.normpath(a.strip().strip('"'))) == os.path.normcase(os.path.normpath(str(b)))
+    """Two entries of the Windows user PATH name one folder: Windows' rules (ntpath), case and a trailing separator
+    ignored, whatever the system the plan is computed on."""
+    import ntpath
+    return ntpath.normcase(ntpath.normpath(a.strip().strip('"'))) == ntpath.normcase(ntpath.normpath(str(b)))
 
 
 def path_steps(home: Path, user_path=None, windows: bool | None = None) -> list[Step]:
