@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .. import codeindex, config, projects, sessionarchive, spool, stacks, vault
+from .. import codeindex, config, ipchealth, projects, sessionarchive, spool, stacks, vault
 from ._common import root_of
 
 ORDER = 340   # its place in brain --help's list of commands (brain.commands)
@@ -28,18 +28,23 @@ USAGE = """\
                                   matches its sha256, OFF when never pushed; the name session-archive (or
                                   --all): the age of the last session archive run that sealed something
                                   (brain.sessionarchive), a warning past 7 days or without gitleaks, OFF while
-                                  config.json session_archive.enabled is not true
+                                  config.json session_archive.enabled is not true; the name ipc (or --all): the
+                                  Brain's local services bind loopback and require the machine's token, their
+                                  containers run as a user (brain.ipchealth): the token file, the MCP server's 401
+                                  without it, each container's published ports (FAIL beyond loopback) and user (a
+                                  warning as root), OFF where none runs
 """
 
 # The machine's own checks, each named by its CHECK and run with --all: health(cfg, named=...) -> exit code.
-MACHINE_CHECKS = (vault, spool, sessionarchive)
+MACHINE_CHECKS = (vault, spool, sessionarchive, ipchealth)
 
 
 def cmd_health(args, root: Path | None, project: str | None) -> int:
     """``brain health``: the stacks asked for (no name: the watched ones, every one with --all, every one of the
     project with --project), then the code index when code-index is named, with --all, or with --project alone, and
     the vault's canaries when vault is named or with --all, the spool's last push when spool is named or with
-    --all, the session archive's last run when session-archive is named or with --all."""
+    --all, the session archive's last run when session-archive is named or with --all, the local services'
+    loopback and token when ipc is named or with --all."""
     names = [n for n in args.stacks if n not in (codeindex.CHECK, *(m.CHECK for m in MACHINE_CHECKS))]
     rc = stacks.main("health", names, args.all, root, project=project) if names or not args.stacks else 0
     for mod in MACHINE_CHECKS:
