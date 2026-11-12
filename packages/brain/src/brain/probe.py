@@ -399,8 +399,9 @@ def probe_encryption() -> list[dict]:
 
 
 _PS_HARDWARE = ("$m = @(Get-CimInstance Win32_PhysicalMemoryArray | ForEach-Object { $_.MemoryErrorCorrection }); "
+                "$d = @(Get-CimInstance Win32_PhysicalMemory | ForEach-Object { @($_.TotalWidth, $_.DataWidth) }); "
                 "$b = @(Get-CimInstance Win32_Battery).Count; "
-                "ConvertTo-Json -Compress @{ecc = $m; battery = $b}")
+                "ConvertTo-Json -Compress @{ecc = $m; dimms = $d; battery = $b}")
 
 
 def probe_hardware() -> dict:
@@ -417,6 +418,10 @@ def probe_hardware() -> dict:
         codes = {int(c) for c in (data.get("ecc") if isinstance(data.get("ecc"), list) else [data.get("ecc")])
                  if isinstance(c, (int, float))}
         ecc = True if codes & ECC_YES else False if codes and codes <= ECC_NO else None
+        widths = [w for w in (data.get("dimms") or []) if isinstance(w, (int, float))]
+        pairs = list(zip(widths[0::2], widths[1::2]))
+        if ecc and pairs and all(total <= width for total, width in pairs):
+            ecc = False   # the board corrects, its DIMMs carry no check bits (TotalWidth == DataWidth)
         return {"ecc": ecc, "ecc_source": "wmi", "battery": bool(data.get("battery")), "battery_source": "wmi"}
     if system == "darwin":
         code, out = _run(["pmset", "-g", "batt"], TIMEOUTS["hardware"] - 0.3)

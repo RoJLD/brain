@@ -510,14 +510,19 @@ def pr_body(report: Report, changes: list[tuple[str, str]], conflicts: list[tupl
     return "\n".join(out) + "\n"
 
 
+def export_held() -> str:
+    """Why the export (the machine's branch, a shared machine-level write) is held, '' when it is not: an engine below
+    config.json engine.min, or this machine's identity in doubt (brain.machine). The import goes on."""
+    from . import config, machine, skew
+
+    return skew.below_min(None) or machine.in_doubt(config.load().data)
+
+
 def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True, do_export: bool = True,
          day: str | None = None, gh=None, timeout: float | None = None, state: dict | None = None) -> Report:
     """One sync, both ways (see the module's docstring). ``state`` is updated in place (saved by the caller)."""
-    from . import skew
-
-    low = "" if dry_run else skew.below_min(None)
-    if low:
-        raise SyncError(f"memory sync refused: {low}")
+    held = "" if dry_run or not do_export else export_held()
+    do_export = do_export and not held
     state = load_state() if state is None else state
     deadline = time.monotonic() + (timeout or _float_env("BRAIN_MEMORY_TIMEOUT", DEFAULT_TIMEOUT))
     remote = remote_url()
@@ -526,6 +531,8 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
                         "(install.ps1 -Apply)")
     s = Sync(remote, deadline, day, gh)
     report = Report(s.machine, s.day, s.branch, dry_run=dry_run)
+    if held:
+        report.actions["(export)"] = f"held: {held}"
     main, branch_head = s.fetch(offline)
     if not dry_run:
         state["fetched_epoch"], state["fetched_at"] = time.time(), _now()

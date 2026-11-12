@@ -2,8 +2,8 @@
 step S4 of the one-brain design).
 
 **The identity.** :func:`name` is the machine's name for the whole engine: ``$BRAIN_MACHINE``, else the host name,
-lowercase, ``[a-z0-9-]``, 40 characters at most (the memory sync's rule, now the one rule: brain.memory, brain.probe,
-brain.permissions and brain.schedule read it). :func:`anchor` ties the name to the OS install: ``sha256(id || os
+lowercase, ``[a-z0-9-]``, 40 characters at most (the memory sync's rule, now the one rule: brain.memory, brain.probe
+and brain.schedule read it; brain.permissions' ``machines:`` stay host names, as they were). :func:`anchor` ties the name to the OS install: ``sha256(id || os
 family)`` of ``MachineGuid`` (Windows), ``/etc/machine-id`` (Linux) or ``IOPlatformUUID`` (macOS), each readable without
 admin rights and one per OS install; the raw id is never written or printed. :func:`identity` keeps the first sight in
 ``<BRAIN_HOME>/machine.json`` (``v``, the name, the anchor, a local id, its date) and compares it, and the owner's
@@ -18,7 +18,8 @@ declared machines (``config.json`` ``hosts``: ``{name: {anchor, roles, aliases, 
   no-anchor    the OS install id could not be read
 
 Every state but ok and new is a doubt (``doubt`` holds the question, asked once: ``asked`` in machine.json dates it):
-a writer of the machine level writes nothing while it lasts (:func:`in_doubt`).
+the memory sync's export (the machine's branch, a machine-level write) is held while it lasts (:func:`in_doubt`,
+brain.memory.export_held), as it is below ``config.json`` ``engine.min``; the import goes on.
 
 **The facts.** Each fact is true, false or unknown (None): an unknown fact never satisfies ``FACT`` nor ``not FACT``
 (brain.tiers.truth). :func:`facts` gives each fact's value and its source, in this order of trust:
@@ -242,6 +243,8 @@ def nodes_file(spec: dict, me: str, aliases: list[str]) -> tuple[dict, dict]:
     from .graph import load_yaml
 
     ref = spec.get("ref") or "origin/main"
+    if str(ref).startswith("-") or str(spec["file"]).startswith("-"):   # never read as a git option
+        raise ValueError(f"{ref}:{spec['file']} is not a ref and a path (it starts with -)")
     text = _git_show(str(spec["checkout"]), ref, str(spec["file"]))
     data = load_yaml(text) or {}
     vpath, accept = spec.get("version_path", "version"), [str(v) for v in spec.get("versions") or []]

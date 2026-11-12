@@ -791,12 +791,13 @@ a cwd in another repo (a code repo of P, say) or a plain folder keeps the regist
 ### This machine: its identity and its facts
 
 One name for the machine everywhere (`brain.machine`): `$BRAIN_MACHINE`, else the host name, lowercase and
-`[a-z0-9-]` (the memory sync, the profile, the schedules and the permissions read it). It is tied to the OS install
+`[a-z0-9-]` (the memory sync, the profile and the schedules read it; the permissions' `machines:` stay host names). It is tied to the OS install
 by an anchor, `sha256(install id || OS family)` of `MachineGuid`, `/etc/machine-id` or `IOPlatformUUID` (never the raw
 id), kept at first sight in `<BRAIN_HOME>/machine.json`. `brain doctor` prints the identity's state and, while the
 owner's `config.json` lacks it, the `hosts` line to add (`"hosts": {"<name>": {"anchor": "..."}}`): a name on another
 install (reused), two names on one install (a cloned image), a renamed machine, a copied `BRAIN_HOME` or an unreadable
-id is a doubt, said with its question, and a machine-level writer writes nothing while it lasts.
+id is a doubt, said with its question; while it lasts the memory sync exports nothing (the machine's branch), and
+imports as before.
 
 Each fact is true, false or unknown: an unknown fact satisfies neither `FACT` nor `not FACT` in a `recommend_when`,
 and a requirement unknown counts as missing. `brain doctor` probes ECC memory (WMI on Windows, EDAC on Linux) and a
@@ -809,7 +810,8 @@ keeps the last ones with their source. A machine's `profile.json` overrides `con
 key (a switch it does not name keeps the brain's default).
 
 `config.json` `engine.min` (optional, beside `engine.pin`) is the oldest engine that may write the shared formats:
-below it the memory sync and the DDRs refuse to write and `brain check` says so; the machine still reads.
+below it the memory sync exports nothing (it still imports), the DDRs are not written and `brain check` says so; the
+machine still reads.
 
 ### Projects the brain only reads, projects that share a root
 

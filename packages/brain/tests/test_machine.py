@@ -54,6 +54,13 @@ def test_the_anchor_is_a_hash_of_the_install_id_and_never_the_id(box):
     assert machine.identity({})["state"] == "ok"
 
 
+def test_a_doubt_holds_the_memory_export(box, monkeypatch):
+    machine.identity({})
+    assert memory.export_held() == ""
+    monkeypatch.setenv("BRAIN_MACHINE", "box2")
+    assert "first seen as box1" in memory.export_held()
+
+
 def test_doubts_renamed_moved_reused_duplicate_and_no_anchor(box, monkeypatch):
     machine.identity({})                                         # first sight: box1 on RAW
     monkeypatch.setenv("BRAIN_MACHINE", "box2")
@@ -96,6 +103,8 @@ def test_the_probe_wins_then_the_nodes_file_then_hosts_then_unknown(box, monkeyp
     assert flat["ecc"] is True and sourced["ecc"]["source"].startswith("nodes-file@origin/main:")   # probe unknown
     assert (flat["type"], flat["battery"]) == ("server", True) and sourced["battery"]["source"] == "declared"
     assert flat["encrypted"] is None and sourced["encrypted"]["source"] == "unknown"
+    bad = {**cfg["inventory"]["nodes_file"], "ref": "--output=x"}
+    assert "starts with -" in machine.facts({}, {**cfg, "inventory": {"nodes_file": bad}})[2][0]
     genome["version"] = 3
     _, sourced, errors = machine.facts({}, cfg)
     assert "is not one this brain reads" in errors[0] and sourced["ecc"]["source"] == "declared"
@@ -114,10 +123,13 @@ def test_the_agent_report_counts_only_when_infra_node_is_on_and_recent(box, tmp_
     assert flat["cpu_cores"] == 4 and "older than 24 h" in errors[0]
 
 
-@pytest.mark.parametrize("codes, battery, ecc", [([6], 1, True), ([3, 3], 0, False), ([2], 0, None), ([], 0, None)])
-def test_the_windows_hardware_probe(monkeypatch, codes, battery, ecc):
+@pytest.mark.parametrize("codes, dimms, battery, ecc", [
+    ([6], [72, 64, 72, 64], 1, True), ([6], [64, 64], 0, False),   # an ECC board with non-ECC DIMMs: no ECC
+    ([6], [], 0, True), ([3, 3], [], 0, False), ([2], [], 0, None), ([], [], 0, None)])
+def test_the_windows_hardware_probe(monkeypatch, codes, dimms, battery, ecc):
     monkeypatch.setattr(probe, "_system", lambda: "Windows")
-    monkeypatch.setattr(probe, "_run", lambda argv, timeout: (0, json.dumps({"ecc": codes, "battery": battery})))
+    monkeypatch.setattr(probe, "_run", lambda argv, timeout: (0, json.dumps({"ecc": codes, "dimms": dimms,
+                                                                            "battery": battery})))
     hw = probe.probe_hardware()
     assert (hw["ecc"], hw["battery"]) == (ecc, bool(battery))
 
@@ -136,7 +148,9 @@ def test_flattened_facts_ecc_battery_encrypted_and_an_unprobed_gpu(monkeypatch):
 
 def test_doctor_shows_the_identity_and_each_facts_source(box):
     _cfg(box, hosts={"box1": {"ecc": True}})
-    doc = tiers.doctor(None, doc=json.loads((STATUS / "older.json").read_text(encoding="utf-8")))
+    doc = json.loads((STATUS / "older.json").read_text(encoding="utf-8"))
+    doc["brain"]["hardware"] = {"ecc": None, "battery": False}
+    doc = tiers.doctor(None, doc=doc)
     prof = doc["brain"]["profile"]
     assert prof["identity"]["state"] == "new" and prof["sources"]["ecc"] == {"value": True, "source": "declared"}
     text = "\n".join(tiers.render_doctor(doc))
@@ -158,13 +172,14 @@ def test_below_engine_min_reads_and_writes_no_shared_format(box, store, monkeypa
     _cfg(box, engine={"repo": "o/brain", "pin": "v0.3.2", "min": "v99.0.0"})
     assert "below config.json engine.min v99.0.0" in skew.below_min(None)
     assert any("engine.min" in line for line in skew.check_lines(None))
+    _cfg(box, engine={"repo": "o/brain", "min": "v99.0.0"})   # no pin: the minimum is still said
+    assert any("engine.min" in line for line in skew.check_lines(None))
     root = store.parents[1]
     monkeypatch.setenv("BRAIN_CONFIG", str(box / "config.json"))
     from test_records import DDR
     with pytest.raises(SystemExit, match="no DDR written"):
         records.write(root, "ddr", DDR)
-    with pytest.raises(memory.SyncError, match="memory sync refused"):
-        memory.sync(state={})
+    assert "engine.min" in memory.export_held()   # the export held, the import goes on
     _cfg(box, engine={"repo": "o/brain", "pin": "v0.3.2", "min": "v0.0.1"})
     assert skew.below_min(None) == ""
 

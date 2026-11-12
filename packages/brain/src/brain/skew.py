@@ -144,8 +144,8 @@ def check_lines(root: Path | None) -> list[str]:
     """brain check's warnings ([] when the engine is the pinned one and not below engine.min)."""
     low = below_min(root)
     pin, diff, engines = of(root)
-    return ([f"warning: {low}"] if low else []) + [f"warning: the running engine is not config.json engine.pin {pin}: {'; '.join(diff)} (brain sync and "
-            f"brain render refuse to write until it is: {how(root, pin, engines)})"] if diff else []
+    return ([f"warning: {low}"] if low else []) + ([f"warning: the running engine is not config.json engine.pin {pin}: {'; '.join(diff)} (brain sync and "
+            f"brain render refuse to write until it is: {how(root, pin, engines)})"] if diff else [])
 
 
 def below_min(root: Path | None = None) -> str:
