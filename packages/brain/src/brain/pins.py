@@ -74,7 +74,7 @@ def parse(text: str, where: str = FILE) -> tuple[list[dict], int]:
     or is not a list. A ``touches`` given as one string is read as a list of one."""
     yaml = graph._yaml()
     try:
-        data = yaml.safe_load(text) if text.strip() else None
+        data = graph.load_yaml(text) if text.strip() else None   # the one helper of every load
     except yaml.YAMLError as exc:
         raise PinError(f"{where}: {exc}") from None
     if data is None:
