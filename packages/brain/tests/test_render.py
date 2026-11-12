@@ -217,6 +217,24 @@ def test_check_reports_what_breaks_the_source(ada):
         assert bit in errors, bit
 
 
+def test_an_unknown_pack_key_is_kept_and_noted_never_refused_in_read_mode(ada, monkeypatch, capsys):
+    """spec-brain-typology-packs E1 ter: a newer brain's pack key (typologies, layers, stages...) is kept and noted by
+    an older engine, which renders the pack as before; strict mode (CI, the engine there is the pin) refuses it."""
+    before = [(o.rel, o.text) for o in render.render_claude(neutral.load(ada)).outputs]
+    write(ada / "source", {"packs.yaml": PACKS.replace("    projects: [demo]\n",
+                                                       "    projects: [demo]\n    typologies: [software, film]\n"
+                                                       "    stages: build\n")})
+    src = neutral.load(ada)
+    assert next(p for p in src.packs if p.spec.get("typologies")).spec["typologies"] == ["software", "film"]
+    monkeypatch.setenv("BRAIN_STRICT", "0")
+    assert neutral.check(src) == []
+    err = capsys.readouterr().err
+    assert "unknown key 'typologies'" in err and "unknown key 'stages'" in err and "kept" in err
+    assert [(o.rel, o.text) for o in render.render_claude(src).outputs] == before
+    monkeypatch.setenv("BRAIN_STRICT", "1")
+    assert any("unknown key 'typologies'" in e for e in neutral.check(src))
+
+
 def test_a_scope_file_may_hold_its_front_matter_only_and_renders_nothing(ada):
     write(ada / "source", {"rules/scopes/demo.md": "---\ntitle: The demo's rules\nintro: None yet.\n---\n",
                            "packs.yaml": PACKS.replace("    projects: [demo]\n",
