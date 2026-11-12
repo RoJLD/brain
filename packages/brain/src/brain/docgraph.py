@@ -149,7 +149,8 @@ def _edges(edges: list, seen: set[str], where: str, errors: list[str], notes: li
                      for end in ("from", "to") if isinstance(e.get(end), str) and e[end] not in seen)
 
 
-def _findings(doc: dict, seen: set[str], where: str, errors: list[str], notes: list[str]) -> None:
+def _run_lists(doc: dict, where: str, errors: list[str], notes: list[str]) -> set[str]:
+    """The checks said not run; a check both run and not run is an error, an id that is not a named one a note."""
     run = {c for c in _list(doc, "checks_run") if isinstance(c, str)}
     not_run = {c for c in _list(doc, "checks_not_run") if isinstance(c, str)}
     errors.extend(f"{where}: check {cid!r} is both run and not run" for cid in sorted(run & not_run))
@@ -158,6 +159,11 @@ def _findings(doc: dict, seen: set[str], where: str, errors: list[str], notes: l
     named_or_found = set(CHECK_IDS) | {str(f.get("id")) for f in _list(doc, "checks") if isinstance(f, dict)}
     notes.extend(f"{where}: {cid!r} in checks_run is the producer's own check (not a named one)"
                  for cid in sorted(run - named_or_found))
+    return not_run
+
+
+def _findings(doc: dict, seen: set[str], where: str, errors: list[str], notes: list[str]) -> None:
+    not_run = _run_lists(doc, where, errors, notes)
     for i, f in enumerate(_list(doc, "checks")):
         if not isinstance(f, dict):
             continue
