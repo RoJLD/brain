@@ -88,7 +88,8 @@ install, the commits pip recorded are checked against the one the signed tag nam
 `true`, the owner's opt-in, which refuses an unsigned tag (`brain update --yes` then exits 1). The installer does the same
 ([docs/identity.md](docs/identity.md), « Signed releases »).
 
-The cockpit (`brain tui`) has one tab per question, each on its key: `0` the overview, `1` the queue, `2` the sessions,
+The cockpit (`brain tui`) runs once per machine (`<BRAIN_HOME>/locks/cockpit.lock`: a second interactive cockpit is
+refused, `--once`, `--json` and `--detail` read beside it). It has one tab per question, each on its key: `0` the overview, `1` the queue, `2` the sessions,
 `3` the frontier, `4` the milestones, `8` health (alerts on top; audit debt, stacks and index, and the exec times).
 The overview shows one card per tab, what counts in it in a few lines: the band now, the sessions asking, the nearest
 milestones, what can start, the open alerts. Enter or a click opens its tab, already filtered as the card says, whatever your
@@ -681,7 +682,9 @@ unbalanced quote is refused by `brain check --all`. `brain schedule list` shows 
 or its install, the later, is older than two cadences of the machine's awake time (a machine asleep or off misses
 no pass); the SessionStart health hook says so in one line and `brain status`'s alerts row shows
 it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and says so in one line; the alerts go
-at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped.
+at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped. One pass runs at a time
+per machine (`<BRAIN_HOME>/locks/alerts-pass.lock`, `brain.shutdown`): a pass that starts while another runs (a
+logon pass beside the 15-minute one) is skipped, exit 0.
 
 ### Dependency probes: loud fallbacks
 
@@ -1098,6 +1101,15 @@ def run(args, root: Path) -> int:
 - `run(args, root)` gets the project's root: `--root`, else `--project`'s, else the nearest folder above with a graph
   store. A command that must run before any root is resolved (a hook, a machine-wide command, a repo that may hold
   no graph store) defines `early(args)`: its exit code, or `None` to go on to `run`.
+- Every command runs under `brain.shutdown.graceful()`: SIGINT (Ctrl+C), SIGTERM, SIGHUP and SIGBREAK (Ctrl+Break
+  on Windows) stop it with `Stopped` (a `KeyboardInterrupt`), so its `finally` and `with` blocks run and its locks
+  are released; one that arrives inside `brain.shutdown.critical()` (each ledger line, each atomic state write)
+  waits for the write to end, and one that arrives while the write fails still stops it. stderr names the signal;
+  then, on POSIX, the command dies by the signal itself, so a shell sees 128 + its number (130 for Ctrl+C, 143 for
+  SIGTERM) and stops a loop on it; on Windows it exits 128 + the number (149 for Ctrl+Break). `main([...])` called
+  from Python returns that code instead. `brain timed` passes a signal sent to brain alone to its command (POSIX),
+  and the text cockpit quits with 0 on Ctrl+C. A long command's own write that must not be cut goes in `critical()`, or through
+  `stateio.write_atomic`; `taskkill /F` and SIGKILL cannot be trapped.
 - `NO_PROJECT = {"hello"}`: no `--project` is added after its subcommand (the hooks', machine-wide commands).
 - What several commands share is in `_common.py` (the text options, the project, its store and scope) and
   `_stores.py` (the passes of sync, check and refresh); a module whose name starts with `_` is not a command.
