@@ -96,6 +96,23 @@ def test_a_store_still_naming_the_machine_is_found(fz, tmp_path):
     assert set(terms.values()) <= {"host-a", "ada-l"} and all(len(t) >= 3 for t in terms)
 
 
+def test_a_common_name_is_never_replaced(fz, monkeypatch):
+    """As brain init's machine_terms: a user 'root' (a container) is denied nowhere, so 'root: .' in projects.yaml
+    is never rewritten."""
+    assert {"root", "test", "admin"} <= fz.common_names()
+    monkeypatch.setattr(fz.getpass, "getuser", lambda: "root")
+    monkeypatch.setattr(fz.socket, "gethostname", lambda: "localhost.example")
+    assert fz.machine() == {}
+
+
+def test_a_store_naming_this_checkout_is_found(fz, tmp_path):
+    """A step reads the checkout's fixtures (the SR's transcript): a store recording that path, in any case or as a
+    file URI, names this machine."""
+    for i, text in enumerate([str(fz.CHECKOUT / "x.jsonl"), str(fz.CHECKOUT).upper(), fz.CHECKOUT.resolve().as_uri()]):
+        (tmp_path / f"f{i}.md").write_text(text, encoding="utf-8")
+    assert fz.named(tmp_path, tmp_path / "elsewhere") == ["f0.md", "f1.md", "f2.md"]
+
+
 def test_a_frozen_store_is_never_replaced_without_force(fz, monkeypatch, tmp_path, capsys):
     out = tmp_path / "stores"
     (out / "v0.3.1").mkdir(parents=True)
