@@ -134,12 +134,17 @@ def decisions_of(p: projects.Project, st: resume.Store, queue: dict | None = Non
 
 def queue_rows(projs: list[projects.Project], every: bool, root: Path | None = None, **kw) -> list[dict]:
     """brain.queue.collect's rows for the projects in scope, called as brain queue calls it: the denials placed among
-    every registered project, ``only`` the one in scope without --all; ``kw`` goes to collect; [] without it."""
+    every registered project, ``only`` the one in scope without --all; several projects without --all (a --scope
+    node): every registered one's rows, those in scope kept; ``kw`` goes to collect; [] without it."""
     q = _optional("queue")
     if q is None or not hasattr(q, "collect"):
         return []
-    return (q.collect([p for p in projs if p.root.is_dir()], **kw) if every
-            else q.collect(list(projects.load(root).values()), only=projs[0], **kw) if projs else [])
+    if every:
+        return q.collect([p for p in projs if p.root.is_dir()], **kw)
+    if len(projs) > 1:
+        names = {p.name for p in projs}
+        return [r for r in q.collect(list(projects.load(root).values()), **kw) if r.get("project") in names]
+    return q.collect(list(projects.load(root).values()), only=projs[0], **kw) if projs else []
 
 
 def queues(projs: list[projects.Project], quick: bool, every: bool, root: Path | None = None) -> dict[str, dict]:

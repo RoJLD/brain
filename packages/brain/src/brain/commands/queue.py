@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from .. import config, decisions, detail, projects, queue, records, resume
-from ._common import _now, _project, _queue_changed, _text
+from ._common import _now, _project, _queue_changed, _scope, _text
 
 ORDER = 100   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 100   # its usage lines' place in brain --help's epilog
@@ -35,6 +35,8 @@ USAGE = """\
   brain queue apply ID   {owner}'s Apply: the action's exact command (queue add --command CMD [--cwd DIR], else the one
                  its text names) shown, an install.ps1 -Apply's plan run first, run on the owner's y, logged as their action in
                  $BRAIN_HOME/ledger/cockpit-<month>.jsonl, then queue done; refused in a Claude Code session's shell
+  brain queue --scope REF [...]   the queue of the projects of a node's subtree in the scope tree (brain scopes: an
+                 id, a path of ids, global = --all, . or ..), one group each, then their totals
 """
 
 
@@ -77,20 +79,25 @@ def cmd_queue(args, root: Path) -> int:
     if args.all and not reg:
         raise SystemExit(f"brain: --all needs the project registry ({projects.REGISTRY}; $BRAIN_PROJECTS or "
                          "$CLAUDE_BRAIN_DIR)")
-    only = None if args.all else (getattr(args, "project_obj", None) or resume.project_for(root))
+    # --scope REF: the projects of a node's subtree (brain.scopes), placed among every one, no outside group
+    names = [p.name for p in _scope(args, root)] if args.scope else []
+    many = args.all or bool(names)
+    only = None if many else (getattr(args, "project_obj", None) or resume.project_for(root))
     data = queue.collect(list(reg.values()), only=only, kinds=tuple(args.kind or queue.KINDS), days=args.days,
                          with_graph=not args.no_graph, transcripts=not args.no_transcripts)
-    shown = data if args.all else [d for d in data if d["project"] != queue.OUTSIDE]
+    shown = data if args.all else [d for d in data if d["project"] != queue.OUTSIDE
+                                   and (not names or d["project"] in names)]
     if args.json:
-        print(json.dumps(shown if args.all else shown[0], ensure_ascii=False, indent=1))
+        print(json.dumps(shown if many else shown[0], ensure_ascii=False, indent=1))
         return 0
-    outside = 0 if args.all else sum(len(d["entries"]) for d in data if d["project"] == queue.OUTSIDE)
+    outside = 0 if many else sum(len(d["entries"]) for d in data if d["project"] == queue.OUTSIDE)
     for d in shown:
-        print("\n".join(queue.render(d, outside=outside, legend=not args.all, why=args.explain)))
-    if args.all:
+        print("\n".join(queue.render(d, outside=outside, legend=not many, why=args.explain)))
+    if many:
         print("\n".join(queue.LEGEND))
         total = {k: sum(d["counts"][k] for d in shown) for k in queue.KINDS}
-        print(f"all: {sum(total.values())} waiting on {config.name_of()} in "
+        what = "all" if args.all else f"scope {args.scope_node}"
+        print(f"{what}: {sum(total.values())} waiting on {config.name_of()} in "
               f"{sum(1 for d in shown if d['entries'])} of {len(shown)} group(s): {total['decision']} decision(s), "
               f"{total['action']} action(s), "
               f"{total['permission']} permission(s)")
@@ -146,6 +153,8 @@ def register(sub, ctx) -> None:
                                       "lacked; in three bands, ranked by what each holds up (--explain)")
     qu.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
     qu.add_argument("--all", action="store_true", help="every registered project, then the denials outside them")
+    qu.add_argument("--scope", help="the projects of a node's subtree in the scope tree (brain scopes): an id, a "
+                                    "path of ids, global (= --all), . or ..")
     qu.add_argument("--kind", action="append", choices=list(queue.KINDS))
     qu.add_argument("--days", type=int, default=queue.DAYS,
                     help=f"how far back the denied tool calls are read (default {queue.DAYS})")
