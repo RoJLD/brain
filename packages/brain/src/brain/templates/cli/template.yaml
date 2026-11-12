@@ -3,7 +3,7 @@
 # standards for the cli profile at the project's stage (projects.yaml standards:, brain standards list --applicable).
 name: cli
 version: 1
-engine: ">=0.3.2"
+engine: ">=0.4.0"
 title: "A command-line tool: the software base and the cli profile's standards"
 extends: _software
 append:                    # the project's standards selection, under its entry in projects.yaml

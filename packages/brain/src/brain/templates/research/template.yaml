@@ -5,7 +5,7 @@
 # by name instead of extending _software, so what _software adds later reaches it only when it says so.
 name: research
 version: 1
-engine: ">=0.3.2"
+engine: ">=0.4.0"
 title: "A research project: the parts of the software base it uses and the research profile's standards"
 extends: _project
 takes:                     # an engine template: the brain's paths whose files (or appends) it takes from that one

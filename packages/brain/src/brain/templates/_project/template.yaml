@@ -4,7 +4,7 @@
 # _software's), so a project that is not code, or not on GitHub, extends it alone.
 name: _project
 version: 1
-engine: ">=0.3.2"
+engine: ">=0.4.0"
 title: "A project's brain: the generic brain and an ADR template"
 extends: generic
 files:                     # the brain's path: the template's file (added to generic's)

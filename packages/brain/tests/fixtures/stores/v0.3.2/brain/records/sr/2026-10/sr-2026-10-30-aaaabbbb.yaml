@@ -1,0 +1,88 @@
+# SR (session record), computed from the transcript at zero token. Schema: brain/schemas/sr.schema.json
+v: 1
+id: sr-2026-10-30-aaaabbbb
+tool: claude-code
+session_id: aaaabbbb-1111-2222-3333-444455556666
+status: closed
+title: Build the thing
+summary: a first session
+surface: cli
+model: claude-opus-5-5
+models:
+  claude-opus-5-5: 2
+  claude-sonnet-5-5: 1
+versions:
+- 2.1.309
+- 2.1.310
+effort: xhigh
+efforts:
+  xhigh: 2
+  medium: 1
+speeds:
+  standard: 3
+permission_modes:
+- auto
+folder: /work/brain
+folders:
+- /work/brain
+- /work/brain/sub
+branch: main
+branches:
+- main
+- feat
+start: '2026-10-30T10:00:01.000Z'
+end: '2026-10-30T10:22:00.000Z'
+duration_s: 1319
+active_s: 179
+tokens:
+  messages: 3
+  input: 16
+  output: 160
+  thinking: 40
+  cache_read: 4800
+  cache_write: 500
+  cache_write_1h: 500
+  cache_write_5m: 0
+tokens_by_model:
+  claude-opus-5-5:
+    messages: 2
+    input: 15
+    output: 150
+    thinking: 40
+    cache_read: 3000
+    cache_write: 500
+    cache_write_1h: 500
+    cache_write_5m: 0
+  claude-sonnet-5-5:
+    messages: 1
+    input: 1
+    output: 10
+    thinking: 0
+    cache_read: 1800
+    cache_write: 0
+    cache_write_1h: 0
+    cache_write_5m: 0
+context:
+  budget: 400000
+  peak: 2005
+  last: 1801
+  compactions: 1
+ultracode: false
+cost_usd: 1.25
+tools:
+  Bash: 2
+prs:
+- repo: RoJLD/brain-test
+  number: 7
+  url: https://github.com/RoJLD/brain-test/pull/7
+  actions:
+  - created
+  - linked
+actions:
+- ar-2026-11-12-commit-0123456789abcdef
+items:
+- wi-brain-record-formats
+api_errors: 1
+transcript:
+  path: transcript.jsonl
+  archived: null

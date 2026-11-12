@@ -1,0 +1,3 @@
+#brain.hook-contract/v1
+version 0.3.2
+rule rules/global.md

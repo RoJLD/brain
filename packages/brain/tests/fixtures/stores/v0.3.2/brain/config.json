@@ -1,0 +1,318 @@
+{
+  "v": 1,
+  "identity": {
+    "owner": "Ada Example",
+    "kind": "person"
+  },
+  "registry": "projects.yaml",
+  "rules": [
+    "rules/global.md"
+  ],
+  "memory": "memory",
+  "records": "records",
+  "template": {
+    "name": "generic",
+    "version": 1
+  },
+  "engine": {
+    "repo": "RoJLD/brain",
+    "pin": "v0.3.2"
+  },
+  "tier": {
+    "base": "lite"
+  },
+  "adapters": {
+    "claude": {
+      "marketplace": "brain",
+      "plugin": "brain-core"
+    }
+  },
+  "public": {
+    "repos": [],
+    "deny": {
+      "people": [
+        "Ada Example"
+      ],
+      "hosts": [
+        "host-a"
+      ]
+    }
+  },
+  "classes": {
+    "stores": {
+      "memory": {
+        "class": "confidential",
+        "paths": [
+          "memory/**"
+        ],
+        "to": [
+          "cloud-model"
+        ],
+        "waive": {
+          "git-private": "in clear in the private remote until encrypted git (sops) is adopted"
+        },
+        "why": "notes about people, machines and choices, read by every session"
+      },
+      "ddr": {
+        "class": "confidential",
+        "paths": [
+          "records/ddr/**"
+        ],
+        "to": [
+          "cloud-model"
+        ],
+        "waive": {
+          "git-private": "in clear in the private remote until encrypted git (sops) is adopted"
+        },
+        "why": "decisions whose context may touch money, people or the law, announced to every session"
+      },
+      "ledger": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/ledger"
+        ]
+      },
+      "sessions": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/sessions"
+        ]
+      },
+      "resume": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/resume"
+        ]
+      },
+      "digest": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/digest"
+        ]
+      },
+      "vault": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/vault"
+        ]
+      },
+      "transcripts": {
+        "class": "sealed",
+        "paths": [
+          "~/.claude/projects"
+        ]
+      },
+      "usage": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/usage"
+        ]
+      },
+      "budget": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/budget"
+        ]
+      },
+      "forecast": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/forecast"
+        ]
+      },
+      "announce": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/announce"
+        ]
+      },
+      "handover": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/handover"
+        ]
+      },
+      "inbox": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/inbox"
+        ]
+      },
+      "features": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/features"
+        ]
+      },
+      "cache": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/cache"
+        ]
+      },
+      "memory-sync": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/memory-sync"
+        ]
+      },
+      "schedules": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/schedules"
+        ]
+      },
+      "alerts": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/alerts"
+        ]
+      },
+      "probes": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/probes"
+        ]
+      },
+      "notify": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/notify"
+        ]
+      },
+      "secrets": {
+        "class": "secret",
+        "paths": [
+          "$BRAIN_HOME/secrets"
+        ]
+      },
+      "collector": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/stacks/sovereign/data/otel-collector"
+        ]
+      },
+      "stacks": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/stacks"
+        ]
+      },
+      "telemetry": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/telemetry"
+        ]
+      },
+      "code-index": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/code-index"
+        ]
+      },
+      "code-index-record": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/code-index.json"
+        ]
+      },
+      "code-map": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/code-map"
+        ]
+      },
+      "public-check": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/public-check"
+        ]
+      },
+      "reviews": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/reviews"
+        ]
+      },
+      "backup": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/backup"
+        ]
+      },
+      "spool": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/spool"
+        ]
+      },
+      "session-archive": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/session-archive"
+        ]
+      },
+      "cockpit": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/tui.json"
+        ]
+      },
+      "update-check": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/update.json"
+        ]
+      },
+      "net": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/net"
+        ]
+      },
+      "outbox": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/outbox"
+        ]
+      },
+      "personal": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/personal.json"
+        ]
+      },
+      "profile": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/profile.json"
+        ]
+      },
+      "venv": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/venv"
+        ]
+      },
+      "bin": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/bin"
+        ]
+      },
+      "engine-clones": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/engine"
+        ]
+      },
+      "repo": {
+        "class": "private",
+        "paths": [
+          "**"
+        ],
+        "why": "rules, graph, ADRs, journal, records"
+      }
+    }
+  }
+}
