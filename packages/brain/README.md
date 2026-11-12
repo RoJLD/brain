@@ -414,7 +414,10 @@ it with `props.value` (high 5, medium 3, low 1 on that scale) and `props.value_r
 whose value the owner set, so that frequent overrides show the weights are wrong. The effort is the hours of the
 item's size (« Item sizes »), an unsized item counting as M. A quick win is a carried or startable item of size S
 whose value is high (the owner's, or a derived value of 4 or more); the wave's quick wins are named on a line of their
-own at its top, the rows keeping the rank's order. `brain forecast` derives an item's value the same way. `--explain` puts
+own at its top, the rows keeping the rank's order. A wave keeps about a fifth of its places for them (its quick-win
+slot, `brain.waves.QUICKWIN_SHARE`: one place at least): `brain next` and `brain wave plan` say the slot, the wave's
+items of size S and high value that fill it and, while a place is free, the startable quick wins outside the wave (in
+no wave or a later one) that would, with the `brain item link ID part_of WAVE` that places one. `brain forecast` derives an item's value the same way. `--explain` puts
 each score's parts under its item: `score 12.5 = value 3.75 (base 1 + features 2 + unblocks 0.75) / 0.3 h (S)`. The
 cockpit's frontier takes the same order by default, sorts by score on demand, and its column chooser adds the size,
 the value and the score. Every number is a written setting of `brain.ranking` (`SCORE`, `VALUE`, `HIGH`), which
