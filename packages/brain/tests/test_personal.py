@@ -101,7 +101,7 @@ def test_the_claude_hooks_ship_with_the_package():
     assert (hooks / "hooks.json").is_file() and (hooks / "guard.sh").is_file()
 
 
-@pytest.mark.parametrize("hook", ["announce.sh", "budget.sh", "capture.sh", "guard.sh", "midsession.sh",
+@pytest.mark.parametrize("hook", ["announce.sh", "budget.sh", "capture.sh", "guard.sh", "midsession.sh", "waithint.sh",
                                   "health.sh", "memory.sh", "resume.sh", "readhint.sh"])
 def test_every_hook_tries_the_brain_commands_venv(hook):
     """A plugin folder without the package runs the installed engine: each launcher tries the brain command's venv

@@ -1017,6 +1017,20 @@ not registered and no call pays its cost (the script ships either way, `brain.re
 set the key, run `brain sync` and restart the sessions; while it is on, `BRAIN_READ_HINT=0` turns it off in a
 session.
 
+**The background waiter's hint** (`waithint.sh`, `brain.waithint`, PreToolUse on Bash and PowerShell;
+wi-brain-stuck-waiters) never refuses either: a call run in the background whose `until` or `while` loop has no
+bound gets one line of hook context: bound it (`timeout 1800 bash -c 'until ...'`), make it exit when its file or
+process is gone (`[ -e run.log ] || exit 1`, `kill -0 $pid || exit 1`), and stop the session's background tasks
+before deleting their logs or venvs. A bound is a `timeout` wrapper or parameter, a counter or numeric comparison, a
+clock (`$SECONDS`, `date +%s`, a Stopwatch, `Get-Date`), a process check (`kill -0`, `ps -p`, `pgrep`,
+`Get-Process`, `Wait-Process`) or a check that the file is still there; a loop that waits for a file to appear is no
+bound, and a `while read` loop is no wait. In wave 0.3.2 two such loops spun on logs their sessions had deleted, and
+the sessions could not be archived (lesson les-brain-unbounded-background-waiter). Claude Code starts it only when the
+command names `until` or `while` (its `if` conditions), and its bash stops at once for a call not run in the
+background; a foreground call is bounded by the tool's own timeout, a Monitor by its own. Always registered;
+`BRAIN_WAIT_HINT=0` turns it off. The brief's after-merge lines and close-item's step 5 say the same: no background
+task left at the cleanup or the archive.
+
 Two guards keep what a session brings in and what it records clean (the runbook: [`docs/guards.md`](docs/guards.md)):
 
 - **Third-party kits** (`guard.sh shell`, check `third-party`): a session never installs or runs a third-party kit. A
