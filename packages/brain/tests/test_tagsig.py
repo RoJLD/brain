@@ -125,6 +125,18 @@ def test_another_key_an_unsigned_and_a_lightweight_tag_do_not_verify(engine):
 
 
 @needs_ssh
+def test_an_older_signed_tag_pushed_under_the_pins_name_does_not_verify(engine):
+    """The signature covers the tag object, not the ref's name: v2.0.0 pointed at v1.0.0's signed tag object (an
+    account that can push but holds no key, rolling the machines back) is misnamed, never verified
+    (wi-brain-install-verify-tag's review)."""
+    repo, pub, commit = engine
+    git(repo, "update-ref", "refs/tags/v2.0.0", git(repo, "rev-parse", "refs/tags/v1.0.0"))
+    v = tagsig.verify_remote(repo.as_uri(), "v2.0.0", allowed(pub))
+    assert v["status"] == tagsig.MISNAMED and v["commit"] == commit
+    assert "the tag object of v1.0.0, not of v2.0.0" in v["why"]
+
+
+@needs_ssh
 def test_a_decision_signature_namespace_does_not_verify_a_tag(engine):
     repo, pub, _ = engine
     wrong = sshsig.allowed_signers({"ada": [pub]}, sshsig.NAMESPACE)   # brain-decision, not git
@@ -160,6 +172,8 @@ def test_verify_tag_that_cannot_run_is_unverifiable_not_a_foreign_key():
     def runner(cmd, **kw):
         if "verify-tag" in cmd:
             raise OSError("ssh-keygen vanished")
+        if cmd[-3:-1] == ["cat-file", "tag"]:   # the tag object's header: v1.0.0 itself, of a commit
+            return subprocess.CompletedProcess(cmd, 0, "object c0ffee\ntype commit\ntag v1.0.0\n\nmsg\n", "")
         out = {"cat-file": "tag\n", "rev-parse": "c0ffee\n"}.get(next((a for a in cmd if a in ("cat-file",
                                                                                                "rev-parse")), ""), "")
         return subprocess.CompletedProcess(cmd, 0, out, "")
@@ -322,10 +336,44 @@ def test_the_installer_verifies_as_the_engine_does(engine, tmp_path, monkeypatch
     assert ps_verify(url, "v0.8.0", f)["status"] == "unsigned"
     assert ps_verify(url, "v9.9.9", f)["status"] == "unverifiable"
     assert ps_verify(url, "v1.0.0", tmp_path / "none")["status"] == "no-signers"
+    git(repo, "update-ref", "refs/tags/v2.0.0", git(repo, "rev-parse", "refs/tags/v1.0.0"))   # an older signed tag
+    assert ps_verify(url, "v2.0.0", f)["status"] == "misnamed"
     cfg = tmp_path / "gitconfig-owner"   # an owner's signing program that cannot verify: git's ssh-keygen does
     cfg.write_text('[gpg "ssh"]\n\tprogram = C:/nonexistent/op-ssh-sign.exe\n', encoding="utf-8")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))
     assert ps_verify(url, "v1.0.0", f)["status"] == "verified"
+
+
+@needs_ps
+def test_the_installer_says_whether_it_runs_from_the_signed_commit(tmp_path):
+    """Get-OwnCommit: its own folder's HEAD ('+changes' when a tracked file differs), '' outside git; the step says
+    'runs from that commit' when it is the verified one, else a note, never a refusal (wi-brain-install-verify-tag)."""
+    text = INSTALLER.read_text(encoding="utf-8-sig")
+    func = re.search(r"^function Get-OwnCommit\b.*?^}", text, re.S | re.M).group(0)
+    repo = tmp_path / "clone"
+    (repo / "packages" / "brain" / "installer").mkdir(parents=True)
+    tracked = repo / "packages" / "brain" / "installer" / "install.ps1"
+    tracked.write_text("'x'\n", encoding="utf-8")
+    git(repo, "init", "--quiet")
+    git(repo, "add", "-A")
+    git(repo, "commit", "--quiet", "-m", "release")
+    head = git(repo, "rev-parse", "HEAD")
+    (tmp_path / "copy").mkdir()
+
+    def own(folder: Path) -> str:
+        r = subprocess.run([PS, "-NoProfile", "-NonInteractive", "-Command",
+                            f"{func}\n\"[$(Get-OwnCommit '{folder}')]\""], capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, r.stderr
+        return r.stdout.strip()[1:-1]
+
+    (repo / "packages" / "__pycache__").mkdir()   # untracked: no change
+    assert own(repo / "packages" / "brain") == head
+    tracked.write_text("'changed'\n", encoding="utf-8")
+    assert own(repo / "packages" / "brain") == f"{head}+changes"
+    assert own(tmp_path / "copy") == ""
+    step = text[text.index("if ($sig.status -eq 'verified') {"):text.index("} elseif ($verify_tags) {")]
+    assert "$own = Get-OwnCommit $engine_root" in step and "this installer runs from that commit" in step
+    assert "throw" not in step
 
 
 def test_the_installer_refuses_only_under_verify_tags_and_installs_by_the_tag():

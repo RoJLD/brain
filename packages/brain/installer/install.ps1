@@ -21,7 +21,9 @@
       verify       before the install, the pin's tag fetched alone into a temporary repo and checked with git
                    verify-tag against the personal brain's allowed_signers (brain identity allowed-signers --write:
                    members.yaml's releaser keys); after pip, the commits it recorded are checked against the verified
-                   one (a tag moved meanwhile). Said either way;
+                   one (a tag moved meanwhile). Said either way, with whether this installer runs from the signed
+                   commit (its own folder's HEAD: a check inside the tag's code cannot vouch for that code, so a
+                   brain's bootstrap that clones the engine verifies the clone before running it; docs/identity.md);
                    config.json engine.verify_tags: true refuses a tag unsigned, signed by another key or that cannot be
                    verified (docs/release.md). -Engine installs what it names, unchecked.
       pointer      <BRAIN_HOME>\personal.json, {"root": <the personal brain's main checkout>}: how the engine and its
@@ -181,6 +183,15 @@ function Test-TagSignature([string]$url, [string]$tag, [string]$allowed) {
         $result.commit = "$(& git -C $tmp rev-parse --verify "$ref^{commit}" 2>$null)".Trim()
         if (-not $kind -or -not $result.commit) { $result.why = "git could not read the fetched $tag"; return $result }
         if ($kind -ne 'tag') { $result.status = 'unsigned'; $result.why = "$tag is a lightweight tag: no signature"; return $result }
+        # the signature covers the tag object, not the ref's name: an older release's signed tag object pushed under
+        # this name would verify, so the object must name the tag itself, and a commit
+        $header = @(& git -C $tmp cat-file tag $ref 2>$null | ForEach-Object { "$_" } | Select-Object -First 6)
+        if ($header -cnotcontains "tag $tag" -or $header -cnotcontains 'type commit') {
+            $named = ($header | Where-Object { $_ -like 'tag *' } | Select-Object -First 1) -replace '^tag ', ''
+            $result.status = 'misnamed'
+            $result.why = "refs/tags/$tag holds the tag object of $(if ($named) { $named } else { 'something else' }), not of $tag"
+            return $result
+        }
         $file = (Resolve-Path -LiteralPath $allowed).Path -replace '\\', '/'
         $said = @(& git -C $tmp -c "gpg.ssh.allowedSignersFile=$file" -c gpg.ssh.program=ssh-keygen verify-tag --raw $ref 2>&1 | ForEach-Object { "$_" }) -join "`n"
         $code = $LASTEXITCODE
@@ -201,6 +212,19 @@ function Test-TagSignature([string]$url, [string]$tag, [string]$allowed) {
         $env:GIT_TERMINAL_PROMPT = $prompt
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Get-OwnCommit([string]$dir) {
+    # The commit this installer runs from when its folder is in a git clone or checkout (HEAD, '+changes' when tracked
+    # files differ from it), '' otherwise (an archive, a copy). Said beside the tag's verification: the check runs
+    # inside the tag's own code, so only a check made before running it (a brain's bootstrap, docs/identity.md)
+    # vouches for this installer; this line only shows whether it is the signed commit.
+    $ErrorActionPreference = 'Continue'
+    $head = "$(& git -C $dir rev-parse --verify --quiet HEAD 2>$null)".Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $head) { return '' }
+    $changed = @(& git -C $dir status --porcelain --untracked-files=no 2>$null | Where-Object { $_ })
+    if ($changed) { return "$head+changes" }
+    $head
 }
 # --- end of the tag verification ---
 
@@ -494,6 +518,13 @@ if (-not $SkipCommand) {
         $sig = Test-TagSignature "https://github.com/$engine_repo.git" $engine_pin $allowed
         if ($sig.status -eq 'verified') {
             "verify   ${engine_pin}: signed by $($sig.signer) ($allowed), commit $($sig.commit.Substring(0, 12))"
+            $own = Get-OwnCommit $engine_root
+            if ($own -eq $sig.commit) {
+                "verify   this installer runs from that commit"
+            } elseif ($own) {
+                $short = $own -replace '^([0-9a-f]{12})[0-9a-f]*', '$1'
+                "note     this installer runs from $short, not the commit the signed $engine_pin names: a checkout of another commit (fine for a branch you trust), or a clone moved or changed since its tag (verify a clone before running it: docs/identity.md, « Signed releases »)"
+            }
         } elseif ($verify_tags) {
             "refuse   ${engine_pin}: not verified, $($sig.why) (config.json engine.verify_tags is on)"
             if ($Apply) { throw "$engine_pin is not verified ($($sig.why)): nothing installed (config.json engine.verify_tags is on)" }

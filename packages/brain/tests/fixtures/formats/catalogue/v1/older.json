@@ -1,0 +1,38 @@
+{
+  "schema": "catalogue/v1",
+  "generated": {"at": "2026-01-01T00:00:00Z", "by": "example-tool 0.1.0", "from": ["modules.yaml"]},
+  "name": "kettle",
+  "bricks": [
+    {"id": "K", "name": "the kettle"},
+    {"id": "M", "name": "the meters"}
+  ],
+  "modules": [
+    {"id": "kettle-core", "name": "Kettle core", "brick": "K", "class": "core", "status": "built",
+     "description": "boil and pour", "requires": [], "cost": {"disk_mb": 20}, "licence": "MIT",
+     "distributions": ["base"]},
+    {"id": "kettle-meter", "name": "Kettle meter", "brick": "M", "class": "extra", "status": "built",
+     "depends_on": ["kettle-core"], "requires": ["python"], "cost": {"ram_mb": 40, "disk_mb": 5},
+     "fallback": "the core's timer", "licence": "MIT", "distributions": ["base", "meter-pack"]},
+    {"id": "kettle-vision", "name": "Kettle vision", "brick": "M", "class": "service", "status": "built", "ai": true,
+     "depends_on": ["kettle-core"], "uses": ["kettle-meter"], "requires": ["gpu"],
+     "recommend_when": ["gpu_vram_gb >= 8", "not battery"], "cost": {"ram_mb": 900, "vram_gb": 6,
+     "download_mb": 2100}, "fallback": "the meter alone", "licence": "Apache-2.0", "distributions": ["vision-image"]},
+    {"id": "kettle-cloud", "name": "Kettle cloud", "brick": "K", "class": "service", "status": "planned",
+     "depends_on": ["kettle-core"], "fallback": "the local history"}
+  ],
+  "distributions": [
+    {"id": "base", "name": "the kettle install", "kind": "base", "version": "1.0.0", "bundled": true,
+     "licence": "MIT"},
+    {"id": "meter-pack", "name": "the meter pack", "kind": "package", "version": "1.0.0", "bundled": false},
+    {"id": "vision-image", "name": "the vision image", "kind": "image", "version": "0.3.0", "bundled": false,
+     "source": {"url": "https://example.org/kettle/vision-0.3.0.tar", "size_mb": 2100,
+                "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "signature": "https://example.org/kettle/vision-0.3.0.tar.sig"}}
+  ],
+  "presets": [
+    {"id": "lite", "name": "Lite", "kind": "base", "modules": ["kettle-core"]},
+    {"id": "default", "name": "Default", "kind": "base", "modules": ["kettle-core", "kettle-meter"]},
+    {"id": "recommended", "name": "Recommended", "kind": "base", "modules": ["kettle-core", "kettle-meter"],
+     "when_fits": ["kettle-vision"]}
+  ]
+}

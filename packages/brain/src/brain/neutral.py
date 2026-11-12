@@ -6,7 +6,10 @@ turns it into each agent's own files; nothing it renders is edited by hand.
 The source is the folder ``source/`` at the brain's root (config.json ``source`` names another)::
 
   source/packs.yaml          the marketplace and the packs: which rules, procedures and MCP servers go together,
-                             with each target's own fields (claude: the plugin manifest and its marketplace entry)
+                             with each target's own fields (claude: the plugin manifest and its marketplace entry);
+                             a pack key this engine does not know (a newer brain's) is kept and noted, refused only
+                             in strict mode (CI: brain.schema.tolerate), so packs may grow keys (typologies...); a
+                             mapping is read as a target's own fields (kept, no note)
   source/rules/<name>.md     rules: front matter (scope, title, intro, lock, a target's own title and intro), then
                              one ``## `` section per rule, its first line ``<!-- id: rule-x -->``
                              (``; overrides: rule-y`` or ``; paths: a/**, b/*.py`` may follow)
@@ -451,9 +454,10 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
                 errors.append(f"{rel}: lock {lid!r} names no rule")
     errors += _check_meta_keys(src)
     for p in src.packs:
-        for k in p.spec:
+        for k in p.spec:   # a newer brain's pack key (typologies, layers, stages...): kept, a note in read mode
             if k not in PACK_KEYS and not isinstance(p.spec[k], dict):
-                errors.append(f"{PACKS}: pack {p.id}: unknown key {k!r}")
+                errors += schema.tolerate(f"{PACKS}: pack {p.id}: unknown key {k!r} (known: "
+                                          f"{', '.join(sorted(PACK_KEYS))}, or a target's mapping)")
         for rel in p.items("rules"):
             if rel not in src.rule_files:
                 errors.append(f"{PACKS}: pack {p.id}: rules {rel!r} not in {FOLDER}/")
