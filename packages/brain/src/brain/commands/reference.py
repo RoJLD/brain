@@ -52,6 +52,15 @@ def _prose_refused(base: Path) -> bool:
     return bool(errors)
 
 
+def _denied(args, root: Path, files: dict[str, str]) -> list[str]:
+    """--public: what brain check --public would refuse in the render (never written into a public repo), each said."""
+    denied = reference.denied(files, config.load(root)) if args.public else []
+    for line in denied:
+        print(f"brain: the public reference: {line} (brain features set <feature> public_title=... or public_id=...)",
+              file=sys.stderr)
+    return denied
+
+
 def cmd_reference(args, root: Path) -> int:
     if args.public and not args.out:
         print("brain reference --public: give --out <a checkout of the public repo>/docs/reference", file=sys.stderr)
@@ -60,10 +69,7 @@ def cmd_reference(args, root: Path) -> int:
     base = _target(args, root)
     if _prose_refused(base):
         return 1
-    denied = reference.denied(files, config.load(root)) if args.public else []
-    for line in denied:   # what brain check --public would refuse: never written into a public repo
-        print(f"brain: the public reference: {line} (brain features set <feature> public_title=... or public_id=...)",
-              file=sys.stderr)
+    denied = _denied(args, root, files)
     if not args.write:
         late = reference.stale(base, files)
         print("\n".join(f"{reference.DIR}/{p}: not the render" for p in late) or f"{reference.DIR}: up to date")
