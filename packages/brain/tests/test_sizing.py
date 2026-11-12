@@ -72,6 +72,36 @@ def test_check_warns_on_an_item_written_since_the_rule_without_a_size(store, mon
     assert sizing.check_lines(store) == []
 
 
+def test_a_size_off_the_scale_is_warned_and_does_not_block_other_edits(store, capsys):
+    text = (store / "nodes" / "work.yaml").read_text(encoding="utf-8")
+    (store / "nodes" / "work.yaml").write_text(text.replace("- {id: wi-two, type: WorkItem, status: doing, title: "
+                                                            "\"Second\"}", "- {id: wi-two, type: WorkItem, status: "
+                                                            "doing, title: \"Second\", props: {size: medium, "
+                                                            "size_reason: hand}}"), encoding="utf-8")
+    graph.set_item(store, "wi-two", ["status=todo"])   # an edit that leaves the size alone (brain wave close's)
+    assert sizing.check_lines(store) == ["warning: 1 open item(s) with a size off the scale S, M, L, XL (brain item "
+                                         "set ID size=...): wi-two"]
+    assert sizing.hours(_nodes(store)["wi-two"]) is None
+    graph.set_item(store, "wi-two", ["size=m"])
+    assert sizing.check_lines(store) == []
+
+
+def test_prop_size_goes_through_the_same_rules(store, capsys):
+    root = store.parents[1]
+    assert cli.main(["--root", str(root), "item", "add", "wi-p", "--title", "P", "--prop", "size=m", "--prop",
+                     "size_reason=why"]) == 0
+    assert _nodes(store)["wi-p"]["props"]["size"] == "M"
+    assert cli.main(["--root", str(root), "item", "add", "wi-q", "--title", "Q", "--prop", "size=S"]) == 1
+    assert cli.main(["--root", str(root), "item", "add", "wi-r", "--title", "R", "--prop", "size="]) == 0
+    assert "size" not in _nodes(store)["wi-r"]["props"]
+
+
+def test_generated_nodes_are_left_out(store):
+    (store / "nodes" / "_generated_x.yaml").write_text(
+        "- {id: wi-gen, type: WorkItem, status: todo, title: G, props: {created: \"2026-11-12\"}}\n", encoding="utf-8")
+    assert sizing.unsized(store) == []
+
+
 def test_hours_is_the_written_scale():
     assert [sizing.hours({"props": {"size": s}}) for s in sizing.SIZES] == [0.3, 0.8, 2.0, 4.0]
     assert sizing.hours({"props": {}}) is None

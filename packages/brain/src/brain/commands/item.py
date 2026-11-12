@@ -76,12 +76,18 @@ def _add_props(args) -> dict:
     """brain item add's props: priority and its reason, theme, idea, the size and its reason (both or neither), a
     WorkItem's created stamp (since the size rule: brain.sizing), then the --prop pairs."""
     props = {k: v for k, v in {"priority": args.priority, "priority_reason": args.reason, "theme": args.theme,
-                               "idea": args.idea, "size": args.size, "size_reason": args.size_reason}.items() if v}
-    if bool(args.size) != bool(args.size_reason):
-        raise graph.GraphError("--size needs its --size-reason (one line: why this size), and the reverse")
+                               "idea": args.idea}.items() if v}
     if args.type == "WorkItem":
         props["created"] = date.today().isoformat()
     props.update(_kv(args.prop))
+    props.update({k: v for k, v in {"size": args.size, "size_reason": args.size_reason}.items() if v})
+    size = str(props.pop("size", "") or "").strip().upper()   # --prop size=m as --size m
+    if size:
+        props["size"] = size
+    if not props.get("size_reason"):
+        props.pop("size_reason", None)
+    if bool(size) != bool(props.get("size_reason")):
+        raise graph.GraphError("--size needs its --size-reason (one line: why this size), and the reverse")
     return props
 
 

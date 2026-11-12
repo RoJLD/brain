@@ -338,8 +338,12 @@ def unlink(store: Path, src: str, dst: str) -> tuple[dict, Path]:
 
 def set_item(store: Path, nid: str, assignments: list[str]) -> dict:
     """``key=value`` pairs: status, title, anchor and type set the node; ``props.<k>`` or any other key sets a
-    prop; an empty value removes the prop. A size is one of SIZES (given in any case)."""
+    prop; an empty value removes the prop. A size assigned is one of SIZES (given in any case); a size already on the
+    node is not checked by an edit that leaves it alone."""
+    sized = False
+
     def change(node: dict) -> None:
+        nonlocal sized
         for a in assignments:
             if "=" not in a:
                 raise GraphError(f"{a!r}: expected key=value")
@@ -350,7 +354,7 @@ def set_item(store: Path, nid: str, assignments: list[str]) -> dict:
                 continue
             key = key[6:] if key.startswith("props.") else key
             if key == "size":
-                value = value.strip().upper()
+                value, sized = value.strip().upper(), True
             props = node.setdefault("props", {})
             if value == "":
                 props.pop(key, None)
@@ -358,7 +362,8 @@ def set_item(store: Path, nid: str, assignments: list[str]) -> dict:
                 props[key] = value
             if not props:
                 node.pop("props")
-        _check_size(node)
+        if sized:
+            _check_size(node)
     return _edit(store, nid, change)
 
 
