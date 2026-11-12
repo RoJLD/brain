@@ -23,7 +23,7 @@ USAGE = """\
                          when you can) by a zero-token score of what each holds up: the priority and count of the open
                          items and milestones downstream, the critical path's slip per day of waiting and the nearest
                          milestone (the last brain forecast), a stated deadline, the minutes it takes, its age;
-                         --explain shows each term
+                         --explain shows each term; then what each gate written on a node holds (props.gate)
   brain queue order ID [N] [--band now|week|later] [--clear]   {owner}'s own order: first in its band, at position N
   brain queue add --kind action|permission --title T --what W [--item ID]... [--blocking] [--due D] [--minutes N]
                  a DDR of that kind (--due: a stated deadline, it weighs above the count; --minutes: the effort)

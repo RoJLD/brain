@@ -15,9 +15,14 @@ A Monte Carlo of futures over the project's open work items. Each future draws, 
              parallel sessions of a past day (its active hours over the hours a session was open, at most its peak);
   scope      an item whose priority is only proposed stays with the keep rate of the store's proposals (kept: validated
              or done; against dropped);
-  gates      an item a pending blocking DDR names starts once the owner answers, after a delay drawn from their past answers.
-             An item blocked, with an external blocker, after another project's item or after a deferred one is not
-             dated, nor is what waits on it: listed apart, with the milestone triggers that name a duration.
+  gates      an item a pending blocking DDR names starts once the owner answers, after a delay drawn from their past answers;
+             one a pending action DDR names (what only the owner may do), after a delay drawn from the actions done;
+             the gates written on a node (props.gate, brain.gates: calendar, count, external, hardware, go_nogo) each
+             draw a release day or a lag after its dependencies; a milestone's own gate holds its finish. An item
+             blocked, with an external blocker, after another project's item not done, after a deferred one or behind
+             a gate the forecast cannot date (hardware without a ready range, a count without a pace) is not dated,
+             nor is what waits on it: listed apart, with the milestone triggers that name a duration and no gate. An
+             item whose p80 passes its ``due`` date raises an alert.
 
 An event-queue scheduler gives each free lane the ready item first by the owner's priority (in progress first, then P0
 to P3, a validated priority before a proposed one), then their order (``props.order``, lower first), then the default
@@ -57,9 +62,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import __version__, config, cost, graph, paths, projects, ranking, records, resume
+from . import gates as gate_data
 
 FORMAT = 1            # the JSON's layout
-MODEL_V = 1           # the method's version: a snapshot says which one made it
+MODEL_V = 2           # the method's version: a snapshot says which one made it (2: declared gates)
 RUNS = 1000
 STATUS_RUNS = 300     # brain status' futures
 SEED = 1              # the default seed: the same inputs give the same numbers
@@ -85,9 +91,8 @@ DEFERRED = "deferred"
 CLOSED = ("done", "dropped")
 NOT_MODELLED = ("risks (wi-brain-risk-register)", "the owner's declared absences and weekly decision budget "
                 "(wi-brain-capacity-model)", "the quota as a cap on capacity", "other projects' dates "
-                "(wi-brain-scope-rollups)", "calendar and hardware gates (wi-brain-forecast-gates)", "the inflow")
-_DURATION_RE = re.compile(r"\b(?:\d+|one|two|three|four|five|six|seven|ten|thirty|sixty)\s+(?:days?|weeks?|months?)\b"
-                          r"|\bin a row\b|\bconsecutive\b|\bcontinuous(?:ly)?\b", re.I)
+                "(wi-brain-scope-rollups)", "the inflow")
+_DURATION_RE = gate_data.DURATION_RE   # a trigger's duration words: a calendar gate the store has not written
 _LINE_RE = re.compile(r"^\+- \{id: ([\w.-]+), type: WorkItem, status: (\w+)")
 
 
@@ -231,15 +236,32 @@ def _ddrs(root: Path) -> list[dict]:
     return out
 
 
-def decision_gates(root: Path) -> tuple[dict[str, list[str]], list[float]]:
+def decision_gates(root: Path, ddrs: list[dict] | None = None) -> tuple[dict[str, list[str]], list[float]]:
     """({item: [the pending blocking DDRs naming it]}, the hours the owner took to answer each answered DDR)."""
     gates: dict[str, list[str]] = {}
     delays = []
-    for d in _ddrs(root):
+    for d in _ddrs(root) if ddrs is None else ddrs:
         asked, answer = _ts((d.get("asked") or {}).get("at")), _ts((d.get("answer") or {}).get("at"))
         if asked and answer and answer >= asked:
             delays.append(round((answer - asked).total_seconds() / 3600, 3))
         if d.get("status") == "pending" and d.get("blocking"):
+            for i in (d.get("links") or {}).get("items") or []:
+                gates.setdefault(str(i), []).append(d["id"])
+    return gates, sorted(delays)
+
+
+def action_gates(ddrs: list[dict]) -> tuple[dict[str, list[str]], list[float]]:
+    """({item: [the pending DDRs of kind action naming it]}: what only the owner may do, a gate whether or not it is
+    flagged blocking; the hours the owner took to do each action done (asked to answered))."""
+    gates: dict[str, list[str]] = {}
+    delays = []
+    for d in ddrs:
+        if (d.get("kind") or "decision") != "action":
+            continue
+        asked, answer = _ts((d.get("asked") or {}).get("at")), _ts((d.get("answer") or {}).get("at"))
+        if asked and answer and answer >= asked:
+            delays.append(round((answer - asked).total_seconds() / 3600, 3))
+        if d.get("status") == "pending":
             for i in (d.get("links") or {}).get("items") or []:
                 gates.setdefault(str(i), []).append(d["id"])
     return gates, sorted(delays)
@@ -312,8 +334,16 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
     part_of = {e["from"]: e["to"] for e in st.edges if e.get("type") == "part_of" and e["from"] in status
                and (st.nodes.get(e["to"]) or {}).get("type") == "Milestone"}
     pool = cost.history(led)
-    gates, delays = decision_gates(p.root)
+    ddrs = _ddrs(p.root)
+    gates, delays = decision_gates(p.root, ddrs)
+    acts, act_delays = action_gates(ddrs)
     ranker = ranking.Ranker(st.nodes, st.edges)   # the value brain next ranks by (features, milestone, unblocks)
+    fl = flow(store, today)
+    resolver = gate_data.Resolver(p.registry_dir or None, here=(p.name, st.nodes))
+
+    def prepared(props: dict) -> list[dict]:
+        return [gate_data.prepare(g, today=today, resolver=resolver, nodes=st.nodes, ddrs=ddrs, work=work, flow=fl)
+                for g in gate_data.of(props)]
 
     def estimate(nid: str) -> dict:
         tgt = cost.target_of(led, nid) if nid in led.items else {"class": "standard", "theme": "", "milestone": "",
@@ -340,11 +370,15 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
         if nid in led.items and s == "doing":
             spent = sum(sh * (r.get("active_s") or 0) for r, sh in led.items[nid].sessions) / 3600
         order = props.get("order")
+        gs = prepared(props)
+        after = [g["after"] for g in gs if g.get("after")]   # a calendar counted from an item's end: a dependency
+        action = sorted(acts.get(nid, []))
         row.update(spent_h=round(spent, 4), order=order if isinstance(order, (int, float)) else None,
-                   deps=sorted(d for d in deps.get(nid, []) if status.get(d) in resume.WORK_OPEN or
-                               status.get(d) == DEFERRED),
-                   ddr=sorted(gates.get(nid, [])),
-                   why=_gate_text(s, props))
+                   deps=sorted({d for d in deps.get(nid, []) + after if status.get(d) in resume.WORK_OPEN or
+                                status.get(d) == DEFERRED}),
+                   ddr=sorted(d for d in gates.get(nid, []) if d not in action), action=action, gates=gs,
+                   due=str(props["due"])[:10] if _day(props.get("due")) else "",
+                   why=_gate_text(s, props, resolver) or next((f"{g['undated']}" for g in gs if g.get("undated")), ""))
         effort = (est["hours"] or {}).get("median") or 1.0
         value = ranker.score(nid).value
         row["score"] = round(value / max(effort, 0.25), 4)
@@ -355,9 +389,11 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
             continue
         members = [i for i in st.milestone_items(m["id"]) if status.get(i) != "dropped"]
         trig = str((m.get("props") or {}).get("trigger") or "")
+        gs = prepared(m.get("props") or {})
         milestones.append({"id": m["id"], "title": " ".join(str(m.get("title") or "").split())[:120],
                            "members": members, "done": sum(1 for i in members if status.get(i) == "done"),
-                           "durations": sorted({w.group(0).lower() for w in _DURATION_RE.finditer(trig)})})
+                           "durations": [] if gs else sorted({w.group(0).lower() for w in _DURATION_RE.finditer(trig)}),
+                           "gates": gs})
     reached = [{"id": m["id"], "reached": str((m.get("props") or {}).get("reached") or "")[:10]}
                for m in st.of_type("Milestone") if m.get("status") == "reached"]
     tests = cost.backtests(led, "active_s")
@@ -370,7 +406,6 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
             if t["ratio"] > 0:
                 by.setdefault(t["class"] or "", []).append(round(t["ratio"], 4))
         dst.update({k: sorted(v) for k, v in by.items() if len(v) >= CLASS_MIN})
-    fl = flow(store, today)
     starts = [d for d in (_day(fl.get("start")),) if d]
     starts += [_day(r.get("start")) for r in led.rows if r.get("served") and _day(r.get("start"))]
     cap = capacity(led.rows, min(starts) if starts else today, today)
@@ -381,7 +416,7 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
     model = {"project": p.name, "now": now.astimezone(timezone.utc).isoformat(timespec="minutes"),
              "items": items, "deferred": deferred, "milestones": milestones, "reached": reached,
              "ratios": ratios, "usd_ratios": usd_ratios, "history": len(pool), "capacity": cap,
-             "keep": keep_rate(work), "delays_h": delays, "flow": fl}
+             "keep": keep_rate(work), "delays_h": delays, "action_delays_h": act_delays, "flow": fl}
     model["inputs"] = {"store_commit": commit, "store_digest": _store_digest(store), "model_digest": _digest(model),
                        "settings_digest": _digest(settings())}
     return model
@@ -393,13 +428,16 @@ def gate_kind(why: str) -> str:
     return why.split(":", 1)[0]
 
 
-def _gate_text(status: str, props: dict) -> str:
-    """Why an item cannot be dated ('' when it can): blocked, an external blocker, another project's item."""
+def _gate_text(status: str, props: dict, resolver: gate_data.Resolver | None = None) -> str:
+    """Why an item cannot be dated ('' when it can): blocked, an external blocker, another project's item (none
+    once ``after_external`` resolves to a ``<project>:<id>`` that is done)."""
     if status == "blocked":
         return "blocked" + (f": {str(props['external_blocker'])[:80]}" if props.get("external_blocker") else "")
     if props.get("external_blocker"):
         return f"external blocker: {str(props['external_blocker'])[:80]}"
     if props.get("after_external"):
+        if resolver and resolver.status(props["after_external"]) == "done":
+            return ""
         return f"after another project: {str(props['after_external'])[:80]}"
     return ""
 
@@ -485,13 +523,23 @@ def _plan(model: dict) -> dict:
     for i in model["items"]:
         visit(i["id"])
     dated = [i for i in model["items"] if i["id"] not in why]
+    held = {m["id"]: _held(m, set(why) | deferred) for m in model["milestones"]}
 
     def key(i: dict) -> tuple:
         return (0 if i["status"] == "doing" else 1, PRIORITY_RANK.get(i["priority"], 4), 1 if i["proposed"] else 0,
                 i["order"] if i["order"] is not None else math.inf, -i["score"], i["id"])
 
     dated.sort(key=key)
-    return {"dated": dated, "undated": {i: why[i] for i in sorted(why)}}
+    return {"dated": dated, "undated": {i: why[i] for i in sorted(why)},
+            "milestones": {m: w for m, w in sorted(held.items()) if w}}
+
+
+def _held(m: dict, undated: set[str]) -> str:
+    """Why a milestone's own gates hold it undated ('' when they do not): a gate the forecast cannot date, or a
+    calendar counted from an item not dated."""
+    gs = m.get("gates") or []
+    return (next((g["undated"] for g in gs if g.get("undated")), "")
+            or next((f"after an item not dated: {g['after']}" for g in gs if g.get("after") in undated), ""))
 
 
 def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
@@ -511,11 +559,14 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
     lanes = [d["lanes"] for d in model["capacity"]["days"] if d["hours"] > 0] or [1]
     keep = model["keep"]["rate"]
     delays = model["delays_h"]
+    act_delays = model.get("action_delays_h") or delays   # no action done yet: the owner's answer delays
     members = {m["id"]: set(m["members"]) for m in model["milestones"]}
+    mgates = {m["id"]: m.get("gates") or [] for m in model["milestones"]
+              if m.get("gates") and m["id"] not in plan["milestones"]}
     groups = {"*": list(range(len(tasks))), "": [k for k, t in enumerate(tasks) if not t["milestone"]],
               **{m: [k for k, t in enumerate(tasks) if t["id"] in ids] for m, ids in members.items()}}
     out = {"finish": {t["id"]: [] for t in tasks}, "runs": 0, "plan": plan,
-           "work": {g: {"hours": [], "usd": []} for g in groups}}
+           "work": {g: {"hours": [], "usd": []} for g in groups}, "mgate": {m: [] for m in mgates}}
     if not tasks or not any(h > 0 for h in hist):
         return out
     for f in range(runs):
@@ -524,7 +575,9 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
         factor = {c: _quantile(r, u) for c, r in model["ratios"].items()}
         usd_factor = {c: _quantile(r, u) for c, r in model["usd_ratios"].items()}
         cal = _Calendar(random.Random(f"{seed}:{f}:capacity"), hist, rng.choice(lanes))
-        d, kept, release, dollars = [], [], [], []
+        grng = random.Random(f"{seed}:{f}:gates")   # its own stream: a gate added leaves the other draws as they were
+        d, kept, release, lag, dollars = [], [], [], [], []
+        waits: dict[int, list[tuple[int, float]]] = {}   # an item -> the items whose calendar counts from its end
         for k, t in enumerate(tasks):
             z = rng.gauss(0.0, 1.0)  # one draw for the item's time and cost: they go together
             x = math.exp(dur[k][0] + dur[k][1] * z) * factor.get(t["class"], factor.get("*", 1.0))
@@ -533,12 +586,32 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
             d.append(x)
             kept.append(not t["proposed"] or rng.random() < keep)
             gate = rng.choice(delays) / 24 if t["ddr"] and delays else 0.0
+            if t.get("action") and act_delays:
+                gate = max(gate, grng.choice(act_delays) / 24)
+            wait = 0.0
+            for g in t.get("gates") or ():
+                rel, lg = gate_data.draw(g, grng, delays)
+                if g.get("after") in idx:   # counted from that item's own end, not from the last dependency's
+                    waits.setdefault(idx[g["after"]], []).append((k, lg))
+                    lg = 0.0
+                gate, wait = max(gate, rel), max(wait, lg)
             release.append(cal.w(gate) if gate else 0.0)
+            lag.append(wait)
             dollars.append(math.exp(usd[k][0] + usd[k][1] * z) * usd_factor.get(t["class"], usd_factor.get("*", 1.0))
                            if usd[k] else 0.0)
-        done = _schedule(d, kept, release, deps, dependents, cal.lanes)
+        done = _schedule(d, kept, release, deps, dependents, cal.lanes, lag, cal, waits)
         for k, t in enumerate(tasks):
             out["finish"][t["id"]].append(round(cal.t(done[k]), 4) if kept[k] else None)
+        for m, gs in mgates.items():
+            rels, lags = [0.0], [0.0]
+            for g in gs:
+                rel, lg = gate_data.draw(g, grng, delays)
+                if g.get("after"):   # a calendar from an item's end: that item's finish in this future, plus the count
+                    fin = (out["finish"].get(g["after"]) or [None])[-1] if g["after"] in idx else None
+                    rel, lg = (fin or 0.0) + lg, 0.0
+                rels.append(rel)
+                lags.append(lg)
+            out["mgate"][m].append((max(rels), max(lags)))
         for g, ks in groups.items():
             out["work"][g]["hours"].append(sum(d[k] for k in ks if kept[k]))
             out["work"][g]["usd"].append(sum(dollars[k] for k in ks if kept[k]))
@@ -547,17 +620,37 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
 
 
 def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: list[list[int]],
-              dependents: list[list[int]], lanes: int) -> list[float]:
+              dependents: list[list[int]], lanes: int, lag: list[float] | None = None,
+              cal: _Calendar | None = None, waits: dict[int, list[tuple[int, float]]] | None = None) -> list[float]:
     """The event queue: each item's finish in a lane's work hours. The items are given in priority order, so an
-    item's index is its rank; an item left out is satisfied at once and holds no lane."""
+    item's index is its rank; an item left out is satisfied at once and holds no lane. ``lag``: calendar days an item
+    still waits once all its dependencies are done (a Go/NoGo's answer); ``waits``: an item -> (a later item, calendar
+    days it waits from that item's end: a calendar gate counted from it). Both turned into work hours by ``cal``."""
+    waits = waits or {}
     n = len(dur)
     left = [sum(1 for d in deps[k] if kept[d]) for k in range(n)]
     done = [0.0] * n
     ready: list[int] = []
     waiting: list[tuple[float, int]] = []
     running: list[tuple[float, int]] = []
+
+    def gate(k: int, at: float) -> float:
+        if lag and cal and lag[k]:
+            return max(release[k], cal.w(cal.t(at) + lag[k]))
+        return release[k]
+
+    release = list(release)
+
+    def ended(k: int, at: float) -> None:   # the calendars counted from k's end start at ``at``
+        for j, days in waits.get(k, ()):
+            release[j] = max(release[j], cal.w(cal.t(at) + days)) if cal else release[j]
+
+    for k in range(n):
+        if not kept[k]:
+            ended(k, 0.0)
     for k in range(n):
         if kept[k] and not left[k]:
+            release[k] = gate(k, 0.0)
             heapq.heappush(waiting, (release[k], k)) if release[k] > 0 else heapq.heappush(ready, k)
     now, free = 0.0, lanes
     while ready or waiting or running:
@@ -573,9 +666,11 @@ def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: li
             now, k = heapq.heappop(running)
             done[k] = now
             free += 1
+            ended(k, now)
             for j in dependents[k]:
                 left[j] -= 1
                 if kept[j] and not left[j]:
+                    release[j] = gate(j, now)
                     heapq.heappush(waiting, (release[j], j)) if release[j] > now else heapq.heappush(ready, j)
         else:
             now, k = heapq.heappop(waiting)
@@ -616,13 +711,20 @@ def _shown(q: dict | None) -> str:
     return "range" if q["p90"] <= HORIZON_DAYS else "partial" if q["p10"] <= HORIZON_DAYS else "beyond"
 
 
-def _group(ids: list[str], sim: dict) -> dict | None:
+def _group(ids: list[str], sim: dict, gate: list[tuple[float, float]] | None = None) -> dict | None:
     """A milestone's or the backlog's finish: its latest dated item's in each future, as quantiles (days from now);
-    a future that kept none of them finishes at once."""
+    a future that kept none of them finishes at once. ``gate``: the milestone's own gate in each future (released
+    on a day, a lag after its items), which it waits on too."""
     finish = [sim["finish"][i] for i in ids if i in sim["finish"]]
-    if not finish or not sim["runs"]:
+    if not sim["runs"] or not (finish or gate):
         return None
-    return quantiles([max((f[k] for f in finish if f[k] is not None), default=0.0) for k in range(sim["runs"])])
+    out = []
+    for k in range(sim["runs"]):
+        x = max((f[k] for f in finish if f[k] is not None), default=0.0)
+        if gate:
+            x = max(x + gate[k][1], gate[k][0])
+        out.append(x)
+    return quantiles(out)
 
 
 def _work(sim: dict, g: str) -> dict | None:
@@ -643,28 +745,34 @@ def summarize(model: dict, sim: dict, runs: int, seed: int, snapshots: list[dict
     for t in plan["dated"]:
         f = [x for x in sim["finish"][t["id"]] if x is not None]
         q = quantiles(f) if f else None
+        dates = _dates(now, q) if q else None
         items.append({"id": t["id"], "priority": t["priority"] + ("?" if t["proposed"] and t["priority"] else ""),
                       "milestone": t["milestone"], "status": t["status"], "basis": t["basis"],
                       "kept": round(len(f) / n_runs, 3) if n_runs else None, "days": q,
-                      "dates": _dates(now, q) if q else None, "ddr": t["ddr"]})
+                      "dates": dates, "ddr": t["ddr"], "action": t.get("action") or [],
+                      "gates": [g["label"] for g in t.get("gates") or [] if not g.get("passed")],
+                      "due": t.get("due") or "", "late": bool(t.get("due") and dates and dates["p80"] > t["due"])})
 
-    def block(ids: list[str]) -> dict:
+    def block(ids: list[str], gate: list | None = None, held: str = "") -> dict:
         """The range of ``ids``; when one of them cannot be dated, none (the gate holds the whole group) and the
         range of the dated part apart."""
-        q = _group(ids, sim)
+        q = _group(ids, sim, gate)
         out = {"days": q, "dates": _dates(now, q) if q else None, "shown": _shown(q)}
-        if any(i in plan["undated"] for i in ids):
+        if held or any(i in plan["undated"] for i in ids):
             return {"days": None, "dates": None, "shown": "undated", "part": out}
         return out
 
     milestones = []
     for m in model["milestones"]:
         open_ids = [i for i in m["members"] if i in by_id]
+        held = plan.get("milestones", {}).get(m["id"], "")
+        gate = (sim.get("mgate") or {}).get(m["id"])
         milestones.append({"id": m["id"], "title": m["title"], "items": len(m["members"]), "done": m["done"],
                            "open": len(open_ids), "dated": sum(1 for i in open_ids if i in sim["finish"]),
                            "undated": [i for i in open_ids if i in plan["undated"]],
                            "deferred": [i for i in m["members"] if i in deferred_ids], "durations": m["durations"],
-                           **block(open_ids), "work": _work(sim, m["id"])})
+                           "gates": [g["label"] for g in m.get("gates") or [] if not g.get("passed")],
+                           "held": held, **block(open_ids, gate, held), "work": _work(sim, m["id"])})
     loose = [i["id"] for i in model["items"] if not i["milestone"]]
     no_ms = {"open": len(loose), "dated": sum(1 for i in loose if i in sim["finish"]), **block(loose),
              "work": _work(sim, "")}
@@ -679,7 +787,11 @@ def summarize(model: dict, sim: dict, runs: int, seed: int, snapshots: list[dict
              "delays_h": quantiles(model["delays_h"]) if model["delays_h"] else None,
              "undated": [{"id": i, "why": w, "milestone": by_id[i]["milestone"]} for i, w in plan["undated"].items()],
              "durations": [{"milestone": m["id"], "words": m["durations"]} for m in model["milestones"]
-                           if m["durations"]]}
+                           if m["durations"]],
+             "action": sorted({d for t in plan["dated"] for d in t.get("action") or []}),
+             "action_items": sorted(t["id"] for t in plan["dated"] if t.get("action")),
+             "declared": _declared(model),
+             "late": [{"id": i["id"], "due": i["due"], "p80": i["dates"]["p80"]} for i in items if i["late"]]}
     defer = model["deferred"]
     deferred = {"items": len(defer), "ids": [i["id"] for i in defer],
                 "hours": round(sum((i["hours"] or {}).get("median") or 0 for i in defer)
@@ -704,6 +816,20 @@ def summarize(model: dict, sim: dict, runs: int, seed: int, snapshots: list[dict
             "flow": model["flow"], "gates": gates, "deferred": deferred, "quota": quota_pace(),
             "not_modelled": list(NOT_MODELLED), "backlog": back, "no_milestone": no_ms, "milestones": milestones,
             "items": items}
+
+
+def _declared(model: dict) -> list[dict]:
+    """The gates written on the nodes (props.gate), each with what it holds: [{gate, kind, state, items,
+    milestones}], state 'drawn', 'undated' or 'passed'."""
+    out: dict[str, dict] = {}
+    for kind, rows in (("items", model["items"]), ("milestones", model["milestones"])):
+        for n in rows:
+            for g in n.get("gates") or ():
+                e = out.setdefault(g["label"], {"gate": g["label"], "kind": g["kind"], "state": (
+                    "passed" if g.get("passed") else "undated" if g.get("undated") else "drawn"),
+                    "items": [], "milestones": []})
+                e[kind].append(n["id"])
+    return [out[k] for k in sorted(out)]
 
 
 def _median(xs: list[float] | None) -> float:
@@ -840,17 +966,20 @@ def backlog_line(res: dict) -> str:
 
 
 def _milestone_text(m: dict, undated: list[dict], cal: bool) -> str:
-    if not m["open"]:
+    if not m["open"] and not m.get("dates") and m["shown"] != "undated":
         text = f"no open item ({m['done']}/{m['items']} done): its trigger decides"
     elif m["shown"] == "undated":
-        text = f"not dated: {_kinds(m['undated'], undated)}" + (
+        why = ", ".join(x for x in (gate_kind(m["held"]) if m.get("held") else "", _kinds(m["undated"], undated)) if x)
+        text = f"not dated: {why}" + (
             f"; its dated part {span(m['part'], cal)}" if (m.get("part") or {}).get("dates") else "")
     else:
         text = span(m, cal)
     if m.get("deferred"):
         text += f"; {len(m['deferred'])} deferred item(s) out"
+    if m.get("gates"):
+        text += f"; gated: {', '.join(m['gates'])}"
     if m["durations"]:
-        text += f"; its trigger names {', '.join(m['durations'])} (not modelled)"
+        text += f"; its trigger names {', '.join(m['durations'])} with no gate (not modelled)"
     return text
 
 
@@ -858,7 +987,7 @@ def render(res: dict, show_items: bool = False) -> list[str]:
     cal = res["calibration"]["state"] == "calibrated"
     lines = [f"brain forecast {res['project']}: {res['as_of'].replace('T', ' ')[:16]} UTC, {res['runs']} futures, seed "
              f"{res['seed']} — {label(res).upper() if not cal else 'CALIBRATED'}",
-             f"  (s) measured, (d) derived, (e) estimated; dates p10–p90"
+             "  (s) measured, (d) derived, (e) estimated; dates p10–p90"
              + ("" if cal else ", the p50 alone once calibrated") + f"; beyond {HORIZON_DAYS // 7} weeks no date"]
     if not res["runs"]:
         why = ("no finished item with sessions to estimate from" if not res["scope"]["history"] else
@@ -910,9 +1039,17 @@ def render(res: dict, show_items: bool = False) -> list[str]:
     if g["undated"]:
         lines.append(f"  not dated      {len(g['undated'])} item(s): {_kinds([u['id'] for u in undated], undated)} "
                      "(--items lists them)")
+    if g.get("action"):
+        lines.append(f"  actions (s)    {len(g['action'])} pending action(s) only {config.name_of()} may do hold "
+                     f"{len(g['action_items'])} item(s), timed by the actions done")
+    for x in g.get("declared") or ():
+        held = ", ".join(f"{len(x[k])} {k[:-1]}(s)" for k in ("milestones", "items") if x[k])
+        lines.append(f"  gate           {x['gate']} ({x['state']}) holds {held}")
     if g["durations"]:
-        lines.append(f"  calendar       {len(g['durations'])} milestone trigger(s) name a duration, not modelled: "
-                     + ", ".join(f"{x['milestone']} ({', '.join(x['words'])})" for x in g["durations"]))
+        lines.append(f"  calendar       {len(g['durations'])} milestone trigger(s) name a duration with no gate, not "
+                     "modelled: " + ", ".join(f"{x['milestone']} ({', '.join(x['words'])})" for x in g["durations"]))
+    for x in g.get("late") or ():
+        lines.append(f"  ALERT          {x['id']}: its p80 {x['p80']} passes its due date {x['due']}")
     d = res["deferred"]
     lines.append(f"  deferred       {d['items']} item(s) in the icebox, out of every date"
                  + (f"; if everything thawed: {d['hours']:.0f} h, ${d['usd']:,.0f} (e)" if d["items"] else ""))
@@ -927,8 +1064,9 @@ def render(res: dict, show_items: bool = False) -> list[str]:
         for it in sorted(res["items"], key=lambda i: ((i["days"] or {}).get("p50", 0), i["id"])):
             dt = it["dates"]
             when = " · ".join(_md(dt[k]) for k in ("p10", "p50", "p80", "p90")) if dt else "-"
+            waits = [*it["ddr"], *(it.get("action") or []), *(it.get("gates") or [])]
             extra = (f" kept {it['kept']:.0%}" if it["kept"] is not None and it["kept"] < 1 else "") + (
-                f" after {', '.join(it['ddr'])}" if it["ddr"] else "")
+                f" after {', '.join(waits)}" if waits else "") + (f" due {it['due']}" if it.get("due") else "")
             lines.append(f"  {it['id']:<42} {it['priority'] or '-':<4} {when}{extra}")
         for u in res["gates"]["undated"]:
             lines.append(f"  {u['id']:<42} not dated: {u['why']}")

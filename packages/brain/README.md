@@ -414,11 +414,23 @@ it with `props.value` (high 5, medium 3, low 1 on that scale) and `props.value_r
 whose value the owner set, so that frequent overrides show the weights are wrong. The effort is the hours of the
 item's size (« Item sizes »), an unsized item counting as M. A quick win is a carried or startable item of size S
 whose value is high (the owner's, or a derived value of 4 or more); the wave's quick wins are named on a line of their
-own at its top, the rows keeping the rank's order. `brain forecast` derives an item's value the same way. `--explain` puts
+own at its top, the rows keeping the rank's order. A wave keeps about a fifth of its places for them (its quick-win
+slot, `brain.waves.QUICKWIN_SHARE`: one place at least): `brain next` and `brain wave plan` say the slot, the wave's
+items of size S and high value that fill it and, while a place is free, the startable quick wins outside the wave (in
+no wave or a later one; not twice across the current and the next wave) that would, each with the command that
+moves it there and leaves it in one wave (a link; for an item of a later wave its edge removed first; for a carried
+one its `carried_to`). A closed wave has no free place; the generated view leaves the slot out. `brain forecast` derives an item's value the same way. `--explain` puts
 each score's parts under its item: `score 12.5 = value 3.75 (base 1 + features 2 + unblocks 0.75) / 0.3 h (S)`. The
 cockpit's frontier takes the same order by default, sorts by score on demand, and its column chooser adds the size,
 the value and the score. Every number is a written setting of `brain.ranking` (`SCORE`, `VALUE`, `HIGH`), which
 `brain forecast` shares for its tie-breaks.
+
+What holds a node without being work is written as data, `props.gate` ([`docs/gates.md`](docs/gates.md)): a calendar
+count of days (from a date or an item's end, with a reset rule), a counter to reach (`ddr.answered`, `items.done`, or
+one's own pace), another project's item (`<project>:<id>`), a machine with its ready range, a Go/NoGo. `brain
+forecast` draws each one, and reads the owner's pending blocking DDRs and pending action DDRs as gates of the items
+they name; `brain check` warns on a trigger that names a duration with no gate, on an `after_external` that does not
+resolve and on a `due` date without its `due_source`; `brain queue` ends with what each gate holds.
 
 The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
 X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending
@@ -477,6 +489,13 @@ brain adr target [--needs] [--json]            # the one-way-door ADRs against t
 brain spec show REF [--section N | --toc] [--json]   # a Spec node, a Doc id (doc:<repo>:<path>::<key>) or a path
 brain journal last [N] [--titles] [--json]     # the last N dated entries (default 1; 0: all)
 ```
+
+An item closes with its evidence: `brain item close ID --pr "repo #N"` for a code item, `--evidence TEXT`
+(repeatable: a render id, a document's version, a DDR) for another kind. The definition of done comes in two layers
+(`wi-brain-done-by-typology`): a generic sentence for every item (documented, verified, linked, integrated, recorded),
+then the clauses of its typologies ([docs/typologies.md](docs/typologies.md)): its `props.typology`, else its
+project's `lifecycle.typologies` in `projects.yaml`. `brain item clauses ID [--json]` prints them; `--pr` is required
+for an item that takes a PR clause (the software pack's), and for a project that declares no typology, as before.
 
 `brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
 no wave whose free-text `props.wave` names that release. `brain spec show --section` takes a heading's number (`2.1`),
@@ -583,9 +602,11 @@ graph, whose layers are its own). `--template` does not take a base. The CI and 
 another language replaces their steps and keeps the jobs.
 
 The profiles' names and the stages `--stage` selects are typology and stage ids, as are the graph layers'
-`lifecycle` ids (`research_graph layers`): they follow one typology catalog still to come
-(`wi-brain-typology-catalog`), which maps the profiles to the layers' typologies and the standards' stages to the
-layers' (`explore`, `build`, ...). An id this engine does not know in a brain's `standards:` selection, written by a
+`lifecycle` ids (`research_graph layers`): they follow the typology catalog ([docs/typologies.md](docs/typologies.md),
+`brain typologies`), whose entries (`software`, `research`, `hardware-cad`, `creation`, `strategy`, `marketing`,
+`organisation`, `compliance`) each map to the Vision's modules; the profiles are sub-profiles of `software` (and
+`research` an entry), a sub-profile takes what its entry takes, and the standards' stages map to the layers'
+(`prototype` → `explore`, `mvp` → `build`, `v1` → `launch`, `scale` → `grow`). An id this engine does not know in a brain's `standards:` selection, written by a
 template of a later catalog, is tolerated: a note in read mode, an error only in strict mode (CI) (`--stage` itself
 takes this engine's stages).
 
@@ -1072,6 +1093,14 @@ older meaning, a level's start): REF is an id, a path of ids (`pro/acme`), `glob
 stay. Without `scopes.yaml` and `parent:`, every project sits under Global and nothing changes. An older engine
 reads `parent:` and `scope_types` as unknown keys (a note; refused in strict mode, CI) and refuses `parent:` on a
 read-only entry or a mount: add them once every machine and the brain repo's CI run the release that knows them.
+
+A container's `lifecycle.typologies` (spec-brain-product-lifecycle LC-1; the rest of the key waits on
+`wi-brain-lifecycle-stage`) names ids of the typology catalog: `brain typologies [--lang fr] [--json]` lists its
+entries (each with its column to the Vision's modules, J1 to K4) and their sub-profiles, the lifecycle's stages and the
+standards' stages mapped to them; `brain typologies show ID [--stage S]` shows one id and the graph layers a project of
+that kind is proposed at a stage. `config.json` `typologies` renames labels (`{"software": {"fr": "Produit
+logiciel"}}`) and adds a brain's own ids (`{"podcast": {"en": "Podcast", "parent": "creation"}}`); an id the catalog
+does not know is a note in read mode, an error in strict mode (CI) ([docs/typologies.md](docs/typologies.md)).
 
 **The deny list from the tree.** With `config.json` `public.deny_from_tree: true`, `public.deny.repos` gains, after the
 hand list, the name of every project whose class floor along its chain is `private` or stricter (a container's

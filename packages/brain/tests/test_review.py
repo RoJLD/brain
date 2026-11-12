@@ -26,7 +26,8 @@ def test_prep_writes_the_packet_with_the_lenses_the_surfaces_call_for(pr, brain_
     folder = review.folder_for(head)
     assert p.folder == str(folder) and p.head == head
     assert sorted(p.files) == ["README.md", "docs/guards.md", "src/brain/guards.py", "tests/test_guards.py"]
-    assert p.lenses == ["correctness", "security", "tests", "docs"]   # no schema, installer or procedure touched
+    # no schema, installer or procedure touched
+    assert p.lenses == ["correctness", "scope", "security", "tests", "docs"]
     assert (folder / "files" / "src" / "brain" / "guards.py").read_text(encoding="utf-8") == "x = 2\n"
     assert not (folder / "files" / "README.md").exists()   # deleted at the head
     assert "+x = 2" in (folder / "diff.patch").read_text(encoding="utf-8")
@@ -47,9 +48,21 @@ def test_a_packet_prepared_again_keeps_no_file_of_an_older_diff(pr, brain_home, 
 
 def test_a_schema_or_an_installer_calls_their_lenses():
     assert review.lenses_for(["packages/brain/src/brain/schemas/x.json", "packages/brain/installer/install.ps1"]) == [
-        "correctness", "compatibility", "install and upgrade"]
+        "correctness", "scope", "compatibility", "install and upgrade"]
     assert review.lenses_for(["packages/brain/src/brain/procedures/close-item/SKILL.md"]) == [
-        "correctness", "procedure", "docs"]
+        "correctness", "scope", "procedure", "docs"]
+
+
+def test_the_scope_lens_is_always_asked_and_the_skeptics_carry_the_evidence_rule(pr, brain_home):
+    """wi-brain-review-scope-lens (TR-3): scope on every diff, even one file of no named surface; the packet's README
+    says the scope lens's ask and that a negative claim stands only with its query and that query's coverage."""
+    assert review.lenses_for(["a/b.txt"]) == ["correctness", "scope"]
+    repo, base, head = pr
+    review.prep(repo, f"{base}..{head}", scout=False)
+    readme = (review.folder_for(head) / "README.md").read_text(encoding="utf-8")
+    assert "- **scope**: a changed line the item does not need" in readme and "follow-up item" in readme
+    assert "a negative claim (nothing calls it, untested, no other reader" in readme
+    assert "the query that shows it and that query's coverage" in readme
 
 
 def test_stamp_then_check_by_the_heads_full_sha_and_a_new_head_is_not_reviewed(pr, brain_home, tmp_path, capsys):
