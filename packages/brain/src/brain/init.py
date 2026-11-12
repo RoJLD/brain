@@ -226,38 +226,65 @@ def _base(spec: str, data: dict, chain: tuple[str, ...]) -> Template | None:
     return load_template(ext, chain + (ext,))
 
 
-def _takes(spec: str, data: dict, chain: tuple[str, ...], extended: tuple[str, ...]) -> dict[str, list]:
+def _path_list(name, rels) -> bool:
+    return isinstance(name, str) and isinstance(rels, list) and bool(rels) and all(isinstance(x, str) for x in rels)
+
+
+def _take(where: str, name: str, rels: list[str], skip: tuple[str, ...]) -> tuple[dict, list]:
+    """What ``takes`` gets from the engine template ``name``: ({rel: (folder, source)}, [(rel, folder, source)]), each
+    path from that template's own ``files`` or ``append``. ``skip``: the template itself and those it extends."""
+    if not (BASE_RE.fullmatch(name) and (TEMPLATES / name / MANIFEST).is_file()):
+        raise InitError(f"{where} {name!r}: one of the engine's templates "
+                        f"({', '.join(sorted(d.name for d in TEMPLATES.iterdir() if (d / MANIFEST).is_file()))})")
+    if name in skip:
+        raise InitError(f"{where} {name!r}: the template itself or one it extends (it has all of it already)")
+    folder, other = _manifest(name)
+    _head(name, other)
+    files, appends = _paths(name, folder, other, "files"), _paths(name, folder, other, "append")
+    stray = [rel for rel in rels if rel not in files and rel not in appends]
+    if stray:
+        raise InitError(f"{where} {name}: {stray[0]!r}: not a path {name} itself writes or appends to (its own: "
+                        f"{', '.join(sorted(set(files) | set(appends)))})")
+    return ({rel: (folder, files[rel]) for rel in rels if rel in files},
+            [(rel, folder, appends[rel]) for rel in rels if rel in appends])
+
+
+def _takes(spec: str, declared, skip: tuple[str, ...]) -> tuple[dict, list]:
     """``takes``: {one of the engine's templates: [the brain's paths]}, each path's file and append from that
     template's own manifest (never its chain, its graphs or its classes: what it extends comes by ``extends``), so a
-    template uses parts of a base without inheriting all of it. -> {"files": {rel: (folder, source)}, "append":
-    [(rel, folder, source)]}, in the order given."""
-    declared = data.get("takes")
-    out: dict[str, list] = {"files": {}, "append": []}
+    template uses parts of a base without inheriting all of it. -> ({rel: (folder, source)}, [(rel, folder, source)]),
+    in the order given."""
+    files: dict = {}
+    appends: list = []
     if declared is None:
-        return out
+        return files, appends
     where = f"--template {spec}: {MANIFEST}: takes"
-    if not isinstance(declared, dict) or not all(
-            isinstance(k, str) and isinstance(v, list) and v and all(isinstance(x, str) for x in v)
-            for k, v in declared.items()):
+    if not (isinstance(declared, dict) and all(_path_list(k, v) for k, v in declared.items())):
         raise InitError(f"{where} maps one of the engine's templates to the brain's paths taken from it")
     for name, rels in declared.items():
-        if not (BASE_RE.fullmatch(name) and (TEMPLATES / name / MANIFEST).is_file()):
-            raise InitError(f"{where} {name!r}: one of the engine's templates "
-                            f"({', '.join(sorted(d.name for d in TEMPLATES.iterdir() if (d / MANIFEST).is_file()))})")
-        if name in chain or name in extended:
-            raise InitError(f"{where} {name!r}: the template itself or one it extends (it has all of it already)")
-        folder, other = _manifest(name)
-        _head(name, other)
-        files, appends = _paths(name, folder, other, "files"), _paths(name, folder, other, "append")
-        for rel in rels:
-            if rel not in files and rel not in appends:
-                raise InitError(f"{where} {name}: {rel!r}: not a path {name} itself writes or appends to (its own: "
-                                f"{', '.join(sorted(set(files) | set(appends)))})")
-            if rel in files:
-                out["files"][rel] = (folder, files[rel])
-            if rel in appends:
-                out["append"].append((rel, folder, appends[rel]))
-    return out
+        got, more = _take(where, name, rels, skip)
+        files.update(got)
+        appends += more
+    return files, appends
+
+
+def _layered(spec: str, data: dict, folder, base: Template | None, skip: tuple[str, ...]) -> tuple[dict, ...]:
+    """(files, origin, appends, takes): the base's, then what the template takes, then its own (its own files win;
+    its own appends come last)."""
+    base = base or Template("", 1, "", None)
+    taken, taken_appends = _takes(spec, data.get("takes"), skip)
+    own = _paths(spec, folder, data, "files")
+    fs = {**base.files, **{rel: s for rel, (_, s) in taken.items()}, **own}
+    origin = {**base.origin, **{rel: f for rel, (f, _) in taken.items()}, **{rel: folder for rel in own}}
+    appends = {rel: list(v) for rel, v in base.appends.items()}
+    for rel, there, source in taken_appends + [(r, folder, s) for r, s in _paths(spec, folder, data, "append").items()]:
+        if rel not in fs:
+            raise InitError(f"--template {spec}: {MANIFEST}: append {rel}: not a file the template writes")
+        appends.setdefault(rel, []).append((there, source))
+    takes = dict(base.takes)
+    for name, rels in (data.get("takes") or {}).items():
+        takes[name] = tuple(dict.fromkeys(takes.get(name, ()) + tuple(rels)))
+    return fs, origin, appends, takes
 
 
 def load_template(spec: str = DEFAULT_TEMPLATE, _chain: tuple[str, ...] = ()) -> Template:
@@ -276,24 +303,7 @@ def load_template(spec: str = DEFAULT_TEMPLATE, _chain: tuple[str, ...] = ()) ->
     if base is None and not isinstance(data.get("files"), dict):
         raise InitError(f"--template {spec}: {MANIFEST}: files maps the brain's path to the template's file")
     extended = ((data["extends"],) + base.extends) if base else ()
-    taken = _takes(spec, data, _chain or (spec,), extended)
-    own = _paths(spec, folder, data, "files")
-    fs = {**(base.files if base else {}), **{rel: s for rel, (_, s) in taken["files"].items()}, **own}
-    origin = {**(base.origin if base else {}), **{rel: f for rel, (f, _) in taken["files"].items()},
-              **{rel: folder for rel in own}}
-    appends = {rel: list(v) for rel, v in (base.appends if base else {}).items()}
-    for rel, there, source in taken["append"]:
-        if rel not in fs:
-            raise InitError(f"--template {spec}: {MANIFEST}: takes {rel}: an append to a file the template does not "
-                            "write")
-        appends.setdefault(rel, []).append((there, source))
-    takes = {k: tuple(v) for k, v in (base.takes if base else {}).items()}
-    for name, rels in (data.get("takes") or {}).items():
-        takes[name] = tuple(dict.fromkeys(takes.get(name, ()) + tuple(rels)))
-    for rel, source in _paths(spec, folder, data, "append").items():
-        if rel not in fs:
-            raise InitError(f"--template {spec}: {MANIFEST}: append {rel}: not a file the template writes")
-        appends.setdefault(rel, []).append((folder, source))
+    fs, origin, appends, takes = _layered(spec, data, folder, base, (_chain or (spec,)) + extended)
     missing = [r for r in REQUIRED if r not in fs]
     if missing:
         raise InitError(f"--template {spec}: {MANIFEST}: files misses what config.json names: {', '.join(missing)}")
