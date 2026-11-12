@@ -368,12 +368,17 @@ def set_item(store: Path, nid: str, assignments: list[str]) -> dict:
 
 
 def close_item(store: Path, nid: str, pr: str, outcome: str = "", today: str | None = None,
-               status: str = "done") -> dict:
+               status: str = "done", evidence: list[str] | None = None) -> dict:
+    """Close a node: its status, ``props.pr`` (a PR) and ``props.evidence`` (what else proves it: a render id, a
+    document's version, a DDR...; wi-brain-done-by-typology), the date and outcome under ``props.done``."""
     def change(node: dict) -> None:
         node["status"] = status
         props = node.setdefault("props", {})
         if pr:
             props["pr"] = pr
+        proofs = [e.strip() for e in evidence or [] if e.strip()]
+        if proofs:
+            props["evidence"] = "; ".join(proofs)
         props["done" if status == "done" else status] = f"{today or date.today().isoformat()} {outcome}".strip()
     return _edit(store, nid, change)
 

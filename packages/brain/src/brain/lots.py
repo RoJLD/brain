@@ -23,6 +23,10 @@ full suite of each running locally; ``--at-once N``). The plan also says what th
 memory guard's two measures (brain.governor) and the last quota forecast's advice (brain.quota's ``quota.json``,
 read through its reader: this module never opens the quota readings itself). It prints and refuses nothing; ``brain
 next`` shows the current wave's plan in short.
+
+**The quick-win slot.** The plan's head says the wave's quick-win slot (brain.waves.quickwin_slot,
+wi-brain-wave-quickwin-slot): about a fifth of its places kept for items of size S with a high value, what fills it
+and, while a place is free, the startable quick wins outside the wave that would.
 """
 
 from __future__ import annotations
@@ -75,9 +79,10 @@ class WavePlan:
     conflicts: list[dict]
     hot: dict[str, list[str]]
     caps: dict
+    slot: dict = field(default_factory=dict)   # the wave's quick-win slot (brain.waves.quickwin_slot)
 
     def as_dict(self) -> dict:
-        return {"wave": self.wave, "id": self.wid, "caps": self.caps,
+        return {"wave": self.wave, "id": self.wid, "caps": self.caps, "slot": self.slot,
                 "rounds": [[asdict(self.lots[n - 1]) for n in r] for r in self.rounds],
                 "conflicts": self.conflicts, "hot": self.hot,
                 "unknown": sorted(u.id for u in self.units.values() if not u.known),
@@ -332,7 +337,7 @@ def plan(store: Path, root: Path | None, wave: str = "", project: str = "", at_o
         for lot in group:
             lot.round = r
     return WavePlan(pl.label(wid), wid, units, numbered, [[lot.n for lot in g] for g in rounds], conflicts,
-                    _hot_shared(units, numbered), caps)
+                    _hot_shared(units, numbered), caps, waves.quickwin_slot(pl, wid))
 
 
 def _wave_id(pl: waves.Plan, wave: str, store: Path) -> str:
@@ -394,6 +399,9 @@ def render(wp: WavePlan) -> list[str]:
              f"Now: memory guard {c['memory']}; quota: {c['quota_advice']}"
              + ("; the sessions cap leaves no session beside the master's" if not c["sessions_left"] else "")
              + ("; no lot can start now" if not c["now"] else "")]
+    line = waves.slot_line(wp.slot, wp.wid)
+    if line:
+        lines.append(line[:1].upper() + line[1:])
     for r, group in enumerate(wp.rounds, 1):
         lines.append(f"Round {r} ({len(group)} lot(s)):")
         for n in group:

@@ -40,11 +40,13 @@ from pathlib import Path
 
 import yaml
 
-from . import graph, schema
+from . import graph, schema, typologies
 
 KIND = "standards"   # its schema: schemas/standards.schema.json (brain.schema)
 ENGINE_DIR = Path(__file__).with_name("catalogs")
 # The vocabularies. A value outside them is a note in read mode (a newer engine's), an error in strict mode (CI).
+# PROFILES are sub-profiles or entries of the typology catalog (brain.typologies): a profile is any id of the engine's
+# catalog (:func:`profiles`), and a project of a sub-profile meets a row named for its entry (cli meets software).
 PROFILES = {
     "any": "every kind of project",
     "library": "a library other code imports",
@@ -142,6 +144,29 @@ def _strings(value) -> list[str]:
     return [str(v) for v in value if isinstance(v, str) and v] if isinstance(value, list) else []
 
 
+def _catalog() -> typologies.Catalog | None:
+    """The engine's typology catalog; None when its file cannot be read (a broken install: brain doctor), so the
+    standards read as before it."""
+    try:
+        return typologies.engine()
+    except typologies.CatalogError:
+        return None
+
+
+def profiles() -> list[str]:
+    """The profiles a row or a selection may name: :data:`PROFILES`, then every other id of the engine's typology
+    catalog (brain.typologies)."""
+    cat = _catalog()
+    return list(PROFILES) + [t for t in (cat.typologies if cat else {}) if t not in PROFILES]
+
+
+def kinds(profile: str) -> list[str]:
+    """What a project of ``profile`` is: the profile and, for a sub-profile of the typology catalog, its entry (a
+    ``cli`` project meets the rows of ``software``)."""
+    cat = _catalog()
+    return cat.kinds(profile) if cat else [profile]
+
+
 def _vocab(where: str, what: str, value: str, known, strict: bool | None, notes: list[str]) -> list[str]:
     if value in known:
         return []
@@ -153,8 +178,9 @@ def row_errors(where: str, row: dict, strict: bool | None = None, notes: list[st
     engine does not know (a note in read mode: a newer engine's value; an error in strict mode)."""
     notes = notes if notes is not None else []
     errors = []
+    known = profiles()
     for p in _strings(row.get("profiles")):
-        errors += _vocab(where, "profile", p, PROFILES, strict, notes)
+        errors += _vocab(where, "profile", p, known, strict, notes)
     if isinstance(row.get("stage"), str):
         errors += _vocab(where, "stage", row["stage"], STAGES, strict, notes)
     if isinstance(row.get("enforcement"), str):
@@ -322,8 +348,9 @@ def _names(value) -> bool:
 
 def _profile_stage_errors(where: str, value: dict, strict: bool | None, notes: list[str] | None) -> list[str]:
     errors = []
+    known = profiles()
     for p in _strings(value.get("profiles")):
-        errors += _vocab(where, "profile", p, PROFILES, strict, notes)
+        errors += _vocab(where, "profile", p, known, strict, notes)
     stage = value.get("stage")
     if "stage" in value and not isinstance(stage, str):
         errors.append(f"{where}: stage is one of {', '.join(STAGES)}")
@@ -349,7 +376,7 @@ def applicable(rows: list[Row], sel: Selection | None) -> list[tuple[Row, str]]:
     if sel is None:
         return []
     at = STAGES.index(sel.stage) if sel.stage in STAGES else -1
-    mine = set(sel.profiles)
+    mine = {k for p in sel.profiles for k in kinds(p)}   # a sub-profile meets its entry's rows (cli: software)
     out = []
     for row in rows:
         if row.id in sel.exclude:
