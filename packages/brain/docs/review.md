@@ -31,10 +31,12 @@ project that declares `standards:` (projects.yaml) also gets a **standards** len
 
 The README's « Invariants and failure modes to test » is the section `brain brief` writes for the item's session
 (`wi-brain-brief-failure-modes`, `brain.failuremodes`): the author's tests and the review read one list. Without
-`--item` it comes from the diff alone: its files' paths, and its removed lines for a test removed or a check moved.
-With `--item ID` (the item of the repo's registered project), the item's predicted surface, title, props and own
-`props.invariants` join it. Each lens checks that the PR's tests hold the lines that concern it; a line no test
-holds is a finding.
+`--item` it comes from the diff alone: its files' paths (a test or a doc is not the module it names) and the tests it
+removes for good (a `def test...` removed and not added back under its name). With `--item ID` (the item of the
+repo's registered project), the item's predicted surface, title, props and own `props.invariants` join it. The
+public engine's line is there when the reviewed repo is in config.json `public.repos`, with or without `--item`.
+`--json` carries the section as `failure_modes`, and the item as `item`. Each lens checks that the PR's tests hold
+the lines that concern it; a line no test holds is a finding.
 
 ## 2. The agents, then the skeptics
 

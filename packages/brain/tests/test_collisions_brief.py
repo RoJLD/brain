@@ -250,7 +250,15 @@ def test_brief_writes_the_failure_modes_of_the_items_surfaces_then_its_own(proje
     cfg.write_text('{"v": 1, "identity": {"owner": "Ada"}, "rules": ["rules.md"], "public": {"repos": ["ada/eng"]}}',
                    encoding="utf-8")
     monkeypatch.setattr(public, "remote_of", lambda repo, c, name="": ("origin", "ada/eng"))
-    assert "- **the public engine**: no private id" in brief.render(brief.build(project, "wi-f"))
+    # wi-f names no CodeRef: no repo, no public line (the review of the repo gives it)
+    assert "the public engine" not in brief.render(brief.build(project, "wi-f"))
+    edges = project.root / "notes" / "graph" / "edges" / "extra.yaml"
+    edges.write_text("- {from: wi-f, to: feat-a, type: delivers}\n", encoding="utf-8")
+    assert "- **the public engine**: no private id" in brief.render(brief.build(project, "wi-f"))   # code:main:...
+    cfg_ = config.load(project.root)
+    # a CodeRef's token is the repo's folder or its name, case ignored; another repo's token is not this one
+    assert brief.touches_public(project, cfg_, {"MAIN"}) and not brief.touches_public(project, cfg_, {"other"})
+    assert not brief.touches_public(project, cfg_, set())
     # nothing matched: the line that says so
     monkeypatch.setattr(public, "remote_of", lambda repo, c, name="": ("origin", "ada/other"))
     assert brief.build(project, "wi-d").failure_modes == [
@@ -259,5 +267,6 @@ def test_brief_writes_the_failure_modes_of_the_items_surfaces_then_its_own(proje
     # brain review prep --item: the diff's files and a removed test join the item's
     st, node, _ = brief._find(project, "wi-d")
     lines = brief.failure_modes(project, st, node, config.load(project.root), ["src/brain/guards.py"],
-                                ["-def test_old(): pass"])
-    assert [x.split("**")[1] for x in lines] == ["a guard or a gate", "a test removed or a check moved"]
+                                ["-def test_old(): pass"], public=True)
+    assert [x.split("**")[1] for x in lines] == ["a guard or a gate", "a test removed or a check moved",
+                                                 "the public engine"]   # the reviewed repo is public

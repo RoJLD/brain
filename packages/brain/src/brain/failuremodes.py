@@ -54,7 +54,7 @@ SURFACES = (
     Surface("external", "an external system (a service, an API, a tool on the PATH)",
             "the system down, slow (a timeout that ends) and answering garbage; its real payload copied as a "
             "fixture, never one the code under test made",
-            (r"(^|/)adapters/", r"mcp", *_py("net", "codeindex", "notify", "probe")),
+            (r"(^|/)adapters/", r"(^|/)mcp\w*(\.py$|/)", *_py("net", "codeindex", "notify", "probe")),
             (r"\bAPI\b", r"\bHTTPS?\b", r"\bgh (pr|api|run)\b", r"\bGitHub\b", r"\bnetwork\b", r"\bMCP\b",
              r"\bGitNexus\b", r"\bwebhook\b", r"\bexternal\b")),
     Surface("multiwrite", "a write in several steps",
@@ -89,12 +89,12 @@ SURFACES = (
             "each assertion the old test or check made, and its new home (a test that still fails when the "
             "behaviour breaks)",
             (),
-            (r"^-\s*def test\w*\(",r"^-\s*assert\b", r"\bsupersed", r"\bmoves? (the|a) (check|test)",
-             r"\bremoves? (the|a) (check|test)"), on_diff=True),
+            (r"^-def test\w*\(", r"\bsupersed", r"\bmoves? (the|a) (check|test)", r"\bremoves? (the|a) (check|test)"),
+            on_diff=True),
     Surface("escaped", "text written into another format",
             "an escaping helper per target (Markdown, YAML, JSON, XML or HTML, a shell, CSV), tested with a newline, "
             "quotes, %, $ and XML entities",
-            (r"(^|/)templates/", r"export", *_py("render", "views", "digest", "readme")),
+            (r"(^|/)templates/", r"(^|/)export\w*(\.py$|/)", *_py("render", "views", "digest", "readme")),
             (r"\brender", r"\bescap", r"\bexport", r"\bXML\b", r"\bHTML\b", r"\bCSV\b")),
 )
 PUBLIC = ("public", "the public engine",
@@ -113,18 +113,42 @@ def _hit(patterns: tuple[str, ...], texts: list[str], flags: int = 0) -> str:
     return ""
 
 
+TEST_DEF = re.compile(r"^([+-])\s*def (test\w*)\(")
+
+
+def removed_tests(diff: list[str]) -> list[str]:
+    """The tests a diff removes for good, as ``-def NAME(`` lines: a test whose ``def`` line is removed and not added
+    back under its name (an edited signature or body is not a removal)."""
+    gone, back = [], set()
+    for line in diff:
+        m = TEST_DEF.match(line)
+        if m and m.group(1) == "-":
+            gone.append(m.group(2))
+        elif m:
+            back.add(m.group(2))
+    return [f"-def {n}(" for n in dict.fromkeys(gone) if n not in back]
+
+
+def _source(path: str) -> bool:
+    """Whether a path's surface counts: a test or a doc is not the module it names (the format fixtures are a
+    store's)."""
+    return not {"tests", "docs"} & set(path.split("/")[:-1]) or "/fixtures/formats/" in f"/{path}"
+
+
 def match(files: list[str] | None = None, texts: list[str] | None = None,
           diff: list[str] | None = None) -> list[tuple[Surface, str]]:
-    """The surfaces ``files`` (paths), ``texts`` (an item's title and props) and ``diff`` (a diff's changed lines,
-    read only by the surfaces marked ``on_diff``: code mentions a store or a guard everywhere) touch, in the table's
-    order, each with what matched it (a path, or the matching words)."""
-    files = [f.replace("\\", "/") for f in files or []]
+    """The surfaces ``files`` (paths, the tests and docs left out), ``texts`` (an item's title and props) and ``diff``
+    (a diff's changed lines, read only by the surfaces marked ``on_diff``, as the tests it removes for good: code
+    mentions a store or a guard everywhere) touch, in the table's order, each with what matched it (a path, or the
+    matching words)."""
+    files = [f for f in (f.replace("\\", "/") for f in files or []) if _source(f)]
     texts = [t for t in texts or [] if t]
+    gone = removed_tests(list(diff or []))
     out = []
     for s in SURFACES:
         why = next((f for f in files if any(re.search(p, f) for p in s.paths)), "")
         if not why:
-            why = _hit(s.words, texts + (list(diff or []) if s.on_diff else []), re.I)
+            why = _hit(s.words, texts + (gone if s.on_diff else []), re.I)
             why = f"« {why} »" if why else ""
         if why:
             out.append((s, why))

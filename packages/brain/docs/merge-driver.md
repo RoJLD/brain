@@ -197,8 +197,9 @@ writes the brief a coordinator hands to a sub-session, so that it edits only wha
   heuristic or a metric (a replay on the real data); a guard or a gate (every sibling path through it); a counted or
   guarded set (its scope: per store, per project, per tenant); a test removed or a check moved (each assertion and
   its new home); text written into another format (an escaping helper per target, tested with a newline, quotes,
-  `%`, `$` and XML entities). The public engine gets its line when a repo the item touches is in config.json
-  `public.repos`; the item's own `props.invariants` (a line or a list) come last. `brain review prep --item` gives
+  `%`, `$` and XML entities). The public engine gets its line when a CodeRef of the item names a repo (its folder
+  or its name) in config.json `public.repos` (an item with no CodeRef gets it from the review of its repo); the
+  item's own `props.invariants` (a line or a list) come last. `brain review prep --item` gives
   the review's agents the same section;
 - a « To decide » section the coordinator fills in;
 - « After the merge », the close-item procedure's step 5 (wi-brain-archive-after-merge): the session that merges its

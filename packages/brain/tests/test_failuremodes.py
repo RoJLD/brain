@@ -30,7 +30,8 @@ def test_a_diffs_lines_call_only_the_moved_test_surface():
     """Code names stores and guards everywhere: a diff's changed lines are read for a removed test only."""
     assert fm.match([], [], ["+    store = guard(schema)", "+    # the API"]) == []
     found = fm.match([], [], ["-def test_the_old_behaviour():", "+x = 1"])
-    assert keys(found) == ["moved"] and dict((s.key, w) for s, w in found)["moved"] == "« def test_the_old_behaviour( »"
+    assert keys(found) == ["moved"]
+    assert dict((s.key, w) for s, w in found)["moved"] == "« def test_the_old_behaviour( »"
 
 
 def test_changed_lines_keep_their_sign_and_leave_the_headers():
@@ -59,3 +60,18 @@ def test_every_surface_says_what_to_test_and_has_a_way_to_match():
     assert len({s.key for s in fm.SURFACES}) == len(fm.SURFACES)
     for s in fm.SURFACES:
         assert s.name and s.test and (s.paths or s.words)
+
+
+def test_an_edited_test_is_not_a_removed_one():
+    """A changed signature or assertion shows as - then +: only a test whose def is gone for good is a removal."""
+    assert fm.match([], [], ["-def test_a(x):", "+def test_a(x, y):", "-    assert x == 1", "+    assert x == 2"]) == []
+    assert fm.removed_tests(["-def test_a():", "-def test_b():", "+def test_b(y):", "-def test_a():"]) == [
+        "-def test_a("]
+
+
+def test_tests_and_docs_do_not_call_the_surface_of_what_they_name():
+    assert fm.match(["packages/brain/tests/test_mcp_x.py", "docs/export-notes.md", "tests/commands/test_a.py",
+                     "packages/brain/docs/hooks/guard.md"]) == []
+    assert keys(fm.match(["packages/brain/tests/fixtures/formats/ar-v1.json"])) == ["store"]   # a format's fixture
+    assert keys(fm.match(["packages/brain/src/brain/mcpserver.py", "src/research_graph/export_gitnexus.py"])) == [
+        "external", "escaped"]

@@ -100,6 +100,38 @@ def test_the_packet_carries_the_failure_modes_of_the_diff_and_of_the_item(pr, br
         encoding="utf-8")
 
 
+def test_prep_item_through_the_cli_hands_the_items_section_and_the_repos_public_line(pr, brain_home, monkeypatch,
+                                                                                      capsys):
+    """brain review prep --item: the item found in the repo's project, brain.brief.failure_modes given the diff's files
+    and changed lines and whether the reviewed repo is public; an unknown item (or an unreadable store) exits 1."""
+    from types import SimpleNamespace
+
+    from brain import brief, public, standards
+    repo, base, head = pr
+    monkeypatch.setattr(standards, "project_of_repo", lambda r: SimpleNamespace(root=repo, name="demo"))
+    monkeypatch.setattr(standards, "lenses", lambda p: [])
+    monkeypatch.setattr(public, "is_public", lambda slug, cfg: True)
+    got = {}
+
+    def find(proj, nid):
+        if nid != "wi-x":
+            raise brief.BriefError(f"{nid}: no such node in demo's stores")
+        return "st", {"id": nid}, None
+
+    def modes(proj, st, node, cfg, files, changed, public=False):
+        got.update(node=node["id"], files=files, public=public)
+        return ["- **the item's own** (props.invariants): x"]
+
+    monkeypatch.setattr(brief, "_find", find)
+    monkeypatch.setattr(brief, "failure_modes", modes)
+    assert cli.main(["review", "prep", f"{base}..{head}", "--item", "wi-x", "--repo", str(repo), "--no-scout"]) == 0
+    assert got["node"] == "wi-x" and got["public"] is True and "src/brain/guards.py" in got["files"]
+    readme = (review.folder_for(head) / "README.md").read_text(encoding="utf-8")
+    assert "## Invariants and failure modes to test (wi-x)" in readme and "props.invariants): x" in readme
+    assert cli.main(["review", "prep", f"{base}..{head}", "--item", "wi-nope", "--repo", str(repo), "--no-scout"]) == 1
+    assert "--item wi-nope: wi-nope: no such node" in capsys.readouterr().err
+
+
 def test_prep_item_in_a_repo_of_no_project_is_refused(pr, brain_home, monkeypatch, capsys):
     from brain import standards
     repo, base, head = pr

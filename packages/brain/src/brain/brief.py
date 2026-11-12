@@ -266,27 +266,31 @@ def _start(p: projects.Project, node: dict) -> list[str]:
 
 
 def touches_public(p: projects.Project, cfg: config.Config, repos: set[str]) -> bool:
-    """Whether a repo of ``p`` named in ``repos`` (all of them when empty) is public (config.json ``public.repos``)."""
+    """Whether a repo of ``p`` that ``repos`` names (a CodeRef's token: the repo's folder or its name, case ignored)
+    is public (config.json ``public.repos``). No repo named, no answer: False (the review of the repo says it)."""
     from . import public
-    if not public.public_repos(cfg):
+    want = {r.lower() for r in repos if r}
+    if not want or not public.public_repos(cfg):
         return False
     for name, path, _ in tidy._repos(p):
-        if (not repos or name in repos) and public.is_public(public.remote_of(path, cfg)[1], cfg):
+        if {name.lower(), path.name.lower()} & want and public.is_public(public.remote_of(path, cfg)[1], cfg):
             return True
     return False
 
 
 def failure_modes(p: projects.Project, st: resume.Store, node: dict, cfg: config.Config,
-                  extra_files: list[str] | None = None, diff: list[str] | None = None) -> list[str]:
+                  extra_files: list[str] | None = None, diff: list[str] | None = None,
+                  public: bool = False) -> list[str]:
     """The section « Invariants and failure modes to test » of item ``node`` (brain.failuremodes), from its predicted
     surface (brain.collisions.surface), its texts, and ``extra_files`` and ``diff`` (a diff's files and changed lines,
-    for brain review prep --item); a line saying none matched when the table sees nothing."""
+    for brain review prep --item); ``public`` (the reviewed repo is public) adds the public line whatever the item's
+    CodeRefs say; a line saying none matched when the table sees nothing."""
     from . import collisions
     paths, names = collisions.surface(node, st)
     try:
-        pub = touches_public(p, cfg, {r for r, _ in paths if r})
+        pub = public or touches_public(p, cfg, {r for r, _ in paths if r})
     except Exception:  # noqa: BLE001 - a remote that cannot be read never stops a brief
-        pub = False
+        pub = public
     lines = failuremodes.for_item(node, [path for _, path in paths] + names, pub, extra_files, diff)
     return lines or ["- no surface of the table matched (brain.failuremodes): the review reads the state logic; "
                      "record the item's own in props.invariants (brain item set)"]

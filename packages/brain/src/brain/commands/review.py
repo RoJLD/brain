@@ -44,9 +44,9 @@ def _modes(repo: Path, proj, item: str | None):
     from .. import brief
     try:
         st, node, _ = brief._find(proj, item)
-    except brief.BriefError as exc:
+    except Exception as exc:  # noqa: BLE001 - no such item, or a store that cannot be read: exit 1, said
         raise review.ReviewError(f"--item {item}: {exc}") from None
-    return (lambda files, changed: brief.failure_modes(proj, st, node, cfg, files, changed)), pub
+    return (lambda files, changed: brief.failure_modes(proj, st, node, cfg, files, changed, public=pub)), pub
 
 
 def cmd_review(args, root: Path | None = None) -> int:
