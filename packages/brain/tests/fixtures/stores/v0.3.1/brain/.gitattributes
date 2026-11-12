@@ -1,0 +1,16 @@
+# LF everywhere, on every machine: the hooks' shell scripts (plugins/) break with CRLF
+* text=auto eol=lf
+# brain merge-driver: generated views keep one side (then brain refresh), logs and edges are unioned, the graph's
+# YAML is merged by id. brain merge-driver install --apply defines the driver; without it git merges these as text.
+notes/journal.md merge=brain
+notes/decisions.md merge=brain
+notes/kanban_graph.md merge=brain
+notes/roadmap_graph.md merge=brain
+notes/decision_queue.md merge=brain
+notes/audit.md merge=brain
+notes/modules_graph.md merge=brain
+notes/plan_graph.md merge=brain
+notes/graph/nodes/*.yaml merge=brain
+notes/graph/edges/*.yaml merge=brain
+FEATURES.md merge=brain
+CHANGELOG.md merge=brain
