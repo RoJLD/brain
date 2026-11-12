@@ -13,7 +13,13 @@ USAGE_ORDER = 545   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain handover write [--from FILE|-] [--successor NAME] [--id ID]   the coordinator's hand-over note in
                  <BRAIN_HOME>/handover/coordinator-<date>-<name>.md, its first line its own app id (From <id> (<name>),
-                 <date> UTC), then the successor's name and the body (FILE, - for stdin)
+                 <date> UTC), then the successor's name and the body (FILE, - for stdin); with --successor, the
+                 successor's brief beside it (<note>.brief.txt), its first line carrying ultracode (on at every
+                 hand-over), to start the successor with
+  brain handover wait --successor ID [--id ID] [--timeout S] [--json]   wait, bounded (default 120 s, at most 600),
+                 for the successor's first turn before Remote Control on for it; exit 0 once it is live, 1 when the
+                 bound passed with it still starting or when it is no successor of this session (archived, another's,
+                 not a coordinator), 2 when the app's files cannot be read or an id is malformed
   brain handover check [--id ID] [--successor ID] [--json]   the guard's conditions before Remote Control: a
                  coordinator by name (or a chain root), started by one (or by a root), its note under 6 h old, its
                  successors live and detached; and its predecessor, which the incoming coordinator archives first;
@@ -29,9 +35,29 @@ def _write(args) -> int:
     body = sys.stdin.read() if args.from_ == "-" else succession.read_body(args.from_) if args.from_ else ""
     f = succession.write_note(body, host=args.id, successor=args.successor or "")
     print(f"hand-over note written: {f}")
-    print("next: brain handover check, then the start, Remote Control on for the successor, the children told, "
-          "Remote Control off on yourself (the private brain's coordinator-handover skill)")
+    if args.successor:   # the successor's brief, its first line with ultracode (on at every hand-over)
+        b = succession.write_brief(f, host=args.id, successor=args.successor)
+        print(f"successor's brief written: {b} (its first line carries ultracode: start the successor with it)")
+    elif succession.drop_brief(f):
+        print("the earlier successor's brief beside it removed (no --successor this time)")
+    print("next: brain handover check, then the start (its brief first), brain handover wait --successor <its id>, "
+          "Remote Control on for it, the children told, Remote Control off on yourself (the coordinator-handover "
+          "procedure)")
     return 0
+
+
+def _wait(args) -> int:
+    r = succession.wait(args.successor, args.id, timeout=args.timeout)
+    if args.json:
+        print(json.dumps(r, indent=1, sort_keys=True))
+    elif r["ok"]:
+        print(f"{r['successor']} is {r['state']} after {r['waited_s']} s: turn Remote Control on for it now"
+              + ("" if r["detached"] else "; detach it (detach_session) before Remote Control off on yourself"))
+    else:
+        print(f"{r['successor']} ({r['state']}): {r['why']}" + (
+            "; Remote Control on still passes while it starts (engine 0.4.0 and later): on a refusal that says it "
+            "is unknown, wait again and retry once" if r["why"].startswith("no first turn") else ""))
+    return 0 if r["ok"] else 1
 
 
 def _check(args) -> int:
@@ -61,7 +87,7 @@ def _root(args) -> int:
 def early(args) -> int:
     """Exit 2 on a refusal or what cannot be read: the app's files, an id, the owner's mark from a session."""
     try:
-        return {"write": _write, "check": _check, "root": _root}[args.ho_cmd](args)
+        return {"write": _write, "check": _check, "wait": _wait, "root": _root}[args.ho_cmd](args)
     except (succession.SuccessionError, OSError) as exc:
         print(f"brain handover {args.ho_cmd}: {exc}", file=sys.stderr)
         return 2
@@ -78,6 +104,12 @@ def register(sub, ctx) -> None:
     c.add_argument("--id", metavar="ID", help="the session's app id (default CLAUDE_CODE_HOST_SESSION_ID)")
     c.add_argument("--successor", metavar="ID", help="the successor to check (default the first one found)")
     c.add_argument("--json", action="store_true", help="stable keys")
+    wt = sp.add_parser("wait", help="wait, bounded, for the successor's first turn before Remote Control on for it")
+    wt.add_argument("--successor", metavar="ID", required=True, help="the successor's app id (local_<uuid>)")
+    wt.add_argument("--id", metavar="ID", help="this session's app id (default CLAUDE_CODE_HOST_SESSION_ID)")
+    wt.add_argument("--timeout", type=float, default=succession.WAIT_S,
+                    help=f"seconds, default {succession.WAIT_S}, at most {succession.WAIT_MAX_S}")
+    wt.add_argument("--json", action="store_true", help="stable keys")
     r = sp.add_parser("root", help=f"{ctx.who}'s, in their own terminal: mark a coordinators' chain root")
     r.add_argument("host", nargs="?", metavar="ID", help="the root session's app id (local_<uuid>)")
     r.add_argument("--reason", metavar="TEXT", help="why, kept with the mark")

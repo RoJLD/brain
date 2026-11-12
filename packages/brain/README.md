@@ -790,7 +790,15 @@ those conditions before the calls, at zero token, from the files the guard reads
 
 - **`brain handover write [--from FILE|-] [--successor NAME] [--id ID]`**: the note,
   `<BRAIN_HOME>/handover/coordinator-<date>-<name>.md`, whose first line is `From <app id> (<name>), <date> UTC` (the
-  guard reads the first app id of its opening as whose note it is), then the successor's name and the body.
+  guard reads the first app id of its opening as whose note it is), then the successor's name and the body. With
+  `--successor`, the successor's brief beside it, `<note>.brief.txt` (never read as a note): its first line carries
+  the word `ultracode`, so ultracode is on at every hand-over (the keyword in a session's first message turns it on
+  there), then the note to read and the predecessor to archive first.
+- **`brain handover wait --successor ID [--id ID] [--timeout S] [--json]`**: before Remote Control on for the
+  successor, a bounded wait (default 120 s, at most 600) for its first turn, polling the app's files: exit 0 once it
+  is live, 1 when the bound passed with it still starting (the guard of 0.4.0 lets `on` through while it starts; on a
+  refusal that says it is unknown, wait again and retry once) or when it is no successor of this session (archived,
+  another's, not a coordinator), 2 when the app's files cannot be read.
 - **`brain handover check [--id ID] [--successor ID] [--json]`**: each condition (a coordinator by name or a chain
   root, started by one, its note under 6 hours old, its successors live and detached), whether `on` and `off` would
   pass, and the predecessor, which an incoming coordinator archives first (a session's own archive is refused); exit
