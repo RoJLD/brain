@@ -15,8 +15,8 @@ What it serves, read from the personal brain it runs in (``--root``, else brain.
 
 Every answer (a tool's, a resource's, a prompt's) passes the secret scan (brain.secretscan.clean): a line with a key's
 shape is dropped and the answer says how many; the whole result is scanned again (names and descriptions too).
-A spec reference stays inside the project's repos (no absolute path, drive or ``..``). The engine's guards do not
-judge the calls yet (wi-brain-mcp-guards): the tools are reads, and the one write is a memory note under the scan.
+A spec reference stays inside the project's repos (no absolute path, drive or ``..``). Every tool call passes the
+guards before it runs (brain.mcpguards, wi-brain-mcp-guards): a refused call runs nothing.
 
 Transports (``brain mcp serve``):
 
@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import quote, unquote
 
-from . import __version__, ipcauth, neutral, secretscan
+from . import __version__, ipcauth, mcpguards, neutral, secretscan
 
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")   # the newest first: offered when the client asks another
 DEFAULT_PORT = 8791
@@ -88,7 +88,9 @@ class ToolError(Exception):
 class Tool:
     """One tool: its name and schema as the client sees them, ``kind`` (read: changes nothing; write: changes a file
     or a repo), and either ``argv`` (the ``brain`` command it runs, from the validated arguments) or ``func`` (run in
-    the server: ``func(server, args) -> (text, is_error)``)."""
+    the server: ``func(server, args) -> (text, is_error)``). ``effect(server, args)``: what the call does, as the
+    payload a PreToolUse hook would get, for the guards (brain.mcpguards); an ``argv`` tool's is its command, run in
+    the brain's root. A write tool without one is refused."""
     name: str
     title: str
     description: str
@@ -97,6 +99,7 @@ class Tool:
     kind: str = "read"
     argv: Callable[[dict], list[str]] | None = None
     func: Callable[["Server", dict], tuple[str, bool]] | None = None
+    effect: Callable[["Server", dict], dict] | None = None
 
     def listing(self) -> dict:
         return {"name": self.name, "title": self.title, "description": self.description,
@@ -234,20 +237,26 @@ def _memory_read(server: "Server", a: dict) -> tuple[str, bool]:
     return f.read_text(encoding="utf-8", errors="replace"), False
 
 
-def _memory_propose(server: "Server", a: dict) -> tuple[str, bool]:
+def _memory_target(server: "Server", a: dict) -> Path:
+    """The note memory_propose writes (ToolError when the arguments are wrong or the project is not here)."""
     from . import memory
     key, note = _str(a, "project", MEMORY_KEY, required=True), _str(a, "note", NOTE, required=True)
+    folder = memory.local_dir(key)
+    if folder is None:
+        raise ToolError(f"no project folder {key} on this machine: a note is only written where the project is")
+    return folder / note
+
+
+def _memory_propose(server: "Server", a: dict) -> tuple[str, bool]:
+    target = _memory_target(server, a)
+    key, note = a["project"], a["note"]
     content = a.get("content")
     if not isinstance(content, str) or not content.strip() or len(content) > 100_000:
         raise ToolError("content must be a non-empty string of at most 100000 characters")
     hits = secretscan.scan_lines(content)
     if hits:
         raise ToolError(f"refused: line {hits[0][0]} matches a secret pattern ({hits[0][1]}); nothing written")
-    folder = memory.local_dir(key)
-    if folder is None:
-        raise ToolError(f"no project folder {key} on this machine: a note is only written where the project is")
-    folder.mkdir(exist_ok=True)
-    target = folder / note
+    target.parent.mkdir(exist_ok=True)
     existed = target.is_file()
     tmp = target.with_name(target.name + ".mcp-new")
     tmp.write_text(content if content.endswith("\n") else content + "\n", encoding="utf-8", newline="\n")
@@ -268,7 +277,8 @@ TOOLS += (
          {"project": {"type": "string", "description": "a memory folder's key (memory_read lists them)"},
           "note": {"type": "string", "description": "the file name, ending in .md"},
           "content": {"type": "string", "description": "the note's Markdown text"}},
-         ("project", "note", "content"), kind="write", func=_memory_propose),
+         ("project", "note", "content"), kind="write", func=_memory_propose,
+         effect=lambda s, a: mcpguards.write_payload(s.root, _memory_target(s, a))),
 )
 
 
@@ -365,11 +375,21 @@ class Server:
         return {"content": [{"type": "text", "text": clean(text)}], "isError": bool(is_error)}
 
     def run(self, tool: Tool, args: dict) -> tuple[str, bool]:
-        """Run a tool whose arguments passed (ToolError when they do not)."""
+        """Run a tool once its arguments are valid (ToolError when they are not) and the guards let the call through
+        (brain.mcpguards: a refusal is the answer, and nothing runs)."""
+        argv = tool.argv(args) if tool.argv is not None else None
+        if tool.effect is not None:
+            effect = tool.effect(self, args)
+        else:
+            effect = mcpguards.bash_payload(self.root, argv) if argv is not None else None
+        refusal = mcpguards.judge(tool, args, effect, argv)
+        if refusal is not None:
+            mcpguards.record(tool, refusal, effect, self.client)
+            return f"refused by the {refusal.guard} guard: {refusal.reason}", True
         if tool.func is not None:
             with self.lock:
                 return tool.func(self, args)
-        return self.brain(tool.argv(args))
+        return self.brain(argv)
 
     def brain(self, argv: list[str]) -> tuple[str, bool]:
         """``brain --root ROOT ARGV`` in a child process: (its stdout then stderr, failed)."""

@@ -49,9 +49,38 @@ it is cut to its size limit: a line with a key's shape is dropped, and the answe
 result is scanned again, names and descriptions included. An internal error reaches the client as its type only; the
 detail goes to the server's stderr. The scan knows keys by their shape: it is a net, not a reason to serve a file.
 
-**The guards.** The engine's guards (production checkouts, the owner's gestures, the public and secrets checks) do
-not judge the calls in this version: its tools are reads, and its one write is a memory note under the secret scan.
-`wi-brain-mcp-guards` puts every call through them before it runs.
+## The guards
+
+Other clients run none of Claude Code's hooks, so the server applies the guards itself (`brain.mcpguards`,
+`wi-brain-mcp-guards`): every tool call is judged before it runs, and a refused call runs nothing. Each tool states
+what its call does as the payload a `PreToolUse` hook would get (its effect): a `brain` command is a Bash call of that
+command in the brain's root; `memory_propose` is a Write of its note's path. In order:
+
+1. **The tool's declaration.** A write tool that declares no effect is refused: a guard that exists only as a Claude
+   hook is ported, or its tool is refused.
+2. **The owner's gestures.** The `brain` commands only the owner runs are refused whatever the tool: `decision
+   answer`, `queue done`, `schedule install`, `ipc token`, `vault`, `identity`, `update`, `init`, `up`, `down`,
+   `bundle apply`, `permissions grant`, `session-archive`, and any `--arm`.
+3. **The secret scan of a write's arguments.** A string argument of a write tool that matches a secret pattern is
+   refused; nothing is written.
+4. **The engine's guards** (`brain.guards.refusals`, strict): production checkouts, the owner's never-grantable
+   categories, power and cluster, third-party kits, attribution, the public and secrets checks, conflict markers,
+   branch names, on the effect. Strict: a check that fails to judge the call refuses it, where a hook lets it through.
+
+`BRAIN_GUARD_ALLOW` lifts nothing here: a client's configuration can set a stdio server's environment, so the owner's
+override stays Claude Code's. A refusal reaches the client as a tool error, `refused by the <guard> guard: <reason>`,
+and goes to the guards ledger (`<BRAIN_HOME>/ledger/guards-<month>.jsonl`, when it exists) with the tool as
+`mcp:<name>` and the client's name as its session. Then every answer passes the secret scan (above).
+
+| Claude Code hook | For an MCP client |
+|---|---|
+| `guard.sh` (PreToolUse: shell, edit, scheduled tasks, session settings, Terminal) | ported: step 4 judges every call's effect |
+| `governor.sh` (PreToolUse: agents, workflows, sessions) | no tool starts an agent or a session; one that would is refused until the governor is ported |
+| `readhint.sh` (PreToolUse: read hints) | a hint, not a guard: no tool reads arbitrary files |
+| `inject-rules.sh`, `announce.sh`, `health.sh`, `resume.sh`, `memory.sh` (SessionStart) | context: the rules and procedures are resources and prompts, the instructions say to read the rules first |
+| `capture.sh`, `budget.sh`, `midsession.sh` | measure Claude's own sessions: the calls' refusals go to the guards ledger; per-client attribution is `wi-brain-agent-attribution` |
+
+Git's own hooks stay the second line for what reaches a repository, whichever agent wrote it.
 
 ## The transports
 
@@ -116,5 +145,4 @@ the image.
   `BRAIN_UID=$(id -u) BRAIN_GID=$(id -g)` (default 10001). The server refuses to serve as root in its container.
 
 A remote endpoint (a tunnel, the cluster) waits on the owner's answers to the connector spec's open questions: which
-projects it serves, which providers, where it runs. The guards every tool call passes before it runs are
-`wi-brain-mcp-guards`'.
+projects it serves, which providers, where it runs.
