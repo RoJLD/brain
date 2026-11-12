@@ -266,7 +266,28 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> tuple[l
         errors += _place_errors(tree, n)
         warnings += _place_warnings(tree, n)
     errors += _floor_errors(tree)
+    errors += _typology_errors(tree, cfg)
     return errors, warnings
+
+
+def _typology_errors(tree: Tree, cfg: config.Config) -> list[str]:
+    """A container's ``lifecycle.typologies`` (spec-brain-product-lifecycle LC-1), read against the typology catalog
+    (brain.typologies): an id it does not know is a note in read mode, an error in strict mode (CI); the rest of the
+    key waits on wi-brain-lifecycle-stage."""
+    from . import typologies
+    cat = None
+    errors = []
+    for n in tree.nodes.values():
+        lc = n.data.get("lifecycle") if n.kind == "container" else None
+        typs = lc.get("typologies") if isinstance(lc, dict) else None
+        if typs is None:
+            continue
+        if not (isinstance(typs, list) and all(isinstance(t, str) for t in typs)):
+            errors.append(f"{_where(n)}: lifecycle.typologies is a list of typology ids (brain typologies)")
+            continue
+        cat = cat or typologies.load(cfg)
+        errors += typologies.unknown(f"{_where(n)}: lifecycle.typologies", typs, cat)
+    return errors
 
 
 def _where(n: Node) -> str:

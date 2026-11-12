@@ -59,7 +59,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import boundary, config, paths, privateids, secretscan
+from . import boundary, config, diffs, paths, privateids, secretscan
 
 STAMPS = "public-check"
 STAMP_V = 2  # none: no v and no key (up to 0.2.5); 2: keyed by the engine, the rules and gitleaks
@@ -339,30 +339,13 @@ def scan_history(repo: Path, rev_range: list[str], r: Rules) -> tuple[list[Findi
     if not shas:
         return [], 0
     out: list[Finding] = []
-    log = _git(repo, "log", "-p", "-U0", "--no-color", "--no-ext-diff", "--no-renames", "--format=%x00%H",
-               *rev_range, timeout=300).stdout.decode("utf-8", "replace")
-    commit, path, n, lines = "", "", 0, []
-
-    def flush():
-        if path and lines:
-            out.extend(scan_lines(path, lines, r, commit))
-
-    for raw in log.splitlines():
-        if raw.startswith("\0"):
-            flush()
-            commit, path, lines = raw[1:].strip(), "", []
-        elif raw.startswith("+++ "):
-            flush()
-            p = raw[4:].strip().strip('"')
-            path, lines = (p[2:] if p.startswith("b/") else "" if p == "/dev/null" else p), []
-        elif raw.startswith("@@"):
-            m = re.search(r"\+(\d+)", raw)
-            n = int(m.group(1)) if m else 0
-        elif raw.startswith("+") and path:
-            lines.append((n, raw[1:]))
-            n += 1
-    flush()
-    names = _git(repo, "log", "--name-only", "--diff-filter=AMR", "--no-renames", "--format=%x00%H",
+    log = _git(repo, *diffs.argv("log", "-p", "-U0", "--no-renames", "--format=%x00%H", *rev_range),
+               timeout=300).stdout.decode("utf-8", "replace")
+    for commit, files in diffs.log_records(log):   # brain.diffs: the engine's one reader
+        for f in files:
+            if f.new and (lines := f.added()):
+                out.extend(scan_lines(f.new, lines, r, commit))
+    names = _git(repo, *diffs.CONFIG, "log", "--name-only", "--diff-filter=AMR", "--no-renames", "--format=%x00%H",
                  *rev_range, timeout=300).stdout.decode("utf-8", "replace")
     commit = ""
     for raw in names.splitlines():

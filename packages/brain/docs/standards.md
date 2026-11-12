@@ -45,7 +45,7 @@ The vocabularies (`brain.standards`):
 
 | Key | Values |
 |---|---|
-| `profiles` | `any`, `library`, `cli`, `local-client`, `service`, `data-pipeline`, `embedded`, `research`, `strategy`, `marketing`, `engineering-product` |
+| `profiles` | `any`, or an id of the typology catalog ([typologies.md](typologies.md)): its sub-profiles `library`, `cli`, `local-client`, `service`, `data-pipeline`, `embedded`, `engineering-product`... and its entries `software`, `research`, `strategy`, `marketing`...; a project of a sub-profile meets the rows of its entry (`cli` meets `software`) |
 | `stage` | `prototype`, `mvp`, `v1`, `scale`, in that order: a row is required from its stage on |
 | `enforcement` | from the cheapest: `check` (a machine check that blocks), `measure` (a number that trends), `test-template` (a test the brief asks for), `review-lens` (a question of the review), `rule` (judgement only) |
 | `adapter` | `lint`, `typecheck`, `test`, `coverage`, `format` |
@@ -101,7 +101,8 @@ app:
     catalogs: [standards/research.yaml]   # the brain's local catalogs, relative to the registry's folder
 ```
 
-The rows that apply are those whose profiles meet the project's (or `any`) and whose stage is at or before its own,
+The rows that apply are those whose profiles meet the project's (or `any`; a project's sub-profile meets its entry's
+rows too: `cli` meets `software`) and whose stage is at or before its own,
 plus `include`, minus `exclude`. `profiles` and `stage` go together; a project may hold `include` alone. An empty
 `standards:` declares none, as without the key.
 
