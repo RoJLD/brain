@@ -841,6 +841,41 @@ def _standards_errors(where: str, value, registry: Path | None, engine: list) ->
     return errors + standards.selection_errors(where, value, ids if not errors else None)
 
 
+def repo_tokens(root: Path | None = None) -> set[str]:
+    """The ``<repo>`` tokens a CodeRef may name (``code:<repo>:<path>``), lowercased
+    (wi-brain-audit-unregistered-coderef): every repo of every project the registry loads, cloned on this machine or
+    not, by its name and its main checkout's folder; for a project whose ``repos:`` does not read (projects.check says
+    it), its name and its declared paths' folders; and the name of each entry the walk skips (a read-only project, a
+    tenant mount), whose repos the brain never audits. ``root``: as :func:`load` takes it (a project's
+    ``registry_dir`` names the registry it came from)."""
+    out: set[str] = set()
+    for p in load(root).values():
+        try:
+            rs = repos_of(p)
+        except RepoError:
+            declared = [e.get("path") if isinstance(e, dict) else e for e in (p.repos if isinstance(p.repos, list)
+                                                                                else [])]
+            out |= {p.name.lower(), p.root.name.lower()} | {Path(x).name.lower() for x in declared
+                                                             if isinstance(x, str) and x}
+            continue
+        out |= {r.name.lower() for r in rs} | {r.folder.lower() for r in rs if r.folder}
+    out |= {str(name).lower() for name, entry in raw(root).items() if is_read_only(entry) or is_mount(entry)}
+    return out
+
+
+def code_refs(store: Path) -> list[tuple[str, str]]:
+    """(id, status) of each CodeRef node of a store, read from its node files."""
+    out: list[tuple[str, str]] = []
+    for f in sorted((store / "nodes").glob("*.yaml")):
+        if "CodeRef" not in f.read_text(encoding="utf-8", errors="replace"):
+            continue
+        data = graph.load_yaml_file(f)
+        for n in data if isinstance(data, list) else []:
+            if isinstance(n, dict) and n.get("type") == "CodeRef" and n.get("id"):
+                out.append((str(n["id"]), str(n.get("status", ""))))
+    return out
+
+
 def node_ids(store: Path) -> dict[str, str]:
     """The ids of a store's nodes, generated ones included, each with the name of the file that holds it."""
     out: dict[str, str] = {}
