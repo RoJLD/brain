@@ -66,14 +66,7 @@ def offered(cat: typologies.Catalog) -> list[str]:
 def resolve(cat: typologies.Catalog, kinds: list[str], stage: str, template: str | None = None) -> Answers:
     """The answers checked: each kind an id of the catalog of an offered entry, the stage one of brain init's, the
     template the one given or the first kind's."""
-    if not kinds:
-        raise WizardError("--kind K: what the project produces, an id of the typology catalog (brain typologies)")
-    for k in kinds:
-        if not cat.known(k):
-            raise WizardError(f"--kind {k}: not in the typology catalog (brain typologies lists the kinds)")
-        if cat.entry(k) not in OFFERED:
-            raise WizardError(f"--kind {k}: a kind of {cat.entry(k)}, named by the catalog and not offered yet "
-                              "(STD-5: code products and research first; brain init DIR writes the generic brain)")
+    _check_kinds(cat, kinds)
     if stage not in init.STAGES:
         raise WizardError(f"--stage {stage}: one of {', '.join(init.STAGES)}")
     have = templates_of(cat)
@@ -84,13 +77,29 @@ def resolve(cat: typologies.Catalog, kinds: list[str], stage: str, template: str
     layers: list[str] = []
     for k in kinds:
         layers += [la for la in typologies.layers(cat, k, stage) if la not in layers]
-    try:
-        graphs = init.load_template(chosen).graphs
-    except init.InitError as exc:
-        raise WizardError(f"--template {chosen}: {exc}") from None
-    held = set(graphs[0].get("layers") or []) if graphs else set()
+    held = _held(chosen)
     return Answers(list(kinds), stage, cat.stage(stage), chosen, list(dict.fromkeys(cat.entry(k) for k in kinds)),
                    sorted(layers), sorted(set(layers) - held) if held else [])
+
+
+def _check_kinds(cat: typologies.Catalog, kinds: list[str]) -> None:
+    if not kinds:
+        raise WizardError("--kind K: what the project produces, an id of the typology catalog (brain typologies)")
+    for k in kinds:
+        if not cat.known(k):
+            raise WizardError(f"--kind {k}: not in the typology catalog (brain typologies lists the kinds)")
+        if cat.entry(k) not in OFFERED:
+            raise WizardError(f"--kind {k}: a kind of {cat.entry(k)}, named by the catalog and not offered yet "
+                              "(STD-5: code products and research first; brain init DIR writes the generic brain)")
+
+
+def _held(template: str) -> set[str]:
+    """The layers the template's first graph holds."""
+    try:
+        graphs = init.load_template(template).graphs
+    except init.InitError as exc:
+        raise WizardError(f"--template {template}: {exc}") from None
+    return set(graphs[0].get("layers") or []) if graphs else set()
 
 
 def summary(cat: typologies.Catalog, a: Answers) -> list[str]:
