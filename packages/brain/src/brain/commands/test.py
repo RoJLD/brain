@@ -10,7 +10,7 @@ from pathlib import Path
 from ..inventory import AuditError
 from ._common import _print_json, root_of
 
-ORDER = 535   # its place in brain --help's list of commands (brain.commands), after coverage
+ORDER = 532   # its place in brain --help's list of commands (brain.commands), after coverage
 USAGE_ORDER = 191
 USAGE = """\
   brain test --changed [BASE] [--repo-dir D] [--map FILE] [--inert GLOB]... [--list] [--json] [--strict]

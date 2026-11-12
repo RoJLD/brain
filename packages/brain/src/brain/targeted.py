@@ -257,26 +257,31 @@ class _Selector:
             if not d or t.startswith(d + "/"):
                 self.sel.add(t, why)
 
+    def reach(self) -> None:
+        """The changed modules' importers, transitively: the tests that ran or import them, and the conftests that
+        import one of them select their folder."""
+        why = "(imports a changed module)"
+        reach = closure(self.measured, importers(self.tree, self.mods))
+        for q in sorted(reach - self.measured):
+            for t in ((self.files.get(q) or {}).get("tests") or {}):
+                self.sel.add(t, f"ran {q} {why}")
+            self.by_import(q, f"imports {q} {why}")
+        names = {self.dotted[q] for q in reach if q in self.dotted}
+        for c in sorted(p for p in self.tree.files if posixpath.basename(p) == "conftest.py"):
+            if _imports(self.tree.text(c) or "", "", False) & names:
+                self.under(c, f"under {c}, which imports a changed module")
+
     def finish(self) -> None:
         """What runs a changed module without the map knowing: its importers, transitively (a call at import time
         carries no test context), the conftests that import one of them (a fixture's lines count for one test
         only), the test modules that start Python processes (a child's lines carry no test context), and those the
         map never saw."""
-        if self.touched_py and self.no_roots:
-            self.sel.widen.append("the repo's package roots are unknown: no importer can be read")
         if self.measured:
-            why = "(imports a changed module)"
-            reach = closure(self.measured, importers(self.tree, self.mods))
-            for q in sorted(reach - self.measured):
-                for t in ((self.files.get(q) or {}).get("tests") or {}):
-                    self.sel.add(t, f"ran {q} {why}")
-                self.by_import(q, f"imports {q} {why}")
-            names = {self.dotted[q] for q in reach if q in self.dotted}
-            for c in sorted(p for p in self.tree.files if posixpath.basename(p) == "conftest.py"):
-                if _imports(self.tree.text(c) or "", "", False) & names:
-                    self.under(c, f"under {c}, which imports a changed module")
+            self.reach()
         if not self.touched_py:
             return
+        if self.no_roots:
+            self.sel.widen.append("the repo's package roots are unknown: no importer can be read")
         for t in self.sel.suite:
             if self.mapped and t not in self.mapped:
                 self.sel.add(t, "not in the map")
