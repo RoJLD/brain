@@ -17,7 +17,7 @@ USAGE = """\
                  the class's calibration; --record writes props.cost_estimate on the item
   brain cost review [ITEM] [--since WHEN] [--until WHEN] [--record] [--json]   actual against the recorded (else
                  backtest) estimate and the brief's budget, and the token-free signals that explain the gap;
-                 --record writes props.cost_review
+                 --record writes props.cost_review (not for an item no session of the token ledger served)
   brain cost audit [--since WHEN] [--until WHEN] [--top N] [--write] [--json]   the window's estimates off by more
                  than x1.5 and why, the calibration per class, the costliest sessions, the script candidates;
                  --write: <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md, and the week's forecast snapshot
@@ -49,8 +49,9 @@ def cmd_cost(args, root: Path) -> int:
         ids = [args.item] if args.item else [a["id"] for a in cost.history(led) if a["done_day"] >= since
                                              and (not until or a["done_day"] < until)]
         reviews = [cost.review(led, i) for i in ids]
+        kept = [rv for rv in reviews if rv["item"]["sessions"]]   # an item no session served has no actual to record
         if args.record:
-            for rv in reviews:
+            for rv in kept:
                 cost.record(led.items[rv["item"]["id"]].store, rv["item"]["id"], "cost_review",
                             cost.review_text(rv, today))
         if args.json:
@@ -58,7 +59,9 @@ def cmd_cost(args, root: Path) -> int:
             return 0
         lines = [x for rv in reviews for x in cost.render_review(rv)] or [f"no finished item since {since}"]
         if args.record and reviews:
-            lines.append(f"{len(reviews)} review(s) recorded (props.cost_review); then brain refresh")
+            lines.append(f"{len(kept)} review(s) recorded (props.cost_review); then brain refresh")
+            lines += [f"not recorded: {rv['item']['id']} (no session of the token ledger served it)"
+                      for rv in reviews if not rv["item"]["sessions"]]
         print("\n".join(lines))
         return 0
     au = cost.audit(led, since, until, args.top)

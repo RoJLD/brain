@@ -6,6 +6,9 @@ from .. import capture
 
 ORDER = 550   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 390   # its usage lines' place in brain --help's epilog
+RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
+    "capture": "wired: the capture hook (capture.sh) runs hooks/capture.py on each event, not the CLI",
+}
 USAGE = """\
   brain capture EVENT [git|gh]   the hooks' entry (hook JSON on stdin; prints nothing)
 """

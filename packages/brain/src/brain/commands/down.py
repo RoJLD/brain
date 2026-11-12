@@ -7,6 +7,9 @@ from ._common import root_of
 
 ORDER = 330   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 430   # its usage lines' place in brain --help's epilog
+RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
+    "down": "on demand: stops a watched stack (brain up starts it)",
+}
 USAGE = """\
   brain down [STACK]...     stop stacks, in reverse dependency order (up and down --project P: P's stacks)
 """
