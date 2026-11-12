@@ -282,7 +282,9 @@ evidence names, the tests that import the module themselves, and for a CodeRef o
 that ran it by the store's coverage summary. `brain coverage --repo R --run --write` runs a repo's suites under
 pytest-cov with test contexts and keeps that summary in the store (`coverage/<repo>.json`); `brain audit` then
 measures `test.coverage`, `feature.tests` reports a feature no test covers, and `FEATURES.md` shows each feature's
-coverage. The rules: [docs/tests-graph.md](docs/tests-graph.md).
+coverage. `brain test --changed` runs the test modules a change touches by that summary first (shadow mode: missing
+or stale evidence widens the answer to the whole suite, which the CI runs before the merge). The rules:
+[docs/tests-graph.md](docs/tests-graph.md).
 
 ### The module map
 
