@@ -285,6 +285,15 @@ The guards refuse `brain usage allow` to a session, and any write of its file (`
 `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` (how many workflow agents run at once; about 8 on a machine like the
 scale study's) is Claude Code's own setting: the owner sets it through their installer's plan, never a session.
 
+## The guards for other agents (the MCP server)
+
+`brain mcp serve` (docs/mcp.md) runs these same checks on each tool call of a client that runs no Claude Code hook
+(`brain.mcpguards`): the call's effect as a hook payload, through `brain.guards.refusals(payload, strict=True)`. Two
+differences from a hook: a check that raises refuses the call (a hook lets it through), and `BRAIN_GUARD_ALLOW` lifts
+nothing (a client's configuration can set the server's environment). The owner's own `brain` gestures (answering a
+decision, a schedule installed, the machine's token made...) are refused there whatever the tool, and the refusals go
+to the same guards ledger, the tool named `mcp:<name>`.
+
 ## Troubleshooting
 
 - **Every start is refused as stale**: a session reads get_usage, then notes each window it shows

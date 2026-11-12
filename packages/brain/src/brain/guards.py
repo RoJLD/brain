@@ -3440,11 +3440,12 @@ def check_branches(cmds: list[tuple[list[str], str]]) -> str | None:
 
 # --- the hook ----------------------------------------------------------------------------------------------------
 
-def refusals(payload: dict):
+def refusals(payload: dict, strict: bool = False):
     """(guard, check, reason, request) for each check that refuses the call, in order, lazily; ``check`` tells a
     guard's refusals apart in the ledger (the production guard's edit, git and shell-write; the owner guard's category;
     the power guard's machine, node, wake, cluster and bot); ``request`` is the action put to the owner (owner and
-    power), else None."""
+    power), else None. ``strict`` (the MCP server, brain.mcpguards): a check that raises refuses the call instead of
+    letting the others judge it alone; a hook stays fail-open."""
     tool = payload.get("tool_name") or ""
     inp = payload.get("tool_input") or {}
     cwd = payload.get("cwd") or os.getcwd()
@@ -3485,6 +3486,8 @@ def refusals(payload: dict):
             out = run()
         except Exception as exc:  # one check's error lets the others run (and goes to ledger/errors.log)
             _log(guard, exc)
+            if strict:   # the MCP server (brain.mcpguards): a check that cannot judge the call refuses it
+                yield guard, check or "error", f"the {guard} guard could not judge the call ({type(exc).__name__})", None
             continue
         if isinstance(out, str):
             yield guard, check, out, None
