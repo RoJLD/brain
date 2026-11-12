@@ -282,6 +282,10 @@ TOOLS += (
 )
 
 
+# the resource brain://decisions/{ref} runs brain adr show: judged as this read tool (never listed)
+ADR_RESOURCE = Tool("resource:decisions", "An ADR", "brain://decisions/{ref}", {})
+
+
 # --- the server -------------------------------------------------------------------------------------------------------
 
 def _timeout() -> float:
@@ -378,21 +382,30 @@ class Server:
         """Run a tool once its arguments are valid (ToolError when they are not) and the guards let the call through
         (brain.mcpguards: a refusal is the answer, and nothing runs)."""
         argv = tool.argv(args) if tool.argv is not None else None
-        if tool.effect is not None:
-            effect = tool.effect(self, args)
-        else:
-            effect = mcpguards.bash_payload(self.root, argv) if argv is not None else None
-        refusal = mcpguards.judge(tool, args, effect, argv)
-        if refusal is not None:
-            mcpguards.record(tool, refusal, effect, self.client)
-            return f"refused by the {refusal.guard} guard: {refusal.reason}", True
+        refused = self.refused(tool, args, argv)
+        if refused:
+            return refused, True
         if tool.func is not None:
             with self.lock:
                 return tool.func(self, args)
         return self.brain(argv)
 
+    def refused(self, tool: Tool, args: dict, argv: list[str] | None) -> str:
+        """Why the guards refuse this call ('' when they let it through), recorded in the guards ledger. Every path
+        that runs something for a client comes here first: a tool call, an ADR read through brain adr show."""
+        if tool.effect is not None:
+            effect = tool.effect(self, args)
+        else:
+            effect = mcpguards.bash_payload(self.root, argv) if argv is not None else None
+        refusal = mcpguards.judge(tool, args, effect, argv)
+        if refusal is None:
+            return ""
+        mcpguards.record(tool, refusal, effect, self.client)
+        return f"refused by the {refusal.guard} guard: {refusal.reason}"
+
     def brain(self, argv: list[str]) -> tuple[str, bool]:
-        """``brain --root ROOT ARGV`` in a child process: (its stdout then stderr, failed)."""
+        """``brain --root ROOT ARGV`` in a child process: (its stdout then stderr, failed). Judged by the caller
+        (:meth:`refused`)."""
         cmd = [sys.executable, "-m", "brain", f"--root={self.root}", *argv]
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
         try:
@@ -449,7 +462,11 @@ class Server:
             ref = unquote(rest)
             if ref.lstrip().startswith("-") or len(ref) > 300:
                 raise RpcError(INVALID_PARAMS, "not a valid ADR reference")
-            text, failed = self.brain(["adr", "show", ref])
+            argv = ["adr", "show", ref]
+            refused = self.refused(ADR_RESOURCE, {}, argv)
+            if refused:
+                raise RpcError(INVALID_PARAMS, refused)
+            text, failed = self.brain(argv)
             return None if failed else text
         f = self.root / DECISIONS
         if not f.is_file():

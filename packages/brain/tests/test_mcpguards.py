@@ -141,10 +141,54 @@ def test_every_shipped_tool_is_judged_and_its_calls_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(mcpserver.Server, "brain", lambda self, argv: (seen.append(argv), ("ok", False))[1])
     for tool in mcpserver.TOOLS:
         assert tool.kind == "read" or tool.effect is not None, tool.name
+    judged = []
+    real = mcpguards.judge
+    monkeypatch.setattr(mcpguards, "judge", lambda *a: (judged.append(a[2]["tool_input"]["command"]), real(*a))[1])
     c = Client(server)
     assert c.tool("brain_items", text="secret budget") == (False, "ok")   # words, not gestures
     assert c.tool("brain_check") == (False, "ok")
     assert len(seen) == 2
+    # the guards saw the command that runs, every argument of it
+    assert judged[0].endswith("items --limit=50 '--text=secret budget'") and judged[1].endswith(" check")
+    assert all(f"--root={tmp_path}" in c for c in judged)
+
+
+def test_an_argv_tool_is_judged_by_the_engine_s_guards_on_its_command(tmp_path, monkeypatch, ran):
+    """Step 4 on a brain command: the owner guard refuses schedule install --apply even with the gesture list off."""
+    monkeypatch.setattr(mcpguards, "owner_gesture", lambda argv: "")
+    tool = mcpserver.Tool("b", "b", "", {}, kind="write", argv=lambda a: ["schedule", "install", "--apply"])
+    server = mcpserver.Server(root=tmp_path, tools=(tool,))
+    server.brain = lambda a: (ran.append(a), ("ran", False))[1]
+    failed, text = Client(server).tool("b")
+    assert failed and text.startswith("refused by the owner guard") and ran == []
+
+
+@pytest.mark.parametrize("argv", [["--proj=p", "decision", "answer", "x"], ["--ro", "/b", "update"],
+                                  ["--pro=p", "vault", "init"], ["-h"]])
+def test_an_abbreviated_global_option_cannot_hide_the_command(argv):
+    assert mcpguards.owner_gesture(argv).startswith("a command behind the option")
+
+
+@pytest.mark.parametrize("word", ["--arm", "--ar", "--a", "--arm=1"])
+def test_every_spelling_of_arm_is_refused(word):
+    assert mcpguards.owner_gesture(["item", "set", "x", word]) == "an arming flag"
+    assert mcpguards.owner_gesture(["items", "--all"]) == ""
+
+
+def test_an_effect_the_guards_cannot_read_is_refused(tmp_path, ran):
+    agent = mcpserver.Tool("a", "a", "", {}, kind="write", func=lambda s, a: (ran.append(1), ("x", False))[1],
+                           effect=lambda s, a: {"tool_name": "Agent", "tool_input": {"prompt": "go"}})
+    failed, text = client_with(tmp_path, agent).tool("a")
+    assert failed and "shell calls and file writes only" in text and ran == []
+
+
+def test_an_adr_resource_is_judged_too(tmp_path, monkeypatch):
+    server = mcpserver.Server(root=tmp_path)
+    ran = []
+    monkeypatch.setattr(mcpserver.Server, "brain", lambda self, argv: (ran.append(argv), ("the ADR", False))[1])
+    monkeypatch.setattr(mcpguards, "owner_gesture", lambda argv: "brain adr show")   # as if it were a gesture
+    msg = {"jsonrpc": "2.0", "id": 1, "method": "resources/read", "params": {"uri": "brain://decisions/x"}}
+    assert server.handle(msg)["error"]["message"].startswith("refused by the owner guard") and ran == []
 
 
 def test_memory_propose_is_judged_as_a_write_of_its_note(tmp_path, monkeypatch):

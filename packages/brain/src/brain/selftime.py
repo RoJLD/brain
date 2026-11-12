@@ -172,7 +172,8 @@ class run:
                 c = exc.code
                 code = c if isinstance(c, int) else 0 if c is None else 1
             elif exc_type is not None and issubclass(exc_type, KeyboardInterrupt):
-                code, why = 130, "KeyboardInterrupt"
+                # a signal brain.shutdown trapped: 128 + its number (SIGTERM 143); Ctrl+C 130
+                code, why = getattr(exc, "exit_code", 130), _bare(exc_type)
             elif exc_type is not None:
                 code, why = 1, _bare(exc_type)
                 error(exc, self.task)

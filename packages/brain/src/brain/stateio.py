@@ -62,7 +62,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
-from . import paths
+from . import paths, shutdown
 
 VKEY = "v"
 BACKUP = ".bak"
@@ -340,11 +340,12 @@ def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
-        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        with shutdown.critical():   # a signal waits for the file to be replaced (brain.shutdown)
+            with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(text)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
     finally:
         if tmp.exists():
             try:

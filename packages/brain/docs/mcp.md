@@ -56,26 +56,33 @@ Other clients run none of Claude Code's hooks, so the server applies the guards 
 what its call does as the payload a `PreToolUse` hook would get (its effect): a `brain` command is a Bash call of that
 command in the brain's root; `memory_propose` is a Write of its note's path. In order:
 
-1. **The tool's declaration.** A write tool that declares no effect is refused: a guard that exists only as a Claude
-   hook is ported, or its tool is refused.
+1. **The tool's declaration.** A write tool that declares no effect is refused, and so is an effect the guards do not
+   read (anything but a shell call or a file write: starting an agent or a session, say): a guard that exists only as
+   a Claude hook is ported, or its tool is refused.
 2. **The owner's gestures.** The `brain` commands only the owner runs are refused whatever the tool: `decision
    answer`, `queue done`, `schedule install`, `ipc token`, `vault`, `identity`, `update`, `init`, `up`, `down`,
-   `bundle apply`, `permissions grant`, `session-archive`, and any `--arm`.
+   `bundle apply`, `permissions grant`, `session-archive`, and any `--arm` (or a prefix argparse expands to it). A
+   command behind an option that is not `--root`, `--project` or `--store` spelled in full (`--proj=P`, which
+   argparse would expand) is refused: it could not be read.
 3. **The secret scan of a write's arguments.** A string argument of a write tool that matches a secret pattern is
    refused; nothing is written.
-4. **The engine's guards** (`brain.guards.refusals`, strict): production checkouts, the owner's never-grantable
-   categories, power and cluster, third-party kits, attribution, the public and secrets checks, conflict markers,
-   branch names, on the effect. Strict: a check that fails to judge the call refuses it, where a hook lets it through.
+4. **The engine's guards** (`brain.guards.refusals`, strict) on the effect: on a shell call, production checkouts,
+   the owner's never-grantable categories, power and cluster, third-party kits, attribution, the public and secrets
+   checks, conflict markers and branch names; on a file write (`memory_propose`), production checkouts and the
+   owner's categories (step 3 covers its text). Strict: a check that fails to judge the call refuses it, where a hook
+   lets it through. The resource `brain://decisions/{ref}`, which runs `brain adr show`, is judged the same way.
 
-`BRAIN_GUARD_ALLOW` lifts nothing here: a client's configuration can set a stdio server's environment, so the owner's
-override stays Claude Code's. A refusal reaches the client as a tool error, `refused by the <guard> guard: <reason>`,
+`BRAIN_GUARD_ALLOW` lifts nothing here, so the one variable meant to lift the guards cannot be set in a client's
+configuration file, which an agent may be able to edit. The rest of the server's environment is the owner's
+configuration: whoever writes that file also chooses `BRAIN_HOME`, `BRAIN_PROJECTS` (the production checkouts) and
+`BRAIN_CAPTURE`, as for any `brain` command; keep it the owner's file. A refusal reaches the client as a tool error, `refused by the <guard> guard: <reason>`,
 and goes to the guards ledger (`<BRAIN_HOME>/ledger/guards-<month>.jsonl`, when it exists) with the tool as
 `mcp:<name>` and the client's name as its session. Then every answer passes the secret scan (above).
 
 | Claude Code hook | For an MCP client |
 |---|---|
 | `guard.sh` (PreToolUse: shell, edit, scheduled tasks, session settings, Terminal) | ported: step 4 judges every call's effect |
-| `governor.sh` (PreToolUse: agents, workflows, sessions) | no tool starts an agent or a session; one that would is refused until the governor is ported |
+| `governor.sh` (PreToolUse: agents, workflows, sessions) | no tool starts an agent or a session; an effect that would is refused (step 1) until the governor is ported |
 | `readhint.sh` (PreToolUse: read hints) | a hint, not a guard: no tool reads arbitrary files |
 | `inject-rules.sh`, `announce.sh`, `health.sh`, `resume.sh`, `memory.sh` (SessionStart) | context: the rules and procedures are resources and prompts, the instructions say to read the rules first |
 | `capture.sh`, `budget.sh`, `midsession.sh` | measure Claude's own sessions: the calls' refusals go to the guards ledger; per-client attribution is `wi-brain-agent-attribution` |
