@@ -150,6 +150,8 @@ ENGINE_STORES = {
                      "the notifications' state, the quiet hours and their audit (YYYY-MM.jsonl, a log kept 6 months)"),
     "secrets": Known("$BRAIN_HOME/secrets", "secret", "truth-local",
                      "the stack bundles' secret files: never copied, never in the brain"),
+    "ipc": Known("$BRAIN_HOME/ipc", "secret", "truth-local",
+                 "the machine's token for the Brain's local services (brain ipc token): never copied, never printed"),
     "collector": Known("$BRAIN_HOME/stacks/sovereign/data/otel-collector", "sealed", "log",
                        "the telemetry collector's data, after its processors"),
     "stacks": Known("$BRAIN_HOME/stacks", "sealed", "truth-local", "the rendered stack bundles and their data"),
