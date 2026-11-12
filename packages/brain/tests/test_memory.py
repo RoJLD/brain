@@ -310,7 +310,12 @@ def test_a_clean_run_clears_the_alert(world, brain_home):
 def test_session_end_spawns_only_when_needed(world, monkeypatch, brain_home):
     spawned = []
     monkeypatch.setattr(memory, "_spawn", spawned.append)
-    assert memory.hook_main(["session-end"], stdin=io.StringIO("{}")) == 0 and len(spawned) == 1
+
+    def no_process(*args, **kwargs):
+        raise AssertionError(f"the SessionEnd decision started a process: {args[:1]}")
+    with monkeypatch.context() as m:   # the hook returns at once: its decision starts no process but the job
+        m.setattr(subprocess, "Popen", no_process)
+        assert memory.hook_main(["session-end"], stdin=io.StringIO("{}")) == 0 and len(spawned) == 1
     assert spawned[0][:3] == [sys.executable, "-I", "-c"]
     assert memory.session_end() is False  # one queued job is enough: it rescans when it starts
     (brain_home / "memory-sync" / "queued.json").unlink()
@@ -351,7 +356,7 @@ def test_hook_scripts_end_to_end(world, brain_home, tmp_path):
     The job's gh waits for a gate the test opens only once the hook has returned: the hook returning while the job
     still waits proves it detached, with no bound on seconds that a loaded machine overran (it once took more than
     the 10 s it allowed, wi-brain-test-speed-2). A hook that ran the job itself would block on the gate past its 60 s
-    timeout."""
+    timeout; that the decision itself starts no process is test_session_end_spawns_only_when_needed's."""
     bash = _bash()
     if not bash:
         pytest.skip("no bash")
@@ -366,12 +371,14 @@ def test_hook_scripts_end_to_end(world, brain_home, tmp_path):
     env = dict(os.environ, BRAIN_HOME=str(brain_home), BRAIN_PYTHON=sys.executable,
                BRAIN_GH=json.dumps([sys.executable, str(fake)]), BRAIN_MEMORY_REPO="o/r",
                CLAUDE_PLUGIN_ROOT=str(PLUGIN))
-    out = subprocess.run([bash, str(PLUGIN / "hooks" / "memory.sh"), "SessionEnd"], input="{}", capture_output=True,
-                         text=True, env=env, timeout=60)
-    assert out.returncode == 0 and out.stdout == ""
     last = brain_home / "memory-sync" / "last.json"
-    assert not last.exists(), last.read_text(encoding="utf-8")   # the job waits on gh: it has not finished
-    gate.write_text("", encoding="utf-8")
+    try:   # the gate opens whatever fails here: no job left waiting on gh past the test
+        out = subprocess.run([bash, str(PLUGIN / "hooks" / "memory.sh"), "SessionEnd"], input="{}",
+                             capture_output=True, text=True, env=env, timeout=60)
+        assert out.returncode == 0 and out.stdout == ""
+        assert not last.exists(), last.read_text(encoding="utf-8")   # the job waits on gh: it has not finished
+    finally:
+        gate.write_text("", encoding="utf-8")
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if last.exists() and not (brain_home / "memory-sync" / "run.json").exists():
