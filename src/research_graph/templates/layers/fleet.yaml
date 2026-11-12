@@ -1,0 +1,29 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+name: fleet
+version: 1
+title: "The fleet: the machines a project runs on and their profiles"
+requires: [decisions]
+mode: written
+node_types:
+  Host: "a machine of the fleet: a workstation, a server, a cluster"
+  Profile: "a host's profile: what it runs and how"
+edge_types:
+  profile_of:
+    - {from: [Profile], to: [Host], why: "a profile -> its host"}
+statuses: [planned, active, retired]
+status_by_type:
+  Host: [planned, active, retired]
+  Profile: [active, retired]
+ids: {Host: "host-<slug>", Profile: "profile-<host>-<slug>"}
+commands: ["brain profile"]
+views: []
+checks: []
+projection: {gitnexus: research-graph, colors: {Host: "#0f766e", Profile: "#14b8a6"}}
+lifecycle: {typologies: [infra, software], proposed_at: [build, launch]}
+examples:
+  nodes:
+    - {id: example-host-workstation, type: Host, status: active, title: "A fictitious workstation"}
+    - {id: example-profile-workstation-dev, type: Profile, status: active, title: "Its development profile"}
+  edges:
+    - {from: example-profile-workstation-dev, to: example-host-workstation, type: profile_of}
+    - {from: example-host-workstation, to: example-adr-keep-the-backlog-in-the-graph, type: decided_by}

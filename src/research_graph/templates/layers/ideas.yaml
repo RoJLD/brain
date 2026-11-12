@@ -1,0 +1,25 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+name: ideas
+version: 1
+title: "The ideas: what is not yet a work item or an experiment, upstream of the backlog"
+requires: [work]
+mode: written
+node_types:
+  Idea: "an idea not yet promoted to a work item or an experiment"
+edge_types:
+  spawns:
+    - {from: "*", to: [Idea], why: "a node (a verdict, an item) -> the idea it led to"}
+statuses: [open, active, deferred, validated, superseded, dropped]
+status_by_type:
+  Idea: [open, active, deferred, validated, superseded, dropped]
+ids: {Idea: "idea-<slug>"}
+commands: ["brain item add --type Idea"]
+views: []
+checks: []
+projection: {gitnexus: research-graph, colors: {Idea: "#facc15"}}
+lifecycle: {typologies: ["*"], proposed_at: [explore]}
+examples:
+  nodes:
+    - {id: example-idea-a-faster-board, type: Idea, status: open, title: "A board that filters by owner"}
+  edges:
+    - {from: example-wi-first, to: example-idea-a-faster-board, type: spawns}

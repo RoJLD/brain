@@ -379,8 +379,10 @@ claude plugin install brain-core@brain
 A template is data and a manifest, never code: `template.yaml` gives its `name`, `version`, the `engine` versions that
 can render it (`">=0.2.2"`), a `title`, its `graphs` (a list of `{name, store, schema}`, the brain's main store
 first, each started by `research_graph init`, every later one with its board and roadmap beside its store and no
-decision log, also when the first exists already; `schema: default` only for now) and its `files` (`{the brain's path:
-the template's file}`, `""` for an empty one), rendered with `{owner}`, `{owner_q}` (quoted for YAML or JSON),
+decision log, also when the first exists already; `schema: default`, the brain's base, or `layers: [records,
+research, ...]`, its schema composed from research_graph's catalogue of layers with what they require and the
+template's own layers, `layers/<name>.yaml` in its folder: `research_graph layers`) and its `files` (`{the brain's
+path: the template's file}`, `""` for an empty one), rendered with `{owner}`, `{owner_q}` (quoted for YAML or JSON),
 `{name}` and `{title_q}`. It must write what config.json names (`projects.yaml`, `rules/global.md`,
 `source/packs.yaml`, `memory/`, `records/`); the engine writes config.json, the graph stores and the Claude
 marketplace itself. `--template DIR` takes a folder of your own holding one. A template is public data; the owner's

@@ -1,0 +1,25 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+name: rules
+version: 1
+title: "The rules in force: a section of a rules file, the decision behind it and what checks it"
+requires: [decisions]
+mode: written
+node_types:
+  Rule: "a rule in force: a section of a rules file (rules/global.md, a CLAUDE.md)"
+edge_types:
+  enforced_by:
+    - {from: [Rule], to: "*", why: "a rule -> the hook, test or script that checks it at zero token"}
+statuses: [active, retired]
+status_by_type:
+  Rule: [active, retired]
+ids: {Rule: "rule-<slug>"}
+commands: ["brain lint rules", "brain adr show <rule-id>"]
+views: []
+checks: ["a rule without enforced_by is soft: a warning, never an error (brain lint rules)"]
+projection: {gitnexus: research-graph, colors: {Rule: "#7c3aed"}}
+lifecycle: {typologies: ["*"], proposed_at: [build]}
+examples:
+  nodes:
+    - {id: example-rule-merge-by-pr, type: Rule, status: active, title: "Merge by pull request, never on main"}
+  edges:
+    - {from: example-rule-merge-by-pr, to: example-adr-keep-the-backlog-in-the-graph, type: decided_by}
