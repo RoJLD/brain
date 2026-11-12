@@ -22,6 +22,8 @@ USAGE = """\
                  than x1.5 and why, the calibration per class, the costliest sessions, the script candidates;
                  --write: <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md, and the week's forecast snapshot
                  <BRAIN_HOME>/forecast/<project>/<day>.json (the Monday task's command)
+  brain cost estimate|review|audit ... --scope REF   the items and sessions of the projects of a node's subtree in
+                 the scope tree (brain scopes: an id, a path of ids, global = --all, . or ..)
 """
 
 

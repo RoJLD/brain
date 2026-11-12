@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from .. import cockpit, detail
-from ._common import _scope, scope_every
+from ._common import _scope
 
 ORDER = 140   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 540   # its usage lines' place in brain --help's epilog
@@ -74,7 +74,7 @@ def cmd_tui(args, root: Path) -> int:
     views = {n: {**(saved.get("panels") or {}).get(n, {}), **flags.get(n, {})} for n in cockpit.SORTS}
     settings = {"tz": "local", **(saved.get("settings") or {}), **({"tz": args.tz} if args.tz else {})}
     projs = _projects(args, root)
-    cp = cockpit.Cockpit(projs, every=scope_every(args, projs), root=root, hours=args.hours)
+    cp = cockpit.Cockpit(projs, every=args.all, root=root, hours=args.hours)   # --scope: its projects, no more
     if not (args.all or args.scope or getattr(args, "project", None)) and saved.get("scope") in (cockpit.ALL,
                                                                                                 *cp.choices):
         cp.select(saved["scope"])  # the last scope shown, when it is still registered

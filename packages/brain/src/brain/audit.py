@@ -1241,6 +1241,8 @@ def _tree_scope(args, root: Path | None) -> list[projects.Project]:
         raise AuditError(str(exc)) from None
     if not names:
         raise AuditError(f"--scope {args.scope}: no registered project the brain loads under {node}")
+    if node == scopes.GLOBAL:   # global is --all: the milestone line too
+        args.all = True
     reg = _registered(root)
     return [reg[n] for n in names if n in reg]
 
@@ -1255,7 +1257,7 @@ def run(args, root: Path | None, today: date | None = None) -> dict:
     today = today or date.today()
     projs = scope(args, root)
     if (args.write or args.items) and (len(projs) > 1 or args.all or getattr(args, "scope", None)):
-        raise SystemExit("brain: --write and --items take one project (not --all)")
+        raise SystemExit("brain: --write and --items take one project (not --all or --scope)")
     if args.write and args.repo:
         raise SystemExit("brain: --write writes the whole project's view (not --repo)")
     if args.write and projs and projs[0].shares_root_with:
