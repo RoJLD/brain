@@ -241,7 +241,7 @@ def test_a_name_a_yaml_reader_could_take_for_a_number_is_refused(home, capsys, n
 
 
 def git(*words, cwd):
-    subprocess.run(["git", *words], cwd=cwd, check=True, capture_output=True)
+    subprocess.run(["git", *words], cwd=cwd, check=True, capture_output=True, timeout=60)
 
 
 @pytest.fixture
