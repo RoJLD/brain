@@ -361,7 +361,8 @@ def _check_store(args, root: Path, store: Path) -> int:
         rc = _views_verdict(project, root, store, where, stale, legacy, strict) or rc
         return graph.research_graph(root, store, *layout, "check") or rc
     rc = (cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0) or rc
-    for line in pins.check_lines(project):   # the decision pins beside the log (wi-brain-decision-pins)
+    first = next((s for s in project.stores if (s / "schema.yaml").is_file()), store)
+    for line in pins.check_lines(project) if store == first else ():   # the decision pins, once a project
         print(line)
     if decisions.view_stale(root, _project(args, root).name):
         stale.add(decisions.VIEW, "brain sync (or brain decision view --write)")

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from .. import review
+from ..inventory import AuditError
 
 ORDER = 57   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 57   # its usage lines' place in brain --help's epilog
@@ -65,7 +66,7 @@ def _check(args, repo: Path) -> int:
     """brain review check: the stamp of the head, then the pinned decisions the change touches (with the PR body,
     each kept or overridden)."""
     rec = review.check(args.head, repo)
-    touched, blocks = _pins(args, repo)
+    touched, blocks, note = _pins(args, repo)
     if rec is None:
         print(f"review: {args.head} not reviewed (brain review prep, docs/review.md, then brain review stamp)")
     else:
@@ -75,24 +76,32 @@ def _check(args, repo: Path) -> int:
         print(f"  pinned: {x['id']} ({x['day'] or '?'}) holds {x['holds']} ({', '.join(x['hits'][:3])})")
     for b in blocks:
         print(f"  BLOCK {b}")
+    if note:
+        print(f"  note: {note}")
     return 1 if rec is None or blocks else 0
 
 
-def _pins(args, repo: Path) -> tuple[list[dict], list[str]]:
-    """The pinned decisions the change touches and what blocks it, from the PR body (--pr or --body); the pins only,
-    unjudged, without a body."""
+def _pins(args, repo: Path) -> tuple[list[dict], list[str], str]:
+    """(the pinned decisions the change touches, what blocks it, a note), from the PR body (--pr or --body). Without
+    a body the pins are listed unjudged, and one that cannot be read is a note: the stamp alone decides then; with a
+    body, it blocks."""
     body, base = None, args.base or ""
-    if args.pr:
-        r = subprocess.run(["gh", "pr", "view", str(args.pr), "--json", "body,baseRefName"], cwd=repo,
-                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        if r.returncode:
-            raise review.ReviewError(f"PR {args.pr}: {(r.stderr or r.stdout).strip()}")
-        info = json.loads(r.stdout)
-        body, base = str(info.get("body") or ""), base or f"origin/{info.get('baseRefName') or 'main'}"
-    elif args.body:
-        body = Path(args.body).read_text(encoding="utf-8")
-    touched, blocks = review.pins_gate(repo, base or "origin/main", args.head, body)
-    return touched, (blocks if body is not None else [])
+    try:
+        if args.pr:
+            r = subprocess.run(["gh", "pr", "view", str(args.pr), "--json", "body,baseRefName"], cwd=repo,
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+            if r.returncode:
+                raise review.ReviewError(f"PR {args.pr}: {(r.stderr or r.stdout).strip()}")
+            info = json.loads(r.stdout)
+            body, base = str(info.get("body") or ""), base or f"origin/{info.get('baseRefName') or 'main'}"
+        elif args.body:
+            body = Path(args.body).read_text(encoding="utf-8")
+        touched, blocks = review.pins_gate(repo, base or "origin/main", args.head, body)
+    except (review.ReviewError, AuditError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        if body is None and not args.pr and not args.body:
+            return [], [], f"the pins could not be read: {exc}"
+        return [], [f"the pins could not be read: {exc}"], ""
+    return touched, (blocks if body is not None else []), ""
 
 
 def register(sub, ctx) -> None:
