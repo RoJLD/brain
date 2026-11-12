@@ -293,8 +293,8 @@ def scan_lines(path: str, lines, r: Rules, commit: str = "") -> list[Finding]:
             for cat, term, rx in r.terms:
                 if rx.search(flat):
                     out.append(Finding("denied", path, n, f"{cat} term {term!r}", commit))
-            if r.graph:
-                out += [Finding("graph", path, n, what, commit) for what in privateids.find(line, r.graph)]
+        if not allowed and r.graph:   # apart from the terms' prefilter: a line with no denied term may hold an id
+            out += [Finding("graph", path, n, what, commit) for what in privateids.find(line, r.graph)]
         out += [Finding("secret", path, n, f"looks like a secret ({name})", commit)
                 for name in secretscan.find_in_line(line)[:1]]
         if allowed or ALLOW_MARK in line:

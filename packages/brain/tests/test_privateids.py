@@ -37,7 +37,8 @@ def pub(tmp_path, monkeypatch, make_repo):
         f"mine: {{root: ., repos: [., ../engine]}}\nlab: {{root: {lab.as_posix()}}}\n", encoding="utf-8")
     (brain / config.FILE).write_text(json.dumps(
         {"v": 1, "identity": {"owner": "Ada"},
-         "public": {"repos": ["acme/engine"], "allow": {"docs/history.md": "the history quotes the decisions on purpose"}}}),
+         "public": {"repos": ["acme/engine"], "derive": [],   # the graph check alone (brain.denylist apart)
+                    "allow": {"docs/history.md": "the history quotes the decisions on purpose"}}}),
         encoding="utf-8")
     monkeypatch.setenv("BRAIN_CONFIG", str(brain / config.FILE))
     monkeypatch.setenv("BRAIN_PROJECTS", str(brain / "projects.yaml"))
