@@ -26,6 +26,51 @@ def pytest_cmdline_main(config):
             and config.getoption("numprocesses", None) not in (None, 0) \
             and config.getoption("maxschedchunk", None) is None:
         config.option.dist = "worksteal"
+    temp_under_test_root(config)
+
+
+def test_root_dir(kind: str) -> Path | None:
+    """``<BRAIN_TEST_ROOT>/<kind>``, made if missing; None when BRAIN_TEST_ROOT is unset (the system's temp folder)."""
+    raw = os.environ.get("BRAIN_TEST_ROOT", "").strip()
+    if not raw:
+        return None
+    d = Path(raw).expanduser().resolve() / kind   # absolute: subprocesses run from other folders
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+test_root_dir.__test__ = False   # a helper, not a test
+
+
+def temp_under_test_root(config) -> None:
+    """``BRAIN_TEST_ROOT``: pytest's temporary folders go under ``<root>/tmp`` (wi-brain-test-speed-2), one folder an
+    owner can exclude from an on-access antivirus scan, short enough for the venvs some tests build; unset, the
+    system's temp folder as before. pytest keeps its numbering and its last three runs there
+    (``PYTEST_DEBUG_TEMPROOT``); an explicit ``--basetemp`` or ``PYTEST_DEBUG_TEMPROOT`` wins."""
+    if config.getoption("basetemp", None) or os.environ.get("PYTEST_DEBUG_TEMPROOT"):
+        return
+    tmp = test_root_dir("tmp")
+    if tmp is not None:
+        os.environ["PYTEST_DEBUG_TEMPROOT"] = str(tmp)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_auto_num_workers(config):
+    """``BRAIN_TEST_WORKERS``: the worker count ``-n auto`` (or ``-n logical``) means; unset, xdist's own answer
+    (its ``PYTEST_XDIST_AUTO_NUM_WORKERS``, else the CPU count). The strict form of xdist's variable, which it wins
+    over: xdist only warns on a value that is not a number. Measured on a 16-thread Windows machine, 24 and 32 workers
+    ran no faster than 16 (wi-brain-test-speed-2): process creation, not the CPU, bounds the suite there; the variable
+    is for a machine where it differs. An explicit ``-n N`` wins."""
+    raw = os.environ.get("BRAIN_TEST_WORKERS", "").strip()
+    if not raw:
+        return None
+    try:
+        workers = int(raw)
+    except ValueError:
+        raise pytest.UsageError(f"BRAIN_TEST_WORKERS={raw!r}: a whole number of workers (0: one process)") from None
+    if workers < 0:
+        raise pytest.UsageError(f"BRAIN_TEST_WORKERS={raw!r}: a whole number of workers (0: one process)")
+    return workers
 
 
 @pytest.fixture(autouse=True)

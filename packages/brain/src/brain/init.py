@@ -40,9 +40,11 @@ owner. In DIR (default: the current folder), which becomes the owner's private r
 The templates name no person, repo or host: the owner is the name given. A template is data and its manifest
 (``name``, ``version``, ``engine``: the brain versions that can render it, ``title``, ``files``: {the brain's path:
 the template's file, or "" for an empty one}, ``graphs``: the graph stores it starts, a list of {name, store, schema}
-whose first is the brain's main store; ``schema: default``, the brain's base of work, decisions and records
-(``templates/schemas/default.yaml``), is the only one for now), never code (wi-brain-domain-templates). The plan is
-a list of steps, local only: a later step (the owner's repos and data store, created on their keystroke:
+or {name, store, layers} whose first is the brain's main store; ``schema: default`` is the brain's base of work,
+decisions and records (``templates/schemas/default.yaml``); ``layers: [work, decisions, records, research, ...]``
+composes the schema from research_graph's catalogue of layers (``research_graph layers``), a name it does not hold
+being the template's own layer, ``layers/<name>.yaml`` in its folder), never code (wi-brain-domain-templates). The
+plan is a list of steps, local only: a later step (the owner's repos and data store, created on their keystroke:
 wi-brain-init-stores) joins it without changing the others.
 """
 
@@ -65,12 +67,18 @@ DEFAULT_TEMPLATE = "generic"
 # a name the identity hint may print inside double quotes: no $, backtick, backslash or quote for a shell to expand
 SHELL_SAFE_NAME = re.compile(r"[\w .'-]+")
 MANIFEST = "template.yaml"
-TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs", "classes"}
-GRAPH_KEYS = {"name", "store", "schema"}
-SCHEMAS = ("default",)   # templates/schemas/<name>.yaml; a catalogue of graph types comes later
+TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs", "classes", "extends", "append"}
+# an engine template's folder: a name one may give, or a base (``_name``) only other templates extend
+BASE_RE = re.compile(r"_?[a-z0-9][a-z0-9_.-]*")
+MAX_EXTENDS = 6   # a template's chain of bases: an owner's, a profile, _software, _project, generic, and one more
+GRAPH_KEYS = {"name", "store", "schema", "layers"}
+LAYER_RE = re.compile(r"[a-z][a-z0-9_]*")   # a layer's name (research_graph.layers.NAME_RE)
+SCHEMAS = ("default",)   # templates/schemas/<name>.yaml; or a graph's layers, composed from research_graph's catalogue
 # what config.json names, so every template writes it (a folder through its .gitkeep)
 REQUIRED = ("projects.yaml", "rules/global.md", "source/packs.yaml", "memory/.gitkeep", "records/.gitkeep")
 TIERS = ("lite", "default")
+STAGES = ("prototype", "mvp", "v1", "scale")   # brain.standards.STAGES: the stage a profile's template selects for
+DEFAULT_STAGE = "prototype"
 KINDS = ("person", "team")
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9_.-]*")
 STORE = "notes/graph"
@@ -104,9 +112,26 @@ class Template:
     files: dict[str, str] = field(default_factory=dict)
     graphs: list[dict] = field(default_factory=lambda: [{"name": "work", "store": STORE, "schema": "default"}])
     classes: dict = field(default_factory=dict)     # {store: {class, paths, ...}}: the template's own stores
+    origin: dict = field(default_factory=dict)      # the brain's path -> the folder of the template that gives it
+    appends: dict = field(default_factory=dict)     # the brain's path -> [(folder, source)] appended, bases first
+    extends: tuple[str, ...] = ()                   # the engine's templates it builds on, the nearest first
+    layer_folders: tuple = ()                       # where its own layers are looked for (layers/<name>.yaml)
 
     def read(self, source: str) -> str:
         return (self.folder / source).read_text(encoding="utf-8") if source else ""
+
+    def text(self, rel: str) -> str:
+        """The text of the brain's path ``rel``: its file, from the template that gives it, then what the templates
+        append to it, each on a line of its own."""
+        source = self.files[rel]
+        out = (self.origin.get(rel, self.folder) / source).read_text(encoding="utf-8") if source else ""
+        for folder, extra in self.appends.get(rel, []):
+            out += ("" if not out or out.endswith("\n") else "\n") + (folder / extra).read_text(encoding="utf-8")
+        return out
+
+    def appended(self, rel: str) -> str:
+        """What the templates append to ``rel``, named (for a plan that keeps the file)."""
+        return ", ".join(extra for _, extra in self.appends.get(rel, []))
 
 
 def _version(text: str) -> tuple[int, ...]:
@@ -128,24 +153,31 @@ def engine_fits(spec: str, version: str = __version__) -> bool:
     return True
 
 
-def load_template(spec: str = DEFAULT_TEMPLATE) -> Template:
-    """The template ``spec`` names: one of the package's (``templates/<name>``), else a folder holding a
-    template.yaml. Its manifest is checked, and the engine it asks for."""
-    spec = spec or DEFAULT_TEMPLATE
-    folder = TEMPLATES / spec if NAME_RE.fullmatch(spec) else None
+def known_templates() -> list[str]:
+    """The engine's templates one may name: a folder of templates/ with a manifest, not a base (``_name``)."""
+    return sorted(d.name for d in TEMPLATES.iterdir() if NAME_RE.fullmatch(d.name) and (d / MANIFEST).is_file())
+
+
+def _manifest(spec: str) -> tuple[object, dict]:
+    """(the template's folder, its manifest's data): one of the package's, else a folder holding a template.yaml."""
+    folder = TEMPLATES / spec if BASE_RE.fullmatch(spec) else None
     if folder is None or not (folder / MANIFEST).is_file():
         folder = Path(spec).expanduser()
         if not (folder / MANIFEST).is_file():
-            known = sorted(d.name for d in TEMPLATES.iterdir() if (d / MANIFEST).is_file())
-            raise InitError(f"--template {spec!r}: not one of the engine's ({', '.join(known)}) nor a folder with a "
-                            f"{MANIFEST}")
+            raise InitError(f"--template {spec!r}: not one of the engine's ({', '.join(known_templates())}) nor a "
+                            f"folder with a {MANIFEST}")
     try:
         data = graph.load_yaml_file((folder / MANIFEST)) or {}
     except Exception as exc:   # a YAML error: the manifest may be the owner's or a domain's
         raise InitError(f"--template {spec}: {MANIFEST} is not readable YAML ({exc})") from exc
     if not isinstance(data, dict):
         raise InitError(f"--template {spec}: {MANIFEST} is a mapping")
-    # the engine range first: a newer template says "needs brain >=X", not "unknown key(s)" (docs/formats.md)
+    return folder, data
+
+
+def _head(spec: str, data: dict) -> None:
+    """The engine range first (a newer template says "needs brain >=X", not "unknown key(s)": docs/formats.md), then
+    the keys, the name and the version."""
     engine = str(data.get("engine") or "")
     if not engine_fits(engine):
         raise InitError(f"--template {spec}: it needs brain {engine}, this is {__version__} (install the engine at a "
@@ -155,27 +187,84 @@ def load_template(spec: str = DEFAULT_TEMPLATE) -> Template:
         for message in schema.tolerate(f"--template {spec}: {MANIFEST}: unknown key(s) {', '.join(sorted(unknown))} "
                                        f"(known: {', '.join(sorted(TEMPLATE_KEYS))})"):
             raise InitError(message)
-    name, version, fs = data.get("name"), data.get("version"), data.get("files")
-    if not (isinstance(name, str) and NAME_RE.fullmatch(name)):
+    name, version = data.get("name"), data.get("version")
+    if not (isinstance(name, str) and BASE_RE.fullmatch(name)):
         raise InitError(f"--template {spec}: {MANIFEST}: name is lower case letters, digits, '.', '_' and '-'")
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         raise InitError(f"--template {spec}: {MANIFEST}: version is a whole number, 1 or more")
+
+
+def _paths(spec: str, folder, data: dict, key: str) -> dict[str, str]:
+    """``files`` or ``append``: {the brain's path: the template's file}, each path inside the brain, each file there."""
+    fs = data.get(key) or {}
     if not isinstance(fs, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in fs.items()):
-        raise InitError(f"--template {spec}: {MANIFEST}: files maps the brain's path to the template's file")
+        raise InitError(f"--template {spec}: {MANIFEST}: {key} maps the brain's path to the template's file")
     for rel, source in fs.items():
         if rel == config.FILE or rel.startswith("/") or ".." in rel.replace("\\", "/").split("/"):
             raise InitError(f"--template {spec}: {MANIFEST}: {rel!r}: a path inside the brain, not config.json")
-        if source and not (folder / source).is_file():
+        if (source or key == "append") and not (folder / source).is_file():
             raise InitError(f"--template {spec}: {MANIFEST}: {rel}: no file {source!r} in the template")
+    return dict(fs)
+
+
+def _base(spec: str, data: dict, chain: tuple[str, ...]) -> Template | None:
+    """The engine's template ``extends`` names, loaded (a chain of at most :data:`MAX_EXTENDS`, never a cycle)."""
+    ext = data.get("extends")
+    if ext is None:
+        return None
+    if not (isinstance(ext, str) and BASE_RE.fullmatch(ext) and (TEMPLATES / ext / MANIFEST).is_file()):
+        raise InitError(f"--template {spec}: {MANIFEST}: extends {ext!r}: one of the engine's templates "
+                        f"({', '.join(sorted(d.name for d in TEMPLATES.iterdir() if (d / MANIFEST).is_file()))})")
+    if ext in chain or len(chain) > MAX_EXTENDS:
+        raise InitError(f"--template {spec}: {MANIFEST}: extends {ext!r}: a cycle or a chain past {MAX_EXTENDS} "
+                        f"({' -> '.join(chain + (ext,))})")
+    return load_template(ext, chain + (ext,))
+
+
+def load_template(spec: str = DEFAULT_TEMPLATE, _chain: tuple[str, ...] = ()) -> Template:
+    """The template ``spec`` names: one of the package's (``templates/<name>``), else a folder holding a
+    template.yaml. Its manifest is checked, and the engine it asks for. A template that ``extends`` one of the
+    engine's takes its files, appends, graphs and classes, and adds or replaces its own (a file of the same path, its
+    graphs when it gives some)."""
+    spec = spec or DEFAULT_TEMPLATE
+    if not _chain and spec.startswith("_") and (TEMPLATES / spec / MANIFEST).is_file():
+        raise InitError(f"--template {spec}: a base the engine's templates extend, not one to start from (one of "
+                        f"{', '.join(known_templates())})")
+    folder, data = _manifest(spec)
+    _head(spec, data)
+    base = _base(spec, data, _chain or (spec,))
+    if base is None and not isinstance(data.get("files"), dict):
+        raise InitError(f"--template {spec}: {MANIFEST}: files maps the brain's path to the template's file")
+    own = _paths(spec, folder, data, "files")
+    fs = {**(base.files if base else {}), **own}
+    origin = {**(base.origin if base else {}), **{rel: folder for rel in own}}
+    appends = {rel: list(v) for rel, v in (base.appends if base else {}).items()}
+    for rel, source in _paths(spec, folder, data, "append").items():
+        if rel not in fs:
+            raise InitError(f"--template {spec}: {MANIFEST}: append {rel}: not a file the template writes")
+        appends.setdefault(rel, []).append((folder, source))
     missing = [r for r in REQUIRED if r not in fs]
     if missing:
         raise InitError(f"--template {spec}: {MANIFEST}: files misses what config.json names: {', '.join(missing)}")
-    declared = data.get("classes") or {}
+    if not isinstance(data.get("classes") or {}, dict):
+        raise InitError(f"--template {spec}: {MANIFEST}: classes: {{store: {{class, paths}}}}")
+    declared = {**(base.classes if base else {}), **(data.get("classes") or {})}
     _, errors = classes.stores(config.Config(None, Path("."), {"classes": {"stores": declared}}))
-    if not isinstance(declared, dict) or errors:
+    if errors:
         raise InitError(f"--template {spec}: {MANIFEST}: classes: " + ("; ".join(errors) or "{store: {class, paths}}"))
-    return Template(name, version, str(data.get("title") or ""), folder, engine, dict(fs),
-                    graphs_of(spec, data.get("graphs")), dict(declared))
+    own_graphs = "graphs" in data or base is None
+    graphs = graphs_of(spec, data.get("graphs")) if own_graphs else [dict(g) for g in base.graphs]
+    tpl = Template(data["name"], data["version"], str(data.get("title") or ""), folder, str(data.get("engine") or ""),
+                   fs, graphs, declared, origin, appends,
+                   ((data["extends"],) + base.extends) if base else (),
+                   (folder,) + (base.layer_folders if base else ()))
+    for i, g in enumerate(tpl.graphs):   # each graph's layers compose: the catalogue's and the template's own
+        if g.get("layers"):
+            try:
+                graph_schema(g, "x", tpl)
+            except ValueError as exc:
+                raise InitError(f"--template {spec}: {MANIFEST}: graphs[{i}] ({g['name']}): {exc}") from exc
+    return tpl
 
 
 def classes_block(tpl: Template) -> dict:
@@ -191,8 +280,10 @@ def classes_block(tpl: Template) -> dict:
 
 
 def graphs_of(spec: str, declared) -> list[dict]:
-    """The manifest's ``graphs``, checked: a list of {name, store, schema}, names and stores unique, a store inside the
-    brain; none declared: one, ``work`` at notes/graph."""
+    """The manifest's ``graphs``, checked: a list of {name, store, schema} or {name, store, layers}, names and stores
+    unique, a store inside the brain; none declared: one, ``work`` at notes/graph. ``layers``: the layers its schema
+    is composed of (research_graph layers: the catalogue's names, or the template's own, ``layers/<name>.yaml`` in its
+    folder), instead of ``schema``."""
     if declared is None:
         return Template("", 1, "", None).graphs
     where = f"--template {spec}: {MANIFEST}: graphs"
@@ -208,13 +299,58 @@ def graphs_of(spec: str, declared) -> list[dict]:
         if not isinstance(store, str) or not store or store.startswith("/") or \
                 ".." in store.replace("\\", "/").split("/") or store in stores:
             raise InitError(f"{where}[{i}] ({name}): store is a folder inside the brain, each once")
-        if schema not in SCHEMAS:
+        layer_names = g.get("layers")
+        if layer_names is not None:
+            if "schema" in g:
+                raise InitError(f"{where}[{i}] ({name}): schema or layers, not both")
+            if not isinstance(layer_names, list) or not layer_names or \
+                    not all(isinstance(x, str) and LAYER_RE.fullmatch(x) for x in layer_names):
+                raise InitError(f"{where}[{i}] ({name}): layers is a list of layer names, one at least")
+        elif schema not in SCHEMAS:
             raise InitError(f"{where}[{i}] ({name}): schema {schema!r}: only {', '.join(SCHEMAS)} for now "
-                            "(the brain's base: work, decisions, records)")
+                            "(the brain's base: work, decisions, records), or layers: [NAME, ...]")
         names.add(name)
         stores.add(store)
-        out.append({"name": name, "store": store, "schema": schema})
+        out.append({"name": name, "store": store, **({"layers": list(layer_names)} if layer_names is not None else
+                                                     {"schema": schema})})
     return out
+
+
+def template_layers(tpl: Template | None, names) -> dict:
+    """The template's own layers among ``names`` (``layers/<name>.yaml`` in its folder), by name: research_graph's
+    Layer objects; a name of the catalogue is the catalogue's."""
+    from research_graph import layers
+
+    out = {}
+    for n in names:
+        if n in layers.catalogue():
+            continue
+        folders = (tpl.layer_folders or (tpl.folder,)) if tpl is not None else ()
+        f = next((d / "layers" / f"{n}.yaml" for d in folders if d is not None and (d / "layers" / f"{n}.yaml")
+                  .is_file()), None)
+        if f is None:
+            raise InitError(f"layer {n!r}: not in the catalogue ({', '.join(layers.catalogue())}) nor the template's "
+                            f"layers/{n}.yaml")
+        try:
+            data = graph.load_yaml(f.read_text(encoding="utf-8"))
+        except Exception as exc:   # a YAML error in the template's own layer file
+            raise InitError(f"layers/{n}.yaml is not readable YAML ({exc})") from exc
+        layer = layers.parse_layer(data, f"layers/{n}.yaml")
+        if layer.name != n:
+            raise InitError(f"layers/{n}.yaml holds layer {layer.name!r}")
+        out[n] = layer
+    return out
+
+
+def graph_schema(g: dict, owner: str, tpl: Template | None = None) -> str:
+    """A graph's schema.yaml: the default one (``schema``), or the one its ``layers`` compose (``templates:`` and
+    ``endpoints:`` included), with its owner."""
+    if not g.get("layers"):
+        return schema_text(g.get("schema", "default"), owner)
+    from research_graph import layers
+
+    resolved = layers.resolve(g["layers"], template_layers(tpl, g["layers"]))
+    return layers.render(layers.compose_layers(resolved, owner), layers.header_for(resolved))
 
 
 def schema_text(name: str, owner: str) -> str:
@@ -225,8 +361,11 @@ def schema_text(name: str, owner: str) -> str:
     return text.replace("{owner_line}", f"owner: {json.dumps(owner, ensure_ascii=False)}\n")
 
 
-def schema_layers(name: str) -> list[str]:
-    data = graph.load_yaml(schema_text(name, "x")) or {}
+def schema_layers(text: str) -> list[str]:
+    """The layers of a schema.yaml text (a template's schema name gives its text by :func:`schema_text`)."""
+    if "\n" not in text:   # a schema's name (as before 0.3.3)
+        text = schema_text(text, "x")
+    data = graph.load_yaml(text) or {}
     return list((data.get("layers") or {}).keys())
 
 
@@ -261,16 +400,32 @@ def config_text(owner: str, kind: str = "person", tenant: str | None = None, tie
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
+def _appended_yaml(tpl: Template, rel: str, text: str, name: str) -> None:
+    """A YAML file with what the template appends still reads as YAML; an append to the registry lands under the
+    brain's own entry, the last one (the fragment is indented as its keys)."""
+    try:
+        data = graph.load_yaml(text)
+    except Exception as exc:   # the template's fragment, not the owner's input
+        raise InitError(f"--template {tpl.name}: {rel} with what it appends is not YAML ({exc})") from exc
+    if rel == "projects.yaml" and (not isinstance(data, dict) or list(data)[-1:] != [name]):
+        raise InitError(f"--template {tpl.name}: projects.yaml: what it appends goes under the brain's own entry "
+                        f"({name}), which must be the registry's last")
+
+
 def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
-              tpl: Template | None = None) -> dict[str, str]:
+              tpl: Template | None = None, stage: str = DEFAULT_STAGE) -> dict[str, str]:
     """{path relative to the brain: text} for every file brain init writes but the store and the Claude files:
-    config.json, then the template's files with their variables rendered."""
+    config.json, then the template's files (with what it appends to them) with their variables rendered. A YAML
+    file must read as YAML once rendered (an appended fragment that breaks it is the template's error)."""
     tpl = tpl or load_template()
     values = {"owner": owner, "owner_q": json.dumps(owner, ensure_ascii=False), "name": name,
-              "title_q": json.dumps(f"{owner}'s brain: rules, decisions, backlog and journal", ensure_ascii=False)}
+              "title_q": json.dumps(f"{owner}'s brain: rules, decisions, backlog and journal", ensure_ascii=False),
+              "stage": stage}
     out = {config.FILE: config_text(owner, kind, tenant, tier, tpl)}
-    for rel, source in tpl.files.items():
-        out[rel] = re.sub(r"\{(owner|owner_q|name|title_q)\}", lambda m: values[m.group(1)], tpl.read(source))
+    for rel in tpl.files:
+        out[rel] = re.sub(r"\{(owner|owner_q|name|title_q|stage)\}", lambda m: values[m.group(1)], tpl.text(rel))
+        if rel in tpl.appends and rel.endswith((".yaml", ".yml")):
+            _appended_yaml(tpl, rel, out[rel], name)
     return out
 
 
@@ -326,8 +481,17 @@ def render_claude(root: Path) -> tuple[int, list[str]]:
     return 0, []
 
 
+def _file_step(path: Path, text: str, appended: str) -> Step:
+    """A file of the template: created, or kept when it exists (never written over); a kept file names what the
+    template appends to it, for the owner to add by hand."""
+    if not path.exists():
+        return Step("create", path, text)
+    return Step("keep", path, why=f"exists; the template appends {appended} to it: add that by hand, as the new file "
+                                  "would hold it" if appended else "exists")
+
+
 def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = None, tier: str = "lite",
-         name: str = "brain", template_spec: str = DEFAULT_TEMPLATE) -> list[Step]:
+         name: str = "brain", template_spec: str = DEFAULT_TEMPLATE, stage: str = DEFAULT_STAGE) -> list[Step]:
     """What brain init would do in ``root``, file by file, in order (the owner: ``owner``, else the one of the
     config.json already in ``root``)."""
     owner = " ".join((owner or owner_in(root) or "").split())
@@ -340,21 +504,26 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
                         "profile set recommended)")
     if not NAME_RE.fullmatch(name):
         raise InitError(f"--name {name!r}: lower case letters, digits, '.', '_' and '-'")
+    if stage not in STAGES:
+        raise InitError(f"--stage {stage!r}: one of {', '.join(STAGES)} (the standards a profile's template selects)")
     tpl = load_template(template_spec)
     root = Path(root).resolve()
     steps, created = [], set()
-    for rel, text in files_for(owner, kind, tenant, tier, name, tpl).items():
-        p = root / rel
-        if p.exists():
-            steps.append(Step("keep", p, why="exists"))
-        else:
-            steps.append(Step("create", p, text))
+    for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage).items():
+        steps.append(_file_step(root / rel, text, tpl.appended(rel)))
+        if steps[-1].action == "create":
             created.add(rel)
     for i, g in enumerate(tpl.graphs):
         schema = root / g["store"] / "schema.yaml"
-        steps.append(Step("keep", schema.parent, why="a graph store already", graph=i) if schema.exists() else
-                     Step("store", schema.parent, schema_text(g["schema"], owner),
-                          why=f"research_graph init --owner {owner}, layers {', '.join(schema_layers(g['schema']))}",
+        if schema.exists():
+            steps.append(Step("keep", schema.parent, why="a graph store already", graph=i))
+            continue
+        try:
+            text = graph_schema(g, owner, tpl)
+        except ValueError as exc:
+            raise InitError(f"--template {template_spec}: graphs[{i}] ({g['name']}): {exc}") from exc
+        steps.append(Step("store", schema.parent, text,
+                          why=f"research_graph init --owner {owner}, layers {', '.join(schema_layers(text))}",
                           graph=i))
     steps.append(_render_step(root, created, claude_names(root)["plugin"], tpl.graphs[0]["store"]))
     pointer, there = paths.personal_file(), paths.pointer_root()
@@ -441,6 +610,7 @@ def main(args) -> int:
     spec = getattr(args, "template", None) or DEFAULT_TEMPLATE
     try:
         steps = plan(root, args.owner or "", kind=args.kind, tenant=args.tenant, tier=args.tier, name=args.name,
+                     stage=getattr(args, "stage", None) or DEFAULT_STAGE,
                      template_spec=spec)
         tpl = load_template(spec)
     except InitError as exc:

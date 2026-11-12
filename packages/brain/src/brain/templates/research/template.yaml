@@ -1,0 +1,15 @@
+# A research project (hypotheses, experiments, verdicts, with its code and data): brain init --template research
+# [--stage prototype|mvp|v1|scale]. The software base (the CI jobs, the test harness, the format registry, the issue
+# and ADR templates, the code layers of the graph) and the engine's standards for the research profile at the
+# project's stage (projects.yaml standards:, brain standards list --applicable).
+name: research
+version: 1
+engine: ">=0.3.2"
+title: "A research project: the software base and the research profile's standards"
+extends: _software
+graphs:                    # the brain's main store, by layers (research_graph layers)
+  - name: work
+    store: notes/graph
+    layers: [work, decisions, records, lessons, ideas, research, data, code, docs_tests]
+append:                    # the project's standards selection, under its entry in projects.yaml
+  projects.yaml: standards.yaml
