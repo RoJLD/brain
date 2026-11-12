@@ -176,6 +176,15 @@ def test_a_derivation_that_fails_makes_the_guards_fail_closed(brain, monkeypatch
                if g == "public")
 
 
+def test_a_render_for_a_public_repo_does_not_deny_its_own_name(brain):
+    cfg = brain()
+    assert ("repos", "moonshot") in config.deny_terms(cfg)
+    published = denylist.publishing(cfg, ["moonshot"])
+    assert ("repos", "moonshot") not in config.deny_terms(published) and ("repos", "lab-repo") in \
+        config.deny_terms(published)
+    assert "moonshot" not in denylist.public_names(cfg)   # the brain's own config is left as it was
+
+
 def test_many_terms_are_one_regex_first(brain):
     r = public.rules(brain())
     assert r.any_term is not None and r.any_term.search("night_runner") and not r.any_term.search("nothing here")

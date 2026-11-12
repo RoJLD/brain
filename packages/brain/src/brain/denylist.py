@@ -68,6 +68,17 @@ class DeriveError(Exception):
 ENGINE_NAMES = ("brain", "research-graph")   # the engine's own names: a brain's repo is often named as its engine
 
 
+def publishing(cfg: config.Config, names: list[str]) -> config.Config:
+    """A copy of ``cfg`` whose public.public_names also hold ``names``: what a render for a public repo checks against
+    (``brain reference --public --repo R``: R's name is the published repo's, not a private one)."""
+    import copy
+    data = copy.deepcopy(cfg.data)
+    pub = data.setdefault("public", {}) if isinstance(data.get("public", {}), dict) else {}
+    own = pub.get("public_names") if isinstance(pub.get("public_names"), dict) else {}
+    pub["public_names"] = {**own, **{n: "the repo this render publishes" for n in names if n}}
+    return config.Config(cfg.file, cfg.root, data, cfg.error)
+
+
 def _key(t: str) -> str:
     """A name with its separators dropped, lowercased: one key for every spelling."""
     return "".join(t.replace("_", "-").replace(" ", "-").split("-")).lower()

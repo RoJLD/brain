@@ -69,7 +69,9 @@ def _prose_refused(where: Path | None) -> bool:
 
 def _denied(args, root: Path, files: dict[str, str]) -> list[str]:
     """--public: what brain check --public would refuse in the render (never written into a public repo), each said."""
-    denied = reference.denied(files, config.load(root)) if args.public else []
+    from .. import denylist  # the repo rendered is the one published: its own name is not a private one
+    cfg = denylist.publishing(config.load(root), [args.repo or _root_repo(args, root)]) if args.public else None
+    denied = reference.denied(files, cfg) if args.public else []
     for line in denied:
         print(f"brain: the public reference: {line} (brain features set <feature> public_title=... or public_id=...)",
               file=sys.stderr)
