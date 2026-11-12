@@ -56,6 +56,7 @@ def test_apply_writes_a_brain_that_checks_and_points_to_it(fresh, monkeypatch, c
                     "rules": ["rules/global.md"], "memory": "memory", "records": "records",
                     "template": {"name": "generic", "version": 1},
                     "engine": {"repo": init.ENGINE_REPO, "pin": f"v{__version__}"}, "tier": {"base": "lite"},
+                    "modules": {},
                     "adapters": {"claude": {"marketplace": "brain", "plugin": "brain-core"}},
                     "public": {"repos": [], "deny": {"people": ["Ada"], "users": ["ada-l"], "hosts": ["host-a"]}}}
     assert config.check(fresh) == [] and config.owner_of(fresh) == "Ada"

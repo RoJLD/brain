@@ -105,25 +105,25 @@ def _contains(repo: Path, ancestor: str, rev: str) -> bool:
     return bool(rev) and git(repo, "merge-base", ancestor, rev, allow=(0, 1)).strip() == ancestor
 
 
-def sides(repo: Path, base_sha: str, worktree: bool) -> dict[str, str]:
+def sides(repo: Path, base_sha: str, worktree: bool, head: str = "HEAD") -> dict[str, str]:
     """{"ours": the branch before the merge, "mb": its merge base with the base, "merge": MERGE_HEAD or ''}: while a
     merge is uncommitted, ours is HEAD; else the newest merge commit since the base's history (its first parent), else
-    HEAD (no merge: nothing of main to lose)."""
+    ``head`` (no merge: nothing of main to lose)."""
     merge = _rev(repo, "MERGE_HEAD") if worktree else ""
-    ours = "HEAD"
+    ours = head
     if not merge:
-        merges = git(repo, "rev-list", "--first-parent", "--merges", "-n", "50", "HEAD", f"^{base_sha}").split()
+        merges = git(repo, "rev-list", "--first-parent", "--merges", "-n", "50", head, f"^{base_sha}").split()
         brought = [m for m in merges if not _contains(repo, base_sha, _rev(repo, f"{m}^1"))]
-        ours = f"{brought[0]}^1" if brought else "HEAD"   # the merge that brought the base in
+        ours = f"{brought[0]}^1" if brought else head   # the merge that brought the base in
     ours_sha = _rev(repo, ours)
     mb = git(repo, "merge-base", ours_sha, base_sha, allow=(0, 1)).strip()
     return {"ours": ours_sha, "mb": mb, "merge": merge}
 
 
-def _mine(repo: Path, path: str, worktree: bool) -> str:
+def _mine(repo: Path, path: str, worktree: bool, head: str = "HEAD") -> str:
     if worktree:
         return (repo / path).read_text(encoding="utf-8") if (repo / path).is_file() else ""
-    return _show(repo, "HEAD", path)
+    return _show(repo, head, path)
 
 
 def _nodes(text: str) -> dict[str, dict]:
@@ -170,15 +170,17 @@ def lost_nodes(base: str, mb: str, ours: str, result: str) -> tuple[list[tuple[s
 
 
 def check(repo: Path, project: projects.Project | None = None, base: str = "", fetch: bool = True,
-          worktree: bool = False, extra: list[str] | None = None) -> dict:
+          worktree: bool = False, extra: list[str] | None = None, head: str = "HEAD") -> dict:
+    """The check of ``head`` (a commit of the repo, HEAD by default: brain merge-ready passes a PR's head) against a
+    fresh ``base``."""
     base = base or default_base(repo)
     remotes = set(git(repo, "remote").split())
     if fetch and base.split("/", 1)[0] in remotes and "/" in base:
         git(repo, "fetch", "--quiet", base.split("/", 1)[0])
     base_sha = git(repo, "rev-parse", "--verify", f"{base}^{{commit}}").strip()
-    s = sides(repo, base_sha, worktree)
-    behind = not (_contains(repo, base_sha, "HEAD") or _contains(repo, base_sha, s["merge"]))
-    files = watched(repo, project, extra, revs=(base_sha,))
+    s = sides(repo, base_sha, worktree, head)
+    behind = not (_contains(repo, base_sha, _rev(repo, head)) or _contains(repo, base_sha, s["merge"]))
+    files = watched(repo, project, extra, revs=(base_sha, head))
     out = {"base": base, "base_sha": base_sha, "behind": behind, "files": len(files), "lost": [], "lost_ids": [],
            "merge_base": s["mb"]}
     if behind or not files or not s["mb"]:
@@ -187,7 +189,7 @@ def check(repo: Path, project: projects.Project | None = None, base: str = "", f
         texts = [_show(repo, base_sha, path), _show(repo, s["mb"], path)]
         if texts[0] == texts[1]:
             continue  # main did not change it since the merge base
-        result = _mine(repo, path, worktree)
+        result = _mine(repo, path, worktree, head)
         if kind == "append":
             out["lost"] += [{"path": path, "line": n, "text": t} for n, t in lost_lines(*texts, result)]
             continue
