@@ -317,6 +317,14 @@ the refusal of a higher `v`. A new format, or a new version of one, adds its pai
 the `newer` file only (the `projects` one holds an `access: read` entry and a second project at a shared root since
 0.3.0).
 
+Beside that pair, **each released engine's own file** (wi-brain-format-fixture-freeze): `<format>/v<N>/<tag>.<ext>`
+(`ar/v1/v0.3.1.jsonl`), written by that tag through its own commands and frozen by `installer/freeze_store.py` (« The
+old stores » below), never edited. `tests/test_formats_frozen.py` reads each one strict, as CI does: what N-1 wrote,
+N reads with no note and no error. ar, config, ddr, event (the first lines of an exec ledger file), packs, projects,
+sr and template are frozen from v0.2.4 and v0.3.1, then the last tag's at each version PR; the formats no command
+writes (permissions, members, readme, modules, standards) keep their hand-written pair only, and the status document
+too: `brain doctor --json` prints the machine's own inventory, which a public fixture never holds.
+
 ### The old stores
 
 A reader tested on its format alone can still refuse a whole brain an older engine made: brain #33's `brain lesson
