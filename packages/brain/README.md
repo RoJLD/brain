@@ -778,8 +778,9 @@ projects under each node, and `brain sync` writes `notes/scopes_graph.md` (gener
 --scope REF` shows the projects of a node's subtree, with the totals when it holds several (`brain resume` and `brain
 digest` take it too, one pack or digest per project): REF is an id, a path of
 ids (`pro/acme`), `global` (as `--all`), `.` (the project of the folder) or `..` (its parent); `--project` and `--all`
-stay. Without `scopes.yaml` and `parent:`, every project sits under Global and nothing changes. A `parent:` on a
-read-only entry or a mount needs brain 0.3.3 on every machine: an older one's `brain check --all` refuses the key there.
+stay. Without `scopes.yaml` and `parent:`, every project sits under Global and nothing changes. An older engine
+reads `parent:` and `scope_types` as unknown keys (a note; refused in strict mode, CI) and refuses `parent:` on a
+read-only entry or a mount: add them once every machine and the brain repo's CI run the release that knows them.
 
 ### Edges between stores
 

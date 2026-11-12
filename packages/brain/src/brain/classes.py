@@ -440,8 +440,12 @@ def scopes_file(cfg: config.Config) -> Path | None:
 
 
 def scope_nodes(cfg: config.Config) -> dict[str, dict]:
-    """{node id: its mapping} from scopes.yaml (``scopes:``), {} when there is no tree yet (brain.scopes)."""
+    """{node id: its mapping} from scopes.yaml (``scopes:``), {} when there is no tree yet (brain.scopes). A file that
+    cannot be read raises ClassError: a floor or a scoped recipient is never dropped in silence (fail closed)."""
     from . import scopes
+    _, _, problems = scopes.raw(cfg)
+    if problems:
+        raise ClassError(f"{problems[0]}: its class floors and scoped recipients cannot be read")
     return scopes.nodes_of(cfg)
 
 
@@ -458,20 +462,13 @@ def own_project(cfg: config.Config) -> str:
 
 def scope_chain(cfg: config.Config, project: str, nodes: dict[str, dict] | None = None) -> list[str]:
     """The node ids above a project, nearest first, up to (not including) global: its ``parent:`` in the registry,
-    then each node's ``parent``. [] without a tree or a parent."""
+    then each node's, a parent project's included (a sub-project inherits the floors and recipients above its
+    parent: brain.scopes.Tree.chain). [] without a tree or a parent."""
     nodes = scope_nodes(cfg) if nodes is None else nodes
     if not nodes or not project:
         return []
-    try:
-        entry = projects.raw(cfg.root).get(project) or {}
-    except Exception:  # noqa: BLE001
-        entry = {}
-    node = entry.get("parent") if isinstance(entry, dict) else None
-    chain: list[str] = []
-    while isinstance(node, str) and node and node != "global" and node not in chain:
-        chain.append(node)
-        node = (nodes.get(node) or {}).get("parent")
-    return chain
+    from . import scopes
+    return scopes.load(cfg.root, cfg).chain(project)
 
 
 def floor(cfg: config.Config, project: str, nodes: dict[str, dict] | None = None) -> tuple[str, str]:
@@ -566,7 +563,11 @@ def _refuse(rep: Report, s: Store, exit_: str, line: str, advice: str = "") -> N
 
 
 def _floors(cfg: config.Config, rep: Report, by_name: dict[str, Store]) -> None:
-    nodes = scope_nodes(cfg)
+    try:
+        nodes = scope_nodes(cfg)
+    except ClassError as exc:
+        rep.errors.append(str(exc))
+        return
     if not nodes:
         rep.notes.append("no scope tree (scopes.yaml): no class floor to check")
         return

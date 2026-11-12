@@ -149,9 +149,10 @@ class Tree:
         t = self.types.get(type_id) or {}
         return str(t.get(lang) or t.get("en") or type_id)
 
-    def projects_under(self, nid: str) -> list[str]:
-        """The projects in the subtree of ``nid`` (itself when it is one), depth first; shortcuts are not followed."""
-        return [x for x in self.subtree(nid) if self.nodes[x].is_project]
+    def projects_under(self, nid: str, archived: bool = True) -> list[str]:
+        """The projects in the subtree of ``nid`` (itself when it is one), depth first; shortcuts are not followed;
+        ``archived`` False leaves the archived subtrees out."""
+        return [x for x in self.subtree(nid, archived) if self.nodes[x].is_project]
 
 
 def scopes_file(cfg: config.Config) -> Path | None:
@@ -227,8 +228,8 @@ def _registry_nodes(root: Path) -> dict[str, Node]:
         reg = {}
     out = {}
     for name, entry in reg.items():
-        if entry is not None and not isinstance(entry, dict):
-            continue
+        if (entry is not None and not isinstance(entry, dict)) or str(name) == GLOBAL:
+            continue   # global is the root, never a node: check() refuses a project of that name
         entry = entry or {}
         kind = "mount" if projects.is_mount(entry) else "read" if projects.is_read_only(entry) else "project"
         out[str(name)] = Node(str(name), "tenant" if kind == "mount" else "project", kind,
@@ -254,6 +255,12 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> tuple[l
     data, f, _ = raw(cfg)
     if f is not None and not tree.problems:
         errors += _file_errors(data, f, tree)
+    try:
+        named_global = GLOBAL in projects.raw(root if root is not None else cfg.root)
+    except Exception:  # noqa: BLE001 - as in _registry_nodes: projects.check reports a registry it cannot read
+        named_global = False
+    if named_global:
+        errors.append(f"project {GLOBAL}: global is the root of the scope tree, the brain itself: rename the project")
     for n in tree.nodes.values():
         errors += _place_errors(tree, n)
         warnings += _place_warnings(tree, n)
@@ -460,7 +467,11 @@ def resolve(tree: Tree, ref: str, here: str = "") -> str:
         if not here or here not in tree.nodes:
             raise ScopeError(f"--scope {ref}: no registered project here (run it from a project's checkout, or name "
                              "a node)")
-        return here if ref == "." else tree.nodes[here].parent
+        node = here if ref == "." else tree.nodes[here].parent
+        if node != GLOBAL and (node not in tree.nodes or tree._cyclic(node)):
+            raise ScopeError(f"--scope {ref}: the parent of {here}, {node!r}, is no node of the tree (brain check "
+                             "--all says why)")
+        return node
     if "/" in ref:
         return _by_path(tree, ref)
     if ref not in tree.nodes:
@@ -493,18 +504,19 @@ def select(ref: str, root: Path | None = None, here: str = "") -> tuple[str, lis
 
 # --- the views: brain scopes, notes/scopes_graph.md ---
 
-def describe(tree: Tree, lang: str = "en", archived: bool = False) -> dict:
-    """The tree with stable keys: what brain scopes --json prints."""
+def describe(tree: Tree, lang: str = "en", archived: bool = False, top: str = GLOBAL) -> dict:
+    """The tree with stable keys, from ``top``: what brain scopes --json prints."""
     def one(nid: str) -> dict:
         n = tree.nodes[nid]
         return {"id": nid, "kind": n.kind, "type": n.type, "label": tree.label(n.type, lang), "title": n.title,
                 "parent": n.parent, "path": tree.path(nid), "depth": tree.depth(nid), "status": n.status,
                 "children": tree.children(nid, archived),
-                "projects": len([x for x in tree.projects_under(nid) if x != nid]),
+                "projects": len([x for x in tree.projects_under(nid, archived) if x != nid]),
                 "also_under": list(n.data.get("also_under") or []) if n.kind == "container" else []}
-    ids = tree.subtree(GLOBAL, archived)
+    ids = tree.subtree(top, archived)
     return {"present": tree.present, "file": str(tree.file) if tree.file else None,
-            "global": {"children": tree.children(GLOBAL, archived), "projects": len(tree.projects_under(GLOBAL))},
+            "global": {"children": tree.children(GLOBAL, archived),
+                       "projects": len(tree.projects_under(GLOBAL, archived))},
             "nodes": [one(x) for x in ids],
             "types": {k: {lang_: v.get(lang_, "") for lang_ in LANGS} for k, v in tree.types.items()}}
 
@@ -514,10 +526,10 @@ def render(tree: Tree, lang: str = "en", archived: bool = False, depth: int | No
     """The tree in text from ``top`` (Global by default): each node's id, title, type label and the projects under
     it, ``depth`` levels down; a shortcut (also_under) is shown with an arrow, for display only."""
     if top == GLOBAL:
-        count = len(tree.projects_under(GLOBAL))
+        count = len(tree.projects_under(GLOBAL, archived))
         out = [f"Global ({count} project{'s' if count != 1 else ''})"]
     else:
-        out = [f"{tree.path(top)}: " + _line(tree, top, lang, False)]
+        out = [f"{tree.path(top)}: " + _line(tree, top, lang, False, archived)]
     shortcuts: dict[str, list[str]] = {}
     for n in tree.nodes.values():
         for a in (n.data.get("also_under") or []) if n.kind == "container" else []:
@@ -530,7 +542,7 @@ def render(tree: Tree, lang: str = "en", archived: bool = False, depth: int | No
         rows = [(k, False) for k in kids] + [(x, True) for x in links]
         for i, (kid, link) in enumerate(rows):
             last = i == len(rows) - 1
-            out.append(prefix + ("└─ " if last else "├─ ") + _line(tree, kid, lang, link))
+            out.append(prefix + ("└─ " if last else "├─ ") + _line(tree, kid, lang, link, archived))
             if not link and (depth is None or level < depth):
                 walk(kid, prefix + ("   " if last else "│  "), level + 1)
 
@@ -542,7 +554,7 @@ def render(tree: Tree, lang: str = "en", archived: bool = False, depth: int | No
     return out
 
 
-def _line(tree: Tree, nid: str, lang: str, link: bool) -> str:
+def _line(tree: Tree, nid: str, lang: str, link: bool, archived: bool = True) -> str:
     n = tree.nodes[nid]
     bits = [nid]
     if n.kind == "container" and n.title and n.title != nid:
@@ -550,7 +562,7 @@ def _line(tree: Tree, nid: str, lang: str, link: bool) -> str:
     what = tree.label(n.type, lang) if n.type else "?"
     what += {"read": ", read only", "mount": ", mount"}.get(n.kind, "")
     bits.append(f"({what})")
-    under = len([x for x in tree.projects_under(nid) if x != nid])
+    under = len([x for x in tree.projects_under(nid, archived) if x != nid])
     if under:
         bits.append(f"{under} project{'s' if under != 1 else ''}")
     if n.status == "archived":

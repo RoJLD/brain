@@ -44,10 +44,7 @@ def cmd_scopes(args, root: Path) -> int:
     except scopes.ScopeError as exc:
         raise SystemExit(f"brain: {exc}") from None
     if args.json:
-        data = scopes.describe(tree, args.lang, args.archived)
-        if nid != scopes.GLOBAL:
-            keep = set(tree.subtree(nid, args.archived))
-            data["nodes"] = [n for n in data["nodes"] if n["id"] in keep]
+        data = scopes.describe(tree, args.lang, args.archived, top=nid)
         data["scope"] = nid
         print(json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True))
         return 0

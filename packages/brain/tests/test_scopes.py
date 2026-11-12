@@ -7,7 +7,7 @@ import shutil
 
 import pytest
 
-from brain import cli, config, projects, scopes, status
+from brain import cli, config, projects, scopes
 from brain.commands import _stores
 
 TREE = """\
@@ -181,11 +181,11 @@ def test_resume_and_digest_take_scope(brain, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out) == [{"project": "beta"}]   # a list, as with --all
 
 
-def test_status_scope_on_a_multi_project_node_adds_the_totals(brain):
+def test_status_scope_on_a_multi_project_node_adds_the_totals(brain, capsys):
     brain("alpha: {root: ., parent: pro}\nbeta: {root: ../beta, parent: pro}\ngamma: {root: ../gamma}\n")
     _tree(brain.root)
-    names = scopes.select("pro", brain.root)[1]
-    data = status.run([projects.load(brain.root)[n] for n in names], every=True, quick=True)
+    assert cli.main(["--root", str(brain.root), "status", "--scope", "pro", "--quick", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
     assert [p["project"] for p in data["projects"]] == ["alpha", "beta"] and "total" in data
 
 
@@ -219,4 +219,43 @@ def test_classes_reads_the_tree_through_brain_scopes(brain, monkeypatch, tmp_pat
     monkeypatch.delenv("BRAIN_SCOPES")
     errors, _ = scopes.check(brain.root)
     assert errors and errors[0].startswith("scopes.yaml: not readable YAML")
-    assert classes.scope_nodes(config.load(brain.root)) == {}
+    cfg = config.load(brain.root)
+    with pytest.raises(classes.ClassError, match="cannot be read"):   # fail closed: no floor or recipient dropped
+        classes.scope_nodes(cfg)
+    from brain import vault
+    store = classes.Store("repo", "private", project="alpha")
+    with pytest.raises(vault.VaultError, match="not readable YAML"):
+        vault.for_store(cfg, store)   # never sealed to the root's recipients alone
+
+
+def test_a_sub_project_inherits_the_floor_above_its_parent(brain):
+    from brain import classes
+    brain("alpha: {root: ., parent: acme}\nbeta: {root: ../beta, parent: alpha}\ngamma: {root: ../gamma}\n")
+    _tree(brain.root)
+    cfg = config.load(brain.root)
+    assert classes.scope_chain(cfg, "beta") == ["alpha", "acme", "pro"]
+    assert classes.floor(cfg, "beta") == ("confidential", "acme") == scopes.floor(scopes.load(brain.root), "beta")
+
+
+def test_a_project_named_global_is_refused_and_never_loops(brain, capsys):
+    brain("global: {root: .}\nbeta: {root: ../beta}\n")
+    tree = scopes.load(brain.root)
+    assert "global" not in tree.nodes and scopes.render(tree)[0] == "Global (1 project)"
+    errors, _ = scopes.check(brain.root)
+    assert errors == ["project global: global is the root of the scope tree, the brain itself: rename the project"]
+
+
+def test_dotdot_under_an_unknown_parent_is_a_clean_refusal(brain):
+    brain("alpha: {root: ., parent: typo}\nbeta: {root: ../beta}\n")
+    with pytest.raises(SystemExit, match="the parent of alpha, 'typo', is no node"):
+        cli.main(["--root", str(brain.root), "status", "--scope", "..", "--quick"])
+
+
+def test_archived_subtrees_are_left_out_of_the_counts_unless_asked(brain, capsys):
+    brain("alpha: {root: ., parent: old}\nbeta: {root: ../beta}\n")
+    _tree(brain.root, TREE + "  old: {type: folder, status: archived}\n")
+    tree = scopes.load(brain.root)
+    assert scopes.render(tree)[0] == "Global (1 project)"
+    assert scopes.render(tree, archived=True)[0] == "Global (2 projects)"
+    assert cli.main(["--root", str(brain.root), "scopes", "--scope", "old", "--json"]) == 0
+    assert [n["id"] for n in json.loads(capsys.readouterr().out)["nodes"]] == ["old", "alpha"]   # named: shown
