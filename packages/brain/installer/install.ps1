@@ -47,6 +47,11 @@
                    variables reach it; one this machine installed and no longer declares is removed, a task you
                    registered by hand never is. Creating a scheduled task is your decision: the plan shows it, -Apply
                    does it. A brain command older than the subcommand only says so
+      stamps       with a personal brain and -Apply: brain check --public --refresh, by the engine just installed: each
+                   local checkout of config.json public.repos (the registry's repos whose remote is one) checked with
+                   its history and stamped again, since the push guard refuses a stamp another engine made; a HEAD
+                   already stamped is left, a checkout with uncommitted work skipped and named, a finding said (never
+                   an install failure). A brain command older than the flag only says so
     With a personal brain whose config.json has adapters.claude and rules:
       marketplace  adapters.claude.marketplace, cloned by Claude Code from GitHub adapters.claude.source (branch -Ref
                    when given), with background auto-update on (extraKnownMarketplaces.<marketplace>.autoUpdate in
@@ -713,9 +718,33 @@ function Set-Schedules {
 }
 # --- end of the schedule step ---
 
+# --- the stamps step (tests/test_public.py runs it alone) ---
+function Update-Stamps {
+    # brain check --public --refresh by the engine just installed (wi-brain-public-stamp-refresh): each local checkout
+    # of config.json public.repos (the registry's repos) checked with its history and stamped again, since the push
+    # guard refuses a stamp of another engine; one with uncommitted work is skipped and named. Said, never a failure of
+    # the install; a command older than the flag (argparse's exit 2) only says so.
+    if (-not (Test-Path $venv_python)) {
+        "stamps   the public repos' local checkouts re-checked and stamped (brain check --public --refresh), once the command is installed (-Apply)"
+        return
+    }
+    if (-not $Apply) {
+        'stamps   brain check --public --refresh with -Apply: each local checkout of config.json public.repos re-checked with its history by the installed engine and stamped for the push guard (one with uncommitted work skipped and named)'
+        return
+    }
+    $out = @(Invoke-Brain check --public --refresh)
+    if ($script:brain_code -eq 2 -and -not ($out | Where-Object { $_ -match '^(stamps|same|stamped|skip|refused|failed) ' })) {
+        'stamps   the installed brain command has no check --public --refresh yet (an older engine): brain check --public --history in each public checkout'
+        return
+    }
+    $out
+}
+# --- end of the stamps step ---
+
 $allow_file = Join-Path $engine_root 'src\brain\adapters\claude\allow-rules.txt'
 if ($repo) { Set-MergeDriver }
 if ($repo) { Set-Schedules }
+if ($repo -and -not $SkipCommand) { Update-Stamps }
 if ($claude_steps) { Update-Permissions }
 if (-not $repo -and -not $Apply) { 'next     brain init <folder> --owner <you> --apply (after -Apply installs the command), then .\install.ps1 -Personal <folder>' }
 if (-not $Apply) { '(plan only: run with -Apply to install)' }
