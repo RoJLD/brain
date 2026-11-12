@@ -30,7 +30,10 @@ def cmd_review(args, root: Path | None = None) -> int:
     repo = Path(args.repo).resolve() if args.repo else Path.cwd()
     try:
         if args.review_cmd == "prep":
-            p = review.prep(repo, args.target or "", Path(args.out) if args.out else None, scout=not args.no_scout)
+            from .. import standards
+            proj = standards.project_of_repo(repo)
+            p = review.prep(repo, args.target or "", Path(args.out) if args.out else None, scout=not args.no_scout,
+                            standards=standards.lenses(proj) if proj is not None else [])
             if args.json:
                 print(json.dumps(p.__dict__, indent=2))
             else:

@@ -15,6 +15,9 @@ ORDER = 125   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 125   # its usage lines' place in brain --help's epilog
 RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
     "standards show": "on demand: one standard read by hand (brain standards lists them)",
+    "standards lenses": "wired: brain review prep adds the same rows to its packet as the standards lens",
+    "standards rules": "on demand: a project's rules text, written into its rules",
+    "standards ci": "on demand: a project's CI skeleton, once, then adapted by hand",
 }
 USAGE = """\
   brain standards list [--catalog C] [--domain D] [--profile P] [--stage S] [--enforcement E] [--status S]
@@ -28,6 +31,11 @@ USAGE = """\
                  malformed or names an unknown profile, stage or id, or a local catalog cannot be read, and lists the
                  applicable standards whose check does not cover a repo's language (a gap, not an error); 2 when one
                  of the engine's catalogs cannot be read. A project without standards: follows none
+  brain standards lenses | rules [--write FILE] | ci [--write FILE] [--json]   the registry's consumers for the
+                 project: lenses, its review-lens rows, the questions brain review prep adds as the standards lens;
+                 rules, its rule rows as a markdown section of rules text (only what needs judgement); ci, a GitHub
+                 Actions skeleton from its check and measure rows with an adapter, one step per slot and repo (the
+                 usual tool of its language as a comment; the engine runs no tool). Nothing when it declares none
 """
 
 
@@ -163,9 +171,61 @@ def _cmd_check(args, root: Path) -> int:
     return 1 if data["errors"] else 0
 
 
+def _out(text: str, args) -> None:
+    if getattr(args, "write", None):
+        Path(args.write).write_text(text, encoding="utf-8", newline="\n")
+        print(f"standards: written {args.write}")
+    else:
+        sys.stdout.write(text)
+
+
+def _cmd_lenses(args, root: Path) -> int:
+    p = _project(args, root)
+    lines = standards.lenses(p)
+    if args.json:
+        _print_json({"project": p.name, "lenses": lines})
+    else:
+        print("\n".join(f"- {line}" for line in lines) if lines else
+              f"no review-lens standard applies to {p.name} (brain standards list --applicable)")
+    return 0
+
+
+def _cmd_rules(args, root: Path) -> int:
+    p = _project(args, root)
+    text = standards.rules_text(p)
+    if args.json:
+        _print_json({"project": p.name, "rules": text})
+    elif text:
+        _out(text, args)
+    else:
+        print(f"no rule standard applies to {p.name} (brain standards list --applicable)")
+    return 0
+
+
+def _cmd_ci(args, root: Path) -> int:
+    p = _project(args, root)
+    notes: list[str] = []
+    langs, slots = _languages(p, notes)
+    try:
+        tools = {r.name: dict(r.tools) for r in projects.repos_of(p)}
+    except projects.RepoError:
+        tools = {name: {} for name in slots}
+    plan = standards.ci_plan(p, langs, tools)
+    if args.json:
+        _print_json({"project": p.name, "plan": plan, "notes": notes})
+    elif plan:
+        _out(standards.ci_yaml(p, plan, langs), args)
+    else:
+        print(f"no check or measure standard with an adapter applies to {p.name} (brain standards list --applicable)")
+    for n in notes:
+        print(f"brain standards: {n}", file=sys.stderr)
+    return 0
+
+
 def cmd_standards(args, root: Path) -> int:
     try:
-        return {"list": _cmd_list, "show": _cmd_show, "check": _cmd_check}[args.standards_cmd](args, root)
+        return {"list": _cmd_list, "show": _cmd_show, "check": _cmd_check, "lenses": _cmd_lenses,
+                "rules": _cmd_rules, "ci": _cmd_ci}[args.standards_cmd](args, root)
     except standards.StandardsError as exc:
         print(f"brain standards: {exc}", file=sys.stderr)
         return 2
@@ -188,7 +248,12 @@ def register(sub, ctx) -> None:
     sc = ss.add_parser("check", help="exit 1 when a catalog breaks its format or cannot be read, an id is found "
                                      "twice, or the project's standards: is malformed or names an unknown profile, "
                                      "stage or id")
-    for p in (sl, sh, sc):
+    sle = ss.add_parser("lenses", help="the review-lens rows: the standards lens brain review prep adds")
+    sr = ss.add_parser("rules", help="the rule rows as a markdown section of rules text")
+    sci = ss.add_parser("ci", help="a CI workflow skeleton from the check and measure rows with an adapter")
+    for p in (sr, sci):
+        p.add_argument("--write", metavar="FILE", help="write it to FILE instead of printing it")
+    for p in (sl, sh, sc, sle, sr, sci):
         p.add_argument("--json", action="store_true", help="stable keys")
 
 
