@@ -165,8 +165,9 @@ setting runs a command at startup and every 29 minutes (`CLAUDE_CODE_OTEL_HEADER
 JSON object it prints as the export's headers. The command prints `{"Authorization": "Bearer <token>"}`, read from
 the token file each time (a rotation reaches the export at its next refresh), and nothing else; without a usable
 token it prints nothing on stdout, names the fix on stderr and exits 1: Claude Code then exports nothing and warns
-once (`otelHeadersHelper failed; telemetry is not being exported`, also in `/status`). The owner points the setting
-at it in their user settings (`~/.claude/settings.json`), never a session:
+once (`otelHeadersHelper failed; telemetry is not being exported`, also in `/status`). The setting sits in the
+owner's user settings (`~/.claude/settings.json`), never a session's, written by the installer from the brain's
+config.json (below, « Claude Code's export settings »), not by hand:
 
 ```json
 {"otelHeadersHelper": "brain ipc otel-headers"}
@@ -181,6 +182,39 @@ at it in their user settings (`~/.claude/settings.json`), never a session:
   Code's environment. Its limit: the token then sits in clear in that environment (every child process inherits it,
   and a rotation means editing it again), where the helper keeps it in the token file.
 
+### Claude Code's export settings (`wi-brain-install-claude-telemetry`)
+
+The brain records them; the installer writes them. config.json `adapters.claude.telemetry`:
+
+```json
+{"adapters": {"claude": {"telemetry": {"enabled": true}}}, "ipc": {"require_token": ["otel-collector"]}}
+```
+
+| Key | Default | Claude Code's setting |
+|---|---|---|
+| `enabled` | false (nothing written) | `env.CLAUDE_CODE_ENABLE_TELEMETRY` = `1` |
+| `endpoint` | `http://127.0.0.1:4318` (the sovereign collector's OTLP HTTP port) | `env.OTEL_EXPORTER_OTLP_ENDPOINT` |
+| `protocol` | `http/protobuf` (or `http/json`, `grpc`) | `env.OTEL_EXPORTER_OTLP_PROTOCOL` |
+| `exporters` | `["metrics", "logs"]` | `env.OTEL_METRICS_EXPORTER`, `env.OTEL_LOGS_EXPORTER` = `otlp` |
+| `env` | none | other `OTEL_*` variables, as strings (`OTEL_METRIC_EXPORT_INTERVAL`, say) |
+| `headers_helper` | `auto`: when `ipc.require_token` names `otel-collector` (or `always`, `never`) | `otelHeadersHelper` = `brain ipc otel-headers` |
+
+`brain ipc claude-settings [--json]` renders them (it prints no secret). It refuses, exit 1 and nothing for the
+installer to write: the helper with `grpc` (Claude Code would not send it), the helper with an endpoint off loopback
+(the machine's token would leave it), an `env` name that is not `OTEL_*`, one that names headers (the token goes
+through the helper, never in clear in `settings.json`), or one the section's own keys set.
+
+`install.ps1` (its telemetry step, after the permissions) adds them to `~/.claude/settings.json`
+(`$CLAUDE_CONFIG_DIR` when set): the plan says each one it would set, `-Apply` writes them. Additions only: a key
+already there with another value is kept and said, its value never printed (one the owner set may be a secret), and
+nothing is removed; turning the section off writes nothing and takes nothing out. `settings.json` is handled as the
+permissions step handles it (refused when it is not a JSON object, kept as it was in `settings.json.bak`). An
+installed brain command older than `brain ipc claude-settings` only says so.
+
+The order of the collector's switch (the owner's): `brain ipc token --init`, the section with `enabled: true` and
+`install.ps1 -Apply` (the helper is written once `ipc.require_token` names the collector, so both in one change of
+config.json), then `brain bundle apply sovereign`, then `brain health ipc`.
+
 On a Linux host the secret is the token file itself, mode 0600 and owned by the owner: give the collector's user
 (10001 in its image) read access with an ACL, `setfacl -m u:10001:r <BRAIN_HOME>/ipc/token`. `brain health ipc`
 accepts a group bit or an ACL entry, and refuses a token readable by every user.
@@ -191,7 +225,11 @@ accepts a group bit or an ACL entry, and refuses a token readable by every user.
   another program answering while the machine has no token: OFF too, since no MCP server can run without one);
 - each running container of the Brain's Compose projects (`brain-sovereign`, `brain-mcp`) and of the code index:
   a port published beyond loopback is a FAIL, a container running as root a warning (Qdrant's image does);
-- which services take requests without the token (the collector while not opted in, GitNexus).
+- which services take requests without the token (the collector while not opted in, GitNexus);
+- when the collector requires the token, Claude Code's export as its user settings say it: on with no
+  `otelHeadersHelper` is a FAIL (the collector refuses the export: the section above, then `install.ps1 -Apply`), the
+  helper with `grpc` too, the token in clear in `OTEL_EXPORTER_OTLP_HEADERS` a warning, the export off OK. Project or
+  managed settings are not read.
 
 Exit 1 on a FAIL. A required token that is missing is a FAIL. Under `--all`, a machine that never made the token and
 requires none gets no line: nothing is probed and Docker is not asked, so `--all` says what it said before. Its

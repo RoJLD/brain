@@ -69,6 +69,13 @@
                    settings.json is Claude Code's file: one that is not a JSON object stops the installer (fix it by
                    hand first, never replaced), one Claude Code wrote meanwhile too (run it again); each write keeps
                    the file as it was in settings.json.bak and replaces it through a temporary file
+      telemetry    Claude Code's OTLP export to the collector, from config.json adapters.claude.telemetry (enabled,
+                   endpoint, protocol, exporters, env, headers_helper), as brain ipc claude-settings --json renders it:
+                   env CLAUDE_CODE_ENABLE_TELEMETRY and OTEL_* in settings.json, and otelHeadersHelper = brain ipc
+                   otel-headers when config.json ipc.require_token names otel-collector (the token never in clear in
+                   settings.json). Additions only: a key already there with another value is kept and said (its value
+                   never printed), nothing removed; an error of the section stops -Apply; skipped while not enabled;
+                   an installed command older than brain ipc claude-settings only says so
       retire       ~/.claude/CLAUDE.md when it is the copy an earlier installer put there (moved to a dated .bak), so
                    that the rules load once
       memory       memory\<project>\*.md -> ~/.claude/projects/<project>/memory/ (only files missing locally: the
@@ -672,6 +679,86 @@ function Update-Permissions {
 }
 # --- end of the permissions step ---
 
+# --- the telemetry step (tests/test_ipchealth.py runs it alone) ---
+function Set-ClaudeTelemetry {
+    # Claude Code's OTLP export (wi-brain-install-claude-telemetry): what config.json adapters.claude.telemetry wants in
+    # the user settings, as the installed brain command renders it (brain ipc claude-settings --json: env
+    # CLAUDE_CODE_ENABLE_TELEMETRY and OTEL_*, and otelHeadersHelper when the collector requires the token). Additions
+    # only: a key missing is added, one already there with another value is kept and said, nothing is removed.
+    if (-not (Test-Path $venv_python)) {
+        "telemetry Claude Code's OTLP export settings from config.json adapters.claude.telemetry, once the command is installed (-Apply)"
+        return
+    }
+    $ErrorActionPreference = 'Continue'
+    $console = [Console]::OutputEncoding
+    [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false   # the brain command writes UTF-8 to a pipe
+    $out = & $venv_python -I -m brain --root $repo ipc claude-settings --json 2>$null
+    $code = $LASTEXITCODE
+    [Console]::OutputEncoding = $console
+    $ErrorActionPreference = 'Stop'
+    $want = $null
+    try { $want = ($out | Out-String) | ConvertFrom-Json } catch { $want = $null }
+    if (-not $want) {
+        if ($code -eq 2) {
+            # argparse's exit: a brain command older than brain ipc claude-settings (a plan before it is installed)
+            'note     the installed brain command has no ipc claude-settings yet: Claude Code''s telemetry settings are left as they are'
+            return
+        }
+        "error    brain ipc claude-settings --json failed (exit $code)"
+        if ($Apply) { throw "brain ipc claude-settings failed (exit $code): Claude Code's telemetry settings are not written" }
+        return
+    }
+    if ($want.errors) {
+        $want.errors | ForEach-Object { "error    telemetry: $_" }
+        if ($Apply) { throw 'config.json adapters.claude.telemetry has errors (brain ipc claude-settings): nothing written' }
+        return
+    }
+    if (-not $want.enabled) {
+        "skip     Claude Code's telemetry: config.json adapters.claude.telemetry.enabled is not true (nothing written)"
+        return
+    }
+    $settings = Read-ForeignJson $settings_path
+    $env_have = if ($settings -and $settings.env) { $settings.env } else { $null }
+    $added = @()
+    $same = 0
+    foreach ($p in $want.env.PSObject.Properties) {
+        $have = if ($env_have) { $env_have.PSObject.Properties[$p.Name] } else { $null }
+        if (-not $have) {
+            "set      env $($p.Name)=$($p.Value) in $settings_path"
+            $added += $p
+        } elseif ("$($have.Value)" -ceq "$($p.Value)") {
+            $same++
+        } else {
+            # never printed: a value the owner set may be a secret
+            "keep     env $($p.Name) in $settings_path (another value there; config.json wants $($p.Value): additions only)"
+        }
+    }
+    $helper = $want.otelHeadersHelper
+    $helper_add = $false
+    if ($helper) {
+        $have = if ($settings) { $settings.PSObject.Properties['otelHeadersHelper'] } else { $null }
+        if (-not $have) {
+            "set      otelHeadersHelper = $helper in $settings_path"
+            $helper_add = $true
+        } elseif ("$($have.Value)" -ceq "$helper") {
+            $same++
+        } else {
+            "keep     otelHeadersHelper in $settings_path (another command there; config.json wants ${helper}: additions only)"
+        }
+    }
+    if (-not $added -and -not $helper_add) {
+        "same     Claude Code's telemetry: $same setting(s) of config.json adapters.claude.telemetry in $settings_path"
+        return
+    }
+    if (-not $Apply) { return }
+    if (-not $settings) { $settings = [pscustomobject]@{} }
+    if (-not $settings.env) { $settings | Add-Member -NotePropertyName env -NotePropertyValue ([pscustomobject]@{}) -Force }
+    foreach ($p in $added) { $settings.env | Add-Member -NotePropertyName $p.Name -NotePropertyValue "$($p.Value)" -Force }
+    if ($helper_add) { $settings | Add-Member -NotePropertyName otelHeadersHelper -NotePropertyValue "$helper" -Force }
+    Write-ForeignJson $settings_path $settings
+}
+# --- end of the telemetry step ---
+
 # --- the merge driver step (tests/test_mergedriver.py runs it alone) ---
 function Set-MergeDriver {
     # brain merge-driver install in the personal brain's repo (its worktrees share its git config): the launcher on
@@ -746,5 +833,6 @@ if ($repo) { Set-MergeDriver }
 if ($repo) { Set-Schedules }
 if ($repo -and -not $SkipCommand) { Update-Stamps }
 if ($claude_steps) { Update-Permissions }
+if ($claude_steps) { Set-ClaudeTelemetry }
 if (-not $repo -and -not $Apply) { 'next     brain init <folder> --owner <you> --apply (after -Apply installs the command), then .\install.ps1 -Personal <folder>' }
 if (-not $Apply) { '(plan only: run with -Apply to install)' }

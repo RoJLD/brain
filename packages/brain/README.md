@@ -1114,7 +1114,10 @@ launches it) or, with `--http`, Streamable HTTP on a loopback address only, each
 Nothing runs it on its own: a service or a remote endpoint is the owner's decision. `brain health ipc` checks every
 local service the Brain starts: loopback only, the token where the service can check one (the collector's is opt-in,
 config.json `ipc.require_token`, its export's header given by `brain ipc otel-headers`), no container as root
-([`docs/mcp.md`](docs/mcp.md), « The Brain's other local services »).
+([`docs/mcp.md`](docs/mcp.md), « The Brain's other local services »). Claude Code's export settings are the brain's,
+never typed by hand: config.json `adapters.claude.telemetry` says them, `brain ipc claude-settings` renders them and
+`install.ps1` adds them to the user settings (additions only), `otelHeadersHelper` included once the collector
+requires the token (docs/mcp.md, « Claude Code's export settings »).
 
 ## The Claude Code hooks
 
