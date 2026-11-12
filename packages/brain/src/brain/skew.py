@@ -141,10 +141,27 @@ def how(root: Path | None, pin: str, engines: list[Engine]) -> str:
 
 
 def check_lines(root: Path | None) -> list[str]:
-    """brain check's warning ([] when the engine is the pinned one)."""
+    """brain check's warnings ([] when the engine is the pinned one and not below engine.min)."""
+    low = below_min(root)
     pin, diff, engines = of(root)
-    return [f"warning: the running engine is not config.json engine.pin {pin}: {'; '.join(diff)} (brain sync and "
-            f"brain render refuse to write until it is: {how(root, pin, engines)})"] if diff else []
+    return ([f"warning: {low}"] if low else []) + ([f"warning: the running engine is not config.json engine.pin {pin}: {'; '.join(diff)} (brain sync and "
+            f"brain render refuse to write until it is: {how(root, pin, engines)})"] if diff else [])
+
+
+def below_min(root: Path | None = None) -> str:
+    """Why this engine is below config.json ``engine.min`` ('' when it is not, or no minimum is set): under it the
+    machine reads but never writes the shared formats (the memory sync, the DDRs; spec one-brain 4.10)."""
+    eng = config.load(root).data.get("engine")
+    want = update.version_of(eng.get("min")) if isinstance(eng, dict) and eng.get("min") else None
+    if want is None:
+        return ""
+    from . import __version__
+
+    have = update.version_of(__version__)
+    if have is None or have >= want:
+        return ""
+    return (f"this engine is {__version__}, below config.json engine.min {eng['min']}: it reads, it writes no shared "
+            "format (brain update, then the installer)")
 
 
 WRITES = "the rendered hooks and the generated links"

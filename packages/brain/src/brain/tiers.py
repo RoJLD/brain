@@ -36,6 +36,7 @@ from pathlib import Path
 from . import config, graph, paths, probe
 
 FILE = Path(__file__).with_name("tiers.yaml")
+INFRA_NODE = "infra-node"   # the switch of the agent report provider (brain.machine), off by default
 MACHINE_FILE = "profile.json"
 CLASSES = ("core", "extra", "service")
 PROFILES = ("lite", "default", "recommended", "custom")
@@ -88,6 +89,8 @@ class Choice:
     applied: str = ""
     computed_from: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
+    own: dict | None = None    # the machine file's own components (components holds them merged over config.json's)
+    inherited: dict = field(default_factory=dict)   # config.json's components, the default a machine overrides
 
 
 # The registry.
@@ -219,13 +222,17 @@ def check(root: Path | None) -> list[str]:
 
 # Facts and rules.
 
-def holds(clause: str, facts: dict) -> bool:
-    """One recommend_when clause on the facts: FACT (true), not FACT, or FACT OP VALUE (numbers, else text)."""
+def truth(clause: str, facts: dict) -> bool | None:
+    """One recommend_when clause on the facts, in three states: FACT (true), not FACT, or FACT OP VALUE (numbers,
+    else text); None when the fact is unknown (absent, or None: never probed, or the probe could not say), so that
+    neither ``ecc`` nor ``not ecc`` holds on a machine whose memory was never read (wi-brain-machine-facts)."""
     m = CLAUSE.match(clause.strip())
     if not m:
         return False
     neg, name, op, value = m.groups()
     have = facts.get(name)
+    if have is None:
+        return None
     if op is None:
         ok = bool(have)
     else:
@@ -234,6 +241,11 @@ def holds(clause: str, facts: dict) -> bool:
         except (TypeError, ValueError):
             ok = OPS[op](str(have), value) if op in ("==", "!=") else False
     return not ok if neg else ok
+
+
+def holds(clause: str, facts: dict) -> bool:
+    """The clause is known to hold (:func:`truth` is True): an unknown fact holds neither way."""
+    return truth(clause, facts) is True
 
 
 def missing(e: Entry, facts: dict) -> list[str]:
@@ -273,6 +285,13 @@ def recommend(reg: dict[str, Entry], facts: dict) -> dict[str, str]:
     return out
 
 
+def machine_facts(root: Path | None, doc: dict, reg: dict[str, Entry], ch: Choice) -> dict:
+    """The flat facts with every source layered (brain.machine.facts): what list, show and set read."""
+    from . import machine
+
+    return machine.facts(probe.facts(doc), config.load(root).data, infra_node=INFRA_NODE in active(reg, ch)[0])[0]
+
+
 def would_fit(reg: dict[str, Entry], facts: dict) -> list[str]:
     """The planned entries of profile recommended this machine would allow once built (shown, never chosen)."""
     return [e.id for e in reg.values() if e.status == "planned" and e.profile == "recommended"
@@ -291,6 +310,12 @@ def preset(reg: dict[str, Entry], base: str) -> set[str]:
 
 def machine_file() -> Path:
     return paths.brain_home() / MACHINE_FILE
+
+
+def _config_components(root: Path | None) -> dict:
+    tier = config.load(root).data.get("tier")
+    comps = tier.get("components") if isinstance(tier, dict) else None
+    return {str(k): bool(v) for k, v in comps.items()} if isinstance(comps, dict) else {}
 
 
 def choice(root: Path | None) -> Choice:
@@ -312,14 +337,17 @@ def choice(root: Path | None) -> Choice:
             elif data.get("base") not in BASES or not isinstance(data.get("components") or {}, dict):
                 warnings.append(f"{f}: base is one of {', '.join(BASES)} and components a mapping: ignored")
             else:
-                return Choice(data["base"], {str(k): bool(v) for k, v in (data.get("components") or {}).items()},
-                              "machine", name, str(data.get("applied") or ""), data.get("computed_from") or {},
-                              warnings)
+                # the machine's override merged key by key over config.json's components (a key it names wins;
+                # one it does not name keeps the brain's default, the infra-node switch say: R25)
+                own = {str(k): bool(v) for k, v in (data.get("components") or {}).items()}
+                inherited = _config_components(root)
+                return Choice(data["base"], {**inherited, **own}, "machine", name, str(data.get("applied") or ""),
+                              data.get("computed_from") or {}, warnings, own, inherited)
     tier = config.load(root).data.get("tier")
     if isinstance(tier, dict) and tier.get("base", BUILT_IN) in ("lite", "default"):
-        return Choice(tier.get("base", BUILT_IN), {str(k): bool(v) for k, v in (tier.get("components") or {}).items()},
-                      "config", name, warnings=warnings)
-    return Choice(BUILT_IN, {}, "built-in", name, warnings=warnings)
+        comps = _config_components(root)
+        return Choice(tier.get("base", BUILT_IN), comps, "config", name, warnings=warnings, own={}, inherited=comps)
+    return Choice(BUILT_IN, {}, "built-in", name, warnings=warnings, own={})
 
 
 def active(reg: dict[str, Entry], ch: Choice) -> tuple[set[str], list[str]]:
@@ -375,8 +403,9 @@ def plan(reg: dict[str, Entry], current: Choice, base: str | None, with_: list[s
     """The choice ``brain profile set`` would write: a base (recommended: the set this machine allows, frozen into
     the overrides) and the overrides, kept only where they differ from the base. No base: the current choice, with
     these overrides. Raises TierError for an entry that cannot be asked for."""
-    if base is None:
-        base, comps, frozen = current.base, dict(current.components), dict(current.computed_from)
+    if base is None:   # the machine's own overrides only: config.json's stay the brain's default, never copied
+        own = current.own if current.own is not None else current.components   # a Choice made by hand
+        base, comps, frozen = current.base, dict(own), dict(current.computed_from)
     elif base == "recommended":
         rec = recommend(reg, facts or {})
         base, comps = "recommended", {eid: True for eid in rec}
@@ -399,9 +428,10 @@ def plan(reg: dict[str, Entry], current: Choice, base: str | None, with_: list[s
         if not value and e.cls == "core":
             raise TierError(f"{eid} is core: every profile has it")
         comps[eid] = value
-    keep = preset(reg, base)
-    comps = {k: v for k, v in sorted(comps.items()) if v != (k in keep)}
-    return Choice(base, comps, "machine", current.machine or probe.machine(), computed_from=frozen)
+    keep = preset(reg, base)   # an override is kept where it differs from the default: the base, then config.json
+    comps = {k: v for k, v in sorted(comps.items()) if v != current.inherited.get(k, k in keep)}
+    return Choice(base, comps, "machine", current.machine or probe.machine(), computed_from=frozen,
+                  own=comps, inherited=current.inherited)
 
 
 def write(ch: Choice) -> tuple[Path, bool]:
@@ -465,11 +495,16 @@ def outside(root: Path | None, reg: dict) -> dict[str, str]:
 def doctor(root: Path | None, quick: bool = False, doc: dict | None = None) -> dict:
     """brain doctor: the probe's report with, in its brain block, the profile: the choice, each entry's state, the
     Recommended profile computed for this machine, and the drift between the two (a proposal, never applied)."""
+    from . import machine
+
     doc = doc or probe.collect(quick=quick, roots=[root] if root else None)
-    facts = probe.facts(doc)
     reg, errors = registry(root)
     ch = choice(root)
     on, warnings = active(reg, ch)
+    cfg = config.load(root).data
+    facts, sourced, provider_errors = machine.facts(probe.facts(doc), cfg, infra_node=INFRA_NODE in on)
+    machine.save_facts(sourced)
+    ident = machine.identity(cfg)
     rec = recommend(reg, facts)
     rec_set = preset(reg, "default") | set(rec)
     rows = []
@@ -494,7 +529,9 @@ def doctor(root: Path | None, quick: bool = False, doc: dict | None = None) -> d
         "inventory": {"providers": ["local"], "nodes": [doc["brain"]["machine"]],
                       "note": "this machine alone: no inventory provider is declared (wi-brain-inventory-providers)"},
         "facts": facts,
-        "warnings": ch.warnings + warnings,
+        "sources": sourced,
+        "identity": ident,
+        "warnings": ch.warnings + warnings + provider_errors,
         "errors": errors,
     }
     return doc
@@ -511,6 +548,11 @@ def _cost(res: dict) -> str:
     return ", ".join(f"{v:g} {units[k]}" for k, v in res.items() if v)
 
 
+def _fact(v) -> str:
+    return "unknown" if v is None else "yes" if v is True else "no" if v is False else \
+        ",".join(map(str, v)) if isinstance(v, list) else str(v)
+
+
 def render_doctor(doc: dict) -> list[str]:
     """brain doctor's text: the machine, the probes, the active profile, each entry's state, Recommended and the
     drift."""
@@ -519,8 +561,13 @@ def render_doctor(doc: dict) -> list[str]:
     cpu, mem, plat = inv["cpu"], inv["memory"], inv["platform"]
     tools = b.get("tools") or {}
     distro = f" {plat['distro']}" if plat["distro"] else ""
+    ident = prof.get("identity") or {}
     lines = [f"machine   {b['machine']} ({plat['os']} {plat['version']}{distro}, {plat['arch']}), report "
              f"{doc['health']}",
+             f"identity  {ident.get('state', '?')}" + (f", anchor {ident['anchor'][:12]} ({ident['anchor_source']})"
+                                                     if ident.get("anchor") else "")
+             + (f": {ident['doubt']}" if ident.get("doubt") else "")
+             + (f"; declare it in config.json: {ident['declare']}" if ident.get("declare") else ""),
              f"cpu       {cpu.get('model') or '?'}, {cpu.get('cores')} logical cores (avx2 "
              f"{'yes' if cpu.get('avx2') else 'no'}, avx512 {'yes' if cpu.get('avx512') else 'no'})",
              f"memory    {_gb(mem.get('total_bytes'))}"
@@ -556,6 +603,11 @@ def render_doctor(doc: dict) -> list[str]:
     if enc is not None:
         lines.append("encrypted " + (", ".join(f"{e['volume']} {e['state']}" for e in enc) or "no volume read")
                      + (f" ({enc[0]['source']})" if enc else ""))
+    srcs = prof.get("sources") or {}
+    shown = [k for k in ("ecc", "battery", "encrypted", "gpu", "type", "cluster", "roles") if k in srcs]
+    if shown:
+        lines.append("facts     " + ", ".join(
+            f"{k} {_fact(srcs[k]['value'])} ({srcs[k]['source']})" for k in shown))
     failed = [f"{n} {p['error']}" for n, p in b["probes"].items() if not p["ok"]]
     lines.append("probes    " + ", ".join(f"{n} {p['seconds']:g} s" for n, p in b["probes"].items() if p["ok"])
                  + (f"; {'; '.join(failed)}" if failed else ""))
