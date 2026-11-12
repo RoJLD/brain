@@ -723,6 +723,26 @@ the app does not know, ended; archiving one child of several keeps it, with one 
 is pruned (14 days), by design: those children still spend; the governor reminds a master past 80 % that calls
 `start_session`, and lets the call through: nothing blocks a new session.
 
+### The coordinators' hand-over
+
+A coordinator hands over to the coordinator it starts: a hand-over note, then Remote Control on for the successor and
+off on itself, two calls the guard lets through only when its conditions hold ([`docs/guards.md`](docs/guards.md),
+Remote Control's three exceptions). `brain handover` (`brain.succession`, machine-wide) scripts the note and checks
+those conditions before the calls, at zero token, from the files the guard reads:
+
+- **`brain handover write [--from FILE|-] [--successor NAME] [--id ID]`**: the note,
+  `<BRAIN_HOME>/handover/coordinator-<date>-<name>.md`, whose first line is `From <app id> (<name>), <date> UTC` (the
+  guard reads the first app id of its opening as whose note it is), then the successor's name and the body.
+- **`brain handover check [--id ID] [--successor ID] [--json]`**: each condition (a coordinator by name or a chain
+  root, started by one, its note under 6 hours old, its successors live and detached), whether `on` and `off` would
+  pass, and the predecessor, which an incoming coordinator archives first (a session's own archive is refused); exit
+  1 when the hand-over would be refused, 2 when the app's files cannot be read.
+- **`brain handover root [ID] [--reason TEXT] [--clear]`**: the owner's, in their own terminal (refused in a Claude
+  Code session's shell, and by the guard to every session, like `brain usage allow`): a session the owner started
+  (no parent in the app's files) marked a chain root, `<BRAIN_HOME>/handover/roots.json`. A root hands over without a
+  coordinator's name, and the coordinators it starts pass the parent condition through it, until `--clear`; a
+  marked id that a session started, or that the app's files do not know, is no root. No ID lists the marks.
+
 ## Lessons
 
 What each finished item teaches is a node of the graph, so it can be found, counted and fixed, at zero token
