@@ -8,7 +8,8 @@ The source is the folder ``source/`` at the brain's root (config.json ``source``
   source/packs.yaml          the marketplace and the packs: which rules, procedures and MCP servers go together,
                              with each target's own fields (claude: the plugin manifest and its marketplace entry);
                              a pack key this engine does not know (a newer brain's) is kept and noted, refused only
-                             in strict mode (CI: brain.schema.tolerate), so packs may grow keys (typologies...)
+                             in strict mode (CI: brain.schema.tolerate), so packs may grow keys (typologies...); a
+                             mapping is read as a target's own fields (kept, no note)
   source/rules/<name>.md     rules: front matter (scope, title, intro, lock, a target's own title and intro), then
                              one ``## `` section per rule, its first line ``<!-- id: rule-x -->``
                              (``; overrides: rule-y`` or ``; paths: a/**, b/*.py`` may follow)

@@ -188,11 +188,25 @@ def test_research_takes_parts_of_the_software_base_instead_of_extending_it():
     ("{_project: [docs/templates/adr.md]}", "takes '_project': the template itself or one it extends"),
     ("[_software]", "takes maps one of the engine's templates to the brain's paths"),
     ("{_software: []}", "takes maps one of the engine's templates to the brain's paths"),
+    ("{_software: [boundary.yaml, boundary.yaml]}", "the brain's paths taken from it, each once"),
+    ("{_software: [boundary.yaml]}\nextends: research", "takes _software: 'boundary.yaml': its base takes it already"),
 ])
 def test_a_bad_take_plans_nothing(fresh, tmp_path, capsys, takes, says):
-    tpl = _own(tmp_path, f"name: mine\nversion: 1\nextends: _project\ntakes: {takes}\n", {})
+    manifest = f"name: mine\nversion: 1\ntakes: {takes}\n"
+    tpl = _own(tmp_path, manifest if "extends" in manifest else manifest + "extends: _project\n", {})
     assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl)]) == 2
     assert says in capsys.readouterr().out and list(fresh.iterdir()) == []
+
+
+def test_a_taken_append_needs_the_file_it_goes_to(fresh, tmp_path, capsys):
+    """A template of no base that writes no boundary.yaml cannot take _software's boundary fragment: the error names
+    the take, not an append the owner never wrote."""
+    files = {r: "x.md" for r in init.REQUIRED}
+    tpl = _own(tmp_path, "name: mine\nversion: 1\ntakes: {_software: [boundary.yaml]}\nfiles: "
+               + json.dumps(files) + "\n", {"x.md": "x\n"})
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl)]) == 2
+    assert ("takes _software: boundary.yaml: what _software appends there needs a file the template does not write"
+            in capsys.readouterr().out)
 
 
 def test_a_template_of_ones_own_takes_the_ci_alone(fresh, tmp_path, capsys):

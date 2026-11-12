@@ -273,7 +273,10 @@ def test_an_unknown_typology_or_stage_id_is_read_never_refused(tmp_path, capsys)
     assert main(["--store", str(store), "--repo-root", str(tmp_path / "me"), "layers", "propose", "--typology", "film",
                  "--stage", "pre-production"]) == 0
     out = capsys.readouterr().out
-    assert "code" not in out.split() and "work" not in out.split()
+    missing = anywhere - {"work", "decisions"}
+    assert missing, "the catalogue has layers open to any typology that the store lacks"
+    proposed = out.strip().splitlines()[-1].split("layers add ", 1)[1].split(" (a plan")[0].split()
+    assert set(proposed) == missing and "code" not in proposed
 
 
 def test_a_block_entry_of_endpoints_takes_the_new_pairs_as_items(tmp_path):
