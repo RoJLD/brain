@@ -82,10 +82,7 @@ def run_scope(scope: list[projects.Project], *, only: str = "", fresh: bool = Fa
               timeout: int | None = None, as_json: bool = False) -> int:
     """brain formats check over projects (brain check --formats too): exit 1 when one fails. With ``only``, the
     projects that declare that format (an error when none of them does)."""
-    if only and len(scope) > 1:
-        scope = [p for p in scope if any(f.id == only for f in formats.formats_of(p.formats))] or scope[:1]
-    out = [report(p, only=only, fresh=fresh, timeout=timeout) for p in scope
-           if p.formats is not None or only or len(scope) == 1]
+    out = [report(p, only=only, fresh=fresh, timeout=timeout) for p in _scoped(scope, only)]
     if as_json:
         _print_json({"formats": 1, "projects": out})
     else:
@@ -95,6 +92,16 @@ def run_scope(scope: list[projects.Project], *, only: str = "", fresh: bool = Fa
         if not out:
             print("no project declares formats: (projects.yaml)")
     return 1 if any(failed(d) for d in out) else 0
+
+
+def _scoped(scope: list[projects.Project], only: str) -> list[projects.Project]:
+    """The projects a check covers: one named alone; with ``only``, those that declare it (else the first, which
+    says it has none); else those that declare formats:."""
+    if len(scope) == 1:
+        return scope
+    if only:
+        return [p for p in scope if any(f.id == only for f in formats.formats_of(p.formats))] or scope[:1]
+    return [p for p in scope if p.formats is not None]
 
 
 def _cmd_list(args, root: Path) -> int:
