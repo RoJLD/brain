@@ -1,0 +1,44 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+# A domain names its own sources in its template's layer (a market venue, a sensor, a registry).
+name: data
+version: 1
+title: "The data: the datasets, where they come from, the code that pulls them and the steps that derive them"
+requires: [work]
+mode: written
+node_types:
+  Source: "where data comes from: a provider, an API, a site, an instrument"
+  Dataset: "a dataset the project reads or produces"
+  Adapter: "code that pulls a source's data"
+  Transform: "a normalisation or derivation step"
+edge_types:
+  provided_by:
+    - {from: [Dataset], to: [Source, Adapter, Dataset], why: "a dataset -> what provides it"}
+  derived_from:
+    - {from: [Dataset], to: [Dataset, Transform], why: "a dataset -> what it is derived from"}
+  hosted_in:
+    - {from: [Adapter, Transform], to: [Repo, Adapter], why: "code -> the repo (code layer) or adapter it lives in"}
+  delivers:
+    - {from: [WorkItem], to: [Source, Dataset, Adapter, Transform], why: "an item -> the data piece it creates"}
+statuses: [active, planned, deferred, retired, superseded]
+status_by_type:
+  Source: [active, planned, deferred, retired]
+  Dataset: [active, planned, deferred, retired, superseded]
+  Adapter: [active, planned, deferred, retired]
+  Transform: [active, planned, superseded]
+ids: {Source: "src-<slug>", Dataset: "ds-<slug>", Adapter: "adapter-<slug>", Transform: "tf-<slug>"}
+commands: ["brain item add --type Dataset", "research_graph impact <id>"]
+views: ["the impact of a change (research_graph impact <id>)"]
+checks: []
+projection: {gitnexus: research-graph, colors: {Source: "#0e7490", Dataset: "#06b6d4", Adapter: "#22d3ee",
+                                                 Transform: "#67e8f9"}}
+lifecycle: {typologies: [research, ai-ml, software], proposed_at: [build]}
+examples:
+  nodes:
+    - {id: example-src-open-data, type: Source, status: active, title: "A fictitious open-data portal"}
+    - {id: example-adapter-portal, type: Adapter, status: active, title: "The portal's pull"}
+    - {id: example-ds-daily, type: Dataset, status: active, title: "Daily series from the portal"}
+    - {id: example-tf-weekly, type: Transform, status: planned, title: "Weekly resampling"}
+  edges:
+    - {from: example-ds-daily, to: example-adapter-portal, type: provided_by}
+    - {from: example-ds-daily, to: example-tf-weekly, type: derived_from}
+    - {from: example-wi-first, to: example-adapter-portal, type: delivers}

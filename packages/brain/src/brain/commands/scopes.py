@@ -11,11 +11,13 @@ from .. import config, projects, scopes, status
 ORDER = 191   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 221   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain scopes [--scope REF] [--depth N] [--archived] [--lang en|fr] [--types] [--json]   the scope tree: Global,
-                 the containers of scopes.yaml (beside config.json; $BRAIN_SCOPES) and the projects placed by their
-                 parent: in projects.yaml, each node's type label (config.json scope_types renames them) and the
-                 projects under it; --scope: one node's subtree (an id, a path pro/acme, global, . or ..); --types:
-                 the type catalogue. Without scopes.yaml or parent:, every project sits under Global
+  brain scopes [--scope REF] [--depth N] [--archived] [--lang en|fr] [--types] [--deny] [--json]   the scope
+                 tree: Global, the containers of scopes.yaml (beside config.json; $BRAIN_SCOPES) and the projects
+                 placed by their parent: in projects.yaml, each node's type label (config.json scope_types renames
+                 them) and the projects under it; --scope: one node's subtree (an id, a path pro/acme, global, . or ..); --types:
+                 the type catalogue; --deny: the terms public.deny_from_tree adds to public.deny.repos (the projects
+                 under a class floor of private or stricter, and their repos). Without scopes.yaml or parent:, every
+                 project sits under Global
 """
 
 
@@ -28,6 +30,16 @@ def here(root: Path | None) -> str:
 def cmd_scopes(args, root: Path) -> int:
     cfg = config.load(root)
     tree = scopes.load(root, cfg)
+    if args.deny:   # what public.deny_from_tree adds to public.deny.repos (brain.scopes.private_terms)
+        terms = scopes.private_terms(cfg)
+        on = "on" if config.deny_from_tree(cfg) else "off (config.json public.deny_from_tree)"
+        if args.json:
+            print(json.dumps({"deny_from_tree": config.deny_from_tree(cfg), "repos": terms}, ensure_ascii=False,
+                             indent=1, sort_keys=True))
+        else:
+            print(f"deny from the tree: {on}; {len(terms)} term(s) for public.deny.repos"
+                  + (": " + ", ".join(terms) if terms else ""))
+        return 0
     if args.types:
         if args.json:
             print(json.dumps({"types": scopes.describe(tree, args.lang)["types"]}, ensure_ascii=False, indent=1,
@@ -67,6 +79,8 @@ def register(sub, ctx) -> None:
     sc.add_argument("--lang", choices=scopes.LANGS, default="en", help="the type labels' language (default en)")
     sc.add_argument("--types", action="store_true", help="the type catalogue: ids, labels, the children a type "
                                                          "accepts")
+    sc.add_argument("--deny", action="store_true", help="the terms config.json public.deny_from_tree adds to "
+                                                        "public.deny.repos: the private projects and their repos")
     sc.add_argument("--json", action="store_true", help="stable keys")
 
 

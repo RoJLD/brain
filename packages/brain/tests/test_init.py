@@ -415,6 +415,69 @@ def test_a_template_starts_each_graph_it_declares(fresh, tmp_path, capsys):
     assert not any("adr-" in f.read_text(encoding="utf-8") for f in (fresh / "research" / "graph" / "nodes").glob("*"))
 
 
+LAB_LAYER = """name: lab
+version: 1
+title: "A domain's own types: the benches its experiments run on"
+requires: [research]
+mode: written
+node_types:
+  Bench: "a bench an experiment runs on"
+edge_types:
+  runs_on:
+    - {from: [Experiment], to: [Bench]}
+statuses: [active, retired]
+status_by_type:
+  Bench: [active, retired]
+"""
+
+
+def _lab_template(tmp_path, graphs: str, layer: str | None = LAB_LAYER):
+    tpl = tmp_path / "lab"
+    (tpl / "layers").mkdir(parents=True)
+    for name in ("projects.yaml", "packs.yaml", "rules.md"):
+        (tpl / name).write_text(init.template(name), encoding="utf-8")
+    if layer:
+        (tpl / "layers" / "lab.yaml").write_text(layer, encoding="utf-8")
+    (tpl / "template.yaml").write_text(
+        f"name: lab\nversion: 1\ngraphs: {graphs}\n"
+        'files: {projects.yaml: projects.yaml, source/packs.yaml: packs.yaml, rules/global.md: rules.md, '
+        'memory/.gitkeep: "", records/.gitkeep: ""}\n', encoding="utf-8")
+    return tpl
+
+
+def test_a_template_composes_a_graph_from_layers_and_its_own(fresh, tmp_path, capsys):
+    """A graph's layers: the catalogue's (research_graph layers) with what they require, and the template's own layer
+    file; the store's schema records them (templates:) and declares their endpoints."""
+    tpl = _lab_template(tmp_path, "[{name: main, store: notes/graph, layers: [records, research, lab]}]")
+    assert init.load_template(str(tpl)).graphs == [{"name": "main", "store": "notes/graph",
+                                                    "layers": ["records", "research", "lab"]}]
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", str(tpl), "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "create   notes/graph (research_graph init --owner Ada, layers work, decisions, records, research, lab)" \
+        in out
+    import yaml
+    data = yaml.safe_load((fresh / "notes" / "graph" / "schema.yaml").read_text(encoding="utf-8"))
+    assert data["owner"] == "Ada" and data["layers"]["lab"] == ["Bench"]
+    assert {"layer": "lab", "version": 1} in data["templates"]
+    assert data["endpoints"]["runs_on"] == [{"from": ["Experiment"], "to": ["Bench"]}]
+
+
+@pytest.mark.parametrize("graphs, layer, says", [
+    ("[{name: main, store: notes/graph, layers: [astrology]}]", None, "not in the catalogue"),
+    ("[{name: main, store: notes/graph, schema: default, layers: [work]}]", None, "schema or layers, not both"),
+    ("[{name: main, store: notes/graph, layers: []}]", None, "layers is a list of layer names"),
+    ("[{name: main, store: notes/graph, layers: [work, lab]}]", LAB_LAYER.replace("name: lab", "name: bench"),
+     "holds layer 'bench'"),
+    ("[{name: main, store: notes/graph, layers: [work, lab]}]", "node_types: {Bench: [unclosed\n",
+     "layers/lab.yaml is not readable YAML"),
+    ("[{name: main, store: notes/graph, layers: [work, my-lab]}]", None, "layers is a list of layer names"),
+])
+def test_a_template_s_layers_are_checked(fresh, tmp_path, graphs, layer, says):
+    tpl = _lab_template(tmp_path, graphs, layer)
+    with pytest.raises(init.InitError, match=says):
+        init.load_template(str(tpl))
+
+
 def test_a_later_graph_after_a_kept_first_one_keeps_its_views_beside_it(fresh, tmp_path, capsys):
     """The first graph exists (a keep step) and the second does not: the second is still a later graph, decided by its
     index in the template's graphs, never by the first store step apply meets (it wrote its board over the first's)."""
@@ -443,7 +506,7 @@ def test_a_later_graph_after_a_kept_first_one_keeps_its_views_beside_it(fresh, t
 
 @pytest.mark.parametrize("graphs, why", [
     ("[]", "graphs is a list of {name, store, schema}, one at least"),
-    ("[{name: work, store: notes/graph, layers: [work]}]", "graphs[0]: a mapping of name, schema, store"),
+    ("[{name: work, store: notes/graph, kind: lab}]", "graphs[0]: a mapping of layers, name, schema, store"),
     ("[{name: a, store: g}, {name: a, store: h}]", "graphs[1]: name is lower case"),
     ("[{name: a, store: ../g}]", "graphs[0] (a): store is a folder inside the brain"),
     ("[{name: a, store: g, schema: quant}]", "schema 'quant': only default for now"),

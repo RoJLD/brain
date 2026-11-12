@@ -1,0 +1,42 @@
+# A layer of the catalogue (research_graph layers): a fragment of a store's schema.yaml, with what writes its nodes,
+# the commands and views it feeds, its GitNexus projection and fictitious examples (ids example-*). A store's
+# schema.yaml is the union of its layers (research_graph layers compose); docs: README.md, « Graph templates ».
+name: work
+version: 1
+title: "The backlog: work items, the milestones they move and the specs they follow"
+requires: []
+mode: written
+node_types:
+  WorkItem: "a backlog task: todo, doing, blocked (by something outside the graph), done or dropped"
+  Milestone: "a step reached on a verifiable trigger (props.trigger), the items part_of it move it"
+  Spec: "a design or a brainstorm under docs/specs/, anchored at its file"
+edge_types:
+  depends_on: {why: "a node needs another first (an item waits on an item; a layer may give more)"}
+  part_of:
+    - {from: [WorkItem, Milestone], to: [Milestone], why: "an item or a sub-milestone moves a milestone"}
+  specified_by:
+    - {from: "*", to: [Spec], why: "a node follows a spec"}
+statuses: [todo, doing, blocked, done, dropped, pending, reached, proposed, active, superseded]
+status_by_type:
+  WorkItem: [todo, doing, blocked, done, dropped]
+  Milestone: [pending, reached, dropped]
+  Spec: [proposed, active, superseded]
+ids: {WorkItem: "wi-<slug>", Milestone: "ms-<slug>", Spec: "spec-<slug>"}
+commands: ["research_graph items", "research_graph work-frontier", "research_graph blocked",
+           "research_graph milestone <id>", "brain item add|set|close|link"]
+views: ["the kanban (research_graph kanban --write)", "the roadmap (research_graph roadmap --write)"]
+checks: ["a status outside the type's list", "a dependency cycle among open items (research_graph milestone)"]
+projection: {gitnexus: research-graph, colors: {WorkItem: "#3b82f6", Milestone: "#1d4ed8", Spec: "#60a5fa"}}
+lifecycle: {typologies: ["*"], proposed_at: ["*"]}
+examples:
+  nodes:
+    - {id: example-spec-first, type: Spec, status: proposed, title: "What the first milestone delivers"}
+    - {id: example-ms-first, type: Milestone, status: pending, title: "First milestone",
+       props: {trigger: "the example items are done"}}
+    - {id: example-wi-first, type: WorkItem, status: doing, title: "A first step"}
+    - {id: example-wi-second, type: WorkItem, status: todo, title: "A step that waits on the first"}
+  edges:
+    - {from: example-wi-first, to: example-ms-first, type: part_of}
+    - {from: example-wi-second, to: example-ms-first, type: part_of}
+    - {from: example-wi-second, to: example-wi-first, type: depends_on}
+    - {from: example-wi-first, to: example-spec-first, type: specified_by}

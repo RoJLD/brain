@@ -156,6 +156,19 @@ def git_init(path, branch: str = "main", bare: bool = False) -> Path:
     return path
 
 
+def head_sha(repo) -> str:
+    """HEAD's sha, read from the branch's loose ref when there is one (a git process costs 50-300 ms on Windows,
+    and make_repo commits hundreds of times a run: wi-brain-test-speed-2), else from ``git rev-parse HEAD``."""
+    git_dir = Path(repo) / ".git"
+    try:
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        sha = (git_dir / head[5:]).read_text(encoding="utf-8").strip() if head.startswith("ref: ") else head
+    except OSError:   # a worktree's .git file, a packed ref
+        sha = ""
+    return sha if len(sha) in (40, 64) and all(c in "0123456789abcdef" for c in sha) \
+        else run_git(repo, "rev-parse", "HEAD").strip()
+
+
 @pytest.fixture
 def git_repo(tmp_path, monkeypatch):
     if not shutil.which("git"):
@@ -230,7 +243,7 @@ def make_repo(tmp_path, monkeypatch):
         env = dict(os.environ, **GIT_ENV, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
         for args in (["add", "-A"], ["commit", "-q", "--allow-empty", "-m", msg]):
             subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, env=env)
-        return run_git(repo, "rev-parse", "HEAD").strip()
+        return head_sha(repo)
 
     def make(name, files, date="2026-10-01T12:00:00Z", branch="main"):
         repo = git_init(tmp_path / name, branch)

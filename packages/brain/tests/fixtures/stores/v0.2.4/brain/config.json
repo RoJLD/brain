@@ -1,0 +1,114 @@
+{
+  "v": 1,
+  "identity": {
+    "owner": "Ada Example",
+    "kind": "person"
+  },
+  "registry": "projects.yaml",
+  "rules": [
+    "rules/global.md"
+  ],
+  "memory": "memory",
+  "records": "records",
+  "template": {
+    "name": "generic",
+    "version": 1
+  },
+  "engine": {
+    "repo": "RoJLD/brain",
+    "pin": "v0.2.4"
+  },
+  "tier": {
+    "base": "lite"
+  },
+  "adapters": {
+    "claude": {
+      "marketplace": "brain",
+      "plugin": "brain-core"
+    }
+  },
+  "public": {
+    "repos": [],
+    "deny": {
+      "people": [
+        "Ada Example"
+      ],
+      "hosts": [
+        "host-a"
+      ]
+    }
+  },
+  "classes": {
+    "stores": {
+      "memory": {
+        "class": "confidential",
+        "paths": [
+          "memory/**"
+        ],
+        "to": [
+          "cloud-model"
+        ],
+        "waive": {
+          "git-private": "in clear in the private remote until encrypted git (sops) is adopted"
+        },
+        "why": "notes about people, machines and choices, read by every session"
+      },
+      "ddr": {
+        "class": "confidential",
+        "paths": [
+          "records/ddr/**"
+        ],
+        "to": [
+          "cloud-model"
+        ],
+        "waive": {
+          "git-private": "in clear in the private remote until encrypted git (sops) is adopted"
+        },
+        "why": "decisions whose context may touch money, people or the law, announced to every session"
+      },
+      "ledger": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/ledger"
+        ]
+      },
+      "sessions": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/sessions"
+        ]
+      },
+      "resume": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/resume"
+        ]
+      },
+      "digest": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/digest"
+        ]
+      },
+      "vault": {
+        "class": "sealed",
+        "paths": [
+          "$BRAIN_HOME/vault"
+        ]
+      },
+      "transcripts": {
+        "class": "sealed",
+        "paths": [
+          "~/.claude/projects"
+        ]
+      },
+      "repo": {
+        "class": "private",
+        "paths": [
+          "**"
+        ],
+        "why": "rules, graph, ADRs, journal, records"
+      }
+    }
+  }
+}

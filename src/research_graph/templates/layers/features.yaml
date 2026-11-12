@@ -1,0 +1,30 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+name: features
+version: 1
+title: "The features: the product's capabilities, their status set from merged PRs, and the items that deliver them"
+requires: [work]
+mode: written
+generator: "brain sync sets the statuses from merged PRs and FEATURES.md (brain.features)"
+node_types:
+  Feature: "a capability of the product: have, partial, planned or no"
+edge_types:
+  delivers:
+    - {from: [WorkItem], to: [Feature], why: "an item -> the feature it delivers"}
+  part_of:
+    - {from: [Feature], to: [Feature], why: "a feature -> its parent feature"}
+statuses: [have, partial, planned, "no"]
+status_by_type:
+  Feature: [have, partial, planned, "no"]
+ids: {Feature: "feat-<slug>"}
+commands: ["brain features add|set|link|list|search|show|render|sync"]
+views: ["FEATURES.md (brain features render)"]
+checks: ["a feature marked have without the code it is implemented by (brain audit)"]
+projection: {gitnexus: research-graph, colors: {Feature: "#ec4899"}}
+lifecycle: {typologies: [software, api-cli], proposed_at: [build]}
+examples:
+  nodes:
+    - {id: example-feat-board, type: Feature, status: planned, title: "A board of the open work"}
+    - {id: example-feat-board-filters, type: Feature, status: planned, title: "The board's filters"}
+  edges:
+    - {from: example-feat-board-filters, to: example-feat-board, type: part_of}
+    - {from: example-wi-first, to: example-feat-board, type: delivers}

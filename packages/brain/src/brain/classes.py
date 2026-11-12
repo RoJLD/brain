@@ -472,11 +472,13 @@ def scope_chain(cfg: config.Config, project: str, nodes: dict[str, dict] | None 
 
 
 def floor(cfg: config.Config, project: str, nodes: dict[str, dict] | None = None) -> tuple[str, str]:
-    """(the strictest class floor along the project's scope chain, the node that sets it), ('', '') without one."""
+    """(the strictest class floor along the project's scope chain, its own entry's included (projects.yaml classes:
+    {floor}, DENY-1), and the node that sets it), ('', '') without one."""
     nodes = scope_nodes(cfg) if nodes is None else nodes
+    from . import scopes
+    tree = scopes.load(cfg.root, cfg)
     best, where = "", ""
-    for node in scope_chain(cfg, project, nodes):
-        f = ((nodes.get(node) or {}).get("classes") or {}).get("floor")
+    for node, f in scopes.floors(tree, project) if project in tree.nodes else []:
         if f in CLASSES and (not best or RANK[f] > RANK[best]):
             best, where = f, node
     return best, where
@@ -568,8 +570,9 @@ def _floors(cfg: config.Config, rep: Report, by_name: dict[str, Store]) -> None:
     except ClassError as exc:
         rep.errors.append(str(exc))
         return
-    if not nodes:
-        rep.notes.append("no scope tree (scopes.yaml): no class floor to check")
+    from . import scopes
+    if not nodes and not any("classes" in n.data for n in scopes.load(cfg.root, cfg).nodes.values()):
+        rep.notes.append("no scope tree (scopes.yaml) and no project floor: no class floor to check")
         return
     own = own_project(cfg)
     for s in by_name.values():
