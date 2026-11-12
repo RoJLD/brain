@@ -13,9 +13,10 @@ from .. import review
 ORDER = 57   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 57   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain review prep [PR | BASE..HEAD] [--out DIR] [--no-scout] [--json]   the review packet at zero token: the
-                 diff, the touched files at the head, brain audit --diff's output, the lenses the touched surfaces
-                 call for and how to run them (default origin/main..HEAD, into <BRAIN_HOME>/reviews/<head>)
+  brain review prep [PR | BASE..HEAD] [--item ID] [--out DIR] [--no-scout] [--json]   the review packet at zero
+                 token: the diff, the touched files at the head, brain audit --diff's output, the lenses the touched
+                 surfaces call for, the invariants and failure modes to test (the item's brief section with --item)
+                 and how to run them (default origin/main..HEAD, into <BRAIN_HOME>/reviews/<head>)
   brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE]   the review of that head ran
   brain review check HEAD   exit 0 when that head was reviewed, 1 when not (the merge gate's question)
 """
@@ -24,6 +25,28 @@ USAGE = """\
 def early(args) -> int:
     """Any repo, a brain or not: the review is of a PR, never of a brain's data."""
     return cmd_review(args)
+
+
+def _modes(repo: Path, proj, item: str | None):
+    """(the failure modes' builder, whether the repo is public) for brain review prep: with ``--item``, the brief's
+    section of that item of the repo's project (brain.brief.failure_modes) plus the diff's; without, the diff's alone
+    (brain.failuremodes), the public line when the repo is in config.json ``public.repos``."""
+    from .. import config, public
+    try:
+        cfg = config.load(proj.root if proj is not None else None)
+        pub = public.is_public(public.remote_of(repo, cfg)[1], cfg)
+    except Exception:  # noqa: BLE001 - a remote or a config that cannot be read: no public line, never no packet
+        pub = False
+    if not item:
+        return None, pub
+    if proj is None:
+        raise review.ReviewError(f"--item {item}: this repo belongs to no registered project (projects.yaml)")
+    from .. import brief
+    try:
+        st, node, _ = brief._find(proj, item)
+    except brief.BriefError as exc:
+        raise review.ReviewError(f"--item {item}: {exc}") from None
+    return (lambda files, changed: brief.failure_modes(proj, st, node, cfg, files, changed)), pub
 
 
 def cmd_review(args, root: Path | None = None) -> int:
@@ -36,8 +59,9 @@ def cmd_review(args, root: Path | None = None) -> int:
                 rows = standards.lenses(proj) if proj is not None else []
             except standards.StandardsError as exc:   # the packet without the standards lens, said
                 print(f"review: no standards lens: {exc}", file=sys.stderr)
+            modes, pub = _modes(repo, proj, args.item)
             p = review.prep(repo, args.target or "", Path(args.out) if args.out else None, scout=not args.no_scout,
-                            standards=rows)
+                            standards=rows, item=args.item or "", modes=modes, public=pub)
             if args.json:
                 print(json.dumps(p.__dict__, indent=2))
             else:
@@ -71,6 +95,8 @@ def register(sub, ctx) -> None:
     pr.add_argument("target", nargs="?", help="a PR number (gh) or BASE..HEAD (default origin/main..HEAD)")
     pr.add_argument("--out", help="the packet's folder (default <BRAIN_HOME>/reviews/<head>)")
     pr.add_argument("--no-scout", action="store_true", help="leave brain audit --diff out")
+    pr.add_argument("--item", help="the item the PR delivers: its brief's « Invariants and failure modes to test » "
+                                   "join the diff's in the packet")
     pr.add_argument("--json", action="store_true")
     st = rv.add_parser("stamp", help="the review of HEAD ran: its counts")
     st.add_argument("head")

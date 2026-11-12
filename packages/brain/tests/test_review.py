@@ -73,3 +73,36 @@ def test_stamp_refuses_counts_that_do_not_add_up_and_an_unknown_target(pr, brain
         review.stamp(head[:8], 1, 1)
     assert cli.main(["review", "prep", "nope..HEAD", "--repo", str(repo), "--no-scout"]) == 1
     assert "git fetch first" in capsys.readouterr().err
+
+
+def test_the_packet_carries_the_failure_modes_of_the_diff_and_of_the_item(pr, brain_home, make_repo):
+    """wi-brain-brief-failure-modes: without --item, the diff's files and a removed test; with modes (brain review
+    prep --item: brain.brief.failure_modes), the item's section is the packet's; an unregistered repo refuses --item."""
+    repo, base, head = pr
+    p = review.prep(repo, f"{base}..{head}", scout=False)
+    assert p.failure_modes[0].startswith("- **a guard or a gate** (src/brain/guards.py): every sibling path")
+    readme = (review.folder_for(head) / "README.md").read_text(encoding="utf-8")
+    assert "## Invariants and failure modes to test\n" in readme
+    assert readme.index("## Invariants and failure modes") < readme.index("## Files (")
+    gone = make_repo.commit(repo, {"tests/test_guards.py": None})
+    p = review.prep(repo, f"{head}..{gone}", scout=False, public=True)   # the test removed
+    assert [x.split("**")[1] for x in p.failure_modes] == ["a test removed or a check moved", "the public engine"]
+    seen = {}
+
+    def modes(files, changed):
+        seen.update(files=files, changed=changed)
+        return ["- **the item's own** (props.invariants): x"]
+
+    p = review.prep(repo, f"{base}..{head}", scout=False, item="wi-x", modes=modes)
+    assert p.failure_modes == ["- **the item's own** (props.invariants): x"] and "src/brain/guards.py" in seen["files"]
+    assert "+x = 2" in seen["changed"]
+    assert "## Invariants and failure modes to test (wi-x)" in (review.folder_for(head) / "README.md").read_text(
+        encoding="utf-8")
+
+
+def test_prep_item_in_a_repo_of_no_project_is_refused(pr, brain_home, monkeypatch, capsys):
+    from brain import standards
+    repo, base, head = pr
+    monkeypatch.setattr(standards, "project_of_repo", lambda r: None)
+    assert cli.main(["review", "prep", f"{base}..{head}", "--item", "wi-x", "--repo", str(repo), "--no-scout"]) == 1
+    assert "--item wi-x: this repo belongs to no registered project" in capsys.readouterr().err
