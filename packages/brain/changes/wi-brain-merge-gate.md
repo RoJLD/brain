@@ -6,5 +6,6 @@ section: Added
   head that merged an older main included), every CI check green on the head, the
   review's stamp for the head with no finding open, the public check's stamp for a repo of `public.repos`, nothing
   `brain check --public` refuses in the PR's title and body. Exit 0, a stamp under `<BRAIN_HOME>/merge-ready/` and
-  the head to merge (`gh pr merge --match-head-commit`), else exit 1 and the list of what blocks. `brain merge-check`'s check takes the head to read (HEAD by default, as before). See
+  the head to merge (`gh pr merge --match-head-commit`), else exit 1 and the list of what blocks. The new engine store `merge-ready` (`$BRAIN_HOME/merge-ready`, sealed, derived) holds the stamps.
+  `brain merge-check`'s check takes the head to read (HEAD by default, as before). See
   docs/merge-driver.md.
