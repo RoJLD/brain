@@ -404,25 +404,33 @@ _PS_HARDWARE = ("$m = @(Get-CimInstance Win32_PhysicalMemoryArray | ForEach-Obje
                 "ConvertTo-Json -Compress @{ecc = $m; dimms = $d; battery = $b}")
 
 
+def _wmi_ecc(data: dict) -> bool | None:
+    """The board's correction method (MemoryErrorCorrection), then the DIMMs' width: an ECC board whose DIMMs carry no
+    check bits (TotalWidth == DataWidth) has no ECC."""
+    raw = data.get("ecc") if isinstance(data.get("ecc"), list) else [data.get("ecc")]
+    codes = {int(c) for c in raw if isinstance(c, (int, float))}
+    ecc = True if codes & ECC_YES else False if codes and codes <= ECC_NO else None
+    widths = [w for w in (data.get("dimms") or []) if isinstance(w, (int, float))]
+    pairs = list(zip(widths[0::2], widths[1::2]))
+    return False if ecc and pairs and all(total <= width for total, width in pairs) else ecc
+
+
+def _win_hardware() -> dict:
+    code, out = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_HARDWARE],
+                     TIMEOUTS["hardware"] - 0.3)
+    if code != 0:
+        raise RuntimeError("powershell did not read the memory arrays")
+    data = json.loads(out.strip() or "{}")
+    return {"ecc": _wmi_ecc(data), "ecc_source": "wmi", "battery": bool(data.get("battery")), "battery_source": "wmi"}
+
+
 def probe_hardware() -> dict:
     """ECC memory and a battery, each true, false or None (unknown): WMI on Windows (Win32_PhysicalMemoryArray, no
     admin needed; Win32_Battery), EDAC and /sys/class/power_supply on Linux (no EDAC controller: unknown, the module
     may not be loaded), pmset on macOS (ECC unknown)."""
     system = _os()
     if system == "windows":
-        code, out = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_HARDWARE],
-                         TIMEOUTS["hardware"] - 0.3)
-        if code != 0:
-            raise RuntimeError("powershell did not read the memory arrays")
-        data = json.loads(out.strip() or "{}")
-        codes = {int(c) for c in (data.get("ecc") if isinstance(data.get("ecc"), list) else [data.get("ecc")])
-                 if isinstance(c, (int, float))}
-        ecc = True if codes & ECC_YES else False if codes and codes <= ECC_NO else None
-        widths = [w for w in (data.get("dimms") or []) if isinstance(w, (int, float))]
-        pairs = list(zip(widths[0::2], widths[1::2]))
-        if ecc and pairs and all(total <= width for total, width in pairs):
-            ecc = False   # the board corrects, its DIMMs carry no check bits (TotalWidth == DataWidth)
-        return {"ecc": ecc, "ecc_source": "wmi", "battery": bool(data.get("battery")), "battery_source": "wmi"}
+        return _win_hardware()
     if system == "darwin":
         code, out = _run(["pmset", "-g", "batt"], TIMEOUTS["hardware"] - 0.3)
         return {"ecc": None, "ecc_source": "", "battery": ("InternalBattery" in out) if code == 0 else None,

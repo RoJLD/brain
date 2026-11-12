@@ -180,6 +180,18 @@ def _write(f: Path, rec: dict) -> bool:
     return True
 
 
+def _remember(f: Path, first: dict, out: dict) -> None:
+    """machine.json: written at first sight; a doubt's first showing stamped in ``asked`` (``first`` updated)."""
+    state = out["state"]
+    if not first and state in ("new", "no-anchor"):
+        rec = {"v": V, "name": out["name"], "anchor": out["anchor"], "local_id": uuid.uuid4().hex, "since": _stamp()}
+        if _write(f, rec):
+            out.update(local_id=rec["local_id"], since=rec["since"])
+    elif out["doubt"] and first and state not in (first.get("asked") or {}):
+        first.setdefault("asked", {})[state] = _stamp()
+        _write(f, first)
+
+
 def identity(cfg_data: dict | None = None, write: bool = True) -> dict:
     """This machine's identity and its state (see the module's docstring); machine.json is written at first sight
     (``write``), and its ``asked`` stamped the first time a doubt is shown."""
@@ -190,13 +202,8 @@ def identity(cfg_data: dict | None = None, write: bool = True) -> dict:
            "since": first.get("since"), "file": f.as_posix(), "state": state, "declared": nm in declared,
            "doubt": DOUBTS[state].format(name=nm, first=first.get("name") or "?", other=other, why=src)
            if state in DOUBTS else ""}
-    if write and not first and state in ("new", "no-anchor"):
-        rec = {"v": V, "name": nm, "anchor": anc, "local_id": uuid.uuid4().hex, "since": _stamp()}
-        if _write(f, rec):
-            out.update(local_id=rec["local_id"], since=rec["since"])
-    elif write and out["doubt"] and first and state not in (first.get("asked") or {}):
-        first.setdefault("asked", {})[state] = _stamp()
-        _write(f, first)
+    if write:
+        _remember(f, first, out)
     out["asked"] = (first.get("asked") or {}).get(state)
     mine = declared.get(nm) if isinstance(declared.get(nm), dict) else {}
     if anc and not mine.get("anchor") and state in ("ok", "new"):
@@ -205,8 +212,7 @@ def identity(cfg_data: dict | None = None, write: bool = True) -> dict:
 
 
 def in_doubt(cfg_data: dict | None = None) -> str:
-    """The doubt on this machine's identity, '' when there is none: a writer of the machine level writes nothing while
-    it lasts."""
+    """The doubt on this machine's identity, '' when there is none: the memory export is held while it lasts."""
     return identity(cfg_data, write=False)["doubt"]
 
 
