@@ -12,7 +12,8 @@ Setup.
   selector last showed (``p``).
 - **Identity**, **Brain**, **Permissions**: the brain's settings, each shown with its place and the command that
   changes it, and changed only through it: nothing here writes them. A secret is named, never shown.
-- **Setup**: the commands that set a brain up, one per step (the wizards of wi-brain-tui-setup chain them).
+- **Setup**: the setup wizards (brain.wizards, wi-brain-tui-setup), one per row: each chains the brain's own
+  commands, a plan before an apply, run in the cockpit after the owner's confirmation and logged.
 
 Read-only and at zero token: a page whose read fails gives one row that says why, never an exception.
 """
@@ -44,7 +45,7 @@ class Setting:
     value: str                  # as shown; a secret's value never
     source: str                 # the file and its key, or the environment variable
     change: str                 # HERE, or the command that changes it
-    edit: str = ""              # cockpit settings: choice, text or duration; '' read-only
+    edit: str = ""              # cockpit settings: choice, text or duration; the Setup page: wizard; '' read-only
     choices: tuple = field(default_factory=tuple)
     default: str = ""           # what applies when it is not set
 
@@ -255,20 +256,11 @@ def permission_settings(root: Path | None = None) -> list[Setting]:
     ]
 
 
-SETUP_STEPS = (
-    ("first run", "brain profile set lite|default|recommended", "the profile: a plan, then --apply"),
-    ("modules", "brain mod list", "the modules on or off: brain mod enable|disable MODULE, a plan then --apply"),
-    ("a project", "brain projects", "a project added to projects.yaml: a branch and a PR in the personal brain"),
-    ("notifications", "brain notify setup ntfy|telegram|email", "a channel's steps; its secret entered by the owner, "
-                                                                 "named in projects.yaml, never typed here"),
-    ("permissions", "brain permissions", "the rules; a grant by PR (brain permissions grant)"),
-    ("code index", "brain index", "each repo's state, then brain index REPO"),
-    ("checks", "brain check --all", "the configuration, the registry and the stores"),
-)
-
-
 def setup_settings(root: Path | None = None) -> list[Setting]:
-    return [Setting("setup", step, what, "", cmd) for step, cmd, what in SETUP_STEPS]
+    """The setup wizards (brain.wizards), one per row: Enter in the cockpit runs one, its commands logged."""
+    from . import wizards
+    return [Setting("setup", w.id, f"{w.title}: {w.what}", "brain.wizards: run here after a confirmation",
+                    w.command() + (f"; yours: {w.owner}" if w.owner else ""), "wizard") for w in wizards.wizards(root)]
 
 
 READERS = {"cockpit": None, "identity": identity_settings, "brain": brain_settings,

@@ -88,10 +88,11 @@ def test_the_brain_pages_name_each_place_and_never_a_secret(tmp_path, monkeypatc
     assert brain["scope_types"].value == "1 renamed or added"
     assert brain["claude settings"].change.startswith("a plan only")  # install.ps1 -Apply is the owner's
     assert "brain profile set" in brain["profile"].change
-    assert not any(s.edit for page in ("identity", "brain", "permissions", "setup") for s in pages[page])
+    assert not any(s.edit for page in ("identity", "brain", "permissions") for s in pages[page])  # shown, never edited
+    assert {s.edit for s in pages["setup"]} == {"wizard"}  # the setup page runs its wizards (brain.wizards)
     text = "\n".join(settings.lines(pages))
     assert "a-secret-topic-value" not in text and "Identity (4)" in text and "  identity.owner: Ada" in text
-    assert "brain notify setup ntfy|telegram|email" in text  # the setup page: one command per step
+    assert "change: brain notify setup ntfy" in text  # the setup page: one wizard per row, its commands
 
 
 def test_a_page_that_cannot_be_read_says_why_and_the_others_still_read(monkeypatch):

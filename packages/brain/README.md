@@ -113,8 +113,20 @@ title; a wrong value is refused, an empty one sets the default back, and each ch
 settings (`identity.display_name` and the owner, `$BRAIN_HOME`, the personal pointer, `config.json`, the registry, the
 engine pin, the profile, the stacks, the notification routes, the code index, the scope types, `permissions.yaml`,
 Claude Code's settings) are only shown with the command that changes each: Enter says it, nothing is written from
-there, and a secret is named, never shown. The Setup page lists the commands that set a brain up, one per step.
-`brain tui --once --tab settings` prints the same pages (`brain.settings`).
+there, and a secret is named, never shown. `brain tui --once --tab settings` prints the same pages (`brain.settings`).
+
+The Setup page holds the setup wizards (`brain.wizards`), one per row, in the order a new brain walks them: the first
+run (the profile Lite, Default or Recommended), the stacks to enable, the modules, a project to add, the notification
+channels (ntfy, Telegram and its chats, the routes), the permissions, the machines and their facts, the code index, a
+new brain from a domain template, Claude Code's settings and the checks. Each wizard is the brain's own commands,
+never a hidden edit: Enter asks its choice when it has one (and the folder of a new brain, an absolute path), then
+shows its exact command. A wizard that writes shows its plan already run (`brain profile set default`), and `y` runs
+the apply (`... --apply`), never after a plan that failed; a wizard that reads runs its one command on `y`. Each runs
+as the owner's, logged in `<BRAIN_HOME>/ledger/cockpit-<month>.jsonl`, refused in a Claude Code session's shell; the
+notification and code index wizards run for the project the cockpit shows. What stays
+the owner's stays a plan with its command: Claude Code's settings (`install.ps1 -Apply`, in your own terminal), a
+project added to `projects.yaml` and a permission granted (a branch and a PR). A secret is never typed in the cockpit:
+you set it as an environment variable (or in the system keyring), and the wizards name it, never show it.
 
 From 140 columns, on a tab that is one list, a row's detail sits right of the list and follows the cursor: it reads
 once the cursor rests, and remembers each row until its panel changes. Enter gives it the focus, where it scrolls and `o`
