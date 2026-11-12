@@ -24,7 +24,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import secretscan
+from . import diffs, secretscan
 from .transcript import iso, iter_records, parse_ts
 
 COMMIT_MAX_AGE_S = 900
@@ -191,18 +191,14 @@ def make_ar(kind: str, key: str, at: str, meta: dict, source: str, tool_use_id: 
 
 def changed_items(d: str | Path, sha: str) -> list[str]:
     """WorkItem, Milestone and Spec ids whose node blocks a commit changed in any notes/graph/nodes/*.yaml."""
-    diff = git(d, "show", "--format=", "-U0", sha, "--", "*nodes/*.yaml")
+    diff = git(d, *diffs.argv("show", "--format=", "-U0", sha, "--", "*nodes/*.yaml"))
     items: list[str] = []
-    current, lines_by_file = None, {}
-    for line in diff.splitlines():
-        if line.startswith("+++ b/"):
-            current = line[6:]
-            lines_by_file.setdefault(current, [])
-        elif line.startswith("@@") and current:
-            m = re.search(r"\+(\d+)(?:,(\d+))?", line)
-            if m:
-                start, count = int(m.group(1)), int(m.group(2) or 1)
-                lines_by_file[current].extend(range(start, start + max(count, 1)))
+    lines_by_file: dict[str, list[int]] = {}
+    for f in diffs.parse(diff):   # brain.diffs: the engine's one reader (a merge's combined diff included)
+        if f.new:
+            spans = lines_by_file.setdefault(f.new, [])
+            for h in f.hunks:
+                spans.extend(range(h.new_start, h.new_start + max(h.new_count, 1)))
     for f, numbers in lines_by_file.items():
         text = git(d, "show", f"{sha}:{f}")
         owner, block_of = None, {}
@@ -224,8 +220,8 @@ def added_adrs(d: str | Path, sha: str) -> list[dict]:
     """ADR and SDR headings a commit added to notes/decisions.md or notes/scientific_decisions.md."""
     out = []
     for fname, kind in (("notes/decisions.md", "adr"), ("notes/scientific_decisions.md", "sdr")):
-        diff = git(d, "show", "--format=", "-U0", sha, "--", fname)
-        for line in diff.splitlines():
+        diff = git(d, *diffs.argv("show", "--format=", "-U0", sha, "--", fname))
+        for line in ("+" + text for f in diffs.parse(diff) for _, text in f.added()):
             m = _ADR_HEAD_RE.match(line)
             if m:
                 date, title = m.group(1), m.group(2)

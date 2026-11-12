@@ -204,6 +204,21 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
   file with Write or Edit, or check its bytes after (les-brain-heredoc-backslashes). The guards ledger records it as
   `heredoc:backslash`, decision `warned`.
 
+### How the guards read a diff
+
+The commit guards (secrets, conflict markers, the public check), `brain impact`, `brain check --public --history`,
+the digest's and the forecast's history and the changed-items reader all read git's patches through one function,
+`brain.diffs.parse` (wi-brain-diff-parser; the lesson les-brain-unescaped-format: three parsers had the same defect).
+
+- A hunk's lines are read by the counts of its `@@` line: a deleted `-- x` (which reads `--- x`) or an added `++ y`
+  is content, never a header. Headers are read only between a file's `diff --git` line and its first hunk.
+- A name is read as git writes it: a C-quoted one (a quote, a control character, a non-ASCII byte) is unquoted, an
+  unquoted one ends at git's TAB after a name with a space.
+- The git call is built by `brain.diffs.argv`: the a/ and b/ prefixes forced (`diff.noprefix`,
+  `diff.mnemonicPrefix`), whole-repo paths (`diff.relative`), no colour, no external diff, no textconv, a blank
+  context line kept as a space (`diff.suppressBlankEmpty`; an empty line in a hunk is read as context anyway).
+- A merge's combined diff (`diff --cc`) is read too: a line is in the result unless a parent's column says `-`.
+
 ## The usage governor
 
 ### What it reads
