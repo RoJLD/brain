@@ -181,14 +181,17 @@ def deny_terms(cfg: Config) -> list[tuple[str, str]]:
     """(category, term) for each term of public.deny, in DENY's order; with public.deny_from_tree, the repos gain
     the private projects of the scope tree and their repos (brain.scopes.private_terms), after the hand list."""
     deny = (cfg.data.get("public") or {}).get("deny") if isinstance(cfg.data.get("public"), dict) else None
-    terms = [(cat, t) for cat in DENY for t in (deny.get(cat) or [] if isinstance(deny, dict) else [])
-             if isinstance(t, str) and t]
-    if deny_from_tree(cfg):
-        from . import scopes
-        hand = {t.lower() for cat, t in terms if cat == "repos"}
-        at = max((i + 1 for i, (cat, _) in enumerate(terms) if DENY.index(cat) <= DENY.index("repos")), default=0)
-        terms[at:at] = [("repos", t) for t in scopes.private_terms(cfg) if t.lower() not in hand]
-    return terms
+    deny = deny if isinstance(deny, dict) else {}
+    terms = [(cat, t) for cat in DENY for t in deny.get(cat) or [] if isinstance(t, str) and t]
+    return _with_tree_terms(cfg, terms) if deny_from_tree(cfg) else terms
+
+
+def _with_tree_terms(cfg: Config, terms: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``terms`` with the scope tree's private projects and repos after the hand list's repos, none twice."""
+    from . import scopes
+    hand = {t.lower() for cat, t in terms if cat == "repos"}
+    at = max((i + 1 for i, (cat, _) in enumerate(terms) if DENY.index(cat) <= DENY.index("repos")), default=0)
+    return terms[:at] + [("repos", t) for t in scopes.private_terms(cfg) if t.lower() not in hand] + terms[at:]
 
 
 def allowed(cfg: Config) -> dict[str, str]:
