@@ -4,7 +4,7 @@ spec 2026-10-30 §3.14).
 
 One entry per project, its paths relative to the project's root (these are the defaults)::
 
-  quant: {root: ../demo, stores: [notes/graph], journal: notes/journal.md, decisions: notes/decisions.md}
+  acme: {root: ../demo, stores: [notes/graph], journal: notes/journal.md, decisions: notes/decisions.md}
 
 :data:`KEYS` documents every key an entry may hold (``brain projects --keys`` prints them) and :func:`check` refuses
 another one (``brain check --all``); loading never fails on them, so a bad entry never stops another command.

@@ -59,6 +59,36 @@ Linux). It prints a plan; `-Apply` does it. The launcher is replaced even while 
 .\packages\brain\installer\install.ps1 -Apply -Personal D:\me\brain   # and this personal brain's setup
 ```
 
+### Uninstall
+
+`brain uninstall` prints every trace of the brain on this machine that its store registry knows (`brain.uninstall`,
+`wi-brain-uninstall-purge`); `--apply` removes them, in your own terminal (refused in a Claude Code session's shell):
+the scheduled tasks this machine installed, the Claude Code plugin and its marketplace (through the `claude` CLI, or
+its commands named when the CLI is not found), the launcher on the PATH (`<BRAIN_HOME>\bin` out of the user PATH; the
+`~/.local/bin/brain` link elsewhere) and the engine's install stores in `BRAIN_HOME` (the venv, the slots, the tags'
+clones). The venv the command runs from, and `bin` when it was started from there, are left, with the command that
+removes them once it has exited (Windows holds a running program's files; close the Claude Code sessions first, whose
+hooks run the command). The data stays. It names what it leaves outside `BRAIN_HOME`, with the command that removes
+it: the personal brain's merge driver (`git config --remove-section merge.brain`), and the rules and settings the
+installer added to Claude Code's `settings.json`.
+
+`--purge` adds every other entry of `BRAIN_HOME`, this machine's device key (and the previous one of a rotation not
+finished) and `BRAIN_HOME` itself once empty. A derived store (a cache, an index, a view) goes; a store nothing else
+keeps (format `truth-local` or `log`: the ledger, the session records, the vault, the machine's token...), a name no
+store covers and the device keys are held until you confirm their recovery copy: `--confirm-recovery ledger vault
+keystore`, or `all` for the registry's stores and the keys (a name no store covers is confirmed by its own name;
+`brain vault seal` and `brain spool push` make a copy; the purge cannot tell that a copy elsewhere is whole, so it
+asks). It refuses a `BRAIN_HOME` that is not a brain's: a filesystem root, your home or a folder above it, one that
+holds Claude Code's transcripts or the personal brain, one that holds none of the engine's stores. It never touches
+Claude Code's transcripts, the personal brain's repo, or a path outside `BRAIN_HOME` but the launcher's link (a store
+that is a link or a junction has only its link removed). A step that fails is reported; the others still run.
+
+```bash
+brain uninstall                                        # the plan: the install
+brain uninstall --purge                                # and the data: what goes, what is held
+brain uninstall --purge --confirm-recovery all --apply # everything, once the recovery copies are confirmed
+```
+
 ### Updates
 
 `brain update` (since 0.2.4) reads the latest release tag of the engine's public repo (`config.json` `engine.repo`,
@@ -178,7 +208,7 @@ action's `install.ps1 -Apply`, applied with `A` in its detail, goes the same way
 
 A cockpit panel never stays blank without saying why. An empty table shows one line: « 7 hidden by kind action: f
 changes the filters », « Nothing waits on Ada in every project », « far is not on this machine (../nowhere) ». A panel
-not probed yet shows the probe's countdown (« probe in 1 min 40 (r for now) »), then its progress (« probing: quant
+not probed yet shows the probe's countdown (« probe in 1 min 40 (r for now) »), then its progress (« probing: acme
 2/3 »). A read that fails keeps the panel's last content, with the error and the time of the data in its frame; it is
 notified once and read again at the next tick (a probed panel: at the next probe). `--once` and `--json` print a
 failed read on stderr and exit 1; `--detail` names it when it finds no row. A stack or a code index repo that is not
@@ -240,6 +270,33 @@ removed, a field newly required, an enum or a type narrowed, a bound tightened, 
 and justified when the PR's `Compat:` line resolves it (`Compat: migration <id>` with the format's `v` bumped and its
 fixture, or `Compat: breaking <adr-id>`). `brain schema diff --against <tag>` prints the same over a tag's range
 ([`docs/formats.md`](docs/formats.md), « The schema diff »).
+
+### The table of moves
+
+When a path, a folder or a repo moves, write it once in config.json, the same day:
+`"moved": {"<old prefix>": {"to": "<new prefix>", "date": "YYYY-MM-DD", "note": "..."}}` (`brain.moves`,
+wi-brain-moved-paths). The checks then find what still names the old prefix, at zero token:
+
+- `brain audit` and the scout report a doc line that names it as `doc.dead-ref`, with the new prefix to write
+  (ruleset 12). The table is read from the brain whose registry the project comes from.
+- `brain check`, in a brain's own root, warns of the tracked files of that root that are not docs:
+  - instructions (`CLAUDE.md`, `AGENTS.md`), rules, `.claude/` agents and commands;
+  - memory notes (`memory/`) and skills;
+  - hooks and settings;
+  - scripts (`.ps1`, `.sh`, `.cmd`, `.bat`).
+
+  It reads no other project's files, and not the machine's own auto-memory: that is the memory lint's job, which
+  reads `brain.moves` too.
+
+How a prefix matches:
+
+- **At the start of a path.** `engine/` is not in `tools/engine/x`, but it is in `./engine/x`.
+- **To the end of a name.** `old-notes` is not in `old-notes-help` or `old-notes.md`. A prefix ending in `/` matches
+  only as a folder: `kit/engine/` is not in `kit/engine.py`.
+- **Slashes and case.** `/` and `\` are read alike, and case is ignored.
+- **Bare names.** A bare name, such as a repo's, matches in prose too. It never matches in a CodeRef id
+  (`code:<repo>:...`): the audit's `coderef.dangling` owns those.
+- **History.** A line that names the new prefix outside the old one is history (« moved from X to Y ») and passes.
 
 ### Feature coverage
 
@@ -369,6 +426,13 @@ change, the docs to update, the ADRs and specs to re-read, the tests to run (one
 run them, the open items that deliver those features and the decisions pending on them. Without GitNexus it works at
 the file level, a Python symbol looked up by the AST, and says so on its second line. `brain code-map` resolves
 each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
+
+A decision can be pinned to the code it governs ([`docs/pins.md`](docs/pins.md)): `brain adr pin ID --touches
+PATH|CODEREF --holds LINE` writes `pins.yaml` beside the decision log (an ADR, an SDR or an answered DDR; the `holds`
+line never edited, an override being a new ADR). `brain impact --diff` lists the pinned decisions a change touches,
+and `brain review check HEAD --pr N` and `brain merge-ready` refuse until the PR body says, for each, `Keeps ID` (a
+decision in force) or `Overrides ID: why` (one a later ADR supersedes, written first: `brain adr new --reverses ID`,
+an answered DDR's id included).
 
 ### Tests linked and coverage
 
@@ -739,7 +803,9 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
 - **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
-  when the branch is behind or lost something.
+  when the branch is behind or lost something. The push guard `merges:stale` runs it on each pushed branch whose merge
+  of main is not on the remote yet, against a fresh main, and refuses a file the merge resolved against a main that
+  has moved on it since (docs/merge-driver.md).
 - **`brain merge-ready PR`**: the merge gate, before `gh pr merge`: the PR open and not a draft, main not moved under
   a file it touches since their merge base, `brain merge-check` on a head that merged main, every CI check green on
   the head, the review's stamp for the head with no finding open, the public check's stamp for a public repo, nothing
@@ -855,7 +921,13 @@ those conditions before the calls, at zero token, from the files the guard reads
   Code session's shell, and by the guard to every session, like `brain usage allow`): a session the owner started
   (no parent in the app's files) marked a chain root, `<BRAIN_HOME>/handover/roots.json`. A root hands over without a
   coordinator's name, and the coordinators it starts pass the parent condition through it, until `--clear`; a
-  marked id that a session started, or that the app's files do not know, is no root. No ID lists the marks.
+  marked id that a session started, or that the app's files do not know, is no root. No ID lists the marks. The mark
+  is automatic since wi-brain-handover-auto-root (HANDOVER-1): the first prompt of a session the owner started, when
+  it asks for a coordinator (`brain.succession.ROOT_WORDS`: coordinator, coordinateur, coordination...), marks it
+  through the UserPromptSubmit hook (`midsession`), its reason naming the hook, and the owner is told; it judges the
+  session's own transcript and the app's count of completed turns, so a later prompt, a session another session
+  started, or a prompt that names none marks nothing, and the guard refuses a session that runs the hook's entry by
+  hand. `brain handover root` stays the fallback, `--clear` the undo.
 
 ## Lessons
 
@@ -1130,6 +1202,24 @@ the engine's own text, so rename it, or keep it out of a private subtree. Off by
 as unknown and generates nothing: keep the repos in the hand list until every machine and the brain repo's CI run the
 release that knows it.
 
+**The deny terms derived from the registries** (`wi-brain-public-deny-derived`, brain.denylist). Whatever the scope
+tree, `brain check --public`, the commit and push guards and `brain boundary`'s readiness also refuse the names the
+brain's own registries declare, from the day they are declared: `hosts` (the machines of `config.json` `hosts` and
+their `aliases`), `people` (`identity.owner`, `identity.display_name`, `members.yaml`'s people), `projects` (the
+registry's projects, read-only ones too, and their repos by name and folder), `specs` (the file names under
+`docs/specs`) and `modules` (the module registries' names, and ids of 4 characters or more: a short code such as `D7`
+names nothing). Each joins its category after the hand list. `config.json` `public.derive` picks the sources (a list;
+absent, all of them; `[]`, none); `public.public_names` (`{name: reason}`) keeps a public name of a registry out (a
+third-party tool a project reads, an engine capability a module is named after); the engine's own names (`brain`,
+`research-graph`), the names of `public.repos`'s owners and repos, and a name shorter than 3 characters are never
+derived, in any spelling; a project rooted at the brain's own root gives its repos, not its name. `brain check --all` (and a brain's own
+root) warns about each declared name no deny list holds in every spelling, when `public.derive` leaves its source
+out. A term, by hand or derived, matches in every spelling of its separators: `acme-lab` also refuses `acme_lab`,
+`Acme Lab`, `acme - lab` and `acmelab` (a Python module named after a hyphenated repo). A new spec, machine or module changes the rules the stamps are keyed
+by: rerun `brain check --public --history` before the next push. A registry that cannot be read (a YAML error, a
+conflict marker in `projects.yaml`, `members.yaml` or a module registry) never yields a shorter list: the public and
+secrets guards refuse, as for a configuration they cannot trust, and `brain check --public` stops (exit code 2).
+
 **One privacy scrub** (`wi-brain-privacy-scrub`, brain.scrub) for what leaves the machine, beside the secret scan's
 line drop: a line of `ledger/errors.log` (a crash report included), a notification's title, text and link, and what
 the outbox keeps to send later (its free text: body, title, link, message, reason; never what routes it, a project, a
@@ -1178,7 +1268,10 @@ launches it) or, with `--http`, Streamable HTTP on a loopback address only, each
 Nothing runs it on its own: a service or a remote endpoint is the owner's decision. `brain health ipc` checks every
 local service the Brain starts: loopback only, the token where the service can check one (the collector's is opt-in,
 config.json `ipc.require_token`, its export's header given by `brain ipc otel-headers`), no container as root
-([`docs/mcp.md`](docs/mcp.md), « The Brain's other local services »).
+([`docs/mcp.md`](docs/mcp.md), « The Brain's other local services »). Claude Code's export settings are the brain's,
+never typed by hand: config.json `adapters.claude.telemetry` says them, `brain ipc claude-settings` renders them and
+`install.ps1` adds them to the user settings (additions only), `otelHeadersHelper` included once the collector
+requires the token (docs/mcp.md, « Claude Code's export settings »).
 
 ## The Claude Code hooks
 

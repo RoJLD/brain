@@ -68,7 +68,8 @@ GUARDED = {"production": re.compile(r"\bproduction checkouts?\b", re.I),
                                   re.I),
            "third-party": re.compile(r"\bthird-party (?:kits?|plugins?|skills?)\b|\bcurl\b[^.]*\|\s*(?:ba)?sh\b|"
                                      r"\bplugin install\b|/add-plugin\b", re.I),
-           "markers": re.compile(r"\bconflict markers?\b", re.I)}
+           "markers": re.compile(r"\bconflict markers?\b", re.I),
+           "merges": re.compile(r"\bstale main\b|\bbrain merge-check\b", re.I)}
 
 
 def global_rules(cfg: config.Config | None = None) -> str:
@@ -85,7 +86,7 @@ _BULLET = re.compile(r"^[-*+]\s+")
 _NUMBERED = re.compile(r"^\d+[.)]\s+")
 _WORD = re.compile(r"[a-z0-9]+(?:[-_.][a-z0-9]+)*")
 _CODE = re.compile(r"`([^`\n]+)`")
-_COMMAND = re.compile(r"^(?:git|gh|python3?|py|pip|pytest|brain|research_graph|quant|docker|npm|npx|bash|pwsh|"
+_COMMAND = re.compile(r"^(?:git|gh|python3?|py|pip|pytest|brain|research_graph|docker|npm|npx|bash|pwsh|"
                       r"powershell|uv|make|claude)\b|\.(?:ps1|py|sh)\b", re.I)
 _SEQUENCE = re.compile(r"\b(?:then|after|afterwards|before|first|next|finally|once|in this order|followed by)\b", re.I)
 _FORBID = re.compile(r"\b(?:never|no|not|don't|do not|must not|refuse[sd]?|only (?:through|via|with|by)|always|"

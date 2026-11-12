@@ -59,7 +59,7 @@ def test_a_reviewed_green_fresh_pr_is_ready_and_stamped(pr):
     review.stamp(pr.data["headRefOid"], 2, 2)
     g = _gate(pr)
     assert g.ready, g.checks
-    assert [c["check"] for c in g.checks] == ["open", "fresh", "merge-check", "ci", "review", "public", "body"]
+    assert [c["check"] for c in g.checks] == ["open", "fresh", "merge-check", "ci", "review", "public", "body", "pins"]
     f = mergeready.stamp(g)
     assert json.loads(f.read_text(encoding="utf-8"))["head"] == pr.data["headRefOid"]
 

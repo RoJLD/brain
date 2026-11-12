@@ -1,5 +1,5 @@
 """Small graphs and a fake git history for the backlog, roadmap and decisions queries (research_graph.query,
-history, roadmap, priorities; quant backlog). Everything is built under tmp_path: no test reads the real graphs."""
+history, roadmap, priorities; acme backlog). Everything is built under tmp_path: no test reads the real graphs."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ WORK = """\
 - {id: wi-todo, type: WorkItem, status: todo, title: "Todo after doing",
    props: {priority_proposed: P2, priority_reason: "after wi-doing", spec: spec-draft}}
 - {id: wi-free, type: WorkItem, status: todo, title: "Free item about funding",
-   props: {pr: "quant-marketdata #16", after: "wi-doing stage 1"}}
+   props: {pr: "acme-data #16", after: "wi-doing stage 1"}}
 - {id: wi-ext, type: WorkItem, status: blocked, title: "Waits on Ada",
    props: {external_blocker: "Ada decides", open: "which venue"}}
 - {id: wi-ext2, type: WorkItem, status: blocked, title: "Waits on the cluster",
@@ -121,7 +121,7 @@ Questions qui restent :
 BRAIN_WORK = """\
 - {id: wi-brain-x, type: WorkItem, status: todo, title: "Brain item", props: {priority: P0}}
 - {id: ms-brain, type: Milestone, status: pending, title: "Brain milestone", props: {trigger: "x"}}
-- {id: adr-1, type: ADR, status: active, title: "The Brain's own adr-1 (same id as Quant's)"}
+- {id: adr-1, type: ADR, status: active, title: "The Brain's own adr-1 (same id as Acme's)"}
 """
 
 
@@ -143,7 +143,7 @@ def write_store(repo: Path, work: str = WORK, edges: str = EDGES, *, specs: bool
 
 
 def write_brain(root: Path) -> Path:
-    """my-brain-like checkout: <root>/notes/graph with its own items and an id that clashes with Quant's."""
+    """my-brain-like checkout: <root>/notes/graph with its own items and an id that clashes with Acme's."""
     return write_store(root, BRAIN_WORK, "- {from: wi-brain-x, to: ms-brain, type: part_of}\n", specs=False)
 
 
