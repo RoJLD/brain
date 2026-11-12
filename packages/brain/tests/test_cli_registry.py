@@ -17,6 +17,7 @@ from brain.commands import (bundle, capture, catalogue, check, code_map, collisi
                             schema, sessions, spec, timed, up, update)
 from brain.commands import merge_ready
 from brain.commands import test as test_cmd
+from brain.commands import uninstall
 from test_audit import README, _measure
 
 MODULES = _registry.load()
@@ -57,7 +58,7 @@ def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeyp
 # for announce, --hook and --public only); every other command needs the project's root (run only)
 EARLY = {capture, memory, timed, perf, init, merge_driver, merge_check, sessions, schedule, update, audit_cmd, impact,
          index, up, down, health, bundle, quiet, review, probes, schema, test_cmd, merge_ready, mcp, ipc,
-         handover, project}
+         handover, project, uninstall}
 BOTH = {decision, resume, check, docgraph, catalogue}
 ROOTED = {code_map, collisions, formats, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
 

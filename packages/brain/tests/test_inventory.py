@@ -299,8 +299,8 @@ def test_parse_code_ref_pinned_to_the_engines_grammar():
     p = inventory.parse_code_ref
     assert p("code:demo-data:demo_data/venues/lighter.py::LighterVenue") == (
         "demo-data", "demo_data/venues/lighter.py", "LighterVenue")
-    assert p("code:hedge-fund:hedge_fund/deploy/cross_venue/testnet.py") == (
-        "hedge-fund", "hedge_fund/deploy/cross_venue/testnet.py", "")
+    assert p("code:trade-desk:trade_desk/deploy/cross_venue/testnet.py") == (
+        "trade-desk", "trade_desk/deploy/cross_venue/testnet.py", "")
     assert p("code:Demo-lab:scripts/alloc_param_sobol.py::evaluate")[0] == "Demo-lab"
     assert p("code:x:a.py::LighterVenue.funding")[2] == "LighterVenue.funding"
     for bad in ("code:x", "code:x:../a.py", "code:x:a.yaml::S", "code:x:a.py::1bad", "codex:x:a.py",

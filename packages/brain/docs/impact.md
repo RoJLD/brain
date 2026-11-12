@@ -31,7 +31,7 @@ brain code-map [--project P]      # the CodeRefs resolved in the code index, and
    or moves away is touched whatever the index holds (`removed with its file`, `its file moved to ...`): it now names
    a path that is gone.
 4. **The graph.** The nodes relying on those CodeRefs, by research_graph's reliance (`implemented_by`, `part_of`,
-   `depends_on`, ...): features, their parent features, the quant layers. Around them: the Doc sections that document
+   `depends_on`, ...): features, their parent features, the domain layers. Around them: the Doc sections that document
    them or name a changed file, the Test modules that test them or cover the touched code and the CI jobs that run
    those, the ADRs and SDRs linked to them (the current one when a decision was superseded), their specs, the open
    items that deliver them and the DDRs pending on those items.

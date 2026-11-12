@@ -10,7 +10,9 @@ gathered without a model is gathered here, at zero token:
   to run them;
 - ``brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE]`` records that the review ran on that
   head, with its counts (the error score's record, wi-brain-review-error-score);
-- ``brain review check HEAD`` says whether that head was reviewed: the merge gate's question (wi-brain-merge-gate).
+- ``brain review check HEAD`` says whether that head was reviewed: the merge gate's question (wi-brain-merge-gate);
+  with ``--pr N`` (or ``--body FILE``), it also refuses while a pinned decision the change touches is neither kept
+  nor overridden in the PR body (``pins_gate``, brain.pins, wi-brain-decision-pins).
 
 A stamp is keyed by the head's full sha: a push after the review is a new head, reviewed again.
 """
@@ -230,6 +232,96 @@ def stamp(head: str, findings: int, fixed: int, contested: int = 0, note: str = 
            "note": note, **{k: str(v) for k, v in where.items() if k in PLACES and v}, "rows": parse_note(note)}
     f.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8", newline="\n")
     return f
+
+
+def _show(repo: Path, rev: str, rel: str) -> str | None:
+    """A file's text at ``rev`` (None when it is not there)."""
+    r = subprocess.run(["git", "show", f"{rev}:{rel}"], cwd=repo, capture_output=True, timeout=60)
+    return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
+
+
+def _rel(path: Path, top: Path) -> str | None:
+    try:
+        return path.resolve().relative_to(top.resolve()).as_posix()
+    except ValueError:
+        return None
+
+
+def _by_decision(rows: list[dict]) -> dict[str, list]:
+    out: dict[str, list] = {}
+    for r in rows:
+        out.setdefault(str(r.get("decision") or ""), []).append(r)
+    return out
+
+
+def _pins_at(repo: Path, mb: str, head: str, rel: str):
+    """(the pins of the base, with the head's new ones; the decisions whose row the change edits or removes), from
+    the pins file at ``rel`` in the changed repo; (None, set()) when neither side has one."""
+    from . import pins
+    at_base, at_head = _show(repo, mb, rel), _show(repo, head, rel)
+    if at_base is None and at_head is None:
+        return None, set()
+    try:
+        old, _ = pins.parse(at_base or "", rel)
+        new, _ = pins.parse(at_head or "", rel)
+    except pins.PinError as exc:
+        raise ReviewError(str(exc)) from None
+    a, b = _by_decision(old), _by_decision(new)
+    changed = {d for d in set(a) | set(b) if d and a.get(d) != b.get(d)}
+    return old + [r for r in new if str(r.get("decision") or "") not in a], changed
+
+
+def _project_of(repo: Path):
+    """(project, repo entry, checkout) of a registered project's repo, else None (scout.resolve, quiet)."""
+    import contextlib
+    import io
+    from types import SimpleNamespace
+
+    from . import projects, scout
+    from .inventory import AuditError
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):   # scout's "in no registered project" is not this gate's
+            p, _, c, top, registered = scout.resolve(SimpleNamespace(repo_dir=str(repo), project=None), None)
+    except (AuditError, OSError, ValueError, projects.RepoError):
+        return None
+    return (p, c, top) if registered else None
+
+
+def _logs_at(repo: Path, head: str, p, top: Path) -> list[tuple[str, str]]:
+    """The project's decision logs as the head holds them, with their kind."""
+    out = []
+    for log in p.decision_logs or [p.decisions]:
+        lr = _rel(Path(log), top) if log else None
+        text = _show(repo, head, lr) if lr else None
+        out.append((text or "", "sdr" if Path(log).name == "scientific_decisions.md" else "adr"))
+    return out
+
+
+def pins_gate(repo: Path, base: str, head: str, body: str | None) -> tuple[list[dict], list[str]]:
+    """(the pinned decisions the change base..head touches, what blocks it: brain.pins.verdict on the PR body), at the
+    file level; ([], []) for a repo in no registered project or a project without pins. When the pins live in the
+    changed repo, they are read at the merge base (the head adds its new ones, and a row the change edits or removes
+    counts as touched) and the decision logs at the head: a PR can neither drop its own pin nor hide its REVERSAL."""
+    from . import pins, scout
+    found = _project_of(repo)
+    if found is None:
+        return [], []
+    p, c, top = found
+    f = pins.path_of(p)
+    rel = _rel(f, top)
+    if rel is None and not f.is_file():
+        return [], []
+    mb = _git(repo, "merge-base", base, head).strip()
+    rows, edited, decided = None, set(), None
+    if rel is not None:
+        rows, edited = _pins_at(repo, mb, head, rel)
+        if rows is None:
+            return [], []
+        decided = pins.decisions_of(p, logs=_logs_at(repo, head, p, top))
+    files = {x for _, old, new in scout.changed(top, mb, head) for x in (old, new) if x}
+    touched = pins.touched(p, files, {c.name, top.name, (paths.main_checkout(top) or top).name}, pins=rows,
+                           decided=decided, changed_rows=edited)
+    return touched, pins.verdict(p, touched, body)
 
 
 def _lens_words() -> dict[str, str]:

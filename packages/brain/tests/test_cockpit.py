@@ -927,17 +927,17 @@ def test_the_palette_reaches_every_sort_and_filter():
 
 
 def test_the_palette_reaches_every_tab_project_and_table():
-    entries = cockpit.palette({"demo": None, "quant": None})
+    entries = cockpit.palette({"demo": None, "acme": None})
     titles = [e["title"] for e in entries]
     assert len(titles) == len(set(titles))  # the palette finds an entry by its words
     does = {e["do"] for e in entries}
     assert {("tab", n) for n in cockpit.built_tabs()} <= does and ("tab", "ideas") not in does
     assert {("view", "overview", v) for v in cockpit.tab_views("overview")} <= does and ("view", "queue", "list") not in does
-    assert {("scope", "all"), ("scope", "demo"), ("scope", "quant")} <= does
+    assert {("scope", "all"), ("scope", "demo"), ("scope", "acme")} <= does
     assert {("columns", n) for n in cockpit.COLUMNS} <= does and ("reset",) in does
     assert ("view", "overview", "grid") not in {e["do"] for e in cockpit.palette({}, is_narrow=True)}
     assert "Go to Frontier" in titles and "Frontier: sort by unblocks" in titles and "Reset the views" in titles
-    assert "Project: quant (not on this machine)" in titles
+    assert "Project: acme (not on this machine)" in titles
     assert next(e for e in entries if e["do"] == ("tab", "frontier"))["help"] == "key 3: What can start?"
 
 

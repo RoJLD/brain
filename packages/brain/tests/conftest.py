@@ -96,6 +96,7 @@ def brain_home(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_CONFIG", str(BRAIN))
     monkeypatch.delenv("CLAUDE_BRAIN_DIR", raising=False)
     monkeypatch.delenv("BRAIN_PERSONAL", raising=False)  # and no machine's personal brain: the pointer is in home
+    monkeypatch.delenv("BRAIN_PROJECTS", raising=False)  # nor a registry the shell names
     # the machine's token is the temporary BRAIN_HOME's, and no test runs as if inside the MCP server's container
     monkeypatch.delenv("BRAIN_IPC_TOKEN_FILE", raising=False)
     monkeypatch.delenv("BRAIN_MCP_CONTAINER", raising=False)

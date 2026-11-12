@@ -45,7 +45,7 @@ class FakeCockpit:
     def __init__(self):
         self.calls, self.selected = [], []
         self.scope, self.every = "demo", False
-        self.choices = {"demo": None, "quant": None}  # no project behind them: as if not on this machine
+        self.choices = {"demo": None, "acme": None}  # no project behind them: as if not on this machine
 
     @property
     def multi(self):
@@ -244,17 +244,17 @@ def test_the_panels_say_why_they_are_empty_and_what_a_probe_waits_for():
         assert _ids(app, "frontier") == ["wi-one", "wi-three", "wi-two"]  # the last content, kept
         app._done(set(), "")
         assert notified == ["OSError: disk gone (frontier: the last content kept)"]  # notified once
-        snap["probing"], app.busy, app.probing = {"what": "quant", "n": 2, "total": 3}, True, True
+        snap["probing"], app.busy, app.probing = {"what": "acme", "n": 2, "total": 3}, True, True
         app.tick()  # busy: the probe's progress drawn, nothing read
-        assert _why(app, "alerts") == "probing: quant 2/3" and app.sub_title.endswith("| probing: quant 2/3")
+        assert _why(app, "alerts") == "probing: acme 2/3" and app.sub_title.endswith("| probing: acme 2/3")
         audit = app.query_one("#audit-text")
-        assert "probing: quant 2/3" in str(getattr(audit, "content", None) or audit.renderable)
+        assert "probing: acme 2/3" in str(getattr(audit, "content", None) or audit.renderable)
         app.busy = app.probing = False
         await pilot.press("1", "enter")  # the line that says why opens nothing
         await pilot.pause(0.1)
         assert app.screen is app.screen_stack[0]
         assert [(str(label), getattr(label, "style", "")) for label, _ in app._scopes()][1:] == [
-            ("demo (not on this machine)", "dim"), ("quant (not on this machine)", "dim")]  # greyed
+            ("demo (not on this machine)", "dim"), ("acme (not on this machine)", "dim")]  # greyed
     _run(check)
 
 

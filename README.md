@@ -9,7 +9,7 @@ It holds two distributions, released together under one tag series (`vX.Y.Z` is 
 - **`research-graph`** (module `research_graph`, at the repo's root): a typed, layered knowledge graph kept as YAML in
   a git repo, with a loader that validates it, `sync` that derives nodes from the repo (decision logs, experiments),
   queries over the work layer (backlog, milestones, decisions waiting for the owner), its history from git, and
-  generated markdown views (a kanban board and a roadmap). A quant research platform runs it, pinned by tag.
+  generated markdown views (a kanban board and a roadmap). A research platform runs it, pinned by tag.
 - **`brain`** (`packages/brain`): the `brain` command, one command for a personal brain at zero token: records (DDR,
   SR, AR), backlog, decisions waiting on the owner, journal, ADRs, generated views, `brain init` for a new brain, and
   the Claude Code hooks and guards it renders into its owner's own plugin. It depends on `research-graph` at the same

@@ -74,6 +74,9 @@ review of one head (the command says so when `--item` comes without it). `--item
 wave (`brain.waves`, in the repo's registered project) places the stamp, else `--wave X.Y.Z`; `--stream` the lot or
 stream it belongs to.
 
+With `--pr N` (or `--body FILE`), `brain review check` also refuses while a pinned decision the change touches is
+neither kept nor overridden in the PR body (`docs/pins.md`).
+
 ### The note's finding lines
 
 One line per confirmed finding, so that the score counts them by severity, lens and root cause at zero token:

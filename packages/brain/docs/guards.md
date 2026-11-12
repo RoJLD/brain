@@ -69,7 +69,13 @@ What it reads, at zero token:
   spelling, like `brain usage allow`; a roots.json reached through a link marks nothing). A root hands over without a coordinator's
   name, and the coordinators it starts pass the parent condition through it until the owner clears the mark
   (wi-brain-handover-command). A marked id whose
-  app file names a parent is no root.
+  app file names a parent is no root. The first prompt of an owner-started session that asks for a coordinator marks
+  it with no gesture (wi-brain-handover-auto-root: the UserPromptSubmit hook, `brain.succession.auto_root`); the
+  guard refuses a session that runs that hook's entry by hand: an interpreter (python, bash, cmd, a wrapper) given a
+  file named `midsession.py` or `.sh`, `-m brain.midsession`, or a `python -c` code that imports or calls it
+  (`brain.midsession`, `hook_main`, `auto_root`); reading or testing it is not refused. It holds against a mistake:
+  a renamed copy or code built at run time is out of its reach, and the mark itself judges the session's own
+  transcript (found from its id) and the app's count of completed turns, never what the payload says.
 - **Live on this machine**: `running`, `idle`, `asking` or `stale`; not archived, and not `unknown` (no transcript).
   A successor `unknown` because it has no transcript yet still counts, as starting, for `handover-on` and
   `handover-off` when its own app file's `createdAt` is at most 10 minutes old (`HANDOVER_START_S`): the outgoing
@@ -97,8 +103,8 @@ procedural mark (the ADR's « une fois sa note écrite »), not a credential. Th
 starts a child, so a session that starts a `coordinator-x` which starts a `coordinator-y` has built the mark; the
 guard checks one hop of lineage, not the whole chain back to the owner. While its note is under 6 hours old, a
 coordinator may turn Remote Control on for any coordinator it started, not only one. After a new root coordinator
-(started by the owner, so unnamed), the first two handovers stay the owner's gesture unless the owner marks the root
-(`brain handover root <id>`, once per chain): the root has no name, and its first successor's parent is no
+(started by the owner, so unnamed), the first two handovers stay the owner's gesture unless the root is marked: by its
+first prompt when it asks for a coordinator (the hook), else by `brain handover root <id>`, once per chain: the root has no name, and its first successor's parent is no
 coordinator by name. `brain handover check` reads the same conditions before the calls and names the one that fails;
 `brain handover wait --successor <id>` waits, bounded, for the successor's first turn before `on` (a successor with
 no transcript yet passes only as starting, from 0.4.0, within ten minutes of its creation).
@@ -184,8 +190,9 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
   2026-11-04 REVERSAL of the internal-error policy, for these checks only). They refuse every `git commit` and
   `git push`, whatever the repo, while the configuration they read is unexpected, the reason naming the fix:
   `config.json` unreadable or not an object (fix it: `brain config --check`), `public` or one of its keys (`repos`, `deny`, `allow`,
-  `patterns`, `refuse`, `deny_from_tree`) of another type (`brain config --keys`), with `public.deny_from_tree` on a
-  `scopes.yaml` or a `projects.yaml` that cannot be read (the generated deny list would miss terms), a `v` that is not a whole number, or above the one the engine reads (`brain update`), `$BRAIN_CONFIG` naming no file, or no
+  `patterns`, `refuse`, `deny_from_tree`, `derive`, `public_names`) of another type (`brain config --keys`), with `public.deny_from_tree` on a
+  `scopes.yaml` or a `projects.yaml` that cannot be read (the generated deny list would miss terms), a registry
+  `public.derive` reads that raises (brain.denylist: the derived terms would be missing), a `v` that is not a whole number, or above the one the engine reads (`brain update`), `$BRAIN_CONFIG` naming no file, or no
   `config.json` found although `$BRAIN_PERSONAL` or `<BRAIN_HOME>/personal.json` names a personal brain (a renamed or
   moved folder: point the pointer at the main checkout, `install.ps1 -Apply`). An unknown key never refuses (a newer
   brain's, kept). `guard.sh` refuses them as well when it finds no Python, or the one it finds cannot import brain (a
@@ -203,6 +210,12 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
   gets a note in the session's context: through the Bash tool the doubled backslash has arrived single; write the
   file with Write or Edit, or check its bytes after (les-brain-heredoc-backslashes). The guards ledger records it as
   `heredoc:backslash`, decision `warned`.
+
+- **A merge resolution against a stale main** (`merges:stale`; wi-brain-merge-stale-main-2): a `git push` of a
+  branch whose merge of the base is not on the remote yet runs `brain merge-check` against the base as merged and
+  a fresh one, and refuses a lost line or node, or a file the merge resolved that the base has moved on since
+  (docs/merge-driver.md). Override,
+  the owner's: `BRAIN_GUARD_ALLOW=merges:stale`.
 
 ### How the guards read a diff
 

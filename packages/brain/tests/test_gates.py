@@ -27,7 +27,7 @@ def test_each_kind_is_checked_and_labelled():
     assert gates.problems({"kind": "calendar", "days": 7, "reset_daily": 1.5})
     assert gates.problems({"kind": "count", "of": "ddr.answered", "at_least": 100}) == []
     assert "give current and per_day" in gates.problems({"kind": "count", "of": "passes", "at_least": 60})[0]
-    assert gates.problems({"kind": "external", "ref": "quant wi-z"}) == ["an external gate needs ref: <project>:<id>"]
+    assert gates.problems({"kind": "external", "ref": "acme wi-z"}) == ["an external gate needs ref: <project>:<id>"]
     assert gates.problems({"kind": "hardware", "machine": "gpu", "ready": "soon"})
     assert gates.problems({"kind": "eventually"})[0].startswith("kind 'eventually' is not one of")
     assert gates.of({"gate": {"kind": "go_nogo"}}) == [{"kind": "go_nogo"}]
@@ -41,7 +41,7 @@ def test_each_kind_is_checked_and_labelled():
     assert gates.ready_range("2026-12..2027-01") == (date(2026, 12, 1), date(2027, 1, 31))
     assert gates.ready_range("2026-12-15") == (date(2026, 12, 15), date(2026, 12, 15))
     assert gates.ready_range("2027-01..2026-12") is None
-    assert gates.parse_ref("quant:wi-z (the schema)") == ("quant", "wi-z")
+    assert gates.parse_ref("acme:wi-z (the schema)") == ("acme", "wi-z")
     assert gates.parse_ref("Other-lab wi-z") is None
 
 
