@@ -381,10 +381,50 @@ decision log, also when the first exists already; `schema: default`, the brain's
 research, ...]`, its schema composed from research_graph's catalogue of layers with what they require and the
 template's own layers, `layers/<name>.yaml` in its folder: `research_graph layers`) and its `files` (`{the brain's
 path: the template's file}`, `""` for an empty one), rendered with `{owner}`, `{owner_q}` (quoted for YAML or JSON),
-`{name}` and `{title_q}`. It must write what config.json names (`projects.yaml`, `rules/global.md`,
-`source/packs.yaml`, `memory/`, `records/`); the engine writes config.json, the graph stores and the Claude
+`{name}`, `{title_q}` and `{stage}` (`--stage`). It must write what config.json names (`projects.yaml`,
+`rules/global.md`, `source/packs.yaml`, `memory/`, `records/`); the engine writes config.json, the graph stores and the Claude
 marketplace itself. `--template DIR` takes a folder of your own holding one. A template is public data; the owner's
-records live in their own brain.
+records live in their own brain. A template may `extends` one of the engine's (its files, appends, graphs and classes,
+to which it adds or replaces its own: a file of the same path, its `graphs` when it gives some) and `append` a
+fragment of its own to a file the base writes (`{the brain's path: the fragment}`; a YAML file must still read as
+YAML).
+
+### A project's brain, by profile
+
+When the brain is a product's own repo, a profile's template starts it with what the profile needs
+(`wi-brain-project-templates`; the standards registry, [docs/standards.md](docs/standards.md)):
+
+```bash
+brain init ~/my-tool --owner "Your name" --template cli --stage mvp --apply
+```
+
+| Template | The profile | The graph's layers (`research_graph layers`) |
+|---|---|---|
+| `cli` | a command-line tool | work, decisions, records, lessons, code, docs_tests, features |
+| `local-client` | a local client (a desktop or mobile application with its own data) | the same |
+| `service` | a service (a server, an API, a worker) | the same, operations and fleet |
+| `data-pipeline` | a data pipeline | the same, data and operations |
+| `research` | a research project | work, decisions, records, lessons, ideas, research, data, code, docs_tests |
+
+Each one is the generic brain (its files unchanged), plus:
+
+- the standards selection in `projects.yaml`: `standards: {profiles: [<profile>], stage: <--stage, default
+  prototype>}`, so `brain standards list --applicable`, `brain standards check` and `brain brief` read what applies;
+- the CI jobs, `.github/workflows/ci.yml`: the tests with their coverage (JUnit and Cobertura reports, a floor that
+  rises with the stage) and compat-prev, the last tag's tests on the PR's code;
+- the test harness, `tests/conftest.py`: a virtual clock (`clock`), fault injection (`faults.fail(module, "name",
+  after=N)`) and the old formats' fixtures (`old_formats("fmt")`, `fixtures/formats/<format>/v<N>/older.*`), with its
+  own tests, so the CI is green from the first commit;
+- the format registry's skeleton, `docs/formats.md` (tolerant readers, strict writers; a format that moves is a minor
+  version);
+- the issue template, `.github/ISSUE_TEMPLATE/task.md` (reference, context, acceptance, dependencies, an estimate
+  marked (e) with its author and date, the exit criterion served, a proposed owner), and the ADR template,
+  `docs/templates/adr.md` (scope, target compatibility, a precise « Revisit if »);
+- the boundary's rule for `.github/**` (the engine side: nothing private in it).
+
+The bases `_project` (the issue and ADR templates) and `_software` (the CI, the harness, the format registry, the
+code layers) are what the profiles extend; `--template` does not take a base. The CI and the harness are Python's
+first: another language replaces their steps and keeps the jobs.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.

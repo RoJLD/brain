@@ -63,6 +63,8 @@ FIXTURES = f"{BRAIN}/tests/fixtures/formats"
 # (tests/test_release_check.py), so a format registered there is checked here. permissions.yaml has no file of its own:
 # its keys are constants of brain.permissions, and a file's diff cannot tell them from the rest of the module
 # (wi-brain-schema-diff compares keys).
+# the project templates brain init writes from (wi-brain-project-templates), bases first
+PROFILE_TEMPLATES = ("_project", "_software", "cli", "local-client", "service", "data-pipeline", "research")
 # "store" is not a format with a fixture yet: what `brain init` wrote once and keeps afterwards, so that a brain never
 # gets a change of these files by itself (0.2.5's Lesson type and merge=brain line).
 SCHEMAS = {
@@ -78,10 +80,15 @@ SCHEMAS = {
     "status": (f"{SRC}/schemas/status.schema.json",),   # the status document brain doctor --json prints (brain.probe)
     "packs": (f"{SRC}/templates/generic/packs.yaml",),
     "projects": (f"{SRC}/templates/generic/projects.yaml",),
-    "template": (f"{SRC}/templates/generic/template.yaml",),
+    "template": (f"{SRC}/templates/generic/template.yaml",
+                 # the project templates (wi-brain-project-templates): extends and append, bases first
+                 *(f"{SRC}/templates/{t}/template.yaml" for t in PROFILE_TEMPLATES)),
     "permissions": (),
     "store": ("src/research_graph/templates/schema.yaml", f"{SRC}/templates/schemas/default.yaml",
-              f"{SRC}/templates/generic/boundary.yaml", f"{SRC}/templates/generic/gitattributes"),
+              f"{SRC}/templates/generic/boundary.yaml", f"{SRC}/templates/generic/gitattributes",
+              # what a profile's template adds to the brain's boundary and its registry entry
+              f"{SRC}/templates/_project/boundary-github.yaml",
+              *(f"{SRC}/templates/{t}/standards.yaml" for t in PROFILE_TEMPLATES if not t.startswith("_"))),
 }
 
 VERSIONS = {"research-graph": "src/research_graph/__init__.py", "brain": f"{SRC}/__init__.py"}

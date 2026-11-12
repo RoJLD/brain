@@ -70,6 +70,7 @@ MANIFEST = "template.yaml"
 TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs", "classes", "extends", "append"}
 # an engine template's folder: a name one may give, or a base (``_name``) only other templates extend
 BASE_RE = re.compile(r"_?[a-z0-9][a-z0-9_.-]*")
+MAX_EXTENDS = 6   # a template's chain of bases: an owner's, a profile, _software, _project, generic, and one more
 GRAPH_KEYS = {"name", "store", "schema", "layers"}
 LAYER_RE = re.compile(r"[a-z][a-z0-9_]*")   # a layer's name (research_graph.layers.NAME_RE)
 SCHEMAS = ("default",)   # templates/schemas/<name>.yaml; or a graph's layers, composed from research_graph's catalogue
@@ -203,15 +204,15 @@ def _paths(spec: str, folder, data: dict, key: str) -> dict[str, str]:
 
 
 def _base(spec: str, data: dict, chain: tuple[str, ...]) -> Template | None:
-    """The engine's template ``extends`` names, loaded (a chain of at most four, never a cycle)."""
+    """The engine's template ``extends`` names, loaded (a chain of at most :data:`MAX_EXTENDS`, never a cycle)."""
     ext = data.get("extends")
     if ext is None:
         return None
     if not (isinstance(ext, str) and BASE_RE.fullmatch(ext) and (TEMPLATES / ext / MANIFEST).is_file()):
         raise InitError(f"--template {spec}: {MANIFEST}: extends {ext!r}: one of the engine's templates "
                         f"({', '.join(sorted(d.name for d in TEMPLATES.iterdir() if (d / MANIFEST).is_file()))})")
-    if ext in chain or len(chain) > 3:
-        raise InitError(f"--template {spec}: {MANIFEST}: extends {ext!r}: a cycle or a chain past four "
+    if ext in chain or len(chain) > MAX_EXTENDS:
+        raise InitError(f"--template {spec}: {MANIFEST}: extends {ext!r}: a cycle or a chain past {MAX_EXTENDS} "
                         f"({' -> '.join(chain + (ext,))})")
     return load_template(ext, chain + (ext,))
 
@@ -222,6 +223,9 @@ def load_template(spec: str = DEFAULT_TEMPLATE, _chain: tuple[str, ...] = ()) ->
     engine's takes its files, appends, graphs and classes, and adds or replaces its own (a file of the same path, its
     graphs when it gives some)."""
     spec = spec or DEFAULT_TEMPLATE
+    if not _chain and spec.startswith("_") and (TEMPLATES / spec / MANIFEST).is_file():
+        raise InitError(f"--template {spec}: a base the engine's templates extend, not one to start from (one of "
+                        f"{', '.join(known_templates())})")
     folder, data = _manifest(spec)
     _head(spec, data)
     base = _base(spec, data, _chain or (spec,))
@@ -242,7 +246,8 @@ def load_template(spec: str = DEFAULT_TEMPLATE, _chain: tuple[str, ...] = ()) ->
     _, errors = classes.stores(config.Config(None, Path("."), {"classes": {"stores": declared}}))
     if not isinstance(data.get("classes") or {}, dict) or errors:
         raise InitError(f"--template {spec}: {MANIFEST}: classes: " + ("; ".join(errors) or "{store: {class, paths}}"))
-    graphs = graphs_of(spec, data["graphs"]) if "graphs" in data or base is None else [dict(g) for g in base.graphs]
+    own_graphs = "graphs" in data or base is None
+    graphs = graphs_of(spec, data.get("graphs")) if own_graphs else [dict(g) for g in base.graphs]
     tpl = Template(data["name"], data["version"], str(data.get("title") or ""), folder, str(data.get("engine") or ""),
                    fs, graphs, declared, origin, appends,
                    ((data["extends"],) + base.extends) if base else (),

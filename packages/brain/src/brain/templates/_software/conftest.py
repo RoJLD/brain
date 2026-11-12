@@ -39,10 +39,10 @@ class Faults:
     def __init__(self, monkeypatch):
         self._mp = monkeypatch
 
-    def fail(self, owner, name: str, error: BaseException | None = None, after: int = 0) -> None:
-        """``owner.name`` raises ``error`` (an OSError by default) from its call number ``after + 1`` on."""
-        real, calls = getattr(owner, name), [0]
-        error = error or OSError(f"injected fault: {name}")
+    def fail(self, owner, attr: str, error: BaseException | None = None, after: int = 0) -> None:
+        """``owner.attr`` raises ``error`` (an OSError by default) from its call number ``after + 1`` on."""
+        real, calls = getattr(owner, attr), [0]
+        error = error or OSError(f"injected fault: {attr}")
 
         def faulty(*args, **kwargs):
             calls[0] += 1
@@ -50,7 +50,7 @@ class Faults:
                 raise error
             return real(*args, **kwargs)
 
-        self._mp.setattr(owner, name, faulty)
+        self._mp.setattr(owner, attr, faulty)
 
 
 @pytest.fixture
