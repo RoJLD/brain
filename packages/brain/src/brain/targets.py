@@ -66,14 +66,23 @@ def _later_items(store: Path, root: Path | None, nodes: dict) -> list[tuple[str,
         for i in plan.items_of(w):
             seen.setdefault(i, w)
     for era in sorted(m for m, n in nodes.items() if waves.kind(n) == "era" and n.get("status") == "pending"):
-        for x in sorted(plan.members.get(era, ())):
-            if (nodes.get(x) or {}).get("type") != "Milestone":
-                seen.setdefault(x, era)
-            elif x != current and nodes[x].get("status") == "pending":
-                for i in (plan.items_of(x) if waves.kind(nodes[x]) == "wave" else plan.members.get(x, ())):
-                    seen.setdefault(i, x)
+        for item, phase in _era_items(plan, nodes, era, current):
+            seen.setdefault(item, phase)
     return sorted((i, p) for i, p in seen.items() if (nodes.get(i) or {}).get("type") == "WorkItem"
                   and nodes[i].get("status") in OPEN)
+
+
+def _era_items(plan, nodes: dict, era: str, current: str) -> list[tuple[str, str]]:
+    """(member, its phase) of a pending era: its own members, and the items of its pending milestones and waves (the
+    current wave aside)."""
+    out = []
+    for x in sorted(plan.members.get(era, ())):
+        if (nodes.get(x) or {}).get("type") != "Milestone":
+            out.append((x, era))
+        elif x != current and nodes[x].get("status") == "pending":
+            members = plan.items_of(x) if waves.kind(nodes[x]) == "wave" else plan.members.get(x, ())
+            out += [(i, x) for i in members]
+    return out
 
 
 def _need(nid: str, n: dict, kind: str, phase: str, status: str) -> dict:
@@ -146,13 +155,7 @@ def decisions(store: Path, logs: list[Path], root: Path | None = None) -> list[d
     supersedes edge reaches it, its node not superseded): {id, title, scope, target, revisit, modules (of the nodes
     it decides), file (relative to ``root``), line}; an id two logs give is read once, from the first."""
     nodes = {nid: node for nid, (_, node) in graph.node_index(store).items()}
-    edges = _edges(store)
-    decides: dict[str, set[str]] = {}
-    for e in edges:
-        if e.get("type") == "decided_by":
-            decides.setdefault(str(e["to"]), set()).add(str(e["from"]))
-    gone = {str(e["to"]) for e in edges if e.get("type") == "supersedes"}
-    gone |= {nid for nid, n in nodes.items() if n.get("status") == "superseded"}
+    decides, gone = _decided(store, nodes)
     out, seen = [], set()
     for log in logs:
         if not log.is_file():
@@ -168,6 +171,18 @@ def decisions(store: Path, logs: list[Path], root: Path | None = None) -> list[d
                         "target": f.get("Target compatibility", ""), "revisit": f.get("Revisit if", ""),
                         "modules": mods, "file": rel, "line": a["line"]})
     return out
+
+
+def _decided(store: Path, nodes: dict) -> tuple[dict[str, set[str]], set[str]]:
+    """({ADR: the nodes it decides}, the ADRs no longer in force: a supersedes edge reaches it, or its node says
+    superseded)."""
+    edges = _edges(store)
+    decides: dict[str, set[str]] = {}
+    for e in edges:
+        if e.get("type") == "decided_by":
+            decides.setdefault(str(e["to"]), set()).add(str(e["from"]))
+    gone = {str(e["to"]) for e in edges if e.get("type") == "supersedes"}
+    return decides, gone | {nid for nid, n in nodes.items() if n.get("status") == "superseded"}
 
 
 def _rel(log: Path, root: Path | None) -> str:
