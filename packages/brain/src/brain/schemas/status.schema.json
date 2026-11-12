@@ -83,6 +83,7 @@
         "disks": {"type": "array", "items": {"type": "object"}},
         "brain_home": {"type": ["object", "null"]},
         "encryption": {"type": ["array", "null"]},
+        "hardware": {"type": ["object", "null"]},
         "probes": {"type": "object"}
       }
     }

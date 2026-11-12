@@ -23,6 +23,7 @@
                "total_bytes": 512110190592}],
     "brain_home": {"path": "D:\\brain-home", "bytes": 52428800, "complete": true},
     "encryption": [],
+    "hardware": {"ecc": null, "ecc_source": "wmi", "battery": false, "battery_source": "wmi"},
     "probes": {"cpu": {"ok": true, "seconds": 0.05}, "gpus": {"ok": true, "seconds": 0.4}}
   }
 }

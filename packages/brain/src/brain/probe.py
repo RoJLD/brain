@@ -38,8 +38,8 @@ from . import config, paths
 # emits the same document).
 SCHEMA = "brain.status/v1"
 TIMEOUTS = {"cpu": 1.0, "memory": 1.0, "gpus": 4.0, "tools": 2.0, "docker": 3.0, "kube": 2.0, "disk": 1.5,
-            "encryption": 4.0}
-SLOW = ("docker", "kube", "encryption")   # skipped by --quick: each starts a program that may take a second or more
+            "encryption": 4.0, "hardware": 4.0}
+SLOW = ("docker", "kube", "encryption", "hardware")   # skipped by --quick: each starts a program that may take a second or more
 TOOLS = ("git", "bash", "gh", "docker", "podman", "nerdctl", "kubectl", "wsl", "ollama", "gitleaks", "node",
          "nvidia-smi", "rocm-smi", "age", "gpg")
 MODULES = ("textual",)     # pip extras' modules, importable or not
@@ -49,6 +49,9 @@ GIB = 2 ** 30
 CAP32 = 0xFFF00000         # what a 32-bit adapter memory reads at its cap (4,293,918,720 bytes)
 VENDORS = {"10de": "nvidia", "1002": "amd", "1022": "amd", "8086": "intel", "106b": "apple"}
 BITLOCKER = {1: "on", 2: "off", 3: "encrypting", 4: "decrypting", 5: "suspended", 6: "on (locked)"}
+# Win32_PhysicalMemoryArray.MemoryErrorCorrection: 3 none, 4 parity (no correction), 5 single-bit ECC, 6 multi-bit
+# ECC, 7 CRC; 0, 1 and 2 (reserved, other, unknown) say nothing
+ECC_YES, ECC_NO = {5, 6, 7}, {3, 4}
 WALK_BUDGET = 1.0          # seconds to measure BRAIN_HOME's size
 
 
@@ -395,6 +398,52 @@ def probe_encryption() -> list[dict]:
     return rows
 
 
+_PS_HARDWARE = ("$m = @(Get-CimInstance Win32_PhysicalMemoryArray | ForEach-Object { $_.MemoryErrorCorrection }); "
+                "$b = @(Get-CimInstance Win32_Battery).Count; "
+                "ConvertTo-Json -Compress @{ecc = $m; battery = $b}")
+
+
+def probe_hardware() -> dict:
+    """ECC memory and a battery, each true, false or None (unknown): WMI on Windows (Win32_PhysicalMemoryArray, no
+    admin needed; Win32_Battery), EDAC and /sys/class/power_supply on Linux (no EDAC controller: unknown, the module
+    may not be loaded), pmset on macOS (ECC unknown)."""
+    system = _os()
+    if system == "windows":
+        code, out = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_HARDWARE],
+                         TIMEOUTS["hardware"] - 0.3)
+        if code != 0:
+            raise RuntimeError("powershell did not read the memory arrays")
+        data = json.loads(out.strip() or "{}")
+        codes = {int(c) for c in (data.get("ecc") if isinstance(data.get("ecc"), list) else [data.get("ecc")])
+                 if isinstance(c, (int, float))}
+        ecc = True if codes & ECC_YES else False if codes and codes <= ECC_NO else None
+        return {"ecc": ecc, "ecc_source": "wmi", "battery": bool(data.get("battery")), "battery_source": "wmi"}
+    if system == "darwin":
+        code, out = _run(["pmset", "-g", "batt"], TIMEOUTS["hardware"] - 0.3)
+        return {"ecc": None, "ecc_source": "", "battery": ("InternalBattery" in out) if code == 0 else None,
+                "battery_source": "pmset"}
+    mcs = list(Path("/sys/devices/system/edac/mc").glob("mc[0-9]*"))
+    supplies = list(Path("/sys/class/power_supply").glob("*"))
+    battery = any(_read(str(p / "type")).strip() == "Battery" for p in supplies) if supplies else None
+    return {"ecc": True if mcs else None, "ecc_source": "edac", "battery": battery,
+            "battery_source": "power_supply"}
+
+
+def _encrypted(b: dict) -> bool | None:
+    """BRAIN_HOME's volume encrypted: True (on), False (off), None (unknown, or not probed)."""
+    rows = b.get("encryption")
+    home = (b.get("brain_home") or {}).get("path") or ""
+    if not rows or not home:
+        return None
+    norm = home.replace("\\", "/").lower()
+    best = max((r for r in rows if norm.startswith(str(r.get("volume") or "").replace("\\", "/").lower())),
+               key=lambda r: len(str(r.get("volume") or "")), default=None)
+    if best is None:
+        return None
+    state = str(best.get("state") or "")
+    return True if state.startswith("on") else False if state == "off" else None
+
+
 # The report.
 
 def _arch() -> str:
@@ -424,8 +473,9 @@ def _inference(gpus: list[dict], plat: dict) -> dict:
 
 
 def machine() -> str:
-    """This machine's name for the brain: $BRAIN_MACHINE, else the host name, lowercase (brain.memory's rule)."""
-    from .memory import machine as name
+    """This machine's name for the brain: $BRAIN_MACHINE, else the host name, lowercase (brain.machine.name, the
+    one identity)."""
+    from .machine import name
     return name()
 
 
@@ -434,7 +484,7 @@ def collect(quick: bool = False, roots: list[Path] | None = None, timeouts: dict
     limits = {**TIMEOUTS, **(timeouts or {})}
     jobs = {"cpu": probe_cpu, "memory": probe_memory, "gpus": probe_gpus, "tools": probe_tools,
             "docker": probe_docker, "kube": probe_kube, "disk": lambda: probe_disk(roots),
-            "encryption": probe_encryption}
+            "encryption": probe_encryption, "hardware": probe_hardware}
     if quick:
         jobs = {k: f for k, f in jobs.items() if k not in SLOW}
     results, probes, took = {}, {}, {}
@@ -487,14 +537,16 @@ def report(results: dict, probes: dict) -> dict:
         "brain": {"v": 1, "machine": machine(), "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                   "tools": results.get("tools") or {}, "container": results.get("docker"),
                   "kube": results.get("kube"), "disks": disk["disks"], "brain_home": disk["brain_home"],
-                  "encryption": results.get("encryption"), "probes": probes},
+                  "encryption": results.get("encryption"), "hardware": results.get("hardware"),
+                  "probes": probes},
     }
 
 
 def facts(doc: dict) -> dict:
     """The flat facts the registry's requires and recommend_when read: os, arch, cpu_cores, memory_gb, gpu,
     gpu_vram_gb (the largest GPU's, GiB), disk_free_gb (BRAIN_HOME's disk), each tool and module (True when found),
-    container_runtime, docker_server, kube_context, python."""
+    container_runtime, docker_server, kube_context, python; ecc, battery and encrypted (BRAIN_HOME's volume), each
+    true, false or None when unknown (not probed, or the probe could not say); gpu None when its probe failed."""
     inv, b = doc["inventory"], doc["brain"]
     gpus = inv.get("gpus") or []
     vram = max([g["vram_bytes"] for g in gpus if g.get("vram_bytes")] or [0])
@@ -511,4 +563,8 @@ def facts(doc: dict) -> dict:
     for k, v in (b.get("tools") or {}).items():
         if isinstance(v, bool):
             f[k] = v
+    hw = b.get("hardware") or {}
+    f.update(ecc=hw.get("ecc"), battery=hw.get("battery"), encrypted=_encrypted(b))
+    if not gpus and (b.get("probes") or {}).get("gpus", {}).get("ok") is False:
+        f["gpu"] = None   # not found because not probed: unknown, never false
     return f

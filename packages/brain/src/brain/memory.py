@@ -37,7 +37,6 @@ import hashlib
 import json
 import os
 import re
-import socket
 import subprocess
 import sys
 import time
@@ -81,8 +80,9 @@ def mode() -> str:
 
 
 def machine() -> str:
-    raw = os.environ.get("BRAIN_MACHINE") or socket.gethostname() or "machine"
-    return re.sub(r"[^a-z0-9-]+", "-", raw.lower()).strip("-")[:40] or "machine"
+    """This machine's name: brain.machine.name, the one identity ($BRAIN_MACHINE, else the host name)."""
+    from .machine import name
+    return name()
 
 
 def key_map() -> dict[str, str]:
@@ -513,6 +513,11 @@ def pr_body(report: Report, changes: list[tuple[str, str]], conflicts: list[tupl
 def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True, do_export: bool = True,
          day: str | None = None, gh=None, timeout: float | None = None, state: dict | None = None) -> Report:
     """One sync, both ways (see the module's docstring). ``state`` is updated in place (saved by the caller)."""
+    from . import skew
+
+    low = "" if dry_run else skew.below_min(None)
+    if low:
+        raise SyncError(f"memory sync refused: {low}")
     state = load_state() if state is None else state
     deadline = time.monotonic() + (timeout or _float_env("BRAIN_MEMORY_TIMEOUT", DEFAULT_TIMEOUT))
     remote = remote_url()

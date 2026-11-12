@@ -763,8 +763,9 @@ def check(root: Path | None = None) -> list[str]:
 # --- a context: the levels that apply to one project, machine and session --------------------------------------
 
 def this_machine() -> str:
+    """$BRAIN_MACHINE (the one identity's override, brain.machine), else the host name (compared case-insensitively)."""
     import socket  # here, not at the top: it costs the owner guard's hook ~9 ms to import
-    return os.environ.get("COMPUTERNAME") or socket.gethostname() or ""
+    return os.environ.get("BRAIN_MACHINE") or os.environ.get("COMPUTERNAME") or socket.gethostname() or ""
 
 
 @dataclass

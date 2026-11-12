@@ -170,6 +170,15 @@ is the owner's act: `install.ps1 -Apply` writes it, with the same policy in Powe
 `Write-ForeignJson`: a file that is not a JSON object stops it, an empty one is read as missing, a backup
 `settings.json.bak`, a temporary file that replaces it).
 
+### The machine's files
+
+`<BRAIN_HOME>/machine.json` (`v: 1`, truth-local, `brain.machine`): `name`, `anchor` (a sha256 of the OS install's
+id and family, never the id), `local_id`, `since`, and `asked` (the date each doubt was first shown). Written once at
+first sight; a doubt never rewrites it. `<BRAIN_HOME>/facts.json` (`v: 1`, derived): `machine`, `at` and `facts`,
+`{fact: {value, source}}` with `value` true, false, a text or null (unknown) and `source` agent, probed,
+`nodes-file@<ref>:<sha256[:12]>`, declared or unknown; rewritten by each `brain doctor`. The status document's `brain`
+block gains `hardware` (`ecc`, `battery`, each true, false or null, and their sources), an optional key.
+
 ### The log class: rotation and retention
 
 A log is appended to, never rewritten. A JSON-lines ledger (the exec, capture, guards, queue, answers and cockpit
