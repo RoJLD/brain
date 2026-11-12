@@ -80,13 +80,13 @@ def test_the_settings_frame_holds_the_pages_then_their_settings():
         pages = frame.query_one("#settings-pages", tui_settings.SettingsPages)
         assert pages.option_count == len(tui_settings.settings_.PAGES)
         assert [str(pages.get_option_at_index(i).prompt) for i in range(pages.option_count)] == [
-            "Cockpit", "Identity", "Brain", "Permissions", "Setup"]
+            "Cockpit", "Identity", "Brain", "Modules", "Permissions", "Setup"]
         assert app.check_action("edit_setting", ()) is False  # off the tab: its keys are off
         await pilot.press("comma")
         assert app.check_action("edit_setting", ()) is True
         table = app.query_one("#settings-table", DataTable)
         assert tuple(str(c.label) for c in table.ordered_columns) == tui_settings.SETTING_COLUMNS
-        await pilot.press("left", "down", "down", "down", "down")  # the last page: Setup
+        await pilot.press("left", "down", "down", "down", "down", "down")  # the last page: Setup
         await pilot.pause(0.1)
         assert app.setting_page == "setup" and "checks" in _settings(app)
     _run(check)
@@ -188,5 +188,33 @@ def test_a_default_saved_unchanged_stays_unset_and_the_pages_follow_the_language
         await pilot.click("#save")
         await pilot.pause(0.1)
         pages = app.query_one("#settings-pages", tui_settings.SettingsPages)
-        assert str(pages.get_option_at_index(4).prompt) == "Mise en place" and "1 File d'Ada" in _bar(app)
+        assert str(pages.get_option_at_index(5).prompt) == "Mise en place" and "1 File d'Ada" in _bar(app)
+    _run(check)
+
+
+def test_the_modules_page_turns_a_module_on_by_its_plan_then_its_apply(monkeypatch):
+    ran = []
+
+    def run(a, steps, runner=None, env=None):
+        ran.append((a.kind, steps))
+        return [{"command": " ".join(s), "exit": 0, "seconds": 0, "output": "ok"} for s in steps]
+    monkeypatch.setattr(tui.detail, "run", run)
+
+    async def check(app, pilot, fake):
+        await pilot.press("comma")
+        app.setting_page = "modules"
+        app._draw_settings()
+        await pilot.pause(0.1)
+        _cursor_on(app, "plane")
+        await pilot.press("enter")
+        assert isinstance(app.screen, tui_screens.ChoiceScreen)
+        await pilot.press("enter")  # enable
+        await pilot.pause(0.3)
+        assert app.screen.steps == [["brain", "mod", "enable", "plane", "--apply"]]
+        assert ran == [("plan", [["brain", "mod", "enable", "plane"]])]
+        await pilot.press("n")
+        _cursor_on(app, "rules")
+        await pilot.press("enter")  # core: its command said, nothing to choose
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, tui_screens.ChoiceScreen)
     _run(check)

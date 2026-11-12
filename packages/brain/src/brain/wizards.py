@@ -164,5 +164,17 @@ def wizards(root: Path | None = None) -> list[Wizard]:
     ]
 
 
+def module_wizard(mid: str, state: str) -> Wizard:
+    """A module turned on or off for this machine (wi-brain-modules-tab): brain mod's plan (what it pulls, what turns
+    on and off, its cost), then --apply, which writes $BRAIN_HOME/profile.json. Off keeps the module's data and
+    configuration (SIGMA-17): only the profile changes; --cascade also turns off what needs it."""
+    choices = (("disable", "disable --cascade") if state.startswith("on")
+               else ("enable",) if state.startswith("off") else ("enable", "disable", "disable --cascade"))
+    return Wizard(f"module {mid}", f"Module {mid}", f"turn {mid} on or off for this machine: brain mod's plan, then "
+                  "--apply writes $BRAIN_HOME/profile.json; off keeps its data and configuration",
+                  plan=["brain", "mod", "{choice}", mid], apply=["brain", "mod", "{choice}", mid, "--apply"],
+                  choices=choices, placeholder="enable|disable")
+
+
 def by_id(root: Path | None = None) -> dict[str, Wizard]:
     return {w.id: w for w in wizards(root)}

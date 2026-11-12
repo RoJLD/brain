@@ -26,9 +26,10 @@ from pathlib import Path
 
 from . import cockpit, config, paths, projects
 
-PAGES = ("cockpit", "identity", "brain", "permissions", "setup")
+PAGES = ("cockpit", "identity", "brain", "modules", "permissions", "setup")
 PAGE_LABELS = {"cockpit": {"en": "Cockpit", "fr": "Cockpit"}, "identity": {"en": "Identity", "fr": "Identité"},
-               "brain": {"en": "Brain", "fr": "Brain"}, "permissions": {"en": "Permissions", "fr": "Permissions"},
+               "brain": {"en": "Brain", "fr": "Brain"}, "modules": {"en": "Modules", "fr": "Modules"},
+               "permissions": {"en": "Permissions", "fr": "Permissions"},
                "setup": {"en": "Setup", "fr": "Mise en place"}}
 HERE = "here: Enter"  # how a cockpit setting changes: in the screen itself
 REFRESH_MIN = cockpit.INTERVAL_MIN
@@ -263,7 +264,44 @@ def setup_settings(root: Path | None = None) -> list[Setting]:
                     w.command() + (f"; yours: {w.owner}" if w.owner else ""), "wizard") for w in wizards.wizards(root)]
 
 
-READERS = {"cockpit": None, "identity": identity_settings, "brain": brain_settings,
+COST_WORDS = {"ram_mb": ("RAM", "MB"), "disk_mb": ("disk", "MB"), "vram_gb": ("VRAM", "GB"),
+              "download_mb": ("download", "MB")}
+
+
+def _cost_text(cost: dict) -> str:
+    return ", ".join(f"{COST_WORDS[k][0]} {v:g} {COST_WORDS[k][1]}" for k, v in cost.items() if k in COST_WORDS)
+
+
+def module_settings(root: Path | None = None) -> list[Setting]:
+    """The Modules page (wi-brain-modules-tab, SIGMA-15): each module of the brain's catalogue (catalogue/v1, brain
+    catalogue emit) with its state on this machine and where it comes from (brain mod list), its cost, what it needs and
+    its fallback; then the distributions, read-only. Enter on a module: turn it on or off (brain.wizards'
+    module wizard: brain mod enable|disable, a plan then --apply)."""
+    from . import catalogue, mod
+    doc = catalogue.emit(root, by="brain tui")
+    states = {r["id"]: r for r in mod.rows(root)}
+    out = []
+    for m in doc["modules"]:
+        r = states.get(m["id"], {})
+        what = [x for x in (_cost_text(m.get("cost") or {}),
+                            f"needs {', '.join(m['depends_on'])}" if m.get("depends_on") else "",
+                            f"requires {', '.join(m['requires'])}" if m.get("requires") else "",
+                            f"else: {m['fallback']}" if m.get("fallback") else "") if x]
+        switchable = m.get("class") != "core" and r.get("state") not in (None, "auto")
+        out.append(Setting("modules", m["id"], f"{r.get('state', '?')} ({r.get('source', '-')})",
+                           "; ".join(what) or str(m.get("description") or m.get("name") or ""),
+                           f"brain mod enable|disable {m['id']} (a plan, then --apply)" if switchable
+                           else "always on (core, or used whenever it is found): brain mod show " + m["id"],
+                           "module" if switchable else ""))
+    for x in doc["distributions"]:
+        out.append(Setting("modules", f"distribution {x['id']}", f"{x.get('name', '')} ({x.get('kind', '')}"
+                           + (", bundled)" if x.get("bundled") else ", downloaded when a module needs it)"),
+                           "brain catalogue emit", "the engine's install: brain update; an extra by brain profile "
+                           "set and the installer (adding or removing a distribution from here arrives later)"))
+    return out
+
+
+READERS = {"cockpit": None, "identity": identity_settings, "brain": brain_settings, "modules": module_settings,
            "permissions": permission_settings, "setup": setup_settings}
 
 

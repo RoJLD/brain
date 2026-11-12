@@ -122,16 +122,18 @@ class SettingsTab:
             self.notify(s.change, title=f"{s.key}: changed by", timeout=10)
         elif s.edit == "wizard":
             self.start_wizard(s.key)
+        elif s.edit == "module":  # its state before the parenthesis: on, off, partly on
+            self.start_wizard(wizards.module_wizard(s.key, s.value.split(" (")[0]))
         else:
             self.push_screen(SettingScreen(s, s.value), lambda got: self.set_setting(s, got[1]) if got else None)
 
     # --- the Setup page's wizards (brain.wizards): a choice, a word typed, then the plan and the apply ---
 
-    def start_wizard(self, wid: str) -> None:
+    def start_wizard(self, wid) -> None:
         """A wizard: its choice first when it has one, then the folder it asks for, then its commands' confirmation
         (brain.tui's start_action: the plan run and shown, then the apply on the owner's yes, logged; refused in a
         Claude Code session's shell)."""
-        w = wizards.by_id(getattr(self.cockpit, "root", None)).get(wid)
+        w = wid if isinstance(wid, wizards.Wizard) else wizards.by_id(getattr(self.cockpit, "root", None)).get(wid)
         if w is None:
             return
         if w.choices:

@@ -92,3 +92,16 @@ def test_the_notification_and_index_wizards_run_for_the_project_shown():
     assert ws["code-index"].words("apply", project="demo") == ["brain", "--project", "demo", "index", "--stale"]
     assert ws["first-run"].words("plan", "lite", project="demo") == ["brain", "profile", "set", "lite"]  # the machine's
     cli.build_parser().parse_args(ws["notify-status"].words("plan", project="demo")[1:])
+
+
+def test_a_module_turns_on_or_off_by_brain_mods_plan_then_its_apply():
+    """wi-brain-modules-tab: the Modules page's wizard: brain mod enable|disable ID, a plan then --apply."""
+    on, off, part = (wizards.module_wizard("tui", "on"), wizards.module_wizard("plane", "off"),
+                     wizards.module_wizard("x", "partly on (1/2)"))
+    assert on.choices == ("disable", "disable --cascade") and off.choices == ("enable",) and len(part.choices) == 3
+    assert on.words("plan", "disable --cascade") == ["brain", "mod", "disable", "--cascade", "tui"]
+    assert off.words("apply", "enable") == ["brain", "mod", "enable", "plane", "--apply"]
+    parser = cli.build_parser()
+    for w in (on, off):
+        for c in w.choices:
+            parser.parse_args(w.words("apply", c)[1:])

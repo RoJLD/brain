@@ -115,6 +115,15 @@ engine pin, the profile, the stacks, the notification routes, the code index, th
 Claude Code's settings) are only shown with the command that changes each: Enter says it, nothing is written from
 there, and a secret is named, never shown. `brain tui --once --tab settings` prints the same pages (`brain.settings`).
 
+The Modules page (SIGMA-15) lists each module of the brain's catalogue (`brain catalogue emit`, catalogue/v1) with its
+state on this machine and where it comes from (`brain mod list`: the preset, `config.json`, `profile.json`, pulled),
+its cost (RAM, disk, VRAM, download), what it needs and its fallback, then the distributions. Enter on a module that
+can be switched asks on or off (and off with what needs it, `--cascade`), shows `brain mod`'s plan (the dependencies
+pulled, what turns on and off, its cost), then `y` writes this machine's `profile.json` (`--apply`), logged as the
+owner's. Off keeps the module's data and configuration: only the profile changes. A core module is always on. Adding
+or removing a distribution, uninstalling a module with a sealed archive of its data, and refusing a module the machine
+cannot hold arrive later.
+
 The Setup page holds the setup wizards (`brain.wizards`), one per row, in the order a new brain walks them: the first
 run (the profile Lite, Default or Recommended), the stacks to enable, the modules, a project to add, the notification
 channels (ntfy, Telegram and its chats, the routes), the permissions, the machines and their facts, the code index, a
