@@ -9,6 +9,7 @@ itself, before it reports and before the PR merges (the owner's decisions RETRO-
 
 ```bash
 brain review prep 123            # a PR (gh), or BASE..HEAD; default origin/main..HEAD
+brain review prep --item ID      # the item's « Invariants and failure modes to test » join the packet
 ```
 
 It writes `<BRAIN_HOME>/reviews/<head>/` (or `--out DIR`):
@@ -19,14 +20,28 @@ It writes `<BRAIN_HOME>/reviews/<head>/` (or `--out DIR`):
 | `files/` | each touched file as it is at the head (a deleted, binary or very large one is listed, not copied) |
 | `scout.txt` | `brain audit --diff BASE..HEAD`'s output (`--no-scout` leaves it out) |
 | `packet.json` | the base, the head, the files and the lenses |
-| `README.md` | the lenses and these steps |
+| `README.md` | the lenses, the invariants and failure modes to test, and these steps |
 
-The lenses are chosen from what the diff touches: **correctness** always; **security** for a guard, a hook, a
-secret or public path, the permissions; **compatibility** for a schema, a format, the state files, the registry or a
-template; **install and upgrade** for the installer, `brain update` or the release; **procedure** for a procedure or
-the rules; **tests** for the tests; **docs** for Markdown, the docs and the changelog fragments. A repo of a
-project that declares `standards:` (projects.yaml) also gets a **standards** lens: one question per applicable
-`review-lens` standard, does the change keep it (`brain standards lenses`, docs/standards.md).
+The lenses are chosen from what the diff touches: **correctness** and **scope** always; **security** for a guard, a
+hook, a secret or public path, the permissions; **compatibility** for a schema, a format, the state files, the registry
+or a template; **install and upgrade** for the installer, `brain update` or the release; **procedure** for a procedure
+or the rules; **tests** for the tests; **docs** for Markdown, the docs and the changelog fragments. A repo of a project
+that declares `standards:` (projects.yaml) also gets a **standards** lens: one question per applicable `review-lens`
+standard, does the change keep it (`brain standards lenses`, docs/standards.md).
+
+The **scope** lens (`wi-brain-review-scope-lens`, the owner's TR-3 of 2026-11-11) asks what the item does not need:
+a changed line beyond it, a refactor or a rename on the way, a flag or an option nobody asked for. Such a change leaves
+the PR as a follow-up item (`brain item add`), unless the item cannot be done without it, which the finding's answer
+says.
+
+The README's « Invariants and failure modes to test » is the section `brain brief` writes for the item's session
+(`wi-brain-brief-failure-modes`, `brain.failuremodes`): the author's tests and the review read one list. Without
+`--item` it comes from the diff alone: its files' paths (a test or a doc is not the module it names) and the tests it
+removes for good (a `def test...` removed and not added back under its name). With `--item ID` (the item of the
+repo's registered project), the item's predicted surface, title, props and own `props.invariants` join it. The
+public engine's line is there when the reviewed repo is in config.json `public.repos`, with or without `--item`.
+`--json` carries the section as `failure_modes`, and the item as `item`. Each lens checks that the PR's tests hold
+the lines that concern it; a line no test holds is a finding.
 
 ## 2. The agents, then the skeptics
 
@@ -35,7 +50,13 @@ project that declares `standards:` (projects.yaml) also gets a **standards** len
 2. Deduplicate: the same defect at the same place, from two lenses, is one finding.
 3. Two skeptics per distinct finding, each asked to refute it. A finding both refute is dropped; one either upholds is
    kept.
-4. Each kept finding is fixed with a test that fails before the fix, or contested with evidence in a PR comment.
+   **The evidence rule** (TR-3): a negative claim, from a lens or a skeptic, such as « nothing calls it », « it is
+   untested », « no other reader » or « never reached », stands only with the query that shows it (the grep, the
+   `brain impact` or code-index call, the test run) and that query's coverage: what it searched and what it could not
+   see (dynamic dispatch, another repo, a generated file). A clean result of a narrow query is no proof of absence; a
+   negative claim without its query is unproven, and neither keeps nor refutes a finding on its own word.
+4. Each kept finding is fixed with a test that fails before the fix, or contested with evidence in a PR comment. A
+   scope finding is fixed by taking the change out of the PR into a follow-up item.
 
 ## 3. The stamp
 
