@@ -26,8 +26,11 @@ brain adr new "A format for the cups" --context ... --decision ... --why ... --r
 `--target ID=COMPAT[:note]` is repeatable; `ID` is a need of the register (below). Given one of `--scope` and
 `--target` alone, the other is written `TODO` and said. An ADR written by hand states them as labels (`**Scope.**`,
 `**Target compatibility.**`) or as sentences (`Scope: ...`, `Target compatibility: wi-x (to review at 0.2.0); ...`):
-both are read. A need named in a sentence without a compatibility counts as `to-review`. An ADR with either field is a
-one-way door; any other is a two-way door.
+both are read. A sentence field opens a line or follows a sentence's end (« Out of Scope: » inside a sentence is not
+one), its label may wrap over two lines, and a label alone on its line takes the paragraph or list after it. A need
+named without a compatibility in its clause (up to a `;`, a line's end or the next need named) counts as
+`to-review`. An ADR with either field is a one-way door; any other is a two-way door. A superseded ADR is not
+checked.
 
 The compatibility section says what stays open. It never designs a later phase, and no check asks it to.
 
@@ -37,7 +40,8 @@ Computed from the graph at each call, never written by hand (`brain adr target -
 
 - the features still `planned`;
 - the pending milestones with a trigger (`props.trigger`);
-- the open items of the waves after the current one (the lowest release not closed), and of the pending eras.
+- the open items of the waves after the current one (the lowest release not closed), and of the pending eras: their
+  own items and those of their pending milestones and waves, the current wave aside.
 
 Each need keeps its source's status and its module (`props.module`). The register records; it never decides.
 
@@ -51,7 +55,8 @@ exit 0); they are the docgraph/v1 named checks of the same ids ([docgraph.md](do
 - `decision.target-unreferenced`: an open need of a module the decision touches (the modules of the nodes it
   decides, `decided_by`) that its target compatibility does not cite.
 
-`brain docgraph emit` adds the register (need nodes), the one-way decisions (with `door: one-way` and their
+The two presence checks are run on the one-way doors only: a two-way door has neither field by design. `brain
+docgraph emit` adds the register (need nodes), the one-way decisions (with `door: one-way` and their
 `module`), a `constrains` edge per cited need and the findings of the three checks to the brain's documentation graph;
 `brain docgraph join` runs `decision.target-unreferenced` again across the joined graph, where a read project's
 decisions and needs meet the brain's.

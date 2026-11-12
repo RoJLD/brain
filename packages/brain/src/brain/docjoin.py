@@ -417,11 +417,13 @@ def _modules(n: dict) -> set[tuple[str, str]]:
 
 
 def _linked(g: _Graph) -> dict[str, set[str]]:
-    """Each node's neighbours by any edge but constrains (a declared link touches)."""
+    """Each node's neighbours by a declared link (``origin: declared``, but contradicts and constrains): what
+    « touches » means beside a shared module."""
     linked: dict[str, set[str]] = defaultdict(set)
     for e in g.edges:
         a, b = e.get("from"), e.get("to")
-        if e.get("type") != "constrains" and isinstance(a, str) and isinstance(b, str):
+        if (e.get("origin") == "declared" and e.get("type") not in ("constrains", "contradicts")
+                and isinstance(a, str) and isinstance(b, str)):
             linked[a].add(b)
             linked[b].add(a)
     return linked
@@ -429,7 +431,7 @@ def _linked(g: _Graph) -> dict[str, set[str]]:
 
 def _targets(g: _Graph) -> list[dict]:
     """decision.target-unreferenced: a decision (not marked ``door: two-way``) that touches an open need (a shared
-    module, or any edge between them) without a constrains edge to it."""
+    module, or a declared link between them) without a constrains edge to it."""
     needs = [n for n in g.of("need") if n.get("status") not in NEED_CLOSED]
     if not needs:
         return []

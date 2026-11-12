@@ -28,10 +28,12 @@ from . import graph, notes, waves
 
 COMPAT = ("compatible", "extension-point", "to-review")
 _COMPAT_RE = re.compile(r"\b(compatible|extension[- ]point|to[- ]review)\b", re.I)
-_LABEL_RE = re.compile(r"(?:\*\*(Scope|Target compatibility|Revisit if)\.\*\*|\b(Scope|Target compatibility):)")
-_FIELD_END = re.compile(r"\n\s*\n|\*\*[A-Z][^*]{0,40}\.\*\*")
-_ID_RE = re.compile(r"`?([a-z][a-z0-9]*(?:[-.][a-z0-9]+)+)`?")
-DONE = ("done", "dropped", "reached", "have", "retired", "superseded", "archived")
+_NAMES = r"Scope|Target\s+compatibility|Revisit\s+if"
+# a field: a label (**Scope.**, **Scope:**) anywhere, or a sentence that opens a line or follows a sentence's end
+_LABEL_RE = re.compile(rf"\*\*({_NAMES})[.:]\*\*|(?:^|(?<=[.!?]\s)|(?<=\n))[ \t]*({_NAMES}):", re.M)
+_FIELD_END = re.compile(r"\n[ \t]*\n|\*\*[A-Z][^*]{0,40}[.:]\*\*")
+_ID_RE = re.compile(r"(?<![\w./-])([a-z][a-z0-9]*(?:[-.][a-z0-9]+)+)(?![\w-])")
+OPEN = ("todo", "doing", "blocked")
 
 
 def _props(n: dict) -> dict:
@@ -52,21 +54,26 @@ def register(store: Path, root: Path | None = None) -> list[dict]:
 
 
 def _later_items(store: Path, root: Path | None, nodes: dict) -> list[tuple[str, str]]:
-    """(item, its wave or era) for the open items of the waves after the current one and of the pending eras."""
+    """(item, its wave, milestone or era) for the open items of the waves after the current one, and of the pending
+    eras: their own items and those of their pending milestones (the current wave left out)."""
     if not waves.applies(store):
         return []
     plan = waves.load(store, root)
     pend = waves.pending_waves(plan)
+    current = pend[0] if pend else ""
     seen: dict[str, str] = {}
     for w in pend[1:]:
         for i in plan.items_of(w):
             seen.setdefault(i, w)
-    eras = [m for m, n in nodes.items() if waves.kind(n) == "era" and n.get("status") == "pending"]
-    for era in eras:
-        for i in plan.members.get(era, ()):
-            seen.setdefault(i, era)
+    for era in sorted(m for m, n in nodes.items() if waves.kind(n) == "era" and n.get("status") == "pending"):
+        for x in sorted(plan.members.get(era, ())):
+            if (nodes.get(x) or {}).get("type") != "Milestone":
+                seen.setdefault(x, era)
+            elif x != current and nodes[x].get("status") == "pending":
+                for i in (plan.items_of(x) if waves.kind(nodes[x]) == "wave" else plan.members.get(x, ())):
+                    seen.setdefault(i, x)
     return sorted((i, p) for i, p in seen.items() if (nodes.get(i) or {}).get("type") == "WorkItem"
-                  and nodes[i].get("status") in ("todo", "doing", "blocked"))
+                  and nodes[i].get("status") in OPEN)
 
 
 def _need(nid: str, n: dict, kind: str, phase: str, status: str) -> dict:
@@ -76,32 +83,42 @@ def _need(nid: str, n: dict, kind: str, phase: str, status: str) -> dict:
 
 # --- an ADR's fields --------------------------------------------------------------------------------------------------
 
+def _name(raw: str) -> str:
+    return " ".join(raw.split())
+
+
 def fields(text: str) -> dict[str, str]:
     """{"Scope", "Target compatibility", "Revisit if": its text} of an ADR's text, labelled (``**Scope.**``) or in a
-    sentence (``Scope: ...``, up to the end of its paragraph or the next label)."""
+    sentence that opens a line or follows a sentence's end (``Scope: ...``, its label possibly wrapped over two
+    lines), up to the end of its paragraph or the next field; a label alone on its line takes the paragraph after it.
+    Each line's spaces are folded, its line breaks kept (a list stays a list)."""
     out: dict[str, str] = {}
-    for m in _LABEL_RE.finditer(text):
-        name = m.group(1) or m.group(2)
-        rest = text[m.end():]
-        end = _FIELD_END.search(rest)
-        body = rest[:end.start()] if end else rest
-        if name == "Scope" and m.group(2):   # in a sentence: up to its end, before a following « Target ... »
-            body = re.split(r"\bTarget compatibility:", body, maxsplit=1)[0]
-        out.setdefault(name, " ".join(body.split()))
+    hits = list(_LABEL_RE.finditer(text))
+    for k, m in enumerate(hits):
+        name = _name(m.group(1) or m.group(2))
+        rest = text[m.end():hits[k + 1].start()] if k + 1 < len(hits) else text[m.end():]
+        lead = len(rest) - len(rest.lstrip())
+        body = rest[lead:]
+        end = _FIELD_END.search(body)
+        body = body[:end.start()] if end else body
+        lines = [" ".join(line.split()) for line in body.split("\n")]
+        out.setdefault(name, "\n".join(x for x in lines if x))
     return out
 
 
 def cited(target: str, known: set[str]) -> dict[str, str]:
     """{need id: compatibility} of the ids a target compatibility text names (only the ids ``known`` holds): the
-    compatibility is the word that follows the id in its clause, ``to-review`` when none is said."""
+    compatibility is the word that follows the id in its clause (up to a ``;``, a line's end or the next need named),
+    ``to-review`` when none is said."""
+    hits = [m for m in _ID_RE.finditer(target) if m.group(1) in known]
     out: dict[str, str] = {}
-    for m in _ID_RE.finditer(target):
-        nid = m.group(1)
-        if nid not in known or nid in out:
+    for k, m in enumerate(hits):
+        if m.group(1) in out:
             continue
-        clause = re.split(r"[;\n]", target[m.end():], maxsplit=1)[0]
+        stop = hits[k + 1].start() if k + 1 < len(hits) else len(target)
+        clause = re.split(r"[;\n]", target[m.end():stop], maxsplit=1)[0]
         word = _COMPAT_RE.search(clause)
-        out[nid] = word.group(1).lower().replace(" ", "-") if word else "to-review"
+        out[m.group(1)] = word.group(1).lower().replace(" ", "-") if word else "to-review"
     return out
 
 
@@ -125,22 +142,27 @@ def target_text(targets: list[str], leaves_open: str) -> str:
 # --- the one-way decisions and the checks -----------------------------------------------------------------------------
 
 def decisions(store: Path, logs: list[Path], root: Path | None = None) -> list[dict]:
-    """The ADRs of ``logs`` that are one-way doors (a Scope or a Target compatibility): {id, title, scope, target,
-    revisit, modules (of the nodes it decides), file (relative to ``root``), line}."""
+    """The ADRs of ``logs`` that are one-way doors (a Scope or a Target compatibility) and still in force (no
+    supersedes edge reaches it, its node not superseded): {id, title, scope, target, revisit, modules (of the nodes
+    it decides), file (relative to ``root``), line}; an id two logs give is read once, from the first."""
     nodes = {nid: node for nid, (_, node) in graph.node_index(store).items()}
+    edges = _edges(store)
     decides: dict[str, set[str]] = {}
-    for e in _edges(store):
+    for e in edges:
         if e.get("type") == "decided_by":
             decides.setdefault(str(e["to"]), set()).add(str(e["from"]))
-    out = []
+    gone = {str(e["to"]) for e in edges if e.get("type") == "supersedes"}
+    gone |= {nid for nid, n in nodes.items() if n.get("status") == "superseded"}
+    out, seen = [], set()
     for log in logs:
         if not log.is_file():
             continue
         rel = _rel(log, root)
         for a in notes.adr_entries(log.read_text(encoding="utf-8")):
             f = fields(a["text"])
-            if not ({"Scope", "Target compatibility"} & set(f)):
+            if a["id"] in seen or a["id"] in gone or not ({"Scope", "Target compatibility"} & set(f)):
                 continue
+            seen.add(a["id"])
             mods = sorted({str(_props(nodes.get(x, {})).get("module") or "") for x in decides.get(a["id"], ())} - {""})
             out.append({"id": a["id"], "title": a["title"], "scope": f.get("Scope", ""),
                         "target": f.get("Target compatibility", ""), "revisit": f.get("Revisit if", ""),

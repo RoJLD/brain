@@ -189,7 +189,8 @@ brain docgraph join --out joined.json --json
   `part_of` or `supersedes` edges), `proposed.cited-as-decided`, `doc.stale` (from the nodes' `updated` dates,
   compared by day when either is a date; generated documents and dated specs exempt) and
   `decision.target-unreferenced` (a decision not marked `door: two-way` that touches an open need, by a shared
-  `module` within one project or by any edge between them, without a `constrains` edge to it; `module` is an optional
+  `module` within one project or by a declared link between them (`origin: declared`, but `contradicts`), without a
+  `constrains` edge to it; `module` is an optional
   key, a module id or a list of them, and `door` one of `one-way` and `two-way`: see
   [adr-target.md](adr-target.md)). Its findings say `by: join` and
   replace the producers' findings of the same checks, since an edge of another document may settle them; a producer's

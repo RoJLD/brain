@@ -182,7 +182,7 @@ def _field(label: str, value: str, width: int) -> list[str]:
 def _parts(old: str, spec: list, fields: dict, width: int) -> tuple[list[str], list[str]]:
     """(the fields left TODO, each field's text) of an ADR: a required one missing is written TODO; an optional one
     (:data:`OPTIONAL`) only when given, and reported when given as TODO."""
-    todo = [k for k, _ in spec if (k not in fields or fields[k] == TODO) and k not in OPTIONAL]
+    todo = [k for k, _ in spec if k not in fields and k not in OPTIONAL]
     todo += [k for k in OPTIONAL if fields.get(k) == TODO]
     parts = ["\n".join(_field(_label(old, label), fields.get(key, TODO), width)) for key, label in spec
              if key not in OPTIONAL or key in fields]

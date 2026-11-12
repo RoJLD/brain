@@ -185,3 +185,38 @@ def test_the_join_never_checks_a_two_way_door_and_reads_a_declared_link():
                    "confirmed": True}]}
     found = [f for f in docjoin.run_checks(doc) if f["id"] == "decision.target-unreferenced"]
     assert [f["subjects"] for f in found] == [["decision:a", "need:n1"]]
+
+
+def test_the_parser_on_the_ways_an_adr_is_really_written():
+    """A label wrapped over two lines, a label followed by a blank line and a list, a clause without a compatibility
+    beside one with it, « Out of Scope: » inside a sentence, ids inside paths or words."""
+    text = ("**Decision.** The bowl file. Out of Scope: the GUI. Scope: this lab. Target\n"
+            "compatibility: `wi-a` stays open, `wi-b` compatible; ms-tea (extension point)\n"
+            "\n**Target compatibility.**\n\n- `wi-a` stays open\n- `wi-b`: compatible\n\n"
+            "**Revisit if.** spoons change.\n")
+    f = targets.fields(text)
+    assert f["Scope"] == "this lab."
+    assert f["Revisit if"] == "spoons change."
+    assert targets.cited(f["Target compatibility"], {"wi-a", "wi-b", "ms-tea"}) == {
+        "wi-a": "to-review", "wi-b": "compatible", "ms-tea": "extension-point"}
+    block = targets.fields("**Target compatibility.**\n\n- `wi-a` stays open\n- `wi-b`: compatible\n")
+    assert block["Target compatibility"] == "- `wi-a` stays open\n- `wi-b`: compatible"
+    assert targets.cited("see changes/wi-a.md, Wi-b and wi-c_x", {"wi-a", "i-b", "wi-c"}) == {}
+    assert "Scope" not in targets.fields("**Decision.** Out of Scope: the GUI.")
+
+
+def test_a_superseded_one_way_door_is_not_checked_and_an_era_reaches_its_milestones_items(tmp_path):
+    root, store = _store(tmp_path)
+    (store / "nodes" / "more.yaml").write_text(
+        "- {id: ms-era-step, type: Milestone, status: pending, title: A step of the era}\n"
+        "- {id: wi-step, type: WorkItem, status: todo, title: In the step, props: {module: K3}}\n", encoding="utf-8")
+    (store / "edges" / "more.yaml").write_text(
+        "- {from: ms-era-step, to: era-two, type: part_of}\n- {from: wi-step, to: ms-era-step, type: part_of}\n"
+        "- {from: wave-0.1.0, to: era-two, type: part_of}\n"
+        "- {from: adr-2026-01-04-a-two-way-door, to: adr-2026-01-05-a-scope-and-nothing-else, type: supersedes}\n",
+        encoding="utf-8")
+    needs = {n["id"]: n["phase"] for n in targets.register(store, root)}
+    assert needs["wi-step"] == "ms-era-step" and "wi-now" not in needs   # the current wave's items stay out
+    decs = targets.decisions(store, [root / "notes" / "decisions.md"] * 2, root)   # one log listed twice: read once
+    assert [d["id"] for d in decs] == ["adr-2026-01-02-a-format-for-the-cups",
+                                       "adr-2026-01-03-a-format-written-by-hand"]
