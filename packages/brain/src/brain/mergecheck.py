@@ -202,13 +202,18 @@ def check(repo: Path, project: projects.Project | None = None, base: str = "", f
         if kind == "append":
             out["lost"] += [{"path": path, "line": n, "text": t} for n, t in lost_lines(*texts, result)]
             continue
-        ours = _show(repo, s["ours"], path)
-        changed, gone = lost_nodes(*texts, ours, result)
-        o, m = _nodes(ours), _nodes(texts[1])
-        out["lost"] += [{"path": path, "line": 0, "text": f"{nid} {k}: {v}",
-                         "both": o.get(nid, {}).get(k) != m.get(nid, {}).get(k)} for nid, k, v in changed]
-        out["lost_ids"] += [{"path": path, "id": nid} for nid in gone]
+        lost, gone = _node_losses(path, texts, _show(repo, s["ours"], path), result)
+        out["lost"] += lost
+        out["lost_ids"] += gone
     return out
+
+
+def _node_losses(path: str, texts: list[str], ours: str, result: str) -> tuple[list[dict], list[dict]]:
+    """A node file's lost fields (``both``: the branch changed the field too, a « check it by eye ») and lost ids."""
+    changed, gone = lost_nodes(*texts, ours, result)
+    o, m = _nodes(ours), _nodes(texts[1])
+    return ([{"path": path, "line": 0, "text": f"{nid} {k}: {v}", "both": o.get(nid, {}).get(k) != m.get(nid, {}).get(k)}
+             for nid, k, v in changed], [{"path": path, "id": nid} for nid in gone])
 
 
 FETCH_TIMEOUT = 20   # seconds the push guard gives git fetch; past it, the base as last fetched
