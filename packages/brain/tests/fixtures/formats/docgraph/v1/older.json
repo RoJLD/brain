@@ -1,0 +1,50 @@
+{
+  "schema": "docgraph/v1",
+  "generated": {"at": "2026-01-01T00:00:00Z", "by": "example-tool 0.1.0", "repo": "example-org/example",
+                "ref": "0123abc", "sources": {"files": true, "tracker": "reachable"}},
+  "nodes": [
+    {"id": "decision:0005", "type": "decision", "kind": "adr", "title": "Encrypted transport between nodes",
+     "status": "proposed", "native_status": "Proposed", "phase": "S2",
+     "source": {"path": "docs/adr/0005-transport.md", "line": 1, "ref": "0123abc"}},
+    {"id": "decision:0007", "type": "decision", "kind": "adr", "title": "A long-running service on each node",
+     "status": "accepted", "native_status": "Accepted", "phase": "S2",
+     "source": {"path": "docs/adr/0007-service.md", "line": 1, "ref": "0123abc"}},
+    {"id": "decision:0008", "type": "decision", "kind": "adr", "title": "A one-shot command",
+     "status": "proposed", "native_status": "Proposed", "phase": "S2",
+     "source": {"path": "docs/adr/0008-command.md", "line": 1, "ref": "0123abc"}},
+    {"id": "milestone:S2", "type": "milestone", "kind": "phase", "title": "Stage 2", "status": "open",
+     "source": {"tracker": "milestone", "number": 2}},
+    {"id": "criterion:S2-13", "type": "criterion", "title": "Orders are signed end to end", "status": "open",
+     "phase": "S2", "source": {"path": "docs/roadmap.md", "anchor": "s2-exit-criteria", "line": 40, "ref": "0123abc"}},
+    {"id": "criterion:S2-14", "type": "criterion", "title": "A node recovers after a restart", "status": "open",
+     "phase": "S2", "source": {"path": "docs/roadmap.md", "anchor": "s2-exit-criteria", "line": 41, "ref": "0123abc"}},
+    {"id": "item:25", "type": "item", "title": "Signed orders", "status": "open", "phase": "S2",
+     "source": {"tracker": "issue", "number": 25}},
+    {"id": "test:signed-orders", "type": "test", "title": "tests/test_orders.py::test_signed", "status": "open",
+     "source": {"path": "tests/test_orders.py", "line": 12, "ref": "0123abc"}},
+    {"id": "threat:T3", "type": "threat", "title": "A fake order", "status": "open",
+     "source": {"path": "docs/threat-model.md", "anchor": "t3", "ref": "0123abc"}},
+    {"id": "document:docs/architecture.md#transport", "type": "document", "kind": "explanation",
+     "title": "Architecture: transport", "source": {"path": "docs/architecture.md", "anchor": "transport",
+                                                     "ref": "0123abc"}}
+  ],
+  "edges": [
+    {"from": "item:25", "to": "criterion:S2-13", "type": "serves", "origin": "derived",
+     "source": {"tracker": "issue", "number": 25}},
+    {"from": "item:25", "to": "milestone:S2", "type": "part_of", "origin": "derived",
+     "source": {"tracker": "issue", "number": 25}},
+    {"from": "item:25", "to": "test:signed-orders", "type": "carries", "origin": "derived",
+     "source": {"tracker": "issue", "number": 25}},
+    {"from": "test:signed-orders", "to": "threat:T3", "type": "covers", "origin": "derived",
+     "source": {"path": "tests/test_orders.py", "line": 10, "ref": "0123abc"}},
+    {"from": "decision:0005", "to": "document:docs/architecture.md#transport", "type": "reports", "origin": "derived",
+     "source": {"path": "docs/adr/0005-transport.md", "line": 20, "ref": "0123abc"}},
+    {"from": "decision:0008", "to": "decision:0007", "type": "contradicts", "origin": "declared",
+     "reason": "a one-shot command against a service", "confirmed": false}
+  ],
+  "checks": [
+    {"id": "criterion.no-item", "severity": "error", "subjects": ["criterion:S2-14"], "message": "no item serves it"}
+  ],
+  "checks_run": ["criterion.no-item", "test.uncarried", "threat.untested", "cycle"],
+  "checks_not_run": ["decision.modified-after-accept", "decision.target-unreferenced"]
+}
