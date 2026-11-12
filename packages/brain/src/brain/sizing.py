@@ -1,7 +1,10 @@
 """Item sizes (wi-brain-item-size): every item carries ``props.size`` (S, M, L, XL) and ``props.size_reason`` (one
 line), the judgement of the session that writes it (``brain item add --size``, ``brain item set``). A script cannot
-guess a size (the free signals predict the cost poorly), so the engine only checks that one is given, and later
-measures how wrong it was against the actuals (wi-brain-size-calibration).
+guess a size (the free signals predict the cost poorly), so the engine only checks that one is given, and measures
+how wrong it was against the actuals (wi-brain-size-calibration, brain.cost): ``brain cost review`` says each
+finished item's judged size against the size its active time falls in on this scale, ``brain cost audit`` the misses
+per size and class and the thresholds the history proposes, and ``brain cost estimate`` takes the size as its first
+similarity key only while that lowers the backtests' error.
 
 The scale, until the recalibration moves it: S under about 0.3 h of active time, M up to about 0.8 h, L up to about
 2 h, XL beyond (to be split when possible). ``HOURS`` is the ordinal-to-number conversion the ranking reads (a

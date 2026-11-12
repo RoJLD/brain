@@ -16,7 +16,8 @@ milestone the graph's, its kind the words of its title (spec, review, fix, build
                  not only the mean; the split of the cost between the main threads, the plain subagents and the
                  workflow agents; the repeated 3-step sequences (script candidates); the cost of a session's start
                  (its first messages).
-  cost estimate  an item or a brief's text: the finished items most alike (the same class and theme, else class and
+  cost estimate  an item or a brief's text: the finished items most alike (the same size and class first when the
+                 size key lowers the backtests' error, then the same class and theme, else class and
                  milestone, class and kind, class, all; the nearest half by brief size when there are enough), their
                  median and p25-p75 range of cost, output, context peak, active time and sessions, times the
                  class's calibration; ``--record`` writes it on the item (props.cost_estimate) when the work starts,
@@ -24,10 +25,14 @@ milestone the graph's, its kind the words of its title (spec, review, fix, build
   cost review    a finished item's actual against its recorded estimate (else the estimate the history before it
                  gives: a backtest) and its brief's budget; the gap explained by the signals that differ from the
                  class's finished items (phase shares, review rounds, merges and conflicts, reloads, compactions,
-                 thrash, questions and waits, plan growth, sessions); ``--record`` writes props.cost_review.
+                 thrash, questions and waits, plan growth, sessions); its judged size (props.size) against the
+                 size its active time falls in (brain.sizing.HOURS: hit, under-sized or over-sized);
+                 ``--record`` writes props.cost_review.
   cost audit     the window's finished items reviewed, those off by more than ``OFF`` either way and why, the
                  calibration per class (median actual / backtest estimate: what the next estimates are multiplied
-                 by), the costliest sessions and the script candidates; ``--write`` keeps it in
+                 by), the sizes against the actuals (the window's misses per size and class, the thresholds the
+                 history proposes, whether the size key is kept: wi-brain-size-calibration), the costliest sessions
+                 and the script candidates; ``--write`` keeps it in
                  <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md.
 """
 
@@ -42,7 +47,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import config, graph, paths, projects, queue, resume, usage
+from . import config, graph, paths, projects, queue, resume, sizing, usage
 
 MIN_SIMILAR = 3
 OFF = 1.5  # an actual above OFF x its estimate, or below estimate / OFF, is off
@@ -70,6 +75,7 @@ EXPLAIN = (("review_rounds", "review rounds"), ("merges", "merge, rebase or pull
            ("files_edited", "files edited"), ("prompts", "prompts"))
 _PR_RE = re.compile(r"([A-Za-z0-9_.-]+)?\s*#(\d+)")
 _EST_RE = re.compile(r"(\w+)=([^\s\[]+)")
+SIZE_RE = re.compile(r"\bsize:\**\s*(S|M|L|XL)\b", re.I)   # a brief's « - size: M »
 
 
 @dataclass
@@ -178,6 +184,12 @@ def _class_of(rows) -> str:
     return c.most_common(1)[0][0] if c else ""
 
 
+def _size(props: dict) -> str:
+    """The item's judged size (props.size), '' when none or off the scale."""
+    v = str((props or {}).get("size") or "").strip()
+    return v if v in sizing.SIZES else ""
+
+
 def actual(it: Item) -> dict:
     rows = [r for r, _ in it.sessions]
     sig = Counter()
@@ -194,7 +206,7 @@ def actual(it: Item) -> dict:
             phases[ph] = phases.get(ph, 0.0) + share * (v.get("cost") or 0.0)
     budgets = [(r.get("brief") or {}).get("budget") for r in rows]
     return {"id": it.id, "project": it.project, "title": it.title, "status": it.status, "theme": it.theme,
-            "milestone": it.milestone, "kind": it.kind, "class": _class_of(rows),
+            "milestone": it.milestone, "kind": it.kind, "class": _class_of(rows), "size": _size(it.props),
             "cost": round(sum(s * (r.get("cost") or 0) for r, s in it.sessions), 4),
             "output": int(sum(s * ((r.get("tokens") or {}).get("output", 0)
                                    + (r.get("sub_tokens") or {}).get("output", 0)) for r, s in it.sessions)),
@@ -224,9 +236,13 @@ def history(led: Ledger, before: str = "") -> list[dict]:
 
 # --- estimates ---
 
-def _similar(pool: list[dict], target: dict) -> tuple[str, list[dict]]:
-    cls = target.get("class") or ""
-    tiers = (("class+theme", lambda a: a["class"] == cls and target.get("theme") and a["theme"] == target["theme"]),
+def _similar(pool: list[dict], target: dict, size_key: bool = False) -> tuple[str, list[dict]]:
+    """The basis and the finished items most alike ``target``: with ``size_key`` and a size on the target, the same
+    size and class first (wi-brain-size-calibration), then the class with its theme, milestone or kind."""
+    cls, size = target.get("class") or "", target.get("size") or ""
+    sized = (("size+class", lambda a: a["class"] == cls and a.get("size") == size),) if size_key and size else ()
+    tiers = (*sized,
+             ("class+theme", lambda a: a["class"] == cls and target.get("theme") and a["theme"] == target["theme"]),
              ("class+milestone", lambda a: a["class"] == cls and target.get("milestone")
               and a["milestone"] == target["milestone"]),
              ("class+kind", lambda a: a["class"] == cls and a["kind"] == target.get("kind")),
@@ -242,8 +258,8 @@ def _similar(pool: list[dict], target: dict) -> tuple[str, list[dict]]:
     return "all", []
 
 
-def raw_estimate(pool: list[dict], target: dict) -> dict:
-    basis, found = _similar(pool, target)
+def raw_estimate(pool: list[dict], target: dict, size_key: bool = False) -> dict:
+    basis, found = _similar(pool, target, size_key)
     out = {"basis": basis, "n": len(found), "similar": [(a["id"], a["cost"]) for a in found]}
     for m in METRICS:
         q = usage.quantiles([a[m] for a in found if a.get(m) is not None])
@@ -251,17 +267,38 @@ def raw_estimate(pool: list[dict], target: dict) -> dict:
     return out
 
 
-def backtests(led: Ledger, metric: str = "cost") -> list[dict]:
+def backtests(led: Ledger, metric: str = "cost", size_key: bool = False) -> list[dict]:
     """Every finished item against the estimate the items finished before it started would have given, in
-    ``metric`` (the cost; the active time for brain.forecast's shared error)."""
+    ``metric`` (the cost; the active time for brain.forecast's shared error); ``size_key``: with the size as the
+    first similarity key."""
     out = []
     for a in history(led):
         pool = history(led, before=a["first_start"])
-        est = raw_estimate(pool, a)
+        est = raw_estimate(pool, a, size_key)
         if est[metric] and est[metric]["median"]:
             out.append({"id": a["id"], "class": a["class"], "actual": a[metric], "estimate": est[metric]["median"],
                         "ratio": a[metric] / est[metric]["median"], "basis": est["basis"], "n": est["n"]})
     return out
+
+
+def backtest_error(tests: list[dict]) -> float | None:
+    """The backtests' typical error: the median of |log(actual / estimate)| as a factor (x1.0 is exact)."""
+    errs = [abs(math.log(t["ratio"])) for t in tests if t["ratio"] > 0]
+    return round(math.exp(statistics.median(errs)), 3) if errs else None
+
+
+def size_key(led: Ledger) -> dict:
+    """Whether the size is kept as the first similarity key: the backtests with it and without it, kept only when
+    it lowers their typical error (wi-brain-size-calibration). {kept, with, without, n (items with a size), tests}:
+    ``tests`` are the backtests the estimator then uses."""
+    without = backtests(led)
+    n = sum(1 for a in history(led) if a.get("size"))
+    if n < MIN_SIMILAR:   # too few sized items: the key cannot be measured, so it is not used
+        return {"kept": False, "with": None, "without": backtest_error(without), "n": n, "tests": without}
+    sized = backtests(led, size_key=True)
+    e_with, e_without = backtest_error(sized), backtest_error(without)
+    kept = e_with is not None and e_without is not None and e_with < e_without
+    return {"kept": kept, "with": e_with, "without": e_without, "n": n, "tests": sized if kept else without}
 
 
 def calibration(tests: list[dict]) -> dict[str, dict]:
@@ -283,7 +320,7 @@ def target_of(led: Ledger, what: str, cls: str | None = None) -> dict:
     if it:
         rows = [r for r, _ in it.sessions]
         budgets = [(r.get("brief") or {}).get("budget") for r in rows if (r.get("brief") or {}).get("budget")]
-        return {"id": it.id, "project": it.project, "title": it.title, "class": cls or str(
+        return {"id": it.id, "project": it.project, "title": it.title, "size": _size(it.props), "class": cls or str(
             it.props.get("task_class") or "") or _class_of(rows) or "standard", "theme": it.theme,
                 "milestone": it.milestone, "kind": it.kind, "budget": max(budgets) if budgets else None,
                 "chars": max(((r.get("brief") or {}).get("chars") or 0 for r in rows), default=0), "store": it.store}
@@ -293,7 +330,10 @@ def target_of(led: Ledger, what: str, cls: str | None = None) -> dict:
     m_class, m_budget = usage._CLASS_RE.search(text), usage._BUDGET_RE.search(text)
     budget = (int(float(m_budget.group(1).replace(",", ".")) * (1e3 if m_budget.group(2).lower() == "k" else 1e6))
               if m_budget else None)
+    m_size = SIZE_RE.search(text)
+    size = m_size.group(1).upper() if m_size else _size(ref.props) if ref else ""
     return {"id": ref.id if ref else "", "project": ref.project if ref else "", "title": " ".join(text.split())[:80],
+            "size": size if size in sizing.SIZES else "",
             "class": cls or (m_class.group(1).lower() if m_class else "standard"),
             "theme": ref.theme if ref else "", "milestone": ref.milestone if ref else "",
             "kind": usage.kind_of(text), "budget": budget, "chars": len(text), "store": ref.store if ref else None}
@@ -301,8 +341,10 @@ def target_of(led: Ledger, what: str, cls: str | None = None) -> dict:
 
 def estimate(led: Ledger, target: dict, today: str) -> dict:
     pool = [a for a in history(led) if a["id"] != target.get("id")]
-    est = raw_estimate(pool, target)
-    cal = calibration(backtests(led))
+    key = size_key(led)
+    est = raw_estimate(pool, target, key["kept"])
+    est["size_key"] = {k: v for k, v in key.items() if k != "tests"}
+    cal = calibration(key["tests"])
     c = cal.get(target.get("class") or "") or cal.get("*") or {"factor": 1.0, "n": 0}
     est["calibration"] = c
     for m in ("cost", "output", "active_s"):  # the size of the work; not the context peak or the sessions
@@ -360,6 +402,12 @@ def render_estimate(est: dict) -> list[str]:
         if m == "peak" and t.get("budget"):
             line += f"  against the brief's budget {usage.ktok(t['budget'])}"
         lines.append(line)
+    sk = est.get("size_key") or {}
+    if sk.get("with") is not None:
+        lines.append(f"  size key {'kept' if sk['kept'] else 'left out'}: backtests' error x{sk['with']} with it, "
+                     f"x{sk['without']} without ({sk['n']} sized item(s))")
+    elif sk:
+        lines.append(f"  size key not measured: {sk.get('n', 0)} finished item(s) with a size, {MIN_SIMILAR} needed")
     return lines
 
 
@@ -394,6 +442,48 @@ def explain(a: dict, pool: list[dict]) -> list[str]:
     return [t for _, t in sorted(out, key=lambda x: -x[0])]
 
 
+def size_of(hours: float) -> str:
+    """The size an active time falls in on the scale (brain.sizing.HOURS: each size's upper bound; XL beyond L)."""
+    return next((s for s in sizing.SIZES[:-1] if hours <= sizing.HOURS[s]), sizing.SIZES[-1])
+
+
+def size_check(a: dict) -> dict | None:
+    """An item's judged size against its actual: {judged, actual, hours, verdict: hit, under (the work was bigger
+    than judged) or over}; None without a judged size."""
+    if not a.get("size"):
+        return None
+    hours = (a.get("active_s") or 0) / 3600
+    got = size_of(hours)
+    order = sizing.SIZES.index
+    verdict = "hit" if got == a["size"] else "under" if order(got) > order(a["size"]) else "over"
+    return {"judged": a["size"], "actual": got, "hours": round(hours, 2), "verdict": verdict}
+
+
+def sizes(items: list[dict], everything: list[dict]) -> dict:
+    """The sizes against the actuals: ``items`` (the window's finished items) each checked and grouped by size and
+    class (n, hits, under, over, median hours and cost), and the thresholds ``everything`` (the whole history)
+    proposes: each size's p75 of active hours among the items judged that size (MIN_SIMILAR at least), beside the
+    scale's."""
+    rows = [dict(c, id=a["id"], cls=a["class"], cost=a["cost"]) for a in items for c in [size_check(a)] if c]
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for r in rows:
+        groups.setdefault((r["judged"], r["cls"]), []).append(r)
+    order = sizing.SIZES.index
+    table = [{"size": s, "class": c, "n": len(g), "hit": sum(r["verdict"] == "hit" for r in g),
+              "under": sum(r["verdict"] == "under" for r in g), "over": sum(r["verdict"] == "over" for r in g),
+              "hours": round(statistics.median(r["hours"] for r in g), 2),
+              "cost": round(statistics.median(r["cost"] for r in g), 2)}
+             for (s, c), g in sorted(groups.items(), key=lambda kv: (order(kv[0][0]), kv[0][1]))]
+    proposed = []
+    for s in sizing.SIZES[:-1]:
+        hours = [x["hours"] for x in (size_check(a) for a in everything) if x and x["judged"] == s]
+        q = usage.quantiles(hours) if len(hours) >= MIN_SIMILAR else None
+        proposed.append({"size": s, "now": sizing.HOURS[s], "n": len(hours),
+                         "proposed": round(q["p75"], 2) if q and q["n"] else None})
+    return {"items": rows, "table": table, "thresholds": proposed,
+            "misses": sum(r["verdict"] != "hit" for r in rows)}
+
+
 def review(led: Ledger, item_id: str) -> dict:
     it = led.items.get(item_id)
     if not it:
@@ -410,7 +500,7 @@ def review(led: Ledger, item_id: str) -> dict:
             "estimate": est_usd, "source": "recorded" if rec.get("usd") else "backtest" if est_usd else "",
             "ratio": a["cost"] / est_usd if est_usd else None,
             "budget_use": a["peak"] / a["budget"] if a.get("budget") else None,
-            "why": explain(a, same), "pool": len(same)}
+            "why": explain(a, same), "pool": len(same), "size": size_check(a)}
 
 
 def verdict(ratio: float | None) -> str:
@@ -424,7 +514,9 @@ def review_text(rv: dict, today: str) -> str:
     est = f" est={rv['estimate']:.2f} x{rv['ratio']:.2f} ({rv['source']})" if rv["estimate"] else ""
     peak = f" peak={usage.ktok(a['peak'])}/{usage.ktok(a['budget'])}" if a.get("budget") else ""
     why = "; ".join(rv["why"][:4])
-    return f"{today} usd={a['cost']:.2f}{est}{peak} sessions={a['sessions']}" + (f" why: {why}" if why else "")
+    sz = rv.get("size")
+    size = f" size={sz['judged']}/{sz['actual']}" if sz else ""
+    return f"{today} usd={a['cost']:.2f}{est}{peak} sessions={a['sessions']}{size}" + (f" why: {why}" if why else "")
 
 
 def render_review(rv: dict) -> list[str]:
@@ -442,6 +534,10 @@ def render_review(rv: dict) -> list[str]:
     use = f" of the brief's {usage.ktok(a['budget'])} ({rv['budget_use']:.0%})" if rv["budget_use"] else ""
     lines.append(f"  context peak {usage.ktok(a['peak'])}{use}; {a['sessions']} session(s), "
                  f"{usage.hours(a['active_s'])} active, {usage.ktok(a['output'])} output tokens")
+    sz = rv.get("size")
+    if sz:
+        said = {"hit": "a hit", "under": "under-sized", "over": "over-sized"}[sz["verdict"]]
+        lines.append(f"  size {sz['judged']} judged; {sz['hours']:.2f} h active is {sz['actual']}: {said}")
     if rv["why"]:
         lines.append(f"  why, against {rv['pool']} finished item(s) of its class:")
         lines += [f"    {w}" for w in rv["why"][:8]]
@@ -738,7 +834,8 @@ def _render_table(dim: str, rows: list[dict], top: int) -> list[str]:
 # --- the audit ---
 
 def audit(led: Ledger, since: str, until: str, top: int = TOP) -> dict:
-    tests = backtests(led)
+    key = size_key(led)
+    tests = key["tests"]   # the backtests the estimator uses: with the size key when it is kept
     cal = calibration(tests)
     done = [a for a in history(led) if (not since or a["done_day"] >= since) and (not until or a["done_day"] < until)]
     reviews = [review(led, a["id"]) for a in done]
@@ -746,6 +843,8 @@ def audit(led: Ledger, since: str, until: str, top: int = TOP) -> dict:
     rows = led.window(since, until)
     errs = [abs(math.log(t["ratio"])) for t in tests if t["ratio"] > 0]
     return {"since": since, "until": until, "reviews": reviews, "off": off, "calibration": cal,
+            "sizes": sizes([rv["item"] for rv in reviews], history(led)),
+            "size_key": {k: v for k, v in key.items() if k != "tests"},
             "backtests": {"n": len(tests), "within": sum(1 for t in tests if verdict(t["ratio"]) == "within"),
                           "median_factor": round(math.exp(statistics.median(errs)), 3) if errs else None},
             "costliest": table_of(led, rows, "session", since, until)[:top],
@@ -776,6 +875,7 @@ def render_audit(au: dict, project: str, generated: str) -> str:
         lines.append(f"- {'every class' if k == '*' else k or 'no class'}: x{c['factor']} over {c['n']} item(s)")
     if not au["calibration"]:
         lines.append(f"- not enough finished items yet ({MIN_SIMILAR} per class)")
+    lines += _render_sizes(au.get("sizes"), au.get("size_key"))
     lines += ["", "## Where the cost went", ""]
     lines += [f"- {r['key']}: {usage.usd(r['total'])} ({_pct(r['share'])})" for r in au["phases"]]
     lines += ["", "## Costliest sessions", ""]
@@ -785,6 +885,32 @@ def render_audit(au: dict, project: str, generated: str) -> str:
     lines += [f"- `{r['key']}`: {r['count']} times in {r['sessions']} sessions, {usage.usd(r['total'])}"
               for r in au["sequences"]] or ["- none"]
     return "\n".join(lines) + "\n"
+
+
+def _render_sizes(sz: dict | None, key: dict | None) -> list[str]:
+    """The audit's « Sizes against actuals » (wi-brain-size-calibration)."""
+    lines = ["", "## Sizes against actuals (props.size against the active time)", ""]
+    if not sz or not sz["items"]:
+        return lines + ["- no finished item of the window carries a size"]
+    lines.append(f"{len(sz['items'])} sized item(s), {sz['misses']} miss(es) (the scale: "
+                 + ", ".join(f"{s} up to {h} h" for s, h in sizing.HOURS.items() if s != sizing.SIZES[-1])
+                 + f", {sizing.SIZES[-1]} beyond).")
+    lines += [f"- {r['size']} {r['class'] or 'no class'}: {r['n']} item(s), {r['hit']} hit, {r['under']} under-sized, "
+              f"{r['over']} over-sized; median {r['hours']} h, {usage.usd(r['cost'])}" for r in sz["table"]]
+    lines += [f"  - {r['id']}: {r['judged']} judged, {r['hours']} h is {r['actual']}" for r in sz["items"]
+              if r["verdict"] != "hit"]
+    lines += ["", "Thresholds proposed (each size's p75 of active hours among the items judged it, whole history):"]
+    lines += [f"- {t['size']}: now {t['now']} h, proposed " + (f"{t['proposed']} h" if t["proposed"] is not None
+                                                                 else f"- ({t['n']} item(s), {MIN_SIMILAR} needed)")
+              + f" ({t['n']} item(s))" * (t["proposed"] is not None) for t in sz["thresholds"]]
+    got = [t["proposed"] for t in sz["thresholds"] if t["proposed"] is not None]
+    if any(b <= a for a, b in zip(got, got[1:])):
+        lines.append("- the proposals do not rise with the size: the judged sizes do not separate the active time "
+                     "yet (judge again from the misses above before moving the scale)")
+    if key and key.get("with") is not None:
+        lines.append(f"- the size as the estimator's first key: {'kept' if key['kept'] else 'left out'} (backtests' "
+                     f"error x{key['with']} with it, x{key['without']} without)")
+    return lines
 
 
 def audit_path(project: str, since: str, until: str) -> Path:
