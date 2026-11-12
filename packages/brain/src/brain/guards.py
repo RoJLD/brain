@@ -127,7 +127,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, markers, midsession, paths, projects, public, secretscan
+from . import config, markers, midsession, paths, projects, public, secretscan, timing
 
 GUARDS = ("production", "attribution", "secrets", "markers", "owner", "power", "third-party", "public", "branches")
 ALLOW_ENV = "BRAIN_GUARD_ALLOW"
@@ -3492,8 +3492,7 @@ def _record(payload: dict, guard: str, check: str, decision: str, reason: str, r
     if case is not None:
         rec["case"] = case
         rec["what"] = {k: v for k, v in (payload.get("tool_input") or {}).items() if not str(k).startswith("_")}
-    with open(d / f"guards-{at[:7]}.jsonl", "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+    timing.append(d / f"guards-{at[:7]}.jsonl", rec)  # under the ledger's lock: every session's hook writes here
     return True
 
 

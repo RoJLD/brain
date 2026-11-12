@@ -19,8 +19,10 @@ Which number moves is decided by what an owner has to do, not by how much change
 **An optional key of config.json is a patch's** (wi-brain-release-schema-additive): when `config.schema.json` only
 gains optional properties (none of them `required`) or changes its prose (`description`, `title`, `$comment`,
 `examples`), every config.json the old schema accepted is still valid and an owner has nothing to do; `release-check`
-reports it as grown, not moved. Any other change of it moves the format: a key removed, a keyword added, removed
-or changed (a type, an enum, a bound, a pattern, `additionalProperties`, `required`), even a list reordered; the
+reports it as grown, not moved. The same holds for `permissions.schema.json` and for `docgraph.schema.json`
+(docgraph/v1 is read tolerantly: an optional key added within v1 is a patch's, the owner's answer of 2026-11-12;
+removing or narrowing one stays a minor). Any other change of it moves the format: a key removed, a keyword added,
+removed or changed (a type, an enum, a bound, a pattern, `additionalProperties`, `required`), even a list reordered; the
 comparison errs towards a minor version. **A whole new format is a patch's too**: a format the last tag did not
 register (its own `SCHEMAS`) and none of whose files exists there (`release_check.new_formats`) is held by no brain
 yet and never read by an older engine; a file new to a format that exists still moves it, and so does a format
@@ -190,8 +192,8 @@ preview », only says what `release-check` will judge):
   `python packages/brain/installer/release_check.py`, with `--store <the store that plans the releases>` where
   one does (section 1, the closure rule: CI runs it without, as it holds no owner's store; a `--store` it cannot
   read is exit 2).
-  It reads files, not meanings: a section can be there and wrong, and `permissions.yaml`, whose keys are constants in
-  `brain.permissions`, has no file for it to compare. What a schema change narrows (a property removed, a field
+  It reads files, not meanings: a section can be there and wrong (`permissions.yaml`'s keys are constants of
+  `brain.permissions`, described by `permissions.schema.json`, which a test keeps in step). What a schema change narrows (a property removed, a field
   newly required...) is `brain schema diff`'s, on every PR (CI's advisory `schema-diff` job;
   `packages/brain/docs/formats.md`, « The schema diff »): a narrowing that reaches the version PR unresolved by a
   `Compat:` line is a format that moves. This list still applies.

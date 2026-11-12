@@ -47,7 +47,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import paths, secretscan
+from . import paths, secretscan, timing
 
 ASKED, CAPTURED, RECORDED = "asked", "answer", "answer-recorded"
 MARK_RE = re.compile(r"\s*\((?:recommandée?|recommended)\)\s*$", re.I)
@@ -100,13 +100,11 @@ def _append(name: str, recs: list[dict]) -> None:
     if not recs:
         return
     d = paths.ledger_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    by_month: dict[str, list[str]] = {}
+    by_month: dict[str, list[dict]] = {}
     for r in recs:
-        by_month.setdefault(r["at"][:7], []).append(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n")
-    for month, lines in by_month.items():
-        with open(d / f"{name}-{month}.jsonl", "a", encoding="utf-8", newline="\n") as fh:
-            fh.writelines(lines)
+        by_month.setdefault(r["at"][:7], []).append(r)
+    for month, rows in by_month.items():   # one locked write per month file (brain.timing.append_lines)
+        timing.append_lines(d / f"{name}-{month}.jsonl", rows)
 
 
 # --- what brain decision batch printed ---

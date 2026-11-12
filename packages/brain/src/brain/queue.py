@@ -67,7 +67,7 @@ from pathlib import Path
 from functools import lru_cache
 
 from . import (actions, config, decisions, forecast, graph, guards, paths, permissions, projects, records, resume,
-               secretscan)
+               secretscan, timing)
 
 KINDS = decisions.KINDS
 DAYS = 7
@@ -679,8 +679,7 @@ def order(ref: str, *, at: str, position: int | None = None, band: str = "", cle
     d.mkdir(parents=True, exist_ok=True)
     row = {"at": at, "event": "queue-order", "id": ref, "order": None if clear else position,
            "band": None if clear else (band or None), "by": by or config.owner_of()}
-    with open(d / f"queue-{at[:7]}.jsonl", "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    timing.append(d / f"queue-{at[:7]}.jsonl", row)
     if clear:
         return f"{ref}: back to the score's order"
     return (f"{ref}: {config.name_of()}'s order" + (f" {position}" if position is not None else "")
@@ -1016,8 +1015,7 @@ def done(root: Path, ref: str, *, at: str, note: str = "", by: str = "") -> str:
         row = {"at": at, "event": "queue-done", "id": ref, "by": by}
         if note:
             row["note"] = note
-        with open(d / f"queue-{at[:7]}.jsonl", "a", encoding="utf-8", newline="\n") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+        timing.append(d / f"queue-{at[:7]}.jsonl", row)
         return f"{ref}: done, stamped in {d.as_posix()}/queue-{at[:7]}.jsonl (back in the queue if denied again)"
     if ":" in ref and not ref.startswith("ddr-"):
         nid, _, prop = ref.partition(":")

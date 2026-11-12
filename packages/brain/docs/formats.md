@@ -57,7 +57,7 @@ their default.
 | modules.yaml | a store (or the one `config.json` `modules.store` names, [modules.md](modules.md)) | none: a YAML list; each entry that carries the map (`realized_by` or `map_review`) is checked against `modules.schema.json` | an entry's other field is free; a realisation's unknown key is a note (in strict mode, CI: `brain modules --check` refuses it, `brain check` warns) | - (no `v`: a change of the schema moves the format) |
 | standards catalog | the engine's `src/brain/catalogs/*.yaml`; a brain's local ones that `projects.yaml` `standards.catalogs` names ([standards.md](standards.md)) | `v` (`standards.schema.json`) | a note, the row kept; a vocabulary value this engine does not know (a profile, stage, enforcement...) too (in strict mode, CI: `brain standards check` and `brain check --all` report it) | refused: its rows are not read |
 | DDR signature | `records/ddr/<id>.sig`, beside its record | none: an SSH signature (namespace `brain-decision`) over the answer's payload | - | - (an older engine ignores the file and reads the record as before) |
-| permissions.yaml | the brain's root | `v` | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
+| permissions.yaml | the brain's root | `v` (`permissions.schema.json`, described: read by `brain.permissions`) | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
 | packs.yaml | `source/packs.yaml` | `v` | a note | refused |
 | template.yaml | a template's folder | `engine:` range | a note (in CI: refused), `extends` and `append` (wi-brain-project-templates) included: a template that uses them names the engine that knows them in `engine:`; a graph's keys are strict: a graph's `layers` (wi-brain-graph-templates) is refused by an older engine, so a template that uses it names the engine that knows it in `engine:` | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |
 | graph layer | research_graph's `templates/layers/<name>.yaml` (the catalogue); a template's own `layers/<name>.yaml` | `version`, per layer, recorded in a store's `templates:` | refused (`research_graph layers` names the known keys) | - (a layer's version is compared by `brain template upgrade`, a later item) |
@@ -172,7 +172,10 @@ is the owner's act: `install.ps1 -Apply` writes it, with the same policy in Powe
 
 ### The log class: rotation and retention
 
-A log is appended to, never rewritten. `brain.stateio.rotate_log` runs before a line is appended: a log last written
+A log is appended to, never rewritten. A JSON-lines ledger (the exec, capture, guards, queue, answers and cockpit
+ledgers, the quota readings, the session starts, the notify audit and its held messages) is appended by `brain.timing.append_text`: one write, under an
+exclusive lock on `exec.lock` in its folder, a last line left without its newline closed first (on Windows the C
+runtime's append is a seek then a write, so two writers without the lock lose and mix lines). `brain.stateio.rotate_log` runs before a line is appended: a log last written
 in an earlier month (UTC) moves aside as `<stem>-<YYYY-MM><suffix>`, one past 1 MB the same way under this month
 (`-<n>` when that name is taken), then the monthly files past the class's retention go (`prune_months`). Hooks rotate
 at the same time without a lock: the move never replaces an existing file (a rename that refuses one on Windows, a
@@ -403,8 +406,10 @@ and a resolved one as justified. With config.json `audit.schema_diff_strict: tru
 line, to fix or resolve in the PR, and `brain schema diff` exits 1 on it (or with `--strict`): a release never newly
 refuses what passed. CI's advisory `schema-diff` job runs it on every pull request against its target's tip (this
 PR's change alone, and its own commits' Compat: lines), with the PR's body as it was at the push (an edited body is
-read at the next push, or by re-running the job), into the job's summary. `permissions.yaml` has no schema file (its keys are constants of `brain.permissions`):
-the diff does not see it.
+read at the next push, or by re-running the job), into the job's summary. `permissions.yaml`'s keys are constants of
+`brain.permissions`; `schemas/permissions.schema.json` describes them (wi-brain-permissions-schema), a test keeps the
+two in step, and the diff compares it like any schema. `brain.permissions` still reads the file itself: the schema
+refuses nothing at run time.
 
 ## The upgrade test (`compat-prev`)
 

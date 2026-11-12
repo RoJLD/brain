@@ -6,6 +6,12 @@ the findings of a set of named checks. Any program may emit it: a repository's o
 and its tracker alone; the Brain's doc graph, built from a brain's store; an import of documents kept elsewhere. The
 Brain reads every `docgraph/v1` document read only, so a reader of several producers has nothing to translate.
 
+**Target compatibility.** Nothing in the contract assumes code: a producer that holds no code at all (a research
+project's notes and protocols, a writing project's chapters, a design project's decisions, a shared drive's
+documents) emits the same nodes. A `change` is any reviewed modification (a pull request, a revision of a document,
+a new version of a dataset or a model), a `test` any check that can pass or fail (a unit test, a replication, a
+review checklist), a `module` any part of the whole; `implements` from code is one case among others.
+
 The schema is [`schemas/docgraph.schema.json`](../src/brain/schemas/docgraph.schema.json); the rules a schema cannot
 say are `brain.docgraph.validate`'s. Two invented documents, one of each side of the version, are in
 [`tests/fixtures/formats/docgraph/v1/`](../tests/fixtures/formats/docgraph/v1/): a producer and a reader test against
@@ -72,7 +78,7 @@ A node has an `id`, a `type`, a `title` and a `source`; `kind`, `status`, `nativ
 | `milestone` | a phase, a wave or an era | `phase`, `wave`, `era` |
 | `criterion` | an exit criterion or a trigger line | |
 | `item` | an issue or a work item | `review` for a phase's exit review |
-| `change` | a pull request | |
+| `change` | any reviewed modification: a pull request, a revision of a document, a new version of a dataset or a model | `pull`, `revision`, `version` |
 | `test` | a test | |
 | `threat` | a risk or a threat | |
 | `module` | a module or a brick | |
