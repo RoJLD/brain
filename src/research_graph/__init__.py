@@ -5,4 +5,4 @@ DiGraph. The package is path-agnostic: tests point it at a fixture store,
 the CLI defaults to ``notes/graph``.
 """
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"

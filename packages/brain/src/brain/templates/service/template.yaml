@@ -4,7 +4,7 @@
 # (projects.yaml standards:, brain standards list --applicable).
 name: service
 version: 1
-engine: ">=0.3.2"
+engine: ">=0.4.0"
 title: "A service: the software base and the service profile's standards"
 extends: _software
 graphs:                    # the brain's main store, by layers (research_graph layers)

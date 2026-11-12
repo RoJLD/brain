@@ -1,0 +1,106 @@
+{
+ "tag": "v0.3.2",
+ "engine": "0.3.2",
+ "source": "tag",
+ "owner": "Ada Example",
+ "steps": [
+  {
+   "step": "version",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "init apply",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "git init",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "git add",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "first commit",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "milestone",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "item",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "item after",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "item idea",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "close",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "decision",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "journal",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "lesson",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "ar",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "sr",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "refresh",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "git add",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "commit",
+   "rc": 0,
+   "ok": true
+  },
+  {
+   "step": "check",
+   "rc": 0,
+   "ok": true
+  }
+ ],
+ "neutralized": [
+  "config.json"
+ ]
+}

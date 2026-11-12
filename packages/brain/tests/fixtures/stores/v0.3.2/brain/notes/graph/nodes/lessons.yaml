@@ -1,0 +1,4 @@
+- {id: les-ada-first-page, type: Lesson, status: open,
+   title: "Read the page before closing it",
+   props: {trigger: "closing an item", anti_pattern: "closed without reading the page", check: "a reviewer reads it",
+           severity: medium, signal: other, learned: "2026-11-12"}}

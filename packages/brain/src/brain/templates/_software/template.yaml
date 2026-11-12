@@ -5,7 +5,7 @@
 # layers (research_graph layers).
 name: _software
 version: 1
-engine: ">=0.3.2"
+engine: ">=0.4.0"
 title: "A code product's brain: CI (coverage, compat-prev), a test harness, a format registry, the code layers"
 extends: _project
 graphs:                    # the brain's main store: the base, and the code, docs-and-tests and features layers

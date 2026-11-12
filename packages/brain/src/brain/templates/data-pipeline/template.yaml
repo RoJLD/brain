@@ -4,7 +4,7 @@
 # stage (projects.yaml standards:, brain standards list --applicable).
 name: data-pipeline
 version: 1
-engine: ">=0.3.2"
+engine: ">=0.4.0"
 title: "A data pipeline: the software base and the data-pipeline profile's standards"
 extends: _software
 graphs:                    # the brain's main store, by layers (research_graph layers)
