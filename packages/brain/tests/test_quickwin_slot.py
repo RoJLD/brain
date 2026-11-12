@@ -68,11 +68,47 @@ def test_a_free_slot_proposes_the_startable_quick_wins_outside_the_wave(make):
     slot = waves.quickwin_slot(waves.load(store), "wave-1.1.0")
     # wi-later (P1, a later wave) before wi-loose (P2, no wave); wi-old is in an earlier wave, wi-held waits on an
     # item, wi-big is not small, wi-gone is dropped
+    moves = {"wi-later": "brain item unlink wi-later wave-1.2.0, then brain item link wi-later part_of wave-1.1.0",
+             "wi-loose": "brain item link wi-loose part_of wave-1.1.0"}
     assert slot == {"share": 0.2, "places": 10, "slot": 2, "filled": [], "free": 2,
-                    "candidates": ["wi-later", "wi-loose"]}
+                    "candidates": ["wi-later", "wi-loose"], "moves": moves}
     line = waves.slot_line(slot, "wave-1.1.0")
     assert line == ("quick-win slot: 2 of 10 place(s) (20%, size S and a high value); filled by none; 2 free: "
-                    "candidate(s) wi-later, wi-loose (brain item link wi-later part_of wave-1.1.0)")
+                    f"candidate(s) wi-later, wi-loose ({moves['wi-later']})")
+
+
+def test_following_the_move_leaves_each_item_in_one_wave(make):
+    """Review finding 1: a bare link of a later wave's candidate put it in two waves (brain check's error)."""
+    store = make(9)
+    with (store / "edges" / "work.yaml").open("a", encoding="utf-8") as f:   # the move, done by hand
+        f.write("- {from: wi-loose, to: wave-1.1.0, type: part_of}\n- {from: wi-later, to: wave-1.1.0, type: part_of}\n")
+    text = (store / "edges" / "work.yaml").read_text(encoding="utf-8")
+    (store / "edges" / "work.yaml").write_text(text.replace("- {from: wi-later, to: wave-1.2.0, type: part_of}\n", ""),
+                                               encoding="utf-8", newline="\n")
+    pl = waves.load(store)
+    assert not [p for p in waves.problems(pl) if "waves" in p]
+    assert waves.quickwin_slot(pl, "wave-1.1.0")["filled"] == ["wi-later", "wi-loose"]
+    carried = waves.load(store)
+    carried.nodes["wi-loose"]["props"]["carried_to"] = "1.2.0"
+    assert waves.move_command(carried, "wi-loose", "wave-1.1.0") == "brain item set wi-loose carried_to=1.1.0"
+
+
+def test_a_closed_wave_has_no_free_place_and_the_next_wave_no_candidate_twice(make):
+    """Review findings 3 and 4."""
+    store = make(9)
+    pl = waves.load(store)
+    assert waves.quickwin_slot(pl, "wave-1.0.0")["free"] == 0   # reached: nothing is added to it
+    rep = waves.next_report(pl)
+    assert rep["current"]["slot"]["candidates"] == ["wi-later", "wi-loose"]
+    assert rep["next"]["slot"]["candidates"] == []   # wi-loose is proposed for the current wave already
+
+
+def test_the_generated_view_leaves_the_slot_out(make):
+    """Review finding 2: the plan view stays as it was (no stale view after an upgrade); brain next shows it."""
+    store = make(9)
+    pl = waves.load(store)
+    assert not any("quick-win slot" in x for x in waves.render_next(waves.next_report(pl), slot=False))
+    assert any("quick-win slot" in x for x in waves.render_next(waves.next_report(pl)))
 
 
 def test_a_filled_slot_names_what_fills_it_even_once_done(make):

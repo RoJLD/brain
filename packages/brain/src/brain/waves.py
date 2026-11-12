@@ -408,17 +408,19 @@ def _sized_high(plan: Plan, nid: str) -> bool:
     return plan.ranker.score(nid).quick_win
 
 
-def quickwin_slot(plan: Plan, wid: str) -> dict:
+def quickwin_slot(plan: Plan, wid: str, exclude=()) -> dict:
     """A wave's quick-win slot (wi-brain-wave-quickwin-slot; spec-brain-sizing-prioritization 5.3): about
     ``QUICKWIN_SHARE`` of its places (its items, closed ones included, at least one place once it has an item) kept
     for items of size S with a high value. ``filled``: the wave's own items of that kind (done ones too, dropped ones
     not), in rank order; ``free``: the places still free; ``candidates``: the startable quick wins outside the wave (in
-    no wave, or in a later one), in rank order, as many as the free places: what would fill it."""
+    no wave, or in a later one; ``exclude``: those proposed for an earlier wave already), in rank order, as many as the
+    free places: what would fill it, each with the command that moves it (``moves``). A wave closed (reached or
+    dropped) has no free place: nothing is added to it."""
     items = plan.items_of(wid)
     places = len(items)
     slot = max(1, math.floor(places * QUICKWIN_SHARE + 0.5)) if places else 0
     filled = _sorted(plan, [i for i in items if plan.status(i) != "dropped" and _sized_high(plan, i)])
-    free = max(0, slot - len(filled))
+    free = 0 if plan.status(wid) in CLOSED else max(0, slot - len(filled))
     order = {w: k for k, w in enumerate(plan.waves)}
     here = order.get(wid, -1)
 
@@ -426,9 +428,21 @@ def quickwin_slot(plan: Plan, wid: str) -> dict:
         w = plan.wave_of(i)
         return w != wid and (w is None or order.get(w, -1) > here)
 
-    pool = [k for k in plan.nodes if plan.is_item(k) and plan.startable(k) and outside(k) and _sized_high(plan, k)]
+    pool = [k for k in plan.nodes if plan.is_item(k) and plan.startable(k) and outside(k) and _sized_high(plan, k)
+            and k not in exclude]
+    cands = _sorted(plan, pool)[:free]
     return {"share": QUICKWIN_SHARE, "places": places, "slot": slot, "filled": filled, "free": free,
-            "candidates": _sorted(plan, pool)[:free]}
+            "candidates": cands, "moves": {k: move_command(plan, k, wid) for k in cands}}
+
+
+def move_command(plan: Plan, nid: str, wid: str) -> str:
+    """The command that puts ``nid`` in the wave ``wid`` and leaves it in one wave (brain check): a link for an item in
+    no wave; for one part_of a later wave, that edge removed first; for one carried, its carried_to moved."""
+    if _props(plan.nodes.get(nid) or {}).get("carried_to"):
+        return f"brain item set {nid} carried_to={plan.label(wid)}"
+    later = plan.planned(nid)
+    link = f"brain item link {nid} part_of {wid}"
+    return f"brain item unlink {nid} {later[0]}, then {link}" if later else link
 
 
 def slot_line(slot: dict, wid: str) -> str:
@@ -442,7 +456,8 @@ def slot_line(slot: dict, wid: str) -> str:
     text += f"; {slot['free']} free"
     if slot["candidates"]:
         first = slot["candidates"][0]
-        return text + (f": candidate(s) {', '.join(slot['candidates'])} (brain item link {first} part_of {wid})")
+        how = (slot.get("moves") or {}).get(first) or f"brain item link {first} part_of {wid}"
+        return text + f": candidate(s) {', '.join(slot['candidates'])} ({how})"
     return text + ": no startable quick win outside the wave"
 
 
@@ -464,9 +479,11 @@ def pending_waves(plan: Plan) -> list[str]:
 def next_report(plan: Plan) -> dict:
     """brain next's data: the current wave (the lowest release not closed) and the next one."""
     pend = pending_waves(plan)
-    return {"owner": config.name_of(), "waves": len(plan.waves),
-            "current": wave_report(plan, pend[0]) if pend else None,
-            "next": wave_report(plan, pend[1]) if len(pend) > 1 else None}
+    cur = wave_report(plan, pend[0]) if pend else None
+    nxt = wave_report(plan, pend[1]) if len(pend) > 1 else None
+    if cur and nxt:   # one item proposed for one slot: the current wave's candidates are not the next's
+        nxt["slot"] = quickwin_slot(plan, pend[1], exclude=cur["slot"]["candidates"])
+    return {"owner": config.name_of(), "waves": len(plan.waves), "current": cur, "next": nxt}
 
 
 def _row_text(r: dict, owner: str, out: bool = False) -> str:
@@ -494,13 +511,13 @@ GROUPS = (("carried", "carried from an earlier wave, first"), ("startable", "sta
           ("waiting", "waits on {owner}"), ("other", "other open"))
 
 
-def _current_lines(cur: dict, owner: str, explain: bool) -> list[str]:
+def _current_lines(cur: dict, owner: str, explain: bool, slot: bool = True) -> list[str]:
     """The current wave's head, its quick wins, its groups in rank order (with --explain, each carried or startable
     item's score under it, then the values the owner set)."""
     out = [_wave_head(cur)]
     if cur.get("quick_wins"):
         out.append(f"  quick wins (size S, high value), first: {', '.join(cur['quick_wins'])}")
-    line = slot_line(cur.get("slot") or {}, cur["id"])
+    line = slot_line(cur.get("slot") or {}, cur["id"]) if slot else ""   # not in the view: brain next's own
     if line:
         out.append(f"  {line}")
     for key, label in GROUPS:
@@ -515,7 +532,7 @@ def _current_lines(cur: dict, owner: str, explain: bool) -> list[str]:
     return out
 
 
-def render_next(rep: dict, explain: bool = False) -> list[str]:
+def render_next(rep: dict, explain: bool = False, slot: bool = True) -> list[str]:
     """brain next's text; ``explain``: each carried and startable item's score parts under it (brain.ranking)."""
     owner = rep["owner"]
     cur = rep["current"]
@@ -525,7 +542,7 @@ def render_next(rep: dict, explain: bool = False) -> list[str]:
     if cur is None:
         return ["No open wave: a Milestone with props.kind wave and props.release X.Y.Z (brain wave import proposes "
                 "them from the items' props.wave)"]
-    out = _current_lines(cur, owner, explain)
+    out = _current_lines(cur, owner, explain, slot)
     if not cur["open"]:
         out.append(f"  nothing open: close it with its version PR (brain wave close {cur['release']})")
     nxt = rep["next"]
@@ -609,7 +626,7 @@ def render(plan: Plan) -> str:
     out = [HEAD, "# Plan: eras, milestones, waves", "",
            f"{len(plan.eras)} era(s), {len(plan.waves)} wave(s) ({len(pending_waves(plan))} open). A wave is a "
            "release (props.release); the version PR closes it (brain wave close). Read it from the command line "
-           "with `brain next`.", "", "## Next", "", "```"] + render_next(next_report(plan)) + ["```"]
+           "with `brain next`.", "", "## Next", "", "```"] + render_next(next_report(plan), slot=False) + ["```"]
     placed: set[str] = set()
     for e in plan.eras:
         out += _md_era(plan, e, owner, placed)

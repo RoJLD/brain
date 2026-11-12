@@ -417,7 +417,9 @@ whose value is high (the owner's, or a derived value of 4 or more); the wave's q
 own at its top, the rows keeping the rank's order. A wave keeps about a fifth of its places for them (its quick-win
 slot, `brain.waves.QUICKWIN_SHARE`: one place at least): `brain next` and `brain wave plan` say the slot, the wave's
 items of size S and high value that fill it and, while a place is free, the startable quick wins outside the wave (in
-no wave or a later one) that would, with the `brain item link ID part_of WAVE` that places one. `brain forecast` derives an item's value the same way. `--explain` puts
+no wave or a later one; not twice across the current and the next wave) that would, each with the command that
+moves it there and leaves it in one wave (a link; for an item of a later wave its edge removed first; for a carried
+one its `carried_to`). A closed wave has no free place; the generated view leaves the slot out. `brain forecast` derives an item's value the same way. `--explain` puts
 each score's parts under its item: `score 12.5 = value 3.75 (base 1 + features 2 + unblocks 0.75) / 0.3 h (S)`. The
 cockpit's frontier takes the same order by default, sorts by score on demand, and its column chooser adds the size,
 the value and the score. Every number is a written setting of `brain.ranking` (`SCORE`, `VALUE`, `HIGH`), which
