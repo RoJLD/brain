@@ -56,9 +56,11 @@ def temp_under_test_root(config) -> None:
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_xdist_auto_num_workers(config):
-    """``BRAIN_TEST_WORKERS``: the worker count ``-n auto`` means (unset: xdist's own, one per core). Measured on a
-    16-thread Windows machine, 24 and 32 workers ran no faster than 16 (wi-brain-test-speed-2): process creation, not
-    the CPU, bounds the suite there; the variable is for a machine where it differs. An explicit ``-n N`` wins."""
+    """``BRAIN_TEST_WORKERS``: the worker count ``-n auto`` (or ``-n logical``) means; unset, xdist's own answer
+    (its ``PYTEST_XDIST_AUTO_NUM_WORKERS``, else the CPU count). The strict form of xdist's variable, which it wins
+    over: xdist only warns on a value that is not a number. Measured on a 16-thread Windows machine, 24 and 32 workers
+    ran no faster than 16 (wi-brain-test-speed-2): process creation, not the CPU, bounds the suite there; the variable
+    is for a machine where it differs. An explicit ``-n N`` wins."""
     raw = os.environ.get("BRAIN_TEST_WORKERS", "").strip()
     if not raw:
         return None

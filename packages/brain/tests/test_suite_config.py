@@ -51,7 +51,7 @@ def test_brain_test_workers_sets_what_n_auto_means(monkeypatch):
     is a usage error, not a silent default."""
     monkeypatch.delenv("BRAIN_TEST_WORKERS", raising=False)
     assert conftest.pytest_xdist_auto_num_workers(None) is None
-    for raw, workers in (("24", 24), (" 8 ", 8), ("0", 0), ("", None)):
+    for raw, workers in (("24", 24), (" 8 ", 8), ("0", 0), ("", None), ("  ", None)):
         monkeypatch.setenv("BRAIN_TEST_WORKERS", raw)
         assert conftest.pytest_xdist_auto_num_workers(None) == workers
     for raw in ("many", "-2", "1.5"):
@@ -84,3 +84,16 @@ def test_brain_test_root_holds_pytests_temp_folders(tmp_path, monkeypatch):
     assert conftest.test_root_dir("venvs") == root / "venvs" and (root / "venvs").is_dir()
     monkeypatch.delenv("BRAIN_TEST_ROOT")
     assert conftest.test_root_dir("venvs") is None
+
+
+def test_pytest_asks_brain_test_workers_before_xdist(pytestconfig, monkeypatch):
+    """The hook pytest calls for -n auto answers with BRAIN_TEST_WORKERS ahead of xdist's own (firstresult), and over
+    xdist's PYTEST_XDIST_AUTO_NUM_WORKERS; unset, xdist's answer comes back."""
+    if not pytestconfig.pluginmanager.hasplugin("xdist"):
+        return   # no xdist: no -n
+    ask = pytestconfig.hook.pytest_xdist_auto_num_workers
+    monkeypatch.setenv("PYTEST_XDIST_AUTO_NUM_WORKERS", "5")
+    monkeypatch.setenv("BRAIN_TEST_WORKERS", "3")
+    assert ask(config=pytestconfig) == 3
+    monkeypatch.delenv("BRAIN_TEST_WORKERS")
+    assert ask(config=pytestconfig) == 5
