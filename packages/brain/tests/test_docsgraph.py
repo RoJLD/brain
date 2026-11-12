@@ -175,3 +175,87 @@ def test_the_view_goes_to_the_merge_driver_and_the_boundary():
     tmpl = Path(docsgraph.__file__).parent / "templates" / "generic"
     assert line in (tmpl / "gitattributes").read_text(encoding="utf-8")
     assert "notes/docs_graph.md" in (tmpl / "boundary.yaml").read_text(encoding="utf-8")
+
+
+# --- the review's cases ---------------------------------------------------------------------------------------------
+
+def test_a_doc_merged_with_its_nodes_change_is_not_stale(repo, make_repo):
+    """The doc and the node it cites changed on a branch, merged by a merge commit: the store is read at the doc's own
+    last commit, not at the default branch's commit before the merge."""
+    from conftest import run_git
+    run_git(repo, "checkout", "-q", "-b", "feat")
+    make_repo.commit(repo, {"notes/graph/nodes/work.yaml": WORK.replace('title: "A"', 'title: "A2"'),
+                            "docs/guide.md": FILES["docs/guide.md"] + "\nA2 now.\n"}, D2)
+    run_git(repo, "checkout", "-q", "main")
+    make_repo.commit(repo, {"README.md": "# me\n"}, D3)   # main moved meanwhile
+    run_git(repo, "merge", "-q", "--no-ff", "-m", "Merge pull request #1", "feat")
+    assert _stale(_cat(repo), "docs/guide.md") == []
+
+
+def test_a_non_ascii_path_has_its_last_commit(make_repo):
+    files = {**FILES, "docs/café.md": "# Café\n\nwi-a\n",
+             "notes/graph/nodes/_generated_links.yaml": GEN_NODES + (
+                 '- {id: "doc:me:docs/café.md", type: Doc, status: active, title: "docs/café.md", '
+                 'anchor: "docs/café.md"}\n'),
+             "notes/graph/edges/_generated_links.yaml": GEN_EDGES + (
+                 '- {from: wi-a, to: "doc:me:docs/café.md", type: documented_in}\n')}
+    repo = make_repo("me", files, date=D1)
+    make_repo.commit(repo, {"notes/graph/nodes/work.yaml": WORK.replace('title: "A"', 'title: "A2"')}, D2)
+    cat = _cat(repo)
+    cafe = next(d for d in cat.docs.values() if d.path == "docs/café.md")
+    assert cafe.last is not None and cafe.stale
+
+
+def test_a_node_moved_to_another_file_is_no_change(repo, make_repo):
+    head, second = WORK.split("# the second item\n")
+    make_repo.commit(repo, {"notes/graph/nodes/work.yaml": head,
+                            "notes/graph/nodes/more.yaml": "# moved here\n" + second}, D2)
+    assert docsgraph.stale_lines(_cat(repo)) == []
+
+
+def test_git_failing_judges_nothing(repo, make_repo, monkeypatch):
+    make_repo.commit(repo, {"notes/graph/nodes/work.yaml": WORK.replace('title: "A"', 'title: "A2"')}, D2)
+    monkeypatch.setattr(docsgraph, "_batch", lambda top, specs: None)   # cat-file timed out
+    assert docsgraph.stale_lines(_cat(repo)) == []
+    assert docsgraph.reread(repo, "notes/graph", "HEAD~1", "HEAD", set(), _cat(repo)) == []
+
+
+def test_a_store_at_the_repos_root(make_repo):
+    files = {k.removeprefix("notes/graph/"): v for k, v in FILES.items()}
+    repo = make_repo("me", files, date=D1)
+    assert docsgraph.store_location(repo) == (repo.resolve(), "")
+    make_repo.commit(repo, {"nodes/work.yaml": WORK.replace('title: "A"', 'title: "A2"')}, D2)
+    cat = docsgraph.catalogue(repo, repo, "me")
+    assert _stale(cat, "docs/guide.md") == ["doc:me:docs/guide.md::intro"]
+    [line] = docsgraph.reread(repo, "", "HEAD~1", "HEAD", {"nodes/work.yaml"}, cat)
+    assert line["unit"] == "docs/guide.md"
+
+
+def test_another_repos_doc_is_in_the_view_without_its_last_commit(repo, make_repo):
+    other = make_repo("eng", {"docs/eng.md": "# Eng\n\nwi-a\n"}, date=D1)
+    make_repo.commit(repo, {
+        "notes/graph/nodes/_generated_links.yaml": GEN_NODES + (
+            '- {id: "doc:eng:docs/eng.md", type: Doc, status: active, title: "docs/eng.md", '
+            'anchor: "docs/eng.md", repo: eng}\n'),
+        "notes/graph/edges/_generated_links.yaml": GEN_EDGES + (
+            '- {from: wi-a, to: "doc:eng:docs/eng.md", type: documented_in}\n')}, D1)
+    make_repo.commit(repo, {"notes/graph/nodes/work.yaml": WORK.replace('title: "A"', 'title: "A2"')}, D2)
+    cat = docsgraph.catalogue(repo, repo / "notes" / "graph", "me", {"eng": other})
+    eng = next(d for d in cat.docs.values() if d.repo == "eng")
+    assert eng.stale and any(x.startswith("doc.stale: docs/eng.md") for x in docsgraph.stale_lines(cat))
+    text = docsgraph.render(cat)
+    assert "| `eng: docs/eng.md` | explanation | - | - | 1 | 1 | 0 |  |" in text
+    assert "docs/eng.md §" not in text.split("## Docs to re-read")[1]
+
+
+def test_brain_docgraph_emit(repo, make_repo, monkeypatch, capsys):
+    from brain import cli
+    make_repo.commit(repo, {"notes/graph/nodes/work.yaml": WORK.replace('title: "A"', 'title: "A2"')}, D2)
+    monkeypatch.chdir(repo)
+    out = repo / "dg.json"
+    assert cli.main(["--root", str(repo), "--store", str(repo / "notes" / "graph"), "docgraph", "emit",
+                     "--out", str(out)]) == 0
+    assert "node(s)" in capsys.readouterr().out
+    import json
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert docgraph.validate(doc)[0] == [] and doc["generated"]["by"].startswith("brain ")

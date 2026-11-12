@@ -139,8 +139,8 @@ def _docs_checks(project: projects.Project, root: Path, store: Path, stale: view
     for d in cat.docs.values():
         if d.stale:
             by_doc[d.path if d.repo == cat.repo else f"{d.repo}: {d.path}"] = len(d.stale)
-    return cat.warnings + [f"doc.stale: {name}: {n} section(s) cite a node changed after its last commit: re-read "
-                           f"it ({view})" for name, n in sorted(by_doc.items())]
+    return cat.warnings + [f"doc.stale: {name}: {n} section(s) to re-read (a cited node or a declared parent changed "
+                           f"after its last commit; {view})" for name, n in sorted(by_doc.items())]
 
 
 def _store_checks(project: projects.Project, root: Path, store: Path, stale: views.Stale) -> int:

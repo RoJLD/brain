@@ -279,9 +279,10 @@ def _reread(p: projects.Project, cfgs: list, c: projects.Repo, top: Path, rows: 
         rel = next((s.relative_to(b).as_posix() for b in (top.resolve(), main) if s.is_relative_to(b)), None)
         if rel is None:
             continue
-        here = top / rel
-        if not docsgraph.applies(here) or not any(t.startswith(f"{rel}/nodes/") for t in touched):
-            return []
+        rel = "" if rel == "." else rel   # a store at the repo's root
+        here = top / rel if rel else top
+        if not docsgraph.applies(here) or not any(t.startswith(f"{rel}/nodes/" if rel else "nodes/") for t in touched):
+            continue
         cat = docsgraph.load(top, here, c.name, links.anchor_roots(cfgs, c.name))
         return docsgraph.reread(top, rel, base_rev, new_rev, touched, cat)
     return []

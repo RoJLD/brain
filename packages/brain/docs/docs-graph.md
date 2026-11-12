@@ -50,16 +50,22 @@ Its ends are checked like any edge's (`brain check`); one that does not join two
 A hand-written doc is stale when, after its last commit:
 
 - a node one of its sections cites changed: the node's entry in the store's YAML differs from the entry as of the
-  doc's last commit (comments and blank lines aside; a node created since counts), or
-- a doc it declares to depend on was committed.
+  doc's last commit (whole-line comments and blank lines aside, a comment at the end of an entry's line counts; a node
+  created since counts; a node moved to another file with the same text does not), or
+- a doc it declares to depend on was committed, or has uncommitted changes.
+
+A doc of the store's own repo is compared with the store at its own last commit, so a doc merged together with its
+node's change (a merge commit included) is not stale. A doc of another repo of the project is read from that repo's
+checkout on the machine (as the links graph reads it) and compared with the store's last commit made before its own;
+without a checkout it has no last commit and is never stale.
 
 Each stale section is named (section level). A doc with uncommitted changes is being edited and is never stale;
-generated docs and dated specs are exempt (a spec is history: the reference is the present). A doc of another repo
-of the project is read from that repo's checkout on the machine (as the links graph reads it); without one it has no
-last commit and is never stale.
+generated docs and dated specs are exempt (a spec is history: the reference is the present).
 
-- `brain check` warns, one line per doc: `doc.stale: <path>: N section(s) cite a node changed after its last commit:
-  re-read it`.
+- `brain check` warns, one line per doc: `doc.stale: <path>: N section(s) to re-read (a cited node or a declared
+  parent changed after its last commit; notes/docs_graph.md)`, the docs of the project's other repos included.
+- The view is a function of the store's own repo: a doc of another repo is listed there with its kind, sections and
+  citations, but its last commit and its staleness only in `brain check` (that repo's checkout moves on its own).
 - `brain audit --diff` (the scout) adds an info line `doc.reread` for each doc the change does not touch whose
   sections cite a node the change edits, in a store of the changed repo: the docs to re-read before the PR merges.
   It never blocks. `brain impact` lists the docs a change of code reaches.
