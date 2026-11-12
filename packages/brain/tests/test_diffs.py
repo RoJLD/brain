@@ -1,6 +1,9 @@
 """brain.diffs, the engine's one unified-diff reader (wi-brain-diff-parser; the lesson les-brain-unescaped-format):
 headers only from the diff's structure, git's names as it writes them, the user's config neutralised, tested once on
-real diffs and through each reader that relies on it."""
+real diffs, under a hostile config, through the readers whose input it shapes (impact, the public commit check,
+the markers guard, the changed items and the added ADRs of a real merge)."""
+
+import subprocess
 
 import pytest
 
@@ -91,12 +94,14 @@ def test_a_bare_plus_header_and_a_spaced_mode_change():
 
 
 def test_a_combined_diff_of_a_merge():
-    """git show of a merge: one column per parent; a line is in the result unless a column says '-'."""
-    patch = ("diff --cc f.txt\nindex 1,2..3\n--- a/f.txt\n+++ b/f.txt\n@@@ -1,3 -1,2 +1,3 @@@\n  same\n"
-             "+ from ours\n +from theirs\n- gone\n")
+    """git show of a merge: one column per parent; a line is in the result unless a column says '-', and added only
+    when every column says '+' (a line one parent held came with that parent: review of the parser, finding 1)."""
+    patch = ("diff --cc f.txt\nindex 1,2..3\n--- a/f.txt\n+++ b/f.txt\n@@@ -1,3 -1,2 +1,4 @@@\n  same\n"
+             "+ from ours\n +from theirs\n- gone\n++evil\n")
     [f] = diffs.parse(patch)
     assert f.combined and f.new == "f.txt"
-    assert [(ln.kind, ln.new) for ln in f.hunks[0].lines] == [(" ", 1), ("+", 2), ("+", 3), ("-", None)]
+    assert [(ln.kind, ln.new) for ln in f.hunks[0].lines] == [(" ", 1), (" ", 2), (" ", 3), ("-", None),
+                                                               ("+", 4)]
 
 
 def test_a_truncated_hunk_gives_way_to_the_next_file():
@@ -112,27 +117,44 @@ def test_a_git_log_patch_keeps_each_commits_head():
         ("abc123", [("x", [(1, "one")])]), ("def456", [("y", [(1, "--- three")])])]
 
 
+def test_a_nul_inside_a_content_line_does_not_split_a_commit():
+    """A text-forced binary file (.gitattributes diff) puts a NUL in a content line; a record opens only with a NUL
+    at the start of a line (review of the parser, finding 2)."""
+    log = ("\x00abc123\n\ndiff --git a/x.dat b/x.dat\n--- a/x.dat\n+++ b/x.dat\n@@ -0,0 +1,2 @@\n+head\x00tail\n"
+           "+after-nul\n\x00def456\n\ndiff --git a/z b/z\n--- a/z\n+++ b/z\n@@ -0,0 +1 @@\n+z\n")
+    assert [(head, [(f.new, f.added()) for f in files]) for head, files in diffs.log_records(log)] == [
+        ("abc123", [("x.dat", [(1, "head\x00tail"), (2, "after-nul")])]), ("def456", [("z", [(1, "z")])])]
+
+
+def test_shown_drops_what_argv_adds_for_a_message():
+    assert diffs.shown(diffs.argv("diff", "--cached", "-U1", "HEAD")) == ["diff", "--cached", "-U1", "HEAD"]
+    assert guards._words(diffs.argv("diff", "-U0"))[:2] == ["diff", "-U0"]
+
+
 def test_argv_forces_the_prefixes_and_neutralises_the_config():
     a = diffs.argv("diff", "-U0", "HEAD")
     assert a[:a.index("diff")] == list(diffs.CONFIG) and a[-2:] == ["-U0", "HEAD"]
-    assert {"--src-prefix=a/", "--dst-prefix=b/", "--no-ext-diff", "--no-textconv", "--no-color"} <= set(a)
+    assert {"--src-prefix=a/", "--dst-prefix=b/", "--no-ext-diff", "--no-textconv", "--no-color",
+            "--inter-hunk-context=0"} <= set(a)
 
 
 # --- real diffs, under a hostile git config, through every reader ---
 
 HOSTILE = {"diff.noprefix": "true", "diff.mnemonicPrefix": "true", "diff.relative": "true",
            "diff.suppressBlankEmpty": "true", "color.diff": "always", "color.ui": "always",
-           "diff.external": "brain-no-such-diff-tool", "core.quotepath": "true"}
+           "diff.external": "brain-no-such-diff-tool", "core.quotepath": "true", "diff.interHunkContext": "5",
+           "diff.up.textconv": "brain-no-such-textconv"}
 
 
 @pytest.fixture
 def hostile(make_repo, monkeypatch):
     """A repo whose diff the user's config would reshape every way it can, run from a subfolder (diff.relative)."""
     repo = make_repo("hostile", {"docs/my notes.md": "# Notes\n\nkeep\n-- the comment\n", "sub/keep.txt": "k\n",
+                                 ".gitattributes": "*.md diff=up\n", "gap.txt": "1\n2\n3\n4\n5\n",
                                  "café.md": "a\n", "graph/nodes/items.yaml": "- {id: wi-x, type: WorkItem}\n"})
     base = run_git(repo, "rev-parse", "HEAD").strip()
     make_repo.write(repo, {"docs/my notes.md": f"# Notes\n\nkeep\n++ added\n{SIDE} ours\n",
-                           "café.md": "b\n", "graph/nodes/items.yaml": "- {id: wi-x, type: WorkItem, status: done}\n"})
+                           "café.md": "b\n", "gap.txt": "1\nTWO\n3\n4\nFIVE\n", "graph/nodes/items.yaml": "- {id: wi-x, type: WorkItem, status: done}\n"})
     for i, (k, v) in enumerate(HOSTILE.items()):
         monkeypatch.setenv(f"GIT_CONFIG_KEY_{i}", k)
         monkeypatch.setenv(f"GIT_CONFIG_VALUE_{i}", v)
@@ -145,7 +167,8 @@ def test_a_real_diff_under_a_hostile_config_reads_whole_repo_paths(hostile):
     assert run_git(repo / "sub", "diff", "--no-ext-diff", "-U0", base) == ""   # the config bites: diff.relative
     patch = git(repo / "sub", *diffs.argv("diff", "-U0", base))   # read as UTF-8, as the engine reads it
     files = {f.path: f for f in diffs.parse(patch)}
-    assert sorted(files) == ["café.md", "docs/my notes.md", "graph/nodes/items.yaml"]
+    assert sorted(files) == ["café.md", "docs/my notes.md", "gap.txt", "graph/nodes/items.yaml"]
+    assert [h.new_span() for h in files["gap.txt"].hunks] == [(2, 2), (5, 5)]   # never joined over lines 3 and 4
     assert files["docs/my notes.md"].added() == [(4, "++ added"), (5, f"{SIDE} ours")]
     assert [(ln.kind, ln.text) for ln in files["docs/my notes.md"].hunks[0].lines if ln.kind == "-"] == [
         ("-", "-- the comment")]
@@ -163,3 +186,19 @@ def test_every_reader_agrees_on_the_same_hostile_change(hostile):
     assert markers.scan_diff(with_context) == ["docs/my notes.md:5"]
     sha = run_git(repo, "commit", "-qm", "close").strip() or run_git(repo, "rev-parse", "HEAD").strip()
     assert actions.changed_items(repo, sha) == ["wi-x"]
+
+
+def test_a_conflicted_merge_adds_only_its_own_adrs(make_repo):
+    """A merge that keeps both sides' ADRs adds none of them: each was recorded on its own commit (review of the
+    parser, finding 1)."""
+    log = "notes/decisions.md"
+    repo = make_repo("merge", {log: "# Decisions\n"})
+    run_git(repo, "checkout", "-q", "-b", "feat")
+    make_repo.commit(repo, {log: "# Decisions\n\n## 2026-02-02 From feat\n"})
+    run_git(repo, "checkout", "-q", "-")
+    make_repo.commit(repo, {log: "# Decisions\n\n## 2026-03-03 From main\n"})
+    run_git(repo, "checkout", "-q", "feat")
+    subprocess.run(["git", "-C", str(repo), "merge", "-q", "-"], capture_output=True)   # conflicts
+    make_repo.write(repo, {log: "# Decisions\n\n## 2026-02-02 From feat\n\n## 2026-03-03 From main\n"})
+    run_git(repo, "commit", "-qam", "merge")
+    assert actions.added_adrs(repo, "HEAD") == []

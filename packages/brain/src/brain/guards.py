@@ -2905,11 +2905,8 @@ GIT_CAP = 20 * MAX_FILE   # the most of a git command's output a check reads
 
 
 def _words(args) -> list[str]:
-    """git's arguments without its leading ``-c name=value`` pairs (brain.diffs.argv's), for a message."""
-    args = list(args)
-    while len(args) > 1 and args[0] == "-c":
-        args = args[2:]
-    return args or [""]
+    """git's arguments without what brain.diffs.argv adds, for a message."""
+    return diffs.shown(args)
 
 
 def _git_out(repo: str, *args: str, strict: bool = False) -> str:

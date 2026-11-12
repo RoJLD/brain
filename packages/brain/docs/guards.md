@@ -215,9 +215,11 @@ the digest's and the forecast's history and the changed-items reader all read gi
 - A name is read as git writes it: a C-quoted one (a quote, a control character, a non-ASCII byte) is unquoted, an
   unquoted one ends at git's TAB after a name with a space.
 - The git call is built by `brain.diffs.argv`: the a/ and b/ prefixes forced (`diff.noprefix`,
-  `diff.mnemonicPrefix`), whole-repo paths (`diff.relative`), no colour, no external diff, no textconv, a blank
+  `diff.mnemonicPrefix`), whole-repo paths (`diff.relative`), no colour, no external diff, no textconv, no hunks
+  joined over unchanged lines (`diff.interHunkContext`), a blank
   context line kept as a space (`diff.suppressBlankEmpty`; an empty line in a hunk is read as context anyway).
-- A merge's combined diff (`diff --cc`) is read too: a line is in the result unless a parent's column says `-`.
+- A merge's combined diff (`diff --cc`) is read too: a line is in the result unless a parent's column says `-`,
+  and added only when every parent's column says `+` (a line one parent already held is not the merge's).
 
 ## The usage governor
 

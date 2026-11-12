@@ -18,7 +18,8 @@ What the parser holds to:
   diff, no textconv and a context line written as a space (``diff.suppressBlankEmpty``; an empty line inside a hunk is
   read as context anyway).
 - **Combined diffs** (``diff --cc``, a merge commit's ``git show``): ``@@@`` hunks with one column per parent; a line
-  is in the result unless a column says ``-``, added when a column says ``+``.
+  is in the result unless a column says ``-``; it is added only when every column says ``+`` (new against every
+  parent: the merge's own line; one a parent already held came with that parent's commits).
 
 Line ends: the text is split on ``\\n`` only (``str.splitlines`` would cut a content line at a form feed or a
 ``\\x1c``); one trailing ``\\r`` is dropped from every line.
@@ -32,13 +33,28 @@ from dataclasses import dataclass, field
 # git -c ...: before the subcommand. --src/--dst-prefix win over diff.noprefix and diff.mnemonicPrefix.
 CONFIG = ("-c", "core.quotepath=off", "-c", "diff.relative=false", "-c", "diff.suppressBlankEmpty=false",
           "-c", "color.diff=false", "-c", "color.ui=false")
-OPTIONS = ("--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/")
+OPTIONS = ("--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/",
+           "--inter-hunk-context=0")   # diff.interHunkContext would merge two -U0 hunks over unchanged lines
 PREFIXES = ("a/", "b/")
 
 _HUNK = re.compile(r"^(@{2,}) (.*?) \1(?: |$)")
 _RANGE = re.compile(r"([-+])(\d+)(?:,(\d+))?")
 _ESCAPES = {"a": "\a", "b": "\b", "t": "\t", "n": "\n", "v": "\v", "f": "\f", "r": "\r", '"': '"', "\\": "\\"}
 _FILE_STARTS = ("diff --git ", "diff --cc ", "diff --combined ")
+
+
+def shown(args) -> list[str]:
+    """git's arguments without what :func:`argv` adds (its ``-c`` pairs, its forced options): for a message that
+    says which call failed."""
+    args, out, i = list(args), [], 0
+    while i < len(args):
+        if args[i] == "-c" and i + 1 < len(args) and args[i + 1] in CONFIG:
+            i += 2
+            continue
+        if args[i] not in OPTIONS:
+            out.append(args[i])
+        i += 1
+    return out or [""]
 
 
 def argv(sub: str, *rest: str) -> list[str]:
@@ -277,7 +293,7 @@ class _Reader:
             if marks[0] == "-":
                 self.old_no += 1
         else:
-            kind = "+" if "+" in marks else " "
+            kind = "+" if set(marks) == {"+"} else " "   # new against every parent: the merge's own line
             old = None if marks[0] == "+" else self.old_no
             h.lines.append(Line(kind, old, self.new_no, text))
             self.new_no += 1
@@ -318,7 +334,7 @@ def log_records(text: str, prefixes: tuple[str, ...] = PREFIXES) -> list[tuple[s
     """(the head line, its files) of each commit of a ``git log -p --format=%x00<fields>``: a NUL opens each record,
     so a commit's own fields are never read as the patch."""
     out = []
-    for record in text.split("\0")[1:]:
+    for record in ("\n" + text).split("\n\0")[1:]:   # a NUL that opens a line: one in a content line has its mark
         head, _, patch = record.partition("\n")
         out.append((head.strip(), parse(patch, prefixes)))
     return out
