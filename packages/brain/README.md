@@ -598,6 +598,12 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
   when the branch is behind or lost something.
+- **`brain merge-ready PR`**: the merge gate, before `gh pr merge`: the PR open and not a draft, main not moved under
+  a file it touches since their merge base, `brain merge-check` on a head that merged main, every CI check green on
+  the head, the review's stamp for the head with no finding open, the public check's stamp for a public repo, nothing
+  private in the PR's title and body; exit 0, a stamp and the head to merge (`gh pr merge --match-head-commit`),
+  else the list of what blocks
+  ([`docs/merge-driver.md`](docs/merge-driver.md)).
 - **`brain collisions [--all] [--frontier] [--json]`**: the files each open branch and worktree changes, crossed with
   each startable item's predicted surface (its features' CodeRefs, its module, the files it names): the items that
   can start now, and those that wait on a branch and its session.
@@ -853,6 +859,20 @@ read at a git ref of a local checkout, never its working copy, through a table o
 know is refused loudly), the facts declared in `config.json` `hosts.<name>`, else unknown. `<BRAIN_HOME>/facts.json`
 keeps the last ones with their source. A machine's `profile.json` overrides `config.json` `tier.components` key by
 key (a switch it does not name keeps the brain's default).
+
+**Modules** (`brain mod`, `brain.mod`): the module face of `brain profile`, on the same files. A module of the
+store's registry (`modules.yaml`, or the one `config.json` `modules.store` names) that lists the engine's
+`capabilities` turns them on and off together; without such a registry each capability is its own module. The layers,
+in order: the base preset, `config.json` `tier.components` (every machine's default, by a PR), `profile.json` (this
+machine), both accepting module ids, expanded to their capabilities (a capability named directly wins), then the hard
+dependencies pulled. A capability declares `depends_on` (hard: pulled when it is on) and `uses` (soft: a provider it
+reads, its `fallback` otherwise) in `tiers.yaml`; a module depends on another by its registry entry's `depends_on` or
+through its capabilities'. `brain mod list | show ID | explain ID` read; `brain mod enable ID [--apply]` pulls the hard
+dependencies and shows the cost, `brain mod disable ID [--cascade] [--apply]` is refused while a module that is on
+needs it (`--cascade` turns those off too); `--apply` writes this machine's `profile.json`, a second apply changes
+nothing. `explain` shows the scopes' `capabilities` (require, forbid) as declared: the scope tree reserves the key, its
+enforcement comes later. `brain init` writes an empty `modules` key. An auto capability is never switched (its
+module shows auto); a capability two modules list follows the first of them a layer names (keys in order).
 
 `config.json` `engine.min` (optional, beside `engine.pin`) is the oldest engine that may write the shared formats:
 below it the memory sync exports nothing (it still imports), the DDRs are not written and `brain check` says so; the
