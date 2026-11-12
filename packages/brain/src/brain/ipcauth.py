@@ -3,9 +3,9 @@ Brain starts binds a loopback address and answers only a request that carries th
 
 One token per machine, in ``<BRAIN_HOME>/ipc/token`` (``BRAIN_IPC_TOKEN_FILE`` names another file: a container reads
 the copy its compose file mounts as a secret). It is made once, by ``brain ipc token --init`` (the owner's gesture:
-nothing makes it on its own, and a service refuses to start without it), from 32 random bytes, and it is never
-printed: a client reads the file, or takes it from an environment variable its own configuration fills from the
-file. A request carries it as ``Authorization: Bearer <token>``; the comparison takes constant time.
+nothing makes it on its own, and a service refuses to start without it), from 32 random bytes, and it is printed
+only by ``brain ipc otel-headers``, for Claude Code's otelHeadersHelper: a client reads the file, or takes it from
+an environment variable its own configuration fills from the file. A request carries it as ``Authorization: Bearer <token>``; the comparison takes constant time.
 
 Loopback: 127.0.0.0/8, ::1 and the name ``localhost``. A service refuses to bind any other address, and refuses a
 request whose ``Host`` or ``Origin`` names another host (a page in a browser cannot reach it through DNS rebinding).

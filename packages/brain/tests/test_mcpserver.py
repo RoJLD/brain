@@ -355,6 +355,23 @@ def test_the_token_is_made_once_and_never_printed(tmp_path, monkeypatch, capsys,
     assert ipcauth.read() is None
 
 
+def test_otel_headers_print_the_bearer_header_as_one_json_object(capsys, brain_home):
+    """Claude Code's otelHeadersHelper reads stdout as one JSON object of string headers, nothing else."""
+    ipcauth.init()
+    tok = ipcauth.read()
+    assert cli.main(["ipc", "otel-headers"]) == 0
+    out = capsys.readouterr().out
+    assert out.count("\n") == 1 and json.loads(out) == {"Authorization": f"Bearer {tok}"}
+
+
+def test_otel_headers_without_a_token_print_nothing_and_fail(capsys, brain_home):
+    """Without a token the helper fails (Claude Code exports nothing and warns), never a partial header."""
+    assert ipcauth.read() is None
+    assert cli.main(["ipc", "otel-headers"]) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and "brain ipc token --init" in err
+
+
 @pytest.mark.parametrize("host,ok", [("127.0.0.1", True), ("127.8.0.1", True), ("::1", True), ("[::1]", True),
                                      ("localhost", True), ("LOCALHOST", True), ("0.0.0.0", False), ("::", False),
                                      ("10.0.0.1", False), ("localhost.evil.example", False), ("", False),
