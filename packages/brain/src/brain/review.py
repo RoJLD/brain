@@ -10,7 +10,9 @@ gathered without a model is gathered here, at zero token:
   to run them;
 - ``brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE]`` records that the review ran on that
   head, with its counts (the error score's record, wi-brain-review-error-score);
-- ``brain review check HEAD`` says whether that head was reviewed: the merge gate's question (wi-brain-merge-gate).
+- ``brain review check HEAD`` says whether that head was reviewed: the merge gate's question (wi-brain-merge-gate);
+  with ``--pr N`` (or ``--body FILE``), it also refuses while a pinned decision the change touches is neither kept
+  nor overridden in the PR body (``pins_gate``, brain.pins, wi-brain-decision-pins).
 
 A stamp is keyed by the head's full sha: a push after the review is a new head, reviewed again.
 """
@@ -22,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +33,19 @@ from . import failuremodes, paths
 
 FOLDER = "reviews"
 MAX_FILE = 400_000   # a touched file larger than this is listed, not copied
+
+# The error score (wi-brain-review-error-score): a review note's finding lines, « - high correctness A.b fixed: ... »
+FINDING = re.compile(r"^[-*]\s+([^:]+?):\s+(.*)$")   # a bullet at the line's start: a nested one is prose
+SEVERITIES = ("high", "medium", "low")
+VOCABULARY = {"severity": SEVERITIES, "outcome": ("fixed", "contested", "open", "refuted"),
+              "when": ("before", "after"), "covered": ("covered", "uncovered")}
+# The root-cause families of the waves retro of 2026-11-03: A (the brief: a. data from before, b. failure and
+# degraded paths, c. an invariant held in one path only, d. a contract assumed, e. text against code), B shared append
+# points, C the environment, D the child-coordinator blind spots, E unsafe write defaults, F hand-typed facts.
+CAUSE = re.compile(r"A(\.[a-e])?|[B-F]", re.I)
+ROW = {"severity": "", "lens": "", "cause": "", "outcome": "", "when": "before", "covered": ""}   # a row's fields
+PLACES = ("pr", "item", "stream", "wave", "repo_slug")   # where a stamp is placed for the score
+FALLS = 2   # the reviews lighten once the findings per PR fall over this many waves in a row
 
 # The lenses, each chosen by the surfaces a diff touches: (name, what it asks, path patterns).
 # "correctness" and "scope" always.
@@ -197,8 +213,11 @@ def stamp_file(head: str) -> Path:
     return paths.brain_home() / FOLDER / "stamps" / f"{head}.json"
 
 
-def stamp(head: str, findings: int, fixed: int, contested: int = 0, note: str = "", repo: Path | None = None) -> Path:
-    """Record that the review of ``head`` ran, with its counts; a full sha only (a short one could name two)."""
+def stamp(head: str, findings: int, fixed: int, contested: int = 0, note: str = "", repo: Path | None = None,
+          **where: str) -> Path:
+    """Record that the review of ``head`` ran, with its counts; a full sha only (a short one could name two).
+    ``where`` (pr, item, stream, wave, repo_slug) places it for the error score; the note's finding lines
+    (:func:`parse_note`) are kept as its rows."""
     if not re.fullmatch(r"[0-9a-f]{40}", head):
         if repo is None:
             raise ReviewError(f"{head}: a stamp is keyed by a full commit sha")
@@ -210,9 +229,258 @@ def stamp(head: str, findings: int, fixed: int, contested: int = 0, note: str = 
     f.parent.mkdir(parents=True, exist_ok=True)
     rec = {"v": 1, "head": head, "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "findings": findings, "fixed": fixed, "contested": contested, "open": findings - fixed - contested,
-           "note": note}
+           "note": note, **{k: str(v) for k, v in where.items() if k in PLACES and v}, "rows": parse_note(note)}
     f.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8", newline="\n")
     return f
+
+
+def _show(repo: Path, rev: str, rel: str) -> str | None:
+    """A file's text at ``rev`` (None when it is not there)."""
+    r = subprocess.run(["git", "show", f"{rev}:{rel}"], cwd=repo, capture_output=True, timeout=60)
+    return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
+
+
+def _rel(path: Path, top: Path) -> str | None:
+    try:
+        return path.resolve().relative_to(top.resolve()).as_posix()
+    except ValueError:
+        return None
+
+
+def _by_decision(rows: list[dict]) -> dict[str, list]:
+    out: dict[str, list] = {}
+    for r in rows:
+        out.setdefault(str(r.get("decision") or ""), []).append(r)
+    return out
+
+
+def _pins_at(repo: Path, mb: str, head: str, rel: str):
+    """(the pins of the base, with the head's new ones; the decisions whose row the change edits or removes), from
+    the pins file at ``rel`` in the changed repo; (None, set()) when neither side has one."""
+    from . import pins
+    at_base, at_head = _show(repo, mb, rel), _show(repo, head, rel)
+    if at_base is None and at_head is None:
+        return None, set()
+    try:
+        old, _ = pins.parse(at_base or "", rel)
+        new, _ = pins.parse(at_head or "", rel)
+    except pins.PinError as exc:
+        raise ReviewError(str(exc)) from None
+    a, b = _by_decision(old), _by_decision(new)
+    changed = {d for d in set(a) | set(b) if d and a.get(d) != b.get(d)}
+    return old + [r for r in new if str(r.get("decision") or "") not in a], changed
+
+
+def _project_of(repo: Path):
+    """(project, repo entry, checkout) of a registered project's repo, else None (scout.resolve, quiet)."""
+    import contextlib
+    import io
+    from types import SimpleNamespace
+
+    from . import projects, scout
+    from .inventory import AuditError
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):   # scout's "in no registered project" is not this gate's
+            p, _, c, top, registered = scout.resolve(SimpleNamespace(repo_dir=str(repo), project=None), None)
+    except (AuditError, OSError, ValueError, projects.RepoError):
+        return None
+    return (p, c, top) if registered else None
+
+
+def _logs_at(repo: Path, head: str, p, top: Path) -> list[tuple[str, str]]:
+    """The project's decision logs as the head holds them, with their kind."""
+    out = []
+    for log in p.decision_logs or [p.decisions]:
+        lr = _rel(Path(log), top) if log else None
+        text = _show(repo, head, lr) if lr else None
+        out.append((text or "", "sdr" if Path(log).name == "scientific_decisions.md" else "adr"))
+    return out
+
+
+def pins_gate(repo: Path, base: str, head: str, body: str | None) -> tuple[list[dict], list[str]]:
+    """(the pinned decisions the change base..head touches, what blocks it: brain.pins.verdict on the PR body), at the
+    file level; ([], []) for a repo in no registered project or a project without pins. When the pins live in the
+    changed repo, they are read at the merge base (the head adds its new ones, and a row the change edits or removes
+    counts as touched) and the decision logs at the head: a PR can neither drop its own pin nor hide its REVERSAL."""
+    from . import pins, scout
+    found = _project_of(repo)
+    if found is None:
+        return [], []
+    p, c, top = found
+    f = pins.path_of(p)
+    rel = _rel(f, top)
+    if rel is None and not f.is_file():
+        return [], []
+    mb = _git(repo, "merge-base", base, head).strip()
+    rows, edited, decided = None, set(), None
+    if rel is not None:
+        rows, edited = _pins_at(repo, mb, head, rel)
+        if rows is None:
+            return [], []
+        decided = pins.decisions_of(p, logs=_logs_at(repo, head, p, top))
+    files = {x for _, old, new in scout.changed(top, mb, head) for x in (old, new) if x}
+    touched = pins.touched(p, files, {c.name, top.name, (paths.main_checkout(top) or top).name}, pins=rows,
+                           decided=decided, changed_rows=edited)
+    return touched, pins.verdict(p, touched, body)
+
+
+def _lens_words() -> dict[str, str]:
+    """A lens by its first word (``install`` for « install and upgrade »), the standards and scope lenses too."""
+    words = {name.split()[0]: name for name, _, _ in LENSES}
+    return {**words, "scope": words.get("scope", "scope"), "standards": "standards"}
+
+
+def _token(tok: str, lenses: dict[str, str]) -> tuple[str, str] | None:
+    """(field, value) of one token of a finding line, None when it is no known token; ``key=value`` is read as its
+    value alone and must name that field (``lens=install`` is « install and upgrade », ``when=soon`` nothing)."""
+    if "=" in tok:
+        k, _, v = tok.partition("=")
+        got = _token(v, lenses) if "=" not in v else None
+        return got if got and got[0] == k else None
+    low = tok.lower()
+    for name, words in VOCABULARY.items():
+        if low in words:
+            return name, low
+    if CAUSE.fullmatch(tok):
+        return "cause", tok[0].upper() + tok[1:].lower()   # a.b is A.b
+    return ("lens", lenses[low]) if low in lenses else None
+
+
+def parse_note(note: str) -> list[dict]:
+    """The note's finding lines: ``- <severity> <lens|cause|outcome|...>...: text`` at the line's start, the tokens in
+    any order (``key=value`` too), the severity and at least one other token required; a nested bullet, a lone
+    severity word or a line with a word that is no token is prose, not a finding. Each row: severity, lens, cause,
+    outcome, when (default before), covered, text."""
+    lenses, rows = _lens_words(), []
+    for line in (note or "").splitlines():
+        m = FINDING.match(line)
+        got = [_token(t, lenses) for t in m.group(1).split()] if m else [None]
+        row = dict(x for x in got if x)
+        if None in got or len(got) < 2 or row.get("severity") not in SEVERITIES:
+            continue
+        rows.append({**ROW, **row, "text": m.group(2).strip()})
+    return rows
+
+
+def _normal(rec: dict) -> dict | None:
+    """A stamp as the score reads it, whatever engine or hand wrote it: None without a head or an integer count;
+    its rows a list of complete rows, its place strings, its open an integer."""
+    if not isinstance(rec, dict) or not rec.get("head") or not isinstance(rec.get("findings"), int):
+        return None
+    rows = rec.get("rows") if isinstance(rec.get("rows"), list) else []
+    rows = [{**ROW, **{k: str(v) for k, v in r.items() if k in ROW}} for r in rows if isinstance(r, dict)]
+    opened = rec.get("open")
+    return {**rec, "head": str(rec["head"]), "rows": rows, "open": opened if isinstance(opened, int) else 0,
+            **{k: str(rec[k]) for k in PLACES if rec.get(k) not in (None, "")}}
+
+
+def confirmed(rows: list[dict]) -> list[dict]:
+    """The rows a skeptic did not refute: the confirmed findings, the error score's unit."""
+    return [r for r in rows if r.get("outcome") != "refuted"]
+
+
+def stamps() -> list[dict]:
+    """Every stamp recorded, oldest first."""
+    folder = paths.brain_home() / FOLDER / "stamps"
+    out = []
+    for f in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        try:
+            rec = _normal(json.loads(f.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+        if rec:
+            out.append(rec)
+    return sorted(out, key=lambda r: str(r.get("at") or ""))
+
+
+def _pr_key(rec: dict) -> str:
+    """A PR's key: its repo (owner/name, else its folder) and number; without --pr, its head: a stamp without a PR
+    is one review of one head, never merged with another PR's of the same item."""
+    if rec.get("pr"):
+        return f"{rec.get('repo_slug') or ''}#{rec['pr']}"
+    return rec["head"]
+
+
+def per_pr(recs: list[dict]) -> list[dict]:
+    """The latest stamp of each PR: a head stamped again after a fix carries the PR's whole review (its counts are
+    the review's, not what is left of it: docs/review.md). A head stamped once without --pr and again with it counts
+    once, as the PR."""
+    with_pr = {r["head"] for r in recs if r.get("pr")}
+    latest: dict[str, dict] = {}
+    for r in recs:
+        if r.get("pr") or r["head"] not in with_pr:
+            latest[_pr_key(r)] = r
+    return list(latest.values())
+
+
+def _tally(recs: list[dict]) -> dict:
+    rows = [x for r in recs for x in confirmed(r.get("rows") or [])]
+    n, found = len(recs), sum(r["findings"] for r in recs)
+    return {"prs": n, "findings": found, "per_pr": round(found / n, 2) if n else None,
+            "open": sum(r.get("open", 0) for r in recs), "rows": len(rows),
+            **{k: dict(Counter(x[k] or "-" for x in rows).most_common()) for k in ("severity", "lens", "cause")},
+            "after": sum(1 for x in rows if x["when"] == "after"),
+            "covered": sum(1 for x in rows if x["covered"] == "covered")}
+
+
+def _wave_order(wave: str) -> tuple:
+    nums = re.findall(r"\d+", wave)
+    return (0, tuple(int(x) for x in nums), wave) if nums else (1, (), wave)
+
+
+def score(recs: list[dict] | None = None) -> dict:
+    """The error score (wi-brain-review-error-score): each PR's latest stamp, the totals and, per wave in order, the
+    PRs, confirmed findings, findings per PR and the rows' severity, lens, root-cause family, found after the merge
+    and covered by a script; then the owner's rule: the reviews lighten only once the findings per PR fall over two
+    waves in a row."""
+    prs = per_pr(stamps() if recs is None else [x for x in map(_normal, recs) if x])
+    waves: dict[str, list[dict]] = {}
+    for r in prs:
+        waves.setdefault(r.get("wave") or "", []).append(r)
+    trend = [{"wave": w, **_tally(waves[w])} for w in sorted((w for w in waves if w), key=_wave_order)]
+    return {"total": _tally(prs), "waves": trend, "unplaced": len(waves.get("", [])), "lighten": lighten(trend)}
+
+
+def lighten(trend: list[dict]) -> dict:
+    """The owner's rule of 2026-11-03: the reviews stay complete until the findings per PR fall over two waves in a
+    row (the last three scored waves, each lower than the one before, or at zero: a clean wave after a clean one is
+    no rise). Every scored wave counts, the one in progress too: the coordinator reads the verdict at a wave's retro."""
+    last = [t for t in trend if t["per_pr"] is not None][-(FALLS + 1):]
+    if len(last) <= FALLS:
+        return {"ok": False, "why": f"{len(last)} wave(s) scored, {FALLS + 1} needed"}
+    ok = all(b["per_pr"] < a["per_pr"] or b["per_pr"] == 0 for a, b in zip(last, last[1:]))
+    seq = " -> ".join(f"{t['wave']} {t['per_pr']}" for t in last)
+    return {"ok": ok, "why": f"findings per PR {seq}: {'fell' if ok else 'did not fall'} over two waves"}
+
+
+def _tally_lines(t: dict) -> list[str]:
+    lines = [f"{t['prs']} PR(s) reviewed, {t['findings']} confirmed finding(s), {t['per_pr']} per PR, {t['open']} open"
+             + (f"; {t['rows']} described: " + ", ".join(f"{k} {v}" for k, v in t["severity"].items())
+                if t["rows"] else "")]
+    if t["rows"]:
+        lines += ["  by lens: " + ", ".join(f"{k} {v}" for k, v in t["lens"].items()),
+                  "  by root cause: " + ", ".join(f"{k} {v}" for k, v in t["cause"].items())
+                  + f"; {t['after']} found after the merge, {t['covered']} a script now covers"]
+    return lines
+
+
+def score_lines(sc: dict, wave: str = "") -> list[str]:
+    """The error score as text: the totals (or one wave's), the trend per wave, the rule's verdict."""
+    name = wave.removeprefix("wave-")   # a wave named by its id or its release, either way
+    t = next((w for w in sc["waves"] if w["wave"].removeprefix("wave-") == name), None) if wave else sc["total"]
+    head = f"review error score{f', wave {wave}' if wave else ''}: "
+    if t and t["prs"]:
+        body = _tally_lines(t)
+        lines = [head + body[0], *body[1:]]
+    else:
+        lines = [head + "no reviewed PR recorded" + (" for it (brain review stamp --item or --wave)" if wave else "")]
+    if sc["waves"]:
+        lines.append("  per wave: " + ", ".join(f"{w['wave']} {w['per_pr']} ({w['prs']} PR)" for w in sc["waves"]))
+    if sc["unplaced"]:
+        lines.append(f"  {sc['unplaced']} stamp(s) placed in no wave (stamped without --item or --wave); the totals "
+                     "count a stamp without --pr once per head, so a PR reviewed on several heads counts several times")
+    verdict = "the reviews may lighten" if sc["lighten"]["ok"] else "the reviews stay complete"
+    return lines + [f"  {verdict}: {sc['lighten']['why']}"]
 
 
 def check(head: str, repo: Path | None = None) -> dict | None:

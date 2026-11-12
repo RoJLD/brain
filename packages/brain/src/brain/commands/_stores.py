@@ -14,9 +14,9 @@ import sys
 from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, docsgraph, features,
-                gates, graph, links, lint, markers, milestones, modulemap, modules, neutral, permissions, projects,
-                public, readme, records, reference, render, scopes, sizing, skew, specs, stacks, tidy, tiers, vault,
-                views, waves)
+                gates, graph, links, lint, markers, milestones, modulemap, modules, neutral, permissions, pins,
+                projects, public, readme, records, reference, render, scopes, sizing, skew, specs, stacks, tidy,
+                tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -361,6 +361,9 @@ def _check_store(args, root: Path, store: Path) -> int:
         rc = _views_verdict(project, root, store, where, stale, legacy, strict) or rc
         return graph.research_graph(root, store, *layout, "check") or rc
     rc = (cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0) or rc
+    first = next((s for s in project.stores if (s / "schema.yaml").is_file()), store)
+    for line in pins.check_lines(project) if store == first else ():   # the decision pins, once a project
+        print(line)
     if decisions.view_stale(root, _project(args, root).name):
         stale.add(decisions.VIEW, "brain sync (or brain decision view --write)")
     roots: dict[str, Path] = {}   # the other repos' checkouts, where research_graph reads their nodes' anchors
@@ -509,6 +512,7 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     for s in ids["stale"]:
         print(f"warning: shared_ids of {s}: no longer in two stores (remove it)")
     errors += _cross_store(projs, every)
+    errors += _unregistered_code_refs(root, projs, every)
     for line in render.registry_warnings(neutral.brain_root(root), projs) + _uncloned(root):
         print(f"warning: {line}")
     for e in errors:
@@ -539,6 +543,32 @@ def _cross_store(projs: list[projects.Project], every: bool) -> list[str]:
     for line in rep.dangling if not every else []:
         print(f"warning: edge {line} (its store's check refuses it)")
     return [f"edge {line}" for line in rep.dangling] if every else []
+
+
+def _unregistered_code_refs(root: Path | None, projs: list[projects.Project], every: bool) -> list[str]:
+    """The active CodeRefs of the registry's stores whose repo no project registers
+    (wi-brain-audit-unregistered-coderef): errors with ``every`` (check --all), else warned. brain audit reports
+    them as coderef.dangling (P0); nothing would measure them otherwise."""
+    from ..inventory import parse_code_ref
+    known = projects.repo_tokens(root)
+    found, read = [], set()
+    for p in projs:
+        for store in p.stores:
+            key = projects._norm(store)
+            if key in read or not (store / "nodes").is_dir():
+                continue
+            read.add(key)
+            for cid, status in projects.code_refs(store):
+                try:
+                    repo = parse_code_ref(cid)[0]
+                except ValueError:
+                    continue   # malformed: the store's own check refuses it
+                if status == "active" and repo.lower() not in known:
+                    found.append(f"CodeRef {cid} ({p.name}): its repo {repo} is in no project's repos: (register "
+                                 "it, point the CodeRef at a registered repo, or retire it)")
+    for line in found if not every else []:
+        print(f"warning: {line}")
+    return found if every else []
 
 
 def _uncloned(root: Path | None) -> list[str]:

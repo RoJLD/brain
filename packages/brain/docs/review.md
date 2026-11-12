@@ -61,10 +61,59 @@ the lines that concern it; a line no test holds is a finding.
 ## 3. The stamp
 
 ```bash
-brain review stamp <head> --findings N --fixed M --contested K --note review.md
+brain review stamp <head> --findings N --fixed M --contested K --note review.md --pr 123 --item ID
 brain review check <head>        # exit 0 once that head is reviewed
 ```
 
 The stamp is keyed by the head's full sha, in `<BRAIN_HOME>/reviews/stamps/`: a push after the review is a new head,
 reviewed again. Its counts are the error score's record (`wi-brain-review-error-score`), and `brain review check` is
-the merge gate's question (`wi-brain-merge-gate`).
+the merge gate's question (`wi-brain-merge-gate`). `--pr` names the PR (with the repo's `owner/name` from its origin
+remote, else its folder's name), so that a PR stamped on several heads counts once, by its latest stamp: a head
+stamped again after a fix carries the whole review's counts, not what is left of it. A stamp without `--pr` is one
+review of one head (the command says so when `--item` comes without it). `--item` names the item it delivers, whose
+wave (`brain.waves`, in the repo's registered project) places the stamp, else `--wave X.Y.Z`; `--stream` the lot or
+stream it belongs to.
+
+With `--pr N` (or `--body FILE`), `brain review check` also refuses while a pinned decision the change touches is
+neither kept nor overridden in the PR body (`docs/pins.md`).
+
+### The note's finding lines
+
+One line per confirmed finding, so that the score counts them by severity, lens and root cause at zero token:
+
+```markdown
+- high correctness A.b fixed: a rotation cut between two writes leaves a plain copy
+- medium docs A.e contested: the runbook says the command refuses; it never did (a documented limit)
+- low tests C fixed after covered: a test read the owner's git config; a script now refuses it
+- low scope refuted: the rename is the item's own
+```
+
+The words before the colon, in any order (or as `key=value`): the **severity** (`high`, `medium`, `low`: required);
+the **lens** (its first word: `correctness`, `scope`, `security`, `compatibility`, `install`, `procedure`, `tests`,
+`docs`, `standards`); the **root-cause family** of the waves retro of 2026-11-03 (`A.a` data from before the change,
+`A.b` failure and degraded paths, `A.c` an invariant held in one path only, `A.d` a contract assumed, `A.e` text
+against code; `B` shared append points; `C` the environment; `D` the child-coordinator blind spots; `E` unsafe write
+defaults; `F` hand-typed facts and coarse controls); the **outcome** (`fixed`, `contested`, `open`, `refuted`: a
+refuted line is kept in the note but not counted); **when** it was found (`before` the merge, the default, or
+`after`); whether a script now **covers** that family (`covered`, `uncovered`). A finding line is a bullet at the
+line's start with the severity and at least one other word; a nested bullet, a lone severity (`- Low: ...`) or a
+line with any other word before its colon is prose. `key=value` takes the same values (`lens=install`, `when=after`);
+the family's letters may be written in either case (`a.b` is `A.b`). `brain review stamp` says when the note's
+confirmed lines and `--findings` differ.
+
+### The error score
+
+```bash
+brain review score               # every PR reviewed, the trend per wave, the rule's verdict
+brain review score --wave 0.4.1 --json
+```
+
+Each PR counts once, by its latest stamp: its confirmed findings (`--findings`), and its finding lines by severity,
+lens and root cause, those found after the merge and those a script now covers. Per wave, in release order, the
+findings per PR. The owner's rule (2026-11-03): the reviews stay complete, three or four lenses and two skeptics per
+finding, until the findings per PR fall over two waves in a row (the last three scored waves, each lower than the
+one before, or at zero); `brain review score` says which holds. Every scored wave counts, the one in progress too:
+the coordinator reads the verdict at a wave's retro. The totals count a stamp without `--pr` once per head (the
+stamps written before `--pr` existed), so their findings per PR read low; the waves' trend counts only placed
+stamps. `brain retro --wave W` prints the wave's score and the trend, and
+the cockpit's health tab the totals, the last three waves and the verdict.

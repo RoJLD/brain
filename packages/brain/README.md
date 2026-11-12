@@ -370,6 +370,13 @@ run them, the open items that deliver those features and the decisions pending o
 the file level, a Python symbol looked up by the AST, and says so on its second line. `brain code-map` resolves
 each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
 
+A decision can be pinned to the code it governs ([`docs/pins.md`](docs/pins.md)): `brain adr pin ID --touches
+PATH|CODEREF --holds LINE` writes `pins.yaml` beside the decision log (an ADR, an SDR or an answered DDR; the `holds`
+line never edited, an override being a new ADR). `brain impact --diff` lists the pinned decisions a change touches,
+and `brain review check HEAD --pr N` and `brain merge-ready` refuse until the PR body says, for each, `Keeps ID` (a
+decision in force) or `Overrides ID: why` (one a later ADR supersedes, written first: `brain adr new --reverses ID`,
+an answered DDR's id included).
+
 ### Tests linked and coverage
 
 `brain sync` links each feature, item or hook to the test modules of its code (`tested_by`): the tests brain audit's
@@ -739,7 +746,9 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
 - **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
-  when the branch is behind or lost something.
+  when the branch is behind or lost something. The push guard `merges:stale` runs it on each pushed branch whose merge
+  of main is not on the remote yet, against a fresh main, and refuses a file the merge resolved against a main that
+  has moved on it since (docs/merge-driver.md).
 - **`brain merge-ready PR`**: the merge gate, before `gh pr merge`: the PR open and not a draft, main not moved under
   a file it touches since their merge base, `brain merge-check` on a head that merged main, every CI check green on
   the head, the review's stamp for the head with no finding open, the public check's stamp for a public repo, nothing
@@ -758,11 +767,14 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   token-free net; config.json `brief.after_merge` replaces these lines), the invariants and failure modes to test
   (one line per surface kind the item touches, then its `props.invariants`; `brain review prep --item` hands the
   same section to the review), and the definition of done and the never-list read from the owner's rules.
-- **`brain review prep [PR | BASE..HEAD] [--item ID]`**, **`brain review stamp HEAD`**, **`brain review check HEAD`**: the review
+- **`brain review prep [PR | BASE..HEAD] [--item ID]`**, **`brain review stamp HEAD`**, **`brain review check HEAD`**,
+  **`brain review score [--wave W]`**: the review
   a session runs on its own PR before it reports ([`docs/review.md`](docs/review.md), `brain.review`). The packet
   (the diff, the touched files at the head, `brain audit --diff`'s output, the lenses its surfaces call for) is
   gathered at zero token; the lens agents and two skeptics per distinct finding read it; the stamp, keyed by the
-  head's full sha, keeps the counts and answers the merge gate.
+  head's full sha, keeps the counts, the note's finding lines and the PR, item and wave, and answers the merge
+  gate; the error score counts each PR's confirmed findings by severity, lens and root cause, per wave, and says
+  whether the reviews may lighten (the findings per PR fallen over two waves in a row).
 
 ### The session tree
 
@@ -1149,6 +1161,12 @@ refused it). `brain check --all` reads every edge of every store and refuses one
 store of the registry on this machine (the store's own check refuses it too, as before), and counts the edges between
 stores; a brain's own root, checking its registry without `--all`, warns of it.
 
+A CodeRef (`code:<repo>:<path>`) names a repo by its name or its checkout's folder. An active one whose repo no
+project of the registry lists in its `repos:` (cloned here or not) is never measured: `brain check --all` refuses it,
+a brain's own root without `--all` warns of it, and `brain audit` reports it as `coderef.dangling` (P0, ruleset 11).
+A CodeRef of a repo another project registers, or of the project's own repo not cloned on this machine, stays « not
+measured here » (wi-brain-audit-unregistered-coderef).
+
 ## The Brain as an MCP server
 
 `brain mcp serve` serves the Brain to any MCP client ([`docs/mcp.md`](docs/mcp.md), `brain.mcpserver`): its rules,
@@ -1162,7 +1180,10 @@ launches it) or, with `--http`, Streamable HTTP on a loopback address only, each
 Nothing runs it on its own: a service or a remote endpoint is the owner's decision. `brain health ipc` checks every
 local service the Brain starts: loopback only, the token where the service can check one (the collector's is opt-in,
 config.json `ipc.require_token`, its export's header given by `brain ipc otel-headers`), no container as root
-([`docs/mcp.md`](docs/mcp.md), « The Brain's other local services »).
+([`docs/mcp.md`](docs/mcp.md), « The Brain's other local services »). Claude Code's export settings are the brain's,
+never typed by hand: config.json `adapters.claude.telemetry` says them, `brain ipc claude-settings` renders them and
+`install.ps1` adds them to the user settings (additions only), `otelHeadersHelper` included once the collector
+requires the token (docs/mcp.md, « Claude Code's export settings »).
 
 ## The Claude Code hooks
 
