@@ -36,7 +36,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import actions, midsession, paths, plan, schema, secretscan, timing, transcript
+from . import actions, midsession, paths, plan, schema, scrub, secretscan, timing, transcript
 from . import answers as answers_lane
 
 SR_V = 1     # sessions/<id>.json (schemas/sr.schema.json)
@@ -81,7 +81,8 @@ def _log_error(event: str, exc: BaseException) -> None:
 
 
 def _log_line(event: str, text: str) -> None:
-    """One line in ledger/errors.log (secrets dropped), the log rotated first (:func:`_log_error`)."""
+    """One line in ledger/errors.log (secrets dropped, then scrubbed: brain.scrub), the log rotated first
+    (:func:`_log_error`)."""
     from . import stateio
 
     try:
@@ -90,6 +91,7 @@ def _log_line(event: str, text: str) -> None:
         f = d / "errors.log"
         stateio.rotate_log(f, keep=stateio.LOG_RETENTION["errors"])
         text, _ = secretscan.clean_text(text)
+        text = scrub.text(text)   # the user's home, e-mail addresses, host names and login (wi-brain-privacy-scrub)
         with open(f, "a", encoding="utf-8") as fh:
             fh.write(f"{_now()} {event}: {text}\n")
     except OSError:

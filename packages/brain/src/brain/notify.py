@@ -41,6 +41,7 @@ repeat of an open alert, and the threshold (2 missed passes for a 15-minute task
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -50,8 +51,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from . import graph, net, outbox, paths, projects, quiet, secretscan, stateio, timing
-from .config import owner_of   # brain.config's: this module's own config() reads the notify configuration
+from . import graph, net, outbox, paths, projects, quiet, scrub, secretscan, stateio, timing
+from .config import owner_of  # brain.config's: this module's own config() reads the notify configuration
 
 LEVELS = ("info", "warn", "error", "critical")
 MODES = ("first", "all")
@@ -508,6 +509,8 @@ def send(cfg: Config, msg: Message, *, only: list[str] | None = None, dry_run: b
     that sends its failures again itself (the alerts pass's open alerts, the quiet's summary) passes ``queue=False``."""
     env = os.environ if env is None else env
     now = now or datetime.now(timezone.utc)
+    # what leaves the machine is scrubbed (wi-brain-privacy-scrub): the free text, never the sending host's own field
+    msg = dataclasses.replace(msg, body=scrub.text(msg.body), title=scrub.text(msg.title), link=scrub.text(msg.link))
     if msg.level not in LEVELS:
         raise NotifyError(f"unknown level {msg.level!r} (levels: {', '.join(LEVELS)})")
     switch = (env.get(SWITCH) or "").strip().lower()

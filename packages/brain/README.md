@@ -1127,6 +1127,15 @@ the engine's own text, so rename it, or keep it out of a private subtree. Off by
 as unknown and generates nothing: keep the repos in the hand list until every machine and the brain repo's CI run the
 release that knows it.
 
+**One privacy scrub** (`wi-brain-privacy-scrub`, brain.scrub) for what leaves the machine, beside the secret scan's
+line drop: a line of `ledger/errors.log` (a crash report included), a notification's title, text and link, and what
+the outbox keeps to send later. It replaces a secret's match by `<secret>` (URL credentials keep their scheme and
+host), an e-mail address by `<email>` (a no-reply or example one is kept), a home folder with its user name
+(`C:\Users\name`, `/Users/name`, `/home/name`) by `~` with the rest of the path kept, this machine's and the fleet's
+names (`$BRAIN_MACHINE`, the host name, `config.json` `hosts` and their `aliases`) by `<host>`, and the login by
+`<user>`. A notification's own sending-host field is kept, so the owner still reads where it comes from. The corpus
+`tests/fixtures/scrub/corpus.json` holds each case, its input and its expected output.
+
 ### Edges between stores
 
 An edge of a store may name a node another store of the registry holds (every store of every registered project on
