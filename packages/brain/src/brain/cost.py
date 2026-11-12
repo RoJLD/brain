@@ -20,8 +20,10 @@ milestone the graph's, its kind the words of its title (spec, review, fix, build
                  size key lowers the backtests' error, then the same class and theme, else class and
                  milestone, class and kind, class, all; the nearest half by brief size when there are enough), their
                  median and p25-p75 range of cost, output, context peak, active time and sessions, times the
-                 class's calibration; ``--record`` writes it on the item (props.cost_estimate) when the work starts,
-                 beside the brief's context budget.
+                 class's calibration; ``--record`` writes it on the item (props.cost_estimate, with the size judged
+                 then, which the backtests read instead of a size judged again later) when the work starts,
+                 beside the brief's context budget. The size key is the estimator's (brain cost estimate, the brief's
+                 line, the audit's calibration): brain.forecast and brain.quota keep their unsized basis.
   cost review    a finished item's actual against its recorded estimate (else the estimate the history before it
                  gives: a backtest) and its brief's budget; the gap explained by the signals that differ from the
                  class's finished items (phase shares, review rounds, merges and conflicts, reloads, compactions,
@@ -75,7 +77,8 @@ EXPLAIN = (("review_rounds", "review rounds"), ("merges", "merge, rebase or pull
            ("files_edited", "files edited"), ("prompts", "prompts"))
 _PR_RE = re.compile(r"([A-Za-z0-9_.-]+)?\s*#(\d+)")
 _EST_RE = re.compile(r"(\w+)=([^\s\[]+)")
-SIZE_RE = re.compile(r"\bsize:\**\s*(S|M|L|XL)\b", re.I)   # a brief's « - size: M »
+# a brief's « - size: M » line (its item's props): a line of its own, the scale's letters as written
+SIZE_RE = re.compile(r"^\s*[-*]?\s*(?:\*\*)?size:(?:\*\*)?\s*(S|M|L|XL)\b", re.M)
 
 
 @dataclass
@@ -185,8 +188,12 @@ def _class_of(rows) -> str:
 
 
 def _size(props: dict) -> str:
-    """The item's judged size (props.size), '' when none or off the scale."""
-    v = str((props or {}).get("size") or "").strip()
+    """The item's judged size when its work started: the one its recorded estimate carries (props.cost_estimate's
+    ``size=``), else props.size; '' when none or off the scale. A size judged again after the close never reaches
+    the backtests through an estimate recorded before it (the review of wi-brain-size-calibration: no hindsight)."""
+    props = props or {}
+    v = parse_estimate(props["cost_estimate"]).get("size", "") if props.get("cost_estimate") else ""
+    v = str(v or props.get("size") or "").strip()
     return v if v in sizing.SIZES else ""
 
 
@@ -219,13 +226,21 @@ def actual(it: Item) -> dict:
             "session_ids": [r["session_id"] for r in rows]}
 
 
+def _actual_of(led: Ledger, it: Item) -> dict:
+    """``actual(it)``, computed once per ledger: the backtests read the history once per item (do not mutate it)."""
+    cache = led.__dict__.setdefault("_actuals", {})
+    if it.id not in cache:
+        cache[it.id] = actual(it)
+    return cache[it.id]
+
+
 def history(led: Ledger, before: str = "") -> list[dict]:
     """The finished items with at least one session, closed before ``before`` (an ISO time; '' for all)."""
     out = []
     for it in led.items.values():
         if it.status != "done" or not it.sessions:
             continue
-        a = actual(it)
+        a = _actual_of(led, it)
         last_end = max((r.get("end") or "") for r, _ in it.sessions)
         if before and not last_end < before:
             continue
@@ -290,13 +305,16 @@ def backtest_error(tests: list[dict]) -> float | None:
 def size_key(led: Ledger) -> dict:
     """Whether the size is kept as the first similarity key: the backtests with it and without it, kept only when
     it lowers their typical error (wi-brain-size-calibration). {kept, with, without, n (items with a size), tests}:
-    ``tests`` are the backtests the estimator then uses."""
+    ``tests`` are the backtests the estimator then uses. The errors are those of the sized items' backtests alone
+    (an unsized item gets the same estimate both ways and would only dilute the gap); a tie leaves the key out."""
     without = backtests(led)
-    n = sum(1 for a in history(led) if a.get("size"))
+    ids = {a["id"] for a in history(led) if a.get("size")}
+    n = len(ids)
     if n < MIN_SIMILAR:   # too few sized items: the key cannot be measured, so it is not used
-        return {"kept": False, "with": None, "without": backtest_error(without), "n": n, "tests": without}
+        return {"kept": False, "with": None, "without": None, "n": n, "tests": without}
     sized = backtests(led, size_key=True)
-    e_with, e_without = backtest_error(sized), backtest_error(without)
+    e_with = backtest_error([t for t in sized if t["id"] in ids])
+    e_without = backtest_error([t for t in without if t["id"] in ids])
     kept = e_with is not None and e_without is not None and e_with < e_without
     return {"kept": kept, "with": e_with, "without": e_without, "n": n, "tests": sized if kept else without}
 
@@ -363,7 +381,8 @@ def estimate_text(est: dict) -> str:
         return f"{fmt(q['median'])} [{fmt(q['p25'])}-{fmt(q['p75'])}]" if q else "-"
 
     return (f"{est['day']} class={t['class']} basis={est['basis']} n={est['n']} "
-            f"usd={rng('cost', lambda x: f'{x:.2f}')} out={rng('output', usage.ktok)} "
+            + (f"size={t['size']} " if t.get("size") else "")
+            + f"usd={rng('cost', lambda x: f'{x:.2f}')} out={rng('output', usage.ktok)} "
             f"active={rng('active_s', lambda x: f'{x / 3600:.1f}h')} peak={rng('peak', usage.ktok)} "
             f"budget={usage.ktok(t.get('budget')) if t.get('budget') else '-'} cal=x{est['calibration']['factor']:.2f}")
 

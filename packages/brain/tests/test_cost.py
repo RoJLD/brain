@@ -313,7 +313,15 @@ def test_the_size_is_the_first_key_only_while_it_lowers_the_backtests_error(proj
     assert est["basis"] == "size+class" and {i for i, _ in est["similar"]} == {"wi-s0", "wi-s2", "wi-s4", "wi-s6"}
     assert est["size_key"]["kept"] and "size key kept: backtests' error x" in "\n".join(cost.render_estimate(est))
     # a brief's text carries its size as « - size: L »
-    assert cost.target_of(led, "Brief. - size: L\n**Task class:** standard")["size"] == "L"
+    assert cost.target_of(led, "Brief.\n- size: L\n**Task class:** standard")["size"] == "L"
+    for text in ("a font-size: m rule", "Batch size: S.", "- size: Large", "- size: m"):   # not a size line
+        assert cost.target_of(led, text)["size"] == ""
+    # the two backtests cover the same items; the errors compared are the sized items'
+    assert {t["id"] for t in cost.backtests(led)} == {t["id"] for t in cost.backtests(led, size_key=True)}
+    # the estimate records the size judged at the start, and the backtests read it, not a size judged again later
+    assert " size=S usd=" in cost.estimate_text(est)
+    led.items["wi-s0"].props.update(size="L", cost_estimate="2026-10-09 class=standard size=S usd=10.00")
+    assert cost.actual(led.items["wi-s0"])["size"] == "S"
     au = cost.audit(led, "2026-10-01", "2026-11-01")
     assert [(t["size"], t["proposed"]) for t in au["sizes"]["thresholds"]] == [("S", 0.2), ("M", None), ("L", 1.5)]
     # the key that does not lower the error is left out: the estimator falls back to class and theme

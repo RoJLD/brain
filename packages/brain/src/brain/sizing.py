@@ -96,7 +96,7 @@ def size_check(a: dict) -> dict | None:
     than judged) or over}; None without a judged size."""
     if not a.get("size"):
         return None
-    hours = (a.get("active_s") or 0) / 3600
+    hours = round((a.get("active_s") or 0) / 3600, 2)   # the hours shown are the hours judged
     got = size_of(hours)
     order = SIZES.index
     verdict = "hit" if got == a["size"] else "under" if order(got) > order(a["size"]) else "over"
@@ -127,7 +127,8 @@ def _size_table(rows: list[dict]) -> list[dict]:
 
 def _thresholds(everything: list[dict]) -> list[dict]:
     """Each size's upper bound now and the one the history proposes: the p75 of the active hours of the items
-    judged that size (MIN_ITEMS at least, else None)."""
+    judged that size (MIN_ITEMS at least, else None). A proposal, not a boundary between two sizes' spreads: when the
+    proposals do not rise with the size, the report says the judged sizes do not separate the time yet."""
     checked = [x for x in (size_check(a) for a in everything) if x]
     out = []
     for s in SIZES[:-1]:
