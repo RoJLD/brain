@@ -174,13 +174,19 @@ def capabilities(path: Path = FILE) -> tuple[dict[str, Entry], list[str]]:
             errs.append(f"{where}: a capability is a mapping")
             continue
         errs += _shape(str(eid), d, where, stack=False)
-        deps = [str(x) for x in d.get("depends_on") or []] if isinstance(d.get("depends_on"), list) else []
-        uses = [str(x) for x in d.get("uses") or []] if isinstance(d.get("uses"), list) else []
-        out[str(eid)] = _entry(str(eid), d, "capability", depends_on=deps, uses=uses)
-    for e in out.values():
-        errs += [f"{path.name}: {e.id}: {k} names {x!r}, no capability of that name"
-                 for k in ("depends_on", "uses") for x in getattr(e, k) if x not in out]
-    return out, errs
+        out[str(eid)] = _entry(str(eid), d, "capability", depends_on=_strs(d.get("depends_on")),
+                               uses=_strs(d.get("uses")))
+    return out, errs + _dependency_errors(out, path.name)
+
+
+def _strs(v) -> list[str]:
+    return [str(x) for x in v] if isinstance(v, list) else []
+
+
+def _dependency_errors(caps: dict[str, Entry], where: str) -> list[str]:
+    """A capability's depends_on and uses name capabilities of the same file."""
+    return [f"{where}: {e.id}: {k} names {x!r}, no capability of that name"
+            for e in caps.values() for k in ("depends_on", "uses") for x in getattr(e, k) if x not in caps]
 
 
 def stack_entries(reg: dict) -> dict[str, Entry]:

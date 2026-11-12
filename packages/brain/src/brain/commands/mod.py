@@ -27,48 +27,44 @@ USAGE = """\
 """
 
 
-def cmd_mod(args, root: Path) -> int:
-    sub = args.mod_cmd
-    try:
-        if sub == "list":
-            rows = mod.rows(root)
-            if args.json:
-                print(json.dumps(rows, ensure_ascii=False, indent=1))
-                return 0
-            w = max([len(r["id"]) for r in rows] + [6])
-            print(f"{'module':<{w}}  {'state':<16}  {'from':<12}  capabilities (fallback)")
-            for r in rows:
-                fb = f" ({r['fallback']})" if r["fallback"] and r["state"] != "on" else ""
-                print(f"{r['id']:<{w}}  {r['state']:<16}  {r['source']:<12}  {', '.join(r['capabilities'])}{fb}")
-            return 0
-        if sub == "show":
-            data = mod.show(root, args.id)
-            if args.json:
-                print(json.dumps(data, ensure_ascii=False, indent=1))
-                return 0
-            print(f"{data['id']} ({data['name']}): {data['state']}")
-            for c in data["capabilities"]:
-                print(f"  {c['id']}: {c['class']}, {c['profile']}, {'on' if c['on'] else 'off'}"
-                      + (f", requires {', '.join(c['requires'])}" if c["requires"] else "")
-                      + (f", fallback: {c['fallback']}" if c["fallback"] else ""))
-            print(f"  depends on: {', '.join(data['depends_on']) or 'nothing'}; "
-                  f"uses: {', '.join(data['uses']) or 'nothing'}")
-            for r in data["realized_by"]:
-                print(f"  realised by {r.get('project')} ({r.get('kind')}, {r.get('state')})")
-            return 0
-        if sub == "explain":
-            print("\n".join(mod.explain(root, args.id)))
-            return 0
-        new, lines = mod.plan(root, args.id, sub == "enable", getattr(args, "cascade", False))
-    except mod.ModError as exc:
-        print(f"brain mod {sub}: {exc}", file=sys.stderr)
-        return 2
-    print("\n".join(lines))
+def _list(args, root: Path) -> list[str]:
+    rows = mod.rows(root)
+    if args.json:
+        return [json.dumps(rows, ensure_ascii=False, indent=1)]
+    w = max([len(r["id"]) for r in rows] + [6])
+    return [f"{'module':<{w}}  {'state':<16}  {'from':<12}  capabilities (fallback)"] + [
+        f"{r['id']:<{w}}  {r['state']:<16}  {r['source']:<12}  {', '.join(r['capabilities'])}"
+        + (f" ({r['fallback']})" if r["fallback"] and r["state"] != "on" else "") for r in rows]
+
+
+def _show(args, root: Path) -> list[str]:
+    data = mod.show(root, args.id)
+    if args.json:
+        return [json.dumps(data, ensure_ascii=False, indent=1)]
+    return ([f"{data['id']} ({data['name']}): {data['state']}"]
+            + [f"  {c['id']}: {c['class']}, {c['profile']}, {'on' if c['on'] else 'off'}"
+               + (f", requires {', '.join(c['requires'])}" if c["requires"] else "")
+               + (f", fallback: {c['fallback']}" if c["fallback"] else "") for c in data["capabilities"]]
+            + [f"  depends on: {', '.join(data['depends_on']) or 'nothing'}; "
+               f"uses: {', '.join(data['uses']) or 'nothing'}"]
+            + [f"  realised by {r.get('project')} ({r.get('kind')}, {r.get('state')})" for r in data["realized_by"]])
+
+
+def _change(args, root: Path) -> list[str]:
+    new, lines = mod.plan(root, args.id, args.mod_cmd == "enable", getattr(args, "cascade", False))
     if not args.apply:
-        print("plan only: --apply writes $BRAIN_HOME/profile.json for this machine")
-        return 0
+        return lines + ["plan only: --apply writes $BRAIN_HOME/profile.json for this machine"]
     path, written = tiers.write(new)
-    print(f"{path}: {'written' if written else 'already so, nothing written'}")
+    return lines + [f"{path}: {'written' if written else 'already so, nothing written'}"]
+
+
+def cmd_mod(args, root: Path) -> int:
+    act = {"list": _list, "show": _show, "explain": lambda a, r: mod.explain(r, a.id)}.get(args.mod_cmd, _change)
+    try:
+        print("\n".join(act(args, root)))
+    except mod.ModError as exc:
+        print(f"brain mod {args.mod_cmd}: {exc}", file=sys.stderr)
+        return 2
     return 0
 
 

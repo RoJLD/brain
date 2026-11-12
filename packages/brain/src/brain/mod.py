@@ -47,18 +47,26 @@ def _store(root: Path | None) -> Path | None:
     return store if store.is_dir() else None
 
 
+def _ids(v) -> list[str]:
+    return [str(x) for x in v] if isinstance(v, list) else []
+
+
+def _from_registry(entries: list[dict], reg: dict) -> dict[str, Module]:
+    """The registry's entries that list capabilities of tiers.yaml, as modules."""
+    out = {}
+    for m in entries:
+        caps = [c for c in _ids(m.get("capabilities")) if c in reg]
+        if caps:
+            out[str(m["id"])] = Module(str(m["id"]), str(m.get("name") or m["id"]), caps, _ids(m.get("depends_on")),
+                                       _ids(m.get("uses")), list(m.get("realized_by") or []))
+    return out
+
+
 def catalogue(root: Path | None, reg: dict | None = None, store: Path | None = None) -> dict[str, Module]:
     """The modules: the registry's entries that list capabilities (of tiers.yaml), else one per capability."""
     reg = reg if reg is not None else tiers.registry(root)[0]
     store = store or _store(root)
-    entries = (modules.registry(store, root) or []) if store is not None else []
-    out = {}
-    for m in entries:
-        caps = [str(c) for c in m.get("capabilities") or [] if str(c) in reg]
-        if caps:
-            out[str(m["id"])] = Module(str(m["id"]), str(m.get("name") or m["id"]), caps,
-                                       [str(x) for x in m.get("depends_on") or []],
-                                       [str(x) for x in m.get("uses") or []], list(m.get("realized_by") or []))
+    out = _from_registry((modules.registry(store, root) or []) if store is not None else [], reg)
     if out:
         return out
     return {e.id: Module(e.id, e.title, [e.id], list(e.depends_on), list(e.uses), from_registry=False)
@@ -146,52 +154,84 @@ def show(root: Path | None, ref: str) -> dict:
                             for r in m.realized_by]}
 
 
+def _check_enable(m: Module, reg: dict) -> None:
+    for c in m.capabilities:
+        if reg[c].status != "built":
+            raise ModError(f"{m.id}: {c} is planned ({reg[c].item}), not built yet")
+
+
+def _fallbacks(m: Module, reg: dict) -> str:
+    return "; ".join(sorted({reg[c].fallback for c in m.capabilities if reg[c].fallback}))
+
+
+def _enable(m: Module, cat: dict, edges: dict, on: set[str], own: dict) -> list[str]:
+    pulled = [d for d in _closure(m.id, edges) if state(cat[d], on) != "on"]
+    for mid in [m.id, *pulled]:
+        own[mid] = True
+    return ([f"enable {m.id} ({', '.join(m.capabilities)})"]
+            + [f"  pulls {d} ({', '.join(cat[d].capabilities)}): {m.id} needs it" for d in pulled]
+            + [f"  uses {u} when it is on, its fallback otherwise" for u in m.uses])
+
+
+def _disable(m: Module, cat: dict, edges: dict, on: set[str], own: dict, reg: dict, cascade: bool) -> list[str]:
+    if any(reg[c].cls == "core" for c in m.capabilities):
+        raise ModError(f"{m.id} is core: every profile has it")
+    users = [x for x in cat if x != m.id and m.id in _closure(x, edges) and state(cat[x], on) != "off"]
+    if users and not cascade:
+        raise ModError(f"{m.id} is needed by {', '.join(users)}, which are on: --cascade turns them off too")
+    for mid in [m.id, *users]:
+        own[mid] = False
+    return ([f"disable {m.id} ({', '.join(m.capabilities)}): {_fallbacks(m, reg) or 'nothing replaces it'}"]
+            + [f"  cascade: disable {u}, which needs it" for u in users])
+
+
+def _keep_differences(own: dict, cat: dict, reg: dict, cur: tiers.Choice, grp: dict) -> dict:
+    """The machine's overrides kept where they differ from the default (the preset, then config.json's)."""
+    keep = tiers.preset(reg, cur.base)
+    default = {**{c: c in keep for c in reg}, **tiers.expand(cur.inherited, grp)}
+
+    def by_default(k: str) -> bool:
+        if k in cat and cat[k].from_registry:
+            return all(default.get(c, False) for c in cat[k].capabilities)
+        return default.get(k, False)
+
+    return {k: v for k, v in sorted(own.items()) if v != by_default(k)}
+
+
 def plan(root: Path | None, ref: str, enable: bool, cascade: bool = False) -> tuple[tiers.Choice, list[str]]:
     """The choice ``brain mod enable|disable`` would write to profile.json, and the plan's lines."""
     reg, _ = tiers.registry(root)
-    cat, cur = catalogue(root, reg), tiers.choice(root)
+    cat, cur, grp = catalogue(root, reg), tiers.choice(root), groups(root)
     m = resolve(cat, ref)
     on, _ = tiers.active(reg, cur)
     edges = needs(cat, reg)
     own = dict(cur.own if cur.own is not None else cur.components)
-    lines = []
     if enable:
-        for c in m.capabilities:
-            e = reg[c]
-            if e.status != "built":
-                raise ModError(f"{m.id}: {c} is planned ({e.item}), not built yet")
-        pulled = [d for d in _closure(m.id, edges) if state(cat[d], on) != "on"]
-        for mid in [m.id, *pulled]:
-            own[mid] = True
-        lines.append(f"enable {m.id} ({', '.join(m.capabilities)})")
-        lines += [f"  pulls {d} ({', '.join(cat[d].capabilities)}): {m.id} needs it" for d in pulled]
-        lines += [f"  uses {u} when it is on, its fallback otherwise" for u in m.uses]
+        _check_enable(m, reg)
+        lines = _enable(m, cat, edges, on, own)
     else:
-        if any(reg[c].cls == "core" for c in m.capabilities):
-            raise ModError(f"{m.id} is core: every profile has it")
-        users = [x for x in cat if x != m.id and m.id in _closure(x, edges) and state(cat[x], on) != "off"]
-        if users and not cascade:
-            raise ModError(f"{m.id} is needed by {', '.join(users)}, which are on: --cascade turns them off too")
-        for mid in [m.id, *users]:
-            own[mid] = False
-        lines.append(f"disable {m.id} ({', '.join(m.capabilities)}): "
-                     + "; ".join(sorted({reg[c].fallback for c in m.capabilities if reg[c].fallback})
-                                 or ["nothing replaces it"]))
-        lines += [f"  cascade: disable {u}, which needs it" for u in users]
-    keep = tiers.preset(reg, cur.base)
-    default = {**{c: c in keep for c in reg}, **tiers.expand(cur.inherited, groups(root))}
-    own = {k: v for k, v in sorted(own.items())
-           if v != (all(default.get(c, False) for c in cat[k].capabilities) if k in cat and cat[k].from_registry
-                    else default.get(k, False))}
+        lines = _disable(m, cat, edges, on, own, reg, cascade)
+    own = _keep_differences(own, cat, reg, cur, grp)
     new = tiers.Choice(cur.base, own, "machine", cur.machine, computed_from=dict(cur.computed_from), own=own,
                        inherited=cur.inherited)
-    after, _ = tiers.active(reg, tiers.Choice(cur.base, {**tiers.expand(cur.inherited, groups(root)),
-                                                         **tiers.expand(own, groups(root))}))
+    after, _ = tiers.active(reg, tiers.Choice(cur.base, {**tiers.expand(cur.inherited, grp), **tiers.expand(own, grp)}))
     gain, loss = sorted(after - on), sorted(on - after)
-    cost = {k: sum((reg[e].resources or {}).get(k, 0) for e in gain) for k in tiers.RESOURCES}
+    cost = {k: v for k in tiers.RESOURCES if (v := sum((reg[e].resources or {}).get(k, 0) for e in gain))}
     lines.append(f"  capabilities on: {', '.join(gain) or 'none'}; off: {', '.join(loss) or 'none'}"
-                 + (f"; cost {tiers._cost({k: v for k, v in cost.items() if v})}" if any(cost.values()) else ""))
+                 + (f"; cost {tiers._cost(cost)}" if cost else ""))
     return new, lines
+
+
+def _layer_line(label: str, m: Module, comps: dict) -> str:
+    v = _layer(m, comps)
+    named = v is not None or m.id in comps or any(c in comps for c in m.capabilities)
+    return f"  {label}: " + ({True: "on", False: "off", None: "mixed"}[v] if named else "says nothing")
+
+
+def _notes(m: Module, reg: dict) -> list[str]:
+    return ([f"  note       {c} is core: never off" for c in m.capabilities if reg[c].cls == "core"]
+            + [f"  note       {c} is auto: used whenever it is found ({reg[c].fallback} otherwise)"
+               for c in m.capabilities if reg[c].auto])
 
 
 def explain(root: Path | None, ref: str) -> list[str]:
@@ -202,26 +242,16 @@ def explain(root: Path | None, ref: str) -> list[str]:
     m = resolve(cat, ref)
     on, _ = tiers.active(reg, ch)
     keep = tiers.preset(reg, ch.base)
-    say = {True: "on", False: "off", None: "mixed"}
-    lines = [f"{m.id} ({m.name}): {state(m, on)}"]
-    lines.append(f"  engine     base {ch.base}: " + ", ".join(f"{c} {'on' if c in keep else 'off'}"
-                                                         for c in m.capabilities))
-    for label, comps in (("config     config.json tier.components", ch.inherited),
-                         ("machine    profile.json", ch.own or {})):
-        v = _layer(m, comps)
-        lines.append(f"  {label}: " + (say[v] if v is not None or any(c in comps for c in m.capabilities)
-                                       or m.id in comps else "says nothing"))
-    pulled = [c for c in m.capabilities if c in on and c not in keep and tiers.expand(
-        {**ch.inherited, **(ch.own or {})}, groups(root)).get(c) is not True]
-    lines.append("  pulled     " + (", ".join(f"{c} (a dependency of what is on)" for c in pulled) or "nothing"))
-    lines += [f"  scope      {s}" for s in _scopes(root, m)] or ["  scope      no scope says anything of it"]
-    for c in m.capabilities:
-        e = reg[c]
-        if e.cls == "core":
-            lines.append(f"  note       {c} is core: never off")
-        elif e.auto:
-            lines.append(f"  note       {c} is auto: used whenever it is found ({e.fallback} otherwise)")
-    return lines
+    named = tiers.expand({**ch.inherited, **(ch.own or {})}, groups(root))
+    pulled = [c for c in m.capabilities if c in on and c not in keep and named.get(c) is not True]
+    return ([f"{m.id} ({m.name}): {state(m, on)}",
+             f"  engine     base {ch.base}: "
+             + ", ".join(f"{c} {'on' if c in keep else 'off'}" for c in m.capabilities),
+             _layer_line("config     config.json tier.components", m, ch.inherited),
+             _layer_line("machine    profile.json", m, ch.own or {}),
+             "  pulled     " + (", ".join(f"{c} (a dependency of what is on)" for c in pulled) or "nothing")]
+            + ([f"  scope      {s}" for s in _scopes(root, m)] or ["  scope      no scope says anything of it"])
+            + _notes(m, reg))
 
 
 def _scopes(root: Path | None, m: Module) -> list[str]:
