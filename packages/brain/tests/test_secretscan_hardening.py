@@ -36,7 +36,7 @@ def test_a_pem_block_without_its_end_drops_to_the_end():
 
 @pytest.mark.parametrize("name, value", [
     ("ntfy-token", "tk_" + "a1B2c3D4e5" * 2 + "f6G7h8I9j"),
-    ("tailscale-key", "tskey-auth-kAbCd1CNTRL-" + "Q" * 30),
+    ("tailscale-key", "tskey-" + "auth-kAbCd1CNTRL-" + "Q" * 30),
     ("tailscale-key", "tskey-" + "kAbCd1CNTRL-" + "Q7" * 15),   # the older format
     ("pypi-token", "pypi-AgENdGVzdC5weXBpLm9yZw" + "B" * 60),   # TestPyPI
     ("gitlab-token", "glpat-" + "x" * 20),
