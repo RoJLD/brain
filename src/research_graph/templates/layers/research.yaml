@@ -1,0 +1,90 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+# A domain's own research types (a detector, an indicator, a regime...) go in the domain template's own layer.
+name: research
+version: 1
+title: "The research: hypotheses at three levels, the experiments that test them, their runs and verdicts"
+requires: [work, decisions]
+mode: written
+generator: "research_graph sync writes Experiment stubs (experiments/exp*/), SDR stubs (the SDR log) and L2 stubs"
+node_types:
+  Hypothesis: "a research question (L0), a named mechanism (L1) or a pre-registered prediction (L2)"
+  Experiment: "a planned test of one or more hypotheses (experiments/exp<nnn>-<slug>/)"
+  Run: "one concrete run of an experiment"
+  Verdict: "the outcome of an experiment, that gates downstream work"
+  SDR: "a scientific decision record: a dated heading of notes/scientific_decisions.md"
+  Paper: "a citation of the evidence base"
+edge_types:
+  tests:
+    - {from: [Experiment], to: [Hypothesis], why: "an experiment tests a hypothesis"}
+  produces:
+    - {from: [Experiment], to: [Run, Verdict], why: "an experiment -> its runs and its verdict"}
+    - {from: [Run], to: [Verdict]}
+  validates:
+    - {from: [Verdict], to: [Hypothesis], why: "the verdict supports the hypothesis"}
+  refutes:
+    - {from: [Verdict], to: [Hypothesis], why: "the verdict refutes it"}
+  inconclusive:
+    - {from: [Verdict], to: [Hypothesis], why: "underpowered or an artefact"}
+  gated_by:
+    - {from: [Experiment], to: [Verdict], why: "blocked until the verdict validates"}
+  refines:
+    - {from: [Experiment], to: [Experiment], why: "a follow-up experiment"}
+    - {from: [SDR], to: [SDR]}
+  addresses:
+    - {from: [Hypothesis], to: [Hypothesis], why: "an L1 mechanism -> the L0 question"}
+  instantiates:
+    - {from: [Hypothesis], to: [Hypothesis], why: "an L2 prediction -> the L1 mechanism"}
+  cites:
+    - {from: [SDR, Experiment], to: [Paper], why: "a decision or an experiment cites a paper"}
+  corroborates:
+    - {from: [Paper], to: [Hypothesis, Verdict, Experiment], why: "a peer finds the same effect"}
+  contradicts:
+    - {from: [Paper], to: [Hypothesis, Verdict, Experiment], why: "a peer finds the opposite, or a null"}
+  extends:
+    - {from: [Experiment], to: [Paper], why: "an experiment extends a peer's method or result"}
+  spawns:
+    - {from: [Verdict], to: [Experiment, Hypothesis], why: "a verdict -> the follow-up experiment or hypothesis"}
+  uses: {why: "an experiment -> a tool, a dataset or a method it uses (a domain layer names its types)"}
+  decided_by:
+    - {from: "*", to: [SDR], why: "an experiment or a choice follows a scientific decision"}
+  supersedes:
+    - {from: [SDR], to: [SDR]}
+statuses: [open, proposed, planned, active, validated, rejected, inconclusive, deferred, superseded]
+status_by_type:
+  Hypothesis: [open, proposed, planned, active, validated, rejected, inconclusive, deferred, superseded]
+  Experiment: [planned, active, validated, rejected, inconclusive, superseded]
+  Run: [planned, active, validated, rejected, inconclusive]
+  Verdict: [open, validated, rejected, inconclusive, superseded]
+  SDR: [planned, active, validated, superseded]
+  Paper: [active, validated, superseded]
+levels: [L0, L1, L2]
+ids: {Hypothesis: "H-<slug>", Experiment: "exp<nnn>-<slug>", Run: "run-<slug>", Verdict: "verdict-<slug>",
+      SDR: "sdr-<date>-<slug>", Paper: "paper-<key>"}
+commands: ["research_graph frontier", "research_graph gated", "research_graph provenance <id>",
+           "research_graph sync --write"]
+views: ["the research frontier (research_graph frontier)"]
+checks: ["an Experiment that tests no Hypothesis (research_graph check, blocking)",
+         "a validated Hypothesis without a validating Verdict, or with a refuting one (blocking)",
+         "an L2 without its L1 parent, an L0 or L1 stub without prose (advisories)"]
+projection: {gitnexus: research-graph, colors: {Hypothesis: "#a855f7", Experiment: "#8b5cf6", Run: "#c4b5fd",
+                                                 Verdict: "#10b981", SDR: "#d97706", Paper: "#64748b"}}
+lifecycle: {typologies: [research, ai-ml], proposed_at: [explore, build],
+            injects: [{after: build, stage: preregistration-backtest}]}
+examples:
+  nodes:
+    - {id: example-h-a-question, type: Hypothesis, level: L0, status: open, title: "Does the signal lead the price?"}
+    - {id: example-h-a-mechanism, type: Hypothesis, level: L1, status: active,
+       title: "A slower market reacts later to the same news"}
+    - {id: example-exp001-lead-lag, type: Experiment, status: active, title: "Lead-lag on two fictitious series",
+       props: {methodological: false}}
+    - {id: example-run-first, type: Run, status: validated, title: "The first run of the lead-lag test"}
+    - {id: example-verdict-lead-lag, type: Verdict, status: inconclusive, title: "Underpowered on this sample"}
+    - {id: example-paper-a-survey, type: Paper, status: active, title: "A fictitious survey of lead-lag methods"}
+  edges:
+    - {from: example-h-a-mechanism, to: example-h-a-question, type: addresses}
+    - {from: example-exp001-lead-lag, to: example-h-a-mechanism, type: tests}
+    - {from: example-exp001-lead-lag, to: example-run-first, type: produces}
+    - {from: example-run-first, to: example-verdict-lead-lag, type: produces}
+    - {from: example-verdict-lead-lag, to: example-h-a-mechanism, type: inconclusive}
+    - {from: example-exp001-lead-lag, to: example-paper-a-survey, type: cites}
+    - {from: example-wi-first, to: example-exp001-lead-lag, type: depends_on}

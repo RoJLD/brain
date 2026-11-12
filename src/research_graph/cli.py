@@ -6,7 +6,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import history, priorities, query, report
+from . import history, layers, priorities, query, report, yamlio
 from .code_layer import FAILING, check_code_refs, orphan_code_refs, repo_heads, structure_errors
 from .export_gitnexus import build_payload, push
 from .init import init_store
@@ -16,8 +16,17 @@ from .loader import ValidationError, apply_overlay, load_store, read_foreign
 from .model import LayeredGraph
 from .roadmap import FILE as ROADMAP_FILE
 from .roadmap import render_roadmap, roadmap_stale, write_roadmap
+from .schema import load_schema
 from .sync import derive, regenerate_edges_file_text, render_edges, render_stubs
-from .validate import _posix, check_consistency, check_coverage, check_wiring, decision_logs, unchecked_anchors
+from .validate import (
+    _posix,
+    check_consistency,
+    check_coverage,
+    check_wiring,
+    decision_logs,
+    endpoint_errors,
+    unchecked_anchors,
+)
 
 DEFAULT_STORE = "notes/graph"
 OPEN = ["doing", "todo", "blocked"]
@@ -107,6 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     ini.add_argument("--owner", help="Who decides for the store, a person or a team (owner in schema.yaml).")
     ini.add_argument("--examples", action="store_true",
                      help="Example spec, milestone, work items and ADR to read and replace.")
+    ini.add_argument("--layers", metavar="NAME,NAME", help="Compose schema.yaml from the catalogue's layers (with "
+                                                           "what they require; research_graph layers) instead of "
+                                                           "the default schema.")
     sub.add_parser("build")
     sub.add_parser("frontier")
     sub.add_parser("gated")
@@ -180,6 +192,28 @@ def main(argv: list[str] | None = None) -> int:
     pa.add_argument("--set", action="append", default=[], metavar="ID=P1",
                     help="Validate with the owner's value instead of the proposal (repeatable).")
     pa.add_argument("--write", action="store_true", help="Edit the node files (then kanban --write and check).")
+    lys = sub.add_parser("layers", help="Graph templates as layers: the catalogue, the store's layers, a composed "
+                                        "schema, adding a layer (a plan, then --write).")
+    lys.add_argument("--json", action="store_true")
+    lsub = lys.add_subparsers(dest="lcmd")
+    lshow = lsub.add_parser("show", help="One layer: its types, edges and endpoints, mode, commands, examples.")
+    lshow.add_argument("name")
+    lshow.add_argument("--json", action="store_true")
+    lcomp = lsub.add_parser("compose", help="Print the schema.yaml the layers make (with what they require).")
+    lcomp.add_argument("names", nargs="+")
+    lcomp.add_argument("--owner", help="Who decides for the store (owner in schema.yaml).")
+    lcomp.add_argument("--layer-file", action="append", default=[], metavar="PATH",
+                       help="A layer of a file of its own (a domain template's), composed with the catalogue's "
+                            "(repeatable); name it in NAMES too.")
+    ladd = lsub.add_parser("add", help="Add layers to --store's schema.yaml: the plan (a diff), then --write.")
+    ladd.add_argument("names", nargs="+")
+    ladd.add_argument("--layer-file", action="append", default=[], metavar="PATH",
+                      help="A layer of a file of its own (repeatable); name it in NAMES too.")
+    ladd.add_argument("--write", action="store_true", help="Write the plan (refused while it has a problem).")
+    lprop = lsub.add_parser("propose", help="The layers a typology may take and a stage proposes that --store "
+                                            "lacks, with the command that adds them.")
+    lprop.add_argument("--typology", required=True, help="software, api-cli, ai-ml, infra, research, ...")
+    lprop.add_argument("--stage", required=True, help="explore, build, launch, deliver, grow, ...")
     exp = sub.add_parser("export-gitnexus")
     exp.add_argument("--out", default="results/graph/gitnexus_payload.json")
     exp.add_argument("--layers", nargs="*", help="Only these layers (default: all).")
@@ -196,6 +230,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "init":
         return _init(args)
+    if args.cmd == "layers":
+        return _layers(args)
     if args.cmd == "sync":
         res = derive(args.store, args.repo_root, args.decisions)
         exp_txt = render_stubs(res["experiments"])
@@ -364,7 +400,8 @@ def main(argv: list[str] | None = None) -> int:
         problems = check_coverage(graph, args.repo_root, repos, args.decisions)
         problems += check_wiring(graph, args.repo_root)
         problems += structure_errors(graph)
-        advisories = check_consistency(graph) + orphan_code_refs(graph) + unchecked_anchors(graph, repos)
+        problems += endpoint_errors(graph, load_schema(Path(args.store) / "schema.yaml"))
+        advisories =check_consistency(graph) + orphan_code_refs(graph) + unchecked_anchors(graph, repos)
         views = kanban_stale(graph, args.repo_root, args.views) + roadmap_stale(graph, args.repo_root, args.views)
         for adv in advisories + views:
             print(f"advisory: {adv}")
@@ -387,8 +424,8 @@ def _init(args) -> int:
     adr_logs = [rel for rel, kind in decision_logs(args.decisions) if kind == "ADR"]
     try:
         written = init_store(args.store, args.repo_root, owner=args.owner, examples=args.examples,
-                             log=adr_logs[0] if adr_logs else None)
-    except FileExistsError as exc:
+                             log=adr_logs[0] if adr_logs else None, layer_names=_ids(args.layers))
+    except (FileExistsError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 1
     for path in written:
@@ -398,6 +435,102 @@ def _init(args) -> int:
     if not code:
         print("next: research_graph check, then edit nodes/work.yaml and edges/work.yaml (research_graph --help)")
     return code
+
+
+def _layer_files(args) -> dict:
+    out = {}
+    for path in getattr(args, "layer_file", []) or []:
+        la = layers.load_layer_file(path)
+        out[la.name] = la
+    return out
+
+
+def _store_data(args) -> dict | None:
+    f = Path(args.store) / "schema.yaml"
+    return yamlio.loads(f.read_text(encoding="utf-8")) or {} if f.is_file() else None
+
+
+def _layers(args) -> int:
+    """research_graph layers: the catalogue (and --store's layers), show, compose, add (a plan, then --write),
+    propose."""
+    try:
+        return _layers_run(args)
+    except layers.LayerError as exc:
+        print(f"research_graph layers: {exc}", file=sys.stderr)
+        return 2
+
+
+def _layers_run(args) -> int:
+    cat = layers.catalogue()
+    data = _store_data(args)
+    have = layers.store_layers(data) if data is not None else None
+    if args.lcmd is None:
+        rows = [{"layer": la.name, "version": la.version, "mode": la.mode, "requires": list(la.requires),
+                 "types": list(la.node_types), "title": la.title,
+                 **({"in_store": la.name in have["present"]} if have else {})} for la in cat.values()]
+        if args.json:
+            _print_json({"layers": rows, "store": have})
+            return 0
+        for r in rows:
+            mark = "" if have is None else ("* " if r["in_store"] else "  ")
+            req = f" (requires {', '.join(r['requires'])})" if r["requires"] else ""
+            print(f"{mark}{r['layer']:<11} v{r['version']} {r['mode']:<9} {', '.join(r['types'])}{req}")
+        if have is not None:
+            print(f"* in {args.store}" + (f"; its own layers: {', '.join(have['other'])}" if have["other"] else ""))
+        return 0
+    if args.lcmd == "show":
+        if args.name not in cat:
+            raise layers.LayerError(f"layer {args.name!r}: not in the catalogue ({', '.join(cat)})")
+        la = cat[args.name]
+        if args.json:
+            _print_json(la.data)
+            return 0
+        print(f"{la.name} v{la.version} ({la.mode}): {la.title}")
+        if la.requires:
+            print(f"requires: {', '.join(la.requires)}")
+        if la.data.get("generator"):
+            print(f"generator: {la.data['generator']}")
+        for t, why in la.node_types.items():
+            print(f"  {t}: {why}" + (f" [{', '.join(la.status_by_type[t])}]" if t in la.status_by_type else ""))
+        for et, pairs in la.edges.items():
+            ends = "; ".join(f"{layers.flow(p['from'])} -> {layers.flow(p['to'])}" for p in pairs) or "not checked"
+            print(f"  -{et}-> {ends}")
+        for key in ("commands", "views", "checks"):
+            if la.data.get(key):
+                print(f"{key}: {'; '.join(la.data[key])}")
+        ex = la.data.get("examples") or {}
+        print(f"examples: {len(ex.get('nodes') or [])} node(s), {len(ex.get('edges') or [])} edge(s), fictitious")
+        return 0
+    if args.lcmd == "compose":
+        resolved = layers.resolve(args.names, _layer_files(args))
+        print(layers.render(layers.compose_layers(resolved, args.owner), layers.header_for(resolved)), end="")
+        return 0
+    if args.lcmd == "propose":
+        if have is None:
+            raise layers.LayerError(f"{args.store}: no schema.yaml")
+        missing = [la for la in layers.proposed(args.typology, args.stage) if la.name not in have["present"]]
+        for la in missing:
+            print(f"{la.name:<11} {la.title}")
+        print(f"next: research_graph --store {args.store} layers add {' '.join(la.name for la in missing)} (a plan, "
+              "then --write)" if missing else f"nothing to propose: {args.store} has the layers of {args.typology} "
+              f"at {args.stage}")
+        return 0
+    plan = layers.add_plan(args.store, args.names, _layer_files(args))   # add
+    for line in plan.lines:
+        print(line)
+    if plan.added:
+        print(plan.diff(), end="")
+    for p in plan.problems:
+        print(f"problem: {p}", file=sys.stderr)
+    if plan.problems:
+        return 1
+    if not plan.added:
+        return 0
+    if not args.write:
+        print("(plan only: --write writes it)")
+        return 0
+    print(f"wrote {layers.write(plan)}; next: research_graph check, then sync --write when the layer is generated")
+    return 0
 
 
 def _print_json(data) -> None:

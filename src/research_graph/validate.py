@@ -447,6 +447,33 @@ def check_wiring(graph: nx.DiGraph, repo_root: str | Path | None = None) -> list
     )
 
 
+def _ends(allowed) -> str:
+    return "any type" if allowed is None else "|".join(sorted(allowed))
+
+
+def endpoint_errors(graph: nx.DiGraph, schema) -> list[str]:
+    """BLOCKING when the schema declares them (``endpoints``, research_graph layers): an edge whose source or target
+    type is outside every (from, to) pair its type allows. An edge type without pairs is not checked; an end whose
+    type is unknown (another store's node without one) is not checked; an overlay's edges follow its own schema."""
+    rules = getattr(schema, "endpoints", None) or {}
+    problems: list[str] = []
+    if not rules:
+        return problems
+    for s, d, e in graph.edges(data=True):
+        pairs = rules.get(e.get("type"))
+        if not pairs or e.get("overlay"):
+            continue
+        st = graph.nodes[s].get("type") or graph.nodes[s].get("foreign_type")
+        dt = graph.nodes[d].get("type") or graph.nodes[d].get("foreign_type")
+        if st is None or dt is None:
+            continue
+        if not any((f is None or st in f) and (t is None or dt in t) for f, t in pairs):
+            allowed = ", ".join(f"{_ends(f)} -> {_ends(t)}" for f, t in pairs)
+            problems.append(f"edge {s}->{d}: {e.get('type')} from {st} to {dt} is outside its endpoints ({allowed}; "
+                            "schema.yaml endpoints)")
+    return problems
+
+
 def check_consistency(graph: nx.DiGraph) -> list[str]:
     """Hypothesis-graph consistency advisories (non-blocking; surfaced but do not fail the check).
 

@@ -1,0 +1,43 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+name: records
+version: 1
+title: "The records: the questions put to the owner, the agent sessions and what they did"
+requires: [work, decisions]
+mode: generated
+generator: "brain sync (records/: ddr/, sr/, ar/), only when the schema has the DDR type"
+node_types:
+  DDR: "a decision discussion record: a question put to the owner, its options, recommendation and answer"
+  Session: "a session record: one agent session, its model, effort, tokens, PRs and items"
+  Action: "an action record: a commit, push, PR, tag, ADR or DDR, with the session that produced it"
+edge_types:
+  raised_by:
+    - {from: [DDR], to: [Session], why: "a question -> the session that asked it"}
+  answered_in:
+    - {from: [DDR], to: [ADR], why: "a question -> the ADR its answer produced"}
+  about:
+    - {from: [DDR], to: "*", why: "a question -> the item, milestone or spec it decides on"}
+  produced_by:
+    - {from: "*", to: [Session], why: "an action or an ADR -> the session that produced it"}
+  touches: {why: "a session or an action -> a node it changed"}
+statuses: [pending, answered, integrated, archived, open, closed, recorded]
+status_by_type:
+  DDR: [pending, answered, integrated, archived]
+  Session: [open, closed]
+  Action: [recorded]
+ids: {DDR: "ddr-<date>-<slug>", Session: "sr-<id>", Action: "ar-<id>"}
+commands: ["brain decision ask|pending|answer", "brain sessions", "brain sync"]
+views: ["the decision queue (brain decision pending)"]
+checks: ["a record that does not match its JSON Schema (brain check)"]
+projection: {gitnexus: research-graph, colors: {DDR: "#f97316", Session: "#94a3b8", Action: "#cbd5e1"}}
+lifecycle: {typologies: ["*"], proposed_at: ["*"]}
+examples:
+  nodes:
+    - {id: example-ddr-which-option, type: DDR, status: answered, title: "Which of two options for the first step?"}
+    - {id: example-sr-a-session, type: Session, status: closed, title: "A session that worked on the first step"}
+    - {id: example-ar-a-pull-request, type: Action, status: recorded, title: "The pull request of the first step"}
+  edges:
+    - {from: example-ddr-which-option, to: example-sr-a-session, type: raised_by}
+    - {from: example-ddr-which-option, to: example-adr-keep-the-backlog-in-the-graph, type: answered_in}
+    - {from: example-ddr-which-option, to: example-wi-first, type: about}
+    - {from: example-ar-a-pull-request, to: example-sr-a-session, type: produced_by}
+    - {from: example-ar-a-pull-request, to: example-wi-first, type: touches}

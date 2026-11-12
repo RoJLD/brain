@@ -56,6 +56,68 @@ research_graph --store ops/graph --repo-root . --no-decisions --views ops check
 any other ADRs; default `notes/scientific_decisions.md` and `notes/decisions.md`), `--no-decisions` none, `--views
 DIR` the folder of the board and the roadmap (default `notes`).
 
+## Graph templates: layers
+
+A graph template is a **layer**: a fragment of a store's schema kept as data in the package
+(`src/research_graph/templates/layers/<name>.yaml`). A store composes several layers in one `schema.yaml`; a second
+store is only worth it when who writes it, its repo or its data class differs (an overlay with `external.yaml`, or a
+store of its own linked by `<project>:<id>` references). The catalogue holds the layers real stores have proven:
+
+| Layer | Types | Mode |
+|---|---|---|
+| `work` | WorkItem, Milestone, Spec | written |
+| `decisions` | ADR | generated (the ADR log) |
+| `records` | DDR, Session, Action | generated (`brain sync`, records/) |
+| `lessons` | Lesson | written |
+| `ideas` | Idea | written |
+| `research` | Hypothesis (L0, L1, L2), Experiment, Run, Verdict, SDR, Paper | written, stubs by `sync` |
+| `data` | Source, Dataset, Adapter, Transform | written |
+| `code` | Repo, CodeRef | written |
+| `docs_tests` | Doc, Test, Workflow | generated (`brain sync`) |
+| `features` | Feature | written, statuses from merged PRs |
+| `operations` | Deployment, Stage, Gate, Harness, Account, Limit, Runbook | written |
+| `fleet` | Host, Profile | written |
+| `rules` | Rule | written |
+| `delivery` | Plugin, Skill, Hook, McpServer | written |
+
+Each layer file carries `name`, `version`, `title`, `requires` (the layers it needs), `mode` (`written`, `generated`
+with its `generator`, `projected`), `node_types` (each with a line that says what it is), `edge_types` (each with the
+`{from, to}` pairs it allows, `"*"` for any type, or none: not checked), `statuses`, `status_by_type`, `levels`,
+`required_props`, `ids`, `commands`, `views`, `checks`, `projection` (its GitNexus template and colours), `lifecycle`
+(the typologies that may take it, the stages that propose it) and `examples`: fictitious nodes and edges, ids
+`example-*` (or a fictitious repo `example` where the engine fixes an id's shape: `repo-example`, `code:example:...`).
+
+```bash
+research_graph layers                                   # the catalogue; * marks the --store's layers
+research_graph layers show research                     # one layer: types, edges and endpoints, commands, checks
+research_graph layers compose records research --owner "Your name"   # the schema.yaml they make
+research_graph --store notes/graph layers add research  # the plan: a diff of schema.yaml
+research_graph --store notes/graph layers add research --write
+research_graph --store notes/graph layers propose --typology research --stage explore
+research_graph --store notes/graph --repo-root . init --owner "Your name" --layers records,research
+```
+
+- **Composition.** A schema is the union of its layers, each after those it requires: a node type belongs to one layer
+  only, two layers may share an edge name (`decided_by`, `part_of`). `templates:` records each layer and its version;
+  `endpoints:` the edges' allowed `{from, to}` pairs. The brain's base schema (`brain init`) is `work`, `decisions`,
+  `records` and `lessons` composed, and `init`'s default is `work`, `decisions` and `lessons`: a test keeps them equal,
+  so a store they started never sees its schema move.
+- **Adding a layer** is a plan, then `--write`: the schema's own text and comments are kept, the new types, edges,
+  statuses, layer and endpoints are appended in the file's own style, and the result is read back and the store loaded
+  with it before anything is written. A layer whose types the store already holds under another layer is refused
+  (rename that layer by hand first: no node moves). An edge type the store already has without endpoints stays
+  unchecked: a layer never starts checking old edges. Nothing is removed or renamed: that is a migration (`brain
+  template upgrade`, a later item). The owner's own types go in a layer of their own (`local` by convention), which no
+  command of the catalogue touches.
+- **Endpoints.** `check` refuses an edge whose source or target type is outside every pair its type allows (exit 1).
+  An edge type without pairs is not checked, nor an end of unknown type (another store's node); a type the store lacks
+  never matches, and is there for when its layer joins. A schema without `endpoints:` is checked as before.
+- **A domain template** composes the catalogue's layers and adds its own layer file (`--layer-file PATH` here; in a
+  `brain init` template, `graphs: [{name, store, layers: [...]}]`, its own layers in its folder's `layers/`). It never
+  copies the base.
+- **GitNexus** is the view and analysis side: each layer names its projection (`research-graph`, which
+  `export-gitnexus` fills) and nothing flows back from GitNexus into a store.
+
 `examples/projects.yaml` is a registry for the `brain` command: one entry per project, each with its own store; it
 shows a project with two stores, two projects at one root and a project the brain reads and never writes.
 
@@ -63,7 +125,8 @@ shows a project with two stores, two projects at one root and a project the brai
 
 ```
 notes/graph/
-  schema.yaml          owner, node_types, edge_types, statuses, layers (layer -> types), status_by_type, levels
+  schema.yaml          owner, node_types, edge_types, statuses, layers (layer -> types), status_by_type, levels;
+                       templates and endpoints when composed from layers (below)
   nodes/*.yaml         flow-style nodes: - {id: wi-x, type: WorkItem, status: todo, title: "...", props: {...}}
   nodes/_generated_*   written by sync (decision, experiment and hypothesis stubs); never edited by hand
   edges/*.yaml         - {from: wi-x, to: ms-y, type: part_of}
@@ -93,9 +156,10 @@ with it.
 
 | Command | What it does |
 |---|---|
-| `init [--owner NAME] [--examples]` | A new store from the templates (above). |
+| `init [--owner NAME] [--examples] [--layers A,B]` | A new store from the templates (above); `--layers` composes its schema from the catalogue's layers. |
+| `layers [show NAME \| compose NAMES \| add NAMES [--write] \| propose --typology T --stage S]` | Graph templates as layers (above): the catalogue and the store's layers, one layer, a composed schema, adding layers by a plan, the layers a stage proposes. `--json` on the list and `show`. |
 | `build` | Load and validate the store (with its overlays). |
-| `check [--repo-path NAME=PATH ...]` | Coverage (a node per dated heading of the decision logs, anchors that resolve), wiring and code-layer structure; advisories (consistency, stale generated views). An anchor of another repo's node resolves in the checkout `--repo-path` gives for it; without one it is not checked (an advisory). Exit 1 on a problem. |
+| `check [--repo-path NAME=PATH ...]` | Coverage (a node per dated heading of the decision logs, anchors that resolve), wiring, code-layer structure and edge endpoints (when the schema declares them); advisories (consistency, stale generated views). An anchor of another repo's node resolves in the checkout `--repo-path` gives for it; without one it is not checked (an advisory). Exit 1 on a problem. |
 | `sync [--write]` | Derive decision stubs from `notes/decisions.md` (ADR) and `notes/scientific_decisions.md` (SDR), experiment, hypothesis, verdict, sweep and exploration stubs from `experiments/` and `results/`, and the lineage edges; print them, or write `nodes/_generated_*.yaml` and the auto-derived block of `edges.yaml`. |
 | `kanban [--write] [--out F]` | The work layer as a markdown board (`notes/kanban_graph.md`); `--write` also writes the roadmap. |
 | `roadmap [--write] [--json] [--markdown]` | Milestones: status, trigger, reached, the items that move each (`notes/roadmap_graph.md`). |

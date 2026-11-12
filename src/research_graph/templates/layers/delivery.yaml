@@ -1,0 +1,41 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+name: delivery
+version: 1
+title: "The agents' tooling a brain delivers: plugins, their skills, hooks and MCP servers"
+requires: [decisions]
+mode: written
+node_types:
+  Plugin: "a plugin of the brain's marketplace (plugins/<name>/)"
+  Skill: "a skill of a plugin (plugins/<name>/skills/<skill>/SKILL.md)"
+  Hook: "a hook of a plugin (plugins/<name>/hooks/hooks.json)"
+  McpServer: "an MCP server a plugin declares (plugins/<name>/.mcp.json)"
+edge_types:
+  part_of:
+    - {from: [Skill, Hook, McpServer], to: [Plugin], why: "a skill, hook or server -> its plugin"}
+  delivers:
+    - {from: [Hook], to: [Rule], why: "a hook -> the rule it puts in the agent's context (rules layer)"}
+    - {from: [WorkItem], to: [Plugin, Skill, Hook, McpServer], why: "an item -> the piece it creates"}
+  depends_on: {why: "a skill -> the rule it carries out"}
+statuses: [active, retired]
+status_by_type:
+  Plugin: [active, retired]
+  Skill: [active, retired]
+  Hook: [active, retired]
+  McpServer: [active, retired]
+ids: {Plugin: "plugin-<name>", Skill: "skill-<plugin>-<name>", Hook: "hook-<plugin>-<name>",
+      McpServer: "mcp-<plugin>-<name>"}
+commands: ["brain render --target claude"]
+views: []
+checks: []
+projection: {gitnexus: research-graph, colors: {Plugin: "#4338ca", Skill: "#6366f1", Hook: "#818cf8",
+                                                 McpServer: "#a5b4fc"}}
+lifecycle: {typologies: [organisation], proposed_at: [build]}
+examples:
+  nodes:
+    - {id: example-plugin-core, type: Plugin, status: active, title: "The brain's core plugin"}
+    - {id: example-skill-core-close-item, type: Skill, status: active, title: "Close an item by the definition of done"}
+    - {id: example-hook-core-inject-rules, type: Hook, status: active, title: "Put the rules in each session"}
+  edges:
+    - {from: example-skill-core-close-item, to: example-plugin-core, type: part_of}
+    - {from: example-hook-core-inject-rules, to: example-plugin-core, type: part_of}
+    - {from: example-plugin-core, to: example-adr-keep-the-backlog-in-the-graph, type: decided_by}

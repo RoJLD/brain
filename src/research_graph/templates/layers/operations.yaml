@@ -1,0 +1,70 @@
+# A layer of the catalogue (research_graph layers); docs: README.md, « Graph templates ».
+# No secret ever lives in this layer: an account carries the names of its environment variables, never their values.
+# When the deployment lives in another repo, this layer is that repo's store, overlaid read-only (--overlay, with an
+# external.yaml naming the ids it points to).
+name: operations
+version: 1
+title: "The operations: deployments through their stages and gates, what runs them, their accounts, limits, runbooks"
+requires: [decisions]
+mode: written
+node_types:
+  Deployment: "something being deployed, through stages"
+  Stage: "one stage of a deployment: a rehearsal, a pilot, production"
+  Gate: "the condition to move from one stage to the next"
+  Harness: "code that runs a stage (a command, a scheduled task)"
+  Account: "an account at a provider (the names of its environment variables only, never a value)"
+  Limit: "a limit a stage keeps within (a budget, a quota, a cap)"
+  Runbook: "an operator's procedure"
+edge_types:
+  deploys:
+    - {from: [Deployment], to: "*", why: "a deployment -> what it deploys"}
+  part_of:
+    - {from: [Stage], to: [Deployment], why: "a stage -> its deployment"}
+  gated_by:
+    - {from: [Stage], to: [Gate], why: "the stage starts once the gate is met"}
+  executed_by:
+    - {from: [Stage], to: [Harness], why: "a stage -> the code that runs it"}
+  uses_account:
+    - {from: [Stage], to: [Account], why: "a stage -> the account it uses"}
+  limited_by:
+    - {from: [Stage], to: [Limit], why: "a stage -> a limit it keeps within"}
+  runs_on:
+    - {from: [Account], to: "*", why: "an account -> the provider or the source it is at"}
+  documented_in:
+    - {from: "*", to: [Runbook], why: "a node -> the runbook that operates it"}
+  depends_on: {why: "a gate -> the stage before it, a harness -> what it reads"}
+statuses: [planned, active, blocked, done, retired, met, pending]
+status_by_type:
+  Deployment: [planned, active, retired]
+  Stage: [planned, active, blocked, done, retired]
+  Gate: [pending, met]
+  Harness: [planned, active, retired]
+  Account: [planned, active, retired]
+  Limit: [active, retired]
+  Runbook: [active, retired]
+ids: {Deployment: "dep-<slug>", Stage: "stage-<slug>", Gate: "gate-<slug>", Harness: "harness-<slug>",
+      Account: "acct-<slug>", Limit: "limit-<slug>", Runbook: "runbook-<slug>"}
+commands: ["research_graph --overlay <store> <command>"]
+views: []
+checks: ["an overlay's external id this graph does not hold (research_graph --overlay)"]
+projection: {gitnexus: research-graph, colors: {Deployment: "#b91c1c", Stage: "#ef4444", Gate: "#fca5a5",
+                                                 Harness: "#7f1d1d", Account: "#fb923c", Limit: "#fdba74",
+                                                 Runbook: "#9a3412"}}
+lifecycle: {typologies: [software, infra, research], proposed_at: [launch, deliver]}
+examples:
+  nodes:
+    - {id: example-dep-board, type: Deployment, status: planned, title: "The board, deployed"}
+    - {id: example-stage-pilot, type: Stage, status: planned, title: "A pilot with one team"}
+    - {id: example-gate-pilot, type: Gate, status: pending, title: "A week without an incident"}
+    - {id: example-harness-nightly, type: Harness, status: planned, title: "The nightly job"}
+    - {id: example-acct-host, type: Account, status: planned, title: "The host account (EXAMPLE_HOST_TOKEN)"}
+    - {id: example-limit-budget, type: Limit, status: active, title: "A monthly budget"}
+    - {id: example-runbook-restart, type: Runbook, status: active, title: "Restart the nightly job"}
+  edges:
+    - {from: example-stage-pilot, to: example-dep-board, type: part_of}
+    - {from: example-stage-pilot, to: example-gate-pilot, type: gated_by}
+    - {from: example-stage-pilot, to: example-harness-nightly, type: executed_by}
+    - {from: example-stage-pilot, to: example-acct-host, type: uses_account}
+    - {from: example-stage-pilot, to: example-limit-budget, type: limited_by}
+    - {from: example-harness-nightly, to: example-runbook-restart, type: documented_in}
+    - {from: example-harness-nightly, to: example-adr-keep-the-backlog-in-the-graph, type: decided_by}

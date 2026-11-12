@@ -40,9 +40,11 @@ owner. In DIR (default: the current folder), which becomes the owner's private r
 The templates name no person, repo or host: the owner is the name given. A template is data and its manifest
 (``name``, ``version``, ``engine``: the brain versions that can render it, ``title``, ``files``: {the brain's path:
 the template's file, or "" for an empty one}, ``graphs``: the graph stores it starts, a list of {name, store, schema}
-whose first is the brain's main store; ``schema: default``, the brain's base of work, decisions and records
-(``templates/schemas/default.yaml``), is the only one for now), never code (wi-brain-domain-templates). The plan is
-a list of steps, local only: a later step (the owner's repos and data store, created on their keystroke:
+or {name, store, layers} whose first is the brain's main store; ``schema: default`` is the brain's base of work,
+decisions and records (``templates/schemas/default.yaml``); ``layers: [work, decisions, records, research, ...]``
+composes the schema from research_graph's catalogue of layers (``research_graph layers``), a name it does not hold
+being the template's own layer, ``layers/<name>.yaml`` in its folder), never code (wi-brain-domain-templates). The
+plan is a list of steps, local only: a later step (the owner's repos and data store, created on their keystroke:
 wi-brain-init-stores) joins it without changing the others.
 """
 
@@ -66,8 +68,8 @@ DEFAULT_TEMPLATE = "generic"
 SHELL_SAFE_NAME = re.compile(r"[\w .'-]+")
 MANIFEST = "template.yaml"
 TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs", "classes"}
-GRAPH_KEYS = {"name", "store", "schema"}
-SCHEMAS = ("default",)   # templates/schemas/<name>.yaml; a catalogue of graph types comes later
+GRAPH_KEYS = {"name", "store", "schema", "layers"}
+SCHEMAS = ("default",)   # templates/schemas/<name>.yaml; or a graph's layers, composed from research_graph's catalogue
 # what config.json names, so every template writes it (a folder through its .gitkeep)
 REQUIRED = ("projects.yaml", "rules/global.md", "source/packs.yaml", "memory/.gitkeep", "records/.gitkeep")
 TIERS = ("lite", "default")
@@ -174,8 +176,15 @@ def load_template(spec: str = DEFAULT_TEMPLATE) -> Template:
     _, errors = classes.stores(config.Config(None, Path("."), {"classes": {"stores": declared}}))
     if not isinstance(declared, dict) or errors:
         raise InitError(f"--template {spec}: {MANIFEST}: classes: " + ("; ".join(errors) or "{store: {class, paths}}"))
-    return Template(name, version, str(data.get("title") or ""), folder, engine, dict(fs),
-                    graphs_of(spec, data.get("graphs")), dict(declared))
+    tpl = Template(name, version, str(data.get("title") or ""), folder, engine, dict(fs),
+                   graphs_of(spec, data.get("graphs")), dict(declared))
+    for i, g in enumerate(tpl.graphs):   # each graph's layers compose: the catalogue's and the template's own
+        if g.get("layers"):
+            try:
+                graph_schema(g, "x", tpl)
+            except ValueError as exc:
+                raise InitError(f"--template {spec}: {MANIFEST}: graphs[{i}] ({g['name']}): {exc}") from exc
+    return tpl
 
 
 def classes_block(tpl: Template) -> dict:
@@ -191,8 +200,10 @@ def classes_block(tpl: Template) -> dict:
 
 
 def graphs_of(spec: str, declared) -> list[dict]:
-    """The manifest's ``graphs``, checked: a list of {name, store, schema}, names and stores unique, a store inside the
-    brain; none declared: one, ``work`` at notes/graph."""
+    """The manifest's ``graphs``, checked: a list of {name, store, schema} or {name, store, layers}, names and stores
+    unique, a store inside the brain; none declared: one, ``work`` at notes/graph. ``layers``: the layers its schema
+    is composed of (research_graph layers: the catalogue's names, or the template's own, ``layers/<name>.yaml`` in its
+    folder), instead of ``schema``."""
     if declared is None:
         return Template("", 1, "", None).graphs
     where = f"--template {spec}: {MANIFEST}: graphs"
@@ -208,13 +219,52 @@ def graphs_of(spec: str, declared) -> list[dict]:
         if not isinstance(store, str) or not store or store.startswith("/") or \
                 ".." in store.replace("\\", "/").split("/") or store in stores:
             raise InitError(f"{where}[{i}] ({name}): store is a folder inside the brain, each once")
-        if schema not in SCHEMAS:
+        layer_names = g.get("layers")
+        if layer_names is not None:
+            if "schema" in g:
+                raise InitError(f"{where}[{i}] ({name}): schema or layers, not both")
+            if not isinstance(layer_names, list) or not layer_names or \
+                    not all(isinstance(x, str) and NAME_RE.fullmatch(x) for x in layer_names):
+                raise InitError(f"{where}[{i}] ({name}): layers is a list of layer names, one at least")
+        elif schema not in SCHEMAS:
             raise InitError(f"{where}[{i}] ({name}): schema {schema!r}: only {', '.join(SCHEMAS)} for now "
-                            "(the brain's base: work, decisions, records)")
+                            "(the brain's base: work, decisions, records), or layers: [NAME, ...]")
         names.add(name)
         stores.add(store)
-        out.append({"name": name, "store": store, "schema": schema})
+        out.append({"name": name, "store": store, **({"layers": list(layer_names)} if layer_names is not None else
+                                                     {"schema": schema})})
     return out
+
+
+def template_layers(tpl: Template | None, names) -> dict:
+    """The template's own layers among ``names`` (``layers/<name>.yaml`` in its folder), by name: research_graph's
+    Layer objects; a name of the catalogue is the catalogue's."""
+    from research_graph import layers
+
+    out = {}
+    for n in names:
+        if n in layers.catalogue():
+            continue
+        f = tpl.folder / "layers" / f"{n}.yaml" if tpl is not None and tpl.folder is not None else None
+        if f is None or not f.is_file():
+            raise InitError(f"layer {n!r}: not in the catalogue ({', '.join(layers.catalogue())}) nor the template's "
+                            f"layers/{n}.yaml")
+        layer = layers.parse_layer(graph.load_yaml(f.read_text(encoding="utf-8")), f"layers/{n}.yaml")
+        if layer.name != n:
+            raise InitError(f"layers/{n}.yaml holds layer {layer.name!r}")
+        out[n] = layer
+    return out
+
+
+def graph_schema(g: dict, owner: str, tpl: Template | None = None) -> str:
+    """A graph's schema.yaml: the default one (``schema``), or the one its ``layers`` compose (``templates:`` and
+    ``endpoints:`` included), with its owner."""
+    if not g.get("layers"):
+        return schema_text(g.get("schema", "default"), owner)
+    from research_graph import layers
+
+    resolved = layers.resolve(g["layers"], template_layers(tpl, g["layers"]))
+    return layers.render(layers.compose_layers(resolved, owner), layers.header_for(resolved))
 
 
 def schema_text(name: str, owner: str) -> str:
@@ -225,8 +275,11 @@ def schema_text(name: str, owner: str) -> str:
     return text.replace("{owner_line}", f"owner: {json.dumps(owner, ensure_ascii=False)}\n")
 
 
-def schema_layers(name: str) -> list[str]:
-    data = graph.load_yaml(schema_text(name, "x")) or {}
+def schema_layers(text: str) -> list[str]:
+    """The layers of a schema.yaml text (a template's schema name gives its text by :func:`schema_text`)."""
+    if "\n" not in text:   # a schema's name (as before 0.4)
+        text = schema_text(text, "x")
+    data = graph.load_yaml(text) or {}
     return list((data.get("layers") or {}).keys())
 
 
@@ -352,9 +405,15 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
             created.add(rel)
     for i, g in enumerate(tpl.graphs):
         schema = root / g["store"] / "schema.yaml"
-        steps.append(Step("keep", schema.parent, why="a graph store already", graph=i) if schema.exists() else
-                     Step("store", schema.parent, schema_text(g["schema"], owner),
-                          why=f"research_graph init --owner {owner}, layers {', '.join(schema_layers(g['schema']))}",
+        if schema.exists():
+            steps.append(Step("keep", schema.parent, why="a graph store already", graph=i))
+            continue
+        try:
+            text = graph_schema(g, owner, tpl)
+        except ValueError as exc:
+            raise InitError(f"--template {template_spec}: graphs[{i}] ({g['name']}): {exc}") from exc
+        steps.append(Step("store", schema.parent, text,
+                          why=f"research_graph init --owner {owner}, layers {', '.join(schema_layers(text))}",
                           graph=i))
     steps.append(_render_step(root, created, claude_names(root)["plugin"], tpl.graphs[0]["store"]))
     pointer, there = paths.personal_file(), paths.pointer_root()
