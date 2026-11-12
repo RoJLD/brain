@@ -91,9 +91,10 @@ script first, a rule last. A coordinator runs `brain retro --wave <W>` at each w
 retro. In the same PR as the backlog change.
 
 Then record what the item really cost: `brain [--project P] cost review <id> --record` writes its actual against the
-recorded estimate and the brief's budget (`props.cost_review`), which `brain cost audit` and the size calibration read
-(the item's `props.size` against its actual time). Like the retro, it never stops the close: when the ledger does not
-know the item yet, write `Cost review: skipped (<why>)` in the report.
+recorded estimate and the brief's budget on the item (`props.cost_review`), beside its `props.size`, in the same PR
+as the backlog change. Like the retro, it never stops the close: when it exits 1 (an id it does not know) or prints
+`not recorded: <id>` (no session of the token ledger served the item yet), write `Cost review: skipped (<why>)` in
+the report and go on.
 
 ## 3. Ticked in the backlog
 

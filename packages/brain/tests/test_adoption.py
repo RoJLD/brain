@@ -128,6 +128,8 @@ def test_perf_usage_splits_each_commands_runs_and_proposes_for_each_gap(tmp_path
     assert rows["brain status"] == {"command": "brain status", "module": "status", "runs": 3, "by_session": 1,
                                     "otherwise": 2}
     assert rows["brain item show"]["otherwise"] == 0 and "brain brief" in rep["never_run"]
+    reached = {r["command"]: r["via"] for r in rep["reached_otherwise"]}   # main passes the modules' RUNS_VIA
+    assert reached["brain capture"].startswith("wired: ") and "brain capture" not in rep["never_run"]
     assert "brain status" not in rep["never_run"] and rep["sessions"] == 2
     kinds = [(p["kind"], p["what"]) for p in rep["proposals"]]
     assert ("hint", "1 hand read(s) of the journal: brain journal last [N] answers") in kinds
@@ -166,6 +168,10 @@ def test_runs_via_names_real_units_and_says_how(known):
     via = adoption.runs_via()
     assert "brain capture" in via and "brain memory sync" in via and "brain vault seal" in via
     assert all(u in units for u in via), sorted(set(via) - set(units))
+    from brain.commands import _registry as registry
+    for m in registry.load():   # a module accounts for its own commands only
+        name = m.__name__.rsplit(".", 1)[-1]
+        assert all(units[f"brain {k}"] == name for k in getattr(m, "RUNS_VIA", None) or {}), name
     assert all(v.startswith(("wired: ", "on demand: ")) for v in via.values())
     assert "brain cost review" not in via   # wired by close-item's step 2b: it must show when it never runs
 

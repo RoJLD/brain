@@ -14,7 +14,7 @@ from ._common import _repos, _root_repo, _store
 ORDER = 45   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 32   # its usage lines' place in brain --help's epilog
 RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
-    "docs check": "wired: brain check runs it for each repo with a readme.yaml (opt-in)",
+    "docs check": "wired: brain check runs its checks for each repo with a readme.yaml (stale: default branch)",
     "docs render": "on demand: the remedy brain check names when a generated README is stale",
 }
 USAGE = """\
