@@ -189,8 +189,8 @@ def test_sync_writes_the_links_and_check_warns_when_stale(tmp_path, monkeypatch,
     run_git(repo, "checkout", "-q", "-b", "feat")   # a branch need not hold them fresh (brain.views)
     assert cli.main(["--project", "demo", "check"]) == 0
     out = capsys.readouterr().out
-    assert "views: 2 stale here (notes/graph/nodes/_generated_links.yaml, notes/graph/edges/_generated_links.yaml)" \
-        in out and "error:" not in out
+    assert "views: 3 stale here (notes/graph/nodes/_generated_links.yaml, notes/graph/edges/_generated_links.yaml, " \
+        "notes/docs_graph.md)" in out and "error:" not in out   # the doc graph's too: its README is being edited
 
 
 ENGINE = {   # another repo of the project, with no store: its code is described by the store of the repo "demo"

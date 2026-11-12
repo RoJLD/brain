@@ -263,17 +263,18 @@ def load(root: Path, store: Path, repo: str, roots: dict[str, Path] | None = Non
         if n.get("type") == "Doc" and _anchor_path(n):
             _add_section(cat, n, str(n.get("repo") or repo))
     cat.docs = {k: d for k, d in cat.docs.items() if d.sections}   # a path named that is no doc of the graph
-    for e in graph.load_yaml_list(gen_edges):
-        if isinstance(e, dict) and e.get("type") == "documented_in" and str(e.get("to")) in cat.section_of:
-            doc = cat.docs[cat.section_of[str(e["to"])]]
-            doc.cites.setdefault(str(e["to"]), set()).add(str(e.get("from")))
-    for f in sorted((store / "edges").glob("*.yaml")):
-        if not f.name.startswith("_generated"):
-            for e in graph.load_yaml_list(f):
-                if isinstance(e, dict) and e.get("type") == "depends_on":
-                    _declare(cat, str(e.get("from")), str(e.get("to")), str((e.get("props") or {}).get("reason") or ""))
+    for e in _edges_of(gen_edges, "documented_in"):
+        if str(e.get("to")) in cat.section_of:
+            cat.docs[cat.section_of[str(e["to"])]].cites.setdefault(str(e["to"]), set()).add(str(e.get("from")))
+    for f in sorted(p for p in (store / "edges").glob("*.yaml") if not p.name.startswith("_generated")):
+        for e in _edges_of(f, "depends_on"):
+            _declare(cat, str(e.get("from")), str(e.get("to")), str((e.get("props") or {}).get("reason") or ""))
     _read_files(cat, {repo: root, **(roots or {})})
     return cat
+
+
+def _edges_of(f: Path, etype: str) -> list[dict]:
+    return [e for e in graph.load_yaml_list(f) if isinstance(e, dict) and e.get("type") == etype]
 
 
 def _add_section(cat: Catalogue, n: dict, repo: str) -> None:
@@ -461,6 +462,20 @@ def _dg_node(node: dict, did: str) -> dict:
     return out
 
 
+def _dg_cited(cat: Catalogue, d: Doc, sec: str, nodes: list, edges: list, seen: set) -> None:
+    """The nodes a section cites, of the types the contract has (each once), and their documented_in edges."""
+    for nid in sorted(d.cites.get(sec, ())):
+        node = cat.nodes.get(nid) or {}
+        did = _dg_id(node) if node else None
+        if did is None:
+            continue
+        if did not in seen:
+            seen.add(did)
+            nodes.append(_dg_node(node, did))
+        edges.append({"from": did, "to": f"document:{sec}", "type": "documented_in", "origin": "derived",
+                      "source": {"path": d.path}})
+
+
 def to_docgraph(cat: Catalogue, by: str, repo: str = "", ref: str = "", now: datetime | None = None) -> dict:
     """The catalogue as a docgraph/v1 document: a document node per Doc section (kind its file's), the cited nodes of
     the types the contract has (decisions, items, milestones, tests, lessons as findings), documented_in and the
@@ -471,16 +486,7 @@ def to_docgraph(cat: Catalogue, by: str, repo: str = "", ref: str = "", now: dat
     for d in sorted(cat.docs.values(), key=lambda x: x.key):
         for sec in d.sections:
             nodes.append(_dg_section(d, sec, cat.nodes.get(sec, {})))
-            for nid in sorted(d.cites.get(sec, ())):
-                node = cat.nodes.get(nid) or {}
-                did = _dg_id(node) if node else None
-                if did is None:
-                    continue
-                if did not in seen:
-                    seen.add(did)
-                    nodes.append(_dg_node(node, did))
-                edges.append({"from": did, "to": f"document:{sec}", "type": "documented_in", "origin": "derived",
-                              "source": {"path": d.path}})
+            _dg_cited(cat, d, sec, nodes, edges, seen)
         edges += [{"from": f"document:{sec}", "to": f"document:{parent}", "type": "depends_on", "origin": "declared",
                    "reason": reason or "(none given)", "confirmed": True} for sec, parent, reason in d.parents]
         findings += [{"id": "doc.stale", "severity": "warning", "subjects": [f"document:{sec}"], "message": why}
