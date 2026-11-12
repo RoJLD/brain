@@ -31,7 +31,9 @@ USAGE = """\
                  hot files (READMEs, CHANGELOGs, formats.md, FEATURES.md, config.schema.json, changes/) counted apart,
                  in rounds by their depends_on, the lots that unblock the most first, at most the sessions cap less the
                  master's and N PRs verified at once (3) a round; the predicted conflicts, the hot files shared, the
-                 items with no known surface, what the memory guard and the quota forecast say now; refuses nothing
+                 items with no known surface, what the memory guard and the quota forecast say now, the wave's
+                 quick-win slot (a fifth of its places for size S and high value: what fills it, the candidates);
+                 refuses nothing
 """
 
 

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import graph
+from . import diffs, graph
 
 try:  # Python 3.11+; on 3.10 the tomli backport (a dependency there); without both, a pyproject.toml is not measured
     import tomllib
@@ -90,7 +90,7 @@ def git(repo: Path, *args: str, allow: tuple = (0,)) -> str:
     other than 0)."""
     code, out, err = _run_git(repo, list(args))
     if code not in allow:
-        raise AuditError(f"git {' '.join(args[:4])} in {repo} failed: "
+        raise AuditError(f"git {' '.join(diffs.shown(args)[:4])} in {repo} failed: "
                          f"{err.decode('utf-8', 'replace').strip()[-300:] or f'exit {code}'}")
     return out.decode("utf-8", "replace") if code == 0 else ""
 
