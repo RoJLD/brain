@@ -26,11 +26,12 @@ import io
 import os
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import catalogue, config, paths, secretscan, timing, tiers
+from . import catalogue, config, paths, secretscan, tiers, timing
 
 LOG = "setup"          # <BRAIN_HOME>/ledger/setup-<month>.jsonl
 OUTPUT_MAX = 4000      # the end of a step's output kept in the log
@@ -167,9 +168,8 @@ def base_set(cat: dict, preset: dict, facts: dict) -> list[str]:
     if preset.get("kind") == "persona" and preset.get("base"):
         out += base_set(cat, _preset(cat, preset["base"]), facts)
     out += preset.get("modules") or []
-    for mid in preset.get("when_fits") or []:
-        f = fit(mods[mid], facts)
-        if f.runs is True and f.recommended:
+    for mid in preset.get("when_fits") or []:   # left out, as tiers.recommend does, when a dependency does not run
+        if fit(mods[mid], facts).recommended and all(fit(mods[d], facts).runs is True for d in _closure([mid], mods)):
             out.append(mid)
     return list(dict.fromkeys(out))
 
@@ -254,11 +254,26 @@ def _check_on(on: list[str], pulled: dict, without: list[str], mods: dict, facts
             raise SetupError(f"{by} needs {d}, which this machine does not hold ({'; '.join(f.why)})")
 
 
+def _check_persona(cat: dict, preset: dict, facts: dict, notes: list[str]) -> None:
+    """A persona's own modules are measured against the machine like a box ticked: refused when it does not hold
+    one, noted when a fact is unknown."""
+    if preset.get("kind") != "persona":
+        return
+    mods = _mods(cat)
+    for mid in preset.get("modules") or []:
+        f = fit(mods[mid], facts)
+        if f.runs is False:
+            raise SetupError(f"persona {preset['id']}: {mid}: this machine does not hold it ({'; '.join(f.why)})")
+        if f.runs is None:
+            notes.append(f"{mid}: {'; '.join(f.why)}: chosen, not checked")
+
+
 def choose(cat: dict, preset_id: str, facts: dict, with_: list[str] = (), without: list[str] = ()) -> Choice:
     """Screen 3: the preset's modules here, then the boxes ticked (--with) and unticked (--without), the hard
     dependencies pulled; SetupError for a module the catalogue or the machine refuses, or one a module on needs."""
     mods, notes = _mods(cat), []
     preset = _preset(cat, preset_id)
+    _check_persona(cat, preset, facts, notes)
     for mid in with_:
         _check_with(mods, mid, facts, notes)
     for mid in without:
@@ -317,30 +332,53 @@ def log(row: dict) -> Path:
     return f
 
 
-def run(words: list[str], cwd: Path, runner=None) -> dict:
+def _call(runner, argv: list[str], buf: io.StringIO) -> int:
+    """The step's exit code; a usage error (argparse's exit) its code, any other exception 1, its traceback in the
+    output: a step that fails is logged, never a crash after the files are written."""
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            return runner(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+    except Exception:   # noqa: BLE001 - logged with its traceback as the step's failure (exit 1)
+        buf.write(traceback.format_exc())
+        return 1
+
+
+def run(words: list[str], cwd: Path, runner=None, by: str = "") -> dict:
     """One step, run in this process as ``brain`` would run it (offline: the same engine), its output captured and
-    printed, logged as the owner's step; {command, exit, seconds, output}."""
+    printed, logged as the owner's step (``by``: the brain's owner); {command, exit, seconds, output}."""
     from . import cli
     runner = runner or (lambda argv: cli.main(argv))
     start, t0 = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), time.monotonic()
     buf = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            code = runner(words[1:])
-    except SystemExit as exc:   # argparse's exit on a usage error
-        code = exc.code if isinstance(exc.code, int) else 2
+    code = _call(runner, words[1:], buf)
     text, _ = secretscan.clean_text(buf.getvalue().strip())
     res = {"command": shown(words), "exit": code, "seconds": round(time.monotonic() - t0, 2), "output": text}
-    log({"at": start, "event": "setup-step", "via": "init", "by": config.owner_of(), "command": res["command"],
+    log({"at": start, "event": "setup-step", "via": "init", "by": by or config.owner_of(cwd), "command": res["command"],
          "cwd": str(cwd), "exit": code, "seconds": res["seconds"], "output": text[-OUTPUT_MAX:]})
     return res
 
 
-def apply(root: Path, plan: list[list[str]], runner=None) -> list[dict]:
+def already(root: Path, cat: dict, ch: Choice) -> bool:
+    """This machine is already as the choice says: its base, and each switched module on or off as chosen (a second
+    apply then runs nothing, and profile.json is not written again)."""
+    from . import mod
+    cur = tiers.choice(root)
+    if cur.source != "machine" or cur.base != ch.base:
+        return False
+    reg, _ = tiers.registry(root)
+    on, _ = tiers.active(reg, cur)
+    have = mod.catalogue(root, reg)
+    return all((mod.state(have[m["id"]], on, reg) == "on") == (m["id"] in ch.on)
+               for m in cat["modules"] if switched(m) and m["id"] in have)
+
+
+def apply(root: Path, plan: list[list[str]], runner=None, by: str = "") -> list[dict]:
     """Each step in order, the next only when the last exited 0."""
     out = []
     for words in plan:
-        out.append(run(words, root, runner))
+        out.append(run(words, root, runner, by))
         if out[-1]["exit"] != 0:
             break
     return out
@@ -484,8 +522,8 @@ def interactive(cat: dict, facts: dict, preset: str, with_: list[str], without: 
             out(f"refused: {exc}")
 
 
-def log_init(root: Path, words: list[str], code: int) -> Path:
+def log_init(root: Path, words: list[str], code: int, by: str = "") -> Path:
     """brain init's own step, logged like the others (its files were written by its plan, shown before)."""
     return log({"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "event": "setup-step",
-                "via": "init", "by": config.owner_of(), "command": shown(words), "cwd": str(root), "exit": code,
-                "seconds": 0.0, "output": ""})
+                "via": "init", "by": by or config.owner_of(root), "command": shown(words), "cwd": str(root),
+                "exit": code, "seconds": 0.0, "output": ""})

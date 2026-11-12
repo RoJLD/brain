@@ -239,9 +239,9 @@ def test_apply_runs_each_step_logs_it_and_a_second_apply_changes_nothing(engine,
     assert all(r["event"] == "setup-step" and r["via"] == "init" and r["exit"] == 0 for r in rows)
     before = tiers.machine_file().read_text(encoding="utf-8")
     assert cli.main(args) == 0
-    assert "keep     config.json" in capsys.readouterr().out
-    assert json.loads(tiers.machine_file().read_text(encoding="utf-8"))["components"] == \
-        json.loads(before)["components"]
+    out = capsys.readouterr().out
+    assert "keep     config.json" in out and "this machine is already as chosen: no step run" in out
+    assert tiers.machine_file().read_text(encoding="utf-8") == before   # not written again, not even its date
 
 
 def test_a_refused_choice_plans_nothing(engine, capsys):
@@ -254,8 +254,8 @@ def test_a_refused_choice_plans_nothing(engine, capsys):
 def test_a_failed_step_stops_the_others(engine, capsys, monkeypatch):
     real = firstrun.run
 
-    def failing(words, cwd, runner=None):
-        return real(words, cwd, runner=(lambda argv: 3) if "enable" in words else None)
+    def failing(words, cwd, runner=None, by=""):
+        return real(words, cwd, (lambda argv: 3) if "enable" in words else None, by)
     monkeypatch.setattr(firstrun, "run", failing)
     assert cli.main(["init", str(engine), "--owner", "Ada", "--preset", "lite", "--with", "store", "--apply"]) == 1
     assert f"FAILED (3): brain --root {engine} mod enable store --apply" in capsys.readouterr().out
@@ -292,3 +292,74 @@ def test_the_catalogue_read_is_the_brains_own_emit(engine):
     """The screens read brain catalogue emit's document: one catalogue for the installer and the Modules tab."""
     cat = cat_of(engine)
     assert catalogue.validate(cat)[0] == [] and cat["schema"] == catalogue.ID
+
+
+# --- the review's cases ----------------------------------------------------------------------------------------------
+
+def test_a_recommended_module_whose_dependency_does_not_run_is_left_out():
+    """As tiers.recommend: rec2 is recommended, but it needs agent, which this machine does not hold."""
+    cat = {"modules": [{"id": "agent", "name": "a", "class": "service", "requires": ["docker"]},
+                       {"id": "rec2", "name": "r", "class": "extra", "depends_on": ["agent"]}],
+           "presets": [{"id": "recommended", "name": "R", "kind": "base", "modules": [], "when_fits": ["rec2"]}]}
+    assert firstrun.base_set(cat, cat["presets"][0], SMALL) == []
+    assert firstrun.choose(cat, "recommended", SMALL).on == []
+
+
+def _persona_file(tmp_path):
+    mine = tmp_path / "mine.json"
+    mine.write_text(json.dumps({
+        "schema": "catalogue/v1", "generated": {"at": "2026-01-01T00:00:00Z", "by": "example 1"},
+        "modules": [{"id": "viewer", "name": "Viewer"}],
+        "presets": [{"id": "lite", "name": "Lite", "modules": []},
+                    {"id": "watcher", "name": "Watcher", "kind": "persona", "base": "lite", "modules": ["viewer"]}]}),
+        encoding="utf-8")
+    return mine
+
+
+def test_a_persona_module_the_machine_does_not_hold_is_refused(engine, tmp_path):
+    cat, _ = firstrun.catalogue_for(engine, _persona_file(tmp_path))
+    with pytest.raises(firstrun.SetupError, match="persona watcher: viewer: this machine does not hold it"):
+        firstrun.choose(cat, "watcher", {**BIG, "gpu_vram_gb": 1.0})
+
+
+def test_the_tier_is_the_chosen_presets_base(engine, tmp_path, capsys):
+    """A persona on lite writes tier.base lite; --tier still wins."""
+    assert cli.main(["init", str(engine), "--owner", "Ada", "--catalogue", str(_persona_file(tmp_path)),
+                     "--preset", "watcher", "--apply"]) == 0
+    assert json.loads((engine / "config.json").read_text(encoding="utf-8"))["tier"] == {"base": "lite"}
+    assert "(person, lite)" in capsys.readouterr().out
+
+
+def test_interactive_writes_the_tier_of_the_preset_it_picked(engine, capsys, monkeypatch):
+    answers = iter(["default", "", "", "y"])
+    monkeypatch.setattr(firstrun, "ASK", lambda prompt: next(answers))
+    monkeypatch.setattr(firstrun, "tty", lambda: True)
+    assert cli.main(["init", str(engine), "--owner", "Ada", "-i"]) == 0
+    assert json.loads((engine / "config.json").read_text(encoding="utf-8"))["tier"] == {"base": "default"}
+
+
+def test_a_closed_input_cancels_with_nothing_written(engine, capsys, monkeypatch):
+    def eof(prompt):
+        raise EOFError
+    monkeypatch.setattr(firstrun, "ASK", eof)
+    monkeypatch.setattr(firstrun, "tty", lambda: True)
+    assert cli.main(["init", str(engine), "--owner", "Ada", "-i", "--apply"]) == 2
+    assert "brain init: cancelled, nothing written" in capsys.readouterr().out
+    assert not (engine / "config.json").exists()
+
+
+def test_a_step_that_raises_is_logged_as_a_failure(engine, tmp_path):
+    def boom(argv):
+        raise OSError("disk full")
+    r = firstrun.run(["brain", "profile", "set", "lite", "--apply"], tmp_path, runner=boom, by="Ada")
+    assert r["exit"] == 1 and "OSError: disk full" in r["output"]
+    [row] = [json.loads(x) for f in firstrun.paths.ledger_dir().glob("setup-*.jsonl")
+             for x in f.read_text(encoding="utf-8").splitlines()]
+    assert row["exit"] == 1 and row["by"] == "Ada"
+
+
+def test_the_log_names_the_new_brains_owner(engine):
+    assert cli.main(["init", str(engine), "--owner", "Ada", "--preset", "lite", "--apply"]) == 0
+    rows = [json.loads(x) for f in firstrun.paths.ledger_dir().glob("setup-*.jsonl")
+            for x in f.read_text(encoding="utf-8").splitlines()]
+    assert rows and {r["by"] for r in rows} == {"Ada"}

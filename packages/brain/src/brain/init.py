@@ -687,13 +687,12 @@ def wants_modules(args) -> bool:
                 or getattr(args, "catalogue", None) or getattr(args, "interactive", False))
 
 
-def _tier(args) -> str:
-    """config.json tier.base: --tier, else the preset's engine base when it is lite or default (recommended is this
-    machine's, frozen by brain profile set), else lite."""
+def _tier(args, base: str | None = None) -> str:
+    """config.json tier.base: --tier, else the chosen preset's engine base (a persona's base) when it is lite or
+    default (recommended is this machine's, frozen by brain profile set: default), else lite."""
     if getattr(args, "tier", None):
         return args.tier
-    preset = getattr(args, "preset", None)
-    return preset if preset in TIERS else "default" if preset else "lite"
+    return base if base in TIERS else "default" if base else "lite"
 
 
 def command_line(root: Path, args, owner: str, tier: str, preset: str, with_: list[str],
@@ -733,28 +732,35 @@ def _screens(root: Path, args, out=print) -> tuple:
     screens = [] if getattr(args, "interactive", False) else (
         firstrun.render_presets(cat, facts) + firstrun.render_machine(cat, facts)
         + firstrun.render_adjust(cat, ch, facts))
-    return ch, firstrun.steps(root, ch), screens
+    return ch, firstrun.steps(root, ch), screens, cat
 
 
 def _show_modules(root: Path, args, owner: str, tier: str, mod: tuple) -> list[str]:
     """The screens, the plan's brain commands and the one command that makes the same choice; --interactive then asks
     whether to apply. The command, for the log."""
     from . import firstrun
-    ch, mod_steps, screens = mod
+    ch, mod_steps, screens, _ = mod
     same = command_line(root, args, owner, tier, ch.preset, getattr(args, "with_", None) or [],
                         getattr(args, "without", None) or [])
     print("\n".join(screens + firstrun.render_plan(mod_steps)))
     print(f"the same, without the screens: {firstrun.shown(same)}")
     if getattr(args, "interactive", False) and not args.apply:
-        args.apply = firstrun.ASK("apply? [y/N] ").strip().lower() in ("y", "yes", "o", "oui")
+        try:
+            args.apply = firstrun.ASK("apply? [y/N] ").strip().lower() in ("y", "yes", "o", "oui")
+        except (EOFError, KeyboardInterrupt):
+            args.apply = False
     return same
 
 
-def _run_modules(root: Path, mod: tuple) -> int:
-    """The module steps in order, each logged; 1 when one fails (the next ones are not run)."""
+def _run_modules(root: Path, mod: tuple, owner: str) -> int:
+    """The module steps in order, each logged; 1 when one fails (the next ones are not run); none when the machine is
+    already as chosen (a second apply writes nothing)."""
     from . import firstrun
-    ch, mod_steps, _ = mod
-    done = firstrun.apply(root, mod_steps)
+    ch, mod_steps, _, cat = mod
+    if firstrun.already(root, cat, ch):
+        print("modules: this machine is already as chosen: no step run")
+        return 0
+    done = firstrun.apply(root, mod_steps, by=owner)
     for r in done:
         print(f"{'ok' if r['exit'] == 0 else 'FAILED'} ({r['exit']}): {r['command']}")
         if r["exit"] != 0 and r["output"]:
@@ -790,30 +796,37 @@ def _apply_files(root: Path, steps: list[Step], owner: str, same: list[str]) -> 
     for e in errors:
         print(f"error: {e}")
     if same:
-        firstrun.log_init(root, same, code or (1 if errors else 0))
+        firstrun.log_init(root, same, code or (1 if errors else 0), by=owner)
     return code or (1 if errors else 0)
 
 
-def _planned(root: Path, args, tier: str) -> tuple:
-    """(the file steps, the template, the owner, the modules' (choice, steps, screens) or None)."""
+def _planned(root: Path, args) -> tuple:
+    """(the file steps, the template, the owner, the tier, the modules' (choice, steps, screens, catalogue) or None):
+    the screens first, so the tier is the chosen preset's base."""
     spec = getattr(args, "template", None) or DEFAULT_TEMPLATE
+    mod = _screens(root, args) if wants_modules(args) else None
+    tier = _tier(args, mod[0].base if mod else None)
     steps = plan(root, args.owner or "", kind=args.kind, tenant=args.tenant, tier=tier, name=args.name,
                  stage=getattr(args, "stage", None) or DEFAULT_STAGE, template_spec=spec)
     owner = " ".join((args.owner or owner_in(root)).split())
-    return steps, load_template(spec), owner, (_screens(root, args) if wants_modules(args) else None)
+    return steps, load_template(spec), owner, tier, mod
 
 
 def main(args) -> int:
     from . import firstrun
-    root, tier = Path(args.dir or ".").resolve(), _tier(args)
+    root = Path(args.dir or ".").resolve()
     if getattr(args, "interactive", False) and not firstrun.tty():
         print("brain init: --interactive needs a terminal; --preset ID [--with ID]... [--without ID]... makes the same "
               "choice without the screens")
         return 2
     try:
-        steps, tpl, owner, mod = _planned(root, args, tier)
+        steps, tpl, owner, tier, mod = _planned(root, args)
     except (InitError, firstrun.SetupError) as exc:
         print(f"brain init: {exc}")
+        return 2
+    except (EOFError, KeyboardInterrupt):
+        print()
+        print("brain init: cancelled, nothing written")
         return 2
     print(f"brain init: {root} for {owner} ({args.kind}, {tier}), template {tpl.name} v{tpl.version}, engine "
           f"{ENGINE_REPO}@v{__version__}")
@@ -826,7 +839,7 @@ def main(args) -> int:
     code = _apply_files(root, steps, owner, same)
     if code:
         return code
-    if mod and _run_modules(root, mod):
+    if mod and _run_modules(root, mod, owner):
         return 1
     _next_steps(root, owner, args.kind)
     return 0
