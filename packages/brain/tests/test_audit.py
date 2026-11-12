@@ -99,7 +99,7 @@ CODE = """\
 
 
 def test_coderefs_dangling_measured_module_layer_and_pending_code_layer(monkeypatch):
-    monkeypatch.setattr(projects, "repo_tokens", lambda root=None: {"far"})   # a repo another project registers
+    monkeypatch.setattr(audit, "_repo_tokens", lambda p, cfgs: {"lab", "sib", "far"})   # far: another project's
     res = _measure({"lab": {
         "notes/graph/schema.yaml": "node_types: [WorkItem, CodeRef, Repo]\n", "notes/graph/nodes/code.yaml": CODE,
         "README.md": README, "src/lab/__init__.py": "", "src/lab/core.py": "def go():\n    pass\n",
@@ -125,7 +125,7 @@ def test_coderefs_dangling_measured_module_layer_and_pending_code_layer(monkeypa
 
 def test_a_coderef_of_a_registered_repo_not_cloned_here_stays_not_measured(monkeypatch):
     """The project's own repo with no tree on this machine is registered: not measured, never P0."""
-    monkeypatch.setattr(projects, "repo_tokens", lambda root=None: set())
+    monkeypatch.setattr(audit, "_repo_tokens", lambda p, cfgs: {"lab", "sib"})
     root = Path("/m/lab")
     p = projects.Project("demo", root, [root / "notes" / "graph"])
     cfgs = [projects.Repo("lab", root), projects.Repo("sib", Path("/m/sib"))]

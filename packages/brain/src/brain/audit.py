@@ -622,14 +622,23 @@ def _test_dir(rf: inventory.RepoFacts) -> str:
     return "tests" if "tests" in dirs or not dirs else dirs[0]
 
 
-def _repo_tokens(p: projects.Project, cfgs: list[projects.Repo]) -> set[str]:
-    """The repo tokens a CodeRef may name: the project's own repos (cloned here or not) and every repo of the
-    registry (projects.repo_tokens); a registry that does not load leaves the project's own."""
-    own = {c.name.lower() for c in cfgs} | {c.folder.lower() for c in cfgs if c.folder}
+_TOKENS: dict[tuple[str, float], set[str]] = {}   # registry file and its mtime -> its repo tokens (the trend's weeks)
+
+
+def _repo_tokens(p: projects.Project, cfgs: list[projects.Repo]) -> set[str] | None:
+    """The repo tokens a CodeRef may name: the project's own repos (cloned here or not) and every one of the registry
+    the project came from (projects.repo_tokens at its registry_dir). None when that registry is unknown or does not
+    load: then no CodeRef is called unregistered (not measured, never a false P0)."""
+    if p.registry_dir is None:
+        return None
+    f = projects.registry_file(p.registry_dir)
     try:
-        return own | projects.repo_tokens(p.root)
+        key = (str(f), f.stat().st_mtime) if f else ("", 0.0)
+        if key not in _TOKENS:
+            _TOKENS[key] = projects.repo_tokens(p.registry_dir)
     except (OSError, ValueError, yaml.YAMLError):
-        return own
+        return None
+    return _TOKENS[key] | {c.name.lower() for c in cfgs} | {c.folder.lower() for c in cfgs if c.folder}
 
 
 def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inventory.Tree],
@@ -692,7 +701,8 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
                                                                 f"malformed CodeRef id: {exc}", "fix the id"))
                 continue
             target = facts.get(repo.lower())
-            if target is None and repo.lower() in registered:   # another project's repo, or one not cloned here
+            if target is None and (registered is None or repo.lower() in registered):   # another project's repo,
+                # one not cloned here, or a registry that does not tell
                 unregistered.setdefault(st.repo, []).append(repo)
                 continue
             if target is None:   # no project registers it: nothing will ever measure it (P0, ruleset 11)

@@ -815,16 +815,24 @@ def _standards_errors(where: str, value, registry: Path | None, engine: list) ->
 
 
 def repo_tokens(root: Path | None = None) -> set[str]:
-    """The ``<repo>`` tokens a CodeRef may name (``code:<repo>:<path>``): every repo of every project the registry
-    loads, cloned on this machine or not, by its name and its main checkout's folder, lowercased
-    (wi-brain-audit-unregistered-coderef). A project whose repos: does not read is skipped (projects.check says it)."""
+    """The ``<repo>`` tokens a CodeRef may name (``code:<repo>:<path>``), lowercased
+    (wi-brain-audit-unregistered-coderef): every repo of every project the registry loads, cloned on this machine or
+    not, by its name and its main checkout's folder; for a project whose ``repos:`` does not read (projects.check says
+    it), its name and its declared paths' folders; and the name of each entry the walk skips (a read-only project, a
+    tenant mount), whose repos the brain never audits. ``root``: as :func:`load` takes it (a project's
+    ``registry_dir`` names the registry it came from)."""
     out: set[str] = set()
     for p in load(root).values():
         try:
             rs = repos_of(p)
         except RepoError:
+            declared = [e.get("path") if isinstance(e, dict) else e for e in (p.repos if isinstance(p.repos, list)
+                                                                                else [])]
+            out |= {p.name.lower(), p.root.name.lower()} | {Path(x).name.lower() for x in declared
+                                                             if isinstance(x, str) and x}
             continue
         out |= {r.name.lower() for r in rs} | {r.folder.lower() for r in rs if r.folder}
+    out |= {str(name).lower() for name, entry in raw(root).items() if is_read_only(entry) or is_mount(entry)}
     return out
 
 
