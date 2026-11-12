@@ -1,0 +1,44 @@
+"""How the suite itself runs (conftest's own hooks, wi-brain-test-speed-2)."""
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import conftest
+
+
+class _Config:
+    def __init__(self, dist, numprocesses, xdist=True, maxschedchunk=None):
+        self.option = SimpleNamespace(dist=dist, numprocesses=numprocesses, maxschedchunk=maxschedchunk)
+        self.pluginmanager = SimpleNamespace(hasplugin=lambda name: xdist and name == "xdist")
+
+    def getoption(self, name, default=None):
+        return getattr(self.option, name, default)
+
+
+def _dist(dist, numprocesses, xdist=True, maxschedchunk=None):
+    config = _Config(dist, numprocesses, xdist, maxschedchunk)
+    conftest.pytest_cmdline_main(config)
+    return config.option.dist
+
+
+def test_parallel_runs_steal_work_unless_told_otherwise():
+    """-n N or -n auto with no --dist: worksteal; an explicit --dist is kept, and load when --maxschedchunk asks for
+    it; no -n, -n 0 or no xdist: one process."""
+    assert _dist("no", 16) == "worksteal"
+    assert _dist("no", "auto") == "worksteal"
+    assert _dist("load", 16) == "load" and _dist("loadfile", "auto") == "loadfile"
+    assert _dist("no", 4, maxschedchunk=1) == "no"   # xdist then makes it load, with that chunk
+    assert _dist("no", None) == "no" and _dist("no", 0) == "no"
+    assert _dist("no", 16, xdist=False) == "no"
+
+
+def test_the_hook_runs_before_xdist_turns_no_dist_into_load(pytestconfig):
+    """The hook only works ahead of xdist's own pytest_cmdline_main, which turns dist "no" into "load": were it to run
+    after (its tryfirst dropped, xdist's hooks reordered), every -n run would silently go back to load."""
+    xdist = pytestconfig.pluginmanager.get_plugin("xdist")
+    if xdist is None:
+        return   # no xdist: nothing to order against
+    order = [impl.plugin for impl in reversed(pytestconfig.hook.pytest_cmdline_main.get_hookimpls())]
+    ours = next(i for i, p in enumerate(order)
+                if Path(getattr(p, "__file__", "") or ".").resolve() == Path(conftest.__file__).resolve())
+    assert ours < order.index(xdist)
