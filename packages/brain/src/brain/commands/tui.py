@@ -34,8 +34,10 @@ USAGE = """\
                  Modules, each module of the catalogue with its state, cost and needs, turned on or off by
                  brain mod's plan then its apply on y;
                  Setup, the setup wizards: a choice, the plan run, then the apply on y, each command logged as
-                 {owner}'s), ctrl+pageup and ctrl+pagedown the previous and next,
-                 Escape back to the overview;
+                 {owner}'s), then a plugged project's tabs and panels, as its plugin declares them (COCKPIT,
+                 brain.plugin_panels: a tab by its name, no number, before the settings; its tables sorted, filtered,
+                 searched and saved as the others, read at the first read and at each probe), ctrl+pageup and
+                 ctrl+pagedown the previous and next, Escape back to the overview;
                  Escape first clears the search and closes a full view; the bar shows the queue's band now, the
                  sessions asking and the open alerts, and is reduced to its
                  numbers under 120 columns or 30 rows, where the cards take one column and the grid is not offered;
@@ -74,11 +76,17 @@ def cmd_tui(args, root: Path) -> int:
     --json: one read. The interactive views start from the scope, the views, the tab and the columns they last showed
     (<BRAIN_HOME>/tui.json; --project or --all, --sort, --filter and --tab win, --reset forgets them) and remember
     them."""
+    notes = cockpit.plug_registry(root)   # the plugged projects' panels and tabs, before their views are read
+    if args.tab and args.tab not in cockpit.built_tabs():
+        raise SystemExit(f"brain tui: --tab {args.tab}: one of {', '.join(cockpit.built_tabs())}")
     try:
         flags = cockpit.parse_view(args.sort, args.filter)
     except ValueError as exc:
         raise SystemExit(f"brain tui: {exc}") from None
     interactive = not (args.once or args.json or args.detail)
+    if not interactive:   # the cockpit notifies them; a one-shot read says them on stderr
+        for text in notes:
+            print(f"brain tui: plugin: {text}", file=sys.stderr)
     saved = cockpit.load_state() if interactive and not args.reset else {}
     views = {n: {**(saved.get("panels") or {}).get(n, {}), **flags.get(n, {})} for n in cockpit.SORTS}
     settings = {"tz": "local", **(saved.get("settings") or {}), **({"tz": args.tz} if args.tz else {})}
@@ -199,9 +207,10 @@ def register(sub, ctx) -> None:
                          "frontier:milestone=all|none|<id> (repeatable)")
     tu.add_argument("--search", default="", metavar="TEXT",
                     help="the rows holding every word of TEXT (ids, titles, projects; case ignored)")
-    tu.add_argument("--tab", choices=cockpit.built_tabs(),
-                    help="start on that tab (default: the last one shown, else the overview); with --once or --plain, "
-                         "print its panels alone (the overview: its cards)")
+    tu.add_argument("--tab", metavar="NAME",
+                    help="start on that tab: " + ", ".join(cockpit.built_tabs()) + ", or a plugged project's tab "
+                         "(default: the last one shown, else the overview); with --once or --plain, print its panels "
+                         "alone (the overview: its cards)")
     tu.add_argument("--tz", choices=cockpit.TZS,
                     help="the times shown: this machine's timezone (local, the interactive default) or UTC; --once "
                          "and --json keep the recorded UTC times unless it is given")

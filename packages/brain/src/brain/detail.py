@@ -143,6 +143,8 @@ def of(name: str, r: dict, cp=None, *, project=None, store=None) -> dict:
         d = session(r)
     elif name == "alerts":
         d = alert(r)
+    elif name in cockpit.PLUGGED:
+        d = plugged(name, r)
     else:
         raise KeyError(name)
     d["refused"] = refused()
@@ -151,7 +153,7 @@ def of(name: str, r: dict, cp=None, *, project=None, store=None) -> dict:
 
 def find(panels: dict, ref: str) -> tuple[str, dict] | None:
     """The row ``ref`` names in the panels (an id, a session id or its start, an alert's key): (panel, row)."""
-    for name in ("queue", "frontier", "milestones", "alerts", "sessions"):
+    for name in ("queue", "frontier", "milestones", "alerts", "sessions", *cockpit.PLUGGED):
         for r in cockpit.entries(name, panels.get(name)):
             if ref in (r.get("id"), r.get("key")) or (name == "sessions" and r["session_id"].startswith(ref)):
                 return name, r
@@ -567,6 +569,15 @@ def session(r: dict) -> dict:
         d["links"].append({"label": "the session's folder", "kind": "file", "path": r["folder"], "line": None})
     if f:
         d["links"].append({"label": "the transcript", "kind": "file", "path": str(f), "line": None})
+    return d
+
+
+def plugged(name: str, r: dict) -> dict:
+    """A plugged panel's row (brain.plugin_panels): its fields as its plugin gave them, and where they come from."""
+    p = cockpit.PLUGGED[name]
+    d = _detail(name, r.get("id", ""), cockpit.title(name))
+    _section(d, r.get("id", ""), [f"{k}: {_flat(v)}" for k, v in r.items() if k not in ("id", "project")])
+    _section(d, "From", [cockpit.HELP[name]["from"], f"brain {p.project} --help: the plugin's own commands"])
     return d
 
 

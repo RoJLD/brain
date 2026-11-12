@@ -89,7 +89,7 @@ TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines, "exec": c
 PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back", "toggle_max", "pick_scope", "search",
                  "next_sort", "reverse", "filters", "panel_help", "toggle_tz", "update", "side_act", "side_open",
                  "columns")  # the panels' keys, off while a dialog or a detail is on top of them
-# every panel and frame, as the grid places them: with open alerts their row is whole (L11), the digest beside the stacks
+# every panel and frame, as the grid places them (open alerts: a whole row, L11); the plugged projects' panels after them
 EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec", "settings")
 CARD_COLUMNS = 3
 STATUS_COLUMNS = 100  # narrower, the global bar keeps its width for the search: the subtitle has the times
@@ -192,7 +192,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
         Binding("ctrl+pageup", "prev_tab", "Previous tab", show=False, priority=True),  # a table's own page left, right
         Binding("ctrl+pagedown", "next_tab", "Next tab", show=False, priority=True),
         *(Binding("comma" if t["key"] == "," else t["key"], f"tab('{name}')", cockpit.TABS[name]["label"]["en"],
-                  show=False) for name, t in cockpit.TABS.items() if name != "overview"),
+                  show=False) for name, t in cockpit.TABS.items() if name != "overview" and t["key"]),  # a plugin's: none
     ]
 
     def __init__(self, cp, refresh: float = cockpit.REFRESH_S, probe: float = cockpit.PROBE_S,
@@ -246,7 +246,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
             yield Static(id="views")
         with Horizontal(id="body"):
             with Grid(id="grid"):  # one widget per panel: a tab or a view is a layout of them (_layout)
-                for name in EVERY_FRAME:
+                for name in (*EVERY_FRAME, *cockpit.PLUGGED):
                     if name == "settings":  # its pages on the left, the page's settings on the right
                         yield SettingsFrame(id=name, classes="panel")
                     elif name in cockpit.COLUMNS:
@@ -289,6 +289,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
         self.tick(probe=False)
         self._focus_body()
         self.call_after_refresh(self._check_update)  # after the first paint, never before it (UPD-1)
+        for text in cockpit.PLUG_NOTES:  # what a plugin's declaration left out or tolerated
+            self.notify(text, title="plugin", severity="warning", timeout=10)
 
     # --- the tabs: one widget per panel, a tab or a view is a layout of them (wi-brain-tui-layout) ---
 
@@ -312,7 +314,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
         grid.set_class(view == "frames", "frames")
         grid.set_class(self._narrow(), "stacked")
         self._alerts_row()
-        for name in EVERY_FRAME:
+        for name in (*EVERY_FRAME, *cockpit.PLUGGED):
             self._q(f"#{name}").set_class(name not in shown, "off")
         self._q("#cards").display = view == "cards"
         self._q("#cards-grid").set_class(self._narrow(), "one")
@@ -358,7 +360,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
             tab = self._q(f"#tab-{name}", Tab)
             if tab.label_text != label:
                 tab.label = Content(label)
-            tip = f"{cockpit.tab_title(name)} ({cockpit.TABS[name]['key']}): {cockpit.tab_question(name)}"
+            key = cockpit.TABS[name]["key"]
+            tip = f"{cockpit.tab_title(name)}{f' ({key})' if key else ''}: {cockpit.tab_question(name)}"
             if tab.tooltip != tip:  # its word and its key, whatever the bar shows of it
                 tab.tooltip = tip
 
@@ -554,7 +557,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
         full = (getattr(self._base().maximized, "id", None) == name
                 or cockpit.tab_panels(self.tab, self._view()) == (name,))
         crumb = f"{self.scope} > " if full else ""
-        return escape(f"{crumb}{cockpit.TABS[cockpit.panel_tab(name)]['key']} {heading} [i]")
+        key = cockpit.TABS[cockpit.panel_tab(name)]["key"]  # none for a plugin's tab
+        return escape(f"{crumb}{key + ' ' if key else ''}{heading} [i]")
 
     def _maximized(self, widget) -> None:
         self._titles()
@@ -562,7 +566,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
 
     def _titles(self) -> None:
         panels = self.cockpit.snapshot()["panels"]
-        for name in EVERY_FRAME:
+        for name in (*EVERY_FRAME, *cockpit.PLUGGED):
             panel = panels.get(cockpit.FRAMES.get(name, name))
             self._q(f"#{name}").border_title = self._title(name, cockpit.heading(name, panel))
 
@@ -579,7 +583,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
     def draw(self, updated: set[str]) -> None:
         snap = self.cockpit.snapshot()
         panels = snap["panels"]
-        for name in EVERY_FRAME:
+        for name in (*EVERY_FRAME, *cockpit.PLUGGED):
             source = cockpit.FRAMES.get(name, name)  # a frame is drawn when the panel it reads changes
             if source not in updated or name == "settings":  # the settings are read when shown (_draw_settings)
                 continue
