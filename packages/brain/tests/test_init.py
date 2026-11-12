@@ -468,6 +468,9 @@ def test_a_template_composes_a_graph_from_layers_and_its_own(fresh, tmp_path, ca
     ("[{name: main, store: notes/graph, layers: []}]", None, "layers is a list of layer names"),
     ("[{name: main, store: notes/graph, layers: [work, lab]}]", LAB_LAYER.replace("name: lab", "name: bench"),
      "holds layer 'bench'"),
+    ("[{name: main, store: notes/graph, layers: [work, lab]}]", "node_types: {Bench: [unclosed\n",
+     "layers/lab.yaml is not readable YAML"),
+    ("[{name: main, store: notes/graph, layers: [work, my-lab]}]", None, "layers is a list of layer names"),
 ])
 def test_a_template_s_layers_are_checked(fresh, tmp_path, graphs, layer, says):
     tpl = _lab_template(tmp_path, graphs, layer)

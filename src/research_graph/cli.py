@@ -401,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
         problems += check_wiring(graph, args.repo_root)
         problems += structure_errors(graph)
         problems += endpoint_errors(graph, load_schema(Path(args.store) / "schema.yaml"))
-        advisories =check_consistency(graph) + orphan_code_refs(graph) + unchecked_anchors(graph, repos)
+        advisories = check_consistency(graph) + orphan_code_refs(graph) + unchecked_anchors(graph, repos)
         views = kanban_stale(graph, args.repo_root, args.views) + roadmap_stale(graph, args.repo_root, args.views)
         for adv in advisories + views:
             print(f"advisory: {adv}")

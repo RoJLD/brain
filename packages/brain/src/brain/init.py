@@ -69,6 +69,7 @@ SHELL_SAFE_NAME = re.compile(r"[\w .'-]+")
 MANIFEST = "template.yaml"
 TEMPLATE_KEYS = {"name", "version", "engine", "title", "files", "graphs", "classes"}
 GRAPH_KEYS = {"name", "store", "schema", "layers"}
+LAYER_RE = re.compile(r"[a-z][a-z0-9_]*")   # a layer's name (research_graph.layers.NAME_RE)
 SCHEMAS = ("default",)   # templates/schemas/<name>.yaml; or a graph's layers, composed from research_graph's catalogue
 # what config.json names, so every template writes it (a folder through its .gitkeep)
 REQUIRED = ("projects.yaml", "rules/global.md", "source/packs.yaml", "memory/.gitkeep", "records/.gitkeep")
@@ -224,7 +225,7 @@ def graphs_of(spec: str, declared) -> list[dict]:
             if "schema" in g:
                 raise InitError(f"{where}[{i}] ({name}): schema or layers, not both")
             if not isinstance(layer_names, list) or not layer_names or \
-                    not all(isinstance(x, str) and NAME_RE.fullmatch(x) for x in layer_names):
+                    not all(isinstance(x, str) and LAYER_RE.fullmatch(x) for x in layer_names):
                 raise InitError(f"{where}[{i}] ({name}): layers is a list of layer names, one at least")
         elif schema not in SCHEMAS:
             raise InitError(f"{where}[{i}] ({name}): schema {schema!r}: only {', '.join(SCHEMAS)} for now "
@@ -249,7 +250,11 @@ def template_layers(tpl: Template | None, names) -> dict:
         if f is None or not f.is_file():
             raise InitError(f"layer {n!r}: not in the catalogue ({', '.join(layers.catalogue())}) nor the template's "
                             f"layers/{n}.yaml")
-        layer = layers.parse_layer(graph.load_yaml(f.read_text(encoding="utf-8")), f"layers/{n}.yaml")
+        try:
+            data = graph.load_yaml(f.read_text(encoding="utf-8"))
+        except Exception as exc:   # a YAML error in the template's own layer file
+            raise InitError(f"layers/{n}.yaml is not readable YAML ({exc})") from exc
+        layer = layers.parse_layer(data, f"layers/{n}.yaml")
         if layer.name != n:
             raise InitError(f"layers/{n}.yaml holds layer {layer.name!r}")
         out[n] = layer
@@ -277,7 +282,7 @@ def schema_text(name: str, owner: str) -> str:
 
 def schema_layers(text: str) -> list[str]:
     """The layers of a schema.yaml text (a template's schema name gives its text by :func:`schema_text`)."""
-    if "\n" not in text:   # a schema's name (as before 0.4)
+    if "\n" not in text:   # a schema's name (as before 0.3.3)
         text = schema_text(text, "x")
     data = graph.load_yaml(text) or {}
     return list((data.get("layers") or {}).keys())
