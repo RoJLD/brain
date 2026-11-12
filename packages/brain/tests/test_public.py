@@ -7,9 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from brain import boundary, cli, config, guards, public
-
 from conftest import run_git
 
 PUBLIC = {"v": 1, "identity": {"owner": "Ada"},
@@ -90,7 +88,8 @@ def test_every_check_finds_its_case(pub, make_repo):
     assert set(files) == {"data/ticks.csv", "x/heirs.yaml", "keys/deploy.pem", "store/cache.parquet",
                           "library/paper.pdf", "library/book.epub"}
     assert ("domain", "src/engine/cols.py", 1) in got and ("domain", "research/alpha.md", 0) in got
-    assert data["counts"]["denied"] >= 4 and all(data["counts"][c] for c in public.CHECKS)
+    # every check but graph (no personal graph here: tests/test_privateids.py)
+    assert data["counts"]["denied"] >= 4 and all(data["counts"][c] for c in public.CHECKS if c != "graph")
 
 
 def test_history_finds_what_a_later_commit_took_out(pub, make_repo, capsys):

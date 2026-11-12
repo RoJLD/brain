@@ -34,7 +34,7 @@ so), ``dry-run`` turns every send into a dry run. Exit code 0 when a channel del
 held back by the throttle, off, dry run); 1 when every channel of the route failed or is not set up; 2 for a
 configuration error. The transports use the standard library only (urllib, smtplib), imported when they send.
 
-The watchdog's interface (a project's ``wi-ops-watchdog-alerts``, then ``wi-brain-project-alerts``) is ``brain notify
+The watchdog's interface (a project's own watchdog item, then ``wi-brain-project-alerts``) is ``brain notify
 send --project P --level L --source watchdog --key ALERT-ID``, or ``notify()`` from Python: the key holds back a
 repeat of an open alert, and the threshold (2 missed passes for a 15-minute task) stays the watchdog's.
 """

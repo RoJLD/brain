@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "brain/schemas/event.schema.json",
   "title": "Event, one execution, one error or one alert of a command, a script, a step or a project",
-  "description": "One schema for the execution-time ledger (kind exec: brain timed, brain.timing.timed; read by brain perf), the ops error events (kind error: wi-ops-error-catalog) and the project alerts (kind alert: brain alerts raise | resolve, brain.alerts.emit; read by brain alerts and brain status), so they make one stream. Append-only: one JSON object per line, in $BRAIN_HOME/ledger/<kind>-<yyyy-mm>.jsonl by the month of 'at', or in a project's own events store (projects.yaml alerts: events:).",
+  "description": "One schema for the execution-time ledger (kind exec: brain timed, brain.timing.timed; read by brain perf), the ops error events (kind error: a project's error catalogue) and the project alerts (kind alert: brain alerts raise | resolve, brain.alerts.emit; read by brain alerts and brain status), so they make one stream. Append-only: one JSON object per line, in $BRAIN_HOME/ledger/<kind>-<yyyy-mm>.jsonl by the month of 'at', or in a project's own events store (projects.yaml alerts: events:).",
   "type": "object",
   "required": ["v", "kind", "at", "host", "task"],
   "additionalProperties": false,

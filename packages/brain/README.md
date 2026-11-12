@@ -34,7 +34,7 @@ What it does, every command reading files and git, never a model:
   workflow; a command a session types into the owner's Terminal panel, `run_in_terminal`, meets the same shell
   guards), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
-  shapes, data files) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
+  shapes, data files, the personal graph's decision ids and titles and the other projects' ids) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
   deny rules and gitleaks as now. After an upgrade, `brain update` and the installer's `-Apply` re-check the
   registry's public checkouts with the new engine (`brain check --public --refresh`), so each one's HEAD is stamped
   again; a checkout with uncommitted work is skipped and named, and another local branch still asks its own check.
@@ -1219,6 +1219,17 @@ out. A term, by hand or derived, matches in every spelling of its separators: `a
 by: rerun `brain check --public --history` before the next push. A registry that cannot be read (a YAML error, a
 conflict marker in `projects.yaml`, `members.yaml` or a module registry) never yields a shorter list: the public and
 secrets guards refuse, as for a configuration they cannot trust, and `brain check --public` stops (exit code 2).
+
+**The personal graph's ids** (`wi-brain-public-private-ids`, brain.privateids). When `config.json` names a public
+repo, `brain check --public` and the public commit guard also refuse, as the `graph` check, what the registry's stores
+hold of the owner's graph: an ADR's or a DDR's id (the owner's decisions and answers) whatever its project; any other
+id of the shapes `wi-`, `adr-`, `feat-`, `ddr-`, `spec-` and `les-` of a project that is not the public repo's own (the
+projects with a repo named as the public repo, whose items, features, specs and lessons the engine cites on purpose:
+its CHANGELOG, its docstrings, FEATURES.md); and an ADR's title of 4 words or more, matched on its first 8 words
+whatever the case and the punctuation (a title quoted whole, or cut where a view truncates it). An id no store holds
+passes (a test's invented `adr-2026-01-01-x`), as does a file under `public.allow`. A store that does not load is said
+in the check's notes, its ids unchecked. The ids are not part of the stamp's key: a new item every few minutes would
+void every stamp, and a line checked before an id existed cannot hold it.
 
 ### Edges between stores
 

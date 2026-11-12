@@ -18,7 +18,7 @@ PowerShell(brain health)
 PowerShell(brain health *)
 
 # brain resume: read a project's resume pack without a prompt, in a session or a sub-session brief; --write writes only
-# <BRAIN_HOME>/resume/<project>.md, --health only checks stacks (the owner, 2026-11-02, ddr-2026-11-02-allow-brain-resume).
+# <BRAIN_HOME>/resume/<project>.md, --health only checks stacks (the owner, 2026-11-02).
 Bash(brain resume)
 Bash(brain resume *)
 PowerShell(brain resume)
