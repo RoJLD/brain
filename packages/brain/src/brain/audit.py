@@ -785,9 +785,10 @@ def _sum(repos: list[dict]) -> dict:
 
 
 def _moved(p: projects.Project) -> list:
-    """config.json's table of moves (brain.moves), read from the project's brain; [] when it does not load."""
+    """config.json's table of moves (brain.moves), read from the brain whose registry the project came from (its
+    registry_dir, else its root); [] when it does not load."""
     try:
-        return moves.table(config.load(p.root))
+        return moves.table(config.load(p.registry_dir or p.root))
     except (OSError, ValueError):
         return []
 

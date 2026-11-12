@@ -7,14 +7,18 @@ zero token instead of a sweep by hand (the post-extraction sweep found about 20 
   (:func:`brain_files`), a warning each;
 - the memory lint (wi-brain-memory-lint) reads it through :func:`scan_text`.
 
-A prefix matches where a path starts and ends: not inside a longer name (``old-notes`` is not in
-``old-notes-help``), ``/`` and ``\\`` alike, case ignored (Windows paths). A line that names the new prefix too is
-history (« moved from X to Y ») and passes.
+A prefix matches at the start of a path: not after another path segment (``engine/`` is not in ``tools/engine/x``;
+``./engine/`` is), not inside a longer name (``old-notes`` is not in ``old-notes-help`` or ``old-notes.md``), and a
+prefix ending in ``/`` only as a folder (``kit/engine/`` is not in ``kit/engine.py``); ``/`` and ``\\`` alike, case
+ignored (Windows paths). A bare name (a repo's) matches in prose too, by design, but never in a CodeRef id
+(``code:<repo>:...``: brain audit's coderef.dangling owns those). A line that names the new prefix outside the old one
+too is history (« moved from X to Y ») and passes.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import functools
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,9 +26,10 @@ from pathlib import Path
 from . import config
 
 KEY = "moved"
-# what brain check reads in a brain's own root: its instructions, memory notes, skills and scripts
-BRAIN_FILES = ("CLAUDE.md", "*/CLAUDE.md", "AGENTS.md", "*/AGENTS.md", "*/SKILL.md", "memory/*.md", "*.ps1", "*.sh",
-               "*.cmd", "*.bat")   # fnmatch: a * crosses folders
+# what brain check reads in a brain's own root (paths lowercased; fnmatch: a * crosses folders): its instructions,
+# rules, agents and commands, memory notes, skills, hooks and settings, and scripts
+BRAIN_FILES = ("claude.md", "*/claude.md", "agents.md", "*/agents.md", "*/rules/*.md", ".claude/*.md", "*/skills/*",
+               "skills/*", "memory/*.md", "*hooks.json", "*settings.json", "*/hooks/*", "*.ps1", "*.sh", "*.cmd", "*.bat")
 MAX_FILE = 2_000_000
 
 
@@ -43,9 +48,15 @@ def _norm(text: str) -> str:
     return text.replace("\\", "/").lower()
 
 
+@functools.lru_cache(maxsize=512)
 def _pattern(old: str) -> re.Pattern:
-    body = re.escape(_norm(old).rstrip("/"))
-    return re.compile(rf"(?<![\w.-]){body}(?![\w-])")
+    """Where ``old`` starts a path: not after a word, '.' or '-', nor after a segment and its slash ('./' is fine),
+    nor in a CodeRef id; and ends one: a folder prefix (ending in '/') before a slash, else not before a word, '-'
+    or '.<word>'."""
+    norm = _norm(old)
+    body = re.escape(norm.rstrip("/"))
+    end = r"(?=/)" if norm.endswith("/") else r"(?![\w-]|\.\w)"
+    return re.compile(rf"(?<![\w.-])(?<![\w-]/)(?<!code:){body}{end}")
 
 
 def table(cfg: config.Config | None = None) -> list[Move]:
@@ -67,14 +78,16 @@ def find_in_line(line: str, moves: list[Move]) -> list[Move]:
     low = _norm(line)
     hits, taken = [], []
     for m in moves:
-        for hit in _pattern(m.old).finditer(low):
-            if any(a <= hit.start() < b for a, b in taken):
-                continue   # inside a longer prefix already found
-            if _pattern(m.new).search(low):
-                break
-            taken.append(hit.span())
-            hits.append(m)
-            break
+        if _norm(m.old).rstrip("/") not in low:
+            continue   # the cheap test first: most lines name no move
+        spans = [h.span() for h in _pattern(m.old).finditer(low)]
+        fresh = [sp for sp in spans if not any(a <= sp[0] < b for a, b in taken)]   # not inside a longer prefix
+        if not fresh:
+            continue
+        taken += fresh   # found, or history: a shorter prefix inside it is no finding either
+        if any(not any(a <= n.start() < b for a, b in spans) for n in _pattern(m.new).finditer(low)):
+            continue   # the new prefix named outside the old one: history
+        hits.append(m)
     return hits
 
 
@@ -85,7 +98,7 @@ def scan_text(path: str, text: str, moves: list[Move]) -> list[tuple[str, int, M
 
 def brain_files(root: Path, tracked: list[str]) -> list[str]:
     """The tracked files of a brain's root that brain check reads for old prefixes (:data:`BRAIN_FILES`)."""
-    return [t for t in tracked if any(fnmatch.fnmatchcase(t, g) for g in BRAIN_FILES)]
+    return [t for t in tracked if any(fnmatch.fnmatchcase(t.lower(), g) for g in BRAIN_FILES)]
 
 
 def scan_root(root: Path, tracked: list[str], moves: list[Move]) -> list[str]:

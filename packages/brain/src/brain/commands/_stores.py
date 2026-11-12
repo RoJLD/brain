@@ -550,15 +550,17 @@ def _moved_names(root: Path | None) -> list[str]:
     from .. import moves
     cfg = config.load(root)
     table = moves.table(cfg)
-    if not table or cfg.file is None:
+    top = Path(root) if root is not None else cfg.root   # the brain checked, as the rest of its registry check
+    if not table:
         return []
     try:
-        out = subprocess.run(["git", "-C", str(cfg.root), "ls-files", "-z"], capture_output=True, timeout=60,
+        out = subprocess.run(["git", "-C", str(top), "ls-files", "-z"], capture_output=True, timeout=60,
                              stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError):
-        return []
-    tracked = [t for t in out.stdout.decode("utf-8", "replace").split("\0") if t] if out.returncode == 0 else []
-    return moves.scan_root(cfg.root, tracked, table)
+        out = None
+    if out is None or out.returncode:
+        return [f"not checked: {top} is not a git checkout (its tracked files are what is read)"]
+    return moves.scan_root(Path(top), [t for t in out.stdout.decode("utf-8", "replace").split("\0") if t], table)
 
 
 def _uncloned(root: Path | None) -> list[str]:

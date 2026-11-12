@@ -241,6 +241,33 @@ and justified when the PR's `Compat:` line resolves it (`Compat: migration <id>`
 fixture, or `Compat: breaking <adr-id>`). `brain schema diff --against <tag>` prints the same over a tag's range
 ([`docs/formats.md`](docs/formats.md), « The schema diff »).
 
+### The table of moves
+
+When a path, a folder or a repo moves, write it once in config.json, the same day:
+`"moved": {"<old prefix>": {"to": "<new prefix>", "date": "YYYY-MM-DD", "note": "..."}}` (`brain.moves`,
+wi-brain-moved-paths). The checks then find what still names the old prefix, at zero token:
+
+- `brain audit` and the scout report a doc line that names it as `doc.dead-ref`, with the new prefix to write
+  (ruleset 11). The table is read from the brain whose registry the project comes from.
+- `brain check`, in a brain's own root, warns of the tracked files of that root that are not docs:
+  - instructions (`CLAUDE.md`, `AGENTS.md`), rules, `.claude/` agents and commands;
+  - memory notes (`memory/`) and skills;
+  - hooks and settings;
+  - scripts (`.ps1`, `.sh`, `.cmd`, `.bat`).
+
+  It reads no other project's files, and not the machine's own auto-memory: that is the memory lint's job, which
+  reads `brain.moves` too.
+
+How a prefix matches:
+
+- **At the start of a path.** `engine/` is not in `tools/engine/x`, but it is in `./engine/x`.
+- **To the end of a name.** `old-notes` is not in `old-notes-help` or `old-notes.md`. A prefix ending in `/` matches
+  only as a folder: `kit/engine/` is not in `kit/engine.py`.
+- **Slashes and case.** `/` and `\` are read alike, and case is ignored.
+- **Bare names.** A bare name, such as a repo's, matches in prose too. It never matches in a CodeRef id
+  (`code:<repo>:...`): the audit's `coderef.dangling` owns those.
+- **History.** A line that names the new prefix outside the old one is history (« moved from X to Y ») and passes.
+
 ### Feature coverage
 
 A shipped capability cannot miss the feature matrix (`FEATURES.md`): in a package whose `commands/` lists its own
