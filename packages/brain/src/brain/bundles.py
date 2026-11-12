@@ -11,6 +11,8 @@ The rendering keeps the template, except, per component, where its data lives (i
   home     ./data/<volume>, a folder under BRAIN_HOME: files the host reads (the collector's JSONL, for DuckDB)
 and each secret's ``file``, pointed at ``$BRAIN_SECRET_<NAME>`` (a path) or ``<BRAIN_HOME>/secrets/<name>`` (``_`` as
 ``-``), a file the owner fills. Nothing here reads, writes or generates a secret: it only checks that the file is there.
+A component config.json ``ipc.require_token`` names (the collector, opt-in) also gets the machine's token file
+(brain.ipcauth) as a secret, and its configuration checks it on every receiver (:func:`collector_auth`).
 
 ``brain bundle plan [BUNDLE]...`` writes nothing and starts nothing. It checks every published port (127.0.0.1 only),
 every image (pinned by tag and digest), the services against the components, and ``docker compose config`` on the
@@ -128,13 +130,61 @@ def render(bundle: str, comps: list[stacks.Stack]) -> tuple[dict, dict[str, byte
     for sname, sec in (doc.get("secrets") or {}).items():
         if isinstance(sec, dict) and "file" in sec:
             sec["file"] = secret_file(str(sname)).as_posix()
+    tokened = [n for n in require_token() if n in doc["services"] and n in TOKEN_CONFIGS]
+    for name in tokened:   # the machine's token mounted as a secret (brain.ipcauth); config.json ipc.require_token
+        svc = doc["services"][name]
+        svc["secrets"] = [*(svc.get("secrets") or []), TOKEN_SECRET]
+    if tokened:
+        from . import ipcauth
+        doc.setdefault("secrets", {})[TOKEN_SECRET] = {"file": ipcauth.token_file().as_posix()}
     files = {stacks.BUNDLE_FILE: (HEADER.format(bundle=bundle) + _dump(doc)).encode("utf-8")}
     src = ROOT / bundle
     for f in sorted(src.rglob("*")):
         rel = f.relative_to(src).as_posix()
         if f.is_file() and rel != stacks.BUNDLE_FILE and "__pycache__" not in rel:
             files[rel] = f.read_bytes()
+    for name in tokened:
+        rel = TOKEN_CONFIGS[name]
+        if rel in files:
+            files[rel] = collector_auth(files[rel])
     return doc, files
+
+
+# The machine's token for a component that requires it (wi-brain-local-ipc-auth): opt-in, config.json
+# ipc.require_token, because it newly refuses a client that sends none (Claude Code's OTLP export then needs
+# OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>", which the owner sets).
+TOKEN_SECRET = "brain_ipc_token"
+TOKEN_MOUNT = f"/run/secrets/{TOKEN_SECRET}"
+TOKEN_CONFIGS = {"otel-collector": "otelcol.yaml"}   # the component and the configuration file that checks it
+AUTH_HEADER = ("# Rendered by brain bundle apply with the machine's token required (config.json ipc.require_token):\n"
+               "# every OTLP receiver checks Authorization: Bearer against the secret the compose file mounts.\n")
+
+
+def _token_ok() -> bool:
+    """The machine's token is usable (brain.ipcauth's own test: not merely a file that is not empty)."""
+    from . import ipcauth
+    return ipcauth.read() is not None
+
+
+def require_token() -> list[str]:
+    """config.json ``ipc.require_token``: the components that require the machine's token (none by default)."""
+    from . import config, ipchealth
+    return ipchealth.settings(config.load())["require_token"]
+
+
+def collector_auth(text: bytes) -> bytes:
+    """The collector's configuration with the bearertokenauth extension on every OTLP receiver, the token read from
+    the secret file (otelcol-contrib's bearertokenauth: ``filename``, scheme Bearer)."""
+    y = graph._yaml()
+    cfg = graph.load_yaml(text.decode("utf-8")) or {}
+    cfg.setdefault("extensions", {})["bearertokenauth"] = {"filename": TOKEN_MOUNT}
+    for rx in ((cfg.get("receivers") or {}).get("otlp") or {}).get("protocols", {}).values():
+        if isinstance(rx, dict):
+            rx["auth"] = {"authenticator": "bearertokenauth"}
+    service = cfg.setdefault("service", {})
+    exts = list(service.get("extensions") or [])
+    service["extensions"] = exts + ([] if "bearertokenauth" in exts else ["bearertokenauth"])
+    return (AUTH_HEADER + y.safe_dump(cfg, sort_keys=False, default_flow_style=False, width=120)).encode("utf-8")
 
 
 # The checks.
@@ -254,10 +304,12 @@ def plan(reg: dict[str, stacks.Stack], bundle: str, root: Path | None = None) ->
     for s in stacks.plan(reg, [c.name for c in comps]):  # dependencies first
         if s.bundle != bundle:
             continue
-        missing = [p.secrets[n] for n in (services.get(s.name) or {}).get("secrets") or []
-                   if n in p.secrets and not _secret_ok(Path(p.secrets[n]))]
+        named = [n for n in (services.get(s.name) or {}).get("secrets") or [] if n in p.secrets]
+        missing = [p.secrets[n] for n in named if n != TOKEN_SECRET and not _secret_ok(Path(p.secrets[n]))]
         waits = [d for d in s.depends_on if d in p.waiting]
-        if missing:
+        if TOKEN_SECRET in named and not _token_ok():
+            p.waiting[s.name] = f"the machine's token {p.secrets[TOKEN_SECRET]} (brain ipc token --init)"
+        elif missing:
             p.waiting[s.name] = f"its secret file {', '.join(missing)} (the owner fills it)"
         elif waits:
             p.waiting[s.name] = f"{', '.join(waits)}"

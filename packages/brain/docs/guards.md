@@ -47,8 +47,8 @@ app's own server; any other prefix gets the plain refusal) passes in exactly the
 | Case | Call | The guard checks |
 |---|---|---|
 | `archive` | `enabled: false` on another session, just before archiving it | the caller started it; it is `idle` or `ended` (its transcript's tail); it is no live coordinator (by name or title) |
-| `handover-on` | `enabled: true` on another session | the caller is a coordinator started by a coordinator; it started the target; the target is a coordinator, live on this machine; the caller's hand-over note exists |
-| `handover-off` | `enabled: false` on `self` (or its own id) | the caller is a coordinator started by a coordinator; its hand-over note exists; it started a coordinator that is detached and live on this machine |
+| `handover-on` | `enabled: true` on another session | the caller is a coordinator started by a coordinator; it started the target; the target is a coordinator, live (or starting) on this machine; the caller's hand-over note exists |
+| `handover-off` | `enabled: false` on `self` (or its own id) | the caller is a coordinator started by a coordinator; its hand-over note exists; it started a coordinator that is detached and live (or starting) on this machine |
 
 What it reads, at zero token:
 
@@ -64,6 +64,10 @@ What it reads, at zero token:
   can change (`set_session_title`); a title starting « Coordination du Brain » only protects a live session from the
   `archive` case. `coordinator-report` is no coordinator.
 - **Live on this machine**: `running`, `idle`, `asking` or `stale`; not archived, and not `unknown` (no transcript).
+  A successor `unknown` because it has no transcript yet still counts, as starting, for `handover-on` and
+  `handover-off` when its own app file's `createdAt` is at most 10 minutes old (`HANDOVER_START_S`): the outgoing
+  coordinator switches it on seconds after `start_session`, before its first turn is written; an older one, or
+  one whose `createdAt` cannot be read, stays refused (`wi-brain-rc-handover-starting`).
 - **Detached**: the app's `lineageDetached` (`brain.sessions` reads it as `detached`).
 - **The hand-over note**: a regular `*.md` file (no link) in `<BRAIN_HOME>/handover/`, at most 512 kB, written in the
   last 6 hours (not in the future), whose first `local_…` id in its first 2,000 characters is the caller's: a note
@@ -280,6 +284,15 @@ The guards refuse `brain usage allow` to a session, and any write of its file (`
 
 `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` (how many workflow agents run at once; about 8 on a machine like the
 scale study's) is Claude Code's own setting: the owner sets it through their installer's plan, never a session.
+
+## The guards for other agents (the MCP server)
+
+`brain mcp serve` (docs/mcp.md) runs these same checks on each tool call of a client that runs no Claude Code hook
+(`brain.mcpguards`): the call's effect as a hook payload, through `brain.guards.refusals(payload, strict=True)`. Two
+differences from a hook: a check that raises refuses the call (a hook lets it through), and `BRAIN_GUARD_ALLOW` lifts
+nothing (a client's configuration can set the server's environment). The owner's own `brain` gestures (answering a
+decision, a schedule installed, the machine's token made...) are refused there whatever the tool, and the refusals go
+to the same guards ledger, the tool named `mcp:<name>`.
 
 ## Troubleshooting
 
