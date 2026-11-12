@@ -1,4 +1,4 @@
-"""wi-brain-handover-auto-root (HANDOVER-1): a coordinators' chain root marked by its first prompt. The
+"""wi-brain-handover-auto-root (HANDOVER-1): the first prompt marks the root of a coordinators' chain. The
 UserPromptSubmit hook (midsession) marks a session the owner started (no parent in the app's files, no completed turn)
 when its first prompt asks for a coordinator, judged on the session's own transcript (found from its id, never the
 payload's path); a later prompt, a session another session started, or a prompt that asks for none marks nothing; the
