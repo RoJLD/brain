@@ -259,3 +259,134 @@ def test_archived_subtrees_are_left_out_of_the_counts_unless_asked(brain, capsys
     assert scopes.render(tree, archived=True)[0] == "Global (2 projects)"
     assert cli.main(["--root", str(brain.root), "scopes", "--scope", "old", "--json"]) == 0
     assert [n["id"] for n in json.loads(capsys.readouterr().out)["nodes"]] == ["old", "alpha"]   # named: shown
+
+
+def _config(root, **public):
+    data = {"v": 1, "identity": {"owner": "Ada"}, "public": {"deny": {"people": ["Ada"], "repos": ["handmade"],
+                                                                     "paths": ["E:/Work"]}, **public}}
+    (root / config.FILE).write_text(json.dumps(data), encoding="utf-8")
+    return config.load(root)
+
+
+def test_deny_from_tree_is_off_by_default(brain):
+    brain("alpha: {root: ., parent: acme}\nbeta: {root: ../beta}\ngamma: {root: ../gamma}\n")
+    _tree(brain.root)
+    cfg = _config(brain.root)
+    assert config.deny_terms(cfg) == [("people", "Ada"), ("repos", "handmade"), ("paths", "E:/Work")]
+    assert config.unexpected(cfg) == "" and config.describe(cfg)["deny_from_tree"] is False
+
+
+def test_deny_from_tree_adds_the_private_subtree_and_its_repos(brain):
+    brain("alpha: {root: ., parent: finance}\nbeta: {root: ../beta, parent: alpha}\n"
+          "gamma: {root: ../gamma, parent: pro}\nupstream: {title: an upstream, access: read, parent: acme}\n"
+          "handmade: {root: ../beta, parent: acme}\n")
+    _tree(brain.root, TREE + "  open: {type: folder, classes: {floor: public}}\n")
+    cfg = _config(brain.root, deny_from_tree=True, repos=["someone/root"])
+    assert scopes.private_nodes(scopes.load(brain.root)) == ["alpha", "beta", "upstream", "handmade"]
+    # alpha's repo is its root's folder, root: a public repo of public.repos, left out; beta's folder is beta
+    assert scopes.private_terms(cfg) == ["alpha", "beta", "handmade", "upstream"]
+    assert config.deny_terms(cfg) == [("people", "Ada"), ("repos", "handmade"), ("repos", "alpha"), ("repos", "beta"),
+                                      ("repos", "upstream"), ("paths", "E:/Work")]   # gamma (pro: no floor) is not
+    assert config.check(brain.root) == [] and config.describe(cfg)["deny"]["repos"] == 4
+    from brain import public
+    assert public.rules_hash(cfg) != public.rules_hash(_config(brain.root, repos=["someone/root"]))
+
+
+def test_a_newly_placed_private_project_is_denied_without_a_hand_edit(brain):
+    brain("alpha: {root: .}\nbeta: {root: ../beta}\ngamma: {root: ../gamma}\n")
+    _tree(brain.root)
+    cfg = _config(brain.root, deny_from_tree=True)
+    assert scopes.private_terms(cfg) == []
+    brain("alpha: {root: .}\nbeta: {root: ../beta}\ngamma: {root: ../gamma, parent: acme}\n")
+    assert scopes.private_terms(cfg) == ["gamma"]
+
+
+def test_an_unreadable_tree_makes_the_guards_refuse_when_generation_is_on(brain):
+    (brain.root / scopes.FILE).write_text("v: [", encoding="utf-8")
+    assert config.unexpected(_config(brain.root)) == ""   # off: the hand list alone, as before
+    why = config.unexpected(_config(brain.root, deny_from_tree=True))
+    assert why.startswith("scopes.yaml: not readable YAML") and "cannot generate the deny list" in why
+    assert "true or false" in config.unexpected(_config(brain.root, deny_from_tree="yes"))
+
+
+def test_brain_scopes_deny_lists_the_generated_terms(brain, capsys):
+    brain("alpha: {root: .}\nbeta: {root: ../beta, parent: acme}\ngamma: {root: ../gamma}\n")
+    _tree(brain.root)
+    _config(brain.root)
+    assert cli.main(["--root", str(brain.root), "scopes", "--deny"]) == 0
+    assert capsys.readouterr().out == ("deny from the tree: off (config.json public.deny_from_tree); 1 term(s) for "
+                                       "public.deny.repos: beta\n")
+    _config(brain.root, deny_from_tree=True)
+    assert cli.main(["--root", str(brain.root), "scopes", "--deny", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"deny_from_tree": True, "repos": ["beta"]}
+
+
+def test_a_repo_that_cannot_be_resolved_keeps_the_name_and_case_counts_once(brain, monkeypatch):
+    brain("alpha: {root: .}\nbeta: {root: ../beta, parent: acme}\ngamma: {root: ../gamma, parent: acme}\n")
+    _tree(brain.root)
+    cfg = _config(brain.root, deny_from_tree=True)
+
+    def repos_of(p):
+        if p.name == "beta":   # a production checkout on another drive: os.path.relpath raises
+            raise ValueError("path is on mount 'E:', start on mount 'C:'")
+        return [projects.Repo("gamma", p.root, folder="Gamma"), projects.Repo("svc", p.root, folder="SVC")]
+    monkeypatch.setattr(projects, "repos_of", repos_of)
+    assert scopes.private_terms(cfg) == ["beta", "gamma", "svc"]   # never raised into the guard; once each
+    assert config.unexpected(cfg) == ""
+
+
+@pytest.mark.parametrize("case, want", [
+    ("floor", "the scope tree has 1 error(s), the first: scope acme: classes.floor is one of"),
+    ("parent", "the scope tree has 1 error(s), the first: project beta: its parent 'acmee' is no node"),
+    ("named", "does not exist: public.deny_from_tree cannot generate the deny list"),
+    ("none", "no scope tree (scopes.yaml or a parent: in projects.yaml)"),
+    ("list", "projects.yaml is a list, not a mapping"),
+    ("raises", "the deny list could not be generated (RuntimeError: boom)"),
+])
+def test_generation_on_refuses_whatever_would_make_the_list_miss_terms(brain, monkeypatch, case, want):
+    brain("alpha: {root: .}\nbeta: {root: ../beta, parent: acme}\ngamma: {root: ../gamma}\n")
+    _tree(brain.root)
+    cfg = _config(brain.root, deny_from_tree=True)
+    assert config.unexpected(cfg) == ""
+    if case == "floor":
+        _tree(brain.root, TREE.replace("floor: confidential", "floor: Private"))
+    elif case == "parent":
+        brain("alpha: {root: .}\nbeta: {root: ../beta, parent: acmee}\ngamma: {root: ../gamma}\n")
+    elif case == "named":
+        monkeypatch.setenv("BRAIN_SCOPES", str(brain.root / "moved.yaml"))
+    elif case == "none":
+        (brain.root / scopes.FILE).unlink()
+        brain("alpha: {root: .}\nbeta: {root: ../beta}\ngamma: {root: ../gamma}\n")
+    elif case == "list":
+        (brain.root / "projects.yaml").write_text("- alpha\n", encoding="utf-8")
+    else:
+        monkeypatch.setattr(scopes, "private_terms", lambda cfg: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert want in config.unexpected(config.load(brain.root))
+    assert config.unexpected(_config(brain.root)) == ""   # off: the hand list alone, nothing refused
+
+
+def test_a_project_marked_private_on_its_own_entry_is_denied(brain):
+    """DENY-1, the owner's answer: a class floor on the project entry, read-only entries and mounts too."""
+    brain("alpha: {root: .}\nbeta: {root: ../beta, classes: {floor: private}}\ngamma: {root: ../gamma}\n"
+          "upstream: {title: an upstream, access: read, classes: {floor: confidential}}\n"
+          "team: {title: hosted, tenant: {}, classes: {floor: public}}\n")
+    assert projects.check(brain.root) == []
+    assert scopes.check(brain.root) == ([], [])   # parent: is not needed: the floor is the node's own
+    cfg = _config(brain.root, deny_from_tree=True)
+    assert scopes.private_terms(cfg) == ["beta", "upstream"]
+    assert config.unexpected(cfg) == ""
+
+
+def test_a_project_floor_binds_its_stores_and_never_loosens_its_container(brain):
+    from brain import classes
+    brain("alpha: {root: .}\nbeta: {root: ../beta, parent: acme, classes: {floor: private}}\n"
+          "gamma: {root: ../gamma, classes: {floor: sealed}}\n")
+    _tree(brain.root)
+    errors, _ = scopes.check(brain.root)
+    assert errors == ["project beta: its class floor private is under confidential, the floor acme sets above it: "
+                      "a guard only tightens going down (remove it, or raise it)"]
+    cfg = config.load(brain.root)
+    assert classes.floor(cfg, "gamma") == ("sealed", "gamma") and classes.floor(cfg, "beta") == ("confidential", "acme")
+    brain("alpha: {root: .}\nbeta: {root: ../beta, classes: {floor: Private}}\ngamma: {root: ../gamma}\n")
+    assert scopes.check(brain.root)[0] == ["project beta: classes.floor is one of public, private, confidential, "
+                                           "sealed, resident, secret, not 'Private'"]

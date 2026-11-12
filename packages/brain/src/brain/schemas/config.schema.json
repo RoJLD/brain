@@ -84,6 +84,7 @@
             "paths": {"$ref": "#/$defs/terms", "description": "Local paths."}
           }
         },
+        "deny_from_tree": {"type": "boolean", "description": "true: deny.repos gains, after the hand list, the name of every project of the scope tree whose class floor along its chain is private or stricter (scopes.yaml classes.floor) and the names of its repos, a repo of public.repos left out (wi-brain-deny-from-tree, brain.scopes); a newly placed private project is denied without a hand edit. A scope tree or registry that cannot be read then makes the public guard refuse. Default false: the hand list alone."},
         "allow": {"type": "object", "additionalProperties": {"type": "string", "minLength": 15}, "description": "{glob: reason of 15 characters or more}: files where a denied term is expected, a licence's author say; brain check --public excepts them from every check but secrets."},
         "patterns": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}, "description": "{name: regular expression}: what no line of a public repo may match, a domain's own (a data venue's derived columns); brain check --public, from the domain's template."},
         "refuse": {"type": "object", "additionalProperties": {"type": "string", "minLength": 15}, "description": "{glob: reason of 15 characters or more}: files a public repo must not hold, a domain's own (the research-IP paths of a split); brain check --public."}
