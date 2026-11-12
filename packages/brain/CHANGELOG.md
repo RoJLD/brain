@@ -37,13 +37,21 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
    A machine's `profile.json` is now merged key by key over `config.json` `tier.components` (a switch it does not name
    keeps the brain's default), and module ids are accepted in both, expanded to their capabilities. Each fact is now
    true, false or unknown: an unknown fact (never probed, or a probe that could not say) satisfies neither `FACT` nor
-   `not FACT` in a `recommend_when`, and a requirement unknown counts as missing, so a recommendation or a requirement
-   that held on a fact nobody knew no longer does; declare the fact in `config.json` `hosts.<name>` (ecc, battery,
-   encrypted, gpu, type, cluster, roles) where the probe cannot say. The first run writes `<BRAIN_HOME>/machine.json`
-   (the name, `$BRAIN_MACHINE` else the host name, and a sha256 anchor of the OS install); `brain doctor` prints the
-   `hosts` line to add to `config.json` (optional, what tells a reused name or a cloned image). A doubt on the identity
-   (a renamed machine, a copied `BRAIN_HOME` or cloned image, a name reused, an anchor given to two names, an install
-   id that cannot be read) holds the memory export, imports going on, until it is answered. Under the new optional
+   `not FACT` in a `recommend_when`, nor `FACT != VALUE`, so a recommendation, or a `not FACT` or `!=` clause, that
+   held on a fact nobody knew no longer does (a requirement on an unknown fact already counted as missing in 0.3.2);
+   declare the fact in `config.json` `hosts.<name>` (ecc, battery, encrypted, gpu, type, cluster, roles) where the
+   probe cannot say. The first run writes `<BRAIN_HOME>/machine.json` (the name, `$BRAIN_MACHINE` else the host name,
+   and a sha256 anchor of the OS install); `brain doctor` prints the `hosts` line to add to `config.json` (optional,
+   what tells a reused name or a cloned image). A doubt on the identity holds the memory export, imports going on,
+   while it lasts; `brain doctor` names it, and no command answers it: a renamed machine clears when `$BRAIN_MACHINE`
+   gives back its first name, or once `<BRAIN_HOME>/machine.json` is removed (the next run takes the name as a first
+   sight); a copied `BRAIN_HOME` or cloned image once that machine has its own `BRAIN_HOME` and name (or its
+   `machine.json` removed); a name reused, or an anchor given to two names, once `config.json` `hosts` is corrected.
+   An install id that cannot be read (a Linux system or container with neither `/etc/machine-id` nor
+   `/var/lib/dbus/machine-id`, a Python whose platform is not Windows, Linux or macOS, such as an MSYS build) is a
+   doubt that nothing clears in this release, a `hosts` line included, whatever the doubt's text says: that machine
+   exports no memory until it has an install id (`systemd-machine-id-setup` or `dbus-uuidgen --ensure`) or runs the
+   brain from a Windows, Linux or macOS Python. Under the new optional
    `config.json` `engine.min` (no floor when absent), an older engine writes no DDR and exports no memory, and
    `brain check` says so.
 
