@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/docgraph.schema.json",
+  "title": "docgraph/v1, a documentation graph",
+  "description": "A neutral, public contract for a documentation graph (brain.docgraph; packages/brain/docs/docgraph.md): its nodes (decisions, documents and their sections, milestones, criteria, items, changes, tests, threats, modules, owner decisions, findings, needs), their normalised statuses, typed edges named as the Brain names them, a source on every node and every derived edge, declared links with their reason and whether they are confirmed, and the findings of the named checks. Any program may emit it; the Brain reads it read only. Read tolerantly: a key this schema does not name is allowed at every level, so a producer may add one in v1 and a reader ignores it; a key it names keeps its type and its values. A new node type, edge type, status or a change of a named key's meaning is a new id (docgraph/v2). tests/fixtures/formats/docgraph/v1/ holds a document of each side.",
+  "type": "object",
+  "required": ["schema", "generated", "nodes", "edges"],
+  "properties": {
+    "schema": {"const": "docgraph/v1", "description": "The contract's id."},
+    "generated": {
+      "type": "object",
+      "required": ["at", "by"],
+      "description": "Who emitted the document, when, and from what.",
+      "properties": {
+        "at": {"type": "string", "format": "date-time"},
+        "by": {"type": "string", "minLength": 1, "description": "The producer and its version, e.g. example-tool 0.1.0."},
+        "repo": {"type": "string", "description": "The repository read (owner/name), when it is one."},
+        "ref": {"type": "string", "description": "The commit read."},
+        "sources": {"type": "object", "description": "What the producer could read (its files, its tracker...): free keys, for a reader to know what is missing."}
+      }
+    },
+    "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
+    "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
+    "checks": {"type": "array", "items": {"$ref": "#/$defs/finding"}, "description": "The findings of the checks the producer ran; a non-empty list of severity error makes the producer exit non-zero."},
+    "checks_run": {"type": "array", "items": {"$ref": "#/$defs/check_id"}, "description": "The checks the producer ran (a run check with no finding passed)."},
+    "checks_not_run": {"type": "array", "items": {"$ref": "#/$defs/check_id"}, "description": "The named checks its data does not allow it to run."}
+  },
+  "$defs": {
+    "check_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z0-9-]+)*$"},
+    "source": {
+      "type": "object",
+      "description": "Where a node or an edge was read: a file (path, line, anchor) at a commit (ref), or a tracker object (tracker: issue, pull, milestone... and its number or url). A source names a path or a tracker (brain.docgraph checks it).",
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "description": "A path relative to the repository's root, forward slashes."},
+        "line": {"type": "integer", "minimum": 1},
+        "anchor": {"type": "string", "description": "The section's anchor in the file, without #."},
+        "ref": {"type": "string", "description": "The commit the file was read at."},
+        "tracker": {"type": "string", "minLength": 1, "description": "The tracker object's kind: issue, pull, milestone, release..."},
+        "number": {"type": "integer", "minimum": 0},
+        "url": {"type": "string"}
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "type", "title", "source"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z-]*:\\S", "description": "<type>:<native id>, unique within the document; a reader namespaces it by project."},
+        "type": {"enum": ["decision", "document", "milestone", "criterion", "item", "change", "test", "threat", "module", "owner-decision", "finding", "need"]},
+        "kind": {"type": "string", "description": "The producer's subtype: adr, ddr, record for a decision; tutorial, how-to, reference, explanation, generated, dated-spec for a document; wave, era, phase for a milestone..."},
+        "title": {"type": "string"},
+        "status": {"enum": ["proposed", "accepted", "superseded", "open", "closed", "done", "dropped", "planned", "stale"], "description": "Normalised; the producer's own word goes in native_status."},
+        "native_status": {"type": "string"},
+        "phase": {"type": "string", "description": "The milestone, wave, era or phase the node belongs to, by its native id."},
+        "owner": {"type": "string", "description": "Who answers for it, when declared (a role or a handle, never personal data)."},
+        "updated": {"type": "string", "description": "When the node last changed (a date or a date-time), for doc.stale."},
+        "source": {"$ref": "#/$defs/source"}
+      },
+      "allOf": [
+        {"if": {"required": ["type"], "properties": {"type": {"const": "need"}}}, "then": {"required": ["phase", "status"]}}
+      ]
+    },
+    "edge": {
+      "type": "object",
+      "required": ["from", "to", "type", "origin"],
+      "properties": {
+        "from": {"type": "string", "minLength": 1},
+        "to": {"type": "string", "minLength": 1},
+        "type": {"enum": ["decided_by", "supersedes", "complements", "depends_on", "serves", "part_of", "requires", "carries", "covers", "implements", "reports", "contradicts", "documented_in", "tested_by", "constrains"]},
+        "origin": {"enum": ["derived", "declared"], "description": "derived: read from a citation (its source says where); declared: stated by someone without a citation, with its reason and whether it is confirmed."},
+        "reason": {"type": "string", "minLength": 1},
+        "confirmed": {"type": "boolean"},
+        "compatibility": {"enum": ["compatible", "extension-point", "to-review"], "description": "On a constrains edge (decision -> need): how the decision leaves the need."},
+        "source": {"$ref": "#/$defs/source"}
+      },
+      "allOf": [
+        {"if": {"required": ["origin"], "properties": {"origin": {"const": "derived"}}}, "then": {"required": ["source"]}},
+        {"if": {"required": ["origin"], "properties": {"origin": {"const": "declared"}}}, "then": {"required": ["reason", "confirmed"]}},
+        {"if": {"required": ["type"], "properties": {"type": {"const": "constrains"}}}, "then": {"required": ["compatibility"]}}
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "required": ["id", "severity", "subjects"],
+      "properties": {
+        "id": {"$ref": "#/$defs/check_id", "description": "A named check's id (brain docgraph checks), or the producer's own, which a reader shows without interpreting it."},
+        "severity": {"enum": ["error", "warning", "info"]},
+        "subjects": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "The ids of the nodes the finding is about."},
+        "message": {"type": "string"}
+      }
+    }
+  }
+}
