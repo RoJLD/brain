@@ -31,7 +31,11 @@ def test_each_kind_is_checked_and_labelled():
     assert gates.problems({"kind": "hardware", "machine": "gpu", "ready": "soon"})
     assert gates.problems({"kind": "eventually"})[0].startswith("kind 'eventually' is not one of")
     assert gates.of({"gate": {"kind": "go_nogo"}}) == [{"kind": "go_nogo"}]
-    assert gates.of({"gate": [{"kind": "go_nogo"}, "prose"]}) == [{"kind": "go_nogo"}]
+    prose = gates.of({"gate": [{"kind": "go_nogo"}, "4 weeks in a row"]})   # kept, malformed: never silently nothing
+    assert prose == [{"kind": "go_nogo"}, {"kind": "", "text": "4 weeks in a row"}]
+    assert gates.problems(prose[1]) == ["prose, not a gate: a mapping with a kind"]
+    assert gates.label(prose[1]) == "prose: 4 weeks in a row"
+    assert prep(prose[1])["undated"].startswith("a malformed gate: prose")
     assert gates.label({"kind": "hardware", "machine": "gpu"}) == "hardware gpu"
     assert gates.label({"kind": "count", "of": "ddr.answered", "at_least": 100}) == "count ddr.answered >= 100"
     assert gates.ready_range("2026-12..2027-01") == (date(2026, 12, 1), date(2027, 1, 31))
@@ -197,3 +201,105 @@ def test_brain_queue_counts_what_each_gate_holds(store):
     data = {"project": "demo", "counts": {"decision": 0, "action": 0, "permission": 0}, "entries": [],
             "gates": rows, "days": 7}
     assert queue.gates_line(rows) in queue.render(data)
+
+
+# --- the review's findings (each failed before its fix) ---
+
+def test_a_reset_starts_the_whole_count_again_not_the_days_left():
+    p = prep({"kind": "calendar", "days": 28, "from": "2026-10-23", "reset_daily": 0.05})   # 10 days elapsed
+    assert (p["days"], p["full"]) == (18, 28)
+    draws = [gates.draw(p, random.Random(k), [])[0] for k in range(400)]
+    assert all(d == 18 or d >= 28 for d in draws) and any(d >= 28 for d in draws)
+
+
+def test_a_calendar_from_an_item_counts_from_that_items_end():
+    # one lane, 4 h a day: wi-a ends at 0.5 day, wi-b at 3 days; wi-c waits 2 days from wi-a's end and on wi-b
+    cal = forecast._Calendar(random.Random(1), [4.0], 1)
+    done = forecast._schedule([2.0, 10.0, 2.0], [True] * 3, [0.0] * 3, [[], [], [0, 1]], [[2], [2], []], 1,
+                              [0.0] * 3, cal, {0: [(2, 2.0)]})
+    assert done == [2.0, 12.0, 14.0]   # it starts once wi-b is done (3 days): wi-a's count ended at 2.5 days
+    done = forecast._schedule([2.0, 2.0, 2.0], [True] * 3, [0.0] * 3, [[], [], [0, 1]], [[2], [2], []], 1,
+                              [0.0] * 3, cal, {0: [(2, 5.0)]})
+    assert done == [2.0, 4.0, 24.0]    # 5 days from wi-a's end (0.5 day): from 5.5 days, 22 h, then 2 h
+
+
+def test_a_milestones_calendar_counts_from_its_item_and_an_undated_one_holds_it():
+    m = model(n=2)
+    m["items"][1]["gates"] = [{"label": "hardware gpu", "kind": "hardware", "lo": 20, "hi": 20}]
+    m["milestones"][0]["members"] = ["wi-0"]
+    m["milestones"][0]["gates"] = [{"label": "calendar 5 days from wi-1", "kind": "calendar", "after": "wi-1",
+                                    "days": 5.0, "full": 5.0, "reset": 0.0}]
+    res = forecast.run(m, 50)
+    ms = res["milestones"][0]
+    wi1 = next(i for i in res["items"] if i["id"] == "wi-1")["days"]
+    assert ms["days"]["p10"] >= wi1["p10"] + 5 and ms["days"]["p90"] <= wi1["p90"] + 5.01
+    m["items"][1]["why"] = "hardware not dated: gpu"
+    res = forecast.run(m, 50)
+    assert res["milestones"][0]["shown"] == "undated"
+    assert res["milestones"][0]["held"] == "after an item not dated: wi-1"
+
+
+NEVER_ENDS = """
+- {id: wi-dd, type: WorkItem, status: dropped, title: D}
+- {id: wi-c1, type: WorkItem, status: todo, title: C1, props: {gate: {kind: calendar, days: 7, from: wi-dd}}}
+- {id: wi-c2, type: WorkItem, status: todo, title: C2, props: {gate: {kind: calendar, days: 7}}}
+- {id: wi-hw, type: WorkItem, status: todo, title: H, props: {gate: {kind: hardware, machine: gpu, ready: 2026-01}}}
+"""
+
+
+def test_a_calendar_from_a_node_that_never_ends_is_not_dated_and_checked(store):
+    nodes = {"ms-r": {"id": "ms-r", "type": "Milestone", "status": "reached", "props": {"reached": "2026-10-30"}},
+             "wi-d": {"id": "wi-d", "type": "WorkItem", "status": "dropped"},
+             "wi-n": {"id": "wi-n", "type": "WorkItem", "status": "done"}}
+    assert prep({"kind": "calendar", "days": 7, "from": "ms-r"}, nodes)["days"] == 4
+    assert prep({"kind": "calendar", "days": 7, "from": "wi-d"}, nodes)["undated"] == \
+        "calendar from wi-d: a WorkItem dropped: it never ends"
+    assert "done without its date" in prep({"kind": "calendar", "days": 7, "from": "wi-n"}, nodes)["undated"]
+    with (store / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
+        f.write(NEVER_ENDS)
+    lines = gates.check_lines(store, resolver=gates.Resolver(None, here=("demo", {})), today=TODAY)
+    text = "\n".join(lines)
+    assert "3 gate(s) the forecast cannot date as written" in text
+    assert "wi-c1 (calendar from wi-dd: a WorkItem dropped: it never ends)" in text
+    assert "wi-c2 (calendar 7 days without from" in text and "wi-hw (hardware gpu: its ready range ended" in text
+
+
+def test_another_projects_store_that_does_not_load_leaves_the_ref_unresolved(tmp_path, monkeypatch):
+    from brain import projects
+    bad = tmp_path / "other" / "notes" / "graph"
+    (bad / "nodes").mkdir(parents=True)
+    (bad / "schema.yaml").write_text("node_types: [WorkItem]", encoding="utf-8")
+    (bad / "nodes" / "x.yaml").write_text("- {id: wi-x, type: [unclosed", encoding="utf-8")
+    other = projects.Project(name="other", root=tmp_path / "other", stores=[bad])
+    monkeypatch.setattr(projects, "load", lambda root=None: {"other": other})
+    r = gates.Resolver(None)
+    assert r.status("other:wi-x") == "" and r.why_not("other:wi-x") == "no registered project 'other' with a store"
+
+
+PASSED = """
+- {id: wi-old, type: WorkItem, status: todo, title: O, props: {gate: {kind: calendar, days: 3, from: 2026-01-01}}}
+- {id: wi-bad, type: WorkItem, status: todo, title: B, props: {gate: {kind: hardware}}}
+"""
+
+
+def test_the_queue_counts_no_gate_that_passed_or_is_malformed(store):
+    with (store / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
+        f.write(PASSED)
+    assert queue.held_by_gates(queue.load_graph(store), TODAY) == []
+
+
+RESOLVED = """
+- {id: wi-res, type: WorkItem, status: todo, title: "Resolved", props: {priority: P1, theme: "3.9",
+   after_external: "demo:wi-h1"}}
+- {id: wi-hwu, type: WorkItem, status: todo, title: "Gpu", props: {priority: P1, theme: "3.9",
+   gate: {kind: hardware, machine: gpu}}}
+"""
+
+
+def test_gather_resolves_after_external_and_dates_its_item(project):
+    with (project.stores[0] / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
+        f.write(RESOLVED)
+    m = forecast.gather(project, ledger(project), NOW)
+    rows = {i["id"]: i for i in m["items"]}
+    assert rows["wi-res"]["why"] == ""   # demo:wi-h1 is done (this store)
+    assert rows["wi-hwu"]["why"] == "hardware not dated: gpu"

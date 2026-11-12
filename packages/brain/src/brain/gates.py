@@ -58,13 +58,13 @@ LIST_MAX = 10
 # --- reading ---
 
 def of(props: dict | None) -> list[dict]:
-    """The gates of a node's props: ``props.gate`` as a list of mappings (one mapping is a list of one)."""
+    """The gates of a node's props: ``props.gate`` as a list of mappings (one mapping is a list of one). An entry that
+    is not a mapping (prose) is kept as a gate of no kind: malformed, it holds its node until it is written as data."""
     raw = (props or {}).get("gate")
-    if isinstance(raw, dict):
-        return [raw]
-    if isinstance(raw, list):
-        return [g for g in raw if isinstance(g, dict)]
-    return []
+    if raw is None:
+        return []
+    rows = raw if isinstance(raw, list) else [raw]
+    return [g if isinstance(g, dict) else {"kind": "", "text": str(g)} for g in rows]
 
 
 def parse_ref(text) -> tuple[str, str] | None:
@@ -126,6 +126,8 @@ _RULES = {
 def problems(g: dict) -> list[str]:
     """What is wrong with one gate ([] when it is well formed); the external ref is resolved apart."""
     kind = g.get("kind")
+    if not kind and g.get("text"):
+        return ["prose, not a gate: a mapping with a kind"]
     if kind not in KINDS:
         return [f"kind {kind!r} is not one of {', '.join(KINDS)}"]
     return [msg for ok, msg in _RULES[kind] if not ok(g)]
@@ -144,6 +146,8 @@ def label(g: dict) -> str:
         return f"hardware {g.get('machine')}"
     if kind == "go_nogo":
         return "go/no-go" + (f" {g['ddr']}" if g.get("ddr") else "")
+    if not kind and g.get("text"):
+        return f"prose: {' '.join(g['text'].split())[:40]}"
     return str(kind)
 
 
@@ -167,7 +171,7 @@ class Resolver:
             store = next((s for s in p.stores if (s / "schema.yaml").is_file()), None) if p else None
             try:
                 self.cache[name] = ({k: n for k, (_, n) in graph.node_index(store).items()} if store else None)
-            except (OSError, ValueError):
+            except Exception:   # another project's store that does not load (yaml.YAMLError too): unresolved
                 self.cache[name] = None
         return self.cache[name]
 
@@ -225,11 +229,27 @@ def _calendar(g: dict, c: _Ctx) -> dict:
         n = c.nodes.get(str(src))
         if not n:
             return {"undated": f"calendar from an unknown item: {src}"}
-        if n.get("status") != "done":
-            return {"after": str(src), "days": days, "reset": reset}
-        start = _day((n.get("props") or {}).get("done")) or c.today
+        start, why = _end_of(n)
+        if why == "open":
+            return {"after": str(src), "days": days, "full": days, "reset": reset}
+        if why:
+            return {"undated": f"calendar from {src}: {why}"}
     left = max(0.0, days - ((c.today - start).days if start else 0))
-    return {"days": left, "reset": reset} if left else {"passed": True}
+    return {"days": left, "full": days, "reset": reset} if left else {"passed": True}
+
+
+def _end_of(n: dict) -> tuple[date | None, str]:
+    """(the day a node ended, '') for a done item (props.done) or a reached milestone (props.reached); (None, 'open')
+    for an open item; (None, why) otherwise: a calendar counted from it cannot be dated."""
+    status, props = n.get("status"), n.get("props") or {}
+    if n.get("type", "WorkItem") == "WorkItem" and status in OPEN["WorkItem"]:
+        return None, "open"
+    end = _day(props.get("done")) if status == "done" else _day(props.get("reached")) if status == "reached" else None
+    if end:
+        return end, ""
+    if status in ("done", "reached"):
+        return None, f"{status} without its date (props.{'done' if status == 'done' else 'reached'})"
+    return None, f"a {n.get('type', 'node')} {status or 'without a status'}: it never ends"
 
 
 def _count(g: dict, c: _Ctx) -> dict:
@@ -300,7 +320,7 @@ def draw(p: dict, rng, delays_h: list[float]) -> tuple[float, float]:
         return (p["lo"] + rng.random() * (p["hi"] - p["lo"])), 0.0
     days, reset = p["days"], p.get("reset") or 0.0
     t = days
-    if reset > 0:   # a reset day starts the count again: draw the day of each reset until a count gets through
+    if reset > 0:   # a reset day starts the whole count again: draw each reset's day until a count gets through
         t, k = 0.0, days
         while t < MAX_DAYS:
             u = rng.random()
@@ -309,7 +329,7 @@ def draw(p: dict, rng, delays_h: list[float]) -> tuple[float, float]:
                 t += k
                 break
             t += first + 1
-            k = days
+            k = p.get("full") or days
         t = min(t, MAX_DAYS)
     return (0.0, t) if p.get("after") else (t, 0.0)
 
@@ -321,7 +341,8 @@ def _ids(ids: list[str]) -> str:
     return ", ".join(ids[:LIST_MAX]) + more
 
 
-def _gate_findings(nid: str, gs: list[dict], index: dict, resolver: Resolver) -> list[tuple[str, str]]:
+def _gate_findings(nid: str, gs: list[dict], index: dict, resolver: Resolver,
+                   today: date) -> list[tuple[str, str]]:
     """(group, text) of what is wrong with a node's gates."""
     out = []
     for g in gs:
@@ -330,18 +351,35 @@ def _gate_findings(nid: str, gs: list[dict], index: dict, resolver: Resolver) ->
             out.append(("malformed", f"{nid} ({bad[0]})"))
         elif g["kind"] == "external" and resolver.why_not(g["ref"]):
             out.append(("external", f"{nid} ({g['ref']}: {resolver.why_not(g['ref'])})"))
-        elif g["kind"] == "calendar" and g.get("from") and not _day(g["from"]) and str(g["from"]) not in index:
-            out.append(("malformed", f"{nid} (calendar from {g['from']}: no such item)"))
+        elif g["kind"] == "calendar":
+            out += [("dated", f"{nid} ({why})") for why in [_calendar_finding(g, index)] if why]
+        elif g["kind"] == "hardware":
+            rng = ready_range(g.get("ready"))
+            if rng and rng[1] < today:
+                out.append(("dated", f"{nid} (hardware {g['machine']}: its ready range ended {rng[1]}; passed, or "
+                                     "a new range)"))
     return out
 
 
-def _findings(n: dict, index: dict, resolver: Resolver) -> list[tuple[str, str]]:
+def _calendar_finding(g: dict, index: dict) -> str:
+    """What brain check says of a well-formed calendar gate ('' when nothing)."""
+    src = g.get("from")
+    if not src:
+        return f"calendar {g['days']} days without from: counted from each day's today, it never passes"
+    if _day(src):
+        return ""
+    n = index.get(str(src))
+    if n is None:
+        return f"calendar from {src}: no such item"
+    why = _end_of(n)[1]
+    return "" if why in ("", "open") else f"calendar from {src}: {why}"
+
+
+def _findings(n: dict, index: dict, resolver: Resolver, today: date) -> list[tuple[str, str]]:
     """(group, text) of what ``brain check`` says about one open node."""
     props = n.get("props") or {}
     gs = of(props)
-    out = _gate_findings(n["id"], gs, index, resolver)
-    if props.get("gate") is not None and not gs:
-        out.append(("malformed", f"{n['id']} (gate is not a mapping or a list of them)"))
+    out = _gate_findings(n["id"], gs, index, resolver, today)
     words = sorted({w.group(0).lower() for w in DURATION_RE.finditer(str(props.get("trigger") or ""))})
     if words and not gs:
         out.append(("timed", f"{n['id']} ({', '.join(words)})"))
@@ -356,6 +394,7 @@ def _findings(n: dict, index: dict, resolver: Resolver) -> list[tuple[str, str]]
 # brain check's line for each group of findings, in this order.
 _LINES = (("malformed", "malformed gate(s) (docs/gates.md)"),
           ("timed", "trigger(s) name a duration with no gate (props.gate {kind: calendar, days: N}, docs/gates.md)"),
+          ("dated", "gate(s) the forecast cannot date as written"),
           ("external", "external gate(s) that do not resolve"),
           ("unresolved", "after_external that do not resolve to <project>:<id> (or a gate {kind: external, ref: "
                          "<project>:<id>})"),
@@ -363,14 +402,16 @@ _LINES = (("malformed", "malformed gate(s) (docs/gates.md)"),
                     "party)"))
 
 
-def check_lines(store: Path, root: Path | None = None, resolver: Resolver | None = None) -> list[str]:
+def check_lines(store: Path, root: Path | None = None, resolver: Resolver | None = None,
+                today: date | None = None) -> list[str]:
     """``brain check``'s warnings about gates and deadlines on the open items and pending milestones."""
     index = {k: n for k, (_, n) in graph.node_index(store, generated=False).items()}
     resolver = resolver or Resolver(root)
+    today = today or date.today()
     groups: dict[str, list[str]] = {}
     for nid in sorted(index):
         n = index[nid]
         if n.get("status") in OPEN.get(n.get("type"), ()):
-            for group, text in _findings(n, index, resolver):
+            for group, text in _findings(n, index, resolver, today):
                 groups.setdefault(group, []).append(text)
     return [f"warning: {len(groups[k])} {what}: {_ids(groups[k])}" for k, what in _LINES if groups.get(k)]

@@ -845,19 +845,26 @@ def build(project, *, kinds=KINDS, days: int = DAYS, today: date | None = None, 
     return {"project": project.name, "root": str(project.root), "today": today.isoformat(), "days": days,
             "owner": owner, "name": config.name_of(), "entries": entries,
             "counts": {k: sum(1 for e in entries if e["kind"] == k) for k in KINDS}, "bands": bands(entries),
-            "guard_refusals": guards, "expired": expired, "gates": held_by_gates(g),
+            "guard_refusals": guards, "expired": expired, "gates": held_by_gates(
+                g, today, gates.Resolver(getattr(project, "registry_dir", None), here=(project.name, g.nodes))),
             "rules": rules(project, owner), "notes": notes}
 
 
-def held_by_gates(g: Graph) -> list[dict]:
+def held_by_gates(g: Graph, today: date | None = None, resolver: gates.Resolver | None = None) -> list[dict]:
     """What each gate written on an open node holds (props.gate, brain.gates; wi-brain-forecast-gates): [{gate, kind,
     on, items, milestones}], the open items and pending milestones it holds, downstream ones included, the gate
-    holding the most first."""
+    holding the most first. A gate that passed (a count elapsed, another project's item done) or is malformed
+    (brain check names it) holds nothing here."""
+    today = today or date.today()
+    resolver = resolver or gates.Resolver(None, here=("", g.nodes))
     out: dict[str, dict] = {}
     for nid, n in sorted(g.nodes.items()):
         if not g.is_open(nid):
             continue
         for gt in gates.of(n.get("props")):
+            if gates.problems(gt) or gates.prepare(gt, today=today, resolver=resolver, nodes=g.nodes, ddrs=[],
+                                                   work=[], flow={}).get("passed"):
+                continue
             e = out.setdefault(gates.label(gt), {"gate": gates.label(gt), "kind": gt.get("kind"), "on": [],
                                                  "held": set()})
             e["on"].append(nid)

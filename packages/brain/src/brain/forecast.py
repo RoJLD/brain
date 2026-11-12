@@ -524,6 +524,8 @@ def _plan(model: dict) -> dict:
         visit(i["id"])
     dated = [i for i in model["items"] if i["id"] not in why]
     held = {m["id"]: next((g["undated"] for g in m.get("gates") or [] if g.get("undated")), "")
+               or next((f"after an item not dated: {g['after']}" for g in m.get("gates") or []
+                        if g.get("after") and (g["after"] in why or g["after"] in deferred)), "")
             for m in model["milestones"]}
 
     def key(i: dict) -> tuple:
@@ -570,6 +572,7 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
         cal = _Calendar(random.Random(f"{seed}:{f}:capacity"), hist, rng.choice(lanes))
         grng = random.Random(f"{seed}:{f}:gates")   # its own stream: a gate added leaves the other draws as they were
         d, kept, release, lag, dollars = [], [], [], [], []
+        waits: dict[int, list[tuple[int, float]]] = {}   # an item -> the items whose calendar counts from its end
         for k, t in enumerate(tasks):
             z = rng.gauss(0.0, 1.0)  # one draw for the item's time and cost: they go together
             x = math.exp(dur[k][0] + dur[k][1] * z) * factor.get(t["class"], factor.get("*", 1.0))
@@ -583,17 +586,27 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
             wait = 0.0
             for g in t.get("gates") or ():
                 rel, lg = gate_data.draw(g, grng, delays)
+                if g.get("after") in idx:   # counted from that item's own end, not from the last dependency's
+                    waits.setdefault(idx[g["after"]], []).append((k, lg))
+                    lg = 0.0
                 gate, wait = max(gate, rel), max(wait, lg)
             release.append(cal.w(gate) if gate else 0.0)
             lag.append(wait)
             dollars.append(math.exp(usd[k][0] + usd[k][1] * z) * usd_factor.get(t["class"], usd_factor.get("*", 1.0))
                            if usd[k] else 0.0)
-        done = _schedule(d, kept, release, deps, dependents, cal.lanes, lag, cal)
+        done = _schedule(d, kept, release, deps, dependents, cal.lanes, lag, cal, waits)
         for k, t in enumerate(tasks):
             out["finish"][t["id"]].append(round(cal.t(done[k]), 4) if kept[k] else None)
         for m, gs in mgates.items():
-            draws = [gate_data.draw(g, grng, delays) for g in gs]
-            out["mgate"][m].append((max(r for r, _ in draws), max(lg for _, lg in draws)))
+            rels, lags = [0.0], [0.0]
+            for g in gs:
+                rel, lg = gate_data.draw(g, grng, delays)
+                if g.get("after"):   # a calendar from an item's end: that item's finish in this future, plus the count
+                    fin = (out["finish"].get(g["after"]) or [None])[-1] if g["after"] in idx else None
+                    rel, lg = (fin or 0.0) + lg, 0.0
+                rels.append(rel)
+                lags.append(lg)
+            out["mgate"][m].append((max(rels), max(lags)))
         for g, ks in groups.items():
             out["work"][g]["hours"].append(sum(d[k] for k in ks if kept[k]))
             out["work"][g]["usd"].append(sum(dollars[k] for k in ks if kept[k]))
@@ -603,11 +616,12 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
 
 def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: list[list[int]],
               dependents: list[list[int]], lanes: int, lag: list[float] | None = None,
-              cal: _Calendar | None = None) -> list[float]:
+              cal: _Calendar | None = None, waits: dict[int, list[tuple[int, float]]] | None = None) -> list[float]:
     """The event queue: each item's finish in a lane's work hours. The items are given in priority order, so an
     item's index is its rank; an item left out is satisfied at once and holds no lane. ``lag``: calendar days an item
-    still waits once its dependencies are done (a calendar gate counted from an item's end, a Go/NoGo's answer),
-    turned into work hours by ``cal``."""
+    still waits once all its dependencies are done (a Go/NoGo's answer); ``waits``: an item -> (a later item, calendar
+    days it waits from that item's end: a calendar gate counted from it). Both turned into work hours by ``cal``."""
+    waits = waits or {}
     n = len(dur)
     left = [sum(1 for d in deps[k] if kept[d]) for k in range(n)]
     done = [0.0] * n
@@ -621,6 +635,14 @@ def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: li
         return release[k]
 
     release = list(release)
+
+    def ended(k: int, at: float) -> None:   # the calendars counted from k's end start at ``at``
+        for j, days in waits.get(k, ()):
+            release[j] = max(release[j], cal.w(cal.t(at) + days)) if cal else release[j]
+
+    for k in range(n):
+        if not kept[k]:
+            ended(k, 0.0)
     for k in range(n):
         if kept[k] and not left[k]:
             release[k] = gate(k, 0.0)
@@ -639,6 +661,7 @@ def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: li
             now, k = heapq.heappop(running)
             done[k] = now
             free += 1
+            ended(k, now)
             for j in dependents[k]:
                 left[j] -= 1
                 if kept[j] and not left[j]:
