@@ -283,7 +283,8 @@ def stale_render_only(rc: int, out: str) -> bool:
 def where(root: Path, home: Path) -> dict[str, list[Path]]:
     """Where each registered format lives in a brain (docs/formats.md), its files found there. ``template`` lives
     in a template's folder, not in a brain: the store plan reads the engine's, the rollback a newer one; ``status``
-    is printed by brain doctor --json, ``docgraph`` read by brain docgraph: neither is stored (:data:`NOT_STORED`)."""
+    is printed by brain doctor --json, ``docgraph`` read by brain docgraph, ``catalogue`` printed by brain catalogue
+    emit: none is stored (:data:`NOT_STORED`)."""
     def found(base: Path, pattern: str) -> list[Path]:
         return sorted(base.glob(pattern)) if base.is_dir() else []
     return {"ar": found(root, "records/ar/*.jsonl"), "config": found(root, "config.json"),
@@ -292,10 +293,11 @@ def where(root: Path, home: Path) -> dict[str, list[Path]]:
             "projects": found(root, "projects.yaml"), "members": found(root, "members.yaml"),
             "readme": found(root, "readme.yaml"), "sr": found(root, "records/sr/*/*.yaml"),
             "standards": found(root, "standards/*.yaml"), "template": [], "status": [], "docgraph": [],
+            "catalogue": [],
             "modules": found(root, "notes/graph/modules.yaml")}
 
 
-NOT_STORED = ("template", "status", "docgraph")   # registered formats a brain holds no file of (where())
+NOT_STORED = ("template", "status", "docgraph", "catalogue")   # registered formats a brain holds no file of (where())
 
 
 def formats() -> list[tuple[str, int]]:

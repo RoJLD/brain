@@ -256,6 +256,29 @@ def test_what_propose_says_to_add_is_added_to_a_composed_store(tmp_path, capsys)
     assert main(args + ["check"]) == 0
 
 
+def test_an_unknown_typology_or_stage_id_is_read_never_refused(tmp_path, capsys):
+    """spec-brain-typology-packs E1: a layer's lifecycle ids follow one typology catalog still to come
+    (wi-brain-typology-catalog); an id this engine does not know is tolerated: a layer naming one parses, and propose
+    with one proposes the layers open to any typology at any stage, without an error."""
+    lab = layers.parse_layer({"name": "lab", "version": 1, "title": "t", "mode": "written",
+                              "node_types": {"Bench": "a bench"}, "statuses": ["active"],
+                              "lifecycle": {"typologies": ["film"], "proposed_at": ["pre-production"]}})
+    assert lab.lifecycle() == {"typologies": ["film"], "proposed_at": ["pre-production"]}
+    anywhere = {la.name for la in layers.catalogue().values()
+                if "*" in (la.lifecycle().get("typologies") or []) and "*" in (la.lifecycle().get("proposed_at") or [])}
+    assert "work" in anywhere and "code" not in anywhere
+    assert {la.name for la in layers.proposed("film", "pre-production")} == anywhere
+    store = _init(tmp_path / "me", "--layers", "work,decisions")
+    capsys.readouterr()
+    assert main(["--store", str(store), "--repo-root", str(tmp_path / "me"), "layers", "propose", "--typology", "film",
+                 "--stage", "pre-production"]) == 0
+    out = capsys.readouterr().out
+    missing = anywhere - {"work", "decisions"}
+    assert missing, "the catalogue has layers open to any typology that the store lacks"
+    proposed = out.strip().splitlines()[-1].split("layers add ", 1)[1].split(" (a plan")[0].split()
+    assert set(proposed) == missing and "code" not in proposed
+
+
 def test_a_block_entry_of_endpoints_takes_the_new_pairs_as_items(tmp_path):
     text = BLOCK + ("endpoints:\n  part_of:\n    - {from: [WorkItem, Milestone], to: [Milestone]}   # the work's\n"
                     "  specified_by: {from: '*', to: [Spec]}\n")

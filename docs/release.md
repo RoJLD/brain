@@ -16,19 +16,19 @@ Which number moves is decided by what an owner has to do, not by how much change
 | a format that moves: a registered schema changed since `vP` (`SCHEMAS` in `packages/brain/installer/release_check.py`), what `brain init` wrote once; config.json's schema grown by optional keys only, and a whole new format, do not move (below) | the middle one, `0.Y.0` | 0.2.5, a patch before this policy, would be 0.Y.0 under it (the Lesson type, the `merge=brain` line) |
 | only what needs nothing: fixes and additions an owner gets by the standard steps alone | the last one, `0.Y.Z` | a fix of a crash |
 
-**An optional key of config.json is a patch's** (wi-brain-release-schema-additive): when `config.schema.json` only
-gains optional properties (none of them `required`) or changes its prose (`description`, `title`, `$comment`,
-`examples`), every config.json the old schema accepted is still valid and an owner has nothing to do; `release-check`
-reports it as grown, not moved. The same holds for `permissions.schema.json` and for `docgraph.schema.json`
-(docgraph/v1 is read tolerantly: an optional key added within v1 is a patch's, the owner's answer of 2026-11-12;
-removing or narrowing one stays a minor). Any other change of it moves the format: a key removed, a keyword added,
-removed or changed (a type, an enum, a bound, a pattern, `additionalProperties`, `required`), even a list reordered; the
-comparison errs towards a minor version. **A whole new format is a patch's too**: a format the last tag did not
-register (its own `SCHEMAS`) and none of whose files exists there (`release_check.new_formats`) is held by no brain
-yet and never read by an older engine; a file new to a format that exists still moves it, and so does a format
-whose files are renamed. A record schema (ar, ddr, sr, event) moves even by an
-optional key, since older engines on other machines read the records this one writes. A new refusal of what passed
-stays a minor version: ship it off by default, behind a key the owner turns on, to keep a patch.
+**An optional key of config.json is a patch's** (wi-brain-release-schema-additive): when `config.schema.json` only gains
+optional properties (none of them `required`) or changes its prose (`description`, `title`, `$comment`, `examples`),
+every config.json the old schema accepted is still valid and an owner has nothing to do; `release-check` reports it as
+grown, not moved. The same holds for `permissions.schema.json`, for `docgraph.schema.json` (docgraph/v1 is read
+tolerantly: an optional key added within v1 is a patch's, the owner's answer of 2026-11-12; removing or narrowing one
+stays a minor) and for `catalogue.schema.json`, read by the same rule. Any other change of it moves the format: a key
+removed, a keyword added, removed or changed (a type, an enum, a bound, a pattern, `additionalProperties`, `required`),
+even a list reordered; the comparison errs towards a minor version. **A whole new format is a patch's too**: a format
+the last tag did not register (its own `SCHEMAS`) and none of whose files exists there (`release_check.new_formats`) is
+held by no brain yet and never read by an older engine; a file new to a format that exists still moves it, and so does a
+format whose files are renamed. A record schema (ar, ddr, sr, event) moves even by an optional key, since older engines
+on other machines read the records this one writes. A new refusal of what passed stays a minor version: ship it off by
+default, behind a key the owner turns on, to keep a patch.
 
 From 1.0 on, the first number takes the middle one's place for a change that breaks a brain; that is decided at 1.0.
 
@@ -258,7 +258,8 @@ steps for that version; in general:
   in the plan of `brain update` and of the installer, else why not; with `engine.verify_tags` on, an unsigned tag is
   refused there, and so is a rollback to one (every tag up to v0.3.1): turn it off first to roll back. The check runs
   in the installer of the tag being installed: a brain's own installer that clones the engine at the pin and runs
-  that clone verifies it only if it runs `git verify-tag` on the clone first (identity.md, « Signed releases »).
+  that clone verifies it only if it runs `git verify-tag` on the clone first (identity.md, « Signed releases »: the
+  bootstrap's checks, offline), and the installer says whether it runs from the signed commit.
 - **A brain from `brain init`** (no `engine.installer`): `brain update` in the owner's terminal, then `y`. It installs
   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. Then restart the sessions. An engine older
   than 0.2.6 runs that update and only reminds of the pin: run `brain update` once more.

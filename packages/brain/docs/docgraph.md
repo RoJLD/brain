@@ -156,6 +156,48 @@ named one or a producer's own, is lower case words joined by `-`, in dotted part
 The two `decision.*-missing` checks need only a repository's own decisions: a public repository can run them alone.
 The compatibility section says what stays open; it never designs a later phase, and no check asks it to.
 
+## Reading several documents
+
+A brain reads the documents of the projects it only reads (`access: read` in its registry) and never writes to them
+(`brain.docjoin`).
+
+```bash
+brain docgraph pin example --from ../example --ref v1.2.0 --file docs/docs-graph.json
+brain docgraph join                  # the brain's own graph, the pinned copies, the brain's own documents
+brain docgraph join --out joined.json --json
+```
+
+- **A pinned copy.** `pin` reads the file from a local clone of the project with `git show <ref>:<file>` (the clone's
+  working tree, branches and refs are never touched), validates it, and writes it to `docgraph/<project>.json` under
+  the brain's root, with one key added: `pinned` (`ref`, the full commit it was read at; `file`; `at`). The copy is
+  committed and reviewed like any change, so every machine reads it offline, and a newer pin is a reviewed diff. The
+  project's registry entry stays its title, access, parent and classes: no path into the project. A read project's
+  document without `pinned` is left out of the join, and `brain check` (in a brain's own root) names it.
+- **The brain's own documents.** Any other `docgraph/<name>.json` is a document the brain keeps for itself: what stays
+  private (documents kept elsewhere, an owner's coded decisions, review findings). Its file name is its namespace
+  (lower-case letters, digits, `-` and `_`).
+- **Namespaces.** In the joined graph every node id is `<type>:<namespace>/<native id>` (`item:example/25`), the
+  namespace being the project's name, and a node's `phase` is `<namespace>/<phase>`; every node and edge gains
+  `project`. A document's edge end or finding subject written `<type>:@<namespace>/<native id>`
+  (`criterion:@example/S2-13` in the brain's own document) names that other document's node: this is how a private
+  document links to a read project's nodes. Any other id is the document's own, even one that starts like a
+  namespace (`document:docs/a.md` beside a document named `docs`). The joined graph is itself a `docgraph/v1`
+  document.
+- **The checks, run again.** Across the joined graph `join` runs `criterion.no-item`, `item.no-criterion` (an item
+  serving no criterion of its own phase; a phase's exit review is exempt), `test.uncarried`, `test.carried-twice`,
+  `threat.untested`, `depends.cross-phase`, `phase.review-incomplete`, `cycle` (one finding per loop of `depends_on`,
+  `part_of` or `supersedes` edges), `proposed.cited-as-decided` and `doc.stale` (from the nodes' `updated` dates,
+  compared by day when either is a date; generated documents and dated specs exempt). Its findings say `by: join` and
+  replace the producers' findings of the same checks, since an edge of another document may settle them; a producer's
+  `doc.stale` is kept beside the join's (its history knows what dates cannot show). A producer's findings of the other
+  checks are kept with `by: <namespace>`. The checks that need what a document does not carry (a decision's text,
+  history and numbering, the citations of a reported node, the register of needs) are in `checks_not_run`, unless a
+  producer reported them. It exits 1 when a document is left out or an error is found.
+- **The reference.** `brain reference` gives each pinned project a page, `docs/reference/read/<project>.md` (the ref
+  it was read at, its decisions with their status and source, milestones, modules, items by status, the findings on
+  its nodes of the checks run across the pinned copies and the brain's own documents under `docgraph/`: the brain's
+  emitted graph, read from git, is `brain docgraph join`'s only), and a row in its README.
+
 ## Evolution
 
 The status contract's rule (`brain.status/v1`, [formats.md](formats.md#external-formats)):
