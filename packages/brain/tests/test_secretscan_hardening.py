@@ -23,6 +23,12 @@ def test_a_pem_block_is_dropped_whole():
     assert [x for x in secretscan.scan_lines(PEM)] == [(i, "private-key") for i in range(2, 6)]
 
 
+@pytest.mark.parametrize("kind", ["SM2 " + "PRIVATE KEY", "PGP " + "PRIVATE KEY BLOCK", "EC " + "PRIVATE KEY"])
+def test_every_kind_of_private_key_block(kind):
+    text = f"a\n-----BEGIN {kind}-----\nQUJDREVGR0g=\n-----END {kind}-----\nb"
+    assert secretscan.clean_text(text) == ("a\n" + "\n".join([secretscan.DROPPED] * 3) + "\nb", 3)
+
+
 def test_a_pem_block_without_its_end_drops_to_the_end():
     cut = "\n".join(PEM.splitlines()[:3])
     assert secretscan.clean_text(cut + "\nmore base64")[1] == 3
@@ -31,6 +37,8 @@ def test_a_pem_block_without_its_end_drops_to_the_end():
 @pytest.mark.parametrize("name, value", [
     ("ntfy-token", "tk_" + "a1B2c3D4e5" * 2 + "f6G7h8I9j"),
     ("tailscale-key", "tskey-auth-kAbCd1CNTRL-" + "Q" * 30),
+    ("tailscale-key", "tskey-" + "kAbCd1CNTRL-" + "Q7" * 15),   # the older format
+    ("pypi-token", "pypi-AgENdGVzdC5weXBpLm9yZw" + "B" * 60),   # TestPyPI
     ("gitlab-token", "glpat-" + "x" * 20),
     ("pypi-token", "pypi-AgEIcHlwaS5vcmc" + "A" * 60),
     ("npm-token", "npm_" + "Z9" * 18),
@@ -77,6 +85,31 @@ def test_the_commit_guard_refuses_an_allowed_secret_in_memory_even_with_gitleaks
     run_git(repo, "add", "-A")
     hits = guards.commit_secrets(str(repo), [], False)
     assert hits == ["memory/n.md:1 (github-token)"]   # docs.md: the mark waives it there
+
+
+def test_a_commit_from_a_subfolder_reads_the_strict_folder_too(repo):
+    (repo / "machines" / "h1").mkdir(parents=True)
+    (repo / "machines" / "h1" / "s.txt").write_text('t = "ghp_' + "e" * 36 + '"  # gitleaks:allow\n', encoding="utf-8")
+    hits = guards.commit_secrets(str(repo / "machines" / "h1"), ["s.txt"], False)
+    assert hits == ["machines/h1/s.txt:1 (github-token)"]
+
+
+def test_the_pointer_leaves_without_project_source_nor_host(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(notify, "config", lambda *a, **k: notify.Config("demo", {}, {}))
+    monkeypatch.setattr(notify, "send", lambda cfg, msg, **k: sent.append(msg) or notify.Result("", "", "dry-run", "",
+                                                                                                 []))
+    ddr = {"id": "ddr-2026-01-02-keep-rule", "title": "Keep the rule on kestrel?", "question": "Rule X ...",
+           "options": [{"label": "Keep"}, {"label": "Drop"}], "links": {"notes": ["memory/x.md"]}}
+    notify.decision(type("P", (), {"name": "demo"})(), ddr)
+    (msg,) = sent
+    assert (msg.project, msg.source, msg.host) == ("", "", "")
+    assert "demo" not in msg.heading() + msg.text() and "kestrel" not in msg.heading() + msg.text()
+
+
+def test_private_text_refuses_the_engine_side(private, capsys):
+    assert cli.main(["check", "--public", "--repo", str(private), "--engine", "--private-text"]) == 2
+    assert "not the engine side" in capsys.readouterr().out
 
 
 def test_a_rule_or_note_decision_sends_a_pointer_only():

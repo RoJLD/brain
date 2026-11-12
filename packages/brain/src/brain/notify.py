@@ -135,7 +135,7 @@ class Message:
 
     def heading(self) -> str:
         title = self.title or (self.body.strip().splitlines() or [""])[0]
-        return _cut(f"[{self.project} {self.level}] {title}", 200)
+        return _cut(f"[{' '.join(x for x in (self.project, self.level) if x)}] {title}", 200)
 
     def text(self) -> str:
         tail = " · ".join(x for x in (self.host, self.source) if x)
@@ -371,7 +371,7 @@ def _value(ch: Channel, key: str, env: Mapping[str, str]) -> str:
 
 def _ntfy(ch: Channel, msg: Message, env: Mapping[str, str]) -> str:
     payload = {"topic": _value(ch, "topic", env), "title": msg.heading(), "message": msg.text(),
-               "priority": PRIORITY[msg.level], "tags": [TAG[msg.level], msg.project]}
+               "priority": PRIORITY[msg.level], "tags": [t for t in (TAG[msg.level], msg.project) if t]}
     if msg.link:
         payload["click"] = msg.link
     token = env.get(ch.get("token_env") or "")
@@ -672,7 +672,10 @@ def decision(project: projects.Project, ddr: dict, *, dry_run: bool = False,
     try:
         cfg = config(project, registry)
         title, body = decision_message(project.name, ddr)
-        msg = Message(project.name, cfg.decisions, body, title, "decision", str(ddr.get("id", "")))
+        if private_subject(ddr):   # the pointer alone: no project, source nor host goes with it
+            msg = Message("", cfg.decisions, body, title, "", str(ddr.get("id", "")), host="")
+        else:
+            msg = Message(project.name, cfg.decisions, body, title, "decision", str(ddr.get("id", "")))
         return send(cfg, msg, dry_run=dry_run, env=env).lines()
     except NotifyError as exc:
         return [f"notify: not sent: {exc}"]

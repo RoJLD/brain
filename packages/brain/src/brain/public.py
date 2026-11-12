@@ -494,6 +494,8 @@ def render(data: dict, stamped_at: Path | None = None) -> list[str]:
     if data["findings"]:
         lines.append(f"refused: {len(data['findings'])} finding(s); take them out (or except a file in public.allow, "
                      f"a line with {ALLOW_MARK}), nothing is stamped")
+        if data["counts"].get("text"):
+            lines.append("  a text finding is a sentence of the rules or notes: rewrite it in the engine's own words")
     elif data.get("gitleaks_failed"):
         lines.append("refused: gitleaks failed, nothing is stamped (see the note)")
     elif stamped_at:
@@ -637,7 +639,8 @@ def private_text(data: dict, cfg: config.Config) -> None:
     repo, r = Path(data["repo"]), rules(cfg)
     found = []
     for path in boundary.tracked(repo):
-        if r.allowed(path) or path in data["unread"]:
+        if r.allowed(path) or path in data["unread"] or not (repo / path).is_file() \
+                or (repo / path).stat().st_size > MAX_FILE:
             continue
         try:
             text = (repo / path).read_text(encoding="utf-8")
@@ -653,6 +656,9 @@ def private_text(data: dict, cfg: config.Config) -> None:
 
 def main(repo: Path, *, history: bool = False, remote: str = "", engine: bool = False, as_json: bool = False,
          text: bool = False) -> int:
+    if text and engine:
+        print("brain check --public: --private-text reads a public repo's own files, not the engine side (--engine)")
+        return 2
     try:
         data = check(repo, history=history, remote=remote, engine=engine)
     except PublicError as exc:

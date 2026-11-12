@@ -40,12 +40,12 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         ("slack-token", r"\bxox[abposr]-[A-Za-z0-9\-]{10,}"),
         ("huggingface-token", r"\bhf_[A-Za-z0-9]{30,}\b"),
         ("stripe-key", r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"),
-        ("private-key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+        ("private-key", r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"),
         ("age-secret-key", r"\bAGE-SECRET-KEY-1[0-9A-Z]{58}\b"),   # an age identity (brain.vault)
         ("ntfy-token", r"\btk_[A-Za-z0-9]{29}\b"),
-        ("tailscale-key", r"\btskey-[a-z]+-[A-Za-z0-9]{4,}-[A-Za-z0-9]{8,}"),
+        ("tailscale-key", r"\btskey-(?:[a-z]+-)?[A-Za-z0-9]{4,}-[A-Za-z0-9]{8,}"),   # tskey-auth-..., tskey-k...
         ("gitlab-token", r"\bglpat-[A-Za-z0-9_\-]{20,}"),
-        ("pypi-token", r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{40,}"),
+        ("pypi-token", r"\bpypi-AgE(?:IcHlwaS5vcmc|NdGVzdC5weXBpLm9yZw)[A-Za-z0-9_\-]{40,}"),   # PyPI, TestPyPI
         ("npm-token", r"\bnpm_[A-Za-z0-9]{36}\b"),
         ("jwt", r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"),
         ("bearer", r"(?i)\bbearer\s+[A-Za-z0-9._~+/\-]{20,}"),
@@ -62,8 +62,8 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ]
 ]
 _PW_HEADER = re.compile(rf"(?i){_PW}(?![A-Za-z])")
-_PEM_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
-_PEM_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY-----")
+_PEM_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")   # PGP's ends in BLOCK
+_PEM_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")
 STRICT = ("machines/", "memory/")   # the folders where gitleaks:allow waives nothing
 DROPPED_UNIT = "[dropped: the unit matches a secret pattern]"
 _TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$")

@@ -2962,10 +2962,12 @@ def commit_secrets(repo: str, specs: list[str], every_tracked: bool, untracked: 
     hits = list(staged)
     if specs or every_tracked:
         hits += scan_diff(_git_out(repo, "diff", "HEAD", "-U0", "--no-color", "--no-ext-diff", "--", *specs))
-    if untracked:
-        for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *untracked).split("\0"):
+    if untracked:   # by their path from the top, so that a strict folder is one from a subfolder too
+        top = _git_out(repo, "rev-parse", "--show-toplevel").strip() or repo
+        for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "--full-name", "-z", "--",
+                             *untracked).split("\0"):
             if name:
-                hits += scan_text(name, _read_file(name, repo))
+                hits += scan_text(name, _read_file(name, top))
     return list(dict.fromkeys(hits))
 
 
