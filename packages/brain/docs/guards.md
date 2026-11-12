@@ -204,6 +204,12 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
   file with Write or Edit, or check its bytes after (les-brain-heredoc-backslashes). The guards ledger records it as
   `heredoc:backslash`, decision `warned`.
 
+- **A merge resolution against a stale main** (`merges:stale`; wi-brain-merge-stale-main-2): a `git push` of a
+  branch whose merge of the base is not on the remote yet runs `brain merge-check` against the base as merged and
+  a fresh one, and refuses a lost line or node, or a file the merge resolved that the base has moved on since
+  (docs/merge-driver.md). Override,
+  the owner's: `BRAIN_GUARD_ALLOW=merges:stale`.
+
 ### How the guards read a diff
 
 The commit guards (secrets, conflict markers, the public check), `brain impact`, `brain check --public --history`,

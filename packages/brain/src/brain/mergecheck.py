@@ -20,6 +20,12 @@ HEAD while a merge is not committed yet) and their merge base, against the resul
 The files are the registered project's stores (``nodes/*.yaml`` and ``edges/*.yaml``, the generated ones left out),
 its journals and decision logs and every ``CHANGELOG*.md``, in the base or in the result (a whole file the resolution
 dropped counts); ``--path`` adds others. Exit 1 when the branch is behind or lost something, 2 on a git error.
+
+**At the push** (wi-brain-merge-stale-main-2: the lesson regressed after brain merge-check shipped, since nothing ran
+it): the guard ``merges:stale`` runs :func:`stale` on each branch a ``git push`` sends that carries a merge of the
+base. It fetches the base again (bounded), then refuses the push when the resolution lost what it merged (the check
+against the base as merged), when it lost what a fresh base holds, or when the base has moved since the merge on a
+watched file the branch changes too (a resolution made against a stale main: merge the fresh base again first).
 """
 
 from __future__ import annotations
@@ -185,7 +191,10 @@ def check(repo: Path, project: projects.Project | None = None, base: str = "", f
            "merge_base": s["mb"]}
     if behind or not files or not s["mb"]:
         return out
+    by_main = _changed(repo, s["mb"], base_sha)   # one call: only the files main changed are read
     for path, kind in sorted(files.items()):
+        if path not in by_main:
+            continue
         texts = [_show(repo, base_sha, path), _show(repo, s["mb"], path)]
         if texts[0] == texts[1]:
             continue  # main did not change it since the merge base
@@ -193,10 +202,95 @@ def check(repo: Path, project: projects.Project | None = None, base: str = "", f
         if kind == "append":
             out["lost"] += [{"path": path, "line": n, "text": t} for n, t in lost_lines(*texts, result)]
             continue
-        changed, gone = lost_nodes(*texts, _show(repo, s["ours"], path), result)
-        out["lost"] += [{"path": path, "line": 0, "text": f"{nid} {k}: {v}"} for nid, k, v in changed]
-        out["lost_ids"] += [{"path": path, "id": nid} for nid in gone]
+        lost, gone = _node_losses(path, texts, _show(repo, s["ours"], path), result)
+        out["lost"] += lost
+        out["lost_ids"] += gone
     return out
+
+
+def _node_losses(path: str, texts: list[str], ours: str, result: str) -> tuple[list[dict], list[dict]]:
+    """A node file's lost fields (``both``: the branch changed the field too, a « check it by eye ») and lost ids."""
+    changed, gone = lost_nodes(*texts, ours, result)
+    o, m = _nodes(ours), _nodes(texts[1])
+    lost = [{"path": path, "line": 0, "text": f"{nid} {k}: {v}",
+             "both": o.get(nid, {}).get(k) != m.get(nid, {}).get(k)} for nid, k, v in changed]
+    return lost, [{"path": path, "id": nid} for nid in gone]
+
+
+FETCH_TIMEOUT = 20   # seconds the push guard gives git fetch; past it, the base as last fetched
+
+
+def merged_base(repo: Path, base_sha: str, head: str, pushed: str = "") -> tuple[str, str]:
+    """(the merge, the commit of the base it brought in) for the newest merge on ``head``'s first-parent chain whose
+    second parent is an ancestor of the base (a merge of main, or of a branch since merged into it), not yet in
+    ``pushed`` (the remote branch the push updates: a merge already there was checked when it went); ('', '')
+    otherwise."""
+    for m in git(repo, "rev-list", "--first-parent", "--merges", "-n", "50", head, f"^{base_sha}",
+                 *([f"^{pushed}"] if pushed else [])).split():
+        p2 = _rev(repo, f"{m}^2")
+        if p2 and _contains(repo, p2, base_sha):
+            return m, p2
+    return "", ""
+
+
+def _fetch(repo: Path, base: str) -> str:
+    """Fetch the remote base (``origin/main``) within FETCH_TIMEOUT; '' when done or not a remote ref, else why not."""
+    remote, _, branch = base.partition("/")
+    if not branch or remote not in set(git(repo, "remote").split()):
+        return ""
+    from .inventory import _run_git
+    try:
+        code, _, err = _run_git(repo, ["fetch", "--quiet", remote,
+                                       f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}"], timeout=FETCH_TIMEOUT)
+    except AuditError as exc:   # a timeout, git missing
+        return str(exc)
+    return "" if code == 0 else (err.decode("utf-8", "replace").strip().splitlines() or [f"exit {code}"])[-1]
+
+
+def _changed(repo: Path, a: str, b: str) -> set[str]:
+    return set(git(repo, "diff", "--name-only", "--no-renames", "-z", a, b).split("\0")) - {""}
+
+
+def _lost(r: dict) -> list[str]:
+    """What a check lost that the push guard refuses: a node id, a line of an append-only file, a node field only
+    main changed. A field both sides changed stays brain merge-check's « check it by eye »."""
+    return [x["id"] for x in r["lost_ids"]] + [f"{x['path']}: {str(x['text'])[:60]}" for x in r["lost"]
+                                               if x["line"] or not x.get("both")]
+
+
+def stale(repo: Path, head: str, project: projects.Project | None = None, base: str = "",
+          fetch: bool = True, pushed: str = "", fetched: list | None = None) -> str:
+    """Why a push of ``head`` would carry a merge resolution made against a stale base, or '' (no merge of the base
+    on the branch that ``pushed``, the remote branch, lacks; or nothing lost or moved under it). In order: the
+    resolution lost a line or a node of what it merged; it lost one of a fresh base (when not behind); the base has
+    moved since the merge on a watched file the merge itself resolved (changed against both its parents)."""
+    base = base or default_base(repo)
+    if not _rev(repo, base) or not merged_base(repo, _rev(repo, base), head, pushed)[0]:
+        return ""   # no merge of the base as last fetched: none of a fresher one either, and no fetch paid
+    why_fetch = _fetch(repo, base) if fetch else ""
+    if fetch and fetched is not None:
+        fetched.append(base)   # the caller's other refs need no fetch
+    base_sha = _rev(repo, base)
+    m, p2 = merged_base(repo, base_sha, head, pushed)
+    if not m:
+        return ""
+    note = f" (git fetch failed: {why_fetch}; {base} as last fetched)" if why_fetch else ""
+    sides_ = [(p2, f"the commit of {base} it merged ({p2[:8]})")]
+    sides_ += [(base_sha, f"a fresh {base}")] if p2 != base_sha else []   # the merge took the fresh base: once
+    for against, what in sides_:
+        r = check(repo, project, against, fetch=False, head=head)
+        lost = [] if r["behind"] else _lost(r)
+        if lost:
+            return (f"the merge {m[:8]} lost {len(lost)} line(s) or node(s) of {what}, first {lost[0]}; put them "
+                    f"back (git show {base}:<path>), then brain merge-check{note}")
+    resolved = _changed(repo, f"{m}^1", m) & _changed(repo, p2, m)
+    moved = sorted(resolved & _changed(repo, p2, base_sha) & set(watched(repo, project, revs=(base_sha, head))))
+    if moved:
+        more = f" and {len(moved) - 3} more" if len(moved) > 3 else ""
+        return (f"the merge {m[:8]} resolved {', '.join(moved[:3])}{more} against a commit of {base} ({p2[:8]}), and "
+                f"{base} has moved since on those files: a resolution against a stale {base}. git merge {base} again "
+                f"(fresh), resolve, run brain merge-check, then push{note}")
+    return ""
 
 
 def failed(r: dict) -> bool:
