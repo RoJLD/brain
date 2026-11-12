@@ -33,7 +33,8 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   A session's Remote Control and permission mode (security-settings, never lifted) are refused but in Remote Control's
   three exceptions (wi-brain-guard-rc-archive, remote_control): off on a finished session the caller started; at a
   handover between Brain coordinators, on for the coordinator the caller started to succeed it and off on itself,
-  once its hand-over note is in <BRAIN_HOME>/handover/; each one passes logged as decision allowed with its case.
+  once its hand-over note is in <BRAIN_HOME>/handover/ (a successor with no transcript yet counts as starting for
+  HANDOVER_START_S after its app file's createdAt); each one passes logged as decision allowed with its case.
 - ``power`` (wi-brain-power-guard, TOPO-2): no act on a machine or the cluster: machine (shutdown, reboot, sleep,
   Stop-Computer, systemctl and loginctl power verbs, boot arming by bcdedit, efibootmgr or ipmitool), node (the verbs
   but reads of the platform's node lifecycle CLIs, config.json's power.node_clis, a kubectl-<name> one as kubectl
@@ -1718,6 +1719,21 @@ HANDOVER_MAX = 512_000       # a bigger file is not read
 LOCAL_ID = re.compile(r"(?<![\w-])local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\w-])")
 RC_FINISHED = ("idle", "ended")   # the states of a finished session (brain.sessions.state_of)
 RC_LIVE = ("running", "idle", "asking", "stale")   # a successor's: not archived, ended or unknown on this machine
+# A successor with no transcript yet (unknown) counts as starting this long after its app file's createdAt: the
+# outgoing coordinator turns its Remote Control on seconds after start_session, before its first turn is written.
+HANDOVER_START_S = 10 * 60
+
+
+def _created_age(node: dict, now: float | None = None) -> float | None:
+    """Seconds since a session was created by its app file's ``createdAt`` (milliseconds, sessions.APP_KEYS'
+    ``created``), never the ledger's; None when it is missing or not a finite positive number."""
+    import math
+    import time
+    created = node.get("created")
+    if not isinstance(created, (int, float)) or isinstance(created, bool) or not math.isfinite(created) or \
+            created <= 0:
+        return None
+    return (time.time() if now is None else now) - created / 1000
 
 
 def _coordinator(node: dict, titles: bool = False) -> bool:
@@ -1761,8 +1777,11 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
     ``handover-on`` (on for the coordinator the caller started to succeed it) or ``handover-off`` (off on the caller
     itself at that handover, its successor detached), else None and why it is none of them. Read at zero token from
     the desktop app's own session files (brain.sessions.app_index and app_meta: who started whom, the names,
-    archived and detached flags) and the hand-over notes, never from the ledger's SessionStart events or the brief
-    hash, which any session can append to; what cannot be read is a refusal, never a guess."""
+    archived and detached flags, the creation time) and the hand-over notes, never from the ledger's SessionStart
+    events or the brief hash, which any session can append to; what cannot be read is a refusal, never a guess.
+    A successor counts when it is live (RC_LIVE) or starting: no transcript yet (unknown) but created by its own app
+    file's createdAt in the last HANDOVER_START_S; an unknown one created earlier, or whose creation time cannot be
+    read, does not."""
     from . import sessions
     inp = payload.get("tool_input") or {}
     enabled, target = inp.get("enabled"), inp.get("session_id")
@@ -1794,6 +1813,23 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
     def state(m: dict) -> str:
         return "archived" if m.get("archived") else sessions.state_of(m, {}, now)
 
+    def successor_state(m: dict) -> tuple[str, str]:
+        """(its state, or ``starting`` for an unknown one created in the last HANDOVER_START_S; what is known of an
+        unknown one's start, '' otherwise)."""
+        st = state(m)
+        if st != "unknown":
+            return st, ""
+        age = _created_age(m, now)
+        if age is None:
+            return st, "no transcript yet and its creation time cannot be read"
+        if not 0 <= age <= HANDOVER_START_S:
+            return st, (f"no transcript yet and was created {int(age)} s ago, beyond the {HANDOVER_START_S // 60} min "
+                        "a starting successor gets")
+        return "starting", f"has no transcript yet and was created {int(age)} s ago"
+
+    def live(m: dict) -> bool:
+        return successor_state(m)[0] in RC_LIVE + ("starting",)
+
     me = meta(caller)
     if not me or me.get("session") != sid:
         return None, "this session's own app file cannot be read, or names another transcript"
@@ -1816,11 +1852,13 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
             return None, why
 
         def successor(m: dict) -> bool:
-            return mine(m) and _coordinator(m) and m.get("detached") is True and state(m) in RC_LIVE
+            return mine(m) and _coordinator(m) and m.get("detached") is True and live(m)
         succ = [h for h, m in sorted(index.items()) if m.get("parent") == caller and successor(meta(h))]
         if not succ:
             return None, "it has started no live coordinator to succeed it, detached"
-        return "handover-off", f"off on itself at its handover to {', '.join(succ)}"
+        named = [f"{h} (starting: {why})" if st == "starting" else h
+                 for h in succ for st, why in [successor_state(meta(h))]]
+        return "handover-off", f"off on itself at its handover to {', '.join(named)}"
     node = meta(target) if sessions.HOST_RE.match(target) else {}
     if not node:
         return None, f"{json.dumps(target[:80], ensure_ascii=False)} is not in the desktop app's session files"
@@ -1833,8 +1871,11 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
         why = handover()
         if why:
             return None, why
-        if st not in RC_LIVE:
-            return None, f"{target} is {st}"
+        sst, how = successor_state(node)
+        if sst == "starting":
+            return "handover-on", f"on for {target}, the coordinator it started to succeed it, which {how}"
+        if sst not in RC_LIVE:
+            return None, f"{target} is {sst}: {how}" if how else f"{target} is {sst}"
         return "handover-on", f"on for {target}, the coordinator it started to succeed it"
     if _coordinator(node, titles=True) and st not in ("archived", "ended"):
         return None, f"{target} is a live coordinator, which stays in Remote Control"
