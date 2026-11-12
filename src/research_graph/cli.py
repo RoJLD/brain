@@ -453,84 +453,95 @@ def _store_data(args) -> dict | None:
 def _layers(args) -> int:
     """research_graph layers: the catalogue (and --store's layers), show, compose, add (a plan, then --write),
     propose."""
+    data = _store_data(args)
+    have = layers.store_layers(data) if data is not None else None
     try:
-        return _layers_run(args)
+        return LAYER_COMMANDS[args.lcmd](args, have)
     except layers.LayerError as exc:
         print(f"research_graph layers: {exc}", file=sys.stderr)
         return 2
 
 
-def _layers_run(args) -> int:
+def _layers_list(args, have) -> int:
+    rows = [{"layer": la.name, "version": la.version, "mode": la.mode, "requires": list(la.requires),
+             "types": list(la.node_types), "title": la.title,
+             **({"in_store": la.name in have["present"]} if have else {})} for la in layers.catalogue().values()]
+    if args.json:
+        _print_json({"layers": rows, "store": have})
+        return 0
+    for r in rows:
+        mark = "" if have is None else ("* " if r["in_store"] else "  ")
+        req = f" (requires {', '.join(r['requires'])})" if r["requires"] else ""
+        print(f"{mark}{r['layer']:<11} v{r['version']} {r['mode']:<9} {', '.join(r['types'])}{req}")
+    if have is not None:
+        print(f"* in {args.store}" + (f"; its own layers: {', '.join(have['other'])}" if have["other"] else ""))
+    return 0
+
+
+def _layer_lines(la) -> list[str]:
+    """``layers show``: one layer, said."""
+    out = [f"{la.name} v{la.version} ({la.mode}): {la.title}"]
+    out += [f"requires: {', '.join(la.requires)}"] if la.requires else []
+    out += [f"generator: {la.data['generator']}"] if la.data.get("generator") else []
+    out += [f"  {t}: {why}" + (f" [{', '.join(la.status_by_type[t])}]" if t in la.status_by_type else "")
+            for t, why in la.node_types.items()]
+    out += [f"  -{et}-> " + ("; ".join(f"{layers.flow(p['from'])} -> {layers.flow(p['to'])}" for p in pairs)
+                             or "not checked") for et, pairs in la.edges.items()]
+    out += [f"{key}: {'; '.join(la.data[key])}" for key in ("commands", "views", "checks") if la.data.get(key)]
+    ex = la.data.get("examples") or {}
+    return out + [f"examples: {len(ex.get('nodes') or [])} node(s), {len(ex.get('edges') or [])} edge(s), "
+                  "fictitious"]
+
+
+def _layers_show(args, have) -> int:
     cat = layers.catalogue()
-    data = _store_data(args)
-    have = layers.store_layers(data) if data is not None else None
-    if args.lcmd is None:
-        rows = [{"layer": la.name, "version": la.version, "mode": la.mode, "requires": list(la.requires),
-                 "types": list(la.node_types), "title": la.title,
-                 **({"in_store": la.name in have["present"]} if have else {})} for la in cat.values()]
-        if args.json:
-            _print_json({"layers": rows, "store": have})
-            return 0
-        for r in rows:
-            mark = "" if have is None else ("* " if r["in_store"] else "  ")
-            req = f" (requires {', '.join(r['requires'])})" if r["requires"] else ""
-            print(f"{mark}{r['layer']:<11} v{r['version']} {r['mode']:<9} {', '.join(r['types'])}{req}")
-        if have is not None:
-            print(f"* in {args.store}" + (f"; its own layers: {', '.join(have['other'])}" if have["other"] else ""))
-        return 0
-    if args.lcmd == "show":
-        if args.name not in cat:
-            raise layers.LayerError(f"layer {args.name!r}: not in the catalogue ({', '.join(cat)})")
-        la = cat[args.name]
-        if args.json:
-            _print_json(la.data)
-            return 0
-        print(f"{la.name} v{la.version} ({la.mode}): {la.title}")
-        if la.requires:
-            print(f"requires: {', '.join(la.requires)}")
-        if la.data.get("generator"):
-            print(f"generator: {la.data['generator']}")
-        for t, why in la.node_types.items():
-            print(f"  {t}: {why}" + (f" [{', '.join(la.status_by_type[t])}]" if t in la.status_by_type else ""))
-        for et, pairs in la.edges.items():
-            ends = "; ".join(f"{layers.flow(p['from'])} -> {layers.flow(p['to'])}" for p in pairs) or "not checked"
-            print(f"  -{et}-> {ends}")
-        for key in ("commands", "views", "checks"):
-            if la.data.get(key):
-                print(f"{key}: {'; '.join(la.data[key])}")
-        ex = la.data.get("examples") or {}
-        print(f"examples: {len(ex.get('nodes') or [])} node(s), {len(ex.get('edges') or [])} edge(s), fictitious")
-        return 0
-    if args.lcmd == "compose":
-        resolved = layers.resolve(args.names, _layer_files(args))
-        print(layers.render(layers.compose_layers(resolved, args.owner), layers.header_for(resolved)), end="")
-        return 0
-    if args.lcmd == "propose":
-        if have is None:
-            raise layers.LayerError(f"{args.store}: no schema.yaml")
-        missing = [la for la in layers.proposed(args.typology, args.stage) if la.name not in have["present"]]
-        for la in missing:
-            print(f"{la.name:<11} {la.title}")
+    if args.name not in cat:
+        raise layers.LayerError(f"layer {args.name!r}: not in the catalogue ({', '.join(cat)})")
+    if args.json:
+        _print_json(cat[args.name].data)
+    else:
+        print("\n".join(_layer_lines(cat[args.name])))
+    return 0
+
+
+def _layers_compose(args, have) -> int:
+    resolved = layers.resolve(args.names, _layer_files(args))
+    print(layers.render(layers.compose_layers(resolved, args.owner), layers.header_for(resolved)), end="")
+    return 0
+
+
+def _layers_propose(args, have) -> int:
+    if have is None:
+        raise layers.LayerError(f"{args.store}: no schema.yaml")
+    missing = [la for la in layers.proposed(args.typology, args.stage) if la.name not in have["present"]]
+    for la in missing:
+        print(f"{la.name:<11} {la.title}")
+    if missing:
         print(f"next: research_graph --store {args.store} layers add {' '.join(la.name for la in missing)} (a plan, "
-              "then --write)" if missing else f"nothing to propose: {args.store} has the layers of {args.typology} "
-              f"at {args.stage}")
-        return 0
-    plan = layers.add_plan(args.store, args.names, _layer_files(args))   # add
+              "then --write)")
+    else:
+        print(f"nothing to propose: {args.store} has the layers of {args.typology} at {args.stage}")
+    return 0
+
+
+def _layers_add(args, have) -> int:
+    plan = layers.add_plan(args.store, args.names, _layer_files(args))
     for line in plan.lines:
         print(line)
-    if plan.added:
-        print(plan.diff(), end="")
+    print(plan.diff(), end="")
     for p in plan.problems:
         print(f"problem: {p}", file=sys.stderr)
-    if plan.problems:
-        return 1
-    if not plan.added:
-        return 0
+    if plan.problems or not plan.added:
+        return 1 if plan.problems else 0
     if not args.write:
         print("(plan only: --write writes it)")
         return 0
     print(f"wrote {layers.write(plan)}; next: research_graph check, then sync --write when the layer is generated")
     return 0
+
+
+LAYER_COMMANDS = {None: _layers_list, "show": _layers_show, "compose": _layers_compose, "propose": _layers_propose,
+                  "add": _layers_add}
 
 
 def _print_json(data) -> None:
