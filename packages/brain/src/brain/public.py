@@ -537,6 +537,92 @@ def gate(root: Path, cfg: config.Config | None = None) -> tuple[int, list[str]]:
                + ", public scan green"]
 
 
+# --- the stamps refreshed after an engine change (wi-brain-public-stamp-refresh) ---
+
+def checkouts(cfg: config.Config, root: Path | None = None) -> tuple[list[tuple[Path, str]], list[str]]:
+    """The local checkouts of the public repos: every repo of the registry's projects (brain.projects.repos_of: their
+    ``repos:`` and production checkouts) whose remote is in config.json ``public.repos``, deduplicated, as
+    [(checkout, owner/name)]; and the notes on what could not be read (a project's bad ``repos:``, a missing folder)."""
+    from . import projects
+
+    out: list[tuple[Path, str]] = []
+    notes: list[str] = []
+    seen: set[str] = set()
+    if not public_repos(cfg):
+        return out, notes
+    try:
+        registry = projects.load(root or cfg.root)
+    except Exception as exc:  # noqa: BLE001 - a registry that cannot be read is said, never raised (the installer)
+        return out, [f"the registry could not be read: {type(exc).__name__}: {exc}"]
+    for p in registry.values():
+        try:
+            repos = projects.repos_of(p)
+        except projects.RepoError as exc:
+            notes.append(f"project {p.name}: {exc} (its checkouts not refreshed)")
+            continue
+        for r in repos:
+            if not Path(r.path).is_dir():
+                continue
+            top = _out(Path(r.path), "rev-parse", "--show-toplevel")
+            if not top or os.path.normcase(os.path.realpath(top)) in seen:
+                continue
+            seen.add(os.path.normcase(os.path.realpath(top)))
+            _, slug = remote_of(Path(top), cfg)
+            if is_public(slug, cfg):
+                out.append((Path(top), slug))
+    return out, notes
+
+
+def dirty(repo: Path) -> int:
+    """How many tracked files of ``repo`` differ from HEAD (staged or not): the scan reads the working tree, the
+    stamp names HEAD, so a checkout with uncommitted work is never stamped. -1 when git cannot say."""
+    r = _git(repo, "status", "--porcelain", "--untracked-files=no")
+    if r.returncode != 0:
+        return -1
+    return sum(1 for line in r.stdout.decode("utf-8", "replace").splitlines() if line.strip())
+
+
+def refresh(cfg: config.Config | None = None, root: Path | None = None) -> tuple[int, list[str]]:
+    """``brain check --public --refresh``: ``brain check --public --history`` in each local checkout of a public repo
+    (:func:`checkouts`), by this engine, so that its stamps carry this engine's key after an install or ``brain
+    update`` (the push guard refuses a stamp of another engine). A checkout whose HEAD's stamp is already valid is
+    left (same); one with uncommitted work is skipped and named; one with findings is not stamped and named. (exit
+    code: 1 when a check found something or failed, else 0; the lines). Writes only the stamps."""
+    cfg = cfg or config.load(root)
+    found, notes = checkouts(cfg, root)
+    lines = [f"stamps   note: {n}" for n in notes]
+    if not public_repos(cfg):
+        return 0, ["stamps   config.json public.repos lists no public repo: nothing to refresh"]
+    if not found:
+        return 0, [*lines, "stamps   no local checkout of " + ", ".join(public_repos(cfg)) + " in the registry"]
+    code = 0
+    for repo, slug in found:
+        head = _out(repo, "rev-parse", "--verify", "HEAD")
+        changed = dirty(repo)
+        if changed:
+            what = "git status failed" if changed < 0 else f"{changed} tracked file(s) not committed"
+            lines.append(f"skip     {slug} {repo}: {what}; brain check --public --history there once it is committed")
+            continue
+        if head and not stamp_refusal(slug, head, cfg):
+            lines.append(f"same     {slug} {repo}: HEAD {head[:8]} already stamped by this engine")
+            continue
+        try:
+            data = check(repo, cfg, history=True)
+        except (PublicError, OSError, subprocess.SubprocessError) as exc:
+            code = 1
+            lines.append(f"failed   {slug} {repo}: {exc}")
+            continue
+        where = stamp(data, cfg)
+        if where:
+            lines.append(f"stamped  {slug} {repo}: HEAD {data['head'][:8]} ({where.as_posix()})")
+        else:
+            code = 1
+            n = len(data["findings"])
+            why = f"{n} finding(s)" if n else "gitleaks failed" if data.get("gitleaks_failed") else "not stamped"
+            lines.append(f"refused  {slug} {repo}: {why}; brain check --public --history there names them")
+    return code, lines
+
+
 def main(repo: Path, *, history: bool = False, remote: str = "", engine: bool = False, as_json: bool = False) -> int:
     try:
         data = check(repo, history=history, remote=remote, engine=engine)

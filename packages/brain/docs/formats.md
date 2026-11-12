@@ -287,6 +287,9 @@ gitleaks then and not now or the other way round. A stamp without `v` 2 and a `k
 and one a newer brain wrote are refused the same way, never a crash; each refusal ends with the fix, « rerun brain
 check --public --history ». A stamp is never upgraded in place: the check writes a new one. A gitleaks that is on
 the PATH but fails stamps nothing (the check exits 1 and says so): its stamp would be refused at every push.
+`brain check --public --refresh` (run by `brain update` and the installer's `-Apply` after an install) writes new
+stamps for the HEADs of the registry's public checkouts with the engine just installed; it never touches a stamp
+whose key is still valid and never stamps a checkout with tracked changes not committed.
 
 ## External formats
 

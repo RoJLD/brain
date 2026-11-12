@@ -36,6 +36,10 @@ USAGE = """\
                         the PATH); green with --history, it stamps HEAD for the public guard on git push, keyed by
                         the engine version, the rules' hash and gitleaks (a change of any: rerun it); --engine:
                         the files brain boundary sends to the engine, in this checkout (a dry run)
+  brain check --public --refresh   the same with --history in every local checkout of a public repo (the
+                        registry's repos whose remote is in public.repos), by this engine: what the installer's -Apply
+                        and brain update run after an install, so that no stamp is left of the old engine; a HEAD
+                        already stamped is left, a checkout with uncommitted work skipped and named
 """
 
 
@@ -71,9 +75,16 @@ def register(sub, ctx) -> None:
     ck.add_argument("--engine", action="store_true", help="--public: the engine side of this checkout "
                                                           "(boundary.yaml), the extraction's dry run")
     ck.add_argument("--json", action="store_true", help="--public: stable keys")
+    ck.add_argument("--refresh", action="store_true", help="--public: --history in every local checkout of a public "
+                                                           "repo (the registry's), by this engine; a checkout with "
+                                                           "uncommitted work is skipped and named")
 
 
 def early(args) -> int | None:
+    if args.public and args.refresh:   # the installer's -Apply and brain update, after an install
+        code, lines = public.refresh(root=root_of(args))
+        print("\n".join(lines))
+        return code
     if args.public:  # a public repo has no graph store: before find_root
         root = root_of(args)
         return public.main(Path(args.repo).resolve() if args.repo else root or Path.cwd(), history=args.history,

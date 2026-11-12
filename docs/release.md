@@ -74,8 +74,10 @@ nothing else to do, the section says « Nothing to run for the rest » after the
    the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
    `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
 2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
-3. **Refresh the public stamp**: run `brain check --public --history` in each public repo's checkout before its next
-   push. A stamp is valid only under the engine that made it, so the push guard refuses the old one until then.
+3. **Refresh the public stamp**: a stamp is valid only under the engine that made it, so the push guard refuses the
+   old one. From 0.4.0 on, `brain update` and the installer's `-Apply` refresh them (`brain check --public --refresh`:
+   each local checkout of `public.repos` in the registry); by hand, `brain check --public --history` in a checkout
+   they skipped (uncommitted work, named in their output) or outside the registry, before its next push.
 ```
 
 ### The release preview
@@ -260,7 +262,10 @@ steps for that version; in general:
 - **A brain from `brain init`** (no `engine.installer`): `brain update` in the owner's terminal, then `y`. It installs
   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. Then restart the sessions. An engine older
   than 0.2.6 runs that update and only reminds of the pin: run `brain update` once more.
-- **Each public repo's checkout**: `brain check --public --history` before its next push. A stamp is valid only under
-  the engine that made it, so an upgrade makes the push guard refuse the old one.
+- **Each public repo's checkout**: a stamp is valid only under the engine that made it, so an upgrade makes the push
+  guard refuse the old one. `brain update` and the installer's `-Apply` (from 0.4.0) run `brain check --public
+  --refresh` with the new engine: each clean checkout of `public.repos` that the registry lists is checked with its
+  history and stamped again; one with uncommitted work is skipped and named, and gets `brain check --public
+  --history` by hand before its next push, as does a checkout outside the registry.
 
 Tell anyone running a pilot of the tag, with the link to the section at that tag.

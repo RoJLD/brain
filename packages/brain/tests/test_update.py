@@ -636,3 +636,65 @@ def test_a_dependency_from_another_repo_is_not_a_moved_tag(brain_home, venv, ins
     _installed_from("research_graph", "other" * 8, repo="RoJLD/brain")
     code, done = update.apply(_signed_plan("verified"), runner=_ok)
     assert code == 0 and not any(line.startswith("warning") for line in done), done
+
+
+# --- the public stamps refreshed after the install (wi-brain-public-stamp-refresh) ---
+
+def _public(root, repos=("ada/engine",)):
+    data = json.loads((root / "config.json").read_text(encoding="utf-8"))
+    data["public"] = {"repos": list(repos)}
+    (root / "config.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_a_brain_with_public_repos_refreshes_their_stamps_with_the_new_engine(venv, installer_brain):
+    pinned = installer_brain
+    """After pip, the venv's python (the engine just installed) runs brain check --public --refresh in the brain's
+    root: a stamp is valid only under the engine that made it, so the old engine's would block every push."""
+    _public(pinned)
+    p = _signed_plan("verified")
+    assert p["stamps"] == str(pinned)
+    assert "stamps   brain check --public --refresh by brain v0.2.3" in "\n".join(update.lines(p))
+    ran = []
+
+    def runner(cmd, **kw):
+        ran.append((cmd, kw))
+        said = "stamped  ada/engine D:/engine: HEAD abcd1234 (x)\nskip     ada/engine D:/wip: 2 tracked file(s)" \
+            if "--refresh" in cmd else ""
+        return subprocess.CompletedProcess(cmd, 0, said, "")
+
+    code, done = update.apply(p, runner=runner)
+    assert code == 0
+    refresh = [(c, kw) for c, kw in ran if "--refresh" in c]
+    assert refresh and refresh[0][0] == [p["python"], "-m", "brain", "--root", str(pinned), "check", "--public",
+                                         "--refresh"]
+    assert refresh[0][1]["timeout"] == update.STAMPS_TIMEOUT_S and ran[0][0][1:3] == ["-m", "pip"]   # after pip
+    assert "stamped  ada/engine D:/engine: HEAD abcd1234 (x)" in done and any(d.startswith("skip") for d in done)
+
+
+def test_findings_or_an_older_engine_never_fail_the_install(venv, installer_brain):
+    pinned = installer_brain
+    _public(pinned)
+    p = _signed_plan("verified")
+    refused = update.apply(p, runner=lambda cmd, **kw: subprocess.CompletedProcess(
+        cmd, 1 if "--refresh" in cmd else 0, "refused  ada/engine D:/engine: 1 finding(s); ..." if "--refresh" in cmd
+        else "", ""))
+    assert refused[0] == 0 and any(d.startswith("refused  ada/engine") for d in refused[1])
+    older = update.apply(p, runner=lambda cmd, **kw: subprocess.CompletedProcess(
+        cmd, 2 if "--refresh" in cmd else 0, "", "brain: error: unrecognized arguments: --refresh"))
+    assert older[0] == 0 and any("has no check --public --refresh" in d for d in older[1])
+
+    def timeout(cmd, **kw):
+        if "--refresh" in cmd:
+            raise subprocess.TimeoutExpired(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    late = update.apply(p, runner=timeout)
+    assert late[0] == 0 and any(d.startswith("stamps   not refreshed") for d in late[1])
+
+
+def test_a_brain_without_public_repos_has_no_stamps_step(venv, pinned):
+    p = _signed_plan("verified")
+    assert p["stamps"] is None and "stamps" not in "\n".join(update.lines(p))
+    ran = []
+    update.apply(p, runner=lambda cmd, **kw: ran.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    assert not any("--refresh" in c for c in ran)

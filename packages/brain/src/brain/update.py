@@ -33,6 +33,11 @@ tag), then the commits it recorded for brain and research-graph are compared wit
 between the check and the install is said. The plan says the verification either way; under config.json
 ``engine.verify_tags: true`` (the owner's opt-in, off by default) a tag not verified is refused.
 
+After the install, when config.json lists public repos, the new engine runs ``brain check --public --refresh``
+(brain.public.refresh, wi-brain-public-stamp-refresh): each local checkout of a public repo is checked with its
+history and stamped again, since the push guard refuses a stamp of another engine; one with uncommitted work is
+skipped and named. Its findings are said, never an install failure.
+
 :func:`apply` runs it: only from ``brain update --yes``, the terminal's yes or the cockpit's confirmation (which runs
 ``brain update --yes`` in a window), the owner's gesture; never from a Claude Code session's shell, never on its own.
 """
@@ -54,6 +59,7 @@ ENGINE_REPO = "RoJLD/brain"   # where this package is published (brain.init.ENGI
 CACHE = "update.json"         # <BRAIN_HOME>/update.json: the last tags read, and when
 TTL_S = 24 * 3600.0           # UPD-1: one read a day at most
 TIMEOUT_S = 15.0              # git ls-remote, and the CHANGELOG's read
+STAMPS_TIMEOUT_S = 1800.0     # brain check --public --refresh: every public checkout's history, after an install
 SERVICE = "git-remote:github.com"   # the tags' breaker (brain.net); brain update's refresh closes it first
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 CHANGELOG = "https://raw.githubusercontent.com/{repo}/{tag}/packages/brain/CHANGELOG.md"
@@ -298,7 +304,8 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=No
     py = venv_python()
     out = {"installed": installed, "latest": latest, "tag": f"v{latest}" if latest else None, "repo": repo,
            "checked": info.get("checked"), "source": info.get("source"), "changelog": None, "python": str(py),
-           "spec": None, "launcher": None, "pin": None, "signature": None, "verify_tags": False, "blocked": ""}
+           "spec": None, "launcher": None, "pin": None, "signature": None, "verify_tags": False, "blocked": "",
+           "stamps": None}
     target = f"v{latest}" if info.get("newer") else f"v{installed}"
     pin = info.get("pin")
     editable = paths.installed_checkout()
@@ -329,7 +336,21 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=No
     out["spec"] = spec(repo, out["tag"], extras(py))
     pair = launcher(py)
     out["launcher"] = [str(pair[0]), str(pair[1])] if pair else None
+    out["stamps"] = _stamps_root(root)
     return out
+
+
+def _stamps_root(root: Path | None) -> str | None:
+    """The brain's root when its config.json lists public repos (wi-brain-public-stamp-refresh): after the install,
+    the new engine re-checks their local checkouts (brain check --public --refresh), so that no stamp of the old engine
+    is left for the push guard to refuse; None otherwise."""
+    from . import public
+
+    try:
+        cfg = config.load(root)
+        return str(cfg.root) if cfg.root and public.public_repos(cfg) else None
+    except Exception:  # noqa: BLE001 - by design: the plan never raises; no stamps step then
+        return None
 
 
 def _verified(root: Path | None, repo: str, tag: str, verify) -> dict:
@@ -395,6 +416,10 @@ def lines(p: dict) -> list[str]:
                      f"(pip install \"{p['spec']}\")")
         if p.get("launcher"):
             steps.append(f"launcher {p['launcher'][0]} -> {p['launcher'][1]} (swapped in even while a brain runs)")
+        if p.get("stamps"):
+            steps.append(f"stamps   brain check --public --refresh by brain {p['tag']}: each local checkout of a "
+                         "public repo re-checked and stamped for the push guard (one with uncommitted work skipped, "
+                         "named)")
     if pin_writes(p):
         pin = p["pin"]
         where = Path(pin["file"]).parent
@@ -533,6 +558,23 @@ def _sync(python: str, root: Path, runner) -> tuple[int, list[str]]:
     return 0, [f"synced   brain sync in {root}"]
 
 
+def _refresh_stamps(python: str, root: Path, runner) -> list[str]:
+    """brain check --public --refresh run by the venv's engine, the one just installed (a stamp is valid only under
+    the engine that made it): its lines; a failure is said, never an install failure (the push guard names the fix)."""
+    hand = f"run brain check --public --history in each public checkout (brain check --public --refresh, in {root})"
+    try:
+        done = runner([python, "-m", "brain", "--root", str(root), "check", "--public", "--refresh"],
+                      capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=str(root),
+                      timeout=STAMPS_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [f"stamps   not refreshed ({exc}): {hand}"]
+    said = [ln for ln in ((done.stdout or "") + (done.stderr or "")).splitlines() if ln.strip()]
+    if done.returncode == 2 and not any(ln.startswith(("stamps", "same", "stamped", "skip", "refused", "failed"))
+                                        for ln in said):
+        return [f"stamps   the installed brain has no check --public --refresh: {hand}"]
+    return said or [f"stamps   brain check --public --refresh said nothing (exit {done.returncode})"]
+
+
 def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
     """Run a plan's install and launcher steps, then its pin step: moved, committed and synced for a brain without
     an installer of its own (:func:`move_pin`), shown only for one with (a reviewed PR): (exit code, what was done).
@@ -561,6 +603,8 @@ def apply(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:
                        "installer")
         except OSError as exc:
             return 1, [*out, f"launcher {dst}: {exc} (rerun installer/install.ps1 -Apply)"]
+    if p.get("stamps"):
+        out += _refresh_stamps(p["python"], Path(p["stamps"]), runner)
     code = 0
     if pin_writes(p):
         code, moved = move_pin(p, runner)

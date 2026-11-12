@@ -35,7 +35,9 @@ What it does, every command reading files and git, never a model:
   guards), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
   shapes, data files) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
-  deny rules and gitleaks as now.
+  deny rules and gitleaks as now. After an upgrade, `brain update` and the installer's `-Apply` re-check the
+  registry's public checkouts with the new engine (`brain check --public --refresh`), so no stamp of the old engine
+  is left to block a push; a checkout with uncommitted work is skipped and named.
 
 ## Install
 
