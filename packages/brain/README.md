@@ -90,12 +90,13 @@ install, the commits pip recorded are checked against the one the signed tag nam
 
 The cockpit (`brain tui`) runs once per machine (`<BRAIN_HOME>/locks/cockpit.lock`: a second interactive cockpit is
 refused, `--once`, `--json` and `--detail` read beside it). It has one tab per question, each on its key: `0` the overview, `1` the queue, `2` the sessions,
-`3` the frontier, `4` the milestones, `8` health (alerts on top; audit debt, stacks and index, and the exec times).
+`3` the frontier, `4` the milestones, `8` health (alerts on top; audit debt, stacks and index, and the exec times), the
+comma the settings.
 The overview shows one card per tab, what counts in it in a few lines: the band now, the sessions asking, the nearest
 milestones, what can start, the open alerts. Enter or a click opens its tab, already filtered as the card says, whatever your
 filters and search (a filter that is not saved and goes when you leave the tab); the arrows move between the cards.
-Ideas (`5`), lessons (`6`), features (`7`), resources (`9`) and settings (the comma) arrive with their items, and until
-then their key says so. The bar shows what waits in each tab, in digits and signs: « 1 Ada's queue 3 » the band now, « 2
+Ideas (`5`), lessons (`6`), features (`7`) and resources (`9`) arrive with their items, and until then their key says
+so. The bar shows what waits in each tab, in digits and signs: « 1 Ada's queue 3 » the band now, « 2
 Sessions 1! » the sessions asking, « 8 Health 2 » the open alerts. A click on it, `ctrl+pageup` and
 `ctrl+pagedown` also change tab, and Escape goes back one step at a time: the search, a full view, then the overview. A tab with several views says so in its toolbar:
 `v` or a click changes it, and the overview's other views are the grid of every panel, where open alerts take a whole
@@ -103,6 +104,17 @@ row, and the digest. `--tab NAME` starts on a tab, and with `--once` or `--plain
 its cards). Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.
+
+The settings tab (the comma) shows every setting with its value, the file or variable it comes from and how it changes,
+page by page on its left: Cockpit, Identity, Brain, Permissions and Setup. The cockpit's own settings live in
+`<BRAIN_HOME>/tui.json` and are edited there with Enter: the theme, the timezone, the language, how often the files are
+checked (`refresh`) and the probes run (`probe`; `--refresh` and `--probe` win for one launch), and each panel's free
+title; a wrong value is refused, an empty one sets the default back, and each change applies at once. The brain's
+settings (`identity.display_name` and the owner, `$BRAIN_HOME`, the personal pointer, `config.json`, the registry, the
+engine pin, the profile, the stacks, the notification routes, the code index, the scope types, `permissions.yaml`,
+Claude Code's settings) are only shown with the command that changes each: Enter says it, nothing is written from
+there, and a secret is named, never shown. The Setup page lists the commands that set a brain up, one per step.
+`brain tui --once --tab settings` prints the same pages (`brain.settings`).
 
 From 140 columns, on a tab that is one list, a row's detail sits right of the list and follows the cursor: it reads
 once the cursor rests, and remembers each row until its panel changes. Enter gives it the focus, where it scrolls and `o`
@@ -456,7 +468,9 @@ marketplace itself. `--template DIR` takes a folder of your own holding one. A t
 records live in their own brain. A template may `extends` one of the engine's (its files, appends, graphs and classes,
 to which it adds or replaces its own: a file of the same path, its `graphs` when it gives some) and `append` a
 fragment of its own to a file the base writes (`{the brain's path: the fragment}`; a YAML file must still read as
-YAML).
+YAML). It may also `takes` parts of another engine template instead of extending all of it (`{the template: [the
+brain's paths]}`: each path's file, or the fragment it appends there, from that template's own manifest, never its
+chain, graphs or classes), so what that template adds later reaches it only when it names it.
 
 ### A project's brain, by profile
 
@@ -488,13 +502,23 @@ Each one is the generic brain (its files unchanged), plus:
   version);
 - the issue template, a task form in the brain's GitHub issue templates (reference, context, acceptance,
   dependencies, an estimate marked (e) with its author and date, the exit criterion served, a proposed owner), and
-  the ADR template among its docs' templates (scope, target compatibility, a precise « Revisit if »): the template
-  `_project`'s `issue-task.md` and `adr.md`;
+  the ADR template among its docs' templates (scope, target compatibility, a precise « Revisit if »): `_software`'s
+  `issue-task.md` and `_project`'s `adr.md`;
 - the boundary's rule for `.github/**` (the engine side: nothing private in it).
 
-The bases `_project` (the issue and ADR templates) and `_software` (the CI, the harness, the format registry, the
-code layers) are what the profiles extend; `--template` does not take a base. The CI and the harness are Python's
-first: another language replaces their steps and keeps the jobs.
+The bases `_project` (the ADR template: nothing of a code host, so a project that is not code, or not on GitHub, extends
+it alone) and `_software` (the CI, the issue template and the `.github/**` rule, the harness, the format registry,
+the code layers) are what the profiles build on: `cli`, `local-client`, `service` and `data-pipeline` extend
+`_software`; `research` extends `_project` and `takes` the parts of `_software` it uses (all its files today, not its
+graph, whose layers are its own). `--template` does not take a base. The CI and the harness are Python's first:
+another language replaces their steps and keeps the jobs.
+
+The profiles' names and the stages `--stage` selects are typology and stage ids, as are the graph layers'
+`lifecycle` ids (`research_graph layers`): they follow one typology catalog still to come
+(`wi-brain-typology-catalog`), which maps the profiles to the layers' typologies and the standards' stages to the
+layers' (`explore`, `build`, ...). An id this engine does not know in a brain's `standards:` selection, written by a
+template of a later catalog, is tolerated: a note in read mode, an error only in strict mode (CI) (`--stage` itself
+takes this engine's stages).
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
@@ -533,7 +557,7 @@ expires once every session it was refused in is archived or gone in the Claude d
 
 The views name the owner by `identity.display_name` (else `identity.owner`): the queue's title is « Ada's queue », or
 « File d'Ada » with `"lang": "fr"` in `<BRAIN_HOME>/tui.json`'s settings (or `$BRAIN_LANG`), and « My queue » when no
-one is named; `settings.titles` there gives any panel a free title. `identity.owner` stays the id `--by` writes and the
+one is named; `settings.titles` there gives any panel a free title (the settings tab edits both). `identity.owner` stays the id `--by` writes and the
 stores declare.
 
 ### The owner's answers: one writer per batch
@@ -698,6 +722,26 @@ past 80 % with unarchived children keeps its alert until the master or all of it
 the app does not know, ended; archiving one child of several keeps it, with one live child fewer) or its watch state
 is pruned (14 days), by design: those children still spend; the governor reminds a master past 80 % that calls
 `start_session`, and lets the call through: nothing blocks a new session.
+
+### The coordinators' hand-over
+
+A coordinator hands over to the coordinator it starts: a hand-over note, then Remote Control on for the successor and
+off on itself, two calls the guard lets through only when its conditions hold ([`docs/guards.md`](docs/guards.md),
+Remote Control's three exceptions). `brain handover` (`brain.succession`, machine-wide) scripts the note and checks
+those conditions before the calls, at zero token, from the files the guard reads:
+
+- **`brain handover write [--from FILE|-] [--successor NAME] [--id ID]`**: the note,
+  `<BRAIN_HOME>/handover/coordinator-<date>-<name>.md`, whose first line is `From <app id> (<name>), <date> UTC` (the
+  guard reads the first app id of its opening as whose note it is), then the successor's name and the body.
+- **`brain handover check [--id ID] [--successor ID] [--json]`**: each condition (a coordinator by name or a chain
+  root, started by one, its note under 6 hours old, its successors live and detached), whether `on` and `off` would
+  pass, and the predecessor, which an incoming coordinator archives first (a session's own archive is refused); exit
+  1 when the hand-over would be refused, 2 when the app's files cannot be read.
+- **`brain handover root [ID] [--reason TEXT] [--clear]`**: the owner's, in their own terminal (refused in a Claude
+  Code session's shell, and by the guard to every session, like `brain usage allow`): a session the owner started
+  (no parent in the app's files) marked a chain root, `<BRAIN_HOME>/handover/roots.json`. A root hands over without a
+  coordinator's name, and the coordinators it starts pass the parent condition through it, until `--clear`; a
+  marked id that a session started, or that the app's files do not know, is no root. No ID lists the marks.
 
 ## Lessons
 
@@ -889,6 +933,14 @@ needs it (`--cascade` turns those off too); `--apply` writes this machine's `pro
 nothing. `explain` shows the scopes' `capabilities` (require, forbid) as declared: the scope tree reserves the key, its
 enforcement comes later. `brain init` writes an empty `modules` key. An auto capability is never switched (its
 module shows auto); a capability two modules list follows the first of them a layer names (keys in order).
+
+**The module catalogue** (`brain catalogue`, `brain.catalogue`): `catalogue/v1` ([docs/catalogue.md](docs/catalogue.md))
+is the neutral, public format of a catalogue of modules: its bricks, its modules with their hard and soft
+dependencies, requirements, estimated cost (RAM, disk, VRAM), fallback and licence, the distributions that ship them
+and the presets an installer offers (Lite, Default, Recommended; the personas a private catalogue declares). Any
+program may emit it; `brain catalogue emit [--out FILE]` prints the brain's own (`brain mod`'s modules, the engine and
+its extras, the three bases) and `brain catalogue validate FILE...` checks any document against the schema
+(`schemas/catalogue.schema.json`), with no brain needed.
 
 `config.json` `engine.min` (optional, beside `engine.pin`) is the oldest engine that may write the shared formats:
 below it the memory sync exports nothing (it still imports), the DDRs are not written and `brain check` says so; the

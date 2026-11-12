@@ -25,7 +25,8 @@ pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.3.2#subdirectory=
 ```
 
 From an empty machine to a brain of your own (Windows first, Linux and macOS): [`docs/install.md`](docs/install.md).
-Cutting a release: [`docs/release.md`](docs/release.md). Trying it in the pilot: [`docs/pilot.md`](docs/pilot.md). `packages/brain/installer/stranger_test.py` installs a tag
+Proposing a change, the checks a pull request passes and who signs the releases:
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Cutting a release: [`docs/release.md`](docs/release.md). Trying it in the pilot: [`docs/pilot.md`](docs/pilot.md). `packages/brain/installer/stranger_test.py` installs a tag
 into a fresh venv, isolated from its caller, and runs that first hour's scenario (the stranger test); with
 `--upgrade-from <tag>` it upgrades a brain the tag wrote, then rolls back to the tag on what this engine wrote (the
 upgrade test, CI's `compat-prev` job: [`packages/brain/docs/formats.md`](packages/brain/docs/formats.md)).
@@ -86,6 +87,10 @@ with its `generator`, `projected`), `node_types` (each with a line that says wha
 `required_props`, `ids`, `commands`, `views`, `checks`, `projection` (its GitNexus template and colours), `lifecycle`
 (the typologies that may take it, the stages that propose it) and `examples`: fictitious nodes and edges, ids
 `example-*` (or a fictitious repo `example` where the engine fixes an id's shape: `repo-example`, `code:example:...`).
+The `lifecycle` ids (`software`, `api-cli`, `research`, ...; `explore`, `build`, `launch`, `deliver`; `*` for any)
+follow one typology catalog still to come (`wi-brain-typology-catalog`), shared with the `brain` command's project
+templates and the standards' profiles and stages; an id this engine does not know is tolerated: a layer that names
+one is read, and `layers propose` with one proposes the layers open to any typology at any stage.
 
 ```bash
 research_graph layers                                   # the catalogue; * marks the --store's layers
