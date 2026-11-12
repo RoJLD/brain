@@ -31,7 +31,8 @@ USAGE = """\
                  (its pages: Cockpit, the screen's own settings in tui.json, edited there with Enter: theme,
                  timezone, language, refresh and probe intervals, each panel's free title; Identity, Brain,
                  Permissions, each brain setting with its file and the command that changes it, never edited there;
-                 Setup, the commands that set a brain up), ctrl+pageup and ctrl+pagedown the previous and next,
+                 Setup, the setup wizards: a choice, the plan run, then the apply on y, each command logged as
+                 {owner}'s), ctrl+pageup and ctrl+pagedown the previous and next,
                  Escape back to the overview;
                  Escape first clears the search and closes a full view; the bar shows the queue's band now, the
                  sessions asking and the open alerts, and is reduced to its

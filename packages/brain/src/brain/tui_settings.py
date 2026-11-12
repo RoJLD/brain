@@ -2,13 +2,16 @@
 cockpit-ux-round2 §4.0.3): its pages on the left (brain.settings' ``PAGES``), the page's settings on the right with
 their value, where each comes from and how it changes. Enter on a Cockpit setting opens its dialog
 (tui_screens' SettingScreen): the value is checked (brain.settings.parse), saved to <BRAIN_HOME>/tui.json and applied at
-once; on a brain setting it says the command that changes it, and nothing is written. The settings are read when the tab
+once; on a brain setting it says the command that changes it, and nothing is written; on the Setup page it runs a
+wizard (brain.wizards): its choice, a folder typed when it asks one, then its plan and its apply through the actions'
+confirmation, each command logged as the owner's (wi-brain-tui-setup). The settings are read when the tab
 shows, after an edit and on r: zero token, no probe.
 """
 
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -16,9 +19,9 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import DataTable, OptionList
 
-from . import cockpit
+from . import cockpit, detail, wizards
 from . import settings as settings_
-from .tui_screens import SettingScreen
+from .tui_screens import AskScreen, ChoiceScreen, SettingScreen
 
 SETTING_COLUMNS = ("Setting", "Value", "From", "Change")
 SETTING_ACTIONS = ("edit_setting", "settings_pages", "settings_rows")
@@ -113,8 +116,42 @@ class SettingsTab:
             return
         if not s.edit:
             self.notify(s.change, title=f"{s.key}: changed by", timeout=10)
+        elif s.edit == "wizard":
+            self.start_wizard(s.key)
+        else:
+            self.push_screen(SettingScreen(s, s.value), lambda got: self.set_setting(s, got[1]) if got else None)
+
+    # --- the Setup page's wizards (brain.wizards): a choice, a word typed, then the plan and the apply ---
+
+    def start_wizard(self, wid: str) -> None:
+        """A wizard: its choice first when it has one, then the folder it asks for, then its commands' confirmation
+        (brain.tui's start_action: the plan run and shown, then the apply on the owner's yes, logged; refused in a
+        Claude Code session's shell)."""
+        w = wizards.by_id(getattr(self.cockpit, "root", None)).get(wid)
+        if w is None:
             return
-        self.push_screen(SettingScreen(s, s.value), lambda got: self.set_setting(s, got[1]) if got else None)
+        if w.choices:
+            labels = [c or "its steps" for c in w.choices]
+            self.push_screen(ChoiceScreen(w.title, labels),
+                             lambda i: self._wizard_ask(w, w.choices[i]) if i is not None else None)
+        elif w.plan and "{choice}" in w.plan:
+            self.notify("nothing to choose from on this machine", title=w.title, severity="warning")
+        else:
+            self._wizard_ask(w, "")
+
+    def _wizard_ask(self, w, choice: str) -> None:
+        if w.ask:
+            self.push_screen(AskScreen(w.title, w.ask),
+                             lambda typed: self._wizard_run(w, choice, typed) if typed else None)
+        else:
+            self._wizard_run(w, choice, "")
+
+    def _wizard_run(self, w, choice: str, typed: str) -> None:
+        plan, apply = w.words("plan", choice, typed), w.words("apply", choice, typed)
+        notes = [w.what, *w.notes] + ([f"Yours, in your own terminal: {w.owner}."] if w.owner else [])
+        cwd = getattr(self.cockpit, "root", None) or Path.cwd()
+        self.start_action(detail.Action(kind="apply", label=w.title, project="brain", ref=w.id, cwd=Path(cwd),
+                                        steps=[apply or plan], preview=plan if apply else None, plan=notes))
 
     def set_setting(self, s: settings_.Setting, text: str) -> None:
         """A cockpit setting from its dialog: checked, saved to tui.json and applied now ('' sets its default)."""
