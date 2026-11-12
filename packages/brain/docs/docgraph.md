@@ -123,7 +123,9 @@ source names a `path` or a `tracker`.
 
 Every producer and every reader mean the same thing by these ids (`brain docgraph checks` prints this table). A
 producer runs the checks its data allows, lists the others in `checks_not_run`, and exits non-zero when it finds an
-error. An id outside this list is the producer's own: a reader shows it without interpreting it.
+error. An id outside this list is the producer's own: a reader shows it without interpreting it. Every check id, a
+named one or a producer's own, is lower case words joined by `-`, in dotted parts (`^[a-z][a-z0-9-]*(\.[a-z0-9-]+)*$`:
+`example.own-check`).
 
 | Check | Severity | Means |
 |---|---|---|
@@ -166,7 +168,9 @@ reader that joins several documents, in its own store, and never written back to
 
 ## What `brain docgraph validate` checks
 
-Errors (exit 1): the schema's (a required key, a type, a value outside a list); a later version; an id used twice or
+The file is UTF-8 JSON (a byte order mark is accepted); a document nested too deep or holding a number too long to
+read is refused as not JSON, never a crash. A top-level `v` is a producer's own key like any other: the version is
+`schema`'s. Errors (exit 1): the schema's (a required key, a type, a value outside a list); a later version; an id used twice or
 not prefixed by its type; a source that names no path and no tracker; a check both run and not run; a finding of a check
 said not run. Notes (kept, never refused): an edge or a finding's subject that names an id the document does not hold,
-a producer's own check.
+a producer's own check (in a finding or in `checks_run`), an id in `checks_not_run` that is not a named check.

@@ -91,10 +91,11 @@ class DocgraphError(ValueError):
 
 
 def load(path: Path) -> dict:
-    """The document at ``path``; :class:`DocgraphError` when it is not JSON or not an object."""
+    """The document at ``path`` (a UTF-8 byte order mark allowed: a Windows PowerShell 5.1 producer writes one);
+    :class:`DocgraphError` when it is not JSON or not an object (JSON nested too deep or a number too long too)."""
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, RecursionError) as exc:   # ValueError: JSONDecodeError, UnicodeDecodeError, digits
         raise DocgraphError(f"{path}: not a JSON document ({exc})") from exc
     if not isinstance(data, dict):
         raise DocgraphError(f"{path}: not a JSON object")
@@ -103,6 +104,8 @@ def load(path: Path) -> dict:
 
 def newer(doc: dict) -> str:
     """The refusal of a document written for a later version of the contract; "" otherwise."""
+    if not isinstance(doc, dict):
+        return ""
     m = ID_RE.match(str(doc.get("schema", "")))
     if m and int(m.group(1)) > VERSION:
         return f"schema: {doc['schema']} is a later contract than this engine's {ID}: brain update"
@@ -150,6 +153,11 @@ def _findings(doc: dict, seen: set[str], where: str, errors: list[str], notes: l
     run = {c for c in _list(doc, "checks_run") if isinstance(c, str)}
     not_run = {c for c in _list(doc, "checks_not_run") if isinstance(c, str)}
     errors.extend(f"{where}: check {cid!r} is both run and not run" for cid in sorted(run & not_run))
+    notes.extend(f"{where}: {cid!r} in checks_not_run is not a named check"
+                 for cid in sorted(not_run - set(CHECK_IDS)))
+    named_or_found = set(CHECK_IDS) | {str(f.get("id")) for f in _list(doc, "checks") if isinstance(f, dict)}
+    notes.extend(f"{where}: {cid!r} in checks_run is the producer's own check (not a named one)"
+                 for cid in sorted(run - named_or_found))
     for i, f in enumerate(_list(doc, "checks")):
         if not isinstance(f, dict):
             continue
@@ -169,11 +177,14 @@ def validate(doc: dict, where: str = "docgraph") -> tuple[list[str], list[str]]:
     tracker object, a check both run and not run, a finding of a check said not run. Notes: what a reader keeps without
     judging: an edge or a finding that names an id the document does not hold (the checks report it), a finding of a
     check this engine does not name (the producer's own)."""
+    if not isinstance(doc, dict):
+        return [f"{where}: expected a JSON object, got {type(doc).__name__}"], []
     refused = newer(doc)
     if refused:
         return [f"{where}: {refused}"], []
-    errors = [e.replace(KIND, where, 1) if e.startswith(KIND) else e
-              for e in schema.validate(KIND, doc, schema.STRICT)[0]]
+    errors: list[str] = []
+    contract = schema.load(KIND)   # versioned by its id: a top-level v is a producer's own key, never a refusal
+    schema._validate(doc, contract, contract, where, errors)
     notes: list[str] = []
     seen = _nodes(_list(doc, "nodes"), where, errors)
     _edges(_list(doc, "edges"), seen, where, errors, notes)

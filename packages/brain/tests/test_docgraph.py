@@ -112,6 +112,42 @@ def test_a_malformed_document_is_reported_never_a_crash():
     assert docgraph.summary(doc)["by"] is None
 
 
+def test_a_top_level_v_is_a_producers_key_never_a_refusal():
+    """The version is schema's: a v of 2 is no refusal, and the rest of the document is still judged."""
+    doc = fixture("older")
+    doc["v"] = 2
+    assert docgraph.validate(doc) == ([], [])
+    doc["nodes"][0]["type"] = "wish"
+    assert any("'wish' not in" in e for e in docgraph.validate(doc)[0])
+
+
+@pytest.mark.parametrize("value", [[], "x", None, 3])
+def test_a_document_that_is_not_an_object_is_an_error(value):
+    assert docgraph.validate(value, where="d")[0] == [f"d: expected a JSON object, got {type(value).__name__}"]
+
+
+def test_the_producers_own_ids_in_the_run_lists_are_noted():
+    doc = fixture("older")
+    doc["checks_run"].append("example.lint")
+    doc["checks_not_run"].append("example.other")
+    errors, notes = docgraph.validate(doc)
+    assert errors == []
+    assert any("'example.lint' in checks_run is the producer's own" in n for n in notes)
+    assert any("'example.other' in checks_not_run is not a named check" in n for n in notes)
+    doc["checks_run"].append("My_Tool.Check")      # the documented pattern: lower case, dotted
+    assert any("does not match" in e for e in docgraph.validate(doc)[0])
+
+
+def test_load_takes_a_bom_and_refuses_unreadable_json_without_a_crash(tmp_path):
+    bom = tmp_path / "bom.json"
+    bom.write_bytes(b"\xef\xbb\xbf" + (FIXTURES / "older.json").read_bytes())
+    assert docgraph.validate(docgraph.load(bom))[0] == []
+    for name, text in (("deep.json", "[" * 200_000), ("digits.json", '{"n": ' + "9" * 5000 + "}")):
+        (tmp_path / name).write_text(text, encoding="utf-8")
+        with pytest.raises(docgraph.DocgraphError, match="not a JSON document"):
+            docgraph.load(tmp_path / name)
+
+
 def test_summary_counts():
     s = docgraph.summary(fixture("older"))
     assert s["nodes"]["decision"] == 3 and s["edges"]["contradicts"] == 1
@@ -137,6 +173,20 @@ def test_validate_needs_no_brain_and_exits_on_an_invalid_document(tmp_path, monk
     assert cli.main(["docgraph", "validate", str(bad), str(notjson)]) == 1
     out = capsys.readouterr().out
     assert "bad.json: INVALID" in out and "names no path and no tracker" in out and "not a JSON document" in out
+
+
+def test_validate_reports_a_later_version_and_an_unreadable_file_in_json(tmp_path, capsys):
+    later = tmp_path / "later.json"
+    later.write_text(json.dumps({**fixture("older"), "schema": "docgraph/v3"}), encoding="utf-8")
+    deep = tmp_path / "deep.json"
+    deep.write_text("[" * 200_000, encoding="utf-8")
+    assert cli.main(["docgraph", "validate", str(later), str(deep)]) == 1
+    out = capsys.readouterr().out
+    assert "later.json: INVALID\n" in out and "a later contract than this engine's docgraph/v1" in out
+    assert "deep.json: INVALID" in out
+    assert cli.main(["docgraph", "validate", "--json", str(later), str(deep)]) == 1
+    rows = json.loads(capsys.readouterr().out)
+    assert [r["ok"] for r in rows] == [False, False] and rows[0]["summary"] is None and rows[1]["summary"] is None
 
 
 def test_validate_json_and_checks(capsys):
