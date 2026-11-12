@@ -69,6 +69,7 @@ notes/decision_queue.md merge=brain
 notes/audit.md merge=brain
 notes/modules_graph.md merge=brain
 notes/plan_graph.md merge=brain
+notes/docs_graph.md merge=brain
 notes/graph/nodes/*.yaml merge=brain
 notes/graph/edges/*.yaml merge=brain
 FEATURES.md merge=brain
