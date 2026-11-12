@@ -149,6 +149,20 @@
         "node_services": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"}, "description": "The node agents' services: stopping one acts on a node."}
       }
     },
+    "moved": {
+      "type": "object",
+      "description": "The table of moves (brain.moves, wi-brain-moved-paths): {old prefix: {to, date, note}}, a path, folder or repo that moved, written the day it moves. brain audit's doc.dead-ref flags a doc line naming an old prefix with its new one; brain check flags the brain's instructions, memory notes, skills and scripts.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["to", "date"],
+        "properties": {
+          "to": {"type": "string", "minLength": 1, "description": "The new prefix."},
+          "date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The day it moved."},
+          "note": {"type": "string", "description": "Why, or the PR that moved it."}
+        }
+      }
+    },
     "branches": {
       "type": "object", "additionalProperties": false,
       "description": "The branch names the branches guard lets a session create in the registry's repos (brain.guards): git checkout -b, git switch -c, git worktree add -b, git branch NAME, gh pr create's head; main and master always pass.",
