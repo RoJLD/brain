@@ -23,7 +23,10 @@ def _table():
 
 def test_a_prefix_matches_where_a_path_starts_and_ends_either_slash_any_case():
     t = _table()
-    hit = lambda line: [m.old for m in moves.find_in_line(line, t)]   # noqa: E731
+
+    def hit(line):
+        return [m.old for m in moves.find_in_line(line, t)]
+
     assert hit(r"cd D:\work\old-notes\notes") == ["D:/work/old-notes"]
     assert hit("cd d:/WORK/Old-Notes") == ["D:/work/old-notes"]
     assert hit("D:/work/old-notes-help/x") == []            # a longer name is another folder
@@ -78,6 +81,9 @@ def test_brain_check_flags_the_brains_instructions_memory_skills_and_scripts(tmp
 
 def test_the_schema_takes_the_table_and_refuses_a_bad_date():
     from brain import schema
-    about = lambda data: [e for e in schema.validate("config", data, "strict")[0] if "moved" in e]   # noqa: E731
+
+    def about(data):
+        return [e for e in schema.validate("config", data, "strict")[0] if "moved" in e]
+
     assert about({"moved": TABLE}) == []
     assert about({"moved": {"a/": {"to": "b/", "date": "soon"}}})
