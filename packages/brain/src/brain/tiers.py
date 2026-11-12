@@ -89,6 +89,8 @@ class Choice:
     applied: str = ""
     computed_from: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
+    own: dict | None = None    # the machine file's own components (components holds them merged over config.json's)
+    inherited: dict = field(default_factory=dict)   # config.json's components, the default a machine overrides
 
 
 # The registry.
@@ -337,15 +339,15 @@ def choice(root: Path | None) -> Choice:
             else:
                 # the machine's override merged key by key over config.json's components (a key it names wins;
                 # one it does not name keeps the brain's default, the infra-node switch say: R25)
-                merged = {**_config_components(root), **{str(k): bool(v) for k, v in
-                                                          (data.get("components") or {}).items()}}
-                return Choice(data["base"], merged, "machine", name, str(data.get("applied") or ""),
-                              data.get("computed_from") or {}, warnings)
+                own = {str(k): bool(v) for k, v in (data.get("components") or {}).items()}
+                inherited = _config_components(root)
+                return Choice(data["base"], {**inherited, **own}, "machine", name, str(data.get("applied") or ""),
+                              data.get("computed_from") or {}, warnings, own, inherited)
     tier = config.load(root).data.get("tier")
     if isinstance(tier, dict) and tier.get("base", BUILT_IN) in ("lite", "default"):
-        return Choice(tier.get("base", BUILT_IN), {str(k): bool(v) for k, v in (tier.get("components") or {}).items()},
-                      "config", name, warnings=warnings)
-    return Choice(BUILT_IN, {}, "built-in", name, warnings=warnings)
+        comps = _config_components(root)
+        return Choice(tier.get("base", BUILT_IN), comps, "config", name, warnings=warnings, own={}, inherited=comps)
+    return Choice(BUILT_IN, {}, "built-in", name, warnings=warnings, own={})
 
 
 def active(reg: dict[str, Entry], ch: Choice) -> tuple[set[str], list[str]]:
@@ -401,8 +403,9 @@ def plan(reg: dict[str, Entry], current: Choice, base: str | None, with_: list[s
     """The choice ``brain profile set`` would write: a base (recommended: the set this machine allows, frozen into
     the overrides) and the overrides, kept only where they differ from the base. No base: the current choice, with
     these overrides. Raises TierError for an entry that cannot be asked for."""
-    if base is None:
-        base, comps, frozen = current.base, dict(current.components), dict(current.computed_from)
+    if base is None:   # the machine's own overrides only: config.json's stay the brain's default, never copied
+        own = current.own if current.own is not None else current.components   # a Choice made by hand
+        base, comps, frozen = current.base, dict(own), dict(current.computed_from)
     elif base == "recommended":
         rec = recommend(reg, facts or {})
         base, comps = "recommended", {eid: True for eid in rec}
@@ -425,9 +428,10 @@ def plan(reg: dict[str, Entry], current: Choice, base: str | None, with_: list[s
         if not value and e.cls == "core":
             raise TierError(f"{eid} is core: every profile has it")
         comps[eid] = value
-    keep = preset(reg, base)
-    comps = {k: v for k, v in sorted(comps.items()) if v != (k in keep)}
-    return Choice(base, comps, "machine", current.machine or probe.machine(), computed_from=frozen)
+    keep = preset(reg, base)   # an override is kept where it differs from the default: the base, then config.json
+    comps = {k: v for k, v in sorted(comps.items()) if v != current.inherited.get(k, k in keep)}
+    return Choice(base, comps, "machine", current.machine or probe.machine(), computed_from=frozen,
+                  own=comps, inherited=current.inherited)
 
 
 def write(ch: Choice) -> tuple[Path, bool]:

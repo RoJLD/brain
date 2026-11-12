@@ -167,3 +167,20 @@ def test_below_engine_min_reads_and_writes_no_shared_format(box, store, monkeypa
         memory.sync(state={})
     _cfg(box, engine={"repo": "o/brain", "pin": "v0.3.2", "min": "v0.0.1"})
     assert skew.below_min(None) == ""
+
+
+def test_profile_json_overrides_config_key_by_key_and_never_copies_it(box, monkeypatch):
+    """R25: the default common (config.json tier.components), the override local (profile.json), merged key by key."""
+    _cfg(box, tier={"base": "default", "components": {"infra-node": True}})
+    reg, _ = tiers.registry(None)
+    assert "infra-node" in tiers.active(reg, tiers.choice(None))[0]
+    new = tiers.plan(reg, tiers.choice(None), None, [], ["infra-node"], None)
+    tiers.write(new)
+    assert json.loads(tiers.machine_file().read_text(encoding="utf-8"))["components"] == {"infra-node": False}
+    assert "infra-node" not in tiers.active(reg, tiers.choice(None))[0]   # this machine turns it off
+    tiers.machine_file().write_text(json.dumps({"v": 1, "machine": "box1", "base": "default", "components": {}}),
+                                    encoding="utf-8")
+    ch = tiers.choice(None)
+    assert ch.components == {"infra-node": True} and ch.own == {}   # a key it does not name keeps the default
+    later = tiers.plan(reg, ch, None, ["tui"], [], None)
+    assert "infra-node" not in later.components                     # config.json's default is never copied
