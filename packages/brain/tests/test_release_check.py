@@ -624,8 +624,8 @@ def test_every_json_schema_of_the_engine_is_registered():
     assert found and found <= registered
 
 
-def test_only_permissions_has_no_schema_file():
-    assert [name for name, paths in release_check.SCHEMAS.items() if not paths] == ["permissions"]
+def test_every_format_has_its_schema_file():
+    assert [name for name, paths in release_check.SCHEMAS.items() if not paths] == []   # permissions: since 0.3.3
 
 
 def test_every_registered_schema_file_exists():
@@ -965,11 +965,37 @@ def test_a_whole_new_format_is_a_patchs(repo, capsys):
         assert release_check.new_formats(repo, "v0.2.5") == {"widgets"}
         rc, text = run(repo, capsys)
         assert rc == 0, text
-        assert f"new registered formats since v0.2.5, held by no brain yet (compatible with a patch): {widgets}" in text
+        assert f"new schemas since v0.2.5, a new format or the first schema of one, no reader changed (compatible with a patch): {widgets}" in text
         assert "grown by optional keys" not in text
     finally:
         release_check.SCHEMAS.clear()
         release_check.SCHEMAS.update(old)
+
+
+def test_a_first_schema_of_a_format_registered_without_one_is_a_patchs(repo, capsys):
+    """permissions.yaml was registered with no schema file until wi-brain-permissions-schema: its first schema
+    describes the format and changes no reader, so a patch may add it; once released, a change of it moves."""
+    perms = "packages/brain/src/brain/schemas/permissions.schema.json"
+    text = Path(release_check.__file__).read_text(encoding="utf-8")
+    without = text.replace('"permissions": (f"{SRC}/schemas/permissions.schema.json",)', '"permissions": ()')
+    assert without != text
+    write(repo, release_check.REGISTRY, without)          # the tag's registry: permissions with no file
+    commit(repo)
+    git(repo, "tag", "-f", "v0.2.5")
+    versions(repo, "0.2.6")
+    changelogs(repo, "0.2.6")
+    write(repo, release_check.REGISTRY, text)
+    write(repo, perms, '{"properties": {"v": {"const": 1}}, "required": ["v"]}\n')
+    commit(repo)
+    assert release_check.new_formats(repo, "v0.2.5") == {"permissions"}
+    rc, out = run(repo, capsys)
+    assert rc == 0, out
+    assert f"new schemas since v0.2.5, a new format or the first schema of one, no reader changed (compatible with a patch): {perms}" in out
+    git(repo, "tag", "-f", "v0.2.6")
+    write(repo, perms, '{"properties": {"v": {"const": 1}}, "required": ["v", "rules"]}\n')
+    commit(repo)
+    assert release_check.new_formats(repo, "v0.2.6") == set()
+    assert release_check.moved_schemas(repo, "v0.2.6", [perms]) == ([perms], [])
 
 
 def test_a_format_whose_files_are_renamed_moves(repo, capsys):
