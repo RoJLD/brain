@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import projects
+from . import graph, projects
 
 RUNTIME_TYPES = (("Hook", "Hooks"), ("Workflow", "Workflows"), ("Skill", "Skills"), ("Plugin", "Plugins"),
                  ("McpServer", "MCP servers"))
@@ -107,7 +107,8 @@ def context(m, prose: dict, ctx: dict) -> list[str]:
     out = _intro(prose, "context")
     reg = ctx.get("registry") or {}
     if not reg:
-        return out + ["No project registry (`projects.yaml`) here."]
+        return out + ["No project registry (`projects.yaml`) at this repo's root: its context is the registry of the "
+                      "brain that tracks it."]
     out += ["| Project | Access | Repos | Title |", "|---|---|---|---|"]
     for name, row in reg.items():
         mark = " (this one)" if name == ctx.get("project") else ""
@@ -116,31 +117,54 @@ def context(m, prose: dict, ctx: dict) -> list[str]:
     return out
 
 
-def registry(root: Path) -> dict[str, dict]:
-    """{project: {access, repos, title}} of the registry ``root`` reads, in its order; {} without one."""
-    out: dict[str, dict] = {}
+def own_registry(root: Path) -> dict:
+    """The registry as declared, when it is this repo's own (``projects.yaml`` at ``root``, the file the registry is
+    read from): the reference is a function of the repo, never of a machine's other brains. {} otherwise."""
     try:
-        loaded = projects.load(root)
-        ro = projects.readonly(root)
-        names = [str(n) for n in projects.raw(root)]
-    except (SystemExit, OSError, ValueError):   # a registry that does not load: the section says there is none
+        f = projects.registry_file(root)
+        if f is None or Path(f).resolve().parent != Path(root).resolve():
+            return {}
+        return projects.raw(root)
+    except (OSError, ValueError, graph._yaml().YAMLError):   # unreadable: the section says there is none
         return {}
-    for name in names:
-        if name in loaded:
-            p = loaded[name]
-            try:
-                repos = sorted(c.name for c in projects.repos_of(p))
-            except projects.RepoError:
-                repos = []
-            out[name] = {"access": "write", "repos": repos, "title": p.title or ""}
-        elif name in ro:
-            out[name] = {"access": "read", "repos": [], "title": ro[name].title or ""}
+
+
+def _repo_names(name: str, entry: dict) -> list[str]:
+    """The repos an entry declares, by name, from its text alone (no path resolved: the same on every machine)."""
+    root = str(entry.get("root") or name)
+    repos = entry.get("repos") if isinstance(entry.get("repos"), list) else ["."]
+    out = []
+    for r in repos:
+        path = str(r.get("path") or ".") if isinstance(r, dict) else str(r)
+        named = r.get("name") if isinstance(r, dict) else None
+        out.append(str(named or Path(root if path in (".", "") else path).name or name).lower())
+    return sorted(set(out))
+
+
+def registry(raw: dict) -> dict[str, dict]:
+    """{project: {access, repos, title}} of a declared registry, in its order (a mount or an invalid entry left out)."""
+    out: dict[str, dict] = {}
+    for name, entry in raw.items():
+        if not isinstance(entry, dict) or "tenant" in entry:
+            continue
+        read = projects.is_read_only(entry)
+        out[str(name)] = {"access": "read" if read else "write", "repos": [] if read else _repo_names(str(name), entry),
+                          "title": str(entry.get("title") or "")}
     return out
+
+
+def stacks(entry: dict) -> list[str]:
+    """The stacks a registry entry declares: their names, or the file that holds them."""
+    value = entry.get("stacks") if isinstance(entry, dict) else None
+    if isinstance(value, dict):
+        return sorted(f"`{s}`" for s in map(str, value))
+    return [f"declared in `{value}`"] if isinstance(value, str) and value else []
 
 
 def strategy(m, prose: dict, ctx: dict) -> list[str]:
     out = [str(prose["strategy"]).strip(), ""] if prose.get("strategy") else _missing("strategy")
-    keys = [str(k) for k in prose.get("key_decisions") or [] if isinstance(k, str)]
+    named = prose.get("key_decisions")
+    keys = [k for k in named if isinstance(k, str)] if isinstance(named, list) else []
     if not keys:
         return out
     units = {u.id: u for u in m.units}
@@ -182,7 +206,7 @@ def deployment(m, prose: dict, ctx: dict) -> list[str]:
     stacks = ctx.get("stacks") or []
     if not stacks:
         return out + ["No stack declared for this project (`projects.yaml` `stacks`)."]
-    return out + [f"- `{s}`" for s in stacks] + ["", "`brain health` shows their state on a machine, `brain profile` "
+    return out + [f"- {s}" for s in stacks] + ["", "`brain health` shows their state on a machine, `brain profile` "
                                                   "what the machine runs."]
 
 
@@ -257,7 +281,8 @@ def _sub(title: str, lines: list[str]) -> list[str]:
 
 
 def glossary(m, prose: dict, ctx: dict) -> list[str]:
-    terms = [g for g in prose.get("glossary") or [] if isinstance(g, dict) and g.get("term")]
+    listed = prose.get("glossary")
+    terms = [g for g in listed if isinstance(g, dict) and g.get("term")] if isinstance(listed, list) else []
     if "glossary" not in prose:
         return _missing("glossary")
     if not terms:

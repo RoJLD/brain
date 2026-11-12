@@ -119,23 +119,23 @@ its source; every statement carries its status and its id, its source in the gra
 |---|---|
 | 1. Introduction and goals | `goals`; the pending milestones and their triggers (`props.trigger`) |
 | 2. Constraints | the `Rule` nodes, the decisions that set them (`decided_by`, else « without a decision ») and what enforces them (`enforced_by`, else « by judgement ») |
-| 3. Context and scope | the registry: each project, its access, its repos and title, this one marked |
+| 3. Context and scope | the repo's own registry (`projects.yaml` at its root, read as declared: the reference never depends on a machine's other brains): each project, its access, its repos by name and its title, the one registered at this root marked; a repo whose registry lives elsewhere says so |
 | 4. Solution strategy | `strategy`; the decisions `key_decisions` names (one the graph does not hold is said) |
 | 5. Building blocks | the modules and their pages |
 | 6. Runtime view | the `Hook`, `Workflow`, `Skill`, `Plugin` and `McpServer` nodes |
-| 7. Deployment view | the project's stacks (`projects.yaml` `stacks`) |
+| 7. Deployment view | the stacks that registry declares for this project (`stacks`: their names, or the file that holds them) |
 | 8. Cross-cutting concepts | the specs in force |
 | 9. Architecture decisions | per module, its decisions newest first (three, the rest on its page), then the unplaced ones, all of them (a debt line) |
 | 10. Quality requirements | each milestone with a trigger, its items (`part_of`) and their tests (`tested_by`, theirs and their features'); the goals with no test counted |
-| 11. Risks and technical debt | blocked items, open debt items (`debt` in their id), open lessons, open questions (the pending DDRs) |
+| 11. Risks and technical debt | blocked items, open debt items (a `debt` segment in their id, `wi-debt-x`), open lessons, open questions (the pending DDRs) |
 | 12. Glossary | `glossary` |
 
 **The prose**, `docs/reference.yaml` (`schemas/reference.schema.json`, the README YAML's mechanism): `v`, `goals`,
 `strategy` and `glossary` (an empty list says there is no term yet) are required; `key_decisions`, `sections` (a short
 intro per section: `constraints`, `context`, `building_blocks`, `runtime`, `deployment`, `concepts`, `decisions`,
 `quality`, `risks`) and `modules` (a short prose per module id, at the top of its page) are optional. A required field
-missing, or a file that does not read as a mapping, fails `brain reference` (nothing written) and `brain check` (once
-the reference is kept). Without the file, the skeleton shows its facts and says which prose is not written yet.
+missing, or a file that does not read as a mapping, fails `brain reference` (nothing written), `brain check` (once
+the reference is kept) and keeps `brain sync` from writing over the last good render (a warning). Without the file, the skeleton shows its facts and says which prose is not written yet.
 
 The decisions in force: the unit is the answered DDR (its question, the chosen option, who answered and when), with the
 ADR it went to; an ADR no DDR went to shows by its title; an ADR some DDR went to (a batch of answers) never by its

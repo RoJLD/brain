@@ -38,15 +38,25 @@ def _target(args, root: Path) -> Path:
 def files_for(args, root: Path) -> dict[str, str]:
     store = _store(args, root)
     if getattr(args, "public", False):
-        prose = reference.load_prose(_target(args, root).parent.parent)[0]   # the checkout's own docs/reference.yaml
+        where = _prose_root(args, root)
+        prose = reference.load_prose(where)[0] if where is not None else {}   # the checkout's own docs/reference.yaml
         return reference.render_public(store, args.repo or _root_repo(args, root), _root_repo(args, root), prose)
     return reference.render(root, store, _store_label(root, store))
 
 
-def _prose_refused(base: Path) -> bool:
-    """Whether the repo's docs/reference.yaml (beside the folder ``base`` renders) breaks its schema: each error
-    said; the render is then refused, as the README's YAML's."""
-    errors = reference.load_prose(base.parent.parent)[1]
+def _prose_root(args, root: Path) -> Path | None:
+    """The repo whose docs/reference.yaml the render reads: the root's; with --public, the checkout --out names
+    (<checkout>/docs/reference), None when --out is not such a folder (no prose read)."""
+    if not args.public:
+        return root
+    out = _target(args, root)
+    return out.parent.parent if (out.parent.name, out.name) == ("docs", "reference") else None
+
+
+def _prose_refused(where: Path | None) -> bool:
+    """Whether that docs/reference.yaml breaks its schema: each error said; the render is then refused, as the
+    README's YAML's."""
+    errors = reference.load_prose(where)[1] if where is not None else []
     for line in errors:
         print(f"error: {line} (schemas/reference.schema.json)", file=sys.stderr)
     return bool(errors)
@@ -67,7 +77,7 @@ def cmd_reference(args, root: Path) -> int:
         return 1
     files = files_for(args, root)
     base = _target(args, root)
-    if _prose_refused(base):
+    if _prose_refused(_prose_root(args, root)):
         return 1
     denied = _denied(args, root, files)
     if not args.write:

@@ -70,6 +70,9 @@ def _reference_prose_check(project: projects.Project, root: Path, store: Path) -
 def _write_reference(project: projects.Project, root: Path, store: Path) -> None:
     """docs/reference/ written again (brain.reference) once the owner opted in: a brain without it gets none."""
     if _reference_applies(project, root, store):
+        if reference.load_prose(root)[1]:   # never over the last good render: brain check says why
+            print(f"warning: {reference.YAML} breaks its schema: {reference.DIR} not written (brain check)")
+            return
         changed, kept = reference.write(root / reference.DIR, reference.render(root, store, _store_label(root, store)))
         if changed:
             print(f"view: {reference.DIR} written ({len(changed)} file(s))")

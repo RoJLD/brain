@@ -31,7 +31,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import arc42, features, graph, modules, records, schema
+from . import arc42, features, graph, modules, projects, records, schema
 
 DIR = "docs/reference"
 YAML = "docs/reference.yaml"   # the prose a person writes (schemas/reference.schema.json)
@@ -343,17 +343,20 @@ def load_prose(root: Path) -> tuple[dict, list[str]]:
 
 
 def _context(root: Path, store: Path) -> dict:
-    """What section 3 and 7 read beyond the store: the registry, this project's name and its stacks."""
-    from . import resume
-    try:
-        p = resume.project_for(root)
-    except SystemExit:   # a project the registry refuses: the sections say what they can without it
-        p = None
-    stacks = []
-    if p is not None and p.registered:
-        stacks = sorted(map(str, p.stacks)) if isinstance(p.stacks, dict) else ([str(p.stacks)] if p.stacks else [])
-    return {"registry": arc42.registry(root), "project": p.name if p is not None and p.registered else "",
-            "stacks": stacks}
+    """What section 3 and 7 read beyond the store, from the repo's own registry only (arc42.own_registry): its
+    projects, the first one registered at this root (the owner), and its stacks."""
+    raw = arc42.own_registry(root)
+    here = next((str(n) for n, e in raw.items() if isinstance(e, dict) and not projects.is_read_only(e)
+                 and _at(root, e.get("root"))), "")
+    return {"registry": arc42.registry(raw), "project": here, "stacks": arc42.stacks(raw.get(here) or {})}
+
+
+def _at(root: Path, value) -> bool:
+    """Whether a registry entry's root (relative to the registry, which is at ``root``) is ``root``."""
+    if not isinstance(value, str) or not value:
+        return False
+    p = Path(value)
+    return (p if p.is_absolute() else Path(root) / p).resolve() == Path(root).resolve()
 
 
 def render(root: Path, store: Path, store_label: str = "notes/graph") -> dict[str, str]:

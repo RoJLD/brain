@@ -138,9 +138,10 @@ def _arc42(tmp_path, monkeypatch):
         "- {from: wi-boil, to: ms-tea, type: part_of}\n- {from: wi-pour, to: ms-tea, type: part_of}\n"
         "- {from: wi-boil, to: test-boil, type: tested_by}\n- {from: rule-pour-slow, to: hook-guard, type: enforced_by}\n"
         "- {from: rule-pour-slow, to: adr-2026-10-02-old-pour, type: decided_by}\n", encoding="utf-8")
-    reg = tmp_path / "projects.yaml"
-    reg.write_text(reg.read_text(encoding="utf-8") + "  title: the tea lab\nshop: {title: a shop read only, "
-                   "access: read}\n", encoding="utf-8")
+    reg = root / "projects.yaml"   # the repo's own registry: the reference's section 3 reads it
+    reg.write_text("lab:\n  root: .\n  title: the tea lab\n  stacks: {kettle: {start: boil}}\n"
+                   "shop: {title: a shop read only, access: read}\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
     return root, store
 
 
@@ -164,7 +165,7 @@ def test_the_readme_holds_the_twelve_arc42_sections_from_the_graph_and_the_yaml(
     assert "One small core" in s4 and "- `adr-2026-10-09-reversal-boil`: REVERSAL: boil at 95" in s4
     assert "| [K1](modules/K1.md) | kettle-core | K | 2 | 1 | 1 | 5 |" in section["5. Building blocks"]
     assert "### Hooks: 1" in section["6. Runtime view"] and "- `hook-guard` (active) The pour guard" in text
-    assert "No stack declared" in section["7. Deployment view"]
+    assert "- `kettle`" in section["7. Deployment view"]
     assert "- `spec-kettle` (active) Ada Quill's kettle spec" in section["8. Cross-cutting concepts"]
     s9 = section["9. Architecture decisions"]
     assert "### K1 kettle-core: 5 (2 more on [its page](modules/K1.md))" in s9 and "### Unplaced decisions: 0" in s9
@@ -192,9 +193,30 @@ def test_a_reference_yaml_missing_a_required_field_fails_the_render_and_the_chec
     (root / "docs" / "reference.yaml").write_text("- a list\n", encoding="utf-8")
     assert reference.load_prose(root)[1] == ["docs/reference.yaml: not a mapping (its fields: v, goals, strategy, "
                                              "glossary...)"]
+    good = (root / "docs" / "reference" / "README.md").read_text(encoding="utf-8")
+    _write_reference(_lab(), root, store)   # brain sync: never over the last good render
+    assert (root / "docs" / "reference" / "README.md").read_text(encoding="utf-8") == good
+    assert "breaks its schema: docs/reference not written" in capsys.readouterr().out
+    assert cli.main(["check"]) == 1 and "error: docs/reference.yaml: not a mapping" in capsys.readouterr().out
     (root / "docs" / "reference.yaml").unlink()   # no YAML: the skeleton with its facts, said
     text = reference.render(root, store)["README.md"]
     assert "_Not written yet: `goals` in `docs/reference.yaml`._" in text and cli.main(["reference"]) == 1
+
+
+def test_section_3_reads_the_repos_own_registry_only(tmp_path, monkeypatch):
+    """A registry that lives elsewhere (another brain tracks the repo) never reaches the repo's reference: the same
+    graph gives the same files on every machine."""
+    root, store = _brain(tmp_path, monkeypatch)   # its registry is outside the repo
+    text = reference.render(root, store)["README.md"]
+    assert "No project registry (`projects.yaml`) at this repo's root" in text and "| `lab`" not in text
+    assert "No stack declared" in text
+
+
+def test_out_without_public_checks_the_roots_own_yaml(tmp_path, monkeypatch, capsys):
+    root, store = _arc42(tmp_path, monkeypatch)
+    (root / "docs" / "reference.yaml").write_text("v: 1\nstrategy: s\nglossary: []\n", encoding="utf-8")
+    out = tmp_path / "elsewhere" / "docs" / "reference"
+    assert cli.main(["reference", "--out", str(out), "--write"]) == 1 and not out.exists()
 
 
 def test_the_public_render_takes_the_public_repos_own_prose(tmp_path, monkeypatch):
