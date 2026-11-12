@@ -236,13 +236,35 @@ def write_event(event: dict, ledger: str | Path | None = None) -> Path:
     return f
 
 
+def line(rec: dict) -> str:
+    """``rec`` as one compact JSON line (with its newline), as every ledger writes it."""
+    return json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n"
+
+
 def append(f: Path, event: dict) -> bool:
     """Append ``event`` as one JSON line to ``f`` under its folder's lock (the folder made when missing), without
     checking it against the schema (write_event does); whether the lock was had. A writer that could not get the lock
     within LOCK_TIMEOUT writes anyway and says so in ledger/errors.log."""
+    return append_text(f, line(event))
+
+
+def append_lines(f: Path, recs) -> bool:
+    """Append the records ``recs`` as JSON lines to ``f`` in one locked write (:func:`append_text`); True for none."""
+    return append_text(f, "".join(line(r) for r in recs))
+
+
+def append_text(f: Path, text: str) -> bool:
+    """Append ``text`` (whole lines, each ending with its newline) to ``f`` in one write under the lock of ``f``'s
+    folder (``<folder>/exec.lock``, the folder made when missing): every append-only ledger of the brain goes through
+    it (the exec ledger, the capture ledgers ar, ddr, events, the guards, queue, answers and cockpit ledgers, the quota
+    readings, the notify audit; wi-brain-ledger-append-lock), so that writers at once, sessions' hooks and commands,
+    neither lose nor mix a line. A last line left without its newline is closed first. Whether the lock was had: a
+    writer that could not get it within LOCK_TIMEOUT writes anyway and says so in ledger/errors.log."""
+    if not text:
+        return True
     d = f.parent
     d.mkdir(parents=True, exist_ok=True)
-    data = (json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    data = text.encode("utf-8")
     fd = os.open(f, os.O_RDWR | os.O_APPEND | os.O_CREAT | _BINARY, 0o644)
     try:
         with locked(d) as got:  # only the write is held: closing a written file can take ms (an antivirus scan)
@@ -257,7 +279,8 @@ def append(f: Path, event: dict) -> bool:
     finally:
         os.close(fd)
     if not got:
-        _log_error("timed", TimeoutError(f"{d / LOCK_NAME} not had in {LOCK_TIMEOUT:g} s; event written without it"))
+        _log_error("timed", TimeoutError(f"{d / LOCK_NAME} not had in {LOCK_TIMEOUT:g} s; {f.name} written without "
+                                         "it"))
     return got
 
 

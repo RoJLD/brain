@@ -965,7 +965,10 @@ hooks run `brain.capture` (`capture.sh <event>` runs `hooks/capture.py`, which c
 venv): it reads the hook's JSON on stdin and appends the session events, the session-record snapshots and the action
 records to `<BRAIN_HOME>/ledger` at zero token; it prints nothing and never fails the session (its errors go to
 `ledger/errors.log`, moved aside each month, or past 1 MB, as `errors-YYYY-MM.log` and kept six months;
-`BRAIN_CAPTURE=0` turns it off). The session snapshots, states, reports and plans under `<BRAIN_HOME>/sessions` and the
+`BRAIN_CAPTURE=0` turns it off). Every append-only ledger (the exec ledger, the capture ledgers `ar`, `ddr` and
+`events`, the guards, queue, answers and cockpit ledgers, the quota readings, the notify audit) is appended in one write
+under its folder's lock (`exec.lock`, `brain.timing.append_text`), so that sessions writing at once neither lose nor mix
+a line. The session snapshots, states, reports and plans under `<BRAIN_HOME>/sessions` and the
 budget watch's states are written through `brain.stateio` (a backup beside each, an atomic write; a newer brain's left
 to it): [docs/formats.md](docs/formats.md) gives each file's policy and each log's retention. With `config.json`
 `integrity.sidecars: true` (or `BRAIN_STATE_INTEGRITY=1`; off by default) each of these files gets a sha256 sidecar

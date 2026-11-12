@@ -306,7 +306,8 @@ def test_the_audit_keeps_six_months(tmp_path, monkeypatch, fake):
     for name in ("2026-04.jsonl", "2026-05.jsonl", "2026-06.jsonl", "state.json"):
         (d / name).write_text("{}\n", encoding="utf-8")
     notify.send(cfg, _msg(), now=NOW)
-    assert sorted(p.name for p in d.iterdir()) == ["2026-06.jsonl", "2026-11.jsonl", "state.json"]
+    # exec.lock: the audit is appended under its folder's lock (wi-brain-ledger-append-lock)
+    assert sorted(p.name for p in d.iterdir()) == ["2026-06.jsonl", "2026-11.jsonl", "exec.lock", "state.json"]
     (d / "2026-05.jsonl").write_text("{}\n", encoding="utf-8")
     notify.send(cfg, _msg(), now=NOW)                       # not the month's first line: nothing pruned
     assert (d / "2026-05.jsonl").exists()
