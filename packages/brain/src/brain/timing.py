@@ -4,10 +4,10 @@ decorator that projects import; ``brain perf`` (brain.perf) reads it back::
 
   from brain.timing import timed
 
-  with timed("download f1v2", project="quant"):
+  with timed("download f1v2", project="acme"):
       download()
 
-  @timed("cycle L4", project="quant")      # @timed(): the task is module.function
+  @timed("cycle L4", project="acme")      # @timed(): the task is module.function
   def layer_4(): ...
 
 One event schema (``schemas/event.schema.json``), shared with a project's ops error events (its error catalogue):

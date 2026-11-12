@@ -18,7 +18,7 @@ global, like stack names: a project may route to a channel another project decla
       decisions: error            # the level a blocking DDR is sent at (brain decision ask --blocking; default error)
       quiet_hours: "22:00-07:00"  # local time: nothing below critical is sent, one sum-up after (brain.quiet)
       throttle: 60                # minutes before the same --key is sent again at its level (0: never held back)
-  quant:
+  acme:
     notify: {levels: {critical: [ntfy, telegram]}}
 
 A secret is never in a file: a key that holds one ends in ``_env`` and names the environment variable the owner

@@ -10,13 +10,14 @@ the session ids and the hygiene line."""
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, docsgraph, features,
-                gates, graph, links, lint, markers, milestones, modulemap, modules, neutral, permissions, projects,
-                public, readme, records, reference, render, scopes, sizing, skew, specs, stacks, tidy, tiers, vault,
-                views, waves)
+                gates, graph, links, lint, markers, milestones, modulemap, modules, neutral, permissions, pins,
+                projects, public, readme, records, reference, render, scopes, sizing, skew, specs, stacks, tidy,
+                tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -361,6 +362,9 @@ def _check_store(args, root: Path, store: Path) -> int:
         rc = _views_verdict(project, root, store, where, stale, legacy, strict) or rc
         return graph.research_graph(root, store, *layout, "check") or rc
     rc = (cmd_record_check(args, root) if (root / records.RECORDS_DIR).is_dir() else 0) or rc
+    first = next((s for s in project.stores if (s / "schema.yaml").is_file()), store)
+    for line in pins.check_lines(project) if store == first else ():   # the decision pins, once a project
+        print(line)
     if decisions.view_stale(root, _project(args, root).name):
         stale.add(decisions.VIEW, "brain sync (or brain decision view --write)")
     roots: dict[str, Path] = {}   # the other repos' checkouts, where research_graph reads their nodes' anchors
@@ -509,7 +513,13 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     for s in ids["stale"]:
         print(f"warning: shared_ids of {s}: no longer in two stores (remove it)")
     errors += _cross_store(projs, every)
+    errors += _unregistered_code_refs(root, projs, every)
+    for line in _moved_names(root):
+        print(f"warning: moved: {line}")
     for line in render.registry_warnings(neutral.brain_root(root), projs) + _uncloned(root):
+        print(f"warning: {line}")
+    from .. import denylist   # a declared private name no deny list holds (wi-brain-public-deny-derived)
+    for line in denylist.check_lines(root):
         print(f"warning: {line}")
     for e in errors:
         print(f"error: {e}")
@@ -539,6 +549,51 @@ def _cross_store(projs: list[projects.Project], every: bool) -> list[str]:
     for line in rep.dangling if not every else []:
         print(f"warning: edge {line} (its store's check refuses it)")
     return [f"edge {line}" for line in rep.dangling] if every else []
+
+
+def _moved_names(root: Path | None) -> list[str]:
+    """The brain's instructions, memory notes, skills and scripts that name a prefix config.json's table of moves says
+    moved (brain.moves, wi-brain-moved-paths): warnings, with the new prefix."""
+    from .. import moves
+    cfg = config.load(root)
+    table = moves.table(cfg)
+    top = Path(root) if root is not None else cfg.root   # the brain checked, as the rest of its registry check
+    if not table:
+        return []
+    try:
+        out = subprocess.run(["git", "-C", str(top), "ls-files", "-z"], capture_output=True, timeout=60,
+                             stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        out = None
+    if out is None or out.returncode:
+        return [f"not checked: {top} is not a git checkout (its tracked files are what is read)"]
+    return moves.scan_root(Path(top), [t for t in out.stdout.decode("utf-8", "replace").split("\0") if t], table)
+
+
+def _unregistered_code_refs(root: Path | None, projs: list[projects.Project], every: bool) -> list[str]:
+    """The active CodeRefs of the registry's stores whose repo no project registers
+    (wi-brain-audit-unregistered-coderef): errors with ``every`` (check --all), else warned. brain audit reports
+    them as coderef.dangling (P0); nothing would measure them otherwise."""
+    from ..inventory import parse_code_ref
+    known = projects.repo_tokens(root)
+    found, read = [], set()
+    for p in projs:
+        for store in p.stores:
+            key = projects._norm(store)
+            if key in read or not (store / "nodes").is_dir():
+                continue
+            read.add(key)
+            for cid, status in projects.code_refs(store):
+                try:
+                    repo = parse_code_ref(cid)[0]
+                except ValueError:
+                    continue   # malformed: the store's own check refuses it
+                if status == "active" and repo.lower() not in known:
+                    found.append(f"CodeRef {cid} ({p.name}): its repo {repo} is in no project's repos: (register "
+                                 "it, point the CodeRef at a registered repo, or retire it)")
+    for line in found if not every else []:
+        print(f"warning: {line}")
+    return found if every else []
 
 
 def _uncloned(root: Path | None) -> list[str]:

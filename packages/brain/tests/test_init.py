@@ -375,7 +375,7 @@ def test_a_bad_template_plans_nothing(fresh, tmp_path, capsys, manifest, why):
 
 
 def test_an_unknown_template_names_the_engines(fresh, capsys):
-    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", "quant"]) == 2
+    assert cli.main(["init", str(fresh), "--owner", "Ada", "--template", "acme"]) == 2
     assert "not one of the engine's (cli, data-pipeline, generic, local-client, research, service)" in capsys.readouterr().out
 
 
@@ -510,7 +510,7 @@ def test_a_later_graph_after_a_kept_first_one_keeps_its_views_beside_it(fresh, t
     ("[{name: work, store: notes/graph, kind: lab}]", "graphs[0]: a mapping of layers, name, schema, store"),
     ("[{name: a, store: g}, {name: a, store: h}]", "graphs[1]: name is lower case"),
     ("[{name: a, store: ../g}]", "graphs[0] (a): store is a folder inside the brain"),
-    ("[{name: a, store: g, schema: quant}]", "schema 'quant': only default for now"),
+    ("[{name: a, store: g, schema: acme}]", "schema 'acme': only default for now"),
 ])
 def test_a_bad_graph_plans_nothing(fresh, tmp_path, capsys, graphs, why):
     tpl = tmp_path / "lab"

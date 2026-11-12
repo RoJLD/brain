@@ -6,8 +6,10 @@ It runs in the checkout of a public repo (config.json ``public.repos``) from the
 the lists it reads never leave the private side: the config is the brain's (brain.config), never one in the checked
 repo. It refuses, one finding per line, exit code 1:
 
-- ``denied``: a term of ``public.deny`` (people, users, hosts, repos, paths), as brain boundary counts it (whole
-  words, case-insensitive, ``/`` and ``\\`` alike);
+- ``denied``: a term of ``public.deny`` (people, users, hosts, repos, paths) or one derived from the brain's own
+  registries (brain.denylist: its machines, people, projects, specs and modules, ``public.derive``), as brain boundary
+  counts it (whole words, case-insensitive, ``/`` and ``\\`` alike, the separators ``-``, ``_`` and a space in every
+  spelling, none included);
 - ``secret``: a line brain.secretscan matches (a private key block included), unless it carries ``gitleaks:allow``;
   with ``--history``, gitleaks over the commits when it is on the PATH (else the patterns alone, and it says so);
 - ``pattern``: the generic shapes of personal data, written here with nothing personal in them: an e-mail address
@@ -218,7 +220,8 @@ def _stamp_refusal(slug: str, sha: str, cfg: config.Config) -> str:
                 "it, the hook and the brain command run different engine copies: brain sync)")
     if key.get("rules") != now["rules"]:
         return ("was stamped under other rules (config.json public.deny, allow, patterns or refuse changed since, or "
-                "the scope tree that public.deny_from_tree reads)")
+                "the scope tree that public.deny_from_tree reads, or a registry public.derive reads: a new machine, "
+                "project, person, spec or module)")
     if key.get("gitleaks") is not now["gitleaks"]:
         return ("was stamped without gitleaks, which is now on the PATH (if the check says gitleaks failed, fix it "
                 "or take it off the PATH)" if now["gitleaks"] else
@@ -235,7 +238,13 @@ class Rules:
     patterns: list[tuple[str, re.Pattern]]
     refuse: list[tuple[str, re.Pattern, str]]
     errors: list[str]
+    any_term: re.Pattern | None = None   # every term in one regex: a line none matches skips the terms one by one
     graph: privateids.Index | None = None   # the personal graph's ids and ADR titles (rules(cfg, slug))
+
+    def __post_init__(self) -> None:
+        if self.any_term is None and self.terms:
+            self.any_term = re.compile(r"(?i)(?<![A-Za-z0-9_])(?:" + "|".join(
+                boundary.term_body(t) for _, t, _ in self.terms) + r")(?![A-Za-z0-9_])")
 
     def allowed(self, path: str) -> bool:
         return any(rx.match(path) for rx in self.allow)
@@ -257,7 +266,7 @@ def rules(cfg: config.Config, slug: str = "") -> Rules:
     graph = privateids.index(cfg.root, slug) if is_public(slug, cfg) else None
     errors += graph.errors if graph is not None else []
     return Rules([(cat, t, boundary.term_regex(t)) for cat, t in config.deny_terms(cfg)],
-                 [boundary.glob_regex(g) for g in config.allowed(cfg)], patterns, refuse, errors, graph or None)
+                 [boundary.glob_regex(g) for g in config.allowed(cfg)], patterns, refuse, errors, graph=graph or None)
 
 
 def _generic(line: str) -> list[str]:
@@ -280,7 +289,7 @@ def scan_lines(path: str, lines, r: Rules, commit: str = "") -> list[Finding]:
     allowed = r.allowed(path)
     for n, line in lines:
         flat = line.replace("\\", "/")
-        if not allowed:
+        if not allowed and r.any_term is not None and r.any_term.search(flat):
             for cat, term, rx in r.terms:
                 if rx.search(flat):
                     out.append(Finding("denied", path, n, f"{cat} term {term!r}", commit))
@@ -423,6 +432,12 @@ def check(repo: Path, cfg: config.Config | None = None, *, history: bool = False
     top = _out(repo, "rev-parse", "--show-toplevel")
     if not top:
         raise PublicError(f"{repo}: not a git checkout")
+    from . import denylist
+    try:   # a registry that cannot be read: no check under a shorter list (the guards refuse too)
+        denylist.terms(cfg)
+    except denylist.DeriveError as exc:
+        raise PublicError(f"the deny terms cannot be derived from the registries: {exc}; fix it (brain check "
+                          "--all), or narrow config.json public.derive") from exc
     repo = Path(top)
     head = _out(repo, "rev-parse", "--verify", "HEAD")
     notes: list[str] = []

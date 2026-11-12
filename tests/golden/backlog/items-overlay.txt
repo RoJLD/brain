@@ -46,7 +46,7 @@ exit: 0
   "priority": null,
   "priority_proposed": null,
   "repos": [
-   "quant-marketdata"
+   "acme-data"
   ],
   "milestones": [],
   "blockers": [],

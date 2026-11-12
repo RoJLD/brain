@@ -71,7 +71,7 @@ def test_link_appends_one_edge_per_pair(store):
         graph.link(store, "wi-one", "blocks", "wi-two")
 
 
-# --- the research_graph engine: in this process, else the legacy copy (graph.LEGACY) in another Python ---
+# --- the research_graph engine: in this process, else python -m research_graph in another Python ---
 
 def test_engine_runs_in_process(store, monkeypatch, capsys):
     pytest.importorskip("research_graph")
@@ -110,7 +110,7 @@ def test_engine_failure_is_an_exit_code(store, monkeypatch, capsys):
     assert graph.research_graph(root, store, "nope") == 2
 
 
-def test_engine_falls_back_to_the_legacy_python(store, monkeypatch, capsys):
+def test_engine_runs_in_the_named_python(store, monkeypatch, capsys):
     calls = []
 
     class Done:
@@ -121,38 +121,35 @@ def test_engine_falls_back_to_the_legacy_python(store, monkeypatch, capsys):
         return Done
 
     root = store.parents[1]
-    monkeypatch.setenv("BRAIN_GRAPH_PYTHON", "py-with-the-legacy-engine")
+    monkeypatch.setenv("BRAIN_GRAPH_PYTHON", "py-with-the-engine")
     assert graph.engine() is None  # an explicit interpreter wins over the installed package
     monkeypatch.setattr(graph.subprocess, "run", run)
     assert graph.research_graph(root, store, "check") == 0
     assert graph.research_graph_json(root, store, "pending") == {"open_questions": []}
-    assert [c[0][:3] for c in calls] == [["py-with-the-legacy-engine", "-m", graph.LEGACY]] * 2
+    assert [c[0][:3] for c in calls] == [["py-with-the-engine", "-m", "research_graph"]] * 2
     assert calls[1][0][-2:] == ["pending", "--json"] and calls[0][1] == root
-    monkeypatch.delenv("BRAIN_GRAPH_PYTHON")
+    assert "brain update" not in capsys.readouterr().err  # named on purpose: no hint
+
+
+def test_engine_missing_runs_this_python_once_hinted(store, monkeypatch, capsys):
+    """No other copy of the engine is looked for (the legacy package of a registered project is gone): the package
+    missing, this Python runs ``-m research_graph`` and the hint names brain update, once."""
+    import sys
+    calls = []
+
+    class Done:
+        returncode, stdout, stderr = 0, "", ""
+
+    monkeypatch.delenv("BRAIN_GRAPH_PYTHON", raising=False)
     monkeypatch.setattr(graph, "engine", lambda: None)
     monkeypatch.setattr(graph, "_hinted", False)
+    monkeypatch.setattr(graph.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or Done)
+    root = store.parents[1]
     graph.research_graph(root, store, "check")
     graph.research_graph(root, store, "check")
-    assert capsys.readouterr().err.count("install.ps1 -Apply installs it") == 1
-
-
-def test_legacy_python_is_the_venv_of_a_registered_project_that_holds_the_engine(tmp_path, monkeypatch):
-    import sys
-    monkeypatch.delenv("BRAIN_GRAPH_PYTHON", raising=False)
-    other, lab = tmp_path / "other", tmp_path / "lab"
-    other.mkdir()
-    (lab / graph.LEGACY.replace(".", "/")).mkdir(parents=True)
-    exe = lab / ".venv" / "bin" / "python"
-    exe.parent.mkdir(parents=True)
-    exe.write_text("", encoding="utf-8")
-    (other / ".venv" / "bin").mkdir(parents=True)  # a venv without the engine's package: not it
-    (other / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
-    reg = tmp_path / "projects.yaml"
-    reg.write_text(f"other: {{root: {other.as_posix()}}}\nlab: {{root: {lab.as_posix()}}}\n", encoding="utf-8")
-    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
-    assert graph.graph_python(tmp_path) == str(exe)
-    reg.write_text(f"other: {{root: {other.as_posix()}}}\n", encoding="utf-8")
-    assert graph.graph_python(tmp_path) == sys.executable  # none: this Python
+    assert [c[:3] for c in calls] == [[sys.executable, "-m", "research_graph"]] * 2
+    assert capsys.readouterr().err.count("brain update (or install.ps1 -Apply) installs it") == 1
+    assert not hasattr(graph, "LEGACY") and not hasattr(graph, "graph_python")
 
 
 def test_adr_ids_match_the_engine(tmp_path):

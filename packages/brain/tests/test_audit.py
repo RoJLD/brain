@@ -92,11 +92,14 @@ CODE = """\
 - {id: "code:lab:lab/old.py", type: CodeRef, status: retired, title: retired}
 - {id: "code:lab:../x.py", type: CodeRef, status: active, title: malformed}
 - {id: "code:other:x.py", type: CodeRef, status: active, title: unregistered repo}
+- {id: "code:far:x.py", type: CodeRef, status: active, title: "another project's repo"}
+- {id: "code:gone:x.py", type: CodeRef, status: retired, title: "retired: never a finding"}
 - {id: "code:sib:sib/m.py::f", type: CodeRef, status: active, title: ok in a sibling}
 """
 
 
-def test_coderefs_dangling_measured_module_layer_and_pending_code_layer():
+def test_coderefs_dangling_measured_module_layer_and_pending_code_layer(monkeypatch):
+    monkeypatch.setattr(audit, "_repo_tokens", lambda p, cfgs: {"lab", "sib", "far"})   # far: another project's
     res = _measure({"lab": {
         "notes/graph/schema.yaml": "node_types: [WorkItem, CodeRef, Repo]\n", "notes/graph/nodes/code.yaml": CODE,
         "README.md": README, "src/lab/__init__.py": "", "src/lab/core.py": "def go():\n    pass\n",
@@ -106,28 +109,44 @@ def test_coderefs_dangling_measured_module_layer_and_pending_code_layer():
                 "tests/test_m.py": "x\n"}}, {"lab": {"folder": "Lab"}})
     found = _found(res)
     assert {u for c, u in found if c == "coderef.dangling"} == {"code:lab:lab/core.py::nope", "code:lab:lab/gone.py",
-                                                                "code:lab:../x.py"}
+                                                                "code:lab:../x.py", "code:other:x.py"}
     assert all(found[("coderef.dangling", u)] == "P0" for c, u in found if c == "coderef.dangling")
     assert {u for c, u in found if c == "coderef.module"} == {"src/lab/extra.py"}   # sib has no repo-sib node
     lab, sib = res["repos"]
     fix = next(f["fix"] for f in lab["findings"] if f["check"] == "coderef.module")
     assert fix.startswith("add code:Lab:lab/extra.py ")   # the folder's case: the engine's code-check needs it
-    assert {"check": "coderef.dangling", "owner": "CodeRefs of unregistered repos: other"} in lab["not_measured"]
+    why = next(f["why"] for f in lab["findings"] if f["unit"] == "code:other:x.py")
+    assert why == "other is a repo no project registers (projects.yaml repos:)"   # P0 since ruleset 11
+    assert {"check": "coderef.dangling", "owner": "CodeRefs of repos not measured here (another project's, or not "
+                                                  "cloned): far"} in lab["not_measured"]
     assert "code.layer" in [x["check"] for x in sib["not_measured"]]
     assert "code.layer" not in [x["check"] for x in lab["not_measured"]]
+
+
+def test_a_coderef_of_a_registered_repo_not_cloned_here_stays_not_measured(monkeypatch):
+    """The project's own repo with no tree on this machine is registered: not measured, never P0."""
+    monkeypatch.setattr(audit, "_repo_tokens", lambda p, cfgs: {"lab", "sib"})
+    root = Path("/m/lab")
+    p = projects.Project("demo", root, [root / "notes" / "graph"])
+    cfgs = [projects.Repo("lab", root), projects.Repo("sib", Path("/m/sib"))]
+    store = {"notes/graph/schema.yaml": "node_types: [CodeRef, Repo]\n", "README.md": README,
+             "notes/graph/nodes/code.yaml": '- {id: "code:sib:sib/m.py", type: CodeRef, status: active, title: x}\n'}
+    res = audit.measure(p, cfgs, {"lab": mem(store, "lab")})
+    assert ("coderef.dangling", "code:sib:sib/m.py") not in _found(res)
+    assert any("sib" in x["owner"] for x in res["repos"][0]["not_measured"] if x["check"] == "coderef.dangling")
 
 
 def test_readme_exists_and_sections():
     res = _measure({"a": {"src/a/__init__.py": "", "src/a/m.py": "def f():\n    pass\n", "tests/test_m.py": "x\n"},
                     "b": {"README.md": "# b\nshort\n", "src/b/__init__.py": "def f():\n    pass\n"},
-                    "honest-backtest": {"README.md": "# honest-backtest\n" + "text\n" * 9 + "## Install\n## Example\n"
+                    "sample-backtest": {"README.md": "# sample-backtest\n" + "text\n" * 9 + "## Install\n## Example\n"
                                         "```\n## Tests\n```\n", "src/h/__init__.py": "def f():\n    pass\n"},
                     "conf": {"README.md": "# conf\n" + "text\n" * 12}})
     found = _found(res)
     assert found[("readme.exists", "README.md")] == "P0"
     assert [r["findings"][0]["why"] for r in res["repos"][:2]] == [
         "no README.md at the root", "README.md has 2 non-blank line(s) (10 at least)"]
-    assert {u for c, u in _found(res, "honest-backtest") if c == "readme.sections"} == {"README.md#tests"}
+    assert {u for c, u in _found(res, "sample-backtest") if c == "readme.sections"} == {"README.md#tests"}
     assert _found(res, "conf") == {}                                    # no code: no sections asked
 
 

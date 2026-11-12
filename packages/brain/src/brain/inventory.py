@@ -1117,8 +1117,8 @@ def edges(node: tuple[str, str], repos: dict[str, RepoFacts], idx: Index, allowe
 
 
 def command_at(text: str, name: str) -> bool:
-    """A plain-word command name (brain, quant) counts only where a command starts: at a line's start, or after
-    ``&``, ``|``, ``;``, ``(`` or a quote; not in prose ("the quant platform")."""
+    """A plain-word command name (brain, acme) counts only where a command starts: at a line's start, or after
+    ``&``, ``|``, ``;``, ``(`` or a quote; not in prose ("the acme platform")."""
     return re.search(rf"(?m)(?:^\s*|[&|;(`'\"]\s*){re.escape(name)}(?=[\s'\"`)]|$)", text) is not None
 
 
@@ -1219,7 +1219,7 @@ def _load_yaml(tree: Tree, path: str):
 
 def code_stores(repos: dict[str, RepoFacts], declared: list[tuple[str, str]]) -> list[Store]:
     """The project's stores (``declared``: (repo, folder)) and any ``notes/graph`` or ``ops/graph`` of a repo whose
-    schema has CodeRef (hedge-fund's operations graph), with their CodeRef and Repo nodes."""
+    schema has CodeRef (trade-desk's operations graph), with their CodeRef and Repo nodes."""
     out, seen = [], set()
     auto = [(r, s) for r in repos for s in ("notes/graph", "ops/graph")]
     for repo, rel in list(declared) + auto:

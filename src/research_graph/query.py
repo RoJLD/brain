@@ -83,7 +83,7 @@ def leading_date(value: Any) -> str | None:
 
 
 def repos_of(props: Mapping, default: str | None = None) -> list[str]:
-    """Repositories an item belongs to: ``repo`` / ``repos`` props, the repos named in ``pr`` (``quant-marketdata
+    """Repositories an item belongs to: ``repo`` / ``repos`` props, the repos named in ``pr`` (``acme-data
     #16``), else ``default`` (the store's own repository)."""
     names: list[str] = []
     for key in ("repo", "repos"):

@@ -44,12 +44,12 @@ The Task Scheduler is read on Windows only: elsewhere its folders are skipped, a
 
 The registry (projects.yaml), inline or a YAML file relative to the project's root::
 
-  quant:
+  acme:
     alerts:
-      scheduler: ['\\quant\\']           # Task Scheduler folders: every task under them is watched
+      scheduler: ['\\acme\\']           # Task Scheduler folders: every task under them is watched
       exits: {1: warn, 10: ok}          # what a task's exit codes mean (default: 0 ok, any other error)
       tasks:                            # per task: every (15m, 1h, 1d), missed, level, ledger, running
-        quant-recorder: {running: true} # a permanent process: an alert when it is not running
+        acme-recorder: {running: true} # a permanent process: an alert when it is not running
         cycle: {every: 1d, ledger: 'cycle L*'}   # proven by the exec ledger only
       stacks: [gitnexus]                # stacks whose DOWN or STALE is an alert (watched ones always are)
       files: [notes/alerts.md]          # Markdown alert files, relative to the root
@@ -783,7 +783,7 @@ def file_alerts(cfg: Config, root: Path, now: datetime) -> list[Alert]:
         for b in blocks:
             if b["lines"] and (b["writer"] not in latest or b["date"] >= latest[b["writer"]]["date"]):
                 latest[b["writer"]] = b
-        # named with its repo's folder (demo/notes/alerts.md, hedge-fund/notes/alerts.md)
+        # named with its repo's folder (demo/notes/alerts.md, trade-desk/notes/alerts.md)
         base = Path(os.path.normpath(root.parent))
         f = Path(os.path.normpath(f))
         rel = f.relative_to(base).as_posix() if f.is_relative_to(base) else f.as_posix()
