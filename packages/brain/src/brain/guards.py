@@ -130,7 +130,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, markers, midsession, paths, projects, public, secretscan, timing
+from . import config, diffs, markers, midsession, paths, projects, public, secretscan, timing
 
 GUARDS = ("production", "attribution", "secrets", "markers", "owner", "power", "third-party", "public", "branches")
 ALLOW_ENV = "BRAIN_GUARD_ALLOW"
@@ -2862,20 +2862,10 @@ def _secret_names(line: str, path: str = "") -> list[str]:
 
 
 def scan_diff(diff: str) -> list[str]:
-    """``file:line (pattern)`` for every added line of a unified diff that looks like a secret."""
-    hits, path, line = [], "", 0
-    for raw in diff.splitlines():
-        if raw.startswith("+++ "):
-            path = markers.diff_path(raw)
-        elif raw.startswith("@@"):
-            m = re.search(r"\+(\d+)", raw)
-            line = int(m.group(1)) if m else 0
-        elif raw.startswith("+"):
-            names = _secret_names(raw[1:], path)
-            if names:
-                hits.append(f"{path}:{line} ({names[0]})")
-            line += 1
-    return hits
+    """``file:line (pattern)`` for every added line of a unified diff that looks like a secret (brain.diffs reads
+    it; a line under a strict folder is judged by its path, brain.secretscan.STRICT)."""
+    return [f"{path}:{n} ({names[0]})" for path, rows in diffs.added_lines(diff).items() for n, text in rows
+            if (names := _secret_names(text, path))]
 
 
 def scan_text(path: str, text: str) -> list[str]:
@@ -2914,17 +2904,22 @@ class GuardError(RuntimeError):
 GIT_CAP = 20 * MAX_FILE   # the most of a git command's output a check reads
 
 
+def _words(args) -> list[str]:
+    """git's arguments without what brain.diffs.argv adds, for a message."""
+    return diffs.shown(args)
+
+
 def _git_out(repo: str, *args: str, strict: bool = False) -> str:
     """git's output in ``repo``; '' when it fails, or, ``strict``, a GuardError then and when the output is cut."""
     try:
         r = _run(["git", *args], repo)
     except (OSError, subprocess.SubprocessError) as exc:
         if strict:
-            raise GuardError(f"git {args[0]} in {repo}: {exc}") from exc
+            raise GuardError(f"git {_words(args)[0]} in {repo}: {exc}") from exc
         return ""
     if strict and (r.returncode or len(r.stdout) > GIT_CAP):
         why = f"exit {r.returncode}" if r.returncode else f"over {GIT_CAP} bytes, not read whole"
-        raise GuardError(f"git {' '.join(args[:3])} in {repo}: {why}")
+        raise GuardError(f"git {' '.join(_words(args)[:3])} in {repo}: {why}")
     return r.stdout[:GIT_CAP].decode("utf-8", "replace") if r.returncode == 0 else ""
 
 
@@ -2955,13 +2950,13 @@ def commit_secrets(repo: str, specs: list[str], every_tracked: bool, untracked: 
     untracked = specs if untracked is None else untracked
     staged = gitleaks(repo)
     if staged is None:
-        staged = scan_diff(_git_out(repo, "diff", "--cached", "-U0", "--no-color", "--no-ext-diff"))
+        staged = scan_diff(_git_out(repo, *diffs.argv("diff", "--cached", "-U0")))
     else:   # gitleaks honours gitleaks:allow everywhere: the strict folders are read by the built-in scan too
-        staged += scan_diff(_git_out(repo, "diff", "--cached", "-U0", "--no-color", "--no-ext-diff", "--",
-                                     *(f":(top){d}" for d in secretscan.STRICT)))
+        staged += scan_diff(_git_out(repo, *diffs.argv("diff", "--cached", "-U0", "--",
+                                                       *(f":(top){d}" for d in secretscan.STRICT))))
     hits = list(staged)
     if specs or every_tracked:
-        hits += scan_diff(_git_out(repo, "diff", "HEAD", "-U0", "--no-color", "--no-ext-diff", "--", *specs))
+        hits += scan_diff(_git_out(repo, *diffs.argv("diff", "-U0", "HEAD", "--", *specs)))
     if untracked:   # by their path from the top, so that a strict folder is one from a subfolder too
         top = _git_out(repo, "rev-parse", "--show-toplevel").strip() or repo
         for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "--full-name", "-z", "--",
@@ -3097,7 +3092,7 @@ def check_secrets(cmds: list[tuple[list[str], str]]) -> str | None:
 # The diff the markers check reads: one line of context (a heading's line above), renames found whatever diff.renames
 # says (a moved file adds no line), and only the files whose changes hold a line that starts like a marker (-G, the
 # same in basic and extended regex), so a big data file never fills the output.
-MARKER_DIFF = ("-U1", "--no-color", "--no-ext-diff", "-M", "-G^[<=>|][<=>|][<=>|][<=>|][<=>|][<=>|][<=>|]")
+MARKER_DIFF = ("-U1", "-M", "-G^[<=>|][<=>|][<=>|][<=>|][<=>|][<=>|][<=>|]")
 
 
 def _head(repo: str) -> str:
@@ -3123,8 +3118,8 @@ def _added_markers(repo: str, cached: bool, specs: list[str]) -> list[str]:
     (a combined diff's rule)."""
     hits: list[str] | None = None
     for base in (_head(repo), *_merge_heads(repo)):
-        diff = _git_out(repo, "diff", *(["--cached"] if cached else []), *MARKER_DIFF, base, "--", *specs,
-                        strict=True)
+        diff = _git_out(repo, *diffs.argv("diff", *(["--cached"] if cached else []), *MARKER_DIFF, base, "--",
+                                          *specs), strict=True)
         found = markers.scan_diff(diff)
         hits = found if hits is None else [h for h in hits if h in set(found)]
     return hits or []
@@ -3271,26 +3266,8 @@ def _checks_first(cmds: list[tuple[list[str], str]], push: list[str]) -> bool:
 # --- what a commit to a public repo records (the lesson les-brain-owner-name-in-fixtures) ------------------------
 
 def added_lines(diff: str) -> dict[str, list[tuple[int, str]]]:
-    """path -> (line number, text) of each added line of a unified diff."""
-    out: dict[str, list[tuple[int, str]]] = {}
-    path, line = "", 0
-    for raw in diff.splitlines():
-        if raw.startswith("+++ ") and line == -1:
-            path = raw[4:].rstrip("\t").strip('"')   # git ends a name holding a space with a tab
-            path = path[2:] if path.startswith("b/") else path
-        elif raw.startswith("diff --git "):
-            line = -1   # the file's header until its first hunk: a content line '+++ x' is not a header
-        elif raw.startswith("@@"):
-            m = re.search(r"\+(\d+)", raw)
-            line = int(m.group(1)) if m else 0
-        elif line == -1:
-            continue
-        elif raw.startswith("+") and path != "/dev/null":
-            out.setdefault(path, []).append((line, raw[1:]))
-            line += 1
-        elif raw.startswith(" "):
-            line += 1
-    return out
+    """path -> (line number, text) of each added line of a unified diff (brain.diffs, the engine's one reader)."""
+    return diffs.added_lines(diff)
 
 
 def push_slug(repo: str) -> str:
@@ -3316,10 +3293,9 @@ def commit_public(repo: str, specs: list[str], every_tracked: bool,
         return "", []
     untracked = specs if untracked is None else untracked
     r = public.rules(cfg)
-    diff = ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames"]
-    texts = [_git_out(repo, diff[0], "--cached", *diff[1:])]
+    texts = [_git_out(repo, *diffs.argv("diff", "-U0", "--no-renames", "--cached"))]
     if specs or every_tracked:
-        texts.append(_git_out(repo, *diff, "HEAD", "--", *specs))
+        texts.append(_git_out(repo, *diffs.argv("diff", "-U0", "--no-renames", "HEAD", "--", *specs)))
     found: list[public.Finding] = []
     for text in texts:
         for path, lines in added_lines(text).items():
