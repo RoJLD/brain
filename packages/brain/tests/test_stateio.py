@@ -286,10 +286,10 @@ def test_the_write_backs_up_first_and_is_atomic(tmp_path, monkeypatch):
 
     def crash(src, dst):
         raise OSError("disk full")
-    monkeypatch.setattr(stateio.os, "replace", crash)
-    with pytest.raises(OSError):
-        stateio.save(stateio.load(f), {"a": 3})
-    monkeypatch.undo()
+    with monkeypatch.context() as m:   # never monkeypatch.undo(): it would drop the conftest's BRAIN_HOME too
+        m.setattr(stateio.os, "replace", crash)
+        with pytest.raises(OSError):
+            stateio.save(stateio.load(f), {"a": 3})
     assert json.loads(f.read_text(encoding="utf-8")) == {"v": 1, "a": 2}  # a failed write leaves the file whole
     assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
 
