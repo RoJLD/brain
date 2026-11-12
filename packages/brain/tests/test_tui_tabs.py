@@ -22,7 +22,8 @@ def test_a_tab_is_a_layout_of_the_same_panels():
     not built yet says what brings it."""
     async def check(app, pilot, fake):
         assert app.tab == "overview" and app._view() == "grid" and set(_on_screen(app)) == set(cockpit.PANELS)
-        assert _bar(app) == ["0 Overview", "1 Ada's queue", "2 Sessions 1!", "3 Frontier", "4 Milestones", "8 Health"]
+        assert _bar(app) == ["0 Overview", "1 Ada's queue", "2 Sessions 1!", "3 Frontier", "4 Milestones", "8 Health",
+                             ", Settings"]
         assert "What waits on me" in str(app.query_one("#question").render())
         await pilot.press("1")
         assert app.tab == "queue" and _on_screen(app) == ["queue"] and app.focused is app.query_one("#queue")
@@ -41,13 +42,14 @@ def test_a_tab_is_a_layout_of_the_same_panels():
         assert app.tab == "queue" and table.cursor_row == 1
         notified, notify = [], app.notify
         app.notify = lambda message, **kw: notified.append(message) or notify(message, **kw)
-        await pilot.press("5", "comma")  # not built: said, nothing moves
-        assert app.tab == "queue" and notified == ["Ideas is not here yet: it arrives with the ideas board",
-                                                   "Settings is not here yet: it arrives with the settings pages"]
+        await pilot.press("5")  # not built: said, nothing moves
+        assert app.tab == "queue" and notified == ["Ideas is not here yet: it arrives with the ideas board"]
         await pilot.press("ctrl+pagedown")
         assert app.tab == "sessions"
         await pilot.press("ctrl+pageup", "ctrl+pageup", "ctrl+pageup")
-        assert app.tab == "health"  # around the bar
+        assert app.tab == "settings"  # around the bar
+        await pilot.press("ctrl+pageup")
+        assert app.tab == "health"
         await pilot.click("#tab-frontier")
         await pilot.pause(0.1)
         assert app.tab == "frontier" and _on_screen(app) == ["frontier"] and app.focused is app.query_one("#frontier")
@@ -94,12 +96,12 @@ def test_a_narrow_terminal_has_the_tabs_alone():
     out again."""
     async def check(app, pilot, fake):
         assert app._view() == "cards" and _on_screen(app) == []
-        assert _bar(app) == ["0 Overview", "1", "2", "3", "4", "8"]
+        assert _bar(app) == ["0 Overview", "1", "2", "3", "4", "8", ","]
         assert cockpit.tab_views("overview", app._narrow()) == ("cards", "digest")  # the grid is not offered
         await pilot.press("v", "v")
         assert app._view() == "cards"
         await pilot.press("2")
-        assert _bar(app) == ["0", "1", "2 Sessions 1!", "3", "4", "8"]
+        assert _bar(app) == ["0", "1", "2 Sessions 1!", "3", "4", "8", ","]
         await pilot.press("8")
         assert app.query_one("#grid").has_class("stacked")
         await pilot.resize_terminal(160, 48)
@@ -123,7 +125,8 @@ def test_the_bar_counts_what_each_tab_holds(monkeypatch):
         {"id": "ddr-a", "kind": "decision", "unblocks": 1, "age_days": 0, "title": "x", "since": "", "band": "now"}]}]}
 
     async def check(app, pilot, fake):
-        assert _bar(app) == ["0 Overview", "1 Ada's queue 1", "2 Sessions 1!", "3 Frontier", "4 Milestones", "8 Health 2"]
+        assert _bar(app) == ["0 Overview", "1 Ada's queue 1", "2 Sessions 1!", "3 Frontier", "4 Milestones",
+                             "8 Health 2", ", Settings"]
         assert "changed " in str(app.query_one("#status").render())  # the global bar: the last change, the next probe
     monkeypatch.setitem(PANELS, "alerts", alerts)
     monkeypatch.setitem(PANELS, "queue", queue)
@@ -580,11 +583,11 @@ def test_a_plugged_projects_tab_shows_its_panel_as_one_of_the_cockpits_tables(mo
         {"id": "a", "n": 2, "project": "demo"}, {"id": "b", "n": 1, "project": "demo"}]}]})
 
     async def check(app, pilot, fake):
-        assert _bar(app)[-1] == "demo"
+        assert _bar(app)[-2:] == ["demo", ", Settings"]  # after Resources, before the settings
         app.draw({"demo-runs"})
         app.action_tab("demo")
         await pilot.pause(0.1)
-        assert [n for n in tui.frames() if app.query_one(f"#{n}").display] == ["demo-runs"]
+        assert [n for n in (*tui.EVERY_FRAME, *cockpit.PLUGGED) if app.query_one(f"#{n}").display] == ["demo-runs"]
         assert _ids(app, "demo-runs") == ["b", "a"]  # its default sort: n
         assert app.focused is app.query_one("#demo-runs")
         await pilot.press("s")
