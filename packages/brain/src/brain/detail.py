@@ -51,7 +51,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import cockpit, config, decisions, paths, plan, queue, resume, secretscan, status, transcript, update
+from . import (cockpit, config, decisions, paths, plan, queue, resume, secretscan, status, timing, transcript,
+               update)
 
 LOG = "cockpit"  # <BRAIN_HOME>/ledger/cockpit-<month>.jsonl
 OUTPUT_MAX = 4000  # the end of a command's output kept in the log
@@ -713,8 +714,7 @@ def log(row: dict) -> Path:
     d = paths.ledger_dir()
     d.mkdir(parents=True, exist_ok=True)
     f = d / f"{LOG}-{row['at'][:7]}.jsonl"
-    with open(f, "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    timing.append(f, row)
     return f
 
 
