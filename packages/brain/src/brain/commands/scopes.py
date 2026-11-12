@@ -21,10 +21,7 @@ USAGE = """\
 
 def here(root: Path | None) -> str:
     """The registered project of the folder acted on ('' when none): what ``.`` names."""
-    try:
-        found = projects.at_root(root) if root is not None else []
-    except Exception:  # noqa: BLE001 - a broken registry is brain check's to report
-        return ""
+    found = projects.at_root(root) if root is not None else []
     return found[0].name if found else ""
 
 

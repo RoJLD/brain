@@ -205,33 +205,41 @@ def load(root: Path | None = None, cfg: config.Config | None = None) -> Tree:
     cfg = cfg or config.load(root)
     data, f, problems = raw(cfg)
     tree = Tree(types=types_of(cfg), file=f, problems=problems)
-    reg_root = root if root is not None else cfg.root
-    try:
-        reg = projects.raw(reg_root)
-    except Exception:  # noqa: BLE001 - a broken registry is projects.check's to report
-        reg = {}
-    for name, entry in reg.items():
-        if not isinstance(entry, dict) and entry is not None:
-            continue
-        entry = entry or {}
-        kind = "mount" if projects.is_mount(entry) else "read" if projects.is_read_only(entry) else "project"
-        parent = entry.get("parent")
-        title = entry.get("title")
-        tree.nodes[str(name)] = Node(str(name), "tenant" if kind == "mount" else "project", kind,
-                                     parent if isinstance(parent, str) and parent else GLOBAL,
-                                     title if isinstance(title, str) else "", data=entry)
+    tree.nodes.update(_registry_nodes(root if root is not None else cfg.root))
     declared = data.get("scopes")
     for nid, spec in (declared.items() if isinstance(declared, dict) else []):
         nid = str(nid)
-        if nid in tree.nodes or nid == GLOBAL:
-            continue   # check() reports the id used twice; the project keeps it
-        spec = spec if isinstance(spec, dict) else {}
-        parent, title, status = spec.get("parent"), spec.get("title"), spec.get("status")
-        tree.nodes[nid] = Node(nid, str(spec.get("type") or ""), "container",
-                               parent if isinstance(parent, str) and parent else GLOBAL,
-                               title if isinstance(title, str) else "",
-                               status if status in STATUSES else "active", spec)
+        if nid not in tree.nodes and nid != GLOBAL:   # an id used twice: check() reports it, the project keeps it
+            tree.nodes[nid] = _container(nid, spec if isinstance(spec, dict) else {})
     return tree
+
+
+def _text(value, default: str = "") -> str:
+    """A non-empty string as declared, else ``default`` (check() reports a value of another shape)."""
+    return value if isinstance(value, str) and value else default
+
+
+def _registry_nodes(root: Path) -> dict[str, Node]:
+    """The registry's entries as nodes: a project, a read-only project (read), a tenant mount (mount)."""
+    try:
+        reg = projects.raw(root)
+    except Exception:  # noqa: BLE001 - a registry that cannot be read is projects.check's to report, never raised here
+        reg = {}
+    out = {}
+    for name, entry in reg.items():
+        if entry is not None and not isinstance(entry, dict):
+            continue
+        entry = entry or {}
+        kind = "mount" if projects.is_mount(entry) else "read" if projects.is_read_only(entry) else "project"
+        out[str(name)] = Node(str(name), "tenant" if kind == "mount" else "project", kind,
+                              _text(entry.get("parent"), GLOBAL), _text(entry.get("title")), data=entry)
+    return out
+
+
+def _container(nid: str, spec: dict) -> Node:
+    status = spec.get("status")
+    return Node(nid, _text(spec.get("type")), "container", _text(spec.get("parent"), GLOBAL), _text(spec.get("title")),
+                status if status in STATUSES else "active", spec)
 
 
 # --- the check (brain check --all, a brain's own root) ---
@@ -247,24 +255,40 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> tuple[l
     if f is not None and not tree.problems:
         errors += _file_errors(data, f, tree)
     for n in tree.nodes.values():
-        where = f"scope {n.id}" if n.kind == "container" else f"project {n.id}"
-        if n.kind != "container" and "parent" in n.data and not (isinstance(n.data["parent"], str)
-                                                               and n.data["parent"]):
-            errors.append(f"{where}: parent is a node id (a container of {FILE} or a project), or global")
-        if n.parent != GLOBAL and n.parent not in tree.nodes:
-            errors.append(f"{where}: its parent {n.parent!r} is no node (a container of {FILE}, a project, or global)")
-        elif n.parent != GLOBAL and tree._cyclic(n.id):
-            errors.append(f"{where}: its parents loop back to it ({' -> '.join([n.id, *tree.chain(n.id), n.id])})")
-        elif n.parent != GLOBAL:
-            errors += _accepts(tree, n, where)
-        depth = tree.depth(n.id)
-        if depth > DEPTH_WARN and not tree._cyclic(n.id):
-            warnings.append(f"{where} is {depth} levels under global (more than {DEPTH_WARN}): each level that "
-                            "carries rules costs every session of its subtree")
-        if n.status == "active" and n.parent in tree.nodes and tree.nodes[n.parent].status == "archived":
-            warnings.append(f"{where} is active under the archived {n.parent}")
+        errors += _place_errors(tree, n)
+        warnings += _place_warnings(tree, n)
     errors += _floor_errors(tree)
     return errors, warnings
+
+
+def _where(n: Node) -> str:
+    return f"scope {n.id}" if n.kind == "container" else f"project {n.id}"
+
+
+def _place_errors(tree: Tree, n: Node) -> list[str]:
+    """A node's parent: a node id that exists, no loop, a type its parent's type accepts."""
+    where = _where(n)
+    errors = []
+    if n.kind != "container" and "parent" in n.data and not _text(n.data["parent"]):
+        errors.append(f"{where}: parent is a node id (a container of {FILE} or a project), or global")
+    if n.parent == GLOBAL:
+        return errors
+    if n.parent not in tree.nodes:
+        return errors + [f"{where}: its parent {n.parent!r} is no node (a container of {FILE}, a project, or global)"]
+    if tree._cyclic(n.id):
+        return errors + [f"{where}: its parents loop back to it ({' -> '.join([n.id, *tree.chain(n.id), n.id])})"]
+    return errors + _accepts(tree, n, where)
+
+
+def _place_warnings(tree: Tree, n: Node) -> list[str]:
+    out = []
+    depth = tree.depth(n.id)
+    if depth > DEPTH_WARN and not tree._cyclic(n.id):
+        out.append(f"{_where(n)} is {depth} levels under global (more than {DEPTH_WARN}): each level that carries "
+                   "rules costs every session of its subtree")
+    if n.status == "active" and n.parent in tree.nodes and tree.nodes[n.parent].status == "archived":
+        out.append(f"{_where(n)} is active under the archived {n.parent}")
+    return out
 
 
 def _types_errors(cfg: config.Config, tree: Tree) -> list[str]:
@@ -278,84 +302,94 @@ def _types_errors(cfg: config.Config, tree: Tree) -> list[str]:
         where = f"{config.FILE}: scope_types {tid}"
         if not TYPE_ID.match(str(tid)):
             errors.append(f"{where}: a type id is lowercase letters, digits and '-', starting with a letter")
-        if not isinstance(spec, dict):
-            errors.append(f"{where}: a mapping of {', '.join(sorted(TYPE_KEYS))}")
-            continue
-        for lang in LANGS:
-            if lang in spec and not (isinstance(spec[lang], str) and spec[lang].strip()):
-                errors.append(f"{where}: {lang} is a label")
-        kids = spec.get("children")
-        if kids is not None and not (isinstance(kids, list) and all(isinstance(k, str) for k in kids)):
-            errors.append(f"{where}: children is a list of type ids")
-        else:
-            errors += [f"{where}: children names the unknown type {k!r}" for k in kids or [] if k not in tree.types]
-        unknown = sorted(set(map(str, spec)) - TYPE_KEYS)
-        if unknown:
-            errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (known: "
-                                      f"{', '.join(sorted(TYPE_KEYS))})")
+        errors += _type_errors(where, spec, tree) if isinstance(spec, dict) else [
+            f"{where}: a mapping of {', '.join(sorted(TYPE_KEYS))}"]
+    return errors
+
+
+def _type_errors(where: str, spec: dict, tree: Tree) -> list[str]:
+    errors = [f"{where}: {lang} is a label" for lang in LANGS if lang in spec and not _text(spec[lang]).strip()]
+    kids = spec.get("children")
+    if kids is not None and not (isinstance(kids, list) and all(isinstance(k, str) for k in kids)):
+        errors.append(f"{where}: children is a list of type ids")
+    else:
+        errors += [f"{where}: children names the unknown type {k!r}" for k in kids or [] if k not in tree.types]
+    unknown = sorted(set(map(str, spec)) - TYPE_KEYS)
+    if unknown:
+        errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (known: "
+                                  f"{', '.join(sorted(TYPE_KEYS))})")
     return errors
 
 
 def _file_errors(data: dict, f: Path, tree: Tree) -> list[str]:
-    errors = []
-    v = data.get("v")
-    if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
-        errors.append(f"{f.name}: v is a whole number")
-    else:
-        newer = schema.newer(f.name, v, 1)
-        errors += [newer] if newer else []
-    unknown = sorted(set(map(str, data)) - {"v", "scopes"})
-    if unknown:
-        errors += schema.tolerate(f"{f.name}: unknown key(s) {', '.join(unknown)} (known: v, scopes)")
+    errors = _version_errors(data, f)
     declared = data.get("scopes")
     if declared is None:
         return errors
     if not isinstance(declared, dict):
         return errors + [f"{f.name}: scopes is a mapping of id -> {{type, title, parent, status, ...}}"]
     for nid, spec in declared.items():
-        nid = str(nid)
-        where = f"scope {nid}"
-        if nid == GLOBAL:
-            errors.append(f"{where}: global is the root, the brain itself: it is never declared")
-            continue
-        if not ID.match(nid):
-            errors.append(f"{where}: an id is lowercase letters, digits and '-' (kebab-case)")
-        node = tree.nodes.get(nid)
-        if node is not None and node.kind != "container":
-            errors.append(f"{where}: {nid} is a project of the registry too: an id is unique across projects and "
-                          "containers (a project is never declared in scopes.yaml; give it parent: in projects.yaml)")
-            continue
-        if not isinstance(spec, dict):
-            errors.append(f"{where}: a mapping with type, title, parent, status")
-            continue
-        unknown = sorted(set(map(str, spec)) - NODE_KEYS - RESERVED)
-        if unknown:
-            errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (known: "
-                                      f"{', '.join(sorted(NODE_KEYS | RESERVED))})")
-        t = spec.get("type")
-        if not isinstance(t, str) or not t:
-            errors.append(f"{where}: a container declares its type (brain scopes --types lists them)")
-        elif t not in tree.types:
-            errors.append(f"{where}: unknown type {t!r} (known: {', '.join(tree.types)}; config.json scope_types "
-                          "adds one)")
-        elif t == "tenant":
-            errors.append(f"{where}: a tenant is another brain, mounted by a tenant: entry of projects.yaml, never "
-                          "a container")
-        for key in ("title", "parent"):
-            if key in spec and not (isinstance(spec[key], str) and spec[key]):
-                errors.append(f"{where}: {key} is a string")
-        if "status" in spec and spec["status"] not in STATUSES:
-            errors.append(f"{where}: status is active or archived, not {spec['status']!r}")
-        also = spec.get("also_under")
-        if also is not None:
-            if not (isinstance(also, list) and all(isinstance(a, str) for a in also)):
-                errors.append(f"{where}: also_under is a list of node ids (shortcuts, for display only)")
-            else:
-                for a in also:
-                    if a == nid or a == (spec.get("parent") or GLOBAL):
-                        errors.append(f"{where}: also_under {a!r} is the node itself or its parent")
-                    elif a != GLOBAL and a not in tree.nodes:
-                        errors.append(f"{where}: also_under names {a!r}, no node")
+        errors += _container_errors(str(nid), spec, tree)
+    return errors
+
+
+def _version_errors(data: dict, f: Path) -> list[str]:
+    v = data.get("v")
+    if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
+        errors = [f"{f.name}: v is a whole number"]
+    else:
+        errors = [e for e in [schema.newer(f.name, v, 1)] if e]
+    unknown = sorted(set(map(str, data)) - {"v", "scopes"})
+    if unknown:
+        errors += schema.tolerate(f"{f.name}: unknown key(s) {', '.join(unknown)} (known: v, scopes)")
+    return errors
+
+
+def _container_errors(nid: str, spec, tree: Tree) -> list[str]:
+    where = f"scope {nid}"
+    if nid == GLOBAL:
+        return [f"{where}: global is the root, the brain itself: it is never declared"]
+    errors = [] if ID.match(nid) else [f"{where}: an id is lowercase letters, digits and '-' (kebab-case)"]
+    node = tree.nodes.get(nid)
+    if node is not None and node.kind != "container":
+        return errors + [f"{where}: {nid} is a project of the registry too: an id is unique across projects and "
+                         "containers (a project is never declared in scopes.yaml; give it parent: in projects.yaml)"]
+    if not isinstance(spec, dict):
+        return errors + [f"{where}: a mapping with type, title, parent, status"]
+    unknown = sorted(set(map(str, spec)) - NODE_KEYS - RESERVED)
+    if unknown:
+        errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (known: "
+                                  f"{', '.join(sorted(NODE_KEYS | RESERVED))})")
+    errors += _container_type(where, spec.get("type"), tree)
+    errors += [f"{where}: {key} is a string" for key in ("title", "parent") if key in spec and not _text(spec[key])]
+    if "status" in spec and spec["status"] not in STATUSES:
+        errors.append(f"{where}: status is active or archived, not {spec['status']!r}")
+    return errors + _also_errors(where, nid, spec, tree)
+
+
+def _container_type(where: str, t, tree: Tree) -> list[str]:
+    if not _text(t):
+        return [f"{where}: a container declares its type (brain scopes --types lists them)"]
+    if t not in tree.types:
+        return [f"{where}: unknown type {t!r} (known: {', '.join(tree.types)}; config.json scope_types adds one)"]
+    if t == "tenant":
+        return [f"{where}: a tenant is another brain, mounted by a tenant: entry of projects.yaml, never a container"]
+    return []
+
+
+def _also_errors(where: str, nid: str, spec: dict, tree: Tree) -> list[str]:
+    """also_under: shortcuts to other nodes, for display only (SCOPE-5)."""
+    also = spec.get("also_under")
+    if also is None:
+        return []
+    if not (isinstance(also, list) and all(isinstance(a, str) for a in also)):
+        return [f"{where}: also_under is a list of node ids (shortcuts, for display only)"]
+    errors = []
+    for a in also:
+        if a in (nid, _text(spec.get("parent"), GLOBAL)):
+            errors.append(f"{where}: also_under {a!r} is the node itself or its parent")
+        elif a != GLOBAL and a not in tree.nodes:
+            errors.append(f"{where}: also_under names {a!r}, no node")
     return errors
 
 
@@ -428,17 +462,22 @@ def resolve(tree: Tree, ref: str, here: str = "") -> str:
                              "a node)")
         return here if ref == "." else tree.nodes[here].parent
     if "/" in ref:
-        parts = [p for p in ref.strip("/").split("/") if p]
-        node = GLOBAL
-        for part in parts[1:] if parts and parts[0] == GLOBAL else parts:
-            if part not in tree.children(node):
-                raise ScopeError(f"--scope {ref}: {part!r} is not a child of {node} (brain scopes shows the tree)")
-            node = part
-        return node
+        return _by_path(tree, ref)
     if ref not in tree.nodes:
         raise ScopeError(f"--scope {ref}: no node of that id (brain scopes shows the tree; known: "
                          f"{', '.join(sorted(tree.nodes)) or 'none'})")
     return ref
+
+
+def _by_path(tree: Tree, ref: str) -> str:
+    """The node a path of ids names, each a child of the one before (``global/`` first or not)."""
+    parts = [p for p in ref.strip("/").split("/") if p]
+    node = GLOBAL
+    for part in parts[1:] if parts and parts[0] == GLOBAL else parts:
+        if part not in tree.children(node):
+            raise ScopeError(f"--scope {ref}: {part!r} is not a child of {node} (brain scopes shows the tree)")
+        node = part
+    return node
 
 
 def select(ref: str, root: Path | None = None, here: str = "") -> tuple[str, list[str]]:
