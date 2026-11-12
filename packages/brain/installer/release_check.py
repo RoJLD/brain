@@ -64,7 +64,7 @@ FIXTURES = f"{BRAIN}/tests/fixtures/formats"
 # What a format's shape is written in, per format; a folder of FIXTURES must be a key here
 # (tests/test_release_check.py), so a format registered there is checked here. permissions.yaml has no file of its own:
 # its keys are constants of brain.permissions, and a file's diff cannot tell them from the rest of the module
-# (wi-brain-schema-diff compares keys).
+# (brain schema diff, wi-brain-schema-diff, compares schema files: it does not see it either).
 # the project templates brain init writes from (wi-brain-project-templates), bases first
 PROFILE_TEMPLATES = ("_project", "_software", "cli", "local-client", "service", "data-pipeline", "research")
 # "store" is not a format with a fixture yet: what `brain init` wrote once and keeps afterwards, so that a brain never

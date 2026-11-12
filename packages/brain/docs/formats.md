@@ -355,6 +355,48 @@ format's schema files (`SCHEMAS` in `installer/release_check.py`): a version PR 
 has no `### Upgrade` in its CHANGELOG section fails, and so does a patch version that changed one at all (a format that
 moves is a minor version, « The version policy »). A new folder here adds its entry there, or a test fails.
 
+## The schema diff
+
+`release-check` sees that a schema file changed; `brain schema diff` says what the change narrows, so that a breaking
+format change is seen on the PR that makes it, not at the version PR (wi-brain-schema-diff; spec-brain-data-compat
+N6). It compares, between a tag and the working tree, every schema the change touches: the JSON Schemas
+(`*.schema.json`) and the graph stores' `schema.yaml` (a store's, or a template's), in any repo. A **narrowing** is
+what a file valid before would no longer satisfy:
+
+- a JSON Schema: a property removed, a field newly `required`, an `enum` that lost a value (or appeared), a `type`
+  that lost one (or appeared), a `const` added or changed, `additionalProperties` closed or constrained, a bound
+  tightened or added, a `pattern` or `format` added or changed (a wider pattern cannot be told: it counts), an
+  `allOf` entry added, a `$ref` changed, the format's `v` moved, and any keyword it does not weigh (`anyOf`, `oneOf`,
+  `not`, `if`, `uniqueItems`...) added or changed. It walks the subschemas: `properties`, `$defs`, `items`,
+  `additionalProperties`, `allOf`, `then`, `else` (the engine's records keep their conditional fields there);
+- a `schema.yaml`: a node type, an edge type or a status removed, a status of a type removed, a prop newly required;
+- either: the file removed or renamed (a reader looks it up by its path), or one it cannot read or compare (said,
+  never a crash).
+
+What only widens is no narrowing (an optional property, a type, `integer` to `number`, a status, a value, `false` to
+a schema), and prose (`description`, `title`, `$comment`, `examples`) is not compared. A narrowing is resolved by the
+PR's **Compat: line**, in its body or a commit message of the range, read as the scout reads `Root cause:`:
+
+```text
+Compat: migration mig-ddr-v2          v bumped (properties.v.const) and fixtures/formats/ddr/v2/ in the change's tree
+Compat: breaking adr-2026-11-12-x     an adr- id: the decision that drops the reader, for every narrowing of the PR
+Compat: additive                      what the PR claims: a narrowing found stays unresolved
+```
+
+A `migration` id with no hyphen (`TBD`) or a `breaking` line with no `adr-` id resolves nothing.
+
+```bash
+brain schema diff --against v0.3.2 [--pr-body FILE|-] [--strict] [--json]
+```
+
+The scout (`brain audit --diff`) shows each unresolved narrowing as a `schema.narrowed` info line, never blocking,
+and a resolved one as justified. With config.json `audit.schema_diff_strict: true` (the owner's opt-in) it is a NEW
+line, to fix or resolve in the PR, and `brain schema diff` exits 1 on it (or with `--strict`): a release never newly
+refuses what passed. CI's advisory `schema-diff` job runs it on every pull request against its target's tip (this
+PR's change alone, and its own commits' Compat: lines), with the PR's body as it was at the push (an edited body is
+read at the next push, or by re-running the job), into the job's summary. `permissions.yaml` has no schema file (its keys are constants of `brain.permissions`):
+the diff does not see it.
+
 ## The upgrade test (`compat-prev`)
 
 The fixtures prove each reader on its own; the upgrade test proves an engine on a real brain, in both directions
