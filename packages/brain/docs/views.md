@@ -164,6 +164,24 @@ history.
 
 The reference has no date and sorts what it lists: the same graph gives the same files.
 
+### The reference as of a point
+
+`brain reference --asof POINT [--out DIR]` (`brain.asof`, `wi-brain-reference-asof`) renders the reference as it was:
+
+- **The point**: a wave (its id or its release), a milestone or an era is read at the commit of the day it was
+  reached (the first date of its `props.reached`: that day's last first-parent commit); one still pending is read as
+  of now, with its target view. A date (`YYYY-MM-DD`) is read at that day's last commit; anything else is a git ref.
+- **Read from git**: the store, the DDR records, `modules.yaml` (the registry another store of the repo keeps
+  included, `config.json` `modules.store`), `docs/reference.yaml` and `projects.yaml` as they were at that commit,
+  extracted by `git archive` into a temporary folder (nothing checked out, nothing written to the repository), then
+  rendered as today's reference is.
+- **Changes since** the wave reached before the point: the decisions taken and reversed, the features whose status
+  changed, the items done, the modules added.
+- **The target view** of a pending milestone, wave or era: its trigger, the features and items planned in it
+  (`part_of`, nested milestones followed, the features its items deliver), done and left.
+- **Where**: `<BRAIN_HOME>/views/reference/<project>/<point>/` (or `--out`), never into the repo: no frozen copy.
+  `--public` and `--write` are refused with it.
+
 ## Generated READMEs
 
 A repo that holds `readme.yaml` at its root opts in to a generated `README.md` (`brain docs`, `brain.readme`,
