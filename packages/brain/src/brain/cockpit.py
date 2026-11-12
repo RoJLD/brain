@@ -108,7 +108,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (__version__, alerts, audit, config, decisions, defaults, digest, paths, perf, plan, plugin_panels,
-               projects, queue, quiet, ranking, resume, sessions, stateio, status, transcript, usage)
+               projects, queue, quiet, ranking, resume, review, sessions, stateio, status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
 FRAMES = {"exec": "health"}  # a frame drawn from another panel's data, not a read of its own: the health tab's fourth
@@ -493,6 +493,16 @@ def perf_summary(names: set[str] | None, now: datetime) -> dict:
             "slowest": rep["slowest"], "regressions": rep["regressions"]}
 
 
+def review_summary() -> dict:
+    """The review error score (brain.review.score): the totals, the trend per wave and the lightening rule's verdict;
+    {} when it cannot be read."""
+    try:
+        sc = review.score()
+    except Exception:  # noqa: BLE001 - a stamp no engine wrote never takes the health probe down
+        return {}
+    return {"total": sc["total"], "waves": sc["waves"][-3:], "lighten": sc["lighten"]}
+
+
 # --- the panels of a scope ---
 
 def _files(d: Path, pattern: str = "*") -> list[Path]:
@@ -686,6 +696,7 @@ class Cockpit:
         only = None if self.every else {p.name for p in self.projs}
         return {"alerts": {"projects": [g["alerts"] for g in got]}, "audit": {"projects": [g["audit"] for g in got]},
                 "health": {"projects": [g["health"] for g in got], "exec": perf_summary(only, now),
+                           "reviews": review_summary(),
                            **({"probes": self.dep_probes} if self.dep_probes is not None else {})},
                 "digest": {"projects": [g["digest"] for g in got]}}
 
@@ -1096,10 +1107,11 @@ HELP = {
               "read": "at each probe",
               "detail": "brain audit --project <p>"},
     "health": {"what": "Each stack's and each code index repo's state, this machine's dependency probes (a login, a "
-                       "tool's last output, an index's or a backup's age), and the exec-time ledger's last 7 days "
-                       "(runs, failures, regressions).",
+                       "tool's last output, an index's or a backup's age), the exec-time ledger's last 7 days "
+                       "(runs, failures, regressions), and the review error score (findings per PR, per wave, and "
+                       "whether the reviews may lighten).",
                "from": "brain.status.probed, as brain health and brain index; brain.depprobes, as brain probes; "
-                       "brain.perf",
+                       "brain.perf; brain.review.score, as brain review score",
                "read": "at each probe",
                "detail": "brain health; brain index; brain probes; brain perf"},
     "digest": {"what": "The journals' last day and the records, then the latest written digest, else last week's built "
@@ -1506,6 +1518,7 @@ def health_lines(panel: dict | None, width: int = WIDTH, now: datetime | None = 
     if probes_.get("probes") or probes_.get("errors"):
         from . import depprobes
         lines.append(_line("  ", f"dependency probes: {depprobes.status_line(probes_)}", width))
+    lines += review_lines(panel.get("reviews"), width)
     ex = panel.get("exec") or {}
     if ex:
         reg = "; ".join(f"{r['task']} +{r['change']:.0%}" for r in ex.get("regressions") or [])
@@ -1513,6 +1526,17 @@ def health_lines(panel: dict | None, width: int = WIDTH, now: datetime | None = 
                                  f"{len(ex.get('regressions') or [])} regression(s)" + (f": {reg}" if reg else ""),
                            width))
     return lines
+
+
+def review_lines(rv: dict | None, width: int = WIDTH) -> list[str]:
+    """The health tab's line of the review error score (review_summary), none before a PR is reviewed."""
+    if not rv or not rv["total"]["prs"]:
+        return []
+    trend = ", ".join(f"{w['wave']} {w['per_pr']}" for w in rv["waves"])
+    verdict = "the reviews may lighten" if rv["lighten"]["ok"] else "the reviews stay complete"
+    return [_line("  ", f"review error score: {rv['total']['per_pr']} confirmed finding(s) per PR over "
+                        f"{rv['total']['prs']} PR(s)" + (f"; per wave {trend}" if trend else "") + f"; {verdict}",
+                  width)]
 
 
 def exec_lines(panel: dict | None, width: int = WIDTH) -> list[str]:

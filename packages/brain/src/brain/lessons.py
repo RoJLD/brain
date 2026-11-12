@@ -608,9 +608,10 @@ def wave_retro(led, wave: str, store: Path | None = None) -> dict:
         tot["rework"] += sum(s["rework"].values())
         tot["cost"] += s["cost"]
     ids = {r["item"] for r in items} | set(members)
+    from . import review   # the error score of the wave and its trend (wi-brain-review-error-score)
     return {"wave": wave, "items": sorted(items, key=lambda r: -r["friction"]), "totals": dict(tot),
             "learned": _learned(led, ids, store), "notes": _notes(led, ids),
-            "open": sorted(ids - {r["item"] for r in items})}
+            "open": sorted(ids - {r["item"] for r in items}), "reviews": review.score()}
 
 
 def _learned(led, ids: set[str], store: Path | None) -> list[dict]:
@@ -641,6 +642,9 @@ def render_wave(w: dict) -> list[str]:
     if w.get("notes"):
         lines.append(f"retro notes recorded on the wave's items: {len(w['notes'])}")
         lines += [f"  {i}: {n}" for i, n in w["notes"].items()]
+    if w.get("reviews"):
+        from . import review
+        lines += review.score_lines(w["reviews"], str(w["wave"]).removeprefix("wave-"))
     lines.append(f"lessons learned from the wave's items: {len(w['learned'])}")
     lines += [f"  {x['id']} [{x['status']}] seen {x['seen']}: {x['title']}" for x in w["learned"]]
     lines.append("the coordinator answers: what slowed the wave most, what the next wave's briefs change, which "

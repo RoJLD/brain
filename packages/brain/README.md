@@ -758,11 +758,14 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   token-free net; config.json `brief.after_merge` replaces these lines), the invariants and failure modes to test
   (one line per surface kind the item touches, then its `props.invariants`; `brain review prep --item` hands the
   same section to the review), and the definition of done and the never-list read from the owner's rules.
-- **`brain review prep [PR | BASE..HEAD] [--item ID]`**, **`brain review stamp HEAD`**, **`brain review check HEAD`**: the review
+- **`brain review prep [PR | BASE..HEAD] [--item ID]`**, **`brain review stamp HEAD`**, **`brain review check HEAD`**,
+  **`brain review score [--wave W]`**: the review
   a session runs on its own PR before it reports ([`docs/review.md`](docs/review.md), `brain.review`). The packet
   (the diff, the touched files at the head, `brain audit --diff`'s output, the lenses its surfaces call for) is
   gathered at zero token; the lens agents and two skeptics per distinct finding read it; the stamp, keyed by the
-  head's full sha, keeps the counts and answers the merge gate.
+  head's full sha, keeps the counts, the note's finding lines and the PR, item and wave, and answers the merge
+  gate; the error score counts each PR's confirmed findings by severity, lens and root cause, per wave, and says
+  whether the reviews may lighten (the findings per PR fallen over two waves in a row).
 
 ### The session tree
 
