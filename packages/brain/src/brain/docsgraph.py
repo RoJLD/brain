@@ -369,12 +369,17 @@ def mark_stale(cat: Catalogue, store: Path) -> None:
     at = entries_at_revs(top, prefix, sorted(set(rev_of.values()) - {""}))
     for d in todo:
         _stale_sections(d, at.get(rev_of[d.key]), now)
-        for sec, parent, _ in d.parents:
-            p = cat.docs.get(cat.section_of.get(parent, ""))
-            if p is not None and p.dirty:
-                d.stale.append((sec, f"its declared parent {p.path} is being edited"))
-            elif p is not None and p.last is not None and p.last > d.last:
-                d.stale.append((sec, f"its declared parent {p.path} changed after its last commit"))
+        _stale_parents(cat, d)
+
+
+def _stale_parents(cat: Catalogue, d: Doc) -> None:
+    """The sections of ``d`` whose declared parent is being edited or was committed after ``d``."""
+    for sec, parent, _ in d.parents:
+        p = cat.docs.get(cat.section_of.get(parent, ""))
+        if p is not None and p.dirty:
+            d.stale.append((sec, f"its declared parent {p.path} is being edited"))
+        elif p is not None and p.last is not None and p.last > d.last:
+            d.stale.append((sec, f"its declared parent {p.path} changed after its last commit"))
 
 
 def _stale_sections(d: Doc, then: dict[str, str] | None, now: dict[str, str]) -> None:
