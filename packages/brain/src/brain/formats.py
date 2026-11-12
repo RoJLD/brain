@@ -47,7 +47,7 @@ import json
 import os
 import re
 import shlex
-import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -171,7 +171,9 @@ VALUE_ERRORS = {
                                                                       "string)",
     "schema": lambda v: _path_error("schema", v),
     "fixtures": lambda v: _path_error("fixtures", v),
-    "check": lambda v: "" if argv(v) is not None else "check is a command: a string or a list of strings",
+    "check": lambda v: ("check is a command: a string or a list of strings" if argv(v) is None else
+                        "check holds a backslash: a string is split as a POSIX shell would, which drops it; write the "
+                        "command as a list" if isinstance(v, str) and "\\" in v else ""),
     "timeout": _timeout_error,
 }
 
@@ -294,18 +296,34 @@ def matcher(globs: list[str]):
     return lambda path: any(r.match(path) for r in rx)
 
 
-def files(top: Path, globs: list[str]) -> list[str]:
-    """The files under ``top`` that match one of ``globs`` (relative, /-separated, sorted); a .git folder never."""
+def _prefix(glob: str) -> str:
+    """The literal folder a glob starts in ('' for the repo's root): the walk starts there."""
+    head = re.split(r"[*?\[]", glob, maxsplit=1)[0]
+    return head[:head.rfind("/") + 1].rstrip("/") if "/" in head else ""
+
+
+def _walk(top: Path, globs: list[str]):
+    """Each file under ``top`` that matches one of ``globs`` (relative, /-separated), walking from each glob's literal
+    folder only (a .git folder never; a linked folder is followed only as a glob's own literal folder)."""
     hit = matcher(globs)
-    out = []
-    for dirpath, dirs, names in os.walk(top):
-        dirs[:] = [d for d in dirs if d != ".git"]
-        rel = Path(dirpath).relative_to(top).as_posix()
-        for n in names:
-            p = n if rel == "." else f"{rel}/{n}"
-            if hit(p):
-                out.append(p)
-    return sorted(out)
+    seen: set[str] = set()
+    for start in sorted({_prefix(g) for g in globs}):
+        base = top / start if start else top
+        if not base.is_dir():
+            continue
+        for dirpath, dirs, names in os.walk(base):
+            dirs[:] = [d for d in dirs if d != ".git"]
+            rel = Path(dirpath).relative_to(top).as_posix()
+            for n in names:
+                p = n if rel == "." else f"{rel}/{n}"
+                if p not in seen and hit(p):
+                    seen.add(p)
+                    yield p
+
+
+def files(top: Path, globs: list[str]) -> list[str]:
+    """The files under ``top`` that match one of ``globs`` (relative, /-separated, sorted)."""
+    return sorted(_walk(top, globs))
 
 
 def repo_path(f, repos: dict[str, Path], default: str) -> Path | None:
@@ -314,15 +332,15 @@ def repo_path(f, repos: dict[str, Path], default: str) -> Path | None:
 
 
 def presence(where: str, fmts: list[Format], repos: dict[str, Path], default: str) -> list[str]:
-    """What a project's formats declare and its checkouts lack: a glob that matches no file, a schema file or a
-    fixtures folder that is not there. A repo not checked out on this machine is not judged."""
+    """What a project's formats declare and its checkouts lack: a glob that matches no file (the walk stops at the
+    first match), a schema file or a fixtures folder that is not there. A repo not checked out here is not judged."""
     errors = []
     for f in fmts:
         top = repo_path(f, repos, default)
         if top is None or not top.is_dir():
             continue
         w = f"{where}: format {f.id}"
-        if not files(top, f.globs):
+        if next(_walk(top, f.globs), None) is None:
             errors.append(f"{w}: its glob {', '.join(f.globs)} matches no file in {top.name}")
         if f.schema and not (top / f.schema).is_file():
             errors.append(f"{w}: its schema {f.schema} is not a file in {top.name}")
@@ -337,16 +355,43 @@ def _sha(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
 
 
-def key(f: Format, top: Path) -> str:
-    """The cache key of a format's check: the command, its timeout, and the content of every file it judges (its
-    glob's files, its schema, its fixtures' files), by path."""
-    judged = set(files(top, f.globs))
+def _file_sha(path: Path) -> str:
+    """A file's sha256, read in chunks (a data file is never loaded whole); OSError when it cannot be read."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _inside(path: Path, top: Path) -> bool:
+    try:
+        path.resolve().relative_to(top.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def judged(f: Format, top: Path) -> list[str]:
+    """The files a format's check judges, relative to ``top``: its glob's, its schema, its fixtures folder's, and each
+    word of its command that names a file of the repo (the checker's own script: a stricter checker reruns)."""
+    out = set(files(top, f.globs))
     if f.schema and (top / f.schema).is_file():
-        judged.add(f.schema.replace("\\", "/"))
+        out.add(f.schema.replace("\\", "/"))
     if f.fixtures and (top / f.fixtures).is_dir():
         base = f.fixtures.replace("\\", "/").rstrip("/")
-        judged |= {f"{base}/{x}" for x in files(top / base, ["**"])}
-    h = {p: _sha((top / p).read_bytes()) for p in sorted(judged) if (top / p).is_file()}
+        out |= {f"{base}/{x}" for x in files(top / base, ["**"])}
+    for word in (f.check or [])[1:] + (f.check or [])[:1]:
+        p = top / word
+        if word and not Path(word).is_absolute() and _relpath_ok(word) and p.is_file() and _inside(p, top):
+            out.add(word.replace("\\", "/"))
+    return sorted(out)
+
+
+def key(f: Format, top: Path) -> str:
+    """The cache key of a format's check: the command, its timeout, and the content of every file it judges
+    (:func:`judged`), by path; OSError when one cannot be read (a lock): the check then runs and nothing is cached."""
+    h = {p: _file_sha(top / p) for p in judged(f, top) if (top / p).is_file()}
     return _sha(json.dumps({"v": CACHE_V, "argv": f.check, "timeout": f.timeout, "files": h},
                            sort_keys=True).encode("utf-8"))
 
@@ -364,27 +409,73 @@ def _tail(text: str) -> list[str]:
     return [line for line in (text or "").splitlines() if line.strip()][-TAIL:]
 
 
-def _exe(args: list[str]) -> list[str]:
-    found = shutil.which(args[0])
+def _on_path(name: str) -> str | None:
+    """``name`` found on PATH (with PATHEXT on Windows), never in the brain's own working folder."""
+    exts = [""] + (os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").lower().split(";") if os.name == "nt" else [])
+    for d in filter(None, os.environ.get("PATH", "").split(os.pathsep)):
+        for ext in exts:
+            c = Path(d) / (name + ext)
+            if c.is_file() and (os.name == "nt" or os.access(c, os.X_OK)):
+                return str(c)
+    return None
+
+
+def resolve_exe(args: list[str], top: Path) -> list[str]:
+    """The argv with its program found: a path (a separator in it, or a file of the repo) is the repo's, read from
+    ``top`` and refused outside it (ValueError); a bare name is looked up on PATH only (Windows' process creation
+    would search the brain's own folder first, never the repo's)."""
+    prog = args[0]
+    local = top / prog
+    if "/" in prog or "\\" in prog or local.is_file():
+        if Path(prog).is_absolute():
+            return args
+        if not _inside(local, top):
+            raise ValueError(f"{prog!r} is outside the repo")
+        return [str(local.resolve()), *args[1:]]
+    found = _on_path(prog)
     return [found, *args[1:]] if found else args
 
 
-def run_one(f: Format, top: Path) -> Result:
-    """Run a format's check in ``top``, bounded: pass (exit 0), fail (1), timeout, or error (another exit code, a
-    command not found)."""
-    t0 = time.monotonic()
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Stop the check and every process it started (a .cmd's child holds the pipes open after cmd.exe dies)."""
     try:
-        cp = subprocess.run(_exe(f.check or []), cwd=top, capture_output=True, text=True, encoding="utf-8",
-                            errors="replace", timeout=f.timeout, stdin=subprocess.DEVNULL)
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=30,
+                           stdin=subprocess.DEVNULL)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def run_one(f: Format, top: Path) -> Result:
+    """Run a format's check in ``top``, bounded (its process tree stopped at the timeout): pass (exit 0), fail (1),
+    timeout, or error (another exit code, a command not found or outside the repo)."""
+    t0 = time.monotonic()
+    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    try:
+        proc = subprocess.Popen(resolve_exe(f.check or [], top), cwd=top, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
+                                errors="replace", **group)
+    except (OSError, ValueError) as exc:
+        why = str(exc) if isinstance(exc, ValueError) else exc.__class__.__name__
+        return Result(f.id, "error", seconds=time.monotonic() - t0, detail=f"cannot run {f.check[0]!r}: {why}")
+    try:
+        out, err = proc.communicate(timeout=f.timeout)
     except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            proc.communicate(timeout=10)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            pass
         return Result(f.id, "timeout", seconds=time.monotonic() - t0, detail=f"stopped after {f.timeout} s")
-    except OSError as exc:
-        return Result(f.id, "error", seconds=time.monotonic() - t0, detail=f"cannot run {f.check[0]!r}: "
-                      f"{exc.__class__.__name__}")
-    status = {0: "pass", 1: "fail"}.get(cp.returncode, "error")
-    detail = "" if status != "error" else f"exit {cp.returncode} (a check exits 0 or 1)"
-    return Result(f.id, status, seconds=time.monotonic() - t0, detail=detail,
-                  tail=_tail(cp.stdout + "\n" + cp.stderr))
+    status = {0: "pass", 1: "fail"}.get(proc.returncode, "error")
+    detail = "" if status != "error" else f"exit {proc.returncode} (a check exits 0 or 1)"
+    return Result(f.id, status, seconds=time.monotonic() - t0, detail=detail, tail=_tail(out + "\n" + err))
 
 
 def _judge(f: Format, top: Path | None, hit, fresh: bool, default: str) -> tuple[Result, dict | None]:
@@ -394,11 +485,14 @@ def _judge(f: Format, top: Path | None, hit, fresh: bool, default: str) -> tuple
         return Result(f.id, "skipped", detail="no check: declared"), None
     if top is None or not top.is_dir():
         return Result(f.id, "error", detail=f"its repo {f.repo or default} is not checked out here"), None
-    k = key(f, top)
-    if not fresh and isinstance(hit, dict) and hit.get("key") == k and hit.get("status") in ("pass", "fail"):
+    try:
+        k = key(f, top)
+    except OSError:   # a judged file it cannot read (a lock): the check runs, its result is not remembered
+        k = ""
+    if k and not fresh and isinstance(hit, dict) and hit.get("key") == k and hit.get("status") in ("pass", "fail"):
         return Result(f.id, hit["status"], cached=True, tail=list(hit.get("tail") or [])), None
     r = run_one(f, top)
-    if r.status not in ("pass", "fail"):
+    if r.status not in ("pass", "fail") or not k:
         return r, None
     return r, {"key": k, "status": r.status, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                "seconds": round(r.seconds, 3), "tail": r.tail}
@@ -432,24 +526,39 @@ def run(project: str, fmts: list[Format], repos: dict[str, Path], default: str, 
 # --- the scout's glob check ---
 
 def _changed(rows, m: Migration, touched: dict[str, bool]) -> list[str]:
-    """The when files of rule ``m`` the change touches, a deletion or a light touch aside."""
+    """The when files of rule ``m`` the change touches: modified or added (a light touch aside), deleted, or renamed
+    from or to one (a pure rename is a light touch only when it stays inside the when globs)."""
     when = matcher(m.when)
-    return sorted(path for st, _, path in rows if path and st[:1] != "D" and when(path)
-                  and not touched.get(path, False))
+    out = set()
+    for st, old, new in rows:
+        if st[:1] == "D" and old and when(old):
+            out.add(old)
+        elif st[:1] == "R" and old and when(old) and not (new and when(new)):
+            out.add(old)   # moved out of the models: the table it held goes
+        elif new and when(new) and not touched.get(new, False):
+            out.add(new)
+    return sorted(out)
+
+
+def _added(rows, glob: str) -> bool:
+    """Whether the change adds a file matching ``glob``: added, copied, or renamed into it from outside it."""
+    hit = matcher([glob])
+    return any(new and hit(new) and (st[:1] in "AC" or (st[:1] == "R" and not (old and hit(old))))
+               for st, old, new in rows)
 
 
 def migration_signals(repo: str, default: str, rules: list[Migration], rows, touched: dict[str, bool],
                       body: str) -> list[dict]:
     """The scout's ``format.migration`` findings in repo ``repo`` (``default``: the project's first repo, the one
-    a rule without repo: names): a when-file changed (a light touch aside) with no file added that matches one of
-    the rule's add globs. NEW on the first such when-file, justified with a 'Justified: <path>: <reason>' line."""
+    a rule without repo: names): a when-file changed (a light touch aside), deleted or renamed out, with no file
+    added that matches one of the rule's add globs. NEW on the first such when-file, justified with a 'Justified:
+    <path>: <reason>' line."""
     from .structure import JUSTIFIED
     justified = {m.group(1).strip() for m in JUSTIFIED.finditer(body or "")}
-    added = sorted(path for st, _, path in rows if st[:1] in "AC" and path)
     out = []
     for m in rules:
         hit = _changed(rows, m, touched) if (m.repo or default) == repo else []
-        missing = [g for g in m.add if not any(matcher([g])(a) for a in added)] if hit else []
+        missing = [g for g in m.add if not _added(rows, g)] if hit else []
         if missing:
             out.append(_finding(repo, m, hit, missing, hit[0] in justified))
     return out

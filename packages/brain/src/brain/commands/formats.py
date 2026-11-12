@@ -80,7 +80,10 @@ def print_report(data: dict) -> None:
 
 def run_scope(scope: list[projects.Project], *, only: str = "", fresh: bool = False,
               timeout: int | None = None, as_json: bool = False) -> int:
-    """brain formats check over projects (brain check --formats too): exit 1 when one fails."""
+    """brain formats check over projects (brain check --formats too): exit 1 when one fails. With ``only``, the
+    projects that declare that format (an error when none of them does)."""
+    if only and len(scope) > 1:
+        scope = [p for p in scope if any(f.id == only for f in formats.formats_of(p.formats))] or scope[:1]
     out = [report(p, only=only, fresh=fresh, timeout=timeout) for p in scope
            if p.formats is not None or only or len(scope) == 1]
     if as_json:

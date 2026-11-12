@@ -326,17 +326,23 @@ quant:
   exist. An unknown key of an entry is a note in read mode, kept, and an error in strict mode (CI).
 - **The commands, on demand** (the owner's PF-1 answer, « Opt-in run »). `brain formats check` (or `brain check
   --formats`, after the usual checks) runs each format's `check:` in its repo's checkout. A string is split as a
-  POSIX shell would and no shell runs it (a pipe or a redirection goes in a script); a list is the argv as given.
-  It is bounded by its `timeout` (`--timeout S` overrides every one), and exits 0 when the files are valid, 1 when
-  they are not. A pass or a fail is cached in `$BRAIN_HOME/formats/<project>.json`, keyed by the hashes of the
-  command, its timeout and every file it judges (the glob's files, the schema, the fixtures folder's files): the
-  same files are not judged twice, `--fresh` judges them anyway. A timeout, another exit code or a command not found
-  is an error, never cached. A change of the checker's own code that leaves those files as they are does not
-  invalidate the cache: run `--fresh` after it. A plain `brain check` never runs a command, and a project the brain
-  only reads (`access: read`) declares no format (its entry holds title, access, parent and classes only): no
-  command of it is ever run.
+  POSIX shell would and no shell runs it (a pipe or a redirection goes in a script; a string with a backslash is
+  refused, since the split drops it: write a Windows path as a list); a list is the argv as given. Its program, when
+  it is a path (a separator in it, or a file of the repo), is the repo's, refused outside it; a bare name is looked
+  up on `PATH` only, never in the brain's own folder. It is bounded by its `timeout` (`--timeout S` overrides every
+  one): at the bound its whole process tree is stopped (a `.cmd` wrapper's child included), and it exits 0 when the
+  files are valid, 1 when they are not. A pass or a fail is cached in `$BRAIN_HOME/formats/<project>.json`, keyed by
+  the hashes of the command, its timeout and every file it judges (the glob's files, the schema, the fixtures
+  folder's files, and each word of the command that names a file of the repo: the checker's own script), read in
+  chunks: the same files are not judged twice, `--fresh` judges them anyway. A timeout, another exit code or a
+  command not found is an error, never cached; a judged file that cannot be read (a lock) runs the check and caches
+  nothing. A change of code the checker imports from elsewhere does not invalidate the cache: run `--fresh` after
+  it. A plain `brain check` never runs a command, and a project the brain only reads (`access: read`) declares no
+  format (its entry holds title, access, parent and classes only): no command of it is ever run. The registry's
+  check walks each glob from its literal folder (`alloc/` for `alloc/*.json`) and stops at the first match.
 - **The migrations, in the scout.** `brain audit --diff` finds a change of a `when` file (not a light touch:
-  docstrings, imports or whitespace only) with no file added that matches one of the rule's `add` globs: a NEW
+  docstrings, imports or whitespace only; a deletion, or a rename out of the `when` globs, counts) with no file
+  added (a rename into an `add` glob from outside it counts) that matches one of the rule's `add` globs: a NEW
   `format.migration` finding on that file, justified by a `Justified: <path>: <reason>` line in the PR body or a
   commit message (a change of a model that moves no column). The project's own migration tool (Alembic, Flyway,
   Atlas, refinery, Prisma) writes the migration; the engine checks from outside, by globs, that one came.

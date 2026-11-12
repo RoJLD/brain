@@ -240,11 +240,99 @@ def test_a_rule_of_another_repo_is_not_applied(tmp_path):
     assert formats.migration_signals("lab", "lab", [rule], rows, {}, "") == []
     rule.repo = ""
     assert [f["tag"] for f in formats.migration_signals("lab", "lab", [rule], rows, {}, "")] == ["NEW"]
-    renamed = rows + [("R100", "old/m.py", "migrations/m.py")]   # a renamed file is not a new migration
-    assert len(formats.migration_signals("lab", "lab", [rule], renamed, {}, "")) == 1
+    moved_in = rows + [("R100", "old/m.py", "migrations/m.py")]   # renamed into the add glob: a new migration
+    assert formats.migration_signals("lab", "lab", [rule], moved_in, {}, "") == []
+    inside = rows + [("R100", "migrations/a.py", "migrations/b.py")]   # renamed within it: none new
+    assert len(formats.migration_signals("lab", "lab", [rule], inside, {}, "")) == 1
     assert formats.migration_signals("lab", "lab", [rule], rows + [("A", "", "migrations/m.py")], {}, "") == []
 
 
 def test_the_command_is_documented():
     usage = " ".join(formats_cmd.USAGE.split())
     assert "brain formats list" in usage and "Never run by a plain brain check" in usage
+
+
+def test_a_deleted_or_moved_out_when_file_needs_a_migration_too():
+    rule = formats.Migration(["models/*.py"], ["migrations/*.py"])
+    for rows in ([("D", "models/user.py", "")], [("R100", "models/user.py", "archive/user.py")]):
+        (f,) = formats.migration_signals("lab", "lab", [rule], rows, {}, "")
+        assert f["unit"] == "models/user.py" and f["tag"] == "NEW"
+    pure = [("R100", "models/user.py", "models/account.py")]   # a pure rename inside the models: a light touch
+    assert formats.migration_signals("lab", "lab", [rule], pure, {"models/account.py": True}, "") == []
+
+
+def test_a_string_check_with_a_backslash_is_refused(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch, _fmt(check="'tools\\check.cmd --strict'"))
+    assert any("check holds a backslash" in e and "as a list" in e for e in projects.check())
+
+
+def test_a_checker_script_of_the_repo_is_judged_too(tmp_path, monkeypatch, capsys):
+    marker = tmp_path / "count"
+    root = _project(tmp_path, monkeypatch, _fmt(check=json.dumps([sys.executable, "tools/chk.py"])))
+    (root / "tools").mkdir()
+    chk = root / "tools" / "chk.py"
+    chk.write_text(COUNT.replace("sys.argv[1]", repr(str(marker))) + "\n", encoding="utf-8")
+    p = projects.load()["lab"]
+    (f,) = formats.formats_of(p.formats)
+    assert "tools/chk.py" in formats.judged(f, root)
+    for _ in range(2):
+        assert cli.main(["formats", "check", "--project", "lab"]) == 0
+    chk.write_text(chk.read_text(encoding="utf-8") + "# stricter\n", encoding="utf-8")
+    assert cli.main(["formats", "check", "--project", "lab"]) == 0
+    capsys.readouterr()
+    assert marker.read_text(encoding="utf-8") == "xx"   # the stricter checker ran again
+
+
+def test_a_relative_program_is_the_repos_whatever_the_brains_folder(tmp_path, monkeypatch, capsys):
+    root = _project(tmp_path, monkeypatch, _fmt(check=json.dumps(["./tools/ok.py"])))
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "tools").mkdir(parents=True)
+    monkeypatch.chdir(elsewhere)
+    (f,) = formats.formats_of(projects.load()["lab"].formats)
+    assert formats.resolve_exe(f.check, root)[0] == str((root / "tools" / "ok.py").resolve())
+    with pytest.raises(ValueError, match="outside the repo"):
+        formats.resolve_exe(["../elsewhere/tools/x.cmd"], root)
+    _project(tmp_path, monkeypatch, _fmt(check=json.dumps(["../escape.cmd"])))
+    assert cli.main(["formats", "check", "--project", "lab", "--json"]) == 1
+    (r,) = json.loads(capsys.readouterr().out)["projects"][0]["results"]
+    assert r["status"] == "error" and "outside the repo" in r["detail"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a .cmd wrapper and its child: Windows")
+def test_a_timeout_stops_a_cmd_wrapper_and_its_child(tmp_path, monkeypatch, capsys):
+    root = _project(tmp_path, monkeypatch, _fmt(check=json.dumps(["slow.cmd"]), timeout=2))
+    (root / "slow.cmd").write_text(f'@"{sys.executable}" -c "import time; time.sleep(30)"\r\n', encoding="utf-8")
+    assert cli.main(["formats", "check", "--project", "lab", "--json"]) == 1
+    (r,) = json.loads(capsys.readouterr().out)["projects"][0]["results"]
+    assert r["status"] == "timeout" and r["seconds"] < 15
+
+
+def test_a_file_it_cannot_read_runs_the_check_and_caches_nothing(tmp_path, monkeypatch, capsys):
+    marker = tmp_path / "count"
+    _project(tmp_path, monkeypatch, _fmt(check=json.dumps([sys.executable, "-c", COUNT, str(marker)])))
+
+    def locked(path):
+        raise PermissionError(path)
+    monkeypatch.setattr(formats, "_file_sha", locked)
+    for _ in range(2):
+        assert cli.main(["formats", "check", "--project", "lab"]) == 0
+    capsys.readouterr()
+    assert marker.read_text(encoding="utf-8") == "xx" and not formats.cache_file("lab").exists()
+
+
+def test_all_with_one_format_checks_the_projects_that_declare_it(tmp_path, monkeypatch, capsys):
+    _project(tmp_path, monkeypatch, _fmt(check=_cmd("pass")), extra="other:\n  root: .\n")
+    assert cli.main(["formats", "check", "--all", "--format", "alloc", "--json"]) == 0
+    assert [d["project"] for d in json.loads(capsys.readouterr().out)["projects"]] == ["lab"]
+    assert cli.main(["formats", "check", "--all", "--format", "nope"]) == 1
+    assert "no format 'nope'" in capsys.readouterr().out
+
+
+def test_the_walk_starts_at_the_globs_folder(tmp_path):
+    (tmp_path / "alloc").mkdir()
+    (tmp_path / "alloc" / "a.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "big").mkdir()
+    (tmp_path / "big" / "a.json").write_text("{}", encoding="utf-8")
+    assert formats._prefix("alloc/**/*.json") == "alloc" and formats._prefix("**/*.json") == ""
+    assert formats.files(tmp_path, ["alloc/*.json"]) == ["alloc/a.json"]
+    assert formats.files(tmp_path, ["**/a.json"]) == ["alloc/a.json", "big/a.json"]
