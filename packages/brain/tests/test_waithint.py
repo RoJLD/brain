@@ -25,6 +25,13 @@ LOT8 = "until grep -qE '[0-9]+ (passed|failed)' resil-full.log; do sleep 15; don
     "while ! grep -q ready app.log; do sleep 1; done",
     "while (-not (Select-String -Path run.log -Pattern passed -Quiet)) { Start-Sleep 5 }",
     "do { Start-Sleep 5 } until (Select-String -Path run.log -Pattern passed -Quiet)",
+    # the review's shapes: a bound in name only
+    "while [ ! -f done.flag ]; do sleep 1; done",
+    "while (-not (Test-Path done.flag)) { Start-Sleep 5 }",
+    "until [ $(grep -c passed run.log) -ge 1 ]; do sleep 5; done",
+    "until grep -qE 'passed|timeout' run.log; do sleep 5; done",
+    "until [ -f ok ] || [ -f fail ]; do sleep 5; done",
+    "until grep -q passed run.log; do ls -lt; sleep 5; done",
 ])
 def test_an_unbounded_wait_is_named(command):
     assert waithint.unbounded(command), command
@@ -37,6 +44,9 @@ def test_an_unbounded_wait_is_named(command):
     "until grep -q passed run.log; do test -f run.log || break; sleep 5; done",
     "until grep -q passed run.log; do kill -0 $pid || exit 1; sleep 5; done",
     "while [ ! -e out.txt ] && [ $SECONDS -lt 600 ]; do sleep 1; done",
+    "until grep -q passed run.log; do if [ ! -e run.log ]; then exit 1; fi; sleep 5; done",
+    "i=0; until grep -q passed run.log; do i=$((i+1)); [ $i -ge 120 ] && exit 1; sleep 5; done",
+    "timeout -k 5 600 bash -c 'until grep -q passed run.log; do sleep 5; done'",
     "end=$(( $(date +%s) + 600 )); until grep -q x f; do sleep 1; done",
     "while IFS= read -r line; do echo \"$line\"; done < list.txt",
     "while read -r f; do rm \"$f\"; done",
@@ -89,11 +99,16 @@ def test_waithint_sh_fast_path_and_python_path(tmp_path):
     assert run(_payload(background=False)).stdout == ""                 # fast path: not in the background
     assert run(_payload(command="sleep 30")).stdout == ""               # fast path: no loop word
     hit = run(_payload())
+    for multi in (f"cd /work\n{LOT8}", f"cd /work\n\t{LOT8}"):         # a loop at a line's start
+        assert "no deadline" in run(_payload(command=multi)).stdout, multi
     assert hit.returncode == 0 and "no deadline" in json.loads(hit.stdout)["hookSpecificOutput"]["additionalContext"]
     assert run(_payload(), BRAIN_WAIT_HINT="0").stdout == ""
 
 
-def test_hooks_json_starts_it_only_on_a_loop_word():
+def test_hooks_json_starts_it_on_a_sleep_once():
+    """Claude Code matches an if condition against each simple command of the call (the loop's body), never the
+    keyword: the gate is the sleep a wait loop runs, one hook per tool, so a call never gets the line twice."""
     hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
     ifs = sorted(h["if"] for g in hooks for h in g["hooks"] if "waithint.sh" in h["command"])
-    assert ifs == ["Bash(*until*)", "Bash(*while*)", "PowerShell(*until*)", "PowerShell(*while*)"]
+    assert ifs == ["Bash(*sleep*)", "PowerShell(*leep*)"]
+    assert all("leep" in c for c in ("sleep 5", "Start-Sleep -Seconds 5"))

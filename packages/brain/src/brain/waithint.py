@@ -8,13 +8,15 @@ stops it by hand (wave 0.3.2, two lots). A background ``until`` or ``while`` loo
 context: give it a deadline (``timeout``, a counter, ``$SECONDS``), make it exit when its file or process is gone, and
 stop the session's background tasks before deleting their logs or venvs.
 
-A bound is any of: a ``timeout`` wrapper, a counter (``seq``, ``{1..N}``, ``for ((``, a numeric comparison), a clock
-(``$SECONDS``, ``date +%s``, a PowerShell ``Stopwatch``, ``Get-Date``, ``AddMinutes``/``AddSeconds``, ``-Timeout``),
-a process check (``kill -0``, ``ps -p``, ``pgrep``, ``/proc/``, ``Get-Process``, ``Wait-Process``, ``HasExited``) or a
-file that must still be there (``[ -e FILE ] || exit``, ``[ ! -e FILE ]``, ``test -f FILE || break``, ``-not (Test-Path
-FILE)``): a loop that waits for a file to appear is no bound. A ``while read`` loop ends with its input and is no wait.
-A foreground loop is bounded by the tool's own timeout. Never a refusal: it prints no permission decision, only
-additionalContext, and nothing at all on an error. The standard library only.
+A bound is any of: a ``timeout N`` wrapper or a ``-Timeout``/``--timeout`` parameter, a counter (``seq``, ``{1..N}``,
+``for ((``, a variable compared with ``-lt``/``-le``/``-gt``/``-ge`` or in ``(( ))``), a clock (``$SECONDS``,
+``date +%s``, a PowerShell ``Stopwatch``, ``Get-Date``, ``AddMinutes``/``AddSeconds``), a process check (``kill -0``,
+``ps -p``, ``pgrep``, ``/proc/``, ``Get-Process``, ``Wait-Process``, ``HasExited``) or a check that the file is still
+there which leaves the loop (``[ -e FILE ] || exit``, ``test -f FILE || break``, ``if [ ! -e FILE ]; then exit``,
+``if (-not (Test-Path FILE)) { break }``). A loop whose own condition waits for a file to appear, or compares a
+count read from a log, is no bound; the word ``timeout`` in a pattern is none either. A ``while read`` loop ends with
+its input and is no wait. A foreground loop is bounded by the tool's own timeout. Never a refusal: it prints no
+permission decision, only additionalContext, and nothing at all on an error. The standard library only.
 """
 
 from __future__ import annotations
@@ -27,15 +29,18 @@ LESSON = "les-brain-unbounded-background-waiter"
 SHELL_TOOLS = ("Bash", "PowerShell")
 LOOP = re.compile(r"(?i)(?<![\w-])(until|while)(?![\w-])")
 READ_LOOP = re.compile(r"(?i)(?<![\w-])while\s+(?:IFS=\S*\s+)?read(?![\w-])")
+OUT = r"(?:exit|break|return)(?![\w-])"   # what leaves the loop
 BOUNDS = re.compile(
     r"(?ix)"
-    r"(?<![\w-])g?timeout(?![\w-])|-timeout(?![\w-])"                      # a timeout wrapper or parameter
+    r"(?:^|[\s;&|(])g?timeout\s+(?:-\S+\s+)*\d|-{1,2}timeout(?![\w-])"    # a timeout wrapper or parameter
     r"|(?<![\w-])seq(?![\w-])|\{\d+\.\.\d+\}|for\s*\(\("                # a counter
-    r"|-(?:lt|le|gt|ge)(?![\w-])|\(\(\s*[\w$]+\s*(?:<|>|<=|>=)"           # a numeric comparison
+    r"|\$\{?\w+\}?\s+-(?:lt|le|gt|ge)\s|\(\(\s*\$?\w+\s*(?:<|>|<=|>=)"    # a variable compared: a counter
     r"|\$SECONDS|date\s+\+%s|stopwatch|get-date|add(?:minutes|seconds|hours)\b"   # a clock
     r"|kill\s+-0|ps\s+-p|(?<![\w-])pgrep(?![\w-])|/proc/|get-process|wait-process|hasexited"   # a process check
-    r"|\[\[?\s*!\s*-[efsd]\s|(?<![\w-])test\s+!\s*-[efsd]\s"              # a file check: gone, then out
-    r"|(?:\]\]?|(?<![\w-])test\s+-[efsd]\s+\S+)\s*\|\||(?:-not|!)\s*\(?\s*test-path"
+    # a check that the file is still there, which leaves the loop
+    rf"|(?:\[\[?\s*-[efsd]\s+\S+\s*\]\]?|(?<![\w-])test\s+-[efsd]\s+\S+)\s*\|\|\s*{OUT}"
+    rf"|if\s+(?:\[\[?\s*!\s*-[efsd]\s+\S+\s*\]\]?|test\s+!\s*-[efsd]\s+\S+)\s*;\s*then\s+{OUT}"
+    rf"|if\s*\(\s*(?:-not|!)\s*\(?\s*test-path[^{{}}]*\{{\s*{OUT}"
 )
 
 
