@@ -1,0 +1,3 @@
+  standards:   # the engine's standards for a local client at its stage (brain standards list --applicable)
+    profiles: [local-client]
+    stage: {stage}

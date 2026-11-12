@@ -1,0 +1,3 @@
+  standards:   # the engine's standards for a command-line tool at its stage (brain standards list --applicable)
+    profiles: [cli]
+    stage: {stage}

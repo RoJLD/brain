@@ -1,0 +1,15 @@
+# A data pipeline (sources pulled, datasets derived, on a schedule): brain init --template data-pipeline [--stage
+# prototype|mvp|v1|scale]. The software base (the CI jobs, the test harness, the format registry, the issue and ADR
+# templates, the code layers of the graph) and the engine's standards for the data-pipeline profile at the project's
+# stage (projects.yaml standards:, brain standards list --applicable).
+name: data-pipeline
+version: 1
+engine: ">=0.3.2"
+title: "A data pipeline: the software base and the data-pipeline profile's standards"
+extends: _software
+graphs:                    # the brain's main store, by layers (research_graph layers)
+  - name: work
+    store: notes/graph
+    layers: [work, decisions, records, lessons, code, docs_tests, features, data, operations]
+append:                    # the project's standards selection, under its entry in projects.yaml
+  projects.yaml: standards.yaml

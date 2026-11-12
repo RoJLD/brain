@@ -1,0 +1,3 @@
+  standards:   # the engine's standards for a data pipeline at its stage (brain standards list --applicable)
+    profiles: [data-pipeline]
+    stage: {stage}

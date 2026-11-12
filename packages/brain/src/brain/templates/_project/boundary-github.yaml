@@ -1,0 +1,2 @@
+  # --- the project's CI jobs and GitHub templates (a project template): nothing private in them ---
+  - {glob: ".github/**", side: engine, target: ".github/", why: "the CI jobs and the issue template"}
