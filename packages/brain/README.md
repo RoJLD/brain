@@ -1075,11 +1075,11 @@ They read only fixtures, never a real brain's graph, records or rendered files: 
 
 `-n auto` runs them in parallel, one pytest-xdist worker per CPU thread: each test has its own temporary folder,
 `BRAIN_HOME` and environment, so no test shares state with another. With `-n` and no `--dist`, `conftest.py` picks
-xdist's `worksteal` scheduling (pytest-xdist 3.5 or later): a worker that runs out of tests takes some still queued
-on a busy one, so the run no longer ends on one or two workers while the others idle; `--dist load` gives the old
-scheduling back. A git repository in a test is a copy of a template made once per worker (`conftest.git_init`, the `git_repo`
-and `make_repo` fixtures), not a `git init`. The test that calls the real docker client is marked `docker`: the CI
-runs it apart, on one process (`pytest packages/brain -m docker`).
+xdist's `worksteal` scheduling (pytest-xdist 3.5 or later): a worker that runs out of tests takes some still queued on a
+busy one, so the run no longer ends on one or two workers while the others idle; `--dist load` gives the old scheduling
+back. A git repository in a test is a copy of a template made once per worker (`conftest.git_init`, the `git_repo` and
+`make_repo` fixtures), not a `git init`. The test that calls the real docker client is marked `docker`: the CI runs it
+apart, on one process (`pytest packages/brain -m docker`).
 
 `BRAIN_TEST_WORKERS=N` sets how many workers `-n auto` (or `-n logical`) starts. Unset, xdist decides: its own
 `PYTEST_XDIST_AUTO_NUM_WORKERS` if set, else one worker per CPU thread (per physical core when psutil is installed).
