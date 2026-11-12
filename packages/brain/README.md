@@ -755,9 +755,10 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   merges its own PR archives itself once the main checkout is pulled, the note written and its report sent; a
   coordinator archives a child whose report says merged and verified without asking again; never another running session
   or one with uncommitted or unmerged work; the owner's app setting `auto_archive_inactive_days = 7` as the
-  token-free net; config.json `brief.after_merge` replaces these lines), and the definition of done and the
-  never-list read from the owner's rules.
-- **`brain review prep [PR | BASE..HEAD]`**, **`brain review stamp HEAD`**, **`brain review check HEAD`**: the review
+  token-free net; config.json `brief.after_merge` replaces these lines), the invariants and failure modes to test
+  (one line per surface kind the item touches, then its `props.invariants`; `brain review prep --item` hands the
+  same section to the review), and the definition of done and the never-list read from the owner's rules.
+- **`brain review prep [PR | BASE..HEAD] [--item ID]`**, **`brain review stamp HEAD`**, **`brain review check HEAD`**: the review
   a session runs on its own PR before it reports ([`docs/review.md`](docs/review.md), `brain.review`). The packet
   (the diff, the touched files at the head, `brain audit --diff`'s output, the lenses its surfaces call for) is
   gathered at zero token; the lens agents and two skeptics per distinct finding read it; the stamp, keyed by the

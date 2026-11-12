@@ -16,6 +16,11 @@ The brief holds, in this order:
 - its files and collisions (brain collisions' line for the item);
 - how to start: the repo, a worktree from the default branch (a card cannot carry a source branch, so the brief says
   how to start from one);
+- the invariants and failure modes to test (wi-brain-brief-failure-modes, brain.failuremodes): one line per surface
+  kind the item touches (its predicted surface, title and props: a store, a procedure step, an external system, a
+  multi-step write, a CLI, a heuristic, a guard, a counted set, a moved test, text into another format), the public
+  engine when a repo it touches is public (config.json ``public.repos``), then its own ``props.invariants``; brain
+  review prep --item writes the same lines for the review's agents;
 - the invariants: the standards the project follows (projects.yaml ``standards:``, brain.standards), one line each
   with its domain and how it is enforced; no section for a project that declares none;
 - a section the coordinator fills in (scope, order, what to read first);
@@ -38,7 +43,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, projects, resume, standards, tidy
+from . import config, failuremodes, projects, resume, standards, tidy
 
 CLASSES = {"trivial": {"model": "haiku", "effort": "low", "budget": "400k"},
            "standard": {"model": "", "effort": "", "budget": "400k"},
@@ -86,6 +91,7 @@ class Brief:
     subgraph: list[str] = field(default_factory=list)
     collisions: list[str] = field(default_factory=list)
     start: list[str] = field(default_factory=list)
+    failure_modes: list[str] = field(default_factory=list)
     invariants: list[str] = field(default_factory=list)
     after_merge: list[str] = field(default_factory=list)
     done: list[str] = field(default_factory=list)
@@ -259,6 +265,37 @@ def _start(p: projects.Project, node: dict) -> list[str]:
     return lines
 
 
+def touches_public(p: projects.Project, cfg: config.Config, repos: set[str]) -> bool:
+    """Whether a repo of ``p`` that ``repos`` names (a CodeRef's token: the repo's folder or its name, case ignored)
+    is public (config.json ``public.repos``). No repo named, no answer: False (the review of the repo says it)."""
+    from . import public
+    want = {r.lower() for r in repos if r}
+    if not want or not public.public_repos(cfg):
+        return False
+    for name, path, _ in tidy._repos(p):
+        if {name.lower(), path.name.lower()} & want and public.is_public(public.remote_of(path, cfg)[1], cfg):
+            return True
+    return False
+
+
+def failure_modes(p: projects.Project, st: resume.Store, node: dict, cfg: config.Config,
+                  extra_files: list[str] | None = None, diff: list[str] | None = None,
+                  public: bool = False) -> list[str]:
+    """The section « Invariants and failure modes to test » of item ``node`` (brain.failuremodes), from its predicted
+    surface (brain.collisions.surface), its texts, and ``extra_files`` and ``diff`` (a diff's files and changed lines,
+    for brain review prep --item); ``public`` (the reviewed repo is public) adds the public line whatever the item's
+    CodeRefs say; a line saying none matched when the table sees nothing."""
+    from . import collisions
+    paths, names = collisions.surface(node, st)
+    try:
+        pub = public or touches_public(p, cfg, {r for r, _ in paths if r})
+    except Exception:  # noqa: BLE001 - a remote that cannot be read never stops a brief
+        pub = public
+    lines = failuremodes.for_item(node, [path for _, path in paths] + names, pub, extra_files, diff)
+    return lines or ["- no surface of the table matched (brain.failuremodes): the review reads the state logic; "
+                     "record the item's own in props.invariants (brain item set)"]
+
+
 def after_merge(opts: dict) -> list[str]:
     """The brief's after-the-merge lines: config.json ``brief.after_merge`` when it is a list, else AFTER_MERGE."""
     lines = opts.get("after_merge")
@@ -300,6 +337,7 @@ def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget
                  effort=cls.get("effort") or "", budget=budget, coordinator=coordinator, notes=notes,
                  estimate=_estimate(p, nid, task_class), subgraph=subgraph(st, nid),
                  collisions=collisions.item_line(rep, nid), start=_start(p, node),
+                 failure_modes=failure_modes(p, st, node, cfg),
                  invariants=standards.invariants(p), after_merge=after_merge(opts),
                  done=done, never=never,
                  sources=sources, warnings=warnings,
@@ -345,6 +383,7 @@ def render(b: Brief) -> str:
     lines += ["", "## Its subgraph", ""] + (b.subgraph or ["- no edge"])
     lines += ["", "## Files and collisions (brain collisions)", ""] + [f"- {x}" for x in b.collisions]
     lines += ["", "## How to start", ""] + b.start
+    lines += _section(failuremodes.TITLE, b.failure_modes)
     lines += _section("Invariants: the project's standards (brain standards list --applicable)", b.invariants)
     lines += ["", "## To decide (the coordinator)", "",
               "- Scope and order: <edit>", "- What is decided, and by which ADR: <edit>", "- Read first: <edit>"]

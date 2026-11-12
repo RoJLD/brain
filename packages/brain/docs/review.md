@@ -9,6 +9,7 @@ itself, before it reports and before the PR merges (the owner's decisions RETRO-
 
 ```bash
 brain review prep 123            # a PR (gh), or BASE..HEAD; default origin/main..HEAD
+brain review prep --item ID      # the item's « Invariants and failure modes to test » join the packet
 ```
 
 It writes `<BRAIN_HOME>/reviews/<head>/` (or `--out DIR`):
@@ -19,7 +20,7 @@ It writes `<BRAIN_HOME>/reviews/<head>/` (or `--out DIR`):
 | `files/` | each touched file as it is at the head (a deleted, binary or very large one is listed, not copied) |
 | `scout.txt` | `brain audit --diff BASE..HEAD`'s output (`--no-scout` leaves it out) |
 | `packet.json` | the base, the head, the files and the lenses |
-| `README.md` | the lenses and these steps |
+| `README.md` | the lenses, the invariants and failure modes to test, and these steps |
 
 The lenses are chosen from what the diff touches: **correctness** and **scope** always; **security** for a guard, a
 hook, a secret or public path, the permissions; **compatibility** for a schema, a format, the state files, the registry
@@ -32,6 +33,15 @@ The **scope** lens (`wi-brain-review-scope-lens`, the owner's TR-3 of 2026-11-11
 a changed line beyond it, a refactor or a rename on the way, a flag or an option nobody asked for. Such a change leaves
 the PR as a follow-up item (`brain item add`), unless the item cannot be done without it, which the finding's answer
 says.
+
+The README's « Invariants and failure modes to test » is the section `brain brief` writes for the item's session
+(`wi-brain-brief-failure-modes`, `brain.failuremodes`): the author's tests and the review read one list. Without
+`--item` it comes from the diff alone: its files' paths (a test or a doc is not the module it names) and the tests it
+removes for good (a `def test...` removed and not added back under its name). With `--item ID` (the item of the
+repo's registered project), the item's predicted surface, title, props and own `props.invariants` join it. The
+public engine's line is there when the reviewed repo is in config.json `public.repos`, with or without `--item`.
+`--json` carries the section as `failure_modes`, and the item as `item`. Each lens checks that the PR's tests hold
+the lines that concern it; a line no test holds is a finding.
 
 ## 2. The agents, then the skeptics
 
