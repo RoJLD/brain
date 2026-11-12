@@ -77,34 +77,49 @@ def _git(checkout: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", str(checkout), *args], capture_output=True, timeout=GIT_TIMEOUT)
 
 
+def _refused(root: Path, project: str, checkout: Path, ref: str, file: str) -> str:
+    """Why a pin is refused before git runs: "" when it may run."""
+    if project not in projects.readonly(root):
+        return f"{project!r} is not an access: read project of the registry (brain projects lists them)"
+    if not NAME_RE.match(project):
+        return f"{project!r}: a pinned copy is named after its project: lower-case letters, digits, - and _"
+    if not ref or not file or ref.startswith("-") or file.startswith("-"):
+        return f"--ref {ref!r} and --file {file!r}: a commit or a tag, and a path in the repository"
+    if not Path(checkout).is_dir():
+        return f"{checkout}: no such folder (give a local clone of {project})"
+    return ""
+
+
+def _read_at(checkout: Path, ref: str, file: str) -> tuple[str, dict | None, str]:
+    """(the commit ``ref`` names, the JSON document at ``file`` there, the error that stopped the read or "")."""
+    try:
+        rev = _git(checkout, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        sha = rev.stdout.decode("ascii", "replace").strip()
+        if rev.returncode or not sha:
+            return "", None, f"{checkout}: {ref!r} is not a commit of this clone (git fetch it first)"
+        shown = _git(checkout, "show", f"{sha}:{file}")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "", None, f"{checkout}: git could not read it ({exc})"
+    if shown.returncode:
+        return sha, None, f"{checkout}: no {file} at {sha[:12]}"
+    try:
+        return sha, json.loads(shown.stdout.decode("utf-8-sig")), ""
+    except (ValueError, RecursionError) as exc:
+        return sha, None, f"{file} at {sha[:12]}: not a JSON document ({exc})"
+
+
 def pin(root: Path, project: str, checkout: Path, ref: str, file: str,
         now: datetime | None = None) -> tuple[Path | None, list[str], list[str]]:
     """Read ``file`` at ``ref`` from the clone ``checkout`` of the read project ``project`` and write its pinned copy
     to ``<root>/docgraph/<project>.json``. (the copy's path or None, errors, notes): nothing is written on an error.
     Only git's read commands run in the clone (rev-parse, show): its working tree and refs are never touched."""
-    if project not in projects.readonly(root):
-        return None, [f"{project!r} is not an access: read project of the registry (brain projects lists them)"], []
-    if not NAME_RE.match(project):
-        return None, [f"{project!r}: a pinned copy is named after its project: lower-case letters, digits, - and _"], []
-    if ref.startswith("-") or file.startswith("-") or not ref or not file:
-        return None, [f"--ref {ref!r} and --file {file!r}: a commit or a tag, and a path in the repository"], []
-    if not Path(checkout).is_dir():
-        return None, [f"{checkout}: no such folder (give a local clone of {project})"], []
-    try:
-        rev = _git(checkout, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
-        sha = rev.stdout.decode("ascii", "replace").strip()
-        if rev.returncode or not sha:
-            return None, [f"{checkout}: {ref!r} is not a commit of this clone (git fetch it first)"], []
-        shown = _git(checkout, "show", f"{sha}:{file.lstrip('/')}")
-    except (OSError, subprocess.SubprocessError) as exc:
-        return None, [f"{checkout}: git could not read it ({exc})"], []
-    if shown.returncode:
-        return None, [f"{checkout}: no {file} at {sha[:12]}"], []
+    refused = _refused(root, project, checkout, ref, file)
+    if refused:
+        return None, [refused], []
+    sha, doc, error = _read_at(checkout, ref, file.lstrip("/"))
+    if error:
+        return None, [error], []
     where = f"{project}@{sha[:12]}:{file}"
-    try:
-        doc = json.loads(shown.stdout.decode("utf-8-sig"))
-    except (ValueError, RecursionError) as exc:
-        return None, [f"{where}: not a JSON document ({exc})"], []
     errors, notes = docgraph.validate(doc, where=where)
     if errors:
         return None, errors, notes
@@ -176,6 +191,17 @@ def _end(nid, ns: str, names: set[str]):
     return _node_id(nid, ns)
 
 
+def _joined_node(n: dict, ns: str) -> dict:
+    out = {**n, "id": _node_id(n.get("id", ""), ns), "project": ns}
+    if isinstance(n.get("phase"), str):
+        out["phase"] = f"{ns}/{n['phase']}"
+    return out
+
+
+def _subjects(f: dict) -> list:
+    return f["subjects"] if isinstance(f.get("subjects"), list) else []
+
+
 def join(srcs: list[Source], by: str, now: datetime | None = None) -> dict:
     """The valid documents of ``srcs`` as one docgraph/v1 document, ids namespaced, then the checks of :data:`RUN`
     run across it (:func:`run_checks`)."""
@@ -183,21 +209,11 @@ def join(srcs: list[Source], by: str, now: datetime | None = None) -> dict:
     names = {s.name for s in ok}
     nodes, edges, producers = [], [], []
     for s in ok:
-        for n in docgraph._list(s.doc, "nodes"):
-            if not isinstance(n, dict):
-                continue
-            n = {**n, "id": _node_id(n.get("id", ""), s.name), "project": s.name}
-            if isinstance(n.get("phase"), str):
-                n["phase"] = f"{s.name}/{n['phase']}"
-            nodes.append(n)
-        for e in docgraph._list(s.doc, "edges"):
-            if isinstance(e, dict):
-                edges.append({**e, "from": _end(e.get("from"), s.name, names),
-                              "to": _end(e.get("to"), s.name, names), "project": s.name})
-        for f in docgraph._list(s.doc, "checks"):
-            if isinstance(f, dict):
-                subjects = f.get("subjects") if isinstance(f.get("subjects"), list) else []
-                producers.append({**f, "subjects": [_end(x, s.name, names) for x in subjects], "by": s.name})
+        nodes += [_joined_node(n, s.name) for n in docgraph._list(s.doc, "nodes") if isinstance(n, dict)]
+        edges += [{**e, "from": _end(e.get("from"), s.name, names), "to": _end(e.get("to"), s.name, names),
+                   "project": s.name} for e in docgraph._list(s.doc, "edges") if isinstance(e, dict)]
+        producers += [{**f, "subjects": [_end(x, s.name, names) for x in _subjects(f)], "by": s.name}
+                      for f in docgraph._list(s.doc, "checks") if isinstance(f, dict)]
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = {"schema": docgraph.ID,
            "generated": {"at": stamp, "by": by,
@@ -252,67 +268,86 @@ def _sccs(pairs: list[tuple[str, str]]) -> list[list[str]]:
                   if len(c) > 1 or any(g.has_edge(x, x) for x in c))
 
 
-def run_checks(doc: dict) -> list[dict]:
-    """The findings of the checks of :data:`RUN` over ``doc`` (a joined document, or any docgraph/v1 one)."""
+@dataclass
+class _Graph:
+    """A document indexed for the checks: its nodes by id, its edges, both directions by type, each node's phase."""
+    nodes: dict
+    edges: list
+    into: dict
+    out: dict
+    phase: dict
+
+    def of(self, t: str) -> list[dict]:
+        return [n for n in self.nodes.values() if n.get("type") == t]
+
+
+def _graph(doc: dict) -> _Graph:
     nodes = {n["id"]: n for n in docgraph._list(doc, "nodes") if isinstance(n, dict) and isinstance(n.get("id"), str)}
     edges = [e for e in docgraph._list(doc, "edges") if isinstance(e, dict)]
     into, out = defaultdict(list), defaultdict(list)
     for e in edges:
         into[(e.get("type"), e.get("to"))].append(e.get("from"))
         out[(e.get("type"), e.get("from"))].append(e.get("to"))
-    of = lambda t: [n for n in nodes.values() if n.get("type") == t]   # noqa: E731
-    phase = {nid: _phase_of(n, out, nodes) for nid, n in nodes.items()}
+    return _Graph(nodes, edges, into, out, {nid: _phase_of(n, out, nodes) for nid, n in nodes.items()})
+
+
+def run_checks(doc: dict) -> list[dict]:
+    """The findings of the checks of :data:`RUN` over ``doc`` (a joined document, or any docgraph/v1 one)."""
+    g = _graph(doc)
     found: list[dict] = []
-    criteria, items = of("criterion"), of("item")
-    found += [_finding("criterion.no-item", [c["id"]], "no item serves it")
-              for c in criteria if not into[("serves", c["id"])]]
-    with_criteria = {phase[c["id"]] for c in criteria if phase[c["id"]]}
-    found += [_finding("item.no-criterion", [i["id"]], f"its phase {phase[i['id']]} has criteria; it serves none")
-              for i in items if phase[i["id"]] in with_criteria and i.get("kind") != "review"
-              and not any(nodes.get(t, {}).get("type") == "criterion" for t in out[("serves", i["id"])])]
-    for t in of("test"):
-        carriers = sorted(set(into[("carries", t["id"])]))
+    for check in (_criteria, _tests, _cross_phase, _reviews, _cycles, _decided, _stale):
+        found += check(g)
+    return found
+
+
+def _criteria(g: _Graph) -> list[dict]:
+    """criterion.no-item and item.no-criterion."""
+    criteria = g.of("criterion")
+    found = [_finding("criterion.no-item", [c["id"]], "no item serves it")
+             for c in criteria if not g.into[("serves", c["id"])]]
+    with_criteria = {g.phase[c["id"]] for c in criteria if g.phase[c["id"]]}
+    return found + [_finding("item.no-criterion", [i["id"]], f"its phase {g.phase[i['id']]} has criteria; it serves "
+                                                              "none")
+                    for i in g.of("item") if g.phase[i["id"]] in with_criteria and i.get("kind") != "review"
+                    and not any(g.nodes.get(t, {}).get("type") == "criterion" for t in g.out[("serves", i["id"])])]
+
+
+def _tests(g: _Graph) -> list[dict]:
+    """test.uncarried, test.carried-twice and threat.untested."""
+    found = []
+    for t in g.of("test"):
+        carriers = sorted(set(g.into[("carries", t["id"])]))
         if not carriers:
             found.append(_finding("test.uncarried", [t["id"]], "no item carries it"))
         elif len(carriers) > 1:
             found.append(_finding("test.carried-twice", [t["id"], *carriers], f"{len(carriers)} items carry it"))
-    found += [_finding("threat.untested", [t["id"]], "no test covers it") for t in of("threat")
-              if not into[("covers", t["id"])]]
-    found += _cross_phase(items, nodes, out, phase)
-    found += _reviews(items, out, phase)
-    for etype in CYCLE_TYPES:
-        found += [_finding("cycle", c, f"{etype} edges loop") for c in
-                  _sccs([(e["from"], e["to"]) for e in edges if e.get("type") == etype
-                         and isinstance(e.get("from"), str) and isinstance(e.get("to"), str)])]
-    found += [_finding("proposed.cited-as-decided", [nid, d], f"decided by {d}, which is still proposed")
-              for nid in sorted(nodes) for d in out[("decided_by", nid)]
-              if nodes.get(d, {}).get("type") == "decision" and nodes[d].get("status") == "proposed"]
-    found += _stale(nodes, edges)
-    return found
+    return found + [_finding("threat.untested", [t["id"]], "no test covers it") for t in g.of("threat")
+                    if not g.into[("covers", t["id"])]]
 
 
-def _cross_phase(items: list[dict], nodes: dict, out: dict, phase: dict) -> list[dict]:
+def _cross_phase(g: _Graph) -> list[dict]:
     found = []
-    for i in items:
-        for t in out[("depends_on", i["id"])]:
-            other = nodes.get(t)
+    for i in g.of("item"):
+        for t in g.out[("depends_on", i["id"])]:
+            other = g.nodes.get(t)
             if other is None:
                 found.append(_finding("depends.cross-phase", [i["id"]], f"depends on {t}, which no document holds"))
-            elif (other.get("type") == "item" and phase[t] and phase[i["id"]] and phase[t] != phase[i["id"]]
+            elif (other.get("type") == "item" and g.phase[t] and g.phase[i["id"]] and g.phase[t] != g.phase[i["id"]]
                   and other.get("status") in ("closed", "dropped")):
                 found.append(_finding("depends.cross-phase", [i["id"], t],
-                                      f"depends on {t} of {phase[t]}, which is {other['status']}"))
+                                      f"depends on {t} of {g.phase[t]}, which is {other['status']}"))
     return found
 
 
-def _reviews(items: list[dict], out: dict, phase: dict) -> list[dict]:
+def _reviews(g: _Graph) -> list[dict]:
     found = []
+    items = g.of("item")
     for r in items:
-        p = phase[r["id"]]
+        p = g.phase[r["id"]]
         if r.get("kind") != "review" or not p:
             continue
-        missing = sorted(i["id"] for i in items if phase[i["id"]] == p and i["id"] != r["id"]
-                         and i["id"] not in out[("depends_on", r["id"])])
+        missing = sorted(i["id"] for i in items if g.phase[i["id"]] == p and i["id"] != r["id"]
+                         and i["id"] not in g.out[("depends_on", r["id"])])
         if missing:
             more = f" (+{len(missing) - 5})" if len(missing) > 5 else ""
             found.append(_finding("phase.review-incomplete", [r["id"], *missing],
@@ -320,22 +355,47 @@ def _reviews(items: list[dict], out: dict, phase: dict) -> list[dict]:
     return found
 
 
-def _stale(nodes: dict, edges: list[dict]) -> list[dict]:
+def _cycles(g: _Graph) -> list[dict]:
+    return [_finding("cycle", c, f"{etype} edges loop") for etype in CYCLE_TYPES
+            for c in _sccs([(e["from"], e["to"]) for e in g.edges if e.get("type") == etype
+                            and isinstance(e.get("from"), str) and isinstance(e.get("to"), str)])]
+
+
+def _decided(g: _Graph) -> list[dict]:
+    return [_finding("proposed.cited-as-decided", [nid, d], f"decided by {d}, which is still proposed")
+            for nid in sorted(g.nodes) for d in g.out[("decided_by", nid)]
+            if g.nodes.get(d, {}).get("type") == "decision" and g.nodes[d].get("status") == "proposed"]
+
+
+def _stale_pair(e: dict, nodes: dict) -> tuple[str, str] | None:
+    """(the document, what it follows) when ``e`` makes a hand-written document follow a node: a citation, or a
+    declared parent document."""
+    if e.get("type") == "documented_in":
+        doc_end, other = e.get("to"), e.get("from")
+    elif e.get("type") == "depends_on":
+        doc_end, other = e.get("from"), e.get("to")
+    else:
+        return None
+    d, o = nodes.get(doc_end), nodes.get(other)
+    if not d or not o or d.get("type") != "document" or d.get("kind") in EXEMPT_KINDS:
+        return None
+    if e["type"] == "depends_on" and o.get("type") != "document":
+        return None
+    return doc_end, other
+
+
+def _stale(g: _Graph) -> list[dict]:
     """doc.stale from the ``updated`` dates: a hand-written document a cited node, or a declared parent document,
     changed after."""
     found = []
-    for e in edges:
-        doc_end, other = ((e.get("to"), e.get("from")) if e.get("type") == "documented_in" else
-                          (e.get("from"), e.get("to")) if e.get("type") == "depends_on" else (None, None))
-        d, o = nodes.get(doc_end), nodes.get(other)
-        if not d or not o or d.get("type") != "document" or d.get("kind") in EXEMPT_KINDS:
+    for e in g.edges:
+        pair = _stale_pair(e, g.nodes)
+        if pair is None:
             continue
-        if e.get("type") == "depends_on" and o.get("type") != "document":
-            continue
-        dw, ow = _when(d.get("updated")), _when(o.get("updated"))
+        dw, ow = _when(g.nodes[pair[0]].get("updated")), _when(g.nodes[pair[1]].get("updated"))
         if dw and ow and ow > dw:
             what = "cites" if e["type"] == "documented_in" else "depends on"
-            found.append(_finding("doc.stale", [doc_end, other], f"{what} {other}, which changed after it"))
+            found.append(_finding("doc.stale", list(pair), f"{what} {pair[1]}, which changed after it"))
     return found
 
 

@@ -352,17 +352,24 @@ def render_read(root: Path) -> dict[str, str]:
             "| Project | Ref | Producer | Decisions | Items open | Findings |", "|---|---|---|---|---|---|"]
     out = {}
     for s in pinned:
-        mine = [n for n in joined["nodes"] if n.get("project") == s.name]
-        found = [f for f in joined["checks"] if any(str(x).partition(":")[2].startswith(f"{s.name}/")
-                                                    for x in f.get("subjects", []))]
-        by = str((s.doc.get("generated") or {}).get("by", ""))
-        decisions = [n for n in mine if n.get("type") == "decision"]
-        open_items = [n for n in mine if n.get("type") == "item" and n.get("status") in ("open", "planned")]
-        rows.append(f"| [{s.name}]({READ_DIR}/{page_name(s.name)}) | `{s.ref[:12]}` | {_cell(by)} | "
-                    f"{len(decisions)} | {len(open_items)} | {len(found)} |")
-        out[f"{READ_DIR}/{page_name(s.name)}"] = _read_page(s, mine, found, by)
+        row, page = _read_project(s, joined)
+        rows.append(row)
+        out[f"{READ_DIR}/{page_name(s.name)}"] = page
     out["README.md"] = "\n".join(rows) + "\n"
     return out
+
+
+def _read_project(s: docjoin.Source, joined: dict) -> tuple[str, str]:
+    """A read project's row in the index and its page."""
+    mine = [n for n in joined["nodes"] if n.get("project") == s.name]
+    found = [f for f in joined["checks"]
+             if any(str(x).partition(":")[2].startswith(f"{s.name}/") for x in f.get("subjects", []))]
+    by = str((s.doc.get("generated") or {}).get("by", ""))
+    decisions = sum(1 for n in mine if n.get("type") == "decision")
+    open_items = sum(1 for n in mine if n.get("type") == "item" and n.get("status") in ("open", "planned"))
+    row = (f"| [{s.name}]({READ_DIR}/{page_name(s.name)}) | `{s.ref[:12]}` | {_cell(by)} | {decisions} | "
+           f"{open_items} | {len(found)} |")
+    return row, _read_page(s, mine, found, by)
 
 
 def _node_line(n: dict) -> str:

@@ -26,7 +26,8 @@ def _e(a, b, t, **kw):
 
 
 def _git(cwd, *args):
-    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True,
+                          timeout=60).stdout.strip()
 
 
 def _registry(tmp_path, monkeypatch, store):
