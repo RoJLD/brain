@@ -101,6 +101,8 @@ def test_a_brain_renames_labels_and_adds_its_own_ids(brain):
     ({"cli": {"parent": "research"}}, "keeps its place"),
     ({"x": {"parent": "cli"}}, "no entry"),
     ({"x": {"parent": "nowhere"}}, "no entry"),
+    ({"cli": {"vision": ["K4"]}}, "vision is an entry's"),
+    ({"x": {"parent": "creation", "vision": ["J3"]}}, "vision is an entry's"),
 ])
 def test_a_bad_brain_catalog_is_named(brain, given, needle):
     errors = typologies.check(brain(typologies=given))
@@ -163,5 +165,26 @@ def test_brain_typologies_lists_and_shows(brain, capsys):
     assert one["entry"] == "software" and one["stage"] == "build" and "code" in one["layers"]
     assert cli.main(["--root", root, "typologies", "show", "cli", "--stage", "mvp"]) == 0
     assert "layers proposed at mvp (read as build): " in capsys.readouterr().out
+    assert cli.main(["--root", root, "typologies", "--json", "--lang", "fr", "show", "cli"]) == 0   # before show
+    one = json.loads(capsys.readouterr().out)
+    assert one["label"] == "Outil en ligne de commande"
     assert cli.main(["--root", root, "typologies", "show", "video-x"]) == 1
     assert "not in the typology catalog" in capsys.readouterr().out
+
+
+def test_the_catalog_is_parsed_once_and_a_broken_one_leaves_the_standards_as_before(monkeypatch):
+    typologies._read.cache_clear()
+    typologies.engine()
+    typologies.engine()
+    assert typologies._read.cache_info().hits >= 1
+    monkeypatch.setattr(typologies, "engine", lambda: (_ for _ in ()).throw(typologies.CatalogError("broken")))
+    assert standards.profiles() == list(standards.PROFILES) and standards.kinds("cli") == ["cli"]
+
+
+def test_standards_list_profile_meets_the_entry_rows():
+    from types import SimpleNamespace
+
+    from brain.commands import standards as cmd
+    row = standards.Row(id="sw-x", catalog="c", domain="d", statement="s", profiles=["software"], stage="mvp",
+                        enforcement="check", check="a lint", languages=["any"], status="proposed")
+    assert cmd._matches(row, SimpleNamespace(profile="cli")) and not cmd._matches(row, SimpleNamespace(profile="research"))

@@ -4,6 +4,7 @@ to them; ``show ID``: one id, its entry and, with ``--stage``, the graph layers 
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -83,8 +84,10 @@ def register(sub, ctx) -> None:
     sh = tsub.add_parser("show", help="one typology id: its entry, labels and the layers proposed at a stage")
     sh.add_argument("id", help="a typology id (an entry or a sub-profile)")
     sh.add_argument("--stage", help="a lifecycle stage (explore, build...) or a standards stage (prototype, mvp...)")
-    sh.add_argument("--lang", choices=typologies.LANGS, default="en", help="the labels' language (default en)")
-    sh.add_argument("--json", action="store_true", help="stable keys")
+    # SUPPRESS: given before show (brain typologies --json show X), the parent's value stays
+    sh.add_argument("--lang", choices=typologies.LANGS, default=argparse.SUPPRESS,
+                    help="the labels' language (default en)")
+    sh.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="stable keys")
 
 
 run = cmd_typologies
