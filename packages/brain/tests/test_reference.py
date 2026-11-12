@@ -57,6 +57,36 @@ def test_a_module_page_holds_its_features_decisions_in_force_rules_specs_items_a
     assert reference.render(root, store) == files   # no date of its own
 
 
+def test_a_pinned_read_project_gets_its_page_and_a_row_in_the_index(tmp_path, monkeypatch):
+    """wi-brain-docgraph-read: the Sigma view of the reference reads the projects the brain only reads from their
+    pinned docgraph/v1 documents; an unpinned copy gets no page (brain check names it)."""
+    root, store = _brain(tmp_path, monkeypatch)
+    reg = tmp_path / "projects.yaml"
+    reg.write_text(reg.read_text(encoding="utf-8") + "shop: {title: read only, access: read}\n"
+                   "mill: {title: read only, access: read}\n", encoding="utf-8")
+    src = {"path": "docs/x.md"}
+    doc = {"schema": "docgraph/v1", "generated": {"at": "2026-01-01T00:00:00Z", "by": "shop-docs 0.1"},
+           "pinned": {"ref": "0123456789abcdef0123", "file": "docs-graph.json", "at": "2026-01-02T00:00:00Z"},
+           "nodes": [{"id": "decision:0005", "type": "decision", "title": "Transport", "status": "accepted",
+                      "source": {"path": "docs/adr/0005.md"}},
+                     {"id": "criterion:S2-1", "type": "criterion", "title": "Paired", "source": src},
+                     {"id": "item:25", "type": "item", "title": "Signed orders", "status": "open",
+                      "source": {"tracker": "issue", "number": 25}}],
+           "edges": []}
+    (root / "docgraph").mkdir()
+    (root / "docgraph" / "shop.json").write_text(json.dumps(doc), encoding="utf-8")
+    (root / "docgraph" / "mill.json").write_text(json.dumps({**doc, "pinned": None}), encoding="utf-8")
+    files = reference.render(root, store)
+    assert "read/shop.md" in files and "read/mill.md" not in files
+    assert "| [shop](read/shop.md) | `0123456789ab` | shop-docs 0.1 | 1 | 1 | 1 |" in files["README.md"]
+    page = files["read/shop.md"]
+    assert reference.generated(page) and "pinned at `0123456789abcdef0123`" in page
+    assert "- `0005` (accepted) Transport — `docs/adr/0005.md`" in page and "- open: 1" in page
+    assert "error: `criterion.no-item` [join] no item serves it (`criterion:shop/S2-1`)" in page
+    assert reference.render(root, store) == files
+    assert reference.stale(root / reference.DIR, files)   # not written yet: every page is late
+
+
 def test_a_decision_about_no_module_is_unplaced_and_counted(tmp_path, monkeypatch):
     root, store = _brain(tmp_path, monkeypatch)
     with (store / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
