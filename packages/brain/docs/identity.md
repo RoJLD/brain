@@ -155,6 +155,24 @@ install (wi-brain-release-signing). The engine verifies; it never signs.
   own installer, such as one that clones the engine at the pin and runs that clone's `install.ps1`, runs the tag's
   code before any check). An older tag's installer has no check at all, so a rollback through it is not refused. A
   brain's own installer protects its machines only by running `git verify-tag` on its clone itself, before running it.
+  The installer says whether it runs from the signed commit (`verify   this installer runs from that commit`, else a
+  `note` naming its own HEAD): a statement, never a refusal, since a checkout of a branch you trust runs it too.
+- **A brain's own bootstrap** (one that clones the engine at `engine.pin` and runs that clone's installer) verifies the
+  clone before any of its code runs, the installer's plan included, with no network:
+
+  ```bash
+  git -C <clone> rev-parse --show-prefix                       # empty: the folder is the clone's top
+  git -C <clone> cat-file -t refs/tags/<pin>                   # tag: an annotated tag (a lightweight one is unsigned)
+  git -C <clone> rev-parse HEAD "refs/tags/<pin>^{commit}"     # the same commit twice
+  git -C <clone> status --porcelain --untracked-files=no       # empty: no tracked file changed (a __pycache__ is fine)
+  git -C <clone> -c gpg.ssh.allowedSignersFile=<brain>/allowed_signers -c gpg.ssh.program=ssh-keygen \
+      verify-tag --raw refs/tags/<pin>                         # Good "git" signature for <releaser>
+  ```
+
+  A fresh clone is checked in its temporary folder before it takes its place; a cached one on every run. Under
+  `engine.verify_tags` a clone that fails one of these is refused before it runs (and a fresh one removed, so nothing
+  imports it); otherwise it is said, as the installer says its own check. The code that checks lives in the brain,
+  reviewed there, never in the clone.
 - **Nothing is refused by default**: both say the verification and install anyway, until the owner sets
   `"engine": {..., "verify_tags": true}` in `config.json`. Then a tag that is unsigned, signed by a key not in
   `allowed_signers`, or that cannot be verified (offline, no `ssh-keygen` git can run) is refused, before anything is
