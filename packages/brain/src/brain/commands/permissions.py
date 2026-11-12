@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from .. import paths, permissions, projects, queue
-from ._common import _on_main, _project
+from ._common import _on_main, _project, _scope
 
 ORDER = 260   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 300   # its usage lines' place in brain --help's epilog
@@ -23,6 +23,8 @@ USAGE = """\
                  | grant [perm-ID] [--call C] --rule R --why W [--global|--project P|--machine H|...] [--dry-run]
                  render: an adapter's files (Claude Code's; adds the missing rules, never removes one; the user file
                  is install.ps1 -Apply's); grant: a rule appended in this branch, reviewed by PR (no --rule: proposals)
+  brain permissions --scope REF [...]   each project of a node's subtree in the scope tree (brain scopes: an id, a path
+                 of ids, global = --all, . or ..); with --requests, --scope keeps its meaning: a level's start
 """
 
 
@@ -65,7 +67,9 @@ def cmd_permissions(args, root: Path) -> int:
             print("  grant one: brain permissions grant <id> --rule R --why W [level] [--until D | --for-days N | "
                   "--while ITEM]")
         return 0
-    scope = list(model.registry) if args.all else [_project(args, root).name]
+    tree = bool(args.scope)   # not --requests (returned above): --scope REF is a node of the scope tree
+    names = [p.name for p in _scope(args, root)] if tree else []
+    scope = list(model.registry) if args.all else names or [_project(args, root).name]
     out = []
     for i, name in enumerate(scope):
         ctx = permissions.context(model, name, args.machine or "", args.session or "")
@@ -93,7 +97,7 @@ def cmd_permissions(args, root: Path) -> int:
         if not args.json:
             print("\n".join(permissions.render_text(data)))
     if args.json:
-        print(json.dumps(out if args.all else out[0], ensure_ascii=False, indent=1))
+        print(json.dumps(out if args.all or tree else out[0], ensure_ascii=False, indent=1))
     elif not args.explain:
         print("  brain permissions --explain RULE|perm-ID: where a rule comes from; render: the settings files; "
               "grant: a rule, by PR")
@@ -237,7 +241,9 @@ def register(sub, ctx) -> None:
                     "entries and the rules granted for them, with scope, reason, items, milestones, what each "
                     "unblocks, sessions, evidence, duration and status")
     pe.add_argument("--status", choices=["pending", "granted", "expired"], help="--requests: one status")
-    pe.add_argument("--scope", help="--requests: a scope's start (global, project, project quant, machine...)")
+    pe.add_argument("--scope", help="a node of the scope tree, its projects' lists (brain scopes: an id, a path of "
+                                    "ids, global, . or ..); with --requests: a level's start (global, project, project "
+                                    "demo, machine...)")
     pe.add_argument("--item", help="--requests: those that unblock this item or milestone")
     pe.add_argument("--search", help="--requests: a text in the id, reason or evidence")
     pe.add_argument("--sort", choices=list(permissions.REQUEST_SORTS), default="unblocks", help="--requests' order")

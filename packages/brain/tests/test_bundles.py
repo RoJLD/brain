@@ -235,7 +235,10 @@ def test_a_compose_config_out_of_time_that_still_holds_its_folder_is_a_problem_n
 @pytest.mark.docker
 @pytest.mark.skipif(not shutil.which("docker"), reason="docker not on the PATH")
 def test_docker_compose_config_accepts_the_rendering(tmp_path, monkeypatch):
-    """docker compose config (client side: no engine, nothing started) on the template and on the rendering."""
+    """docker compose config (client side: no engine, nothing started) on the template and on the rendering. The test
+    checks the rendering, not the command's timeout: a cold docker client on a loaded machine took longer than the
+    15 s a check allows (CMD_TIMEOUT) and the test said "no answer" (wi-brain-test-speed-2), so it waits 120 s."""
+    monkeypatch.setattr(stacks, "CMD_TIMEOUT", 120.0)
     reg = _registry(tmp_path, monkeypatch)
     _, files = bundles.render("sovereign", bundles.components(reg, "sovereign"))
     assert bundles._compose_config(files) == ("docker compose config OK", "")

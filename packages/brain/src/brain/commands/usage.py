@@ -21,7 +21,8 @@ USAGE = """\
                  unit (median, p25-p75, p90), whose the cost is (main threads, subagents, workflows: their
                  transcripts are read with the session that launched them, counted once), and the script candidates
                  (3-step sequences repeated across sessions); WHEN: Nd, Nw, today, yesterday, last-week, last-month
-                 or YYYY-MM-DD (default 7d)
+                 or YYYY-MM-DD (default 7d); --scope REF: the sessions of the projects of a node's subtree in the
+                 scope tree (brain scopes: an id, a path of ids, global, . or ..)
   brain usage quota [--observe PCT [--resets TIME] [--at TIME]] [--window week|5h] [--no-scan] [--json]
                  the plan's quota (brain.quota): --observe notes a get_usage reading (percent used, read at --at,
                  default now; the window resets at --resets, get_usage's resetsAt, default the last reading's moved
@@ -109,6 +110,8 @@ def register(sub, ctx) -> None:
     us.add_argument("--hours", type=float, help="allow: how long the override holds (default 2; 0 ends it)")
     us.add_argument("--reason", help="allow: why, kept with the override")
     us.add_argument("--all", action="store_true", help="every session on this machine, whatever its project")
+    us.add_argument("--scope", help="the sessions of the projects of a node's subtree in the scope tree (brain "
+                                    "scopes): an id, a path of ids, global, . or ..")
     us.add_argument("--since", help="Nd, Nw, today, yesterday, last-week, last-month or YYYY-MM-DD (default 7d)")
     us.add_argument("--until", help="the same, excluded (default: now)")
     us.add_argument("--by", choices=cost.DIMS, default="summary",
