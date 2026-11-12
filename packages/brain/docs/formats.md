@@ -303,16 +303,16 @@ The rule holds for a project's own data too, in its own language (spec-brain-dat
 migrations under `migrations:` (`brain.formats`, `brain projects --keys`).
 
 ```yaml
-quant:
+shop:
   formats:
-    - id: alloc-contract                     # unique in the project
-      glob: alloc/*.json                     # its files, relative to the repo: a glob or a list
-      repo: quant                            # optional: a repo of repos: (default: the project's first, its root)
+    - id: orders-contract                     # unique in the project
+      glob: orders/*.json                     # its files, relative to the repo: a glob or a list
+      repo: shop                             # optional: a repo of repos: (default: the project's first, its root)
       class: private                         # its data class
       version: SCHEMA_VERSION                # where its version is read: free text
-      schema: schemas/alloc.schema.json      # optional: a file that exists
-      fixtures: tests/fixtures/alloc/        # optional: a folder that exists
-      check: python -m quant.alloc --check   # optional: exit 0 valid, 1 invalid
+      schema: schemas/orders.schema.json      # optional: a file that exists
+      fixtures: tests/fixtures/orders/        # optional: a folder that exists
+      check: python -m mypkg.contract --check   # optional: exit 0 valid, 1 invalid
       timeout: 120                           # optional: seconds, default 120, at most 3600
   migrations:
     - when: ["models/**/*.py", "db/*.sql"]   # a change of one of these files...
@@ -339,7 +339,7 @@ quant:
   nothing. A change of code the checker imports from elsewhere does not invalidate the cache: run `--fresh` after
   it. A plain `brain check` never runs a command, and a project the brain only reads (`access: read`) declares no
   format (its entry holds title, access, parent and classes only): no command of it is ever run. The registry's
-  check walks each glob from its literal folder (`alloc/` for `alloc/*.json`) and stops at the first match.
+  check walks each glob from its literal folder (`orders/` for `orders/*.json`) and stops at the first match.
 - **The migrations, in the scout.** `brain audit --diff` finds a change of a `when` file (not a light touch:
   docstrings, imports or whitespace only; a deletion, or a rename out of the `when` globs, counts) with no file
   added (a rename into an `add` glob from outside it counts) that matches one of the rule's `add` globs: a NEW

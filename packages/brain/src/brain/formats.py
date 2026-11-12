@@ -5,14 +5,14 @@ language.
 ``formats:`` registers the persisted formats a project's code reads and writes, one entry each::
 
   formats:
-    - id: alloc-contract                     # unique in the project
-      glob: alloc/*.json                     # its files, relative to the repo: a glob or a list (** any folders)
-      repo: quant                            # optional: a repo name of repos: (default: the project's first, its root)
+    - id: orders-contract                     # unique in the project
+      glob: orders/*.json                     # its files, relative to the repo: a glob or a list (** any folders)
+      repo: shop                             # optional: a repo name of repos: (default: the project's first, its root)
       class: private                         # its data class (brain.classes.CLASSES)
       version: SCHEMA_VERSION                # where its version is read: free text
-      schema: schemas/alloc.schema.json      # optional: a file that exists
-      fixtures: tests/fixtures/alloc/        # optional: a folder that exists
-      check: python -m quantlab.alloc --check   # optional: exit 0 valid, 1 invalid
+      schema: schemas/orders.schema.json      # optional: a file that exists
+      fixtures: tests/fixtures/orders/        # optional: a folder that exists
+      check: python -m mypkg.contract --check   # optional: exit 0 valid, 1 invalid
       timeout: 120                           # optional: the check's bound in seconds (default 120, at most 3600)
 
 **The declarations are checked always**, with the registry (``brain check`` in a brain's root, ``brain check --all``;
@@ -32,7 +32,7 @@ and is never loaded, so no command of it is ever run.
   migrations:
     - when: ["models/**/*.py", "db/*.sql"]
       add: ["migrations/*.py", "tests/fixtures/db/**"]
-      repo: quant                            # optional, as above
+      repo: shop                             # optional, as above
 
 A when-file changed (not a light touch: docstrings, imports or whitespace only) with no added file matching an
 ``add`` glob is a NEW ``format.migration`` finding on that file; a ``Justified: <path>: <reason>`` line (the PR body

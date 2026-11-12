@@ -24,11 +24,11 @@ COUNT = "import pathlib, sys; f = pathlib.Path(sys.argv[1]); f.write_text(f.read
 
 
 def _project(tmp_path, monkeypatch, formats_yaml: str = "", extra: str = "", files=None):
-    """A project ``lab`` at a plain folder holding ``files`` (default: two alloc files, a schema, a fixtures folder)."""
+    """A project ``lab`` at a plain folder holding ``files`` (default: two order files, a schema, fixtures)."""
     root = tmp_path / "lab"
     for rel, text in (files if files is not None else {
-            "alloc/a.json": "{}", "alloc/b.json": "{}", "schemas/alloc.schema.json": "{}",
-            "tests/fixtures/alloc/v1.json": "{}"}).items():
+            "orders/a.json": "{}", "orders/b.json": "{}", "schemas/orders.schema.json": "{}",
+            "tests/fixtures/orders/v1.json": "{}"}).items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
     root.mkdir(exist_ok=True)
@@ -40,8 +40,8 @@ def _project(tmp_path, monkeypatch, formats_yaml: str = "", extra: str = "", fil
 
 
 def _fmt(check: str = "", **over) -> str:
-    keys = {"id": "alloc", "glob": "alloc/*.json", "class": "private", "version": "SCHEMA_VERSION",
-            "schema": "schemas/alloc.schema.json", "fixtures": "tests/fixtures/alloc", **over}
+    keys = {"id": "orders", "glob": "orders/*.json", "class": "private", "version": "SCHEMA_VERSION",
+            "schema": "schemas/orders.schema.json", "fixtures": "tests/fixtures/orders", **over}
     if check:
         keys["check"] = check
     body = "".join(f"      {k}: {v}\n" for k, v in keys.items() if v is not None)
@@ -49,15 +49,15 @@ def _fmt(check: str = "", **over) -> str:
 
 
 def test_the_keys_are_registered_and_a_valid_declaration_passes(tmp_path, monkeypatch):
-    _project(tmp_path, monkeypatch, _fmt() + _fmt(id="alloc-2", schema=None, fixtures=None, check=_cmd("pass"),
+    _project(tmp_path, monkeypatch, _fmt() + _fmt(id="orders-2", schema=None, fixtures=None, check=_cmd("pass"),
                                                   timeout=30),
              extra="  migrations:\n    - {when: ['models/**/*.py'], add: ['migrations/*.py', 'tests/fixtures/db/**']}\n")
     assert {"formats", "migrations"} <= set(projects.KEYS)
     assert projects.check() == []
     p = projects.load()["lab"]
     fmts = formats.formats_of(p.formats)
-    assert [(f.id, f.cls, f.version, f.timeout) for f in fmts] == [("alloc", "private", "SCHEMA_VERSION", 120),
-                                                                    ("alloc-2", "private", "SCHEMA_VERSION", 30)]
+    assert [(f.id, f.cls, f.version, f.timeout) for f in fmts] == [("orders", "private", "SCHEMA_VERSION", 120),
+                                                                    ("orders-2", "private", "SCHEMA_VERSION", 30)]
     assert fmts[0].check is None and fmts[1].check == [sys.executable, "-c", "pass"]
     assert [(m.when, m.add) for m in formats.migrations_of(p.migrations)] == [
         (["models/**/*.py"], ["migrations/*.py", "tests/fixtures/db/**"])]
@@ -65,22 +65,22 @@ def test_the_keys_are_registered_and_a_valid_declaration_passes(tmp_path, monkey
 
 @pytest.mark.parametrize("entry, message", [
     ("    - {glob: 'a/*', class: private, version: v}\n", "formats[0]: id is required"),
-    ("    - {id: x, glob: 'alloc/*.json', class: open, version: v}\n", "format x: class is one of public"),
-    ("    - {id: X!, glob: 'alloc/*.json', class: private, version: v}\n", "id is lowercase letters"),
+    ("    - {id: x, glob: 'orders/*.json', class: open, version: v}\n", "format x: class is one of public"),
+    ("    - {id: X!, glob: 'orders/*.json', class: private, version: v}\n", "id is lowercase letters"),
     ("    - {id: x, glob: '/etc/*', class: private, version: v}\n", "glob is relative to the repo"),
     ("    - {id: x, glob: '../up/*', class: private, version: v}\n", "glob is relative to the repo"),
-    ("    - {id: x, glob: 'alloc/*.json', class: private, version: v, timeout: 0}\n", "timeout is a whole number"),
-    ("    - {id: x, glob: 'alloc/*.json', class: private, version: v, check: ''}\n", "check is a command"),
-    ("    - {id: x, glob: 'alloc/*.json', class: private, version: v, repo: other}\n",
+    ("    - {id: x, glob: 'orders/*.json', class: private, version: v, timeout: 0}\n", "timeout is a whole number"),
+    ("    - {id: x, glob: 'orders/*.json', class: private, version: v, check: ''}\n", "check is a command"),
+    ("    - {id: x, glob: 'orders/*.json', class: private, version: v, repo: other}\n",
      "repo 'other' is not one of the project's repos (lab)"),
-    ("    - {id: x, glob: 'alloc/*.json', class: private, version: v}\n    - {id: x, glob: 'alloc/*.json', "
+    ("    - {id: x, glob: 'orders/*.json', class: private, version: v}\n    - {id: x, glob: 'orders/*.json', "
      "class: private, version: v}\n", "format x: its id is used twice"),
     ("    - {id: x, glob: 'nothing/*.json', class: private, version: v}\n", "matches no file in lab"),
-    ("    - {id: x, glob: 'alloc/*.json', class: private, version: v, schema: s.json}\n",
+    ("    - {id: x, glob: 'orders/*.json', class: private, version: v, schema: s.json}\n",
      "its schema s.json is not a file in lab"),
-    ("    - {id: x, glob: 'alloc/*.json', class: private, version: v, fixtures: fx}\n",
+    ("    - {id: x, glob: 'orders/*.json', class: private, version: v, fixtures: fx}\n",
      "its fixtures fx is not a folder in lab"),
-    ("    - {id: x, glob: 'alloc/*.json', class: private, version: v, owner: me}\n", "format x: unknown key(s) owner"),
+    ("    - {id: x, glob: 'orders/*.json', class: private, version: v, owner: me}\n", "format x: unknown key(s) owner"),
 ])
 def test_a_bad_declaration_is_named_by_the_registry_check(tmp_path, monkeypatch, entry, message):
     _project(tmp_path, monkeypatch, entry)
@@ -112,12 +112,12 @@ def test_check_runs_bounded_and_caches_a_pass_or_a_fail_by_the_files_hashes(tmp_
     marker = tmp_path / "count"
     root = _project(tmp_path, monkeypatch, _fmt(check=json.dumps([sys.executable, "-c", COUNT, str(marker)])))
     assert cli.main(["formats", "check", "--project", "lab"]) == 0
-    assert "pass     alloc (" in capsys.readouterr().out and marker.read_text(encoding="utf-8") == "x"
+    assert "pass     orders (" in capsys.readouterr().out and marker.read_text(encoding="utf-8") == "x"
     assert cli.main(["formats", "check", "--project", "lab"]) == 0   # the same files: the cached pass
-    assert "pass     alloc (cached)" in capsys.readouterr().out and marker.read_text(encoding="utf-8") == "x"
+    assert "pass     orders (cached)" in capsys.readouterr().out and marker.read_text(encoding="utf-8") == "x"
     cache = json.loads(formats.cache_file("lab").read_text(encoding="utf-8"))
-    assert cache["v"] == 1 and cache["results"]["alloc"]["status"] == "pass"
-    for change in ("alloc/b.json", "schemas/alloc.schema.json", "tests/fixtures/alloc/v1.json"):
+    assert cache["v"] == 1 and cache["results"]["orders"]["status"] == "pass"
+    for change in ("orders/b.json", "schemas/orders.schema.json", "tests/fixtures/orders/v1.json"):
         (root / change).write_text('{"changed": "%s"}' % change, encoding="utf-8")
         assert cli.main(["formats", "check", "--project", "lab"]) == 0
         capsys.readouterr()
@@ -136,7 +136,7 @@ def test_a_fail_is_cached_a_timeout_or_another_exit_never(tmp_path, monkeypatch,
     assert cli.main(["formats", "check", "--project", "lab", "--json"]) == 1
     data = json.loads(capsys.readouterr().out)
     assert [(r["format"], r["status"], r["cached"]) for r in data["projects"][0]["results"]] == [
-        ("alloc", status, False)]
+        ("orders", status, False)]
     cli.main(["formats", "check", "--project", "lab", "--json"])
     again = json.loads(capsys.readouterr().out)["projects"][0]["results"][0]
     assert (again["status"], again["cached"]) == (status, cached)
@@ -146,7 +146,7 @@ def test_a_command_not_found_a_format_without_check_and_an_invalid_declaration(t
     _project(tmp_path, monkeypatch, _fmt(check="no-such-checker-xyz --check") + _fmt(id="plain"))
     assert cli.main(["formats", "check", "--project", "lab", "--json"]) == 1
     res = {r["format"]: r for r in json.loads(capsys.readouterr().out)["projects"][0]["results"]}
-    assert res["alloc"]["status"] == "error" and "cannot run 'no-such-checker-xyz'" in res["alloc"]["detail"]
+    assert res["orders"]["status"] == "error" and "cannot run 'no-such-checker-xyz'" in res["orders"]["detail"]
     assert res["plain"]["status"] == "skipped"
     assert cli.main(["formats", "check", "--project", "lab", "--format", "plain"]) == 0
     capsys.readouterr()
@@ -159,14 +159,14 @@ def test_a_command_not_found_a_format_without_check_and_an_invalid_declaration(t
 
 
 def test_list_prints_each_format(tmp_path, monkeypatch, capsys):
-    _project(tmp_path, monkeypatch, _fmt(check="python -m lab.alloc --check"))
+    _project(tmp_path, monkeypatch, _fmt(check="python -m lab.contract --check"))
     assert cli.main(["formats", "list", "--project", "lab", "--json"]) == 0
     (row,) = json.loads(capsys.readouterr().out)["formats"]
-    assert row["repo"] == "lab" and row["check"] == ["python", "-m", "lab.alloc", "--check"]
+    assert row["repo"] == "lab" and row["check"] == ["python", "-m", "lab.contract", "--check"]
     assert cli.main(["formats", "list", "--project", "lab"]) == 0
     out = capsys.readouterr().out
-    assert "lab/alloc  alloc/*.json in lab  class private, version: SCHEMA_VERSION" in out
-    assert "check: python -m lab.alloc --check (timeout 120 s)" in out
+    assert "lab/orders  orders/*.json in lab  class private, version: SCHEMA_VERSION" in out
+    assert "check: python -m lab.contract --check (timeout 120 s)" in out
 
 
 def test_a_read_only_project_declares_no_format_and_nothing_of_it_runs(tmp_path, monkeypatch, capsys):
@@ -185,17 +185,17 @@ def test_a_read_only_project_declares_no_format_and_nothing_of_it_runs(tmp_path,
 
 def test_brain_check_formats_runs_them_after_the_check(tmp_path, monkeypatch, capsys, store):
     root = store.parents[1]
-    (root / "alloc").mkdir()
-    (root / "alloc" / "a.json").write_text("{}", encoding="utf-8")
+    (root / "orders").mkdir()
+    (root / "orders" / "a.json").write_text("{}", encoding="utf-8")
     reg = tmp_path / "projects.yaml"
-    reg.write_text(f"demo:\n  root: {root.as_posix()}\n  formats:\n    - {{id: alloc, glob: 'alloc/*.json', class: "
+    reg.write_text(f"demo:\n  root: {root.as_posix()}\n  formats:\n    - {{id: orders, glob: 'orders/*.json', class: "
                    f"private, version: v, check: {_cmd('import sys; sys.exit(1)')}}}\n", encoding="utf-8")
     monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
     cli.main(["check", "--project", "demo"])
     assert "== formats" not in capsys.readouterr().out   # a plain check runs no command
     assert cli.main(["check", "--project", "demo", "--formats"]) == 1
     out = capsys.readouterr().out
-    assert "== formats" in out and "fail     alloc" in out
+    assert "== formats" in out and "fail     orders" in out
 
 
 def test_the_cache_is_a_registered_engine_store():
@@ -322,17 +322,17 @@ def test_a_file_it_cannot_read_runs_the_check_and_caches_nothing(tmp_path, monke
 
 def test_all_with_one_format_checks_the_projects_that_declare_it(tmp_path, monkeypatch, capsys):
     _project(tmp_path, monkeypatch, _fmt(check=_cmd("pass")), extra="other:\n  root: .\n")
-    assert cli.main(["formats", "check", "--all", "--format", "alloc", "--json"]) == 0
+    assert cli.main(["formats", "check", "--all", "--format", "orders", "--json"]) == 0
     assert [d["project"] for d in json.loads(capsys.readouterr().out)["projects"]] == ["lab"]
     assert cli.main(["formats", "check", "--all", "--format", "nope"]) == 1
     assert "no format 'nope'" in capsys.readouterr().out
 
 
 def test_the_walk_starts_at_the_globs_folder(tmp_path):
-    (tmp_path / "alloc").mkdir()
-    (tmp_path / "alloc" / "a.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "orders").mkdir()
+    (tmp_path / "orders" / "a.json").write_text("{}", encoding="utf-8")
     (tmp_path / "big").mkdir()
     (tmp_path / "big" / "a.json").write_text("{}", encoding="utf-8")
-    assert formats._prefix("alloc/**/*.json") == "alloc" and formats._prefix("**/*.json") == ""
-    assert formats.files(tmp_path, ["alloc/*.json"]) == ["alloc/a.json"]
-    assert formats.files(tmp_path, ["**/a.json"]) == ["alloc/a.json", "big/a.json"]
+    assert formats._prefix("orders/**/*.json") == "orders" and formats._prefix("**/*.json") == ""
+    assert formats.files(tmp_path, ["orders/*.json"]) == ["orders/a.json"]
+    assert formats.files(tmp_path, ["**/a.json"]) == ["big/a.json", "orders/a.json"]
