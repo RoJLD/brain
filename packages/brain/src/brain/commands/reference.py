@@ -76,6 +76,17 @@ def _denied(args, root: Path, files: dict[str, str]) -> list[str]:
     return denied
 
 
+def _asof_base(args, root: Path, store: Path) -> Path | None:
+    """--asof --out: the folder, refused inside the repository (an as-of render is never the repo's copy)."""
+    if not args.out:
+        return None
+    out = Path(args.out).resolve()
+    for inside in {root.resolve(), asof._top(store)[0].resolve()}:
+        if out == inside or inside in out.parents:
+            raise asof.AsofError(f"--out {out} is inside the repository: an as-of render goes outside it")
+    return out
+
+
 def _asof(args, root: Path) -> int:
     """--asof: the reference as of a point, written under BRAIN_HOME/views (or --out), never into the repo."""
     from ._common import _project
@@ -83,12 +94,17 @@ def _asof(args, root: Path) -> int:
         print("brain reference --asof: renders under BRAIN_HOME/views (or --out), never --public nor --write",
               file=sys.stderr)
         return 1
+    store = _store(args, root)
     try:
-        point, files = asof.render(_store(args, root), args.asof)
+        base = _asof_base(args, root, store)
+        point, files = asof.render(store, args.asof, root, _store_label(root, store))
+        base = base or asof.out_dir(_project(args, root).name, point)
+        if asof.dirty(store):
+            print("brain reference --asof: note: the store has changes not committed; it reads commits only",
+                  file=sys.stderr)
     except asof.AsofError as exc:
         print(f"brain reference --asof: {exc}", file=sys.stderr)
         return 1
-    base = Path(args.out).resolve() if args.out else asof.out_dir(_project(args, root).name, point)
     changed, kept = reference.write(base, files)
     for p in kept:
         print(f"brain: {base / p} is not generated (no '{reference.MARKER}'): kept, not overwritten", file=sys.stderr)
