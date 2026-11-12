@@ -12,8 +12,8 @@ from brain import audit, cli, commands, inventory
 from brain.commands import _registry
 from brain.commands import audit as audit_cmd
 from brain.commands import (bundle, capture, check, code_map, collisions, decision, down, health, impact, index, init,
-                            memory, merge_check, merge_driver, milestone, perf, probes, quiet, refresh, resume, retro,
-                            review, schedule, schema, sessions, spec, timed, up, update)
+                            ipc, mcp, memory, merge_check, merge_driver, milestone, perf, probes, quiet, refresh,
+                            resume, retro, review, schedule, schema, sessions, spec, timed, up, update)
 from test_audit import README, _measure
 
 MODULES = _registry.load()
@@ -31,7 +31,7 @@ def test_every_command_module_keeps_the_contract():
     usage_orders = [m.USAGE_ORDER for m in MODULES if getattr(m, "USAGE", "")]
     assert len(set(orders)) == len(orders) and len(set(usage_orders)) == len(usage_orders)   # one place each
     assert owners["doctor"] is owners["profile"] and owners["lessons"] is owners["lesson"]   # an alias, its module
-    assert _registry.no_project() == {"capture", "announce", "memory", "sessions", "quiet", "probes"}
+    assert _registry.no_project() == {"capture", "announce", "memory", "sessions", "quiet", "probes", "mcp", "ipc"}
 
 
 def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeypatch):
@@ -53,7 +53,7 @@ def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeyp
 # that may hold no graph store): their module defines early, and no run; decision, resume and check define both (early
 # for announce, --hook and --public only); every other command needs the project's root (run only)
 EARLY = {capture, memory, timed, perf, init, merge_driver, merge_check, sessions, schedule, update, audit_cmd, impact,
-         index, up, down, health, bundle, quiet, review, probes, schema}
+         index, up, down, health, bundle, quiet, review, probes, schema, mcp, ipc}
 BOTH = {decision, resume, check}
 ROOTED = {code_map, collisions, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
 

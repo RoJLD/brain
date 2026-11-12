@@ -1,0 +1,38 @@
+# The Brain's MCP server in a container (wi-brain-mcp-server; docs: packages/brain/docs/mcp.md). A definition, not a
+# service: nothing runs it on its own, and it never restarts by itself (restart: "no"); running it, and anything that
+# makes it reachable from another machine, is the owner's decision.
+#
+#   BRAIN_ROOT_DIR=<the personal brain's checkout> BRAIN_IPC_TOKEN=<the machine's token file> \
+#     docker compose -f packages/brain/container/compose.yaml up --build
+#
+# The token file is the one brain ipc token --init makes (<BRAIN_HOME>/ipc/token); the client sends it as
+# Authorization: Bearer. The port is published on 127.0.0.1 only.
+name: brain-mcp
+
+services:
+  brain-mcp:
+    build:
+      context: ../../..
+      dockerfile: packages/brain/container/Dockerfile
+      args:
+        BRAIN_VERSION: ${BRAIN_VERSION:-dev}
+    image: brain-mcp:${BRAIN_VERSION:-dev}
+    user: "10001:10001"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ${BRAIN_ROOT_DIR:?the personal brain's checkout}:/brain:ro
+      - brain-home:/var/lib/brain
+    secrets: [brain-ipc-token]
+    ports:
+      - 127.0.0.1:8791:8791
+    restart: "no"
+
+volumes:
+  brain-home: {}
+
+secrets:
+  brain-ipc-token:
+    file: ${BRAIN_IPC_TOKEN:?the machine's token file (brain ipc token --init)}
