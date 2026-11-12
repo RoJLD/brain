@@ -323,6 +323,16 @@ Its fixtures, `tests/fixtures/formats/docgraph/v1/`, are a first producer's docu
 of its own, a need and a producer's own check (`newer`); `tests/test_docgraph.py` reads both clean. A brain holds no
 file of it (the upgrade test's `NOT_STORED`).
 
+**Out and in: the module catalogue.** `catalogue/v1` ([catalogue.md](catalogue.md), wi-brain-catalogue-contract) is a
+catalogue of modules (bricks, modules, distributions, presets) any program may emit and an installer or a settings
+tab reads, published as `schemas/catalogue.schema.json` (registered in `SCHEMAS`, `catalogue`). Versioned by its id
+(`schema: catalogue/v1`) like the documentation graph, it allows a key it does not name at every level, and a key it
+names keeps its type and its values: a new class, status or preset kind is `catalogue/v2`, which `brain catalogue
+validate` refuses as a later contract. Its fixtures, `tests/fixtures/formats/catalogue/v1/`, are a first producer's
+catalogue (`older`) and another's with keys of its own, a persona, a typology id no catalogue holds yet and a soft
+dependency on another catalogue's module (`newer`); `tests/test_catalogue.py` reads both clean. A brain holds no file
+of it (`brain catalogue emit` prints one: the upgrade test's `NOT_STORED`).
+
 ## The validator's keywords
 
 `brain.schema` validates with the standard library only, so the capture hooks can validate what they write. It
@@ -346,8 +356,8 @@ Beside that pair, **each released engine's own file** (wi-brain-format-fixture-f
 old stores » below), never edited. `tests/test_formats_frozen.py` reads each one strict, as CI does: what N-1 wrote,
 N reads with no note and no error. ar, config, ddr, event (the first lines of an exec ledger file), packs, projects,
 sr and template are frozen from v0.2.4 and v0.3.1, then the last tag's at each version PR; the formats no command
-writes (permissions, members, readme, modules, standards, docgraph) keep their hand-written pair only, and the status
-document too: `brain doctor --json` prints the machine's own inventory, which a public fixture never holds.
+writes (permissions, members, readme, modules, standards, docgraph, catalogue) keep their hand-written pair only, and
+the status document too: `brain doctor --json` prints the machine's own inventory, which a public fixture never holds.
 
 ### The old stores
 
