@@ -394,7 +394,7 @@ def config_text(owner: str, kind: str = "person", tenant: str | None = None, tie
     tpl = tpl or load_template()
     data = {"v": 1, "identity": ident, "registry": "projects.yaml", "rules": ["rules/global.md"], "memory": "memory",
             "records": "records", "template": {"name": tpl.name, "version": tpl.version},
-            "engine": {"repo": ENGINE_REPO, "pin": f"v{__version__}"}, "tier": {"base": tier},
+            "engine": {"repo": ENGINE_REPO, "pin": f"v{__version__}"}, "tier": {"base": tier}, "modules": {},
             "adapters": {"claude": claude}, "public": {"repos": [], "deny": {"people": [owner], **machine_terms()}},
             "classes": classes_block(tpl)}
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
