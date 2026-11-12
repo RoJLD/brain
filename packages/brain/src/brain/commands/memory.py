@@ -6,6 +6,10 @@ from .. import memory
 
 ORDER = 430   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 400   # its usage lines' place in brain --help's epilog
+RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
+    "memory status": "on demand: a dry-run plan against main (the memory hook shows only the last sync's alert)",
+    "memory sync": "wired: the memory hook (memory.sh) syncs at session end, detached",
+}
 USAGE = """\
   brain memory status [--offline]   what a memory sync would do, note by note (export, import, conflict, kept),
                                   against main fetched now (--offline: as last fetched); writes nothing

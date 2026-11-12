@@ -13,6 +13,9 @@ from ._common import _print_json, _project
 
 ORDER = 125   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 125   # its usage lines' place in brain --help's epilog
+RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
+    "standards show": "on demand: one standard read by hand (brain standards lists them)",
+}
 USAGE = """\
   brain standards list [--catalog C] [--domain D] [--profile P] [--stage S] [--enforcement E] [--status S]
                  [--applicable] [--json] | show ID [--json] | check [--json]   the standards registry: one row per

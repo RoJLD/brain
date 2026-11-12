@@ -90,6 +90,12 @@ again is `brain lesson seen <les-id> --from <id>`. A lesson that recurs files it
 script first, a rule last. A coordinator runs `brain retro --wave <W>` at each wave's end or hand-over, the deep
 retro. In the same PR as the backlog change.
 
+Then record what the item really cost: `brain [--project P] cost review <id> --record` writes its actual against the
+recorded estimate and the brief's budget on the item (`props.cost_review`), beside its `props.size`, in the same PR
+as the backlog change. Like the retro, it never stops the close: when it exits 1 (an id it does not know) or prints
+`not recorded: <id>` (no session of the token ledger served the item yet), write `Cost review: skipped (<why>)` in
+the report and go on.
+
 ## 3. Ticked in the backlog
 
 Mark the item done where the project tracks its work, with the PR (repository and number) and the date and a

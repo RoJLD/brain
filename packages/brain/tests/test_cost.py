@@ -221,6 +221,9 @@ def test_cli_usage_and_cost(project, capsys):
     assert "x4.50, over" in capsys.readouterr().out
     text = (project.stores[0] / "nodes" / "work.yaml").read_text(encoding="utf-8")
     assert "cost_estimate:" in text and "cost_review:" in text
+    assert cli.main(["--root", root, "cost", "review", "wi-one", "--record"]) == 0   # in the backlog, no session
+    assert "0 review(s) recorded" in (out := capsys.readouterr().out) and "not recorded: wi-one (no session" in out
+    assert text == (project.stores[0] / "nodes" / "work.yaml").read_text(encoding="utf-8")   # nothing written
     assert cli.main(["--root", root, "cost", "audit", "--since", "2026-10-01", "--write"]) == 0
     assert "written to" in capsys.readouterr().out
     with pytest.raises(SystemExit):
