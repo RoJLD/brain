@@ -112,18 +112,18 @@ def test_check_runs_bounded_and_caches_a_pass_or_a_fail_by_the_files_hashes(tmp_
     marker = tmp_path / "count"
     root = _project(tmp_path, monkeypatch, _fmt(check=json.dumps([sys.executable, "-c", COUNT, str(marker)])))
     assert cli.main(["formats", "check", "--project", "lab"]) == 0
-    assert "pass     alloc (" in capsys.readouterr().out and marker.read_text() == "x"
+    assert "pass     alloc (" in capsys.readouterr().out and marker.read_text(encoding="utf-8") == "x"
     assert cli.main(["formats", "check", "--project", "lab"]) == 0   # the same files: the cached pass
-    assert "pass     alloc (cached)" in capsys.readouterr().out and marker.read_text() == "x"
+    assert "pass     alloc (cached)" in capsys.readouterr().out and marker.read_text(encoding="utf-8") == "x"
     cache = json.loads(formats.cache_file("lab").read_text(encoding="utf-8"))
     assert cache["v"] == 1 and cache["results"]["alloc"]["status"] == "pass"
     for change in ("alloc/b.json", "schemas/alloc.schema.json", "tests/fixtures/alloc/v1.json"):
         (root / change).write_text('{"changed": "%s"}' % change, encoding="utf-8")
         assert cli.main(["formats", "check", "--project", "lab"]) == 0
         capsys.readouterr()
-    assert marker.read_text() == "xxxx"   # each judged file changed: run again
+    assert marker.read_text(encoding="utf-8") == "xxxx"   # each judged file changed: run again
     assert cli.main(["formats", "check", "--project", "lab", "--fresh"]) == 0
-    assert marker.read_text() == "xxxxx"
+    assert marker.read_text(encoding="utf-8") == "xxxxx"
 
 
 @pytest.mark.parametrize("code, status, cached", [

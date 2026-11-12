@@ -147,6 +147,53 @@ def _relpath_ok(value) -> bool:
     return not (p.startswith("/") or re.match(r"[A-Za-z]:", p) or ".." in p.split("/"))
 
 
+def _glob_error(key: str, value) -> str:
+    g = _globs(value)
+    if g is None:
+        return f"{key} is a glob or a list of globs"
+    return "" if all(_relpath_ok(x) for x in g) else f"{key} is relative to the repo (no root, drive or '..')"
+
+
+def _path_error(key: str, value) -> str:
+    return "" if _relpath_ok(value) else f"{key} is a path relative to the repo (no root, drive or '..')"
+
+
+def _timeout_error(value) -> str:
+    ok = isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_TIMEOUT
+    return "" if ok else f"timeout is a whole number of seconds from 1 to {MAX_TIMEOUT}"
+
+
+# What each optional or required value of a format entry may be: '' when it is right (the key present only).
+VALUE_ERRORS = {
+    "glob": lambda v: _glob_error("glob", v),
+    "class": lambda v: "" if v in classes.CLASSES else f"class is one of {', '.join(classes.CLASSES)}, not {v!r}",
+    "version": lambda v: "" if isinstance(v, str) and v.strip() else "version says where its version is read (a "
+                                                                      "string)",
+    "schema": lambda v: _path_error("schema", v),
+    "fixtures": lambda v: _path_error("fixtures", v),
+    "check": lambda v: "" if argv(v) is not None else "check is a command: a string or a list of strings",
+    "timeout": _timeout_error,
+}
+
+
+def _id_error(fid, seen: set) -> str:
+    if not isinstance(fid, str) or not ID.fullmatch(fid):
+        return f"id is lowercase letters, digits, '.', '_' and '-' ({fid!r})"
+    if fid in seen:
+        return "its id is used twice in the project"
+    seen.add(fid)
+    return ""
+
+
+def _format_entry(where: str, i: int, entry: dict, seen: set, repos: list[str] | None) -> list[str]:
+    fid = entry.get("id")
+    w = f"{where}: format {fid}" if isinstance(fid, str) and fid else f"{where}: formats[{i}]"
+    out = _unknown(w, entry, FORMAT_KEYS) + [f"{w}: {k} is required" for k in REQUIRED if k not in entry]
+    found = [_id_error(fid, seen)] if "id" in entry else []
+    found += [check(entry[k]) for k, check in VALUE_ERRORS.items() if k in entry]
+    return out + [f"{w}: {e}" for e in found if e] + _repo_error(w, entry, repos)
+
+
 def format_errors(where: str, value, repos: list[str] | None = None) -> list[str]:
     """What a project's formats: breaks: a list of mappings, each with id, glob, class and version, the optional
     keys of the right shape, ids unique; ``repos``: the project's repo names, when known, that repo: must name."""
@@ -156,39 +203,10 @@ def format_errors(where: str, value, repos: list[str] | None = None) -> list[str
         return [f"{where}: formats is a list of mappings (brain projects --keys)"]
     errors, seen = [], set()
     for i, entry in enumerate(value):
-        w = f"{where}: formats[{i}]"
         if not isinstance(entry, dict):
-            errors.append(f"{w}: a mapping of {', '.join(FORMAT_KEYS)}")
+            errors.append(f"{where}: formats[{i}]: a mapping of {', '.join(FORMAT_KEYS)}")
             continue
-        fid = entry.get("id")
-        if isinstance(fid, str) and fid:
-            w = f"{where}: format {fid}"
-        errors += _unknown(w, entry, FORMAT_KEYS)
-        errors += [f"{w}: {k} is required" for k in REQUIRED if k not in entry]
-        if "id" in entry:
-            if not isinstance(fid, str) or not ID.fullmatch(fid):
-                errors.append(f"{w}: id is lowercase letters, digits, '.', '_' and '-' ({fid!r})")
-            elif fid in seen:
-                errors.append(f"{w}: its id is used twice in the project")
-            else:
-                seen.add(fid)
-        if "glob" in entry and _globs(entry["glob"]) is None:
-            errors.append(f"{w}: glob is a glob or a list of globs")
-        elif "glob" in entry and not all(_relpath_ok(g) for g in _globs(entry["glob"]) or []):
-            errors.append(f"{w}: glob is relative to the repo (no root, drive or '..')")
-        if "class" in entry and entry["class"] not in classes.CLASSES:
-            errors.append(f"{w}: class is one of {', '.join(classes.CLASSES)}, not {entry['class']!r}")
-        if "version" in entry and (not isinstance(entry["version"], str) or not entry["version"].strip()):
-            errors.append(f"{w}: version says where its version is read (a string)")
-        for k in ("schema", "fixtures"):
-            if k in entry and not _relpath_ok(entry[k]):
-                errors.append(f"{w}: {k} is a path relative to the repo (no root, drive or '..')")
-        if "check" in entry and argv(entry["check"]) is None:
-            errors.append(f"{w}: check is a command: a string or a list of strings")
-        t = entry.get("timeout", TIMEOUT)
-        if not isinstance(t, int) or isinstance(t, bool) or not 1 <= t <= MAX_TIMEOUT:
-            errors.append(f"{w}: timeout is a whole number of seconds from 1 to {MAX_TIMEOUT}")
-        errors += _repo_error(w, entry, repos)
+        errors += _format_entry(where, i, entry, seen, repos)
     return errors
 
 
@@ -216,12 +234,7 @@ def migration_errors(where: str, value, repos: list[str] | None = None) -> list[
             errors.append(f"{w}: a mapping of {', '.join(MIGRATION_KEYS)}")
             continue
         errors += _unknown(w, entry, MIGRATION_KEYS)
-        for k in ("when", "add"):
-            g = _globs(entry.get(k))
-            if g is None:
-                errors.append(f"{w}: {k} is a glob or a list of globs")
-            elif not all(_relpath_ok(x) for x in g):
-                errors.append(f"{w}: {k} is relative to the repo (no root, drive or '..')")
+        errors += [f"{w}: {e}" for e in (_glob_error(k, entry.get(k)) for k in ("when", "add")) if e]
         errors += _repo_error(w, entry, repos)
     return errors
 
@@ -374,6 +387,23 @@ def run_one(f: Format, top: Path) -> Result:
                   tail=_tail(cp.stdout + "\n" + cp.stderr))
 
 
+def _judge(f: Format, top: Path | None, hit, fresh: bool, default: str) -> tuple[Result, dict | None]:
+    """A format's result, and its new cache entry (None: nothing to remember): skipped without check:, an error
+    without its checkout, the cached pass or fail whose key still holds (unless ``fresh``), else a run."""
+    if f.check is None:
+        return Result(f.id, "skipped", detail="no check: declared"), None
+    if top is None or not top.is_dir():
+        return Result(f.id, "error", detail=f"its repo {f.repo or default} is not checked out here"), None
+    k = key(f, top)
+    if not fresh and isinstance(hit, dict) and hit.get("key") == k and hit.get("status") in ("pass", "fail"):
+        return Result(f.id, hit["status"], cached=True, tail=list(hit.get("tail") or [])), None
+    r = run_one(f, top)
+    if r.status not in ("pass", "fail"):
+        return r, None
+    return r, {"key": k, "status": r.status, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+               "seconds": round(r.seconds, 3), "tail": r.tail}
+
+
 def run(project: str, fmts: list[Format], repos: dict[str, Path], default: str, *, only: str = "",
         fresh: bool = False, timeout: int | None = None) -> list[Result]:
     """Each format's check (``only``: the one of that id), in its repo's checkout: a cached result whose key still
@@ -387,25 +417,10 @@ def run(project: str, fmts: list[Format], repos: dict[str, Path], default: str, 
             continue
         if timeout is not None:
             f = Format(**{**f.__dict__, "timeout": timeout})
-        top = repo_path(f, repos, default)
-        if f.check is None:
-            results.append(Result(f.id, "skipped", detail="no check: declared"))
-            continue
-        if top is None or not top.is_dir():
-            results.append(Result(f.id, "error", detail=f"its repo {f.repo or default} is not checked out here"))
-            continue
-        k = key(f, top)
-        hit = cached.get(f.id)
-        if not fresh and isinstance(hit, dict) and hit.get("key") == k and hit.get("status") in ("pass", "fail"):
-            results.append(Result(f.id, hit["status"], cached=True, seconds=0.0,
-                                  tail=list(hit.get("tail") or [])))
-            continue
-        r = run_one(f, top)
+        r, entry = _judge(f, repo_path(f, repos, default), cached.get(f.id), fresh, default)
         results.append(r)
-        if r.status in ("pass", "fail"):
-            cached[f.id] = {"key": k, "status": r.status, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                            "seconds": round(r.seconds, 3), "tail": r.tail}
-            changed = True
+        if entry is not None:
+            cached[f.id], changed = entry, True
     if changed and state.writable:
         try:
             stateio.save(state, {**state.data, "results": cached})
@@ -415,6 +430,13 @@ def run(project: str, fmts: list[Format], repos: dict[str, Path], default: str, 
 
 
 # --- the scout's glob check ---
+
+def _changed(rows, m: Migration, touched: dict[str, bool]) -> list[str]:
+    """The when files of rule ``m`` the change touches, a deletion or a light touch aside."""
+    when = matcher(m.when)
+    return sorted(path for st, _, path in rows if path and st[:1] != "D" and when(path)
+                  and not touched.get(path, False))
+
 
 def migration_signals(repo: str, default: str, rules: list[Migration], rows, touched: dict[str, bool],
                       body: str) -> list[dict]:
@@ -426,24 +448,19 @@ def migration_signals(repo: str, default: str, rules: list[Migration], rows, tou
     added = sorted(path for st, _, path in rows if st[:1] in "AC" and path)
     out = []
     for m in rules:
-        if (m.repo or default) != repo:
-            continue
-        when = matcher(m.when)
-        hit = sorted(path for st, _, path in rows if path and st[:1] != "D" and when(path)
-                     and not touched.get(path, False))
-        if not hit:
-            continue
-        missing = [g for g in m.add if not any(matcher([g])(a) for a in added)]
-        if not missing:
-            continue
-        unit = hit[0]
-        tag = "justified" if unit in justified else "NEW"
-        more = f" (+{len(hit) - 1} more)" if len(hit) > 1 else ""
-        out.append({"key": f"{repo}:format.migration:{unit}", "check": "format.migration",
-                    "severity": "P1" if tag == "NEW" else "info", "unit": unit, "class": "", "chain": "",
-                    "via": "", "tag": tag,
-                    "why": f"{unit}{more} matches migrations[{m.index}].when: no new file matching "
-                           f"{', '.join(missing)}",
-                    "fix": "add the migration and its fixture (projects.yaml migrations:), or a "
-                           f"'Justified: {unit}: <reason>' line"})
+        hit = _changed(rows, m, touched) if (m.repo or default) == repo else []
+        missing = [g for g in m.add if not any(matcher([g])(a) for a in added)] if hit else []
+        if missing:
+            out.append(_finding(repo, m, hit, missing, hit[0] in justified))
     return out
+
+
+def _finding(repo: str, m: Migration, hit: list[str], missing: list[str], justified: bool) -> dict:
+    unit, tag = hit[0], "justified" if justified else "NEW"
+    more = f" (+{len(hit) - 1} more)" if len(hit) > 1 else ""
+    return {"key": f"{repo}:format.migration:{unit}", "check": "format.migration",
+            "severity": "P1" if tag == "NEW" else "info", "unit": unit, "class": "", "chain": "", "via": "",
+            "tag": tag, "why": f"{unit}{more} matches migrations[{m.index}].when: no new file matching "
+                              f"{', '.join(missing)}",
+            "fix": f"add the migration and its fixture (projects.yaml migrations:), or a 'Justified: {unit}: <reason>' "
+                   "line"}
