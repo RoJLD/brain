@@ -35,7 +35,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import codeindex, codemap, inventory, paths, projects, scout
+from . import codeindex, codemap, inventory, paths, pins, projects, scout
 from .inventory import AuditError, git
 
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -95,6 +95,7 @@ class Report:
     ddrs: list = field(default_factory=list)
     stores: list = field(default_factory=list)           # problems loading a store
     malformed: list = field(default_factory=list)        # active CodeRef ids the grammar refuses: left out
+    pins: list = field(default_factory=list)             # pinned decisions the change touches (brain.pins)
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -616,6 +617,10 @@ def run(args, root: Path | None) -> Report:
 
     if registered:
         _graph(rep, p, repo_match, hit, changes, root)
+        changed = {ch.new for ch in changes if ch.new} | {ch.old for ch in changes if ch.old}
+        refs = {t.ref for t in hit} if rep.mode == "gitnexus" else None   # a symbol's pin: only once GitNexus says
+        known = {cid for cid, _ in codemap.active_refs(p)} if refs is not None else set()
+        rep.pins = pins.touched(p, changed, {c.name, folder}, refs, known)
     return rep
 
 
@@ -677,6 +682,10 @@ def render(rep: Report) -> list[str]:
     out += _test_lines(rep)
     out.append(f"[ ] open items that deliver these features ({len(rep.items)}):")
     out += [f"    {i['id']} ({i['status']}): {i['title'][:90]}" for i in rep.items]
+    if rep.pins:
+        out.append(f"[ ] pinned decisions this change touches ({len(rep.pins)}): the PR body says Keeps <id> or "
+                   "Overrides <id>: why (an override is a new ADR)")
+        out += [f"    {x['id']} ({x['day'] or '?'}): holds {x['holds']} ({', '.join(x['hits'][:3])})" for x in rep.pins]
     if rep.ddrs:
         out.append(f"[ ] decisions pending on them ({len(rep.ddrs)}):")
         out += [f"    {d['id']} ({d['status']}): {d['title'][:90]}" for d in rep.ddrs]

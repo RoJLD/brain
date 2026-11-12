@@ -8,7 +8,9 @@ gathered without a model is gathered here, at zero token:
   output (``brain audit --diff``), the lenses chosen from the touched surfaces, and a README that says how to run them;
 - ``brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE]`` records that the review ran on that
   head, with its counts (the error score's record, wi-brain-review-error-score);
-- ``brain review check HEAD`` says whether that head was reviewed: the merge gate's question (wi-brain-merge-gate).
+- ``brain review check HEAD`` says whether that head was reviewed: the merge gate's question (wi-brain-merge-gate);
+  with ``--pr N`` (or ``--body FILE``), it also refuses while a pinned decision the change touches is neither kept
+  nor overridden in the PR body (``pins_gate``, brain.pins, wi-brain-decision-pins).
 
 A stamp is keyed by the head's full sha: a push after the review is a new head, reviewed again.
 """
@@ -189,6 +191,27 @@ def stamp(head: str, findings: int, fixed: int, contested: int = 0, note: str = 
            "note": note}
     f.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8", newline="\n")
     return f
+
+
+def pins_gate(repo: Path, base: str, head: str, body: str | None) -> tuple[list[dict], list[str]]:
+    """(the pinned decisions the change base..head touches, what blocks it: brain.pins.verdict on the PR body), at the
+    file level; ([], []) for a repo in no registered project or without pins."""
+    from types import SimpleNamespace
+
+    from . import pins, scout
+    from .inventory import AuditError
+    try:
+        p, _, c, top, registered = scout.resolve(SimpleNamespace(repo_dir=str(repo), project=None), None)
+    except (AuditError, OSError, ValueError):
+        return [], []
+    if not registered:
+        return [], []
+    mb = _git(repo, "merge-base", base, head).strip()
+    files = set()
+    for line in _git(repo, "diff", "--name-status", "-M", mb, head).splitlines():
+        files.update(x for x in line.split("\t")[1:] if x)
+    touched = pins.touched(p, files, {c.name, top.name, (paths.main_checkout(top) or top).name})
+    return touched, pins.verdict(p, touched, body)
 
 
 def check(head: str, repo: Path | None = None) -> dict | None:

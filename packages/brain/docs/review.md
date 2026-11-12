@@ -46,4 +46,5 @@ brain review check <head>        # exit 0 once that head is reviewed
 
 The stamp is keyed by the head's full sha, in `<BRAIN_HOME>/reviews/stamps/`: a push after the review is a new head,
 reviewed again. Its counts are the error score's record (`wi-brain-review-error-score`), and `brain review check` is
-the merge gate's question (`wi-brain-merge-gate`).
+the merge gate's question (`wi-brain-merge-gate`). With `--pr N` (or `--body FILE`) it also refuses while a
+pinned decision the change touches is neither kept nor overridden in the PR body (`docs/pins.md`).

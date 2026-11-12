@@ -10,6 +10,8 @@ the lesson les-brain-stale-base-ci). Every check runs, and the answer is exit 0 
   included; a no-op for a head that merged nothing;
 - **ci**: every check of the head completed green (success, neutral or skipped); one running or failed blocks;
 - **review**: ``brain review stamp`` recorded the review of this head, with no finding left open;
+- **pins**: each pinned decision the change touches (brain.pins) is kept or overridden in the PR body: ``Keeps <id>``
+  or ``Overrides <id>: <why>``, an override with its REVERSAL ADR;
 - **public**: for a public repo (config.json ``public.repos``), ``brain check --public --history`` stamped this head
   and the stamp is valid now (the push guard's question);
 - **body**: the PR's title and body hold nothing ``brain check --public`` refuses (a private term, a secret, an
@@ -201,6 +203,19 @@ def _review(g: Gate) -> None:
               f"reviewed: {st.get('findings', 0)} finding(s), {st.get('fixed', 0)} fixed")
 
 
+def _pins(g: Gate, repo: Path, data: dict, remote: str = "origin") -> None:
+    """Each pinned decision the change touches kept or overridden in the PR body (brain.pins, wi-brain-decision-pins)."""
+    try:
+        touched, blocks = review.pins_gate(repo, f"{remote}/{g.base or 'main'}", g.head,
+                                           str(data.get("body") or ""))
+    except review.ReviewError as exc:
+        g.add("pins", False, f"the pins could not be read: {exc}")
+        return
+    g.add("pins", not blocks, "; ".join(blocks[:3]) if blocks else
+          f"{len(touched)} pinned decision(s) touched, each kept or overridden" if touched else "no pinned decision "
+          "touched")
+
+
 def _public(g: Gate, data: dict, cfg: config.Config) -> None:
     if public.is_public(g.slug, cfg):
         why = public.stamp_refusal(g.slug, g.head, cfg)
@@ -246,6 +261,7 @@ def gate(repo: Path, pr: str, slug: str = "", remote: str = "", fetch: bool = Tr
     g.add("ci", *ci(data.get("statusCheckRollup") or []))
     _review(g)
     _public(g, data, cfg)
+    _pins(g, repo, data, remote)
     return g
 
 

@@ -370,6 +370,12 @@ run them, the open items that deliver those features and the decisions pending o
 the file level, a Python symbol looked up by the AST, and says so on its second line. `brain code-map` resolves
 each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
 
+A decision can be pinned to the code it governs ([`docs/pins.md`](docs/pins.md)): `brain adr pin ID --touches
+PATH|CODEREF --holds LINE` writes `pins.yaml` beside the decision log (an ADR, an SDR or an answered DDR; the `holds`
+line never edited, an override being a new ADR). `brain impact --diff` lists the pinned decisions a change touches,
+and `brain review check HEAD --pr N` and `brain merge-ready` refuse until the PR body says `Keeps ID` or `Overrides
+ID: why` for each.
+
 ### Tests linked and coverage
 
 `brain sync` links each feature, item or hook to the test modules of its code (`tested_by`): the tests brain audit's

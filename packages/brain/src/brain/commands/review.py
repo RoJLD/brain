@@ -5,6 +5,7 @@ session's lens agents read, the stamp of a head once reviewed, and the check the
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,7 +18,10 @@ USAGE = """\
                  diff, the touched files at the head, brain audit --diff's output, the lenses the touched surfaces
                  call for and how to run them (default origin/main..HEAD, into <BRAIN_HOME>/reviews/<head>)
   brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE]   the review of that head ran
-  brain review check HEAD   exit 0 when that head was reviewed, 1 when not (the merge gate's question)
+  brain review check HEAD [--pr N | --body FILE] [--base REF]   exit 0 when that head was reviewed, 1 when not (the
+                 merge gate's question); with the PR body, 1 also while a pinned decision the change touches (brain
+                 adr pin, docs/pins.md) has no Keeps ID or Overrides ID: why line in it (an override needs its REVERSAL
+                 ADR); without one, the pins touched are listed
 """
 
 
@@ -52,15 +56,37 @@ def cmd_review(args, root: Path | None = None) -> int:
                   f"contested): {f}")
             return 0
         rec = review.check(args.head, repo)
+        touched, blocks = _pins(args, repo)
     except (review.ReviewError, OSError) as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
     if rec is None:
         print(f"review: {args.head} not reviewed (brain review prep, docs/review.md, then brain review stamp)")
-        return 1
-    print(f"review: {rec['head'][:12]} reviewed {rec['at']}: {rec['findings']} finding(s), {rec['fixed']} fixed, "
-          f"{rec['contested']} contested, {rec['open']} open")
-    return 0
+    else:
+        print(f"review: {rec['head'][:12]} reviewed {rec['at']}: {rec['findings']} finding(s), {rec['fixed']} fixed, "
+              f"{rec['contested']} contested, {rec['open']} open")
+    for x in touched:
+        print(f"  pinned: {x['id']} ({x['day'] or '?'}) holds {x['holds']} ({', '.join(x['hits'][:3])})")
+    for b in blocks:
+        print(f"  BLOCK {b}")
+    return 1 if rec is None or blocks else 0
+
+
+def _pins(args, repo: Path) -> tuple[list[dict], list[str]]:
+    """The pinned decisions the change touches and what blocks it, from the PR body (--pr or --body); the pins only,
+    unjudged, without a body."""
+    body, base = None, args.base or ""
+    if args.pr:
+        r = subprocess.run(["gh", "pr", "view", str(args.pr), "--json", "body,baseRefName"], cwd=repo,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if r.returncode:
+            raise review.ReviewError(f"PR {args.pr}: {(r.stderr or r.stdout).strip()}")
+        info = json.loads(r.stdout)
+        body, base = str(info.get("body") or ""), base or f"origin/{info.get('baseRefName') or 'main'}"
+    elif args.body:
+        body = Path(args.body).read_text(encoding="utf-8")
+    touched, blocks = review.pins_gate(repo, base or "origin/main", args.head, body)
+    return touched, (blocks if body is not None else [])
 
 
 def register(sub, ctx) -> None:
@@ -80,6 +106,9 @@ def register(sub, ctx) -> None:
     st.add_argument("--note", help="the review note (a file), kept with the stamp")
     ck = rv.add_parser("check", help="exit 0 when HEAD was reviewed")
     ck.add_argument("head")
+    ck.add_argument("--pr", type=int, help="the PR whose body must keep or override each pinned decision touched")
+    ck.add_argument("--body", help="the PR body, a file (instead of --pr)")
+    ck.add_argument("--base", help="the base the change is read from (default: the PR's, else origin/main)")
     for p in (pr, st, ck):
         p.add_argument("--repo", help="the repo (default: here)")
 
