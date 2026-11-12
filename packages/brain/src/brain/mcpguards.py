@@ -19,7 +19,9 @@ path. :func:`judge` runs, in order:
    it through (a hook never breaks a session; a server never trusts its client).
 
 ``BRAIN_GUARD_ALLOW`` lifts nothing here: a client's configuration can set the server's environment (a stdio
-server's ``env``), so the owner's override stays Claude Code's. A refusal reaches the client as a tool error naming
+server's ``env``), so the owner's override stays Claude Code's; the rest of that environment is the owner's
+configuration (docs/mcp.md, « The guards »). An effect the guards do not read (an agent, a session) is refused, and a
+command hidden behind an abbreviated global option is refused too. A refusal reaches the client as a tool error naming
 the guard, and goes to the guards ledger (``<BRAIN_HOME>/ledger/guards-<month>.jsonl``) with the tool as
 ``mcp:<name>`` and the client as its session. Every answer then passes the secret scan (brain.mcpserver.clean): no
 tool result carries a key's shape.
@@ -32,7 +34,6 @@ measure Claude's own sessions.
 
 from __future__ import annotations
 
-import os
 import shlex
 from typing import NamedTuple
 
@@ -45,6 +46,7 @@ OWNER_GESTURES: tuple[tuple[str, ...], ...] = (
     ("session-archive",),
 )
 GLOBAL_VALUES = ("--root", "--project", "--store")
+JUDGED = {"Bash", "PowerShell", *guards.EDIT_TOOLS}   # the effects brain.guards.refusals reads
 
 
 class Refusal(NamedTuple):
@@ -69,10 +71,19 @@ def words(argv: list[str]) -> list[str]:
     return out
 
 
+def _arm(word: str) -> bool:
+    """``--arm`` or a prefix argparse would expand to it (``--ar``, ``--a``), with or without ``=value``."""
+    opt = word.split("=", 1)[0]
+    return len(opt) >= 3 and opt.startswith("--") and "--arm".startswith(opt)
+
+
 def owner_gesture(argv: list[str]) -> str:
-    """The owner's gesture a brain command is, as text, else ''."""
+    """The owner's gesture a brain command is, as text, else ''. An option before the command that is not a global
+    option spelled out (``--proj=P``, which argparse expands) is refused too: the command could not be read."""
     ws = words(argv)
-    if any(w == "--arm" or w.startswith("--arm=") for w in ws):
+    if ws and ws[0].startswith("-"):
+        return f"a command behind the option {ws[0].split('=', 1)[0]} (spell --root, --project, --store in full)"
+    if any(_arm(w) for w in ws):
         return "an arming flag"
     for gesture in OWNER_GESTURES:
         if tuple(ws[:len(gesture)]) == gesture:
@@ -96,7 +107,12 @@ def judge(tool, args: dict, effect: dict | None, argv: list[str] | None) -> Refu
     try:
         if tool.kind != "read" and effect is None:
             return Refusal("mcp", "undeclared", f"the write tool {tool.name} declares no effect the guards can judge")
+        if effect is not None and effect.get("tool_name") not in JUDGED:
+            return Refusal("mcp", "undeclared", f"the guards judge shell calls and file writes only, not "
+                                                f"{effect.get('tool_name')!r} (an agent or a session starts none here)")
         gesture = owner_gesture(argv) if argv is not None else ""
+        if gesture.startswith("a command behind"):
+            return Refusal("mcp", "options", f"{gesture}: it could not be read")
         if gesture:
             return Refusal("owner", "gesture", f"{gesture} is the owner's alone")
         if tool.kind != "read":
@@ -116,7 +132,7 @@ def judge(tool, args: dict, effect: dict | None, argv: list[str] | None) -> Refu
 def record(tool, refusal: Refusal, effect: dict | None, client: dict) -> None:
     """The refusal in the guards ledger, when it exists (as a hook's); never raises."""
     try:
-        if os.environ.get("BRAIN_CAPTURE", "1") == "0" or not paths.ledger_dir().is_dir():
+        if not paths.ledger_dir().is_dir():
             return
         payload = dict(effect or {}, tool_name=f"mcp:{tool.name}",
                        session_id=f"mcp:{client.get('name') or 'unknown client'}")
