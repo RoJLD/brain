@@ -349,10 +349,20 @@ def test_the_token_is_made_once_and_never_printed(tmp_path, monkeypatch, capsys,
     assert ipcauth.token_file() == brain_home / "ipc" / "token"
     assert cli.main(["ipc", "token", "--init"]) == 0 and ipcauth.read() == tok   # kept
     assert "kept" in capsys.readouterr().out
+    assert cli.main(["ipc", "otel-headers"]) == 0   # Claude Code's otelHeadersHelper: one JSON object, nothing else
+    assert json.loads(capsys.readouterr().out) == {"Authorization": f"Bearer {tok}"}
     short = tmp_path / "short"
     short.write_text("abc\n", encoding="utf-8")
     monkeypatch.setenv(ipcauth.ENV, str(short))
     assert ipcauth.read() is None
+
+
+def test_otel_headers_without_a_token_print_nothing_and_fail(capsys, brain_home):
+    """The export must fail visibly, never go out with an empty or partial header."""
+    assert ipcauth.read() is None
+    assert cli.main(["ipc", "otel-headers"]) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and "brain ipc token --init" in err
 
 
 @pytest.mark.parametrize("host,ok", [("127.0.0.1", True), ("127.8.0.1", True), ("::1", True), ("[::1]", True),

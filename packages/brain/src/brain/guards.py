@@ -23,7 +23,7 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   categories (the engine's NEVER, extended by permissions.yaml's never:, one source): a category's deny rules (Claude
   Code's syntax, matched on every simple command) and, for the categories it knows by name, the shapes of their
   commands: visibility (gh repo create --public, gh repo edit --visibility, gh gist create --public, the REST and
-  GraphQL calls), keys (gh secret set|delete, gh auth token, ssh-keygen, age-keygen, gpg's secret keys, cmdkey,
+  GraphQL calls), keys (gh secret set|delete, gh auth token, brain ipc otel-headers, ssh-keygen, age-keygen, gpg's secret keys, cmdkey,
   Set-Secret, kubectl create secret and Secret manifests), accounts (gh auth login|logout|refresh, docker, npm, az,
   gcloud and argocd logins, local users), scheduled (schtasks /create|/change|/delete, Register-ScheduledTask and
   its kin, brain schedule install --apply, services, crontab but -l, at, systemctl enable, Run keys, a file written
@@ -1641,6 +1641,8 @@ def _owner_command(words: list[str], cwd: str, shell: str, command: str) -> tupl
         return None
     if (prog == "brain" or "brain" in low[1:3]) and "--apply" in low and             any(x == "schedule" and y == "install" for x, y in zip(low, low[1:])):
         return "scheduled", "brain schedule install --apply (it creates, changes or removes scheduled tasks)"
+    if (prog == "brain" or "brain" in low[1:3]) and any(x == "ipc" and y == "otel-headers" for x, y in zip(low, low[1:])):
+        return "keys", "brain ipc otel-headers (it prints the machine's token: Claude Code's otelHeadersHelper runs it)"
     return _subcommand(prog, args)
 
 

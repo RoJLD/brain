@@ -87,7 +87,7 @@ def test_the_secrets_guard_refuses_a_write_whose_argument_holds_a_key(tmp_path, 
 
 
 @pytest.mark.parametrize("argv", [["decision", "answer", "ddr-x", "--choice", "1"], ["--project=p", "queue", "done", "x"],
-                                  ["schedule", "install", "--apply"], ["ipc", "token", "--init"], ["vault", "init"],
+                                  ["schedule", "install", "--apply"], ["ipc", "token", "--init"], ["ipc", "otel-headers"], ["vault", "init"],
                                   ["--root", "/b", "update"], ["up", "otel-collector"], ["bundle", "apply", "s"],
                                   ["item", "set", "x", "--arm"]])
 def test_the_owner_s_brain_gestures_are_refused_whatever_the_tool(tmp_path, ran, argv):
