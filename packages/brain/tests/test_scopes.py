@@ -259,3 +259,62 @@ def test_archived_subtrees_are_left_out_of_the_counts_unless_asked(brain, capsys
     assert scopes.render(tree, archived=True)[0] == "Global (2 projects)"
     assert cli.main(["--root", str(brain.root), "scopes", "--scope", "old", "--json"]) == 0
     assert [n["id"] for n in json.loads(capsys.readouterr().out)["nodes"]] == ["old", "alpha"]   # named: shown
+
+
+def _config(root, **public):
+    data = {"v": 1, "identity": {"owner": "Ada"}, "public": {"deny": {"people": ["Ada"], "repos": ["handmade"],
+                                                                     "paths": ["E:/Work"]}, **public}}
+    (root / config.FILE).write_text(json.dumps(data), encoding="utf-8")
+    return config.load(root)
+
+
+def test_deny_from_tree_is_off_by_default(brain):
+    brain("alpha: {root: ., parent: acme}\nbeta: {root: ../beta}\ngamma: {root: ../gamma}\n")
+    _tree(brain.root)
+    cfg = _config(brain.root)
+    assert config.deny_terms(cfg) == [("people", "Ada"), ("repos", "handmade"), ("paths", "E:/Work")]
+    assert config.unexpected(cfg) == "" and config.describe(cfg)["deny_from_tree"] is False
+
+
+def test_deny_from_tree_adds_the_private_subtree_and_its_repos(brain):
+    brain("alpha: {root: ., parent: finance}\nbeta: {root: ../beta, parent: alpha}\n"
+          "gamma: {root: ../gamma, parent: pro}\nupstream: {title: an upstream, access: read, parent: acme}\nhandmade: {root: ../beta, parent: acme}\n")
+    _tree(brain.root, TREE + "  open: {type: folder, classes: {floor: public}}\n")
+    cfg = _config(brain.root, deny_from_tree=True, repos=["someone/root"])
+    assert scopes.private_nodes(scopes.load(brain.root)) == ["alpha", "beta", "upstream", "handmade"]
+    # alpha's repo is its root's folder, root: a public repo of public.repos, left out; beta's folder is beta
+    assert scopes.private_terms(cfg) == ["alpha", "beta", "handmade", "upstream"]
+    assert config.deny_terms(cfg) == [("people", "Ada"), ("repos", "handmade"), ("repos", "alpha"), ("repos", "beta"),
+                                      ("repos", "upstream"), ("paths", "E:/Work")]   # gamma (pro: no floor) is not
+    assert config.check(brain.root) == [] and config.describe(cfg)["deny"]["repos"] == 4
+    from brain import public
+    assert public.rules_hash(cfg) != public.rules_hash(_config(brain.root, repos=["someone/root"]))
+
+
+def test_a_newly_placed_private_project_is_denied_without_a_hand_edit(brain):
+    brain("alpha: {root: .}\nbeta: {root: ../beta}\ngamma: {root: ../gamma}\n")
+    _tree(brain.root)
+    cfg = _config(brain.root, deny_from_tree=True)
+    assert scopes.private_terms(cfg) == []
+    brain("alpha: {root: .}\nbeta: {root: ../beta}\ngamma: {root: ../gamma, parent: acme}\n")
+    assert scopes.private_terms(cfg) == ["gamma"]
+
+
+def test_an_unreadable_tree_makes_the_guards_refuse_when_generation_is_on(brain):
+    (brain.root / scopes.FILE).write_text("v: [", encoding="utf-8")
+    assert config.unexpected(_config(brain.root)) == ""   # off: the hand list alone, as before
+    why = config.unexpected(_config(brain.root, deny_from_tree=True))
+    assert why.startswith("scopes.yaml: not readable YAML") and "cannot generate the deny list" in why
+    assert "true or false" in config.unexpected(_config(brain.root, deny_from_tree="yes"))
+
+
+def test_brain_scopes_deny_lists_the_generated_terms(brain, capsys):
+    brain("alpha: {root: .}\nbeta: {root: ../beta, parent: acme}\ngamma: {root: ../gamma}\n")
+    _tree(brain.root)
+    _config(brain.root)
+    assert cli.main(["--root", str(brain.root), "scopes", "--deny"]) == 0
+    assert capsys.readouterr().out == ("deny from the tree: off (config.json public.deny_from_tree); 1 term(s) for "
+                                       "public.deny.repos: beta\n")
+    _config(brain.root, deny_from_tree=True)
+    assert cli.main(["--root", str(brain.root), "scopes", "--deny", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"deny_from_tree": True, "repos": ["beta"]}

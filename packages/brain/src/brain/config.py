@@ -30,7 +30,7 @@ DEFAULTS = {"registry": "projects.yaml", "rules": [], "memory": "memory", "recor
 PATH_KEYS = ("registry", "memory", "records", "source")   # declared paths that must exist (and each of rules)
 DENY = ("people", "users", "hosts", "repos", "paths")
 # public's keys the public checks read, and their type (config.schema.json): another type is unexpected (COMPAT-4)
-PUBLIC_KEYS = {"repos": list, "deny": dict, "allow": dict, "patterns": dict, "refuse": dict}
+PUBLIC_KEYS = {"repos": list, "deny": dict, "allow": dict, "patterns": dict, "refuse": dict, "deny_from_tree": bool}
 NO_OWNER = "the owner"
 # The names of the Claude rendering (adapters.claude) when config.json gives none: the engine's own, no person's.
 CLAUDE = {"marketplace": "brain", "plugin": "brain-core", "source": ""}
@@ -99,8 +99,13 @@ def unexpected(cfg: Config | None = None) -> str:
                 "(brain config --keys lists public's keys)")
     for key, kind in PUBLIC_KEYS.items():   # a known key of another type reads as nothing: no repo is public
         if pub and key in pub and not isinstance(pub[key], kind):
-            want = "a list" if kind is list else "an object"
+            want = {list: "a list", bool: "true or false"}.get(kind, "an object")
             return f"{FILE}: public.{key} is a {type(pub[key]).__name__}, not {want}: fix {cfg.file} (brain config --check)"
+    if deny_from_tree(cfg):   # the generated deny list must be whole, or the guards refuse (fail closed)
+        from . import scopes
+        why = scopes.deny_unexpected(cfg)
+        if why:
+            return why
     v = cfg.data.get("v")
     if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
         return f"{FILE}: v is {v!r}, not a whole number: fix {cfg.file} (brain config --check)"
@@ -166,12 +171,24 @@ def claude(cfg: Config) -> dict[str, str]:
     return {k: str(given.get(k) or v) for k, v in CLAUDE.items()}
 
 
+def deny_from_tree(cfg: Config) -> bool:
+    """public.deny_from_tree: the owner's opt-in to a public.deny.repos generated from the scope tree."""
+    pub = cfg.data.get("public")
+    return isinstance(pub, dict) and pub.get("deny_from_tree") is True
+
+
 def deny_terms(cfg: Config) -> list[tuple[str, str]]:
-    """(category, term) for each term of public.deny, in DENY's order."""
+    """(category, term) for each term of public.deny, in DENY's order; with public.deny_from_tree, the repos gain
+    the private projects of the scope tree and their repos (brain.scopes.private_terms), after the hand list."""
     deny = (cfg.data.get("public") or {}).get("deny") if isinstance(cfg.data.get("public"), dict) else None
-    if not isinstance(deny, dict):
-        return []
-    return [(cat, t) for cat in DENY for t in deny.get(cat) or [] if isinstance(t, str) and t]
+    terms = [(cat, t) for cat in DENY for t in (deny.get(cat) or [] if isinstance(deny, dict) else [])
+             if isinstance(t, str) and t]
+    if deny_from_tree(cfg):
+        from . import scopes
+        hand = {t.lower() for cat, t in terms if cat == "repos"}
+        at = max((i + 1 for i, (cat, _) in enumerate(terms) if DENY.index(cat) <= DENY.index("repos")), default=0)
+        terms[at:at] = [("repos", t) for t in scopes.private_terms(cfg) if t.lower() not in hand]
+    return terms
 
 
 def allowed(cfg: Config) -> dict[str, str]:
@@ -228,7 +245,7 @@ def describe(cfg: Config) -> dict:
             "records": cfg.get("records"), "source": cfg.get("source"), "engine": cfg.data.get("engine"),
             "claude": claude(cfg), "public_repos": list(pub.get("repos") or []),
             "personal": str(paths.personal_root()) if paths.personal_root() else None,
-            "deny": {cat: sum(1 for c, _ in terms if c == cat) for cat in DENY},
+            "deny": {cat: sum(1 for c, _ in terms if c == cat) for cat in DENY}, "deny_from_tree": deny_from_tree(cfg),
             "allow": sorted(allowed(cfg)), "secrets": sorted(cfg.data.get("secrets") or {})}
 
 

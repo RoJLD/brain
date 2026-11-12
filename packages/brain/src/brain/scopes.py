@@ -616,3 +616,49 @@ def view_stale(root: Path, cfg: config.Config | None = None) -> bool:
     cfg = cfg or config.load(root)
     f = view_file(cfg)
     return not f.is_file() or f.read_text(encoding="utf-8").replace("\r\n", "\n") != view_text(load(root, cfg))
+
+
+# --- public.deny.repos generated from the tree (wi-brain-deny-from-tree) ---
+
+PRIVATE = "private"   # a floor at this class or stricter marks its subtree private
+
+
+def private_nodes(tree: Tree) -> list[str]:
+    """The projects (read-only ones and mounts too) whose class floor along their chain, themselves included, is
+    private or stricter: those whose names must never reach a public repo."""
+    from .classes import RANK
+    return [x for x, n in tree.nodes.items() if n.is_project and floor(tree, x)[0]
+            and RANK[floor(tree, x)[0]] >= RANK[PRIVATE]]
+
+
+def private_terms(cfg: config.Config) -> list[str]:
+    """The terms config.json public.deny.repos gains when ``public.deny_from_tree`` is on: the name of every private
+    project (:func:`private_nodes`) and of each of its repos (brain audit's names and their folders), sorted; a term
+    that names a repo of public.repos is left out (that repo is public), as is one shorter than two characters."""
+    tree = load(cfg.root, cfg)
+    loaded = projects.load(cfg.root)
+    pub = cfg.data.get("public") if isinstance(cfg.data.get("public"), dict) else {}
+    public = {str(r).rsplit("/", 1)[-1].lower() for r in pub.get("repos") or [] if isinstance(r, str)}
+    terms: set[str] = set()
+    for name in private_nodes(tree):
+        terms.add(name)
+        p = loaded.get(name)
+        try:
+            repos = projects.repos_of(p) if p is not None else []
+        except projects.RepoError:   # brain check --all names it; the project's own name is still denied
+            repos = []
+        terms.update(t for r in repos for t in (r.name, r.folder) if t)
+    return sorted((t for t in terms if len(t) >= 2 and t.lower() not in public), key=str.lower)
+
+
+def deny_unexpected(cfg: config.Config) -> str:
+    """Why the generated deny list cannot be trusted (the public guard then refuses, COMPAT-4): the scope tree or the
+    registry cannot be read while public.deny_from_tree is on; '' otherwise."""
+    _, _, problems = raw(cfg)
+    if problems:
+        return f"{problems[0]}: public.deny_from_tree cannot generate the deny list: fix it (brain check --all)"
+    try:
+        projects.raw(cfg.root)
+    except Exception as exc:  # noqa: BLE001 - any failure to read the registry is a reason to refuse, said as one
+        return f"{projects.REGISTRY} cannot be read ({exc}): public.deny_from_tree cannot generate the deny list"
+    return ""
