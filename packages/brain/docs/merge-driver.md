@@ -108,18 +108,21 @@ brain merge-check            # then push
 ```
 
 **At the push, the guard `merges:stale`** (wi-brain-merge-stale-main-2). The lesson regressed after `brain
-merge-check` shipped: nothing ran it. So a `git push` of a branch that carries a merge of the base runs it. A branch
-with no merge of the base, a tag and a deletion pass, and they pay no fetch. The guard fetches the base again (20
-seconds at most; past that, or on a failed fetch, it reads the base as last fetched and says so). It then refuses the
-push in three cases:
+merge-check` shipped: nothing ran it. So a `git push` runs it on each branch whose newest merge of the base is not on
+the remote branch yet. A merge already pushed was checked when it went, and main moving under an open PR is `brain
+merge-ready`'s to say. A branch with no such merge, a tag (full or short name) and a deletion pass, and they pay no
+fetch. The guard fetches the base again, once per push (20 seconds at most; past that, or on a failed fetch, it reads
+the base as last fetched and says so). It then refuses the push in three cases:
 
-- the resolution lost a line or a node of the base it merged;
+- the merge lost a line of an append-only file, or a node, of the commit of the base it merged;
 - not behind, it lost one of a fresh base;
-- the base has moved since the merge on a watched file the branch changes too. That is a resolution made against a
-  stale main: `git merge origin/main` again, resolve, `brain merge-check`, then push.
+- a watched file the merge itself resolved (changed against both its parents) has moved on the base since. That is a
+  resolution made against a stale main, such as a local `main` ref: `git merge origin/main` again, resolve,
+  `brain merge-check`, then push.
 
-Main moving on a file the branch leaves alone passes: GitHub's merge keeps both. The override is the owner's:
-`BRAIN_GUARD_ALLOW=merges:stale`.
+A field both sides changed on a node stays `brain merge-check`'s « check it by eye », never a refusal. A merge that
+resolved nothing, followed by the branch's own change to a file main moves, passes: GitHub's merge keeps both. The
+override is the owner's: `BRAIN_GUARD_ALLOW=merges:stale`.
 
 ### The merge gate: `brain merge-ready <pr>`
 

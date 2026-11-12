@@ -205,8 +205,9 @@ Three guards the lessons registry asked for (`brain lessons --follow`):
   `heredoc:backslash`, decision `warned`.
 
 - **A merge resolution against a stale main** (`merges:stale`; wi-brain-merge-stale-main-2): a `git push` of a
-  branch that merged the base runs `brain merge-check` against the base as merged and a fresh one, and refuses a
-  lost line or one of the base's files moved since under the branch's own change (docs/merge-driver.md). Override,
+  branch whose merge of the base is not on the remote yet runs `brain merge-check` against the base as merged and
+  a fresh one, and refuses a lost line or node, or a file the merge resolved that the base has moved on since
+  (docs/merge-driver.md). Override,
   the owner's: `BRAIN_GUARD_ALLOW=merges:stale`.
 
 ### How the guards read a diff

@@ -727,9 +727,9 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
 - **`brain merge-check`**: after `git merge origin/main`, the base fetched again and nothing main brought since the
   merge base lost: the lines main added to the journals, decision logs, edge files and CHANGELOGs (as content, in any
   order), the fields main changed on the graph's nodes, the nodes main has (a removal by the branch passes); exit 1
-  when the branch is behind or lost something. The push guard `merges:stale` runs it on every pushed branch that
-  merged main, against a fresh main, and refuses a resolution made against a main that has moved since on a file the
-  branch changes too (docs/merge-driver.md).
+  when the branch is behind or lost something. The push guard `merges:stale` runs it on each pushed branch whose merge
+  of main is not on the remote yet, against a fresh main, and refuses a file the merge resolved against a main that
+  has moved on it since (docs/merge-driver.md).
 - **`brain merge-ready PR`**: the merge gate, before `gh pr merge`: the PR open and not a draft, main not moved under
   a file it touches since their merge base, `brain merge-check` on a head that merged main, every CI check green on
   the head, the review's stamp for the head with no finding open, the public check's stamp for a public repo, nothing

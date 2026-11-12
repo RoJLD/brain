@@ -3517,26 +3517,52 @@ def check_branches(cmds: list[tuple[list[str], str]]) -> str | None:
 
 # --- a merge resolution made against a stale main (wi-brain-merge-stale-main-2) ----------------------------------
 
+def _tag(d: str, ref: str) -> bool:
+    """A tag ref, by its full name or a short one no branch shares."""
+    if ref.startswith("refs/tags/"):
+        return True
+    return not ref.startswith("refs/") and bool(_git_out(d, "rev-parse", "--verify", "--quiet", f"refs/tags/{ref}")) \
+        and not _git_out(d, "rev-parse", "--verify", "--quiet", f"refs/heads/{ref}")
+
+
+def _pushed_ref(d: str, remote: str, refspecs: list[str], src: str) -> str:
+    """The remote-tracking ref of the branch a push of ``src`` updates (refs/remotes/<remote>/<dest>), '' when the
+    remote has no such branch yet."""
+    dest = src
+    for spec in refspecs:
+        a, _, b = spec.lstrip("+").partition(":")
+        if a == src and b:
+            dest = b
+    if dest == "HEAD":
+        dest = _git_out(d, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    dest = dest.removeprefix("refs/heads/")
+    ref = f"refs/remotes/{remote}/{dest}"
+    return ref if dest and _git_out(d, "rev-parse", "--verify", "--quiet", ref).strip() else ""
+
+
 def check_merge_stale(cmds: list[tuple[list[str], str]]) -> str | None:
-    """A git push of a branch whose merge of the base (origin's default branch) lost what it merged or what a fresh
-    base holds, or was resolved against a base that has moved since on a watched file the branch changes too
-    (brain.mergecheck.stale: it fetches the base again, bounded). A tag, a deletion and a branch with no merge of the
-    base pass; so does a repo with no such base."""
+    """A git push of a branch whose merge of the base (origin's default branch), not on the remote branch yet, lost
+    what it merged or what a fresh base holds, or resolved a watched file against a base that has moved since on it
+    (brain.mergecheck.stale: it fetches the base again, once per push, bounded). A tag, a deletion and a branch with
+    no merge of the base pass; so does a repo with no such base."""
     from . import mergecheck, resume
     for _, d, args in _pushes(cmds):
-        _, refspecs, flags = _push_target(args)
+        remote, refspecs, flags = _push_target(args)
         top = _git_out(d, "rev-parse", "--show-toplevel").strip()
         if not top:
             continue
+        remote = remote if remote and not re.search(r"[:/\\]", remote) else "origin"
         try:
             project = resume.project_for(Path(top))
         except (OSError, ValueError):
             project = None
         project = project if project is not None and getattr(project, "registered", False) else None
+        fetch = True
         for ref, sha in _push_commits(d, refspecs, flags):
-            if ref.startswith("refs/tags/"):
+            if _tag(d, ref):
                 continue
-            why = mergecheck.stale(Path(top), sha, project)
+            why = mergecheck.stale(Path(top), sha, project, fetch=fetch, pushed=_pushed_ref(d, remote, refspecs, ref))
+            fetch = False   # the base is fresh for the push's other refs
             if why:
                 return f"git push refused: {ref} ({sha[:8]}): {why}"
     return None
