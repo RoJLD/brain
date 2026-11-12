@@ -51,7 +51,7 @@ def test_priority_filters_validated_proposed_and_none(src):
 def test_repo_prop_and_text_filters(src):
     g = src.graph
     assert _ids(query.list_items(g, repo="Ops-Repo")) == ["wi-doing"]
-    assert _ids(query.list_items(g, repo="quant-marketdata")) == ["wi-free"]
+    assert _ids(query.list_items(g, repo="acme-data")) == ["wi-free"]
     # no repo prop, no repo in pr: the store's own repo
     assert "wi-prereq" in _ids(query.list_items(g, repo="research-lab", default_repo="research-lab"))
     assert "wi-doing" not in _ids(query.list_items(g, repo="research-lab", default_repo="research-lab"))

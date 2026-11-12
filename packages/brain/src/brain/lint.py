@@ -86,7 +86,7 @@ _BULLET = re.compile(r"^[-*+]\s+")
 _NUMBERED = re.compile(r"^\d+[.)]\s+")
 _WORD = re.compile(r"[a-z0-9]+(?:[-_.][a-z0-9]+)*")
 _CODE = re.compile(r"`([^`\n]+)`")
-_COMMAND = re.compile(r"^(?:git|gh|python3?|py|pip|pytest|brain|research_graph|quant|docker|npm|npx|bash|pwsh|"
+_COMMAND = re.compile(r"^(?:git|gh|python3?|py|pip|pytest|brain|research_graph|docker|npm|npx|bash|pwsh|"
                       r"powershell|uv|make|claude)\b|\.(?:ps1|py|sh)\b", re.I)
 _SEQUENCE = re.compile(r"\b(?:then|after|afterwards|before|first|next|finally|once|in this order|followed by)\b", re.I)
 _FORBID = re.compile(r"\b(?:never|no|not|don't|do not|must not|refuse[sd]?|only (?:through|via|with|by)|always|"

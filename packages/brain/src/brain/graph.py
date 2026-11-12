@@ -20,7 +20,7 @@ import traceback
 from datetime import date
 from pathlib import Path
 
-from . import notes, paths
+from . import notes
 
 GENERATED_PREFIX = "_generated_"
 NODE_KEYS = ("id", "type", "status", "title", "level", "repo", "anchor", "props")
@@ -385,10 +385,10 @@ def close_item(store: Path, nid: str, pr: str, outcome: str = "", today: str | N
 
 # --- research_graph, the graph engine ---
 # brain imports the research_graph package (installed into its venv from the pin in pyproject.toml) and runs its CLI
-# in this process. Until install.ps1 -Apply has installed it, or when $BRAIN_GRAPH_PYTHON is set, it runs the legacy
-# copy (LEGACY, in a registered project) in another Python, as it did before the package existed.
+# in this process. When $BRAIN_GRAPH_PYTHON is set, or the package is missing from this Python, it runs
+# ``python -m research_graph`` in that Python (else this one) instead: there is no other copy of the engine to look for.
 
-LEGACY = "quant_lab.research_graph"
+MODULE = "research_graph"
 _hinted = False
 
 
@@ -425,36 +425,15 @@ def _run_engine(cli, root: Path, argv: list[str]) -> int:
         return 1
 
 
-def _legacy_cmd(root: Path) -> list[str]:
+def _external_cmd() -> list[str]:
+    """``python -m research_graph`` in $BRAIN_GRAPH_PYTHON, else in this Python (the package missing: it says so)."""
     global _hinted
-    if not _hinted and not os.environ.get("BRAIN_GRAPH_PYTHON"):
-        print("brain: the research_graph package is not in brain's venv (install.ps1 -Apply installs it); running "
-              f"the legacy copy ({LEGACY})", file=sys.stderr)
-        _hinted = True
-    return [graph_python(root), "-m", LEGACY]
-
-
-def _venv_python(base: Path) -> Path | None:
-    for rel in ("Scripts/python.exe", "bin/python"):
-        p = base / ".venv" / rel
-        if p.exists():
-            return p
-    return None
-
-
-def graph_python(root: Path) -> str:
-    """Python for the fallback, one that can import :data:`LEGACY`: $BRAIN_GRAPH_PYTHON, else the ``.venv`` of the
-    first registered project that holds that package (brain.projects: relative roots from the main checkout when this
-    is a worktree), else this Python."""
     env = os.environ.get("BRAIN_GRAPH_PYTHON")
-    if env:
-        return env
-    from . import projects  # here: brain.projects imports this module
-    for proj in projects.load(root).values():
-        p = _venv_python(proj.root) if (proj.root / LEGACY.replace(".", "/")).is_dir() else None
-        if p:
-            return str(p)
-    return sys.executable
+    if not _hinted and not env:
+        print("brain: the research_graph package is not in brain's venv: brain update (or install.ps1 -Apply) "
+              "installs it", file=sys.stderr)
+        _hinted = True
+    return [env or sys.executable, "-m", MODULE]
 
 
 def _foreign(root: Path, store: Path) -> list[str]:
@@ -476,7 +455,7 @@ def research_graph_json(root: Path, store: Path, *args: str):
         stdout, stderr = out.getvalue(), err.getvalue()
     else:
         try:
-            res = subprocess.run(_legacy_cmd(root) + argv, cwd=root, capture_output=True, text=True,
+            res = subprocess.run(_external_cmd() + argv, cwd=root, capture_output=True, text=True,
                                  encoding="utf-8", timeout=120, env=dict(os.environ, PYTHONIOENCODING="utf-8"),
                                  stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -502,7 +481,7 @@ def research_graph(root: Path, store: Path, *args: str) -> int:
     cli = engine()
     if cli is not None:
         return _run_engine(cli, root, argv)
-    return subprocess.run(_legacy_cmd(root) + argv, cwd=root).returncode
+    return subprocess.run(_external_cmd() + argv, cwd=root).returncode
 
 
 def board_stale(root: Path, store: Path, views: str) -> list[str]:

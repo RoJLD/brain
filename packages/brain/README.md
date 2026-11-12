@@ -178,7 +178,7 @@ action's `install.ps1 -Apply`, applied with `A` in its detail, goes the same way
 
 A cockpit panel never stays blank without saying why. An empty table shows one line: « 7 hidden by kind action: f
 changes the filters », « Nothing waits on Ada in every project », « far is not on this machine (../nowhere) ». A panel
-not probed yet shows the probe's countdown (« probe in 1 min 40 (r for now) »), then its progress (« probing: quant
+not probed yet shows the probe's countdown (« probe in 1 min 40 (r for now) »), then its progress (« probing: acme
 2/3 »). A read that fails keeps the panel's last content, with the error and the time of the data in its frame; it is
 notified once and read again at the next tick (a probed panel: at the next probe). `--once` and `--json` print a
 failed read on stderr and exit 1; `--detail` names it when it finds no row. A stack or a code index repo that is not
@@ -1165,6 +1165,24 @@ term is a whole word matched without case: a private project or repo named after
 the engine's own text, so rename it, or keep it out of a private subtree. Off by default. An older engine reads the key
 as unknown and generates nothing: keep the repos in the hand list until every machine and the brain repo's CI run the
 release that knows it.
+
+**The deny terms derived from the registries** (`wi-brain-public-deny-derived`, brain.denylist). Whatever the scope
+tree, `brain check --public`, the commit and push guards and `brain boundary`'s readiness also refuse the names the
+brain's own registries declare, from the day they are declared: `hosts` (the machines of `config.json` `hosts` and
+their `aliases`), `people` (`identity.owner`, `identity.display_name`, `members.yaml`'s people), `projects` (the
+registry's projects, read-only ones too, and their repos by name and folder), `specs` (the file names under
+`docs/specs`) and `modules` (the module registries' names, and ids of 4 characters or more: a short code such as `D7`
+names nothing). Each joins its category after the hand list. `config.json` `public.derive` picks the sources (a list;
+absent, all of them; `[]`, none); `public.public_names` (`{name: reason}`) keeps a public name of a registry out (a
+third-party tool a project reads, an engine capability a module is named after); the engine's own names (`brain`,
+`research-graph`), the names of `public.repos`'s owners and repos, and a name shorter than 3 characters are never
+derived, in any spelling; a project rooted at the brain's own root gives its repos, not its name. `brain check --all` (and a brain's own
+root) warns about each declared name no deny list holds in every spelling, when `public.derive` leaves its source
+out. A term, by hand or derived, matches in every spelling of its separators: `acme-lab` also refuses `acme_lab`,
+`Acme Lab`, `acme - lab` and `acmelab` (a Python module named after a hyphenated repo). A new spec, machine or module changes the rules the stamps are keyed
+by: rerun `brain check --public --history` before the next push. A registry that cannot be read (a YAML error, a
+conflict marker in `projects.yaml`, `members.yaml` or a module registry) never yields a shorter list: the public and
+secrets guards refuse, as for a configuration they cannot trust, and `brain check --public` stops (exit code 2).
 
 ### Edges between stores
 

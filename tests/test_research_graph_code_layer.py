@@ -88,12 +88,12 @@ def _copy_store(tmp_path: Path) -> Path:
 
 def test_parse_code_ref_with_and_without_symbol():
     ref = parse_code_ref(
-        "code:quant-marketdata:quant_marketdata/venues/lighter.py::LighterVenue.funding"
+        "code:acme-data:acme_data/venues/lighter.py::LighterVenue.funding"
     )
     assert ref == CodeRef(
-        "quant-marketdata", "quant_marketdata/venues/lighter.py", "LighterVenue.funding"
+        "acme-data", "acme_data/venues/lighter.py", "LighterVenue.funding"
     )
-    assert ref.repo_node == "repo-quant-marketdata"
+    assert ref.repo_node == "repo-acme-data"
     assert parse_code_ref(ref.id) == ref
     whole = parse_code_ref("code:research-lab:scripts/monitoring_cycle.ps1")
     assert whole.symbol is None and whole.repo_node == "repo-research-lab"
@@ -102,7 +102,7 @@ def test_parse_code_ref_with_and_without_symbol():
 @pytest.mark.parametrize(
     "bad, why",
     [
-        ("quant-marketdata:a.py", "must start with"),
+        ("acme-data:a.py", "must start with"),
         ("code:a.py", "expected code:"),
         ("code:repo:/abs/a.py", "bad path"),
         ("code:repo:../a.py", "bad path"),

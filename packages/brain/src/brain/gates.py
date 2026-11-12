@@ -134,7 +134,7 @@ def problems(g: dict) -> list[str]:
 
 
 def label(g: dict) -> str:
-    """'hardware gpu-box', 'calendar 28 days', 'external quant:wi-x', 'count ddr.answered >= 100', 'go/no-go'."""
+    """'hardware gpu-box', 'calendar 28 days', 'external acme:wi-x', 'count ddr.answered >= 100', 'go/no-go'."""
     kind = g.get("kind")
     if kind == "calendar":
         return f"calendar {g.get('days')} days" + (f" from {g['from']}" if g.get("from") else "")

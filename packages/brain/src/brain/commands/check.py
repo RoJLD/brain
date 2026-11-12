@@ -32,7 +32,8 @@ USAGE = """\
                         projects' formats: and migrations: declarations; --formats then runs their check: commands
                         (brain formats check, opt-in: never on a plain brain check)
   brain check --public [--repo DIR] [--remote NAME] [--history] [--engine] [--json]   before a push to a public repo
-                        (config.json public.repos), at zero token: no denied term (public.deny), secret, e-mail or home
+                        (config.json public.repos), at zero token: no denied term (public.deny, and the names derived
+                        from the brain's registries: public.derive, brain.denylist), secret, e-mail or home
                         folder, data or sealed file, nor a domain's patterns (public.patterns, public.refuse) in the
                         tracked files, and with --history in the commits not on the remote yet (gitleaks too when on
                         the PATH); green with --history, it stamps HEAD for the public guard on git push, keyed by

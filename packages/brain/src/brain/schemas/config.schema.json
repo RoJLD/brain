@@ -84,7 +84,7 @@
         "deny": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Terms matched as whole words, case-insensitive, / and \\ alike.",
+          "description": "Terms matched as whole words, case-insensitive, / and \\ alike, a separator (-, _ or a space) in every spelling, none included.",
           "properties": {
             "people": {"$ref": "#/$defs/terms", "description": "Names of people."},
             "users": {"$ref": "#/$defs/terms", "description": "User names of machines and accounts."},
@@ -93,6 +93,8 @@
             "paths": {"$ref": "#/$defs/terms", "description": "Local paths."}
           }
         },
+        "derive": {"type": "array", "items": {"enum": ["hosts", "people", "projects", "specs", "modules"]}, "description": "The registries the deny terms are derived from, after the hand list (brain.denylist, wi-brain-public-deny-derived): hosts (config.json hosts and their aliases), people (identity.owner, identity.display_name, members.yaml's people), projects (the registry's names and their repos' names and folders), specs (the file names under docs/specs), modules (the module registries' names, and ids of 4 characters or more). Absent: all of them; []: none (brain check then warns about each declared name no deny list holds)."},
+        "public_names": {"type": "object", "additionalProperties": {"type": "string", "minLength": 15}, "description": "{name: reason of 15 characters or more}: a name of the registries that is public (a third-party tool a project reads, an engine capability a module is named after), never derived as a deny term."},
         "deny_from_tree": {"type": "boolean", "description": "true: deny.repos gains, after the hand list, the name of every project of the scope tree whose class floor along its chain is private or stricter (scopes.yaml classes.floor) and the names of its repos, a repo of public.repos left out (wi-brain-deny-from-tree, brain.scopes); a newly placed private project is denied without a hand edit. A scope tree or registry that cannot be read then makes the public guard refuse. Default false: the hand list alone."},
         "allow": {"type": "object", "additionalProperties": {"type": "string", "minLength": 15}, "description": "{glob: reason of 15 characters or more}: files where a denied term is expected, a licence's author say; brain check --public excepts them from every check but secrets."},
         "patterns": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}, "description": "{name: regular expression}: what no line of a public repo may match, a domain's own (a data venue's derived columns); brain check --public, from the domain's template."},

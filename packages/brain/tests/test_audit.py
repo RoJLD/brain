@@ -139,14 +139,14 @@ def test_a_coderef_of_a_registered_repo_not_cloned_here_stays_not_measured(monke
 def test_readme_exists_and_sections():
     res = _measure({"a": {"src/a/__init__.py": "", "src/a/m.py": "def f():\n    pass\n", "tests/test_m.py": "x\n"},
                     "b": {"README.md": "# b\nshort\n", "src/b/__init__.py": "def f():\n    pass\n"},
-                    "honest-backtest": {"README.md": "# honest-backtest\n" + "text\n" * 9 + "## Install\n## Example\n"
+                    "sample-backtest": {"README.md": "# sample-backtest\n" + "text\n" * 9 + "## Install\n## Example\n"
                                         "```\n## Tests\n```\n", "src/h/__init__.py": "def f():\n    pass\n"},
                     "conf": {"README.md": "# conf\n" + "text\n" * 12}})
     found = _found(res)
     assert found[("readme.exists", "README.md")] == "P0"
     assert [r["findings"][0]["why"] for r in res["repos"][:2]] == [
         "no README.md at the root", "README.md has 2 non-blank line(s) (10 at least)"]
-    assert {u for c, u in _found(res, "honest-backtest") if c == "readme.sections"} == {"README.md#tests"}
+    assert {u for c, u in _found(res, "sample-backtest") if c == "readme.sections"} == {"README.md#tests"}
     assert _found(res, "conf") == {}                                    # no code: no sections asked
 
 
