@@ -40,10 +40,10 @@ jobs:
         run: |
           pip install -e .
           pip install --no-deps -e packages/brain
-          pip install pyyaml pytest pytest-xdist pytest-cov "tomli>=2; python_version < '3.11'"
+          pip install pyyaml pytest "pytest-xdist>=3.5" pytest-cov "tomli>=2; python_version < '3.11'"
       - name: Tests
-        # in parallel, one worker per core (pytest-xdist); the real docker client apart, on one process. On 3.12 the
-        # same run measures the coverage with test contexts (wi-brain-test-coverage): its data file is the artifact
+        # in parallel, one worker per core (pytest-xdist; tests/conftest.py makes it worksteal: an idle worker takes
+        # tests still queued on a busy one); the real docker client apart, on one process. On 3.12 the same run measures the coverage with test contexts (wi-brain-test-coverage): its data file is the artifact
         # coverage-data, which `brain coverage --repo brain --from coverage.data --cwd packages/brain` reads in a
         # checkout at the same commit (packages/brain/docs/tests-graph.md)
         working-directory: packages/brain
@@ -75,7 +75,7 @@ jobs:
         run: |
           pip install -e .
           pip install --no-deps -e packages/brain
-          pip install pyyaml pytest pytest-xdist
+          pip install pyyaml pytest "pytest-xdist>=3.5"
       - name: Tests
         run: pytest packages/brain -p no:randomly -n auto -m "not docker"
       - name: Tests (docker)
@@ -147,7 +147,7 @@ jobs:
         run: |
           pip install -e .
           pip install --no-deps -e packages/brain
-          pip install pyyaml pytest pytest-xdist "tomli>=2; python_version < '3.11'"
+          pip install pyyaml pytest "pytest-xdist>=3.5" "tomli>=2; python_version < '3.11'"
       - name: Every fault a no-go, no fault a go
         if: steps.touched.outputs.run == 'true'
         working-directory: packages/brain

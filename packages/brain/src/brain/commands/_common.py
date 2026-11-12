@@ -126,6 +126,8 @@ def _scope_projects(args, root: Path) -> list[projects.Project]:
         args.scope_node, names = scopes.select(args.scope, root, here(root))
     except scopes.ScopeError as exc:
         raise SystemExit(f"brain: {exc}") from None
+    if args.scope_node == "global":   # global is --all, whatever the view does with it
+        args.all = True
     if not names:
         raise SystemExit(f"brain: --scope {args.scope}: no registered project the brain loads under "
                          f"{args.scope_node} (brain scopes shows the tree)")

@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import conftest
 import pytest
 
 PACKAGE = Path(__file__).resolve().parents[1]
@@ -77,10 +79,19 @@ def frozen(repo: Path, tag: str) -> None:
     write(repo, f"{release_check.STORES}/{tag}/brain/config.json", '{"v": 1}\n')
 
 
+_TAGGED: list[Path] = []   # the tagged repo, made once per test process (an xdist worker is one), then copied
+
+
 @pytest.fixture
 def repo(tmp_path):
-    """A repo tagged v0.2.5, with a schema of each kind and an ordinary module."""
-    here = tmp_path / "repo"
+    """A repo tagged v0.2.5, with a schema of each kind and an ordinary module: a copy of one made once per test
+    process (its git init, add, commit and tag cost a second on Windows; a copy, a few milliseconds)."""
+    if not _TAGGED:
+        _TAGGED.append(_tagged(conftest._TEMPLATE_ROOT[0] / "release-repo"))
+    return Path(shutil.copytree(_TAGGED[0], tmp_path / "repo", ignore=conftest.NO_LOCKS))
+
+
+def _tagged(here: Path) -> Path:
     here.mkdir()
     git(here, "init", "-q")
     versions(here, "0.2.5")
@@ -92,7 +103,8 @@ def repo(tmp_path):
     write(here, release_check.REGISTRY, Path(release_check.__file__).read_text(encoding="utf-8"))  # the tag's SCHEMAS
     frozen(here, "v0.2.5")   # the old-store fixture of the tag (test_a_version_pr_without_the_last_tags_store_fails)
     git(here, "add", "-A")
-    git(here, "commit", "-qm", "first")
+    # no background maintenance (its objects/maintenance.lock) while a test copies the repo: conftest.git_init's
+    git(here, "-c", "maintenance.auto=false", "-c", "gc.auto=0", "commit", "-qm", "first")
     git(here, "tag", "v0.2.5")
     return here
 

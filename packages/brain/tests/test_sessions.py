@@ -33,6 +33,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
     monkeypatch.delenv(sessions.HOST_ENV, raising=False)
     monkeypatch.setattr(governor, "memory_info", lambda: {"committed": 50.0, "available_gb": 24.0})
+    written: dict[Path, int] = {}
 
     def put(host, cli_id, parent=None, name=None, archived=False, active=None, title="A session", detached=None):
         data = {"sessionId": host, "cliSessionId": cli_id, "title": title, "createdAt": 1_000,
@@ -46,8 +47,15 @@ def app(tmp_path, monkeypatch):
                                    "title": "kept out"}
         if detached is not None:
             data["lineageDetached"] = detached
-        (d / f"{host}.json").write_text(json.dumps(data), encoding="utf-8")
-        return d / f"{host}.json"
+        f = d / f"{host}.json"
+        f.write_text(json.dumps(data), encoding="utf-8")
+        # a rewrite is a new stat, as the app's own rewrites are seconds apart: sessions.app_index caches a file by
+        # (size, mtime), and a same-size rewrite (another cli id) within one clock tick of NTFS kept the earlier
+        # metadata (wi-brain-test-speed-2: test_a_masters_earlier_transcript_raises_no_alert failed under load)
+        mtime = max(f.stat().st_mtime_ns, written.get(f, 0) + 1_000_000)
+        os.utime(f, ns=(mtime, mtime))
+        written[f] = mtime
+        return f
     return put
 
 

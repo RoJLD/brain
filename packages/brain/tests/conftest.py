@@ -13,6 +13,21 @@ GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT
            "GIT_COMMITTER_EMAIL": "t@example.invalid", "GIT_CONFIG_NOSYSTEM": "1"}
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_cmdline_main(config):
+    """``-n N`` with no ``--dist``: pytest-xdist's worksteal, not its default load (wi-brain-test-speed-2). load hands
+    each worker a fixed share up front, so the suite ends on the one or two workers left with the git-heavy tests
+    while the others idle; worksteal lets an idle worker take tests still queued on a busy one. Runs before xdist's
+    own hook, which turns ``dist`` from "no" to "load"; an explicit ``--dist`` is kept, and so is load when
+    ``--maxschedchunk`` (load's own option) is given; ``-n 0`` stays one process. A conftest hook rather than ``--dist``
+    in addopts: a run whose paths span the repo root (``pytest packages/brain/tests tests``) reads the root's pytest
+    config, and ``--dist`` there would fail the research-graph job, which has no xdist."""
+    if config.pluginmanager.hasplugin("xdist") and config.getoption("dist", "no") == "no" \
+            and config.getoption("numprocesses", None) not in (None, 0) \
+            and config.getoption("maxschedchunk", None) is None:
+        config.option.dist = "worksteal"
+
+
 @pytest.fixture(autouse=True)
 def brain_home(tmp_path, monkeypatch):
     """Every test writes its ledger to a temporary BRAIN_HOME, never ~/.brain."""
@@ -122,6 +137,19 @@ def git_init(path, branch: str = "main", bare: bool = False) -> Path:
     return path
 
 
+def head_sha(repo) -> str:
+    """HEAD's sha, read from the branch's loose ref when there is one (a git process costs 50-300 ms on Windows,
+    and make_repo commits hundreds of times a run: wi-brain-test-speed-2), else from ``git rev-parse HEAD``."""
+    git_dir = Path(repo) / ".git"
+    try:
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        sha = (git_dir / head[5:]).read_text(encoding="utf-8").strip() if head.startswith("ref: ") else head
+    except OSError:   # a worktree's .git file, a packed ref
+        sha = ""
+    return sha if len(sha) in (40, 64) and all(c in "0123456789abcdef" for c in sha) \
+        else run_git(repo, "rev-parse", "HEAD").strip()
+
+
 @pytest.fixture
 def git_repo(tmp_path, monkeypatch):
     if not shutil.which("git"):
@@ -196,7 +224,7 @@ def make_repo(tmp_path, monkeypatch):
         env = dict(os.environ, **GIT_ENV, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
         for args in (["add", "-A"], ["commit", "-q", "--allow-empty", "-m", msg]):
             subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, env=env)
-        return run_git(repo, "rev-parse", "HEAD").strip()
+        return head_sha(repo)
 
     def make(name, files, date="2026-10-01T12:00:00Z", branch="main"):
         repo = git_init(tmp_path / name, branch)
