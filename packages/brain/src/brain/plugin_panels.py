@@ -135,25 +135,43 @@ def _panel(project: str, ref: str, own: str, spec, notes: list) -> Panel | None:
         return None
     for k in sorted(set(spec) - PANEL_KEYS):
         notes.append(f"{where}: key {k!r} unknown to this engine: kept, not used")
-    rows, read = spec.get("rows"), spec.get("read")
-    if not (isinstance(rows, str) and rows) and not (isinstance(read, str) and ":" in read):
+    rows, read = _source(spec)
+    if not (rows or read):
         notes.append(f"{where}: neither rows (a JSON file) nor read (module:attr): left out")
         return None
+    cols = _columns(spec.get("columns"))
+    keys = [k for k, _ in cols]
+    sorts = tuple(s for s in spec.get("sorts") or [] if s in keys) or tuple(keys[:1])
+    return Panel(f"{slug(project)}-{slug(own)}", project, own, _texts(spec.get("title"), own), cols, sorts,
+                 _filters(spec.get("filters")), str(spec.get("id") or "id"), rows, read,
+                 str(spec.get("help") or ""), ref)
+
+
+def _source(spec: dict) -> tuple[str, str]:
+    """(the rows' JSON file, the read callable): the file wins when both are given; ('', '') when neither."""
+    rows, read = spec.get("rows"), spec.get("read")
+    rows = rows if isinstance(rows, str) else ""
+    return rows, "" if rows or not (isinstance(read, str) and ":" in read) else read
+
+
+def _columns(given) -> tuple:
+    """((key, title), ...) from a list of {key, title} or of keys; anything else left out."""
     cols = []
-    for c in spec.get("columns") or []:
+    for c in given if isinstance(given, list) else []:
         if isinstance(c, dict) and isinstance(c.get("key"), str):
             cols.append((c["key"], str(c.get("title") or c["key"])))
         elif isinstance(c, str):
             cols.append((c, c))
-    keys = [k for k, _ in cols]
-    sorts = tuple(s for s in spec.get("sorts") or [] if s in keys) or tuple(keys[:1])
-    filters = {}
-    for f, values in (spec.get("filters") or {}).items() if isinstance(spec.get("filters"), dict) else ():
+    return tuple(cols)
+
+
+def _filters(given) -> dict:
+    """{field: (ALL, values...)}: ALL first whether it was given or not."""
+    out = {}
+    for f, values in given.items() if isinstance(given, dict) else ():
         vals = tuple(dict.fromkeys(str(v) for v in values)) if isinstance(values, list) else ()
-        filters[str(f)] = vals if vals[:1] == (ALL,) else (ALL, *[v for v in vals if v != ALL])
-    return Panel(f"{slug(project)}-{slug(own)}", project, own, _texts(spec.get("title"), own), tuple(cols), sorts,
-                 filters, str(spec.get("id") or "id"), rows if isinstance(rows, str) else "",
-                 read if isinstance(read, str) and not rows else "", str(spec.get("help") or ""), ref)
+        out[str(f)] = (ALL, *[v for v in vals if v != ALL])
+    return out
 
 
 def _tab(project: str, spec, panels: dict, notes: list) -> Tab | None:
