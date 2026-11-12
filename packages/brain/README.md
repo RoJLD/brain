@@ -231,7 +231,7 @@ graph gives the same file.
 
 `brain reference --write` writes `docs/reference/`: an arc42 skeleton, its twelve sections from the graph (goals and
 milestones, constraints, context, strategy, building blocks, runtime, deployment, concepts, decisions by module,
-quality from the milestones' triggers and tests, risks and debt, glossary) with the prose of `docs/reference.yaml`,
+quality from the milestones' triggers and tests, risks and debt, glossary) with the prose of the repo's reference YAML,
 and one page per module of the store's registry (what it does, the decisions in force on its nodes from the answered
 DDRs, earlier ones folded, its rules, specs, items and open questions); `brain sync` keeps it current once the folder exists.
 `--public` renders a public repo's neutral reference by feature domain, from its features only (this repo's own is

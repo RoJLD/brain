@@ -245,13 +245,15 @@ def risks(m, prose: dict, ctx: dict) -> list[str]:
     debt = [i for i in items if "debt" in i.split("-") and m.nodes[i].get("status") in r.OPEN]
     lessons = [x for x in _of(m, "Lesson") if m.nodes[x].get("status") in OPEN_LESSON]
     pending = sorted(m.pending, key=lambda d: str(d["id"]))
-    out = _intro(prose, "risks")
-    out += [f"### Blocked items: {len(blocked)}", ""] + ([_line(m, i) for i in blocked] or ["None."]) + [""]
-    out += [f"### Debt items: {len(debt)}", ""] + ([_line(m, i) for i in debt] or ["None."]) + [""]
-    out += [f"### Open lessons: {len(lessons)}", ""] + ([_line(m, x) for x in lessons] or ["None."]) + [""]
-    out += [f"### Open questions: {len(pending)}", ""]
-    return out + ([f"- `{d['id']}` (pending) {r._short(d.get('question') or d.get('title'), 140)}" for d in pending]
-                  or ["None."])
+    questions = [f"- `{d['id']}` (pending) {r._short(d.get('question') or d.get('title'), 140)}" for d in pending]
+    return (_intro(prose, "risks") + _sub("Blocked items", [_line(m, i) for i in blocked])
+            + _sub("Debt items", [_line(m, i) for i in debt]) + _sub("Open lessons", [_line(m, x) for x in lessons])
+            + _sub("Open questions", questions))
+
+
+def _sub(title: str, lines: list[str]) -> list[str]:
+    """A sub-section with its count: « None. » when it is empty."""
+    return [f"### {title}: {len(lines)}", ""] + (lines or ["None."]) + [""]
 
 
 def glossary(m, prose: dict, ctx: dict) -> list[str]:

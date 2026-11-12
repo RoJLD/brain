@@ -43,16 +43,22 @@ def files_for(args, root: Path) -> dict[str, str]:
     return reference.render(root, store, _store_label(root, store))
 
 
+def _prose_refused(base: Path) -> bool:
+    """Whether the repo's docs/reference.yaml (beside the folder ``base`` renders) breaks its schema: each error
+    said; the render is then refused, as the README's YAML's."""
+    errors = reference.load_prose(base.parent.parent)[1]
+    for line in errors:
+        print(f"error: {line} (schemas/reference.schema.json)", file=sys.stderr)
+    return bool(errors)
+
+
 def cmd_reference(args, root: Path) -> int:
     if args.public and not args.out:
         print("brain reference --public: give --out <a checkout of the public repo>/docs/reference", file=sys.stderr)
         return 1
     files = files_for(args, root)
     base = _target(args, root)
-    prose_errors = reference.load_prose(base.parent.parent)[1]   # <repo>/docs/reference.yaml
-    for line in prose_errors:   # a required field missing: the render is refused, as the README's YAML's
-        print(f"error: {line} (schemas/reference.schema.json)", file=sys.stderr)
-    if prose_errors:
+    if _prose_refused(base):
         return 1
     denied = reference.denied(files, config.load(root)) if args.public else []
     for line in denied:   # what brain check --public would refuse: never written into a public repo

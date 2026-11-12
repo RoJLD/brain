@@ -261,14 +261,19 @@ def _asked_about(m: Model, d: dict, mid: str) -> bool:
     return any(module_of(m, x) == mid for x in _about(d))
 
 
+def _module_intro(prose: dict | None, mid: str) -> str:
+    """A module's own prose (docs/reference.yaml ``modules.<id>``), or ""."""
+    texts = (prose or {}).get("modules")
+    return str(texts.get(mid) or "").strip() if isinstance(texts, dict) else ""
+
+
 def render_module(m: Model, mod: dict, store_label: str, prose: dict | None = None) -> str:
     mid = str(mod["id"])
     own = _members(m, mid)
     feats = sorted((n for n in own if m.nodes[n].get("type") == features.TYPE), key=lambda f: _status_rank(m, f))
     items = {n for n in own if m.nodes[n].get("type") == "WorkItem"}
     note = f" {_cell(mod['note'])}" if mod.get("note") else ""
-    texts = (prose or {}).get("modules")
-    intro = str(texts.get(mid) or "").strip() if isinstance(texts, dict) else ""
+    intro = _module_intro(prose, mid)
     out = [f"# {mid} {_cell(mod.get('name'))}".rstrip(), "",
            f"{MARKER} from `{store_label}` (its modules.yaml, its nodes and the DDR records) and `{YAML}`. Do not "
            "edit: change the graph or the YAML, then brain sync.", "",
