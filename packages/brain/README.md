@@ -1087,6 +1087,15 @@ but a whole number is refused). More workers than cores rarely help: on Windows 
 16-thread machine, 24 and 32 workers ran no faster than 16, and 24 workers starting at once once timed out a worker's
 start.
 
+`BRAIN_TEST_ROOT=<folder>` puts the suite's temporary files under one folder: pytest's temporary folders under
+`<folder>/tmp` (pytest keeps its numbering and its last three runs there; an explicit `--basetemp` wins) and the venvs
+the harness tests build under `<folder>/venvs`. Unset, they go to the system's temp folder as before. A short folder
+outside the user profile (`C:\brain-tests` on Windows, say) keeps pip's paths in those venvs under Windows' length
+limit, and is one place to exclude from an on-access antivirus scan: the tests write and delete tens of thousands of
+small files, and a scan of each one slows the suite (about 10 % measured with the temporary folders excluded). The
+engine never changes the antivirus: the owner adds that exclusion by hand, if wanted, and the processes the tests start
+(git, bash, python) are still scanned.
+
 ## Releasing
 
 With research-graph, under the repo's single tag series: see the root README. `CHANGELOG.md` here is the command's.

@@ -1,5 +1,6 @@
 """How the suite itself runs (conftest's own hooks, wi-brain-test-speed-2)."""
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -57,3 +58,29 @@ def test_brain_test_workers_sets_what_n_auto_means(monkeypatch):
         monkeypatch.setenv("BRAIN_TEST_WORKERS", raw)
         with pytest.raises(pytest.UsageError, match="a whole number of workers"):
             conftest.pytest_xdist_auto_num_workers(None)
+
+
+def _temp(monkeypatch, root=None, basetemp=None, temproot=None):
+    for var, value in (("BRAIN_TEST_ROOT", root), ("PYTEST_DEBUG_TEMPROOT", temproot)):
+        if value is None:
+            monkeypatch.delenv(var, raising=False)
+        else:
+            monkeypatch.setenv(var, str(value))
+    config = SimpleNamespace(getoption=lambda name, default=None: basetemp if name == "basetemp" else default)
+    conftest.temp_under_test_root(config)
+    return os.environ.get("PYTEST_DEBUG_TEMPROOT")
+
+
+def test_brain_test_root_holds_pytests_temp_folders(tmp_path, monkeypatch):
+    """BRAIN_TEST_ROOT: pytest's temp root is <root>/tmp (made); unset or blank: the system's, untouched; an explicit
+    --basetemp or PYTEST_DEBUG_TEMPROOT wins."""
+    root = tmp_path / "brain-tests"
+    assert _temp(monkeypatch) is None
+    assert _temp(monkeypatch, root="  ") is None
+    assert _temp(monkeypatch, root=root) == str(root / "tmp") and (root / "tmp").is_dir()
+    assert _temp(monkeypatch, root=root, basetemp=str(tmp_path / "bt")) is None
+    assert _temp(monkeypatch, root=root, temproot=tmp_path / "mine") == str(tmp_path / "mine")
+    monkeypatch.setenv("BRAIN_TEST_ROOT", str(root))
+    assert conftest.test_root_dir("venvs") == root / "venvs" and (root / "venvs").is_dir()
+    monkeypatch.delenv("BRAIN_TEST_ROOT")
+    assert conftest.test_root_dir("venvs") is None
