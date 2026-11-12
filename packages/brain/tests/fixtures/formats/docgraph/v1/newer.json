@@ -1,0 +1,45 @@
+{
+  "schema": "docgraph/v1",
+  "generated": {"at": "2026-03-01T12:00:00Z", "by": "another-tool 2.3.0", "repo": "example-org/other",
+                "ref": "4567def", "sources": {"files": true, "tracker": "unreachable", "drive": false},
+                "duration_ms": 840},
+  "producer_notes": "a key of this producer's own: a reader ignores it",
+  "nodes": [
+    {"id": "decision:ADR-0001", "type": "decision", "kind": "record", "title": "One store per project",
+     "status": "accepted", "native_status": "active", "decided_at": "2026-02-01",
+     "source": {"path": "notes/decisions.md", "anchor": "one-store-per-project", "ref": "4567def",
+                "column": 1}},
+    {"id": "need:N-12", "type": "need", "title": "Several projects in one registry", "status": "proposed",
+     "native_status": "idea", "phase": "V1", "source": {"path": "docs/needs.md", "line": 12, "ref": "4567def"}},
+    {"id": "module:B8", "type": "module", "title": "Contracts", "source": {"path": "docs/modules.md", "line": 3}},
+    {"id": "change:118", "type": "change", "title": "The store per project", "status": "done",
+     "source": {"tracker": "pull", "number": 118, "url": "https://example.org/example-org/other/pull/118"}},
+    {"id": "item:wi-one-store", "type": "item", "title": "One store per project", "status": "done",
+     "native_status": "done", "phase": "wave-1.0", "estimate": "M",
+     "source": {"path": "notes/graph/nodes/items.yaml", "line": 30}},
+    {"id": "owner-decision:2026-02-01", "type": "owner-decision", "title": "Keep one store per project",
+     "status": "accepted", "source": {"path": "notes/journal.md", "anchor": "2026-02-01"}},
+    {"id": "finding:R-4", "type": "finding", "title": "The store's path is not checked", "status": "open",
+     "source": {"tracker": "pull", "number": 118}}
+  ],
+  "edges": [
+    {"from": "decision:ADR-0001", "to": "need:N-12", "type": "constrains", "origin": "declared",
+     "reason": "one store per project leaves several projects to the registry", "confirmed": true,
+     "compatibility": "extension-point", "weight": 0.5},
+    {"from": "change:118", "to": "item:wi-one-store", "type": "implements", "origin": "derived",
+     "source": {"tracker": "pull", "number": 118}},
+    {"from": "item:wi-one-store", "to": "decision:ADR-0001", "type": "decided_by", "origin": "derived",
+     "source": {"path": "notes/graph/nodes/items.yaml", "line": 34}},
+    {"from": "owner-decision:2026-02-01", "to": "decision:ADR-0001", "type": "reports", "origin": "derived",
+     "source": {"path": "notes/journal.md", "anchor": "2026-02-01"}},
+    {"from": "item:wi-one-store", "to": "item:wi-elsewhere", "type": "depends_on", "origin": "derived",
+     "source": {"path": "notes/graph/nodes/items.yaml", "line": 35}}
+  ],
+  "checks": [
+    {"id": "depends.cross-phase", "severity": "warning", "subjects": ["item:wi-one-store"],
+     "message": "item:wi-elsewhere is not in the document", "hint": "a key of this producer's own"},
+    {"id": "example.own-check", "severity": "info", "subjects": ["finding:R-4"], "message": "a producer's own check"}
+  ],
+  "checks_run": ["depends.cross-phase", "cycle", "decision.review-trigger-missing", "example.own-check"],
+  "checks_not_run": ["criterion.no-item", "test.uncarried", "threat.untested"]
+}

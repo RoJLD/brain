@@ -80,6 +80,7 @@ SCHEMAS = {
     "standards": (f"{SRC}/schemas/standards.schema.json",),   # a standards catalog (brain.standards)
     "sr": (f"{SRC}/schemas/sr.schema.json",),
     "status": (f"{SRC}/schemas/status.schema.json",),   # the status document brain doctor --json prints (brain.probe)
+    "docgraph": (f"{SRC}/schemas/docgraph.schema.json",),   # a documentation graph, docgraph/v1 (brain.docgraph)
     "packs": (f"{SRC}/templates/generic/packs.yaml",),
     "projects": (f"{SRC}/templates/generic/projects.yaml",),
     "template": (f"{SRC}/templates/generic/template.yaml",

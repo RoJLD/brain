@@ -226,6 +226,15 @@ questions) and an index with the decisions no module holds; `brain sync` keeps i
 `--public` renders a public repo's neutral reference by feature domain, from its features only (this repo's own is
 [docs/reference/](../../docs/reference/README.md)). See [docs/views.md](docs/views.md).
 
+### The documentation graph's contract
+
+`docgraph/v1` ([docs/docgraph.md](docs/docgraph.md)) is the neutral, public format of a documentation graph: its
+decisions, documents and sections, milestones, criteria, items, changes, tests, threats and modules, typed edges named
+as the Brain names them, a source on every node and derived edge, declared links with their reason, and the findings
+of named checks every producer and reader mean the same way. Any program may emit it (a repository's own docs
+command, the Brain's doc graph); `brain docgraph validate FILE...` checks a document against the schema
+(`schemas/docgraph.schema.json`) and `brain docgraph checks` lists the named checks. Neither needs a brain.
+
 ### Generated READMEs
 
 A repo opts in by holding `readme.yaml` at its root (`schemas/readme.schema.json`): the text only a person writes, what

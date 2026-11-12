@@ -11,8 +11,8 @@ import help_dump
 from brain import audit, cli, commands, inventory
 from brain.commands import _registry
 from brain.commands import audit as audit_cmd
-from brain.commands import (bundle, capture, check, code_map, collisions, decision, down, health, impact, index, init,
-                            memory, merge_check, merge_driver, milestone, perf, probes, quiet, refresh, resume, retro,
+from brain.commands import (bundle, capture, check, code_map, collisions, decision, docgraph, down, health, impact,
+                            index, init, memory, merge_check, merge_driver, milestone, perf, probes, quiet, refresh, resume, retro,
                             review, schedule, sessions, spec, timed, up, update)
 from test_audit import README, _measure
 
@@ -53,7 +53,7 @@ def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeyp
 # that may hold no graph store): their module defines early, and no run; decision, resume and check define both (early
 # for announce, --hook and --public only); every other command needs the project's root (run only)
 EARLY = {capture, memory, timed, perf, init, merge_driver, merge_check, sessions, schedule, update, audit_cmd, impact,
-         index, up, down, health, bundle, quiet, review, probes}
+         index, up, down, health, bundle, quiet, review, probes, docgraph}
 BOTH = {decision, resume, check}
 ROOTED = {code_map, collisions, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
 

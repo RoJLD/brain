@@ -299,6 +299,15 @@ one) and holds the type of each key it names; removing or retyping one is a new 
 and no `brain` block (`newer`); `tests/test_probe.py` checks the probe's report against the schema and the fixture,
 and a consumer tests against the same two files.
 
+**Out and in: the documentation graph.** `docgraph/v1` ([docgraph.md](docgraph.md), wi-brain-docgraph-contract) is a
+documentation graph any program may emit and the Brain reads read only, published as `schemas/docgraph.schema.json`
+(registered in `SCHEMAS`, `docgraph`). Like the status document, it is versioned by its id (`schema: docgraph/v1`), not
+by a top-level `v`; it allows a key it does not name at every level, and a key it names keeps its type and its values:
+a new node type, edge type or status is `docgraph/v2`, which `brain docgraph validate` refuses as a later contract.
+Its fixtures, `tests/fixtures/formats/docgraph/v1/`, are a first producer's document (`older`) and another's with keys
+of its own, a need and a producer's own check (`newer`); `tests/test_docgraph.py` reads both clean. A brain holds no
+file of it (the upgrade test's `NOT_STORED`).
+
 ## The validator's keywords
 
 `brain.schema` validates with the standard library only, so the capture hooks can validate what they write. It
