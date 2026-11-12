@@ -282,7 +282,9 @@ quality from the milestones' triggers and tests, risks and debt, glossary) with 
 and one page per module of the store's registry (what it does, the decisions in force on its nodes from the answered
 DDRs, earlier ones folded, its rules, specs, items and open questions); `brain sync` keeps it current once the folder exists.
 `--public` renders a public repo's neutral reference by feature domain, from its features only (this repo's own is
-[docs/reference/](../../docs/reference/README.md)). See [docs/views.md](docs/views.md).
+[docs/reference/](../../docs/reference/README.md)). `brain reference --asof POINT` renders it as of a wave, a milestone,
+an era, a date or a git ref, read from git, with what changed since the wave before and a pending milestone's
+target view, under `BRAIN_HOME/views`, never into the repo. See [docs/views.md](docs/views.md).
 
 ### The documentation graph
 
