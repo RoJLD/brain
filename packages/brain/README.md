@@ -610,6 +610,18 @@ The profiles' names and the stages `--stage` selects are typology and stage ids,
 template of a later catalog, is tolerated: a note in read mode, an error only in strict mode (CI) (`--stage` itself
 takes this engine's stages).
 
+`brain project new DIR --kind K [--kind K]... [--stage S] [--template T] [--apply]` is the new-project wizard's
+first slice (`wi-brain-project-wizard`): what the project produces (ids of the typology catalog: code products and
+research first, STD-5; `strategy`, `creation`... are named and not offered yet), its stage, then a plan (the kinds
+with their entries and the Vision's modules, the layers they are proposed at that stage and those the template's graph
+lacks, then `brain init`'s plan) and `--apply`: the project's brain written by `brain init` from the first kind's
+profile template (`trading` takes `research`'s; `--template` names another), its registry entry recording
+`lifecycle: {typologies, stage}` (the lifecycle's stage: `mvp` reads as `build`), which `brain item clauses` reads.
+Run again in a folder that holds that brain, the plan shows what the answers change in its entry (typologies, stage,
+the standards' stage, the template) and writes nothing: an existing registry changes by a branch and a PR. The cockpit's Setup page
+offers it as « A new project » (without `--owner`, the owner of this machine's personal brain). The languages and tools, the data classes and the pack, procedures and permissions it
+will propose are its later slices.
+
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
 A team uses `--kind team` (and `--tenant ID` for a hosted brain). The step-by-step guide from an empty machine is
@@ -745,9 +757,10 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   merges its own PR archives itself once the main checkout is pulled, the note written and its report sent; a
   coordinator archives a child whose report says merged and verified without asking again; never another running session
   or one with uncommitted or unmerged work; the owner's app setting `auto_archive_inactive_days = 7` as the
-  token-free net; config.json `brief.after_merge` replaces these lines), and the definition of done and the
-  never-list read from the owner's rules.
-- **`brain review prep [PR | BASE..HEAD]`**, **`brain review stamp HEAD`**, **`brain review check HEAD`**: the review
+  token-free net; config.json `brief.after_merge` replaces these lines), the invariants and failure modes to test
+  (one line per surface kind the item touches, then its `props.invariants`; `brain review prep --item` hands the
+  same section to the review), and the definition of done and the never-list read from the owner's rules.
+- **`brain review prep [PR | BASE..HEAD] [--item ID]`**, **`brain review stamp HEAD`**, **`brain review check HEAD`**: the review
   a session runs on its own PR before it reports ([`docs/review.md`](docs/review.md), `brain.review`). The packet
   (the diff, the touched files at the head, `brain audit --diff`'s output, the lenses its surfaces call for) is
   gathered at zero token; the lens agents and two skeptics per distinct finding read it; the stamp, keyed by the

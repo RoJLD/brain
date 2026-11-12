@@ -205,6 +205,19 @@ writes the brief a coordinator hands to a sub-session, so that it edits only wha
 - its line of `brain collisions`;
 - how to start: each repo's checkout and default branch (a session card cannot carry a source branch, so the brief
   says how to start from one);
+- « Invariants and failure modes to test » (wi-brain-brief-failure-modes, `brain.failuremodes`): one line per surface
+  kind the item touches, read from its predicted surface (its features' and module's CodeRefs, the files it names),
+  its title and its props, each with what matched it and what to test: a store, a schema or a persisted format (the
+  previous release's store as a fixture, the format's round trip); a procedure step (fails without blocking, its
+  order); an external system (down, slow, garbage, its real payload as a fixture); a write in several steps (cut
+  between two writes: atomic); a command line (flags after the subcommand, `--json`, every doc line parses); a
+  heuristic or a metric (a replay on the real data); a guard or a gate (every sibling path through it); a counted or
+  guarded set (its scope: per store, per project, per tenant); a test removed or a check moved (each assertion and
+  its new home); text written into another format (an escaping helper per target, tested with a newline, quotes,
+  `%`, `$` and XML entities). The public engine gets its line when a CodeRef of the item names a repo (its folder
+  or its name) in config.json `public.repos` (an item with no CodeRef gets it from the review of its repo); the
+  item's own `props.invariants` (a line or a list) come last. `brain review prep --item` gives
+  the review's agents the same section;
 - a « To decide » section the coordinator fills in;
 - « After the merge », the close-item procedure's step 5 (wi-brain-archive-after-merge): the session that merges its
   own PR archives itself once its after-merge steps are done (the main checkout pulled, the backlog ticked, the
