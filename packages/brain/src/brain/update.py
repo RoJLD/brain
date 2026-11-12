@@ -564,9 +564,11 @@ def _refresh_stamps(p: dict, runner) -> list[str]:
     python, root = p["python"], Path(p["stamps"])
     hand = f"run brain check --public --history in each public checkout (brain check --public --refresh, in {root})"
     try:
-        done = runner([python, "-m", "brain", "--root", str(root), "check", "--public", "--refresh"],
-                      capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=str(root),
-                      timeout=STAMPS_TIMEOUT_S)
+        # -I: the engine just installed, never a checkout PYTHONPATH or the brain's root would put first; UTF-8: the
+        # brain command writes UTF-8 to a pipe (a path with an accent, say)
+        done = runner([python, "-I", "-m", "brain", "--root", str(root), "check", "--public", "--refresh"],
+                      capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+                      cwd=str(root), timeout=STAMPS_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError) as exc:
         return [f"stamps   not refreshed ({exc}): {hand}"]
     said = [ln for ln in ((done.stdout or "") + (done.stderr or "")).splitlines() if ln.strip()]

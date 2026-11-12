@@ -36,8 +36,8 @@ What it does, every command reading files and git, never a model:
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
   shapes, data files) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
   deny rules and gitleaks as now. After an upgrade, `brain update` and the installer's `-Apply` re-check the
-  registry's public checkouts with the new engine (`brain check --public --refresh`), so no stamp of the old engine
-  is left to block a push; a checkout with uncommitted work is skipped and named.
+  registry's public checkouts with the new engine (`brain check --public --refresh`), so each one's HEAD is stamped
+  again; a checkout with uncommitted work is skipped and named, and another local branch still asks its own check.
 
 ## Install
 

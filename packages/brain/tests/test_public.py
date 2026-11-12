@@ -394,6 +394,26 @@ def test_a_bad_repos_entry_is_noted_never_raised(pub, tmp_path, monkeypatch):
     assert code == 0 and lines[0].startswith("stamps   note: project ada:") and "not refreshed" in lines[0]
 
 
+def test_one_checkout_git_cannot_read_never_stops_the_others(registry, monkeypatch):
+    """A timeout (or a broken index) in one checkout is that checkout's failed line; the others are still refreshed;
+    a checkout with no commit is skipped; a malformed public.repos reads as none (brain update's plan never raises)."""
+    real = public.dirty
+
+    def dirty(repo):
+        if repo.name == "engine-dirty":
+            raise subprocess.TimeoutExpired(["git", "status"], 60)
+        return real(repo)
+
+    monkeypatch.setattr(public, "dirty", dirty)
+    code, lines = public.refresh()
+    assert code == 1
+    assert any(ln.startswith("failed   acme/engine") and "TimeoutExpired" in ln for ln in lines)
+    assert any(ln.startswith("stamped  acme/engine") for ln in lines)
+    (registry["clean"] / ".git" / "refs" / "heads" / "main").unlink()   # no commit on its branch any more
+    assert any(ln.startswith("skip") and "no commit yet" in ln for ln in public.refresh()[1])
+    assert public.public_repos(config.Config(None, Path("."), {"public": {"repos": True}})) == []
+
+
 INSTALLER = Path(__file__).resolve().parents[1] / "installer" / "install.ps1"
 
 

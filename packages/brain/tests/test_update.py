@@ -665,9 +665,10 @@ def test_a_brain_with_public_repos_refreshes_their_stamps_with_the_new_engine(ve
     code, done = update.apply(p, runner=runner)
     assert code == 0
     refresh = [(c, kw) for c, kw in ran if "--refresh" in c]
-    assert refresh and refresh[0][0] == [p["python"], "-m", "brain", "--root", str(pinned), "check", "--public",
-                                         "--refresh"]
+    assert refresh and refresh[0][0] == [p["python"], "-I", "-m", "brain", "--root", str(pinned), "check",
+                                         "--public", "--refresh"]   # -I: the engine just installed, nothing else
     assert refresh[0][1]["timeout"] == update.STAMPS_TIMEOUT_S and ran[0][0][1:3] == ["-m", "pip"]   # after pip
+    assert refresh[0][1]["encoding"] == "utf-8" and refresh[0][1]["errors"] == "replace"
     assert "stamped  ada/engine D:/engine: HEAD abcd1234 (x)" in done and any(d.startswith("skip") for d in done)
 
 

@@ -109,7 +109,8 @@ def repo_slug(url: str) -> str:
 
 def public_repos(cfg: config.Config) -> list[str]:
     pub = cfg.data.get("public") if isinstance(cfg.data.get("public"), dict) else {}
-    return [r for r in pub.get("repos") or [] if isinstance(r, str) and r]
+    repos = pub.get("repos")
+    return [r for r in repos if isinstance(r, str) and r] if isinstance(repos, list) else []
 
 
 def is_public(slug: str, cfg: config.Config) -> bool:
@@ -542,7 +543,8 @@ def gate(root: Path, cfg: config.Config | None = None) -> tuple[int, list[str]]:
 def checkouts(cfg: config.Config, root: Path | None = None) -> tuple[list[tuple[Path, str]], list[str]]:
     """The local checkouts of the public repos: every repo of the registry's projects (brain.projects.repos_of: their
     ``repos:`` and production checkouts) whose remote is in config.json ``public.repos``, deduplicated, as
-    [(checkout, owner/name)]; and the notes on what could not be read (a project's bad ``repos:``, a missing folder)."""
+    [(checkout, owner/name)]; and the notes on what could not be read (a project's bad ``repos:``, a folder git cannot
+    read). A folder that does not exist on this machine is passed over (not every machine clones every repo)."""
     from . import projects
 
     out: list[tuple[Path, str]] = []
@@ -559,11 +561,15 @@ def checkouts(cfg: config.Config, root: Path | None = None) -> tuple[list[tuple[
         for r in repos:
             if not Path(r.path).is_dir():
                 continue
-            top = _out(Path(r.path), "rev-parse", "--show-toplevel")
-            if not top or os.path.normcase(os.path.realpath(top)) in seen:
+            try:
+                top = _out(Path(r.path), "rev-parse", "--show-toplevel")
+                if not top or os.path.normcase(os.path.realpath(top)) in seen:
+                    continue
+                seen.add(os.path.normcase(os.path.realpath(top)))
+                _, slug = remote_of(Path(top), cfg)
+            except (OSError, subprocess.SubprocessError) as exc:   # git missing, or a timeout
+                notes.append(f"{r.path}: git could not read it ({type(exc).__name__}: {exc})")
                 continue
-            seen.add(os.path.normcase(os.path.realpath(top)))
-            _, slug = remote_of(Path(top), cfg)
             if is_public(slug, cfg):
                 out.append((Path(top), slug))
     return out, notes
@@ -582,7 +588,8 @@ def refresh(cfg: config.Config | None = None, root: Path | None = None) -> tuple
     """``brain check --public --refresh``: ``brain check --public --history`` in each local checkout of a public repo
     (:func:`checkouts`), by this engine, so that its stamps carry this engine's key after an install or ``brain
     update`` (the push guard refuses a stamp of another engine). A checkout whose HEAD's stamp is already valid is
-    left (same); one with uncommitted work is skipped and named; one with findings is not stamped and named. (exit
+    left (same); one with uncommitted work, or no commit yet, is skipped and named; one with findings is not stamped
+    and named. Only each checkout's HEAD is stamped: a push of another local branch still asks its own check. (exit
     code: 1 when a check found something or failed, else 0; the lines). Writes only the stamps."""
     cfg = cfg or config.load(root)
     found, notes = checkouts(cfg, root)
@@ -593,30 +600,33 @@ def refresh(cfg: config.Config | None = None, root: Path | None = None) -> tuple
         return 0, [*lines, "stamps   no local checkout of " + ", ".join(public_repos(cfg)) + " in the registry"]
     code = 0
     for repo, slug in found:
-        head = _out(repo, "rev-parse", "--verify", "HEAD")
-        changed = dirty(repo)
-        if changed:
-            what = "git status failed" if changed < 0 else f"{changed} tracked file(s) not committed"
-            lines.append(f"skip     {slug} {repo}: {what}; brain check --public --history there once it is committed")
-            continue
-        if head and not stamp_refusal(slug, head, cfg):
-            lines.append(f"same     {slug} {repo}: HEAD {head[:8]} already stamped by this engine")
-            continue
-        try:
-            data = check(repo, cfg, history=True)
-        except (PublicError, OSError, subprocess.SubprocessError) as exc:
-            code = 1
-            lines.append(f"failed   {slug} {repo}: {exc}")
-            continue
-        where = stamp(data, cfg)
-        if where:
-            lines.append(f"stamped  {slug} {repo}: HEAD {data['head'][:8]} ({where.as_posix()})")
-        else:
-            code = 1
-            n = len(data["findings"])
-            why = f"{n} finding(s)" if n else "gitleaks failed" if data.get("gitleaks_failed") else "not stamped"
-            lines.append(f"refused  {slug} {repo}: {why}; brain check --public --history there names them")
+        try:   # one checkout that git cannot read (a timeout, a broken index) never stops the others
+            failed, line = _refresh_one(repo, slug, cfg)
+        except (PublicError, ValueError, OSError, subprocess.SubprocessError) as exc:
+            failed, line = True, f"failed   {slug} {repo}: {type(exc).__name__}: {exc}"
+        code = 1 if failed else code
+        lines.append(line)
     return code, lines
+
+
+def _refresh_one(repo: Path, slug: str, cfg: config.Config) -> tuple[bool, str]:
+    """(whether it failed or found something, its line) for one public checkout."""
+    head = _out(repo, "rev-parse", "--verify", "HEAD")
+    if not head:
+        return False, f"skip     {slug} {repo}: no commit yet, nothing to stamp"
+    changed = dirty(repo)
+    if changed:
+        what = "git status failed" if changed < 0 else f"{changed} tracked file(s) not committed"
+        return False, f"skip     {slug} {repo}: {what}; brain check --public --history there once it is committed"
+    if not stamp_refusal(slug, head, cfg):
+        return False, f"same     {slug} {repo}: HEAD {head[:8]} already stamped by this engine"
+    data = check(repo, cfg, history=True)
+    where = stamp(data, cfg)
+    if where:
+        return False, f"stamped  {slug} {repo}: HEAD {data['head'][:8]} ({where.as_posix()})"
+    n = len(data["findings"])
+    why = f"{n} finding(s)" if n else "gitleaks failed" if data.get("gitleaks_failed") else "not stamped"
+    return True, f"refused  {slug} {repo}: {why}; brain check --public --history there names them"
 
 
 def main(repo: Path, *, history: bool = False, remote: str = "", engine: bool = False, as_json: bool = False) -> int:
