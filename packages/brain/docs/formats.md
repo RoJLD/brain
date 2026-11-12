@@ -170,6 +170,15 @@ is the owner's act: `install.ps1 -Apply` writes it, with the same policy in Powe
 `Write-ForeignJson`: a file that is not a JSON object stops it, an empty one is read as missing, a backup
 `settings.json.bak`, a temporary file that replaces it).
 
+### The machine's files
+
+`<BRAIN_HOME>/machine.json` (`v: 1`, truth-local, `brain.machine`): `name`, `anchor` (a sha256 of the OS install's
+id and family, never the id), `local_id`, `since`, and `asked` (the date each doubt was first shown). Written once at
+first sight; a doubt never rewrites it. `<BRAIN_HOME>/facts.json` (`v: 1`, derived): `machine`, `at` and `facts`,
+`{fact: {value, source}}` with `value` true, false, a text or null (unknown) and `source` agent, probed,
+`nodes-file@<ref>:<sha256[:12]>`, declared or unknown; rewritten by each `brain doctor`. The status document's `brain`
+block gains `hardware` (`ecc`, `battery`, each true, false or null, and their sources), an optional key.
+
 ### The log class: rotation and retention
 
 A log is appended to, never rewritten. A JSON-lines ledger (the exec, capture, guards, queue, answers and cockpit
@@ -305,6 +314,15 @@ one) and holds the type of each key it names; removing or retyping one is a new 
 and no `brain` block (`newer`); `tests/test_probe.py` checks the probe's report against the schema and the fixture,
 and a consumer tests against the same two files.
 
+**Out and in: the documentation graph.** `docgraph/v1` ([docgraph.md](docgraph.md), wi-brain-docgraph-contract) is a
+documentation graph any program may emit and the Brain reads read only, published as `schemas/docgraph.schema.json`
+(registered in `SCHEMAS`, `docgraph`). Like the status document, it is versioned by its id (`schema: docgraph/v1`), not
+by a top-level `v`; it allows a key it does not name at every level, and a key it names keeps its type and its values:
+a new node type, edge type or status is `docgraph/v2`, which `brain docgraph validate` refuses as a later contract.
+Its fixtures, `tests/fixtures/formats/docgraph/v1/`, are a first producer's document (`older`) and another's with keys
+of its own, a need and a producer's own check (`newer`); `tests/test_docgraph.py` reads both clean. A brain holds no
+file of it (the upgrade test's `NOT_STORED`).
+
 ## The validator's keywords
 
 `brain.schema` validates with the standard library only, so the capture hooks can validate what they write. It
@@ -328,8 +346,8 @@ Beside that pair, **each released engine's own file** (wi-brain-format-fixture-f
 old stores » below), never edited. `tests/test_formats_frozen.py` reads each one strict, as CI does: what N-1 wrote,
 N reads with no note and no error. ar, config, ddr, event (the first lines of an exec ledger file), packs, projects,
 sr and template are frozen from v0.2.4 and v0.3.1, then the last tag's at each version PR; the formats no command
-writes (permissions, members, readme, modules, standards) keep their hand-written pair only, and the status document
-too: `brain doctor --json` prints the machine's own inventory, which a public fixture never holds.
+writes (permissions, members, readme, modules, standards, docgraph) keep their hand-written pair only, and the status
+document too: `brain doctor --json` prints the machine's own inventory, which a public fixture never holds.
 
 ### The old stores
 
