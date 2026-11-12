@@ -138,6 +138,43 @@ One token per machine for every local service the Brain starts (`brain.ipcauth`)
 The token is never printed, never in a log line (the server logs the request line and the status only) and never in
 the image.
 
+## The Brain's other local services (`wi-brain-local-ipc-auth`)
+
+Every local service the Brain starts binds a loopback address and, where it can check one, requires the machine's
+token; its container runs as a user that is not root.
+
+| Service | Loopback | Token |
+|---|---|---|
+| `brain mcp serve --http` | always (it refuses another address) | always |
+| the collector (`otel-collector` of the sovereign bundle) | its ports published on 127.0.0.1 (`brain bundle plan` refuses another) | opt-in: `config.json` `"ipc": {"require_token": ["otel-collector"]}`, then `brain bundle apply` |
+| the other sovereign components (Prometheus, Loki, Grafana, Qdrant) | published on 127.0.0.1 | Grafana its own login; the others none |
+| GitNexus (the code index) | its port on loopback | none: GitNexus has no authentication of its own |
+
+**The collector's token is opt-in**, because it newly refuses a client that sends none (a patch never newly refuses).
+With `ipc.require_token: [otel-collector]`, `brain bundle apply` renders:
+- the collector's configuration with otelcol-contrib's `bearertokenauth` extension on every OTLP receiver (gRPC and
+  HTTP), the token read from `/run/secrets/brain_ipc_token`;
+- that secret in the compose file, from the machine's token file. The component waits for the owner while the token
+  is missing (`brain ipc token --init`).
+
+Claude Code's export then needs the header: the owner sets
+`OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <token>` in its environment (never a session). On a Linux host the
+secret is the token file itself, mode 0600 and owned by the owner: give the collector's user (10001 in its image)
+read access with an ACL, `setfacl -m u:10001:r <BRAIN_HOME>/ipc/token`. `brain health ipc` accepts a group bit or an
+ACL entry, and refuses a token readable by every user.
+
+**`brain health ipc`** (and `brain health --all`) reads, starts nothing, and says on one line each:
+- the token file (usable; on POSIX not readable by every user);
+- the MCP server: a request without the token must get 401 (`ipc.mcp_port`, default 8791; nothing answering: OFF;
+  another program answering while the machine has no token: OFF too, since no MCP server can run without one);
+- each running container of the Brain's Compose projects (`brain-sovereign`, `brain-mcp`) and of the code index:
+  a port published beyond loopback is a FAIL, a container running as root a warning (Qdrant's image does);
+- which services take requests without the token (the collector while not opted in, GitNexus).
+
+Exit 1 on a FAIL. A required token that is missing is a FAIL. Under `--all`, a machine that never made the token and
+requires none gets no line: nothing is probed and Docker is not asked, so `--all` says what it said before. Its
+containers are then not inspected either: `brain health ipc`, named, always inspects them.
+
 ## The container
 
 `packages/brain/container/` holds the image's definition, versioned with the engine:
