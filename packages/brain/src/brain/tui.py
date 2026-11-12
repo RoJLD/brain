@@ -11,7 +11,11 @@ being its other views; a card opens its tab already filtered, by a filter never 
 
 Keys (the footer shows those of the focused panel, ? lists them all):
   0-9, ,   go to a tab: 0 overview, 1 queue, 2 sessions, 3 frontier, 4 milestones, 8 health (the number in a panel's
-           title); 5 ideas, 6 lessons, 7 features, 9 resources and the comma (settings) wait for their items
+           title), the comma settings; 5 ideas, 6 lessons, 7 features and 9 resources wait for their items
+  Settings its pages on the left (Cockpit, Identity, Brain, Permissions, Setup; brain.settings), each setting on the
+           right with its value, where it comes from and how it changes; Enter on a Cockpit setting edits it (tui.json:
+           theme, timezone, language, refresh and probe intervals, a panel's free title), on a brain setting says the
+           command that changes it: nothing else is written from there
   ctrl+pageup, ctrl+pagedown    the previous and the next tab (a click on the bar too, its tooltips name each tab)
   v        the tab's next view (the overview: its cards, its grid, its digest); a click on its word in the toolbar too
   Enter    on a card, its tab, already filtered as the card says (a click too); the arrows move between the cards
@@ -49,7 +53,8 @@ The reads run in one worker thread at a time (the detail beside the list has its
 notification, never a crash: the panels of a read that fails keep their last content, the error and the time of the
 data in their frame; an action's commands run in another, and the panels are read again after them. A refresh keeps
 the view still: a table's cells are updated in place when its rows are the same, else it is rebuilt with its scroll where it was and its cursor on its record. The scope, the views and the
-settings (the theme picked in the command palette, the timezone) are saved to <BRAIN_HOME>/tui.json at each change.
+settings (the theme picked in the command palette, the timezone, those of the Settings tab) are saved to
+<BRAIN_HOME>/tui.json at each change.
 The chosen columns are kept there too. The title bar shows the installed version; once the screen is drawn, a worker reads whether a newer one is out
 (brain.update.check: the engine's tags, cached 24 h, silent offline; the pin of config.json and the installer it
 declares) and adds it there (« brain 0.2.2 · 0.2.3 available », « brain 0.2.1 · pin v0.2.3: -Apply »), so the first
@@ -71,8 +76,10 @@ from textual.markup import escape
 from textual.widgets import DataTable, Footer, Header, Input, Label, Select, Static, Tab, Tabs
 
 from . import cockpit, detail, handover, paths, update
+from . import settings as settings_
 from .tui_palette import PaletteAndColumns, same_cell, styled
 from .tui_screens import AnswerScreen, ConfirmScreen, DetailScreen, LinkScreen, PanelHelp, ResultScreen, ViewScreen
+from .tui_settings import SETTING_ACTIONS, SettingsFrame, SettingsTab
 from .tui_side import DetailBeside, DetailPane
 
 INTERVALS = (0.5, 1.0, 2.0, 5.0, 10.0)
@@ -82,7 +89,7 @@ PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back",
                  "next_sort", "reverse", "filters", "panel_help", "toggle_tz", "update", "side_act", "side_open",
                  "columns")  # the panels' keys, off while a dialog or a detail is on top of them
 # every panel and frame, as the grid places them: with open alerts their row is whole (L11), the digest beside the stacks
-EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec")
+EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec", "settings")
 CARD_COLUMNS = 3
 STATUS_COLUMNS = 100  # narrower, the global bar keeps its width for the search: the subtitle has the times
 
@@ -120,7 +127,7 @@ class SearchInput(Input):
     BINDINGS = [Binding("escape", "app.clear_search", "Clear")]
 
 
-class CockpitApp(DetailBeside, PaletteAndColumns, App):
+class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
     TITLE = update.title(None)  # the installed version; the newer one once the background check answers
     ESCAPE_TO_MINIMIZE = False  # Escape's steps are action_back's: the search before a full view
     CSS = """
@@ -217,6 +224,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
         self.notified: set[tuple] = set()  # the failed reads already notified: (at, error)
         self.update_info: dict | None = None  # brain.update.check's answer, once the background check has one
         self.handover: dict | None = None  # an install handed over (brain.handover.prepare): brain.tui.run starts it
+        self._settings_init()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -238,7 +246,9 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
         with Horizontal(id="body"):
             with Grid(id="grid"):  # one widget per panel: a tab or a view is a layout of them (_layout)
                 for name in EVERY_FRAME:
-                    if name in cockpit.COLUMNS:
+                    if name == "settings":  # its pages on the left, the page's settings on the right
+                        yield SettingsFrame(id=name, classes="panel")
+                    elif name in cockpit.COLUMNS:
                         kind = ViewTable if name in cockpit.SORTS else DataTable
                         yield kind(id=name, classes="panel", zebra_stripes=True, cursor_type="row")
                     else:
@@ -311,6 +321,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
         self._bar()
         self._titles()
         self._draw_cards()
+        self._draw_settings()
         self.refresh_bindings()
 
     def _alerts_row(self) -> None:
@@ -359,7 +370,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
         else:
             last = self.tab_focus.get(self.tab)
             self.last_panel = last if last in shown else shown[0]
-            target = self._q(f"#{self.last_panel}")
+            target = self._q("#settings-table" if self.last_panel == "settings" else f"#{self.last_panel}")
         self._base().set_focus(target, scroll_visible=False)  # at once: the next key goes to it, not to what it left
         if not shown:
             self.call_after_refresh(target.scroll_visible, animate=False)  # once laid out: a card may be below the fold
@@ -569,7 +580,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
         panels = snap["panels"]
         for name in EVERY_FRAME:
             source = cockpit.FRAMES.get(name, name)  # a frame is drawn when the panel it reads changes
-            if source not in updated:
+            if source not in updated or name == "settings":  # the settings are read when shown (_draw_settings)
                 continue
             panel = panels.get(source)
             widget = self._q(f"#{name}")
@@ -680,13 +691,13 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
 
     # --- the view: scope, search, sort, filters ---
 
-    def _save(self) -> None:
-        cockpit.save_state({"scope": self.scope, "panels": self.views, "settings": self.settings, "tab": self.tab,
+    def _save(self) -> bool:
+        return cockpit.save_state({"scope": self.scope, "panels": self.views, "settings": self.settings, "tab": self.tab,
                             "tabs": {t: {"view": v} for t, v in self.tab_views.items()}, "columns": self.chosen})
 
     def watch_theme(self, theme: str) -> None:
         """The theme picked in the command palette becomes the default one (saved with the settings)."""
-        if self.is_mounted and theme != self.settings.get("theme"):
+        if self.is_mounted and theme != self.settings.get("theme", settings_.DEFAULT_THEME):  # its default: unset
             self.settings["theme"] = theme
             self._save()
 
@@ -727,6 +738,9 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         name = event.data_table.id
+        if name == "settings-table":  # a click on a setting's row
+            self.action_edit_setting()
+            return
         r = self.records.get(name, {}).get(event.row_key.value)
         if r is None:
             return
@@ -873,19 +887,18 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action in PANEL_ACTIONS and len(self.screen_stack) > 1:  # a dialog or a detail is open: its keys only
             return False
-        if action == "back":  # nothing to go back from on the overview, no search, no full view
-            return bool(self.search) or self.screen.maximized is not None or self.tab != "overview"
         if action in ("side_act", "side_open"):
             return self._side_allows(action, parameters)
-        if action == "columns":  # the key needs a table focused; the palette calls action_columns with its own
-            return isinstance(self.focused, DataTable)
-        if action == "next_view":  # shown on a tab with several views
-            return len(cockpit.tab_views(self.tab, self._narrow())) > 1
-        if action == "toggle_max":  # a tab of one panel is its full view already
-            return len(cockpit.tab_panels(self.tab, self._view())) > 1
-        if action == "update" and not ((self.update_info or {}).get("newer") or update.applies(self.update_info)):
-            return False  # hidden until a newer one is out, or the installed one lags the pin
-        return True
+        rule = {  # each key's own rule, else it works
+            "back": lambda: bool(self.search) or self.screen.maximized is not None or self.tab != "overview",
+            # a panel's table focused; the palette calls action_columns with its own
+            "columns": lambda: isinstance(self.focused, DataTable) and self.focused.id in cockpit.COLUMNS,
+            "next_view": lambda: len(cockpit.tab_views(self.tab, self._narrow())) > 1,  # a tab with several views
+            "toggle_max": lambda: len(cockpit.tab_panels(self.tab, self._view())) > 1,  # one panel: full already
+            # hidden until a newer one is out, or the installed one lags the pin
+            "update": lambda: bool((self.update_info or {}).get("newer") or update.applies(self.update_info)),
+            **dict.fromkeys(SETTING_ACTIONS, self._settings_allows)}.get(action)
+        return True if rule is None else rule()
 
     def action_back(self) -> None:
         """Escape, one step at a time (spec cockpit-ux-round2 §4.0.5): the search, a full view, then the overview."""
@@ -952,13 +965,12 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
     def action_read_all(self) -> None:
         self.want_probe = True
         self.tick(force=True)
+        self._draw_settings()
 
     def _interval(self, step: int) -> None:
         i = min(range(len(INTERVALS)), key=lambda k: abs(INTERVALS[k] - self.refresh_s))
         self.refresh_s = INTERVALS[max(0, min(len(INTERVALS) - 1, i + step))]
-        if self.timer is not None:
-            self.timer.stop()
-        self.timer = self.set_interval(self.refresh_s, self.tick)
+        self._restart_timer()
         self._subtitle()
 
     def action_faster(self) -> None:
