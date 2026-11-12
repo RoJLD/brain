@@ -101,6 +101,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `code-index` | `$BRAIN_HOME/code-index` | sealed | derived | the code index's bundles |
 | `code-index-record` | `$BRAIN_HOME/code-index.json` | sealed | truth-local | the repos indexed |
 | `code-map` | `$BRAIN_HOME/code-map` | sealed | derived | the code maps |
+| `views` | `$BRAIN_HOME/views` | sealed | derived | the renderings as of a point, never in a repo (`brain reference --asof`: `reference/<project>/<point>/`) |
 | `public-check` | `$BRAIN_HOME/public-check` | sealed | derived | the public check's stamps |
 | `reviews` | `$BRAIN_HOME/reviews` | sealed | truth-local | the reviews' findings and stamps |
 | `merge-ready` | `$BRAIN_HOME/merge-ready` | sealed | derived | the merge gate's stamps, per repo and head (`brain merge-ready`) |

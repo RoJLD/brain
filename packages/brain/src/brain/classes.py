@@ -166,6 +166,8 @@ ENGINE_STORES = {
     "code-index": Known("$BRAIN_HOME/code-index", "sealed", "derived", "the code index's bundles"),
     "code-index-record": Known("$BRAIN_HOME/code-index.json", "sealed", "truth-local", "the repos indexed, and when"),
     "code-map": Known("$BRAIN_HOME/code-map", "sealed", "derived", "the code maps, one per project"),
+    "views": Known("$BRAIN_HOME/views", "sealed", "derived",
+                   "the renderings as of a point, never in a repo (brain reference --asof: reference/<project>/<point>)"),
     "public-check": Known("$BRAIN_HOME/public-check", "sealed", "derived",
                           "the public check's stamps, per repo and commit"),
     "reviews": Known("$BRAIN_HOME/reviews", "sealed", "truth-local", "the reviews' findings and stamps"),
