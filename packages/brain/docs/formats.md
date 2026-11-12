@@ -63,7 +63,7 @@ their default.
 | template.yaml | a template's folder | `engine:` range | a note (in CI: refused), `extends` and `append` (wi-brain-project-templates) and `takes` (spec-brain-typology-packs E1 bis) included: a template that uses them names the engine that knows them in `engine:`; a graph's keys are strict: a graph's `layers` (wi-brain-graph-templates) is refused by an older engine, so a template that uses it names the engine that knows it in `engine:` | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |
 | graph layer | research_graph's `templates/layers/<name>.yaml` (the catalogue); a template's own `layers/<name>.yaml` | `version`, per layer, recorded in a store's `templates:` | refused (`research_graph layers` names the known keys) | - (a layer's version is compared by `brain template upgrade`, a later item) |
 | schema.yaml `templates:`, `endpoints:` | a store's `schema.yaml`, when composed from layers (`research_graph layers`) | none: the store's schema | both optional; an older engine ignores them (its `check` then verifies no endpoints) | - |
-| projects.yaml | the brain's root | none yet | a project key (`KEYS`; `standards` since 0.3.2, `parent` and `classes` since 0.3.3, its own keys a note too), a `repos:` key (`REPO_KEYS`; `tools` since 0.3.2, its slots, keys and formats a note too): a note, kept. `access` is a key that **narrows**: a brain that does not know it (0.2.8 and before) keeps the note (in CI: refused, so a brain repo whose CI runs 0.2.8 goes red) and reads an `access: read` entry as a full project, at the registry's root with the default store, journal and decision log, so such an entry lands in a registry only once every machine runs brain 0.3.0 or later | - |
+| projects.yaml | the brain's root | none yet | a project key (`KEYS`; `standards` since 0.3.2, `parent` and `classes` since 0.3.3, `formats` and `migrations` since 0.4.0, its own keys and those of their entries a note too), a `repos:` key (`REPO_KEYS`; `tools` since 0.3.2, its slots, keys and formats a note too): a note, kept. `access` is a key that **narrows**: a brain that does not know it (0.2.8 and before) keeps the note (in CI: refused, so a brain repo whose CI runs 0.2.8 goes red) and reads an `access: read` entry as a full project, at the registry's root with the default store, journal and decision log, so such an entry lands in a registry only once every machine runs brain 0.3.0 or later | - |
 | scopes.yaml | beside config.json (config.json `scopes`, `$BRAIN_SCOPES`; [the README](../README.md#the-scope-tree)) | `v` | a container's unknown key: a note, kept (in strict mode, CI: `brain check --all` reports it); the keys the inheritance resolver will read (`rules`, `notify`, `quiet`, `capabilities`, `never`, `budgets`, `members`, `language`) are accepted as declared | refused |
 
 AR lines are parsed one by one (`brain.records.parse_ar`): a line that is not a JSON object (a conflict marker, a
@@ -138,6 +138,7 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 | `usage/sessions.json` | `v` 2 (`LEDGER_V`, apart from the scanner's `SCAN_V`, which only rescans rows) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
 | `tui.json` | `v` 1 (beside the older `cockpit: 1`, kept) | the cockpit shows the saved views but does not remember new ones (« brain tui: ... written by a newer brain ... the views are not remembered ») |
 | `memory-sync/state.json` | `v` 1 | the memory sync refuses before any fetch: `last.json` says « failed » and the alert names brain update |
+| `formats/<project>.json` | `v` 1 | `brain formats check` runs and reports as usual, and remembers no result: each check runs again next time |
 | `vault/device.json` | `v` 1 | `brain vault device init` (`--rotate` too) and `device forget-previous` refuse before the keystore is touched |
 | `sessions/<id>.json`, `<id>.state.json` | `v` 1 (the SR's schema, `capture.SR_V`; `STATS_V`) | the Stop hook writes neither (a newer brain's session) and logs nothing |
 | `sessions/<id>.report.json`, `<id>.plan.json` | `v` 1 | `sessions.write_report` returns None, the plan hook keeps the file |
@@ -294,6 +295,57 @@ the PATH but fails stamps nothing (the check exits 1 and says so): its stamp wou
 `brain check --public --refresh` (run by `brain update` and the installer's `-Apply` after an install) writes new
 stamps for the HEADs of the registry's public checkouts with the engine just installed; it never touches a stamp
 whose key is still valid and never stamps a checkout with tracked changes not committed.
+
+## A project's own formats
+
+The rule holds for a project's own data too, in its own language (spec-brain-data-compat § 3, « Other projects »):
+`projects.yaml` registers each persisted format of a project under `formats:`, and the glob check of its database
+migrations under `migrations:` (`brain.formats`, `brain projects --keys`).
+
+```yaml
+shop:
+  formats:
+    - id: orders-contract                     # unique in the project
+      glob: orders/*.json                     # its files, relative to the repo: a glob or a list
+      repo: shop                             # optional: a repo of repos: (default: the project's first, its root)
+      class: private                         # its data class
+      version: SCHEMA_VERSION                # where its version is read: free text
+      schema: schemas/orders.schema.json      # optional: a file that exists
+      fixtures: tests/fixtures/orders/        # optional: a folder that exists
+      check: python -m mypkg.contract --check   # optional: exit 0 valid, 1 invalid
+      timeout: 120                           # optional: seconds, default 120, at most 3600
+  migrations:
+    - when: ["models/**/*.py", "db/*.sql"]   # a change of one of these files...
+      add: ["migrations/*.py", "tests/fixtures/db/**"]   # ...adds a file matching each of these
+```
+
+- **The declarations, always.** `brain check` in a brain's root and `brain check --all` judge them with the rest of
+  the registry: the keys and their shapes, `id`, `glob`, `class` (one of `brain.classes.CLASSES`) and `version`
+  required, an id used once in the project, a `repo` the project spans, the paths relative to the repo; then, where
+  the repo's checkout is on this machine, a glob that matches a file, a `schema` file and a `fixtures` folder that
+  exist. An unknown key of an entry is a note in read mode, kept, and an error in strict mode (CI).
+- **The commands, on demand** (the owner's PF-1 answer, « Opt-in run »). `brain formats check` (or `brain check
+  --formats`, after the usual checks) runs each format's `check:` in its repo's checkout. A string is split as a
+  POSIX shell would and no shell runs it (a pipe or a redirection goes in a script; a string with a backslash is
+  refused, since the split drops it: write a Windows path as a list); a list is the argv as given. Its program, when
+  it is a path (a separator in it, or a file of the repo), is the repo's, refused outside it; a bare name is looked
+  up on `PATH` only, never in the brain's own folder. It is bounded by its `timeout` (`--timeout S` overrides every
+  one): at the bound its whole process tree is stopped (a `.cmd` wrapper's child included), and it exits 0 when the
+  files are valid, 1 when they are not. A pass or a fail is cached in `$BRAIN_HOME/formats/<project>.json`, keyed by
+  the hashes of the command, its timeout and every file it judges (the glob's files, the schema, the fixtures
+  folder's files, and each word of the command that names a file of the repo: the checker's own script), read in
+  chunks: the same files are not judged twice, `--fresh` judges them anyway. A timeout, another exit code or a
+  command not found is an error, never cached; a judged file that cannot be read (a lock) runs the check and caches
+  nothing. A change of code the checker imports from elsewhere does not invalidate the cache: run `--fresh` after
+  it. A plain `brain check` never runs a command, and a project the brain only reads (`access: read`) declares no
+  format (its entry holds title, access, parent and classes only): no command of it is ever run. The registry's
+  check walks each glob from its literal folder (`orders/` for `orders/*.json`) and stops at the first match.
+- **The migrations, in the scout.** `brain audit --diff` finds a change of a `when` file (not a light touch:
+  docstrings, imports or whitespace only; a deletion, or a rename out of the `when` globs, counts) with no file
+  added (a rename into an `add` glob from outside it counts) that matches one of the rule's `add` globs: a NEW
+  `format.migration` finding on that file, justified by a `Justified: <path>: <reason>` line in the PR body or a
+  commit message (a change of a model that moves no column). The project's own migration tool (Alembic, Flyway,
+  Atlas, refinery, Prisma) writes the migration; the engine checks from outside, by globs, that one came.
 
 ## External formats
 

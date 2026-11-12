@@ -339,6 +339,17 @@ judgement); `brain standards ci [--write FILE]` prints a GitHub Actions skeleton
 rows with an adapter, one step per slot and repo in its folder, each failing until it is filled with the project's
 own tool.
 
+### A project's own formats
+
+A project registers its own persisted formats, in any language, under `projects.yaml` `formats:` (id, glob, repo,
+class, version, schema, fixtures, a `check:` command that exits 0 or 1, its timeout), and the glob check of its
+database migrations under `migrations:` (`when` files whose change adds a file of each `add` glob)
+([docs/formats.md](docs/formats.md#a-projects-own-formats)). `brain check` judges the declarations always; the
+commands run only on demand, `brain formats check` (or `brain check --formats`), each in its repo's checkout, with
+no shell, bounded, a pass or a fail cached under `$BRAIN_HOME/formats` by the hashes of the files it judges; `brain
+formats list` prints them. The scout (`brain audit --diff`) finds a `when` file changed with no new migration or
+fixture: a NEW `format.migration` finding, or a `Justified:` line.
+
 ### Language adapters
 
 A repo plugs its own tools in through `projects.yaml` `repos[].tools` (`brain.langs`): for each slot (lint,

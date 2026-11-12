@@ -21,7 +21,9 @@ adds, DEFER on a touched one, LEFT there only under config.json audit.feature_co
 max_lines, a function past the complexity threshold, a dependency no decision log names, an incomplete shortcut:
 marker, a symptom fix with no Root cause: line) join them: NEW, DEFER to the debt item for a file or function already
 past its threshold that grows, or justified (a Justified: or Root cause: line in --pr-body or a commit message: shown,
-never blocking). The norm lints (brain.norms: a subprocess or urlopen without a timeout, a text open() without an
+never blocking). A project's migrations: rules (brain.formats: a change of a when file, a model or an SQL schema,
+with no new file of an add glob, a migration or a fixture) are NEW on that file, justified the same way. The norm
+lints (brain.norms: a subprocess or urlopen without a timeout, a text open() without an
 encoding, a naive datetime stored, a secret in a child's argv or env) are info lines on what the change adds, NEW
 under config.json audit.norm_lints_strict, and DEFER lines, by file and norm, for those already in a touched file.
 Exit code 1 when something is to fix in this PR, 2 for a usage or git error (no base found).
@@ -35,7 +37,8 @@ import json
 import sys
 from pathlib import Path
 
-from . import audit, docsgraph, feature_coverage, graph, inventory, links, norms, paths, projects, schemadiff, structure
+from . import (audit, docsgraph, feature_coverage, formats, graph, inventory, links, norms, paths, projects, schemadiff,
+               structure)
 from .inventory import AuditError, git
 
 ORDER = {"entry": 0, "prod": 1, "other": 2, "": 3}
@@ -257,15 +260,19 @@ def _decision_texts(p: projects.Project) -> list[str]:
 
 
 def _structure(args, p: projects.Project, c: projects.Repo, top: Path, rows: list, base_tree: inventory.Tree,
-               new_tree: inventory.Tree, base_rev: str, new_rev: str, root: Path | None) -> list[dict]:
+               new_tree: inventory.Tree, base_rev: str, new_rev: str, root: Path | None,
+               touched: dict[str, bool] | None = None, first: str = "") -> list[dict]:
     """The structure signals of the change (brain.structure), with the project's thresholds and decision logs, its
-    norm lints (brain.norms, NEW under the owner's opt-in) and what its schemas narrow (brain.schemadiff, NEW under
-    the owner's opt-in too)."""
+    norm lints (brain.norms, NEW under the owner's opt-in), what its schemas narrow (brain.schemadiff, NEW under
+    the owner's opt-in too) and its migrations: glob check (brain.formats: a when file changed with no new add file,
+    NEW; ``first``: the project's first repo, the one a rule without repo: names)."""
     body = structure.body_of(top, base_rev, new_rev, _pr_body(getattr(args, "pr_body", None) or ""))
     shape = structure.signals(c.name, rows, base_tree, new_tree, structure.thresholds(p.audit), body,
                               _decision_texts(p))
     return (shape + norms.signals(c.name, rows, base_tree, new_tree, body, norms.strict(root))
-            + schemadiff.signals(c.name, rows, base_tree, new_tree, body, schemadiff.strict(root)))
+            + schemadiff.signals(c.name, rows, base_tree, new_tree, body, schemadiff.strict(root))
+            + formats.migration_signals(c.name, first or c.name, formats.migrations_of(p.migrations), rows,
+                                        touched or {}, body))
 
 
 def _reread(p: projects.Project, cfgs: list, c: projects.Repo, top: Path, rows: list, base_rev: str,
@@ -361,7 +368,8 @@ def main(args, root: Path | None) -> int:
     limit = args.limit if args.limit is not None else c.scout_limit
     out = classify(touched, deleted, added, c.name, new, base, renamed, limit, script_exts,
                    feature_coverage.strict(root))
-    out = sorted(out + _structure(args, p, c, top, rows, base_tree, new_tree, base_rev, new_rev, root)
+    out = sorted(out + _structure(args, p, c, top, rows, base_tree, new_tree, base_rev, new_rev, root, touched,
+                                  cfgs[0].name if cfgs else c.name)
                  + _reread(p, cfgs, c, top, rows, base_rev, new_rev), key=_rank)
     n_new = sum(1 for f in out if f["tag"] == "NEW")
     n_left = sum(1 for f in out if f["tag"] == "LEFT")
