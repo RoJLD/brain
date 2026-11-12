@@ -373,8 +373,9 @@ each active CodeRef to its GitNexus node and reports the coverage: symbols and f
 A decision can be pinned to the code it governs ([`docs/pins.md`](docs/pins.md)): `brain adr pin ID --touches
 PATH|CODEREF --holds LINE` writes `pins.yaml` beside the decision log (an ADR, an SDR or an answered DDR; the `holds`
 line never edited, an override being a new ADR). `brain impact --diff` lists the pinned decisions a change touches,
-and `brain review check HEAD --pr N` and `brain merge-ready` refuse until the PR body says `Keeps ID` or `Overrides
-ID: why` for each.
+and `brain review check HEAD --pr N` and `brain merge-ready` refuse until the PR body says, for each, `Keeps ID` (a
+decision in force) or `Overrides ID: why` (one a later ADR supersedes, written first: `brain adr new --reverses ID`,
+an answered DDR's id included).
 
 ### Tests linked and coverage
 

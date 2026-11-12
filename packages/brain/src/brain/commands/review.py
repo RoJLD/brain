@@ -21,8 +21,8 @@ USAGE = """\
   brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE]   the review of that head ran
   brain review check HEAD [--pr N | --body FILE] [--base REF]   exit 0 when that head was reviewed, 1 when not (the
                  merge gate's question); with the PR body, 1 also while a pinned decision the change touches (brain
-                 adr pin, docs/pins.md) has no Keeps ID or Overrides ID: why line in it (an override needs its REVERSAL
-                 ADR); without one, the pins touched are listed
+                 adr pin, docs/pins.md) has no Keeps ID line in it (a decision in force) or Overrides ID: why (one a
+                 later ADR supersedes); without one, the pins touched are listed and the stamp alone decides
 """
 
 
