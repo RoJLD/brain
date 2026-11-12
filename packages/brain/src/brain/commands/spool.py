@@ -10,6 +10,12 @@ from .. import config, spool
 
 ORDER = 252   # its place in brain --help's list of commands (brain.commands): after vault
 USAGE_ORDER = 292   # its usage lines' place in brain --help's epilog
+RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
+    "spool push": "on demand: by hand once the vault has its recipients (docs/vault.md); brain health spool warns when "
+                  "the last push is older than 7 days",
+    "spool status": "on demand: brain health spool reads the same index",
+    "spool verify": "on demand: a check by hand of the spool's files against their sha256",
+}
 USAGE = """\
   brain spool push [STORE...] [--dry-run] [--json]   by hand: seal each store of the spool's set (config.json
                  spool.stores, else ledger, usage and sessions) whose content changed since its last push into

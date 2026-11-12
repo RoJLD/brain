@@ -157,3 +157,30 @@ def test_a_have_feature_whose_commands_never_ran(tmp_path, monkeypatch, known):
     got = adoption.unused_features(tmp_path, units, Counter({"brain status": 4}))
     assert got == [{"feature": "feat-a", "commands": ["brain brief"]}]
     assert adoption.unused_features(None, units, Counter()) == []
+
+
+def test_runs_via_names_real_units_and_says_how(known):
+    """wi-brain-adoption-gaps: each RUNS_VIA entry is a unit of the registry, wired or on demand, so a command a hook
+    or another command runs without the CLI, or one the owner runs when its occasion comes, is no gap."""
+    units, _ = known
+    via = adoption.runs_via()
+    assert "brain capture" in via and "brain memory sync" in via and "brain vault seal" in via
+    assert all(u in units for u in via), sorted(set(via) - set(units))
+    assert all(v.startswith(("wired: ", "on demand: ")) for v in via.values())
+    assert "brain cost review" not in via   # wired by close-item's step 2b: it must show when it never runs
+
+
+def test_a_command_reached_another_way_is_listed_apart_not_a_gap(tmp_path, monkeypatch, known):
+    units, _ = known
+    via = {"brain brief": "wired: a test's hook"}
+    rep = adoption.report(units, Counter({"brain status": 1}), {}, NOW - timedelta(days=28), NOW, via=via)
+    assert "brain brief" not in rep["never_run"] and "brain impact" in rep["never_run"]
+    assert {"command": "brain brief", "via": "wired: a test's hook"} in rep["reached_otherwise"]
+    assert any(p["kind"] == "wire" and p["count"] == len(rep["never_run"]) for p in rep["proposals"])
+    text = "\n".join(adoption.render(rep))
+    assert "reached another way (RUNS_VIA, not a gap):\n  brain brief: wired: a test's hook" in text
+    m = features.Model(features={"feat-a": {"id": "feat-a", "status": "have"}}, nodes={},
+                       out={"feat-a": [("implemented_by", "code:brain:packages/brain/src/brain/commands/brief.py")]})
+    monkeypatch.setattr(features, "load_store", lambda store: m)
+    assert adoption.unused_features(tmp_path, units, Counter(), via) == []
+    assert adoption.unused_features(tmp_path, units, Counter()) == [{"feature": "feat-a", "commands": ["brain brief"]}]
