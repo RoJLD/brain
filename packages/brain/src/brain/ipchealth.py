@@ -14,7 +14,8 @@ What it checks, each on its own line (``ipc OK``, ``ipc OFF``, ``ipc warning``, 
   names ``otel-collector`` (opt-in: it would newly refuse Claude Code's export until its headers carry the token,
   brain.bundles); GitNexus has no authentication of its own: a warning that says so, its port on loopback.
 
-Exit 1 on a FAIL, else 0. ``brain health --all`` runs it with the machine's other checks.
+Exit 1 on a FAIL, else 0. ``brain health --all`` runs it with the machine's other checks, silent (Docker not asked)
+on a machine that never made the token and serves nothing on the MCP port: what ``--all`` said before stays the same.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from __future__ import annotations
 import json
 import os
 import stat
-import subprocess
 import urllib.error
 import urllib.request
 
@@ -80,13 +80,12 @@ def probe_mcp(port: int) -> tuple[str, str]:
 
 
 def _docker(argv: list[str]) -> tuple[int | None, str]:
+    """(exit code, output) of ``docker ARGV`` through brain.stacks' runner (None: no answer, or no docker)."""
+    from . import stacks
     try:
-        p = subprocess.run(["docker", *argv], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           timeout=DOCKER_TIMEOUT, stdin=subprocess.DEVNULL,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.TimeoutExpired):
+        return stacks._run(["docker", *argv], None, DOCKER_TIMEOUT)
+    except OSError:
         return None, ""
-    return p.returncode, p.stdout or ""
 
 
 def index_containers(root=None) -> list[str]:
@@ -146,9 +145,9 @@ def health(cfg, named: bool = True, out=None, root=None) -> int:
     lines.append((state, what))
     mcp = probe_mcp(s["mcp_port"])
     lines.append(mcp)
+    if not named and state == "OFF" and mcp[0] == "OFF":
+        return 0   # --all on a machine that never made the token and serves nothing: silent, Docker not asked
     found = containers(root)
-    if not named and state == "OFF" and mcp[0] == "OFF" and not found:
-        return 0   # --all on a machine that runs none of these services: silent
     if found is None:
         lines.append(("warning", "docker does not answer: the containers are not checked"))
     for c in found or []:

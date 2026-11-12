@@ -897,7 +897,9 @@ run no Claude Code hook (`brain.mcpguards`), and every answer passes the secret 
 launches it) or, with `--http`, Streamable HTTP on a loopback address only, each request carrying the machine's token
 (`brain ipc token --init` makes it once; it is never printed). `packages/brain/container/` defines its image (a user
 that is not root, the port published on 127.0.0.1 only). Nothing runs it on its own: a service or a remote endpoint is
-the owner's decision.
+the owner's decision. `brain health ipc` checks every local service the Brain starts: loopback only, the token where
+the service can check one (the collector's is opt-in, config.json `ipc.require_token`), no container as root
+([`docs/mcp.md`](docs/mcp.md), « The Brain's other local services »).
 
 ## The Claude Code hooks
 

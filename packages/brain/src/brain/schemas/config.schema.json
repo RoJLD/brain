@@ -263,7 +263,7 @@
       "type": "object", "additionalProperties": false,
       "description": "The Brain's local services and the machine's token (brain.ipcauth, brain.ipchealth; brain ipc token). docs/mcp.md.",
       "properties": {
-        "require_token": {"type": "array", "items": {"enum": ["otel-collector"]}, "uniqueItems": true, "description": "The bundle components that require the machine's token, opt-in because it newly refuses a client that sends none: otel-collector (its OTLP receivers check Authorization: Bearer; Claude Code's export then needs OTEL_EXPORTER_OTLP_HEADERS). brain bundle apply renders it; default none."},
+        "require_token": {"type": "array", "items": {"enum": ["otel-collector"]}, "description": "The bundle components that require the machine's token, opt-in because it newly refuses a client that sends none: otel-collector (its OTLP receivers check Authorization: Bearer; Claude Code's export then needs OTEL_EXPORTER_OTLP_HEADERS). brain bundle apply renders it; default none."},
         "mcp_port": {"type": "integer", "minimum": 1, "maximum": 65535, "description": "The port brain health ipc probes for brain mcp serve --http; default 8791."}
       }
     },
