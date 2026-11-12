@@ -1206,6 +1206,8 @@ def _not_registered(name: str, root: Path | None, reg) -> str:
 def scope(args, root: Path | None) -> list[projects.Project]:
     """--all: every registered project; --project; else the project whose root (or one of whose repos) is the main
     checkout of --root or the current folder; else the project of the nearest graph store."""
+    if getattr(args, "scope", None):   # a node of the scope tree: the projects of its subtree (brain.scopes)
+        return _tree_scope(args, root)
     if args.all:
         if args.project:
             raise AuditError("--project or --all, not both")
@@ -1229,11 +1231,30 @@ def scope(args, root: Path | None) -> list[projects.Project]:
     return [projects.for_root(root or paths.find_root())]
 
 
+def _tree_scope(args, root: Path | None) -> list[projects.Project]:
+    from . import scopes
+    if args.all or args.project:
+        raise AuditError("--scope, --project or --all: one of them")
+    try:
+        node, names = scopes.select(args.scope, root, _here(root))
+    except scopes.ScopeError as exc:
+        raise AuditError(str(exc)) from None
+    if not names:
+        raise AuditError(f"--scope {args.scope}: no registered project the brain loads under {node}")
+    reg = _registered(root)
+    return [reg[n] for n in names if n in reg]
+
+
+def _here(root: Path | None) -> str:
+    found = projects.at_root(root) if root is not None else []
+    return found[0].name if found else ""
+
+
 def run(args, root: Path | None, today: date | None = None) -> dict:
     """The data of a full run: {audit, ruleset, projects: [...], trend, milestone}."""
     today = today or date.today()
     projs = scope(args, root)
-    if (args.write or args.items) and (len(projs) > 1 or args.all):
+    if (args.write or args.items) and (len(projs) > 1 or args.all or getattr(args, "scope", None)):
         raise SystemExit("brain: --write and --items take one project (not --all)")
     if args.write and args.repo:
         raise SystemExit("brain: --write writes the whole project's view (not --repo)")

@@ -60,7 +60,7 @@ def cmd_cost(args, root: Path) -> int:
         print("\n".join(lines))
         return 0
     au = cost.audit(led, since, until, args.top)
-    name = projs[0].name if len(projs) == 1 else "all"
+    name = projs[0].name if len(projs) == 1 else (getattr(args, "scope_node", "") or "all")
     text = cost.render_audit(au, name, usage.now_utc().strftime("%Y-%m-%d %H:%M UTC"))
     out = cost.audit_path(name, since, until)
     snaps = []
@@ -102,6 +102,9 @@ def register(sub, ctx) -> None:
     ca.add_argument("--write", action="store_true", help="keep it in <BRAIN_HOME>/usage/<project>/audit-*.md, and the "
                                                          "week's forecast snapshot in <BRAIN_HOME>/forecast/<project>")
     ca.add_argument("--json", action="store_true")
+    for one in (ce, cr, ca):
+        one.add_argument("--scope", help="the items and sessions of the projects of a node's subtree in the scope "
+                                         "tree (brain scopes): an id, a path of ids, global, . or ..")
 
 
 run = cmd_cost

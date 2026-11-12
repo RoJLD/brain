@@ -775,9 +775,9 @@ government, association, unit, office, team, folder, project, tenant); `config.j
 type or one its parent does not accept, and a class floor under an ancestor's (a guard only tightens); it warns past six
 levels. `brain scopes [--scope REF] [--depth N] [--archived] [--lang fr] [--types] [--json]` prints the tree with the
 projects under each node, and `brain sync` writes `notes/scopes_graph.md` (generated, never edited). `brain status
---scope REF` shows the projects of a node's subtree, with the totals when it holds several (`brain resume` and `brain
-digest` take it too, one pack or digest per project): REF is an id, a path of
-ids (`pro/acme`), `global` (as `--all`), `.` (the project of the folder) or `..` (its parent); `--project` and `--all`
+--scope REF` shows the projects of a node's subtree, with the totals when it holds several, and so do `brain resume`,
+`digest`, `queue`, `tui`, `usage`, `cost`, `audit` and `permissions` (with `--requests`, `permissions --scope` keeps its
+older meaning, a level's start): REF is an id, a path of ids (`pro/acme`), `global` (as `--all`), `.` (the project of the folder) or `..` (its parent); `--project` and `--all`
 stay. Without `scopes.yaml` and `parent:`, every project sits under Global and nothing changes. An older engine
 reads `parent:` and `scope_types` as unknown keys (a note; refused in strict mode, CI) and refuses `parent:` on a
 read-only entry or a mount: add them once every machine and the brain repo's CI run the release that knows them.

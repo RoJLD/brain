@@ -10,13 +10,14 @@ import sys
 from pathlib import Path
 
 from .. import cockpit, detail
-from ._common import _scope
+from ._common import _scope, scope_every
 
 ORDER = 140   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 540   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain tui [--project P | --all] [--refresh 2s] [--probe 5m] [--hours 24] [--plain] [--sort PANEL:KEY]...
-            [--filter PANEL:FIELD=VALUE]... [--search TEXT] [--tab NAME] [--tz local|utc] [--reset]
+  brain tui [--project P | --all | --scope REF] [--refresh 2s] [--probe 5m] [--hours 24] [--plain]
+            [--sort PANEL:KEY]... [--filter PANEL:FIELD=VALUE]... [--search TEXT] [--tab NAME] [--tz local|utc]
+            [--reset]
             [--once [--quick]] [--json]
                  the cockpit, read-only and at zero token: sessions (project, task, step n/m of its plan, state,
                  model, effort, context and tokens), {owner}'s queue, alerts, milestones, the frontier by priority,
@@ -73,8 +74,9 @@ def cmd_tui(args, root: Path) -> int:
     views = {n: {**(saved.get("panels") or {}).get(n, {}), **flags.get(n, {})} for n in cockpit.SORTS}
     settings = {"tz": "local", **(saved.get("settings") or {}), **({"tz": args.tz} if args.tz else {})}
     projs = _projects(args, root)
-    cp = cockpit.Cockpit(projs, every=args.all, root=root, hours=args.hours)
-    if not (args.all or getattr(args, "project", None)) and saved.get("scope") in (cockpit.ALL, *cp.choices):
+    cp = cockpit.Cockpit(projs, every=scope_every(args, projs), root=root, hours=args.hours)
+    if not (args.all or args.scope or getattr(args, "project", None)) and saved.get("scope") in (cockpit.ALL,
+                                                                                                *cp.choices):
         cp.select(saved["scope"])  # the last scope shown, when it is still registered
     if args.detail:  # the files first; the probes only when the row is not found in them (an alert, a denial)
         cp.refresh(probe=False)
@@ -96,7 +98,8 @@ def cmd_tui(args, root: Path) -> int:
               else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz, tab=args.tab)))
         return 1 if _failed_reads(snap) else 0
     tab, tabs, columns = args.tab or saved.get("tab"), saved.get("tabs") or {}, saved.get("columns") or {}
-    if not cockpit.save_state({"scope": cp.scope, "panels": views, "settings": settings, "tab": tab, "tabs": tabs,
+    kept = (saved.get("scope") or cp.scope) if args.scope else cp.scope   # --scope keeps the one remembered
+    if not cockpit.save_state({"scope": kept, "panels": views, "settings": settings, "tab": tab, "tabs": tabs,
                                "columns": columns}):
         why = cockpit.state_refusal()   # a newer brain's tui.json: shown, never written (before the screen draws)
         if why:
@@ -153,6 +156,8 @@ def register(sub, ctx) -> None:
     tu = sub.add_parser("tui", help=f"the cockpit: sessions and their steps, {who}'s queue, alerts, milestones, "
                                     "frontier, audit, stacks and index, digest; read-only, zero token")
     tu.add_argument("--all", action="store_true", help="every registered project, and every session")
+    tu.add_argument("--scope", help="the projects of a node's subtree in the scope tree (brain scopes): an "
+                    "id, a path of ids, global (= --all), . or ..")
     tu.add_argument("--refresh", type=_duration, default=cockpit.REFRESH_S, metavar="DURATION",
                     help="how often the panels' files are checked, re-read when changed: 500ms, 1s, 2s, 5s... "
                          "(default 2s)")
