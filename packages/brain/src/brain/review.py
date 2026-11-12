@@ -29,10 +29,15 @@ from . import paths
 FOLDER = "reviews"
 MAX_FILE = 400_000   # a touched file larger than this is listed, not copied
 
-# The lenses, each chosen by the surfaces a diff touches: (name, what it asks, path patterns). "correctness" always.
+# The lenses, each chosen by the surfaces a diff touches: (name, what it asks, path patterns).
+# "correctness" and "scope" always.
 LENSES = [
     ("correctness", "what input, state or timing makes a changed line wrong; what the diff removes and where the "
                     "invariant it kept is held now; every caller of a changed function", ()),
+    # wi-brain-review-scope-lens (the owner's TR-3 of 2026-11-11): always, like correctness; what it finds leaves the
+    # PR as a follow-up item.
+    ("scope", "a changed line the item does not need, a refactor, a rename or a flag beyond it: each becomes a "
+              "follow-up item (brain item add) and leaves this PR, unless the item cannot be done without it", ()),
     ("security", "what a guard lets through that it refused, a secret or a private name that could leave, a command "
                  "built from data", (r"guards?\.py$", r"(^|/)hooks/", r"secret", r"public", r"permissions")),
     ("compatibility", "what an older engine reading the new data does, what a newer file does to this engine, a "
@@ -93,7 +98,7 @@ def resolve(repo: Path, target: str) -> tuple[str, str]:
 
 
 def lenses_for(files: list[str]) -> list[str]:
-    """The lenses the touched ``files`` call for, in LENSES' order; correctness always."""
+    """The lenses the touched ``files`` call for, in LENSES' order; correctness and scope always."""
     out = []
     for name, _, patterns in LENSES:
         if not patterns or any(re.search(p, f) for p in patterns for f in files):
@@ -122,8 +127,12 @@ def _readme(p: Packet) -> str:
              "1. One agent per lens below, in parallel, each given `diff.patch`, `files/` and `scout.txt`, asked "
              "for findings with a file, a line and a concrete failure scenario.",
              "2. Deduplicate the findings (same defect, same place).",
-             "3. Two skeptics per distinct finding, each asked to refute it; keep what neither refutes.",
-             "4. Fix each kept finding with a test that fails before the fix, or contest it with evidence in the PR.",
+             "3. Two skeptics per distinct finding, each asked to refute it; keep what neither refutes. The "
+             "evidence rule: a negative claim (nothing calls it, untested, no other reader, never reached) stands "
+             "only with the query that shows it and that query's coverage (what it searched, what it could not "
+             "see); a claim without them is unproven, neither kept nor refuted on its word.",
+             "4. Fix each kept finding with a test that fails before the fix, or contest it with evidence in the PR; "
+             "a scope finding is fixed by taking the change out of the PR into a follow-up item.",
              f"5. `brain review stamp {p.head} --findings N --fixed M --contested K --note review.md`.", "",
              f"## Lenses ({len(p.lenses)})", ""]
     lines += [f"- **{name}**: {asks[name]}" for name in p.lenses if name in asks]
