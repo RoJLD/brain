@@ -1518,13 +1518,7 @@ def health_lines(panel: dict | None, width: int = WIDTH, now: datetime | None = 
     if probes_.get("probes") or probes_.get("errors"):
         from . import depprobes
         lines.append(_line("  ", f"dependency probes: {depprobes.status_line(probes_)}", width))
-    rv = panel.get("reviews") or {}
-    if rv and rv["total"]["prs"]:
-        trend = ", ".join(f"{w['wave']} {w['per_pr']}" for w in rv["waves"])
-        lines.append(_line("  ", f"review error score: {rv['total']['per_pr']} confirmed finding(s) per PR over "
-                                 f"{rv['total']['prs']} PR(s)" + (f"; per wave {trend}" if trend else "")
-                                 + ("; the reviews may lighten" if rv["lighten"]["ok"] else
-                                    "; the reviews stay complete"), width))
+    lines += review_lines(panel.get("reviews"), width)
     ex = panel.get("exec") or {}
     if ex:
         reg = "; ".join(f"{r['task']} +{r['change']:.0%}" for r in ex.get("regressions") or [])
@@ -1532,6 +1526,17 @@ def health_lines(panel: dict | None, width: int = WIDTH, now: datetime | None = 
                                  f"{len(ex.get('regressions') or [])} regression(s)" + (f": {reg}" if reg else ""),
                            width))
     return lines
+
+
+def review_lines(rv: dict | None, width: int = WIDTH) -> list[str]:
+    """The health tab's line of the review error score (review_summary), none before a PR is reviewed."""
+    if not rv or not rv["total"]["prs"]:
+        return []
+    trend = ", ".join(f"{w['wave']} {w['per_pr']}" for w in rv["waves"])
+    verdict = "the reviews may lighten" if rv["lighten"]["ok"] else "the reviews stay complete"
+    return [_line("  ", f"review error score: {rv['total']['per_pr']} confirmed finding(s) per PR over "
+                        f"{rv['total']['prs']} PR(s)" + (f"; per wave {trend}" if trend else "") + f"; {verdict}",
+                  width)]
 
 
 def exec_lines(panel: dict | None, width: int = WIDTH) -> list[str]:

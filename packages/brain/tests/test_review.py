@@ -128,7 +128,8 @@ def test_the_reviews_lighten_only_once_the_score_falls_over_two_waves_in_a_row()
     def trend(*per):
         return [{"wave": f"0.{i}.0", "per_pr": p} for i, p in enumerate(per)]
     assert review.lighten(trend(9, 7, 5))["ok"]
-    assert review.lighten(trend(3, 9, 7, 5))["why"] == "findings per PR 0.1.0 9 -> 0.2.0 7 -> 0.3.0 5: fell over two waves"
+    why = review.lighten(trend(3, 9, 7, 5))["why"]   # the last three waves only
+    assert why == "findings per PR 0.1.0 9 -> 0.2.0 7 -> 0.3.0 5: fell over two waves"
     for per in ((9, 5, 5), (9, 4, 6), (5, 7, 3), (9, 7)):
         assert not review.lighten(trend(*per))["ok"], per
 
@@ -172,3 +173,16 @@ def test_an_older_stamp_without_rows_or_place_still_counts(brain_home):
     (f.parent / "broken.json").write_text("{", encoding="utf-8")
     sc = review.score()
     assert sc["total"]["prs"] == 1 and sc["total"]["findings"] == 11 and sc["unplaced"] == 1 and sc["waves"] == []
+
+
+def test_the_health_tab_shows_the_review_error_score(brain_home):
+    """wi-brain-review-error-score: the totals, the last waves and the rule's verdict, read from the stamps."""
+    from brain import cockpit
+    assert cockpit.review_summary()["total"]["prs"] == 0
+    assert not any("review error score" in x for x in cockpit.health_lines({"projects": [],
+                                                                           "reviews": cockpit.review_summary()}))
+    for i, (wave, n) in enumerate((("0.4.0", 9), ("0.4.1", 6), ("0.4.2", 3))):
+        review.stamp(str(i) * 40, n, n, wave=wave, pr=str(i))
+    lines = cockpit.health_lines({"projects": [], "reviews": cockpit.review_summary()}, width=200)
+    assert ("  review error score: 6.0 confirmed finding(s) per PR over 3 PR(s); per wave 0.4.0 9.0, 0.4.1 6.0, "
+            "0.4.2 3.0; the reviews may lighten") in lines

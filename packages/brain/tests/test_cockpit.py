@@ -999,15 +999,3 @@ def test_a_newer_brains_tui_json_is_shown_never_written(tmp_path, monkeypatch, s
     assert "newer brain" in err and "views are not remembered" in err
     assert cockpit.state_path().read_text(encoding="utf-8") == text
 
-
-def test_the_health_tab_shows_the_review_error_score(brain_home):
-    """wi-brain-review-error-score: the totals, the last waves and the rule's verdict, read from the stamps."""
-    from brain import review
-    assert cockpit.review_summary()["total"]["prs"] == 0
-    assert not any("review error score" in x for x in cockpit.health_lines({"projects": [],
-                                                                           "reviews": cockpit.review_summary()}))
-    for i, (wave, n) in enumerate((("0.4.0", 9), ("0.4.1", 6), ("0.4.2", 3))):
-        review.stamp(str(i) * 40, n, n, wave=wave, pr=str(i))
-    lines = cockpit.health_lines({"projects": [], "reviews": cockpit.review_summary()}, width=200)
-    assert ("  review error score: 6.0 confirmed finding(s) per PR over 3 PR(s); per wave 0.4.0 9.0, 0.4.1 6.0, "
-            "0.4.2 3.0; the reviews may lighten") in lines
