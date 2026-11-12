@@ -204,7 +204,7 @@ def _registry_settings(root: Path | None) -> list[Setting]:
     """What projects.yaml declares per project: the stacks, the notification routes, the code index."""
     try:
         reg = projects.load(root)
-    except Exception as exc:  # noqa: BLE001 - shown, never raised: the other settings still read
+    except Exception as exc:  # shown, never raised: the other settings still read
         return [Setting("brain", "projects.yaml", f"not readable: {type(exc).__name__}: {exc}", "projects.yaml",
                         "brain check")]
     where = str(projects.registry_file(root) or "projects.yaml")
@@ -267,7 +267,7 @@ def collect(root: Path | None = None, state: dict | None = None, themes: tuple =
     for page in pages:
         try:
             out[page] = cockpit_settings(state, themes) if page == "cockpit" else READERS[page](root)
-        except Exception as exc:  # noqa: BLE001 - one page never stops the others
+        except Exception as exc:  # one page never stops the others
             out[page] = [Setting(page, "read failed", f"{type(exc).__name__}: {exc}", "", "brain check --all")]
     return out
 

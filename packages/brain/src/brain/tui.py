@@ -73,13 +73,12 @@ from textual.binding import Binding
 from textual.containers import Grid, Horizontal, VerticalScroll
 from textual.content import Content
 from textual.markup import escape
-from textual.widgets import DataTable, Footer, Header, Input, Label, OptionList, Select, Static, Tab, Tabs
+from textual.widgets import DataTable, Footer, Header, Input, Label, Select, Static, Tab, Tabs
 
 from . import cockpit, detail, handover, paths, update
-from . import settings as settings_
 from .tui_palette import PaletteAndColumns, same_cell, styled
-from .tui_screens import (AnswerScreen, ConfirmScreen, DetailScreen, LinkScreen, PanelHelp, ResultScreen,
-                          SettingScreen, ViewScreen)
+from .tui_screens import AnswerScreen, ConfirmScreen, DetailScreen, LinkScreen, PanelHelp, ResultScreen, ViewScreen
+from .tui_settings import SETTING_ACTIONS, SettingsFrame, SettingsTab
 from .tui_side import DetailBeside, DetailPane
 
 INTERVALS = (0.5, 1.0, 2.0, 5.0, 10.0)
@@ -90,7 +89,6 @@ PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back",
                  "columns")  # the panels' keys, off while a dialog or a detail is on top of them
 # every panel and frame, as the grid places them: with open alerts their row is whole (L11), the digest beside the stacks
 EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec", "settings")
-SETTING_COLUMNS = ("Setting", "Value", "From", "Change")
 CARD_COLUMNS = 3
 STATUS_COLUMNS = 100  # narrower, the global bar keeps its width for the search: the subtitle has the times
 
@@ -124,22 +122,11 @@ class Card(Static, can_focus=True):
         self.app.open_card(self.tab_name)
 
 
-class SettingsTable(DataTable):
-    """The settings of the page picked on the left (brain.settings): Enter edits a cockpit setting, else says the
-    command that changes it; left goes back to the pages."""
-    BINDINGS = [Binding("enter", "app.edit_setting", "Edit"), Binding("left", "app.settings_pages", "Pages")]
-
-
-class SettingsPages(OptionList):
-    """The Settings tab's pages: the cursor shows a page's settings, Enter or right goes to them."""
-    BINDINGS = [Binding("right", "app.settings_rows", "Settings")]
-
-
 class SearchInput(Input):
     BINDINGS = [Binding("escape", "app.clear_search", "Clear")]
 
 
-class CockpitApp(DetailBeside, PaletteAndColumns, App):
+class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
     TITLE = update.title(None)  # the installed version; the newer one once the background check answers
     ESCAPE_TO_MINIMIZE = False  # Escape's steps are action_back's: the search before a full view
     CSS = """
@@ -175,8 +162,6 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
     #side-body .heading.first { margin-top: 0; }
     #side-body .line { padding-left: 2; }
     #side-foot { height: auto; max-height: 30%; color: $text-muted; margin-top: 1; }
-    #settings-pages { width: 22; height: 100%; border: none; }
-    #settings-table { width: 1fr; height: 100%; }
     #cards-grid { grid-size: 3; grid-rows: auto; height: auto; }
     #cards-grid.one { grid-size: 1; }
     .card { border: round $primary; height: auto; min-height: 6; padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
@@ -238,8 +223,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
         self.notified: set[tuple] = set()  # the failed reads already notified: (at, error)
         self.update_info: dict | None = None  # brain.update.check's answer, once the background check has one
         self.handover: dict | None = None  # an install handed over (brain.handover.prepare): brain.tui.run starts it
-        self.setting_page = settings_.PAGES[0]  # the Settings tab's page shown
-        self.setting_rows: dict[str, settings_.Setting] = {}  # its settings by key
+        self._settings_init()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -262,10 +246,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
             with Grid(id="grid"):  # one widget per panel: a tab or a view is a layout of them (_layout)
                 for name in EVERY_FRAME:
                     if name == "settings":  # its pages on the left, the page's settings on the right
-                        with Horizontal(id=name, classes="panel"):
-                            yield SettingsPages(*(settings_.page_label(p) for p in settings_.PAGES),
-                                                id="settings-pages")
-                            yield SettingsTable(id="settings-table", zebra_stripes=True, cursor_type="row")
+                        yield SettingsFrame(id=name, classes="panel")
                     elif name in cockpit.COLUMNS:
                         kind = ViewTable if name in cockpit.SORTS else DataTable
                         yield kind(id=name, classes="panel", zebra_stripes=True, cursor_type="row")
@@ -707,90 +688,6 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
         for status in self.screen_stack[0].query("#status") if self.screen_stack else ():  # none while the app closes
             status.update(Content(cockpit.bar_status(snap.get("read_at"), due, self.probing, self.paused, tz)))
 
-    # --- the Settings tab (brain.settings): its pages, its settings, the cockpit's own edited here ---
-
-    def _draw_settings(self) -> None:
-        """The page's settings, read again (zero token, no probe); the cursor kept on its setting."""
-        if self.tab != "settings":
-            return  # not on screen: read when shown
-        state = {"scope": self.scope, "settings": self.settings}
-        rows = settings_.collect(getattr(self.cockpit, "root", None), state, tuple(sorted(self.available_themes)),
-                                 pages=(self.setting_page,))[self.setting_page]
-        self.setting_rows = {s.key: s for s in rows}
-        table = self._q("#settings-table", DataTable)
-        if not table.columns:
-            table.add_columns(*SETTING_COLUMNS)
-        keep = None
-        if table.row_count:
-            try:
-                keep = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
-            except Exception:  # the cursor out of the rows
-                keep = None
-        table.clear()
-        for s in rows:
-            table.add_row(Text(s.key, style="bold" if s.edit else ""), Text(s.value), Text(s.source), Text(s.change),
-                          key=s.key)
-        keys = [s.key for s in rows]
-        if keep in keys:
-            table.move_cursor(row=keys.index(keep), scroll=False)
-        pages = self._q("#settings-pages", OptionList)
-        if pages.highlighted != settings_.PAGES.index(self.setting_page):
-            pages.highlighted = settings_.PAGES.index(self.setting_page)
-
-    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        if event.option_list.id == "settings-pages" and event.option_index is not None:
-            page = settings_.PAGES[event.option_index]
-            if page != self.setting_page:
-                self.setting_page = page
-                self._draw_settings()
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option_list.id == "settings-pages":
-            self.action_settings_rows()
-
-    def action_settings_rows(self) -> None:
-        self._q("#settings-table").focus()
-
-    def action_settings_pages(self) -> None:
-        self._q("#settings-pages").focus()
-
-    def action_edit_setting(self) -> None:
-        """Enter on a setting: a cockpit setting's dialog; a brain setting's command, said (never run from here)."""
-        table = self._q("#settings-table", DataTable)
-        if not table.row_count:
-            return
-        key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
-        s = self.setting_rows.get(key)
-        if s is None:
-            return
-        if not s.edit:
-            self.notify(s.change, title=f"{s.key}: changed by", timeout=10)
-            return
-        self.push_screen(SettingScreen(s, s.value), lambda got: self.set_setting(s, got[1]) if got else None)
-
-    def set_setting(self, s: settings_.Setting, text: str) -> None:
-        """A cockpit setting from its dialog: checked, saved to tui.json and applied now ('' sets its default)."""
-        try:
-            value = settings_.parse(s.key, text, s.choices)
-        except ValueError as exc:
-            self.notify(str(exc), title=s.key, severity="error")
-            return
-        self.settings = {"tz": "local", **settings_.edited(self.settings, s.key, value)}
-        self._save()  # first: the language and the titles are read from tui.json (cockpit.settings)
-        if s.key == "theme":
-            self.theme = self.settings.get("theme") or s.default
-        elif s.key == "refresh":
-            self.refresh_s = self.settings.get("refresh") or cockpit.REFRESH_S
-            self._restart_timer()
-        elif s.key == "probe":
-            self.probe_s = self.settings.get("probe") or cockpit.PROBE_S
-            self.next_probe = time.monotonic() + self.probe_s
-        self._subtitle()
-        self._layout()  # the titles, the bar and the language; the settings read again
-        self.draw(set(cockpit.PANELS))  # the times in the timezone, the titles
-        shown = self.setting_rows.get(s.key)
-        self.notify(f"{s.key}: {shown.value if shown else text}", title="saved to tui.json")
-
     # --- the view: scope, search, sort, filters ---
 
     def _save(self) -> None:
@@ -989,21 +886,18 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action in PANEL_ACTIONS and len(self.screen_stack) > 1:  # a dialog or a detail is open: its keys only
             return False
-        if action in ("edit_setting", "settings_pages", "settings_rows"):
-            return len(self.screen_stack) == 1 and self.tab == "settings"
-        if action == "back":  # nothing to go back from on the overview, no search, no full view
-            return bool(self.search) or self.screen.maximized is not None or self.tab != "overview"
         if action in ("side_act", "side_open"):
             return self._side_allows(action, parameters)
-        if action == "columns":  # a panel's table focused; the palette calls action_columns with its own
-            return isinstance(self.focused, DataTable) and self.focused.id in cockpit.COLUMNS
-        if action == "next_view":  # shown on a tab with several views
-            return len(cockpit.tab_views(self.tab, self._narrow())) > 1
-        if action == "toggle_max":  # a tab of one panel is its full view already
-            return len(cockpit.tab_panels(self.tab, self._view())) > 1
-        if action == "update" and not ((self.update_info or {}).get("newer") or update.applies(self.update_info)):
-            return False  # hidden until a newer one is out, or the installed one lags the pin
-        return True
+        rule = {  # each key's own rule, else it works
+            "back": lambda: bool(self.search) or self.screen.maximized is not None or self.tab != "overview",
+            # a panel's table focused; the palette calls action_columns with its own
+            "columns": lambda: isinstance(self.focused, DataTable) and self.focused.id in cockpit.COLUMNS,
+            "next_view": lambda: len(cockpit.tab_views(self.tab, self._narrow())) > 1,  # a tab with several views
+            "toggle_max": lambda: len(cockpit.tab_panels(self.tab, self._view())) > 1,  # one panel: full already
+            # hidden until a newer one is out, or the installed one lags the pin
+            "update": lambda: bool((self.update_info or {}).get("newer") or update.applies(self.update_info)),
+            **dict.fromkeys(SETTING_ACTIONS, self._settings_allows)}.get(action)
+        return True if rule is None else rule()
 
     def action_back(self) -> None:
         """Escape, one step at a time (spec cockpit-ux-round2 §4.0.5): the search, a full view, then the overview."""
@@ -1077,11 +971,6 @@ class CockpitApp(DetailBeside, PaletteAndColumns, App):
         self.refresh_s = INTERVALS[max(0, min(len(INTERVALS) - 1, i + step))]
         self._restart_timer()
         self._subtitle()
-
-    def _restart_timer(self) -> None:
-        if self.timer is not None:
-            self.timer.stop()
-        self.timer = self.set_interval(self.refresh_s, self.tick)
 
     def action_faster(self) -> None:
         self._interval(-1)

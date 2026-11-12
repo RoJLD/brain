@@ -1,0 +1,145 @@
+"""The cockpit's Settings tab (``brain tui``, the comma; wi-brain-tui-settings, spec cockpit-ux §4.13 and
+cockpit-ux-round2 §4.0.3): its pages on the left (brain.settings' ``PAGES``), the page's settings on the right with
+their value, where each comes from and how it changes. Enter on a Cockpit setting opens its dialog
+(tui_screens' SettingScreen): the value is checked (brain.settings.parse), saved to <BRAIN_HOME>/tui.json and applied at
+once; on a brain setting it says the command that changes it, and nothing is written. The settings are read when the tab
+shows, after an edit and on r: zero token, no probe.
+"""
+
+from __future__ import annotations
+
+import time
+
+from rich.text import Text
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal
+from textual.widgets import DataTable, OptionList
+
+from . import cockpit
+from . import settings as settings_
+from .tui_screens import SettingScreen
+
+SETTING_COLUMNS = ("Setting", "Value", "From", "Change")
+SETTING_ACTIONS = ("edit_setting", "settings_pages", "settings_rows")
+
+
+class SettingsTable(DataTable):
+    """The settings of the page picked on the left (brain.settings): Enter edits a cockpit setting, else says the
+    command that changes it; left goes back to the pages."""
+    BINDINGS = [Binding("enter", "app.edit_setting", "Edit"), Binding("left", "app.settings_pages", "Pages")]
+
+
+class SettingsPages(OptionList):
+    """The Settings tab's pages: the cursor shows a page's settings, Enter or right goes to them."""
+    BINDINGS = [Binding("right", "app.settings_rows", "Settings")]
+
+
+class SettingsFrame(Horizontal):
+    """The tab's one panel: the pages, then the page's settings."""
+    DEFAULT_CSS = """
+    #settings-pages { width: 22; height: 100%; border: none; }
+    #settings-table { width: 1fr; height: 100%; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield SettingsPages(*(settings_.page_label(p) for p in settings_.PAGES), id="settings-pages")
+        yield SettingsTable(id="settings-table", zebra_stripes=True, cursor_type="row")
+
+
+class SettingsTab:
+    """The app's part of the Settings tab (mixed into brain.tui's CockpitApp)."""
+
+    def _settings_init(self) -> None:
+        self.setting_page = settings_.PAGES[0]  # the page shown
+        self.setting_rows: dict[str, settings_.Setting] = {}  # its settings by key
+
+    def _settings_allows(self) -> bool:
+        return len(self.screen_stack) == 1 and self.tab == "settings"
+
+    def _draw_settings(self) -> None:
+        """The page's settings, read again (zero token, no probe); the cursor kept on its setting."""
+        if self.tab != "settings":
+            return  # not on screen: read when shown
+        state = {"scope": self.scope, "settings": self.settings}
+        rows = settings_.collect(getattr(self.cockpit, "root", None), state, tuple(sorted(self.available_themes)),
+                                 pages=(self.setting_page,))[self.setting_page]
+        self.setting_rows = {s.key: s for s in rows}
+        table = self._q("#settings-table", DataTable)
+        if not table.columns:
+            table.add_columns(*SETTING_COLUMNS)
+        keep = None
+        if table.row_count:
+            try:
+                keep = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+            except Exception:  # the cursor out of the rows
+                keep = None
+        table.clear()
+        for s in rows:
+            table.add_row(Text(s.key, style="bold" if s.edit else ""), Text(s.value), Text(s.source), Text(s.change),
+                          key=s.key)
+        keys = [s.key for s in rows]
+        if keep in keys:
+            table.move_cursor(row=keys.index(keep), scroll=False)
+        pages = self._q("#settings-pages", OptionList)
+        if pages.highlighted != settings_.PAGES.index(self.setting_page):
+            pages.highlighted = settings_.PAGES.index(self.setting_page)
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if event.option_list.id == "settings-pages" and event.option_index is not None:
+            page = settings_.PAGES[event.option_index]
+            if page != self.setting_page:
+                self.setting_page = page
+                self._draw_settings()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id == "settings-pages":
+            self.action_settings_rows()
+
+    def action_settings_rows(self) -> None:
+        self._q("#settings-table").focus()
+
+    def action_settings_pages(self) -> None:
+        self._q("#settings-pages").focus()
+
+    def action_edit_setting(self) -> None:
+        """Enter on a setting: a cockpit setting's dialog; a brain setting's command, said (never run from here)."""
+        table = self._q("#settings-table", DataTable)
+        if not table.row_count:
+            return
+        key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        s = self.setting_rows.get(key)
+        if s is None:
+            return
+        if not s.edit:
+            self.notify(s.change, title=f"{s.key}: changed by", timeout=10)
+            return
+        self.push_screen(SettingScreen(s, s.value), lambda got: self.set_setting(s, got[1]) if got else None)
+
+    def set_setting(self, s: settings_.Setting, text: str) -> None:
+        """A cockpit setting from its dialog: checked, saved to tui.json and applied now ('' sets its default)."""
+        try:
+            value = settings_.parse(s.key, text, s.choices)
+        except ValueError as exc:
+            self.notify(str(exc), title=s.key, severity="error")
+            return
+        self.settings = {"tz": "local", **settings_.edited(self.settings, s.key, value)}
+        self._save()  # first: the language and the titles are read from tui.json (cockpit.settings)
+        if s.key == "theme":
+            self.theme = self.settings.get("theme") or s.default
+        elif s.key == "refresh":
+            self.refresh_s = self.settings.get("refresh") or cockpit.REFRESH_S
+            self._restart_timer()
+        elif s.key == "probe":
+            self.probe_s = self.settings.get("probe") or cockpit.PROBE_S
+            self.next_probe = time.monotonic() + self.probe_s
+        self._subtitle()
+        self._layout()  # the titles, the bar and the language; the settings read again
+        self.draw(set(cockpit.PANELS))  # the times in the timezone, the titles
+        shown = self.setting_rows.get(s.key)
+        self.notify(f"{s.key}: {shown.value if shown else text}", title="saved to tui.json")
+
+    def _restart_timer(self) -> None:
+        if self.timer is not None:
+            self.timer.stop()
+        self.timer = self.set_interval(self.refresh_s, self.tick)

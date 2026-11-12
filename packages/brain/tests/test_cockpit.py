@@ -670,8 +670,7 @@ def test_the_tabs_are_the_eleven_of_ux18_with_their_keys():
         assert set(t["label"]) == set(cockpit.LANGS) and set(t["question"]) == set(cockpit.LANGS)
         assert t["views"] or t["arrives"], name  # a tab not built says what brings it
     # every panel and frame has a tab, and each view its words
-    assert {p for t in cockpit.built_tabs() for p in cockpit.tab_panels(t)} == {*cockpit.PANELS, *cockpit.FRAMES,
-                                                                                "settings"}
+    assert {p for t in cockpit.built_tabs() for p in cockpit.tab_panels(t)} == {*cockpit.PANELS, *cockpit.FRAMES, "settings"}
     assert {v for t in cockpit.TABS.values() for v in t["views"]} <= set(cockpit.VIEW_LABELS)
     assert [cockpit.panel_tab(p) for p in ("queue", "alerts", "exec", "digest")] == ["queue", "health", "health",
                                                                                       "overview"]
@@ -697,9 +696,8 @@ def test_the_bar_is_reduced_to_its_numbers_when_narrow_or_when_it_does_not_fit(m
     assert not cockpit.narrow(120, 30) and cockpit.narrow(119, 30) and cockpit.narrow(120, 29)
     wide = cockpit.tab_labels(snap, "queue", 160, 48)
     assert wide["sessions"] == "2 Sessions 1!" and list(wide) == list(cockpit.built_tabs())
-    assert cockpit.tab_labels(snap, "sessions", 100, 48) == {
-        "overview": "0", "queue": "1", "sessions": "2 Sessions 1!", "frontier": "3", "milestones": "4", "health": "8",
-        "settings": ","}
+    assert cockpit.tab_labels(snap, "sessions", 100, 48) == {"overview": "0", "queue": "1", "sessions": "2 Sessions 1!",
+                                                             "frontier": "3", "milestones": "4", "health": "8", "settings": ","}
     assert cockpit.tab_labels(snap, "queue", 160, 29)["sessions"] == "2"  # short too
     # the eleven, once built: more than 120 columns with their counts, so their numbers there, and it fits
     every = {n: {**t, "views": t["views"] or {"list": ()}} for n, t in cockpit.TABS.items()}
