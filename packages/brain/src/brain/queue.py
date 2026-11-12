@@ -49,6 +49,9 @@ every session it was refused in is archived or gone in the desktop app's eyes (`
 The view names the owner by their display name (config.json ``identity.display_name``, else ``identity.owner``:
 brain.config.name_of), while ``--by`` and the records keep the owner's id.
 
+Under the entries, the gates written on the project's open nodes (``props.gate``, brain.gates) each count what they
+hold, downstream included: « hardware gpu-box holds 3 milestone(s) » (wi-brain-forecast-gates).
+
 ``build`` is the data function the TUI's panel calls (wi-brain-tui-cockpit); ``collect`` builds several projects with
 one transcript scan and returns the denials outside any registered project too.
 """
@@ -66,8 +69,8 @@ from pathlib import Path
 
 from functools import lru_cache
 
-from . import (actions, config, decisions, forecast, graph, guards, paths, permissions, projects, records, resume,
-               secretscan, timing)
+from . import (actions, config, decisions, forecast, gates, graph, guards, paths, permissions, projects, records,
+               resume, secretscan, timing)
 
 KINDS = decisions.KINDS
 DAYS = 7
@@ -842,8 +845,43 @@ def build(project, *, kinds=KINDS, days: int = DAYS, today: date | None = None, 
     return {"project": project.name, "root": str(project.root), "today": today.isoformat(), "days": days,
             "owner": owner, "name": config.name_of(), "entries": entries,
             "counts": {k: sum(1 for e in entries if e["kind"] == k) for k in KINDS}, "bands": bands(entries),
-            "guard_refusals": guards, "expired": expired,
+            "guard_refusals": guards, "expired": expired, "gates": held_by_gates(
+                g, today, gates.Resolver(getattr(project, "registry_dir", None), here=(project.name, g.nodes))),
             "rules": rules(project, owner), "notes": notes}
+
+
+def held_by_gates(g: Graph, today: date | None = None, resolver: gates.Resolver | None = None) -> list[dict]:
+    """What each gate written on an open node holds (props.gate, brain.gates; wi-brain-forecast-gates): [{gate, kind,
+    on, items, milestones}], the open items and pending milestones it holds, downstream ones included, the gate
+    holding the most first. A gate that passed (a count elapsed, another project's item done) or is malformed
+    (brain check names it) holds nothing here."""
+    today = today or date.today()
+    resolver = resolver or gates.Resolver(None, here=("", g.nodes))
+    out: dict[str, dict] = {}
+    for nid, n in sorted(g.nodes.items()):
+        if not g.is_open(nid):
+            continue
+        for gt in gates.of(n.get("props")):
+            if gates.problems(gt) or gates.prepare(gt, today=today, resolver=resolver, nodes=g.nodes, ddrs=[],
+                                                   work=[], flow={}).get("passed"):
+                continue
+            e = out.setdefault(gates.label(gt), {"gate": gates.label(gt), "kind": gt.get("kind"), "on": [],
+                                                 "held": set()})
+            e["on"].append(nid)
+            e["held"].update(g.unblocks([nid]))
+    rows = []
+    for e in out.values():
+        held = sorted(e.pop("held"))
+        rows.append({**e, "items": [x for x in held if g.nodes[x].get("type") == "WorkItem"],
+                     "milestones": [x for x in held if g.nodes[x].get("type") == "Milestone"]})
+    return sorted(rows, key=lambda r: (-len(r["milestones"]) - len(r["items"]), r["gate"]))
+
+
+def gates_line(rows: list[dict]) -> str:
+    """'gates: hardware gpu-box holds 3 milestone(s), 2 item(s); ...' ('' without a gate)."""
+    parts = [f"{r['gate']} holds " + ", ".join(f"{len(r[k])} {k[:-1]}(s)" for k in ("milestones", "items") if r[k])
+             for r in rows if r["milestones"] or r["items"]]
+    return "  gates: " + "; ".join(parts) if parts else ""
 
 
 def collect(projects_list, *, only=None, kinds=KINDS, days: int = DAYS, today: date | None = None,
@@ -943,6 +981,9 @@ def render(data: dict, width: int = 118, outside: int = 0, legend: bool = True, 
     for t in (data.get("rules") or {}).get("uncovered", []):
         lines.append(f"  warning: the rules name {t!r} as {name}'s, and no category of brain.permissions (NEVER, "
                      "never:) finds it")
+    line = gates_line(data.get("gates") or [])
+    if line:
+        lines.append(line)
     lines += [f"  note: {n}" for n in data.get("notes", [])]
     return lines
 
