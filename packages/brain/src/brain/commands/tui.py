@@ -27,12 +27,17 @@ USAGE = """\
                  else (--plain) the same text redrawn in place; --once prints it once (--quick: no probe), --json its
                  data (unfiltered). One tab per question, each on its key: 0 overview (its views, v: one card per tab,
                  which Enter or a click opens already filtered, the grid, the digest), 1 {owner}'s queue, 2 sessions,
-                 3 frontier, 4 milestones, 8 health (alerts, audit, stacks and index, exec times), ctrl+pageup and ctrl+pagedown the previous and next, Escape back to the overview;
+                 3 frontier, 4 milestones, 8 health (alerts, audit, stacks and index, exec times), the comma settings
+                 (its pages: Cockpit, the screen's own settings in tui.json, edited there with Enter: theme,
+                 timezone, language, refresh and probe intervals, each panel's free title; Identity, Brain,
+                 Permissions, each brain setting with its file and the command that changes it, never edited there;
+                 Setup, the commands that set a brain up), ctrl+pageup and ctrl+pagedown the previous and next,
+                 Escape back to the overview;
                  Escape first clears the search and closes a full view; the bar shows the queue's band now, the
                  sessions asking and the open alerts, and is reduced to its
                  numbers under 120 columns or 30 rows, where the cards take one column and the grid is not offered;
                  --tab NAME starts there, and with --once or --plain prints that tab's panels alone (the overview:
-                 its cards). The project selector (p: global or one
+                 its cards; the settings: its pages). The project selector (p: global or one
                  project), the sessions', queue's and frontier's filters and sorts (f, s, o), a table's columns (C:
                  shown or hidden, their order, the longest a title may be; the sessions also offer Cost, App id, Id and
                  Branch), the palette (ctrl+p: every tab, view, project, sort, filter and table's columns, and reset
@@ -74,6 +79,9 @@ def cmd_tui(args, root: Path) -> int:
     saved = cockpit.load_state() if interactive and not args.reset else {}
     views = {n: {**(saved.get("panels") or {}).get(n, {}), **flags.get(n, {})} for n in cockpit.SORTS}
     settings = {"tz": "local", **(saved.get("settings") or {}), **({"tz": args.tz} if args.tz else {})}
+    # --refresh and --probe win for one launch; else the Settings tab's (tui.json), else the defaults
+    args.refresh = args.refresh or settings.get("refresh") or cockpit.REFRESH_S
+    args.probe = args.probe or settings.get("probe") or cockpit.PROBE_S
     projs = _projects(args, root)
     cp = cockpit.Cockpit(projs, every=args.all, root=root, hours=args.hours)   # --scope: its projects, no more
     if not (args.all or args.scope or getattr(args, "project", None)) and saved.get("scope") in (cockpit.ALL,
@@ -96,7 +104,8 @@ def cmd_tui(args, root: Path) -> int:
         cp.refresh(probe=not args.quick)
         snap = cp.snapshot()
         print(json.dumps(snap, ensure_ascii=False, indent=1, sort_keys=True) if args.json
-              else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz, tab=args.tab)))
+              else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz, tab=args.tab,
+                                                 root=root)))
         return 1 if _failed_reads(snap) else 0
     try:   # one interactive cockpit per machine (brain.shutdown); --once, --json and --detail read beside it
         with shutdown.single_instance("cockpit", "brain tui"):
@@ -168,12 +177,12 @@ def register(sub, ctx) -> None:
     tu.add_argument("--all", action="store_true", help="every registered project, and every session")
     tu.add_argument("--scope", help="the projects of a node's subtree in the scope tree (brain scopes): an "
                     "id, a path of ids, global (= --all), . or ..")
-    tu.add_argument("--refresh", type=_duration, default=cockpit.REFRESH_S, metavar="DURATION",
+    tu.add_argument("--refresh", type=_duration, metavar="DURATION",
                     help="how often the panels' files are checked, re-read when changed: 500ms, 1s, 2s, 5s... "
-                         "(default 2s)")
-    tu.add_argument("--probe", type=_duration, default=cockpit.PROBE_S, metavar="DURATION",
+                         "(for this launch; default: the Settings tab's, else 2s)")
+    tu.add_argument("--probe", type=_duration, metavar="DURATION",
                     help="how often alerts, audit, stacks and index, digest and the denied calls are read again "
-                         "(default 5m; the r key: now)")
+                         "(for this launch; default: the Settings tab's, else 5m; the r key: now)")
     tu.add_argument("--hours", type=float, default=cockpit.HOURS,
                     help=f"the sessions whose transcript was written in the last N hours (default {cockpit.HOURS:g})")
     tu.add_argument("--plain", action="store_true", help="the text view redrawn in place, even with the tui extra")

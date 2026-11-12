@@ -3,9 +3,9 @@ brain.cockpit's, tested in test_cockpit; the app's helpers are test_tui's)."""
 
 from test_tui import GRID, PANELS, FakeCockpit, _ids, _many, _run, _session, _why  # skipped with it, without Textual
 from textual.markup import escape
-from textual.widgets import DataTable, Select, Static, Tabs
+from textual.widgets import DataTable, Input, Select, Static, Tabs
 
-from brain import cockpit, tui
+from brain import cockpit, tui, tui_screens
 
 
 def _on_screen(app):
@@ -22,7 +22,8 @@ def test_a_tab_is_a_layout_of_the_same_panels():
     not built yet says what brings it."""
     async def check(app, pilot, fake):
         assert app.tab == "overview" and app._view() == "grid" and set(_on_screen(app)) == set(cockpit.PANELS)
-        assert _bar(app) == ["0 Overview", "1 Ada's queue", "2 Sessions 1!", "3 Frontier", "4 Milestones", "8 Health"]
+        assert _bar(app) == ["0 Overview", "1 Ada's queue", "2 Sessions 1!", "3 Frontier", "4 Milestones", "8 Health",
+                             ", Settings"]
         assert "What waits on me" in str(app.query_one("#question").render())
         await pilot.press("1")
         assert app.tab == "queue" and _on_screen(app) == ["queue"] and app.focused is app.query_one("#queue")
@@ -41,13 +42,14 @@ def test_a_tab_is_a_layout_of_the_same_panels():
         assert app.tab == "queue" and table.cursor_row == 1
         notified, notify = [], app.notify
         app.notify = lambda message, **kw: notified.append(message) or notify(message, **kw)
-        await pilot.press("5", "comma")  # not built: said, nothing moves
-        assert app.tab == "queue" and notified == ["Ideas is not here yet: it arrives with the ideas board",
-                                                   "Settings is not here yet: it arrives with the settings pages"]
+        await pilot.press("5")  # not built: said, nothing moves
+        assert app.tab == "queue" and notified == ["Ideas is not here yet: it arrives with the ideas board"]
         await pilot.press("ctrl+pagedown")
         assert app.tab == "sessions"
         await pilot.press("ctrl+pageup", "ctrl+pageup", "ctrl+pageup")
-        assert app.tab == "health"  # around the bar
+        assert app.tab == "settings"  # around the bar
+        await pilot.press("ctrl+pageup")
+        assert app.tab == "health"
         await pilot.click("#tab-frontier")
         await pilot.pause(0.1)
         assert app.tab == "frontier" and _on_screen(app) == ["frontier"] and app.focused is app.query_one("#frontier")
@@ -94,12 +96,12 @@ def test_a_narrow_terminal_has_the_tabs_alone():
     out again."""
     async def check(app, pilot, fake):
         assert app._view() == "cards" and _on_screen(app) == []
-        assert _bar(app) == ["0 Overview", "1", "2", "3", "4", "8"]
+        assert _bar(app) == ["0 Overview", "1", "2", "3", "4", "8", ","]
         assert cockpit.tab_views("overview", app._narrow()) == ("cards", "digest")  # the grid is not offered
         await pilot.press("v", "v")
         assert app._view() == "cards"
         await pilot.press("2")
-        assert _bar(app) == ["0", "1", "2 Sessions 1!", "3", "4", "8"]
+        assert _bar(app) == ["0", "1", "2 Sessions 1!", "3", "4", "8", ","]
         await pilot.press("8")
         assert app.query_one("#grid").has_class("stacked")
         await pilot.resize_terminal(160, 48)
@@ -123,7 +125,8 @@ def test_the_bar_counts_what_each_tab_holds(monkeypatch):
         {"id": "ddr-a", "kind": "decision", "unblocks": 1, "age_days": 0, "title": "x", "since": "", "band": "now"}]}]}
 
     async def check(app, pilot, fake):
-        assert _bar(app) == ["0 Overview", "1 Ada's queue 1", "2 Sessions 1!", "3 Frontier", "4 Milestones", "8 Health 2"]
+        assert _bar(app) == ["0 Overview", "1 Ada's queue 1", "2 Sessions 1!", "3 Frontier", "4 Milestones",
+                             "8 Health 2", ", Settings"]
         assert "changed " in str(app.query_one("#status").render())  # the global bar: the last change, the next probe
     monkeypatch.setitem(PANELS, "alerts", alerts)
     monkeypatch.setitem(PANELS, "queue", queue)
@@ -565,3 +568,69 @@ def test_run_gives_the_app_its_tab_and_views(monkeypatch):
     monkeypatch.setattr(tui, "CockpitApp", App)
     assert tui.run(FakeCockpit(), tab="health", tabs={"overview": {"view": "digest"}}) == 0
     assert seen["args"][-3:] == ("health", {"overview": {"view": "digest"}}, None)
+
+
+def _settings(app):
+    table = app.query_one("#settings-table", DataTable)
+    return {str(table.get_row_at(i)[0]): str(table.get_row_at(i)[1]) for i in range(table.row_count)}
+
+
+def _cursor_on(app, key):
+    table = app.query_one("#settings-table", DataTable)
+    table.move_cursor(row=[k.value for k in table.rows].index(key))
+
+
+def test_the_settings_tab_edits_the_cockpit_and_only_names_the_brain_s_commands():
+    """wi-brain-tui-settings: the comma opens the Settings tab, its pages on the left; Enter on a Cockpit setting edits it
+    in tui.json and applies it now, a wrong value is refused; on a brain setting it says the command, nothing written."""
+    async def check(app, pilot, fake):
+        notified, notify = [], app.notify
+        app.notify = lambda message, **kw: notified.append((kw.get("title"), message)) or notify(message, **kw)
+        await pilot.press("comma")
+        await pilot.pause(0.1)
+        assert app.tab == "settings" and _on_screen(app) == ["settings"]
+        assert app.focused is app.query_one("#settings-table")
+        rows = _settings(app)
+        assert rows["tz"] == "local" and rows["refresh"] == "2 s" and rows["titles.queue"] == "Ada's queue"
+        _cursor_on(app, "tz")
+        await pilot.press("enter")
+        assert isinstance(app.screen, tui_screens.SettingScreen)
+        app.screen.query_one("#setting-value", Select).value = "utc"
+        await pilot.click("#save")
+        await pilot.pause(0.1)
+        assert app.settings["tz"] == "utc" and cockpit.load_state()["settings"]["tz"] == "utc"
+        assert _settings(app)["tz"] == "utc" and app.sub_title.endswith("| UTC")
+        _cursor_on(app, "refresh")
+        await pilot.press("enter")
+        app.screen.query_one("#setting-value", Input).value = "100ms"
+        await pilot.press("enter")  # submitted: refused, nothing changes
+        await pilot.pause(0.1)
+        assert app.refresh_s == 2.0 and "refresh" not in cockpit.load_state()["settings"]
+        assert ("refresh", "'100ms': 250 ms at least") in notified
+        await pilot.press("enter")
+        app.screen.query_one("#setting-value", Input).value = "5s"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert app.refresh_s == 5.0 and cockpit.load_state()["settings"]["refresh"] == 5.0
+        _cursor_on(app, "titles.queue")
+        await pilot.press("enter")
+        app.screen.query_one("#setting-value", Input).value = "Ma file"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert cockpit.load_state()["settings"]["titles"] == {"queue": "Ma file"}
+        assert "1 Ma file" in _bar(app)  # applied at once
+        await pilot.press("enter")
+        await pilot.click("#default")  # back to its default: the key removed
+        await pilot.pause(0.1)
+        assert "titles" not in cockpit.load_state()["settings"] and "1 Ada's queue" in _bar(app)
+        await pilot.press("left", "down")  # the pages: Identity
+        await pilot.pause(0.1)
+        assert app.setting_page == "identity" and _settings(app)["identity.owner"] == "Ada"
+        await pilot.press("right", "enter")  # a brain setting: its command said, no dialog, nothing written
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, tui_screens.SettingScreen)
+        assert notified[-1][0] == "identity.owner: changed by" and "no brain config set" in notified[-1][1]
+        assert app.check_action("columns", ()) is False  # C is a panel's table's, not the settings'
+        await pilot.press("i")
+        assert isinstance(app.screen, tui.PanelHelp) and app.screen.panel_name == "settings"
+    _run(check)
