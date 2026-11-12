@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .. import config, reference, skew
+from .. import asof, config, reference, skew
 from ._common import _root_repo, _store, _store_label
 
 ORDER = 46   # its place in brain --help's list of commands (brain.commands)
@@ -28,6 +28,11 @@ USAGE = """\
                  strategy and glossary of its own docs/reference.yaml), into --out (a checkout's docs/reference),
                  written only when brain check --public would refuse none of it; --force: write under views.strict
                  with another engine than the pin
+  brain reference --asof POINT [--out DIR]   the reference as of a wave (its id or release), a milestone or an era
+                 (the commit of the day it was reached; a pending one as of now, with its target view: the features
+                 and items planned in it), a date or a git ref, read from git (nothing checked out), with « Changes
+                 since » the wave reached before (decisions taken and reversed, features whose status changed, items
+                 done, modules added); written under BRAIN_HOME/views/reference/<project>/<point>/, never the repo
 """
 
 
@@ -71,7 +76,30 @@ def _denied(args, root: Path, files: dict[str, str]) -> list[str]:
     return denied
 
 
+def _asof(args, root: Path) -> int:
+    """--asof: the reference as of a point, written under BRAIN_HOME/views (or --out), never into the repo."""
+    from ._common import _project
+    if args.public or args.write:
+        print("brain reference --asof: renders under BRAIN_HOME/views (or --out), never --public nor --write",
+              file=sys.stderr)
+        return 1
+    try:
+        point, files = asof.render(_store(args, root), args.asof)
+    except asof.AsofError as exc:
+        print(f"brain reference --asof: {exc}", file=sys.stderr)
+        return 1
+    base = Path(args.out).resolve() if args.out else asof.out_dir(_project(args, root).name, point)
+    changed, kept = reference.write(base, files)
+    for p in kept:
+        print(f"brain: {base / p} is not generated (no '{reference.MARKER}'): kept, not overwritten", file=sys.stderr)
+    print(f"reference as of {point.label} ({point.sha[:12]}{', ' + point.day if point.day else ''}): {len(files)} "
+          f"file(s) in {base}")
+    return 1 if kept else 0
+
+
 def cmd_reference(args, root: Path) -> int:
+    if args.asof:
+        return _asof(args, root)
     if args.public and not args.out:
         print("brain reference --public: give --out <a checkout of the public repo>/docs/reference", file=sys.stderr)
         return 1
@@ -105,7 +133,12 @@ def register(sub, ctx) -> None:
                                                          "engine.pin (refused under views.strict)")
     rf.add_argument("--public", action="store_true", help="the neutral reference of a public repo, by feature domain")
     rf.add_argument("--repo", default="", help="with --public: the repo whose features it renders")
-    rf.add_argument("--out", default="", help="the docs/reference folder to write or check (a checkout's)")
+    rf.add_argument("--out", default="", help="the docs/reference folder to write or check (a checkout's); with "
+                                             "--asof, where the render goes")
+    rf.add_argument("--asof", default="", metavar="POINT",
+                    help="the reference as of a wave (id or release), a milestone, an era, a date (YYYY-MM-DD) or a "
+                         "git ref, read from git, with « Changes since » the wave before and, for a pending milestone, "
+                         "its target view; written under BRAIN_HOME/views/reference/<project>/<point>/")
 
 
 run = cmd_reference
