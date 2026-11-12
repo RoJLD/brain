@@ -254,48 +254,52 @@ def load(root: Path, store: Path, repo: str, roots: dict[str, Path] | None = Non
     """The catalogue of ``store``'s docs: ``repo`` is the root's repo (its docs are read under ``root``), ``roots`` the
     checkouts of the project's other repos (links.anchor_roots); a doc whose checkout is not here has no last commit
     and is never stale."""
-    roots = {repo: root, **(roots or {})}
     cat = Catalogue(repo=repo)
     gen_nodes, gen_edges = links.files(store)
-    gen = graph.load_yaml_list(gen_nodes)
+    gen = [n for n in graph.load_yaml_list(gen_nodes) if isinstance(n, dict)]
     hand_nodes = [n for f in _hand_files(store / "nodes") for n in graph.load_yaml_list(f) if isinstance(n, dict)]
-    cat.nodes = {str(n.get("id")): n for n in [*hand_nodes, *gen] if isinstance(n, dict)}
+    cat.nodes = {str(n.get("id")): n for n in [*hand_nodes, *gen]}
     for n in gen:
-        if not isinstance(n, dict) or n.get("type") != "Doc":
-            continue
-        r, path = str(n.get("repo") or repo), _anchor_path(n)
-        if not path:
-            continue
-        doc = cat.docs.setdefault(f"{r}:{path}", Doc(r, path))
-        doc.sections.append(str(n["id"]))
-        doc.titles[str(n["id"])] = str(n.get("title", path))
-        cat.section_of[str(n["id"])] = doc.key
-        for p in (n.get("props") or {}).get("paths") or []:
-            if p != path and str(p).endswith(".md"):
-                cat.docs.setdefault(f"{r}:{p}", Doc(r, p)).cited_by.add(path)
+        if n.get("type") == "Doc" and _anchor_path(n):
+            _add_section(cat, n, str(n.get("repo") or repo))
     cat.docs = {k: d for k, d in cat.docs.items() if d.sections}   # a path named that is no doc of the graph
     for e in graph.load_yaml_list(gen_edges):
         if isinstance(e, dict) and e.get("type") == "documented_in" and str(e.get("to")) in cat.section_of:
             doc = cat.docs[cat.section_of[str(e["to"])]]
             doc.cites.setdefault(str(e["to"]), set()).add(str(e.get("from")))
     for f in sorted((store / "edges").glob("*.yaml")):
-        if f.name.startswith("_generated"):
-            continue
-        for e in graph.load_yaml_list(f):
-            if not isinstance(e, dict) or e.get("type") != "depends_on":
-                continue
-            src, dst = str(e.get("from")), str(e.get("to"))
-            if src in cat.section_of or dst in cat.section_of:
-                if src not in cat.section_of or dst not in cat.section_of:
-                    cat.warnings.append(f"docs: depends_on {src} -> {dst}: both ends must be Doc sections")
-                    continue
-                reason = str((e.get("props") or {}).get("reason") or "")
-                if not reason:
-                    cat.warnings.append(f"docs: depends_on {src} -> {dst} gives no props.reason (a declared link "
-                                        f"says why the docs depend on each other)")
-                cat.docs[cat.section_of[src]].parents.append((src, dst, reason))
-    _read_files(cat, roots)
+        if not f.name.startswith("_generated"):
+            for e in graph.load_yaml_list(f):
+                if isinstance(e, dict) and e.get("type") == "depends_on":
+                    _declare(cat, str(e.get("from")), str(e.get("to")), str((e.get("props") or {}).get("reason") or ""))
+    _read_files(cat, {repo: root, **(roots or {})})
     return cat
+
+
+def _add_section(cat: Catalogue, n: dict, repo: str) -> None:
+    """A Doc node joins its file's entry; the docs its section names (props.paths) are cited by that file."""
+    path, sid = _anchor_path(n), str(n["id"])
+    doc = cat.docs.setdefault(f"{repo}:{path}", Doc(repo, path))
+    doc.sections.append(sid)
+    doc.titles[sid] = str(n.get("title", path))
+    cat.section_of[sid] = doc.key
+    for p in (n.get("props") or {}).get("paths") or []:
+        if p != path and str(p).endswith(".md"):
+            cat.docs.setdefault(f"{repo}:{p}", Doc(repo, p)).cited_by.add(path)
+
+
+def _declare(cat: Catalogue, src: str, dst: str, reason: str) -> None:
+    """A hand depends_on edge: a declared link when both ends are Doc sections; a warning when one end only is, or
+    when it gives no reason."""
+    if src not in cat.section_of and dst not in cat.section_of:
+        return   # a dependency between other nodes
+    if src not in cat.section_of or dst not in cat.section_of:
+        cat.warnings.append(f"docs: depends_on {src} -> {dst}: both ends must be Doc sections")
+        return
+    if not reason:
+        cat.warnings.append(f"docs: depends_on {src} -> {dst} gives no props.reason (a declared link says why the "
+                            f"docs depend on each other)")
+    cat.docs[cat.section_of[src]].parents.append((src, dst, reason))
 
 
 def _read_files(cat: Catalogue, roots: dict[str, Path]) -> None:
@@ -328,18 +332,23 @@ def mark_stale(cat: Catalogue, store: Path) -> None:
     at = entries_at_revs(top, prefix, sorted(set(rev_of.values()) - {""}),
                          [f.name for f in _hand_files(store / "nodes")])
     for d in todo:
-        then = at.get(rev_of[d.key])
-        for sec in d.sections:
-            changed = sorted(nid for nid in d.cites.get(sec, ()) if nid in now and then is not None
-                             and then.get(nid) != now[nid])
-            if changed:
-                more = f" (+{len(changed) - 5})" if len(changed) > 5 else ""
-                d.stale.append((sec, f"cites {', '.join(changed[:5])}{more}, changed after its last commit "
-                                     f"({d.last.date().isoformat()})"))
+        _stale_sections(d, at.get(rev_of[d.key]), now)
         for sec, parent, _ in d.parents:
             p = cat.docs.get(cat.section_of.get(parent, ""))
             if p is not None and (p.dirty or (p.last is not None and p.last > d.last)):
                 d.stale.append((sec, f"its declared parent {p.path} changed after its last commit"))
+
+
+def _stale_sections(d: Doc, then: dict[str, str] | None, now: dict[str, str]) -> None:
+    """The sections of ``d`` that cite a node whose entry now differs from ``then`` (the store at its last commit)."""
+    if then is None:
+        return
+    for sec in d.sections:
+        changed = sorted(nid for nid in d.cites.get(sec, ()) if nid in now and then.get(nid) != now[nid])
+        if changed:
+            more = f" (+{len(changed) - 5})" if len(changed) > 5 else ""
+            d.stale.append((sec, f"cites {', '.join(changed[:5])}{more}, changed after its last commit "
+                                 f"({d.last.date().isoformat()})"))
 
 
 def catalogue(root: Path, store: Path, repo: str, roots: dict[str, Path] | None = None) -> Catalogue:
@@ -361,13 +370,7 @@ def render(cat: Catalogue) -> str:
     docs = sorted(cat.docs.values(), key=lambda d: (KINDS.index(d.kind) if d.kind in KINDS else 9, d.key))
     lines = [HEAD, "| Doc | Kind | Last commit | Owner | Sections | Cites | Cited by | Stale |",
              "|---|---|---|---|---|---|---|---|"]
-    for d in docs:
-        cites = len(set().union(*d.cites.values())) if d.cites else 0
-        last = "edited" if d.dirty else (d.last.date().isoformat() if d.last else "-")
-        stale = "exempt" if d.exempt else (str(len(d.stale)) if d.stale else "")
-        name = d.path if d.repo == cat.repo else f"{d.repo}: {d.path}"
-        lines.append(f"| `{name}` | {d.kind} | {last} | {d.owner or '-'} | {len(d.sections)} | {cites} | "
-                     f"{len(d.cited_by)} | {stale} |")
+    lines += [_row(d, cat.repo) for d in docs]
     stale = stale_lines(cat)
     lines += ["", f"## Docs to re-read ({len(stale)})", ""]
     lines += [f"- {x.removeprefix('doc.stale: ')}" for x in stale] or ["None."]
@@ -375,6 +378,15 @@ def render(cat: Catalogue) -> str:
     lines += ["", f"## Declared links ({len(declared_links)})", ""]
     lines += [f"- {s} depends on {p}: {r or '(no reason given)'}" for d, s, p, r in declared_links] or ["None."]
     return "\n".join(lines) + "\n"
+
+
+def _row(d: Doc, own: str) -> str:
+    cites = len(set().union(*d.cites.values())) if d.cites else 0
+    last = "edited" if d.dirty else (d.last.date().isoformat() if d.last else "-")
+    stale = "exempt" if d.exempt else (str(len(d.stale)) if d.stale else "")
+    name = d.path if d.repo == own else f"{d.repo}: {d.path}"
+    return (f"| `{name}` | {d.kind} | {last} | {d.owner or '-'} | {len(d.sections)} | {cites} | {len(d.cited_by)} | "
+            f"{stale} |")
 
 
 def write(root: Path, view: str, text: str) -> bool:
@@ -425,51 +437,61 @@ def _dg_id(node: dict) -> str | None:
     return f"{t}:{node['id']}" if t else None
 
 
+def _dg_section(d: Doc, sec: str, node: dict) -> dict:
+    """A Doc section as a docgraph document node."""
+    anchor = str(node.get("anchor", d.path))
+    out = {"id": f"document:{sec}", "type": "document", "kind": d.kind, "title": d.titles.get(sec, d.path),
+           "source": {"path": d.path, **({"anchor": anchor.split("#", 1)[1]} if "#" in anchor else {})}}
+    if d.owner:
+        out["owner"] = d.owner
+    if d.last:
+        out["updated"] = d.last.isoformat()
+    if any(s == sec for s, _ in d.stale):
+        out.update(status="stale", native_status="active")
+    return out
+
+
+def _dg_node(node: dict, did: str) -> dict:
+    """A cited node of a type the contract has."""
+    status = str(node.get("status"))
+    out = {"id": did, "type": TYPE_MAP[str(node["type"])], "title": str(node.get("title", node["id"])),
+           "source": {"path": "notes/graph"}}
+    if status in STATUS_MAP:
+        out.update(status=STATUS_MAP[status], native_status=status)
+    return out
+
+
 def to_docgraph(cat: Catalogue, by: str, repo: str = "", ref: str = "", now: datetime | None = None) -> dict:
     """The catalogue as a docgraph/v1 document: a document node per Doc section (kind its file's), the cited nodes of
     the types the contract has (decisions, items, milestones, tests, lessons as findings), documented_in and the
     declared depends_on edges, and the checks this catalogue runs (doc.stale, cycle among the declared links)."""
+    from . import docgraph
     now = now or datetime.now(timezone.utc)
     nodes, edges, findings, seen = [], [], [], set()
     for d in sorted(cat.docs.values(), key=lambda x: x.key):
         for sec in d.sections:
-            n = cat.nodes.get(sec, {})
-            anchor = str(n.get("anchor", d.path))
-            src = {"path": d.path, **({"anchor": anchor.split("#", 1)[1]} if "#" in anchor else {})}
-            nodes.append({"id": f"document:{sec}", "type": "document", "kind": d.kind,
-                          "title": d.titles.get(sec, d.path), "source": src,
-                          **({"owner": d.owner} if d.owner else {}),
-                          **({"updated": d.last.isoformat()} if d.last else {}),
-                          **({"status": "stale", "native_status": "active"} if any(s == sec for s, _ in d.stale)
-                             else {})})
+            nodes.append(_dg_section(d, sec, cat.nodes.get(sec, {})))
             for nid in sorted(d.cites.get(sec, ())):
-                node = cat.nodes.get(nid)
+                node = cat.nodes.get(nid) or {}
                 did = _dg_id(node) if node else None
                 if did is None:
                     continue
                 if did not in seen:
                     seen.add(did)
-                    nodes.append({"id": did, "type": TYPE_MAP[str(node["type"])],
-                                  "title": str(node.get("title", nid)), "source": {"path": "notes/graph"},
-                                  **({"status": STATUS_MAP[str(node.get("status"))],
-                                      "native_status": str(node.get("status"))}
-                                     if str(node.get("status")) in STATUS_MAP else {})})
+                    nodes.append(_dg_node(node, did))
                 edges.append({"from": did, "to": f"document:{sec}", "type": "documented_in", "origin": "derived",
                               "source": {"path": d.path}})
-        for sec, parent, reason in d.parents:
-            edges.append({"from": f"document:{sec}", "to": f"document:{parent}", "type": "depends_on",
-                          "origin": "declared", "reason": reason or "(none given)", "confirmed": True})
+        edges += [{"from": f"document:{sec}", "to": f"document:{parent}", "type": "depends_on", "origin": "declared",
+                   "reason": reason or "(none given)", "confirmed": True} for sec, parent, reason in d.parents]
         findings += [{"id": "doc.stale", "severity": "warning", "subjects": [f"document:{sec}"], "message": why}
                      for sec, why in d.stale]
     findings += [{"id": "cycle", "severity": "error", "subjects": c, "message": "declared depends_on links loop"}
                  for c in _cycles([(e["from"], e["to"]) for e in edges if e["type"] == "depends_on"])]
-    from . import docgraph
     run = ["doc.stale", "cycle"]
-    return {"schema": docgraph.ID,
-            "generated": {"at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "by": by, **({"repo": repo} if repo else {}),
-                          **({"ref": ref} if ref else {}), "sources": {"files": True, "store": True}},
-            "nodes": nodes, "edges": edges, "checks": findings, "checks_run": run,
-            "checks_not_run": [c for c in docgraph.CHECK_IDS if c not in run]}
+    generated = {"at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "by": by, "sources": {"files": True, "store": True}}
+    generated.update({k: v for k, v in (("repo", repo), ("ref", ref)) if v})
+    return {"schema": docgraph.ID, "generated": generated, "nodes": nodes, "edges": edges, "checks": findings,
+            "checks_run": run, "checks_not_run": [c for c in docgraph.CHECK_IDS if c not in run]}
 
 
 def _cycles(pairs: list[tuple[str, str]]) -> list[list[str]]:
