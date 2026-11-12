@@ -136,8 +136,23 @@ def test_graph_tools_run_the_brain_command_with_validated_arguments(client, monk
 
 
 def test_a_tool_runs_brain_in_a_child_process_against_its_root(client):
-    text, failed = client.server.brain(["--version"])
-    assert not failed and text.startswith("brain ")
+    r = client.tool("brain_adr_show", ref="Second call")   # the decision log of the served root, nowhere else
+    assert r["isError"] is False and "## 2026-11-02 — Second call" in r["content"][0]["text"]
+
+
+@pytest.mark.parametrize("ref", ["C:/Users/x/.ssh/id_ed25519", "c:\\x\\key", "/etc/passwd", "../x.md",
+                                 "notes/../../x.md", "doc:brain:../../x.md::k", "doc:brain:C:/x.md", "~/x.md",
+                                 "notes\\x.md", "a/ ../b"])
+def test_a_spec_ref_never_leaves_the_project_s_repos(client, monkeypatch, ref):
+    seen = []
+    monkeypatch.setattr(mcpserver.Server, "brain", lambda self, argv: (seen.append(argv), ("x", False))[1])
+    r = client.tool("brain_spec_show", ref=ref)
+    assert r["isError"] is True and "no .." in r["content"][0]["text"] and seen == []
+
+
+def test_a_spec_ref_inside_the_repos_passes():
+    for ref in ("spec-brain-plugin", "doc:brain:docs/x.md::2-1", "docs/specs/a.md", "notes/x..y.md"):
+        assert mcpserver.spec_ref(ref), ref
 
 
 def test_every_answer_passes_the_secret_scan(client, monkeypatch):
@@ -146,6 +161,25 @@ def test_every_answer_passes_the_secret_scan(client, monkeypatch):
     text = client.tool("brain_next")["content"][0]["text"]
     assert GH_TOKEN not in text
     assert text.startswith("line one\n[dropped") and "[1 line(s) dropped by the secret scan]" in text
+
+
+def test_the_scan_runs_before_the_cut_and_on_names_and_descriptions(client, monkeypatch):
+    monkeypatch.setattr(mcpserver, "MAX_TEXT", 30)
+    cut = mcpserver.clean("x" * 10 + " " + GH_TOKEN)   # the cut would leave a key's first 19 characters
+    assert GH_TOKEN[:19] not in cut and "[1 line(s) dropped" in cut
+    proc = client.server.root / "source" / "procedures" / "tidy-up" / "SKILL.md"
+    proc.write_text(f"---\nname: tidy-up\ndescription: uses {GH_TOKEN}\n---\nStep one.\n", encoding="utf-8")
+    listed = json.dumps(client.call("prompts/list")["result"])
+    assert GH_TOKEN not in listed and "tidy-up" in listed
+
+
+def test_a_body_nested_past_the_parser_s_depth_is_a_parse_error(client):
+    out = io.StringIO()
+    deep = "[" * 200_000 + "]" * 200_000
+    mcpserver.serve_stdio(client.server, io.StringIO(deep + "\n" + json.dumps({"jsonrpc": "2.0", "id": 9,
+                                                                              "method": "ping"}) + "\n"), out)
+    first, second = (json.loads(line) for line in out.getvalue().splitlines())
+    assert first["error"]["code"] == mcpserver.PARSE_ERROR and second == {"jsonrpc": "2.0", "id": 9, "result": {}}
 
 
 # --- memory -----------------------------------------------------------------------------------------------------------
@@ -286,6 +320,20 @@ def test_http_binds_loopback_only_and_never_without_a_token(tmp_path, monkeypatc
             mcpserver.make_http(server, host, 0)
     monkeypatch.setenv(mcpserver.CONTAINER_ENV, "1")   # inside the image: its compose file publishes on 127.0.0.1
     assert mcpserver.bindable("0.0.0.0")
+    monkeypatch.setattr(mcpserver.os, "geteuid", lambda: 0, raising=False)
+    with pytest.raises(ValueError, match="as root"):
+        mcpserver.make_http(server, "0.0.0.0", 0)
+
+
+def test_a_rotated_token_revokes_the_old_one_without_a_restart(httpd):
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    old = ipcauth.read()
+    ipcauth.token_file().unlink()
+    assert _post(httpd, ping, {"Authorization": f"Bearer {old}"})[0] == 401   # no file: every request refused
+    ipcauth.init()
+    assert ipcauth.read() != old
+    assert _post(httpd, ping, {"Authorization": f"Bearer {old}"})[0] == 401
+    assert _post(httpd, ping)[0] == 200   # the new one
 
 
 # --- the machine's token ----------------------------------------------------------------------------------------------
@@ -351,7 +399,7 @@ def test_the_container_runs_as_a_user_and_publishes_on_loopback_only():
     assert "BRAIN_MCP_CONTAINER=1" in docker and "BRAIN_IPC_TOKEN_FILE=/run/secrets/" in docker
     compose = yaml.safe_load((CONTAINER / "compose.yaml").read_text(encoding="utf-8"))
     (svc,) = compose["services"].values()
-    assert svc["user"].split(":")[0] not in ("0", "root")
+    assert svc["user"] == "${BRAIN_UID:-10001}:${BRAIN_GID:-10001}"   # 10001 unless the token file's owner
     assert svc["restart"] == "no" and svc["read_only"] is True and svc["cap_drop"] == ["ALL"]
     assert svc["ports"] and all(str(p).startswith("127.0.0.1:") for p in svc["ports"])
     assert svc["secrets"] == ["brain-ipc-token"] and not svc.get("environment")

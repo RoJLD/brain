@@ -35,15 +35,23 @@ Read from the personal brain it runs in (`brain --root DIR mcp serve`, else the 
 | `memory_read` | read | the memory notes of this machine: the folders, a folder's notes, a note |
 | `memory_propose` | write | writes a note into this machine's memory folder of a project; the memory sync exports it by a reviewed PR, never to main (`brain memory`) |
 
-Every tool takes an optional `project` (a registered project). A graph tool runs the `brain` command in a child
-process with a deadline (`BRAIN_MCP_TIMEOUT`, seconds, default 120). Its arguments are validated first: an id never
-starts with `-`, a free text goes as `--text=VALUE`, an argument the tool does not declare is refused, and nothing
-runs when one is wrong. `memory_propose` refuses a note whose text matches a secret pattern, and a project folder that
-does not exist on this machine.
+A graph tool takes an optional `project` (a registered project; default: the brain's own). The memory tools'
+`project` is a memory folder's key (`memory_read` with no argument lists them), required by `memory_propose`. A graph
+tool runs the `brain` command in a child process with a deadline (`BRAIN_MCP_TIMEOUT`, seconds, default 120). Its
+arguments are validated first: an id never starts with `-`, a free text goes as `--text=VALUE`, an argument the tool
+does not declare is refused, and nothing runs when one is wrong. `brain_spec_show`'s `ref` stays inside the project's
+repos: a Spec id, a Doc id or a relative path, never an absolute path, a drive, a backslash or a `..` part
+(`brain spec show` reads the path it is given). `memory_propose` refuses a note whose text matches a secret pattern,
+and a project folder that does not exist on this machine.
 
-**No secret in an answer.** Every answer (a tool's, a resource's, a prompt's) passes `brain.secretscan.clean`: a line
-with a key's shape is dropped, and the answer says how many lines were. An internal error reaches the client as its
-type only; the detail goes to the server's stderr.
+**No secret in an answer.** Every answer (a tool's, a resource's, a prompt's) passes `brain.secretscan.clean` before
+it is cut to its size limit: a line with a key's shape is dropped, and the answer says how many lines were; the whole
+result is scanned again, names and descriptions included. An internal error reaches the client as its type only; the
+detail goes to the server's stderr. The scan knows keys by their shape: it is a net, not a reason to serve a file.
+
+**The guards.** The engine's guards (production checkouts, the owner's gestures, the public and secrets checks) do
+not judge the calls in this version: its tools are reads, and its one write is a memory note under the secret scan.
+`wi-brain-mcp-guards` puts every call through them before it runs.
 
 ## The transports
 
@@ -70,7 +78,8 @@ stream: `GET` and `DELETE` answer `405`.
 - **Host and Origin.** A request whose `Host` is not a loopback name, or whose `Origin` names another host (a page in
   a browser, DNS rebinding), gets `403`.
 - **Limits.** A body over 1 MB gets `413`; an `MCP-Protocol-Version` header naming a version it does not speak gets
-  `400` (it speaks 2025-06-18, 2025-03-26 and 2024-11-05). A refused request closes its connection.
+  `400` (it speaks 2025-06-18, 2025-03-26 and 2024-11-05). A refused request closes its connection, and a connection
+  silent for 30 s is closed.
 
 A client's configuration with a header, the token taken from an environment variable the owner fills from the file:
 
@@ -86,7 +95,9 @@ One token per machine for every local service the Brain starts (`brain.ipcauth`)
 
 - `brain ipc token`: the file, and whether it holds a usable token (exit 1 when not).
 - `brain ipc token --init`: makes it when there is none, from 32 random bytes, the file readable by its owner only;
-  an existing usable token is kept. A rotation is the file's deletion, then `--init`, then each client updated.
+  an existing usable token is kept. A rotation is the file's deletion, then `--init`, then each client updated. The
+  server reads the file on each request: the old token is refused at once, with no restart (and while there is no
+  file, every request is).
 
 The token is never printed, never in a log line (the server logs the request line and the status only) and never in
 the image.
@@ -100,7 +111,9 @@ the image.
   `docker build -f packages/brain/container/Dockerfile --build-arg BRAIN_VERSION=<version> -t brain-mcp:<version> .`
 - `compose.yaml`: the personal brain's checkout mounted read-only at `/brain` (`BRAIN_ROOT_DIR`), the token file as a
   secret (`BRAIN_IPC_TOKEN`), the port published on `127.0.0.1:8791`, a read-only root file system, every capability
-  dropped, no new privileges, `restart: "no"`. Its `BRAIN_HOME` is a named volume.
+  dropped, no new privileges, `restart: "no"`. Its `BRAIN_HOME` is a named volume. On a Linux host, outside swarm
+  mode, the secret is the token file itself (its owner, mode 0600): run the container as that file's owner with
+  `BRAIN_UID=$(id -u) BRAIN_GID=$(id -g)` (default 10001). The server refuses to serve as root in its container.
 
 A remote endpoint (a tunnel, the cluster) waits on the owner's answers to the connector spec's open questions: which
 projects it serves, which providers, where it runs. The guards every tool call passes before it runs are

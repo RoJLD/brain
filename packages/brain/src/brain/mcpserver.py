@@ -14,7 +14,9 @@ What it serves, read from the personal brain it runs in (``--root``, else brain.
   ``--text=VALUE``), with a deadline (``BRAIN_MCP_TIMEOUT`` seconds, default 120).
 
 Every answer (a tool's, a resource's, a prompt's) passes the secret scan (brain.secretscan.clean): a line with a key's
-shape is dropped and the answer says how many. The guards of wi-brain-mcp-guards judge each call before it runs.
+shape is dropped and the answer says how many; the whole result is scanned again (names and descriptions too).
+A spec reference stays inside the project's repos (no absolute path, drive or ``..``). The engine's guards do not
+judge the calls yet (wi-brain-mcp-guards): the tools are reads, and the one write is a memory note under the scan.
 
 Transports (``brain mcp serve``):
 
@@ -22,9 +24,11 @@ Transports (``brain mcp serve``):
   (Claude Code, Cursor and others' "command" connectors). Nothing is exposed; logs go to stderr.
 - **HTTP** (``--http``): Streamable HTTP's POST on ``/mcp``, each answer a JSON body (no SSE stream: the server sends
   no request of its own; GET and DELETE answer 405). It binds a loopback address only (brain.ipcauth), and refuses a
-  request without the machine's token (401), from a Host or Origin that is not loopback (403), larger than 1 MB (413)
-  or naming a protocol version it does not speak (400). Inside the container (``BRAIN_MCP_CONTAINER=1``, set by its
-  image) it binds all of the container's addresses, and the compose file publishes the port on 127.0.0.1 only.
+  request without the machine's token (401; the token file is read on each request, so a rotation revokes at once),
+  from a Host or Origin that is not loopback (403), larger than 1 MB (413) or naming a protocol version it does not
+  speak (400); a connection silent for 30 s is closed. Inside the container (``BRAIN_MCP_CONTAINER=1``, set by its
+  image) it binds all of the container's addresses, and the compose file publishes the port on 127.0.0.1 only; it
+  refuses to serve as root there.
 
 Nothing here starts on its own: ``brain mcp serve`` runs in the foreground of whoever launched it. A service, a
 container left running or an endpoint reachable from another machine is the owner's decision (spec §6, Q1 to Q3).
@@ -50,6 +54,7 @@ PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")   # the newest first: off
 DEFAULT_PORT = 8791
 PATH = "/mcp"
 MAX_BODY = 1_000_000
+SOCKET_TIMEOUT = 30.0     # seconds a connection may stay silent
 CONTAINER_ENV = "BRAIN_MCP_CONTAINER"
 TIMEOUT_ENV = "BRAIN_MCP_TIMEOUT"
 MAX_TEXT = 400_000          # characters of one answer; the rest is cut, and the answer says so
@@ -149,8 +154,25 @@ def _items_argv(a: dict) -> list[str]:
     return argv
 
 
+SPEC_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#@+ -]{0,299}$")
+DRIVE = re.compile(r"^[A-Za-z]:[\\/]|^doc:[^:]*:[A-Za-z]:")
+
+
+def spec_ref(ref: str) -> bool:
+    """Whether a spec reference stays inside the project's repos: a node id, a Doc id or a relative path, never an
+    absolute path, a drive, a backslash, ``~`` or a ``..`` part (``brain spec show`` reads a path it is given, and
+    a Doc id's path from the repo's root: a client must not reach any other file of the machine)."""
+    if not SPEC_REF.match(ref) or DRIVE.search(ref):
+        return False
+    parts = re.split(r"[/:]", ref)
+    return ".." not in parts and not any(p.strip() == ".." for p in parts)
+
+
 def _spec_argv(a: dict) -> list[str]:
-    argv = _project(a) + ["spec", "show", _ref(a, "ref")]
+    ref = _ref(a, "ref")
+    if not spec_ref(ref):
+        raise ToolError("ref must be a Spec id, a Doc id or a path relative to the project's repo, with no ..")
+    argv = _project(a) + ["spec", "show", ref]
     section = _str(a, "section")
     if section is not None:
         argv.append(f"--section={section}")
@@ -160,6 +182,7 @@ def _spec_argv(a: dict) -> list[str]:
 
 
 _P = {"project": {"type": "string", "description": "a registered project (default: the brain's own)"}}
+# a memory tool's "project" is a memory folder's key (memory_read lists them), not a registered project
 
 TOOLS: tuple[Tool, ...] = (
     Tool("brain_items", "Backlog items",
@@ -259,10 +282,11 @@ def _timeout() -> float:
 
 
 def clean(text: str) -> str:
-    """``text`` cut to MAX_TEXT and passed through the secret scan; a note says what was dropped or cut."""
+    """``text`` passed through the secret scan, then cut to MAX_TEXT (scanned first: a key cut in two no longer has
+    its shape); a note says what was dropped or cut."""
+    text, dropped = secretscan.clean_text(text)
     cut = len(text) > MAX_TEXT
     text = text[:MAX_TEXT]
-    text, dropped = secretscan.clean_text(text)
     if dropped:
         text += f"\n[{dropped} line(s) dropped by the secret scan]"
     if cut:
@@ -282,7 +306,8 @@ class Server:
     # JSON-RPC
     def handle(self, msg) -> dict | None:
         if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
-            return _error(msg.get("id") if isinstance(msg, dict) else None, INVALID_REQUEST, "not a JSON-RPC 2.0 message")
+            mid = msg.get("id") if isinstance(msg, dict) else None
+            return _error(mid, INVALID_REQUEST, "not a JSON-RPC 2.0 message")
         method = msg.get("method")
         if not isinstance(method, str):
             return None   # a response or an error from the client: this server sends no request
@@ -296,7 +321,8 @@ class Server:
         if handler is None:
             return _error(mid, METHOD_NOT_FOUND, f"method not found: {method}")
         try:
-            return {"jsonrpc": "2.0", "id": mid, "result": handler(self, params)}
+            # the texts are scanned where they are made (clean); the whole result again, names and descriptions too
+            return {"jsonrpc": "2.0", "id": mid, "result": secretscan.clean(handler(self, params))[0]}
         except RpcError as exc:
             return _error(mid, exc.code, str(exc))
         except Exception as exc:   # never a traceback to the client: its type only, the rest on stderr
@@ -477,7 +503,7 @@ def serve_stdio(server: Server, stdin=None, stdout=None) -> int:
             continue
         try:
             body = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):   # a body nested past the parser's depth ends nothing but itself
             answer = _error(None, PARSE_ERROR, "not JSON")
         else:
             answer = handle_body(server, body)
@@ -493,6 +519,7 @@ class _Handler(BaseHTTPRequestHandler):
     server_version = "brain-mcp"
     sys_version = ""
     protocol_version = "HTTP/1.1"
+    timeout = SOCKET_TIMEOUT   # a client that stalls holds its thread this long at most
 
     def log_message(self, fmt, *args):   # the request line and status only, never a header
         print(f"brain mcp: {self.address_string()} {fmt % args}", file=sys.stderr)
@@ -519,7 +546,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif not ipcauth.is_loopback(ipcauth.host_of(self.headers.get("Host"))) or \
                 not ipcauth.origin_ok(self.headers.get("Origin")):
             self._send(403, {"error": "only a loopback Host and Origin are served"})
-        elif not ipcauth.authorized(self.headers.get("Authorization"), self.server.token):
+        elif not ipcauth.authorized(self.headers.get("Authorization"), ipcauth.read() or ""):
+            # the file read on each request: a rotated token revokes the old one at once, a deleted one refuses all
             self._send(401, {"error": "the machine's token is required (brain ipc token)"},
                        {"WWW-Authenticate": 'Bearer realm="brain"'})
         elif self.headers.get("MCP-Protocol-Version") not in (None, *PROTOCOLS):
@@ -543,7 +571,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         try:
             body = json.loads(self.rfile.read(length).decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             self._send(400, _error(None, PARSE_ERROR, "not JSON"))
             return
         answer = handle_body(self.server.mcp, body)
@@ -562,9 +590,8 @@ class _Handler(BaseHTTPRequestHandler):
 class HTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, mcp: Server, token: str, host: str, port: int):
+    def __init__(self, mcp: Server, host: str, port: int):
         self.mcp = mcp
-        self.token = token
         family_v6 = ":" in host
         if family_v6:
             import socket
@@ -578,12 +605,15 @@ def bindable(host: str) -> bool:
 
 
 def make_http(server: Server, host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> HTTPServer:
-    """The HTTP transport, bound but not serving yet; ValueError for an address it may not bind, TokenError when the
-    machine has no token."""
+    """The HTTP transport, bound but not serving yet; ValueError for an address it may not bind or for root inside
+    the container, TokenError when the machine has no token."""
     if not bindable(host):
         raise ValueError(f"brain mcp binds a loopback address only, not {host}: an endpoint reachable from another "
                          "machine is the owner's decision (a tunnel, spec-brain-multi-agent-connector §6)")
-    return HTTPServer(server, ipcauth.require(), host, port)
+    if os.environ.get(CONTAINER_ENV) == "1" and getattr(os, "geteuid", lambda: -1)() == 0:
+        raise ValueError("brain mcp does not serve as root in its container: run it as a user (compose.yaml user:)")
+    ipcauth.require()
+    return HTTPServer(server, host, port)
 
 
 def serve_http(server: Server, host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> int:

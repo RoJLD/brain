@@ -33,9 +33,10 @@ RUN pip install . "pyyaml>=6" "tomli>=2; python_version < '3.11'" \
     && rm -rf /opt/brain/packages/brain/tests
 
 # /brain: the personal brain's checkout, mounted read-only; git trusts it although another user owns it
-# BRAIN_HOME (/var/lib/brain), owned by the user: a named volume mounted there starts with this ownership
+# BRAIN_HOME (/var/lib/brain): a named volume mounted there starts with this ownership and mode; writable by the
+# user the compose file runs (10001, or the token file's owner on a Linux host: BRAIN_UID), sticky
 RUN useradd --system --uid 10001 --user-group --no-create-home --home-dir /var/lib/brain brain \
-    && install -d -o 10001 -g 10001 -m 0700 /var/lib/brain \
+    && install -d -o 10001 -g 10001 -m 1777 /var/lib/brain \
     && git config --system --add safe.directory /brain
 USER 10001:10001
 

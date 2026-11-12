@@ -7,6 +7,10 @@
 #
 # The token file is the one brain ipc token --init makes (<BRAIN_HOME>/ipc/token); the client sends it as
 # Authorization: Bearer. The port is published on 127.0.0.1 only.
+#
+# On a Linux host, outside swarm mode, the secret is the token file itself, with its owner and mode 0600: the
+# container's user must be that file's owner, so set BRAIN_UID and BRAIN_GID to it (id -u, id -g; never 0: the server
+# refuses to serve as root). Docker Desktop (Windows, macOS) needs neither.
 name: brain-mcp
 
 services:
@@ -17,7 +21,7 @@ services:
       args:
         BRAIN_VERSION: ${BRAIN_VERSION:-dev}
     image: brain-mcp:${BRAIN_VERSION:-dev}
-    user: "10001:10001"
+    user: "${BRAIN_UID:-10001}:${BRAIN_GID:-10001}"
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
