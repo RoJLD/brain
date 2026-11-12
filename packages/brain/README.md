@@ -1073,7 +1073,7 @@ through `BRAIN_CONFIG`), with a temporary `BRAIN_HOME`; they need git, and bash 
 They read only fixtures, never a real brain's graph, records or rendered files: what checks a brain's own data is
 `brain check` and `brain audit`.
 
-`-n auto` runs them in parallel, one pytest-xdist worker per core: each test has its own temporary folder, `BRAIN_HOME`
+`-n auto` runs them in parallel, one pytest-xdist worker per CPU thread: each test has its own temporary folder, `BRAIN_HOME`
 and environment, so no test shares state with another. With `-n` and no `--dist`, `conftest.py` picks xdist's
 `worksteal` scheduling (pytest-xdist 3.5 or later): a worker that runs out of tests takes some still queued on a busy
 one, so the run no longer ends on one or two workers while the others idle; `--dist load` gives the old scheduling
@@ -1081,11 +1081,13 @@ back. A git repository in a test is a copy of a template made once per worker (`
 and `make_repo` fixtures), not a `git init`. The test that calls the real docker client is marked `docker`: the CI
 runs it apart, on one process (`pytest packages/brain -m docker`).
 
-`BRAIN_TEST_WORKERS=N` sets how many workers `-n auto` starts (unset: one per core; an explicit `-n N` wins; anything
-but a whole number is refused). More workers than cores rarely help: on Windows the suite is bound by process creation
-(it starts some ten thousand git processes, and an on-access antivirus scans each one), not by the CPU. On a
-16-thread machine, 24 and 32 workers ran no faster than 16, and 24 workers starting at once once timed out a worker's
-start.
+`BRAIN_TEST_WORKERS=N` sets how many workers `-n auto` (or `-n logical`) starts. Unset, xdist decides: its own
+`PYTEST_XDIST_AUTO_NUM_WORKERS` if set, else one worker per CPU thread (per physical core when psutil is installed).
+`BRAIN_TEST_WORKERS` wins over `PYTEST_XDIST_AUTO_NUM_WORKERS` and, unlike it, refuses anything but a whole number
+with `-n auto`; an explicit `-n N` wins over both. More workers than CPU threads rarely help: on Windows the suite is
+bound by process creation (it starts some ten thousand git processes, and an on-access antivirus scans each one),
+not by the CPU. On a 16-thread machine, 24 and 32 workers ran no faster than 16, and on one run 24 workers starting
+together timed out a worker's start.
 
 ## Releasing
 
