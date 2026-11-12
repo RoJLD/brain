@@ -83,11 +83,21 @@ def cockpit_settings(state: dict | None = None, themes: tuple = (), running: dic
         Setting("cockpit", "scope", state.get("scope") or "(the folder's project)", f"{cockpit.state_path()} scope",
                 "p, the project selector: the next start shows the last one"),
     ]
-    for s in out:  # the interval this launch runs, when it is not the saved one
-        now = (running or {}).get(s.key)
+    _running(out, running or {})
+    return out + _titles(got.get("titles") or {}, where)
+
+
+def _running(rows: list[Setting], running: dict) -> None:
+    """The interval this launch runs, said before how a row changes when it is not the saved one."""
+    for s in rows:
+        now = running.get(s.key)
         if now is not None and _seconds(now) != s.value:
             s.change = f"this launch runs {_seconds(now)}; " + s.change
-    titles = got.get("titles") or {}
+
+
+def _titles(titles: dict, where: str) -> list[Setting]:
+    """Each panel's free title, else its own (the queue's: the owner's name, in the language)."""
+    out = []
     for name in (*cockpit.PANELS, *cockpit.FRAMES):
         default = cockpit.queue_title() if name == "queue" else cockpit.TITLES[name]
         out.append(Setting("cockpit", f"titles.{name}", titles.get(name) or default, f"{where}.titles.{name}", HERE,
