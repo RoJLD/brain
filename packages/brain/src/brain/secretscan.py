@@ -5,6 +5,19 @@ Only string values are scanned; keys and numbers are kept. Passwords have no sha
 the word before them (password, passwd, passphrase, pwd, mdp, mot de passe): a quoted value right after it, an
 unquoted one after ``:``, ``=`` or ``|`` that holds a digit or a symbol, and, in ``clean_text`` and ``scan_lines``,
 the rows of a Markdown table under a password column.
+
+Hardened before the first machine snapshot (wi-brain-secretscan-hardening, spec-brain-one-brain §10):
+
+- **a whole PEM block**: every line from a ``-----BEGIN ... PRIVATE KEY-----`` line to its ``-----END ...`` line (to
+  the text's end when it has none) matches ``private-key``, so :func:`clean_text` drops the key's body, not only its
+  first line;
+- **the fleet's token formats**: ntfy (``tk_``), Tailscale (``tskey-``), GitLab (``glpat-``), PyPI (``pypi-``) and npm
+  (``npm_``);
+- **a whole unit** (:func:`unit_hits`, :func:`clean_unit`): a note, a rule file or a snapshot's unit is refused whole
+  on a match, never sent with its matching lines dropped;
+- **no waiver where the owner's own text lives**: ``gitleaks:allow`` is ignored under ``machines/`` and ``memory/``
+  (:data:`STRICT`), the folders committed in clear under the git-private waiver: a line there that matches is refused
+  whatever it carries.
 """
 
 from __future__ import annotations
@@ -27,8 +40,13 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         ("slack-token", r"\bxox[abposr]-[A-Za-z0-9\-]{10,}"),
         ("huggingface-token", r"\bhf_[A-Za-z0-9]{30,}\b"),
         ("stripe-key", r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"),
-        ("private-key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+        ("private-key", r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"),
         ("age-secret-key", r"\bAGE-SECRET-KEY-1[0-9A-Z]{58}\b"),   # an age identity (brain.vault)
+        ("ntfy-token", r"\btk_[A-Za-z0-9]{29}\b"),
+        ("tailscale-key", r"\btskey-(?:[a-z]+-)?[A-Za-z0-9]{4,}-[A-Za-z0-9]{8,}"),   # tskey-auth-..., tskey-k...
+        ("gitlab-token", r"\bglpat-[A-Za-z0-9_\-]{20,}"),
+        ("pypi-token", r"\bpypi-AgE(?:IcHlwaS5vcmc|NdGVzdC5weXBpLm9yZw)[A-Za-z0-9_\-]{40,}"),   # PyPI, TestPyPI
+        ("npm-token", r"\bnpm_[A-Za-z0-9]{36}\b"),
         ("jwt", r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"),
         ("bearer", r"(?i)\bbearer\s+[A-Za-z0-9._~+/\-]{20,}"),
         ("url-credentials", r"[a-z][a-z0-9+.\-]*://[^/\s:@]+:[^/\s@]+@"),
@@ -44,6 +62,10 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ]
 ]
 _PW_HEADER = re.compile(rf"(?i){_PW}(?![A-Za-z])")
+_PEM_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")   # PGP's ends in BLOCK
+_PEM_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")
+STRICT = ("machines/", "memory/")   # the folders where gitleaks:allow waives nothing
+DROPPED_UNIT = "[dropped: the unit matches a secret pattern]"
 _TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$")
 _EMPTY_CELL = re.compile(r"(?i)^(?:|-+|—|n/?a|none|\(none\)|\*+|<[^>]*>|\$\{?\w+\}?|\.\.\.|…)$")
 
@@ -61,10 +83,19 @@ def find(text: str) -> list[str]:
     return [name for name, rx in PATTERNS if rx.search(text)]
 
 
-def find_in_line(line: str) -> list[str]:
+def strict(path: str) -> bool:
+    """Whether ``path`` (relative to its repo) is under a folder of :data:`STRICT`, where ``gitleaks:allow`` waives
+    nothing."""
+    p = (path or "").replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.startswith(STRICT)
+
+
+def find_in_line(line: str, path: str = "") -> list[str]:
     """Names of the patterns a line of a file matches, :data:`ASSIGNMENT` instead of the looser assignment pattern;
-    none when the line carries ``gitleaks:allow``."""
-    if ALLOW_MARK in line:
+    none when the line carries ``gitleaks:allow``, unless ``path`` is under a :data:`STRICT` folder."""
+    if ALLOW_MARK in line and not strict(path):
         return []
     names = [n for n in find(line) if n != "assignment"]
     return names + (["assignment"] if ASSIGNMENT.search(line) else [])
@@ -75,10 +106,25 @@ def _cells(line: str) -> list[str] | None:
     return [c.strip() for c in s.strip("|").split("|")] if s.startswith("|") else None
 
 
+def _pem_body(lines: list[str], hits: list[list[str]]) -> None:
+    """``private-key`` on each line of a PEM block after its BEGIN line, its END line included (to the end of
+    ``lines`` when it has none)."""
+    inside = False
+    for i, line in enumerate(lines):
+        begin = _PEM_BEGIN.search(line)
+        if begin:
+            inside = not _PEM_END.search(line[begin.end():])
+        elif inside:
+            if "private-key" not in hits[i]:
+                hits[i].append("private-key")
+            inside = not _PEM_END.search(line)
+
+
 def _hits(lines: list[str]) -> list[list[str]]:
-    """The pattern names of each line, plus ``password-table`` for a Markdown table row whose cell under a password
-    column holds a value."""
+    """The pattern names of each line, the body of a PEM block included, plus ``password-table`` for a Markdown table
+    row whose cell under a password column holds a value."""
     hits = [find(line) for line in lines]
+    _pem_body(lines, hits)
     columns: list[int] = []
     for i, line in enumerate(lines):
         cells = _cells(line)
@@ -95,7 +141,7 @@ def _hits(lines: list[str]) -> list[list[str]]:
 
 def clean_text(text: str) -> tuple[str, int]:
     """``text`` with every matching line replaced by DROPPED, and the number of lines dropped."""
-    if not find(text) and not _PW_HEADER.search(text):
+    if not find(text) and not _PW_HEADER.search(text):   # a PEM block starts with a line find() matches
         return text, 0
     out, dropped = [], 0
     lines = text.split("\n")
@@ -126,6 +172,19 @@ def clean(obj):
             n += d
         return out, n
     return obj, 0
+
+
+def unit_hits(text: str) -> list[tuple[int, str]]:
+    """(line number, pattern name) of every match in a unit (a note, a rule file, a snapshot's unit), the PEM blocks
+    whole; a unit is refused whole on any (``gitleaks:allow`` waives nothing in it)."""
+    return scan_lines(text)
+
+
+def clean_unit(text: str) -> tuple[str, int]:
+    """``text`` unchanged when no line matches, else :data:`DROPPED_UNIT` alone, and the number of matching lines: a
+    unit never leaves with only its matching lines dropped (the lines around a key can name what it opens)."""
+    hits = unit_hits(text)
+    return (DROPPED_UNIT if hits else text), len({line for line, _ in hits})
 
 
 def scan_lines(text: str) -> list[tuple[int, str]]:

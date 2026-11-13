@@ -238,12 +238,12 @@ def test_a_notification_leaves_scrubbed(tmp_path, monkeypatch, fake):
 
 def test_blocking_decision_is_sent_and_never_fails_the_ask(tmp_path, monkeypatch, fake):
     cfg = _cfg(tmp_path, monkeypatch, LEVELS)
-    ddr = {"id": "ddr-2026-11-02-ntfy-server", "title": "Which server", "question": "Which ntfy server?",
+    ddr = {"id": "ddr-2026-01-02-which-server", "title": "Which server", "question": "Which ntfy server?",
            "options": [{"label": "ntfy.sh"}, {"label": "Self-hosted"}]}
     title, body = notify.decision_message("demo", ddr)
     assert title == "Decision needed: Which server"
     assert body == ("Which ntfy server?\n\n1. ntfy.sh (recommended)\n2. Self-hosted\n\n"
-                    "brain decision answer ddr-2026-11-02-ntfy-server <n>  (--project demo)")
+                    "brain decision answer ddr-2026-01-02-which-server <n>  (--project demo)")
     lines = notify.decision(projects.get("demo"), ddr)
     assert lines == ["notify demo error: delivered", "  ntfy: sent (HTTP 200)"]
     assert fake.posts[0][1]["title"] == "[demo error] Decision needed: Which server"

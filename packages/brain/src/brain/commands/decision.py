@@ -79,7 +79,8 @@ def cmd_decision(args, root: Path) -> int:
                 at=now, context=_text(args.context), blocks=args.blocks or "", multi=args.multi,
                 blocking=args.blocking, due=args.due or "", recommend=args.recommend or "", items=args.item,
                 specs=args.spec, adrs=args.adr, project=_project(args, root).name, session=args.session or "",
-                slug=args.slug or "", dry_run=args.dry_run, low_stakes=args.low_stakes)
+                slug=args.slug or "", dry_run=args.dry_run, low_stakes=args.low_stakes, rules=args.rule,
+                notes=args.note)
             if out is None:
                 print(records._dump_yaml(ddr), end="")
                 if args.blocking and not args.no_notify:
@@ -336,6 +337,10 @@ def register(sub, ctx) -> None:
     da.add_argument("--item", action="append", help="WorkItem or Milestone the answer goes to (repeatable)")
     da.add_argument("--spec", action="append", help="spec node or section (repeatable)")
     da.add_argument("--adr", action="append", help="related ADR id (repeatable)")
+    da.add_argument("--rule", action="append", help="the owner's rule it is about (a rules file and section, "
+                                                    "repeatable): its notification is a pointer only")
+    da.add_argument("--note", action="append", help="the owner's note it is about (repeatable): its notification "
+                                                    "is a pointer only")
     da.add_argument("--slug", help="id slug (default: from the title)")
     da.add_argument("--session", help="the asking session's id")
     da.add_argument("--at", help="time asked (default: now)")
