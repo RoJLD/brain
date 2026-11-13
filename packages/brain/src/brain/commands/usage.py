@@ -1,12 +1,13 @@
 """``brain usage``: the token ledger: what the sessions cost, by project, item, class, phase, tool, command, day...;
-distributions and script candidates; quota: the plan's quota readings and forecast (zero token).
+distributions and script candidates; --kind: the usage counters of every kind of tooling (brain.tooling); quota: the
+plan's quota readings and forecast (zero token).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from .. import config, cost, governor, projects, quota, usage
+from .. import config, cost, governor, projects, quota, toolids, tooling, usage
 from ._common import _scope, _when, _whole
 
 ORDER = 160   # its place in brain --help's list of commands (brain.commands)
@@ -23,6 +24,15 @@ USAGE = """\
                  (3-step sequences repeated across sessions); WHEN: Nd, Nw, today, yesterday, last-week, last-month
                  or YYYY-MM-DD (default 7d); --scope REF: the sessions of the projects of a node's subtree in the
                  scope tree (brain scopes: an id, a path of ids, global, . or ..)
+  brain usage --kind all|skill|rule|command|script|mcp|tool|hook|guard|plugin|scheduled [--project P | --all]
+                 [--since WHEN] [--until WHEN] [--top N] [--no-scan] [--json]   the usage counters by tool id
+                 (brain.tooling, default window 30d): per skill (a Skill call, a slash command, a Read of its SKILL.md,
+                 an Agent's prompt naming it), rule (a Rule node cited, an instruction file loaded or read), brain
+                 command (program and subcommand, never its arguments), script, MCP tool, Claude Code tool, hook,
+                 guard refusal (the guards ledger joined to the transcripts), plugin and scheduled task: its calls,
+                 sessions and projects, the token cost that can be attributed, its last use; the OpenTelemetry export
+                 adds hook and tool durations and rejected calls when the collector runs; a skill, rule, brain
+                 command, MCP tool, hook, plugin or schedule unused for 30 days is marked "retire or merge"
   brain usage quota [--observe PCT [--resets TIME] [--at TIME]] [--window week|5h] [--no-scan] [--json]
                  the plan's quota (brain.quota): --observe notes a get_usage reading (percent used, read at --at,
                  default now; the window resets at --resets, get_usage's resetsAt, default the last reading's moved
@@ -51,11 +61,25 @@ def cmd_usage(args, root: Path) -> int:
         return _quota(args, root, projs)
     if args.what in ("guard", "allow"):
         return _governor(args, root)
+    if args.kind:
+        return _tooling(args, root, projs)
     led = cost.scoped(cost.load(projs, root, refresh=not (args.no_scan or args.rescan)), projs, args.all)
     by = {"daily": "day", "weekly": "week"}.get(args.report or "", args.by)
     rep = cost.report(led, _when(args.since, "7d"), _when(args.until), by,
                       usage.plans_from(config.load(root).get("usage")))
     print(cost.as_json(rep) if args.json else "\n".join(cost.render_report(rep, args.top)))
+    return 0
+
+
+def _tooling(args, root: Path, projs: list[projects.Project]) -> int:
+    """brain usage --kind (brain.tooling): the usage counters by tool id, the unused marked."""
+    led = cost.scoped(cost.load(projs, root, refresh=not (args.no_scan or args.rescan)), projs, args.all)
+    try:
+        registry = projects.load(root)
+    except (OSError, ValueError):
+        registry = {}
+    rep = tooling.report(led, projs, _when(args.since, "30d"), _when(args.until), args.kind, registry=registry)
+    print(cost.as_json(rep) if args.json else "\n".join(tooling.render(rep, args.top)))
     return 0
 
 
@@ -119,6 +143,9 @@ def register(sub, ctx) -> None:
                          "workflow runs when there are any, and the script candidates; workflow: each workflow run; "
                          "agent: each subagent's or workflow agent's label)")
     us.add_argument("--report", choices=("daily", "weekly"), help="the same as --by day or --by week")
+    us.add_argument("--kind", choices=("all", *toolids.KINDS),
+                    help="the usage counters of a kind of tooling by tool id (all: every kind), the unused for 30 days "
+                         "marked retire or merge; the window defaults to 30d")
     us.add_argument("--top", type=_whole, default=cost.TOP, help=f"rows per table (default {cost.TOP}; 0: all)")
     us.add_argument("--no-scan", action="store_true", help="read the ledger as it is, without scanning the "
                                                           "transcripts that changed")

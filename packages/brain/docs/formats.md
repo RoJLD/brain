@@ -136,7 +136,7 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 | `schedules/installed.json` | `v` 1, unwritten | `brain schedule install --apply` prints the plan and refuses (exit 2) |
 | `alerts/state.json` | `v` 1, unwritten | the notify pass sends nothing (« nothing sent: ... »), since sending without a record would send again each pass |
 | `vault/state.json` | `v` 1, written from 0.2.6 | `brain vault seal`, `canary` and `drill` refuse before any work; `status` and the health still read it |
-| `usage/sessions.json` | `v` 2 (`LEDGER_V`, apart from the scanner's `SCAN_V`, which only rescans rows) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
+| `usage/sessions.json` | `v` 2 (`LEDGER_V`, apart from the scanner's `SCAN_V`, which only rescans rows; `SCAN_V` 4 adds a row's `tooling` and `refused`, the usage counters by tool id: additive, a row without them, its transcript gone, is read from its `tools`, `commands` and `skills`) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
 | `tui.json` | `v` 1 (beside the older `cockpit: 1`, kept) | the cockpit shows the saved views but does not remember new ones (« brain tui: ... written by a newer brain ... the views are not remembered ») |
 | `memory-sync/state.json` | `v` 1 | the memory sync refuses before any fetch: `last.json` says « failed » and the alert names brain update |
 | `formats/<project>.json` | `v` 1 | `brain formats check` runs and reports as usual, and remembers no result: each check runs again next time |
