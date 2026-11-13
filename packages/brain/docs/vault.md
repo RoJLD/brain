@@ -140,7 +140,7 @@ by mistake, and a store its class keeps from an exit never feeds that exit:
   store's folder (one nested in another included), never follows a link or a junction, and refuses an unknown exit.
   A name no store covers is `sealed` by default.
 - The engine's own secret stores (`secrets`, `ipc`) stay refused whatever the brain declares: a store over all of
-  `$BRAIN_HOME`, or a looser re-declaration, never opens them, and `brain classes --check` refuses such a
+  `$BRAIN_HOME`, or a looser re-declaration, never opens them, and `brain classes --check` notes such a
   declaration. `home_store` also refuses a path that holds a store the reader may not enter.
 - `classes.home_names()` lists the names at the top of `$BRAIN_HOME` and opens nothing under them. The uninstaller and
   the check of unknown names use it.

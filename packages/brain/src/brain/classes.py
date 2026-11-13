@@ -567,8 +567,8 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> Report:
         held = sorted(r.name for r in secret_roots() for x in map(expand, s.machine)
                       if (x == r or x in r.parents) and s.cls != "secret")
         if held:
-            rep.errors.append(f"store {s.name} ({s.cls}) holds the engine's secret store(s) {', '.join(held)}: only "
-                              "class secret (the read gate refuses them anyway)")
+            rep.notes.append(f"store {s.name} ({s.cls}) holds the engine's secret store(s) {', '.join(held)}: they "
+                             "stay secret (the read gate refuses them whatever is declared)")
     _floors(cfg, rep, by_name)
     return rep
 

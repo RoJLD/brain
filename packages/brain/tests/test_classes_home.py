@@ -510,7 +510,7 @@ def test_an_ancestor_or_a_looser_declaration_never_opens_a_secret_store(brain_ho
     with pytest.raises(classes.Refused, match="secrets"):   # its path holds a store this reader may not enter
         classes.home_store("all", cfg=cfg)
     cfg.file = brain_home / "config.json"   # check() reads a brain that has its file
-    assert any("holds the engine's secret store(s) ipc, secrets" in e for e in classes.check(brain_home, cfg).errors)
+    assert any("holds the engine's secret store(s) ipc, secrets" in n for n in classes.check(brain_home, cfg).notes)
 
 
 def test_home_store_refuses_a_path_that_holds_a_nested_secret(brain_home):
