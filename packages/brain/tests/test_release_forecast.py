@@ -33,7 +33,7 @@ def merge(repo: Path, branch: str, number: int, path: str, text: str) -> None:
 
 def main_branch(repo: Path) -> str:
     return subprocess.run(["git", "-C", str(repo), "branch", "--show-current"], capture_output=True, text=True,
-                          check=True).stdout.strip()
+                          check=True, timeout=60).stdout.strip()
 
 
 # release_check.py --preview --ref --json
@@ -102,7 +102,7 @@ def test_the_forecast_runs_the_commits_own_preview(engine):
 def test_the_default_ref_is_the_remotes_default_branch_else_head(engine, tmp_path):
     assert nextrelease.default_ref(engine) == "HEAD"
     clone = tmp_path / "clone"
-    subprocess.run(["git", "clone", "-q", str(engine), str(clone)], check=True, capture_output=True)
+    subprocess.run(["git", "clone", "-q", str(engine), str(clone)], check=True, capture_output=True, timeout=60)
     assert nextrelease.default_ref(clone) == f"origin/{main_branch(engine)}"
 
 

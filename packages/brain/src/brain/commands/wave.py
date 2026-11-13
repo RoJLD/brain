@@ -106,6 +106,22 @@ def _plan(args, root: Path, store: Path) -> int:
     return 0
 
 
+def _check(args, root: Path, store: Path) -> int:
+    """The closure rule (its exit), then the release forecast of that wave (advisory, brain.nextrelease)."""
+    plan = waves.load(store, root)
+    found = waves.closure_problems(plan, args.version)
+    for line in found:
+        print(f"error: {line}")
+    if not found:
+        print(f"wave {args.version}: closed, or no wave of that release (its version PR may go)")
+    wid = plan.resolve(args.version)
+    release = plan.label(wid) if wid else args.version
+    if waves.release_key(release):
+        for line in nextrelease.lines(nextrelease.forecast([r.path for r in _repos(args, root)]), release):
+            print(line)
+    return 1 if found else 0
+
+
 def cmd_wave(args, root: Path) -> int:
     store = _store(args, root)
     try:
@@ -120,18 +136,7 @@ def cmd_wave(args, root: Path) -> int:
         if args.wave_cmd == "plan":
             return _plan(args, root, store)
         if args.wave_cmd == "check":
-            plan = waves.load(store, root)
-            found = waves.closure_problems(plan, args.version)
-            for line in found:
-                print(f"error: {line}")
-            if not found:
-                print(f"wave {args.version}: closed, or no wave of that release (its version PR may go)")
-            wid = plan.resolve(args.version)
-            release = plan.label(wid) if wid else args.version
-            if waves.release_key(release):   # advisory: the exit stays the closure rule's
-                for line in nextrelease.lines(nextrelease.forecast([r.path for r in _repos(args, root)]), release):
-                    print(line)
-            return 1 if found else 0
+            return _check(args, root, store)
         return _import(args, store)
     except graph.GraphError as exc:
         print(f"brain: {exc}", file=sys.stderr)
