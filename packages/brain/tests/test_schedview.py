@@ -31,8 +31,11 @@ ROWS = [
      "triggers": [{"type": "MSFT_TaskTimeTrigger", "enabled": True, "interval": "PT15M", "duration": None}]},
     {"name": "demo-report", "folder": "\\demo\\", "state": "Disabled", "exe": "C:\\Python\\python.exe", "args": "r.py",
      "triggers": [{"type": "MSFT_TaskDailyTrigger", "enabled": True, "days": 1}]},
-    {"name": "alerts-pass", "folder": "\\demo\\", "state": "Ready", "exe": str(PY), "args": "-I -m brain alerts",
+    {"name": "alerts-pass", "folder": "\\Brain\\", "state": "Ready", "exe": str(PY), "args": "-I -m brain alerts",
      "last_run": "2026-11-13T12:00:00Z", "last_result": 0, "triggers": []},
+    # the project's own task named as a declared schedule: listed as found, its run never shown on the declared row
+    {"name": "collect", "folder": "\\demo\\", "state": "Ready", "exe": "cmd.exe", "args": "/c c.bat",
+     "last_run": "2026-11-01T00:00:00Z", "last_result": 1, "triggers": []},
 ]
 
 
@@ -86,6 +89,7 @@ def test_a_collector_at_or_under_its_floor_passes():
     ("C:\\venv\\Scripts\\pythonw.exe", "-m x", "hidden"), ("powershell.exe", "-WindowStyle Hidden -File a.ps1",
                                                           "hidden"),
     ("powershell.exe", "-w hidden -File a.ps1", "hidden"), ("conhost.exe", "--headless cmd", "hidden"),
+    ("powershell.exe", "-Win Hidden -File a.ps1", "hidden"),
     ("powershell.exe", "-File a.ps1", "visible"), ("", "", "?")])
 def test_a_found_tasks_window_is_read_from_its_action(exe, args, window):
     assert schedview.window_of({"exe": exe, "args": args}) == window
@@ -94,8 +98,16 @@ def test_a_found_tasks_window_is_read_from_its_action(exe, args, window):
 def test_the_view_holds_declared_and_found_tasks_with_their_settings(reg):
     rows, why = schedview.rows(projects.load(), here="box1")
     assert why == ""
-    by = {r["name"]: r for r in rows}
-    assert set(by) == {"alerts-pass", "collect", "block", "demo-scan", "demo-report"}   # alerts-pass once
+    assert [(r["kind"], r["name"]) for r in rows] == [
+        ("declared", "alerts-pass"), ("declared", "collect"), ("declared", "block"), ("found", "demo-scan"),
+        ("found", "demo-report"), ("found", "collect")]   # alerts-pass once: \Brain\ holds the declared ones
+    by = {(r["kind"], r["name"]): r for r in rows}
+    assert by[("declared", "collect")]["last_run"] is None and by[("found", "collect")]["last_result"] == 1
+
+
+def test_each_row_carries_its_settings(reg):
+    rows, _ = schedview.rows(projects.load(), here="box1")
+    by = {r["name"]: r for r in rows if r["kind"] == "declared" or r["name"] != "collect"}
     a = by["alerts-pass"]
     assert a["kind"] == "declared" and a["window"] == "hidden" and a["enabled"] and a["quiet"] == "22:00-07:00"
     assert a["last_run"] == "2026-11-13T12:00:00Z" and a["source"].endswith("projects.yaml: demo.schedules.alerts-pass")
@@ -120,7 +132,16 @@ def test_cli_list_json_gives_the_declared_and_the_found(reg, capsys):
     assert cli.main(["schedule", "list", "--json"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert [s["name"] for s in out["schedules"]] == ["alerts-pass", "collect", "block"]
-    assert {r["name"] for r in out["found"]} == {"demo-scan", "demo-report"} and out["scheduler"] == "read"
+    assert {r["name"] for r in out["found"]} == {"demo-scan", "demo-report", "collect"} and out["scheduler"] == "read"
+
+
+def test_a_folder_two_projects_name_lists_its_tasks_once(reg, monkeypatch):
+    text = reg.read_bytes().decode("utf-8") + "other:\r\n  root: .\r\n  alerts:\r\n    scheduler: ['\\\\demo\\\\']\r\n"
+    reg.write_bytes(text.encode("utf-8"))
+    rows, _ = schedview.rows(projects.load(), here="box1")
+    found = [(r["project"], r["name"]) for r in rows if r["kind"] == "found"]
+    assert sorted(n for _, n in found) == ["collect", "demo-report", "demo-scan"]
+    assert {p for p, _ in found} == {"demo"}
 
 
 def test_the_cockpit_page_lists_the_declared_and_reads_no_scheduler(reg, monkeypatch):
@@ -213,3 +234,72 @@ def test_a_name_that_appears_in_another_block_is_not_the_line_rewritten(tmp_path
     assert cli.main(["schedule", "set", "pass", "--every", "5m", "--apply"]) == 0
     text = f.read_text(encoding="utf-8")
     assert "pass: {missed: 1}" in text and "pass: {command: alerts --all, every: 5m}" in text
+
+
+# --- review of wi-brain-schedule-settings ---
+
+def _one(tmp_path, monkeypatch, entries: str) -> Path:
+    root = tmp_path / "demo"
+    root.mkdir(exist_ok=True)
+    f = tmp_path / "projects.yaml"
+    f.write_text(f"demo:\n  root: {root.as_posix()}\n{entries}", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(f))
+    monkeypatch.setattr(alerts, "_scheduler", lambda folders: ([], ""))
+    return f
+
+
+def test_a_brace_in_the_comment_stays_the_comment(tmp_path, monkeypatch):
+    f = _one(tmp_path, monkeypatch, "  schedules:\n    x: {command: alerts, every: 15m}  # see {y}\n")
+    assert cli.main(["schedule", "set", "x", "--every", "1h", "--apply"]) == 0
+    assert f.read_text(encoding="utf-8").endswith("    x: {command: alerts, every: 1h}  # see {y}\n")
+
+
+@pytest.mark.parametrize("line, after", [
+    ("x: {command: alerts, machines: [o'brien-pc], every: 15m}",
+     "x: {command: alerts, machines: [o'brien-pc], every: 1h}"),   # an apostrophe inside a word opens no quote
+    ('x: {command: alerts, "every": 15m}', "x: {command: alerts, every: 1h}"),   # a quoted key is the same key
+    ("x: {command: 'a, b', every: 15m}", "x: {command: 'a, b', every: 1h}")])
+def test_quotes_and_quoted_keys_are_read_as_yaml_reads_them(tmp_path, monkeypatch, line, after):
+    f = _one(tmp_path, monkeypatch, f"  schedules:\n    {line}\n")
+    assert cli.main(["schedule", "set", "x", "--every", "1h", "--apply"]) == 0
+    assert f.read_text(encoding="utf-8").endswith(f"    {after}\n")
+
+
+def test_a_key_twice_once_rewritten_is_changed_by_hand(monkeypatch):
+    monkeypatch.setattr(schedview, "_split_flow", lambda inner: ["command: alerts", "every: 15m", "'every': 5m"])
+    assert schedview._rewrite("    x: {command: alerts, every: 15m}\n", "x", {"every": "1h"}) is None
+
+
+def test_a_change_to_the_same_values_writes_nothing_and_touches_no_other_line(tmp_path, monkeypatch, capsys):
+    f = _one(tmp_path, monkeypatch, "  alerts:\n    tasks:\n      x: {every: 1h,ledger: a}\n"
+                                    "  schedules:\n    x: {command: alerts, every: 15m}\n")
+    before = f.read_text(encoding="utf-8")
+    assert cli.main(["schedule", "set", "x", "--enable", "--hidden", "--apply"]) == 0
+    assert "already has these values: nothing to write" in capsys.readouterr().out
+    assert f.read_text(encoding="utf-8") == before
+
+
+def test_a_name_of_digits_is_found(tmp_path, monkeypatch):
+    f = _one(tmp_path, monkeypatch, "  schedules:\n    2024: {command: alerts, every: 15m}\n")
+    assert cli.main(["schedule", "set", "2024", "--every", "1h", "--apply"]) == 0
+    assert "2024: {command: alerts, every: 1h}" in f.read_text(encoding="utf-8")
+
+
+def test_a_refusal_in_json_is_json_and_an_empty_value_is_refused(tmp_path, monkeypatch, capsys):
+    _one(tmp_path, monkeypatch, "  schedules:\n    x: {command: alerts, every: 15m}\n")
+    assert cli.main(["schedule", "set", "nope", "--every", "1h", "--json"]) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["written"] is False and "no declared schedule 'nope'" in out["error"]
+    assert cli.main(["schedule", "set", "x", "--every", ""]) == 2
+    assert "--every: a value, or none to remove it" in capsys.readouterr().err
+
+
+def test_the_newer_keys_are_said_to_need_every_machine_on_0_5_1(tmp_path, monkeypatch, capsys):
+    f = _one(tmp_path, monkeypatch, "  schedules:\n    x: {command: alerts, every: 15m}\n")
+    assert cli.main(["schedule", "set", "x", "--visible", "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "note     every machine that reads this file must run brain 0.5.1 or later" in out
+    assert not list(tmp_path.glob(".projects.yaml.*"))   # the temporary file renamed over it
+    assert cli.main(["schedule", "set", "x", "--hidden", "--every", "30m"]) == 0
+    assert "note" not in capsys.readouterr().out   # no newer key left in the entry
+    assert "visible: true" in f.read_text(encoding="utf-8")

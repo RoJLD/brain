@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import shlex
 import sys
@@ -38,7 +39,7 @@ import yaml
 from . import graph, projects, schedule
 
 HIDDEN_EXES = {"pythonw.exe", "wscript.exe"}
-HIDDEN_ARGS = re.compile(r"-w(indowstyle)?\s+hidden\b|--headless\b", re.I)
+HIDDEN_ARGS = re.compile(r"-w\w*\s+hidden\b|--headless\b", re.I)   # -WindowStyle and its prefixes (-w, -Win)
 SET_HINT = "brain schedule set {name} --every|--at|--days|--visible|--hidden|--enable|--disable"
 INSTALL_HINT = "then brain schedule install --apply on its machines (the owner's)"
 
@@ -86,9 +87,30 @@ def _found_when(row: dict) -> str:
     return " and ".join(parts) or "on an event"
 
 
-def _scheduler_rows(registry: Mapping[str, projects.Project]) -> tuple[dict[str, list[dict]], str]:
-    """{project: its scheduler folders' rows} and why the scheduler could not be read ('' when it was, or when no
-    project names a folder)."""
+BRAIN_FOLDER = "\\brain\\"   # where brain schedule installs the declared ones (schedule.WIN_FOLDER, normalised)
+
+
+def _scheduler_rows(registry: Mapping[str, projects.Project]) -> tuple[dict[str, list[dict]], dict[str, dict], str]:
+    """({project: its scheduler folders' rows, each task once}, {name: the row of brain schedule's own folder}, why the
+    scheduler could not be read ('' when it was)). The brain's own folder is always read: the declared tasks' last
+    runs come from there only."""
+    from . import alerts
+    cfgs = _alerts_configs(registry)
+    sched = alerts.read_scheduler([alerts.Config(project="", scheduler=[schedule.WIN_FOLDER]), *cfgs])
+    if "error" in sched:
+        return {}, {}, sched["error"]
+    every = sched.get("rows") or []
+    own = {_where(r)[1]: r for r in every if _where(r)[0] == BRAIN_FOLDER}
+    out: dict[str, list[dict]] = {}
+    taken: set[tuple[str, str]] = set()   # a folder two projects name: its tasks listed once, under the first
+    for c in cfgs:
+        folders = {alerts._norm_folder(f) for f in c.scheduler}
+        out[c.project] = [r for r in every if _where(r)[0] in folders and _where(r) not in taken]
+        taken |= {_where(r) for r in out[c.project]}
+    return out, own, ""
+
+
+def _alerts_configs(registry: Mapping[str, projects.Project]) -> list:
     from . import alerts
     cfgs = []
     for p in registry.values():
@@ -96,30 +118,32 @@ def _scheduler_rows(registry: Mapping[str, projects.Project]) -> tuple[dict[str,
             cfgs.append(alerts.config(p))
         except (alerts.AlertsError, ValueError):   # a bad alerts entry: brain check's to report, not the view's
             continue
-    sched = alerts.read_scheduler(cfgs)
-    if "error" in sched:
-        return {}, sched["error"]
-    out: dict[str, list[dict]] = {}
-    for c in cfgs:
-        folders = {alerts._norm_folder(f) for f in c.scheduler}
-        out[c.project] = [r for r in sched.get("rows") or []
-                          if alerts._norm_folder(str(r.get("folder") or "")) in folders]
-    return out, ""
+    return cfgs
+
+
+def _where(r: dict) -> tuple[str, str]:
+    """A scheduler row's (folder, name), both normalised."""
+    from . import alerts
+    return alerts._norm_folder(str(r.get("folder") or "")), str(r.get("name") or "").lower()
 
 
 def rows(registry: Mapping[str, projects.Project], *, here: str | None = None, root: Path | None = None,
          live: bool = True) -> tuple[list[dict], str]:
     """Every scheduled task of every project: (rows, why the scheduler could not be read). ``live``: the Task
     Scheduler is read for the found tasks and the declared tasks' last runs (a PowerShell call on Windows)."""
+    from . import alerts
     declared = schedule.declared(registry)
     here = here or schedule.machine()
     rec = schedule.installed()
-    found, why = _scheduler_rows(registry) if live else ({}, "")
-    seen = {(r.get("name") or "").lower(): r for rs in found.values() for r in rs}
-    out = [_declared_row(s, registry[s.project], here, rec, seen.get(s.name.lower(), {}), root) for s in declared]
+    found, own, why = _scheduler_rows(registry) if live else ({}, {}, "")
+    out = [_declared_row(s, registry[s.project], here, rec, own.get(s.name.lower(), {}), root) for s in declared]
     names = {s.name.lower() for s in declared}
+
+    def declared_task(r: dict) -> bool:   # a declared schedule's own task, in brain schedule's folder
+        return (alerts._norm_folder(str(r.get("folder") or "")) == BRAIN_FOLDER
+                and str(r.get("name") or "").lower() in names)
     out += [_found_row(r, project, registry[project]) for project, rs in found.items() for r in rs
-            if str(r.get("name") or "").lower() not in names]
+            if not declared_task(r)]
     return out, why
 
 
@@ -168,6 +192,11 @@ class Change:
     after: str
     text: str                    # the file's new text ('' when it is to change by hand)
     by_hand: str = ""            # why the line cannot be rewritten, with the change to make
+    same: bool = False           # the schedule already has these values: nothing to write
+    newer_keys: tuple = ()       # keys an engine before 0.5.1 refuses (visible, floor), in the changed entry
+
+
+NEWER_KEYS = ("visible", "floor")   # added in 0.5.1: an older engine refuses the whole registry's schedules
 
 
 def _split_flow(inner: str) -> list[str]:
@@ -178,7 +207,7 @@ def _split_flow(inner: str) -> list[str]:
             cur += ch
             quote = "" if ch == quote else quote
             continue
-        if ch in "'\"":
+        if ch in "'\"" and (not cur.strip() or cur.rstrip()[-1] in ":[{,"):   # a quote opens a scalar only
             quote = ch
         elif ch in "[{":
             depth += 1
@@ -209,7 +238,9 @@ def wanted_changes(args_every=None, args_at=None, args_days=None, visible=None, 
     ch: dict = {}
     for key, v in (("every", args_every), ("at", args_at)):
         if v is not None:
-            ch[key] = None if v.lower() == "none" else v
+            if not v.strip():
+                raise SetError(f"--{key}: a value, or none to remove it")
+            ch[key] = None if v.strip().lower() == "none" else v.strip()
     if args_days is not None:
         days = [d.strip().lower() for d in args_days.split(",") if d.strip()]
         ch["days"] = None if args_days.lower() == "none" or not days else days
@@ -220,17 +251,28 @@ def wanted_changes(args_every=None, args_at=None, args_days=None, visible=None, 
     return ch
 
 
+def _line_re(name: str) -> re.Pattern:
+    """A one-line entry: the name, a flow mapping (the shortest that leaves only a comment after it: a brace in the
+    comment stays the comment's), then an optional comment."""
+    return re.compile(rf"^(\s*{re.escape(name)}\s*:\s*)\{{(.*?)\}}(\s*(?:#.*)?)$")
+
+
 def _entry_lines(lines: list[str], name: str) -> list[int]:
-    pat = re.compile(rf"^(\s*){re.escape(name)}\s*:\s*(\{{.*\}})\s*(#.*)?$")
+    pat = _line_re(name)
     return [i for i, line in enumerate(lines) if pat.match(line.rstrip("\r\n"))]
 
 
-def _rewrite(line: str, name: str, changes: dict) -> str:
+def _key(item: str) -> str:
+    return item.split(":", 1)[0].strip().strip("'\"")
+
+
+def _rewrite(line: str, name: str, changes: dict) -> str | None:
+    """The line with the changes, or None when its items cannot be told apart (a key twice once rewritten)."""
     body = line.rstrip("\r\n")
     end = line[len(body):]
-    m = re.match(rf"^(\s*{re.escape(name)}\s*:\s*)\{{(.*)\}}(\s*(#.*)?)$", body)
+    m = _line_re(name).match(body)
     items = _split_flow(m.group(2))
-    keyed = [(it.split(":", 1)[0].strip(), it) for it in items]
+    keyed = [(_key(it), it) for it in items]
     out, done = [], set()
     for key, it in keyed:
         if key in changes:
@@ -240,6 +282,9 @@ def _rewrite(line: str, name: str, changes: dict) -> str:
         else:
             out.append(it)
     out += [f"{k}: {_render_value(k, v)}" for k, v in changes.items() if k not in done and v is not None]
+    keys = [_key(it) for it in out]
+    if len(keys) != len(set(keys)):   # a quote the splitter misread, a quoted key: YAML would keep the last one
+        return None
     return f"{m.group(1)}{{{', '.join(out)}}}{m.group(3)}{end}"
 
 
@@ -248,8 +293,13 @@ def _path_of(p: projects.Project, name: str) -> list[str]:
 
 
 def _get(doc, path: list[str]):
+    """The entry at ``path``, a key matched as its text (a name of digits loads as a number)."""
     for k in path:
-        doc = doc[k]
+        if not isinstance(doc, dict):
+            raise SetError(f"{'.'.join(path)}: not found where the file declares it")
+        doc = next((v for key, v in doc.items() if str(key) == k), None)
+        if doc is None:
+            raise SetError(f"{'.'.join(path)}: not found where the file declares it")
     return doc
 
 
@@ -272,11 +322,15 @@ def plan_change(registry: Mapping[str, projects.Project], name: str, changes: di
         raise SetError(f"{name}: the file that declares it is not found ({f})")
     with f.open(encoding="utf-8", newline="") as fh:
         text = fh.read()
-    want = _wanted_doc(text, _path_of(p, name), changes, s.project, name)
+    path = _path_of(p, name)
+    want = _wanted_doc(text, path, changes, s.project, name)
+    newer = tuple(k for k in NEWER_KEYS if k in _get(want, path))
+    if want == (graph.load_yaml(text) or {}):
+        return Change(name, s.project, f, 0, "", "", "", same=True)
     found = _rewritten(text, name, changes, want)
     if found:
         i, before, after, new_text = found
-        return Change(name, s.project, f, i + 1, before, after, new_text)
+        return Change(name, s.project, f, i + 1, before, after, new_text, newer_keys=newer)
     by_hand = ", ".join(f"{k}: {_render_value(k, v)}" if v is not None else f"{k} removed" for k, v in changes.items())
     return Change(name, s.project, f, 0, "", "", "", by_hand=f"{name} is not a one-line entry of {f.name}: change it "
                   f"by hand ({by_hand})")
@@ -303,6 +357,8 @@ def _rewritten(text: str, name: str, changes: dict, want) -> tuple[int, str, str
     lines = text.splitlines(keepends=True)
     for i in _entry_lines(lines, name):
         new_line = _rewrite(lines[i], name, changes)
+        if new_line is None:
+            continue
         new_text = "".join(lines[:i]) + new_line + "".join(lines[i + 1:])
         try:
             back = graph.load_yaml(new_text)
@@ -319,26 +375,45 @@ def set_main(registry: Mapping[str, projects.Project], name: str, changes: dict,
     try:
         ch = plan_change(registry, name, changes, root)
     except (SetError, schedule.ScheduleError) as exc:
+        if as_json:   # a JSON reader gets JSON on a refusal too
+            print(json.dumps({"schedule": name, "error": str(exc), "written": False}))
         print(f"brain schedule set: {exc}", file=sys.stderr)
         return 2
-    written = False
-    if apply and ch.text:
-        with ch.file.open("w", encoding="utf-8", newline="") as fh:   # its line endings kept
-            fh.write(ch.text)
-        written = True
+    written = bool(apply and ch.text)
+    if written:
+        _write_atomic(ch.file, ch.text)
+    note = (f"every machine that reads this file must run brain 0.5.1 or later: an older engine refuses "
+            f"{', '.join(ch.newer_keys)} and with it every schedule" if ch.newer_keys else "")
     if as_json:
         print(json.dumps({"schedule": ch.schedule, "project": ch.project, "file": str(ch.file), "line": ch.line_no,
-                          "before": ch.before, "after": ch.after, "by_hand": ch.by_hand, "written": written},
-                         indent=2))
+                          "before": ch.before, "after": ch.after, "by_hand": ch.by_hand, "same": ch.same,
+                          "note": note, "written": written}, indent=2))
         return 1 if ch.by_hand else 0
+    return _print_change(ch, written, note)
+
+
+def _print_change(ch: Change, written: bool, note: str) -> int:
+    if ch.same:
+        print(f"same     {ch.schedule} ({ch.project}) already has these values: nothing to write")
+        return 0
     if ch.by_hand:
         print(f"by hand  {ch.by_hand}")
         return 1
     print(f"schedule {ch.schedule} ({ch.project}): {ch.file} line {ch.line_no}")
     print(f"  - {ch.before.strip()}")
     print(f"  + {ch.after.strip()}")
+    if note:
+        print(f"note     {note}")
     print("written  (commit it by a PR; " + INSTALL_HINT + ")" if written else "plan only: --apply writes the file")
     return 0
+
+
+def _write_atomic(f: Path, text: str) -> None:
+    """The file replaced whole (a temporary file beside it, then a rename), its line endings as given."""
+    tmp = f.with_name(f".{f.name}.brain-schedule-set.tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    os.replace(tmp, f)
 
 
 def _row_lines(r: dict) -> list[str]:

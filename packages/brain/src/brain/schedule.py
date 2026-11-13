@@ -903,7 +903,11 @@ def main(cmd: str, apply: bool, root: Path | None, as_json: bool = False, args=N
     if cmd == "list":   # every task of every project (brain.schedview); listing() stays the declared ones'
         return schedview.list_main(registry, root=root, as_json=as_json)
     if cmd == "set":
-        changes = schedview.wanted_changes(args.every, args.at, args.days, args.visible, args.enabled)
+        try:
+            changes = schedview.wanted_changes(args.every, args.at, args.days, args.visible, args.enabled)
+        except schedview.SetError as exc:
+            print(f"brain schedule set: {exc}", file=sys.stderr)
+            return 2
         return schedview.set_main(registry, args.name, changes, apply, root=root, as_json=as_json)
     return install(registry, apply, as_json=as_json)
 
