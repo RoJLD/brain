@@ -162,20 +162,24 @@ PRs each green alone can still conflict together (two PRs that both append to a 
 coordinator who merges several at once used to integrate them by hand in a scratch worktree and choose the tests.
 `brain merge-ready 12 --with 14 --with 15` (or `--with 14,15`) does it at zero token:
 
-- each PR passes the gate above alone (the same checks, the same blocks);
+- each PR passes the gate above alone (the same checks, the same blocks); a PR given twice counts once, and a set
+  needs two;
 - the heads are merged together on the base, in the order given, by `git merge-tree` with the repo's merge driver
-  (the base's `.gitattributes`, the repo's `merge.brain.driver`, else this engine's): nothing is checked out and no
-  view is marked. A head that conflicts with one before it is left out, with its files (`BLOCK #15 conflicts after
+  (the base's `.gitattributes`, the repo's `merge.brain.driver`, else this engine's own module run by its Python):
+  nothing is checked out and no view is marked. A head that conflicts with one before it is left out, with its files (`BLOCK #15 conflicts after
   #12: README.md`): a merge only adds, so it would conflict at any later place too;
-- the same merges are made as plain text, as GitHub merges with no driver: a PR that conflicts there once those
-  before it merged is said (`then #14: once #12 merged, GitHub sees a conflict on CHANGELOG.md: merge the base into
-  it locally (the driver resolves it), push, CI again`);
+- the same merges are made as plain text, as GitHub merges with no driver, on a chain of their own: a PR that
+  conflicts there once those before it merged (not on the base alone) needs a new head (`then #14: once #12 merged,
+  GitHub sees a conflict on CHANGELOG.md: merge the base into it locally (the driver resolves it), push, CI again`):
+  the set is not ready and that head gets no stamp;
 - the tests are chosen by `brain impact` on the change from the base to the integrated commit; `--test` runs them
   (`<python> -m pytest -q`, `--python P`, default this one) in a scratch worktree of that commit, the checkout's
-  `src` and `packages/*/src` first on PYTHONPATH, removed afterwards;
-- ready means every PR ready alone, every head merged and the tests green when they ran: each head then gets its
-  stamp, whose `together` names the PRs it was checked with, the merge order, the integrated commit and the tests.
-  Exit 0 when ready, 1 when not, 2 when gh or git fails; `--json` gives it all as data.
+  `src` and `packages/*/src` first on PYTHONPATH, no git hook run, removed afterwards (its folder deleted and the
+  worktree pruned when git cannot); under `--test` a test choice that failed blocks;
+- ready means every PR ready alone, every head merged as it is and the tests green when they ran. Each head ready
+  as it is gets its stamp, even in a set not ready (the first PRs may merge while a later one gets its new head),
+  whose `together` names the PRs it was checked with, the merge order, the integrated commit and the tests. Exit 0
+  when the set is ready, 1 when not, 2 when gh or git fails (or `--test` without `--with`); `--json` gives it all.
 
 ```bash
 brain merge-ready 12 --with 14,15            # the order said, what blocks, the tests to run

@@ -22,10 +22,10 @@ USAGE = """\
                         and what blocks (2: gh or git failed)
   brain merge-ready PR --with PR... [--test] [--python P] [...]   the PRs merged together, in that order: each
                         through the gate alone, then integrated on the base by git merge-tree with the repo's merge
-                        driver (nothing checked out; a conflicting head tried again after the others), the merge order
-                        said and each PR GitHub will see conflicting once those before it merge; the tests brain
-                        impact chooses for the set, run by --test in a scratch worktree; a stamp per head when all is
-                        ready
+                        driver (nothing checked out; a head that conflicts left out), the merge order said, and each
+                        PR GitHub will see conflicting once those before it merge (a new head needed: not ready, no
+                        stamp); the tests brain impact chooses for the set, run by --test in a scratch worktree; a
+                        stamp per head ready as it is; exit 0 when the whole set is ready
 """
 
 
@@ -39,12 +39,13 @@ def _together(args, top: Path) -> int:
     try:
         t = mergetogether.check(top, prs, args.slug or "", args.remote or "", fetch=not args.no_fetch,
                                 test=args.test, python=args.python or "", project=getattr(args, "project", "") or "")
-        written = [str(f) for f in mergetogether.stamps(t)] if t.ready else []
     except (AuditError, mergeready.GateError) as exc:
         print(f"brain merge-ready: {exc}", file=sys.stderr)
         return 2
+    try:
+        written = [str(f) for f in mergetogether.stamps(t)]
     except OSError as exc:
-        print(f"brain merge-ready: ready, but a stamp was not written: {exc}", file=sys.stderr)
+        print(f"brain merge-ready: a stamp was not written: {exc}", file=sys.stderr)
         return 2
     if args.json:
         print(json.dumps({**t.to_json(), "stamps": written}, ensure_ascii=False, indent=1))
@@ -59,6 +60,10 @@ def early(args) -> int:
     """Any checkout of the PR's repo (a worktree too); gh reads the PR."""
     from .. import mergeready
     from .merge_check import git_top
+    if (args.test or args.python) and not args.with_:
+        print("brain merge-ready: --test and --python go with --with PR (a set of PRs merged together)",
+              file=sys.stderr)
+        return 2
     if args.with_:
         try:
             return _together(args, Path(git_top(Path(args.repo_dir or ".").resolve())))
