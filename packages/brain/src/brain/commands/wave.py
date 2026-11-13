@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import closemerged, config, graph, lots, nextrelease, projects, waverename, waves
+from .. import closemerged, config, graph, lots, nextrelease, projects, waveimport, waverename, waves
 from ._common import _project, _store
 from ._common import _repos as _project_repos
 
@@ -88,7 +88,7 @@ def _rename(args, store: Path) -> int:
 
 
 def _import(args, store: Path) -> int:
-    imp = waves.do_import(store, write=args.write, start=args.start or "")
+    imp = waveimport.do_import(store, write=args.write, start=args.start or "")
     for rel, items in imp.before.items():
         print(f"{rel}: before --from {args.start}, not imported: {', '.join(items)}")
     for rel, items in imp.waves.items():
