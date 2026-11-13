@@ -65,7 +65,24 @@ text() {
     tr -d '\r' < "${rules[$i]}" | tr '\t' ' '
   done
 }
-context=$(text | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{printf "%s\\n", $0}')
+# A floor-only machine (config.json "floor": {"only": true}, brain/floor.py) gets the locked rules alone: the lines
+# that carry <!-- lock --> or <!-- lock: ID -->, the marker taken out, and one line that says why.
+floor_only=
+if [ -f "$config" ]; then
+  json=$(tr -d '\r\n' < "$config")
+  only='"floor"[[:space:]]*:[[:space:]]*\{[^}]*"only"[[:space:]]*:[[:space:]]*true'
+  [[ $json =~ $only ]] && floor_only=1
+fi
+locked() {
+  printf '%s\n' "Floor only (config.json floor.only): this machine gets the locked rules alone, until it is adopted; the guard applies only the floor's refusals, and the memory notes are not synced."
+  text | grep -E '<!--[[:space:]]*lock(:[[:space:]]*[A-Za-z0-9_.-]+)?[[:space:]]*-->' \
+    | sed -E 's/[[:space:]]*<!--[[:space:]]*lock(:[[:space:]]*[A-Za-z0-9_.-]+)?[[:space:]]*-->//; s/[[:space:]]+$//' || :
+}
+if [ -n "$floor_only" ]; then
+  context=$(locked | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{printf "%s\\n", $0}')
+else
+  context=$(text | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{printf "%s\\n", $0}')
+fi
 
 printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$event" "$context"
 selftime_bash "hook inject-rules $event [bash]"

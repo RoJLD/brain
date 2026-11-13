@@ -301,6 +301,14 @@
         "read": {"type": "boolean", "description": "The read hint (readhint.sh, brain.readhint, PreToolUse on Read, Grep, Bash and PowerShell, about 0.2 s per call): true, brain render --target claude (brain sync) registers it in the core plugin's hooks.json; default false: not registered, no call pays its cost. BRAIN_READ_HINT=0 turns it off in a session while it is on."}
       }
     },
+    "floor": {
+      "type": "object", "additionalProperties": false,
+      "description": "The locked floor (brain.floor, the owner's R21): the rules marked <!-- lock --> and the guard's refusals that hold them.",
+      "properties": {
+        "refuse": {"type": "boolean", "description": "true: the guard refuses a session's git push to main or master and a forced push (guard floor, checks main and force; BRAIN_GUARD_ALLOW=floor lifts them). Default false: refusals 0.5.1 adds."},
+        "only": {"type": "boolean", "description": "true: this machine gets the floor alone until it is adopted: inject-rules.sh injects the locked rules only, the guard runs only the floor's refusals and the secrets check, the memory notes are not synced either way. Default false."}
+      }
+    },
     "ipc": {
       "type": "object", "additionalProperties": false,
       "description": "The Brain's local services and the machine's token (brain.ipcauth, brain.ipchealth; brain ipc token). docs/mcp.md.",

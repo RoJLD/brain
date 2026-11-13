@@ -74,7 +74,11 @@ def _float_env(name: str, default: float) -> float:
 
 
 def mode() -> str:
-    """BRAIN_MEMORY_SYNC: 'both' (the default), 'export' (no import) or 'off'."""
+    """BRAIN_MEMORY_SYNC: 'both' (the default), 'export' (no import) or 'off'; 'off' whatever it says on a floor-only
+    machine (config.json floor.only, brain.floor: no sync either way until it is adopted)."""
+    from . import config, floor
+    if floor.settings(config.load().data)["only"]:
+        return "off"
     v = os.environ.get("BRAIN_MEMORY_SYNC", "1").strip().lower()
     return {"0": "off", "off": "off", "false": "off", "export": "export"}.get(v, "both")
 

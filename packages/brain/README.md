@@ -1341,6 +1341,11 @@ brain whose `source/packs.yaml` gives its core pack `hooks:` gets them copied in
 the call goes through. Each hook passes its `brain_version` to the Python it starts, and the SessionStart health says
 when a session's plugin copy and the engine differ, or when two `.brain` folders exist.
 
+**The locked floor** (`brain.floor`, [docs/guards.md](docs/guards.md#the-locked-floor)): the rules marked
+`<!-- lock -->` and the guard's refusals of a push to main or master and of a forced push (config.json
+`floor.refuse`); a floor-only machine (`floor.only`) gets the locked rules alone, the floor's refusals and the
+secrets check alone, and no memory sync, until it is adopted.
+
 A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
 Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that
 may write, names `gh`, a program of the owner and power guards, `claude` then `plugin` or `skills` then `add` (whatever

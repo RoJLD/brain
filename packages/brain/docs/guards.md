@@ -15,6 +15,29 @@ Both are declared in `src/brain/adapters/claude/hooks/hooks.json`. A personal br
 `brain render --target claude --write` (or `brain sync`) into its own plugin, then its installer applies the plugin
 (on Windows `install.ps1 -Apply`, the owner's).
 
+## The locked floor
+
+The few rules no level overrides (`brain.floor`, the owner's R21): a line of the owner's rules (config.json `rules`)
+that carries `<!-- lock -->` or `<!-- lock: ID -->` (the decision that locked it) is locked; Markdown shows nothing of
+the marker. The guard holds them with two refusals, guard `floor`:
+
+- `main`: a `git push` to `main` or `master`: a refspec's destination (`HEAD:main`, `x:refs/heads/master`), the
+  branch checked out when no refspec names one (`git push`, `git push origin HEAD`), `--all`, a deletion (`:main`,
+  `--delete main`); `--tags` alone sends no branch;
+- `force`: a forced push: `--force`, `-f` in a group of short options, `--force-with-lease`, `--force-if-includes`,
+  `--mirror`, a refspec starting with `+`.
+
+The third line of the floor, no secret in a commit, is the secrets guard's already. They run under config.json
+`floor.refuse: true` (off by default: refusals 0.5.1 adds) or `floor.only: true`; `BRAIN_GUARD_ALLOW=floor` (or
+`floor:main`, `floor:force`) lifts them, the owner's.
+
+**Floor only** (config.json `floor.only: true`): the machine gets the floor and nothing else, until it is adopted:
+`inject-rules.sh` injects the locked lines alone, after one line that says why; the guard runs only the floor's
+refusals, the secrets check and the configuration check (no production, owner, power or third-party guard: a project
+whose own work they would refuse); the memory notes are not synced, either way, whatever `BRAIN_MEMORY_SYNC` says.
+The owner sets it; how a machine with no anchor in the owner's brain, or a project until its merge phase, enters it
+on its own is a decision still open.
+
 ## The Terminal panel
 
 A command a session types into the owner's Terminal panel (`mcp__*terminal__run_in_terminal`) runs in the owner's own

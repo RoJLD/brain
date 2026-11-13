@@ -103,8 +103,12 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   without -b), git branch NAME or -m|-c [OLD] NEW gives, and gh pr create's head branch (--head, else the folder's
   current branch). A name the command does not resolve ($b) passes. The refusal names the allowed list.
 
+- ``floor`` (wi-brain-unadopted-floor, R21, brain.floor): under config.json floor.refuse (off by default) or
+  floor.only, a git push to main or master (check main) and a forced push (check force). On a floor-only machine
+  (floor.only) a shell call runs only the configuration, secrets and floor checks, and a tool edit none.
+
 Override, the owner's only: ``BRAIN_GUARD_ALLOW=production,owner,power,third-party,attribution,secrets,markers,
-public,branches``, a
+public,branches,floor``, a
 guard:check pair (owner:installer, power:cluster) or ``all``, in Claude Code's own environment, which a command
 cannot set; the call passes and the ledger records it. Refusals and overrides go to
 ``<BRAIN_HOME>/ledger/guards-<month>.jsonl`` when the ledger exists (a request for the owner creates it), with the
@@ -130,10 +134,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, diffs, markers, midsession, paths, projects, public, secretscan, timing
+from . import config, diffs, floor, markers, midsession, paths, projects, public, secretscan, timing
 
 GUARDS = ("production", "attribution", "secrets", "markers", "owner", "power", "third-party", "public", "branches",
-          "merges")
+          "merges", "floor")
 ALLOW_ENV = "BRAIN_GUARD_ALLOW"
 EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 SHELL_TOOLS = ("Bash", "PowerShell")
@@ -3640,7 +3644,8 @@ def refusals(payload: dict, strict: bool = False):
     if TERMINAL_TOOL.match(tool):
         tool = terminal_shell()
         cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
-    if tool in EDIT_TOOLS:
+    only = floor.settings(config.load().data)["only"]   # floor only: the floor's refusals and the secrets check
+    if tool in EDIT_TOOLS and not only:
         reason = check_production(tool, inp, [], cwd)
         if reason:
             yield "production", "edit", reason, None
@@ -3658,7 +3663,7 @@ def refusals(payload: dict, strict: bool = False):
         return
     powershell = tool == "PowerShell"
     cmds = calls(command, cwd, powershell)
-    for guard, check, run in (("production", "git", lambda: check_production(tool, inp, cmds, cwd)),
+    for guard, check, run in _floor_checks(cmds) if only else (("production", "git", lambda: check_production(tool, inp, cmds, cwd)),
                               ("production", "shell-write", lambda: check_shell_writes(cmds, powershell)),
                               ("owner", None, lambda: check_owner(tool, inp, cmds, cwd, powershell, command)),
                               ("power", None, lambda: check_power(cmds, powershell, command)),
@@ -3670,7 +3675,8 @@ def refusals(payload: dict, strict: bool = False):
                               ("public", "public", lambda: check_public(cmds)),
                               ("public", "commit", lambda: check_public_commit(cmds)),
                               ("branches", "name", lambda: check_branches(cmds)),
-                              ("merges", "stale", lambda: check_merge_stale(cmds))):
+                              ("merges", "stale", lambda: check_merge_stale(cmds)),
+                              ("floor", None, lambda: check_floor(cmds))):
         try:
             out = run()
         except Exception as exc:  # one check's error lets the others run (and goes to ledger/errors.log)
@@ -3682,6 +3688,32 @@ def refusals(payload: dict, strict: bool = False):
             yield guard, check, out, None
         elif out:
             yield guard, *out
+
+
+def _floor_checks(cmds):
+    """The checks a floor-only machine runs (config.json floor.only, brain.floor): the configuration, the secrets in a
+    commit and the floor's own refusals."""
+    return (("public", "config", lambda: check_config(cmds)), ("secrets", "secrets", lambda: check_secrets(cmds)),
+            ("floor", None, lambda: check_floor(cmds, always=True)))
+
+
+def check_floor(cmds, always: bool = False) -> tuple[str, str, None] | None:
+    """(check, reason, None) for a git push that breaks the locked floor (brain.floor: main, force), under config.json
+    floor.refuse or floor.only (``always``: the floor-only machine's); None otherwise."""
+    pushes = list(_pushes(cmds))
+    if not pushes or not (always or floor.settings(config.load().data)["refuse"]):
+        return None
+    for _, d, args in pushes:
+        remote, refspecs, flags = _push_target(args)
+        current = _git_out(d, "rev-parse", "--abbrev-ref", "HEAD").strip()
+        refspecs = [current if r == "HEAD" else r.replace("HEAD:", f"{current}:", 1) if r.startswith("HEAD:")
+                    else r for r in refspecs]
+        hit = floor.push_refusal(refspecs, flags, current)
+        if hit:
+            check, what = hit
+            return (check, f"git push refused: {what} breaks the locked floor (no push to main or master, no force-push: "
+                           f"merge by a pull request{'' if check == 'main' else ', push a new commit instead'})", None)
+    return None
 
 
 def terminal_shell() -> str:
