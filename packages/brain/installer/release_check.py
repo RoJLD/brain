@@ -842,6 +842,16 @@ def run_preview(repo: Path, tag: str, base: str, summary: str, ref: str = "", as
     return 0
 
 
+def ref_problem(ref: str, base: str) -> str:
+    """Why ``--ref`` cannot be previewed as given ('' when it can): a value git would read as an option, or ``--base``
+    beside it (--base names this branch's files in the working tree, --ref a commit)."""
+    if ref.startswith("-"):
+        return f"--ref {ref!r} is no commit"
+    if ref and base:
+        return "--base names this branch's own files in the working tree, --ref a commit: one or the other"
+    return ""
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="The version PR's check (docs/release.md).")
     ap.add_argument("--repo", default=".", help="the checkout (default: here)")
@@ -867,12 +877,8 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     repo = Path(args.repo)
-    if args.preview and args.ref.startswith("-"):
-        print(f"release-preview: cannot tell: --ref {args.ref!r} is no commit", file=sys.stderr)
-        return 2
-    if args.preview and args.ref and args.base:
-        print("release-preview: cannot tell: --base names this branch's own files in the working tree, --ref a "
-              "commit: one or the other", file=sys.stderr)
+    if args.preview and ref_problem(args.ref, args.base):
+        print(f"release-preview: cannot tell: {ref_problem(args.ref, args.base)}", file=sys.stderr)
         return 2
     if args.preview:
         return run_preview(repo, args.against, args.base, "" if args.json else args.summary, args.ref, args.json)

@@ -73,7 +73,7 @@ def well_formed(data) -> bool:
 
 def _cached(repo: Path, key: str) -> dict | None:
     try:
-        got = json.loads(CACHE().read_text(encoding="utf-8")).get(str(repo))
+        got = json.loads(cache_file().read_text(encoding="utf-8")).get(str(repo))
     except (OSError, ValueError, AttributeError):
         return None
     return got["data"] if isinstance(got, dict) and got.get("key") == key and well_formed(got.get("data")) else None
@@ -82,7 +82,7 @@ def _cached(repo: Path, key: str) -> dict | None:
 def _keep(repo: Path, key: str, data: dict) -> None:
     """The forecast kept for that commit (the cache store's ``release-forecast.json``, one entry per checkout): the
     same commit gives the same forecast, so brain next runs the preview once per fetch."""
-    f = CACHE()
+    f = cache_file()
     try:
         held = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
         held = held if isinstance(held, dict) else {}
@@ -95,31 +95,18 @@ def _keep(repo: Path, key: str, data: dict) -> None:
         pass   # a cache: the next call runs the preview again
 
 
-def CACHE() -> Path:   # noqa: N802 - a path read at call time (BRAIN_HOME may move in a test)
+def cache_file() -> Path:
+    """The cache's file, read at call time (BRAIN_HOME may move, in a test)."""
     return paths.brain_home() / "cache" / "release-forecast.json"
 
 
-def forecast(repos: list[Path], ref: str = "", timeout: float = TIMEOUT) -> dict | None:
-    """The preview of the project's engine checkout as data (release_check.py's ``--json`` keys, plus ``repo``), or
-    {"error": why} when it cannot tell; None when no repo of the project holds the script. A commit already
-    previewed is read from the cache (:func:`_keep`)."""
-    repo = checkout(repos)
-    if repo is None:
-        return None
-    ref = ref or default_ref(repo)
-    if ref.startswith("-"):
-        return {"error": f"{ref!r} is no commit", "repo": str(repo), "ref": ref}
-    sha = _git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
-    if sha:
-        hit = _cached(repo, sha)
-        if hit is not None:
-            return hit | {"repo": str(repo), "ref": ref}
+def _run(repo: Path, ref: str, timeout: float) -> dict:
+    """The commit's own preview, run from a temporary folder: its data, or {"error": why}."""
     with tempfile.TemporaryDirectory(prefix="brain-forecast-") as tmp:
         for name in SCRIPTS:   # the commit's own scripts: the checkout's branch and working tree play no part
             text = _git(repo, "show", f"{ref}:{Path(SCRIPT).parent.as_posix()}/{name}")
             if not text:
-                return {"error": f"{ref} has no {name}: not an engine checkout, or a ref git cannot read",
-                        "repo": str(repo), "ref": ref}
+                return {"error": f"{ref} has no {name}: not an engine checkout, or a ref git cannot read"}
             (Path(tmp) / name).write_text(text + "\n", encoding="utf-8")
         cmd = [sys.executable, "-I", str(Path(tmp) / Path(SCRIPT).name), "--repo", str(repo), "--preview",
                "--ref", ref, "--json"]
@@ -127,24 +114,41 @@ def forecast(repos: list[Path], ref: str = "", timeout: float = TIMEOUT) -> dict
             done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=timeout, check=False)
         except subprocess.TimeoutExpired:
-            return {"error": f"the release preview took more than {timeout:g} s", "repo": str(repo), "ref": ref}
+            return {"error": f"the release preview took more than {timeout:g} s"}
         except OSError as exc:
-            return {"error": f"the release preview cannot run: {exc}", "repo": str(repo), "ref": ref}
+            return {"error": f"the release preview cannot run: {exc}"}
     if done.returncode:
         why = (done.stderr.strip().splitlines() or [f"exit {done.returncode}"])[-1]
         if "unrecognized arguments" in why:   # a commit before this command: its preview reads only the working tree
             why = f"the release preview at {ref} predates the forecast (no --ref, --json): it comes with that engine"
-        return {"error": why.removeprefix("release-preview: "), "repo": str(repo), "ref": ref}
+        return {"error": why.removeprefix("release-preview: ")}
     try:
         data = json.loads(done.stdout)
     except ValueError:
         data = None
     if not well_formed(data):
-        return {"error": "the release preview printed no forecast this engine reads (another engine's shape?)",
-                "repo": str(repo), "ref": ref}
-    if sha:
-        _keep(repo, sha, data)
-    return data | {"repo": str(repo), "ref": ref}
+        return {"error": "the release preview printed no forecast this engine reads (another engine's shape?)"}
+    return data
+
+
+def forecast(repos: list[Path], ref: str = "", timeout: float = TIMEOUT) -> dict | None:
+    """The preview of the project's engine checkout as data (release_check.py's ``--json`` keys, plus ``repo`` and
+    ``ref``), or {"error": why, ...} when it cannot tell; None when no repo of the project holds the script. A commit
+    already previewed is read from the cache (:func:`_keep`); an error is never kept."""
+    repo = checkout(repos)
+    if repo is None:
+        return None
+    ref = ref or default_ref(repo)
+    where = {"repo": str(repo), "ref": ref}
+    if ref.startswith("-"):
+        return {"error": f"{ref!r} is no commit"} | where
+    sha = _git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    data = _cached(repo, sha) if sha else None
+    if data is None:
+        data = _run(repo, ref, timeout)
+        if sha and "error" not in data:
+            _keep(repo, sha, data)
+    return data | where
 
 
 def concerns(fc: dict | None, release: str) -> bool:

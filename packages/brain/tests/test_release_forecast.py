@@ -202,7 +202,7 @@ def test_a_drifted_shape_is_unknown_not_a_crash(engine, monkeypatch):
 def test_a_commit_already_previewed_is_read_from_the_cache(engine, monkeypatch):
     first = nextrelease.forecast([engine], ref="HEAD")
     assert "error" not in first, first
-    assert nextrelease.CACHE().is_file()
+    assert nextrelease.cache_file().is_file()
 
     real = subprocess.run
 
