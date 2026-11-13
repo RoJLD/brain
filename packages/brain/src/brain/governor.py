@@ -9,7 +9,9 @@ the desktop app's session files (``%LOCALAPPDATA%/Claude-Data/*/claude-code-sess
 the session records the Stop hook writes (``<BRAIN_HOME>/sessions/<id>.json``), the machine's committed memory and
 available RAM, and
 its configuration resolved once and cached in ``<BRAIN_HOME>/cache/governor.json`` while config.json and the
-registry keep their mtime and size. Its decision takes under 50 ms (tests/test_governor.py checks it).
+registry keep their mtime and size. Its decision takes under 50 ms (tests/test_governor.py checks it) for a subagent,
+a workflow, and a new session with the wave quota gate off; with it on, a start_session reads the app's sessions and
+its children's transcripts too (~40-70 ms measured, bounded at 2 s: brain.wavegate, tests/test_hook_latency.py).
 
 The checks, in order; the first that holds decides:
 
@@ -36,14 +38,18 @@ The checks, in order; the first that holds decides:
   through is noted in ``usage/starts.jsonl``, so the next start counts it before its first turn ends (a log rotated
   monthly, two months kept, brain.stateio: the hook reads the live file and the newest monthly one, so a start just
   before the month turned still counts; the quota readings likewise).
+- ``streams`` and ``wave_quota``, the wave quota gate (brain.wavegate, wi-brain-wave-quota-gate), only with config.json
+  ``usage.guard.wave_quota`` (absent: off) and for a start_session call that starts a session now: deny a stream when
+  its master already has ``max_streams`` live ones, ask when the week's forecast at its reset plus the stream's
+  estimate goes over ``ask_over_pct``; what it cannot read lets the call through with a note in the hook's context.
 - ``warn``: a window at ``warn`` % or more: ask the owner, for every tool.
 
 The thresholds and caps are config.json's ``usage.guard`` (:data:`DEFAULTS`), never rule text. A refusal names the
 reason and the allow that lifts it (wi-brain-governor-override-scope, RETRO-8): ``brain usage allow [--check NAME]
 [--hours H]`` in the owner's own terminal (the guards refuse it to a session, and any write of its file) lifts checks,
-not the governor: by default the memory and session caps (:data:`DEFAULT_LIFT`), a quota threshold only when named
-(critical lifts warn too), a stale reading never (reading it again is one call); a lifted check lets the next one
-decide. ``BRAIN_GUARD_ALLOW=usage`` in Claude Code's environment lifts every check, ``usage:CHECK`` one. Refusals,
+not the governor: by default the memory and session caps (:data:`DEFAULT_LIFT`), a quota threshold or a check of the
+wave quota gate (streams, wave_quota) only when named (critical lifts warn too), a stale reading never (reading it
+again is one call); a lifted check lets the next one decide. ``BRAIN_GUARD_ALLOW=usage`` in Claude Code's environment lifts every check, ``usage:CHECK`` one. Refusals,
 asks and overrides go to the guards ledger (``guard: usage``, the check that decided, ``by`` the allow or the
 variable), and so does each allow and its end (``check: allow``, ``decision`` allowed or ended: ended or expired);
 an allow adds to the one in force. Any error lets the call through and
@@ -69,7 +75,7 @@ GUARD = "usage"
 DEFAULTS = {"enabled": True, "warn": 80.0, "critical": 95.0, "sessions": 8, "brainstorms": 2, "memory": 97.0,
             "memory_available_gb": 0.0, "wave_hours": 4.0, "session_hour_usd": 14.0, "session_hour_measured": False,
             "fresh_minutes": 60, "live_minutes": 30,
-            "brainstorm_hours": 12, "brainstorm_title": r"^\W*brainstorm\b"}
+            "brainstorm_hours": 12, "brainstorm_title": r"^\W*brainstorm\b", "wave_quota": None}
 LOWER_ONLY = ("sessions", "brainstorms")   # what a project's usage: may lower for itself, never raise
 SESSION_TOOL = re.compile(r"^mcp__.+__start_session$")
 AGENT_TOOLS = ("Agent", "Task")
@@ -79,9 +85,12 @@ WINDOWS = {"week": timedelta(days=7), "5h": timedelta(hours=5)}
 OPTED_IN = timedelta(days=7)        # a machine with a reading this recent is checked for stale readings
 PENDING = timedelta(minutes=10)     # a brainstorm start counts this long before the app shows its session
 ALLOW_HOURS = 2.0
-CHECKS = ("critical", "stale", "memory", "sessions", "brainstorms", "warn")   # verdict's, in its order
-LIFTABLE = ("critical", "memory", "sessions", "brainstorms", "warn")   # never stale: one get_usage call refreshes it
-DEFAULT_LIFT = ("memory", "sessions", "brainstorms")   # what brain usage allow lifts without --check (RETRO-8)
+# verdict's checks, in its order; the ones brain usage allow lifts (never stale: one get_usage call refreshes it);
+# what it lifts without --check (RETRO-8): the machine's caps; a quota threshold and the wave quota gate's opt-in
+# checks (streams, wave_quota) only when named
+CHECKS = ("critical", "stale", "memory", "sessions", "brainstorms", "streams", "wave_quota", "warn")
+LIFTABLE = ("critical", "memory", "sessions", "brainstorms", "streams", "wave_quota", "warn")
+DEFAULT_LIFT = ("memory", "sessions", "brainstorms")
 
 
 def kind(tool: str) -> str:
@@ -134,6 +143,11 @@ def limits_of(data: dict | None) -> tuple[dict, list[str]]:
     for key, value in given.items():
         if key not in DEFAULTS:
             errors.append(f"usage.guard.{key}: unknown (known: {', '.join(DEFAULTS)})")
+            continue
+        if key == "wave_quota":   # the wave quota gate's mapping (brain.wavegate)
+            from . import wavegate
+            out[key], errs = wavegate.config_of(value)
+            errors += errs
             continue
         want = type(DEFAULTS[key])
         ok = isinstance(value, bool) if want is bool else isinstance(value, str) if want is str else \
@@ -274,7 +288,8 @@ def quota_now(now: datetime, lim: dict) -> dict:
     out: dict = {"windows": {}, "newest": _iso(newest) if newest else None,
                  "opted_in": bool(newest and newest >= now - OPTED_IN), "usd_per_pct": None}
     conv = status.get("conversion") if isinstance(status.get("conversion"), dict) else {}
-    if isinstance(conv.get("usd_per_pct"), (int, float)) and conv["usd_per_pct"] > 0:
+    if isinstance(conv.get("usd_per_pct"), (int, float)) and not isinstance(conv["usd_per_pct"], bool) \
+            and conv["usd_per_pct"] > 0:
         out["usd_per_pct"] = float(conv["usd_per_pct"])
     sh = status.get("session_hour") if isinstance(status.get("session_hour"), dict) else {}
     out["session_hour_usd"] = float(sh["usd"]) if isinstance(sh.get("usd"), (int, float)) and sh["usd"] > 0 else None
@@ -289,13 +304,14 @@ def quota_now(now: datetime, lim: dict) -> dict:
             if s_at and s_resets and s_resets > now and s_at > at and abs(s_resets - _dt(r["resets"])) < \
                     timedelta(minutes=5):
                 pct, at, how = float(status["pct_now"]), s_at, "forecast"
+        base = pct   # as read at ``at``, before the pace: brain.wavegate projects from it
         pace = (status.get("pace") or {}).get("pct_h") if w == "week" else None
         if isinstance(pace, (int, float)) and pace > 0:
             hours = min(max(0.0, (now - at).total_seconds() / 3600), lim["fresh_minutes"] / 60)
             pct += pace * hours
             how += f" + {pace:.2f} %/h x {hours:.1f} h"
         out["windows"][w] = {"pct": round(min(pct, 100.0), 1), "at": _iso(at), "how": how,
-                             "resets": r["resets"]}
+                             "resets": r["resets"], "base_pct": round(base, 2)}
     return out
 
 
@@ -675,6 +691,9 @@ def state(payload: dict, now: datetime | None = None) -> dict:
         room = (100 - week["pct"]) * q["usd_per_pct"]
         out["quota_cap"] = max(0, math.floor(room / max(1e-9, lim["wave_hours"] * out["session_hour_usd"])) - 1)
     out["override"] = override_until(now)
+    if lim.get("wave_quota"):   # the wave quota gate (brain.wavegate): a start_session that starts a stream now
+        from . import wavegate
+        out["wave"] = wavegate.for_start(k, lim, inp, str(payload.get("session_id") or ""), now, q)
     return out
 
 
@@ -727,7 +746,7 @@ def _stale(s: dict, lim: dict, q: dict, what: str):
 
 
 def _session_caps(s: dict, lim: dict, q: dict, what: str):
-    """A new session's caps, in order: the parallel sessions, then the brainstorms."""
+    """A new session's caps, in order: the parallel sessions, the brainstorms, then the wave quota gate's."""
     ss = s["sessions"]
     cap, why = int(lim["sessions"]), f"usage.guard.sessions {lim['sessions']:g}"
     if s.get("quota_cap") is not None and s["quota_cap"] < cap:
@@ -744,6 +763,9 @@ def _session_caps(s: dict, lim: dict, q: dict, what: str):
         yield ("deny", "brainstorms", f"a new brainstorm refused: {ss['brainstorms']} brainstorm(s) open on this "
                 f"machine ({names or 'not named'}), the cap is {lim['brainstorms']:g}"
                 + (f" for {s['project']}" if s["project"] else "") + "; finish or archive one first")
+    if s.get("wave"):   # the wave quota gate (brain.wavegate): streams, then wave_quota
+        from . import wavegate
+        yield from wavegate.verdicts(s["wave"])
 
 
 def override_hint(owner: str, check: str = "") -> str:
@@ -762,15 +784,25 @@ def _record(payload: dict, check: str, decision: str, reason: str, by: str = "")
     _ledger({**rec, "by": by} if by else rec)
 
 
-def _note_start(payload: dict, s: dict) -> None:
+def _note_start(payload: dict, s: dict, asked: bool = False) -> None:
+    """A start let through, noted so the next start counts it before the app shows it: a brainstorm (not a proposal's
+    start: its title is not in the call), and a stream while the wave quota gate is on (``stream``). A start the hook
+    asks the owner about (``asked``) is noted as a stream too, so that parallel starts in one message see each other:
+    brain.wavegate counts a start no child matches for a minute only, so one the owner declined holds no slot longer.
+    The line goes through brain.timing's lock: hooks at once neither lose nor mix one."""
     inp = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
-    if not s.get("brainstorm") or inp.get("initiation") not in ("user_asked", None) or inp.get("proposal_id"):
+    brainstorm = bool(s.get("brainstorm") and inp.get("initiation") in ("user_asked", None)
+                      and not inp.get("proposal_id") and not asked)
+    stream = bool((s.get("wave") or {}).get("max_streams"))
+    if not brainstorm and not stream:
         return
     f = paths.brain_home() / "usage" / "starts.jsonl"
     f.parent.mkdir(parents=True, exist_ok=True)
     stateio.rotate_log(f, keep=stateio.LOG_RETENTION["starts"])
-    rec = {"at": s["now"], "brainstorm": True, "title": str(inp.get("title") or ""), "project": s["project"],
+    rec = {"at": s["now"], "brainstorm": brainstorm, "title": str(inp.get("title") or ""), "project": s["project"],
            "by": payload.get("session_id")}
+    if stream:
+        rec.update(stream=True, name=str(inp.get("name") or ""), asked=asked)
     timing.append(f, rec)
 
 
@@ -801,19 +833,41 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
         from . import budget
         budget.expire(str(payload.get("session_id") or ""))   # the budget watch checks at the next call: a master
     if v is None:
-        if s["kind"] == "session":
-            _note_start(payload, s)
-            note = master_note(str(payload.get("session_id") or ""))
-            if note:   # ST-4: a reminder with the call, never a refusal
-                return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": note}}
-        return None
+        return _let_through(payload, s) if s["kind"] == "session" else None
     decision, check, reason = v
     _record(payload, check, "denied" if decision == "deny" else "asked", reason)
+    if decision == "ask" and s["kind"] == "session":
+        _note_asked(payload, s)
     text = f"{s['plugin']} usage guard: {reason}."
     if decision == "deny":
         text += f" {override_hint(s['owner'], check)}."
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                    "permissionDecisionReason": text}}
+
+
+def _note_asked(payload: dict, s: dict) -> None:
+    """A start the hook asks about, noted (the owner may say yes: a parallel start must count it); a starts log it
+    cannot write never drops the ask: the failure goes to errors.log."""
+    try:
+        _note_start(payload, s, asked=True)
+    except OSError as exc:
+        from .capture import _log_error
+        _log_error("governor note_start", exc)
+
+
+def _let_through(payload: dict, s: dict) -> dict | None:
+    """A start_session let through: the start noted, and the hook's context when there is something to say (what the
+    wave quota gate could not read; the master's watch, ST-4: a reminder with the call, never a refusal)."""
+    _note_start(payload, s)
+    notes = []
+    if s.get("wave"):
+        from . import wavegate
+        notes = wavegate.notes(s["wave"])
+    note = master_note(str(payload.get("session_id") or ""))
+    notes += [note] if note else []
+    if not notes:
+        return None
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "\n".join(notes)}}
 
 
 def main(stdin=None, stdout=None) -> int:
@@ -837,13 +891,21 @@ def report(cwd: str, now: datetime | None = None) -> dict:
     """``brain usage guard``: what each tool would get now, from the same state the hook reads."""
     now = now or _now()
     out = {}
+    from . import sessions  # the session ids from the environment
+    me = sessions.here()
+    master = me["host_id"] or me["session"]
     for tool, inp in (("mcp__ccd_session__start_session", {"title": "a session"}),
                       ("mcp__ccd_session__start_session", {"title": "Brainstorm"}), ("Agent", {}), ("Workflow", {})):
-        s = state({"tool_name": tool, "tool_input": inp, "cwd": cwd}, now)
+        s = state({"tool_name": tool, "tool_input": inp, "cwd": cwd, "session_id": master}, now)
         v = verdict(s, lifted_checks(s["override"]))   # what the hook decides: the override's checks passed over
         name = "brainstorm" if inp.get("title") == "Brainstorm" else kind(tool)
         out[name] = {"decision": v[0] if v else "allow", "check": v[1] if v else "", "reason": v[2] if v else ""}
         out.setdefault("state", s)
+    out["waves"] = None
+    wq = out["state"]["caps"].get("wave_quota")
+    if wq:   # how many streams fit now, each at the median session's cost (brain.wavegate)
+        from . import wavegate
+        out["waves"] = wavegate.room(cwd, master, [None] * (int(wq["max_streams"]) or 10), now)
     return out
 
 
@@ -878,6 +940,8 @@ def render(rep: dict) -> list[str]:
     out.append(f"  newest    {q['newest'] or 'none'}" + ("" if q["opted_in"] else " (not checked: no reading in 7 d)"))
     out += _session_lines(s, lim, q)
     out.append(f"  memory    {memory_text(s.get('memory'), s.get('ram_available_gb'), lim)}")
+    from . import wavegate
+    out.append(wavegate.guard_line(lim, rep.get("waves"), lifted_checks(s.get("override"))))
     ov = s.get("override")
     out.append(f"  override  {', '.join(lifted_checks(ov))} until {ov['until']}"
                + (f" ({ov['reason']})" if ov.get("reason") else "") if ov else "  override  none")

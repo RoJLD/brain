@@ -13,7 +13,8 @@ USAGE = """\
   brain brief ITEM [--class trivial|standard|strategic] [--budget 400k] [--coordinator ID] [--notes DIR] [--write F]
                         a sub-session's brief from the graph: the item, its decided props and open questions, its
                         subgraph, its specs and ADRs, its files and collisions, the class's model and effort
-                        (config.json brief.classes), the budget, the cost estimate, the coordinator's id (--coordinator,
+                        (config.json brief.classes), the budget, the cost estimate, the streams that fit now for the
+                        coordinator (while config.json usage.guard.wave_quota is set), the coordinator's id (--coordinator,
                         else $CLAUDE_CODE_HOST_SESSION_ID), the shared notes folder, what to do after the merge
                         (close-item step 5: the session that merges its own PR archives itself, the coordinator archives
                         a child reported merged and verified; config.json brief.after_merge), and the definition of
