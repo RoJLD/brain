@@ -4,9 +4,11 @@ A Milestone may carry ``props.kind``:
 
 - ``wave``: a release's batch of work. Its id carries no version (wi-brain-wave-ids-decoupled, the owner's WAVES-3 to
   WAVES-5): ``wave-sN``, N its place in the order of the waves (``props.seq``); its release is a label, computed:
-  a reached wave's ``props.shipped_as`` (the version its PR shipped), else its ``props.release`` (a legacy wave
-  ``wave-X.Y.Z``, or one pinned by brain wave import), else the next patch after the release of the wave before it.
-  So when a wave ships as a higher version than planned, the later waves follow without an edit. ``props.week``
+  :meth:`Plan.label` is its ``props.release`` (a legacy wave ``wave-X.Y.Z``, or one pinned by brain wave import or
+  --carry-to when it is not the computed one), else computed: the next patch after the release the last wave before
+  it that was not dropped shipped as. A reached wave's ``props.shipped_as`` (the version its PR shipped) is what the
+  later waves count from, and it resolves the wave too. So when a wave ships as a higher version than planned, the
+  later waves follow without an edit. A dropped wave holds no release (its ids still resolve). ``props.week``
   optional. Its members are work items (``part_of``); it is itself ``part_of`` a milestone or an era. An item is in
   one wave at most: the one it is ``part_of``, or, once that wave closed without it, the later wave its
   ``props.carried_to`` names (a wave id or its release). The edge to the first wave stays: it says where the item was
@@ -697,7 +699,7 @@ def render_next(rep: dict, explain: bool = False, slot: bool = True) -> list[str
     cur = rep["current"]
     if cur is None and rep.get("waves"):
         return [f"No open wave: all {rep['waves']} wave(s) are closed (reached or dropped); plan the next one: brain "
-                f"wave add X.Y.Z --parent MS"]
+                f"wave add --parent MS (its release computed)"]
     if cur is None:
         return ["No open wave: a Milestone with props.kind wave and props.release X.Y.Z (brain wave import proposes "
                 "them from the items' props.wave)"]

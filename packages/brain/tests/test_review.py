@@ -155,7 +155,8 @@ def test_stamp_places_the_review_and_says_when_the_note_and_the_counts_differ(pr
     repo, base, head = pr
     note = tmp_path / "review.md"
     note.write_text(NOTE, encoding="utf-8")
-    plan = SimpleNamespace(wave_of=lambda nid: "wave-0.4.1" if nid == "wi-x" else None, label=lambda w: "0.4.1")
+    plan = SimpleNamespace(wave_of=lambda nid: "wave-0.4.1" if nid == "wi-x" else None, label=lambda w: "0.4.1",
+                           resolve=lambda ref: None, waves=["wave-0.4.1"])
     monkeypatch.setattr(standards, "project_of_repo", lambda r: SimpleNamespace(stores=[tmp_path]))
     monkeypatch.setattr(waves, "applies", lambda store: True)
     monkeypatch.setattr(waves, "load", lambda store: plan)
@@ -166,6 +167,7 @@ def test_stamp_places_the_review_and_says_when_the_note_and_the_counts_differ(pr
     rec = review.check(head)
     assert (rec["pr"], rec["item"], rec["wave"], rec["stream"], len(rec["rows"])) == ("7", "wi-x", "0.4.1",
                                                                                       "lot review", 4)
+    assert rec["wave_id"] == "wave-0.4.1"   # the wave's stable id: its label may move
     # an item no plan places, and --wave given: the stamp says what it was told
     assert cli.main(["review", "stamp", base, "--findings", "0", "--fixed", "0", "--item", "wi-y", "--wave", "0.4.2",
                      "--repo", str(repo)]) == 0
@@ -314,3 +316,13 @@ def test_prep_item_in_a_repo_of_no_project_is_refused(pr, brain_home, monkeypatc
     monkeypatch.setattr(standards, "project_of_repo", lambda r: None)
     assert cli.main(["review", "prep", f"{base}..{head}", "--item", "wi-x", "--repo", str(repo), "--no-scout"]) == 1
     assert "--item wi-x: this repo belongs to no registered project" in capsys.readouterr().err
+
+
+def test_the_score_counts_a_stamp_in_its_wave_s_release_now():
+    """wi-brain-wave-ids-decoupled: wave-s3 was stamped as 1.0.2, then wave 1.0.1 shipped as 1.1.0 and wave-s3 is
+    1.1.1 now; a stamp without a wave_id keeps its label."""
+    recs = [{"head": "a" * 40, "findings": 2, "fixed": 2, "pr": "1", "wave": "1.0.2", "wave_id": "wave-s3"},
+            {"head": "b" * 40, "findings": 1, "fixed": 1, "pr": "2", "wave": "1.0.2"}]
+    assert [w["wave"] for w in review.score(recs)["waves"]] == ["1.0.2"]
+    got = {w["wave"]: w["prs"] for w in review.score(recs, labels={"wave-s3": "1.1.1"})["waves"]}
+    assert got == {"1.0.2": 1, "1.1.1": 1}

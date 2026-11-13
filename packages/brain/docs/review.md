@@ -72,7 +72,9 @@ remote, else its folder's name), so that a PR stamped on several heads counts on
 stamped again after a fix carries the whole review's counts, not what is left of it. A stamp without `--pr` is one
 review of one head (the command says so when `--item` comes without it). `--item` names the item it delivers, whose
 wave (`brain.waves`, in the repo's registered project) places the stamp, else `--wave X.Y.Z`; `--stream` the lot or
-stream it belongs to.
+stream it belongs to. The stamp keeps the wave's release as stamped (`wave`) and its stable id (`wave_id`), and
+`brain review score` counts a stamp in its wave's release now: a label moves when an earlier wave ships as a higher
+version (wi-brain-wave-ids-decoupled).
 
 With `--pr N` (or `--body FILE`), `brain review check` also refuses while a pinned decision the change touches is
 neither kept nor overridden in the PR body (`docs/pins.md`).

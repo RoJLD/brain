@@ -482,7 +482,7 @@ def test_next_when_every_wave_is_closed(tmp_path, capsys):
     _write(root / "notes" / "graph", nodes)
     assert cli.main(["--root", str(root), "next"]) == 0
     assert capsys.readouterr().out.startswith("No open wave: all 3 wave(s) are closed (reached or dropped); plan the "
-                                              "next one: brain wave add X.Y.Z --parent MS")
+                                              "next one: brain wave add --parent MS (its release computed)")
 
 
 # --- the release forecast (wi-brain-wave-version-forecast): brain next and brain wave check say it ---
