@@ -1,7 +1,14 @@
 # The OpenTelemetry collector of the sovereign stack. OTLP in on 4317 (gRPC) and 4318 (HTTP), published on
 # 127.0.0.1 only; metrics out to Prometheus (it scrapes :8889 on the stack's network) and to JSONL files, logs and
-# events out to Loki and to JSONL files. The files, under BRAIN_HOME (placement data home), are what DuckDB reads
-# (wi-brain-otel-telemetry). No prompt text is kept: the prompt attribute is dropped on the way in.
+# events out to Loki and to JSONL files. The files, under BRAIN_HOME (placement data home), are what brain telemetry
+# reads (brain.otel; DuckDB too, when installed).
+#
+# What is kept (the owner's decisions ST-7 and ST-8, 2026-11-03): no prompt or response text, no tool parameters, no
+# error text (a failure keeps its class, error_type), and nothing that names the account: user.email,
+# user.account_uuid, user.account_id and process.owner (the operating system's user name) are dropped from every
+# record's attributes and from its resource, in every pipeline, before any exporter (tests/test_otel.py checks it).
+# The names an MCP or a skill call carries in its tool parameters are kept apart first (mcp_server.name,
+# mcp_tool.name, skill.name), then the parameters are dropped.
 extensions:
   health_check:
     endpoint: 0.0.0.0:13133
@@ -19,10 +26,30 @@ processors:
     check_interval: 1s
     limit_mib: 256
     spike_limit_mib: 64
-  attributes/no-prompts:  # metrics and events without prompt text (the owner, 2026-11-01)
-    actions:
-      - key: prompt
-        action: delete
+  transform/tool-names:  # logs only: the MCP server, MCP tool and skill a call names, kept before the parameters go
+    error_mode: ignore
+    log_statements:
+      - context: log
+        conditions:
+          - attributes["tool_parameters"] != nil
+        statements:
+          - set(cache["p"], ParseJSON(attributes["tool_parameters"]))
+          - set(attributes["mcp_server.name"], cache["p"]["mcp_server_name"]) where cache["p"]["mcp_server_name"] != nil
+          - set(attributes["mcp_tool.name"], cache["p"]["mcp_tool_name"]) where cache["p"]["mcp_tool_name"] != nil
+          - set(attributes["skill.name"], cache["p"]["skill_name"]) where cache["p"]["skill_name"] != nil
+  attributes/private:  # a data point's or an event's own attributes (ST-7, ST-8)
+    actions: &private
+      - {key: prompt, action: delete}
+      - {key: prompt_text, action: delete}
+      - {key: response, action: delete}
+      - {key: tool_parameters, action: delete}
+      - {key: error, action: delete}
+      - {key: user.email, action: delete}
+      - {key: user.account_uuid, action: delete}
+      - {key: user.account_id, action: delete}
+      - {key: process.owner, action: delete}
+  resource/private:  # the same keys on the resource every record of a batch shares
+    attributes: *private
   batch: {}
 
 exporters:
@@ -42,9 +69,9 @@ service:
   pipelines:
     metrics:
       receivers: [otlp]
-      processors: [memory_limiter, attributes/no-prompts, batch]
+      processors: [memory_limiter, attributes/private, resource/private, batch]
       exporters: [prometheus, file/metrics]
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, attributes/no-prompts, batch]
+      processors: [memory_limiter, transform/tool-names, attributes/private, resource/private, batch]
       exporters: [otlphttp/loki, file/logs]
