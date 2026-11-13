@@ -467,7 +467,10 @@ and `brain sync` is its one writer): the tree era > milestone > wave > items, ea
 on the owner (its `props.open`, its `external_blocker`, the pending DDRs on it), each wave's carried items first,
 then the startable ones. `brain next [--explain] [--json]` prints its first part at zero token: the current wave (the
 lowest release not closed), its quick wins, its items carried from an earlier wave, its startable items, what waits on
-the owner, the other open ones, then the next wave.
+the owner, the other open ones, then the next wave. Under the current wave's head, the release forecast: whether it
+ships as the patch it is named for or as a minor, the first PR that tipped it and why (`release_check.py --preview
+--ref --json` on the engine checkout's `origin/main`, `brain.nextrelease`; `brain wave check X.Y.Z` says it too;
+`docs/release.md`, « The release preview »).
 
 Each group, here and in the view, is ranked (`brain.ranking`): the owner's priority first (a confirmed one before the
 same one proposed), then the owner's explicit order (`props.order`, a number, lower first), then WSJF, value over
