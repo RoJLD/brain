@@ -509,7 +509,7 @@ function Add-ProfileExtras {
     $chosen = Read-Tier
     Show-Tier $chosen
     if (-not $chosen.render) {
-        "note     to install the cockpit's Textual app anyway: -Apply -Extras tui"
+        if ($wanted -notcontains 'tui') { "note     to install the cockpit's Textual app anyway: -Apply -Extras tui" }
         return
     }
     $more = @($chosen.render.extras | Where-Object { $_ -and $wanted -notcontains $_ })

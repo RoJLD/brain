@@ -12,9 +12,13 @@ from pathlib import Path
 
 import pytest
 
+from brain import paths
+
 INSTALLER = Path(__file__).resolve().parents[1] / "installer" / "install.ps1"
 PS = shutil.which("powershell.exe") or shutil.which("pwsh")   # Windows PowerShell, else PowerShell 7 (Linux)
-pytestmark = pytest.mark.skipif(not PS, reason="no PowerShell to run install.ps1")
+pytestmark = [pytest.mark.skipif(not PS, reason="no PowerShell to run install.ps1"),
+              pytest.mark.skipif(paths.package_repo() is not None,
+                                 reason="the engine sits in a brain of its own: a root is always found")]
 FUNCS = ("Get-Spec", "Invoke-Brain", "Read-Tier", "Show-Tier", "Add-ProfileExtras")
 
 
@@ -31,7 +35,8 @@ def extras_step(tmp_path, tier_args=(), wanted=(), apply=True) -> str:
     def arr(items):
         return "@(" + ", ".join(f"'{i}'" for i in items) + ")"
 
-    script = (f"$ErrorActionPreference = 'Stop'\n$Apply = ${str(apply).lower()}\n$Engine = ''\n$repo = $null\n"
+    script = (f"$ErrorActionPreference = 'Stop'\n[Console]::OutputEncoding = New-Object Text.UTF8Encoding $false\n"
+              f"$Apply = ${str(apply).lower()}\n$Engine = ''\n$repo = $null\n"
               f"$engine_repo = 'RoJLD/brain'\n$engine_pin = 'v9.9.9'\n$venv_python = '{sys.executable}'\n"
               f"$tier_args = {arr(tier_args)}\n$wanted = {arr(wanted)}\n"
               "function Install-Brain([string]$spec) { \"PIP $spec\" }\n"
@@ -41,7 +46,7 @@ def extras_step(tmp_path, tier_args=(), wanted=(), apply=True) -> str:
     env = {k: v for k, v in os.environ.items() if not k.startswith("BRAIN_")}
     env["BRAIN_HOME"] = str(home)
     r = subprocess.run([PS, "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True,
-                       timeout=300, cwd=tmp_path, env=env)
+                       encoding="utf-8", errors="replace", timeout=300, cwd=tmp_path, env=env)
     assert r.returncode == 0, r.stderr
     return r.stdout
 
@@ -61,7 +66,8 @@ def test_the_plan_names_the_extras_and_installs_nothing(tmp_path):
 
 
 def test_an_extra_already_asked_is_not_installed_twice_and_lite_wants_none(tmp_path):
-    assert "PIP " not in extras_step(tmp_path, wanted=["tui"])
+    out = extras_step(tmp_path, wanted=["tui"])
+    assert "built-in); extras tui;" in out and "PIP " not in out
     out = extras_step(tmp_path, tier_args=["lite"], apply=False)
     assert "lite (Lite" in out and "extras none" in out and "install  the profile's extras" not in out
 
@@ -69,3 +75,5 @@ def test_an_extra_already_asked_is_not_installed_twice_and_lite_wants_none(tmp_p
 def test_a_render_that_fails_says_how_to_add_the_extras(tmp_path):
     out = extras_step(tmp_path, tier_args=["--with", "no-such-entry"], apply=False)
     assert "no capability or stack 'no-such-entry'" in out and "-Apply -Extras tui" in out and "PIP " not in out
+    out = extras_step(tmp_path, tier_args=["--with", "no-such-entry"], wanted=["tui"], apply=False)
+    assert "no capability or stack" in out and "-Extras tui" not in out   # already asked: no hint

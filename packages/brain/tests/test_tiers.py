@@ -264,6 +264,7 @@ def test_render_runs_with_no_root_from_an_empty_home(tmp_path, monkeypatch, caps
     gives the built-in base's extras instead of stopping on the missing root, so a first install.ps1 -Apply installs
     the cockpit's tui (wi-brain-install-profile-extras); set plans there too, and --root still runs at that root."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(paths, "package_repo", lambda: None)   # an engine inside a brain of its own finds that root
     monkeypatch.setattr(probe, "collect", lambda quick=False, roots=None, timeouts=None: _doc())
     with pytest.raises(SystemExit):
         paths.find_root()
