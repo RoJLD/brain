@@ -1,68 +1,122 @@
 """``brain wave rename`` (wi-brain-wave-ids-decoupled, the owner's WAVES-5): a legacy wave ``wave-X.Y.Z`` renamed once
-to an id that carries no version (``wave-sN``, its place), its references rewritten in the store's hand-written node
-and edge files, its old id kept in ``props.renamed_from`` where :meth:`brain.waves.Plan.resolve` still finds it.
+to an id that carries no version (``wave-sN``, its place), its references rewritten in the store's node and edge files
+(the generated ones too, so the store loads before the next brain sync), its old id kept in ``props.renamed_from``
+where :meth:`brain.waves.Plan.resolve` still finds it.
+
+Only YAML values are rewritten: an ``id``, an edge's ``from`` and ``to``, an item's ``carried_to`` and each id of its
+``carried_via``; a comment or a free text that names the old id is left as written. A default title
+(« Wave <old release> ») becomes « Wave sN ».
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
 from . import graph
 from .waves import ID_RE, WaveError, _props, load
 
+
 @dataclass(frozen=True)
 class Renaming:
     old: str
     new: str
-    files: dict[str, int]   # store-relative file -> the references rewritten
+    files: dict[str, int]   # store-relative hand-written file -> the references rewritten
     seq: int
     release: str            # its label after the rename
+    generated: dict[str, int] = field(default_factory=dict)   # the generated files (brain sync's) rewritten too
+    title: str = ""         # the default title it gets, '' when its title is kept
 
 
-def _ref_re(wid: str) -> re.Pattern:
-    return re.compile(rf"(?<![\w.-]){re.escape(wid)}(?![\w.-])")
+def _value_res(wid: str) -> tuple[re.Pattern, re.Pattern]:
+    """(an id, from, to or carried_to whose value is ``wid``; a carried_via value that holds it)."""
+    old = re.escape(wid)
+    single = re.compile(rf"((?:^|[{{,\s-])(?:id|from|to|carried_to)\s*:\s*)([\"']?){old}\2(?=\s*(?:[,}}\]#]|$))",
+                        re.M)
+    via = re.compile(r"((?:^|[{,\s])carried_via\s*:\s*)([\"'])([^\"'\n]*)\2|((?:^|[{,\s])carried_via\s*:\s*)"
+                     r"([^\"'\n#{}][^\n#}]*)", re.M)
+    return single, via
 
 
-def _references(store: Path, rx: re.Pattern) -> dict[str, int]:
-    """The hand-written node and edge files of ``store`` that name the wave: store-relative path -> how many times."""
-    hand = [store / "edges.yaml", *sorted((store / "nodes").glob("*.yaml")), *sorted((store / "edges").glob("*.yaml"))]
-    found = {f.relative_to(store).as_posix(): len(rx.findall(f.read_text(encoding="utf-8")))
-             for f in hand if f.is_file() and not f.name.startswith("_generated")}
+def _rewrite(text: str, old: str, new: str) -> tuple[str, int]:
+    """``text`` with the YAML values naming ``old`` rewritten to ``new``, and how many."""
+    single, via = _value_res(old)
+    text, n = single.subn(lambda m: f"{m.group(1)}{m.group(2)}{new}{m.group(2)}", text)
+    token = re.compile(rf"(?<![\w.-]){re.escape(old)}(?![\w.-])")
+    count = [n]
+
+    def one(m: re.Match) -> str:
+        if m.group(1) is not None:
+            value, k = token.subn(new, m.group(3))
+            count[0] += k
+            return f"{m.group(1)}{m.group(2)}{value}{m.group(2)}"
+        value, k = token.subn(new, m.group(5))
+        count[0] += k
+        return f"{m.group(4)}{value}"
+    text = via.sub(one, text)
+    return text, count[0]
+
+
+def _files(store: Path) -> list[Path]:
+    """The store's node and edge files, the generated ones included."""
+    return [f for f in [store / "edges.yaml", *sorted((store / "nodes").glob("*.yaml")),
+                        *sorted((store / "edges").glob("*.yaml"))] if f.is_file()]
+
+
+def _references(store: Path, old: str, new: str) -> dict[str, int]:
+    """Each node or edge file of ``store`` whose values name the wave: store-relative path -> how many."""
+    found = {f.relative_to(store).as_posix(): _rewrite(f.read_text(encoding="utf-8"), old, new)[1]
+             for f in _files(store)}
     return {k: n for k, n in found.items() if n}
+
+
+def _generated(rel: str) -> bool:
+    return rel.rsplit("/", 1)[-1].startswith("_generated")
+
+
+def _check_new(plan, old: str, new: str, store: Path) -> None:
+    if not ID_RE.match(new):
+        raise WaveError(f"{new}: a wave id is wave-<letters, digits, dashes>, no dot (it carries no version)")
+    if new == old or new in plan.nodes:
+        raise WaveError(f"{new}: already a node of {store}")
+    taken = next((w for w in plan.waves if w != old and new in plan.former(w)), None)
+    if taken:
+        raise WaveError(f"{new}: a former id of {taken} (props.renamed_from), which it still resolves to")
 
 
 def rename(store: Path, ref: str, new: str = "", *, write: bool = False, today: str | None = None) -> Renaming:
     """A wave renamed once to an id that carries no version (the owner's WAVES-5): ``new`` (default ``wave-sN``, its
-    place) in every hand-written node and edge file of ``store`` (the items' part_of edges, carried_to and
-    carried_via); a pending wave's props.release dropped (its label computed from then on); its old id appended to
-    props.renamed_from, so it still resolves. The generated files follow at the next brain sync; the append-only
-    logs keep the old id."""
+    place) in the YAML values of every node and edge file of ``store`` (its id, the edges' from and to, the items'
+    carried_to and carried_via; the generated files too, so the store loads before brain sync rebuilds them); a
+    pending wave's props.release dropped (its label computed from then on); a default title « Wave <old release> »
+    made « Wave sN »; its old id appended to props.renamed_from, so it still resolves. The append-only logs keep the
+    old id."""
     plan = load(store)
     old = plan.resolve(ref)
     if old is None:
         raise WaveError(f"{ref}: no wave of that id or release")
     seq = plan.seq(old) or plan.waves.index(old) + 1
     new = new or f"wave-s{seq}"
-    if not ID_RE.match(new):
-        raise WaveError(f"{new}: a wave id is wave-<letters, digits, dashes>, no dot (it carries no version)")
-    if new == old or new in plan.nodes:
-        raise WaveError(f"{new}: already a node of {store}")
-    rx = _ref_re(old)
-    files = _references(store, rx)
+    _check_new(plan, old, new, store)
+    refs = _references(store, old, new)
+    files = {k: n for k, n in refs.items() if not _generated(k)}
+    generated = {k: n for k, n in refs.items() if _generated(k)}
     pending = plan.status(old) == "pending"
+    title = str(plan.nodes[old].get("title") or "")
+    default = {f"Wave {old.removeprefix('wave-')}", f"Wave {plan.label(old)}"}
+    retitle = f"Wave s{seq}" if title in default else ""
     after = plan.label(old) if not pending else ""
     if write:
-        for rel in files:
+        for rel in refs:
             f = store / rel
             raw = f.read_bytes().decode("utf-8")
-            f.write_bytes(rx.sub(new, raw).encode("utf-8"))
+            f.write_bytes(_rewrite(raw, old, new)[0].encode("utf-8"))
         day = today or date.today().isoformat()
         before = str(_props(plan.nodes[old]).get("renamed_from") or "")
         said = f"{old} (brain wave rename, {day})" + (f"; before: {before}" if before else "")
         graph.set_item(store, new, [f"props.seq={seq}", f"props.renamed_from={said}"]
-                       + (["props.release="] if pending else []))
+                       + (["props.release="] if pending else []) + ([f"title={retitle}"] if retitle else []))
         after = load(store).label(new)
-    return Renaming(old, new, files, seq, after)
+    return Renaming(old, new, files, seq, after, generated, retitle)

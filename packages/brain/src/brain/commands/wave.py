@@ -27,9 +27,11 @@ USAGE = """\
                  reached with props.shipped_as X.Y.Z, from which the later waves' releases are computed; without
                  --write, the plan; refused while an open item is neither
   brain wave rename WAVE [NEW] [--write]   a legacy wave-X.Y.Z renamed once to an id without a version (default
-                 wave-sN, its place): its edges, carried_to and carried_via rewritten in the hand-written files, a
-                 pending wave's props.release dropped (its release computed from then on), the old id kept in
-                 props.renamed_from (it still resolves); without --write, what it would rewrite
+                 wave-sN, its place): the YAML values that name it (its id, the edges' from and to, carried_to,
+                 carried_via) rewritten in the store's node and edge files, the generated ones too (comments and free
+                 text left), a default title « Wave X.Y.Z » made « Wave sN », a pending wave's props.release dropped
+                 (its release computed from then on), the old id kept in props.renamed_from (it still resolves; a NEW
+                 that is another wave's former id is refused); without --write, what it would rewrite
   brain wave close-merged X.Y.Z [--repo NAME]... [--repo-dir D]... [--since REF] [--until REF] [--write] [--json]
                  the items the PRs merged since the last release tag deliver (each by the changelog fragment it added,
                  changes/<item>.md, or an item id in its title), closed done with --pr "<repo> #N" and their titles as
@@ -81,9 +83,14 @@ def _rename(args, store: Path) -> int:
     r = waverename.rename(store, args.wave, args.new or "", write=args.write)
     for rel, n in r.files.items():
         print(f"{rel}: {n} reference(s) to {r.old}")
+    for rel, n in r.generated.items():
+        print(f"{rel}: {n} reference(s) to {r.old} (generated: rewritten too, so the store loads before brain sync)")
+    if r.title:
+        print(f"title: {r.title} (its default title named the old release)")
     tail = (f"renamed, its release {r.release or '(computed at the next brain sync)'}; then brain sync and brain "
             f"check" if args.write else "not written: --write")
-    print(f"{r.old} -> {r.new} (seq {r.seq}): {sum(r.files.values())} reference(s) in {len(r.files)} file(s); {tail}")
+    n, k = sum(r.files.values()) + sum(r.generated.values()), len(r.files) + len(r.generated)
+    print(f"{r.old} -> {r.new} (seq {r.seq}): {n} reference(s) in {k} file(s); {tail}")
     return 0
 
 
