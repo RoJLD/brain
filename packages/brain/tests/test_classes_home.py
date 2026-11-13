@@ -462,7 +462,9 @@ def test_home_files_never_enters_a_secret_store(brain_home):
     got = {(s, f.relative_to(brain_home).as_posix()) for s, f in classes.home_files(cfg=cfg)}
     assert got == {("ledger", "ledger/events.jsonl"), ("usage", "usage/quota.json"), ("stray", "stray/x.yaml")}
     assert list(classes.home_files("cloud-model", cfg=cfg)) == []   # sealed stores: never to a cloud model
-    assert {s for s, _ in classes.home_files("offsite", sealed=True, cfg=cfg)} == {"ledger", "usage"}
+    assert {s for s, _ in classes.home_files("offsite", sealed=True, cfg=cfg)} == {"ledger", "usage", "stray"}
+    with pytest.raises(classes.Refused, match="not an exit"):   # never a silent empty walk
+        list(classes.home_files("a-dataset", cfg=cfg))
     declared = config.Config(None, brain_home, {"classes": {"stores": {
         "quota": {"class": "secret", "paths": ["$BRAIN_HOME/usage/quota.json"]}}}})
     assert "usage/quota.json" not in {f.relative_to(brain_home).as_posix()   # a secret store nested in another
@@ -491,3 +493,54 @@ def test_the_probe_measures_the_home_through_the_gate(brain_home):
     (brain_home / "secrets" / "stack" / "big.env").write_bytes(b"0" * 10_000)
     out = probe.probe_disk()["brain_home"]
     assert out["complete"] and 6 <= out["bytes"] < 10_000   # ledger, usage and stray; the secrets never walked
+
+
+def test_an_ancestor_or_a_looser_declaration_never_opens_a_secret_store(brain_home):
+    """The engine's secret stores stay refused whatever the brain declares: a store over all of BRAIN_HOME, or the
+    secrets re-declared sealed; brain classes --check says so."""
+    _home(brain_home)
+    for stores in ({"all": {"class": "sealed", "paths": ["$BRAIN_HOME"]}},
+                   {"secrets": {"class": "sealed", "paths": ["$BRAIN_HOME/secrets"]},
+                    "ipc": {"class": "private", "paths": ["~/.brain-elsewhere/../.brain/ipc", "$BRAIN_HOME/ipc"]}}):
+        cfg = config.Config(None, brain_home, {"classes": {"stores": stores}})
+        got = {f.relative_to(brain_home).as_posix() for _, f in classes.home_files(cfg=cfg)}
+        assert "secrets/stack/db.env" not in got and "ipc/token" not in got, stores
+        assert "ledger/events.jsonl" in got
+    cfg = config.Config(None, brain_home, {"classes": {"stores": {"all": {"class": "sealed", "paths": ["$BRAIN_HOME"]}}}})
+    with pytest.raises(classes.Refused, match="secrets"):   # its path holds a store this reader may not enter
+        classes.home_store("all", cfg=cfg)
+    cfg.file = brain_home / "config.json"   # check() reads a brain that has its file
+    assert any("holds the engine's secret store(s) ipc, secrets" in e for e in classes.check(brain_home, cfg).errors)
+
+
+def test_home_store_refuses_a_path_that_holds_a_nested_secret(brain_home):
+    _home(brain_home)
+    cfg = config.Config(None, brain_home, {"classes": {"stores": {
+        "quota": {"class": "secret", "paths": ["$BRAIN_HOME/usage/quota.json"]}}}})
+    with pytest.raises(classes.Refused, match="quota.json"):
+        classes.home_store("usage", cfg=cfg)
+
+
+def test_a_name_is_decided_by_its_own_store_not_another_of_the_same_name(brain_home):
+    """An undeclared folder named like a declared repo store is sealed by default, never that store's class."""
+    _home(brain_home)
+    (brain_home / "repo").mkdir()
+    (brain_home / "repo" / "x.txt").write_text("x\n", encoding="utf-8")
+    cfg = config.Config(None, brain_home, {"classes": {"stores": {"repo": {"class": "public", "paths": ["**"]}}}})
+    assert [f for _, f in classes.home_files("cloud-model", cfg=cfg)] == []
+
+
+def test_home_files_follows_no_junction(brain_home, tmp_path):
+    import os
+    import subprocess
+
+    if os.name != "nt":
+        pytest.skip("junctions are Windows'")
+    _home(brain_home)
+    target = brain_home / "ledger" / "j"
+    out = subprocess.run(["cmd", "/c", "mklink", "/J", str(target), str(brain_home / "secrets")], capture_output=True,
+                         timeout=30)
+    if out.returncode:
+        pytest.skip("mklink /J failed here")
+    names = {f.relative_to(brain_home).as_posix() for _, f in classes.home_files(cfg=config.Config(None, brain_home))}
+    assert not any(n.startswith("ledger/j/") for n in names)

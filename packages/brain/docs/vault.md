@@ -136,8 +136,12 @@ by mistake, and a store its class keeps from an exit never feeds that exit:
 
   No exit means the read stays in the engine, on this machine.
 - `classes.home_files(exit)` is the only walk of `$BRAIN_HOME`. It yields each file of each store the gate lets that
-  reader read, a store at a time. It never enters a secret store's folder (one nested in another included) and never
-  follows a link. A name no store covers is `sealed` by default.
+  reader read, a store at a time, each top name classed by the deepest store that holds it. It never enters a secret
+  store's folder (one nested in another included), never follows a link or a junction, and refuses an unknown exit.
+  A name no store covers is `sealed` by default.
+- The engine's own secret stores (`secrets`, `ipc`) stay refused whatever the brain declares: a store over all of
+  `$BRAIN_HOME`, or a looser re-declaration, never opens them, and `brain classes --check` refuses such a
+  declaration. `home_store` also refuses a path that holds a store the reader may not enter.
 - `classes.home_names()` lists the names at the top of `$BRAIN_HOME` and opens nothing under them. The uninstaller and
   the check of unknown names use it.
 
@@ -146,9 +150,14 @@ by mistake, and a store its class keeps from an exit never feeds that exit:
   and `os.walk`, `os.scandir`, `os.listdir`, `glob.glob` or `shutil.copytree` of it;
 - in a hook's shell script, a `find`, `ls`, `du`, `tar` or `cp -r` of `$BRAIN_HOME`.
 
-Reading one store's folder (`brain_home() / "ledger"`) is that store's own reader, not a walk of the home. The test
-cannot follow a home passed to another function as an argument: such a function lists the home through
-`home_names(home)`.
+Reading one store's folder (`brain_home() / "ledger"`) is that store's own reader, not a walk of the home. The scan
+is a floor, not a proof. It does not follow:
+- a home passed to another function as an argument;
+- a wrapper that returns `brain_home()`;
+- an annotated or walrus binding;
+- a shell option written before the path.
+
+The engine's own listings of the home go through `home_names(home)`.
 
 ### What the engine reads and never writes
 

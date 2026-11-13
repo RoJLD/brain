@@ -43,7 +43,9 @@ a notes service): ``clear``, ``sealed`` (only through ``brain vault seal``) or `
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -561,6 +563,12 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> Report:
                     f"store {s.name} ({s.cls}): {len(clear)} tracked file(s) go to {rep.remote} in clear, which its "
                     + ("class forbids" if allowed == "never" else f"class allows {allowed} only"),
                     " (untrack them, seal them, or waive it with its reason)")
+    for s in declared:   # an engine secret store stays secret, whatever holds or re-declares it
+        held = sorted(r.name for r in secret_roots() for x in map(expand, s.machine)
+                      if (x == r or x in r.parents) and s.cls != "secret")
+        if held:
+            rep.errors.append(f"store {s.name} ({s.cls}) holds the engine's secret store(s) {', '.join(held)}: only "
+                              "class secret (the read gate refuses them anyway)")
     _floors(cfg, rep, by_name)
     return rep
 
@@ -602,7 +610,13 @@ def decide(cfg: config.Config, store: str, exit_: str) -> str:
     suggested class (COMPAT-6). Unknown store or exit: never."""
     declared, _ = stores(cfg)
     s = next((x for x in effective(declared) if x.name == store), None)
-    if s is None or exit_ not in EXITS:
+    return decide_store(s, exit_) if s is not None else "never"
+
+
+def decide_store(s: Store, exit_: str) -> str:
+    """:func:`decide` for a store already resolved (the read gate decides the store a path belongs to, never another
+    of the same name). Unknown exit: never."""
+    if exit_ not in EXITS:
         return "never"
     h = how(s.cls, exit_)
     if h == "opt-in":
@@ -623,20 +637,40 @@ class Refused(ClassError):
     """A read the classes refuse: the message names the store, the exit and why."""
 
 
-def _home_reader(store: Store, exit_: str | None, sealed: bool, cfg: config.Config) -> str:
+def secret_roots() -> set[Path]:
+    """The engine's secret stores (:data:`ENGINE_STORES` of class secret: the stack secrets, the machine's token):
+    refused to every reader whatever the brain declares, an ancestor store or a looser re-declaration included."""
+    return {expand(k.path) for k in ENGINE_STORES.values() if k.cls == "secret"}
+
+
+def _home_reader(store: Store, exit_: str | None, sealed: bool) -> str:
     """Why ``store`` may not be read for ``exit_`` ('' when it may): a secret store never (its values live in a
-    keystore, never read as data); for an exit, what decide() says (sealed only when the caller seals)."""
+    keystore, never read as data); for an exit, what decide_store says (sealed only when the caller seals)."""
     if store.kind == "secret":
         return f"{store.name} is a secret store: never read as data"
     if exit_ is None:
         return ""
-    if exit_ not in EXITS:
-        return f"{exit_} is not an exit ({', '.join(EXITS)})"
-    said = decide(cfg, store.name, exit_)
+    said = decide_store(store, exit_)
     if said == "never" or (said == "sealed" and not sealed):
         return (f"{store.name} ({store.cls}) may not reach {exit_}: {said}"
                 + (" (only sealed: pass sealed=True and seal it, brain vault seal)" if said == "sealed" else ""))
     return ""
+
+
+def _refused_roots(every: list[Store], exit_: str | None, sealed: bool) -> set[Path]:
+    """The machine paths under BRAIN_HOME this reader may not enter: the engine's secret stores always, and every
+    store (however its path is spelled) the gate refuses it."""
+    home = paths.brain_home()
+    out = set(secret_roots())
+    for s in every:
+        if _home_reader(s, exit_, sealed):
+            out |= {x for x in map(expand, s.machine) if x == home or home in x.parents}
+    return out
+
+
+def _check_exit(exit_: str | None) -> None:
+    if exit_ is not None and exit_ not in EXITS:
+        raise Refused(f"{exit_} is not an exit ({', '.join(EXITS)})")
 
 
 def home_store(store: str, exit_: str | None = None, *, sealed: bool = False,
@@ -644,16 +678,24 @@ def home_store(store: str, exit_: str | None = None, *, sealed: bool = False,
     """The read gate: the path of the store ``store`` (an engine store of :data:`ENGINE_STORES`, or one the brain
     declares with a machine path) for a reader whose output goes to ``exit_`` (None: it stays in the engine, on this
     machine). Refused (:class:`Refused`): a store with no machine path; a secret store, whatever the exit; with an
-    exit, one :func:`decide` says never for, or sealed when the caller does not seal (``sealed``)."""
+    exit, one :func:`decide` says never for, or sealed when the caller does not seal (``sealed``); a path that is or
+    holds a store this reader may not enter (walk it through :func:`home_files`)."""
+    _check_exit(exit_)
     cfg = cfg or config.load()
     declared, _ = stores(cfg)
-    s = next((x for x in effective(declared) if x.name == store), None)
+    every = effective(declared)
+    s = next((x for x in every if x.name == store), None)
     if s is None or not s.machine:
         raise Refused(f"{store} is no store with a machine path (brain classes lists them)")
-    why = _home_reader(s, exit_, sealed, cfg)
+    why = _home_reader(s, exit_, sealed)
     if why:
         raise Refused(why)
-    return expand(s.machine[0])
+    path = expand(s.machine[0])
+    inside = sorted(r for r in _refused_roots(every, exit_, sealed) if r == path or path in r.parents)
+    if inside:
+        raise Refused(f"{store} holds {', '.join(r.name for r in inside)}, which this reader may not enter: walk it "
+                      "through classes.home_files")
+    return path
 
 
 def home_names(home: Path | None = None) -> list[str]:
@@ -665,20 +707,41 @@ def home_names(home: Path | None = None) -> list[str]:
         return []
 
 
+def _most_specific(every: list[Store], path: Path) -> Store | None:
+    """The store whose machine path is the deepest one holding ``path``: an engine store beats a declared ancestor."""
+    best, depth = None, -1
+    for s in every:
+        for x in map(expand, s.machine):
+            if (x == path or x in path.parents) and len(x.parts) > depth:
+                best, depth = s, len(x.parts)
+    return best
+
+
 def home_files(exit_: str | None = None, *, sealed: bool = False, cfg: config.Config | None = None):
     """The gated walk of BRAIN_HOME: (the store's name, a file) for every file the gate lets a reader for ``exit_``
-    read, a store at a time; a secret store's subtree (and, for an exit, a refused one's) is never entered. A name
-    no store covers is sealed by default (COMPAT-6)."""
+    read, a store at a time, each top name classed by the deepest store that holds it; a secret store's subtree (and,
+    for an exit, a refused one's) is never entered, nor a link or a junction followed. A name no store covers is
+    sealed by default (COMPAT-6). An unknown exit is refused."""
+    _check_exit(exit_)
     cfg = cfg or config.load()
     declared, _ = stores(cfg)
     every = effective(declared)
     home = paths.brain_home()
-    refused = {expand(m) for s in every for m in s.machine   # the roots under BRAIN_HOME kept from this reader
-               if m.startswith("$BRAIN_HOME") and _home_reader(s, exit_, sealed, cfg)}
+    refused = _refused_roots(every, exit_, sealed)
     for name in home_names():
-        s = store_of(every, f"$BRAIN_HOME/{name}") or Store(name, FLOOR)
-        if home / name not in refused and not _home_reader(s, exit_, sealed, cfg):
+        s = _most_specific(every, home / name) or Store(name, FLOOR)
+        if home / name not in refused and not _home_reader(s, exit_, sealed):
             yield from ((s.name, f) for f in _store_files(home / name, refused))
+
+
+def _is_link(p: Path) -> bool:
+    """A symlink, or any reparse point on Windows (a junction needs no privilege to make)."""
+    if p.is_symlink():
+        return True
+    try:
+        return bool(getattr(os.lstat(p), "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    except OSError:
+        return True
 
 
 def _store_files(top: Path, refused: set[Path]):
@@ -688,7 +751,7 @@ def _store_files(top: Path, refused: set[Path]):
     while stack:
         p = stack.pop()
         try:
-            if p.is_symlink():
+            if _is_link(p):
                 continue
             if p.is_file():
                 yield p
