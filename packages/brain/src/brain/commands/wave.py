@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import closemerged, config, graph, lots, nextrelease, projects, waveimport, waverename, waves
+from .. import closemerged, config, graph, lots, nextrelease, projects, waveclose, waveimport, waverename, waves
 from ._common import _project, _store
 from ._common import _repos as _project_repos
 
@@ -61,7 +61,7 @@ def _ids(values: list[str] | None) -> list[str]:
 
 
 def _close(args, root: Path, store: Path) -> int:
-    c = waves.close(store, args.version, args.carry_to or "", _ids(args.drop), write=args.write, root=root)
+    c = waveclose.close(store, args.version, args.carry_to or "", _ids(args.drop), write=args.write, root=root)
     for i in c.carried:
         print(f"{i}: carried to {args.carry_to} ({c.carry_to})")
     for i in c.dropped:

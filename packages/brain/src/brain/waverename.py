@@ -105,18 +105,24 @@ def rename(store: Path, ref: str, new: str = "", *, write: bool = False, today: 
     generated = {k: n for k, n in refs.items() if _generated(k)}
     pending = plan.status(old) == "pending"
     title = str(plan.nodes[old].get("title") or "")
-    default = {f"Wave {old.removeprefix('wave-')}", f"Wave {plan.label(old)}"}
-    retitle = f"Wave s{seq}" if title in default else ""
+    retitle = f"Wave s{seq}" if title in (f"Wave {old.removeprefix('wave-')}", f"Wave {plan.label(old)}") else ""
     after = plan.label(old) if not pending else ""
     if write:
-        for rel in refs:
-            f = store / rel
-            raw = f.read_bytes().decode("utf-8")
-            f.write_bytes(_rewrite(raw, old, new)[0].encode("utf-8"))
-        day = today or date.today().isoformat()
-        before = str(_props(plan.nodes[old]).get("renamed_from") or "")
-        said = f"{old} (brain wave rename, {day})" + (f"; before: {before}" if before else "")
-        graph.set_item(store, new, [f"props.seq={seq}", f"props.renamed_from={said}"]
-                       + (["props.release="] if pending else []) + ([f"title={retitle}"] if retitle else []))
+        _write(store, plan, refs, (old, new, seq), pending, retitle, today)
         after = load(store).label(new)
     return Renaming(old, new, files, seq, after, generated, retitle)
+
+
+def _write(store: Path, plan, refs: dict[str, int], names: tuple[str, str, int], pending: bool, retitle: str,
+           today: str | None) -> None:
+    """The rename written: each file's values, then the wave's props (seq, renamed_from; a pending wave's release
+    dropped) and its default title. ``names``: (the old id, the new one, its place)."""
+    old, new, seq = names
+    for rel in refs:
+        f = store / rel
+        f.write_bytes(_rewrite(f.read_bytes().decode("utf-8"), old, new)[0].encode("utf-8"))
+    day = today or date.today().isoformat()
+    before = str(_props(plan.nodes[old]).get("renamed_from") or "")
+    said = f"{old} (brain wave rename, {day})" + (f"; before: {before}" if before else "")
+    graph.set_item(store, new, [f"props.seq={seq}", f"props.renamed_from={said}"]
+                   + (["props.release="] if pending else []) + ([f"title={retitle}"] if retitle else []))

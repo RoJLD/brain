@@ -7,7 +7,7 @@ import json
 import pytest
 import yaml
 
-from brain import cli, decisions, governor, milestones, quota, waves
+from brain import cli, decisions, governor, milestones, quota, waveclose, waves
 
 
 @pytest.fixture(autouse=True)
@@ -392,7 +392,7 @@ def test_close_creates_the_wave_it_carries_to_when_there_is_none(tmp_path, capsy
     2026-11-10), instead of refusing."""
     store = _write(tmp_path / "graph", NODES)
     plan = waves.load(store)
-    c = waves.close(store, "1.1.0", "3.0.0", write=True, today="2026-11-10")
+    c = waveclose.close(store, "1.1.0", "3.0.0", write=True, today="2026-11-10")
     assert c.created and c.carry_to == "wave-s4" and not c.left   # an id without a version (WAVES-4)
     after = waves.load(store)
     assert after.resolve("3.0.0") == "wave-s4" and after.status("wave-s4") == "pending"
@@ -629,10 +629,10 @@ def test_a_created_wave_goes_last(tmp_path):
     plan = waves.load(_jump_store(tmp_path, "s", nodes))
     with pytest.raises(waves.WaveError, match="1.1.5: no live wave of that release, and a new wave goes last, from "
                                               "1.2.1 on"):
-        waves.plan_close(plan, "1.1.0", "1.1.5")
-    assert waves.plan_close(plan, "1.1.0", "1.2.1").created
+        waveclose.plan_close(plan, "1.1.0", "1.1.5")
+    assert waveclose.plan_close(plan, "1.1.0", "1.2.1").created
     with pytest.raises(waves.WaveError, match="not after 1.1.0"):
-        waves.plan_close(plan, "1.1.0", "1.0.9")
+        waveclose.plan_close(plan, "1.1.0", "1.0.9")
 
 
 def test_a_pinned_release_a_jump_left_behind_is_refused(tmp_path):
@@ -663,7 +663,7 @@ def test_a_dropped_wave_holds_no_release(tmp_path):
     assert plan.resolve("wave-s3") == "wave-s3" and plan.same_release("1.0.2") == ["wave-s4"]
     assert waves.problems(plan) == [] and waves.next_release(plan) == "1.0.3"
     with pytest.raises(waves.WaveError, match="wave-s3 is dropped, not pending"):
-        waves.plan_close(plan, "1.0.1", "wave-s3")
+        waveclose.plan_close(plan, "1.0.1", "wave-s3")
 
 
 def test_a_later_wave_labelled_as_the_jump_is_ambiguous(tmp_path, capsys):

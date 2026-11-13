@@ -43,7 +43,6 @@ import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date
 from functools import cached_property
 from pathlib import Path
 
@@ -353,26 +352,37 @@ def _kind_problems(plan: Plan) -> list[str]:
 def _wave_problems(plan: Plan) -> list[str]:
     out, seen, prev = [], {}, None
     for w in plan.waves:
-        rel = _props(plan.nodes[w]).get("release")
-        if rel not in (None, "") and release_key(rel) is None:
-            out.append(f"{w}: props.release is a release X.Y.Z (not {rel!r})")
-        elif plan.release(w) is None:
-            out.append(f"{w}: no release: no props.release and no wave before it to count from (brain wave add "
-                       f"X.Y.Z for a store's first wave)")
-        elif plan.status(w) != "dropped" and plan.label(w) in seen:
-            out.append(f"{w}: release {plan.label(w)} is also {seen[plan.label(w)]}'s (one wave per release)")
-        elif plan.status(w) == "pending" and prev and plan.release(w) <= prev[1]:
-            out.append(f"{w}: release {plan.label(w)} is not after {prev[0]}'s, which shipped as "
-                       f"{'.'.join(map(str, prev[1]))} (a pinned release a jump left behind: brain item set {w} "
-                       "props.release= computes it)")
+        said = _release_problem(plan, w, seen, prev)
+        if said:
+            out.append(said)
         elif plan.status(w) != "dropped":
             seen[plan.label(w)] = w
         if plan.status(w) != "dropped" and release_key(plan.shipped(w)):
             prev = (w, release_key(plan.shipped(w)))
+    for w in plan.waves:
         bad = sorted(m for m in plan.members.get(w, ()) if not plan.is_item(m))
         if bad:
             out.append(f"{w}: a wave's members are work items, not {', '.join(bad)}")
     return out + _seq_problems(plan)
+
+
+def _release_problem(plan: Plan, w: str, seen: dict[str, str], prev: tuple | None) -> str:
+    """What brain check refuses about a wave's release, '' when nothing: a malformed props.release, no release, the
+    release of another live wave (``seen``), a pending release at or below what the last live wave before it shipped
+    as (``prev``: a pin a jump left behind)."""
+    rel = _props(plan.nodes[w]).get("release")
+    if rel not in (None, "") and release_key(rel) is None:
+        return f"{w}: props.release is a release X.Y.Z (not {rel!r})"
+    if plan.release(w) is None:
+        return (f"{w}: no release: no props.release and no wave before it to count from (brain wave add X.Y.Z for a "
+                "store's first wave)")
+    if plan.status(w) != "dropped" and plan.label(w) in seen:
+        return f"{w}: release {plan.label(w)} is also {seen[plan.label(w)]}'s (one wave per release)"
+    if plan.status(w) == "pending" and prev and plan.release(w) <= prev[1]:
+        return (f"{w}: release {plan.label(w)} is not after {prev[0]}'s, which shipped as "
+                f"{'.'.join(map(str, prev[1]))} (a pinned release a jump left behind: brain item set {w} "
+                "props.release= computes it)")
+    return ""
 
 
 def _seq_problems(plan: Plan) -> list[str]:
@@ -828,120 +838,12 @@ class WaveError(graph.GraphError):
     pass
 
 
-@dataclass(frozen=True)
-class Closing:
-    wave: str
-    release: str
-    carry_to: str          # the wave id the carried items go to, '' when none
-    carried: list[str]
-    dropped: list[str]
-    left: list[str]        # open items neither carried nor dropped: the wave cannot close
-    done: int
-    created: bool = False  # the carry-to wave does not exist yet: closing creates it beside the closed one
-    shipped_as: str = ""   # the version the wave ships as (props.shipped_as): the version closed
-    carry_release: str = ""   # the release --carry-to named, when closing creates its wave
-    carry_label: str = ""     # the release of the wave carried to, once the wave is closed
-    carry_pin: bool = False   # the created wave pins its release (it is not the computed one)
-
-
-def _wave_to_close(plan: Plan, version: str) -> str:
-    amb = ambiguous(plan, version)
-    if amb:
-        raise WaveError(amb)
-    w = plan.for_release(version)
-    if w is None:
-        raise WaveError(f"{version}: no wave of that release, and not the next minor or major after the current "
-                        f"wave's (brain next)")
-    if plan.status(w) != "pending":
-        raise WaveError(f"{w}: already {plan.status(w)}")
-    return w
-
-
 def _after(plan: Plan, w: str, version: str) -> Plan:
     """The plan once ``w`` is closed as ``version`` (reached, props.shipped_as): the later waves' computed labels follow
     it, so a --carry-to and the release a created wave pins are read against it."""
     nodes = dict(plan.nodes)
     nodes[w] = {**nodes[w], "status": "reached", "props": {**_props(nodes[w]), "shipped_as": version}}
     return Plan(nodes, parents=plan.parents, members=plan.members, deps=plan.deps, ddrs=plan.ddrs, edges=plan.edges)
-
-
-def _carry_target(after: Plan, w: str, carry_to: str) -> str:
-    """The later wave ``carry_to`` names in ``after`` (the plan once ``w`` is closed: :func:`_after`), '' when none is
-    given; a release with no wave yet names the wave that closing creates (the next ``wave-sN``, beside the closed
-    one: the owner, 2026-11-10; its release computed, or pinned when it is not the computed one)."""
-    if not carry_to:
-        return ""
-    target = after.resolve(carry_to)
-    if not target:
-        key = release_key(carry_to)
-        if key is None:
-            raise WaveError(f"--carry-to {carry_to}: no wave of that name, and not a release X.Y.Z to create")
-        if key <= (release_key(after.shipped(w)) or (0, 0, 0)):
-            raise WaveError(f"--carry-to {carry_to}: not after {after.shipped(w)}")
-        last = release_key(next_release(after)) or (0, 0, 0)
-        if key < last:   # a created wave goes last: its release after every other one's
-            raise WaveError(f"--carry-to {carry_to}: no live wave of that release, and a new wave goes last, from "
-                            f"{next_release(after)} on (carry to a wave by its id or its release)")
-        return f"wave-s{after.next_seq()}"
-    if after.waves.index(target) <= after.waves.index(w):
-        raise WaveError(f"--carry-to {carry_to}: not after {after.shipped(w)}")
-    if after.status(target) != "pending":
-        raise WaveError(f"--carry-to {carry_to}: {target} is {after.status(target) or 'without a status'}, not "
-                        "pending (an item carried there would be in no live wave)")
-    return target
-
-
-def plan_close(plan: Plan, version: str, carry_to: str = "", drop: list[str] | None = None) -> Closing:
-    """What closing the wave ``version`` does: its open items carried to ``carry_to`` (read against the plan once the
-    wave is closed: a jump's later waves have moved), those of ``drop`` dropped."""
-    w = _wave_to_close(plan, version)
-    shipped = _shipped_as(plan, w, version)
-    after = _after(plan, w, shipped)
-    target = _carry_target(after, w, carry_to)
-    items = plan.items_of(w)
-    opened = [i for i in items if plan.status(i) in OPEN]
-    drop = list(dict.fromkeys(drop or []))
-    unknown = [d for d in drop if d not in opened]
-    if unknown:
-        raise WaveError(f"--drop {', '.join(unknown)}: not an open item of {w}")
-    rest = [i for i in opened if i not in drop]
-    done = sum(1 for i in items if plan.status(i) == "done")
-    created = bool(target) and target not in plan.nodes
-    label = (carry_to if created else after.label(target)) if target else ""
-    return Closing(w, plan.label(w), target, rest if target else [], drop, [] if target else rest, done,
-                   created=created, shipped_as=shipped, carry_release=carry_to if created else "",
-                   carry_label=label, carry_pin=created and carry_to != next_release(after))
-
-
-def _shipped_as(plan: Plan, w: str, version: str) -> str:
-    """The version a wave closes as: the release given, else its label (closed by its id)."""
-    return version if release_key(version) else plan.label(w)
-
-
-def close(store: Path, version: str, carry_to: str = "", drop: list[str] | None = None, *, write: bool = False,
-          today: str | None = None, root: Path | None = None) -> Closing:
-    """The closure of a wave: its open items carried to ``carry_to`` (props.carried_to) or dropped, then the wave
-    reached with what it did. Writes only with ``write`` and when nothing is left."""
-    plan = load(store, root)
-    c = plan_close(plan, version, carry_to, drop)
-    if not write or c.left:
-        return c
-    day = today or date.today().isoformat()
-    if c.created:   # the next wave, part of what the closed wave is part of; its release computed (after the close),
-        parents = plan.parents.get(c.wave) or []   # unless --carry-to named another one (then pinned: props.release)
-        add(store, c.carry_release if c.carry_pin else "", parent=parents[0] if parents else "", today=day,
-            pin=c.carry_pin, decided=f"created by brain wave close {c.shipped_as} --carry-to {c.carry_release}")
-    for i in c.dropped:
-        graph.close_item(store, i, "", f"at the close of wave {c.release}", today=day, status="dropped")
-    for i in c.carried:   # carried again: the wave it leaves joins the ones it went through
-        via = plan.via(i) + [c.wave] if plan.carried_in(i) else []
-        graph.set_item(store, i, [f"props.carried_to={c.carry_to}"] + ([f"props.carried_via={', '.join(via)}"]
-                                                                        if via else []))
-    to = f", {len(c.carried)} carried to {c.carry_label}" if c.carried else ""
-    graph.set_item(store, c.wave, ["status=reached", f"props.shipped_as={c.shipped_as}",
-                                   f"props.reached={day}: closed by brain wave close ({c.done} done{to}, "
-                                   f"{len(c.dropped)} dropped)"])
-    return c
 
 
 def next_release(plan: Plan) -> str:
