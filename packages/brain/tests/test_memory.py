@@ -142,9 +142,8 @@ def test_decide(local, main, entry, history, want):
 
 def test_a_conflict_merged_keeping_main_s_note_is_resolved():
     entry = {"base": None, "conflict": {"local": "l", "main": "m", "branch": "memory/m1/2026-11-01"}}
-    closed = lambda branch: False  # noqa: E731
-    assert memory.decide("l", "m", entry, set(), closed, lambda branch: True)[0] == "resolved"
-    assert memory.decide("l", "m", entry, set(), closed, lambda branch: False)[0] == "conflict"   # closed unmerged
+    assert memory.decide("l", "m", entry, set(), lambda b: False, lambda b: True)[0] == "resolved"
+    assert memory.decide("l", "m", entry, set(), lambda b: False, lambda b: False)[0] == "conflict"   # not merged
 
 
 def test_flagged_conflict_stays_while_its_pr_is_open():
