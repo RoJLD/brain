@@ -12,6 +12,10 @@ Setup.
   selector last showed (``p``).
 - **Identity**, **Brain**, **Permissions**: the brain's settings, each shown with its place and the command that
   changes it, and changed only through it: nothing here writes them. A secret is named, never shown.
+- **Schedules**: every scheduled task of every project (brain.schedview, wi-brain-schedule-settings): its cadence,
+  window, enabled, quiet hours and floor, the file its value lives in and the command that changes it (``brain
+  schedule set``, then the owner's ``brain schedule install --apply``); the declared ones only, so that the page
+  reads no scheduler (``brain schedule list`` adds the tasks found in the projects' scheduler folders).
 - **Setup**: the setup wizards (brain.wizards, wi-brain-tui-setup), one per row: each chains the brain's own
   commands, a plan before an apply, run in the cockpit after the owner's confirmation and logged.
 
@@ -26,10 +30,11 @@ from pathlib import Path
 
 from . import cockpit, config, paths, projects
 
-PAGES = ("cockpit", "identity", "brain", "modules", "permissions", "setup")
+PAGES = ("cockpit", "identity", "brain", "modules", "permissions", "schedules", "setup")
 PAGE_LABELS = {"cockpit": {"en": "Cockpit", "fr": "Cockpit"}, "identity": {"en": "Identity", "fr": "Identité"},
                "brain": {"en": "Brain", "fr": "Brain"}, "modules": {"en": "Modules", "fr": "Modules"},
                "permissions": {"en": "Permissions", "fr": "Permissions"},
+               "schedules": {"en": "Schedules", "fr": "Tâches planifiées"},
                "setup": {"en": "Setup", "fr": "Mise en place"}}
 HERE = "here: Enter"  # how a cockpit setting changes: in the screen itself
 REFRESH_MIN = cockpit.INTERVAL_MIN
@@ -326,8 +331,19 @@ def module_settings(root: Path | None = None) -> list[Setting]:
     return out
 
 
+def schedule_settings(root: Path | None = None) -> list[Setting]:
+    """The Schedules page: each declared schedule of every project, read-only, with its file and the command that
+    changes it (brain.schedview); the tasks found in a project's scheduler folders: brain schedule list."""
+    from . import schedview
+    rows, _ = schedview.rows(projects.load(root), root=root, live=False)
+    out = [Setting("schedules", r["name"], f"{r['when']}; {schedview.settings_line(r)}", r["source"], r["change"])
+           for r in rows]
+    return out + [Setting("schedules", "found tasks", "the tasks a project registers itself (alerts: scheduler:)",
+                          "the Task Scheduler", "brain schedule list (reads the scheduler)")]
+
+
 READERS = {"cockpit": None, "identity": identity_settings, "brain": brain_settings, "modules": module_settings,
-           "permissions": permission_settings, "setup": setup_settings}
+           "permissions": permission_settings, "schedules": schedule_settings, "setup": setup_settings}
 
 
 def collect(root: Path | None = None, state: dict | None = None, themes: tuple = (),

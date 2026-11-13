@@ -2,7 +2,9 @@
 # PreToolUse on a new session (mcp__*__start_session), a subagent (Agent, Task) and a workflow (Workflow): the
 # governor's usage-enforce hook (hooks/governor.py, brain.governor). It reads the cached quota readings, the open
 # sessions and brainstorms and the machine's committed memory; it asks the owner at WARN and refuses at CRITICAL, past
-# a cap, or while the newest quota reading is stale. A decision is one JSON line on stdout; nothing else is printed.
+# a cap, or while the newest quota reading is stale; with config.json usage.guard.wave_quota (off by default) it refuses a
+# master's stream past max_streams live ones and asks past ask_over_pct at the week's reset (the wave quota gate). A
+# decision is one JSON line on stdout; nothing else is printed.
 # Uses $BRAIN_PYTHON, else the brain command's venv (<BRAIN_HOME>/venv: the installed engine), else python3, else
 # python, skipping the Windows Store stubs. Without a Python 3, or on any error, the call goes through: it always
 # exits 0, so the hook never breaks a session.

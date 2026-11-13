@@ -10,8 +10,9 @@ import json
 import sys
 from pathlib import Path
 
-from .. import closemerged, config, graph, lots, projects, waves
+from .. import closemerged, config, graph, lots, nextrelease, projects, waves
 from ._common import _project, _store
+from ._common import _repos as _project_repos
 
 ORDER = 55   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 55   # its usage lines' place in brain --help's epilog
@@ -27,7 +28,10 @@ USAGE = """\
                  the outcome; without --write, the plan; the wave's open items no merged PR names listed; a revert
                  takes its PR out; --write refused while a repo is not read (zero token, git only, as last fetched)
   brain wave check X.Y.Z   the closure rule alone (release_check.py --store runs it on a version PR): exit 1 while the
-                 wave holds an open item neither carried nor dropped, or is not reached yet
+                 wave holds an open item neither carried nor dropped, or is not reached yet; then the release
+                 forecast of a wave planned as the next patch or minor: a patch or a minor, the first PR that tipped
+                 it and why (release_check --preview of the engine checkout's origin/main; advisory, the exit is the
+                 closure rule's)
   brain wave import [--from X.Y.Z] [--write]   the items' free-text props.wave: a wave proposed per release it names
                  (X.Y.Z; --from: the first one, the earlier ones already tagged are listed and left out), the other
                  values listed to place by {owner}; --write creates the waves and their items' part_of edges
@@ -36,7 +40,8 @@ USAGE = """\
                  hot files (READMEs, CHANGELOGs, formats.md, FEATURES.md, config.schema.json, changes/) counted apart,
                  in rounds by their depends_on, the lots that unblock the most first, at most the sessions cap less the
                  master's and N PRs verified at once (3) a round; the predicted conflicts, the hot files shared, the
-                 items with no known surface, what the memory guard and the quota forecast say now, the wave's
+                 items with no known surface, what the memory guard and the quota forecast say now (with
+                 usage.guard.wave_quota: at most max_streams lots a round, and the streams that fit now), the wave's
                  quick-win slot (a fifth of its places for size S and high value: what fills it, the candidates);
                  refuses nothing
 """
@@ -108,6 +113,22 @@ def _plan(args, root: Path, store: Path) -> int:
     return 0
 
 
+def _check(args, root: Path, store: Path) -> int:
+    """The closure rule (its exit), then the release forecast of that wave (advisory, brain.nextrelease)."""
+    plan = waves.load(store, root)
+    found = waves.closure_problems(plan, args.version)
+    for line in found:
+        print(f"error: {line}")
+    if not found:
+        print(f"wave {args.version}: closed, or no wave of that release (its version PR may go)")
+    wid = plan.resolve(args.version)
+    release = plan.label(wid) if wid else args.version
+    if waves.release_key(release):
+        for line in nextrelease.lines(nextrelease.forecast([r.path for r in _project_repos(args, root)]), release):
+            print(line)
+    return 1 if found else 0
+
+
 def _repos(args, root: Path) -> list[tuple[str, Path]]:
     """The (name, checkout) pairs close-merged reads: --repo-dir's, else the project's repos (--repo's alone when
     given). The --repo-dirs are named by --repo, one name each in the same order, else as the registry names their
@@ -173,12 +194,7 @@ def cmd_wave(args, root: Path) -> int:
         if args.wave_cmd == "close-merged":
             return _close_merged(args, root, store)
         if args.wave_cmd == "check":
-            found = waves.closure_problems(waves.load(store, root), args.version)
-            for line in found:
-                print(f"error: {line}")
-            if not found:
-                print(f"wave {args.version}: closed, or no wave of that release (its version PR may go)")
-            return 1 if found else 0
+            return _check(args, root, store)
         return _import(args, store)
     except graph.GraphError as exc:
         print(f"brain: {exc}", file=sys.stderr)

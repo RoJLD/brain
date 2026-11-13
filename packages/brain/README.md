@@ -26,8 +26,10 @@ What it does, every command reading files and git, never a model:
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
   usage and cost ledgers, forecasts;
 - **updates**: `brain update` shows the plan to the latest engine tag and installs it on the owner's yes;
-- **the machine**: its profile (`brain profile`, alias `brain doctor`: Lite, Default, Recommended, Custom), stacks
-  started on demand (`brain up|down|health`), permissions rendered for Claude Code (`brain permissions`);
+- **the machine**: its profile (`brain profile`, alias `brain doctor`: Lite, Default, Recommended, Custom), what runs
+  for the Brain costs (`brain resources`: CPU, memory, disk, network, the sessions' processes, the containers, the
+  stores, the tokens today and the quota), stacks started on demand (`brain up|down|health`), permissions rendered for
+  Claude Code (`brain permissions`);
 - **Claude Code**: the hooks and guards under `src/brain/adapters/claude/hooks/` (rules injection, capture, the
   PreToolUse guards: production checkouts, the owner's own actions, a session's Remote Control and permission mode,
   power, third-party kits, attribution, secrets, conflict markers, public pushes, branch names; the usage governor before a new session, a subagent or a
@@ -139,8 +141,8 @@ comma the settings.
 The overview shows one card per tab, what counts in it in a few lines: the band now, the sessions asking, the nearest
 milestones, what can start, the open alerts. Enter or a click opens its tab, already filtered as the card says, whatever your
 filters and search (a filter that is not saved and goes when you leave the tab); the arrows move between the cards.
-Ideas (`5`), lessons (`6`), features (`7`) and resources (`9`) arrive with their items, and until then their key says
-so. The bar shows what waits in each tab, in digits and signs: « 1 Ada's queue 3 » the band now, « 2
+Ideas (`5`), lessons (`6`) and features (`7`) arrive with their items, and until then their key says so; until the
+resources tab comes, `9` opens the resources' detail (`brain resources`, below). The bar shows what waits in each tab, in digits and signs: « 1 Ada's queue 3 » the band now, « 2
 Sessions 1! » the sessions asking, « 8 Health 2 » the open alerts. A click on it, `ctrl+pageup` and
 `ctrl+pagedown` also change tab, and Escape goes back one step at a time: the search, a full view, then the overview. A tab with several views says so in its toolbar:
 `v` or a click changes it, and the overview's other views are the grid of every panel, where open alerts take a whole
@@ -148,6 +150,14 @@ row, and the digest. `--tab NAME` starts on a tab, and with `--once` or `--plain
 its cards). Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.
+
+The header's right end is the resources band: the CPU, the committed memory, the fullest of the Brain's drives
+(BRAIN_HOME's, Temp's and the registered projects', the registry read once), the network's throughput up and down, the tokens today and the quota with its pace (« CPU 23 % · RAM 81 % · C: 64 % ·
+↑12K ↓1.4M · 1.2M tok · quota 42 % 0.8x »), read by a worker every 3 s from the same sampler as `brain resources`,
+without starting a program; a measure at WARN (85 %) is yellow, at CRITICAL (95 %) red, and the quota takes
+`brain usage quota`'s level. Under 120 columns it keeps the CPU, the memory and the quota. A click on it, or `9`, opens
+the detail (its docker stats bounded to 4 s; closing it or quitting stops its read at the next step); `space`
+pauses the band with the rest.
 
 The settings tab (the comma) shows every setting with its value, the file or variable it comes from and how it changes,
 page by page on its left: Cockpit, Identity, Brain, Permissions and Setup. The cockpit's own settings live in
@@ -171,7 +181,15 @@ cannot hold arrive later.
 The Setup page holds the setup wizards (`brain.wizards`), one per row, in the order a new brain walks them: the first
 run (the profile Lite, Default or Recommended), the stacks to enable, the modules, a project to add, the notification
 channels (ntfy, Telegram and its chats, the routes), the permissions, the machines and their facts, the code index, a
-new brain from a domain template, Claude Code's settings and the checks. Each wizard is the brain's own commands,
+new brain from a domain template, Claude Code's settings, the Local services and the checks. The Local services are
+six optional steps, in the order they must run, for a machine where the telemetry collector runs: the machine's token
+(`brain ipc token --plan`, then `--init`), the collector's token declared (`config.json ipc.require_token`, by a PR in
+the personal brain: it takes effect at the bundle's apply, and it is what gives the next step's settings their
+header), Claude Code's OTLP export and its `otelHeadersHelper` (`brain ipc claude-settings`: the exact lines and the
+helper's export checked; `install.ps1 -Apply` writes them, never a session), the sovereign bundle (`brain bundle plan
+sovereign`, then `apply`), `brain health ipc`, and Cursor's MCP server (`brain render --target cursor`); each needs the
+ones before it, so stop at the first that fails. `brain init` prints the same steps among its next ones. Each wizard
+is the brain's own commands,
 never a hidden edit: Enter asks its choice when it has one (and the folder of a new brain, an absolute path), then
 shows its exact command. A wizard that writes shows its plan already run (`brain profile set default`), and `y` runs
 the apply (`... --apply`), never after a plan that failed; a wizard that reads runs its one command on `y`. Each runs
@@ -467,7 +485,10 @@ and `brain sync` is its one writer): the tree era > milestone > wave > items, ea
 on the owner (its `props.open`, its `external_blocker`, the pending DDRs on it), each wave's carried items first,
 then the startable ones. `brain next [--explain] [--json]` prints its first part at zero token: the current wave (the
 lowest release not closed), its quick wins, its items carried from an earlier wave, its startable items, what waits on
-the owner, the other open ones, then the next wave.
+the owner, the other open ones, then the next wave. Under the current wave's head, the release forecast: whether it
+ships as the patch it is named for or as a minor, the first PR that tipped it and why (`release_check.py --preview
+--ref --json` on the engine checkout's `origin/main`, `brain.nextrelease`; `brain wave check X.Y.Z` says it too;
+`docs/release.md`, « The release preview »).
 
 Each group, here and in the view, is ranked (`brain.ranking`): the owner's priority first (a confirmed one before the
 same one proposed), then the owner's explicit order (`props.order`, a number, lower first), then WSJF, value over
@@ -527,7 +548,11 @@ fragments; `--hot` adds one) counted apart and listed, to merge origin/main befo
 prerequisite comes a round earlier, the lots that unblock the most first, at most the sessions cap in force less the
 master's and `N` PRs verified at once (3) a round. It prints the rounds, the predicted conflicts, the hot files shared
 and the items with no known surface (each a lot of its own, unchecked), with what the memory guard and the last quota
-forecast say now; it refuses nothing. `brain next` shows the current wave's first round.
+forecast say now; it refuses nothing. While `usage.guard.wave_quota` is set, a round holds at most its `max_streams`
+lots, and the plan says how many streams fit now: this session's live streams under `max_streams`, and the first
+round's lots, each at the sum of its items' recorded estimates (`props.cost_estimate`; none: the median session's),
+under `ask_over_pct` at the week's reset (docs/guards.md, « The wave quota gate »). `brain next` shows the current
+wave's first round, and that line.
 
 ### Item sizes
 
@@ -851,13 +876,28 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   the head, the review's stamp for the head with no finding open, the public check's stamp for a public repo, nothing
   private in the PR's title and body; exit 0, a stamp and the head to merge (`gh pr merge --match-head-commit`),
   else the list of what blocks
-  ([`docs/merge-driver.md`](docs/merge-driver.md)).
+  ([`docs/merge-driver.md`](docs/merge-driver.md)). `--with PR...` checks PRs merged together: each through the gate,
+  then all merged on the base by `git merge-tree` with the repo's merge driver, the merge order and the PR GitHub
+  will see conflicting said, the tests `brain impact` chooses for the set (run by `--test` in a scratch worktree),
+  and a stamp per head naming the set.
+- **`brain lot check [SESSION] [--branch B]... [--keep B]... [--repo-dir D]... [--scratch GLOB]... [--lot NAME]
+  [--offline] [--json]`** (brain.lotcheck): whether a finished lot (a session a coordinator started; default: this
+  one) can be archived, read only. From the desktop app's file of the session (its worktree and branch, the branches
+  it wrote, its PRs) and the repos it touched: each worktree on a lot branch clean (a detached one's commits on a
+  remote branch), each branch with no PR open (the PRs of that repo's origin, by gh, else as the app last saw it,
+  `--offline`), no commit neither pushed nor in the default branch, and merged (a PR merged, or the default branch
+  holds its tip) or kept on purpose (`--keep`). A repo's default branch and its main checkout's never count. « ready to archive » (exit 0) lists what to remove (`git worktree remove`, `git branch -d`, the scratch
+  folders `--scratch` names, `{lot}` the lot's name), else what is left (exit 1); 2 when the session is not found.
+  Nothing is removed or archived: the archive stays the app's tool, the coordinator's, under the owner's standing
+  permission once the work is merged and verified, and never for a session that is running.
 - **`brain collisions [--all] [--frontier] [--json]`**: the files each open branch and worktree changes, crossed with
   each startable item's predicted surface (its features' CodeRefs, its module, the files it names): the items that
   can start now, and those that wait on a branch and its session.
 - **`brain brief ITEM [--class C] [--budget B] [--coordinator ID]`**: a sub-session's brief from the graph: the item
   and its subgraph, its collisions, the class's model and effort (config.json `brief.classes`), the budget, the cost
-  estimate, the coordinator's id, what to do after the merge (the close-item procedure's step 5: the session that
+  estimate, while `usage.guard.wave_quota` is set the streams that fit now for the coordinator (its live streams
+  under `max_streams`, the streams at the item's estimate under `ask_over_pct` at the week's reset), the coordinator's
+  id, what to do after the merge (the close-item procedure's step 5: the session that
   merges its own PR archives itself once the main checkout is pulled, the note written and its report sent; a
   coordinator archives a child whose report says merged and verified without asking again; never another running session
   or one with uncommitted or unmerged work; the owner's app setting `auto_archive_inactive_days = 7` as the
@@ -988,11 +1028,77 @@ What each finished item teaches is a node of the graph, so it can be found, coun
   Markdown, read only. **`brain lint lessons`**: the lessons a script could check (guard candidates) and those that
   should say why not.
 
+## The rules across their sources
+
+The same rule is often written in several places, and the copies drift apart. **`brain rules diff`** compares them,
+at zero token (`brain.rulesdiff`). It changes no file: it writes only, like every brain command, the engine's timing
+event of the run (`brain.selftime`), and a restricted note's error line in `ledger/errors.log` (below).
+
+- **The sources.** This machine's `~/.claude/CLAUDE.md`; the brain's global rules (`config.json` `rules`, else the core
+  plugin's copy that `brain lint rules` reads); the project's `CLAUDE.md` files (`--project`, else the repo of the
+  current folder); and the machine's feedback memory notes (the notes under Claude Code's
+  `projects/<key>/memory/` whose front matter says `type: feedback`, or `metadata: {type: feedback}`). Each one can
+  be named by a flag instead: `--machine-rules FILE`, `--global FILE`, `--project-rules FILE`, `--notes DIR`. A file
+  or folder named by a flag that cannot be read exits 2; a default place that holds nothing is listed as skipped.
+- **The units.** A rule as `brain lint rules` cuts it: a bullet with its wrapped lines and sub-bullets, a numbered
+  list with its lead, a paragraph (headings and a YAML front matter left out). One feedback note is one unit.
+- **The classes.** *Identical*: the same words in another file, however short. *Near*: close by content words, with `brain lint
+  rules`' measure (a Jaccard index of 0.5, or a containment of 0.75). *One side*: in one file only. *Contradictory*:
+  two units give different values to the same subject in the same scope. *To check*: a unit touches a subject, but
+  no single value of it could be read.
+
+The text report lists each class with its count, each unit by source, file, line and a short excerpt; `--json`
+gives each unit's source, file, line, class, subject, value and scope. Differences are not failures: the command
+exits 0.
+
+**The subject list** is what makes contradictions computable, without a model. It is the owner's, kept in their own
+brain, never in this engine: `config.json` `rules_diff.subjects` names it, relative to the brain's root, or
+`--subjects FILE`. Without one, the report says that no contradiction was computed. Each subject has an id, a kind
+(`guardrail` or `preference`), an optional topic and a closed set of values; each value has its patterns, in French
+and in English, and may have `not` patterns: a negation that cancels it in a sentence they match. A pattern is a
+regular expression, or a list of them that must all match, searched in each sentence of a unit (case and accents
+ignored; a sentence does not end after « e.g. », « i.e. » and the like). A sentence that matches exactly one value of
+a subject is a claim: (subject, value, scope). Its scope is one of the list's `scopes` that the sentence names, else
+the one an earlier sentence of the unit named, else its heading's, else `any`. An invented example
+(`tests/fixtures/rules-diff/subjects.yaml` has the whole file):
+
+```yaml
+v: 1
+scopes:
+  this-repo: {en: ['\bin this (?:repo|repository)\b'], fr: ['\bdans ce (?:repo|depot)\b']}
+subjects:
+  - id: git-authority
+    kind: guardrail
+    topic: {en: ['\bwho (?:commits|merges)\b'], fr: ['\bqui (?:commite|merge)\b']}
+    values:
+      ask: {en: [['\bnever\b', '\bcommit']], fr: [['\bjamais\b', '\bcommit']]}
+      automerge:
+        en: [['\bmerge\b', '\byourself\b']]
+        fr: [['\bmerge', '\btoi-meme\b']]
+        not: ['\b(?:never|not|jamais|ne)\b']
+```
+
+With it, « Never commit without being asked » and « Crée et merge tes PR toi-même » are one subject with two
+values: a contradiction, though one is English and the other French. « Never merge your PRs yourself » is no claim
+of `automerge`.
+
+**Restricted notes.** A project whose notes must never be copied is listed in `config.json` `rules_diff.restricted`
+(memory folder keys, or project folders, turned into their key the way Claude Code names the folder); each
+`--restricted-notes DIR` is added to them. A memory folder whose key is a restricted key, or starts with one and a
+`-` (the project's worktrees), is never read as ordinary notes, even when `--notes` names it (the report lists it as
+skipped); an entry that matches no folder of the machine is reported. One function reads these folders: for each
+feedback note, its file name and the ids of the subjects it touches, nothing of its text. It catches every exception
+and logs only the exception's class and the note's name to `ledger/errors.log`, and it refuses to run in an agent
+session (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` or `BRAIN_AGENT_SESSION` set): the report then says the notes were
+not read, and they stay out of the ordinary notes.
+
 ## Schedules and the alerts pass
 
 A project's `schedules:` entry in the registry declares the brain commands a machine's scheduler runs, `{name:
-{command, every, at, days, at_logon, machines, timeout, enabled}}`, with `days` the days `at` runs on (`days: [mon]`
-is weekly, none is every day); the alerts pass, say:
+{command, every, at, days, at_logon, machines, timeout, enabled, visible, floor}}`, with `days` the days `at` runs on
+(`days: [mon]` is weekly, none is every day), `visible: true` for a console window (hidden by default) and `floor` for
+a collector, whose data cannot be recovered: the slowest cadence its `every` may take (an engine before 0.5.1
+refuses these two keys: declare them once every machine runs 0.5.1); the alerts pass, say:
 
 ```yaml
 brain:
@@ -1017,6 +1123,18 @@ it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and
 at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped. One pass runs at a time
 per machine (`<BRAIN_HOME>/locks/alerts-pass.lock`, `brain.shutdown`): a pass that starts while another runs (a
 logon pass beside the 15-minute one) is skipped, exit 0.
+
+**One view of every scheduled task** (`brain.schedview`, wi-brain-schedule-settings): `brain schedule list` shows the
+declared schedules and the tasks found under each project's `alerts: scheduler:` folders (registered by the project's
+own setup), each with its cadence, its window (hidden or visible), enabled or not, its project's quiet hours (they hold
+notifications below critical, never a run), a collector's floor, its last run, the file its value lives in and how it
+changes; the cockpit's Settings tab has the same rows on its Schedules page (the declared ones: the page reads no
+scheduler). `brain schedule set NAME [--every D|none] [--at HH:MM|none] [--days mon,fri|none] [--visible|--hidden]
+[--enable|--disable]` prints the change of a declared schedule as its line before and after, in the file that declares
+it (the registry, or the project's schedules file), and `--apply` writes it, the comments and the other lines kept; the
+result must read back as the same file with that one entry changed and pass the checks. A collector's floor refuses a
+slower `every` and a `--disable`; a block entry is shown as the change to make by hand; a found task changes where its
+project registers it. Writing the file installs nothing: `brain schedule install --apply`, the owner's, applies it.
 
 ### Dependency probes: loud fallbacks
 
@@ -1172,6 +1290,52 @@ its extras, the three bases) and `brain catalogue validate FILE...` checks any d
 below it the memory sync exports nothing (it still imports), the DDRs are not written and `brain check` says so; the
 machine still reads.
 
+### What runs costs: brain resources
+
+`brain resources` (`brain.resources`, zero token) says what the Brain's work costs this machine, beside the
+machine's total, so it tells what one more session costs:
+
+```bash
+brain resources                      # the machine, the projects, the sessions, the containers, the stores
+brain resources --by session --json  # one section: machine, project, session, container or store
+brain resources --quick              # no docker stats, no folder walked
+brain --project lab resources        # that project's sessions and containers
+```
+
+- **the machine**: the CPU busy since the last reading; the memory as Windows' commit charge against its commit limit
+  (what the usage governor guards; elsewhere the memory in use), the RAM available and the kernel's non-paged pool;
+  the free space of the Brain's drives (BRAIN_HOME's, the temporary folder's, the registered projects'); the network's
+  throughput up and down. The network is the machine's: psutil gives system-wide counters on Windows, and a rate per
+  process would need ETW, not planned until a need shows it.
+- **the sessions**: each Claude Code CLI process with its memory and its process tree's (its MCP servers, the test
+  suites it started), tied to its session by its command line (`--session-id`, or `--resume` without
+  `--fork-session`), else by its folder when one live session of the desktop app holds it, it is the only CLI
+  without a session flag in that folder and no command line already names that session, else said unknown (a hook's
+  `claude -p` beside its session is its own row, outside its parent's tree, and a session's tokens count once); its
+  tokens and cost today from the token ledger (as its last scan left it: `brain usage`, `brain status`). A session
+  that spent tokens today without a live CLI here is listed too. The median CLI tree is « one more session ».
+- **the brain commands and the suites** running, each once (a brain command's launcher and the venv's Python under
+  it, a pytest run and its xdist workers: the top process holds the tree).
+- **the containers**: `docker stats --no-stream`, bounded to 8 s, each container tied to the stack that declares it
+  (its `index.container`; for a stack whose start runs `docker compose ... up`, its Compose project: `-p`, the
+  `name:` of its `-f` files or of its folder's compose file, else its folder's name, then a bundle component's
+  `<project>-<service>-N` and a Compose stack's `<project>-...`), else said
+  declared by no stack. Docker absent, down, slow or answering garbage is a state, never an error.
+- **the stores**: each entry of `BRAIN_HOME` walked through the read gate (a secret store has no row and is never
+  walked), the transcripts and the temporary folder, each walk bounded in time (an unfinished one says « at least »;
+  when the stores' budget runs out, the entries not reached yet are named on a « not walked » line, `left_out` in
+  `--json`).
+- **the tokens today** (the UTC day), **the quota** (the last `brain usage quota` forecast: the percent now, the pace
+  as a ratio of the pace that would end the window at exactly 100 %, its level) and **the capacity**: the room left in
+  session-hours, and for 20 sessions in hours.
+- **the levels**: WARN at 85 %, CRITICAL at 95 % (the CPU, the committed memory, each drive), and the quota's own.
+
+The process rows need psutil, in the `tui` extra (`pip install brain[tui]`); without it the machine's totals come from
+the standard library (GetSystemTimes, GetPerformanceInfo and GetIfTable on Windows, `/proc` on Linux) and the rows say
+so. Nothing is stored: the present is in the cockpit, the history in the sovereign stack's Prometheus when it runs.
+The Brain's own token overhead (rules, hooks, skills and resume packs injected into sessions) is pending: it waits on
+the rule usage measure, plugged into `brain.resources.OVERHEAD_SOURCES`. Exit code 1 when the sample fails.
+
 ### Projects the brain only reads, projects that share a root
 
 An entry `access: read` in `projects.yaml` is a project the brain reads and never writes (its own sessions do): it
@@ -1287,7 +1451,10 @@ personal brain's own text, its rules (`config.json` `rules`) and its notes (the 
 8 words, lowercased, so case, punctuation and line breaks hide nothing: a sentence copied from a rule or a note is a
 `text` finding (the file, its line, the source), even when it names no denied term. A file under `public.allow` is not
 read. It runs before each tag (docs/release.md, « 3. The tag »), never stamps, and its findings are not part of the
-push guard's stamp.
+push guard's stamp. The push guard runs the same comparison as advice on each push to a public repo that it lets
+through (wi-brain-private-text-prepush): the lines the push's commits add that the remote has not, compared with this
+machine's rules and notes, each passage named by file, line and source (never its text) in the session's context, so
+it is reworded in its PR rather than before the tag; nothing is refused, and a scan that fails lets the push go.
 
 **One privacy scrub** (`wi-brain-privacy-scrub`, brain.scrub) for what leaves the machine, beside the secret scan's
 line drop: a line of `ledger/errors.log` (a crash report included), a notification's title, text and link, and what
@@ -1389,6 +1556,13 @@ comes between: a quoted `claude.exe`, global options, a line continuation), or g
 read (`git [-C DIR] status`, `log`, `diff`, `show`, `rev-parse`... without `--output`: `brain.guards.GIT_READS`,
 checked against the guards' tables). In Python a guard reads the registry through libyaml and does not import `urllib.request`.
 
+**The owner's gestures** (`brain.gestures`, [docs/guards.md](docs/guards.md#the-owners-gestures-declared-once)): every
+command or flag only the owner runs (`brain usage allow`, `brain schedule install --apply`, `brain vault open`, `drill`,
+`device init`, `reseal --apply`, `brain update`, `brain uninstall --apply`, `brain queue apply`, `brain handover root`,
+`brain ipc otel-headers`, `install.ps1 -Apply`) is declared once; the owner guard and the command line read that list,
+and a test checks that each one is refused to an agent's session. config.json `guards.owner_strict: true` adds the
+refusals 0.5.1 brings (off by default).
+
 **The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
 a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its
 journal or a generated view (`*_graph.md`, `decision_queue.md`, `FEATURES.md`) by hand, it adds one line of hook
@@ -1464,9 +1638,20 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   counted; a project's `usage: {brainstorms: N}` in `projects.yaml` lowers it for itself, never raises it), a new
   session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (an opt-in floor, 0 by default; both
   shown by `brain usage guard` and `brain status`, the refusal naming the one), or while the newest quota reading is older than
-  `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
-  now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
-  (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
+  `fresh_minutes`. With `usage.guard.wave_quota` (off by default; `{"ask_over_pct": 90, "max_streams": 3}`), a
+  session started now is refused when its master already has `max_streams` live streams (its running or starting
+  children in the desktop app), and asks the owner when the week's forecast at its reset plus the stream's estimate
+  (its brief's `usd=`, else the median session's) goes over `ask_over_pct`; what it cannot read lets the start
+  through with a note, and `brain brief`, `brain wave plan` and `brain usage guard` say how many streams fit now
+  ([`docs/guards.md`](docs/guards.md), « The wave quota gate »). The thresholds are config.json `usage.guard`;
+  `brain usage guard` shows what each tool would get now. A refusal names its reason and the allow that lifts it:
+  `brain usage allow [--check NAME] [--hours H]` in the owner's own terminal (the guards refuse it to a session),
+  which lifts the memory and session caps by default, a quota threshold or the wave quota gate's checks
+  (`streams`, `wave_quota`) only by `--check`, a stale reading never; each allow and its end go to the guards ledger; or
+  `BRAIN_GUARD_ALLOW=usage` (`usage:CHECK` for one). Its decision takes under 50 ms for `Agent`, `Task` and
+  `Workflow`, and for `start_session` with the wave quota gate off; with it on, a `start_session` also reads the app's
+  sessions, the transcript folders once and the children's tails: ~40-70 ms measured on a machine of 204 app sessions
+  and a master of 5 children, bounded at 2 s.
 
 The quota conversion (`brain usage quota`) is per plan: only the readings of the plan in force (config.json
 `usage.plans`) count, and until the plan has 3 converted readings it says "uncalibrated", does not convert the week and
@@ -1751,8 +1936,18 @@ back. A git repository in a test is a copy of a template made once per worker (`
 `make_repo` fixtures), not a `git init`. The test that calls the real docker client is marked `docker`: the CI runs it
 apart, on one process (`pytest packages/brain -m docker`).
 
+The lite suite (`pytest packages/brain -m lite`, `tests/test_lite.py`) runs the stranger test's Lite scenario on the
+checkout's engine (checked: the launcher imports this checkout's `brain` and `research_graph`) in a stranger's
+environment: `docker`, `podman` and `gh` taken off the PATH and replaced by shims that leave a mark, the proxies
+pointed at a local listener that counts its connections, no `BRAIN_GRAPH_PYTHON`, `brain refresh --offline`. Then
+an ADR, the records' check, a sync, the capture hook; and it reads back what each wrote (the journal, the decision
+log, the item, the DDR, the kanban and the queue regenerated with them, the links sync derived, the session event),
+with no mark and no connection. One test, about half a minute; it needs the `brain` launcher of this Python (`pip
+install -e packages/brain`): skipped without it on a machine, failed without it in the CI.
+
 `BRAIN_TEST_WORKERS=N` sets how many workers `-n auto` (or `-n logical`) starts. Unset, xdist decides: its own
-`PYTEST_XDIST_AUTO_NUM_WORKERS` if set, else one worker per CPU thread (per physical core when psutil is installed).
+`PYTEST_XDIST_AUTO_NUM_WORKERS` if set, else one worker per CPU thread, psutil installed or not (the conftest keeps the
+logical count: with psutil, which the `tui` extra brings, xdist would count physical cores only).
 `BRAIN_TEST_WORKERS` wins over `PYTEST_XDIST_AUTO_NUM_WORKERS` and, unlike it, refuses anything but a whole number
 with `-n auto`; an explicit `-n N` wins over both. More workers than CPU threads rarely help: on Windows the suite is
 bound by process creation (it starts some ten thousand git processes, and an on-access antivirus scans each one),

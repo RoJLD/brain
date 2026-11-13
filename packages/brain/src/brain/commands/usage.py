@@ -46,9 +46,14 @@ USAGE = """\
                  Workflow): the quota windows it reads, the sessions running and the brainstorms open on this
                  machine, the two memory measures (committed memory, available RAM), the caps (config.json usage.guard, lowered by the project's usage:)
                  and what a new session, a brainstorm, a subagent and a workflow would get now (ask at WARN, refuse at
-                 CRITICAL, past a cap or while the newest reading is stale)
-  brain usage allow [--hours H] [--reason TEXT]   {owner}'s override of the usage governor for H hours (default 2;
-                 0 ends it), run in their own terminal: the guards refuse it to a session
+                 CRITICAL, past a cap or while the newest reading is stale); with usage.guard.wave_quota, the wave
+                 quota gate's line: the streams that fit now (this session's live streams under max_streams, the
+                 week's forecast at its reset under ask_over_pct)
+  brain usage allow [--check NAME]... [--hours H] [--reason TEXT]   {owner}'s override of the usage governor for H
+                 hours (default 2; 0 ends it), run in their own terminal (the guards refuse it to a session): it lifts
+                 the memory and session caps (memory, sessions, brainstorms), or each --check named (critical, warn
+                 too; the wave quota gate's streams, wave_quota), never a stale quota reading; each allow and its end
+                 are written to the guards ledger
 """
 
 
@@ -109,9 +114,13 @@ def _governor(args, root: Path) -> int:
     if args.what == "allow":
         if args.hours is not None and args.hours < 0:
             raise SystemExit("brain: --hours is 0 or more")
-        rec = governor.allow(args.hours if args.hours is not None else governor.ALLOW_HOURS, args.reason or "")
-        print(cost.as_json(rec) if args.json else f"usage guard lifted until {rec['until']} ({governor.allow_file()})"
-              if rec else "usage guard override ended")
+        try:
+            rec = governor.allow(args.hours if args.hours is not None else governor.ALLOW_HOURS, args.reason or "",
+                                 checks=args.check)
+        except (ValueError, OSError) as exc:   # a check it does not lift, --check with --hours 0, a locked file
+            raise SystemExit(f"brain: {exc}") from None
+        print(cost.as_json(rec) if args.json else f"usage guard lifted for {', '.join(rec['checks'])} until "
+              f"{rec['until']} ({governor.allow_file()})" if rec else "usage guard override ended")
         return 0
     rep = governor.report(str(Path.cwd()))
     print(cost.as_json(rep) if args.json else "\n".join(governor.render(rep)))
@@ -133,6 +142,9 @@ def register(sub, ctx) -> None:
     us.add_argument("--at", metavar="TIME", help="quota: when the reading was taken (ISO; default now)")
     us.add_argument("--hours", type=float, help="allow: how long the override holds (default 2; 0 ends it)")
     us.add_argument("--reason", help="allow: why, kept with the override")
+    us.add_argument("--check", action="append", choices=governor.LIFTABLE, metavar="NAME",
+                    help="allow: the check it lifts, repeatable: " + ", ".join(governor.LIFTABLE) + " (default: "
+                         + ", ".join(governor.DEFAULT_LIFT) + "; never stale: one get_usage call refreshes it)")
     us.add_argument("--all", action="store_true", help="every session on this machine, whatever its project")
     us.add_argument("--scope", help="the sessions of the projects of a node's subtree in the scope tree (brain "
                                     "scopes): an id, a path of ids, global, . or ..")

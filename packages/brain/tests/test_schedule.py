@@ -399,6 +399,7 @@ def test_the_scheduler_is_skipped_off_windows(tmp_path, monkeypatch):
 def test_cli_schedule_install_and_list(tmp_path, monkeypatch, capsys):
     _registry(tmp_path, monkeypatch, PASS)
     monkeypatch.setattr(schedule, "system", lambda run=None: _win(Runs({"schtasks /Query": (1, "")})))
+    monkeypatch.setattr(alerts, "_scheduler", lambda folders: ([], ""))   # the list reads no real scheduler
     assert cli.main(["schedule", "install", "--json"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["applied"] is False and out["steps"][0]["action"] == "create"
