@@ -82,8 +82,10 @@ the four fields are a warning in read mode, kept by its rewrites (`brain.records
 strict mode (CI), as any newer brain's field. config.json `usage.accounts` is additive the same way: an older engine
 notes it in read mode and refuses it in strict mode, so a brain repo whose CI runs an older engine sets it once its CI
 runs the engine that knows it. `account` and `usage.accounts[].alias` never take an `@` nor a UUID (an e-mail address,
-an account id): a value that breaks a schema's pattern is printed back as « an e-mail address » when it looks like
-one. The token ledger (`usage/sessions.json`) does not change: its rows are read for these fields at report time.
+an account id) anywhere in it, nor a trailing newline (the patterns end on `(?![\s\S])`, read alike by ECMA and
+Python), and `usage.accounts[].since` is a UTC day (YYYY-MM-DD). A value that breaks a schema's pattern is never
+printed back, whatever the schema: the error gives its path and length. The token ledger (`usage/sessions.json`) does not change: its rows are read for these fields at report time
+(what the session's snapshot captured first, then config.json and the model).
 
 ### Milestone kinds (the store)
 

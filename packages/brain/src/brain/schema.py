@@ -24,7 +24,6 @@ from functools import lru_cache
 from pathlib import Path
 
 KINDS = ("ddr", "sr", "ar")
-_EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")   # a value that fails a pattern is never printed back as is
 SCHEMAS = KINDS + ("event", "config", "members", "readme", "standards", "modules", "status", "permissions",
                      "docgraph", "catalogue", "reference")  # event: the
 # execution-time ledger and the ops error events (brain.timing); config: a personal brain's config.json
@@ -206,8 +205,8 @@ def _validate(value, schema: dict, root: dict, path: str, errors: list[str],
         if "maxLength" in schema and len(value) > schema["maxLength"]:
             errors.append(f"{path}: longer than {schema['maxLength']}")
         if "pattern" in schema and not re.search(schema["pattern"], value):
-            shown = "an e-mail address" if _EMAIL_RE.search(value) else repr(value)   # never printed back
-            errors.append(f"{path}: {shown} does not match {schema['pattern']}")
+            # the value is never printed back: it may be an e-mail address, an account id or a secret
+            errors.append(f"{path}: its value ({len(value)} character(s)) does not match {schema['pattern']}")
         if "format" in schema and not _format_ok(value, schema["format"]):
             errors.append(f"{path}: {value!r} is not a {schema['format']}")
     if _is_type(value, "number") and "minimum" in schema and value < schema["minimum"]:

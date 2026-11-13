@@ -107,7 +107,8 @@ def test_a_row_breaking_its_schema_is_an_error(tmp_path):
     text = "\n".join(cat.errors)
     assert "rows[0].profiles" in text                      # minItems
     assert "rows[1]" in text and "statement" in text       # required
-    assert "Bad Id" in text and "does not match" in text   # the id's pattern
+    assert "rows[2].id" in text and "does not match" in text   # the id's pattern, its value never printed back
+    assert "Bad Id" not in text
     assert [r.id for r in cat.rows] == ["a", "Bad Id"]   # b has no statement: left out
 
 

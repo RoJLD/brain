@@ -1448,8 +1448,8 @@ its `plan`. The Stop hook takes the provider from the session's own environment 
 `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`), else from the account's `provider`,
 else from the model's id. The account is an **alias the owner chooses**, set in config.json `usage.accounts` (the one in
 force from each `since` day, an entry that names the session's `harness` first), or named by `BRAIN_ACCOUNT` in the
-session's environment (an owner running two accounts on one machine); its plan is the entry's `plan`, else
-`usage.plans`. An alias is never an e-mail address nor an account id: such a value is never written (the hook leaves it
+session's environment (an owner running two accounts on one machine, or switching within a day); its plan is the
+entry's `plan`, else `usage.plans`. `since` is a UTC day (YYYY-MM-DD), compared with the UTC day the session started. An alias is never an e-mail address nor an account id: such a value is never written (the hook leaves it
 out and says so in `errors.log`, without the value), and an SR or a config.json that holds one is refused by its
 schema. Nothing reads Claude Code's account files or its telemetry. `brain record sr` and `brain record backfill` keep
 what the session's snapshot captured, and a rebuilt record keeps the values it had.
@@ -1462,7 +1462,8 @@ what the session's snapshot captured, and a rebuilt record keeps the values it h
 
 `brain usage` adds a « where » line (each provider's, harness's and account's cost and share; `--json`: `sources`),
 and `--by provider`, `--by harness` and `--by account`; `brain status` shows the same breakdown in its tokens row
-(`--json`: `tokens.sources`). A token-ledger row is read at report time (its model, its day, `usage.accounts`), so the
+(`--json`: `tokens.sources`). A token-ledger row is read at report time (what its session's Stop hook captured, then
+its model, its day and `usage.accounts`), so the
 sessions scanned before keep working and an alias set later applies to them; an account that is not an alias shows as
 `(masked)`, an unknown one as `(none)`. The reader of another harness's sessions comes with that harness's adapter.
 

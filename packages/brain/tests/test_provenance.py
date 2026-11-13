@@ -11,8 +11,9 @@ import pytest
 from brain import backfill, capture, cli, config, cost, projects, provenance, records, schema, status, usage
 
 ADDRESS = "ada" + "@" + "example.org"   # an e-mail-shaped value (never a real one)
+DOTLESS = "ada" + "@" + "corp"           # an address without a dot
 UUID = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"
-ACCOUNTS = [{"alias": "solo", "plan": "Pro", "since": ""},
+ACCOUNTS = [{"alias": "solo", "plan": "Pro"},
             {"alias": "main", "plan": "Max", "since": "2026-11-05"},
             {"alias": "ide", "plan": "Team", "since": "2026-11-01", "harness": "cursor", "provider": "anthropic"}]
 
@@ -35,6 +36,9 @@ def ada_config(tmp_path, monkeypatch):
     ("claude-opus-5-5", "anthropic"),
     ("us.anthropic.claude-sonnet-5-5-v1:0", "bedrock"),
     ("anthropic.claude-haiku-5-5-v1:0", "bedrock"),
+    ("global.anthropic.claude-opus-5-5-v1:0", "bedrock"),
+    ("us-gov.anthropic.claude-sonnet-5-5-v1:0", "bedrock"),
+    ("apac.anthropic.claude-sonnet-5-5-v1:0", "bedrock"),
     ("arn:aws:bedrock:us-east-1:123:inference-profile/x", "bedrock"),
     ("claude-opus-5-5@20261101", "vertex"),
     ("<synthetic>", ""), ("", ""), (None, ""), ("gpt-9", ""),
@@ -60,13 +64,20 @@ def test_harness_takes_over_tool_read_as_its_fallback():
 
 def test_an_alias_is_never_an_email_address_nor_an_account_id():
     assert provenance.safe_alias("main") == "main" and provenance.safe_alias("team-2.b_x") == "team-2.b_x"
-    for bad in (ADDRESS, UUID, UUID.replace("-", ""), "", " main", "a b", "x" * 41, None, 3):
-        assert provenance.safe_alias(bad) == ""
+    for bad in (ADDRESS, DOTLESS, UUID, UUID.replace("-", ""), "a-" + UUID, "x" + UUID.replace("-", ""),
+                "work\n", "work\r\n", "", " main", "a b", "x" * 41, None, 3):
+        assert provenance.safe_alias(bad) == "", bad
+    assert provenance._plan("Max 20x") == "Max 20x"
+    for bad in (UUID, "plan " + UUID.replace("-", ""), "Max " + DOTLESS):
+        assert provenance._plan(bad) == "", bad
 
 
 def test_the_account_in_force_on_a_day_of_its_harness():
-    accts = provenance.accounts({"accounts": ACCOUNTS + [{"alias": ADDRESS, "plan": "Max"}, "junk", {"plan": "x"}]})
-    assert [a["alias"] for a in accts] == ["solo", "ide", "main"]   # the e-mail-shaped entry is never used
+    bad_days = [{"alias": "late", "since": "2026-11-05T23:00"}, {"alias": "empty", "since": ""},
+                {"alias": "slash", "since": "2026/11/05"}]
+    accts = provenance.accounts({"accounts": ACCOUNTS + [{"alias": ADDRESS, "plan": "Max"}, "junk", {"plan": "x"}]
+                                 + bad_days})
+    assert [a["alias"] for a in accts] == ["solo", "ide", "main"]   # an e-mail-shaped alias or a bad day: never used
     assert provenance.account_on("2026-11-02", accts)["alias"] == "solo"
     assert provenance.account_on("2026-11-05", accts)["alias"] == "main"
     assert provenance.account_on("2026-11-02", accts, harness="cursor")["alias"] == "ide"
@@ -140,15 +151,18 @@ def test_an_older_engine_reads_a_new_record_with_notes_only():
 def test_the_new_fields_validate_strict_and_an_email_shaped_alias_is_refused():
     new = {**_old_sr(), "harness": "claude-code", "provider": "anthropic", "account": "main", "plan": "Max 20x"}
     assert schema.check("sr", new)[0] == []
-    for bad in (ADDRESS, UUID):
+    for bad in (ADDRESS, DOTLESS, UUID, "a-" + UUID, "work\n"):
         errors = schema.check("sr", {**new, "account": bad})[0]
-        assert any(e.startswith("sr.account") for e in errors)
-        assert ADDRESS not in " ".join(errors)   # the value is never printed back
-    assert schema.check("sr", {**new, "plan": "Max " + ADDRESS})[0]
-    assert schema.check("sr", {**new, "provider": "Bedrock!"})[0]
-    with pytest.raises(SystemExit) as exc:
-        records.validate("sr", {**new, "account": ADDRESS})
-    assert ADDRESS not in str(exc.value)
+        assert any(e.startswith("sr.account") for e in errors), bad
+        assert bad.strip() not in " ".join(errors)   # the value is never printed back
+    for field, bad in (("plan", "Max " + ADDRESS), ("plan", UUID), ("plan", "Max\n"), ("provider", "Bedrock!"),
+                       ("harness", "cursor\n")):
+        errors = schema.check("sr", {**new, field: bad})[0]
+        assert errors and bad.strip() not in " ".join(errors), (field, bad)
+    for bad in (ADDRESS, DOTLESS, UUID):
+        with pytest.raises(SystemExit) as exc:
+            records.validate("sr", {**new, "account": bad})
+        assert bad not in str(exc.value)
 
 
 def test_a_record_built_from_a_transcript_carries_where_it_ran(fixture_transcript, ada_config):
@@ -193,12 +207,18 @@ def test_a_rebuilt_record_keeps_where_it_ran_as_recorded():
 
 def test_brain_config_check_refuses_an_email_shaped_alias(tmp_path, monkeypatch):
     base = json.loads(open(config.config_file(), encoding="utf-8").read())
-    base["usage"] = {"accounts": [{"alias": ADDRESS, "plan": "Max"}]}
+    base["usage"] = {"accounts": [{"alias": ADDRESS, "plan": "Max"}, {"alias": DOTLESS}, {"alias": UUID},
+                                  {"alias": "ok", "plan": UUID}, {"alias": "late", "since": "2026-11-05T23:00"},
+                                  {"alias": "empty", "since": ""}]}
     f = tmp_path / "config.json"
     f.write_text(json.dumps(base), encoding="utf-8")
     monkeypatch.setenv("BRAIN_CONFIG", str(f))
     errors = config.check()
-    assert any("usage.accounts[0].alias" in e for e in errors) and ADDRESS not in " ".join(errors)
+    text = " ".join(errors)
+    for i, k in enumerate(("alias", "alias", "alias", "plan", "since", "since")):
+        assert f"usage.accounts[{i}].{k}" in text, (i, k)
+    for bad in (ADDRESS, DOTLESS, UUID):
+        assert bad not in text
     base["usage"] = {"accounts": ACCOUNTS}
     f.write_text(json.dumps(base), encoding="utf-8")
     assert not [e for e in config.check() if "usage" in e]
@@ -245,6 +265,37 @@ def test_usage_breaks_the_cost_down_by_provider_harness_and_account(lab):
         table = cost.report(led, "2026-11-01", "", dim)["tables"][dim]
         assert sum(r["total"] for r in table) == pytest.approx(10.5)
     assert ADDRESS not in cost.as_json(rep)
+
+
+def test_usage_reads_what_the_stop_hook_captured_before_the_configuration(lab, brain_home):
+    """BRAIN_ACCOUNT=solo and CLAUDE_CODE_USE_FOUNDRY=1 in the session: its snapshot says foundry, solo, Pro; the
+    ledger row (its model, its day) alone would say anthropic, main, Max."""
+    snaps = brain_home / "sessions"
+    snaps.mkdir(parents=True)
+    (snaps / "s2.json").write_text(json.dumps({"v": 1, "provider": "foundry", "harness": "claude-code",
+                                               "account": "solo", "plan": "Pro"}), encoding="utf-8")
+    led = cost.Ledger(_rows(lab)[:2], [lab], cfg_usage={"accounts": ACCOUNTS})
+    s2 = next(r for r in led.rows if r["session_id"] == "s2")
+    assert (s2["provider"], s2["harness"], s2["account"], s2["plan"]) == ("foundry", "claude-code", "solo", "Pro")
+    s1 = next(r for r in led.rows if r["session_id"] == "s1")   # no snapshot: the configuration and the model
+    assert (s1["provider"], s1["account"], s1["plan"]) == ("anthropic", "solo", "Pro")
+    by = {r["key"]: r for r in cost.report(led, "", "", "account")["tables"]["account"]}
+    assert set(by) == {"solo"} and by["solo"]["n"] == 2
+    row = {**_rows(lab)[1], "provider": "bedrock"}   # the row's own field wins over the snapshot
+    assert provenance.of_row(row, {"accounts": ACCOUNTS}, snapshot=provenance.captured("s2"))["provider"] == "bedrock"
+
+
+def test_a_row_read_twice_reads_the_same(lab):
+    """A Ledger built again from annotated rows (brain.forecast does) keeps (none) and (masked) as they were."""
+    cfg = {"accounts": [{"alias": "late", "plan": "Max", "since": "2026-11-05"}]}
+    rows = _rows(lab)
+    first = cost.Ledger(rows, [lab], cfg_usage=cfg).rows
+    again = cost.Ledger([dict(r) for r in first], [lab], cfg_usage=cfg).rows
+    pick = ("provider", "harness", "account", "plan")
+    assert [[r[k] for k in pick] for r in again] == [[r[k] for k in pick] for r in first]
+    assert [r["account"] for r in first] == ["(none)", "late", "late", "late", "(masked)"]
+    for r in first:
+        assert provenance.of_row(r, cfg) == {k: r[k] for k in pick}
 
 
 def test_usage_without_accounts_reads_old_rows_alike(lab):

@@ -13,9 +13,14 @@ Where each value comes from, the first that gives one:
             comes with its adapter).
   account   what the session captured; in the Stop hook, ``BRAIN_ACCOUNT`` (an alias, for an owner who runs two
             accounts on one machine); else the entry of config.json ``usage.accounts`` in force on the session's
-            day (the latest ``since`` on or before it; an entry that names the session's harness first).
+            day (the latest ``since`` on or before it; an entry that names the session's harness first). The day is
+            the UTC date the session started (YYYY-MM-DD): a switch of account within a day is told by
+            ``BRAIN_ACCOUNT``, not by ``since``.
   plan      what the session captured; the account's ``plan``; else config.json ``usage.plans`` (the plan in force
             that day) when the owner set it.
+
+``brain usage`` and ``brain status`` read the same order for a token-ledger row (:func:`of_row`): the row's own
+fields, then what the session's snapshot captured, then config.json and the model.
 
 An alias is a short name (``main``, ``team-2``), **never an e-mail address and never an account id**: an alias that
 holds an ``@`` or looks like a UUID is never written (:func:`safe_alias` drops it) and an SR or a config.json that
@@ -39,27 +44,39 @@ ACCOUNT_ENV = "BRAIN_ACCOUNT"
 # Claude Code's switches to another provider (its third-party integrations), checked in this order.
 PROVIDER_ENV = (("CLAUDE_CODE_USE_BEDROCK", "bedrock"), ("CLAUDE_CODE_USE_VERTEX", "vertex"),
                 ("CLAUDE_CODE_USE_FOUNDRY", "foundry"))
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")   # a provider's or a harness's id (sr.schema.json)
-# An alias: letters, digits, dot, dash, underscore; never an account id (a UUID); no '@', so never an e-mail address.
-# The same pattern is in sr.schema.json (account) and config.schema.json (usage.accounts[].alias).
-ALIAS_RE = re.compile(r"^(?![0-9A-Fa-f]{8}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4})[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
-_BEDROCK_RE = re.compile(r"^(?:arn:aws[a-z-]*:bedrock|(?:[a-z]{2,4}\.)?anthropic\.)")
+# The patterns of sr.schema.json and config.schema.json, matched whole (fullmatch: a trailing newline never passes;
+# the schemas end on (?![\s\S]), which ECMA and Python read alike).
+NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")   # a provider's or a harness's id
+_UUID = r"[0-9A-Fa-f]{8}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{12}"
+# An alias: letters, digits, dot, dash, underscore; no account id (a UUID) anywhere in it; no '@', so never an e-mail
+# address (sr.schema.json account, config.schema.json usage.accounts[].alias).
+ALIAS_RE = re.compile(rf"(?!.*{_UUID})[A-Za-z0-9][A-Za-z0-9._-]{{0,39}}", re.S)
+PLAN_RE = re.compile(rf"(?!.*{_UUID})[^@\n\r]{{1,40}}", re.S)   # a plan's label: no '@', no UUID
+DAY_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")   # a since: the UTC day, YYYY-MM-DD
+# Bedrock's model ids: an ARN, or anthropic.<model> with an inference profile's prefix (us., eu., apac., global.,
+# us-gov....).
+_BEDROCK_RE = re.compile(r"^(?:arn:aws[a-z-]*:bedrock|(?:[a-z]+(?:-[a-z]+)?\.)?anthropic\.)")
 
 
 def safe_alias(value) -> str:
-    """``value`` when it is an alias :data:`ALIAS_RE` takes, else '' (an e-mail address, an account id, anything
+    """``value`` when it is an alias :data:`ALIAS_RE` takes whole, else '' (an e-mail address, an account id, anything
     else: never written)."""
-    return value if isinstance(value, str) and ALIAS_RE.match(value) else ""
+    return value if isinstance(value, str) and ALIAS_RE.fullmatch(value) else ""
 
 
 def _name(value) -> str:
     v = value.strip().lower() if isinstance(value, str) else ""
-    return v if NAME_RE.match(v) else ""
+    return v if NAME_RE.fullmatch(v) else ""
 
 
 def _plan(value) -> str:
-    v = " ".join(value.split()) if isinstance(value, str) else ""
-    return v[:40] if v and "@" not in v else ""
+    v = " ".join(value.split())[:40] if isinstance(value, str) else ""
+    return v if v and PLAN_RE.fullmatch(v) else ""
+
+
+def _absent(value) -> bool:
+    """A value a report put in for what was unknown or hidden (:data:`NONE`, :data:`MASKED`): read as no value."""
+    return value in (None, "", NONE, MASKED)
 
 
 def _on(value) -> bool:
@@ -99,7 +116,10 @@ def accounts(cfg_usage) -> list[dict]:
     for r in rows if isinstance(rows, list) else []:
         if not isinstance(r, Mapping) or not safe_alias(r.get("alias")):
             continue
-        out.append({"alias": r["alias"], "plan": _plan(r.get("plan")), "since": str(r.get("since") or ""),
+        since = r.get("since")
+        if since is not None and not (isinstance(since, str) and DAY_RE.fullmatch(since)):
+            continue   # a since that is not a UTC day (config.json --check says so): no day to compare
+        out.append({"alias": r["alias"], "plan": _plan(r.get("plan")), "since": since or "",
                     "provider": _name(r.get("provider")), "harness": _name(r.get("harness"))})
     return sorted(out, key=lambda a: a["since"])
 
@@ -160,7 +180,7 @@ def captured(session_id: str) -> dict:
     session's own environment said, which a later rebuild from the transcript cannot know. {} without one."""
     from . import paths
 
-    if not session_id or not re.match(r"^[A-Za-z0-9-]+$", session_id):
+    if not session_id or not re.fullmatch(r"[A-Za-z0-9-]+", session_id):
         return {}
     try:
         data = json.loads((paths.sessions_dir() / f"{session_id}.json").read_text(encoding="utf-8"))
@@ -187,13 +207,29 @@ def _model_of(row: Mapping) -> str:
     return row.get("model") or (next(iter(by_model), "") if isinstance(by_model, Mapping) else "")
 
 
-def of_row(row: Mapping, cfg_usage=None, accts: list[dict] | None = None) -> dict:
+def _own(row: Mapping) -> dict:
+    """The provenance a row holds itself, :data:`NONE` and :data:`MASKED` read as absent (a row a report already
+    annotated reads as the raw one); ``tool`` as the harness's fallback; an account as it is (checked by the caller)."""
+    out = {k: _name(row.get(k)) for k in ("provider", "harness")}
+    out["harness"] = out["harness"] or _name(row.get("tool"))
+    out["plan"] = "" if _absent(row.get("plan")) else _plan(row.get("plan"))
+    out["account"] = "" if _absent(row.get("account")) else row.get("account")
+    return {k: v for k, v in out.items() if v}
+
+
+def of_row(row: Mapping, cfg_usage=None, accts: list[dict] | None = None, snapshot: Mapping | None = None) -> dict:
     """{provider, harness, account, plan} of a token-ledger row (brain.usage) or a session record, read at report
-    time: its own fields first (a newer scanner's, another harness's adapter), else what its model and day give;
-    every key set (``(none)`` when unknown, ``(masked)`` for an account that is not an alias)."""
+    time: its own fields first (a newer scanner's, another harness's adapter), then ``snapshot``, what the session's
+    Stop hook captured (:func:`captured`: its environment's provider and account), then what config.json, its model
+    and its day give; every key set (``(none)`` when unknown, ``(masked)`` for an account that is not an alias).
+    Idempotent: a row it annotated reads the same again."""
     accts = accounts(cfg_usage) if accts is None else accts
-    out = _fill({**row, "harness": harness_of(row)}, _model_of(row), str(row.get("start") or "")[:10], cfg_usage,
-                accts)
-    if row.get("account") and not safe_alias(row.get("account")):   # never shown, nor taken for the day's account
-        out.update(account=MASKED, plan=_plan(row.get("plan")))
+    own = _own(row)
+    masked = row.get("account") == MASKED or bool(own.get("account") and not safe_alias(own["account"]))
+    given = {**(snapshot or {}), **own}
+    if masked:   # never shown, nor taken for the day's account
+        given.pop("account", None)
+    out = _fill(given, _model_of(row), str(row.get("start") or "")[:10], cfg_usage, accts)
+    if masked:
+        out.update(account=MASKED, plan=own.get("plan", ""))
     return {k: v or NONE for k, v in out.items()}

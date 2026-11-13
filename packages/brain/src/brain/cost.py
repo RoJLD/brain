@@ -133,7 +133,8 @@ class Ledger:
         for r in rows:
             r = dict(r)
             r["project"] = (placer(r["folder"]) if r.get("folder") else "") or queue.OUTSIDE
-            r.update(provenance.of_row(r, cfg_usage, accts))   # where it ran, read at report time
+            # where it ran, read at report time: the row, what its Stop hook captured, config.json, its model
+            r.update(provenance.of_row(r, cfg_usage, accts, provenance.captured(str(r.get("session_id") or ""))))
             self.rows.append(r)
         self.parent = usage.link_families(self.rows)
         self.items: dict[str, Item] = {}
