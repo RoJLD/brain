@@ -105,9 +105,9 @@ Where the `brain` command serves the project (a research_graph store registered 
 use it rather than editing the YAML: `brain [--project P] item close <id> --pr "<repo> #<n>" --outcome "..."`, then
 `brain refresh`. The item's definition of done is the generic sentence plus the clauses of its typologies (`brain
 item clauses <id>` lists them, from the item's `props.typology` or, without one, the registry entry's
-`lifecycle.typologies`): a code item takes the software
-clauses (a PR, a test, the docs in the same PR, the scout, the worktree) and closes with `--pr`; an item of another
-kind closes with `--evidence "<a render id, a document's version, a DDR>"` instead.
+`lifecycle.typologies` when the store is the project's own): a code item takes the software clauses (a PR, a test,
+the docs in the same PR, the scout, the worktree) and closes with `--pr`; an item of another kind closes with
+`--evidence "<a render id, a document's version, a DDR>"` instead.
 
 ## 4. Historised
 

@@ -1902,10 +1902,10 @@ From 0.2.4, in a brain that 0.2.4 (or older) initialised, in this order:
   a `default` (its recommendation, final 24 h later): the asking session applies it at once, provisionally; without
   an answer, `brain refresh` or `brain decision defaulted --apply` records it `by: default`, `via: default` at the
   deadline and the hooks announce it « by default ». At the ask and in `brain check`, the mark is refused for a
-  decision that touches the owner's rules, scheduled tasks, accounts, keys, money, publication, visibility or
-  arming. `brain decision defaulted` is the
-  owner's review list (`--seen` from their terminal), with a line in the morning batch and the cockpit's queue panel; `answer ID <option> --again`
-  reverses a default. The DDR schema gains `default` and the answer's `via: default`.
+  decision on the owner's rules, scheduled tasks, accounts, keys, money, publication, visibility or arming.
+  `brain decision defaulted` is the owner's review list (`--seen` from their terminal), with a line in the morning
+  batch and the cockpit's queue panel; `answer ID <option> --again` reverses a default. The DDR schema gains
+  `default` and the answer's `via: default`.
 
 ## 0.2.3 — 2026-11-03
 
