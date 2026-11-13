@@ -576,8 +576,28 @@ class _Handler(BaseHTTPRequestHandler):
         if data:
             self.wfile.write(data)
 
+    def _drain(self) -> None:
+        """Read a refused request's body (up to MAX_BODY) before the answer: a server that closes with it unread
+        resets the connection on Windows, and the client reads no answer at all (brain health ipc's probe)."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return
+        if 0 < length <= MAX_BODY:
+            try:
+                self.rfile.read(length)
+            except OSError:
+                pass
+
     def _refused(self) -> bool:
         """Answer and True when the request may not reach the server: path, Host, Origin, token, version."""
+        if self._gate():
+            self._drain()
+            return True
+        return False
+
+    def _gate(self) -> bool:
+        """The refusal's answer sent, and True, for a request that may not reach the server."""
         if self.path.split("?", 1)[0] != PATH:
             self._send(404, {"error": "not found"})
         elif not ipcauth.is_loopback(ipcauth.host_of(self.headers.get("Host"))) or \

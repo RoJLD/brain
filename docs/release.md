@@ -98,6 +98,17 @@ this PR », or how many of them), naming each with « (this PR) », in the job's
 whatever it says (2 when it cannot tell: no tag), and a minor version stays the owner's decision at the version PR.
 Run it from a branch before pushing, committed or not. Making it a required check is a branch-protection setting.
 
+`--ref REF` previews a commit instead of the working tree (read with git, the checkout left as it is), and `--json`
+prints the preview as data: the release it would be (`kind`, `release`, `patch`, `minor`), each reason with the first
+commit since the tag that brought it, and `tipped_by`, the first of them (with the merged PR's number when its subject
+names one). The brain reads it (wi-brain-wave-version-forecast): `brain next` under the current wave's head and
+`brain wave check X.Y.Z` after the closure rule say whether the wave named for the next patch ships as that patch or
+as a minor, the PR that first tipped it and why, so that the version and the wave's name are decided before the
+version PR. They run the preview of the engine checkout's remote default branch as git last fetched it
+(`origin/HEAD`, else `origin/main`), with that commit's own two scripts (read with `git show` into a temporary
+folder), bounded to a minute; a project with no engine checkout gets no forecast, and one that cannot be read is said
+in one line. Advisory: neither command's exit changes.
+
 `release-check` itself refuses, on every PR, a standard step that the pending Upgrade fragments ask twice: one fragment
 holds the standard steps for the whole release, and a PR's fragment adds only its own step, never a copy of them
 (les-brain-upgrade-fragment-copies-standard).

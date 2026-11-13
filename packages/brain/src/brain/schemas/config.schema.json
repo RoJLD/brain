@@ -23,6 +23,15 @@
     },
     "registry": {"type": "string", "minLength": 1, "description": "The projects registry (brain projects, brain --project NAME); default projects.yaml."},
     "rules": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "The owner's rules for every project, in order, as the Claude rendering injects them at the start of each session and subagent (files brain render --target claude writes from the neutral source). Default: none."},
+    "rules_diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "brain rules diff's inputs (README, The rules across their sources).",
+      "properties": {
+        "subjects": {"type": "string", "minLength": 1, "description": "The owner's subject list, YAML, relative to the brain's root: each subject's id, kind (guardrail or preference), closed set of values and their French and English patterns. Without it, brain rules diff computes no contradiction."},
+        "restricted": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The projects whose memory notes must never be copied: memory folder keys (the folder names under Claude Code's projects folder), or project folders turned into their key. brain rules diff reads their feedback notes for their names and subjects only, never in an agent session."}
+      }
+    },
     "source": {"type": "string", "minLength": 1, "description": "The neutral source's folder (rules with scope and id, procedures, MCP servers, packs) that brain render turns into each agent's files; default source."},
     "memory": {"type": "string", "minLength": 1, "description": "The memory notes' folder (brain memory); default memory."},
     "records": {"type": "string", "minLength": 1, "description": "The records' folder, DDR, SR and AR (brain record); default records."},
@@ -299,6 +308,13 @@
       "description": "The opt-in hooks that hint, never refuse: brain render --target claude (brain sync) registers each only when it is true.",
       "properties": {
         "read": {"type": "boolean", "description": "The read hint (readhint.sh, brain.readhint, PreToolUse on Read, Grep, Bash and PowerShell, about 0.2 s per call): true, brain render --target claude (brain sync) registers it in the core plugin's hooks.json; default false: not registered, no call pays its cost. BRAIN_READ_HINT=0 turns it off in a session while it is on."}
+      }
+    },
+    "guards": {
+      "type": "object", "additionalProperties": false,
+      "description": "The owner guard's options (brain.guards, brain.gestures: the owner's gestures, declared once).",
+      "properties": {
+        "owner_strict": {"type": "boolean", "description": "true: the owner's gestures brain.gestures marks strict are refused too (docs/guards.md, the owner's gestures): at the guard brain vault reseal --apply, and vault open, drill, device init and forget-previous, update, uninstall --apply and queue apply, which their commands refuse in an agent's session already; at the command line itself brain usage allow, brain schedule install --apply and brain vault reseal --apply in an agent's session (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT or BRAIN_AGENT_SESSION set), past the hook. Default false: the guard refuses what 0.5.0 refused."}
       }
     },
     "ipc": {
