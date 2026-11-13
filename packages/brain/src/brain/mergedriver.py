@@ -640,20 +640,28 @@ _GONE = object()   # a key one side deleted and the other left as it was
 def _merge_key(key: str, b: dict, o: dict, t: dict, nested: tuple, winner: str):
     """One key of :func:`_merge_keys`: its merged value, ``_GONE``, or :class:`_Clash`."""
     bv, ov, tv = b.get(key), o.get(key), t.get(key)
-    if key in nested and isinstance(ov, dict) and isinstance(tv, dict) and isinstance(bv or {}, dict) \
-            and ov != tv and ov != bv and tv != bv:
+    if key in nested and _both_moved_dicts(bv, ov, tv):
         sub = _merge_keys(bv or {}, ov, tv, (), winner)
         if sub is None:
             raise _Clash(key)
         return sub
     if ov == tv or tv == bv:
-        return ov if key in o else _GONE
+        return _kept(o, key)
     if ov == bv:
-        return tv if key in t else _GONE
+        return _kept(t, key)
     if winner and (key == "status" or not nested):   # the status, or a prop (one level down), both changed
-        side = o if winner == "ours" else t
-        return side[key] if key in side else _GONE
+        return _kept(o if winner == "ours" else t, key)
     raise _Clash(key)
+
+
+def _kept(side: dict, key: str):
+    return side[key] if key in side else _GONE
+
+
+def _both_moved_dicts(bv, ov, tv) -> bool:
+    """Both sides changed a mapping (props), each its own way: merged one level down."""
+    return isinstance(ov, dict) and isinstance(tv, dict) and isinstance(bv or {}, dict) \
+        and ov != tv and ov != bv and tv != bv
 
 
 def merge_node(bt: str, ot: str, tt: str) -> str | None:
