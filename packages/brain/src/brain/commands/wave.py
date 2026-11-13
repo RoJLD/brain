@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import config, graph, lots, waves
+from .. import config, graph, lots, waverename, waves
 from ._common import _project, _store
 
 ORDER = 55   # its place in brain --help's list of commands (brain.commands)
@@ -69,7 +69,7 @@ def _close(args, root: Path, store: Path) -> int:
 
 
 def _rename(args, store: Path) -> int:
-    r = waves.rename(store, args.wave, args.new or "", write=args.write)
+    r = waverename.rename(store, args.wave, args.new or "", write=args.write)
     for rel, n in r.files.items():
         print(f"{rel}: {n} reference(s) to {r.old}")
     tail = (f"renamed, its release {r.release or '(computed at the next brain sync)'}; then brain sync and brain "
