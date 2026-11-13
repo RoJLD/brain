@@ -244,7 +244,7 @@ A user timer runs while you are logged in; on a server, keep them running with, 
 
 ```bash
 loginctl enable-linger "$USER"
-brain schedule list        # what is declared, installed, and the alerts pass's last run (SILENT after two cadences)
+brain schedule list        # every scheduled task, declared or found, and the alerts pass's last run (SILENT after two cadences)
 ```
 
 ### macOS
