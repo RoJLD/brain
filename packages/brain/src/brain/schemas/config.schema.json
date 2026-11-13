@@ -23,6 +23,15 @@
     },
     "registry": {"type": "string", "minLength": 1, "description": "The projects registry (brain projects, brain --project NAME); default projects.yaml."},
     "rules": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "The owner's rules for every project, in order, as the Claude rendering injects them at the start of each session and subagent (files brain render --target claude writes from the neutral source). Default: none."},
+    "rules_diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "brain rules diff's inputs (README, The rules across their sources).",
+      "properties": {
+        "subjects": {"type": "string", "minLength": 1, "description": "The owner's subject list, YAML, relative to the brain's root: each subject's id, kind (guardrail or preference), closed set of values and their French and English patterns. Without it, brain rules diff computes no contradiction."},
+        "restricted": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The projects whose memory notes must never be copied: memory folder keys (the folder names under Claude Code's projects folder), or project folders turned into their key. brain rules diff reads their feedback notes for their names and subjects only, never in an agent session."}
+      }
+    },
     "source": {"type": "string", "minLength": 1, "description": "The neutral source's folder (rules with scope and id, procedures, MCP servers, packs) that brain render turns into each agent's files; default source."},
     "memory": {"type": "string", "minLength": 1, "description": "The memory notes' folder (brain memory); default memory."},
     "records": {"type": "string", "minLength": 1, "description": "The records' folder, DDR, SR and AR (brain record); default records."},
