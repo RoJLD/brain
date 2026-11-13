@@ -269,8 +269,21 @@ def _unmatched(starts: list[dict], family: list[dict]) -> list[str]:
     return out
 
 
-def _running(kids: list[dict], now: datetime, lim: dict, found: dict[str, Path], deadline: float) -> list[str] | None:
-    """The names of the children that run or start (:data:`LIVE`); None past ``deadline`` (time.monotonic)."""
+def _family(idx: dict, host: str) -> tuple[list[dict], list[dict]]:
+    """Every child of ``host`` (archived and detached ones too: the starts are matched against them), and those
+    neither archived nor detached, the newest first (the ones that may be live)."""
+    family = [m for m in idx.values() if m.get("parent") == host]
+    kids = sorted((m for m in family if not m.get("archived") and m.get("detached") is not True),
+                  key=lambda m: -(m.get("created") or 0))
+    return family, kids
+
+
+def _running(kids: list[dict], now: datetime, lim: dict, deadline: float) -> list[str] | None:
+    """The names of the children that run or start (:data:`LIVE`), their transcripts found in one pass; None past
+    ``deadline`` (time.monotonic)."""
+    found = _transcripts({str(m.get("session") or "") for m in kids}, deadline)
+    if found is None:
+        return None
     names = []
     for m in kids:
         if time.monotonic() > deadline:
@@ -298,11 +311,8 @@ def live_streams(master: str, now: datetime, lim: dict, budget_s: float | None =
     if not host:
         return _not_counted("the desktop app's sessions are not on this machine" if idx is None
                             else "this session is not one of the desktop app's")
-    family = [m for m in idx.values() if m.get("parent") == host]   # archived and detached ones too
-    kids = sorted((m for m in family if not m.get("archived") and m.get("detached") is not True),
-                  key=lambda m: -(m.get("created") or 0))
-    found = _transcripts({str(m.get("session") or "") for m in kids}, deadline)
-    names = _running(kids, now, lim, found, deadline) if found is not None else None
+    family, kids = _family(idx, host)
+    names = _running(kids, now, lim, deadline)
     if names is None:
         return _not_counted(late)
     names += _unmatched(_stream_starts(now, str(idx[host].get("session") or master)), family)
