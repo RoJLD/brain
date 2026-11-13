@@ -77,6 +77,8 @@ def forecast(repos: list[Path], ref: str = "", timeout: float = TIMEOUT) -> dict
             return {"error": f"the release preview cannot run: {exc}", "repo": str(repo), "ref": ref}
     if done.returncode:
         why = (done.stderr.strip().splitlines() or [f"exit {done.returncode}"])[-1]
+        if "unrecognized arguments" in why:   # a commit before this command: its preview reads only the working tree
+            why = f"the release preview at {ref} predates the forecast (no --ref, --json): it comes with that engine"
         return {"error": why.removeprefix("release-preview: "), "repo": str(repo), "ref": ref}
     try:
         data = json.loads(done.stdout)

@@ -34,7 +34,9 @@ step that the pending Upgrade fragments ask twice (:func:`standard_step_copies`)
 version policy applied as if the next release were a patch of the last tag, to the registered schemas that moved since
 it and to the pending Upgrade fragments' steps beyond the standard ones; it says whether the next release would be a
 minor one and, with ``--base``, which of the reasons this branch carries, appends that to ``--summary`` (default
-$GITHUB_STEP_SUMMARY) and exits 0 whatever it says (2 when it cannot tell).
+$GITHUB_STEP_SUMMARY) and exits 0 whatever it says (2 when it cannot tell). ``--ref REF`` previews that commit
+instead of the working tree (read with git), ``--json`` prints it as data with the first commit that brought each
+reason (brain wave check and brain next read it: brain.nextrelease, wi-brain-wave-version-forecast).
 
 Standard library only (``--store``'s check aside), and the working tree is what is read: the job runs before any
 install, and it can be run before committing. Exit 0 when it passes or there is nothing to check, 1 when it fails, 2
@@ -43,6 +45,7 @@ PyYAML; on any PR, a version PR or not).
 
     python packages/brain/installer/release_check.py [--repo DIR] [--against vX.Y.Z] [--store DIR]
     python packages/brain/installer/release_check.py --preview [--base origin/main] [--summary FILE]
+    python packages/brain/installer/release_check.py --preview --ref origin/main --json
 """
 from __future__ import annotations
 
@@ -821,8 +824,8 @@ def main(argv: list[str] | None = None) -> int:
                                                "this branch carries")
     ap.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY", ""),
                     help="with --preview: a Markdown file the preview is appended to (default: $GITHUB_STEP_SUMMARY)")
-    ap.add_argument("--ref", default="", help="with --preview: preview this commit (origin/main) instead of the working "
-                                              "tree, read with git; the checkout is left as it is")
+    ap.add_argument("--ref", default="", help="with --preview: preview this commit (origin/main) instead of the "
+                                              "working tree, read with git; the checkout is left as it is")
     ap.add_argument("--json", action="store_true", help="with --preview: the preview as data on stdout, no summary "
                                                         "written (brain wave check and brain next read it)")
     args = ap.parse_args(argv)
