@@ -36,7 +36,9 @@ USAGE = """\
                  Workflow): the quota windows it reads, the sessions running and the brainstorms open on this
                  machine, the two memory measures (committed memory, available RAM), the caps (config.json usage.guard, lowered by the project's usage:)
                  and what a new session, a brainstorm, a subagent and a workflow would get now (ask at WARN, refuse at
-                 CRITICAL, past a cap or while the newest reading is stale)
+                 CRITICAL, past a cap or while the newest reading is stale); with usage.guard.wave_quota, the wave
+                 quota gate's line: the streams that fit now (this session's live streams under max_streams, the
+                 week's forecast at its reset under ask_over_pct)
   brain usage allow [--hours H] [--reason TEXT]   {owner}'s override of the usage governor for H hours (default 2;
                  0 ends it), run in their own terminal: the guards refuse it to a session
 """

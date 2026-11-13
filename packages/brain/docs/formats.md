@@ -205,7 +205,7 @@ over. Each class keeps (`stateio.LOG_RETENTION`, this month counted):
 | errors | `ledger/errors.log`, `ledger/errors-YYYY-MM[-n].log` | 6 months |
 | timing | `ledger/engine/*-YYYY-MM.jsonl` (brain.selftime, the hooks' `exec-bash-`) | 3 months |
 | ledger | `ledger/<name>-YYYY-MM.jsonl` (actions, decisions, events, guard decisions, the queue) | kept: records nothing else holds |
-| starts | `usage/starts.jsonl`, `usage/starts-YYYY-MM[-n].jsonl` (the governor's brainstorm starts, read for 10 minutes) | 2 months |
+| starts | `usage/starts.jsonl`, `usage/starts-YYYY-MM[-n].jsonl` (the governor's brainstorm starts, and its stream starts while `usage.guard.wave_quota` is on, `"stream": true`; read for 10 minutes) | 2 months |
 | quota | `usage/quota.jsonl`, `usage/quota-YYYY-MM[-n].jsonl` (`brain usage quota --observe`'s readings) | 12 months |
 | notify | `notify/YYYY-MM.jsonl` (the notifications' audit: one file per month already; the older months go at a month's first line) | 6 months |
 

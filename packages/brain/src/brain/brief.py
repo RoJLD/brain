@@ -9,6 +9,9 @@ The brief holds, in this order:
   :data:`CLASSES`: a trivial task on a small model at low effort, a strategic one on the strongest at high effort);
   ``--budget`` else the class's;
 - the cost estimate of brain cost (wi-brain-brief-estimate) when the token ledger has a basis;
+- while config.json ``usage.guard.wave_quota`` is set (wi-brain-wave-quota-gate), how many streams fit now: the
+  coordinator's live streams under ``max_streams``, and the streams at this item's estimate that keep the week's
+  forecast at its reset under ``ask_over_pct`` (brain.governor.wave_room, what the governor checks at the start);
 - the coordinator's app session id (``--coordinator``, else ``$CLAUDE_CODE_HOST_SESSION_ID``: the session that runs
   ``brain brief``) and the shared notes folder (``--notes``, else the desktop app's folder for that session when it
   exists);
@@ -88,6 +91,7 @@ class Brief:
     coordinator: str
     notes: str
     estimate: str
+    streams: str = ""
     subgraph: list[str] = field(default_factory=list)
     collisions: list[str] = field(default_factory=list)
     start: list[str] = field(default_factory=list)
@@ -247,6 +251,21 @@ def _estimate(p: projects.Project, nid: str, task_class: str) -> str:
         return f"none ({type(exc).__name__}: {_short(exc, 80)})"
 
 
+def _streams(p: projects.Project, coordinator: str, estimate: str) -> str:
+    """The streams that fit now (brain.governor.wave_room) for ``coordinator``, each at this item's estimate; '' while
+    the wave quota gate is off."""
+    try:
+        from . import governor
+        wq = governor.settings(str(p.root))["limits"].get("wave_quota")
+        if not wq:
+            return ""
+        room = governor.wave_room(str(p.root), coordinator, [governor.estimate_usd(estimate)]
+                                  * (int(wq["max_streams"]) or 10))
+        return room["line"] if room else ""
+    except Exception as exc:  # noqa: BLE001 - a hint: its absence never stops a brief
+        return f"not known ({type(exc).__name__}: {_short(exc, 80)})"
+
+
 def _start(p: projects.Project, node: dict) -> list[str]:
     """Where the session starts: each repo's main checkout and default branch."""
     lines = []
@@ -333,9 +352,10 @@ def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget
     done, never, sources = owner_rules(p, cfg)
     if not done:
         warnings.append(f"no '{opts.get('done') or DONE}' section in the rules read")
+    estimate = _estimate(p, nid, task_class)
     return Brief(item=node, project=p.name, task_class=task_class, model=cls.get("model") or "",
                  effort=cls.get("effort") or "", budget=budget, coordinator=coordinator, notes=notes,
-                 estimate=_estimate(p, nid, task_class), subgraph=subgraph(st, nid),
+                 estimate=estimate, streams=_streams(p, coordinator, estimate), subgraph=subgraph(st, nid),
                  collisions=collisions.item_line(rep, nid), start=_start(p, node),
                  failure_modes=failure_modes(p, st, node, cfg),
                  invariants=standards.invariants(p), after_merge=after_merge(opts),
@@ -371,6 +391,7 @@ def render(b: Brief) -> str:
              f"{who(b.effort, 'the coordinator’s')}. **Context budget:** {b.budget}; at ~80 %, commit, write a "
              "hand-over note in the shared notes folder and report.",
              f"- **Cost estimate:** {b.estimate}",
+             *([f"- **Streams that fit now:** {b.streams}"] if b.streams else []),
              f"- **Coordinator:** {who(b.coordinator, 'unknown (--coordinator)')}: report to it by SendMessage, "
              "signed with your own `local_` id; give your PR numbers and head shas.",
              f"- **Shared notes folder:** {who(b.notes, 'none found (--notes)')}"]
