@@ -92,6 +92,10 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   unreadable, not an object, ``public`` not an object, a ``v`` above the known one, $BRAIN_CONFIG naming no file, or
   no config.json found although $BRAIN_PERSONAL or personal.json names a personal brain; never an unknown key), the
   reason naming the fix; guard.sh refuses them too when no Python that imports brain can run the guards.
+- Advice, never a refusal (wi-brain-private-text-prepush): a git push to a public repo that the guards let through gets
+  in the session's context the passages of 8 words or more that the lines its commits add (those the remote has not)
+  share with the owner's rules and notes on this machine (brain.privatetext), by file, line and source: reworded in
+  their PR, not before the tag. The ledger records it as ``public:private-text``, decision warned.
 - A warning, never a refusal: a Bash heredoc that holds a doubled backslash and writes a file or feeds an
   interpreter, on Windows, gets a note in the session's context (additionalContext): through the Bash tool the
   doubled backslash has arrived single; Write or Edit, or a byte check after (the lesson
@@ -3254,21 +3258,30 @@ def _push_commits(repo: str, refspecs: list[str], flags: set[str]) -> list[tuple
     return out
 
 
+def _public_push(d: str, args: list[str], cfg) -> tuple[str, str, list[str], set[str]] | None:
+    """(slug, remote, refspecs, flags) of a git push run in ``d`` with ``args`` when it goes to a public repo of
+    config.json ``public.repos`` (the remote named or given as a URL, else the branch's push remote or upstream,
+    else origin); None for any other repo."""
+    remote, refspecs, flags = _push_target(args)
+    if not remote:
+        branch = _git_out(d, "rev-parse", "--abbrev-ref", "HEAD").strip()
+        remote = _git_out(d, "config", f"branch.{branch}.pushRemote").strip() or \
+            _git_out(d, "config", f"branch.{branch}.remote").strip() or "origin"
+    url = remote if re.search(r"[:/]", remote) else _git_out(d, "remote", "get-url", "--push", remote).strip()
+    slug = public.repo_slug(url)
+    return (slug, remote, refspecs, flags) if public.is_public(slug, cfg) else None
+
+
 def check_public(cmds: list[tuple[list[str], str]]) -> str | None:
     cfg = None
     for words, d, args in _pushes(cmds):
         cfg = cfg or config.load()
         if not public.public_repos(cfg):
             return None
-        remote, refspecs, flags = _push_target(args)
-        if not remote:
-            branch = _git_out(d, "rev-parse", "--abbrev-ref", "HEAD").strip()
-            remote = _git_out(d, "config", f"branch.{branch}.pushRemote").strip() or \
-                _git_out(d, "config", f"branch.{branch}.remote").strip() or "origin"
-        url = remote if re.search(r"[:/]", remote) else _git_out(d, "remote", "get-url", "--push", remote).strip()
-        slug = public.repo_slug(url)
-        if not public.is_public(slug, cfg):
+        target = _public_push(d, args, cfg)
+        if target is None:
             continue
+        slug, _, refspecs, flags = target
         # a stamp counts only under the key it was made with: this engine, these rules, gitleaks as now
         # (wi-brain-public-stamp-binding)
         missing = [(ref, sha, why) for ref, sha in _push_commits(d, refspecs, flags)
@@ -3298,6 +3311,72 @@ def _checks_first(cmds: list[tuple[list[str], str]], push: list[str]) -> bool:
         if brain and "check" in words and "--public" in words:
             return True
     return False
+
+
+# --- the private text a push to a public repo sends: advice (wi-brain-private-text-prepush) ----------------------
+
+PRIVATE_TEXT_SHOWN = 5   # the passages a note names; it counts the rest
+
+
+def private_text_note(payload: dict) -> str | None:
+    """Advice, never a refusal, for a git push to a public repo: the passages of 8 words or more that what it sends
+    (the added lines of its commits that the remote has not) shares with the owner's rules and notes on this machine
+    (brain.privatetext, the check ``brain check --public --private-text`` runs before a tag), so that a sentence
+    copied from them is reworded in its PR, not at the release. A file under public.allow is not read. None when the
+    push sends none, goes elsewhere, or the brain has no rules or notes here."""
+    command, cwd, powershell = _shell_call(payload)
+    if "push" not in command:
+        return None
+    found, cfg, idx = [], None, None
+    for _, d, args in _pushes(calls(command, cwd, powershell)):
+        cfg = cfg or config.load()
+        target = _public_push(d, args, cfg) if public.public_repos(cfg) else None
+        if target is None:
+            continue
+        from . import privatetext
+        idx = privatetext.index(cfg) if idx is None else idx
+        if not idx:
+            return None
+        slug, remote, refspecs, flags = target
+        found += _pushed_text(d, remote, [sha for _, sha in _push_commits(d, refspecs, flags)], idx,
+                              public.rules(cfg, slug))
+    return _private_text_message(found) if found else None
+
+
+def _shell_call(payload: dict) -> tuple[str, str, bool]:
+    """(command, folder, PowerShell or not) of a shell call or a Terminal panel command; '' for any other tool."""
+    tool = payload.get("tool_name") or ""
+    inp = payload.get("tool_input") or {}
+    cwd = payload.get("cwd") or os.getcwd()
+    if TERMINAL_TOOL.match(tool):
+        tool = terminal_shell()
+        cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
+    command = (inp.get("command") or "") if tool in SHELL_TOOLS else ""
+    return str(command), cwd, tool == "PowerShell"
+
+
+def _private_text_message(found: list[tuple[str, int, str]]) -> str:
+    shown = "; ".join(f"{path}:{line} (from {src})" for path, line, src in found[:PRIVATE_TEXT_SHOWN])
+    more = f"; and {len(found) - PRIVATE_TEXT_SHOWN} more" if len(found) > PRIVATE_TEXT_SHOWN else ""
+    return (f"brain guard, advice (nothing refused): this push sends {len(found)} passage(s) of 8 words or more that "
+            f"the owner's rules or notes on this machine hold: {shown}{more}. Reword them in your own words in this "
+            "PR, before the tag's check refuses them (brain check --public --private-text lists them all).")
+
+
+def _pushed_text(repo: str, remote: str, shas: list[str], idx: dict, allow) -> list[tuple[str, int, str]]:
+    """(path, line, source) of each copied passage in the lines the commits ``shas`` add that ``remote`` has not."""
+    if not shas:
+        return []
+    remotes = f"--remotes={remote}" if not re.search(r"[:/]", remote) else "--remotes"
+    diff = _git_out(repo, "log", "-p", "--no-color", "--no-ext-diff", "--format=", "-U0", *shas, "--not", remotes)
+    from . import privatetext
+    out = []
+    for path, rows in diffs.added_lines(diff).items():
+        if allow.allowed(path):
+            continue
+        for line, src in privatetext.scan("\n".join(text for _, text in rows), idx):
+            out.append((path, rows[line - 1][0] if 0 < line <= len(rows) else line, src))
+    return list(dict.fromkeys(out))
 
 
 # --- what a commit to a public repo records (the lesson les-brain-owner-name-in-fixtures) ------------------------
@@ -3787,11 +3866,22 @@ def main(stdin=None, stdout=None) -> int:
             (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
             return 0
+        notes = []
         note = heredoc_note(payload)
         if note:
             _record(payload, "heredoc", "backslash", "warned", note)
+            notes.append(note)
+        try:
+            note = private_text_note(payload)
+        except Exception as exc:   # advice that fails is no advice: the push goes on (ledger/errors.log)
+            _log("public", exc)
+            note = None
+        if note:
+            _record(payload, "public", "private-text", "warned", note)
+            notes.append(note)
+        if notes:
             (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "PreToolUse", "additionalContext": note}}) + "\n")
+                "hookEventName": "PreToolUse", "additionalContext": " ".join(notes)}}) + "\n")
     except Exception as exc:  # never break the session
         try:
             from .capture import _log_error

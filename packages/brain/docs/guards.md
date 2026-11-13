@@ -176,7 +176,14 @@ so the guard fails closed. Override, the owner's: `BRAIN_GUARD_ALLOW=markers`.
 
 ## A public repo's commits, a chained push, heredocs
 
-Three guards the lessons registry asked for (`brain lessons --follow`):
+Three guards the lessons registry asked for (`brain lessons --follow`), and an advice:
+
+- **The private text a push sends** (`public:private-text`, advice, never a refusal; wi-brain-private-text-prepush):
+  a `git push` to a repo of `public.repos` that the guards let through is compared, by its added lines that the
+  remote has not, with the owner's rules and notes on this machine (`brain.privatetext`, windows of 8 words, as
+  `brain check --public --private-text` before a tag). Each passage is named in the session's context by its file,
+  line and source, never its text, and the ledger records the advice (`warned`); a file under `public.allow` is not
+  read, and a scan that fails lets the push go (`errors.log`). The PR rewords them; the tag's check still refuses.
 
 - **The public check at the commit** (`public:commit`): in a checkout whose branch pushes to a repo of config.json's
   `public.repos` (its pushRemote, else its remote, else origin: a private fork's public upstream is not checked), a `git commit` whose added lines hold a denied term outside `public.allow` (the owner's name, a
