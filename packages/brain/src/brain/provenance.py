@@ -128,22 +128,30 @@ def _plans(cfg_usage) -> tuple:
         if isinstance(rows, list) else ()
 
 
+def _plan_on(day: str, cfg_usage) -> str:
+    plans = _plans(cfg_usage)
+    return usage.plan_of(day, plans) if plans and day else ""
+
+
+def _fill(given: Mapping, model: str, day: str, cfg_usage, accts: list[dict], env: Mapping | None = None) -> dict:
+    """{provider, harness, account, plan}, '' where unknown: what ``given`` holds (a snapshot's, a row's own fields)
+    first, then ``env``, the account in force, the model's id."""
+    h = _name(given.get("harness")) or HARNESS
+    alias = safe_alias(given.get("account")) or (safe_alias(env.get(ACCOUNT_ENV)) if env else "")
+    acct = account_on(day, accts, h, alias)
+    return {"provider": _name(given.get("provider")) or provider_from_env(env) or acct.get("provider")
+            or provider_from_model(model),
+            "harness": h, "account": acct.get("alias") or "",
+            "plan": _plan(given.get("plan")) or acct.get("plan") or _plan_on(day, cfg_usage)}
+
+
 def resolve(model: str, day: str, cfg_usage=None, env: Mapping | None = None, captured: Mapping | None = None,
             harness: str = "") -> dict:
     """{provider, harness, account, plan} for one session, each key only when known (the module's docstring says from
     where). ``env`` is the session's own environment (the Stop hook's), None elsewhere; ``captured`` what its snapshot
     holds."""
-    captured = captured or {}
-    accts = accounts(cfg_usage)
-    h = _name(captured.get("harness")) or _name(harness) or HARNESS
-    alias = safe_alias(captured.get("account")) or (safe_alias((env or {}).get(ACCOUNT_ENV)) if env else "")
-    acct = account_on(day, accts, h, alias)
-    out = {"provider": _name(captured.get("provider")) or provider_from_env(env) or acct.get("provider") or
-           provider_from_model(model),
-           "harness": h, "account": acct.get("alias") or ""}
-    plans = _plans(cfg_usage)
-    out["plan"] = _plan(captured.get("plan")) or acct.get("plan") or (usage.plan_of(day, plans) if plans and day
-                                                                       else "")
+    given = {"harness": harness, **{k: v for k, v in (captured or {}).items() if v}}
+    out = _fill(given, model, day, cfg_usage, accounts(cfg_usage), env)
     return {k: v for k, v in out.items() if v}
 
 
@@ -166,15 +174,17 @@ def captured(session_id: str) -> dict:
 
 
 def for_session(model: str, day: str, root=None, env: Mapping | None = None, session_id: str = "") -> dict:
-    """:func:`resolve` with config.json's ``usage`` (brain.config) and the session's snapshot; never raises (a
-    configuration that does not load gives what the model says)."""
-    try:
-        from . import config
+    """:func:`resolve` with config.json's ``usage`` (brain.config, whose loading never fails: an unreadable file gives
+    no account) and the session's snapshot."""
+    from . import config
 
-        cfg_usage = config.load(root).data.get("usage")
-    except Exception:  # noqa: BLE001 - a bad configuration never costs a record its provenance
-        cfg_usage = None
+    cfg_usage = config.load(root).data.get("usage")
     return resolve(model, day, cfg_usage, env=env, captured=captured(session_id))
+
+
+def _model_of(row: Mapping) -> str:
+    by_model = row.get("by_model")
+    return row.get("model") or (next(iter(by_model), "") if isinstance(by_model, Mapping) else "")
 
 
 def of_row(row: Mapping, cfg_usage=None, accts: list[dict] | None = None) -> dict:
@@ -182,20 +192,8 @@ def of_row(row: Mapping, cfg_usage=None, accts: list[dict] | None = None) -> dic
     time: its own fields first (a newer scanner's, another harness's adapter), else what its model and day give;
     every key set (``(none)`` when unknown, ``(masked)`` for an account that is not an alias)."""
     accts = accounts(cfg_usage) if accts is None else accts
-    h = harness_of(row)
-    day = str(row.get("start") or "")[:10]
-    model = row.get("model") or ""
-    if not model and isinstance(row.get("by_model"), Mapping) and row["by_model"]:
-        model = next(iter(row["by_model"]))
-    raw = row.get("account")
-    alias = safe_alias(raw)
-    acct = {"alias": alias} if alias else account_on(day, accts, h)
-    if alias:
-        acct = next((a for a in accts if a["alias"] == alias), acct)
-    plans = _plans(cfg_usage)
-    plan = _plan(row.get("plan")) or acct.get("plan") or (usage.plan_of(day, plans) if plans and day else "")
-    return {"provider": _name(row.get("provider")) or acct.get("provider") or provider_from_model(model) or NONE,
-            "harness": h,
-            "account": MASKED if raw and not alias else acct.get("alias") or NONE,
-            "plan": plan or NONE}
-
+    out = _fill({**row, "harness": harness_of(row)}, _model_of(row), str(row.get("start") or "")[:10], cfg_usage,
+                accts)
+    if row.get("account") and not safe_alias(row.get("account")):   # never shown, nor taken for the day's account
+        out.update(account=MASKED, plan=_plan(row.get("plan")))
+    return {k: v or NONE for k, v in out.items()}
