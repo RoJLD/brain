@@ -14,14 +14,15 @@ environment variable (or in the system keyring) and the wizards show its name, n
 secrets-entry).
 
 **Local services** (wi-brain-wizard-local-services): the steps that wire the Brain's local services for any owner,
-in their order (:data:`LOCAL`): the machine's token (``brain ipc token --init``, the owner's gesture); Claude Code's
-OTLP export settings and its ``otelHeadersHelper`` (``brain ipc claude-settings``: the exact settings lines and the
-export checked, HTTP on loopback; written by the owner's ``install.ps1 -Apply``, never a session edit); the collector
-requiring the token (``config.json ipc.require_token``, by a PR in the personal brain, once the export sends the
-header); the sovereign bundle applied (``brain bundle plan``, then ``apply``); ``brain health ipc``; and Cursor's MCP
-server rendered (``brain render --target cursor``; the home folder's file once brain render has a user-level target).
-Each is optional: a machine without the telemetry collector skips them, and a step that fails stops none of the
-others. ``brain init`` prints the same steps among its next steps (:func:`local_lines`).
+in their order (:data:`LOCAL`): the machine's token (``brain ipc token --init``, the owner's gesture); the collector's
+token declared (``config.json ipc.require_token``, by a PR in the personal brain: it takes effect at the bundle's
+apply, and it is what makes the next step's settings carry the header); Claude Code's OTLP export settings and their
+``otelHeadersHelper`` (``brain ipc claude-settings``: the exact lines and the helper's export checked, HTTP on
+loopback; written by the owner's ``install.ps1 -Apply``, never a session edit); the sovereign bundle applied (``brain
+bundle plan``, then ``apply``); ``brain health ipc``; and Cursor's MCP server rendered (``brain render --target
+cursor``; the home folder's file once brain render has a user-level target). They are optional (a machine without
+the telemetry collector skips them), and each needs the ones before it: the cockpit runs one at a time, so the owner
+stops at the first that fails. ``brain init`` prints the same steps among its next steps (:func:`local_lines`).
 
 A plan writes nothing but a cache (``brain profile --quick`` refreshes ``$BRAIN_HOME/facts.json``); a plan that fails
 keeps the apply off. The notification and code index wizards run for the project the cockpit shows (``--project``).
@@ -130,25 +131,28 @@ def _kinds() -> tuple:
         return ()
 
 
-LOCAL_WHY = ("optional: only where the telemetry collector runs (config.json adapters.claude.telemetry); a step that "
-             "fails stops none of the others")
+LOCAL_WHY = ("optional, where the telemetry collector runs; each step needs the ones before it: stop at the first "
+             "that fails")
 LOCAL = [
     Wizard("local-token", "Local services 1: the machine's token",
            "the token of the Brain's local services (the collector, the MCP server over HTTP): its state, then --init "
-           "makes it, readable by its owner only; it is never shown",
+           "makes it (an unusable file is replaced); it is never shown",
            plan=["brain", "ipc", "token", "--plan"], apply=["brain", "ipc", "token", "--init"], notes=[LOCAL_WHY]),
-    Wizard("local-claude-export", "Local services 2: Claude Code's export and its token header",
-           "the settings Claude Code's OTLP export needs (env and otelHeadersHelper: brain ipc otel-headers), their "
-           "exact lines, and the export checked (HTTP, on loopback)",
-           plan=["brain", "ipc", "claude-settings"],
-           owner="install.ps1 -Apply, in the owner's own terminal: it adds these lines to ~/.claude/settings.json "
-                 "(never a session edit)", notes=[LOCAL_WHY]),
-    Wizard("local-require-token", "Local services 3: the collector requires the token",
-           "config.json ipc.require_token: [otel-collector], once steps 1 and 2 are done (before, the collector would "
-           "refuse an export without its header); the services' state now",
+    # The key before the settings: brain ipc claude-settings adds the otelHeadersHelper line only once
+    # ipc.require_token names the collector (headers_helper auto), and the collector requires the token only from
+    # the bundle's apply (step 4), so the export carries its header before any refusal.
+    Wizard("local-require-token", "Local services 2: the collector's token, declared",
+           "config.json ipc.require_token: [otel-collector]: the collector requires the token from step 4's apply on, "
+           "and Claude Code's settings (step 3) gain the header; the services' state now",
            plan=["brain", "health", "ipc"],
            owner="a branch and a PR in the personal brain: config.json ipc.require_token: [otel-collector]",
            notes=[LOCAL_WHY]),
+    Wizard("local-claude-export", "Local services 3: Claude Code's export and its token header",
+           "the settings Claude Code's OTLP export needs (env, and otelHeadersHelper: brain ipc otel-headers, once "
+           "step 2 is merged), their exact lines, and the helper's export checked (HTTP, on loopback)",
+           plan=["brain", "ipc", "claude-settings"],
+           owner="install.ps1 -Apply, in the owner's own terminal: it adds these lines to ~/.claude/settings.json "
+                 "(never a session edit)", notes=[LOCAL_WHY]),
     Wizard("local-bundle", "Local services 4: the sovereign bundle",
            "the collector and its stack rendered and started with the token required: the bundle's plan, then its "
            "apply (a second apply changes nothing)",
@@ -168,9 +172,10 @@ LOCAL = [
 
 def local_lines() -> list[str]:
     """The Local services steps as ``brain init``'s next steps print them: each a command, in their order."""
-    out = [f"      local services ({LOCAL_WHY}; the cockpit's Setup page runs them):"]
+    out = [f"      local services, in this order ({LOCAL_WHY}; the cockpit's Setup page runs them):"]
     for i, w in enumerate(LOCAL, 1):
-        out.append(f"        {i}. {w.command()}" + (f"; the owner's: {w.owner}" if w.owner else ""))
+        out.append(f"        {i}. {w.title.split(': ', 1)[1]}: " + (f"{w.owner}; see {w.command()}" if w.owner
+                                                                     else w.command()))
     return out
 
 

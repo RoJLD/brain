@@ -100,7 +100,7 @@ def early(args) -> int:
     ok = ipcauth.read() is not None
     if args.plan:
         print(f"{ipcauth.token_file()}: " + ("a usable token: --init keeps it" if ok else
-                                             "no usable token: --init makes it (readable by its owner only)"))
+                                             "no usable token: --init makes it (replacing an unusable file)"))
         return 0
     print(f"{ipcauth.token_file()}: {'a usable token' if ok else 'no usable token (brain ipc token --init)'}")
     return 0 if ok else 1

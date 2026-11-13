@@ -109,16 +109,33 @@ def test_a_module_turns_on_or_off_by_brain_mods_plan_then_its_apply():
 
 # --- the Local services step (wi-brain-wizard-local-services) ---
 
-LOCAL_IDS = ["local-token", "local-claude-export", "local-require-token", "local-bundle", "local-health",
+LOCAL_IDS = ["local-token", "local-require-token", "local-claude-export", "local-bundle", "local-health",
              "local-cursor"]
 
 
 def test_the_local_services_steps_come_in_their_order_before_the_checks():
     ids = [w.id for w in wizards.wizards()]
     assert [i for i in ids if i.startswith("local-")] == LOCAL_IDS
-    # the token, then the export's header, then the collector requiring it, then the bundle: the order of the ADR
-    assert ids.index("local-token") < ids.index("local-require-token") < ids.index("local-bundle") < ids.index("checks")
+    # the token; the key declared, so that the settings carry the header; the settings; then the bundle's apply,
+    # where the collector starts requiring the token: the export never goes out without its header to a refusal
+    assert ids.index("local-token") < ids.index("local-require-token") < ids.index("local-claude-export") < \
+        ids.index("local-bundle") < ids.index("checks")
     assert ids[-1] == "checks"
+
+
+def test_the_settings_step_shows_the_header_once_the_key_is_declared(tmp_path, monkeypatch, capsys):
+    """Review of wi-brain-wizard-local-services: brain ipc claude-settings adds otelHeadersHelper only once
+    ipc.require_token names the collector, hence the key before the settings."""
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"adapters": {"claude": {"telemetry": {"enabled": true}}}}', encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    settings_file = tmp_path / "settings.json"
+    assert cli.main(["ipc", "claude-settings", "--settings", str(settings_file)]) == 0
+    assert "otelHeadersHelper" not in capsys.readouterr().out
+    cfg.write_text('{"adapters": {"claude": {"telemetry": {"enabled": true}}}, "ipc": {"require_token": '
+                   '["otel-collector"]}}', encoding="utf-8")
+    assert cli.main(["ipc", "claude-settings", "--settings", str(settings_file)]) == 0
+    assert "helper   otelHeadersHelper:" in capsys.readouterr().out
 
 
 def test_the_owners_steps_stay_plans_and_the_others_plan_before_they_apply():
@@ -141,6 +158,7 @@ def test_the_tokens_plan_never_fails_and_never_shows_the_token(brain_home, capsy
     from brain import ipcauth
     assert cli.main(["ipc", "token", "--plan"]) == 0
     assert "no usable token: --init makes it" in capsys.readouterr().out
+    assert not ipcauth.token_file().exists()   # the plan wrote nothing
     assert cli.main(["ipc", "token", "--init"]) == 0
     capsys.readouterr()
     assert cli.main(["ipc", "token", "--plan"]) == 0
@@ -152,7 +170,8 @@ def test_the_tokens_plan_never_fails_and_never_shows_the_token(brain_home, capsy
 
 def test_brain_init_prints_the_local_services_in_the_same_order():
     lines = wizards.local_lines()
-    assert lines[0].strip().startswith("local services (optional: only where the telemetry collector runs")
+    assert lines[0].strip().startswith("local services, in this order (optional, where the telemetry collector runs")
     assert [ln.strip().split(".", 1)[0] for ln in lines[1:]] == ["1", "2", "3", "4", "5", "6"]
-    assert lines[1].strip() == "1. brain ipc token --plan, then brain ipc token --init"
-    assert "the owner's: install.ps1 -Apply" in lines[2] and "brain bundle apply sovereign" in lines[4]
+    assert lines[1].strip() == "1. the machine's token: brain ipc token --plan, then brain ipc token --init"
+    assert lines[2].strip().startswith("2. the collector's token, declared: a branch and a PR in the personal brain")
+    assert "install.ps1 -Apply" in lines[3] and "brain bundle apply sovereign" in lines[4]
