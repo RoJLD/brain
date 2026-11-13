@@ -8,4 +8,6 @@ section: Added
   names with `BRAIN_ACCOUNT`, never an e-mail address nor an account id (such a value is never written, and the SR and
   config.json schemas refuse it). `brain usage` adds a « where » line and `--by provider|harness|account` (`--json`:
   `sources`); `brain status` shows the same breakdown in its tokens row (`tokens.sources`). Old records and ledger
-  rows read alike, from their `tool`, model and day.
+  rows read alike, from their `tool`, model and day. The four SR fields and `usage.accounts` are optional keys, which
+  an older engine reads with a note and refuses in strict mode (CI, `BRAIN_STRICT=1`): set `usage.accounts` once
+  every machine and the brain's CI run this engine.

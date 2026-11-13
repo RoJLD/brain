@@ -13,7 +13,7 @@ from brain import backfill, capture, cli, config, cost, projects, provenance, re
 ADDRESS = "ada" + "@" + "example.org"   # an e-mail-shaped value (never a real one)
 UUID = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"
 ACCOUNTS = [{"alias": "solo", "plan": "Pro", "since": ""},
-            {"alias": "main", "plan": "Max", "since": "2026-11-06"},
+            {"alias": "main", "plan": "Max", "since": "2026-11-05"},
             {"alias": "ide", "plan": "Team", "since": "2026-11-01", "harness": "cursor", "provider": "anthropic"}]
 
 
@@ -68,7 +68,7 @@ def test_the_account_in_force_on_a_day_of_its_harness():
     accts = provenance.accounts({"accounts": ACCOUNTS + [{"alias": ADDRESS, "plan": "Max"}, "junk", {"plan": "x"}]})
     assert [a["alias"] for a in accts] == ["solo", "ide", "main"]   # the e-mail-shaped entry is never used
     assert provenance.account_on("2026-11-02", accts)["alias"] == "solo"
-    assert provenance.account_on("2026-11-06", accts)["alias"] == "main"
+    assert provenance.account_on("2026-11-05", accts)["alias"] == "main"
     assert provenance.account_on("2026-11-02", accts, harness="cursor")["alias"] == "ide"
     assert provenance.account_on("2026-11-07", accts, alias="ide")["plan"] == "Team"
     assert provenance.account_on("2026-11-07", accts, alias="other") == {"alias": "other"}
@@ -123,6 +123,18 @@ def test_an_old_record_stays_valid_and_reads_alike():
     assert provenance.of_row(old) == {"provider": "anthropic", "harness": "claude-code", "account": "(none)",
                                       "plan": "(none)"}
     assert provenance.of_row(old, {"accounts": ACCOUNTS})["account"] == "solo"
+
+
+def test_an_older_engine_reads_a_new_record_with_notes_only():
+    """The SR schema before these fields (brain 0.5.0's: the same, without them) reads a new SR in read mode with an
+    unknown field per new key and no error, and keep_unknown carries them through its rewrites."""
+    older = json.loads(json.dumps(schema.load("sr")))
+    for k in ("provider", "harness", "account", "plan"):
+        older["properties"].pop(k)
+    new = {**_old_sr(), "harness": "claude-code", "provider": "anthropic", "account": "main", "plan": "Max"}
+    errors, unknown = [], []
+    schema._validate(new, older, older, "sr", errors, unknown)
+    assert errors == [] and sorted(k for _, k in unknown) == ["account", "harness", "plan", "provider"]
 
 
 def test_the_new_fields_validate_strict_and_an_email_shaped_alias_is_refused():

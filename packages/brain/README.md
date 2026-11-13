@@ -1456,7 +1456,7 @@ what the session's snapshot captured, and a rebuilt record keeps the values it h
 
 ```json
 "usage": {"accounts": [{"alias": "personal", "plan": "Pro"},
-                       {"alias": "work", "plan": "Max", "since": "2026-11-06"},
+                       {"alias": "work", "plan": "Max", "since": "2026-11-05"},
                        {"alias": "ide", "plan": "Team", "harness": "cursor"}]}
 ```
 
