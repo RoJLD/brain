@@ -1351,7 +1351,10 @@ personal brain's own text, its rules (`config.json` `rules`) and its notes (the 
 8 words, lowercased, so case, punctuation and line breaks hide nothing: a sentence copied from a rule or a note is a
 `text` finding (the file, its line, the source), even when it names no denied term. A file under `public.allow` is not
 read. It runs before each tag (docs/release.md, « 3. The tag »), never stamps, and its findings are not part of the
-push guard's stamp.
+push guard's stamp. The push guard runs the same comparison as advice on each push to a public repo that it lets
+through (wi-brain-private-text-prepush): the lines the push's commits add that the remote has not, compared with this
+machine's rules and notes, each passage named by file, line and source (never its text) in the session's context, so
+it is reworded in its PR rather than before the tag; nothing is refused, and a scan that fails lets the push go.
 
 **One privacy scrub** (`wi-brain-privacy-scrub`, brain.scrub) for what leaves the machine, beside the secret scan's
 line drop: a line of `ledger/errors.log` (a crash report included), a notification's title, text and link, and what
