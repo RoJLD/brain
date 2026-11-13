@@ -113,8 +113,8 @@ def test_critical_refuses_every_tool_with_the_reason_and_the_override(ada, brain
     for tool in (START, "Agent", "Workflow"):
         decision, reason = hook(tool, ada.lab, title="x", initiation="user_asked")
         assert decision == "deny" and "the week quota is at 96 % (CRITICAL from 95 %" in reason
-        assert "Override (Ada only): brain usage allow --hours 2 in their own terminal" in reason
-        assert "BRAIN_GUARD_ALLOW=usage" in reason and reason.startswith("brain-core usage guard: ")
+        assert "Override (Ada only): brain usage allow --check critical --hours 2 in their own terminal" in reason
+        assert "BRAIN_GUARD_ALLOW=usage:critical" in reason and reason.startswith("brain-core usage guard: ")
     assert {(r["guard"], r["check"], r["decision"]) for r in ledger(brain_home)} == {("usage", "critical", "denied")}
 
 
@@ -409,9 +409,11 @@ def test_the_owners_override(ada, brain_home, monkeypatch):
     reading(brain_home, 97, at=datetime.now(timezone.utc) - timedelta(minutes=1))
     now = datetime.now(timezone.utc)
     assert hook("Agent", ada.lab, now=now)[0] == "deny"
-    rec = governor.allow(2, "the pilot demo")
-    assert rec["reason"] == "the pilot demo" and hook("Agent", ada.lab, now=now) is None
-    assert ledger(brain_home)[-1]["decision"] == "overridden"
+    rec = governor.allow(2, "the pilot demo")   # the memory and session caps only: not the critical quota
+    assert rec["checks"] == ["memory", "sessions", "brainstorms"] and hook("Agent", ada.lab, now=now)[0] == "deny"
+    rec = governor.allow(2, "the pilot demo", checks=["critical"])
+    assert rec["reason"] == "the pilot demo" and hook("Agent", ada.lab, now=now) is None   # warn with it
+    assert ledger(brain_home)[-1]["decision"] == "overridden" and ledger(brain_home)[-1]["by"] == "allow"
     governor.allow(0)
     assert hook("Agent", ada.lab, now=now)[0] == "deny"
     monkeypatch.setenv("BRAIN_GUARD_ALLOW", "usage")
@@ -489,7 +491,7 @@ def test_brain_usage_guard_and_allow(ada, brain_home, capsys, monkeypatch):
     rep = json.loads(capsys.readouterr().out)
     assert rep["workflow"]["decision"] == "ask" and rep["state"]["owner"] == "Ada"
     assert cli.main(["usage", "allow", "--hours", "1.5", "--reason", "demo"]) == 0
-    assert "usage guard lifted until" in capsys.readouterr().out
+    assert "usage guard lifted for memory, sessions, brainstorms until" in capsys.readouterr().out
     assert json.loads(governor.allow_file().read_text(encoding="utf-8"))["reason"] == "demo"
     assert cli.main(["usage", "allow", "--hours", "0"]) == 0 and not governor.allow_file().exists()
 
@@ -547,3 +549,141 @@ def test_a_brainstorm_start_rotates_its_log(ada, brain_home):
     assert hook(START, ada.lab, title="Brainstorm: one", initiation="user_asked") is None
     assert '"Brainstorm: one"' in f.read_text(encoding="utf-8") and "2020-01-01" not in f.read_text(encoding="utf-8")
     assert not (f.parent / "starts-2020-01.jsonl").exists() and not last_month.exists()   # rotated, then pruned
+
+
+# --- the override by check, logged (wi-brain-governor-override-scope, RETRO-8) ----------------------------------------
+
+def allows(brain_home):
+    return [(r["decision"], r.get("why", ""), tuple(r.get("checks", ()))) for r in ledger(brain_home)
+            if r["check"] == "allow"]
+
+
+def test_an_allow_lifts_the_memory_and_session_caps_never_a_stale_reading(ada, brain_home, monkeypatch):
+    monkeypatch.setattr(governor, "memory_info", lambda: {"committed": 99.0, "available_gb": 24.0})
+    reading(brain_home, 40, at=NOW - timedelta(minutes=5))
+    assert hook(START, ada.lab, title="x")[0] == "deny"
+    governor.allow(2, now=NOW - timedelta(minutes=1))
+    assert hook(START, ada.lab, title="x") is None
+    reading(brain_home, 40, at=NOW - timedelta(minutes=90))   # a fresh machine reading 90 min old is stale
+    (brain_home / "usage" / "quota.jsonl").write_text("", encoding="utf-8")
+    reading(brain_home, 40, at=NOW - timedelta(minutes=90))
+    decision, reason = hook(START, ada.lab, title="x")
+    assert decision == "deny" and "the newest reading is 90 min old" in reason
+    assert "No allow lifts a stale reading: reading the quota is one call" in reason
+    with pytest.raises(ValueError, match="stale: not a check brain usage allow lifts"):
+        governor.allow(2, checks=["stale"])
+
+
+def test_a_lifted_check_lets_the_next_one_decide(ada, brain_home, monkeypatch):
+    """Memory lifted, the parallel sessions cap still refuses: each check is its own."""
+    monkeypatch.setattr(governor, "memory_info", lambda: {"committed": 99.0, "available_gb": 24.0})
+    ada(guard={"sessions": 1})
+    reading(brain_home, 40)
+    app_session(ada, "a", "Session a")
+    governor.allow(2, checks=["memory"], now=NOW - timedelta(minutes=1))
+    decision, reason = hook(START, ada.lab, title="x")
+    assert decision == "deny" and "session(s) running in parallel" in reason
+    assert "brain usage allow --hours 2" in reason   # sessions is in the default set: no --check named
+    rows = [(r["check"], r["decision"]) for r in ledger(brain_home) if r["check"] != "allow"]
+    assert rows[-2:] == [("memory", "overridden"), ("sessions", "denied")]
+
+
+def test_each_allow_and_its_end_are_written_to_the_guards_ledger(ada, brain_home):
+    governor.allow(2, "demo", now=NOW - timedelta(hours=3))
+    rec = governor.allow(1, checks=["warn", "warn", "critical"], now=NOW - timedelta(hours=2))   # adds to the first
+    assert rec["checks"] == ["warn", "critical", "memory", "sessions", "brainstorms"]
+    assert rec["until"] == iso(NOW - timedelta(hours=1))   # the later end kept
+    assert governor.override_until(NOW) is None and not governor.allow_file().exists()   # its hour has passed
+    assert governor.override_until(NOW) is None                                          # its end written once
+    governor.allow(2, now=NOW)
+    governor.allow(0, now=NOW)
+    every = ("critical", "memory", "sessions", "brainstorms", "warn")
+    assert allows(brain_home) == [
+        ("allowed", "", ("memory", "sessions", "brainstorms")),
+        ("allowed", "", ("warn", "critical", "memory", "sessions", "brainstorms")), ("ended", "expired", every),
+        ("allowed", "", ("memory", "sessions", "brainstorms")), ("ended", "ended", ("memory", "sessions", "brainstorms"))]
+    governor.allow(0)   # nothing in force: nothing written
+    assert len(allows(brain_home)) == 5
+
+
+def test_an_allow_past_its_time_is_ended_as_expired_by_the_next_allow(ada, brain_home):
+    governor.allow(1, now=NOW - timedelta(hours=2))
+    governor.allow(1, checks=["critical"], now=NOW)
+    assert [a[:2] for a in allows(brain_home)] == [("allowed", ""), ("ended", "expired"), ("allowed", "")]
+    assert governor.lifted_checks(governor.override_until(NOW)) == ("critical", "warn")   # nothing kept from it
+
+
+def test_a_new_allow_written_while_a_hook_ends_the_old_one_stays(ada, brain_home, monkeypatch):
+    """Review of the PR: the hook reads an expired allow, the owner writes a new one, then the hook ends: the new one
+    is put back, never deleted, and the old one's end is not written twice."""
+    governor.allow(1, now=NOW - timedelta(hours=2))
+    read = governor._read_json
+
+    def racing(f):
+        data = read(f)
+        if f == governor.allow_file() and not getattr(racing, "done", False):
+            racing.done = True
+            governor.allow(1, checks=["critical"], now=NOW)   # the owner, in their terminal, meanwhile
+        return data
+    monkeypatch.setattr(governor, "_read_json", racing)
+    held = governor.override_until(NOW)
+    assert governor.lifted_checks(held) == ("critical", "warn") and governor.allow_file().exists()
+    assert [a[:2] for a in allows(brain_home)].count(("ended", "expired")) == 1
+
+
+@pytest.mark.parametrize("content", ["{}", "[]", "{not json", json.dumps({"until": 12345, "checks": ["memory"]})])
+def test_hours_0_removes_any_file_and_logs_only_an_override(ada, brain_home, content):
+    f = governor.allow_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(content, encoding="utf-8")
+    assert governor.override_until(NOW) is None
+    governor.allow(0, now=NOW)
+    assert not f.exists() and allows(brain_home) == []
+
+
+def test_checks_of_another_type_lift_nothing_and_hours_0_takes_no_check(ada, brain_home):
+    assert governor.lifted_checks({"until": iso(NOW), "checks": "memory"}) == ()
+    assert governor.lifted_checks({"until": iso(NOW), "checks": ["stale", "memory"]}) == ("memory",)
+    with pytest.raises(ValueError, match="give no --check"):
+        governor.allow(0, checks=["memory"])
+
+
+def test_brain_usage_guard_shows_what_the_hook_decides_under_an_override(ada, brain_home, capsys, monkeypatch):
+    monkeypatch.chdir(ada.lab)
+    reading(brain_home, 97, at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    governor.allow(1, checks=["critical"])
+    rep = governor.report(str(ada.lab))
+    assert rep["agent"]["decision"] == "allow"
+
+
+def test_an_allow_written_before_the_scope_lifts_every_check_but_stale(ada, brain_home):
+    """0.5.0 wrote no checks: such a file still in force lifts what it lifted then (critical included)."""
+    f = governor.allow_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"v": 1, "at": iso(NOW), "until": iso(NOW + timedelta(hours=1)), "reason": ""}),
+                 encoding="utf-8")
+    assert governor.lifted_checks(governor.override_until(NOW)) == governor.LIFTABLE
+    reading(brain_home, 97)
+    assert hook("Agent", ada.lab) is None
+    reading(brain_home, 97, at=NOW - timedelta(minutes=90))   # stale stays refused, as it did then
+    (brain_home / "usage" / "quota.jsonl").write_text("", encoding="utf-8")
+    reading(brain_home, 40, at=NOW - timedelta(minutes=90))
+    assert hook(START, ada.lab, title="x")[0] == "deny"
+
+
+def test_brain_guard_allow_aims_one_check(ada, brain_home, monkeypatch):
+    reading(brain_home, 97)
+    monkeypatch.setenv("BRAIN_GUARD_ALLOW", "usage:memory")
+    assert hook("Agent", ada.lab)[0] == "deny"
+    monkeypatch.setenv("BRAIN_GUARD_ALLOW", "owner,usage:critical")
+    assert hook("Agent", ada.lab) is None
+    assert ledger(brain_home)[-1]["by"] == "BRAIN_GUARD_ALLOW"
+
+
+def test_brain_usage_allow_check(ada, brain_home, capsys):
+    assert cli.main(["usage", "allow", "--check", "critical", "--check", "warn", "--hours", "1"]) == 0
+    assert "usage guard lifted for critical, warn until" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        cli.main(["usage", "allow", "--check", "stale"])
+    assert cli.main(["usage", "guard"]) == 0
+    assert "override  critical, warn until" in capsys.readouterr().out

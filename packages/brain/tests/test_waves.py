@@ -517,3 +517,34 @@ def test_import_from_a_release_leaves_the_earlier_ones(tmp_path, capsys):
     assert plan.items_of("wave-2.0.0") == [] and plan.items_of("wave-2.1.0") == ["wi-b", "wi-c"]
     assert cli.main(["--root", str(store.parents[1]), "wave", "import", "--from", "2.1"]) == 1
     assert "--from 2.1: a release X.Y.Z" in capsys.readouterr().err
+
+# --- the release forecast (wi-brain-wave-version-forecast): brain next and brain wave check say it ---
+
+FORECAST = {"kind": "minor", "patch": "1.1.0", "minor": "1.2.0", "ref": "origin/main", "sha": "abc1234",
+            "tipped_by": {"sha": "def5678", "subject": "Merge pull request #8 from a/b", "pr": 8},
+            "reasons": [{"kind": "schema", "path": "s.json"}]}
+
+
+def test_next_and_wave_check_say_the_release_forecast(plan_root, capsys, monkeypatch):
+    from brain import nextrelease
+    seen = []
+    monkeypatch.setattr(nextrelease, "forecast", lambda repos, **kw: seen.append(repos) or FORECAST)
+    assert cli.main(["--root", str(plan_root), "next"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[1].startswith("  release forecast: wave 1.1.0 ships as a minor, 1.2.0, not the patch 1.1.0")
+    assert out[2] == "    first tipped by def5678 (PR #8): Merge pull request #8 from a/b"
+    assert seen and all(isinstance(r, type(plan_root)) for r in seen[0])   # the project's repos' paths
+    assert cli.main(["--root", str(plan_root), "next", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["forecast"]["kind"] == "minor"
+    base = ["--root", str(plan_root), "wave", "check"]
+    assert cli.main(base + ["1.1.0"]) == 1   # the exit stays the closure rule's
+    assert "release forecast: wave 1.1.0 ships as a minor, 1.2.0" in capsys.readouterr().out
+    assert cli.main(base + ["1.0.0"]) == 0   # a wave the forecast does not concern: nothing said
+    assert "release forecast" not in capsys.readouterr().out
+
+
+def test_next_without_an_engine_checkout_says_no_forecast(plan_root, capsys):
+    assert cli.main(["--root", str(plan_root), "next", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["forecast"] is None
+    assert cli.main(["--root", str(plan_root), "next"]) == 0
+    assert "release forecast" not in capsys.readouterr().out

@@ -27,7 +27,8 @@ declarations are checked here, the commands run only by ``brain formats check`` 
 core plugin's guards refuse tool edits and git changes there (brain.guards). ``stacks`` declares the project's stacks,
 inline or as a YAML file relative to the root, for ``brain up / down / health`` (brain.stacks). ``repos`` lists the
 repos the project spans, for ``brain audit`` (brain.audit): a path relative to the root, or a mapping ``{path, name,
-entry, roots, waive, item, lang, scout_limit}`` (default: the root, plus every production checkout not listed);
+entry, roots, waive, item, lang, scout_limit}`` (default: the root, plus every production checkout not listed;
+``waive``'s globs leave out a module, a script, and a test or a doc of doc.links and test.links, each with its reason);
 ``audit: {spec: <id>}`` names the spec the audit's debt items link to. They are read by :func:`repos_of`, which
 raises RepoError on a bad entry (exit code 2), so another command never fails on them. ``code_index`` lists
 the repos ``brain index`` has GitNexus index, relative to the root (brain.codeindex). ``notify`` declares the

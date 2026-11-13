@@ -20,6 +20,8 @@ GitNexus indexes are declared under each project's code_index:, the stack that i
 each project's alerts come from (scheduler folders, tasks and their cadences, stacks, alert files, event folders,
 levels) is declared under alerts: (brain.alerts).
 {owner}: config.json's identity.owner (brain config), filled in by build_parser.
+The owner's gestures (brain.gestures) that the command line gates are refused, exit 2, in an agent's session under
+config.json guards.owner_strict.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ import codecs
 import os
 import sys
 
-from . import __version__, config, nowindow, paths, plugins, projects, selftime, shutdown
+from . import __version__, config, gestures, nowindow, paths, plugins, projects, selftime, shutdown
 from .commands import _registry as registry
 from .commands._common import root_of
 
@@ -108,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
         if lines:
             parser.epilog = "\n".join([parser.epilog or "", "", *lines])
     args = parser.parse_args(argv)
+    why = gestures.cli_refusal(argv)   # an owner's gesture an agent's session runs past the hook (brain.gestures)
+    if why:
+        print(f"brain: {why}", file=sys.stderr)
+        return 2
     try:
         # a signal stops the command once its current write is whole, its locks released (brain.shutdown)
         with shutdown.graceful(), selftime.run(selftime.command_task(args)):  # the exec event; an error event too
