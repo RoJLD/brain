@@ -233,14 +233,20 @@ def check(session: str, *, branches: list[str] | None = None, keep: list[str] | 
     rep.repos = repos_of(data, repo_dirs or [])
     infos = lot_branches(data, branches or [])
     if not offline:
-        for info in infos.values():
-            info["pr_state"] = gh_state(info["slug"], info["number"]) or info["pr_state"]
+        _refresh(infos)
+    kept = set(keep or [])
     for repo in rep.repos:
-        found = (branch_state(repo, b, info, set(keep or [])) for b, info in infos.items())
+        found = (branch_state(repo, b, info, kept) for b, info in infos.items())
         rep.branches += [st for st in found if st is not None]
         rep.worktrees += worktrees_of(repo, set(infos), str(data.get("worktreePath") or ""))
     rep.scratch = _scratch(scratch or [], name)
     return rep
+
+
+def _refresh(infos: dict[str, dict]) -> None:
+    """Each PR's state by gh, the app's last seen state kept when gh does not answer."""
+    for info in infos.values():
+        info["pr_state"] = gh_state(info["slug"], info["number"]) or info["pr_state"]
 
 
 def _scratch(patterns: list[str], name: str) -> list[str]:
