@@ -1068,8 +1068,10 @@ not read, and they stay out of the ordinary notes.
 ## Schedules and the alerts pass
 
 A project's `schedules:` entry in the registry declares the brain commands a machine's scheduler runs, `{name:
-{command, every, at, days, at_logon, machines, timeout, enabled}}`, with `days` the days `at` runs on (`days: [mon]`
-is weekly, none is every day); the alerts pass, say:
+{command, every, at, days, at_logon, machines, timeout, enabled, visible, floor}}`, with `days` the days `at` runs on
+(`days: [mon]` is weekly, none is every day), `visible: true` for a console window (hidden by default) and `floor` for
+a collector, whose data cannot be recovered: the slowest cadence its `every` may take (an engine before 0.5.1
+refuses these two keys: declare them once every machine runs 0.5.1); the alerts pass, say:
 
 ```yaml
 brain:
@@ -1094,6 +1096,18 @@ it. Without its channel's variable (`BRAIN_NTFY_TOPIC`) a pass sends nothing and
 at the first pass that finds it. Off Windows, the alerts' Task Scheduler folders are skipped. One pass runs at a time
 per machine (`<BRAIN_HOME>/locks/alerts-pass.lock`, `brain.shutdown`): a pass that starts while another runs (a
 logon pass beside the 15-minute one) is skipped, exit 0.
+
+**One view of every scheduled task** (`brain.schedview`, wi-brain-schedule-settings): `brain schedule list` shows the
+declared schedules and the tasks found under each project's `alerts: scheduler:` folders (registered by the project's
+own setup), each with its cadence, its window (hidden or visible), enabled or not, its project's quiet hours (they hold
+notifications below critical, never a run), a collector's floor, its last run, the file its value lives in and how it
+changes; the cockpit's Settings tab has the same rows on its Schedules page (the declared ones: the page reads no
+scheduler). `brain schedule set NAME [--every D|none] [--at HH:MM|none] [--days mon,fri|none] [--visible|--hidden]
+[--enable|--disable]` prints the change of a declared schedule as its line before and after, in the file that declares
+it (the registry, or the project's schedules file), and `--apply` writes it, the comments and the other lines kept; the
+result must read back as the same file with that one entry changed and pass the checks. A collector's floor refuses a
+slower `every` and a `--disable`; a block entry is shown as the change to make by hand; a found task changes where its
+project registers it. Writing the file installs nothing: `brain schedule install --apply`, the owner's, applies it.
 
 ### Dependency probes: loud fallbacks
 
