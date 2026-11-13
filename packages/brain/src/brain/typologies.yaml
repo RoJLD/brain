@@ -18,7 +18,7 @@ done:
   - {id: verified, text: "verified: checked as its kind checks (a test, a review, a measure), the check recorded"}
   - {id: linked, text: "linked in the graph: its item, its spec, its decisions and what it delivers"}
   - {id: integrated, text: "integrated: merged and applied where it is used"}
-  - {id: recorded, text: "recorded: ticked in the backlog with its evidence and date, historised in the journal"}
+  - {id: recorded, text: "recorded: the backlog marks it done with the date and the evidence, and the journal records it"}
 entries:
   software:
     en: Software
