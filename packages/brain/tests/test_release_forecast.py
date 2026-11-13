@@ -158,3 +158,62 @@ def test_the_lines_of_a_patch_and_of_a_later_wave():
     assert nextrelease.lines(patch, "0.2.6")[0].startswith("release forecast: wave 0.2.6 ships as the patch 0.2.6")
     assert "planned as the minor" in nextrelease.lines(patch, "0.3.0")[0]
     assert nextrelease.lines(patch, "0.2.7") == [] and nextrelease.lines(MINOR, "0.4.0") == []
+
+
+# The review's cases: names git would quote, the commit that made a reason, a drifted shape, the cache
+
+
+def test_a_fragment_with_a_non_ascii_name_counts_in_a_ref_too(repo, capsys):
+    merge(repo, "step-e", 8, f"{FRAGMENTS}/wi-\u00e9t\u00e9.md", STEP)
+    data = preview_json(repo, capsys, "--ref", main_branch(repo))
+    assert data["kind"] == "minor" and data["tipped_by"]["pr"] == 8, data
+
+
+def test_the_pr_that_tipped_it_is_the_one_that_moved_the_schema_not_the_one_that_grew_it(repo, capsys):
+    merge(repo, "grow", 7, CONFIG_SCHEMA, '{"properties": {"new": {}}}\n')   # an optional key: still a patch
+    merge(repo, "move", 9, CONFIG_SCHEMA, MOVED)
+    data = preview_json(repo, capsys, "--ref", main_branch(repo))
+    assert data["tipped_by"]["pr"] == 9 and data["reasons"][0]["first"]["pr"] == 9, data
+
+
+def test_a_fragment_counts_from_the_commit_that_gave_it_a_step_beyond_the_standard_ones(repo, capsys):
+    merge(repo, "note", 7, f"{FRAGMENTS}/wi-b.md", "section: Upgrade\n\nNothing to run for the rest.\n")
+    merge(repo, "step", 8, f"{FRAGMENTS}/wi-b.md", STEP)
+    assert preview_json(repo, capsys, "--ref", main_branch(repo))["tipped_by"]["pr"] == 8
+
+
+@pytest.mark.parametrize("args", [["--ref=--output=x"], ["--ref", "HEAD", "--base", "HEAD"]])
+def test_a_ref_like_an_option_or_with_base_cannot_tell(repo, capsys, args):
+    assert release_check.main(["--repo", str(repo), "--preview", "--json", *args]) == 2
+    assert "cannot tell" in capsys.readouterr().err
+    assert not (repo / "x").exists()
+
+
+def test_a_drifted_shape_is_unknown_not_a_crash(engine, monkeypatch):
+    def run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, '{"kind": "minor", "patch": "0.2.6"}', "")
+    monkeypatch.setattr(nextrelease.subprocess, "run", run)
+    fc = nextrelease.forecast([engine], ref="HEAD")
+    assert "another engine's shape" in fc["error"]
+    assert nextrelease.lines({"kind": "minor", "patch": "0.2.6", "minor": "0.3.0", "reasons": [{}],
+                              "tipped_by": {}}, "0.2.6")   # lines() reads with defaults, never raises
+
+
+def test_a_commit_already_previewed_is_read_from_the_cache(engine, monkeypatch):
+    first = nextrelease.forecast([engine], ref="HEAD")
+    assert "error" not in first, first
+    assert nextrelease.CACHE().is_file()
+
+    real = subprocess.run
+
+    def boom(cmd, **kw):
+        if cmd[:1] != ["git"]:
+            raise AssertionError("the preview ran again")
+        return real(cmd, **kw)
+    monkeypatch.setattr(nextrelease.subprocess, "run", boom)
+    again = nextrelease.forecast([engine], ref="HEAD")
+    assert again == first
+    write(engine, OTHER, "x = 3\n")
+    git(engine, "commit", "-qam", "a new commit")
+    with pytest.raises(AssertionError, match="ran again"):   # a new commit: a new preview
+        nextrelease.forecast([engine], ref="HEAD")

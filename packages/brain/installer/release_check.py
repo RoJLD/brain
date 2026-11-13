@@ -121,7 +121,9 @@ class CannotTell(Exception):
 def git(repo: Path, *args: str) -> str:
     """git's stdout, stripped; :class:`CannotTell` on a failure."""
     try:
-        done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
+        # core.quotePath off: a path with a non-ASCII letter comes back as written, not quoted with octal escapes
+        done = subprocess.run(["git", "-c", "core.quotePath=false", "-C", str(repo), *args], capture_output=True,
+                              text=True, encoding="utf-8",
                               errors="replace", check=False)
     except OSError as exc:
         raise CannotTell(f"git cannot run: {exc}") from exc
@@ -227,11 +229,16 @@ def new_formats(repo: Path, tag: str, ref: str = "") -> set[str]:
             and all(exists(repo, p, ref) and not _at_tag(repo, tag, p) for p in group)}
 
 
+def growing() -> set[str]:
+    """The schema files that may grow by optional keys in a patch (:data:`ADDITIVE`'s JSON ones)."""
+    return {path for name in ADDITIVE for path in SCHEMAS[name] if path.endswith(".json")}
+
+
 def moved_schemas(repo: Path, tag: str, changed: list[str], ref: str = "") -> tuple[list[str], list[str]]:
     """(moved, additive): the changed schema files split into those whose format moves and those that only grew:
     by optional keys (:data:`ADDITIVE`, :func:`additive`), or as a whole new format (:func:`new_formats`). Any other
     file new or gone since ``tag``, or unreadable as JSON, moves."""
-    grows = {path for name in ADDITIVE for path in SCHEMAS[name] if path.endswith(".json")}
+    grows = growing()
     added = {path for name in new_formats(repo, tag, ref) for path in SCHEMAS[name]}
     moved, grown = [], []
     for path in changed:
@@ -727,12 +734,15 @@ class Preview:
 PR_RE = re.compile(r"^Merge pull request #(\d+)\b")
 
 
-def firsts(repo: Path, tag: str, ref: str, paths: set[str]) -> dict[str, dict]:
+def firsts(repo: Path, tag: str, ref: str, paths: set[str], made: dict | None = None) -> dict[str, dict]:
     """Each of ``paths`` -> the first commit of ``tag..ref`` (HEAD without ``ref``) on the first-parent line that
-    touched it: {sha, subject, pr (the merged PR's number, or None), order}; a path no commit touched yet (an
-    uncommitted fragment) is left out. One git call; a merge commit counts by its diff with its first parent."""
+    made it a reason: {sha, subject, pr (the merged PR's number, or None), order}. ``made``: path -> a test of a
+    commit's sha (is the path a reason at that commit?); a path without one counts from the first commit that
+    touched it. A path no commit made a reason yet (an uncommitted fragment) is left out. A merge commit counts by
+    its diff with its first parent."""
     if not paths:
         return {}
+    made = made or {}
     log = git(repo, "log", "--first-parent", "--diff-merges=first-parent", "--reverse", "--name-only",
               "--format=%x00%h%x09%s", f"{tag}..{ref or 'HEAD'}", "--", *sorted(paths))
     found: dict[str, dict] = {}
@@ -742,7 +752,7 @@ def firsts(repo: Path, tag: str, ref: str, paths: set[str]) -> dict[str, dict]:
         pr = PR_RE.match(subject)
         for name in names.splitlines():
             name = name.strip()
-            if name in paths and name not in found:
+            if name in paths and name not in found and (name not in made or made[name](sha)):
                 found[name] = {"sha": sha, "subject": subject, "pr": int(pr.group(1)) if pr else None,
                                "order": order}
     return found
@@ -782,10 +792,32 @@ def preview(repo: Path, tag: str, base: str = "", ref: str = "") -> Preview:
     if version_pr:   # the fragments are compiled: the version's ### Upgrade holds its steps
         log = f"{BRAIN}/CHANGELOG.md"
         beyond += [(log, line) for line in steps_beyond_standard(upgrade_section(read(repo, log, ref), version) or "")]
-    reasons = set(moved) | {path for path, _ in beyond}
+    reasons, made = set(moved), {}
+    for path in reasons & growing():   # grown by optional keys first is no reason: from the commit it moved at
+        made[path] = lambda sha, path=path: _moved_at(repo, tag, path, sha)
+    for path in {path for path, _ in beyond} - {f"{BRAIN}/CHANGELOG.md"}:   # a version PR's CHANGELOG: no first
+        reasons.add(path)
+        made[path] = lambda sha, path=path: _beyond_at(repo, path, sha, standard)
     return Preview(tag, moved, grown_lines(repo, tag, grown, ref), beyond, standard_step_copies(repo, fragments),
                    pr_files(repo, base) if base else None, version_pr, ref,
-                   git(repo, "rev-parse", "--short", ref or "HEAD"), firsts(repo, tag, ref, reasons))
+                   git(repo, "rev-parse", "--short", ref or "HEAD"), firsts(repo, tag, ref, reasons, made))
+
+
+def _moved_at(repo: Path, tag: str, path: str, sha: str) -> bool:
+    """Whether the schema ``path`` at the commit ``sha`` moved from ``tag``'s (gone, unreadable or not additive)."""
+    try:
+        old, new = git(repo, "show", f"{tag}:{path}"), git(repo, "show", f"{sha}:{path}")
+        return not additive(json.loads(old), json.loads(new))
+    except (CannotTell, ValueError):
+        return True
+
+
+def _beyond_at(repo: Path, path: str, sha: str, standard: set[str]) -> bool:
+    """Whether the Upgrade fragment ``path`` at the commit ``sha`` asks a step beyond the standard ones."""
+    import changelog as frag
+    got, _ = frag.parse_text(repo / path, read(repo, path, sha))
+    return bool(got and got.section == "Upgrade"
+                and any(_step_title(line) not in standard for line in fragment_steps(got.body)))
 
 
 def run_preview(repo: Path, tag: str, base: str, summary: str, ref: str = "", as_json: bool = False) -> int:
@@ -835,6 +867,13 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     repo = Path(args.repo)
+    if args.preview and args.ref.startswith("-"):
+        print(f"release-preview: cannot tell: --ref {args.ref!r} is no commit", file=sys.stderr)
+        return 2
+    if args.preview and args.ref and args.base:
+        print("release-preview: cannot tell: --base names this branch's own files in the working tree, --ref a "
+              "commit: one or the other", file=sys.stderr)
+        return 2
     if args.preview:
         return run_preview(repo, args.against, args.base, "" if args.json else args.summary, args.ref, args.json)
     try:

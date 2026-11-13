@@ -12,6 +12,9 @@ merged, so the version and the wave's name are decided before the version PR.
 - **Which wave**: the wave whose release is the next patch or the next minor of the last tag; a later wave gets no
   forecast.
 
+A commit already previewed is read from the cache store (``<BRAIN_HOME>/cache/release-forecast.json``, one entry per
+checkout, keyed by the commit's sha): ``brain next`` runs the preview once per fetch, not on every call.
+
 Advisory: it never changes an exit code. It runs the script with this interpreter, bounded by :data:`TIMEOUT`; a
 script that fails, hangs or prints garbage is said in one line (``forecast unknown: ...``).
 """
@@ -23,6 +26,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from . import paths
 
 SCRIPT = "packages/brain/installer/release_check.py"
 SCRIPTS = ("release_check.py", "changelog.py")   # the preview's files, beside each other (it imports changelog)
@@ -52,13 +57,63 @@ def default_ref(repo: Path) -> str:
     return next((r for r in REFS[1:] if _git(repo, "rev-parse", "--verify", "--quiet", f"{r}^{{commit}}")), "HEAD")
 
 
+def well_formed(data) -> bool:
+    """Whether a preview's JSON holds what :func:`lines` reads (a later engine's copy may rename a key)."""
+    if not isinstance(data, dict) or data.get("kind") not in ("patch", "minor"):
+        return False
+    if not all(isinstance(data.get(k), str) and data.get(k) for k in ("patch", "minor")):
+        return False
+    reasons, tipped = data.get("reasons"), data.get("tipped_by")
+    if not isinstance(reasons, list) or not all(isinstance(r, dict) and isinstance(r.get("path"), str)
+                                                and r.get("kind") in ("schema", "upgrade") for r in reasons):
+        return False
+    return tipped is None or (isinstance(tipped, dict)
+                              and all(isinstance(tipped.get(k), str) for k in ("sha", "subject")))
+
+
+def _cached(repo: Path, key: str) -> dict | None:
+    try:
+        got = json.loads(CACHE().read_text(encoding="utf-8")).get(str(repo))
+    except (OSError, ValueError, AttributeError):
+        return None
+    return got["data"] if isinstance(got, dict) and got.get("key") == key and well_formed(got.get("data")) else None
+
+
+def _keep(repo: Path, key: str, data: dict) -> None:
+    """The forecast kept for that commit (the cache store's ``release-forecast.json``, one entry per checkout): the
+    same commit gives the same forecast, so brain next runs the preview once per fetch."""
+    f = CACHE()
+    try:
+        held = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+        held = held if isinstance(held, dict) else {}
+        held[str(repo)] = {"key": key, "data": data}
+        f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(held, indent=1, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(f)
+    except (OSError, ValueError):
+        pass   # a cache: the next call runs the preview again
+
+
+def CACHE() -> Path:   # noqa: N802 - a path read at call time (BRAIN_HOME may move in a test)
+    return paths.brain_home() / "cache" / "release-forecast.json"
+
+
 def forecast(repos: list[Path], ref: str = "", timeout: float = TIMEOUT) -> dict | None:
     """The preview of the project's engine checkout as data (release_check.py's ``--json`` keys, plus ``repo``), or
-    {"error": why} when it cannot tell; None when no repo of the project holds the script."""
+    {"error": why} when it cannot tell; None when no repo of the project holds the script. A commit already
+    previewed is read from the cache (:func:`_keep`)."""
     repo = checkout(repos)
     if repo is None:
         return None
     ref = ref or default_ref(repo)
+    if ref.startswith("-"):
+        return {"error": f"{ref!r} is no commit", "repo": str(repo), "ref": ref}
+    sha = _git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    if sha:
+        hit = _cached(repo, sha)
+        if hit is not None:
+            return hit | {"repo": str(repo), "ref": ref}
     with tempfile.TemporaryDirectory(prefix="brain-forecast-") as tmp:
         for name in SCRIPTS:   # the commit's own scripts: the checkout's branch and working tree play no part
             text = _git(repo, "show", f"{ref}:{Path(SCRIPT).parent.as_posix()}/{name}")
@@ -84,9 +139,11 @@ def forecast(repos: list[Path], ref: str = "", timeout: float = TIMEOUT) -> dict
         data = json.loads(done.stdout)
     except ValueError:
         data = None
-    if not isinstance(data, dict) or data.get("kind") not in ("patch", "minor") or not data.get("patch"):
-        return {"error": "the release preview printed no forecast (an engine checkout older than this command?)",
+    if not well_formed(data):
+        return {"error": "the release preview printed no forecast this engine reads (another engine's shape?)",
                 "repo": str(repo), "ref": ref}
+    if sha:
+        _keep(repo, sha, data)
     return data | {"repo": str(repo), "ref": ref}
 
 
@@ -105,7 +162,7 @@ def lines(fc: dict | None, release: str) -> list[str]:
         return []
     if "error" in fc:
         return [f"release forecast unknown: {fc['error']}"]
-    at = f"release_check --preview of {fc['ref']} at {fc.get('sha') or '?'}"
+    at = f"release_check --preview of {fc.get('ref') or '?'} at {fc.get('sha') or '?'}"
     if fc["kind"] == "patch":
         if release == fc["patch"]:
             return [f"release forecast: wave {release} ships as the patch {fc['patch']}, as planned ({at})"]
@@ -117,9 +174,10 @@ def lines(fc: dict | None, release: str) -> list[str]:
     tipped = fc.get("tipped_by")
     if tipped:
         pr = f" (PR #{tipped['pr']})" if tipped.get("pr") else ""
-        out.append(f"  first tipped by {tipped['sha']}{pr}: {tipped['subject']}")
+        out.append(f"  first tipped by {tipped.get('sha', '?')}{pr}: {tipped.get('subject', '')}")
     for r in fc.get("reasons") or []:
-        what = r["path"] if r["kind"] == "schema" else f"{r['path']}: {r.get('step', '')}"
-        label = "a registered schema moved" if r["kind"] == "schema" else "an Upgrade step beyond the standard ones"
+        schema = r.get("kind") == "schema"
+        what = r.get("path", "?") if schema else f"{r.get('path', '?')}: {r.get('step', '')}"
+        label = "a registered schema moved" if schema else "an Upgrade step beyond the standard ones"
         out.append(f"  {label}: {what}")
     return out
