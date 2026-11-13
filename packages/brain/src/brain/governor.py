@@ -837,16 +837,22 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
     decision, check, reason = v
     _record(payload, check, "denied" if decision == "deny" else "asked", reason)
     if decision == "ask" and s["kind"] == "session":
-        try:   # the owner may say yes: a parallel start must count it; a log it cannot write never drops the ask
-            _note_start(payload, s, asked=True)
-        except OSError as exc:
-            from .capture import _log_error
-            _log_error("governor note_start", exc)
+        _note_asked(payload, s)
     text = f"{s['plugin']} usage guard: {reason}."
     if decision == "deny":
         text += f" {override_hint(s['owner'], check)}."
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                    "permissionDecisionReason": text}}
+
+
+def _note_asked(payload: dict, s: dict) -> None:
+    """A start the hook asks about, noted (the owner may say yes: a parallel start must count it); a starts log it
+    cannot write never drops the ask: the failure goes to errors.log."""
+    try:
+        _note_start(payload, s, asked=True)
+    except OSError as exc:
+        from .capture import _log_error
+        _log_error("governor note_start", exc)
 
 
 def _let_through(payload: dict, s: dict) -> dict | None:
