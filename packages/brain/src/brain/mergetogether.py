@@ -203,6 +203,19 @@ def stamps(t: Together) -> list[Path]:
                                  "tests": t.tests, "tests_rc": t.tests_rc}) for g in t.gates]
 
 
+def _step_line(s: Step, before: list[int]) -> str:
+    """One head's line: left out, to merge the base into after those before it, its own text conflict, or clean."""
+    after = ", ".join(f"#{n}" for n in before)
+    if not s.merged:
+        return f"  BLOCK #{s.pr} conflicts after {after or 'the base'}: " + ", ".join(s.conflicts or ["(no tree)"])
+    if s.as_text and before:
+        return (f"  then  #{s.pr}: once {after} merged, GitHub sees a conflict on {', '.join(s.as_text)}: merge the "
+                "base into it locally (the driver resolves it), push, CI again")
+    if s.as_text:
+        return f"  note  #{s.pr}: its own merge conflicts as text on {', '.join(s.as_text)} (GitHub)"
+    return f"  ok    #{s.pr} merges clean"
+
+
 def lines(t: Together) -> list[str]:
     out = []
     for g in t.gates:
@@ -213,19 +226,9 @@ def lines(t: Together) -> list[str]:
                + f"; merge order: {', '.join(f'#{n}' for n in t.order) or 'none'}")
     before: list[int] = []
     for s in t.steps:
-        if not s.merged:
-            out.append(f"  BLOCK #{s.pr} conflicts after {', '.join(f'#{n}' for n in before) or 'the base'}: "
-                       + ", ".join(s.conflicts or ["(no tree)"]))
-            continue
-        if s.as_text and before:
-            out.append(f"  then  #{s.pr}: once {', '.join(f'#{n}' for n in before)} merged, GitHub sees a conflict "
-                       f"on {', '.join(s.as_text)}: merge the base into it locally (the driver resolves it), push, "
-                       "CI again")
-        elif s.as_text:
-            out.append(f"  note  #{s.pr}: its own merge conflicts as text on {', '.join(s.as_text)} (GitHub)")
-        else:
-            out.append(f"  ok    #{s.pr} merges clean")
-        before.append(s.pr)
+        out.append(_step_line(s, before))
+        if s.merged:
+            before.append(s.pr)
     out.append(f"  tests {t.tests_note or 'not chosen (a head did not merge)'}")
     if t.tests:
         out.append("        pytest " + " ".join(t.tests))
