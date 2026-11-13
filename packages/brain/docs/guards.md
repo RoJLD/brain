@@ -15,6 +15,50 @@ Both are declared in `src/brain/adapters/claude/hooks/hooks.json`. A personal br
 `brain render --target claude --write` (or `brain sync`) into its own plugin, then its installer applies the plugin
 (on Windows `install.ps1 -Apply`, the owner's).
 
+## The owner's gestures, declared once
+
+What only the owner runs, in their own terminal, is one list in the engine, `brain.gestures.GESTURES`: a subcommand
+path of `brain`, the flags that make it the owner's, the owner guard's category, and where it is refused. The owner
+guard (`brain.guards.check_owner`) reads it for every shell call and every command of a nested shell, wrapper or
+launcher it sees through; `guard.sh`'s pre-filter starts Python for each; the command line (`brain.cli`) refuses the
+ones it gates when an agent's session (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` or `BRAIN_AGENT_SESSION` set) runs them
+past the hook, through a script for instance. `tests/test_gestures.py` checks each gesture against the guard, the
+pre-filter, the command line and this table, so a new gesture added to the list is refused everywhere at once.
+
+| Gesture | Category | The guard | The command line in a session |
+|---|---|---|---|
+| `brain usage allow` | override | refuses | refuses (strict) |
+| `brain handover root` | override | refuses, whatever runs it | refuses (its own check) |
+| `brain schedule install --apply` | scheduled | refuses, queued for the owner | refuses (strict) |
+| `brain ipc otel-headers` | keys | refuses, whatever runs it, queued | runs: Claude Code's `otelHeadersHelper` calls it |
+| `brain vault open` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault drill` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault device init` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault device forget-previous` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault reseal --apply` (or `--identity`) | keys | refuses (strict), queued | refuses (strict; `--identity`: its own check) |
+| `brain update` (but `--check`) | installer | refuses (strict) | refuses (its own check) |
+| `brain uninstall --apply` | installer | refuses (strict) | refuses (its own check) |
+| `brain queue apply` | actions | refuses (strict) | refuses (its own check) |
+| `install.ps1 -Apply` | installer | refuses when permissions.yaml declares `installer` | not the engine's |
+
+A gesture's words follow `brain`'s own options (`--root`, `--project`, `--store`, or argparse's prefixes of them:
+`brain --proj x usage allow`), with options and their values allowed between them (`brain usage --hours 2 allow`),
+whatever runs it as the program: `brain`, its `.exe` or `.cmd`, `python -m brain` (`-mbrain`, `-Imbrain`, `-m
+brain.cli`), `uv run brain`; a word that only names brain (`echo brain update`, `cp -r brain x`) runs nothing. A flag
+counts by argparse's prefixes too (`--a`, `--app=x`). A loose gesture (`handover root`, `ipc otel-headers`) is found
+anywhere in the command, its last word unresolved too (`brain ipc $x`), `--help` or not; any other is a read with
+`--help` or `-h` before a `--`. A category
+of the never-grantable list (keys, scheduled; installer when permissions.yaml declares it) makes the refusal an action
+the owner can queue (`brain queue add --guard`); the others name the gesture and the owner's terminal.
+
+**Strict** (config.json `guards.owner_strict: true`, off by default): the refusals 0.5.1 adds to what the guard let
+through before. At the guard: `brain vault reseal --apply`, and the gestures whose commands refuse themselves in an
+agent's session already (`vault open`, `drill`, `device init` and `forget-previous`, `update`, `uninstall --apply`,
+`queue apply`: refused before they run, `brain update`'s plan included); at the command line, its own refusal of
+`brain usage allow`, `brain schedule install --apply` and `brain vault reseal --apply` in an agent's session (exit 2).
+Without it, the guard refuses what 0.5.0 refused (`usage allow`, `handover root`, `schedule install --apply`, `ipc
+otel-headers`), now however brain is run, and each command keeps its own check.
+
 ## The Terminal panel
 
 A command a session types into the owner's Terminal panel (`mcp__*terminal__run_in_terminal`) runs in the owner's own
@@ -176,7 +220,20 @@ so the guard fails closed. Override, the owner's: `BRAIN_GUARD_ALLOW=markers`.
 
 ## A public repo's commits, a chained push, heredocs
 
-Three guards the lessons registry asked for (`brain lessons --follow`):
+Three guards the lessons registry asked for (`brain lessons --follow`), and an advice:
+
+- **The private text a push sends** (`public:private-text`, advice, never a refusal; wi-brain-private-text-prepush):
+  a `git push` to a repo of `public.repos` that the guards let through is compared, by its added lines that the
+  remote has not, with the owner's rules and notes on this machine (`brain.privatetext`, windows of 8 words, as
+  `brain check --public --private-text` before a tag). Each passage is named in the session's context by its file,
+  line and source, never its text, and the ledger records the advice (`warned`); a file under `public.allow` is not
+  read, and a scan that fails lets the push go (`errors.log`). The PR rewords them; the tag's check still refuses.
+  A push that adds no line costs one `git log`; the windows are hashed and cached in
+  `<BRAIN_HOME>/cache/private-text.json` (hashes and source paths, never the words) while the rules and notes keep
+  their mtime and size; one push reads 500 commits at most (a first push of a long history), each hunk on its own,
+  and a remote given as a URL excludes what the remotes naming the same repo have. Tag messages and git notes are not
+  read. `BRAIN_GUARD_ALLOW=public` lifts the push's refusal, not the advice; `BRAIN_GUARD_ALLOW=public:private-text`
+  turns the advice off.
 
 - **The public check at the commit** (`public:commit`): in a checkout whose branch pushes to a repo of config.json's
   `public.repos` (its pushRemote, else its remote, else origin: a private fork's public upstream is not checked), a `git commit` whose added lines hold a denied term outside `public.allow` (the owner's name, a
@@ -313,12 +370,26 @@ Every refusal, ask and override is a line of the guards ledger with `"guard": "u
 ### Overriding it (the owner only)
 
 ```bash
-brain usage allow --hours 2 --reason "finish the demo"   # in your own terminal
+brain usage allow --hours 2 --reason "finish the demo"   # in your own terminal: the memory and session caps
+brain usage allow --check critical --hours 1             # the critical quota (and warn with it)
 brain usage allow --hours 0                              # end it now
 ```
 
+An allow lifts checks, not the governor (RETRO-8): by default the memory and session caps (`memory`, `sessions`,
+`brainstorms`); `--check NAME`, repeatable, aims one or more of `critical` (which lifts `warn` too), `warn`, `memory`,
+`sessions`, `brainstorms`. A stale quota reading is never lifted: reading it again is one `get_usage` call. A lifted
+check lets the next one decide (memory lifted, the sessions cap still refuses), and each refusal names the allow that
+lifts it (`brain usage allow --check critical --hours 2`), or says that none does. An allow adds to the one in
+force (its checks and the later end kept), so following one refusal's hint never undoes another allow; `--hours 0`
+ends the whole override. Each allow, and its end (`ended` by `--hours 0`, `expired` when its time has passed: the
+first to see it, a hook, `brain usage guard` or the next allow, claims the file and ends it, once; an allow the
+owner wrote meanwhile is kept), is a line of the guards ledger (`"guard": "usage"`, `"check": "allow"`, its checks, since, until and reason),
+and each call it lets through one more (`"decision": "overridden"`, `"by": "allow"`). An `allow.json` written by
+0.5.0 (no `checks`) lifts every check but `stale` until it ends.
+
 The guards refuse `brain usage allow` to a session, and any write of its file (`<BRAIN_HOME>/usage/allow.json`).
-`BRAIN_GUARD_ALLOW=usage` in Claude Code's environment lifts it too, for every session started with it.
+`BRAIN_GUARD_ALLOW=usage` in Claude Code's environment lifts every check, for every session started with it;
+`BRAIN_GUARD_ALLOW=usage:CHECK` that one only.
 
 ### Not applied here
 

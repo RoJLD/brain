@@ -813,6 +813,8 @@ def _next_steps(root: Path, owner: str, kind: str) -> None:
           f"{names['plugin']}@{names['marketplace']} (brain sync renders the plugin again after an engine upgrade)")
     print(f"      the vault, before anything leaves this machine: brain classes (each store's class), brain vault "
           f"status (your device key, your recovery key, the daily canary); the runbook: {vault.RUNBOOK}")
+    from .wizards import local_lines
+    print("\n".join(local_lines()))
 
 
 def _apply_files(root: Path, steps: list[Step], owner: str, same: list[str]) -> int:
