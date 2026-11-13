@@ -98,7 +98,7 @@ then the view merges as plain text and `boundary.yaml` reads it as `notes/**`; `
 | `props.kind` | Its members (`part_of` it) | Its props | brain check refuses |
 |---|---|---|---|
 | none | items and milestones, as before | `trigger`, `reached` | - |
-| `wave` | work items; it is itself `part_of` a milestone or an era (a warning without one) | `release: X.Y.Z` (its name), `week` (optional) | a `release` that is not `X.Y.Z`, two waves of one release, a member that is not a work item, an item `part_of` two waves, a `carried_to` that names no later wave, a `carried_via` that names no wave, a reached or dropped wave that still holds an open item |
+| `wave` | work items; it is itself `part_of` a milestone or an era (a warning without one) | `seq` (its place; the id `wave-sN`), `release: X.Y.Z` (a legacy or pinned release; else computed), `shipped_as: X.Y.Z` (written by `brain wave close`), `renamed_from` (`brain wave rename`), `week` (optional) | a `release` that is not `X.Y.Z`, a wave with no release (nothing before it to count from), two waves of one release, a member that is not a work item, an item `part_of` two waves, a `carried_to` that names no later wave, a `carried_via` that names no wave, a reached or dropped wave that still holds an open item |
 | `era` | milestones | `exit` (the Go/NoGo question, a DDR once its milestones are reached), `stage_to` and `serves` (optional, free labels) | a member that is not a milestone (a warning without `exit`, and once its exit is due) |
 
 An item's wave is the one it is `part_of`, or, once that wave closed without it, the later one its `props.carried_to`

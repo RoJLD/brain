@@ -512,6 +512,17 @@ def _waves(repo: Path):
         return waves
 
 
+def _read_by(repo: Path) -> str:
+    """`` (read by brain X.Y.Z, <its folder>)``: which engine read the store, the installed one or this checkout's
+    (:func:`_waves`), since a wave's label depends on it; '' when it cannot be told."""
+    try:
+        waves = _waves(repo)
+        import brain
+    except ImportError:
+        return ""
+    return f" (read by brain {getattr(brain, '__version__', '?')}, {Path(waves.__file__).resolve().parent})"
+
+
 def readable_store(store: Path) -> None:
     """:class:`CannotTell` unless ``store`` is a graph store (its ``nodes/``)."""
     if not (store / "nodes").is_dir():
@@ -571,7 +582,8 @@ def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], l
     problems += policy(tag, version, changed, upgrade)
     if store is not None:
         closure = wave_closure(repo, store, version)
-        said.append(f"the wave {version} in {store}: " + ("open items left" if closure else "closed or none"))
+        said.append(f"the wave {version} in {store}{_read_by(repo)}: "
+                    + ("open items left" if closure else "closed or none"))
         problems += closure
     return said, problems
 

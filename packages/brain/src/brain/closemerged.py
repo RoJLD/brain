@@ -226,10 +226,10 @@ def plan(store: Path, repos: list[tuple[str, Path]], version: str, since: str = 
          root: Path | None = None) -> Plan:
     """What close-merged does for the wave ``version`` (its release or its id) over ``repos`` ((name, checkout))."""
     wp = waves.load(store, root)
-    wid = wp.resolve(version)
+    wid = wp.for_release(version)   # its label, or the current wave when the release jumped (wave ids decoupled)
     if wid is None:
         raise CloseError(f"{version}: no wave of that release (brain wave add {version})")
-    out = Plan(wp.label(wid), wid)
+    out = Plan(version if waves.release_key(version) else wp.label(wid), wid)
     _read(out, repos, since, until)
     nodes = {k: n for k, n in wp.nodes.items() if n.get("type") == "WorkItem"}
     _map(out, wp, set(nodes))
