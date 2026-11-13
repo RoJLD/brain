@@ -35,9 +35,9 @@ def early(args) -> int:
     return cmd_review(args)
 
 
-def _plans(repo: Path) -> list:
-    """The wave plans (brain.waves) of the repo's registered project's stores; a store that cannot be read is left out
-    (the stamp is then unplaced, never unwritten)."""
+def _plans(repo: Path) -> tuple[str, list]:
+    """(the repo's registered project, the wave plans of its stores: brain.waves); a store that cannot be read is
+    left out (the stamp is then unplaced, never unwritten)."""
     from .. import standards, waves
     proj = standards.project_of_repo(repo)
     out = []
@@ -47,22 +47,19 @@ def _plans(repo: Path) -> list:
                 out.append(waves.load(store))
         except Exception:  # noqa: BLE001 - a plan that cannot be read leaves the stamp unplaced, never unwritten
             continue
-    return out
+    return (getattr(proj, "name", "") or "", out)
 
 
-def _wave_of(repo: Path, item: str, wave: str = "") -> tuple[str, str]:
-    """(the release label, the wave id) of the wave ``item`` is planned in, or of ``wave`` (a label or an id) when
-    given; ('', '') when none: the id keeps the stamp in its wave when the label moves."""
-    for plan in _plans(repo):
+def _wave_of(repo: Path, item: str, wave: str = "") -> tuple[str, str, str]:
+    """(the release label, the wave id, its project) of the wave ``item`` is planned in, or of ``wave`` (a label or
+    an id) when given; the id and the project are '' when no plan has it: they keep the stamp in its wave when the
+    label moves."""
+    name, plans = _plans(repo)
+    for plan in plans:
         wid = plan.resolve(wave) if wave else plan.wave_of(item)
         if wid:
-            return (wave or plan.label(wid), wid)
-    return (wave, "")
-
-
-def _labels(repo: Path) -> dict[str, str]:
-    """Each wave id of the repo's project -> its release now (the score groups a stamp's wave_id by it)."""
-    return {w: plan.label(w) for plan in _plans(repo) for w in plan.waves}
+            return (plan.label(wid) if wave == wid else wave or plan.label(wid), wid, name)
+    return (wave, "", "")
 
 
 def _slug(repo: Path) -> str:
@@ -83,9 +80,10 @@ def _slug(repo: Path) -> str:
 def _stamp(args, repo: Path) -> int:
     """brain review stamp: the counts, the note and its finding lines, and where the review stands for the score."""
     note = Path(args.note).read_text(encoding="utf-8") if args.note else ""
-    wave, wave_id = _wave_of(repo, args.item or "", args.wave or "") if args.item or args.wave else ("", "")
+    wave, wave_id, project = (_wave_of(repo, args.item or "", args.wave or "") if args.item or args.wave
+                              else ("", "", ""))
     f = review.stamp(args.head, args.findings, args.fixed, args.contested, note, repo, pr=args.pr or "",
-                     item=args.item or "", stream=args.stream or "", wave=wave, wave_id=wave_id,
+                     item=args.item or "", stream=args.stream or "", wave=wave, wave_id=wave_id, project=project,
                      repo_slug=_slug(repo) if args.pr else "")
     rows = review.confirmed(review.parse_note(note))
     print(f"review: {f.stem[:12]} stamped ({args.findings} finding(s), {args.fixed} fixed, {args.contested} "
@@ -145,8 +143,9 @@ def cmd_review(args, root: Path | None = None) -> int:
         if args.review_cmd == "stamp":
             return _stamp(args, repo)
         if args.review_cmd == "score":
-            sc = review.score(labels=_labels(repo))
-            print(json.dumps(sc, indent=2) if args.json else "\n".join(review.score_lines(sc, args.wave or "")))
+            sc = review.score(labels=review.labels_now())
+            wave = _wave_of(repo, "", args.wave)[0] if args.wave else ""   # a wave id read as its release now
+            print(json.dumps(sc, indent=2) if args.json else "\n".join(review.score_lines(sc, wave)))
             return 0
         return _check(args, repo)
     except (review.ReviewError, OSError) as exc:

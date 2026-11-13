@@ -321,8 +321,24 @@ def test_prep_item_in_a_repo_of_no_project_is_refused(pr, brain_home, monkeypatc
 def test_the_score_counts_a_stamp_in_its_wave_s_release_now():
     """wi-brain-wave-ids-decoupled: wave-s3 was stamped as 1.0.2, then wave 1.0.1 shipped as 1.1.0 and wave-s3 is
     1.1.1 now; a stamp without a wave_id keeps its label."""
-    recs = [{"head": "a" * 40, "findings": 2, "fixed": 2, "pr": "1", "wave": "1.0.2", "wave_id": "wave-s3"},
-            {"head": "b" * 40, "findings": 1, "fixed": 1, "pr": "2", "wave": "1.0.2"}]
+    recs = [{"head": "a" * 40, "findings": 2, "fixed": 2, "pr": "1", "wave": "1.0.2", "wave_id": "wave-s3",
+             "project": "lab"},
+            {"head": "b" * 40, "findings": 1, "fixed": 1, "pr": "2", "wave": "1.0.2"},
+            {"head": "c" * 40, "findings": 1, "fixed": 1, "pr": "3", "wave": "1.0.2", "wave_id": "wave-s3",
+             "project": "other"}]   # another project's wave-s3: another store's wave
     assert [w["wave"] for w in review.score(recs)["waves"]] == ["1.0.2"]
-    got = {w["wave"]: w["prs"] for w in review.score(recs, labels={"wave-s3": "1.1.1"})["waves"]}
-    assert got == {"1.0.2": 1, "1.1.1": 1}
+    got = {w["wave"]: w["prs"] for w in review.score(recs, labels={("lab", "wave-s3"): "1.1.1"})["waves"]}
+    assert got == {"1.0.2": 2, "1.1.1": 1}
+
+
+
+def test_labels_now_reads_each_project_s_waves(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from test_waves import JUMP_EDGES, JUMP_NODES, _write
+
+    from brain import projects
+    store = _write(tmp_path / "graph", JUMP_NODES, JUMP_EDGES)
+    monkeypatch.setattr(projects, "load", lambda root=None: {"lab": SimpleNamespace(stores=[store, tmp_path / "x"])})
+    got = review.labels_now()
+    assert got[("lab", "wave-s3")] == "1.0.2" and got[("lab", "wave-1.0.1")] == "1.0.1"

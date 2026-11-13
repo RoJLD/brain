@@ -58,10 +58,10 @@ SATISFIED = ("done", "reached", "validated", "active", "live")   # research_grap
 RELEASE_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 RELEASE_IN_RE = re.compile(r"^\s*v?(\d+\.\d+\.\d+)(?![\d.])")   # a free-text props.wave that names a release
 SEQ_RE = re.compile(r"^wave-s(\d+)$")   # a wave's id that carries its place, never a version
-# the ids a props.renamed_from names: its first ids, and each after « before: » (any case), comma-separated; an id ends
-# before a space, a parenthesis, a semicolon, a comma or a dot that ends it (« wave-s3. »)
+# the ids a props.renamed_from names: its first ids, and each after « before: » (any case), comma-separated; an
+# id ends before a space, a parenthesis, a semicolon, a comma or a dot that ends it (« wave-s3. »)
 _FORMER_ID = r"wave-[A-Za-z0-9](?:[\w.-]*[\w-])?"
-FORMER_RE = re.compile(rf"(?:^|;)\s*(?i:before:)?\s*({_FORMER_ID}(?:\s*,\s*{_FORMER_ID})*)(?=[\s(;,.]|$)")
+FORMER_RE = re.compile(rf"(?:^|;\s*(?i:before:))\s*({_FORMER_ID}(?:\s*,\s*{_FORMER_ID})*)(?=[\s(;,.]|$)")
 ID_RE = re.compile(r"^wave-[a-z0-9][a-z0-9-]*$")   # a new wave id: no dot, so no version
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 QUICKWIN_SHARE = 0.2   # the share of a wave's places kept for quick wins (spec-brain-sizing-prioritization 5.3)
@@ -108,7 +108,7 @@ class Plan:
         """A wave's place given by its props.seq or its id (``wave-sN``); None for a legacy wave."""
         raw = _props(self.nodes.get(wid) or {}).get("seq")
         n = int(raw) if isinstance(raw, int) and not isinstance(raw, bool) else (
-            int(raw) if isinstance(raw, str) and raw.strip().isdigit() else None)
+            int(raw) if isinstance(raw, str) and re.fullmatch(r"[0-9]+", raw.strip()) else None)
         if n is None:
             m = SEQ_RE.match(wid)
             n = int(m.group(1)) if m else None
@@ -137,16 +137,29 @@ class Plan:
         """Each wave's (label, shipped): its label, props.release, else the next patch after the release the last
         wave before it that was not dropped shipped as (computed); what it shipped as, a reached wave's
         props.shipped_as, else its label. '' when nothing comes before it to count from."""
+        return self._counts[0]
+
+    @cached_property
+    def _counts(self) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[int, int, int] | None]]:
+        """(:attr:`labels`, each wave -> the release it counts from: what the last live wave before it shipped as,
+        None for the first). A dropped wave shipped nothing, so the next one counts from before it; when only dropped
+        waves come before, the first live wave takes the first dropped one's release (its place in the count)."""
         out: dict[str, tuple[str, str]] = {}
-        prev = None
+        base: dict[str, tuple[int, int, int] | None] = {}
+        prev = seed = None
         for w in self.waves:
             p = _props(self.nodes[w])
             own = release_key(p.get("release")) or (prev and (prev[0], prev[1], prev[2] + 1)) or None
+            if own is None and self.status(w) != "dropped":
+                own = seed
             shipped = (release_key(p.get("shipped_as")) if self.status(w) == "reached" else None) or own
             out[w] = (".".join(map(str, own)) if own else "", ".".join(map(str, shipped)) if shipped else "")
-            if self.status(w) != "dropped":   # a dropped wave shipped nothing: the next one counts from before it
-                prev = shipped or prev
-        return out
+            base[w] = prev
+            if self.status(w) == "dropped":
+                seed = seed or (own if prev is None else None)
+            else:
+                prev, seed = shipped or prev, None
+        return out, base
 
     @cached_property
     def live(self) -> list[str]:
@@ -226,8 +239,7 @@ class Plan:
         cur = release_key(self.label(pend[0])) if pend else None
         if cur is None:
             return None
-        before = (cur[0], cur[1], cur[2] - 1) if cur[2] else None   # the release the current wave counts from
-        base = before or cur
+        base = self._counts[1].get(pend[0]) or cur   # what the last live wave before it shipped as; itself when first
         return pend[0] if key in ((base[0], base[1] + 1, 0), (base[0] + 1, 0, 0)) and key > cur else None
 
     def planned(self, nid: str) -> list[str]:
@@ -355,10 +367,11 @@ def _wave_problems(plan: Plan) -> list[str]:
         said = _release_problem(plan, w, seen, prev)
         if said:
             out.append(said)
-        elif plan.status(w) != "dropped":
+            continue   # a flagged wave is no reference for the next ones
+        if plan.status(w) != "dropped":
             seen[plan.label(w)] = w
-        if plan.status(w) != "dropped" and release_key(plan.shipped(w)):
-            prev = (w, release_key(plan.shipped(w)))
+            if release_key(plan.shipped(w)):
+                prev = (w, release_key(plan.shipped(w)))
     for w in plan.waves:
         bad = sorted(m for m in plan.members.get(w, ()) if not plan.is_item(m))
         if bad:
@@ -378,10 +391,11 @@ def _release_problem(plan: Plan, w: str, seen: dict[str, str], prev: tuple | Non
                 "store's first wave)")
     if plan.status(w) != "dropped" and plan.label(w) in seen:
         return f"{w}: release {plan.label(w)} is also {seen[plan.label(w)]}'s (one wave per release)"
-    if plan.status(w) == "pending" and prev and plan.release(w) <= prev[1]:
+    if plan.status(w) == "pending" and not plan.computed(w) and prev and plan.release(w) <= prev[1]:
+        how = (f"brain item set {w} props.release= computes it" if plan.seq(w) else
+               f"brain wave rename {w} gives it its place and computes it")   # a legacy wave sorts by its release
         return (f"{w}: release {plan.label(w)} is not after {prev[0]}'s, which shipped as "
-                f"{'.'.join(map(str, prev[1]))} (a pinned release a jump left behind: brain item set {w} "
-                "props.release= computes it)")
+                f"{'.'.join(map(str, prev[1]))} (a pinned release a jump left behind: {how})")
     return ""
 
 
@@ -391,7 +405,7 @@ def _seq_problems(plan: Plan) -> list[str]:
     out, held = [], defaultdict(list)
     for w in plan.waves:
         raw = _props(plan.nodes[w]).get("seq")
-        if raw not in (None, "") and not (str(raw).strip().isdigit() and int(str(raw).strip()) > 0
+        if raw not in (None, "") and not (re.fullmatch(r"[0-9]+", str(raw).strip()) and int(str(raw).strip()) > 0
                                           and not isinstance(raw, bool)):
             out.append(f"{w}: props.seq is a whole number from 1 (not {raw!r})")
         if plan.seq(w):
@@ -438,7 +452,8 @@ def _closed_left(plan: Plan, statuses: tuple[str, ...]) -> list[str]:
             left = [i for i in plan.items_of(w) if plan.status(i) in OPEN]
             if left:
                 out.append(f"{w}: {plan.status(w)}, and {len(left)} open item(s) still in it: {', '.join(left)} "
-                           f"(carry each to a pending wave, brain item set ID props.carried_to=X.Y.Z, or drop it)")
+                           f"(carry each to a pending wave, brain item set ID props.carried_to=WAVE-ID, or drop "
+                           "it)")
     return out
 
 
@@ -453,7 +468,7 @@ def problems(plan: Plan) -> list[str]:
 def warnings(plan: Plan) -> list[str]:
     """brain check's warnings: a reached wave that still holds an open item, a wave in no milestone or era, an era
     without its exit or whose exit is due."""
-    out = list(_closed_left(plan, ("reached",)))
+    out = list(_closed_left(plan, ("reached",))) + _moving_carries(plan)
     for w in plan.waves:
         if not plan.parents.get(w):
             out.append(f"{w}: a wave in no milestone or era (brain item link {w} part_of MS)")
@@ -464,6 +479,19 @@ def warnings(plan: Plan) -> list[str]:
         if exit_due(plan, e):
             out.append(f"{e}: its milestones are all reached: its exit is due, a Go/NoGo DDR to {config.name_of()} "
                        f"(brain decision ask)")
+    return out
+
+
+def _moving_carries(plan: Plan) -> list[str]:
+    """An item whose props.carried_to names a computed release, not a wave id: that release moves with the waves
+    before it (a jump, a dropped wave), and the item with it."""
+    out = []
+    for k in sorted(k for k in plan.nodes if plan.is_item(k)):
+        to = str(_props(plan.nodes[k]).get("carried_to") or "").strip()
+        target = plan.resolve(to) if release_key(to) else None
+        if target and plan.computed(target):
+            out.append(f"{k}: carried_to {to} names a computed release, which moves with the waves before it: "
+                       f"brain item set {k} props.carried_to={target} (the wave's id)")
     return out
 
 
@@ -487,8 +515,8 @@ def closure_problems(plan: Plan, version: str) -> list[str]:
     behind = _behind(plan, version, w)
     if w is None:
         return behind
-    out = behind + [f"{i}: in {len(plan.planned(i))} waves ({', '.join(plan.planned(i))}), {w} among them: one wave per item "
-           f"(brain check)" for i in sorted(plan.members.get(w, ())) if len(plan.planned(i)) > 1]
+    out = behind + [f"{i}: in {len(plan.planned(i))} waves ({', '.join(plan.planned(i))}), {w} among them: one wave "
+                    "per item (brain check)" for i in sorted(plan.members.get(w, ())) if len(plan.planned(i)) > 1]
     left = [i for i in plan.items_of(w) if plan.status(i) in OPEN]
     if left:
         out.append(f"wave {version} ({w}) holds {len(left)} open item(s) neither carried nor dropped: "
@@ -884,6 +912,9 @@ def _pinned(plan: Plan, version: str, pin: bool) -> str:
         raise WaveError(f"{version}: a release X.Y.Z")
     if plan.resolve(version):
         raise WaveError(f"{version}: already a wave ({plan.resolve(version)})")
+    if pin and computed and release_key(version) < release_key(computed):
+        raise WaveError(f"{version}: a new wave goes last, from {computed} on (the next patch after the last wave's); "
+                        "an earlier release names no new wave")
     if computed and version != computed and not pin:
         raise WaveError(f"{version}: a new wave's release is computed, {computed} (the next patch after the last "
                         f"wave's); brain wave add without a release, and its version PR closes it as what it ships")

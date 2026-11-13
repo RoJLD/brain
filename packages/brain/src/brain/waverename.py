@@ -33,10 +33,12 @@ class Renaming:
 def _value_res(wid: str) -> tuple[re.Pattern, re.Pattern]:
     """(an id, from, to or carried_to whose value is ``wid``; a carried_via value that holds it)."""
     old = re.escape(wid)
-    single = re.compile(rf"((?:^|[{{,\s-])(?:id|from|to|carried_to)\s*:\s*)([\"']?){old}\2(?=\s*(?:[,}}\]#]|$))",
+    key = r"(?:^[ \t]*(?:-[ \t]+)?|[{,][ \t]*)"   # a key at a line's start (a list item's too), or in a flow mapping
+    single = re.compile(rf"({key}(?:id|from|to|carried_to)[ \t]*:[ \t]*)([\"']?){old}\2(?=[ \t]*(?:[,}}\]#]|$))",
                         re.M)
-    via = re.compile(r"((?:^|[{,\s])carried_via\s*:\s*)([\"'])([^\"'\n]*)\2|((?:^|[{,\s])carried_via\s*:\s*)"
-                     r"([^\"'\n#{}][^\n#}]*)", re.M)
+    via = re.compile(rf"({key}carried_via[ \t]*:[ \t]*)([\"'])([^\"'\n]*)\2"   # quoted: the whole value
+                     rf"|(^[ \t]*(?:-[ \t]+)?carried_via[ \t]*:[ \t]*)([^\"'\s#{{}}][^\n#]*)"   # block: to its end
+                     rf"|([{{,][ \t]*carried_via[ \t]*:[ \t]*)([^\"'\s#{{}},][^\n#,}}]*)", re.M)   # flow: to , or }}
     return single, via
 
 
@@ -52,9 +54,10 @@ def _rewrite(text: str, old: str, new: str) -> tuple[str, int]:
             value, k = token.subn(new, m.group(3))
             count[0] += k
             return f"{m.group(1)}{m.group(2)}{value}{m.group(2)}"
-        value, k = token.subn(new, m.group(5))
+        lead, raw = (m.group(4), m.group(5)) if m.group(4) is not None else (m.group(6), m.group(7))
+        value, k = token.subn(new, raw)
         count[0] += k
-        return f"{m.group(4)}{value}"
+        return f"{lead}{value}"
     text = via.sub(one, text)
     return text, count[0]
 

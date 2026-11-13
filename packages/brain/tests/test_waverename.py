@@ -81,3 +81,24 @@ def test_a_new_id_with_a_version_or_taken_is_refused(tmp_path, new, why):
 def test_the_former_ids_a_renamed_from_names(said, ids):
     plan = waves.Plan({"wave-x": {"id": "wave-x", "type": "Milestone", "props": {"kind": "wave", "renamed_from": said}}})
     assert plan.former("wave-x") == ids
+
+
+
+def test_a_value_beside_it_and_a_key_that_ends_in_to_are_left(tmp_path):
+    """A flow mapping's next value, a block value on the next line and a key such as go-to are not carried_via's or
+    to's: only the values of the keys the rename knows change."""
+    nodes = JUMP_NODES.replace("title: Later}", "title: Later, props: {carried_via: wave-1.0.1, note: wave-1.0.1, "
+                                                "go-to: wave-1.0.1}}") + (
+        "- id: wi-block\n  type: WorkItem\n  status: todo\n  title: Block\n  props:\n    carried_via:\n"
+        "    note: wave-1.0.1 slipped\n")
+    store = _write(tmp_path / "graph", nodes, JUMP_EDGES)
+    waverename.rename(store, "wave-1.0.1", write=True, today="2030-01-01")
+    later = _nodes(store)["wi-later"]["props"]
+    assert later["carried_via"] == "wave-s2" and later["note"] == "wave-1.0.1" and later["go-to"] == "wave-1.0.1"
+    assert _nodes(store)["wi-block"]["props"]["note"] == "wave-1.0.1 slipped"
+
+
+def test_a_semicolon_without_before_names_no_former_id():
+    plan = waves.Plan({"wave-x": {"id": "wave-x", "type": "Milestone",
+                                  "props": {"kind": "wave", "renamed_from": "wave-a (rename); wave-z later"}}})
+    assert plan.former("wave-x") == ["wave-a"]
