@@ -591,7 +591,8 @@ def test_rename_once_rewrites_the_references_and_keeps_the_old_id(plan_root, cap
     store = _store(plan_root)
     nodes = store / "nodes" / "work.yaml"
     nodes.write_text(nodes.read_text(encoding="utf-8").replace(
-        'title: "Can start", props: {priority: P1}}', 'title: "Can start", props: {priority: P1, carried_to: wave-1.2.0}}'),
+        'title: "Can start", props: {priority: P1}}',
+        'title: "Can start", props: {priority: P1, carried_to: wave-1.2.0}}'),
         encoding="utf-8")
     base = ["--root", str(plan_root), "wave", "rename"]
     before = nodes.read_text(encoding="utf-8")
@@ -608,5 +609,6 @@ def test_rename_once_rewrites_the_references_and_keeps_the_old_id(plan_root, cap
     assert got["wave-s3"]["props"]["renamed_from"].startswith("wave-1.2.0 (brain wave rename, ")
     plan = waves.load(store)
     assert plan.resolve("wave-1.2.0") == "wave-s3" and plan.label("wave-s3") == "1.1.1"   # after 1.1.0, computed
-    assert plan.items_of("wave-s3") == ["wi-next", "wi-next-after", "wi-start"] and plan.parents["wave-s3"] == ["ms-free"]
+    assert plan.items_of("wave-s3") == ["wi-next", "wi-next-after", "wi-start"]
+    assert plan.parents["wave-s3"] == ["ms-free"]
     assert waves.problems(plan) == []

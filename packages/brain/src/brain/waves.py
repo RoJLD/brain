@@ -710,7 +710,8 @@ def render(plan: Plan) -> str:
     out = [HEAD, "# Plan: eras, milestones, waves", "",
            f"{len(plan.eras)} era(s), {len(plan.waves)} wave(s) ({len(pending_waves(plan))} open). A wave is a "
            "release, written or computed (its id carries no version); the version PR closes it (brain wave close). "
-           "Read it from the command line with `brain next`.","", "## Next", "", "```"] + render_next(next_report(plan), slot=False) + ["```"]
+           "Read it from the command line with `brain next`.", "", "## Next", "",
+           "```"] + render_next(next_report(plan), slot=False) + ["```"]
     placed: set[str] = set()
     for e in plan.eras:
         out += _md_era(plan, e, owner, placed)
