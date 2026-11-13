@@ -191,7 +191,7 @@ def test_many_terms_are_one_regex_first(brain):
     assert public.scan_lines("a.md", [(1, "nothing private")], r) == []
 
 
-def test_a_project_in_the_brains_own_repo_gives_no_name_from_a_worktree_either(brain, tmp_path, monkeypatch):
+def test_the_brains_own_root_gives_no_name_from_a_worktree_either(brain, tmp_path, monkeypatch):
     """The registry read from the main checkout and config.json from a worktree (or the other way round) are one
     brain: a project rooted in its repo is not derived by name (a brain named as its engine)."""
     from conftest import git_init
@@ -211,4 +211,5 @@ def test_a_project_in_the_brains_own_repo_gives_no_name_from_a_worktree_either(b
     cfg = config.load()
     assert cfg.root == wt.resolve()
     names = {t for s, t in denylist.declared(cfg) if s == "projects"}
-    assert "inner-proj" not in names and "main-twin" not in names and "moonshot" in names
+    assert "main-twin" not in names and "moonshot" in names
+    assert "inner-proj" in names   # a subfolder of the brain's repo is another project: its name is derived

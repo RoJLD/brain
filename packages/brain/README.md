@@ -1212,7 +1212,7 @@ names nothing). Each joins its category after the hand list. `config.json` `publ
 absent, all of them; `[]`, none); `public.public_names` (`{name: reason}`) keeps a public name of a registry out (a
 third-party tool a project reads, an engine capability a module is named after); the engine's own names (`brain`,
 `research-graph`), the names of `public.repos`'s owners and repos, and a name shorter than 3 characters are never
-derived, in any spelling; a project rooted in the brain's own repo (its folder, or a worktree or the main checkout of the same repo) gives its repos, not its name. `brain check --all` (and a brain's own
+derived, in any spelling; a project rooted at the brain's own folder (or at the top of a worktree or the main checkout of the same repo) gives its repos, not its name; one in a subfolder keeps its name derived. `brain check --all` (and a brain's own
 root) warns about each declared name no deny list holds in every spelling, when `public.derive` leaves its source
 out. A term, by hand or derived, matches in every spelling of its separators: `acme-lab` also refuses `acme_lab`,
 `Acme Lab`, `acme - lab` and `acmelab` (a Python module named after a hyphenated repo). A new spec, machine or module changes the rules the stamps are keyed
