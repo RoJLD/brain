@@ -226,6 +226,7 @@ def worktrees_of(repo: str, branches: set[str], own: str) -> list[WorktreeState]
 def check(session: str, *, branches: list[str] | None = None, keep: list[str] | None = None,
           repo_dirs: list[str] | None = None, scratch: list[str] | None = None, lot: str = "",
           offline: bool = False) -> Report:
+    """The lot of ``session``: its repos, branches, worktrees and scratch folders (module docstring)."""
     data = session_file(session)
     name = lot or str((data.get("spawnedFrom") or {}).get("name") or "")
     rep = Report(session, str(data.get("title") or ""), name, bool(data.get("isArchived")))
@@ -235,23 +236,28 @@ def check(session: str, *, branches: list[str] | None = None, keep: list[str] | 
         for info in infos.values():
             info["pr_state"] = gh_state(info["slug"], info["number"]) or info["pr_state"]
     for repo in rep.repos:
-        for b, info in infos.items():
-            st = branch_state(repo, b, info, set(keep or []))
-            if st is not None:
-                rep.branches.append(st)
+        found = (branch_state(repo, b, info, set(keep or [])) for b, info in infos.items())
+        rep.branches += [st for st in found if st is not None]
         rep.worktrees += worktrees_of(repo, set(infos), str(data.get("worktreePath") or ""))
-    for pattern in scratch or []:
-        rep.scratch += sorted(str(Path(p)) for p in glob.glob(pattern.replace("{lot}", name)) if Path(p).exists())
+    rep.scratch = _scratch(scratch or [], name)
     return rep
+
+
+def _scratch(patterns: list[str], name: str) -> list[str]:
+    return [str(Path(p)) for pattern in patterns for p in sorted(glob.glob(pattern.replace("{lot}", name)))
+            if Path(p).exists()]
+
+
+def _branch_line(b: BranchState) -> str:
+    state = "merged" if b.merged else "kept" if b.kept else "pushed" if b.pushed else "local only"
+    pr = f", PR {b.pr} {b.pr_state.lower() or '?'}" if b.pr else ""
+    return f"  branch   {b.branch}: {state}{pr}" + ("" if b.exists else " (local branch gone)")
 
 
 def lines(rep: Report) -> list[str]:
     out = [f"lot {rep.lot or '?'} ({rep.session}): {rep.title}" + (" [archived already]" if rep.archived else "")]
     out += [f"  repo     {r}" for r in rep.repos]
-    for b in rep.branches:
-        state = "merged" if b.merged else "kept" if b.kept else "pushed" if b.pushed else "local only"
-        pr = f", PR {b.pr} {b.pr_state.lower() or '?'}" if b.pr else ""
-        out.append(f"  branch   {b.branch}: {state}{pr}" + ("" if b.exists else " (local branch gone)"))
+    out += [_branch_line(b) for b in rep.branches]
     for w in rep.worktrees:
         out.append(f"  worktree {w.path} [{w.branch or 'detached'}]: {'clean' if w.clean else 'changes'}")
     if rep.ready:
