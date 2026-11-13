@@ -15,6 +15,43 @@ Both are declared in `src/brain/adapters/claude/hooks/hooks.json`. A personal br
 `brain render --target claude --write` (or `brain sync`) into its own plugin, then its installer applies the plugin
 (on Windows `install.ps1 -Apply`, the owner's).
 
+## The owner's gestures, declared once
+
+What only the owner runs, in their own terminal, is one list in the engine, `brain.gestures.GESTURES`: a subcommand
+path of `brain`, the flags that make it the owner's, the owner guard's category, and where it is refused. The owner
+guard (`brain.guards.check_owner`) reads it for every shell call and every command of a nested shell, wrapper or
+launcher it sees through; `guard.sh`'s pre-filter starts Python for each; the command line (`brain.cli`) refuses the
+ones it gates when an agent's session (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` or `BRAIN_AGENT_SESSION` set) runs them
+past the hook, through a script for instance. `tests/test_gestures.py` checks each gesture against the guard, the
+pre-filter, the command line and this table, so a new gesture added to the list is refused everywhere at once.
+
+| Gesture | Category | The guard | The command line in a session |
+|---|---|---|---|
+| `brain usage allow` | override | refuses | refuses (strict) |
+| `brain handover root` | override | refuses, whatever runs it | refuses (its own check) |
+| `brain schedule install --apply` | scheduled | refuses, queued for the owner | refuses (strict) |
+| `brain ipc otel-headers` | keys | refuses, whatever runs it, queued | runs: Claude Code's `otelHeadersHelper` calls it |
+| `brain vault open` | keys | refuses, queued | refuses (its own check) |
+| `brain vault drill` | keys | refuses, queued | refuses (its own check) |
+| `brain vault device init` | keys | refuses, queued | refuses (its own check) |
+| `brain vault device forget-previous` | keys | refuses, queued | refuses (its own check) |
+| `brain vault reseal --apply` (or `--identity`) | keys | refuses (strict), queued | refuses (strict; `--identity`: its own check) |
+| `brain update` (but `--check`) | installer | refuses | refuses (its own check) |
+| `brain uninstall --apply` | installer | refuses | refuses (its own check) |
+| `brain queue apply` | actions | refuses | refuses (its own check) |
+| `install.ps1 -Apply` | installer | refuses when permissions.yaml declares `installer` | not the engine's |
+
+A gesture's words follow `brain`'s own options (`brain --project x usage allow`), whatever runs it: `brain`, its
+`.exe` or `.cmd`, `python -m brain` (`-mbrain`, `-m brain.cli`), `uv run brain`; a loose one (`handover root`, `ipc
+otel-headers`) anywhere in the command, its last word unresolved too (`brain ipc $x`). `--help` is a read. A category
+of the never-grantable list (keys, scheduled; installer when permissions.yaml declares it) makes the refusal an action
+the owner can queue (`brain queue add --guard`); the others name the gesture and the owner's terminal.
+
+**Strict** (config.json `guards.owner_strict: true`, off by default): the refusals 0.5.1 adds to what passed before,
+`brain vault reseal --apply` at the guard, and the command line's own refusal of `brain usage allow`, `brain schedule
+install --apply` and `brain vault reseal --apply` in an agent's session (exit 2). Without it, the guard's refusals of
+0.5.0 hold, and each command's own check.
+
 ## The Terminal panel
 
 A command a session types into the owner's Terminal panel (`mcp__*terminal__run_in_terminal`) runs in the owner's own

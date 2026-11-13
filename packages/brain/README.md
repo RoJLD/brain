@@ -1348,6 +1348,13 @@ comes between: a quoted `claude.exe`, global options, a line continuation), or g
 read (`git [-C DIR] status`, `log`, `diff`, `show`, `rev-parse`... without `--output`: `brain.guards.GIT_READS`,
 checked against the guards' tables). In Python a guard reads the registry through libyaml and does not import `urllib.request`.
 
+**The owner's gestures** (`brain.gestures`, [docs/guards.md](docs/guards.md#the-owners-gestures-declared-once)): every
+command or flag only the owner runs (`brain usage allow`, `brain schedule install --apply`, `brain vault open`, `drill`,
+`device init`, `reseal --apply`, `brain update`, `brain uninstall --apply`, `brain queue apply`, `brain handover root`,
+`brain ipc otel-headers`, `install.ps1 -Apply`) is declared once; the owner guard and the command line read that list,
+and a test checks that each one is refused to an agent's session. config.json `guards.owner_strict: true` adds the
+refusals 0.5.1 brings (off by default).
+
 **The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
 a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its
 journal or a generated view (`*_graph.md`, `decision_queue.md`, `FEATURES.md`) by hand, it adds one line of hook

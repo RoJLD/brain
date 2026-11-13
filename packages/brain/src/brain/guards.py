@@ -27,7 +27,11 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   Set-Secret, kubectl create secret and Secret manifests), accounts (gh auth login|logout|refresh, docker, npm, az,
   gcloud and argocd logins, local users), scheduled (schtasks /create|/change|/delete, Register-ScheduledTask and
   its kin, brain schedule install --apply, services, crontab but -l, at, systemctl enable, Run keys, a file written
-  where it starts on its own, the desktop app's scheduled-tasks tools), arming (--arm), installer (install.ps1 -Apply). A category the file does
+  where it starts on its own, the desktop app's scheduled-tasks tools), arming (--arm), installer (install.ps1 -Apply).
+  The engine's own gestures (brain usage allow, handover root, schedule install --apply, ipc otel-headers, vault open,
+  drill, device init and forget-previous, update, uninstall --apply, queue apply; vault reseal --apply under config.json
+  guards.owner_strict) are brain.gestures' one list, judged first: one in a never-grantable category is an action the
+  owner can queue, any other is refused naming the owner's terminal. A category the file does
   not declare is not guarded; money and legal have no command, only their deny rules. Also refused: setting
   BRAIN_GUARD_ALLOW for later sessions (setx, the registry, Claude Code's settings, a shell profile; check override).
   A session's Remote Control and permission mode (security-settings, never lifted) are refused but in Remote Control's
@@ -130,7 +134,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, diffs, markers, midsession, paths, projects, public, secretscan, timing
+from . import config, diffs, gestures, markers, midsession, paths, projects, public, secretscan, timing
 
 GUARDS = ("production", "attribution", "secrets", "markers", "owner", "power", "third-party", "public", "branches",
           "merges")
@@ -1640,12 +1644,8 @@ def _owner_command(words: list[str], cwd: str, shell: str, command: str) -> tupl
             if any(str(o.get("kind")) == "Secret" for o in objs):
                 return "keys", f"kubectl {verb} of a Secret"
         return None
-    if (prog == "brain" or "brain" in low[1:3]) and "--apply" in low and             any(x == "schedule" and y == "install" for x, y in zip(low, low[1:])):
-        return "scheduled", "brain schedule install --apply (it creates, changes or removes scheduled tasks)"
-    # whatever runs it (brain.cmd, python -mbrain, python -m brain.cli, a wrapper) and a word the guard cannot resolve
-    # after ipc ($x, %x%, a backquote), as _root_override reads brain handover root
-    if any(x == "ipc" and (y == "otel-headers" or any(c in y for c in "$`%")) for x, y in zip(low, low[1:])):
-        return "keys", "brain ipc otel-headers (it prints the machine's token: Claude Code's otelHeadersHelper runs it)"
+    # brain's own gestures (brain schedule install --apply, brain ipc otel-headers...) are brain.gestures', read by
+    # check_owner before this table
     return _subcommand(prog, args)
 
 
@@ -1955,13 +1955,8 @@ def _is_usage_allow(target) -> bool:
 
 
 def _usage_override(cmds, shell: str) -> str | None:
-    """What lifts the usage governor for a session: brain usage allow (python -m brain too), or a shell write into its
-    file."""
-    for words, _, _, _ in actions(cmds, shell):
-        low = [w.lower() for w in words]
-        if (_prog(words[0]) == "brain" or "brain" in low[1:3]) and any(
-                a == "usage" and b == "allow" for a, b in zip(low, low[1:])):
-            return "brain usage allow"
+    """What lifts the usage governor for a session by its file: a shell write into it (brain usage allow itself is a
+    gesture of brain.gestures, judged before)."""
     for what, target in shell_writes(cmds, shell):
         if not isinstance(target, Unresolved) and _is_usage_allow(target):
             return f"{what} into {target}"
@@ -2016,15 +2011,13 @@ def _hook_word(low: list[str], i: int, python: bool) -> bool:
 
 
 def _root_override(cmds, shell: str) -> str | None:
-    """What marks a chain root for a session (wi-brain-handover-command): any command whose words hold ``handover``
-    then ``root`` (quoted or not) or a word the guard cannot resolve (``$x``, ``%x%``, a backquote), whatever runs it
-    (brain, python -I -m brain, a wrapper); the hook entry that marks a root at a first prompt (midsession.py,
+    """What marks a chain root for a session (wi-brain-handover-command) but brain handover root itself (a loose
+    gesture of brain.gestures: any command whose words hold ``handover`` then ``root`` or a word the guard cannot
+    resolve, whatever runs it, judged before): the hook entry that marks a root at a first prompt (midsession.py,
     brain.midsession, brain.succession.auto_root: wi-brain-handover-auto-root) run by an interpreter; or a shell write
     into its file or the folder that holds it."""
     for words, _, _, _ in actions(cmds, shell):
         low = [w.lower() for w in words]
-        if any(a == "handover" and (b == "root" or any(c in b for c in "$`%")) for a, b in zip(low, low[1:])):
-            return "brain handover root"
         if _root_hook(low):
             return "the chain root's hook entry (midsession.py) run by hand"
     for what, target in shell_writes(cmds, shell):
@@ -2097,6 +2090,18 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     if what:
         return ("override", f"{what} refused: the guards' override is {config.owner_of()}'s, set in Claude Code's "
                             "environment", None)
+    cats = owner_categories()
+    for words, _, sh, top in actions(cmds, sub, command=command):
+        g = gestures.match(words)
+        if g is None or (g.guard == "strict" and not gestures.strict()):
+            continue
+        remote = " over ssh" if sh == "ssh" else ""
+        if g.category in cats:
+            why = cats[g.category].get("why") or f"{g.category} is in the never-grantable list"
+            return (g.category, f"{g.name} ({g.why}){remote} refused: {g.category} is {config.owner_of()}'s alone "
+                                f"({why.rstrip('.')})", _request(g.category, g.name + remote, top, shell, cwd))
+        return (g.category, f"{g.name}{remote} refused: {g.why}; it is {config.owner_of()}'s, in their own terminal "
+                            "(brain.gestures)", None)
     what = _usage_override(cmds, sub)
     if what:
         return ("override", f"{what} refused: it lifts the usage guard (brain.governor), which is "
@@ -2105,7 +2110,6 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     if what:
         return ("override", f"{what} refused: it marks a coordinators' chain root, which lets a session switch "
                             f"Remote Control; that mark is {config.owner_of()}'s, in their own terminal", None)
-    cats = owner_categories()
 
     def refusal(cat, what, top, remote=""):
         why = cats[cat].get("why") or f"{cat} is in the never-grantable list"

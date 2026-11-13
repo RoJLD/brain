@@ -301,6 +301,13 @@
         "read": {"type": "boolean", "description": "The read hint (readhint.sh, brain.readhint, PreToolUse on Read, Grep, Bash and PowerShell, about 0.2 s per call): true, brain render --target claude (brain sync) registers it in the core plugin's hooks.json; default false: not registered, no call pays its cost. BRAIN_READ_HINT=0 turns it off in a session while it is on."}
       }
     },
+    "guards": {
+      "type": "object", "additionalProperties": false,
+      "description": "The owner guard's options (brain.guards, brain.gestures: the owner's gestures, declared once).",
+      "properties": {
+        "owner_strict": {"type": "boolean", "description": "true: the owner's gestures brain.gestures marks strict are refused too: brain vault reseal --apply (or --identity) at the guard, and brain usage allow, brain schedule install --apply and brain vault reseal --apply by the command line itself in an agent's session (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT or BRAIN_AGENT_SESSION set), past the hook. Default false: only the refusals of 0.5.0."}
+      }
+    },
     "ipc": {
       "type": "object", "additionalProperties": false,
       "description": "The Brain's local services and the machine's token (brain.ipcauth, brain.ipchealth; brain ipc token). docs/mcp.md.",

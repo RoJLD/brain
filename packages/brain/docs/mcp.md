@@ -62,7 +62,8 @@ command in the brain's root; `memory_propose` is a Write of its note's path. In 
 2. **The owner's gestures.** The `brain` commands only the owner runs are refused whatever the tool: `decision
    answer`, `queue done`, `schedule install`, `ipc` (`token`, `otel-headers`), `vault`, `identity`, `update`,
    `init`, `up`, `down`, `bundle apply`, `permissions grant`, `session-archive`, and any `--arm` (or a prefix argparse
-   expands to it). A
+   expands to it); plus every gesture of the engine's one list, `brain.gestures` (`usage allow`, `handover root`,
+   `uninstall --apply`, `queue apply`...: [guards.md](guards.md#the-owners-gestures-declared-once)), strict ones too. A
    command behind an option that is not `--root`, `--project` or `--store` spelled in full (`--proj=P`, which
    argparse would expand) is refused: it could not be read.
 3. **The secret scan of a write's arguments.** A string argument of a write tool that matches a secret pattern is
