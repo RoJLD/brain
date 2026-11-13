@@ -580,10 +580,23 @@ def test_the_stores_are_brain_homes_entries_with_a_bounded_walk(monkeypatch, bra
     st = resources.stores()
     by = {r["name"]: r for r in st["rows"]}
     assert by["usage"]["bytes"] == 300 and by["usage"]["complete"] and by["machine.json"]["bytes"] == 2
-    monkeypatch.setattr(resources, "_size", lambda root, budget: (5, False))
-    assert {r["complete"] for r in resources.stores()["rows"] if r["name"] == "usage"} == {False}
+    monkeypatch.setattr(resources, "WALK_BUDGET", {**resources.WALK_BUDGET, "stores": -1.0})
+    cut = [r for r in resources.stores()["rows"] if r["name"] in ("usage", "machine.json")]
+    assert len(cut) == 1 and not cut[0]["complete"]   # the entry walked when the budget ran out; the later ones left out
+    monkeypatch.setattr(resources, "_size", lambda root, budget: (5, False))   # the transcripts and temp walks
     lines = resources_view.render({"v": 1, "at": "t", "levels": [], "stores": resources.stores()})
     assert any("at least" in ln for ln in lines)
+
+
+def test_the_stores_go_through_the_read_gate(monkeypatch, brain_home, tmp_path):
+    """A secret store is never walked: it has no row, and its files are not counted."""
+    monkeypatch.setattr(resources.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    (brain_home / "secrets" / "stack").mkdir(parents=True)
+    (brain_home / "secrets" / "stack" / "big.env").write_bytes(b"0" * 10_000)
+    (brain_home / "ledger").mkdir()
+    (brain_home / "ledger" / "a.jsonl").write_text("x" * 7, encoding="utf-8")
+    by = {r["name"]: r for r in resources.stores()["rows"]}
+    assert "secrets" not in by and by["ledger"]["bytes"] == 7 and by["ledger"]["complete"]
 
 
 # --- the command ---------------------------------------------------------------------------------------------------

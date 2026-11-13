@@ -69,7 +69,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 
-from . import governor, paths, probe, quota, sessions, usage
+from . import classes, governor, paths, probe, quota, sessions, usage
 from .resources_containers import DOCKER_TIMEOUT, containers
 
 V = 1
@@ -797,29 +797,31 @@ def tie(flags: dict, cwd: str | None, by_cli: dict, by_cwd: dict) -> tuple[str, 
 # --- the stores ----------------------------------------------------------------------------------------------------
 
 def stores(stop=None) -> dict:
-    """{state, rows: [{name, path, bytes, complete}]}: each top-level entry of BRAIN_HOME (a store), the transcripts
-    and the temporary folder, each walk bounded in time (:data:`WALK_BUDGET`); ``stop`` asked between two walks
-    (:class:`Cancelled`)."""
+    """{state, rows: [{name, path, bytes, complete}]}: each top-level entry of BRAIN_HOME the read gate lets the engine
+    walk (:func:`brain.classes.home_files`: a secret store is never entered nor a link followed, so it has no row, nor
+    has an empty folder), the transcripts and the temporary folder, each walk bounded in time (:data:`WALK_BUDGET`):
+    when the stores' budget runs out, the entry being walked is said incomplete and the later ones are left out;
+    ``stop`` asked between two entries (:class:`Cancelled`)."""
     home = paths.brain_home()
-    rows = []
+    by: dict[str, dict] = {}
     end = time.monotonic() + WALK_BUDGET["stores"]
-    try:
-        entries = sorted(home.iterdir()) if home.is_dir() else []
-    except OSError:
-        entries = []
-    for e in entries:
-        if stop and stop():
-            raise Cancelled()
-        left = end - time.monotonic()
+    if stop and stop():
+        raise Cancelled()
+    for _store, f in (classes.home_files() if home.is_dir() else ()):
         try:
-            if e.is_dir():
-                n, done = _size(e, max(left, 0.0)) if left > 0 else (0, False)
-            else:
-                n, done = e.stat().st_size, True
-        except OSError:
+            top = f.relative_to(home).parts[0]
+            n = f.stat().st_size
+        except (OSError, ValueError, IndexError):
             continue
-        rows.append({"name": e.name, "path": str(e), "bytes": n, "complete": done})
-    rows.sort(key=lambda r: -r["bytes"])
+        if top not in by:
+            if stop and stop():
+                raise Cancelled()
+            by[top] = {"name": top, "path": str(home / top), "bytes": 0, "complete": True}
+        by[top]["bytes"] += n
+        if time.monotonic() > end:
+            by[top]["complete"] = False
+            break
+    rows = sorted(by.values(), key=lambda r: -r["bytes"])
     for name, root in (("transcripts", paths.projects_dir()), ("temp", Path(tempfile.gettempdir()))):
         if stop and stop():
             raise Cancelled()

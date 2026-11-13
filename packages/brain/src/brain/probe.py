@@ -310,6 +310,29 @@ def _existing(p: Path) -> Path:
     return next((d for d in (p, *p.parents) if d.exists()), Path.cwd())
 
 
+def _size(root: Path, budget: float) -> tuple[int, bool]:
+    """(bytes under ``root``, complete), no link followed; the walk stops at ``budget`` seconds. For a folder outside
+    BRAIN_HOME (the transcripts, the temporary folder): BRAIN_HOME is walked through the gate (:func:`_home_size`)."""
+    end, total = time.monotonic() + budget, 0
+    stack = [root]
+    while stack:
+        if time.monotonic() > end:
+            return total, False
+        try:
+            with os.scandir(stack.pop()) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            stack.append(Path(e.path))
+                        elif e.is_file(follow_symlinks=False):
+                            total += e.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total, True
+
+
 def _home_size(budget: float) -> tuple[int, bool]:
     """(bytes of BRAIN_HOME's stores, complete), through the read gate (brain.classes.home_files: a secret store is
     never walked, a link never followed); the walk stops at ``budget`` seconds."""

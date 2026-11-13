@@ -1315,8 +1315,9 @@ brain --project lab resources        # that project's sessions and containers
   `name:` of its `-f` files or of its folder's compose file, else its folder's name, then a bundle component's
   `<project>-<service>-N` and a Compose stack's `<project>-...`), else said
   declared by no stack. Docker absent, down, slow or answering garbage is a state, never an error.
-- **the stores**: each entry of `BRAIN_HOME`, the transcripts and the temporary folder, each walk bounded in time (an
-  unfinished one says « at least »).
+- **the stores**: each entry of `BRAIN_HOME` walked through the read gate (a secret store has no row and is never
+  walked), the transcripts and the temporary folder, each walk bounded in time (an unfinished one says « at least »;
+  when the stores' budget runs out, the entries not reached yet are left out).
 - **the tokens today** (the UTC day), **the quota** (the last `brain usage quota` forecast: the percent now, the pace
   as a ratio of the pace that would end the window at exactly 100 %, its level) and **the capacity**: the room left in
   session-hours, and for 20 sessions in hours.
