@@ -349,7 +349,7 @@ def _wave_id(pl: waves.Plan, wave: str, store: Path) -> str:
         return wid
     pend = waves.pending_waves(pl)
     if not pend:
-        raise ValueError(f"no open wave in {store} (brain wave add X.Y.Z)")
+        raise ValueError(f"no open wave in {store} (brain wave add)")
     return pend[0]
 
 

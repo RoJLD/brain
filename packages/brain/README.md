@@ -451,11 +451,14 @@ A brain built module by module keeps the registry of its modules in the store (`
 
 ### Waves and eras
 
-A wave is a release's batch of work: a milestone of kind wave named by its release (`props.kind: wave`,
-`props.release: X.Y.Z`, `props.week` optional), whose members are work items (`part_of`), itself part of a milestone
-or an era. An era is a milestone of milestones (`props.kind: era`), whose exit is a Go/NoGo question put to the owner
+A wave is a release's batch of work: a milestone of kind wave (`props.kind: wave`, `props.week` optional), whose
+members are work items (`part_of`), itself part of a milestone or an era. Its id carries no version
+(wi-brain-wave-ids-decoupled): `wave-sN`, N its place (`props.seq`); its release is a label, a reached wave's
+`props.shipped_as` (what its version PR shipped), else its `props.release` (a legacy `wave-X.Y.Z`, or a release pinned
+by `brain wave import` or `--carry-to`), else computed, the next patch after the release of the wave before it. When a
+wave ships as a higher version than planned, the later waves' releases follow without an edit. An era is a milestone of milestones (`props.kind: era`), whose exit is a Go/NoGo question put to the owner
 once its milestones are reached (`props.exit`; `props.stage_to` and `props.serves` optional). `brain check` refuses a
-wave whose release is not `X.Y.Z`, two waves of one release, an item in two waves, a wave holding a milestone, an era
+`props.release` that is not `X.Y.Z`, a wave with no release (nothing before it to count from), two waves of one release, an item in two waves, a wave holding a milestone, an era
 holding an item, a `carried_to` that names no later wave, and a dropped wave that still holds an open item; it warns
 about a reached wave that still holds one, a wave in no milestone or era, an era without its exit and an era whose
 exit is due. Those rules run
@@ -497,13 +500,17 @@ they name; `brain check` warns on a trigger that names a duration with no gate, 
 resolve and on a `due` date without its `due_source`; `brain queue` ends with what each gate holds.
 
 The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
-X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending
-wave, created beside the closed one when that release has none yet) or drops it, then reaches the wave; it refuses
-while an item is neither. An item carried again keeps the
+X.Y.Z+1 [--drop ID]... [--write]` closes the wave of that release, or the current wave when the release jumped (X.Y.Z
+the next minor or major after the release the current wave counts from); it carries each open item by name to the
+later wave (`props.carried_to`; a pending wave, a new `wave-sN` created beside the closed one when that release has
+none yet) or drops it, then reaches the wave with `props.shipped_as` X.Y.Z; it refuses while an item is neither. An item carried again keeps the
 waves it went through (`props.carried_via`). `brain wave check X.Y.Z` is the rule alone, and `release_check.py --store
-DIR` applies it to a version PR, which also wants the wave reached. `brain wave add X.Y.Z --parent MS [--week W]`
-adds a wave at once (no DDR, unlike `brain milestone add`: a wave is named by its release, which the version PR
-closes), and `brain wave import [--from X.Y.Z] [--write]` turns the items' free-text `props.wave` into waves: one per
+DIR` applies it to a version PR, which also wants the wave reached. `brain wave add [X.Y.Z] --parent MS [--week W]`
+adds a wave at once, `wave-sN` with its computed release (no DDR, unlike `brain milestone add`; X.Y.Z, when given,
+must be that release, and a store's first wave names it); `brain wave rename WAVE [NEW] [--write]` renames a legacy
+`wave-X.Y.Z` once (default `wave-sN`): its edges, `carried_to` and `carried_via` in the hand-written files, a pending
+wave's `props.release` dropped (its release computed from then on), the old id kept in `props.renamed_from`, where it
+still resolves (the append-only logs keep naming it); and `brain wave import [--from X.Y.Z] [--write]` turns the items' free-text `props.wave` into waves: one per
 release a value names (`0.2.9 (decided ...)` is 0.2.9) from `--from` on, the earlier releases (already tagged) listed
 and left out, the other values (letters, free text) listed for the owner to place.
 

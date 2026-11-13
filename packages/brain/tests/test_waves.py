@@ -150,7 +150,7 @@ def test_check_refuses_what_breaks_the_rules(tmp_path):
     assert "ms-odd: props.kind 'phase' is wave or era" in got
     assert "wi-kind: props.kind wave is a Milestone's, not a WorkItem's" in got
     assert "ddr-x" not in got   # a DDR's own kind (action, question) is not a milestone's
-    assert "wave-bad: a wave is named by its release, props.release X.Y.Z (not '1.x')" in got
+    assert "wave-bad: props.release is a release X.Y.Z (not '1.x')" in got
     assert "wave-dup: release 1.2.0 is also wave-1.2.0's (one wave per release)" in got
     assert "wave-1.1.0: a wave's members are work items, not ms-free" in got
     assert "era-one: an era's members are milestones, not wi-in-era" in got
@@ -240,7 +240,7 @@ def test_sync_writes_the_view_and_check_says_what_breaks(plan_root, capsys):
                      encoding="utf-8")
     assert cli.main(["--root", str(plan_root), "check"]) == 1
     out = capsys.readouterr().out
-    assert "error: plan: wave-1.2.0: a wave is named by its release" in out
+    assert "error: plan: wave-1.2.0: props.release is a release X.Y.Z (not '1.2')" in out
     assert "warning: notes/plan_graph.md is stale: brain sync" in out
 
 
@@ -306,15 +306,30 @@ def test_close_carries_drops_and_reaches_the_wave(plan_root, capsys):
     assert [r["id"] for r in rep["current"]["startable"]] == ["wi-next"]
 
 
-def test_wave_add_names_the_wave_by_its_release(plan_root, capsys):
+def test_wave_add_gives_an_id_without_a_version_and_computes_the_release(plan_root, capsys):
+    """wi-brain-wave-ids-decoupled (WAVES-4): wave-sN, its place; the release the next patch after the last wave's."""
     base = ["--root", str(plan_root), "wave", "add"]
-    assert cli.main(base + ["1.3.0", "--parent", "ms-free", "--week", "2030-01-21"]) == 0
-    node = _nodes(_store(plan_root))["wave-1.3.0"]
-    assert node["type"] == "Milestone" and node["props"] == {"kind": "wave", "release": "1.3.0", "week": "2030-01-21"}
-    assert waves.load(_store(plan_root)).parents["wave-1.3.0"] == ["ms-free"]
-    assert cli.main(base + ["1.3.0"]) == 1 and "already a wave" in capsys.readouterr().err
-    assert cli.main(base + ["1.3"]) == 1 and "named by its release X.Y.Z" in capsys.readouterr().err
-    assert cli.main(base + ["1.4.0", "--parent", "wi-start"]) == 1
+    assert cli.main(base + ["--parent", "ms-free", "--week", "2030-01-21"]) == 0
+    assert "wave-s4: added, release 1.2.1, part of ms-free" in capsys.readouterr().out
+    node = _nodes(_store(plan_root))["wave-s4"]
+    assert node["type"] == "Milestone" and node["props"] == {"kind": "wave", "seq": 4, "week": "2030-01-21"}
+    plan = waves.load(_store(plan_root))
+    assert plan.parents["wave-s4"] == ["ms-free"] and plan.label("wave-s4") == "1.2.1" and plan.waves[-1] == "wave-s4"
+    assert cli.main(base + ["1.2.2"]) == 0 and "wave-s5: added, release 1.2.2" in capsys.readouterr().out
+    assert "release" not in _nodes(_store(plan_root))["wave-s5"]["props"]   # the computed one: not pinned
+    assert cli.main(base + ["1.2.2"]) == 1 and "already a wave" in capsys.readouterr().err
+    assert cli.main(base + ["1.4.0"]) == 1 and "a new wave's release is computed, 1.2.3" in capsys.readouterr().err
+    assert cli.main(base + ["1.3"]) == 1 and "a release X.Y.Z" in capsys.readouterr().err
+    assert cli.main(base + ["--parent", "wi-start"]) == 1
+
+
+def test_a_stores_first_wave_names_its_release(tmp_path, capsys):
+    store = _write(tmp_path / "root" / "notes" / "graph", "- {id: ms-x, type: Milestone, status: pending, title: X}\n",
+                   "")
+    base = ["--root", str(store.parents[1]), "wave", "add"]
+    assert cli.main(base) == 1 and "first wave names its release" in capsys.readouterr().err
+    assert cli.main(base + ["0.1.0"]) == 0
+    assert _nodes(store)["wave-s1"]["props"] == {"kind": "wave", "seq": 1, "release": "0.1.0"}
 
 
 # --- brain wave import ---
@@ -341,7 +356,7 @@ def test_import_proposes_a_wave_per_release_and_lists_the_rest(tmp_path, capsys)
     assert cli.main(base) == 0
     out = capsys.readouterr().out
     assert "2.0.0: into wave-2.0.0, 1 item(s): wi-a" in out   # wi-f is in it already
-    assert "2.1.0: new wave wave-2.1.0, 2 item(s): wi-b, wi-c" in out
+    assert "2.1.0: a new wave (wave-sN, its release pinned), 2 item(s): wi-b, wi-c" in out
     assert "to place by Ada (names no release): 'G': wi-d" in out
     assert "'after the H gate': wi-e" in out and "'2.0.0.1': wi-g" in out
     assert "not written: --write" in out
@@ -349,8 +364,9 @@ def test_import_proposes_a_wave_per_release_and_lists_the_rest(tmp_path, capsys)
     assert cli.main(base + ["--write"]) == 0
     capsys.readouterr()
     plan = waves.load(store)
-    assert plan.items_of("wave-2.0.0") == ["wi-a", "wi-f"] and plan.items_of("wave-2.1.0") == ["wi-b", "wi-c"]
-    new = _nodes(store)["wave-2.1.0"]
+    assert plan.items_of("wave-2.0.0") == ["wi-a", "wi-f"] and plan.items_of("wave-s2") == ["wi-b", "wi-c"]
+    assert plan.resolve("2.1.0") == "wave-s2"
+    new = _nodes(store)["wave-s2"]
     assert new["props"]["kind"] == "wave" and new["props"]["release"] == "2.1.0" and "brain wave import" in \
         new["props"]["decided"]
     assert _nodes(store)["wi-a"]["props"]["wave"] == "2.0.0 (Ada, 2030-01-01)"   # kept: when it was planned
@@ -419,12 +435,13 @@ def test_close_creates_the_wave_it_carries_to_when_there_is_none(tmp_path, capsy
     store = _write(tmp_path / "graph", NODES)
     plan = waves.load(store)
     c = waves.close(store, "1.1.0", "3.0.0", write=True, today="2026-11-10")
-    assert c.created and c.carry_to == "wave-3.0.0" and not c.left
+    assert c.created and c.carry_to == "wave-s4" and not c.left   # an id without a version (WAVES-4)
     after = waves.load(store)
-    assert after.resolve("3.0.0") == "wave-3.0.0" and after.status("wave-3.0.0") == "pending"
-    assert after.parents.get("wave-3.0.0") == plan.parents.get("wave-1.1.0")
-    assert after.status("wave-1.1.0") == "reached"
-    assert all(after.wave_of(i) == "wave-3.0.0" for i in c.carried)
+    assert after.resolve("3.0.0") == "wave-s4" and after.status("wave-s4") == "pending"
+    assert _nodes(store)["wave-s4"]["props"]["release"] == "3.0.0"   # named by --carry-to: pinned
+    assert after.parents.get("wave-s4") == plan.parents.get("wave-1.1.0")
+    assert after.status("wave-1.1.0") == "reached" and _nodes(store)["wave-1.1.0"]["props"]["shipped_as"] == "1.1.0"
+    assert all(after.wave_of(i) == "wave-s4" for i in c.carried)
     assert waves.problems(after) == []
 
 
@@ -509,11 +526,87 @@ def test_import_from_a_release_leaves_the_earlier_ones(tmp_path, capsys):
     base = ["--root", str(store.parents[1]), "wave", "import", "--from", "2.1.0"]
     assert cli.main(base) == 0
     out = capsys.readouterr().out
-    assert "2.1.0: new wave wave-2.1.0, 2 item(s): wi-b, wi-c" in out
+    assert "2.1.0: a new wave (wave-sN, its release pinned), 2 item(s): wi-b, wi-c" in out
     assert "2.0.0: before --from 2.1.0, not imported: wi-a, wi-f" in out
     assert cli.main(base + ["--write"]) == 0
     capsys.readouterr()
     plan = waves.load(store)
-    assert plan.items_of("wave-2.0.0") == [] and plan.items_of("wave-2.1.0") == ["wi-b", "wi-c"]
+    assert plan.items_of("wave-2.0.0") == [] and plan.items_of(plan.resolve("2.1.0")) == ["wi-b", "wi-c"]
     assert cli.main(["--root", str(store.parents[1]), "wave", "import", "--from", "2.1"]) == 1
     assert "--from 2.1: a release X.Y.Z" in capsys.readouterr().err
+
+# --- wi-brain-wave-ids-decoupled: ids without a version, a computed release, the jump, the rename ---
+
+JUMP_NODES = """\
+- {id: ms-x, type: Milestone, status: pending, title: X}
+- {id: wave-1.0.0, type: Milestone, status: reached, title: "Wave 1.0.0", props: {kind: wave, release: 1.0.0}}
+- {id: wave-1.0.1, type: Milestone, status: pending, title: "Wave 1.0.1", props: {kind: wave, release: 1.0.1}}
+- {id: wave-s3, type: Milestone, status: pending, title: "Wave s3", props: {kind: wave, seq: 3}}
+- {id: wave-s4, type: Milestone, status: pending, title: "Wave s4", props: {kind: wave, seq: 4}}
+- {id: wi-now, type: WorkItem, status: done, title: Now}
+- {id: wi-later, type: WorkItem, status: todo, title: Later}
+"""
+JUMP_EDGES = """\
+- {from: wave-1.0.1, to: ms-x, type: part_of}
+- {from: wave-s3, to: ms-x, type: part_of}
+- {from: wave-s4, to: ms-x, type: part_of}
+- {from: wi-now, to: wave-1.0.1, type: part_of}
+- {from: wi-later, to: wave-s3, type: part_of}
+"""
+
+
+def test_the_order_and_the_computed_release(tmp_path):
+    plan = waves.load(_write(tmp_path / "graph", JUMP_NODES, JUMP_EDGES))
+    assert plan.waves == ["wave-1.0.0", "wave-1.0.1", "wave-s3", "wave-s4"]
+    assert [plan.label(w) for w in plan.waves] == ["1.0.0", "1.0.1", "1.0.2", "1.0.3"]
+    assert plan.computed("wave-s3") and not plan.computed("wave-1.0.1")
+    assert plan.resolve("1.0.2") == "wave-s3" and waves.problems(plan) == []
+    assert waves.next_report(plan)["current"]["id"] == "wave-1.0.1"
+
+
+def test_a_release_that_jumps_closes_the_current_wave_and_the_later_ones_follow(tmp_path, capsys):
+    """Wave 1.0.1 ships as 1.1.0 (a moved schema): its version PR closes it by that version, and the waves after it
+    are 1.1.1 and 1.1.2 without an edit (the renames of WAVES-1 and WAVES-2, no more)."""
+    store = _write(tmp_path / "root" / "notes" / "graph", JUMP_NODES, JUMP_EDGES)
+    plan = waves.load(store)
+    assert plan.for_release("1.1.0") == "wave-1.0.1" and plan.for_release("2.0.0") == "wave-1.0.1"
+    assert plan.for_release("1.2.0") is None and plan.for_release("1.0.5") is None   # not a jump of the current one
+    assert "is still pending" in "\n".join(waves.closure_problems(plan, "1.1.0"))   # the version PR's rule, by 1.1.0
+    base = ["--root", str(store.parents[1]), "wave"]
+    assert cli.main(base + ["close", "1.1.0", "--write"]) == 0
+    assert "wave 1.0.1 (wave-1.0.1, shipped as 1.1.0): closes with 1 done" in capsys.readouterr().out
+    after = waves.load(store)
+    assert _nodes(store)["wave-1.0.1"]["props"]["shipped_as"] == "1.1.0"
+    assert after.label("wave-s3") == "1.1.1" and after.label("wave-s4") == "1.1.2"
+    assert after.resolve("1.1.0") == "wave-1.0.1" and after.resolve("1.0.1") == "wave-1.0.1"
+    assert waves.closure_problems(after, "1.1.0") == []
+    assert cli.main(base + ["check", "1.1.0"]) == 0   # brain wave check and release_check --store resolve alike
+    assert waves.next_report(after)["current"]["release"] == "1.1.1"
+    assert cli.main(base + ["rename", "wave-s3", "wave-s4"]) == 1 and "already a node" in capsys.readouterr().err
+
+
+def test_rename_once_rewrites_the_references_and_keeps_the_old_id(plan_root, capsys):
+    """WAVES-5: wave-1.2.0 (pending) renamed wave-s3: its edges and the carried_to that name it rewritten, its
+    props.release dropped (computed from then on), the old id in props.renamed_from (it resolves)."""
+    store = _store(plan_root)
+    nodes = store / "nodes" / "work.yaml"
+    nodes.write_text(nodes.read_text(encoding="utf-8").replace(
+        'title: "Can start", props: {priority: P1}}', 'title: "Can start", props: {priority: P1, carried_to: wave-1.2.0}}'),
+        encoding="utf-8")
+    base = ["--root", str(plan_root), "wave", "rename"]
+    before = nodes.read_text(encoding="utf-8")
+    assert cli.main(base + ["1.2.0"]) == 0
+    out = capsys.readouterr().out
+    assert "edges/work.yaml: 3 reference(s) to wave-1.2.0" in out and "not written: --write" in out
+    assert nodes.read_text(encoding="utf-8") == before
+    assert cli.main(base + ["1.2.0", "wave-1.2.x"]) == 1 and "no dot" in capsys.readouterr().err
+    assert cli.main(base + ["wave-1.2.0", "--write"]) == 0
+    assert "wave-1.2.0 -> wave-s3 (seq 3)" in capsys.readouterr().out
+    got = _nodes(store)
+    assert "wave-1.2.0" not in got and got["wave-s3"]["props"]["seq"] == "3"
+    assert "release" not in got["wave-s3"]["props"] and got["wi-start"]["props"]["carried_to"] == "wave-s3"
+    assert got["wave-s3"]["props"]["renamed_from"].startswith("wave-1.2.0 (brain wave rename, ")
+    plan = waves.load(store)
+    assert plan.resolve("wave-1.2.0") == "wave-s3" and plan.label("wave-s3") == "1.1.1"   # after 1.1.0, computed
+    assert plan.items_of("wave-s3") == ["wi-next", "wi-next-after", "wi-start"] and plan.parents["wave-s3"] == ["ms-free"]
+    assert waves.problems(plan) == []

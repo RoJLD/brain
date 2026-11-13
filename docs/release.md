@@ -106,10 +106,12 @@ holds the standard steps for the whole release, and a PR's fragment adds only it
 
 - The items named for this release are merged, each reviewed, CI green on Windows (the `brain` job) included.
 - **The version PR closes its wave** (the closure rule). Where a store plans the releases as waves (a Milestone of
-  kind wave named by its release, `packages/brain/docs/formats.md`, « Milestone kinds »), the wave named by this
-  version may hold no open item that is neither carried by name to a later wave nor dropped: in the brain that holds
+  kind wave whose release is a label, `packages/brain/docs/formats.md`, « Milestone kinds »), the wave of this
+  version (its label, or the current wave when the release jumped to the next minor or major: the release forecast
+  of `brain next` says it from the first PR that tips it) may hold no open item that is neither carried by name to a later wave nor dropped: in the brain that holds
   that store, `brain wave close X.Y.Z --carry-to X.Y.Z+1 [--drop ID]... --write` writes each open item's
-  `props.carried_to` (or drops it), reaches the wave with what it did, then `brain sync` (a PR there, like any
+  `props.carried_to` (or drops it), reaches the wave with what it did and `props.shipped_as` X.Y.Z (the later
+  waves' releases are computed from it), then `brain sync` (a PR there, like any
   backlog change). `--carry-to` names a pending wave, created beside the closed one when its release has none yet: a
   reached or dropped one is refused, since no live wave would show the item. `release_check.py --store <that store>` refuses the version PR until then (an open item left, or
   the wave not reached yet), naming the items, and `brain wave check X.Y.Z` says the same from the brain; CI holds
