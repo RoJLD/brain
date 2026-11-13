@@ -13,10 +13,11 @@ from ._common import root_of
 ORDER = 446   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 406   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain ipc token [--init]        the machine's token for the Brain's local services (brain.ipcauth): its file and
+  brain ipc token [--init|--plan] the machine's token for the Brain's local services (brain.ipcauth): its file and
                                   whether it holds a usable token; --init makes it when there is none (32 random
                                   bytes, the file readable by its owner only); never prints the token: a client reads
-                                  the file ($BRAIN_IPC_TOKEN_FILE names another); exit 1 without a usable token
+                                  the file ($BRAIN_IPC_TOKEN_FILE names another); exit 1 without a usable token;
+                                  --plan: what --init would do, exit 0 (the setup wizard's Local services step)
   brain ipc otel-headers          the OTLP export's headers for Claude Code's otelHeadersHelper setting, one JSON
                                   object {"Authorization": "Bearer <token>"} on stdout, for the collector that
                                   requires the token (config.json ipc.require_token); the helper's only output: a
@@ -37,7 +38,9 @@ def register(sub, ctx) -> None:
     ip = sub.add_parser("ipc", help="the machine's token for the Brain's local services: where it is, --init makes "
                                     "it").add_subparsers(dest="ipc_cmd", required=True)
     tk = ip.add_parser("token", help="the token's file and whether it is usable; never prints the token")
-    tk.add_argument("--init", action="store_true", help="make the token when there is none (an existing one is kept)")
+    how = tk.add_mutually_exclusive_group()
+    how.add_argument("--init", action="store_true", help="make the token when there is none (an existing one is kept)")
+    how.add_argument("--plan", action="store_true", help="what --init would do, exit 0 (a setup wizard's plan)")
     ip.add_parser("otel-headers", help="the OTLP export's headers (Authorization: Bearer) as JSON, for Claude Code's "
                                        "otelHeadersHelper; exit 1 without a usable token")
     cs = ip.add_parser("claude-settings", help="what Claude Code's user settings need for its OTLP export, from "
@@ -95,5 +98,9 @@ def early(args) -> int:
         print(f"{f}: {'made' if made else 'kept (a usable token was already there)'}")
         return 0
     ok = ipcauth.read() is not None
+    if args.plan:
+        print(f"{ipcauth.token_file()}: " + ("a usable token: --init keeps it" if ok else
+                                             "no usable token: --init makes it (replacing an unusable file)"))
+        return 0
     print(f"{ipcauth.token_file()}: {'a usable token' if ok else 'no usable token (brain ipc token --init)'}")
     return 0 if ok else 1

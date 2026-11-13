@@ -181,7 +181,15 @@ cannot hold arrive later.
 The Setup page holds the setup wizards (`brain.wizards`), one per row, in the order a new brain walks them: the first
 run (the profile Lite, Default or Recommended), the stacks to enable, the modules, a project to add, the notification
 channels (ntfy, Telegram and its chats, the routes), the permissions, the machines and their facts, the code index, a
-new brain from a domain template, Claude Code's settings and the checks. Each wizard is the brain's own commands,
+new brain from a domain template, Claude Code's settings, the Local services and the checks. The Local services are
+six optional steps, in the order they must run, for a machine where the telemetry collector runs: the machine's token
+(`brain ipc token --plan`, then `--init`), the collector's token declared (`config.json ipc.require_token`, by a PR in
+the personal brain: it takes effect at the bundle's apply, and it is what gives the next step's settings their
+header), Claude Code's OTLP export and its `otelHeadersHelper` (`brain ipc claude-settings`: the exact lines and the
+helper's export checked; `install.ps1 -Apply` writes them, never a session), the sovereign bundle (`brain bundle plan
+sovereign`, then `apply`), `brain health ipc`, and Cursor's MCP server (`brain render --target cursor`); each needs the
+ones before it, so stop at the first that fails. `brain init` prints the same steps among its next ones. Each wizard
+is the brain's own commands,
 never a hidden edit: Enter asks its choice when it has one (and the folder of a new brain, an absolute path), then
 shows its exact command. A wizard that writes shows its plan already run (`brain profile set default`), and `y` runs
 the apply (`... --apply`), never after a plan that failed; a wizard that reads runs its one command on `y`. Each runs
