@@ -9,7 +9,9 @@ the desktop app's session files (``%LOCALAPPDATA%/Claude-Data/*/claude-code-sess
 the session records the Stop hook writes (``<BRAIN_HOME>/sessions/<id>.json``), the machine's committed memory and
 available RAM, and
 its configuration resolved once and cached in ``<BRAIN_HOME>/cache/governor.json`` while config.json and the
-registry keep their mtime and size. Its decision takes under 50 ms (tests/test_governor.py checks it).
+registry keep their mtime and size. Its decision takes under 50 ms (tests/test_governor.py checks it) for a subagent,
+a workflow, and a new session with the wave quota gate off; with it on, a start_session reads the app's sessions and
+its children's transcripts too (~40-70 ms measured, bounded at 2 s: brain.wavegate, tests/test_hook_latency.py).
 
 The checks, in order; the first that holds decides:
 
@@ -291,13 +293,14 @@ def quota_now(now: datetime, lim: dict) -> dict:
             if s_at and s_resets and s_resets > now and s_at > at and abs(s_resets - _dt(r["resets"])) < \
                     timedelta(minutes=5):
                 pct, at, how = float(status["pct_now"]), s_at, "forecast"
+        base = pct   # as read at ``at``, before the pace: brain.wavegate projects from it
         pace = (status.get("pace") or {}).get("pct_h") if w == "week" else None
         if isinstance(pace, (int, float)) and pace > 0:
             hours = min(max(0.0, (now - at).total_seconds() / 3600), lim["fresh_minutes"] / 60)
             pct += pace * hours
             how += f" + {pace:.2f} %/h x {hours:.1f} h"
         out["windows"][w] = {"pct": round(min(pct, 100.0), 1), "at": _iso(at), "how": how,
-                             "resets": r["resets"]}
+                             "resets": r["resets"], "base_pct": round(base, 2)}
     return out
 
 
@@ -641,12 +644,15 @@ def _record(payload: dict, check: str, decision: str, reason: str) -> None:
     timing.append(d / f"guards-{at[:7]}.jsonl", rec)  # the guards ledger's lock (brain.timing)
 
 
-def _note_start(payload: dict, s: dict) -> None:
+def _note_start(payload: dict, s: dict, asked: bool = False) -> None:
     """A start let through, noted so the next start counts it before the app shows it: a brainstorm (not a proposal's
-    start: its title is not in the call), and a stream while the wave quota gate is on (``stream``)."""
+    start: its title is not in the call), and a stream while the wave quota gate is on (``stream``). A start the hook
+    asks the owner about (``asked``) is noted as a stream too, so that parallel starts in one message see each other:
+    brain.wavegate counts a start no child matches for a minute only, so one the owner declined holds no slot longer.
+    The line goes through brain.timing's lock: hooks at once neither lose nor mix one."""
     inp = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
     brainstorm = bool(s.get("brainstorm") and inp.get("initiation") in ("user_asked", None)
-                      and not inp.get("proposal_id"))
+                      and not inp.get("proposal_id") and not asked)
     stream = bool((s.get("wave") or {}).get("max_streams"))
     if not brainstorm and not stream:
         return
@@ -656,7 +662,7 @@ def _note_start(payload: dict, s: dict) -> None:
     rec = {"at": s["now"], "brainstorm": brainstorm, "title": str(inp.get("title") or ""), "project": s["project"],
            "by": payload.get("session_id")}
     if stream:
-        rec["stream"] = True
+        rec.update(stream=True, name=str(inp.get("name") or ""), asked=asked)
     timing.append(f, rec)
 
 
@@ -688,6 +694,8 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
         return _let_through(payload, s) if s["kind"] == "session" else None
     decision, check, reason = v
     _record(payload, check, "denied" if decision == "deny" else "asked", reason)
+    if decision == "ask" and s["kind"] == "session":
+        _note_start(payload, s, asked=True)   # the owner may say yes: a parallel start must count it
     text = f"{s['plugin']} usage guard: {reason}."
     if decision == "deny":
         text += f" {override_hint(s['owner'])}."

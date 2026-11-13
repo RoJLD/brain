@@ -118,7 +118,8 @@ def test_over_the_threshold_it_asks_the_owner_with_the_arithmetic(ada, wave):
     forecast(wave, 60, pct_h=0.3)
     d, reason = decision(start(ada))
     assert d == "ask" and "a new stream: the week's forecast at its reset 2026-11-09 12:00 UTC is 97 %" in reason
-    assert "(60 % now + 0.30 %/h x 123.0 h) plus this stream's 0.4 % ($11.00, the brief's estimate): 97 %" in reason
+    assert ("(60 % at 08:58 UTC + 0.30 %/h x 123.0 h) plus this stream's 0.4 % ($11.00, the brief's estimate): "
+            "97 %") in reason
     assert "over 90 % (usage.guard.wave_quota.ask_over_pct); start it anyway?" in reason
     assert ledger(wave)[-1]["check"] == "wave_quota" and ledger(wave)[-1]["decision"] == "asked"
     ada({"wave_quota": {"ask_over_pct": 98}})
@@ -182,18 +183,116 @@ def test_what_counts_as_a_live_stream(ada, wave, tmp_path):
 
 
 def test_a_start_counts_before_the_app_shows_it(ada, wave, tmp_path):
+    """Parallel starts in one message: each sees the others for a minute, until the app shows their children."""
     forecast(wave, 30)
     child(ada, tmp_path, 1)
     assert start(ada, title="Stream two") is None
-    assert start(ada, title="Stream three", now=NOW + timedelta(minutes=1)) is None
-    d, reason = decision(start(ada, title="Stream four", now=NOW + timedelta(minutes=2)))
+    assert start(ada, title="Stream three", now=NOW + timedelta(seconds=20)) is None
+    d, reason = decision(start(ada, title="Stream four", now=NOW + timedelta(seconds=40)))
     assert d == "deny" and "3 live stream(s) (stream-1, Stream two, Stream three)" in reason
-    # the app shows Stream two: counted once, not twice
+    # the app shows Stream two (no transcript yet: starting): counted once, not twice
     app_file(ada, "local_bbbbbbbb-0000-4000-8000-0000000000e2", "c-two", "Stream two", parent=MASTER,
              created=NOW + timedelta(seconds=5))
     lim = governor.caps(governor.settings(str(ada.lab)), "lab")
-    assert wavegate.live_streams(M_CLI, NOW + timedelta(minutes=3), lim)["n"] == 3
-    assert wavegate.live_streams(M_CLI, NOW + timedelta(minutes=13), lim)["n"] == 1   # the unseen start is forgotten
+    assert wavegate.live_streams(M_CLI, NOW + timedelta(seconds=50), lim)["n"] == 3
+    # a minute on, the start no child matched is forgotten; Stream two still starts
+    assert wavegate.live_streams(M_CLI, NOW + timedelta(minutes=2), lim)["names"] == ["stream two", "stream-1"]
+
+
+def _streams(ada, at):
+    return wavegate.live_streams(M_CLI, at, governor.caps(governor.settings(str(ada.lab)), "lab"))
+
+
+def test_a_failed_start_retried_holds_no_slot(ada, wave, tmp_path):
+    """Review of #222, finding 1a: a start the governor let through but the app refused (no child ever comes), then
+    retried: the first is forgotten after a minute, the retry counts once."""
+    forecast(wave, 30)
+    child(ada, tmp_path, 1)
+    child(ada, tmp_path, 2)
+    assert start(ada, title="Stream three") is None   # the app refuses it: no child
+    assert _streams(ada, NOW + timedelta(seconds=30))["n"] == 3
+    assert start(ada, title="Stream three", now=NOW + timedelta(minutes=2)) is None   # the retry passes
+    app_file(ada, "local_bbbbbbbb-0000-4000-8000-0000000000f3", "c-three", "Stream three", parent=MASTER,
+             created=NOW + timedelta(minutes=2, seconds=4))
+    assert _streams(ada, NOW + timedelta(minutes=2, seconds=30))["n"] == 3
+
+
+def test_a_quick_child_archived_or_detached_holds_no_slot(ada, wave, tmp_path):
+    """Finding 1b: a review that ran and was archived (or detached) within the minute matches its start: no slot."""
+    forecast(wave, 30)
+    child(ada, tmp_path, 1)
+    assert start(ada, title="Review one") is None
+    assert start(ada, title="Review two", now=NOW + timedelta(seconds=10)) is None
+    app_file(ada, "local_bbbbbbbb-0000-4000-8000-0000000000a1", "c-r1", "Review one", parent=MASTER,
+             created=NOW + timedelta(seconds=3), archived=True)
+    app_file(ada, "local_bbbbbbbb-0000-4000-8000-0000000000a2", "c-r2", "Review two", parent=MASTER,
+             created=NOW + timedelta(seconds=13), detached=True)
+    s = _streams(ada, NOW + timedelta(seconds=30))
+    assert s["n"] == 1 and s["names"] == ["stream-1"]
+
+
+def test_a_child_whose_title_differs_matches_its_start_by_time(ada, wave, tmp_path):
+    """Finding 1c: the app shows another title (renamed, or cut at 60 characters): the start is matched on its
+    creation time; the title and the short name only break a tie."""
+    forecast(wave, 30)
+    long = "A stream whose title runs well past the sixty characters the app keeps for it"
+    assert start(ada, title=long, name="long-one") is None
+    assert start(ada, title="Short", name="short", now=NOW + timedelta(seconds=1)) is None
+    app_file(ada, "local_bbbbbbbb-0000-4000-8000-0000000000b1", "c-b1", long[:60], parent=MASTER,
+             created=NOW + timedelta(seconds=4), name="long-one")
+    app_file(ada, "local_bbbbbbbb-0000-4000-8000-0000000000b2", "c-b2", "Renamed by the owner", parent=MASTER,
+             created=NOW + timedelta(seconds=4), name="other")
+    s = _streams(ada, NOW + timedelta(seconds=20))
+    assert s["n"] == 2 and sorted(s["names"]) == ["long-one", "other"]   # both starting, no start left over
+    starts = wavegate._stream_starts(NOW + timedelta(seconds=20), M_CLI)
+    kids = [{"created": ms(NOW + timedelta(seconds=4)), "title": "x", "name": "short"},
+            {"created": ms(NOW + timedelta(seconds=4)), "title": long[:60], "name": "long-one"}]
+    assert wavegate._unmatched(starts, kids) == []
+    assert wavegate._unmatched(starts, kids[:1]) == ["Short"]   # the tie goes to the name: long-one is the one left
+
+
+def test_a_start_asked_about_is_noted(ada, wave, tmp_path):
+    """Finding 2: a start the governor asks the owner about may pass: a parallel start counts it (for a minute)."""
+    forecast(wave, 60, pct_h=0.3)   # every stream asks
+    child(ada, tmp_path, 1)
+    child(ada, tmp_path, 2)
+    assert decision(start(ada, title="Stream three"))[0] == "ask"
+    rec = json.loads((wave / "usage" / "starts.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert rec["stream"] is True and rec["asked"] is True and rec["brainstorm"] is False
+    assert decision(start(ada, title="Stream four", now=NOW + timedelta(seconds=5)))[0] == "deny"
+    assert decision(start(ada, title="Stream four", now=NOW + timedelta(minutes=2)))[0] == "ask"   # declined: gone
+
+
+def test_the_projection_runs_from_the_reading_not_from_the_capped_now(ada, wave):
+    """Finding 3: 60 % read 5 h ago at 1 %/h with fresh_minutes 0: quota_now's percent now stays at 60 (its pace is
+    capped at fresh_minutes), but the forecast at the reset runs from the reading: 60 + 1 x 128 h = 188, not 183."""
+    ada({"wave_quota": WAVE, "sessions": 20, "fresh_minutes": 0})
+    (wave / "usage" / "quota.jsonl").unlink()
+    reading(wave, 60, at=NOW - timedelta(hours=5))
+    forecast(wave, 60, at=NOW - timedelta(hours=5), pct_h=1.0)
+    lim = governor.caps(governor.settings(str(ada.lab)), "lab")
+    q = governor.quota_now(NOW, lim)
+    assert q["windows"]["week"]["pct"] == 60.0 and q["windows"]["week"]["base_pct"] == 60.0
+    p = wavegate.projection(q, NOW)
+    assert p["at_reset"] == 188.0 and p["hours"] == 128.0 and p["now_pct"] == 65.0 and p["hours_left"] == 123.0
+    d, reason = decision(start(ada))
+    assert d == "ask" and "is 188 % (60 % at 04:00 UTC + 1.00 %/h x 128.0 h)" in reason
+
+
+def test_a_last_record_past_64_kb_is_read_once_larger(ada, wave, tmp_path):
+    """Finding 4: a turn that ended on a record past 64 KB reads idle (a 1 MB tail), not active; one past 1 MB is
+    unknown, never live."""
+    lim = governor.caps(governor.settings(str(ada.lab)), "lab")
+    big = {"type": "assistant", "message": {"content": [{"type": "text", "text": "x" * 70_000}],
+                                            "stop_reason": "end_turn"}}
+    child(ada, tmp_path, 1, records=(*WORKING, big))
+    node = {"session": "c-1", "created": ms(NOW - timedelta(minutes=29))}
+    assert wavegate.child_state(node, NOW, lim) == "idle"
+    huge = dict(big, message=dict(big["message"], content=[{"type": "text", "text": "x" * 1_100_000}]))
+    transcript(tmp_path, "c-1", *WORKING, huge)
+    assert wavegate.child_state(node, NOW, lim) == "unknown"
+    young = dict(node, created=ms(NOW - timedelta(minutes=2)))
+    assert wavegate.child_state(young, NOW, lim) == "starting"
 
 
 def test_an_unreadable_forecast_lets_the_start_through_with_a_note(ada, wave, tmp_path):
@@ -226,8 +325,9 @@ def test_a_missing_ledger_or_app_and_a_slow_count_let_it_through_with_a_note(ada
     assert "the week's forecast cannot be read" in text and "this session is not one of the desktop app's" in text
     master(ada)
     child(ada, tmp_path, 1)
-    monkeypatch.setattr(wavegate, "BUDGET_S", -1.0)   # a count that times out
+    monkeypatch.setattr(wavegate, "BUDGET_S", -1.0)   # a count that times out, timed from before the app is read
     assert "the live streams were not counted within -1 s" in decision(start(ada))[1]
+    monkeypatch.setattr(wavegate, "BUDGET_S", 2.0)
     monkeypatch.delenv("LOCALAPPDATA")
     assert "the desktop app's sessions are not on this machine" in decision(start(ada))[1]
 
@@ -268,8 +368,8 @@ def test_the_threshold_on_a_real_forecast(ada, brain_home):
     assert got == {"pct_h": 2.157, "pct_per_usd": 0.058719, "median_session_usd": 26.4}
     assert p["now_pct"] == 78.2 and p["hours_left"] == 71.5 and p["at_reset"] == 232.4
     d, reason = decision(start(ada, now=REAL_NOW))
-    assert d == "ask" and ("is 232 % (78 % now + 2.16 %/h x 71.5 h) plus this stream's 0.7 % ($11.00, the brief's "
-                           "estimate): 233 %") in reason
+    assert d == "ask" and ("is 232 % (78 % at 12:24 UTC + 2.16 %/h x 71.6 h) plus this stream's 0.7 % ($11.00, "
+                           "the brief's estimate): 233 %") in reason
     data = json.loads((QUOTA / "quota.json").read_text(encoding="utf-8"))
     data["pace"]["pct_h"] = 0.05
     (brain_home / "usage" / "quota.json").write_text(json.dumps(data), encoding="utf-8")

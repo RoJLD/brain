@@ -289,19 +289,25 @@ included. Without `usage.guard.wave_quota` in config.json nothing of this runs; 
   children in the desktop app's session files (their `spawnedFrom`), neither archived nor detached, that are
   *running* (the transcript written in the last `live_minutes` and its last turn not ended: a child that reported and
   waits, or asks the owner, does not count) or *starting* (created in the last 10 minutes, no transcript yet), plus the
-  stream starts the governor let through that the app does not show yet (`usage/starts.jsonl`, `"stream": true`,
-  counted for 10 minutes).
+  stream starts no child matches yet. Each start the governor lets through, or asks the owner about (so that parallel
+  starts in one message see each other), is noted in `usage/starts.jsonl` (`"stream": true`). A noted start is matched
+  against every child of the master, archived and detached ones included, on its creation time (the title or the
+  app's short name only breaks a tie: the app may cut or rename a title); one no child matches counts for one minute
+  only, so a start the app refused, or the owner declined, holds no slot for long, and a review that ran and was
+  archived within minutes holds none.
 - **`wave_quota`** asks the owner when the week's forecast at its reset goes over `ask_over_pct`: the week's percent
-  now (as the other checks read it) plus the last forecast's pace (`usage/quota.json`, `pace.pct_h`, only while that
-  forecast is of the week in force) times the hours to the reset, plus this stream's cost in percent of the week. The
+  as read (the newest reading, or the last forecast's percent when it is newer) plus the last forecast's pace
+  (`usage/quota.json`, `pace.pct_h`, only while that forecast is of the week in force) times the hours from that
+  reading to the reset, plus this stream's cost in percent of the week. The
   cost is the brief's estimate (the `usd=` of its « Cost estimate » line: `brain brief`, `brain cost estimate`), else
   the median session's cost of the last forecast (`live.median_session_usd`), converted by its `pct_per_usd`. The
-  question gives the arithmetic: `232 % (78 % now + 2.16 %/h x 71.5 h) plus this stream's 0.7 % ($11.00, the brief's
-  estimate): 233 %, over 90 %`.
+  question gives the arithmetic: `232 % (78 % at 12:24 UTC + 2.16 %/h x 71.6 h) plus this stream's 0.7 % ($11.00,
+  the brief's estimate): 233 %, over 90 %`.
 
 Both fail open: a forecast that cannot be read (no week reading in force, no pace of this week, no conversion), a
-session the app does not know or no app on the machine, a count that takes more than 2 s, or an error inside the gate
-let the call through, and the hook says why in its context (« Wave quota gate (usage.guard.wave_quota): ...; the start
+session the app does not know or no app on the machine, a count that takes more than 2 s (timed from before the app's
+sessions are read), a transcript with no whole record in its last 1 MB (that child is not counted), or an error inside
+the gate let the call through, and the hook says why in its context (« Wave quota gate (usage.guard.wave_quota): ...; the start
 goes through unchecked by it. »). The owner's override (below) lifts it as it lifts the other checks.
 
 The gate is `brain.wavegate`. How many streams fit now, from the same reading (`brain.wavegate.room`): the smaller of the streams left to the

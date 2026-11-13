@@ -1436,7 +1436,10 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   through with a note, and `brain brief`, `brain wave plan` and `brain usage guard` say how many streams fit now
   ([`docs/guards.md`](docs/guards.md), « The wave quota gate »). The thresholds are config.json `usage.guard`;
   `brain usage guard` shows what each tool would get now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
-  (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
+  (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms for `Agent`,
+  `Task` and `Workflow`, and for `start_session` with the wave quota gate off; with it on, a `start_session` also
+  reads the app's sessions, the transcript folders once and the children's tails: ~40-70 ms measured on a machine of
+  204 app sessions and a master of 5 children, bounded at 2 s.
 
 The quota conversion (`brain usage quota`) is per plan: only the readings of the plan in force (config.json
 `usage.plans`) count, and until the plan has 3 converted readings it says "uncalibrated", does not convert the week and
