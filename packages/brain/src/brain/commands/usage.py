@@ -90,7 +90,7 @@ def _governor(args, root: Path) -> int:
         try:
             rec = governor.allow(args.hours if args.hours is not None else governor.ALLOW_HOURS, args.reason or "",
                                  checks=args.check)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:   # a check it does not lift, --check with --hours 0, a locked file
             raise SystemExit(f"brain: {exc}") from None
         print(cost.as_json(rec) if args.json else f"usage guard lifted for {', '.join(rec['checks'])} until "
               f"{rec['until']} ({governor.allow_file()})" if rec else "usage guard override ended")

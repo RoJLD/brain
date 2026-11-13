@@ -45,8 +45,8 @@ not the governor: by default the memory and session caps (:data:`DEFAULT_LIFT`),
 (critical lifts warn too), a stale reading never (reading it again is one call); a lifted check lets the next one
 decide. ``BRAIN_GUARD_ALLOW=usage`` in Claude Code's environment lifts every check, ``usage:CHECK`` one. Refusals,
 asks and overrides go to the guards ledger (``guard: usage``, the check that decided, ``by`` the allow or the
-variable), and so does each allow and its end (``check: allow``, ``decision`` allowed or ended: ended, replaced or
-expired). Any error lets the call through and
+variable), and so does each allow and its end (``check: allow``, ``decision`` allowed or ended: ended or expired);
+an allow adds to the one in force. Any error lets the call through and
 goes to ``ledger/errors.log``: the hook never breaks a session.
 
 Not applied here: ``CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS`` (the workflow agents running at once, ~8 from the
@@ -494,25 +494,60 @@ def allow_file() -> Path:
 
 def override_until(now: datetime) -> dict | None:
     """The owner's override (brain usage allow) while it holds: {until, reason, at, checks}, else None. One whose
-    time has passed is removed, its end written to the guards ledger (once: the process that removes it)."""
+    time has passed is ended (:func:`_expire`)."""
     f = allow_file()
     data = _read_json(f)
     until = _dt(data.get("until")) if isinstance(data, dict) else None
     if until and until > now:
         return data
     if until:
-        _end(f, data, "expired")
+        return _expire(f, now)
     return None
 
 
+def _expire(f: Path, now: datetime) -> dict | None:
+    """End the override file ``f`` whose time has passed, its end written once to the guards ledger: the file is
+    claimed first (renamed), so that two hooks never both write it, then read again: an allow the owner wrote since
+    (it holds) is put back, never deleted. Returns the override that holds after it, else None."""
+    claim = f.with_name(f".{f.name}.{os.getpid()}.ending")
+    try:
+        os.replace(f, claim)
+    except OSError:   # another process claimed it, or it is gone
+        return None
+    data = _read_json(claim)
+    until = _dt(data.get("until")) if isinstance(data, dict) else None
+    if until and until > now:   # the owner's new allow, written between the read and the claim: it stays
+        try:
+            if not f.exists():
+                os.replace(claim, f)
+                return data
+        except OSError:
+            pass
+        _unlink(claim)
+        return override_until(now)
+    _unlink(claim)
+    if until:
+        _ledger(_ended(data, "expired"))
+    return None
+
+
+def _unlink(f: Path) -> None:
+    try:
+        f.unlink()
+    except OSError:
+        pass
+
+
 def lifted_checks(override: dict | None) -> tuple[str, ...]:
-    """The checks an override lifts: its ``checks`` (only the liftable ones); an override written before 0.5.1 has
-    none and lifts every liftable check, as it did then."""
+    """The checks an override lifts: its ``checks`` (the liftable ones, critical with warn); an override written
+    before 0.5.1 has no ``checks`` key and lifts every liftable check, as it did then; any other value lifts none."""
     if not override:
         return ()
-    checks = override.get("checks")
-    if not isinstance(checks, list):
+    if "checks" not in override:
         return LIFTABLE
+    checks = override["checks"]
+    if not isinstance(checks, list):
+        return ()
     return tuple(c for c in LIFTABLE if c in checks or (c == "warn" and "critical" in checks))
 
 
@@ -530,41 +565,56 @@ def _ledger(rec: dict) -> None:
     timing.append(d / f"guards-{rec['at'][:7]}.jsonl", rec)  # the guards ledger's lock (brain.timing)
 
 
-def _end(f: Path, data: dict, why: str) -> None:
-    """Remove the override file and write its end (``why``: expired, ended, replaced) to the guards ledger; a
-    process that finds it gone already writes nothing."""
-    try:
-        f.unlink()
-    except OSError:
-        return
-    _ledger({"check": "allow", "decision": "ended", "why": why, "checks": list(lifted_checks(data)),
-             "since": data.get("at"), "until": data.get("until"), "reason": data.get("reason", "")})
+def _ended(data: dict, why: str) -> dict:
+    """The ledger line of an override's end (``why``: ended, expired)."""
+    return {"check": "allow", "decision": "ended", "why": why, "checks": list(lifted_checks(data)),
+            "since": data.get("at"), "until": data.get("until"), "reason": data.get("reason", "")}
 
 
-def allow(hours: float = ALLOW_HOURS, reason: str = "", now: datetime | None = None,
-          checks: list[str] | tuple[str, ...] | None = None) -> dict:
-    """``brain usage allow``: lift ``checks`` (default :data:`DEFAULT_LIFT`, the memory and session caps; never
-    ``stale``) for ``hours`` (0: end the override now); the owner's, in their own terminal (brain.guards refuses it
-    to a session). The allow and the end of the one it replaces are written to the guards ledger."""
-    now = now or _now()
+def _names(checks, hours: float) -> list[str]:
+    """The checks an allow names (default :data:`DEFAULT_LIFT`), each once; ValueError for one it never lifts, or
+    for checks named with --hours 0 (which ends the whole override)."""
+    if checks and hours <= 0:
+        raise ValueError("--hours 0 ends the whole override: give no --check with it")
     names = list(DEFAULT_LIFT if not checks else dict.fromkeys(checks))
     bad = [c for c in names if c not in LIFTABLE]
     if bad:
         raise ValueError(f"{', '.join(bad)}: not a check brain usage allow lifts (one of {', '.join(LIFTABLE)}; "
                          "a stale reading is refreshed by one get_usage call, never lifted)")
+    return names
+
+
+def allow(hours: float = ALLOW_HOURS, reason: str = "", now: datetime | None = None,
+          checks: list[str] | tuple[str, ...] | None = None) -> dict:
+    """``brain usage allow``: lift ``checks`` (default :data:`DEFAULT_LIFT`, the memory and session caps; never
+    ``stale``) for ``hours``; the owner's, in their own terminal (brain.guards refuses it to a session). An allow
+    adds to the one in force (its checks kept, the later end kept), so following the hint of one refusal never undoes
+    the allow of another; ``hours`` 0 ends the override, whatever it lifts. Each allow and each end are written to the
+    guards ledger (an end once: an override found past its time is ended as expired)."""
+    now = now or _now()
+    names = _names(checks, hours)
     f = allow_file()
-    old = _read_json(f)
-    if isinstance(old, dict) and old:
-        _end(f, old, "ended" if hours <= 0 else "replaced")
+    old = override_until(now)   # an override past its time is ended here, as expired
     if hours <= 0:
+        if f.exists():
+            _unlink(f)
+            if old:
+                _ledger(_ended(old, "ended"))
         return {}
-    rec = {"v": 1, "at": _iso(now), "until": _iso(now + timedelta(hours=hours)), "reason": reason, "checks": names}
+    until = now + timedelta(hours=hours)
+    kept = [c for c in lifted_checks(old) if c not in names] if old else []
+    if old and (_dt(old.get("until")) or until) > until:
+        until = _dt(old["until"])
+    rec = {"v": 1, "at": _iso(now), "until": _iso(until), "reason": reason, "checks": names + kept}
     f.parent.mkdir(parents=True, exist_ok=True)
     tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, f)   # whole or absent: the hook never reads half an override
-    _ledger({"check": "allow", "decision": "allowed", "checks": names, "since": rec["at"], "until": rec["until"],
-             "reason": reason})
+    try:
+        tmp.write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, f)   # whole or absent, never deleted first: a hook never reads half an override, nor none
+    finally:
+        _unlink(tmp)
+    _ledger({"check": "allow", "decision": "allowed", "checks": rec["checks"], "added": names, "since": rec["at"],
+             "until": rec["until"], "reason": reason})
     return rec
 
 
@@ -777,7 +827,7 @@ def report(cwd: str, now: datetime | None = None) -> dict:
     for tool, inp in (("mcp__ccd_session__start_session", {"title": "a session"}),
                       ("mcp__ccd_session__start_session", {"title": "Brainstorm"}), ("Agent", {}), ("Workflow", {})):
         s = state({"tool_name": tool, "tool_input": inp, "cwd": cwd}, now)
-        v = verdict(s)
+        v = verdict(s, lifted_checks(s["override"]))   # what the hook decides: the override's checks passed over
         name = "brainstorm" if inp.get("title") == "Brainstorm" else kind(tool)
         out[name] = {"decision": v[0] if v else "allow", "check": v[1] if v else "", "reason": v[2] if v else ""}
         out.setdefault("state", s)

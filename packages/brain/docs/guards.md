@@ -322,9 +322,11 @@ An allow lifts checks, not the governor (RETRO-8): by default the memory and ses
 `brainstorms`); `--check NAME`, repeatable, aims one or more of `critical` (which lifts `warn` too), `warn`, `memory`,
 `sessions`, `brainstorms`. A stale quota reading is never lifted: reading it again is one `get_usage` call. A lifted
 check lets the next one decide (memory lifted, the sessions cap still refuses), and each refusal names the allow that
-lifts it (`brain usage allow --check critical --hours 2`), or says that none does. Each allow, and its end (`ended`
-by `--hours 0`, `replaced` by a new allow, `expired` when its time passes: the first hook that sees it removes the
-file), is a line of the guards ledger (`"guard": "usage"`, `"check": "allow"`, its checks, since, until and reason),
+lifts it (`brain usage allow --check critical --hours 2`), or says that none does. An allow adds to the one in
+force (its checks and the later end kept), so following one refusal's hint never undoes another allow; `--hours 0`
+ends the whole override. Each allow, and its end (`ended` by `--hours 0`, `expired` when its time has passed: the
+first to see it, a hook, `brain usage guard` or the next allow, claims the file and ends it, once; an allow the
+owner wrote meanwhile is kept), is a line of the guards ledger (`"guard": "usage"`, `"check": "allow"`, its checks, since, until and reason),
 and each call it lets through one more (`"decision": "overridden"`, `"by": "allow"`). An `allow.json` written by
 0.5.0 (no `checks`) lifts every check but `stale` until it ends.
 
