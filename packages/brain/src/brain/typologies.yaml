@@ -29,7 +29,7 @@ entries:
       - {id: pr, evidence: pr, text: "merged by a pull request, after local verification (tests, linters)"}
       - {id: test, text: "a test of the new behaviour wherever one can be written"}
       - {id: same-pr-docs, text: "the same PR updates the README, the docs, the runbook, the CHANGELOG and the script's help for
-          any change of behaviour, commands, configuration, setup or data"}
+          any change of its behaviour, its commands, its configuration, its setup or its data"}
       - {id: scout, text: "the modules it touches left at the standard: brain audit --diff's NEW and LEFT lines fixed"}
       - {id: worktree, text: "its worktree removed and its session archived once merged and verified"}
     sub:
