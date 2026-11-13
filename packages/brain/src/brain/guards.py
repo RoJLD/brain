@@ -2894,20 +2894,20 @@ def _run(args: list[str], cwd: str, timeout: float = 10, env: dict[str, str] | N
     return subprocess.run(args, cwd=cwd, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
 
 
-def _secret_names(line: str) -> list[str]:
-    return secretscan.find_in_line(line)
+def _secret_names(line: str, path: str = "") -> list[str]:
+    return secretscan.find_in_line(line, path)
 
 
 def scan_diff(diff: str) -> list[str]:
     """``file:line (pattern)`` for every added line of a unified diff that looks like a secret (brain.diffs reads
-    it)."""
+    it; a line under a strict folder is judged by its path, brain.secretscan.STRICT)."""
     return [f"{path}:{n} ({names[0]})" for path, rows in diffs.added_lines(diff).items() for n, text in rows
-            if (names := _secret_names(text))]
+            if (names := _secret_names(text, path))]
 
 
 def scan_text(path: str, text: str) -> list[str]:
     return [f"{path}:{i} ({names[0]})" for i, line in enumerate(text.splitlines(), 1)
-            if (names := _secret_names(line))]
+            if (names := _secret_names(line, path))]
 
 
 def gitleaks(repo: str) -> list[str] | None:
@@ -2988,13 +2988,18 @@ def commit_secrets(repo: str, specs: list[str], every_tracked: bool, untracked: 
     staged = gitleaks(repo)
     if staged is None:
         staged = scan_diff(_git_out(repo, *diffs.argv("diff", "--cached", "-U0")))
+    else:   # gitleaks honours gitleaks:allow everywhere: the strict folders are read by the built-in scan too
+        staged += scan_diff(_git_out(repo, *diffs.argv("diff", "--cached", "-U0", "--",
+                                                       *(f":(top){d}" for d in secretscan.STRICT))))
     hits = list(staged)
     if specs or every_tracked:
         hits += scan_diff(_git_out(repo, *diffs.argv("diff", "-U0", "HEAD", "--", *specs)))
-    if untracked:
-        for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *untracked).split("\0"):
+    if untracked:   # by their path from the top, so that a strict folder is one from a subfolder too
+        top = _git_out(repo, "rev-parse", "--show-toplevel").strip() or repo
+        for name in _git_out(repo, "ls-files", "--others", "--exclude-standard", "--full-name", "-z", "--",
+                             *untracked).split("\0"):
             if name:
-                hits += scan_text(name, _read_file(name, repo))
+                hits += scan_text(name, _read_file(name, top))
     return list(dict.fromkeys(hits))
 
 
