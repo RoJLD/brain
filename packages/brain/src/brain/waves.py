@@ -57,7 +57,8 @@ SATISFIED = ("done", "reached", "validated", "active", "live")   # research_grap
 RELEASE_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 RELEASE_IN_RE = re.compile(r"^\s*v?(\d+\.\d+\.\d+)(?![\d.])")   # a free-text props.wave that names a release
 SEQ_RE = re.compile(r"^wave-s(\d+)$")   # a wave's id that carries its place, never a version
-WAVE_ID_RE = re.compile(r"wave-(?:s\d+|\d+\.\d+\.\d+)(?![\w.])")   # the ids a props.renamed_from names
+# the ids a props.renamed_from names: its first word, and each one after « before: »
+FORMER_RE = re.compile(r"(?:^|;\s*before:\s*)(wave-[A-Za-z0-9][\w.-]*?)(?=[\s(;]|$)")
 ID_RE = re.compile(r"^wave-[a-z0-9][a-z0-9-]*$")   # a new wave id: no dot, so no version
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 QUICKWIN_SHARE = 0.2   # the share of a wave's places kept for quick wins (spec-brain-sizing-prioritization 5.3)
@@ -112,14 +113,20 @@ class Plan:
 
     @cached_property
     def waves(self) -> list[str]:
-        """The waves in order: a legacy wave (no sequence) by its props.release (a malformed one last), its place
-        counted among them from 1; a wave with a sequence at its N, after a legacy wave of the same place."""
+        """The waves in order: a wave with a sequence at its N; a legacy wave (no sequence), by its props.release (a
+        malformed one last), at the next place no sequence holds (a legacy wave renamed wave-sN keeps its place)."""
         ws = [k for k, n in self.nodes.items() if kind(n) == WAVE]
 
         def planned(w: str):
             key = release_key(_props(self.nodes[w]).get("release"))
             return (key is None, key or (0, 0, 0), w)
-        place = {w: i + 1 for i, w in enumerate(sorted((w for w in ws if self.seq(w) is None), key=planned))}
+        taken = {self.seq(w) for w in ws} - {None}
+        place, n = {}, 0
+        for w in sorted((w for w in ws if self.seq(w) is None), key=planned):
+            n += 1
+            while n in taken:
+                n += 1
+            place[w] = n
         return sorted(ws, key=lambda w: (place[w] if self.seq(w) is None else self.seq(w), self.seq(w) is not None, w))
 
     @cached_property
@@ -147,7 +154,7 @@ class Plan:
 
     def former(self, wid: str) -> list[str]:
         """The ids a wave had before a rename (props.renamed_from)."""
-        return WAVE_ID_RE.findall(str(_props(self.nodes.get(wid) or {}).get("renamed_from") or ""))
+        return FORMER_RE.findall(str(_props(self.nodes.get(wid) or {}).get("renamed_from") or ""))
 
     def next_seq(self) -> int:
         """The place of a new wave: one more than the last."""
