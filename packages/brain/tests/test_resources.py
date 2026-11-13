@@ -515,6 +515,16 @@ def test_the_folder_ties_one_cli_only_and_never_a_session_twice():
     assert (lab["sessions_live"], lab["tokens_today"], lab["usd_today"], lab["tree_bytes"]) == (2, 40, 1.0, 20)
 
 
+def test_a_programs_name_reads_the_same_whatever_the_platform_and_its_separator():
+    """A Windows path in a command line reads on Linux as on Windows (the CI's Linux job once read a Windows
+    launcher's whole path as one name, and lost the brain subcommand after it)."""
+    assert [resources._stem(x) for x in (r"C:\venv\Brain.EXE", "/venv/bin/brain", "brain", r"C:\py\pytest.exe")] == [
+        "brain", "brain", "brain", "pytest"]
+    assert resources.brain_what([r"C:\py\python.exe", r"C:\venv\brain.exe", "tui"]) == "tui"
+    assert resources.kind_of("python", "", [r"C:\py\python.exe", r"C:\venv\brain.exe", "tui"]) == "brain"
+    assert resources.kind_of("python", "", [r"C:\venv\Scripts\pytest.exe", "tests"]) == "suite"
+
+
 def test_what_a_process_is():
     assert resources.kind_of("claude", "/opt/claude/bin/claude", ["claude"]) == "cli"
     assert resources.kind_of("claude", "/Applications/Claude.app/Contents/MacOS/Claude", []) == ""

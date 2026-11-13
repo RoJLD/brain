@@ -67,7 +67,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import governor, paths, probe, quota, sessions, usage
 from .resources_containers import DOCKER_TIMEOUT, containers
@@ -519,7 +519,7 @@ class Sampler:
 
     def _kind(self, t: dict) -> tuple[str, dict] | None:
         """(kind, detail) of a process of the Brain's (a CLI, a brain command, a suite), else None."""
-        stem = Path(t["name"]).stem.lower()
+        stem = _stem(t["name"])
         detail = self._detail(t["p"]) if stem in STEMS else None
         kind = kind_of(stem, detail["exe"], detail["cmdline"]) if detail else ""
         return (kind, detail) if kind else None
@@ -697,6 +697,12 @@ def _cwd(p, ps) -> str:
         return ""
 
 
+def _stem(path: str) -> str:
+    """A program's name without its folder and suffix, lowercase, whatever the separator: a Windows path
+    (``C:\\v\\brain.exe``) reads the same on Linux as on Windows (PureWindowsPath splits on both)."""
+    return PureWindowsPath(str(path)).stem.lower()
+
+
 def _norm(path: str) -> str:
     return os.path.normcase(os.path.normpath(str(path))) if path else ""
 
@@ -723,9 +729,9 @@ def _python_kind(low: list[str]) -> str:
     """A Python process: a pytest run (``pytest``, ``-m pytest``) or a brain command (``-m brain``, a brain script),
     else ''."""
     head = low[:4]
-    if any(Path(a).stem == "pytest" for a in head) or ("-m" in low[:3] and "pytest" in head):
+    if any(_stem(a) == "pytest" for a in head) or ("-m" in low[:3] and "pytest" in head):
         return "suite"
-    if ("-m" in low[:3] and "brain" in head) or (len(low) > 1 and Path(low[1]).stem == "brain"):
+    if ("-m" in low[:3] and "brain" in head) or (len(low) > 1 and _stem(low[1]) == "brain"):
         return "brain"
     return ""
 
@@ -736,7 +742,7 @@ def brain_what(cmd: list[str]) -> str:
     known = {n.replace("_", "-") for n in _names()} | {"doctor", "lessons"}
     low = [a.lower() for a in cmd]
     for i, a in enumerate(low):
-        if Path(a).stem == "brain" or (a == "brain" and i and low[i - 1] == "-m"):
+        if _stem(a) == "brain" or (a == "brain" and i and low[i - 1] == "-m"):
             return next((x for x in low[i + 1:] if x in known), "")
     return ""
 
