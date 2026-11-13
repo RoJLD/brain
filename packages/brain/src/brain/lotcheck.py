@@ -297,16 +297,21 @@ def check(session: str, *, branches: list[str] | None = None, keep: list[str] | 
     infos = lot_branches(data, branches or [])
     if not offline:
         _refresh(infos)
-    kept = set(keep or [])
     for repo in rep.repos:
-        mine = {b: prs for b, prs in infos.items() if b not in _not_lot(repo)}
-        found = (branch_state(repo, b, prs, kept, _slug(repo)) for b, prs in mine.items())
-        rep.branches += [st for st in found if st is not None]
-        trees, gone = worktrees_of(repo, set(mine), str(data.get("worktreePath") or ""))
-        rep.worktrees += trees
-        if gone:
-            rep.prunable.append(repo)
+        _read_repo(rep, repo, infos, set(keep or []), str(data.get("worktreePath") or ""))
     return rep
+
+
+def _read_repo(rep: Report, repo: str, infos: dict[str, list[dict]], kept: set[str], own: str) -> None:
+    """The lot's branches and worktrees in ``repo`` into ``rep``."""
+    mine = {b: prs for b, prs in infos.items() if b not in _not_lot(repo)}
+    slug = _slug(repo)
+    found = (branch_state(repo, b, prs, kept, slug) for b, prs in mine.items())
+    rep.branches += [st for st in found if st is not None]
+    trees, gone = worktrees_of(repo, set(mine), own)
+    rep.worktrees += trees
+    if gone:
+        rep.prunable.append(repo)
 
 
 def _refresh(infos: dict[str, list[dict]]) -> None:
