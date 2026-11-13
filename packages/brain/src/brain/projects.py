@@ -87,6 +87,9 @@ DEFAULTS = {"stores": ["notes/graph"], "journal": "notes/journal.md", "decisions
 # Every key of a project's entry, with what it holds: brain projects --keys prints them, check() refuses another one.
 KEYS = {
     "root": "the project's main checkout, relative to the registry's folder (default: .)",
+    "kind": "knowledge: the owner's notes home (brain notes, brain.knowledge), an entry of title, kind, root, parent and classes "
+            "only, never loaded as a project (no backlog, no journal, no store the brain writes); any other value "
+            "is an error",
     "title": "one line saying what the project is, for the views",
     "stores": "its graph stores, relative to the root (default [notes/graph]); brain item writes the first",
     "journal": "its journals: a path or a list (default notes/journal.md); brain journal add writes the first",
@@ -142,6 +145,8 @@ KEYS = {
 LIFECYCLE_KEYS = ("typologies", "stage", "shape", "profile", "since", "paused")   # LC-1; typologies read so far
 ACCESS = ("write", "read")
 READ_ONLY_KEYS = {"title", "access", "parent", "classes"}
+KNOWLEDGE = "knowledge"
+KNOWLEDGE_KEYS = {"title", "kind", "root", "parent", "classes"}   # a notes home: the folder brain notes reads
 # the decision logs research_graph covers for a store given none (research_graph.validate.DEFAULT_DECISIONS; not
 # imported: a guard reads this module on every call)
 GRAPH_DECISIONS = ("notes/scientific_decisions.md", "notes/decisions.md")
@@ -284,6 +289,23 @@ def is_read_only(entry) -> bool:
     return isinstance(entry, dict) and entry.get("access") == "read"
 
 
+def is_knowledge(entry) -> bool:
+    """The owner's notes home (``kind: knowledge``, brain.knowledge): never loaded as a project, listed by
+    :func:`knowledge`. Another kind is an error (check()) and is not loaded either."""
+    return isinstance(entry, dict) and "kind" in entry
+
+
+def knowledge(root: Path | None = None) -> dict[str, Path]:
+    """{name: its folder} of the notes homes (``kind: knowledge``), in the registry's order: the root relative to the
+    registry's folder."""
+    f = registry_file(root)
+    out = {}
+    for name, entry in raw(root).items():
+        if is_knowledge(entry) and entry.get("kind") == KNOWLEDGE and f is not None:
+            out[str(name)] = _resolve_root(str(entry.get("root") or "."), f.parent)
+    return out
+
+
 def bad_access(entry) -> bool:
     """An entry whose ``access`` is neither read nor write: invalid, reported as such (check(), :func:`unloaded`, the
     neutral source), never loaded (the key narrows: a typo never opens a way in) and never shown as read only."""
@@ -298,7 +320,7 @@ def invalid_access(root: Path | None = None) -> dict[str, object]:
 
 def _skipped(entry) -> bool:
     """An entry the registry's walk never loads: a tenant mount, a read-only project, an invalid access."""
-    return is_mount(entry) or is_read_only(entry) or bad_access(entry)
+    return is_mount(entry) or is_read_only(entry) or bad_access(entry) or is_knowledge(entry)
 
 
 def load(root: Path | None = None) -> dict[str, Project]:
@@ -481,6 +503,8 @@ def unloaded(name: str, root: Path | None = None) -> str:
         return f"{name!r} is not loaded: access is read or write, not {entry['access']!r}"
     if is_read_only(entry):
         return f"{name!r} is read only: the brain reads it and never writes it"
+    if is_knowledge(entry):
+        return f"{name!r} is a notes home (kind: {entry.get('kind')}): brain notes reads it, it is no project"
     refused = _load(root)[1].get(name)
     return f"{name!r} is not loaded: {'; '.join(refused[1])}" if refused else ""
 
@@ -700,6 +724,18 @@ def _check_read_only(where: str, entry: dict) -> list[str]:
     return errors
 
 
+def _check_knowledge(where: str, entry: dict) -> list[str]:
+    """A notes home holds title, kind, root, parent and classes only, and its kind is knowledge."""
+    errors = []
+    if entry.get("kind") != KNOWLEDGE:
+        errors.append(f"{where}: kind is {KNOWLEDGE}, not {entry.get('kind')!r} (the only kind)")
+    extra = sorted(set(map(str, entry)) - KNOWLEDGE_KEYS)
+    if extra:
+        errors.append(f"{where}: a notes home holds title, kind, root, parent and classes only, not {', '.join(extra)}")
+    errors += [f"{where}: {k} is a string" for k in ("root", "title") if k in entry and not isinstance(entry[k], str)]
+    return errors
+
+
 def view_clashes(projs: list[Project]) -> dict[tuple[str, str], str]:
     """The stores whose views folder (:func:`views_dir`) a store registered before them at the same root uses: brain
     sync would write one's board over the other's. {(project, the store relative to its root): what to say}."""
@@ -752,6 +788,9 @@ def check(root: Path | None = None) -> list[str]:
             continue
         if is_read_only(entry):
             errors += _check_read_only(where, entry)
+            continue
+        if is_knowledge(entry):
+            errors += _check_knowledge(where, entry)
             continue
         unknown = sorted(set(map(str, entry)) - set(KEYS))
         if unknown:   # read mode: a newer brain's key, noted and kept; strict (CI): an error
@@ -859,7 +898,8 @@ def repo_tokens(root: Path | None = None) -> set[str]:
                                                              if isinstance(x, str) and x}
             continue
         out |= {r.name.lower() for r in rs} | {r.folder.lower() for r in rs if r.folder}
-    out |= {str(name).lower() for name, entry in raw(root).items() if is_read_only(entry) or is_mount(entry)}
+    out |= {str(name).lower() for name, entry in raw(root).items()
+            if is_read_only(entry) or is_mount(entry) or is_knowledge(entry)}
     return out
 
 

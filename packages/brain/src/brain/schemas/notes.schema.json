@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/RoJLD/brain/schemas/notes.schema.json",
+  "title": "A note's front matter",
+  "description": "The YAML front matter of a note of the owner's notes home (brain notes): what brain notes check validates and brain notes find indexes. The folder gives the class; class only raises it. Unknown keys are kept and noted (an editor's own keys).",
+  "type": "object",
+  "required": ["id", "type", "title"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*-[0-9A-Za-z][0-9A-Za-z-]*$", "description": "Stable, never reused: n-YYYYMMDD-HHMM (or a ULID after the prefix); the file name may change. brain notes check refuses a duplicate."},
+    "type": {"enum": ["fleeting", "idea", "note", "source", "daily", "weekly", "meeting", "person", "map"], "description": "What the note is; its template and its folder (brain.notes.TYPES)."},
+    "title": {"type": "string", "minLength": 1},
+    "scope": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Ids of the scope tree (an id, a path such as pro/acme, or global)."},
+    "tags": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Free tags; brain notes check says when two differ only by case."},
+    "status": {"enum": ["seed", "growing", "evergreen", "archived"], "description": "Its maturity; archived is a status, never a folder."},
+    "links": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The Brain ids it cites (items, ADRs, specs); the body's wikilinks are enough. brain notes check flags one the graph does not hold."},
+    "share": {"type": "array", "items": {"enum": ["notion"]}, "description": "Where it may be exported (opt-in): notion; empty by default. Never for a confidential or sealed note."},
+    "summary": {"type": "string", "description": "One or two sentences, by the owner or a local model."},
+    "aliases": {"type": "array", "items": {"type": "string"}, "description": "Holds the id, so that an editor resolves [[id]]."},
+    "class": {"enum": ["private", "confidential", "sealed"], "description": "Only to raise the folder's class, never to lower it."},
+    "created": {"type": "string", "format": "date"},
+    "kind": {"type": "string", "description": "A source's kind: paper, book, web page, live document, slides, dataset..."},
+    "doi": {"type": "string"},
+    "arxiv": {"type": "string"},
+    "url": {"type": "string"},
+    "retrieved": {"type": "string", "format": "date"},
+    "licence": {"type": "string"},
+    "access": {"type": "string", "description": "A source's access: open, subscription, private..."},
+    "file": {"type": "string", "description": "A source's file by its hash (sha256:...), in attachments/."},
+    "snapshot": {"type": "string"},
+    "zotero": {"type": "string", "description": "The Zotero item key, when the source is in Zotero."}
+  }
+}
