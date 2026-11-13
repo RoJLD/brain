@@ -11,7 +11,7 @@ import pytest
 from conftest import GIT_ENV, git_init, run_git
 from test_capture import PLUGIN, _bash
 
-from brain import cli, memory
+from brain import cli, memory, memorykeys
 
 DAY = "2026-11-02"
 SECRET = "token ghp_" + "a1B2c3D4e5" * 4  # a GitHub token's shape, not a token
@@ -29,7 +29,7 @@ class FakeGh:
         if self.origin is None:
             return ""
         p = subprocess.run(["git", "--git-dir", str(self.origin), "rev-parse", "-q", "--verify", f"refs/heads/{branch}"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=30)
         return p.stdout.strip()
 
     def __call__(self, args, data=None):
@@ -466,7 +466,7 @@ def test_a_key_no_project_claims_is_not_exported_nor_watched(world, tmp_path, mo
         (tmp_path / "claude" / "projects" / key / "memory").mkdir(parents=True)
         (tmp_path / "claude" / "projects" / key / "memory" / "n.md").write_text(f"{key}\n", encoding="utf-8")
     monkeypatch.setenv("BRAIN_MEMORY_MAP", "Mapped=Mapped")
-    monkeypatch.setattr(memory, "registered_keys", lambda: {memory.path_key("E:/work/proj").lower()})
+    monkeypatch.setattr(memorykeys, "registered_keys", lambda: {memorykeys.path_key("E:/work/proj").lower()})
     report = world.sync()
     assert report.actions["Stray/n.md"] == "unmapped" and "Stray" in " ".join(report.lines())
     assert {"Mapped/n.md", "E--work-proj/n.md", "E--work-proj--claude-worktrees-x/n.md"} <= {
@@ -486,10 +486,10 @@ def test_registered_keys_reads_the_personal_brain_s_registry(tmp_path, monkeypat
     (personal / "projects.yaml").write_text("p:\n  root: proj\n", encoding="utf-8")
     monkeypatch.setenv("BRAIN_PERSONAL", str(personal))
     monkeypatch.setenv("BRAIN_PROJECTS", str(personal / "projects.yaml"))
-    assert memory.path_key((personal / "proj").resolve()).lower() in memory.registered_keys()
+    assert memorykeys.path_key((personal / "proj").resolve()).lower() in memorykeys.registered_keys()
     monkeypatch.delenv("BRAIN_PERSONAL")
     monkeypatch.setattr(memory.paths, "pointer_root", lambda: None)
-    assert memory.registered_keys() == set()
+    assert memorykeys.registered_keys() == set()
 
 
 def test_a_branch_someone_else_pushed_to_is_left_and_the_notes_go_to_the_next(world, brain_home):

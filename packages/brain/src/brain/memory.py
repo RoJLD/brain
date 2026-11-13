@@ -56,11 +56,11 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from . import config, paths, secretscan, stateio
+from .memorykeys import CONFLICT_RX, local_dir, local_notes, recognized_keys, snapshot, watched
 
 DEFAULT_TIMEOUT = 300.0
 DEFAULT_PULL_HOURS = 12.0
 INDEX = "MEMORY.md"
-CONFLICT_RX = re.compile(r"\.conflict-[A-Za-z0-9_-]+\.md$")
 GITHUB_RX = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$")
 
 
@@ -93,96 +93,6 @@ def machine() -> str:
     """This machine's name: brain.machine.name, the one identity ($BRAIN_MACHINE, else the host name)."""
     from .machine import name
     return name()
-
-
-def key_map() -> dict[str, str]:
-    """BRAIN_MEMORY_MAP, 'local-key=repo-key;...': local project folder -> repo key ('' leaves the folder out)."""
-    out = {}
-    for part in re.split(r"[;\n]", os.environ.get("BRAIN_MEMORY_MAP", "")):
-        if "=" in part:
-            k, v = part.split("=", 1)
-            out[k.strip()] = v.strip()
-    return out
-
-
-def local_notes() -> dict[str, Path]:
-    """'key/name.md' -> local file, for every note of every project's memory folder (MEMORY.md included, conflict
-    copies left out)."""
-    root = paths.projects_dir()
-    if not root.is_dir():
-        return {}
-    aliases = key_map()
-    out = {}
-    for mem in sorted(root.glob("*/memory")):
-        key = aliases.get(mem.parent.name, mem.parent.name)
-        if not key:
-            continue
-        for f in sorted(mem.glob("*.md")):
-            if f.is_file() and not CONFLICT_RX.search(f.name):
-                out[f"{key}/{f.name}"] = f
-    return out
-
-
-def local_dir(key: str) -> Path | None:
-    """This machine's memory folder for the repo key ``key``, when its project folder exists (import never creates
-    a project folder: on a machine with another layout it would be noise)."""
-    aliases = key_map()
-    local_key = next((k for k, v in aliases.items() if v == key), key)
-    if aliases.get(local_key, local_key) != key:
-        return None
-    proj = paths.projects_dir() / local_key
-    return proj / "memory" if proj.is_dir() else None
-
-
-def path_key(path: str | Path) -> str:
-    """Claude Code's folder name for a project at ``path``: every character but a letter or a digit becomes '-'."""
-    return re.sub(r"[^A-Za-z0-9]", "-", str(path))
-
-
-def registered_keys() -> set[str]:
-    """The keys of the folders of the projects the personal brain registers (each one's root and repos), lower case;
-    none when there is no personal brain or its registry does not load."""
-    root = paths.personal_root()
-    if not root:
-        return set()
-    try:
-        from . import projects
-
-        out = set()
-        for p in projects.load(root).values():
-            out.add(path_key(p.root).lower())
-            try:
-                out.update(path_key(r.path).lower() for r in projects.repos_of(p))
-            except ValueError:   # a bad repos: entry: the root alone
-                pass
-        return out
-    except Exception:  # noqa: BLE001 - the registry unreadable: only main's keys and the map are recognized
-        return set()
-
-
-def recognized_keys(keys: set[str], on_main: set[str], registered: set[str] | None = None) -> set[str]:
-    """The keys among ``keys`` the sync may export: a key already on ``main`` (reviewed before), one of
-    ``BRAIN_MEMORY_MAP``'s repo keys, or the folder of a registered project or a folder inside it (a worktree of it).
-    Another key is not exported: before adoption a machine would export every folder it ever opened."""
-    registered = registered_keys() if registered is None else registered
-    mapped = {v for v in key_map().values() if v}
-    out = set()
-    for k in keys:
-        low = k.lower()
-        if k in on_main or k in mapped or any(low == r or low.startswith(r + "-") for r in registered):
-            out.add(k)
-    return out
-
-
-def snapshot(notes: dict[str, Path]) -> dict[str, list[int]]:
-    out = {}
-    for k, f in notes.items():
-        try:
-            st = f.stat()
-        except OSError:
-            continue
-        out[k] = [st.st_mtime_ns, st.st_size]
-    return out
 
 
 STATE_V = 1  # memory-sync/state.json's v (brain.stateio)
@@ -218,16 +128,6 @@ def save_state(state: dict) -> None:
         stateio.save(_state(write=True), state)
     except stateio.StateError as exc:
         raise SyncError(str(exc)) from None
-
-
-def watched(notes: dict[str, Path], state: dict) -> dict[str, Path]:
-    """The notes whose change starts a run: those of the keys the last run recognized (``state['keys']``); every note
-    before a first run. A key left out (a read-only project's, a folder no project claims) starts none."""
-    keys = state.get("keys")
-    if not isinstance(keys, list):
-        return notes
-    keep = set(keys)
-    return {k: f for k, f in notes.items() if k.split("/", 1)[0] in keep}
 
 
 def needs_run(state: dict, now: float | None = None) -> bool:
@@ -365,22 +265,20 @@ class Report:
             by.setdefault(action, []).append(note)
         out = [f"{action:<9} {note}" for action in ("export", "conflict", "import", "resolved", "kept", "secret")
                for note in by.get(action, [])]
-        if by.get("unmapped"):
-            out.append(f"unmapped  {len(by['unmapped'])} note(s) of keys no project claims, kept here: "
-                       + ", ".join(sorted({n.split('/', 1)[0] for n in by['unmapped']}))
-                       + " (register the project, or map the key in BRAIN_MEMORY_MAP)")
-        if by.get("same"):
-            out.append(f"same      {len(by['same'])} note(s)")
-        if self.hits:
-            out.append("held      on this machine, secret patterns in " + ", ".join(self.hits))
-        for b in self.left:
-            out.append(f"left      {b}: someone else pushed to it; this machine's notes go to {self.branch}")
-        for b in self.kept_open:
-            out.append(f"open      {b}: its head is not this machine's last push, so it is not closed as superseded")
-        if self.commented:
-            out.append(f"comment   {self.commented}: its body was edited or reviewed, the update is a comment")
-        if self.error:
-            out.append(f"failed    {self.error}")
+        stray = sorted({n.split("/", 1)[0] for n in by.get("unmapped", [])})
+        said = [   # (a line, when it is said)
+            (f"unmapped  {len(by.get('unmapped', []))} note(s) of keys no project claims, kept here: "
+             f"{', '.join(stray)} (register the project, or map the key in BRAIN_MEMORY_MAP)", stray),
+            (f"same      {len(by.get('same', []))} note(s)", by.get("same")),
+            ("held      on this machine, secret patterns in " + ", ".join(self.hits), self.hits),
+            *[(f"left      {b}: someone else pushed to it; this machine's notes go to {self.branch}", True)
+              for b in self.left],
+            *[(f"open      {b}: its head is not this machine's last push, so it is not closed as superseded", True)
+              for b in self.kept_open],
+            (f"comment   {self.commented}: its body was edited or reviewed, the update is a comment", self.commented),
+            (f"failed    {self.error}", self.error),
+        ]
+        out += [line for line, when in said if when]
         if self.dry_run:
             out.append("(status only: nothing written)")
         elif self.pushed or self.pr:
@@ -813,33 +711,37 @@ def _import(s: Sync, k: str, mb: str, notes: dict[str, Path], state: dict, snap:
     state.setdefault("imports", {})[k] = rec
 
 
+def _undo_of(note: str) -> tuple[dict, dict, Path, Path | None]:
+    """(the state, the import's record, the note's file, its backup or None when the import created it) for
+    ``brain memory undo``; SyncError says why there is nothing to undo."""
+    if "/" not in note:
+        raise SyncError(f"{note}: name a note as KEY/NAME.md (brain memory status lists them)")
+    state = load_state(write=True)
+    rec = (state.get("imports") or {}).get(note)
+    if not rec:
+        raise SyncError(f"no import of {note} recorded (brain memory status lists the notes)")
+    key, name = note.split("/", 1)
+    folder = local_dir(key)
+    target = local_notes().get(note) or (folder / name if folder else None)
+    if target is None:
+        raise SyncError(f"{note}: its project folder is not on this machine")
+    saved = sync_dir() / rec["backup"] if rec.get("backup") else None
+    if saved is not None and not saved.is_file():
+        raise SyncError(f"{note}: its backup {rec['backup']} is gone; nothing changed")
+    return state, rec, target, saved
+
+
 def undo(note: str, out=None) -> int:
     """``brain memory undo KEY/NAME.md``: put back the copy the last import of that note replaced, only while the note
     still holds what was imported (its hash is the import's 'after'). Otherwise nothing is overwritten: the backup is
     written beside it as ``<name>.undo-conflict``, to merge by hand. Exit 1 when it did not restore."""
     out = out or sys.stdout
-    if "/" not in note:
-        print(f"brain: {note}: name a note as KEY/NAME.md (brain memory status lists them)", file=out)
-        return 1
     try:
-        state = load_state(write=True)
+        state, rec, target, saved = _undo_of(note)
     except SyncError as exc:
         print(f"brain: {exc}", file=out)
         return 1
-    rec = (state.get("imports") or {}).get(note)
-    if not rec:
-        print(f"brain: no import of {note} recorded (brain memory status lists the notes)", file=out)
-        return 1
     key, name = note.split("/", 1)
-    folder = local_dir(key)
-    target = local_notes().get(note) or (folder / name if folder else None)
-    if target is None:
-        print(f"brain: {note}: its project folder is not on this machine", file=out)
-        return 1
-    saved = sync_dir() / rec["backup"] if rec.get("backup") else None
-    if saved is not None and not saved.is_file():
-        print(f"brain: {note}: its backup {rec['backup']} is gone; nothing changed", file=out)
-        return 1
     now = blob_id(normalize(target.read_bytes())) if target.exists() else None
     if now != rec.get("after"):
         if saved is None:
