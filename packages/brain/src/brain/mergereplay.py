@@ -107,7 +107,7 @@ def main_replay(repo: Path, since: str, specs: list[str], as_json: bool, rev: st
             if len(parents) != 3:
                 print(f"brain merge-driver replay: {spec} is not a two-parent merge", file=sys.stderr)
                 return 1
-            pairs.append(tuple(parents))   # type: ignore[arg-type]
+            pairs.append((parents[0], parents[1], parents[2]))
     if since or not specs:
         pairs += merges(repo, since, rev)
     if any(not x for p in pairs for x in p[1:]):
