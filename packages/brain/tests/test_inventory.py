@@ -80,6 +80,15 @@ def test_a_frozen_store_is_no_doc():
     assert [p for p in data + kept if inventory.is_doc(p)] == kept
 
 
+def test_a_frozen_store_s_hook_is_no_test():
+    """A frozen store's hooks (guard.sh, capture.sh under tests/fixtures/stores/<tag>/) are data an upgrade test
+    reads, not tests: no feature is tested by them, no test.links finding is about them."""
+    frozen = ["packages/brain/tests/fixtures/stores/v0.4.0/brain/plugins/brain-core/hooks/guard.sh",
+              "tests/fixtures/stores/v1/hooks/x.ps1"]
+    tests = ["tests/hooks/guard.sh", "tests/fixtures/fake.sh", "packages/brain/tests/test_x.py"]
+    assert [p for p in frozen + tests if inventory.is_test(p)] == tests
+
+
 def _modules(files, tops=("p",)):
     t = mem(files)
     rf = inventory.collect(t, "demo")

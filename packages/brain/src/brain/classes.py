@@ -142,7 +142,8 @@ ENGINE_STORES = {
     "inbox": Known("$BRAIN_HOME/inbox", "sealed", "log", "the owner's messages to sessions"),
     "features": Known("$BRAIN_HOME/features", "sealed", "derived", "the feature stores' indexes (sqlite)"),
     "cache": Known("$BRAIN_HOME/cache", "sealed", "derived",
-                   "the app metadata's picked keys (a closed list), the governor's and the guards' caches"),
+                   "the app metadata's picked keys (a closed list), the governor's and the guards' caches, the "
+                   "release forecast per engine checkout (brain.nextrelease)"),
     "memory-sync": Known("$BRAIN_HOME/memory-sync", "sealed", "truth-local",
                          "the memory export's state, alerts and backups"),
     "schedules": Known("$BRAIN_HOME/schedules", "sealed", "truth-local", "the scheduled tasks this machine installed"),

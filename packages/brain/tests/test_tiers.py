@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from brain import alerts, cli, probe, stacks, tiers
+from brain import alerts, cli, paths, probe, stacks, tiers
 
 REGISTRY = """\
 infra:
@@ -257,3 +257,23 @@ def test_cli_doctor_list_show_set_and_render(brain, monkeypatch, capsys):
     assert r["base"] == "lite" and r["extras"] == [] and r["stacks"]["off"] == ["docker", "gitnexus"]
     assert cli.main(["--root", root, "profile", "show", "custom"]) == 0
     assert "docker (service, stack)" in capsys.readouterr().out
+
+
+def test_render_runs_with_no_root_from_an_empty_home(tmp_path, monkeypatch, capsys):
+    """The brain command installed alone (no personal brain, no graph store above the folder): brain profile render
+    gives the built-in base's extras instead of stopping on the missing root, so a first install.ps1 -Apply installs
+    the cockpit's tui (wi-brain-install-profile-extras); set plans there too, and --root still runs at that root."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(paths, "package_repo", lambda: None)   # an engine inside a brain of its own finds that root
+    monkeypatch.setattr(probe, "collect", lambda quick=False, roots=None, timeouts=None: _doc())
+    with pytest.raises(SystemExit):
+        paths.find_root()
+    assert cli.main(["profile", "render"]) == 0
+    r = json.loads(capsys.readouterr().out)
+    assert r["base"] == "default" and r["source"] == "built-in" and r["extras"] == ["tui"]
+    assert cli.main(["profile", "set", "lite"]) == 0
+    assert "plan     " in capsys.readouterr().out and not tiers.machine_file().exists()
+    assert cli.main(["profile", "--quick"]) == 0
+    assert "profile" in capsys.readouterr().out
+    with pytest.raises(SystemExit):   # a root named that holds no brain is still the root acted on
+        cli.main(["--project", "nosuch", "profile", "render"])

@@ -3,3 +3,5 @@
 # back from release/X.Y; a PR writes a fragment (packages/brain/changes/, changes/), never the CHANGELOG itself.
 CHANGELOG.md merge=brain
 packages/brain/CHANGELOG.md merge=brain
+# docs/reference/ is brain reference's public render: a view, one side kept, then rendered again.
+docs/reference/**/*.md merge=brain
