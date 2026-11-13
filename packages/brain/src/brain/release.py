@@ -102,7 +102,28 @@ def version_edits(repo: Path, prev: str, new: str) -> list[Edit]:
 
 
 def _version_key(v: str) -> tuple[int, ...]:
+    if not VERSION.fullmatch(v):
+        raise ReleaseError(f"{v!r}: not a version X.Y.Z")
     return tuple(int(x) for x in v.split("."))
+
+
+def previous_version(repo: Path, runner: Runner = subprocess.run) -> str:
+    """The release this version PR follows: the last tag vX.Y.Z reachable from HEAD, so that a second run after a
+    partial --write still knows it; this checkout's __version__ where git names no tag."""
+    try:
+        r = runner(["git", "-C", str(repo), "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"],
+                   capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        r = None
+    tag = (r.stdout or "").strip() if r is not None and r.returncode == 0 else ""
+    return tag[1:] if VERSION.fullmatch(tag[1:]) else current_version(repo)
+
+
+def _compiled(repo: Path, version: str) -> bool:
+    """The brain's CHANGELOG already holds this version's section (a compile ran: a second one would add another)."""
+    f = repo / "packages" / "brain" / "CHANGELOG.md"
+    return f.is_file() and any(line.startswith(f"## {version} ") for line in
+                               f.read_text(encoding="utf-8").splitlines())
 
 
 def plan(repo: Path, version: str, theme: str, *, planning: Path | None = None, store: str = "",
@@ -113,17 +134,17 @@ def plan(repo: Path, version: str, theme: str, *, planning: Path | None = None, 
         raise ReleaseError(f"{version!r}: a version X.Y.Z (no v)")
     if not theme.strip():
         raise ReleaseError("--theme: the release's theme, for its CHANGELOG heading and its tag")
-    prev = current_version(repo)
-    if _version_key(version) < _version_key(prev):
-        raise ReleaseError(f"{version} is before this checkout's {prev}")
+    prev = previous_version(repo)
+    if _version_key(version) <= _version_key(prev):
+        raise ReleaseError(f"{version} is not after the last release, {prev}")
     brain = brain or [python, "-m", "brain"]
     steps = []
-    if version == prev:
-        steps.append(Step("versions", f"same     versions: this checkout is at {version} already", "same"))
-    else:
-        edits = version_edits(repo, prev, version)
+    edits = version_edits(repo, prev, version)
+    if edits:
         lines = "; ".join(f"{e.path} ({e.count})" for e in edits)
         steps.append(Step("versions", f"edit     versions {prev} -> {version}: {lines}", edits=edits))
+    else:
+        steps.append(Step("versions", f"same     versions: no line names {prev} any more", "same"))
     frozen = (repo / STORES / f"v{prev}").is_dir()
     freeze_argv = [python, f"{INSTALLER}/freeze_store.py", f"v{prev}"]
     steps.append(Step("freeze", f"same     freeze: the store v{prev} wrote is frozen ({STORES}/v{prev})", "same")
@@ -131,7 +152,9 @@ def plan(repo: Path, version: str, theme: str, *, planning: Path | None = None, 
                                      f"without {STORES}/v{prev})", "skip") if not freeze
                  else Step("freeze", f"run      freeze: {' '.join(freeze_argv[1:])} (installs v{prev} in a fresh "
                                      "venv)", argv=freeze_argv))
-    steps.append(Step("changelog", f"run      changelog: compile {version} --theme {theme!r} --write",
+    steps.append(Step("changelog", f"same     changelog: packages/brain/CHANGELOG.md holds ## {version} already", "same")
+                 if _compiled(repo, version) else
+                 Step("changelog", f"run      changelog: compile {version} --theme {theme!r} --write",
                       argv=[python, f"{INSTALLER}/changelog.py", "--repo", str(repo), "compile", version, "--theme",
                             theme, "--write"]))
     if planning is None:
@@ -195,6 +218,9 @@ def _where(args) -> tuple[Path, Path | None, str]:
         raise ReleaseError(f"{repo}: no {INIT} (--repo names the engine checkout)")
     planning = Path(args.planning).resolve() if args.planning else (
         Path(args.root).resolve() if getattr(args, "root", None) else paths.personal_root())
+    if planning is not None and not ((planning / "config.json").is_file() or (planning / "notes" / "graph").is_dir()):
+        raise ReleaseError(f"{planning}: no brain there (no config.json, no notes/graph): --planning names the brain "
+                           "that plans the releases")
     graph_dir = planning / "notes" / "graph" if planning else None
     store = args.store or (str(graph_dir) if graph_dir and graph_dir.is_dir() else "")
     return repo, planning, store
@@ -203,7 +229,7 @@ def _where(args) -> tuple[Path, Path | None, str]:
 def _report(rows: list[dict]) -> int:
     for r in rows:
         print(f"{r['step']:<9}{r['outcome']}")
-        if r.get("output") and r["outcome"].startswith("failed"):
+        if r.get("output") and (r["outcome"].startswith("failed") or r["step"] in ("check", "preview")):
             print("  " + r["output"].replace("\n", "\n  "))
     return 1 if any(r["outcome"].startswith("failed") for r in rows) else 0
 
@@ -218,7 +244,11 @@ def main_prepare(args) -> int:
         return 2
     print(f"release  {prev} -> {args.version} in {repo}")
     print("\n".join(st.line for st in steps))
-    code = _report(apply(repo, steps)) if args.write else 0
+    try:
+        code = _report(apply(repo, steps)) if args.write else 0
+    except OSError as exc:   # a file locked or read-only: the steps before it are done, a second run resumes
+        print(f"brain release prepare: {exc} (run it again once the file is free: it resumes)", file=sys.stderr)
+        return 1
     if not args.write:
         print("plan only: --write runs it, in this order, stopping at the first step that fails")
     print("\n".join(f"by hand  {x}" for x in BY_HAND))

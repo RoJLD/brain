@@ -70,8 +70,25 @@ def test_write_moves_the_version_lines_only_and_keeps_line_endings_and_history(r
         assert f"v{prev}" not in text and f"v{new}" in text, rel
     assert f"brain_version={new}" in (repo / "packages/brain/src/brain/adapters/claude/hooks/common.sh").read_text(
         encoding="utf-8")
-    again = release.plan(repo, new, "t", freeze=False)[1][0]   # a second run: nothing left to move
-    assert again.state == "same" and again.line.startswith("same     versions")
+
+
+def test_a_second_run_after_a_partial_write_resumes_from_the_last_tag(repo):
+    """Review of wi-brain-release-prepare: the previous version is the last tag, not __version__ (moved by the first
+    run), and a compiled changelog is not compiled again."""
+    prev = release.current_version(repo)
+    new = _next(prev)
+    for argv in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m",
+                                                 "x"], ["tag", f"v{prev}"]):
+        subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True)
+    release.apply(repo, release.plan(repo, new, "t", freeze=False)[1], runner=Runs(fail="release_check"))
+    log = repo / "packages" / "brain" / "CHANGELOG.md"
+    log.write_text(f"# Changelog\n\n## {new} — 2026-11-13 — t\n", encoding="utf-8")   # what the compile wrote
+    got, steps = release.plan(repo, new, "t")
+    by = {s.name: s for s in steps}
+    assert got == prev and by["versions"].state == "same" and by["changelog"].state == "same"
+    assert by["freeze"].argv[-1] == f"v{prev}"   # the store the last release wrote, not the new one
+    with pytest.raises(release.ReleaseError, match="not after the last release"):
+        release.plan(repo, prev, "t")
 
 
 def test_a_theme_reaches_the_script_as_typed():
@@ -105,7 +122,7 @@ def test_a_frozen_store_is_not_frozen_again_and_no_planning_brain_is_said(repo):
     assert by["freeze"].state == "same" and by["features"].state == "skip" and "reference" not in by
 
 
-@pytest.mark.parametrize("version, error", [("v0.9.0", "a version X.Y.Z"), ("0.0.1", "is before this checkout's"),
+@pytest.mark.parametrize("version, error", [("v0.9.0", "a version X.Y.Z"), ("0.0.1", "is not after the last release"),
                                             ("1.0", "a version X.Y.Z")])
 def test_a_bad_version_is_refused(repo, version, error):
     with pytest.raises(release.ReleaseError, match=error):
@@ -115,7 +132,12 @@ def test_a_bad_version_is_refused(repo, version, error):
 def test_cli_plan_then_refusals(repo, capsys, tmp_path):
     nxt = _next(release.current_version(repo))
     assert cli.main(["release", "prepare", nxt, "--theme", "t", "--repo", str(repo), "--planning",
-                     str(tmp_path / "none")]) == 0
+                     str(tmp_path / "none")]) == 2   # no brain there: refused before anything is written
+    assert "no brain there" in capsys.readouterr().err
+    (tmp_path / "planning").mkdir()
+    (tmp_path / "planning" / "config.json").write_text("{}", encoding="utf-8")
+    assert cli.main(["release", "prepare", nxt, "--theme", "t", "--repo", str(repo), "--planning",
+                     str(tmp_path / "planning")]) == 0
     out = capsys.readouterr().out
     assert out.startswith(f"release  {release.current_version(repo)} -> {nxt}") and "plan only" in out
     assert "by hand  the ### Upgrade section" in out
