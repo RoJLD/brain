@@ -496,6 +496,18 @@ forecast` draws each one, and reads the owner's pending blocking DDRs and pendin
 they name; `brain check` warns on a trigger that names a duration with no gate, on an `after_external` that does not
 resolve and on a `due` date without its `due_source`; `brain queue` ends with what each gate holds.
 
+Before it, `brain wave close-merged X.Y.Z [--repo NAME]... [--repo-dir D]... [--since REF] [--until REF] [--write]
+[--json]` closes the items the merged PRs deliver (brain.closemerged, zero token, git only): the PRs merged on each
+repo's default branch since the last release tag before X.Y.Z (up to its own tag once cut), each mapped to its
+items by the changelog fragment it added (`changes/<item>.md`, `<item>-upgrade.md`) or an item id in its title;
+each open one closed done with `--pr "<repo> #N"` (after the refs its `props.pr` holds), the PR's title as the
+outcome and its merge's date. The fragments are those of `changes/` and `packages/<name>/changes/`, named
+`<item>.md` or `<item>-<section>.md`; a revert PR (`Revert "<title>"`) takes the PR it reverts out. It lists the
+items already closed, the PRs and fragments that name no item, and the wave's open items that no merged PR names;
+`--write` is refused while a repo could not be read (no tag: `--since`, or leave it out with `--repo`). The default
+branch is read as last fetched. A rebase merge leaves no trace of its PR and is not read, and a title that only
+mentions an item closes it too: the fragment is the mapping to trust.
+
 The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
 X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending
 wave, created beside the closed one when that release has none yet) or drops it, then reaches the wave; it refuses
