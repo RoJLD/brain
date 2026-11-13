@@ -1,0 +1,54 @@
+# An invented subject list, the shape brain rules diff reads (config.json rules_diff.subjects, or --subjects FILE).
+# An owner's real list is private: it stays in their own brain. Patterns are regular expressions searched in each
+# sentence of a rule, case and accents ignored; a list of patterns must all match.
+v: 1
+scopes:
+  this-repo:
+    en: ['\bin this (?:repo|repository)\b']
+    fr: ['\bdans ce (?:repo|depot)\b']
+  other-repos:
+    en: ['\bin any other (?:repo|repository)\b']
+    fr: ['\bdans tout autre (?:repo|depot)\b']
+subjects:
+  - id: git-authority
+    kind: guardrail
+    title: who commits and who merges pull requests
+    topic:
+      en: ['\bwho (?:commits|merges)\b', '\bpermission to (?:commit|merge)\b']
+      fr: ['\bqui (?:commite|merge)\b', '\bpermission de (?:commiter|merger)\b']
+    values:
+      ask:
+        en: [['\bnever\b', '\bcommit'], ['\bcommit', '\bonly when\b', '\b(?:asked|asks|told)\b']]
+        fr: [['\bjamais\b', '\bcommit'], ['\bcommit', '\bseulement\b', '\bdemande']]
+      pr:
+        en: ['\bthe owner merges\b']
+        fr: ['\ble proprietaire merge\b']
+      automerge:
+        en: [['\bmerge\b', '\byourself\b']]
+        fr: [['\bmerge', '\btoi-meme\b']]
+  - id: commit-language
+    kind: preference
+    title: the language of commits and pull requests
+    topic:
+      en: ['\blanguage\b']
+      fr: ['\blangue\b']
+    values:
+      english:
+        en: ['\b(?:commits?|prs?)\b.*\bin english\b']
+        fr: ['\b(?:commits?|pr)\b.*\ben anglais\b']
+      french:
+        en: ['\b(?:commits?|prs?)\b.*\bin french\b']
+        fr: ['\b(?:commits?|pr)\b.*\ben francais\b']
+  - id: shell
+    kind: preference
+    title: the shell scripts are written for
+    topic:
+      en: ['\bshell\b']
+      fr: ['\bshell\b']
+    values:
+      bash:
+        en: [['\bbash\b', '\b(?:always|prefer|use)\b']]
+        fr: [['\bbash\b', '\b(?:toujours|prefere|utilise)\b']]
+      powershell:
+        en: [['\bpowershell\b', '\b(?:always|prefer|use)\b']]
+        fr: [['\bpowershell\b', '\b(?:toujours|prefere|utilise)\b']]

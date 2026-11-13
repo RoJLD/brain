@@ -380,26 +380,36 @@ def _map_rules(us: list[Unit], hard: dict[str, dict]) -> None:
 
 # --- the checks ---
 
+def similarity(a_text: str, a_words: frozenset, b_text: str, b_words: frozenset) -> tuple[str, float, float] | None:
+    """How close two rule texts are: ("exact", J, C) for the same words, ("near", J, C) for a Jaccard index J of their
+    content words of at least NEAR or a containment C of at least CONTAIN (the shorter one of MIN_WORDS or more);
+    None otherwise. The one measure of brain lint rules and brain rules diff (brain.rulesdiff)."""
+    if not a_words or not b_words:
+        return None
+    inter = len(a_words & b_words)
+    if not inter:
+        return None
+    jac = inter / len(a_words | b_words)
+    small = min(len(a_words), len(b_words))
+    cont = inter / small
+    if _normal(a_text) == _normal(b_text) and len(a_words) >= 3:
+        return "exact", jac, cont
+    if jac >= NEAR or (cont >= CONTAIN and small >= MIN_WORDS):
+        return "near", jac, cont
+    return None
+
+
 def duplicates(us: list[Unit]) -> list[dict]:
     """Pairs of units from two different files that say the same: exact (the same words) or near."""
     out = []
     for i, a in enumerate(us):
         for b in us[i + 1:]:
-            if (a.owner, a.rel) == (b.owner, b.rel) or not a.words or not b.words:
+            if (a.owner, a.rel) == (b.owner, b.rel):
                 continue
-            inter = len(a.words & b.words)
-            if not inter:
-                continue
-            jac = inter / len(a.words | b.words)
-            small = min(len(a.words), len(b.words))
-            cont = inter / small
-            if _normal(a.text) == _normal(b.text) and len(a.words) >= 3:
-                kind = "exact"
-            elif jac >= NEAR or (cont >= CONTAIN and small >= MIN_WORDS):
-                kind = "near"
-            else:
-                continue
-            out.append({"kind": kind, "jaccard": round(jac, 2), "containment": round(cont, 2), "a": a, "b": b})
+            found = similarity(a.text, a.words, b.text, b.words)
+            if found:
+                kind, jac, cont = found
+                out.append({"kind": kind, "jaccard": round(jac, 2), "containment": round(cont, 2), "a": a, "b": b})
     return sorted(out, key=lambda d: (d["kind"] != "exact", -max(d["jaccard"], d["containment"])))
 
 

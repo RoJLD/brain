@@ -976,6 +976,60 @@ What each finished item teaches is a node of the graph, so it can be found, coun
   Markdown, read only. **`brain lint lessons`**: the lessons a script could check (guard candidates) and those that
   should say why not.
 
+## The rules across their sources
+
+The same rule is often written in several places, and the copies drift apart. **`brain rules diff`** compares them,
+read only, at zero token (`brain.rulesdiff`):
+
+- **The sources.** This machine's `~/.claude/CLAUDE.md`; the brain's global rules (`config.json` `rules`, else the core
+  plugin's copy that `brain lint rules` reads); the project's `CLAUDE.md` files (`--project`, else the repo of the
+  current folder); and the machine's feedback memory notes (the notes under Claude Code's
+  `projects/<key>/memory/` whose front matter says `type: feedback`, or `metadata: {type: feedback}`). Each one can
+  be named by a flag instead: `--machine-rules FILE`, `--global FILE`, `--project-rules FILE`, `--notes DIR`. A file
+  or folder named by a flag that cannot be read exits 2; a default place that holds nothing is listed as skipped.
+- **The units.** A rule as `brain lint rules` cuts it: a bullet with its wrapped lines and sub-bullets, a numbered
+  list with its lead, a paragraph. One feedback note is one unit.
+- **The classes.** *Identical*: the same words in another file. *Near*: close by content words, with `brain lint
+  rules`' measure (a Jaccard index of 0.5, or a containment of 0.75). *One side*: in one file only. *Contradictory*:
+  two units give different values to the same subject in the same scope. *To check*: a unit touches a subject, but
+  no single value of it could be read.
+
+The text report lists each class with its count, each unit by source, file, line and a short excerpt; `--json`
+gives each unit's source, file, line, class, subject, value and scope. Differences are not failures: the command
+exits 0.
+
+**The subject list** is what makes contradictions computable, without a model. It is the owner's, kept in their own
+brain, never in this engine: `config.json` `rules_diff.subjects` names it, relative to the brain's root, or
+`--subjects FILE`. Without one, the report says that no contradiction was computed. Each subject has an id, a kind
+(`guardrail` or `preference`), an optional topic and a closed set of values; each value has its patterns, in French
+and in English. A pattern is a regular expression, or a list of them that must all match, searched in each sentence
+of a unit (case and accents ignored). A sentence that matches exactly one value of a subject is a claim: (subject,
+value, scope), its scope one of the list's `scopes` that the sentence names, else `any`. An invented example
+(`tests/fixtures/rules-diff/subjects.yaml` has the whole file):
+
+```yaml
+v: 1
+scopes:
+  this-repo: {en: ['\bin this (?:repo|repository)\b'], fr: ['\bdans ce (?:repo|depot)\b']}
+subjects:
+  - id: git-authority
+    kind: guardrail
+    topic: {en: ['\bwho (?:commits|merges)\b'], fr: ['\bqui (?:commite|merge)\b']}
+    values:
+      ask: {en: [['\bnever\b', '\bcommit']], fr: [['\bjamais\b', '\bcommit']]}
+      automerge: {en: [['\bmerge\b', '\byourself\b']], fr: [['\bmerge', '\btoi-meme\b']]}
+```
+
+With it, « Never commit without being asked » and « Crée et merge tes PR toi-même » are one subject with two
+values: a contradiction, though one is English and the other French.
+
+**Restricted notes.** A project whose notes must never be copied is listed in `config.json` `rules_diff.restricted`
+(memory folder keys, or project folders, turned into their key the way Claude Code names the folder), or named by
+`--restricted-notes DIR`. Its folder is left out of the ordinary notes, and one function reads it: for each feedback
+note, its file name and the ids of the subjects it touches, nothing of its text. It catches every exception and logs
+only the exception's class and the note's name to `ledger/errors.log`, and it refuses to run in an agent session
+(`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` or `BRAIN_AGENT_SESSION` set): the report then says the notes were not read.
+
 ## Schedules and the alerts pass
 
 A project's `schedules:` entry in the registry declares the brain commands a machine's scheduler runs, `{name:
