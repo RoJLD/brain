@@ -22,8 +22,11 @@ The kind of a path, from its name and its first lines:
 - **yaml**: any other ``.yaml`` or ``.yml`` that is a list of ``id:`` entries: merged entry by entry (an entry changed
   on one side takes that side, the new entries of both sides are kept where they were added, an entry changed on both
   sides is merged line by line, else key by key with its props one level down and written as brain item set writes
-  a node, else left as a conflict); a file that is not such a list is merged as text; a dated CHANGELOG without an
-  Unreleased section is a log, newest first when written so;
+  a node, a status both sides moved by its order (done over doing over todo, the later side's props kept where
+  both changed one), else left as a conflict); a file that is not such a list is merged as text; a dated CHANGELOG
+  without an Unreleased section is a log, newest first when written so;
+- the pages of ``docs/reference/`` (``brain reference``) are views by their marker, once ``.gitattributes`` names them
+  (:data:`REFERENCE_ATTRIBUTE`, which ``brain merge-driver install`` suggests where the folder exists);
 - **text**: anything else: git's three-way merge (``git merge-file``).
 
 Whatever goes wrong falls back to ``git merge-file``, so the driver never leaves a file without its conflict markers.
@@ -56,6 +59,10 @@ HEAD_LINES = 5                 # a view's marker is in its first lines
 ENTRY = re.compile(r"^(?P<ind>[ ]*)-[ ]")
 ENTRY_ID = re.compile(r"^(?P<ind>[ ]*)-[ ]+(?:\{[ ]*)?id:[ ]*(?P<q>[\"']?)(?P<id>[^\"',}\s]+)(?P=q)")
 INNER = 41                     # the marker size of the driver's own merge-file runs (never in a brain's files)
+# A node's status both sides moved merges by its order (wi-brain-merge-generated-files): the later rank wins, with its
+# side's props where both changed one. One chain per lifecycle; statuses of one rank, or of no common chain, conflict.
+STATUS_ORDER = ({"todo": 0, "doing": 1, "blocked": 1, "done": 2},   # a WorkItem
+                {"pending": 0, "reached": 1})                         # a Milestone
 
 # The .gitattributes lines brain init writes (templates/generic/gitattributes) and brain merge-driver install checks.
 ATTRIBUTES = """\
@@ -75,6 +82,10 @@ notes/graph/edges/*.yaml merge=brain
 FEATURES.md merge=brain
 CHANGELOG.md merge=brain
 """
+# A brain that renders its reference (brain reference --write, the owner's opt-in) adds this line: its pages are views by
+# their marker. Not in ATTRIBUTES: what brain init writes once is a registered format (release_check SCHEMAS « store »),
+# so brain merge-driver install suggests it where docs/reference/ exists instead.
+REFERENCE_ATTRIBUTE = "docs/reference/**/*.md merge=brain"
 
 
 class DriverError(RuntimeError):
@@ -589,15 +600,31 @@ def _load_entry(text: str) -> dict | None:
     return data[0] if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict) else None
 
 
-def _merge_keys(b: dict, o: dict, t: dict, nested: tuple = ("props",)) -> dict | None:
+def status_winner(b: dict, o: dict, t: dict) -> str:
+    """``ours`` or ``theirs`` when both sides moved a node's status and one is later in :data:`STATUS_ORDER` (done
+    over doing over todo, reached over pending), else ''. Two statuses of one rank (doing and blocked), or of no
+    chain in common (done and dropped), have no order: the key stays a conflict."""
+    bs, os_, ts = b.get("status"), o.get("status"), t.get("status")
+    if os_ == ts or os_ == bs or ts == bs or not isinstance(os_, str) or not isinstance(ts, str):
+        return ""
+    for chain in STATUS_ORDER:
+        if os_ in chain and ts in chain and chain[os_] != chain[ts]:
+            return "ours" if chain[os_] > chain[ts] else "theirs"
+    return ""
+
+
+def _merge_keys(b: dict, o: dict, t: dict, nested: tuple = ("props",), winner: str | None = None) -> dict | None:
     """A three-way merge key by key (``props`` one level down): ours' order, theirs' new keys after; None when a key
-    changed both ways."""
+    changed both ways. The status both sides moved merges by its order (:func:`status_winner`), and the later side's
+    props win where both sides changed one: a close (done, its PR and date) over a branch's « doing »."""
+    if winner is None:
+        winner = status_winner(b, o, t)
     out: dict = {}
     for key in [*o, *(k for k in t if k not in o)]:
         bv, ov, tv = b.get(key), o.get(key), t.get(key)
         if key in nested and isinstance(ov, dict) and isinstance(tv, dict) and isinstance(bv or {}, dict) \
                 and ov != tv and ov != bv and tv != bv:
-            sub = _merge_keys(bv or {}, ov, tv, ())
+            sub = _merge_keys(bv or {}, ov, tv, (), winner)
             if sub is None:
                 return None
             out[key] = sub
@@ -608,6 +635,10 @@ def _merge_keys(b: dict, o: dict, t: dict, nested: tuple = ("props",)) -> dict |
         elif ov == bv:
             if key in t:
                 out[key] = tv
+        elif winner and (key == "status" or not nested):   # the status, or a prop (one level down), both changed
+            side = o if winner == "ours" else t
+            if key in side:
+                out[key] = side[key]
         else:
             return None
     return out   # a key one side deleted and the other left as it was is gone: neither branch above keeps it
@@ -840,9 +871,10 @@ def install(repo: Path, apply: bool = False, launcher: str | None = None, as_jso
                       file=sys.stderr)
                 return 1
         changed = True
+    missing = missing_attributes(Path(p.repo), p.attributes) if p.attributes else []
     if as_json:
         print(json.dumps({"repo": p.repo, "driver": p.driver, "current": p.current, "set": p.done or changed,
-                          "changed": changed, "attributes": p.attributes}, indent=2))
+                          "changed": changed, "attributes": p.attributes, "missing": missing}, indent=2))
         return 0
     state = "already set" if p.done else ("set" if changed else
                                           ("to set (--apply)" if not p.current else f"to change from {p.current!r}"
@@ -853,7 +885,20 @@ def install(repo: Path, apply: bool = False, launcher: str | None = None, as_jso
         print("\n".join("           " + x for x in ATTRIBUTES.splitlines()))
     else:
         print(f"merge    {len(p.attributes)} path pattern(s) use it in .gitattributes")
+        if missing:
+            print(f"merge    {len(missing)} line(s) the driver would use, not in .gitattributes yet (add them):"
+                  + "".join(f"\n           {x}" for x in missing))
     return 0
+
+
+def missing_attributes(repo: Path, attributes: list[str]) -> list[str]:
+    """The lines of :data:`ATTRIBUTES` a repo's .gitattributes lacks, and :data:`REFERENCE_ATTRIBUTE` where the repo
+    holds a ``docs/reference/`` folder (a release that names one more view, a brain that renders its reference)."""
+    have = {" ".join(x.split()) for x in attributes}
+    want = [x for x in ATTRIBUTES.splitlines() if x and not x.startswith("#")]
+    if (Path(repo) / "docs" / "reference").is_dir():
+        want.append(REFERENCE_ATTRIBUTE)
+    return [x for x in want if " ".join(x.split()) not in have]
 
 
 def status(cwd=None, as_json: bool = False) -> int:
