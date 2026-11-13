@@ -43,7 +43,8 @@ testpaths = ["tests"]
 addopts = "-p no:cacheprovider"
 # docker: calls the real docker client, flaky on a busy runner; the CI runs it apart, on one process, after the rest
 markers = ["docker: calls the real docker client (the CI runs these apart: -m docker)",
-           "harness: reruns the stranger test with an injected fault (slow, installs; skipped unless -m harness)"]
+           "harness: reruns the stranger test with an injected fault (slow, installs; skipped unless -m harness)",
+           "lite: the core's Lite scenario, Docker, gh, the network and the other engines hidden (-m lite)"]
 
 [tool.coverage.run]
 # the CI's coverage data names its files relative to packages/brain, so brain coverage --from reads it in any checkout
