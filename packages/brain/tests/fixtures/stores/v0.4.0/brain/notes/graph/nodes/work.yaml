@@ -1,0 +1,18 @@
+# Work layer: specs, milestones and work items, one flow-style node per entry:
+#   - {id: wi-x, type: WorkItem, status: todo, title: "...", props: {priority: P1}}
+# Ids are kebab-case and unique in the store (wi- items, ms- milestones, spec- specs). Statuses come from schema.yaml.
+# Useful props: priority (P0-P3), priority_proposed and priority_reason, open (a question waiting on the owner),
+# external_blocker (what holds a blocked item), trigger and reached (a milestone), pr and done (a closed item).
+- {id: ms-first-release, type: Milestone, status: pending,
+   title: "The first release",
+   props: {trigger: "the first two items done"}}
+- {id: wi-first, type: WorkItem, status: done,
+   title: "Write the first page",
+   props: {priority: P1, priority_reason: "the first step", created: "2026-11-13", pr: "ada/brain #1",
+           done: "2026-11-13 the first page written and read"}}
+- {id: wi-second, type: WorkItem, status: todo,
+   title: "Review the first page",
+   props: {priority: P2, created: "2026-11-13"}}
+- {id: wi-later, type: WorkItem, status: todo,
+   title: "An idea for later",
+   props: {idea: "Ada, a first brainstorm", created: "2026-11-13"}}

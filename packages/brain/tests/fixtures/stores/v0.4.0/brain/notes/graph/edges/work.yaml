@@ -1,0 +1,9 @@
+# Work edges: part_of (an item or sub-milestone moves a milestone), depends_on (an item waits on another),
+# specified_by (an item follows a spec), decided_by (a node follows an ADR), supersedes (an ADR replaces another).
+
+# 2026-11-13: wi-first (brain item add)
+- {from: wi-first, to: ms-first-release, type: part_of}
+
+# 2026-11-13: wi-second (brain item add)
+- {from: wi-second, to: wi-first, type: depends_on}
+- {from: wi-second, to: ms-first-release, type: part_of}

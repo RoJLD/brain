@@ -2,6 +2,281 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## 0.5.0 — 2026-11-13 — Typologies, privacy and measured plans
+
+### Upgrade
+
+1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead. Do it on every
+   machine of the fleet before this engine's records reach them: the DDR record gains two optional fields
+   (`links.rules`, `links.notes`, written by `brain decision ask --rule ... --note ...`), which an engine at 0.4.0
+   reads with a note and refuses in strict mode (CI, `BRAIN_STRICT=1`), so until every machine and the brain's CI
+   run 0.5.0, ask with neither flag. The event schema changed its descriptions only: an event either engine writes
+   reads the same in both. The standards schema did too, but the profiles a standards row or a project's
+   `standards: {profiles: [...]}` may name grew to every id of the typology catalog, which 0.4.0 notes and refuses
+   in strict mode (below, « Optional, read by 0.5.0 only »). With `$BRAIN_GRAPH_PYTHON` set, that Python needs this
+   tag's `research_graph` package: brain runs `python -m research_graph` there and no longer falls back to an older
+   copy in a registered project, so a graph command fails until it has it or the variable is unset.
+2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered and its close-item skill.
+   Until then a session's `midsession.sh` keeps its older fast path, so a first prompt that asks for a coordinator is
+   not marked as a chain root by itself (`brain handover root` still marks it), and its close-item skill gives the
+   definition of done without the clauses of the item's typologies (`brain item clauses ID` prints them).
+3. **Clear the public check's new findings**, in each checkout of `public.repos`, before its next push: `brain check
+   --public` there. It now also refuses the names the brain's own registries declare, from the day each is declared:
+   the machines (`config.json` `hosts` and their aliases), the people (`identity`, `members.yaml`), the projects and
+   their repos (the registry), the specs (`docs/specs`' file names) and the modules (the module registries' names,
+   ids of 4 characters or more); and, as its `graph` check, the personal graph's ids (an ADR's or a DDR's id of any
+   store of the registry; a `wi-`, `adr-`, `feat-`, `ddr-`, `spec-` or `les-` id of a project that is not the repo's
+   own) and an ADR's title (its first 8 words). Every deny term now matches in every spelling of its separators
+   (`acme-lab` also matches `acme_lab`, `Acme Lab` and `acmelab`): the derived names, and also the hand-written
+   `public.deny` lists and the scope tree's terms (`public.deny_from_tree`), which matched only as written at 0.4.0,
+   so a checkout that passed then can get new `denied` findings of a term it already held. Until a checkout is
+   clear, the commit and push guards refuse it, `brain boundary`'s readiness fails and step 4 does not stamp it. A
+   derived name that is public (a third-party tool a project reads, an engine capability a module is named after)
+   goes to `config.json` `public.public_names` with its reason (15 characters or more), by a PR of the brain;
+   `public.derive` narrows the sources (absent: all; `[]`: none). `public.public_names` clears derived names only: a
+   finding of a hand-written or scope-tree term is cleared by saying it in the repo's own words, by narrowing the
+   term in `public.deny` (or the scope tree), or by `public.allow` for a file where the term is expected, never by
+   `public.public_names`; any other finding is said in the repo's own words. A registry the
+   terms are derived from that cannot be read (a YAML error or a conflict marker in `projects.yaml`, `members.yaml`
+   or a module registry) now makes the public and secret guards refuse every commit and `brain check --public` exit
+   2: fix it (`brain check --all` names it) or narrow `public.derive`.
+4. **Refresh the public stamp**: a stamp is valid only under the engine that made it, so the push guard refuses the
+   old one. `brain update` and the installer's `-Apply` refresh them (`brain check --public --refresh`: each local
+   checkout of `public.repos` in the registry); a checkout with findings (step 3) is named and not stamped: run
+   `brain check --public --refresh` once they are cleared. By hand, `brain check --public --history` in a checkout
+   they skipped (uncommitted work, named in their output) or outside the registry, before its next push. A spec, a
+   machine or a module declared later changes the rules as well: the push guard's refusal then names « a registry
+   public.derive reads », and the same refresh answers it.
+5. **Fix what `brain check --all` newly refuses**. A CodeRef of a repo no project of the registry registers is now
+   `brain audit`'s `coderef.dangling` (P0, ruleset 11; it was listed as not measured): `brain check --all` refuses
+   it, and a brain's own root without `--all` warns of it; a CodeRef of another project's repo, or of the project's
+   own repo not cloned here, stays not measured. Register the repo (its project's `repos:`, or `brain project add NAME
+   --read`) or retire the CodeRef. A scope container's `lifecycle.typologies` (`scopes.yaml`) is read against the
+   typology catalog: an id it does not know is a note in read mode and an error in strict mode (CI). Use an id of
+   the catalog (`brain typologies`; every id 0.4.0 published is one) or declare the brain's own in `config.json`
+   `typologies` (with its `parent` for a sub-profile), by a PR once step 1 is done on every machine.
+6. **Give Claude Code's export its headers helper**, only on a machine whose `config.json` `ipc.require_token` names
+   `otel-collector` while Claude Code's OTLP export is on: `brain health ipc` now fails there until
+   `~/.claude/settings.json` has `otelHeadersHelper` (the collector already refuses that export without it). Declare
+   `adapters.claude.telemetry` (`{"enabled": true}`) in `config.json` by a PR once step 1 is done on every machine,
+   then run the installer's `-Apply`: its new telemetry step adds `env` and the helper, additions only, a plan first;
+   `brain ipc claude-settings` shows what it writes (docs/mcp.md, « Claude Code's export settings »).
+
+What this release newly refuses, with nothing to run until it does:
+
+- **The push guard `merges:stale`**: a `git push` of a branch whose merge of the base is not on the remote yet is
+  refused when that merge lost a line or a node, against the base it merged or a fresh one, or resolved a watched
+  file against a base that has moved on it since: merge a freshly fetched base again, then push. The owner's
+  override is `BRAIN_GUARD_ALLOW=merges:stale`.
+- **The secret scan**: the commit guard and `brain check --public` match a PEM private key's whole block and the
+  token formats of ntfy (`tk_`), Tailscale (`tskey-`), GitLab (`glpat-`), PyPI (`pypi-`) and npm (`npm_`); under
+  `machines/` and `memory/`, `gitleaks:allow` waives nothing, even with gitleaks on the PATH: take the value out.
+- **Decision pins**: once a brain pins a decision (`brain adr pin`), `brain merge-ready` (its new `pins` check) and
+  `brain review check HEAD --pr N` refuse a PR that touches it until its body says `Keeps ID` or `Overrides ID: why`.
+  A brain with no `pins.yaml` has nothing pinned.
+- **The chain root's hook**: the guard refuses a session that runs the UserPromptSubmit hook's entry by hand
+  (`midsession.py`, `-m brain.midsession`, or `python -c` code that calls it); `brain handover root` marks a root.
+
+Optional, read by 0.5.0 only: an engine at 0.4.0 notes each key or value and refuses it in strict mode (CI), so a
+brain sets one by a PR once every machine and its CI run 0.5.0:
+
+- `config.json` `adapters.claude.telemetry` (step 6), `public.public_names` and `public.derive` (step 3), `moved`
+  (the table of moves, read by `brain audit`'s `doc.dead-ref`, ruleset 12, and `brain check`) and `typologies` (the
+  catalog's labels and the brain's own ids);
+- `projects.yaml`'s `lifecycle` key (`typologies`, `stage`), which `brain project new` writes and `brain item clauses`
+  reads; `brain project add` registers a project instead of a hand edit;
+- a standards profile that is a typology catalog id 0.4.0 does not know (`software`, `api-cli`, `ai-ml`, `infra`,
+  `trading`, `hardware-cad`, `hardware`, `creation`, `organisation`, `compliance`), in a row of a brain's own
+  standards catalog or in a project's `standards: {profiles: [...]}`; the profiles 0.4.0 published (`cli`,
+  `service`, `research`...) read the same in both;
+- with no older engine to wait for: a decision pins file, `pins.yaml` beside the decision log (`notes/pins.yaml`
+  beside `notes/decisions.md`; docs/pins.md), and `props.gate` on items and milestones (docs/gates.md).
+
+No new engine store: `brain classes --suggest` has nothing to add to `classes.stores` (the chain root's marks are in
+`handover/`, `brain project add`'s steps in `ledger/`). `brain init` writes what it wrote at 0.4.0, and the project
+templates keep `engine: ">=0.4.0"`.
+
+Nothing to run for the rest.
+
+### Added
+
+- `brain brief` writes « Invariants and failure modes to test »: one line per surface kind the item touches (a store
+  or a persisted format, a procedure step, an external system, a write in several steps, a command line, a heuristic,
+  a guard, a counted set, a moved test, text into another format), each with what matched it and what to test, the
+  public engine's line when a repo it touches is public, then the item's own `props.invariants`; `brain review prep
+  --item ID` gives the review's agents the same section, and without `--item` the diff's (`brain.failuremodes`,
+  `wi-brain-brief-failure-modes`).
+- Decision pins (`wi-brain-decision-pins`, `docs/pins.md`): `brain adr pin ID --touches PATH|CODEREF --holds LINE`
+  pins an ADR, an SDR or an answered DDR to the code it governs, in `pins.yaml` beside the decision log (a `holds`
+  line is never edited: an override is a new ADR). `brain impact --diff` lists the pinned decisions a change touches
+  (`pins` in `--json`); `brain review check HEAD --pr N` (or `--body FILE`) and `brain merge-ready` (its new `pins`
+  check) refuse until the PR body says `Keeps ID` for a decision in force or `Overrides ID: why` for one a later ADR
+  supersedes (the pins read at the merge base when they live in the changed repo, the logs at the head); `brain adr
+  new --reverses` takes an answered DDR's id too; `brain check` warns on a pin of an unknown, pending or superseded
+  decision, a malformed row and a decision pinned twice.
+- The definition of done by typology (`wi-brain-done-by-typology`, spec-brain-typology-packs E2): a generic sentence
+  for every item (documented, verified, linked, integrated, recorded), then the clauses of its typologies, from the
+  typology catalog (the software pack's: a PR, a test, the docs in the same PR, the scout, the worktree; research's:
+  pre-registered, verdict, reproducible). An item's typologies are its `props.typology`, else its project's
+  `lifecycle.typologies`, a new `projects.yaml` key (LC-1; its other keys kept as declared). `brain item clauses ID`
+  prints them; `brain item close` takes `--evidence TEXT` beside `--pr`, and requires `--pr` only for an item that
+  takes a PR clause, or whose project declares no typology, as before.
+- Gates as data (`wi-brain-forecast-gates`, `docs/gates.md`): `props.gate` on a WorkItem or a Milestone, one gate or a
+  list, of five kinds: `calendar` (days from a date or an item's end, a reset rule and its daily chance), `count` (a
+  counter to reach: `ddr.answered` and `items.done` measured, any other with its own pace), `external`
+  (`<project>:<id>`, passed once done), `hardware` (a machine and its ready range) and `go_nogo` (an answer delay once
+  the node's dependencies are done). `brain forecast` (model v2) draws each one, waits a milestone on its own gate,
+  reads a pending DDR of kind action as a gate of the items it names (timed by the actions done), lists the declared
+  gates with what they hold and raises an alert when an item's p80 passes its `due` date; an `after_external` that
+  resolves to a done item no longer holds its item. `brain check` warns on a malformed gate, a trigger that names a
+  duration with no gate, an `after_external` or external gate that does not resolve, and a `due` without its
+  `due_source`. `brain queue` ends with what each gate holds.
+- A coordinators' chain root marked by its first prompt (`wi-brain-handover-auto-root`, HANDOVER-1): the
+  UserPromptSubmit hook (`midsession`) marks a session in `<BRAIN_HOME>/handover/roots.json` when the desktop app shows
+  it owner-started (no parent, no completed turn), its own transcript (found from its id) holds no turn yet and its
+  prompt asks for a coordinator (`brain.succession.ROOT_WORDS`); the row's reason names the hook and the owner is told
+  (a system message). The guard refuses a session that runs the hook's entry by hand (an interpreter given
+  `midsession.py`, `-m brain.midsession`, or `python -c` code that imports or calls it); `brain handover root` stays
+  the fallback.
+- Claude Code's OTLP export settings come from the brain, never typed by hand (`wi-brain-install-claude-telemetry`):
+  config.json `adapters.claude.telemetry` (`enabled`, `endpoint`, `protocol`, `exporters`, `env`, `headers_helper`),
+  rendered by `brain ipc claude-settings [--json]` and added by `install.ps1`'s new telemetry step to
+  `~/.claude/settings.json`: `env` `CLAUDE_CODE_ENABLE_TELEMETRY` and `OTEL_*`, and `otelHeadersHelper` = `brain ipc
+  otel-headers` once config.json `ipc.require_token` names the collector. Additions only (a key already there with
+  another value is kept and said), a plan then `-Apply`, `settings.json.bak` kept; the helper off loopback or with
+  grpc, and any `*HEADERS*` variable, are refused. `brain health ipc` fails when the collector requires the token and
+  Claude Code's export is on without the helper (docs/mcp.md, « Claude Code's export settings »).
+- The push guard `merges:stale`: a `git push` of a branch whose merge of the base is not on the remote yet fetches
+  the base again (once, bounded) and runs `brain merge-check` against the base as merged and the fresh one. It
+  refuses a merge that lost a line or a node, and a watched file the merge resolved against a main that has moved on
+  it since (`wi-brain-merge-stale-main-2`; override `BRAIN_GUARD_ALLOW=merges:stale`). `brain merge-check` reads only
+  the files main changed since the merge base.
+- The table of moves: config.json `moved: {old prefix: {to, date, note}}` (`brain.moves`). `brain audit`'s
+  `doc.dead-ref` flags a doc line that names an old prefix, with its new one (ruleset 12). `brain check` in a brain's
+  own root warns of the tracked instructions, rules, memory notes, skills, hooks, settings and scripts that do
+  (`wi-brain-moved-paths`).
+- **One privacy scrub for what leaves the machine** (`wi-brain-privacy-scrub`, brain.scrub): `ledger/errors.log`'s
+  lines, a notification's title, text and link, and the free text of the outbox's kept copies have their secrets,
+  e-mail addresses, home folders with a user name, this machine's and the fleet's names and the login replaced
+  (`<secret>`, `<email>`, `~`, `<host>`, `<user>`); short names and common words (`root`, `runner`, `dev`...) are
+  kept; a test corpus (`tests/fixtures/scrub/corpus.json`) holds the cases. The sending host's own field of a
+  notification, and what routes an outbox entry (project, key, channel), are kept.
+- `brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
+  CLASS] [--title TEXT] [--apply]` (`wi-brain-project-add`): a project registered in the brain's `projects.yaml` by a
+  command instead of a hand edit, a plan then `--apply`. `--read` writes a read-only entry (title, `access: read`,
+  parent, classes), `--existing` the root of a folder that holds a graph store (relative to the registry's main
+  checkout, checked to read back from a worktree, absolute when no relative path does), `--template` runs `brain init
+  DIR --template T --name NAME` as a logged step and then registers it (refused on a machine without its pointer).
+  `--parent` places it in the scope tree, `--floor` gives it a class floor, and the plan says what `public.deny.repos`
+  gains when `public.deny_from_tree` is on. The registry as it would be is checked first (an error `brain check`
+  would add refuses the write; one already there is left to `brain check`); the entry is appended with the file's
+  comments, order and line endings kept, and the write is logged in `<BRAIN_HOME>/ledger/setup-<month>.jsonl`. The
+  registry acted on is the one at `--root`, else `$BRAIN_PROJECTS`, else the nearest above the current folder, read
+  with its own config.json and scopes.yaml; never the pointer's brain from another folder.
+- The new-project wizard, first slice (`wi-brain-project-wizard`, spec-brain-client-standards §8, STD-5): `brain
+  project new DIR --kind K [--kind K]... [--stage S] [--template T] [--apply]` asks what the project produces (ids of
+  the typology catalog; code products and research first) and its stage, plans (the layers its kinds are proposed, the
+  template, `brain init`'s plan), and with `--apply` writes its brain through `brain init`, its registry entry
+  recording `lifecycle: {typologies, stage}`. Run again on that brain, the plan shows what the answers change there and
+  writes nothing (a PR of that brain). The cockpit's Setup page offers it as « A new project ».
+- **The deny terms derived from the brain's own registries** (`wi-brain-public-deny-derived`, brain.denylist): `brain
+  check --public`, the commit and push guards and `brain boundary`'s readiness also refuse the names of the machines
+  (`config.json` `hosts` and their aliases), the people (`identity`, `members.yaml`), the projects and their repos (the
+  registry), the specs (`docs/specs`' file names) and the modules (the module registries' names, ids of 4 characters
+  or more), from the day each is declared. `public.derive` picks the sources (absent: all; `[]`: none),
+  `public.public_names` keeps a registry's public name out; `brain check --all` warns about a declared name no deny
+  list holds. A term matches in every spelling of its separators (`a-b`, `a_b`, `a b`, `ab`), and every term is
+  matched by one regex first, so the check stays fast with many terms (Upgrade, steps 3 and 4).
+- **The personal graph's ids refused in a public repo** (`wi-brain-public-private-ids`, brain.privateids): `brain check
+  --public` and the public commit guard gain the `graph` check: an ADR's or a DDR's id of any store of the registry,
+  any other id (`wi-`, `adr-`, `feat-`, `ddr-`, `spec-`, `les-`) of a project that is not the public repo's own, and an
+  ADR's title (its first 8 words, whatever the case and punctuation). An invented id passes, as does a file under
+  `public.allow`. The engine's own docstrings, a schema and a test no longer quote such ids or titles.
+- The review error score (`wi-brain-review-error-score`): `brain review stamp` takes `--pr`, `--item` (its wave
+  places the stamp), `--wave` and `--stream`, and keeps the note's finding lines (`- high correctness A.b fixed:
+  ...`: severity, lens, root-cause family, outcome, found before or after the merge, covered by a script) as the
+  stamp's rows; `brain review score [--wave W] [--json]` counts each PR once by its latest stamp, the confirmed
+  findings per PR by severity, lens and root cause, the trend per wave, and the owner's rule: the reviews lighten
+  only once the findings per PR fall over two waves in a row. `brain retro --wave` and the cockpit's health tab show
+  it (docs/review.md, « The error score »).
+- `brain review prep`: a **scope** lens on every diff (a changed line the item does not need, a refactor or a flag
+  beyond it leaves the PR as a follow-up item) and the skeptics' **evidence rule** in the packet's README and
+  docs/review.md (a negative claim such as « nothing calls it » stands only with the query that shows it and that
+  query's coverage) (`wi-brain-review-scope-lens`).
+- **The secret scan hardened** (`wi-brain-secretscan-hardening`, brain.secretscan): a PEM private key's whole block
+  matches (a ledger line drop takes its body too, not only its BEGIN line); the fleet's token formats are known (ntfy
+  `tk_`, Tailscale `tskey-`, GitLab `glpat-`, PyPI `pypi-`, npm `npm_`); `clean_unit` refuses a unit (a note, a rule
+  file) whole on a match; `gitleaks:allow` waives nothing under `machines/` and `memory/`, in the commit guard (even
+  with gitleaks, which honours the mark) and in `brain check --public`.
+- A blocking decision about the owner's rules or notes (`brain decision ask --rule ... --note ...`, `links.rules`,
+  `links.notes`) is notified as a pointer only: never its question, options, rule text, id or host.
+- `brain check --public --private-text` (brain.privatetext): the tracked files against the personal brain's rules and
+  notes, by windows of 8 words, before each tag (docs/release.md, « 3. The tag »); it never stamps.
+- Sizes checked against actuals (`wi-brain-size-calibration`): `brain cost review` says a finished item's judged size
+  (`props.size`) against the size its active time falls in on the scale (a hit, under-sized or over-sized);
+  `brain cost audit` adds « Sizes against actuals »: the window's misses per size and class, the thresholds the
+  history proposes (each size's p75 of active hours), and whether the size is kept as `brain cost estimate`'s first
+  similarity key: it is, as the `size+class` basis, only while it lowers the backtests' error.
+- The typology catalog (`wi-brain-typology-catalog`, spec-brain-typology-packs E1, TYPO-3): one vocabulary of the kinds
+  of project for the graph layers' `lifecycle` ids, the project templates' profiles and the standards' profiles. Eight
+  entries (`software`, `research`, `hardware-cad`, `creation`, `strategy`, `marketing`, `organisation`, `compliance`),
+  each with its column to the Vision's modules (J1 to K4); every id 0.4.0 published is an entry or a sub-profile
+  (`cli`, `service`, `ai-ml`... of `software`), and a sub-profile takes what its entry takes (a `cli` project meets the
+  standards rows of `software`). The lifecycle's stages, and the standards' stages mapped to them (`mvp` → `build`).
+  `brain typologies [show ID --stage S]` lists the catalog and the layers a kind is proposed at a stage; config.json
+  `typologies` renames labels and adds a brain's own ids; a scope node's `lifecycle.typologies` is read against it.
+  An id the catalog does not know is a note in read mode, an error in strict mode (CI). Contract:
+  `docs/typologies.md`.
+- `brain uninstall [--purge] [--confirm-recovery STORE...] [--apply] [--json]` (`wi-brain-uninstall-purge`): every
+  trace of the brain on this machine its store registry knows, a plan first, removed with `--apply` in the owner's
+  terminal: the scheduled tasks this machine installed, the Claude Code plugin and marketplace, the launcher on the
+  PATH and the engine's install stores in `BRAIN_HOME`. `--purge` adds the data stores, this machine's device key and
+  `BRAIN_HOME` itself: a derived store goes, a store nothing else keeps (truth-local or log), a name no store covers
+  and the device key are held until `--confirm-recovery` names them (or `all`) once their recovery copy is confirmed.
+  Never Claude Code's transcripts, the brain's repo or a path outside `BRAIN_HOME` (a link has only itself removed).
+- A quick-win slot in each wave (`wi-brain-wave-quickwin-slot`): about a fifth of a wave's places (one at least) kept
+  for items of size S with a high value; `brain next` and `brain wave plan` say the slot, the wave's items that fill
+  it and, while a place is free, the startable quick wins outside the wave (in no wave or a later one) that would,
+  with the command that moves one there and leaves it in one wave (`slot` in both `--json`); a closed wave has no
+  free place, and the generated `plan_graph.md` leaves the slot out.
+
+### Fixes
+
+- One unified-diff reader for the engine (`brain.diffs`): `brain impact`, the commit guards (secrets, conflict
+  markers, the public check), `brain check --public --history`, the digest, the forecast and the changed-items reader
+  read a hunk's lines by its counts, so a content line starting `-- ` or `++ ` is never a header, a name with a space
+  loses git's TAB, a C-quoted name is unquoted, and the user's `diff.noprefix`, `diff.mnemonicPrefix`,
+  `diff.relative`, `diff.suppressBlankEmpty`, `diff.interHunkContext`, colour, external diff and textconv no longer
+  reshape what they read; a merge's combined diff counts as added only the lines new against every parent
+  (`wi-brain-diff-parser`).
+
+### Changes
+
+- `brain audit` reports an active CodeRef of a repo no project of the registry registers as `coderef.dangling` (P0,
+  ruleset 11), instead of listing it as not measured; `brain check --all` refuses it (a warning in a brain's own root
+  without `--all`). A CodeRef of another project's repo, or of the project's own repo not cloned here, stays not
+  measured (`wi-brain-audit-unregistered-coderef`).
+- The engine's tests run in a hermetic environment, an allow list (`wi-brain-hermetic-tests`): every `BRAIN_*`,
+  `CLAUDE*`, `GIT_*`, `RESEARCH_GRAPH_*` and `OTEL_*` variable, a GitHub token and the editor are cleared unless the
+  conftest pins them or a test sets them, and git reads an empty global configuration and no system one; the suite gives
+  the same result from a desktop-app session, a terminal or CI. `tests/test_hermetic.py` lists the variables the engine
+  reads and fails on one left set without a reason, and on any `monkeypatch.undo()` in the tests. An owner has
+  nothing to do for it: it changes how the engine's own suite runs, not a brain.
+- `brain uninstall [--purge]` (Added) asks nothing of an owner who keeps the brain: it runs only when called, a plan
+  first, removing with `--apply` in the owner's own terminal.
+- The engine no longer repeats the owner's rules word for word (`wi-brain-private-text-rewrite`): the topics a
+  default never decides, the budget watch's notices, the done steps of the typologies and the close-item skill, the
+  DDR schema's descriptions, the test fixtures and a sentence of the released 0.2.4 section, reworded at the
+  owner's request (2026-11-13), say the same in the engine's own words. The derived deny terms
+  (brain.denylist) count a worktree of the brain and its main checkout as one brain: a project rooted at the top of
+  either gives its repos, not its name; a project in a subfolder keeps its name derived.
+- The legacy fallback of the graph engine is gone (`wi-brain-public-deny-derived`): without the `research_graph`
+  package in brain's venv, or with `$BRAIN_GRAPH_PYTHON` set, brain runs `python -m research_graph` in that Python
+  (else this one) and no longer looks for an older copy in a registered project. The examples of the docs and the
+  tests name invented projects, and brain lint's rule commands no longer count a private project's command.
+
 ## 0.4.0 — 2026-11-12 — Templates, modules and local services
 
 ### Upgrade

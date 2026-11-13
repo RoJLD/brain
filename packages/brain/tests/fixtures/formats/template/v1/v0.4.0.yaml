@@ -1,0 +1,36 @@
+# The generic template: what brain init writes for a person or a team with no domain of their own (the default,
+# brain init --template generic). A template is data and this manifest, never code: the engine renders the files
+# below with their variables, then writes the parts it owns (config.json, the graph store by research_graph init,
+# the Claude marketplace by brain render --target claude).
+#
+# Variables: {owner} (the name as given), {owner_q} (the same, quoted for YAML or JSON), {name} (the project's name
+# in projects.yaml), {title_q} (its title, quoted). A file never names a person, a host or a path of anyone's.
+name: generic
+version: 1
+engine: ">=0.2.2"          # the brain versions that can render it
+title: "A generic brain: a backlog graph, decisions, a journal, guards and the cockpit"
+graphs:                    # the graph stores it starts, the brain's main one first (research_graph init --owner);
+  # schema default: the brain's base, the work, decisions and records layers (DDR, Session, Action by brain sync)
+  - {name: work, store: notes/graph, schema: default}
+files:                     # the brain's path: the template's file
+  projects.yaml: projects.yaml
+  source/packs.yaml: packs.yaml
+  boundary.yaml: boundary.yaml
+  notes/journal.md: journal.md
+  rules/global.md: rules.md
+  CLAUDE.md: CLAUDE.md
+  README.md: README.md
+  .gitignore: gitignore
+  .gitattributes: gitattributes
+  fixtures/README.md: fixtures-README.md
+  memory/.gitkeep: ""
+  records/.gitkeep: ""
+classes:                   # the data class of the template's own stores (brain classes); the engine adds its machine
+                           # stores (sealed) and a private catch-all. Confidential stays out of git in clear: the
+                           # waiver keeps that known gap printed until encrypted git is adopted
+  memory: {class: confidential, paths: ["memory/**"], to: [cloud-model],
+           waive: {git-private: "in clear in the private remote until encrypted git (sops) is adopted"},
+           why: "notes about people, machines and choices, read by every session"}
+  ddr: {class: confidential, paths: ["records/ddr/**"], to: [cloud-model],
+        waive: {git-private: "in clear in the private remote until encrypted git (sops) is adopted"},
+        why: "decisions whose context may touch money, people or the law, announced to every session"}
