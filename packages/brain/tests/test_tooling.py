@@ -314,6 +314,21 @@ def test_the_scheduled_tasks_read_the_engines_runs(world, units, monkeypatch, br
     assert s["alerts-pass"]["mark"] == "" and s["dead"]["mark"] == tooling.MARK
 
 
+def test_the_inventory_holds_the_projects_skills_rules_and_schedules(world, monkeypatch):
+    lab, other, _ = world
+    skill = lab.root / ".claude" / "skills" / "notes" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: notes\ndescription: Take notes.\n---\n", encoding="utf-8")
+    (lab.root / "CLAUDE.md").write_text("# lab\n", encoding="utf-8")
+    monkeypatch.setattr(tooling, "_schedules", lambda projs, registry: [("nightly", "lab", ["alerts", "--all"])])
+    inv = tooling.inventory([lab])
+    assert inv["skill"]["notes"] == {"lab"} and inv["rule"]["CLAUDE.md"] == {"lab"}
+    assert set(inv["rule"]) >= {"rule-git-prs", "rule-never-cited"} and "rule-retired" not in inv["rule"]
+    assert inv["scheduled"]["nightly"] == {"lab"}
+    assert tooling.schedule_units([lab], None) == {"nightly": "brain alerts"}
+    assert "notes" not in tooling.inventory([other])["skill"]   # the other project's inventory is its own
+
+
 def test_cli_usage_kind_json_and_text(world, units, capsys, monkeypatch):
     lab, other, pdir = world
     rows = {f"p/{sid}.jsonl": _row(pdir, sid) for sid in (LAB_SID, OTHER_SID)}

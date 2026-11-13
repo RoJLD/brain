@@ -261,7 +261,7 @@ def inventory(projs: list[projects.Project], registry: dict | None = None) -> di
                 out["rule"][toolids.rule_file(str(src.path), str(p.root))].add(p.name)
         for rid in _rule_nodes(p, active=True):
             out["rule"][rid].add(p.name)
-    for name, project in _schedules(projs, registry):
+    for name, project, _ in _schedules(projs, registry):
         out["scheduled"][name].add(project)
     return out
 
