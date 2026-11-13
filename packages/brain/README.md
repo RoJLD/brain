@@ -839,7 +839,10 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   the head, the review's stamp for the head with no finding open, the public check's stamp for a public repo, nothing
   private in the PR's title and body; exit 0, a stamp and the head to merge (`gh pr merge --match-head-commit`),
   else the list of what blocks
-  ([`docs/merge-driver.md`](docs/merge-driver.md)).
+  ([`docs/merge-driver.md`](docs/merge-driver.md)). `--with PR...` checks PRs merged together: each through the gate,
+  then all merged on the base by `git merge-tree` with the repo's merge driver, the merge order and the PR GitHub
+  will see conflicting said, the tests `brain impact` chooses for the set (run by `--test` in a scratch worktree),
+  and a stamp per head naming the set.
 - **`brain collisions [--all] [--frontier] [--json]`**: the files each open branch and worktree changes, crossed with
   each startable item's predicted surface (its features' CodeRefs, its module, the files it names): the items that
   can start now, and those that wait on a branch and its session.
