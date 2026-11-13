@@ -137,8 +137,11 @@ def container_lines(c: dict) -> list[str]:
 
 def store_lines(s: dict, width: int) -> list[str]:
     out = ["", f"stores    ({s['state']}{': ' + s['why'] if s.get('why') else ''})"]
-    return out + [f"  {r['name'][:32]:32} {('' if r['complete'] else 'at least ') + size_text(r['bytes']):>18}  "
-                  f"{r['path']}"[:width] for r in s.get("rows", [])]
+    out += [f"  {r['name'][:32]:32} {('' if r['complete'] else 'at least ') + size_text(r['bytes']):>18}  "
+            f"{r['path']}"[:width] for r in s.get("rows", [])]
+    if s.get("left_out"):
+        out.append(f"  not walked (time budget spent): {', '.join(s['left_out'])}"[:width])
+    return out
 
 
 def render(doc: dict, width: int = 120) -> list[str]:

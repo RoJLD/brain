@@ -580,10 +580,43 @@ def test_the_stores_are_brain_homes_entries_with_a_bounded_walk(monkeypatch, bra
     st = resources.stores()
     by = {r["name"]: r for r in st["rows"]}
     assert by["usage"]["bytes"] == 300 and by["usage"]["complete"] and by["machine.json"]["bytes"] == 2
-    monkeypatch.setattr(resources, "_size", lambda root, budget: (5, False))
-    assert {r["complete"] for r in resources.stores()["rows"] if r["name"] == "usage"} == {False}
+    monkeypatch.setattr(resources, "WALK_BUDGET", {**resources.WALK_BUDGET, "stores": -1.0})
+    st = resources.stores()
+    cut = [r for r in st["rows"] if r["name"] in ("usage", "machine.json")]
+    # the first entry (sorted) is cut before its first file, the later one is named, never silently dropped
+    assert [(r["name"], r["complete"]) for r in cut] == [("machine.json", False)] and st["left_out"] == ["usage"]
+    monkeypatch.setattr(resources, "_size", lambda root, budget: (5, False))   # the transcripts and temp walks
     lines = resources_view.render({"v": 1, "at": "t", "levels": [], "stores": resources.stores()})
-    assert any("at least" in ln for ln in lines)
+    assert any("at least" in ln for ln in lines) and any("not walked (time budget spent): usage" in ln for ln in lines)
+
+
+def test_the_stores_walk_checks_its_deadline_on_every_entry(monkeypatch, brain_home, tmp_path):
+    """A tree of empty folders (nothing to count) still stops at the deadline: it is tested before each entry."""
+    monkeypatch.setattr(resources.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    deep = brain_home / "cache"
+    for i in range(30):
+        deep = deep / f"d{i}"
+    deep.mkdir(parents=True)
+    (brain_home / "usage").mkdir()
+    clock = iter(range(1000))
+    monkeypatch.setattr(resources.time, "monotonic", lambda: float(next(clock)))
+    st = resources.stores()   # the deadline is 2 ticks after the start: the walk of cache is cut inside its tree
+    by = {r["name"]: r for r in st["rows"]}
+    assert not by["cache"]["complete"] and st["left_out"] == ["usage"]
+
+
+def test_the_stores_go_through_the_read_gate(monkeypatch, brain_home, tmp_path):
+    """A secret store is never walked: it has no row, and its files are not counted."""
+    monkeypatch.setattr(resources.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    (brain_home / "secrets" / "stack").mkdir(parents=True)
+    (brain_home / "secrets" / "stack" / "big.env").write_bytes(b"0" * 10_000)
+    (brain_home / "ledger").mkdir()
+    (brain_home / "ledger" / "a.jsonl").write_text("x" * 7, encoding="utf-8")
+    (brain_home / "spool").mkdir()   # an empty folder: a row of 0 bytes, as before the gate
+    st = resources.stores()
+    by = {r["name"]: r for r in st["rows"]}
+    assert "secrets" not in by and by["ledger"]["bytes"] == 7 and by["ledger"]["complete"]
+    assert by["spool"]["bytes"] == 0 and st["left_out"] == []
 
 
 # --- the command ---------------------------------------------------------------------------------------------------

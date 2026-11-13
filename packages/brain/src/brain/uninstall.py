@@ -277,10 +277,7 @@ def home_refusal(home: Path) -> str:
                         ("the personal brain", personal)):
         if other is not None and _within(Path(other), home):
             return f"BRAIN_HOME {home} holds {what} ({other})"
-    try:
-        names = {p.name for p in home.iterdir()}
-    except OSError:
-        return ""   # absent: nothing to remove there
+    names = set(classes.home_names(home))   # names only, through the read gate's lister
     if names and not any(_store_of(n) for n in names):
         return f"BRAIN_HOME {home} holds none of the engine's stores: not a brain's home"
     return ""
@@ -328,10 +325,7 @@ def store_step(entry: Path, home: Path, purge: bool, confirmed: set[str]) -> Ste
 
 def store_steps(home: Path, purge: bool, confirmed: set[str]) -> list[Step]:
     """Each top-level entry of BRAIN_HOME: the install stores always, the rest with --purge."""
-    try:
-        entries = sorted(home.iterdir(), key=lambda p: p.name)
-    except OSError:
-        return []
+    entries = [home / n for n in classes.home_names(home)]
     steps = [store_step(e, home, purge, confirmed) for e in entries]
     return [s for s in steps if s is not None]
 
@@ -415,7 +409,7 @@ def _rmdir_if_empty(home: Path) -> str:
     try:
         if not home.is_dir():
             return ""
-        left = sorted(p.name for p in home.iterdir())
+        left = classes.home_names(home)
         if left:
             return f"{KEPT}not empty ({', '.join(left)}); once they are gone: {_cleanup_command(home)}"
         home.rmdir()
@@ -427,10 +421,7 @@ def _rmdir_if_empty(home: Path) -> str:
 def unknown_names(confirmed: set[str]) -> list[str]:
     """The --confirm-recovery names that are neither a top-level engine store, the keystore, all, nor an entry of
     BRAIN_HOME (a store inside another, the collector in stacks, is confirmed by the one that holds it)."""
-    try:
-        present = {_store_of(p.name)[0] if _store_of(p.name) else p.name for p in paths.brain_home().iterdir()}
-    except OSError:
-        present = set()
+    present = {_store_of(n)[0] if _store_of(n) else n for n in classes.home_names()}
     top = {n for n, k in classes.ENGINE_STORES.items()
            if k.path.startswith("$BRAIN_HOME/") and "/" not in k.path[len("$BRAIN_HOME/"):]}
     known = top | {KEYSTORE, ALL} | present

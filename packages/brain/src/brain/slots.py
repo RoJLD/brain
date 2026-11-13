@@ -171,7 +171,9 @@ def switch(to: Path, *, aside_for: str = "") -> Path | None:
 def _clear_stale_links() -> None:
     """The links an interrupted switch left beside venv (``venv.switch-*.tmp``, ``venv.prev-*.tmp``): links only,
     never a folder."""
-    for p in home().glob(f"{ACTIVE}.*-*.tmp"):
+    from . import classes   # the names at BRAIN_HOME's top, through the read gate's lister
+
+    for p in (home() / n for n in classes.home_names(home()) if n.startswith(f"{ACTIVE}.") and n.endswith(".tmp")):
         if is_link(p) and (p.name.startswith(f"{ACTIVE}.switch-") or p.name.startswith(f"{ACTIVE}.prev-")):
             try:
                 remove_link(p)
