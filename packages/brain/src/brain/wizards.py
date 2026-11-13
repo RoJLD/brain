@@ -13,6 +13,16 @@ PR in the personal brain; a permission is granted by PR. A secret is never typed
 environment variable (or in the system keyring) and the wizards show its name, never its value (ddr-2026-11-02-cockpit-
 secrets-entry).
 
+**Local services** (wi-brain-wizard-local-services): the steps that wire the Brain's local services for any owner,
+in their order (:data:`LOCAL`): the machine's token (``brain ipc token --init``, the owner's gesture); Claude Code's
+OTLP export settings and its ``otelHeadersHelper`` (``brain ipc claude-settings``: the exact settings lines and the
+export checked, HTTP on loopback; written by the owner's ``install.ps1 -Apply``, never a session edit); the collector
+requiring the token (``config.json ipc.require_token``, by a PR in the personal brain, once the export sends the
+header); the sovereign bundle applied (``brain bundle plan``, then ``apply``); ``brain health ipc``; and Cursor's MCP
+server rendered (``brain render --target cursor``; the home folder's file once brain render has a user-level target).
+Each is optional: a machine without the telemetry collector skips them, and a step that fails stops none of the
+others. ``brain init`` prints the same steps among its next steps (:func:`local_lines`).
+
 A plan writes nothing but a cache (``brain profile --quick`` refreshes ``$BRAIN_HOME/facts.json``); a plan that fails
 keeps the apply off. The notification and code index wizards run for the project the cockpit shows (``--project``).
 A new brain's folder is an absolute path (its quotes taken off; an option refused).
@@ -120,6 +130,50 @@ def _kinds() -> tuple:
         return ()
 
 
+LOCAL_WHY = ("optional: only where the telemetry collector runs (config.json adapters.claude.telemetry); a step that "
+             "fails stops none of the others")
+LOCAL = [
+    Wizard("local-token", "Local services 1: the machine's token",
+           "the token of the Brain's local services (the collector, the MCP server over HTTP): its state, then --init "
+           "makes it, readable by its owner only; it is never shown",
+           plan=["brain", "ipc", "token", "--plan"], apply=["brain", "ipc", "token", "--init"], notes=[LOCAL_WHY]),
+    Wizard("local-claude-export", "Local services 2: Claude Code's export and its token header",
+           "the settings Claude Code's OTLP export needs (env and otelHeadersHelper: brain ipc otel-headers), their "
+           "exact lines, and the export checked (HTTP, on loopback)",
+           plan=["brain", "ipc", "claude-settings"],
+           owner="install.ps1 -Apply, in the owner's own terminal: it adds these lines to ~/.claude/settings.json "
+                 "(never a session edit)", notes=[LOCAL_WHY]),
+    Wizard("local-require-token", "Local services 3: the collector requires the token",
+           "config.json ipc.require_token: [otel-collector], once steps 1 and 2 are done (before, the collector would "
+           "refuse an export without its header); the services' state now",
+           plan=["brain", "health", "ipc"],
+           owner="a branch and a PR in the personal brain: config.json ipc.require_token: [otel-collector]",
+           notes=[LOCAL_WHY]),
+    Wizard("local-bundle", "Local services 4: the sovereign bundle",
+           "the collector and its stack rendered and started with the token required: the bundle's plan, then its "
+           "apply (a second apply changes nothing)",
+           plan=["brain", "bundle", "plan", "sovereign"], apply=["brain", "bundle", "apply", "sovereign"],
+           notes=[LOCAL_WHY]),
+    Wizard("local-health", "Local services 5: the services checked",
+           "the token file, each service on loopback and refusing a request without the token",
+           plan=["brain", "health", "ipc"], notes=[LOCAL_WHY]),
+    Wizard("local-cursor", "Local services 6: Cursor's MCP server",
+           "Cursor connects to the Brain's MCP server over stdio: the files brain render writes for it, as a plan",
+           plan=["brain", "render", "--target", "cursor"],
+           owner="brain render --target cursor --write renders it into the brain's and the project's repos, by a PR; "
+                 "the home folder's ~/.cursor/mcp.json once brain render has a user-level target",
+           notes=["optional: only when Cursor is used"]),
+]
+
+
+def local_lines() -> list[str]:
+    """The Local services steps as ``brain init``'s next steps print them: each a command, in their order."""
+    out = [f"      local services ({LOCAL_WHY}; the cockpit's Setup page runs them):"]
+    for i, w in enumerate(LOCAL, 1):
+        out.append(f"        {i}. {w.command()}" + (f"; the owner's: {w.owner}" if w.owner else ""))
+    return out
+
+
 def wizards(root: Path | None = None) -> list[Wizard]:
     """The setup wizards, in the order a new brain walks them."""
     return [
@@ -177,6 +231,7 @@ def wizards(root: Path | None = None) -> list[Wizard]:
                "the rules the user settings would gain: a plan only", plan=["brain", "permissions", "render",
                                                                              "--level", "user"],
                owner="install.ps1 -Apply, in the owner's own terminal: it writes ~/.claude/settings.json"),
+        *LOCAL,
         Wizard("checks", "Checks", "the configuration, the registry and the stores checked",
                plan=["brain", "check", "--all"]),
     ]

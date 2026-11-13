@@ -105,3 +105,54 @@ def test_a_module_turns_on_or_off_by_brain_mods_plan_then_its_apply():
     for w in (on, off):
         for c in w.choices:
             parser.parse_args(w.words("apply", c)[1:])
+
+
+# --- the Local services step (wi-brain-wizard-local-services) ---
+
+LOCAL_IDS = ["local-token", "local-claude-export", "local-require-token", "local-bundle", "local-health",
+             "local-cursor"]
+
+
+def test_the_local_services_steps_come_in_their_order_before_the_checks():
+    ids = [w.id for w in wizards.wizards()]
+    assert [i for i in ids if i.startswith("local-")] == LOCAL_IDS
+    # the token, then the export's header, then the collector requiring it, then the bundle: the order of the ADR
+    assert ids.index("local-token") < ids.index("local-require-token") < ids.index("local-bundle") < ids.index("checks")
+    assert ids[-1] == "checks"
+
+
+def test_the_owners_steps_stay_plans_and_the_others_plan_before_they_apply():
+    ws = wizards.by_id()
+    tok = ws["local-token"]
+    assert tok.words("plan") == ["brain", "ipc", "token", "--plan"] and tok.words("apply") == [
+        "brain", "ipc", "token", "--init"]
+    assert ws["local-bundle"].words("apply") == ["brain", "bundle", "apply", "sovereign"]
+    for wid in ("local-claude-export", "local-require-token", "local-cursor"):   # a settings file, a PR, a render
+        assert ws[wid].apply is None and ws[wid].owner and not ws[wid].reads, wid
+    assert "install.ps1 -Apply" in ws["local-claude-export"].owner and "never a session edit" in \
+        ws["local-claude-export"].owner
+    assert "ipc.require_token: [otel-collector]" in ws["local-require-token"].owner
+    assert ws["local-health"].reads and ws["local-health"].words("plan") == ["brain", "health", "ipc"]
+    assert all(any(n.startswith("optional") for n in ws[i].notes) for i in LOCAL_IDS)   # each says it may be skipped
+
+
+def test_the_tokens_plan_never_fails_and_never_shows_the_token(brain_home, capsys):
+    """A plan that fails keeps the wizard's apply off: --plan exits 0 with or without a token."""
+    from brain import ipcauth
+    assert cli.main(["ipc", "token", "--plan"]) == 0
+    assert "no usable token: --init makes it" in capsys.readouterr().out
+    assert cli.main(["ipc", "token", "--init"]) == 0
+    capsys.readouterr()
+    assert cli.main(["ipc", "token", "--plan"]) == 0
+    out = capsys.readouterr().out
+    assert "a usable token: --init keeps it" in out and ipcauth.read() not in out
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["ipc", "token", "--plan", "--init"])
+
+
+def test_brain_init_prints_the_local_services_in_the_same_order():
+    lines = wizards.local_lines()
+    assert lines[0].strip().startswith("local services (optional: only where the telemetry collector runs")
+    assert [ln.strip().split(".", 1)[0] for ln in lines[1:]] == ["1", "2", "3", "4", "5", "6"]
+    assert lines[1].strip() == "1. brain ipc token --plan, then brain ipc token --init"
+    assert "the owner's: install.ps1 -Apply" in lines[2] and "brain bundle apply sovereign" in lines[4]
