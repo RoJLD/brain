@@ -742,8 +742,6 @@ def home_sizes(until: float | None = None, between=None, *,
     entered, nor a link or a junction followed; an empty folder counts 0. ``until``: a ``time.monotonic()`` deadline
     tested before each entry the walk takes, so a slow tree cannot overrun it; ``between``: called before each top
     name (a caller's stop raises from it). One ``lstat`` per entry."""
-    import time
-
     cfg = cfg or config.load()
     declared, _ = stores(cfg)
     every = effective(declared)
@@ -759,25 +757,34 @@ def home_sizes(until: float | None = None, between=None, *,
     for i, name in enumerate(names):
         if between:
             between()
-        total, stack = 0, [home / name]
-        while stack:
-            if until is not None and time.monotonic() > until:
-                sizes[name] = total
-                return sizes, name, names[i + 1:]
-            p = stack.pop()
-            try:
-                st = os.lstat(p)
-                if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & getattr(
-                        stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
-                    continue
-                if stat.S_ISREG(st.st_mode):
-                    total += st.st_size
-                elif stat.S_ISDIR(st.st_mode):
-                    stack += [c for c in p.iterdir() if c not in refused]
-            except OSError:
-                continue
-        sizes[name] = total
+        sizes[name], cut = _tree_size(home / name, refused, until)
+        if cut:
+            return sizes, name, names[i + 1:]
     return sizes, None, []
+
+
+def _tree_size(top: Path, refused: set[Path], until: float | None) -> tuple[int, bool]:
+    """(bytes under ``top``, cut by the deadline): one ``lstat`` per entry, a refused root never entered, a link or a
+    reparse point never followed; ``until`` tested before each entry."""
+    import time
+
+    total, stack = 0, [top]
+    while stack:
+        if until is not None and time.monotonic() > until:
+            return total, True
+        p = stack.pop()
+        try:
+            st = os.lstat(p)
+            if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & getattr(
+                    stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+                continue
+            if stat.S_ISREG(st.st_mode):
+                total += st.st_size
+            elif stat.S_ISDIR(st.st_mode):
+                stack += [c for c in p.iterdir() if c not in refused]
+        except OSError:
+            continue
+    return total, False
 
 
 def _is_link(p: Path) -> bool:
