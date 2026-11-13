@@ -220,7 +220,13 @@
             "fresh_minutes": {"type": "number", "minimum": 0, "description": "a new session or workflow is refused while the newest quota reading is older (default 60; 0: never)"},
             "live_minutes": {"type": "number", "minimum": 0, "description": "a session counts as running when active this recently (default 30)"},
             "brainstorm_hours": {"type": "number", "minimum": 0, "description": "a brainstorm counts as open when active this recently and not archived (default 12)"},
-            "brainstorm_title": {"type": "string", "description": "the regular expression a brainstorm's title matches, besides its brief's Task class: brainstorm or #brainstorm (default ^\\W*brainstorm\\b, case ignored)"}
+            "brainstorm_title": {"type": "string", "description": "the regular expression a brainstorm's title matches, besides its brief's Task class: brainstorm or #brainstorm (default ^\\W*brainstorm\\b, case ignored)"},
+            "wave_quota": {"type": "object", "additionalProperties": false, "description": "The wave quota gate (wi-brain-wave-quota-gate), off while absent: before a start_session that starts a session now, ask the owner when the week's forecast at its reset (brain usage quota's pace) plus the stream's estimate (its brief's usd=, else the median session's) goes over ask_over_pct, and refuse a new stream of a master that already has max_streams live ones (running or starting children in the desktop app). brain brief, brain wave plan and brain usage guard say how many streams fit now. It fails open: a forecast or a session tree it cannot read lets the start through, with a note.",
+              "properties": {
+                "ask_over_pct": {"type": "number", "minimum": 0, "maximum": 100, "description": "% of the week at its reset over which a new stream asks the owner (default 90; 0: no quota check)"},
+                "max_streams": {"type": "integer", "minimum": 0, "description": "the live streams of one master, at most, their reviews included (default 3; 0: no streams cap)"}
+              }
+            }
           }
         }
       }

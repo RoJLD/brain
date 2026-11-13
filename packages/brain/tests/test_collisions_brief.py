@@ -270,3 +270,44 @@ def test_brief_writes_the_failure_modes_of_the_items_surfaces_then_its_own(proje
                                 ["-def test_old(): pass"], public=True)
     assert [x.split("**")[1] for x in lines] == ["a guard or a gate", "a test removed or a check moved",
                                                  "the public engine"]   # the reviewed repo is public
+
+
+def test_brief_says_how_many_streams_fit_now(project, tmp_path, monkeypatch, brain_home):
+    """wi-brain-wave-quota-gate: while usage.guard.wave_quota is set, the brief says how many streams fit now for its
+    coordinator: its live streams under max_streams, and the streams at the item's estimate under ask_over_pct at the
+    reset (a real forecast: 232 % at the reset, so none by the quota); without the key, no line."""
+    import json
+    import shutil
+    from datetime import datetime, timezone
+
+    from brain import governor
+    from test_wave_quota_gate import QUOTA, WORKING, app_file, transcript
+    cfg = tmp_path / "brain4"
+    cfg.mkdir()
+    (cfg / "config.json").write_text(json.dumps({"v": 1, "identity": {"owner": "Ada"}, "usage": {
+        "guard": {"wave_quota": {"ask_over_pct": 90, "max_streams": 3}}}}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg / "config.json"))
+    (brain_home / "usage").mkdir(parents=True)
+    shutil.copy(QUOTA / "quota.json", brain_home / "usage" / "quota.json")
+    shutil.copy(QUOTA / "quota.jsonl", brain_home / "usage" / "quota.jsonl")
+    now = datetime(2026, 11, 13, 12, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(governor, "_now", lambda: now)
+    app = tmp_path / "appdata" / "Claude-Data" / "claude_t" / "claude-code-sessions"
+    (app / "acct" / "org").mkdir(parents=True)
+    ada = type("Ada", (), {"app": app})
+    coord = "local_c0000000-0000-4000-8000-000000000000"
+    app_file(ada, coord, "coord-cli", "Ada's coordinator", created=now)
+    app_file(ada, "local_c0000000-0000-4000-8000-000000000001", "kid-1", "First stream", parent=coord, created=now,
+             name="first")
+    transcript(tmp_path, "kid-1", *WORKING, at=now)
+    monkeypatch.setattr(brief, "_estimate", lambda p, nid, cls: "2026-11-13 class=standard n=4 usd=11.00 [8-14]")
+    b = brief.build(project, "wi-c", coordinator=coord)
+    text = brief.render(b)
+    assert ("- **Streams that fit now:** 0 (by the quota 0: the week 78 % now, 232 % at its reset 2026-11-16 12:00 UTC "
+            "at the last forecast's pace, asked over 90 %, a stream 0.7 %; by the streams 2: 1 live of 3 (first); "
+            "usage.guard.wave_quota)") in text
+    assert text.index("**Cost estimate:**") < text.index("**Streams that fit now:**") < text.index("**Coordinator:**")
+    assert b.as_dict()["streams"] == b.streams
+    (cfg / "config.json").write_text('{"v": 1, "identity": {"owner": "Ada"}}', encoding="utf-8")
+    b = brief.build(project, "wi-c", coordinator=coord)
+    assert b.streams == "" and "Streams that fit" not in brief.render(b)

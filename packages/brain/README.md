@@ -548,7 +548,11 @@ fragments; `--hot` adds one) counted apart and listed, to merge origin/main befo
 prerequisite comes a round earlier, the lots that unblock the most first, at most the sessions cap in force less the
 master's and `N` PRs verified at once (3) a round. It prints the rounds, the predicted conflicts, the hot files shared
 and the items with no known surface (each a lot of its own, unchecked), with what the memory guard and the last quota
-forecast say now; it refuses nothing. `brain next` shows the current wave's first round.
+forecast say now; it refuses nothing. While `usage.guard.wave_quota` is set, a round holds at most its `max_streams`
+lots, and the plan says how many streams fit now: this session's live streams under `max_streams`, and the first
+round's lots, each at the sum of its items' recorded estimates (`props.cost_estimate`; none: the median session's),
+under `ask_over_pct` at the week's reset (docs/guards.md, « The wave quota gate »). `brain next` shows the current
+wave's first round, and that line.
 
 ### Item sizes
 
@@ -891,7 +895,9 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   can start now, and those that wait on a branch and its session.
 - **`brain brief ITEM [--class C] [--budget B] [--coordinator ID]`**: a sub-session's brief from the graph: the item
   and its subgraph, its collisions, the class's model and effort (config.json `brief.classes`), the budget, the cost
-  estimate, the coordinator's id, what to do after the merge (the close-item procedure's step 5: the session that
+  estimate, while `usage.guard.wave_quota` is set the streams that fit now for the coordinator (its live streams
+  under `max_streams`, the streams at the item's estimate under `ask_over_pct` at the week's reset), the coordinator's
+  id, what to do after the merge (the close-item procedure's step 5: the session that
   merges its own PR archives itself once the main checkout is pulled, the note written and its report sent; a
   coordinator archives a child whose report says merged and verified without asking again; never another running session
   or one with uncommitted or unmerged work; the owner's app setting `auto_archive_inactive_days = 7` as the
@@ -1632,11 +1638,20 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   counted; a project's `usage: {brainstorms: N}` in `projects.yaml` lowers it for itself, never raises it), a new
   session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (an opt-in floor, 0 by default; both
   shown by `brain usage guard` and `brain status`, the refusal naming the one), or while the newest quota reading is older than
-  `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
-  now. A refusal names its reason and the allow that lifts it: `brain usage allow [--check NAME] [--hours H]` in the
-  owner's own terminal (the guards refuse it to a session), which lifts the memory and session caps by default, a
-  quota threshold only by `--check`, a stale reading never; each allow and its end go to the guards ledger; or
-  `BRAIN_GUARD_ALLOW=usage` (`usage:CHECK` for one). Its decision takes under 50 ms.
+  `fresh_minutes`. With `usage.guard.wave_quota` (off by default; `{"ask_over_pct": 90, "max_streams": 3}`), a
+  session started now is refused when its master already has `max_streams` live streams (its running or starting
+  children in the desktop app), and asks the owner when the week's forecast at its reset plus the stream's estimate
+  (its brief's `usd=`, else the median session's) goes over `ask_over_pct`; what it cannot read lets the start
+  through with a note, and `brain brief`, `brain wave plan` and `brain usage guard` say how many streams fit now
+  ([`docs/guards.md`](docs/guards.md), « The wave quota gate »). The thresholds are config.json `usage.guard`;
+  `brain usage guard` shows what each tool would get now. A refusal names its reason and the allow that lifts it:
+  `brain usage allow [--check NAME] [--hours H]` in the owner's own terminal (the guards refuse it to a session),
+  which lifts the memory and session caps by default, a quota threshold or the wave quota gate's checks
+  (`streams`, `wave_quota`) only by `--check`, a stale reading never; each allow and its end go to the guards ledger; or
+  `BRAIN_GUARD_ALLOW=usage` (`usage:CHECK` for one). Its decision takes under 50 ms for `Agent`, `Task` and
+  `Workflow`, and for `start_session` with the wave quota gate off; with it on, a `start_session` also reads the app's
+  sessions, the transcript folders once and the children's tails: ~40-70 ms measured on a machine of 204 app sessions
+  and a master of 5 children, bounded at 2 s.
 
 The quota conversion (`brain usage quota`) is per plan: only the readings of the plan in force (config.json
 `usage.plans`) count, and until the plan has 3 converted readings it says "uncalibrated", does not convert the week and
