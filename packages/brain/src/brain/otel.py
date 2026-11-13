@@ -809,8 +809,7 @@ def status(cfg, where: Path | None = None, url: str = HEALTH_URL, timeout: float
     state, seen = probe(url, timeout)
     sig = {s: signal_state(where, s) for s in SIGNALS}
     on, up = bool(exp["settings"]), state == "up"
-    stale = [s for s in exp["signals"] if now - sig[s]["last"] > stale_hours * 3600]
-    activity, whole = last_activity(projects) if up and on and stale else (0.0, True)   # walked only when needed
+    activity, whole = _activity_if_needed(exp, sig, up and on, now - stale_hours * 3600, projects)
     lines = _export_lines(exp) + [_collector_line(url, state, seen, on)]
     if not where.is_dir():
         lines.append(("warning", f"no collector files in {where} (its placement data is not home: the files stay in "
@@ -844,6 +843,14 @@ def _collector_line(url: str, state: str, seen: str, on: bool) -> tuple[str, str
     if on:
         return ("FAIL", f"the collector does not answer at {url}: {state}, {seen} (brain up otel-collector)")
     return ("OFF", f"the collector does not answer at {url}: {state}, {seen}")
+
+
+def _activity_if_needed(exp: dict, sig: dict, live: bool, cutoff: float, projects: Path | None) -> tuple[float, bool]:
+    """:func:`last_activity`, walked only when the export is on, the collector answers and an exported signal's last
+    record is older than ``cutoff``; (0.0, True) otherwise."""
+    if live and any(sig[s]["last"] < cutoff for s in exp["signals"]):
+        return last_activity(projects)
+    return 0.0, True
 
 
 def _active_after(last: float, activity: float, now: float, window: float) -> bool:
