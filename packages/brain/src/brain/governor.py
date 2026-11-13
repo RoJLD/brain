@@ -39,9 +39,14 @@ The checks, in order; the first that holds decides:
 - ``warn``: a window at ``warn`` % or more: ask the owner, for every tool.
 
 The thresholds and caps are config.json's ``usage.guard`` (:data:`DEFAULTS`), never rule text. A refusal names the
-reason and the owner's ways to override: ``brain usage allow [--hours H]`` in their own terminal (the guards refuse it
-to a session, and any write of its file), or ``BRAIN_GUARD_ALLOW=usage`` in Claude Code's environment. Refusals, asks
-and overrides go to the guards ledger (``guard: usage``, the check that decided). Any error lets the call through and
+reason and the allow that lifts it (wi-brain-governor-override-scope, RETRO-8): ``brain usage allow [--check NAME]
+[--hours H]`` in the owner's own terminal (the guards refuse it to a session, and any write of its file) lifts checks,
+not the governor: by default the memory and session caps (:data:`DEFAULT_LIFT`), a quota threshold only when named
+(critical lifts warn too), a stale reading never (reading it again is one call); a lifted check lets the next one
+decide. ``BRAIN_GUARD_ALLOW=usage`` in Claude Code's environment lifts every check, ``usage:CHECK`` one. Refusals,
+asks and overrides go to the guards ledger (``guard: usage``, the check that decided, ``by`` the allow or the
+variable), and so does each allow and its end (``check: allow``, ``decision`` allowed or ended: ended or expired);
+an allow adds to the one in force. Any error lets the call through and
 goes to ``ledger/errors.log``: the hook never breaks a session.
 
 Not applied here: ``CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS`` (the workflow agents running at once, ~8 from the
@@ -74,6 +79,9 @@ WINDOWS = {"week": timedelta(days=7), "5h": timedelta(hours=5)}
 OPTED_IN = timedelta(days=7)        # a machine with a reading this recent is checked for stale readings
 PENDING = timedelta(minutes=10)     # a brainstorm start counts this long before the app shows its session
 ALLOW_HOURS = 2.0
+CHECKS = ("critical", "stale", "memory", "sessions", "brainstorms", "warn")   # verdict's, in its order
+LIFTABLE = ("critical", "memory", "sessions", "brainstorms", "warn")   # never stale: one get_usage call refreshes it
+DEFAULT_LIFT = ("memory", "sessions", "brainstorms")   # what brain usage allow lifts without --check (RETRO-8)
 
 
 def kind(tool: str) -> str:
@@ -485,32 +493,135 @@ def allow_file() -> Path:
 
 
 def override_until(now: datetime) -> dict | None:
-    """The owner's override (brain usage allow) while it holds: {until, reason, at}, else None."""
-    data = _read_json(allow_file())
-    until = _dt(data.get("until")) if isinstance(data, dict) else None
-    return data if until and until > now else None
-
-
-def allow(hours: float = ALLOW_HOURS, reason: str = "", now: datetime | None = None) -> dict:
-    """``brain usage allow``: lift the governor for ``hours`` (0: end the override now); the owner's, in their own
-    terminal (brain.guards refuses it to a session)."""
-    now = now or _now()
+    """The owner's override (brain usage allow) while it holds: {until, reason, at, checks}, else None. One whose
+    time has passed is ended (:func:`_expire`)."""
     f = allow_file()
-    if hours <= 0:
+    data = _read_json(f)
+    until = _dt(data.get("until")) if isinstance(data, dict) else None
+    if until and until > now:
+        return data
+    if until:
+        return _expire(f, now)
+    return None
+
+
+def _expire(f: Path, now: datetime) -> dict | None:
+    """End the override file ``f`` whose time has passed, its end written once to the guards ledger: the file is
+    claimed first (renamed), so that two hooks never both write it, then read again: an allow the owner wrote since
+    (it holds) is put back, never deleted. Returns the override that holds after it, else None."""
+    claim = f.with_name(f".{f.name}.{os.getpid()}.ending")
+    try:
+        os.replace(f, claim)
+    except OSError:   # another process claimed it, or it is gone
+        return None
+    data = _read_json(claim)
+    until = _dt(data.get("until")) if isinstance(data, dict) else None
+    if until and until > now:   # the owner's new allow, written between the read and the claim: it stays
         try:
-            f.unlink()
+            if not f.exists():
+                os.replace(claim, f)
+                return data
         except OSError:
             pass
+        _unlink(claim)
+        return override_until(now)
+    _unlink(claim)
+    if until:
+        _ledger(_ended(data, "expired"))
+    return None
+
+
+def _unlink(f: Path) -> None:
+    try:
+        f.unlink()
+    except OSError:
+        pass
+
+
+def lifted_checks(override: dict | None) -> tuple[str, ...]:
+    """The checks an override lifts: its ``checks`` (the liftable ones, critical with warn); an override written
+    before 0.5.1 has no ``checks`` key and lifts every liftable check, as it did then; any other value lifts none."""
+    if not override:
+        return ()
+    if "checks" not in override:
+        return LIFTABLE
+    checks = override["checks"]
+    if not isinstance(checks, list):
+        return ()
+    return tuple(c for c in LIFTABLE if c in checks or (c == "warn" and "critical" in checks))
+
+
+def implied(check: str) -> tuple[str, ...]:
+    """The checks lifting ``check`` lifts: critical lifts warn too (the same windows, past the higher threshold)."""
+    return (check, "warn") if check == "critical" else (check,)
+
+
+def _ledger(rec: dict) -> None:
+    """A line of the guards ledger (when it exists), the usage guard's: an allow, its end, a decision."""
+    d = paths.ledger_dir()
+    if os.environ.get("BRAIN_CAPTURE", "1") == "0" or not d.is_dir():
+        return
+    rec = {"at": _iso(_now()), "event": "guard", "guard": GUARD, **rec}
+    timing.append(d / f"guards-{rec['at'][:7]}.jsonl", rec)  # the guards ledger's lock (brain.timing)
+
+
+def _ended(data: dict, why: str) -> dict:
+    """The ledger line of an override's end (``why``: ended, expired)."""
+    return {"check": "allow", "decision": "ended", "why": why, "checks": list(lifted_checks(data)),
+            "since": data.get("at"), "until": data.get("until"), "reason": data.get("reason", "")}
+
+
+def _names(checks, hours: float) -> list[str]:
+    """The checks an allow names (default :data:`DEFAULT_LIFT`), each once; ValueError for one it never lifts, or
+    for checks named with --hours 0 (which ends the whole override)."""
+    if checks and hours <= 0:
+        raise ValueError("--hours 0 ends the whole override: give no --check with it")
+    names = list(DEFAULT_LIFT if not checks else dict.fromkeys(checks))
+    bad = [c for c in names if c not in LIFTABLE]
+    if bad:
+        raise ValueError(f"{', '.join(bad)}: not a check brain usage allow lifts (one of {', '.join(LIFTABLE)}; "
+                         "a stale reading is refreshed by one get_usage call, never lifted)")
+    return names
+
+
+def allow(hours: float = ALLOW_HOURS, reason: str = "", now: datetime | None = None,
+          checks: list[str] | tuple[str, ...] | None = None) -> dict:
+    """``brain usage allow``: lift ``checks`` (default :data:`DEFAULT_LIFT`, the memory and session caps; never
+    ``stale``) for ``hours``; the owner's, in their own terminal (brain.guards refuses it to a session). An allow
+    adds to the one in force (its checks kept, the later end kept), so following the hint of one refusal never undoes
+    the allow of another; ``hours`` 0 ends the override, whatever it lifts. Each allow and each end are written to the
+    guards ledger (an end once: an override found past its time is ended as expired)."""
+    now = now or _now()
+    names = _names(checks, hours)
+    f = allow_file()
+    old = override_until(now)   # an override past its time is ended here, as expired
+    if hours <= 0:
+        if f.exists():
+            _unlink(f)
+            if old:
+                _ledger(_ended(old, "ended"))
         return {}
-    rec = {"v": 1, "at": _iso(now), "until": _iso(now + timedelta(hours=hours)), "reason": reason}
+    until = now + timedelta(hours=hours)
+    kept = [c for c in lifted_checks(old) if c not in names] if old else []
+    if old and (_dt(old.get("until")) or until) > until:
+        until = _dt(old["until"])
+    rec = {"v": 1, "at": _iso(now), "until": _iso(until), "reason": reason, "checks": names + kept}
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+    tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, f)   # whole or absent, never deleted first: a hook never reads half an override, nor none
+    finally:
+        _unlink(tmp)
+    _ledger({"check": "allow", "decision": "allowed", "checks": rec["checks"], "added": names, "since": rec["at"],
+             "until": rec["until"], "reason": reason})
     return rec
 
 
-def _env_allowed() -> bool:
+def _env_allowed(check: str) -> bool:
+    """BRAIN_GUARD_ALLOW in Claude Code's environment: usage (or all) lifts every check, usage:CHECK that one."""
     names = {w.strip().lower() for w in os.environ.get("BRAIN_GUARD_ALLOW", "").split(",") if w.strip()}
-    return bool(names & {"usage", "all"} or any(n.startswith("usage:") for n in names))
+    return bool(names & {"usage", "all"} or any(check in implied(n[6:]) for n in names if n.startswith("usage:")))
 
 
 # --- the decision --------------------------------------------------------------------------------------------------
@@ -559,68 +670,83 @@ def _how_to_note() -> str:
             "(and --window 5h for the 5-hour one)")
 
 
-def verdict(s: dict) -> tuple[str, str, str] | None:
-    """(decision, check, reason) for the state ``s`` (:func:`state`): deny or ask; None to let the call through."""
+def verdict(s: dict, skip=()) -> tuple[str, str, str] | None:
+    """(decision, check, reason) for the state ``s`` (:func:`state`): deny or ask; None to let the call through. The
+    checks in ``skip`` (an override's) are passed over, so the next one that holds still decides."""
     lim, q, k = s["caps"], s["quota"], s["kind"]
     if not k or not lim["enabled"]:
         return None
+    return next((v for v in _verdicts(s, lim, q, k) if v[1] not in skip), None)
+
+
+def _verdicts(s: dict, lim: dict, q: dict, k: str):
+    """Each check that holds, as (decision, check, reason), in :data:`CHECKS`' order, computed as it is asked for."""
     what = {"session": "a new session", "agent": "a subagent", "workflow": "a workflow"}[k]
     wins = sorted(q["windows"].items(), key=lambda kv: -kv[1]["pct"])
     top = wins[0] if wins else None
     if top and top[1]["pct"] >= lim["critical"]:
-        return ("deny", "critical", f"{what} refused: the {top[0]} quota is at {top[1]['pct']:.0f} % "
+        yield ("deny", "critical", f"{what} refused: the {top[0]} quota is at {top[1]['pct']:.0f} % "
                 f"(CRITICAL from {lim['critical']:g} %, {top[1]['how']} at {top[1]['at'][11:16]} UTC; resets "
                 f"{top[1]['resets'][:16].replace('T', ' ')} UTC): finish the live work, start nothing new")
     if k in ("session", "workflow") and q["opted_in"] and lim["fresh_minutes"]:
-        newest = _dt(q["newest"])
-        age = (_dt(s["now"]) - newest).total_seconds() / 60 if newest else None
-        if age is not None and age > lim["fresh_minutes"]:
-            return ("deny", "stale", f"{what} refused until the quota is read: the newest reading is {age:.0f} min "
-                    f"old (more than {lim['fresh_minutes']:g}); {_how_to_note()}, then start it again")
+        yield from _stale(s, lim, q, what)
     mem, ram = s.get("memory"), s.get("ram_available_gb")
     which = memory_refusal(mem, ram, lim)
     if which:
         by = {"both": "both memory measures", "committed": "the committed memory",
               "available": "the available RAM"}[which]
-        return ("deny", "memory", f"{what} refused by {by}: the machine is at {memory_text(mem, ram, lim)}; close "
+        yield ("deny", "memory", f"{what} refused by {by}: the machine is at {memory_text(mem, ram, lim)}; close "
                 "or archive a session first")
     if k == "session":
-        ss = s["sessions"]
-        cap, why = int(lim["sessions"]), f"usage.guard.sessions {lim['sessions']:g}"
-        if s.get("quota_cap") is not None and s["quota_cap"] < cap:
-            cap, why = s["quota_cap"], (f"what the week's room pays for: {100 - q['windows']['week']['pct']:.0f} % "
-                                        f"left, {lim['wave_hours']:g} h at "
-                                        f"${s.get('session_hour_usd') or lim['session_hour_usd']:g} per "
-                                        "session-hour" + (" measured" if s.get("session_hour_applied") else "")
-                                        + ", the master's share kept")
-        if ss["running"] >= cap:
-            return ("deny", "sessions", f"{what} refused: {ss['running']} session(s) running in parallel, the cap is "
-                    f"{cap} ({why}); finish or archive one first")
-        if s["brainstorm"] and ss["brainstorms"] >= lim["brainstorms"]:
-            names = ", ".join(t for t in ss["brainstorm_titles"][:4] if t)
-            return ("deny", "brainstorms", f"a new brainstorm refused: {ss['brainstorms']} brainstorm(s) open on this "
-                    f"machine ({names or 'not named'}), the cap is {lim['brainstorms']:g}"
-                    + (f" for {s['project']}" if s["project"] else "") + "; finish or archive one first")
+        yield from _session_caps(s, lim, q, what)
     if top and top[1]["pct"] >= lim["warn"]:
-        return ("ask", "warn", f"{what}: the {top[0]} quota is at {top[1]['pct']:.0f} % (WARN from "
+        yield ("ask", "warn", f"{what}: the {top[0]} quota is at {top[1]['pct']:.0f} % (WARN from "
                 f"{lim['warn']:g} %, CRITICAL from {lim['critical']:g} %); start it anyway?")
-    return None
 
 
-def override_hint(owner: str) -> str:
-    return (f"Override ({owner} only): brain usage allow --hours {ALLOW_HOURS:g} in their own terminal (refused to "
-            "sessions), or BRAIN_GUARD_ALLOW=usage in Claude Code's environment")
+def _stale(s: dict, lim: dict, q: dict, what: str):
+    """The stale check: the newest quota reading older than fresh_minutes."""
+    newest = _dt(q["newest"])
+    age = (_dt(s["now"]) - newest).total_seconds() / 60 if newest else None
+    if age is not None and age > lim["fresh_minutes"]:
+        yield ("deny", "stale", f"{what} refused until the quota is read: the newest reading is {age:.0f} min "
+                f"old (more than {lim['fresh_minutes']:g}); {_how_to_note()}, then start it again")
 
 
-def _record(payload: dict, check: str, decision: str, reason: str) -> None:
-    d = paths.ledger_dir()
-    if os.environ.get("BRAIN_CAPTURE", "1") == "0" or not d.is_dir():
-        return
-    at = _iso(_now())
-    rec = {"at": at, "event": "guard", "guard": GUARD, "check": check, "decision": decision, "reason": reason,
-           "tool": payload.get("tool_name"), "session_id": payload.get("session_id"),
-           "tool_use_id": payload.get("tool_use_id"), "cwd": payload.get("cwd")}
-    timing.append(d / f"guards-{at[:7]}.jsonl", rec)  # the guards ledger's lock (brain.timing)
+def _session_caps(s: dict, lim: dict, q: dict, what: str):
+    """A new session's caps, in order: the parallel sessions, then the brainstorms."""
+    ss = s["sessions"]
+    cap, why = int(lim["sessions"]), f"usage.guard.sessions {lim['sessions']:g}"
+    if s.get("quota_cap") is not None and s["quota_cap"] < cap:
+        cap, why = s["quota_cap"], (f"what the week's room pays for: {100 - q['windows']['week']['pct']:.0f} % "
+                                    f"left, {lim['wave_hours']:g} h at "
+                                    f"${s.get('session_hour_usd') or lim['session_hour_usd']:g} per "
+                                    "session-hour" + (" measured" if s.get("session_hour_applied") else "")
+                                    + ", the master's share kept")
+    if ss["running"] >= cap:
+        yield ("deny", "sessions", f"{what} refused: {ss['running']} session(s) running in parallel, the cap is "
+                f"{cap} ({why}); finish or archive one first")
+    if s["brainstorm"] and ss["brainstorms"] >= lim["brainstorms"]:
+        names = ", ".join(t for t in ss["brainstorm_titles"][:4] if t)
+        yield ("deny", "brainstorms", f"a new brainstorm refused: {ss['brainstorms']} brainstorm(s) open on this "
+                f"machine ({names or 'not named'}), the cap is {lim['brainstorms']:g}"
+                + (f" for {s['project']}" if s["project"] else "") + "; finish or archive one first")
+
+
+def override_hint(owner: str, check: str = "") -> str:
+    """The allow that lifts ``check``, named in its refusal: none for a stale reading (one call refreshes it)."""
+    if check == "stale":
+        return (f"No allow lifts a stale reading: reading the quota is one call ({owner} only: BRAIN_GUARD_ALLOW=usage "
+                "in Claude Code's environment)")
+    aim = "" if not check or check in DEFAULT_LIFT else f" --check {check}"
+    return (f"Override ({owner} only): brain usage allow{aim} --hours {ALLOW_HOURS:g} in their own terminal (refused "
+            f"to sessions), or BRAIN_GUARD_ALLOW=usage{':' + check if check else ''} in Claude Code's environment")
+
+
+def _record(payload: dict, check: str, decision: str, reason: str, by: str = "") -> None:
+    rec = {"check": check, "decision": decision, "reason": reason, "tool": payload.get("tool_name"),
+           "session_id": payload.get("session_id"), "tool_use_id": payload.get("tool_use_id"), "cwd": payload.get("cwd")}
+    _ledger({**rec, "by": by} if by else rec)
 
 
 def _note_start(payload: dict, s: dict) -> None:
@@ -652,10 +778,12 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
     if not kind(payload.get("tool_name") or ""):
         return None
     s = state(payload, now)
+    lifted, skip = lifted_checks(s["override"]), []
     v = verdict(s)
-    if v and (s["override"] or _env_allowed()):
-        _record(payload, v[1], "overridden", v[2])
-        v = None
+    while v and (v[1] in lifted or _env_allowed(v[1])):   # each lifted check written, then the next that holds
+        _record(payload, v[1], "overridden", v[2], by="allow" if v[1] in lifted else "BRAIN_GUARD_ALLOW")
+        skip.append(v[1])
+        v = verdict(s, skip)
     if s["kind"] == "session":
         from . import budget
         budget.expire(str(payload.get("session_id") or ""))   # the budget watch checks at the next call: a master
@@ -670,7 +798,7 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
     _record(payload, check, "denied" if decision == "deny" else "asked", reason)
     text = f"{s['plugin']} usage guard: {reason}."
     if decision == "deny":
-        text += f" {override_hint(s['owner'])}."
+        text += f" {override_hint(s['owner'], check)}."
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                    "permissionDecisionReason": text}}
 
@@ -699,7 +827,7 @@ def report(cwd: str, now: datetime | None = None) -> dict:
     for tool, inp in (("mcp__ccd_session__start_session", {"title": "a session"}),
                       ("mcp__ccd_session__start_session", {"title": "Brainstorm"}), ("Agent", {}), ("Workflow", {})):
         s = state({"tool_name": tool, "tool_input": inp, "cwd": cwd}, now)
-        v = verdict(s)
+        v = verdict(s, lifted_checks(s["override"]))   # what the hook decides: the override's checks passed over
         name = "brainstorm" if inp.get("title") == "Brainstorm" else kind(tool)
         out[name] = {"decision": v[0] if v else "allow", "check": v[1] if v else "", "reason": v[2] if v else ""}
         out.setdefault("state", s)
@@ -738,8 +866,8 @@ def render(rep: dict) -> list[str]:
     out += _session_lines(s, lim, q)
     out.append(f"  memory    {memory_text(s.get('memory'), s.get('ram_available_gb'), lim)}")
     ov = s.get("override")
-    out.append(f"  override  until {ov['until']}" + (f" ({ov['reason']})" if ov.get("reason") else "") if ov
-               else "  override  none")
+    out.append(f"  override  {', '.join(lifted_checks(ov))} until {ov['until']}"
+               + (f" ({ov['reason']})" if ov.get("reason") else "") if ov else "  override  none")
     for name in ("session", "brainstorm", "agent", "workflow"):
         r = rep[name]
         out.append(f"  {name:<10} {r['decision']}" + (f" ({r['check']}): {r['reason']}" if r["check"] else ""))
