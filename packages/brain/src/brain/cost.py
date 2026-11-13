@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import config, graph, paths, projects, queue, resume, sizing, usage
+from . import config, graph, paths, projects, provenance, queue, resume, sizing, usage
 
 MIN_SIMILAR = 3
 OFF = 1.5  # an actual above OFF x its estimate, or below estimate / OFF, is off
@@ -62,7 +62,8 @@ TRIVIAL_STEPS = {"grep", "head", "tail", "sed", "cat", "cut", "ls", "wc", "sort"
                  "Read", "Edit", "Write", "Grep", "Glob", "MultiEdit", "diff", "jq", "test", "[", "nl", "file"}
 TOP = 10
 CLASSES = ("trivial", "standard", "strategic")
-SESSION_DIMS = ("project", "class", "kind", "model", "pr")
+SOURCE_DIMS = ("provider", "harness", "account")   # where a session ran (brain.provenance)
+SESSION_DIMS = ("project", "class", "kind", "model", "pr", *SOURCE_DIMS)
 ITEM_DIMS = ("item", "theme", "milestone")
 PART_DIMS = {"phase": "phases", "tool": "tools", "command": "commands", "skill": "skills"}
 TIME_DIMS = ("day", "week")
@@ -125,12 +126,14 @@ def item_prs(pr_prop: str) -> list[str]:
 class Ledger:
     """The ledger's rows (the projects placed by the registry) joined to the projects' backlogs."""
 
-    def __init__(self, rows: list[dict], projs: list[projects.Project], placer=None) -> None:
+    def __init__(self, rows: list[dict], projs: list[projects.Project], placer=None, cfg_usage=None) -> None:
         placer = placer or queue.Placer(projs)
+        accts = provenance.accounts(cfg_usage)
         self.rows = []
         for r in rows:
             r = dict(r)
             r["project"] = (placer(r["folder"]) if r.get("folder") else "") or queue.OUTSIDE
+            r.update(provenance.of_row(r, cfg_usage, accts))   # where it ran, read at report time
             self.rows.append(r)
         self.parent = usage.link_families(self.rows)
         self.items: dict[str, Item] = {}
@@ -718,12 +721,45 @@ def report(led: Ledger, since: str, until: str, by: str, plans=None) -> dict:
            "unpriced": sum(r.get("unpriced") or 0 for r in rows), "start": start,
            "agents": agents_split(rows, since, until)}
     dims = ("project", "item", "class", "phase", "tool", "command") if by == "summary" else (by,)
+    rep["sources"] = sources(rows)
     rep["tables"] = {d: (sequences(rows) if d == "sequences" else table_of(led, rows, d, since, until)) for d in dims}
     if by == "summary":
         if rep["agents"]["workflows"]["runs"]:
             rep["tables"]["workflow"] = table_of(led, rows, "workflow", since, until)
         rep["tables"]["sequences"] = sequences(rows)
     return rep
+
+
+def sources(rows: list[dict]) -> dict:
+    """Where the sessions ran: {provider|harness|account: [{key, cost, share, sessions}]}, costliest first; an
+    account's row carries its plan(s)."""
+    total = sum(r.get("cost") or 0 for r in rows) or 1e-9
+    out: dict[str, list[dict]] = {}
+    for dim in SOURCE_DIMS:
+        groups: dict[str, dict] = {}
+        for r in rows:
+            g = groups.setdefault(r.get(dim) or provenance.NONE, {"cost": 0.0, "sessions": 0, "plans": set()})
+            g["cost"] += r.get("cost") or 0
+            g["sessions"] += 1
+            if r.get("plan") and r["plan"] != provenance.NONE:
+                g["plans"].add(r["plan"])
+        out[dim] = sorted(({"key": k, "cost": round(g["cost"], 4), "share": round(g["cost"] / total, 4),
+                            "sessions": g["sessions"], **({"plans": sorted(g["plans"])} if dim == "account" else {})}
+                           for k, g in groups.items()), key=lambda x: (-x["cost"], x["key"]))
+    return out
+
+
+def sources_line(src: dict, limit: int = 3) -> str:
+    """``provider anthropic $12 (100%); harness claude-code $12 (100%); account main (Max) $10 (83%), ...``."""
+    parts = []
+    for dim in SOURCE_DIMS:
+        rows = src.get(dim) or []
+        if not rows:
+            continue
+        shown = [f"{r['key']}" + (f" ({', '.join(r['plans'])})" if r.get("plans") else "")
+                 + f" {usage.usd(r['cost'])} ({_pct(r['share'])})" for r in rows[:limit]]
+        parts.append(f"{dim} " + ", ".join(shown) + (f" and {len(rows) - limit} more" if len(rows) > limit else ""))
+    return "; ".join(parts)
 
 
 def _pct(x: float) -> str:
@@ -746,6 +782,8 @@ def render_report(rep: dict, top: int = TOP) -> list[str]:
                      f"{a['subagents']['count']} agent(s)), workflows {usage.usd(a['workflows']['cost'])} "
                      f"({_pct(a['workflows']['cost'] / whole)}, {a['workflows']['runs']} run(s), "
                      f"{a['workflows']['agents']} agent(s))")
+    if rep.get("sessions") and rep.get("sources"):
+        lines.append(f"  where: {sources_line(rep['sources'])}")
     s = rep["start"]
     if s["n"]:
         lines.append(f"  a session's start ({usage.START_MESSAGES} first messages): median {usage.usd(s['median'])}, "
@@ -886,7 +924,8 @@ def summary_of(led: Ledger, name: str, since: str, until: str = "", top: int = 3
             "p90": q.get("p90"),
             "items": [[r["key"], round(r["total"], 2)] for r in table_of(led, rows, "item", since, until)[:top]],
             "phases": [[r["key"], round(r["share"], 3)] for r in table_of(led, rows, "phase", since, until)[:top]],
-            "candidates": [[r["key"], r["sessions"], round(r["total"], 2)] for r in sequences(rows)[:top]]}
+            "candidates": [[r["key"], r["sessions"], round(r["total"], 2)] for r in sequences(rows)[:top]],
+            "sources": sources(rows)}
 
 
 def summary_line(s: dict) -> str:
@@ -894,9 +933,10 @@ def summary_line(s: dict) -> str:
         return "no session in the token ledger"
     items = ", ".join(f"{i} {usage.usd(c)}" for i, c in s["items"])
     phases = ", ".join(f"{p} {x:.0%}" for p, x in s["phases"])
+    where = sources_line(s.get("sources") or {}, limit=2)
     return (f"{usage.usd(s['cost'])} at API prices over {s['sessions']} session(s), median {usage.usd(s['median'])}, "
             f"p90 {usage.usd(s['p90'])}" + (f"; costliest items {items}" if items else "")
-            + (f"; {phases}" if phases else "") + " (brain usage)")
+            + (f"; {phases}" if phases else "") + (f"; {where}" if where else "") + " (brain usage)")
 
 
 def status_of(p: projects.Project, root: Path | None, now: datetime, quick: bool = False) -> dict:
@@ -919,7 +959,8 @@ def load(projs: list[projects.Project], root: Path | None = None, refresh: bool 
         registry = list(projects.load(root).values())
     except (OSError, ValueError):
         registry = []
-    return Ledger(list(rows.values()), projs, queue.Placer(registry + list(projs)))
+    cfg_usage = config.load(root).data.get("usage")
+    return Ledger(list(rows.values()), projs, queue.Placer(registry + list(projs)), cfg_usage)
 
 
 def scoped(led: Ledger, projs: list[projects.Project], every: bool) -> Ledger:

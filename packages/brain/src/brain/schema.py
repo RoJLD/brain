@@ -24,6 +24,7 @@ from functools import lru_cache
 from pathlib import Path
 
 KINDS = ("ddr", "sr", "ar")
+_EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")   # a value that fails a pattern is never printed back as is
 SCHEMAS = KINDS + ("event", "config", "members", "readme", "standards", "modules", "status", "permissions",
                      "docgraph", "catalogue", "reference")  # event: the
 # execution-time ledger and the ops error events (brain.timing); config: a personal brain's config.json
@@ -205,7 +206,8 @@ def _validate(value, schema: dict, root: dict, path: str, errors: list[str],
         if "maxLength" in schema and len(value) > schema["maxLength"]:
             errors.append(f"{path}: longer than {schema['maxLength']}")
         if "pattern" in schema and not re.search(schema["pattern"], value):
-            errors.append(f"{path}: {value!r} does not match {schema['pattern']}")
+            shown = "an e-mail address" if _EMAIL_RE.search(value) else repr(value)   # never printed back
+            errors.append(f"{path}: {shown} does not match {schema['pattern']}")
         if "format" in schema and not _format_ok(value, schema["format"]):
             errors.append(f"{path}: {value!r} is not a {schema['format']}")
     if _is_type(value, "number") and "minimum" in schema and value < schema["minimum"]:
@@ -321,6 +323,8 @@ def _sr_rules(r: dict) -> tuple[list[str], list[str]]:
         errors.append("sr.id: must start with sr-<start date>")
     if r.get("session_id") and not str(r.get("id", "")).endswith(r["session_id"].replace("-", "")[:8].lower()):
         errors.append("sr.id: must end with the first 8 characters of the session id")
+    if "@" in str(r.get("account") or ""):   # its pattern refuses it too: this says why
+        errors.append("sr.account: an e-mail address is never recorded, only an alias (config.json usage.accounts)")
     return errors, []
 
 

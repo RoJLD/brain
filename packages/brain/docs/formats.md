@@ -72,6 +72,19 @@ truncated write, a byte that is not UTF-8) or that its schema refuses is an erro
 `v`, a kind this engine does not know) is skipped and counted. Neither stops `brain sync`: the graph is built from the
 other lines, and a note says how many were left out. Their ids still count as recorded, so no AR is appended twice.
 
+### Where a session ran (SR, config.json)
+
+An SR's `provider`, `harness`, `account` and `plan` (wi-brain-session-provenance, `brain.provenance`) are additive
+under SR `v` 1: optional fields, so every SR written before stays valid and reads alike (its `harness` is its `tool`,
+its provider what its model's id says, its account the config.json `usage.accounts` entry in force on its day).
+`tool` stays required and is still written, the same value as `harness`, so an older engine reads a new SR as before:
+the four fields are a warning in read mode, kept by its rewrites (`brain.records.keep_unknown`), and refused only in
+strict mode (CI), as any newer brain's field. config.json `usage.accounts` is additive the same way: an older engine
+notes it in read mode and refuses it in strict mode, so a brain repo whose CI runs an older engine sets it once its CI
+runs the engine that knows it. `account` and `usage.accounts[].alias` never take an `@` nor a UUID (an e-mail address,
+an account id): a value that breaks a schema's pattern is printed back as « an e-mail address » when it looks like
+one. The token ledger (`usage/sessions.json`) does not change: its rows are read for these fields at report time.
+
 ### Milestone kinds (the store)
 
 A graph store's `schema.yaml` is a registered format (`store` in `SCHEMAS`, with what `brain init` writes once:
