@@ -229,42 +229,54 @@ def plan(store: Path, repos: list[tuple[str, Path]], version: str, since: str = 
     wid = wp.resolve(version)
     if wid is None:
         raise CloseError(f"{version}: no wave of that release (brain wave add {version})")
-    release = wp.label(wid)
-    out = Plan(release, wid)
-    for name, path in repos:
-        try:
-            start, end = span(path, release, since, until)
-            out.prs += merged_prs(path, name, start, end)
-            day = _git(path, "log", "-1", "--format=%cs", start).strip()
-        except CloseError as exc:
-            out.skipped[name] = str(exc)
-            continue
-        out.ranges[name] = f"{start} ({day})..{end}"
+    out = Plan(wp.label(wid), wid)
+    _read(out, repos, since, until)
     nodes = {k: n for k, n in wp.nodes.items() if n.get("type") == "WorkItem"}
-    gone = _reverted(out.prs)
-    reverts = {id(r) for r in gone.values()}
-    for pr in out.prs:
-        if id(pr) in gone:
-            out.reverted[pr.ref] = gone[id(pr)].ref
-            continue
-        hits, stray = items_of(pr, set(nodes))
-        out.stray += [f"{pr.ref}: {f}" for f in stray]
-        if not hits and id(pr) not in reverts:   # a revert of a PR not in the range is said
-            out.unmapped.append(pr)
-        for i in hits:
-            status = wp.status(i)
-            if status in waves.OPEN:
-                out.to_close.setdefault(i, []).append(pr)
-            elif status in CLOSED:
-                out.closed.setdefault(i, []).append(pr)
-            else:
-                out.other[i] = status or "no status"
+    _map(out, wp, set(nodes))
     members = set(wp.items_of(wid))
     out.outside = sorted(i for i in out.to_close if i not in members)
     out.waiting = [i for i in wp.items_of(wid) if wp.status(i) in waves.OPEN and i not in out.to_close]
     out.earlier = {i: str((nodes[i].get("props") or {}).get("pr") or "") for i in out.to_close
                    if (nodes[i].get("props") or {}).get("pr")}
     return out
+
+
+def _read(out: Plan, repos: list[tuple[str, Path]], since: str, until: str) -> None:
+    """Each repo's merged PRs into ``out.prs``, its range into ``out.ranges``, or why it was not read."""
+    for name, path in repos:
+        try:
+            start, end = span(path, out.version, since, until)
+            out.prs += merged_prs(path, name, start, end)
+            day = _git(path, "log", "-1", "--format=%cs", start).strip()
+        except CloseError as exc:
+            out.skipped[name] = str(exc)
+            continue
+        out.ranges[name] = f"{start} ({day})..{end}"
+
+
+def _map(out: Plan, wp: waves.Plan, ids: set[str]) -> None:
+    """Each PR's items sorted by their status, a reverted PR left out, what names nothing listed."""
+    gone = _reverted(out.prs)
+    reverts = {id(r) for r in gone.values()}
+    for pr in out.prs:
+        if id(pr) in gone:
+            out.reverted[pr.ref] = gone[id(pr)].ref
+            continue
+        hits, stray = items_of(pr, ids)
+        out.stray += [f"{pr.ref}: {f}" for f in stray]
+        if not hits and id(pr) not in reverts:   # a revert of a PR not in the range is said
+            out.unmapped.append(pr)
+        for i in hits:
+            _place(out, i, wp.status(i), pr)
+
+
+def _place(out: Plan, item: str, status: str, pr: MergedPR) -> None:
+    if status in waves.OPEN:
+        out.to_close.setdefault(item, []).append(pr)
+    elif status in CLOSED:
+        out.closed.setdefault(item, []).append(pr)
+    else:
+        out.other[item] = status or "no status"
 
 
 def outcome(prs: list[MergedPR]) -> str:
