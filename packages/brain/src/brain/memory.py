@@ -6,20 +6,30 @@ encoded). The Brain repo holds the shared copy, ``memory/<key>/*.md`` on ``main`
 1. fetches ``main`` and this machine's branch of the day into a private bare repo, ``<BRAIN_HOME>/memory-sync/repo.git``
    (never a working checkout: no branch switch, no index, no stash; git plumbing only);
 2. compares each note three ways: the local copy, ``main``'s, and the base (the version this machine last saw equal on
-   both sides, in ``state.json``; without one, a local copy found in ``main``'s history at that path is an old one);
+   both sides, in ``state.json``; without one, a local copy found in ``main``'s history at that path is an old one,
+   and any other is a conflict: a same-name note never replaces ``main``'s);
 3. imports what only ``main`` changed (reviewed notes from another machine), the replaced copy backed up under
-   ``memory-sync/backup/<date>``; a note is imported only into a project folder that exists on this machine;
-4. exports what only this machine changed: the secret scan first (a hit refuses the whole export), then a commit built
-   on ``main`` and force-pushed to ``memory/<machine>/<date>``, one PR per machine and day (an older open PR of the
-   machine is closed as superseded: the new branch holds its changes). Never a push to ``main``: the owner, or the
+   ``memory-sync/backup/<date>/<key>/<stem>.<hash>.md`` (named by its content's hash, never overwritten) and the import
+   recorded, so ``brain memory undo`` restores it only while the note still holds what was imported; a note is
+   imported only into a project folder that exists on this machine;
+4. exports what only this machine changed, from a recognized key only (one on ``main``, one of ``BRAIN_MEMORY_MAP`` or
+   the folder of a project the personal brain registers: :func:`recognized_keys`; another stays here, listed): the
+   secret scan first (a note with a hit stays on this machine alone, the others go on), then a commit built on
+   ``main`` and pushed to ``memory/<machine>/<date>`` with ``--force-with-lease`` on this machine's last push there,
+   one PR per machine and day. A branch someone else pushed to is never overwritten: the notes go to
+   ``<branch>-2`` (then ``-3``...), and the alert says so. A PR body someone else edited, or a PR with a review, is
+   never edited: the update is a comment. An older open PR of the machine is closed as superseded (its branch
+   deleted) only when its head is still this machine's last push. Never a push to ``main``: the owner, or the
    close-item flow, merges the PR;
 5. keeps both sides of a conflict (both changed since the base): the local copy goes to the PR as
-   ``<stem>.conflict-<machine>.md`` beside ``main``'s, and ``MEMORY.md`` (an index) as the union of both sides' lines,
-   flagged in the PR title and body and in the alert. Once the PR that carried it is closed and ``main`` moved past the
-   flagged version (the reviewer merged both), ``main``'s note is imported.
+   ``<stem>.conflict-<machine>.md`` beside ``main``'s, ``MEMORY.md`` (an index) included: it is never unioned nor
+   regenerated, an index the agent wrote keeps its titles, order and sentences. Flagged in the PR title and body and in
+   the alert. Once the PR that carried it is closed and ``main`` moved past the flagged version (the reviewer merged
+   both), ``main``'s note is imported.
 
-The SessionEnd hook (``hook_main(["session-end"])``) only decides and spawns: when a note changed since the last run
-(mtime and size) or the last pull is older than ``BRAIN_MEMORY_PULL_HOURS``, it starts ``run`` detached and returns, in
+The SessionEnd hook (``hook_main(["session-end"])``) only decides and spawns: when a note of a key the last run
+recognized changed since then (mtime and size; a key it left out, a read-only project's included, starts no run) or
+the last pull is older than ``BRAIN_MEMORY_PULL_HOURS``, it starts ``run`` detached and returns, in
 a few milliseconds. What needs the owner (a refused export, a conflict, a failure, a job that died) goes to
 ``alert.txt``, which the SessionStart hook prints in bash builtins; a clean run removes it.
 
@@ -124,6 +134,46 @@ def local_dir(key: str) -> Path | None:
     return proj / "memory" if proj.is_dir() else None
 
 
+def path_key(path: str | Path) -> str:
+    """Claude Code's folder name for a project at ``path``: every character but a letter or a digit becomes '-'."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(path))
+
+
+def registered_keys() -> set[str]:
+    """The keys of the folders of the projects the personal brain registers (each one's root and repos), lower case;
+    none when there is no personal brain or its registry does not load."""
+    root = paths.personal_root()
+    if not root:
+        return set()
+    try:
+        from . import projects
+
+        out = set()
+        for p in projects.load(root).values():
+            out.add(path_key(p.root).lower())
+            try:
+                out.update(path_key(r.path).lower() for r in projects.repos_of(p))
+            except ValueError:   # a bad repos: entry: the root alone
+                pass
+        return out
+    except Exception:  # noqa: BLE001 - the registry unreadable: only main's keys and the map are recognized
+        return set()
+
+
+def recognized_keys(keys: set[str], on_main: set[str], registered: set[str] | None = None) -> set[str]:
+    """The keys among ``keys`` the sync may export: a key already on ``main`` (reviewed before), one of
+    ``BRAIN_MEMORY_MAP``'s repo keys, or the folder of a registered project or a folder inside it (a worktree of it).
+    Another key is not exported: before adoption a machine would export every folder it ever opened."""
+    registered = registered_keys() if registered is None else registered
+    mapped = {v for v in key_map().values() if v}
+    out = set()
+    for k in keys:
+        low = k.lower()
+        if k in on_main or k in mapped or any(low == r or low.startswith(r + "-") for r in registered):
+            out.add(k)
+    return out
+
+
 def snapshot(notes: dict[str, Path]) -> dict[str, list[int]]:
     out = {}
     for k, f in notes.items():
@@ -170,9 +220,19 @@ def save_state(state: dict) -> None:
         raise SyncError(str(exc)) from None
 
 
+def watched(notes: dict[str, Path], state: dict) -> dict[str, Path]:
+    """The notes whose change starts a run: those of the keys the last run recognized (``state['keys']``); every note
+    before a first run. A key left out (a read-only project's, a folder no project claims) starts none."""
+    keys = state.get("keys")
+    if not isinstance(keys, list):
+        return notes
+    keep = set(keys)
+    return {k: f for k, f in notes.items() if k.split("/", 1)[0] in keep}
+
+
 def needs_run(state: dict, now: float | None = None) -> bool:
-    """A note changed since the last run (mtime or size), or the last pull is older than the pull interval."""
-    if snapshot(local_notes()) != state.get("snapshot"):
+    """A watched note changed since the last run (mtime or size), or the last pull is older than the pull interval."""
+    if snapshot(watched(local_notes(), state)) != state.get("snapshot"):
         return True
     hours = _float_env("BRAIN_MEMORY_PULL_HOURS", DEFAULT_PULL_HOURS)
     if hours <= 0 or mode() == "export":
@@ -188,17 +248,6 @@ def normalize(data: bytes) -> bytes:
 def blob_id(data: bytes) -> str:
     """git's object id of a blob holding ``data``."""
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
-
-
-def union_lines(main: bytes, local: bytes) -> bytes:
-    """``main``'s lines, then the lines only ``local`` has, in order (an index merged by keeping both sides)."""
-    lines = main.decode("utf-8", "replace").splitlines()
-    seen = set(lines)
-    for line in local.decode("utf-8", "replace").splitlines():
-        if line.strip() and line not in seen:
-            lines.append(line)
-            seen.add(line)
-    return ("\n".join(lines).rstrip("\n") + "\n").encode("utf-8")
 
 
 def decide(local: str | None, main: str | None, entry: dict, history: set[str],
@@ -217,8 +266,10 @@ def decide(local: str | None, main: str | None, entry: dict, history: set[str],
     flagged = entry.get("conflict") or {}
     if flagged.get("local") == local and flagged.get("main") != main and not conflict_open(flagged.get("branch")):
         return "resolved", base
-    if base is None:  # first sync of this note here: a local copy main once had is an old one
-        base = local if local in history else main
+    if base is None:  # first sync of this note here: a local copy main once had is an old one; another is a conflict
+        if local not in history:   # a same-name note written apart: never a replacement of main's
+            return "conflict", None
+        base = local
     if local == base:
         return "import", base
     if main == base:
@@ -299,6 +350,9 @@ class Report:
     exported: list[str] = field(default_factory=list)  # repo paths written to the branch
     conflicts: list[str] = field(default_factory=list)
     hits: list[str] = field(default_factory=list)  # 'key/name.md:line pattern' (never the line itself)
+    left: list[str] = field(default_factory=list)  # branches someone else pushed to: left as they are
+    kept_open: list[str] = field(default_factory=list)  # older PRs not closed: their head is not this machine's push
+    commented: str = ""  # the PR whose body was not edited: the update went to a comment
     pushed: bool = False
     pr: str = ""
     error: str = ""
@@ -309,12 +363,22 @@ class Report:
         by: dict[str, list[str]] = {}
         for note, action in sorted(self.actions.items()):
             by.setdefault(action, []).append(note)
-        out = [f"{action:<9} {note}" for action in ("export", "conflict", "import", "resolved", "kept")
+        out = [f"{action:<9} {note}" for action in ("export", "conflict", "import", "resolved", "kept", "secret")
                for note in by.get(action, [])]
+        if by.get("unmapped"):
+            out.append(f"unmapped  {len(by['unmapped'])} note(s) of keys no project claims, kept here: "
+                       + ", ".join(sorted({n.split('/', 1)[0] for n in by['unmapped']}))
+                       + " (register the project, or map the key in BRAIN_MEMORY_MAP)")
         if by.get("same"):
             out.append(f"same      {len(by['same'])} note(s)")
         if self.hits:
-            out.append("refused   the export: secret patterns in " + ", ".join(self.hits))
+            out.append("held      on this machine, secret patterns in " + ", ".join(self.hits))
+        for b in self.left:
+            out.append(f"left      {b}: someone else pushed to it; this machine's notes go to {self.branch}")
+        for b in self.kept_open:
+            out.append(f"open      {b}: its head is not this machine's last push, so it is not closed as superseded")
+        if self.commented:
+            out.append(f"comment   {self.commented}: its body was edited or reviewed, the update is a comment")
         if self.error:
             out.append(f"failed    {self.error}")
         if self.dry_run:
@@ -330,7 +394,9 @@ class Sync:
         self.run = Runner(deadline)
         self.machine = machine()
         self.day = day or date.today().isoformat()
-        self.branch = f"memory/{self.machine}/{self.day}"
+        self.day_branch = f"memory/{self.machine}/{self.day}"
+        self.branch = self.day_branch   # the branch this run pushes to (pick_branch: -2, -3... past one someone touched)
+        self.heads: dict[str, str] = {}   # this machine's branches on the remote: ref -> commit
         self.repo = sync_dir() / "repo.git"
         m = GITHUB_RX.search(remote)
         self.slug = os.environ.get("BRAIN_MEMORY_REPO") or (m.group(1) if m else "")
@@ -353,9 +419,10 @@ class Sync:
         return p.stdout.decode("utf-8", "replace").strip()
 
     def open_prs(self) -> dict[str, dict]:
-        """This machine's open memory PRs, by branch."""
+        """This machine's open memory PRs, by branch (with their head, body and reviews)."""
         if self._prs is None:
-            out = self.gh("pr", "list", "--state", "open", "--json", "number,url,headRefName", "--limit", "100")
+            out = self.gh("pr", "list", "--state", "open", "--json", "number,url,headRefName,headRefOid,body,reviews",
+                          "--limit", "100")
             prefix = f"memory/{self.machine}/"
             self._prs = {p["headRefName"]: p for p in json.loads(out or "[]")
                          if str(p.get("headRefName", "")).startswith(prefix)}
@@ -377,10 +444,33 @@ class Sync:
             out[ref] = (commit, tree)
         return out
 
+    def touched(self, branch: str, state: dict) -> bool:
+        """Whether someone else pushed to ``branch``: it is on the remote and its head is not this machine's last push
+        there (state['pushed'])."""
+        head = self.heads.get(f"refs/heads/{branch}")
+        return head is not None and head != ((state.get("pushed") or {}).get(branch) or {}).get("commit")
+
+    def pick_branch(self, state: dict, skip: tuple[str, ...] = ()) -> list[str]:
+        """Set ``self.branch`` to the day's branch, or ``-2``, ``-3``... past each one someone else pushed to (or in
+        ``skip``: a lease that failed); the branches passed over."""
+        left = []
+        for n in range(1, 10):
+            branch = self.day_branch if n == 1 else f"{self.day_branch}-{n}"
+            if branch in skip or self.touched(branch, state):
+                left.append(branch)
+                continue
+            self.branch = branch
+            return left
+        raise SyncError(f"no branch left for the day: {self.day_branch} to -9 were pushed to by someone else")
+
     def fetch(self, offline: bool = False) -> tuple[str, str | None]:
         """(main's commit, the branch's commit or None), fetched into the private bare repo (``offline``: as last
-        fetched); their trees in ``self.trees``."""
-        main_ref, branch_ref = "refs/heads/main", f"refs/heads/{self.branch}"
+        fetched); their trees in ``self.trees``, this machine's branches' heads in ``self.heads``."""
+        main_ref, day_ref = "refs/heads/main", f"refs/heads/{self.day_branch}"
+
+        def ours(ref: str) -> bool:   # the day's branch and its -2, -3...
+            return ref == day_ref or re.fullmatch(re.escape(day_ref) + r"-[2-9]", ref) is not None
+
         if not (self.repo / "HEAD").is_file():
             if offline:
                 raise SyncError("nothing fetched yet: run without --offline")
@@ -391,23 +481,26 @@ class Sync:
             mark.write_text(self.remote, encoding="utf-8")
         refs = self.refs()
         if offline:
-            heads = {r: refs[r][0] for r in (main_ref, branch_ref) if r in refs}
+            heads = {r: refs[r][0] for r in refs if r == main_ref or ours(r)}
         else:
             heads = {}
-            for line in self.git("ls-remote", "origin", main_ref, branch_ref).splitlines():
+            for line in self.git("ls-remote", "origin", main_ref, day_ref, f"{day_ref}-*").splitlines():
                 sha, _, ref = line.partition("\t")
-                heads[ref] = sha
+                if ref == main_ref or ours(ref):
+                    heads[ref] = sha
             want = [f"+{r}:{r}" for r, sha in heads.items() if refs.get(r, ("",))[0] != sha]
             if want:
                 self.git("fetch", "-q", "--no-tags", "origin", *want)
-            if branch_ref in refs and branch_ref not in heads:
-                self.git("update-ref", "-d", branch_ref)
+            for r in refs:
+                if ours(r) and r not in heads:   # deleted on the remote (merged, closed)
+                    self.git("update-ref", "-d", r)
             if want:
                 refs = self.refs()
         if main_ref not in heads:
             raise SyncError("nothing fetched yet: run without --offline" if offline else "the remote has no main")
         self.trees = {r: refs[r][1] for r in heads}
-        return heads[main_ref], heads.get(branch_ref)
+        self.heads = {r: sha for r, sha in heads.items() if r != main_ref}
+        return heads[main_ref], heads.get(day_ref)
 
     def main_notes(self, main: str) -> dict[str, str]:
         """'key/name.md' -> blob id, for main's memory/<key>/<name>.md (conflict copies left out)."""
@@ -467,23 +560,63 @@ class Sync:
                          env={f"GIT_{role}_{k}": v for role in ("AUTHOR", "COMMITTER") for k, v in who.items()})
         return p.stdout.decode("utf-8").strip()
 
-    def open_pr(self, title: str, body: str, state: dict) -> str:
-        """Open or update the PR of the day, close this machine's older ones (the branch of the day holds their
-        changes); its URL."""
+    def push(self, commit: str, state: dict) -> bool:
+        """Push ``commit`` to ``self.branch`` with a lease on this machine's last push there (none: the branch must
+        not exist). False when the lease fails: someone pushed meanwhile, nothing was overwritten."""
+        expect = ((state.get("pushed") or {}).get(self.branch) or {}).get("commit", "") \
+            if f"refs/heads/{self.branch}" in self.heads else ""
+        ref = f"refs/heads/{self.branch}"
+        p = self.run(["git", "--git-dir", str(self.repo), "push", "-q", f"--force-with-lease={ref}:{expect}", "origin",
+                      f"{commit}:{ref}"], check=False)
+        if p.returncode == 0:
+            return True
+        err = p.stderr.decode("utf-8", "replace")
+        if "stale info" in err or "rejected" in err or "already exists" in err:
+            return False
+        last = (err.strip().splitlines() or [f"exit code {p.returncode}"])[-1]
+        raise SyncError(f"git push: {secretscan.clean_text(secretscan.strip_url_credentials(last))[0]}")
+
+    def own_head(self, branch: str, pr: dict, state: dict) -> bool:
+        """The PR's head is this machine's last push to ``branch`` and nobody reviewed it."""
+        last = ((state.get("pushed") or {}).get(branch) or {}).get("commit")
+        return bool(last) and pr.get("headRefOid") == last and not pr.get("reviews")
+
+    def open_pr(self, title: str, body: str, state: dict, report: Report | None = None) -> str:
+        """Open or update the PR of ``self.branch``, close this machine's older ones (the branch holds their changes)
+        whose head is still its last push; its URL. A body someone else edited (not the one this machine wrote last)
+        or a PR with a review is never edited: the update goes to a comment."""
         prs = self.open_prs()
+        bodies = state.setdefault("bodies", {})
+        digest = blob_id(body.encode("utf-8"))
         if self.branch in prs:
             pr = prs[self.branch]
-            self.gh("pr", "edit", str(pr["number"]), "--title", title, "--body-file", "-", data=body)
             url = pr["url"]
+            current = blob_id(str(pr.get("body") or "").replace("\r\n", "\n").encode("utf-8"))
+            if current == digest:
+                pass
+            elif bodies.get(self.branch) == current and not pr.get("reviews"):
+                self.gh("pr", "edit", str(pr["number"]), "--title", title, "--body-file", "-", data=body)
+                bodies[self.branch] = digest
+            else:
+                self.gh("pr", "comment", str(pr["number"]), "--body-file", "-",
+                        data=f"The memory sync of `{self.machine}` pushed again; the body was left as it is.\n\n"
+                             + body)
+                if report is not None:
+                    report.commented = url
         else:
             out = self.gh("pr", "create", "--base", "main", "--head", self.branch, "--title", title,
                           "--body-file", "-", data=body)
             url = (out.splitlines() or [""])[-1].strip()
+            bodies[self.branch] = digest
         state.setdefault("prs", {})[self.branch] = url
         for branch, pr in sorted(prs.items()):
-            if branch != self.branch:
+            if branch == self.branch:
+                continue
+            if self.own_head(branch, pr, state):
                 self.gh("pr", "close", str(pr["number"]), "--delete-branch",
-                        "--comment", f"Superseded by {url}: the branch of {self.day} holds these notes.")
+                        "--comment", f"Superseded by {url}: the branch {self.branch} holds these notes.")
+            elif report is not None:
+                report.kept_open.append(branch)
         return url
 
 
@@ -530,36 +663,60 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
         raise SyncError("no remote: set BRAIN_MEMORY_REMOTE, or install the brain command from a clone "
                         "(install.ps1 -Apply)")
     s = Sync(remote, deadline, day, gh)
-    report = Report(s.machine, s.day, s.branch, dry_run=dry_run)
+    main, _ = s.fetch(offline)
+    left = s.pick_branch(state)
+    report = Report(s.machine, s.day, s.branch, dry_run=dry_run, left=left)
     if held:
         report.actions["(export)"] = f"held: {held}"
-    main, branch_head = s.fetch(offline)
     if not dry_run:
         state["fetched_epoch"], state["fetched_at"] = time.time(), _now()
         state["remote"] = secretscan.strip_url_credentials(remote)
     on_main = s.main_notes(main)
     history = s.history(main)
     notes = local_notes()
-    snap = snapshot(notes)
+    main_keys = {k.split("/", 1)[0] for k in on_main}
+    known = recognized_keys({k.split("/", 1)[0] for k in notes} | main_keys, main_keys)
+    snap = snapshot({k: f for k, f in notes.items() if k.split("/", 1)[0] in known})
     local = {k: normalize(f.read_bytes()) for k, f in notes.items()}
     entries = state.setdefault("notes", {}) if not dry_run else dict(state.get("notes") or {})
     keys = sorted(set(local) | {k for k in on_main if local_dir(k.split("/")[0]) is not None})
+
+    def elsewhere(branch: str | None) -> bool:
+        """A flagged conflict's PR this run does not supersede: a branch someone else pushed to, or reviewed."""
+        if not branch or branch == s.branch:
+            return False
+        if branch in left:
+            return True
+        try:
+            pr = s.open_prs().get(branch)
+        except (SyncError, ValueError):
+            return False
+        return pr is not None and not s.own_head(branch, pr, state)
 
     files: dict[str, bytes] = {}
     changes: list[tuple[str, str]] = []
     conflicts: list[tuple[str, str]] = []
     for k in keys:
+        if k.split("/", 1)[0] not in known:   # a key no project claims: kept here, never exported
+            report.actions[k] = "unmapped"
+            continue
         lb = blob_id(local[k]) if k in local else None
         mb = on_main.get(k)
         entry = dict(entries.get(k) or {})
         action, base = decide(lb, mb, entry, history.get(k, set()), s.conflict_open)
         report.actions[k] = action
+        if action in ("export", "conflict"):   # the secret scan, note by note: a hit keeps that note here alone
+            hits = secretscan.scan_lines(local[k].decode("utf-8", "replace"))
+            if hits:
+                report.actions[k] = "secret"
+                report.hits += [f"{k}:{line} {pattern}" for line, pattern in hits]
+                continue
         if action in ("same", "import", "resolved"):
             if action != "same":
                 if not do_import:
                     continue
                 if not dry_run:
-                    _import(s, k, mb, notes, snap)
+                    _import(s, k, mb, notes, state, snap)
                 report.imported.append(k)
             entries[k] = {"base": mb}
         elif action == "export":
@@ -567,67 +724,141 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
             changes.append((f"memory/{k}", "new" if mb is None else "edited"))
             entries[k] = {"base": base} if base else {}
         elif action == "conflict":
+            flagged = entry.get("conflict") or {}
+            if flagged.get("local") == lb and flagged.get("main") == mb and elsewhere(flagged.get("branch")):
+                report.conflicts.append(k)   # already on a PR someone else is working on: not carried again
+                continue
             key, name = k.split("/", 1)
-            if name == INDEX:
-                merged = union_lines(s.blob(mb), local[k])
-                if blob_id(merged) == mb:  # main's index already has every local line
-                    report.actions[k] = "import"
-                    if do_import and not dry_run:
-                        _import(s, k, mb, notes, snap)
-                        report.imported.append(k)
-                        entries[k] = {"base": mb}
-                    continue
-                files[f"memory/{k}"] = merged
-                how = "the union of both indexes' lines (check the order and duplicates)"
-            else:
-                side = f"memory/{key}/{name[:-3]}.conflict-{s.machine}.md"
-                files[side] = local[k]
-                how = f"`{s.machine}`'s version is `{side}`"
-            conflicts.append((k, how))
+            side = f"memory/{key}/{name[:-3]}.conflict-{s.machine}.md"
+            files[side] = local[k]
+            conflicts.append((k, f"`{s.machine}`'s version is `{side}`"))
             report.conflicts.append(k)
             entries[k] = {"base": base, "conflict": {"local": lb, "main": mb, "branch": s.branch}}
-    for path, data in files.items():  # the secret scan: one hit refuses the whole export
-        for line, pattern in secretscan.scan_lines(data.decode("utf-8", "replace")):
-            report.hits.append(f"{path[len('memory/'):]}:{line} {pattern}")
     report.exported = sorted(files)
 
-    if files and do_export and not dry_run and not report.hits:
+    if files and do_export and not dry_run:
         # the branch already holds these files on this main (the last push, from the state): no git at all
         digest = blob_id(json.dumps(sorted((p, blob_id(d)) for p, d in files.items())).encode("utf-8"))
-        pushed = (state.get("pushed") or {}).get(s.branch) or {}
-        same = branch_head is not None and pushed == {"commit": branch_head, "main": main, "files": digest}
-        if not same:
-            tree = s.build(main, files)
+        tree = ""
+        lease_lost: tuple[str, ...] = ()
+        while True:
+            branch_head = s.heads.get(f"refs/heads/{s.branch}")
+            pushed = (state.get("pushed") or {}).get(s.branch) or {}
+            same = branch_head is not None and pushed == {"commit": branch_head, "main": main, "files": digest}
+            if same:
+                break
+            tree = tree or s.build(main, files)
             same = branch_head is not None and s.trees.get(f"refs/heads/{s.branch}") == tree
-            if not same:
-                message = (_title(s.machine, s.day, len(conflicts)) + "\n\n"
-                           + "\n".join(f"{p} ({what})" for p, what in changes + [(f"memory/{n}", "conflict")
-                                                                              for n, _ in conflicts]) + "\n")
-                commit = s.commit(tree, main, message)
-                s.git("push", "-q", "origin", f"+{commit}:refs/heads/{s.branch}")
+            if same:
+                break
+            message = (_title(s.machine, s.day, len(conflicts)) + "\n\n"
+                       + "\n".join(f"{p} ({what})" for p, what in changes + [(f"memory/{n}", "conflict")
+                                                                          for n, _ in conflicts]) + "\n")
+            commit = s.commit(tree, main, message)
+            if s.push(commit, state):
                 s.git("update-ref", f"refs/heads/{s.branch}", commit)
                 state.setdefault("pushed", {})[s.branch] = {"commit": commit, "main": main, "files": digest}
                 report.pushed = True
+                break
+            lease_lost += (s.branch,)   # someone pushed between the fetch and the push: nothing overwritten
+            left = report.left = s.pick_branch(state, skip=lease_lost)
+        report.branch = s.branch
+        for k in report.conflicts:   # the branch that carries them, once the lease settled it
+            if (entries.get(k) or {}).get("conflict", {}).get("branch") in lease_lost:
+                entries[k]["conflict"]["branch"] = s.branch
         if not same or s.branch not in (state.get("prs") or {}):  # or a PR the last run failed to open
             report.pr = s.open_pr(_title(s.machine, s.day, len(conflicts)), pr_body(report, changes, conflicts),
-                                  state)
+                                  state, report)
         else:
             report.pr = state["prs"][s.branch]
     if not dry_run:
+        state["keys"] = sorted(known)
         state["snapshot"] = snap
-        for k in ("prs", "pushed"):  # two weeks of branches
-            state[k] = {b: v for b, v in (state.get(k) or {}).items() if b[-10:] >= _days_ago(14)}
+        cutoff = _days_ago(14)
+        for k in ("prs", "pushed", "bodies"):  # two weeks of branches
+            state[k] = {b: v for b, v in (state.get(k) or {}).items() if _branch_day(b) >= cutoff}
+        state["imports"] = {n: v for n, v in (state.get("imports") or {}).items()
+                            if str(v.get("at", ""))[:10] >= cutoff}
     return report
 
 
-def _import(s: Sync, k: str, mb: str, notes: dict[str, Path], snap: dict) -> None:
-    """Write main's version of the note ``k`` here, the replaced copy backed up under memory-sync/backup/<date>."""
+def _branch_day(branch: str) -> str:
+    """The date of a memory branch, ``memory/<machine>/<date>`` or ``...-<n>``; '' when it has none."""
+    m = re.search(r"(\d{4}-\d{2}-\d{2})(?:-\d)?$", branch)
+    return m.group(1) if m else ""
+
+
+def backup(key: str, name: str, data: bytes) -> Path:
+    """Keep ``data`` (a note about to be replaced) under memory-sync/backup/<date>/<key>/<stem>.<hash>.md, named by its
+    content's hash: never overwritten (the same content is the same file)."""
+    stem, dot, ext = name.rpartition(".")
+    stem, ext = (stem, f".{ext}") if dot else (name, "")
+    f = sync_dir() / "backup" / date.today().isoformat() / key / f"{stem}.{blob_id(data)[:12]}{ext}"
+    if not f.exists():
+        _write(f, data)
+    return f
+
+
+def _import(s: Sync, k: str, mb: str, notes: dict[str, Path], state: dict, snap: dict) -> None:
+    """Write main's version of the note ``k`` here, the replaced copy backed up (:func:`backup`) and the import
+    recorded in ``state['imports']`` for ``brain memory undo``."""
     key, name = k.split("/", 1)
     target = notes.get(k) or local_dir(key) / name
+    rec = {"at": _now(), "after": mb, "before": None, "backup": None}
     if target.exists():
-        _write(sync_dir() / "backup" / date.today().isoformat() / key / name, target.read_bytes())
+        old = target.read_bytes()
+        rec.update(before=blob_id(normalize(old)), backup=backup(key, name, old).relative_to(sync_dir()).as_posix())
     _write(target, s.blob(mb))
     snap.update(snapshot({k: target}))
+    state.setdefault("imports", {})[k] = rec
+
+
+def undo(note: str, out=None) -> int:
+    """``brain memory undo KEY/NAME.md``: put back the copy the last import of that note replaced, only while the note
+    still holds what was imported (its hash is the import's 'after'). Otherwise nothing is overwritten: the backup is
+    written beside it as ``<name>.undo-conflict``, to merge by hand. Exit 1 when it did not restore."""
+    out = out or sys.stdout
+    if "/" not in note:
+        print(f"brain: {note}: name a note as KEY/NAME.md (brain memory status lists them)", file=out)
+        return 1
+    try:
+        state = load_state(write=True)
+    except SyncError as exc:
+        print(f"brain: {exc}", file=out)
+        return 1
+    rec = (state.get("imports") or {}).get(note)
+    if not rec:
+        print(f"brain: no import of {note} recorded (brain memory status lists the notes)", file=out)
+        return 1
+    key, name = note.split("/", 1)
+    folder = local_dir(key)
+    target = local_notes().get(note) or (folder / name if folder else None)
+    if target is None:
+        print(f"brain: {note}: its project folder is not on this machine", file=out)
+        return 1
+    saved = sync_dir() / rec["backup"] if rec.get("backup") else None
+    if saved is not None and not saved.is_file():
+        print(f"brain: {note}: its backup {rec['backup']} is gone; nothing changed", file=out)
+        return 1
+    now = blob_id(normalize(target.read_bytes())) if target.exists() else None
+    if now != rec.get("after"):
+        if saved is None:
+            print(f"brain: {note} changed since the import and had no copy before it: nothing to restore", file=out)
+            return 1
+        side = target.with_name(target.name + ".undo-conflict")
+        _write(side, saved.read_bytes())
+        print(f"brain: {note} changed since the import: left as it is; the copy before the import is {side}, "
+              "merge it by hand", file=out)
+        return 1
+    if saved is None:   # the import created the note: undoing it removes it (main's copy stays in git)
+        backup(key, name, target.read_bytes())
+        target.unlink()
+    else:
+        _write(target, saved.read_bytes())
+    del state["imports"][note]
+    save_state(state)
+    print(f"brain: {note} restored to its copy before the import of {rec.get('at', '?')}", file=out)
+    return 0
 
 
 def _days_ago(n: int) -> str:
@@ -643,8 +874,12 @@ def alert_lines(report: Report | None, error: str = "") -> list[str]:
     if error:
         out.append(f"{head} failed: {error}. `brain memory sync` runs it again in the foreground.")
     if report and report.hits:
-        out.append(f"{head} export refused, secret patterns in {', '.join(report.hits[:5])}. Remove the secret from "
-                   "the local note (~/.claude/projects/<key>/memory/), then `brain memory sync`; nothing was pushed.")
+        out.append(f"{head} note(s) kept on this machine, secret patterns in {', '.join(report.hits[:5])}. Remove the "
+                   "secret from the local note (~/.claude/projects/<key>/memory/), then `brain memory sync`; the other "
+                   "notes went on.")
+    if report and report.left:
+        out.append(f"{head} {', '.join(report.left)}: someone else pushed to it, so it was left as it is; this "
+                   f"machine's notes went to {report.branch}. Merge or close the first one's PR.")
     if report and report.conflicts:
         out.append(f"{head} {len(report.conflicts)} conflicting note(s) kept on both sides in "
                    f"{report.pr or report.branch}: {', '.join(report.conflicts[:5])}. Merge each pair on the PR "
@@ -737,10 +972,10 @@ def job_main(force: bool = False, out=None, do_import: bool | None = None, **kw)
                 except SyncError as exc:
                     error = str(exc)
             last = {"at": _now(), "took": round(time.monotonic() - started, 2), "machine": machine(),
-                    "result": "failed" if error else "refused" if report.hits else "ok", "error": error}
+                    "result": "failed" if error else "held" if report.hits else "ok", "error": error}
             if report:
                 last.update(branch=report.branch, pr=report.pr, pushed=report.pushed, imported=report.imported,
-                            exported=report.exported, conflicts=report.conflicts, hits=report.hits)
+                            exported=report.exported, conflicts=report.conflicts, hits=report.hits, left=report.left)
             _write(sync_dir() / "last.json", json.dumps(last, indent=1, ensure_ascii=False))
             write_alert(died + alert_lines(report, error))
         if out:
@@ -809,10 +1044,12 @@ def hook_main(argv: list[str], stdin=None) -> int:
     return 0
 
 
-def main_cli(cmd: str, offline: bool = False, export_only: bool = False, out=None) -> int:
-    """``brain memory status`` (what a sync would do, nothing written) or ``brain memory sync`` (now, in the
-    foreground)."""
+def main_cli(cmd: str, offline: bool = False, export_only: bool = False, out=None, note: str = "") -> int:
+    """``brain memory status`` (what a sync would do, nothing written), ``brain memory sync`` (now, in the
+    foreground) or ``brain memory undo NOTE`` (an import put back)."""
     out = out or sys.stdout
+    if cmd == "undo":
+        return undo(note, out)
     if cmd == "sync":
         if mode() == "off":
             print("brain: memory sync is off (BRAIN_MEMORY_SYNC=0)", file=out)
