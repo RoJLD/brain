@@ -476,13 +476,15 @@ members are work items (`part_of`), itself part of a milestone or an era. Its id
 by `brain wave import` or `--carry-to` when it is not the computed one), else computed, the next patch after the
 release the last wave before it that was not dropped shipped as (`props.shipped_as` is also what the later waves count
 from, and it still resolves the wave). When a wave ships as a higher version than planned, the later waves' releases
-follow without an edit. A dropped wave holds no release (the next wave counts from before it); its id still resolves. An era is a milestone of milestones (`props.kind: era`), whose exit is a Go/NoGo question put to the owner
+follow without an edit. A dropped wave holds no release (the next wave counts from before it; after only dropped
+waves, the first live one takes their release); its id still resolves. An era is a milestone of milestones (`props.kind: era`), whose exit is a Go/NoGo question put to the owner
 once its milestones are reached (`props.exit`; `props.stage_to` and `props.serves` optional). `brain check` refuses a
 `props.release` that is not `X.Y.Z`, a wave with no release (nothing before it to count from), two waves of one release,
 a pending pinned release a jump left behind (at or below what the wave before it shipped as), a `props.seq` of 0 or a
 place two waves hold, an item in two waves, a wave holding a milestone, an era
 holding an item, a `carried_to` that names no later wave, and a dropped wave that still holds an open item; it warns
-about a reached wave that still holds one, a wave in no milestone or era, an era without its exit and an era whose
+about a reached wave that still holds one, a `carried_to` that names a computed release (it moves with the waves
+before it: name the wave id), a wave in no milestone or era, an era without its exit and an era whose
 exit is due. Those rules run
 in a store that holds a wave or an era; any other `props.kind` on a milestone is refused there. The kinds are in
 [docs/formats.md](docs/formats.md) (« Milestone kinds »).
