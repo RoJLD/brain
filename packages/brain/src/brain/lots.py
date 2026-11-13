@@ -21,8 +21,12 @@ depend on each other both ways are merged. Within a round, the lots that unblock
 project's own if lower, minus the master's session) and the PRs one machine verifies at once (:data:`AT_ONCE`, the
 full suite of each running locally; ``--at-once N``). The plan also says what the guards would answer now: the
 memory guard's two measures (brain.governor) and the last quota forecast's advice (brain.quota's ``quota.json``,
-read through its reader: this module never opens the quota readings itself). It prints and refuses nothing; ``brain
-next`` shows the current wave's plan in short.
+read through its reader: this module never opens the quota readings itself). While config.json
+``usage.guard.wave_quota`` is set (wi-brain-wave-quota-gate; RETRO-5), a round holds at most its ``max_streams`` lots,
+and the plan says how many streams fit now (brain.wavegate.room): this session's live streams under
+``max_streams``, and the first round's lots, each at the sum of its items' recorded estimates (props.cost_estimate;
+none recorded: the median session's), that keep the week's forecast at its reset under ``ask_over_pct``. It prints
+and refuses nothing; ``brain next`` shows the current wave's plan in short.
 
 **The quick-win slot.** The plan's head says the wave's quick-win slot (brain.waves.quickwin_slot,
 wi-brain-wave-quickwin-slot): about a fifth of its places kept for items of size S with a high value, what fills it
@@ -35,7 +39,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import collisions, governor, quota, resume, waves
+from . import collisions, governor, quota, resume, wavegate, waves
 
 HOT = ("README.md", "CHANGELOG.md", "FEATURES.md", "formats.md", "config.schema.json", "changes/")
 AT_ONCE = 3   # the PRs one machine verifies at once: each runs the whole suite locally, ~10 minutes on all cores
@@ -52,6 +56,7 @@ class Unit:
     hot: list[str] = field(default_factory=list)        # the hot files it touches
     after: list[str] = field(default_factory=list)      # its open prerequisites in the wave
     outside: list[str] = field(default_factory=list)    # its open prerequisites outside the wave
+    usd: float | None = None                             # its recorded estimate (props.cost_estimate's usd=)
 
     @property
     def known(self) -> bool:
@@ -131,9 +136,10 @@ def _unit(plan: waves.Plan, st: resume.Store, nid: str, extra_hot: tuple[str, ..
     paths, names = collisions.surface(node, st)
     entries = sorted({f"{repo}:{p}" if repo else p for repo, p in paths} | set(names))
     hot = [e for e in entries if is_hot(e, extra_hot)]
-    priority = str((node.get("props") or {}).get("priority") or "")
+    props = node.get("props") or {}
+    priority = str(props.get("priority") or "")
     return Unit(nid, str(node.get("title") or ""), plan.status(nid), priority, [e for e in entries if e not in hot],
-                hot)
+                hot, usd=wavegate.estimate_usd(str(props.get("cost_estimate") or "")))
 
 
 def units_of(plan: waves.Plan, st: resume.Store, wid: str, extra_hot: tuple[str, ...] = ()) -> dict[str, Unit]:
@@ -298,10 +304,37 @@ def caps_in_force(root: Path | None, project: str, at_once: int | None = None) -
     except Exception:   # noqa: BLE001 - a machine whose memory cannot be read
         refused, memory = "", "not read on this machine"
     level, advice = quota_answer(quota.load_status(), datetime.now(timezone.utc))
-    lots = min(sessions, verify)
+    wq = lim.get("wave_quota") if lim.get("enabled", True) else None
+    streams = int(wq["max_streams"]) if wq and wq.get("max_streams") else None
+    lots = min(sessions, verify, streams or sessions)
     now = 0 if refused or level == "none" or children < 1 else lots
     return {"at_once": lots, "sessions": sessions, "verify": verify, "memory": memory, "memory_refuses": bool(refused),
-            "sessions_left": max(children, 0), "quota": level, "quota_advice": advice, "now": now}
+            "sessions_left": max(children, 0), "quota": level, "quota_advice": advice, "now": now,
+            "max_streams": streams, "streams": None}
+
+
+def lot_usd(lot: Lot, units: dict[str, Unit]) -> float | None:
+    """A lot's cost: the sum of its items' recorded estimates; None when none of them has one."""
+    known = [units[i].usd for i in lot.items if units[i].usd is not None]
+    return round(sum(known), 2) if known else None
+
+
+def streams_now(root: Path | None, caps: dict, first: list[Lot], units: dict[str, Unit]) -> None:
+    """While the wave quota gate is on, ``caps["streams"]`` (brain.wavegate.room for this session, the first
+    round's lots at their cost) and ``now`` lowered to the streams that fit."""
+    try:
+        from . import sessions
+        me = sessions.here()
+        room = wavegate.room(str(root or ""), me["host_id"] or me["session"],
+                                  [lot_usd(lot, units) for lot in first] or [None])
+    except Exception as exc:   # noqa: BLE001 - a hint: a plan always prints
+        caps["streams"] = {"fit": None, "line": f"not known ({type(exc).__name__})"}
+        return
+    if room is None:
+        return
+    caps["streams"] = {k: room.get(k) for k in ("fit", "by_quota", "by_streams", "line")}
+    if room["fit"] is not None:
+        caps["now"] = min(caps["now"], room["fit"])
 
 
 def quota_answer(fc: dict, now: datetime) -> tuple[str, str]:
@@ -330,6 +363,8 @@ def plan(store: Path, root: Path | None, wave: str = "", project: str = "", at_o
     caps = caps_in_force(root, project, at_once)
     lots, conflicts = lots_of(units)
     rounds = rounds_of(lots, units, caps["at_once"])
+    if caps["max_streams"] is not None:
+        streams_now(root, caps, rounds[0] if rounds else [], units)
     numbered = [lot for group in rounds for lot in group]
     for n, lot in enumerate(numbered, 1):
         lot.n = n
@@ -395,10 +430,14 @@ def render(wp: WavePlan) -> list[str]:
     lines = [f"Wave {wp.wave} ({wp.wid}): {len(wp.units)} open item(s) in {len(wp.lots)} lot(s) over "
              f"{len(wp.rounds)} round(s) (zero token; brain wave plan)",
              f"At most {c['at_once']} lot(s) a round: the sessions cap in force less the master's ({c['sessions']}), "
-             f"the PRs verified at once ({c['verify']}, --at-once)",
+             f"the PRs verified at once ({c['verify']}, --at-once)"
+             + (f", the streams of one master ({c['max_streams']}, usage.guard.wave_quota)"
+                if c.get("max_streams") else ""),
              f"Now: memory guard {c['memory']}; quota: {c['quota_advice']}"
              + ("; the sessions cap leaves no session beside the master's" if not c["sessions_left"] else "")
              + ("; no lot can start now" if not c["now"] else "")]
+    if c.get("streams"):
+        lines.append(f"Streams that fit now: {c['streams']['line']}")
     line = waves.slot_line(wp.slot, wp.wid)
     if line:
         lines.append(line[:1].upper() + line[1:])
@@ -425,4 +464,6 @@ def summary(wp: WavePlan) -> list[str]:
     out = [f"Lots (brain wave plan {wp.wave}): {len(wp.lots)} lot(s) over {len(wp.rounds)} round(s); round 1:"]
     out += [f"  Lot {n}: {', '.join(wp.lots[n - 1].items)}" + ("" if wp.lots[n - 1].checked else " (unchecked)")
             for n in first]
+    if wp.caps.get("streams"):
+        out.append(f"  streams that fit now: {wp.caps['streams']['line']}")
     return out

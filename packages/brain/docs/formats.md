@@ -72,6 +72,19 @@ truncated write, a byte that is not UTF-8) or that its schema refuses is an erro
 `v`, a kind this engine does not know) is skipped and counted. Neither stops `brain sync`: the graph is built from the
 other lines, and a note says how many were left out. Their ids still count as recorded, so no AR is appended twice.
 
+### Where a session ran (config.json)
+
+config.json `usage.accounts` (wi-brain-session-provenance, `brain.provenance`) is additive: an optional key, which an
+older engine notes in read mode and refuses in strict mode (CI), so a brain repo whose CI runs an older engine sets it
+once its CI runs the engine that knows it. `usage.accounts[].alias` never takes an `@` nor a UUID (an e-mail address,
+an account id) anywhere in it, nor a trailing newline (the patterns end on `(?![\s\S])`, read alike by ECMA and
+Python), and `usage.accounts[].since` is a UTC day (YYYY-MM-DD). A value that breaks a schema's pattern is never
+printed back, whatever the schema: the error gives its path and length; an enum's or a format's error prints a short
+plain word only (no `@`, no UUID, at most 40 characters), else the length too. The SR and the token ledger
+(`usage/sessions.json`) do not change: a session's provider, harness, account and plan are computed when a report is
+built (the row's own fields, what the session's snapshot holds, then config.json and the model). The SR fields come
+with wi-brain-sr-provenance-fields.
+
 ### Milestone kinds (the store)
 
 A graph store's `schema.yaml` is a registered format (`store` in `SCHEMAS`, with what `brain init` writes once:
@@ -205,7 +218,7 @@ over. Each class keeps (`stateio.LOG_RETENTION`, this month counted):
 | errors | `ledger/errors.log`, `ledger/errors-YYYY-MM[-n].log` | 6 months |
 | timing | `ledger/engine/*-YYYY-MM.jsonl` (brain.selftime, the hooks' `exec-bash-`) | 3 months |
 | ledger | `ledger/<name>-YYYY-MM.jsonl` (actions, decisions, events, guard decisions, the queue) | kept: records nothing else holds |
-| starts | `usage/starts.jsonl`, `usage/starts-YYYY-MM[-n].jsonl` (the governor's brainstorm starts, read for 10 minutes) | 2 months |
+| starts | `usage/starts.jsonl`, `usage/starts-YYYY-MM[-n].jsonl` (the governor's brainstorm starts, read for 10 minutes; and its stream starts, let through or asked about, while `usage.guard.wave_quota` is on: `"stream": true`, `name`, `asked`, read for a minute) | 2 months |
 | quota | `usage/quota.jsonl`, `usage/quota-YYYY-MM[-n].jsonl` (`brain usage quota --observe`'s readings) | 12 months |
 | notify | `notify/YYYY-MM.jsonl` (the notifications' audit: one file per month already; the older months go at a month's first line) | 6 months |
 

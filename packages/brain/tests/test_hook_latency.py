@@ -7,14 +7,15 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+import brain
 import pytest
 import yaml
-from test_capture import PLUGIN, _bash
-
-import brain
 from brain import graph, paths, projects
+from test_capture import PLUGIN, _bash
+from test_governor import ada  # noqa: F401 - a fixture (the wave quota gate's latency)
 
 HOOKS = PLUGIN / "hooks"
 
@@ -169,3 +170,40 @@ def test_what_the_if_conditions_let_through_the_bash_fast_path_still_filters():
     fast = re.search(r"brain_files='([^']+)'", text).group(1)
     for value in READS + SHELLS:
         assert re.search(fast, json.dumps(value)), value
+
+
+
+def test_a_stream_start_with_the_wave_quota_gate_on_stays_fast(ada, tmp_path, brain_home):  # noqa: F811
+    """wi-brain-wave-quota-gate (review of #222, finding 6): a start_session with usage.guard.wave_quota on reads the
+    app's sessions, one pass over the transcript folders and the children's tails: with the caches warm it decides
+    in well under the 2 s bound (measured ~40-70 ms on a machine of 204 app sessions), and it imports neither the
+    cockpit (~1 s) nor PyYAML."""
+    from datetime import timedelta
+
+    from test_governor import NOW, forecast, reading
+    from test_wave_quota_gate import START, app_file, child, master, start
+
+    ada({"wave_quota": {"ask_over_pct": 90, "max_streams": 10}, "sessions": 50})   # each start counts
+    reading(brain_home, 40)
+    forecast(brain_home, 40, pct_h=0.1)
+    master(ada)
+    for n in (1, 2):
+        child(ada, tmp_path, n)
+    for n in range(40):   # the machine's other sessions
+        app_file(ada, f"local_dddddddd-0000-4000-8000-{n:012d}", f"o-{n}", f"Other {n}", created=NOW - timedelta(days=2))
+    assert start(ada) is None   # builds the settings' and the app index's caches
+    best = min(_timed(lambda: start(ada)) for _ in range(5))
+    assert best < 0.150, f"{best * 1000:.1f} ms"
+    code = ("import json, sys; from brain import governor; governor.decide({'session_id': 's-ada', 'cwd': sys.argv[1], "
+            f"'tool_name': '{START}', 'tool_input': {{'title': 'x', 'initiation': 'user_asked'}}}}); "
+            "print(json.dumps(sorted(m for m in ('brain.cockpit', 'yaml') if m in sys.modules)))")
+    out = subprocess.run([sys.executable, "-c", code, str(ada.lab)], capture_output=True, text=True, timeout=60,
+                         env=dict(os.environ))
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout.strip().splitlines()[-1]) == []
+
+
+def _timed(fn):
+    t = time.perf_counter()
+    fn()
+    return time.perf_counter() - t
