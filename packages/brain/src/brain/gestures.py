@@ -30,7 +30,8 @@ from dataclasses import dataclass
 AGENT_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION")
 RUNNER = re.compile(r"^brain(?:\.(?:exe|cmd|bat|ps1))?$")   # the brain command, its Windows launchers
 MODULES = ("brain", "brain.cli", "brain.__main__")           # python -m brain, -mbrain, -m brain.cli
-VALUE_OPTS = ("--project", "--root", "--scope")              # brain's options before the subcommand that take a value
+VALUE_OPTS = ("--root", "--project", "--store")              # brain's options before the subcommand that take a value
+LAUNCHERS = ("uv", "uvx", "poetry", "pipx", "pdm", "hatch", "rye")  # ... run brain
 UNRESOLVED = re.compile(r"[$`%]")                            # a word the guard cannot resolve ($x, %x%, a backquote)
 
 
@@ -60,15 +61,18 @@ GESTURES: tuple[Gesture, ...] = (
             flags=("--apply",), cli="gate"),
     Gesture(("ipc", "otel-headers"), "keys", "it prints the machine's token (Claude Code's otelHeadersHelper runs "
             "it)", loose=True, cli="none"),
-    Gesture(("vault", "open"), "keys", "it decrypts a sealed store with a key"),
-    Gesture(("vault", "drill"), "keys", "it opens the recovery key's canary with that key"),
-    Gesture(("vault", "device", "init"), "keys", "it creates this machine's device key"),
-    Gesture(("vault", "device", "forget-previous"), "keys", "it deletes the previous device key from the keystore"),
+    Gesture(("vault", "open"), "keys", "it decrypts a sealed store with a key", guard="strict"),
+    Gesture(("vault", "drill"), "keys", "it opens the recovery key's canary with that key", guard="strict"),
+    Gesture(("vault", "device", "init"), "keys", "it creates this machine's device key", guard="strict"),
+    Gesture(("vault", "device", "forget-previous"), "keys", "it deletes the previous device key from the keystore",
+            guard="strict"),
     Gesture(("vault", "reseal"), "keys", "it decrypts every sealed file with the device key to seal it again",
             flags=("--apply", "--identity"), guard="strict", cli="gate"),
-    Gesture(("update",), "installer", "it installs a newer engine and moves the pin", unless=("--check",)),
-    Gesture(("uninstall",), "installer", "it removes the brain from this machine", flags=("--apply",)),
-    Gesture(("queue", "apply"), "actions", "it runs an action the owner queued as theirs"),
+    Gesture(("update",), "installer", "it installs a newer engine and moves the pin", unless=("--check",),
+            guard="strict"),
+    Gesture(("uninstall",), "installer", "it removes the brain from this machine", flags=("--apply",),
+            guard="strict"),
+    Gesture(("queue", "apply"), "actions", "it runs an action the owner queued as theirs", guard="strict"),
     Gesture((), "installer", "it writes the machine's settings, hooks and scheduled tasks", flags=("-Apply",),
             program="install.ps1", cli="none"),
 )
@@ -82,34 +86,47 @@ def agent_session(env=None) -> str:
 
 def runs_brain(low: list[str]) -> int:
     """The index of the word that runs brain in the simple command ``low`` (lower case): the brain command or a
-    launcher of it, or the module after an interpreter's -m (``python -X utf8 -m brain``, ``-mbrain``, ``uv run
-    brain``); -1 when it runs something else."""
-    for i, w in enumerate(low[:8]):
-        base = re.split(r"[\\/]", w)[-1]
-        if RUNNER.match(base):
+    launcher of it as the program, the module after an interpreter's -m (``python -X utf8 -m brain``, ``-mbrain``,
+    ``-Imbrain``, ``-Im brain``), or the word after a launcher's run (``uv run brain``); -1 when it runs something
+    else (``echo brain update``, ``cp -r brain x`` name it, never run it)."""
+    if not low:
+        return -1
+    if RUNNER.match(re.split(r"[\\/]",low[0])[-1]):
+        return 0
+    prog = re.split(r"[\\/]",low[0])[-1].removesuffix(".exe")
+    for i, w in enumerate(low[1:8], 1):
+        if re.fullmatch(r"-[a-z]*m", low[i - 1]) and w in MODULES:
             return i
-        if w.startswith("-m") and w[2:] in MODULES:
+        m = re.fullmatch(r"-[a-z]*m(\S+)", w)
+        if m and m[1] in MODULES:
             return i
-        if i and low[i - 1] == "-m" and w in MODULES:
+        if RUNNER.match(re.split(r"[\\/]",w)[-1]) and (prog in LAUNCHERS and (low[i - 1] in ("run", "tool")
+                                                                              or prog == "uvx")):
             return i
     return -1
 
 
 def _flag(word: str, flag: str) -> bool:
-    """Whether ``word`` gives ``flag``: as written, with a value (--apply=x), or as argparse's unique prefix of it
-    (--app); a PowerShell parameter (-Apply) by any prefix, in any case."""
+    """Whether ``word`` gives ``flag``: as written, with a value (--apply=x), or as argparse's prefix of it (--a,
+    --app=x: from three characters); a PowerShell parameter (-Apply) by any prefix, in any case."""
     if flag.startswith("--"):
-        return word == flag or word.startswith(flag + "=") or (len(word) > 3 and word.startswith("--")
-                                                                and flag.startswith(word))
+        opt = word.split("=", 1)[0]
+        return opt == flag or (len(opt) >= 3 and opt.startswith("--") and flag.startswith(opt))
     w, f = word.lower().lstrip("-–—"), flag.lower().lstrip("-")
     return bool(w) and word[:1] in "-–—" and f.startswith(w.split(":")[0])
+
+
+def _value_opt(word: str) -> bool:
+    """Whether ``word`` is one of brain's options before the subcommand that takes the next word as its value,
+    spelled out or as argparse's prefix of it (--proj, --ro, --st)."""
+    return any(_flag(word, o) for o in VALUE_OPTS) and "=" not in word
 
 
 def _command(low: list[str], start: int) -> list[str]:
     """The words of ``low`` from its subcommand on: the options brain takes before it, and their values, skipped."""
     i = start
     while i < len(low) and low[i].startswith("-"):
-        i += 2 if low[i] in VALUE_OPTS else 1
+        i += 2 if _value_opt(low[i]) else 1
     return low[i:]
 
 
@@ -119,19 +136,48 @@ def _fits(g: Gesture, rest: list[str]) -> bool:
     return not (g.unless and any(_flag(w, f) for w in rest for f in g.unless))
 
 
+def _words_at(g: Gesture, cmd: list[str]) -> int:
+    """Where a gesture's words end in ``cmd`` (its subcommand first), options and their values allowed between them
+    (``usage --hours 2 allow``, ``queue --kind action apply``), a positional word not (``queue add ... apply``); -1
+    when they are not there."""
+    if not g.words or cmd[:1] != [g.words[0]]:
+        return -1
+    i = 1
+    for word in g.words[1:]:
+        while i < len(cmd) and cmd[i] != word:
+            if not (cmd[i].startswith("-") or (cmd[i - 1].startswith("-") and "=" not in cmd[i - 1])):
+                return -1
+            i += 1
+        if i >= len(cmd):
+            return -1
+        i += 1
+    return i
+
+
+def _help(low: list[str]) -> bool:
+    """Whether brain is asked for its help (--help or -h before any --): a read."""
+    words = low[1:low.index("--")] if "--" in low else low[1:]
+    return "--help" in words or "-h" in words
+
+
 def match(words: list[str]) -> Gesture | None:
     """The gesture the simple command ``words`` runs, else None. A brain gesture's words follow brain's own options
-    (``brain --project x usage allow``); a loose one is found anywhere, whatever runs it, its last word unresolved
-    too (``brain ipc $x``). ``--help`` is a read."""
+    (``brain --project x usage allow``, their prefixes too), options allowed between them; a loose one is found
+    anywhere, whatever runs it, its last word unresolved too (``brain ipc $x``), even with --help. ``--help`` or
+    ``-h`` before any ``--`` makes any other one a read."""
     low = [w.lower() for w in words]
-    if not low or "--help" in low[1:] or "-h" in low[1:]:
+    if not low:
         return None
     at = runs_brain(low)
     cmd = _command(low, at + 1) if at >= 0 else []
+    helped = _help(low)
     for g in GESTURES:
-        n = len(g.words)
-        if g.program == "brain" and ((cmd[:n] == list(g.words) and _fits(g, cmd[n:])) or
-                                     (g.loose and _anywhere(g, low))):
+        if g.program != "brain":
+            continue
+        if g.loose and _anywhere(g, low):
+            return g
+        end = -1 if helped else _words_at(g, cmd)
+        if end >= 0 and _fits(g, cmd[end:]):
             return g
     return None
 

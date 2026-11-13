@@ -305,7 +305,7 @@
       "type": "object", "additionalProperties": false,
       "description": "The owner guard's options (brain.guards, brain.gestures: the owner's gestures, declared once).",
       "properties": {
-        "owner_strict": {"type": "boolean", "description": "true: the owner's gestures brain.gestures marks strict are refused too: brain vault reseal --apply (or --identity) at the guard, and brain usage allow, brain schedule install --apply and brain vault reseal --apply by the command line itself in an agent's session (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT or BRAIN_AGENT_SESSION set), past the hook. Default false: only the refusals of 0.5.0."}
+        "owner_strict": {"type": "boolean", "description": "true: the owner's gestures brain.gestures marks strict are refused too (docs/guards.md, the owner's gestures): at the guard brain vault reseal --apply, and vault open, drill, device init and forget-previous, update, uninstall --apply and queue apply, which their commands refuse in an agent's session already; at the command line itself brain usage allow, brain schedule install --apply and brain vault reseal --apply in an agent's session (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT or BRAIN_AGENT_SESSION set), past the hook. Default false: the guard refuses what 0.5.0 refused."}
       }
     },
     "ipc": {

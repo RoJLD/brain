@@ -28,9 +28,9 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   gcloud and argocd logins, local users), scheduled (schtasks /create|/change|/delete, Register-ScheduledTask and
   its kin, brain schedule install --apply, services, crontab but -l, at, systemctl enable, Run keys, a file written
   where it starts on its own, the desktop app's scheduled-tasks tools), arming (--arm), installer (install.ps1 -Apply).
-  The engine's own gestures (brain usage allow, handover root, schedule install --apply, ipc otel-headers, vault open,
-  drill, device init and forget-previous, update, uninstall --apply, queue apply; vault reseal --apply under config.json
-  guards.owner_strict) are brain.gestures' one list, judged first: one in a never-grantable category is an action the
+  The engine's own gestures (brain usage allow, handover root, schedule install --apply, ipc otel-headers; under
+  config.json guards.owner_strict also vault open, drill, device init and forget-previous, reseal --apply, update,
+  uninstall --apply, queue apply) are brain.gestures' one list, judged first: one in a never-grantable category is an action the
   owner can queue, any other is refused naming the owner's terminal. A category the file does
   not declare is not guarded; money and legal have no command, only their deny rules. Also refused: setting
   BRAIN_GUARD_ALLOW for later sessions (setx, the registry, Claude Code's settings, a shell profile; check override).

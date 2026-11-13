@@ -31,26 +31,33 @@ pre-filter, the command line and this table, so a new gesture added to the list 
 | `brain handover root` | override | refuses, whatever runs it | refuses (its own check) |
 | `brain schedule install --apply` | scheduled | refuses, queued for the owner | refuses (strict) |
 | `brain ipc otel-headers` | keys | refuses, whatever runs it, queued | runs: Claude Code's `otelHeadersHelper` calls it |
-| `brain vault open` | keys | refuses, queued | refuses (its own check) |
-| `brain vault drill` | keys | refuses, queued | refuses (its own check) |
-| `brain vault device init` | keys | refuses, queued | refuses (its own check) |
-| `brain vault device forget-previous` | keys | refuses, queued | refuses (its own check) |
+| `brain vault open` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault drill` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault device init` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault device forget-previous` | keys | refuses (strict), queued | refuses (its own check) |
 | `brain vault reseal --apply` (or `--identity`) | keys | refuses (strict), queued | refuses (strict; `--identity`: its own check) |
-| `brain update` (but `--check`) | installer | refuses | refuses (its own check) |
-| `brain uninstall --apply` | installer | refuses | refuses (its own check) |
-| `brain queue apply` | actions | refuses | refuses (its own check) |
+| `brain update` (but `--check`) | installer | refuses (strict) | refuses (its own check) |
+| `brain uninstall --apply` | installer | refuses (strict) | refuses (its own check) |
+| `brain queue apply` | actions | refuses (strict) | refuses (its own check) |
 | `install.ps1 -Apply` | installer | refuses when permissions.yaml declares `installer` | not the engine's |
 
-A gesture's words follow `brain`'s own options (`brain --project x usage allow`), whatever runs it: `brain`, its
-`.exe` or `.cmd`, `python -m brain` (`-mbrain`, `-m brain.cli`), `uv run brain`; a loose one (`handover root`, `ipc
-otel-headers`) anywhere in the command, its last word unresolved too (`brain ipc $x`). `--help` is a read. A category
+A gesture's words follow `brain`'s own options (`--root`, `--project`, `--store`, or argparse's prefixes of them:
+`brain --proj x usage allow`), with options and their values allowed between them (`brain usage --hours 2 allow`),
+whatever runs it as the program: `brain`, its `.exe` or `.cmd`, `python -m brain` (`-mbrain`, `-Imbrain`, `-m
+brain.cli`), `uv run brain`; a word that only names brain (`echo brain update`, `cp -r brain x`) runs nothing. A flag
+counts by argparse's prefixes too (`--a`, `--app=x`). A loose gesture (`handover root`, `ipc otel-headers`) is found
+anywhere in the command, its last word unresolved too (`brain ipc $x`), `--help` or not; any other is a read with
+`--help` or `-h` before a `--`. A category
 of the never-grantable list (keys, scheduled; installer when permissions.yaml declares it) makes the refusal an action
 the owner can queue (`brain queue add --guard`); the others name the gesture and the owner's terminal.
 
-**Strict** (config.json `guards.owner_strict: true`, off by default): the refusals 0.5.1 adds to what passed before,
-`brain vault reseal --apply` at the guard, and the command line's own refusal of `brain usage allow`, `brain schedule
-install --apply` and `brain vault reseal --apply` in an agent's session (exit 2). Without it, the guard's refusals of
-0.5.0 hold, and each command's own check.
+**Strict** (config.json `guards.owner_strict: true`, off by default): the refusals 0.5.1 adds to what the guard let
+through before. At the guard: `brain vault reseal --apply`, and the gestures whose commands refuse themselves in an
+agent's session already (`vault open`, `drill`, `device init` and `forget-previous`, `update`, `uninstall --apply`,
+`queue apply`: refused before they run, `brain update`'s plan included); at the command line, its own refusal of
+`brain usage allow`, `brain schedule install --apply` and `brain vault reseal --apply` in an agent's session (exit 2).
+Without it, the guard refuses what 0.5.0 refused (`usage allow`, `handover root`, `schedule install --apply`, `ipc
+otel-headers`), now however brain is run, and each command keeps its own check.
 
 ## The Terminal panel
 

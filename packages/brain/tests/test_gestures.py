@@ -44,16 +44,26 @@ def spellings(g):
     """The ways a session runs a gesture: brain, its .exe, python -m (with options before -m), -mbrain, options of
     brain before the subcommand, a flag's argparse prefix."""
     tail = " ".join((*g.words, *g.flags[:1]))
-    out = [f"brain {tail}", f"python -X utf8 -m brain {tail}", f"python -mbrain {tail}",
-           f"brain --project lab {tail}", f"~/.brain/venv/bin/python -m brain --root ~/b {tail} --json"]
+    out = [f"brain {tail}", f"python -X utf8 -m brain {tail}", f"python -mbrain {tail}", f"python -Imbrain {tail}",
+           f"python -Im brain {tail}", f"uv run brain {tail}", f"brain --project lab {tail}",
+           f"~/.brain/venv/bin/python -m brain --root ~/b {tail} --json",
+           # found by the review of the registry: brain's options by prefix, --store, quoted words, options between
+           f"brain --store x {tail}", f"brain --proj lab {tail}", f"brain --ro ~/b {tail}", f"brain --root=~/b {tail}",
+           "brain " + " ".join(f"'{w}'" for w in (*g.words, *g.flags[:1]))]
+    if len(g.words) > 1:
+        out.append(f"brain {g.words[0]} --json {' '.join(g.words[1:])} {' '.join(g.flags[:1])}")
+        out.append(f"brain {g.words[0]} --reason x {' '.join(g.words[1:])} {' '.join(g.flags[:1])}")
     if g.flags and g.flags[0].startswith("--"):
-        out.append(f"brain {' '.join(g.words)} {g.flags[0][:5]}")
+        out += [f"brain {' '.join(g.words)} {g.flags[0][:5]}", f"brain {' '.join(g.words)} {g.flags[0][:3]}",
+                f"brain {' '.join(g.words)} {g.flags[0][:6]}=1"]
     return out
 
 
 def test_the_list_is_well_formed():
     names = [g.name for g in gestures.GESTURES]
     assert len(names) == len(set(names))
+    assert gestures.VALUE_OPTS == tuple(a.option_strings[0] for a in cli.build_parser()._actions
+                                        if a.option_strings and a.nargs is None and a.dest != "help")
     for g in gestures.GESTURES:
         assert g.guard in ("always", "strict") and g.cli in ("own", "gate", "none") and g.why.startswith("it ")
         assert g.category and re.fullmatch(r"[a-z-]+", g.category)
@@ -88,10 +98,19 @@ def test_the_prefilter_starts_python_for_each_gesture(g):
     "brain queue add --kind action --title t --what 'brain vault open'", "brain handover check",
     "brain ipc token", "brain usage allow --help", "brain vault open -h", "grep -rn 'usage allow' docs/",
     "git commit -m 'brain vault open is refused'", "brain item update wi-x --status doing",
+    # found by the review of the registry: brain named, not run
+    "echo brain update", "cp -r brain update", "git add brain update", "echo run brain queue apply in your terminal",
+    "brain queue add --kind action --title t apply", "ls packages/brain update",
 ])
 def test_reads_and_mentions_pass(owner, tmp_path, monkeypatch, command):
     config(tmp_path, monkeypatch, strict=True)
     assert bash(owner, command) is None, command
+
+
+def test_a_loose_gesture_is_refused_even_after_a_double_dash(owner, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch, strict=None)
+    assert "marks a coordinators' chain root" in bash(owner, "brain handover root -- -h")
+    assert bash(owner, "brain usage allow --help") is None and bash(owner, "brain usage allow -- -h")
 
 
 def test_a_queued_category_is_an_action_for_the_owner(owner, tmp_path, monkeypatch):
