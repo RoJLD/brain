@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import probe, tiers
+from .. import paths, probe, tiers
 
 ORDER = 270   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 250   # its usage lines' place in brain --help's epilog
@@ -31,7 +31,8 @@ USAGE = """\
                  writes it to $BRAIN_HOME/profile.json, and a second apply changes nothing; no base: the current one
                  with these overrides; --with all: every built entry; install.ps1 -Tier / -With / -Without runs it
   brain profile render [the same]   what install.ps1 reads, as JSON: the pip extras the profile wants, those
-                 installed outside it, the stacks on and off
+                 installed outside it, the stacks on and off. Every brain profile command runs with no personal brain
+                 too (a first install): the machine's profile.json over the built-in base
 """
 
 
@@ -50,7 +51,7 @@ def cmd_profile(args, root: Path) -> int:
         print(f"brain profile: {e}", file=sys.stderr)
     ch = tiers.choice(root)
     base = getattr(args, "base", None)
-    facts = (tiers.machine_facts(root, probe.collect(quick=True, roots=[root]), reg, ch)
+    facts = (tiers.machine_facts(root, probe.collect(quick=True, roots=[root] if root else None), reg, ch)
              if sub in ("list", "show") or base == "recommended" else None)
     if sub == "list":
         data = tiers.profiles(reg, ch, facts)
@@ -99,6 +100,22 @@ def register(sub, ctx) -> None:
         sp.add_argument("--without", action="append", metavar="ID", help="turn a capability or stack off (repeatable)")
         if name == "set":
             sp.add_argument("--apply", action="store_true", help="write the choice (a second apply changes nothing)")
+
+
+def early(args) -> int | None:
+    """No project to act on (the brain command installed alone, no personal brain yet): the profile is the machine's
+    (<BRAIN_HOME>/profile.json over tiers.yaml's built-in base), so every subcommand runs without a root rather than
+    stop on the missing graph store. install.ps1 reads ``brain profile render`` right after its first pip install,
+    before any brain init: without this, a first -Apply never installed the default profile's extras
+    (wi-brain-install-profile-extras). --root, --project or a root found: None, the command runs at that root."""
+    if args.root or getattr(args, "project", None):
+        return None
+    try:
+        paths.find_root()
+    except SystemExit:
+        args.cmd = "profile"
+        return cmd_profile(args, None)
+    return None
 
 
 def run(args, root: Path) -> int:

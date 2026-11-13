@@ -496,6 +496,18 @@ forecast` draws each one, and reads the owner's pending blocking DDRs and pendin
 they name; `brain check` warns on a trigger that names a duration with no gate, on an `after_external` that does not
 resolve and on a `due` date without its `due_source`; `brain queue` ends with what each gate holds.
 
+Before it, `brain wave close-merged X.Y.Z [--repo NAME]... [--repo-dir D]... [--since REF] [--until REF] [--write]
+[--json]` closes the items the merged PRs deliver (brain.closemerged, zero token, git only): the PRs merged on each
+repo's default branch since the last release tag before X.Y.Z (up to its own tag once cut), each mapped to its
+items by the changelog fragment it added (`changes/<item>.md`, `<item>-upgrade.md`) or an item id in its title;
+each open one closed done with `--pr "<repo> #N"` (after the refs its `props.pr` holds), the PR's title as the
+outcome and its merge's date. The fragments are those of `changes/` and `packages/<name>/changes/`, named
+`<item>.md` or `<item>-<section>.md`; a revert PR (`Revert "<title>"`) takes the PR it reverts out. It lists the
+items already closed, the PRs and fragments that name no item, and the wave's open items that no merged PR names;
+`--write` is refused while a repo could not be read (no tag: `--since`, or leave it out with `--repo`). The default
+branch is read as last fetched. A rebase merge leaves no trace of its PR and is not read, and a title that only
+mentions an item closes it too: the fragment is the mapping to trust.
+
 The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
 X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending
 wave, created beside the closed one when that release has none yet) or drops it, then reaches the wave; it refuses
@@ -1340,15 +1352,20 @@ the account's uuid and id, the system's user name): an MCP or a skill call keeps
 at zero token, and drops the same attributes from files written before the processors did:
 
 ```bash
-brain telemetry summary              # the last 7 days: per UTC day, model and session, tokens by type, cost,
+brain telemetry summary              # the last 7 x 24 hours: per UTC day, model and session, tokens by type, cost,
                                      # API requests, errors and retries; tool decisions; tool failures; hook p50/p90
 brain telemetry summary --days 1 --session 1a2b --json
 brain telemetry status               # the export on or off, the collector answering, each signal's last record
 ```
 
-`brain telemetry status` exits 1 when the export is on and the collector does not answer (a bounded probe of its
-health endpoint, 127.0.0.1:13133), or answers while a signal has had no record for 24 hours (`--stale-hours`): a
-collector with no source looks healthy and records nothing. The transcripts stay the first source of the ledgers
+`--days N` is a rolling window (the last N x 24 hours), so the first UTC day of the table is partial.
+`brain telemetry status` exits 1 when the export is on and the collector does not answer (a probe of its health
+endpoint, 127.0.0.1:13133, bounded as a whole, no redirect followed), or answers while a signal has had no record for
+24 hours (`--stale-hours`) although Claude Code wrote a transcript more than that after its last record: a collector
+with no source looks healthy and records nothing. Claude Code exports only while a session runs, so a quiet spell is
+a warning (no activity), not a failure. The summary names any attribute key outside the reviewed list
+(`brain.otel.KNOWN_KEYS`), so that a key a new Claude Code version adds is reviewed before it is kept. The
+transcripts stay the first source of the ledgers
 (`brain usage`); the export adds Claude Code's own durations, permission decisions with their source and the API's
 retries. Other readers iterate `brain.otel.records()` (one normalized record per data point or event). DuckDB is not
 needed; where it is installed, it reads the same files directly, for instance
