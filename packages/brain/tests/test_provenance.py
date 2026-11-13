@@ -47,13 +47,6 @@ def test_the_provider_a_model_id_implies(model, provider):
     assert provenance.provider_from_model(model) == provider
 
 
-def test_harness_takes_over_tool_read_as_its_fallback():
-    assert provenance.harness_of({"harness": "cursor", "tool": "claude-code"}) == "cursor"
-    assert provenance.harness_of({"tool": "claude-code"}) == "claude-code"   # an old record
-    assert provenance.harness_of({}) == "claude-code"                         # a ledger row (Claude Code's reader)
-    assert provenance.harness_of({"harness": "Not An Id!"}) == "claude-code"
-
-
 def test_an_alias_is_never_an_email_address_nor_an_account_id():
     assert provenance.safe_alias("main") == "main" and provenance.safe_alias("team-2.b_x") == "team-2.b_x"
     for bad in (ADDRESS, DOTLESS, UUID, UUID.replace("-", ""), "a-" + UUID, "x" + UUID.replace("-", ""),
@@ -140,6 +133,10 @@ def test_the_session_record_is_unchanged(fixture_transcript, ada_config, brain_h
     snap = json.loads((brain_home / "sessions" / f"{payload['session_id']}.json").read_text(encoding="utf-8"))
     assert not set(snap) & set(provenance.FIELDS) and schema.check("sr", snap)[0] == []
     assert schema.check("sr", {**_old_sr(), "account": "main"})[0]
+    led = cost.Ledger([{"session_id": payload["session_id"], "folder": "", "start": "2026-11-07T10:00:00Z",
+                        "model": "claude-opus-5-5", "cost": 1.0}], [], cfg_usage={"accounts": ACCOUNTS})
+    (row,) = led.where(led.rows)   # today's snapshot through a report: its tool, the account configured that day
+    assert (row["harness"], row["provider"], row["account"], row["plan"]) == ("claude-code", "anthropic", "main", "Max")
 
 
 def test_a_pattern_error_never_prints_the_value_back():
@@ -150,6 +147,19 @@ def test_a_pattern_error_never_prints_the_value_back():
         with pytest.raises(SystemExit) as exc:
             records.validate("sr", {**_old_sr(), "tool": bad})
         assert bad not in str(exc.value)
+        errors = schema.check("sr", {**_old_sr(), "status": bad})[0]   # an enum
+        assert any(e.startswith("sr.status: its value (") for e in errors) and bad not in " ".join(errors)
+    assert "sr.status: 'opened' not in" in " ".join(schema.check("sr", {**_old_sr(), "status": "opened"})[0])
+
+
+def test_a_format_error_never_prints_an_address_back(tmp_path, monkeypatch):
+    base = json.loads(open(config.config_file(), encoding="utf-8").read())
+    base["usage"] = {"accounts": [{"alias": "ok", "since": ADDRESS}]}
+    f = tmp_path / "config.json"
+    f.write_text(json.dumps(base), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(f))
+    text = " ".join(config.check())
+    assert "usage.accounts[0].since" in text and ADDRESS not in text
 
 
 def test_brain_config_check_refuses_an_email_shaped_alias(tmp_path, monkeypatch):
@@ -222,6 +232,8 @@ def test_usage_reads_what_the_snapshot_holds_before_the_configuration(lab, brain
     (snaps / "s2.json").write_text(json.dumps({"v": 1, "provider": "foundry", "harness": "claude-code",
                                                "account": "solo", "plan": "Pro"}), encoding="utf-8")
     led = cost.Ledger(_rows(lab)[:2], [lab], cfg_usage={"accounts": ACCOUNTS})
+    assert "provider" not in led.rows[0]   # read when a report asks for the row, not when the ledger loads
+    led.window("", "")
     s2 = next(r for r in led.rows if r["session_id"] == "s2")
     assert (s2["provider"], s2["harness"], s2["account"], s2["plan"]) == ("foundry", "claude-code", "solo", "Pro")
     s1 = next(r for r in led.rows if r["session_id"] == "s1")   # no snapshot: the configuration and the model
@@ -236,8 +248,8 @@ def test_a_row_read_twice_reads_the_same(lab):
     """A Ledger built again from annotated rows (brain.forecast does) keeps (none) and (masked) as they were."""
     cfg = {"accounts": [{"alias": "late", "plan": "Max", "since": "2026-11-05"}]}
     rows = _rows(lab)
-    first = cost.Ledger(rows, [lab], cfg_usage=cfg).rows
-    again = cost.Ledger([dict(r) for r in first], [lab], cfg_usage=cfg).rows
+    first = cost.Ledger(rows, [lab], cfg_usage=cfg).window("", "")
+    again = cost.Ledger([dict(r) for r in first], [lab], cfg_usage=cfg).window("", "")
     pick = ("provider", "harness", "account", "plan")
     assert [[r[k] for k in pick] for r in again] == [[r[k] for k in pick] for r in first]
     assert [r["account"] for r in first] == ["(none)", "late", "late", "late", "(masked)"]

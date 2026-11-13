@@ -14,13 +14,15 @@ a token-ledger row (:func:`of_row`), the first source that gives a value:
             adapter).
   account   the row's or the snapshot's; else the entry of config.json ``usage.accounts`` in force on the session's
             day (the latest ``since`` on or before it; an entry that names the session's harness first). The day is
-            the UTC date the session started (YYYY-MM-DD).
+            the UTC date the session started (YYYY-MM-DD): an account switched within a day takes that whole day
+            (the entry whose ``since`` is that day), the sessions before the switch included.
   plan      the row's or the snapshot's; the account's ``plan``; else config.json ``usage.plans`` (the plan in force
             that day) when the owner set it.
 
 An alias is a short name (``main``, ``team-2``), **never an e-mail address and never an account id**: an alias that
-holds an ``@`` or looks like a UUID is never shown (:func:`safe_alias` drops it, a row's shows as ``(masked)``) and
-a config.json that holds one is refused by its schema. Nothing here reads Claude Code's account files or its telemetry: the alias is the
+holds an ``@`` or looks like a UUID is never shown (:func:`safe_alias` drops it; a row that would carry one, from a
+later scanner or another harness's adapter, shows as ``(masked)``) and a config.json that holds one is refused by its
+schema. Nothing here reads Claude Code's account files or its telemetry: the alias is the
 owner's configuration only.
 """
 
@@ -52,7 +54,7 @@ _BEDROCK_RE = re.compile(r"^(?:arn:aws[a-z-]*:bedrock|(?:[a-z]+(?:-[a-z]+)?\.)?a
 
 def safe_alias(value) -> str:
     """``value`` when it is an alias :data:`ALIAS_RE` takes whole, else '' (an e-mail address, an account id, anything
-    else: never written)."""
+    else: never shown nor used)."""
     return value if isinstance(value, str) and ALIAS_RE.fullmatch(value) else ""
 
 
@@ -82,11 +84,6 @@ def provider_from_model(model) -> str:
     if m.startswith("claude-"):
         return "vertex" if "@" in m else "anthropic"
     return ""
-
-
-def harness_of(record: Mapping) -> str:
-    """A record's harness: ``harness``, else ``tool`` (read as a fallback), else :data:`HARNESS`."""
-    return _name(record.get("harness")) or _name(record.get("tool")) or HARNESS
 
 
 def accounts(cfg_usage) -> list[dict]:
@@ -192,4 +189,4 @@ def of_row(row: Mapping, cfg_usage=None, accts: list[dict] | None = None, snapsh
     out = _fill(given, _model_of(row), str(row.get("start") or "")[:10], cfg_usage, accts)
     if masked:
         out.update(account=MASKED, plan=own.get("plan", ""))
-    return {k: v or NONE for k, v in out.items()}
+    return {k: out[k] or NONE for k in FIELDS}

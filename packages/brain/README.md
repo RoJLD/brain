@@ -1448,9 +1448,10 @@ the session record is unchanged (the SR fields come with wi-brain-sr-provenance-
 `provider`, else what the model's id says (`us.anthropic.claude-...` or an ARN: bedrock; `claude-...@<date>`: vertex;
 `claude-...`: anthropic). The account is an **alias the owner chooses**, set in config.json `usage.accounts` (the one in
 force from each `since` day, an entry that names the session's `harness` first); its plan is the entry's `plan`, else
-`usage.plans`. `since` is a UTC day (YYYY-MM-DD), compared with the UTC day the session started. An alias is never an
-e-mail address nor an account id: config.json's schema refuses one, and a ledger row that holds one shows as
-`(masked)`. Nothing reads Claude Code's account files or its telemetry.
+`usage.plans`. `since` is a UTC day (YYYY-MM-DD), compared with the UTC day the session started: an account switched
+within a day takes that whole day, the sessions before the switch included. An alias is never an e-mail address nor an
+account id: config.json's schema refuses one, and a ledger row that would carry one (a later scanner's, another
+harness's adapter) shows as `(masked)`. Nothing reads Claude Code's account files or its telemetry.
 
 ```json
 "usage": {"accounts": [{"alias": "personal", "plan": "Pro"},

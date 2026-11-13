@@ -79,7 +79,8 @@ older engine notes in read mode and refuses in strict mode (CI), so a brain repo
 once its CI runs the engine that knows it. `usage.accounts[].alias` never takes an `@` nor a UUID (an e-mail address,
 an account id) anywhere in it, nor a trailing newline (the patterns end on `(?![\s\S])`, read alike by ECMA and
 Python), and `usage.accounts[].since` is a UTC day (YYYY-MM-DD). A value that breaks a schema's pattern is never
-printed back, whatever the schema: the error gives its path and length. The SR and the token ledger
+printed back, whatever the schema: the error gives its path and length; an enum's or a format's error prints a short
+plain word only (no `@`, no UUID, at most 40 characters), else the length too. The SR and the token ledger
 (`usage/sessions.json`) do not change: a session's provider, harness, account and plan are computed when a report is
 built (the row's own fields, what the session's snapshot holds, then config.json and the model). The SR fields come
 with wi-brain-sr-provenance-fields.

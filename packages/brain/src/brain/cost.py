@@ -128,13 +128,11 @@ class Ledger:
 
     def __init__(self, rows: list[dict], projs: list[projects.Project], placer=None, cfg_usage=None) -> None:
         placer = placer or queue.Placer(projs)
-        accts = provenance.accounts(cfg_usage)
+        self.cfg_usage, self.accts, self._where = cfg_usage, provenance.accounts(cfg_usage), set()
         self.rows = []
         for r in rows:
             r = dict(r)
             r["project"] = (placer(r["folder"]) if r.get("folder") else "") or queue.OUTSIDE
-            # where it ran, read at report time: the row, what its Stop hook captured, config.json, its model
-            r.update(provenance.of_row(r, cfg_usage, accts, provenance.captured(str(r.get("session_id") or ""))))
             self.rows.append(r)
         self.parent = usage.link_families(self.rows)
         self.items: dict[str, Item] = {}
@@ -180,7 +178,18 @@ class Ledger:
         return list(dict.fromkeys(ids))
 
     def window(self, since: str, until: str) -> list[dict]:
-        return [r for r in self.rows if usage.in_window(r, since, until)]
+        """The rows of [since, until), each with where it ran (:meth:`where`)."""
+        return self.where([r for r in self.rows if usage.in_window(r, since, until)])
+
+    def where(self, rows: list[dict]) -> list[dict]:
+        """``rows`` with where each ran (brain.provenance.of_row: the row, its session's snapshot, config.json, its
+        model), read once per row and only for the rows a report reads: a snapshot is a file per session."""
+        for r in rows:
+            if id(r) not in self._where:
+                self._where.add(id(r))
+                r.update(provenance.of_row(r, self.cfg_usage, self.accts,
+                                           provenance.captured(str(r.get("session_id") or ""))))
+        return rows
 
 
 # --- an item's actual ---
