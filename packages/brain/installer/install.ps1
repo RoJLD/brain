@@ -29,8 +29,9 @@
       pointer      <BRAIN_HOME>\personal.json, {"root": <the personal brain's main checkout>}: how the engine and its
                    hooks find the personal brain from anywhere ($env:BRAIN_PERSONAL overrides it)
       profile      this machine's profile (brain profile, alias brain doctor: Lite, Défaut, Recommandé,
-                   Personnalisable), read once the brain command is installed: the pip extras it wants join -Extras
-                   (Défaut, the built-in base, brings the cockpit's tui). -Tier lite|default|recommended, -With ID and
+                   Personnalisable), read once the brain command is installed, with or without a personal brain: the
+                   pip extras it wants join -Extras in the same -Apply (Défaut, the built-in base, brings the
+                   cockpit's tui, a first install's included). -Tier lite|default|recommended, -With ID and
                    -Without ID change it: brain profile set prints the plan, and with -Apply writes
                    <BRAIN_HOME>\profile.json (recommended: the set this machine allows, frozen there). An extra the
                    profile no longer wants is left installed; the stacks it turns on start on demand (brain up).
@@ -500,6 +501,23 @@ function Show-Tier($t) {
     $r.extras_outside | Where-Object { $_ } | ForEach-Object { "keep     the $_ extra is installed but outside the profile: left installed" }
     $r.warnings | Where-Object { $_ } | ForEach-Object { "warning  profile: $_" }
 }
+# --- the profile's extras (tests/test_installer_profile.py runs it alone) ---
+function Add-ProfileExtras {
+    # The extras the profile wants beyond -Extras, installed in the same -Apply. brain profile render runs without a
+    # personal brain (the machine's profile.json over the built-in base), so a first install of the command alone
+    # gets the default profile's tui (wi-brain-install-profile-extras). A render that fails says how to add them.
+    $chosen = Read-Tier
+    Show-Tier $chosen
+    if (-not $chosen.render) {
+        if ($wanted -notcontains 'tui') { "note     to install the cockpit's Textual app anyway: -Apply -Extras tui" }
+        return
+    }
+    $more = @($chosen.render.extras | Where-Object { $_ -and $wanted -notcontains $_ })
+    if (-not $more) { return }
+    $spec = Get-Spec (@($wanted) + $more | Sort-Object -Unique)
+    "install  the profile's extras (pip install `"$spec`")"
+    if ($Apply) { Install-Brain $spec }
+}
 
 function Get-InstalledCommit([string]$dist) {
     # The commit pip recorded for a distribution installed from git (its dist-info's direct_url.json) from the
@@ -575,14 +593,7 @@ if (-not $SkipCommand) {
     }
     # The machine's profile, read from the installed brain command: the extras it wants too.
     if (Test-Path $launcher) {
-        $chosen = Read-Tier
-        Show-Tier $chosen
-        $more = @(if ($chosen.render) { $chosen.render.extras | Where-Object { $_ -and $wanted -notcontains $_ } })
-        if ($more) {
-            $spec = Get-Spec (@($wanted) + $more | Sort-Object -Unique)
-            "install  the profile's extras (pip install `"$spec`")"
-            if ($Apply) { Install-Brain $spec }
-        }
+        Add-ProfileExtras
     } else {
         "profile  read once the brain command is installed (-Apply); the built-in base is default: Lite and the cockpit's tui"
     }

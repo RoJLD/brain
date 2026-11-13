@@ -13,7 +13,7 @@ from brain.commands import _registry
 from brain.commands import audit as audit_cmd
 from brain.commands import (bundle, capture, catalogue, check, code_map, collisions, decision, docgraph, down,
                             formats, handover, health, impact, index, init, ipc, mcp, memory, merge_check, merge_driver,
-                            milestone, perf, probes, project, quiet, refresh, resume, retro, review, schedule,
+                            milestone, perf, probes, profile, project, quiet, refresh, resume, retro, review, schedule,
                             schema, sessions, spec, timed, up, update)
 from brain.commands import merge_ready
 from brain.commands import release as release_cmd
@@ -57,11 +57,13 @@ def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeyp
 
 # Before the registry, cli._dispatch ran these before any root was resolved (a hook, a machine-wide command, a repo
 # that may hold no graph store): their module defines early, and no run; decision, resume and check define both (early
-# for announce, --hook and --public only); every other command needs the project's root (run only)
+# for announce, --hook and --public only), and profile (early when no root is found: a first install); every other
+# command needs the project's root (run only)
 EARLY = {capture, memory, timed, perf, init, merge_driver, merge_check, sessions, schedule, update, audit_cmd, impact,
          index, up, down, health, bundle, quiet, review, probes, schema, test_cmd, merge_ready, mcp, ipc,
          handover, project, uninstall, release_cmd}
-BOTH = {decision, resume, check, docgraph, catalogue}
+BOTH = {decision, resume, check, docgraph, catalogue, profile}
+ALIASES = {"profile": ("doctor",)}
 ROOTED = {code_map, collisions, formats, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
 
 
@@ -71,10 +73,11 @@ def test_the_commands_that_run_before_a_root_is_resolved_keep_their_phase():
     assert {m.__name__ for m in MODULES if phase(m) == "early"} == {m.__name__ for m in EARLY}
     assert {m.__name__ for m in MODULES if phase(m) == "both"} == {m.__name__ for m in BOTH}
     assert all(phase(m) == "run" for m in ROOTED)
-    for m in EARLY | BOTH | ROOTED:   # each registers the command of its file name
+    for m in EARLY | BOTH | ROOTED:   # each registers the command of its file name (and its aliases: doctor)
         sub = argparse.ArgumentParser().add_subparsers()
         m.register(sub, _registry.Context("Ada", "ada"))
-        assert list(sub.choices) == [m.__name__.rsplit(".", 1)[1].replace("_", "-")], m.__name__
+        name = m.__name__.rsplit(".", 1)[1].replace("_", "-")
+        assert list(sub.choices) == [name, *ALIASES.get(name, ())], m.__name__
 
 
 def test_brain_cli_adds_no_parser_itself():
