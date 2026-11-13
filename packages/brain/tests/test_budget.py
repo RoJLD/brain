@@ -78,7 +78,7 @@ def test_context_warned_once_at_80_and_once_at_100(session):
     assert _run(session) == ""  # once
     _append(session, _asst("m4", 420_000))
     note = _run(session)
-    assert "105 % of its brief's context budget" in note and "expanded to the next step" in note
+    assert "105 % of its brief's context budget" in note and "its budget grows one step" in note
     _append(session, _asst("m5", 500_000))
     assert _run(session) == ""
     state = json.loads((budget.state_dir() / "s-1.json").read_text(encoding="utf-8"))
