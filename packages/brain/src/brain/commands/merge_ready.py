@@ -56,20 +56,26 @@ def _together(args, top: Path) -> int:
     return 0 if t.ready else 1
 
 
+def _set(args) -> int:
+    """--with's path: PRs merged together; --test and --python alone are refused."""
+    from .merge_check import git_top
+    if not args.with_:
+        print("brain merge-ready: --test and --python go with --with PR (a set of PRs merged together)",
+              file=sys.stderr)
+        return 2
+    try:
+        return _together(args, Path(git_top(Path(args.repo_dir or ".").resolve())))
+    except AuditError as exc:
+        print(f"brain merge-ready: {exc}", file=sys.stderr)
+        return 2
+
+
 def early(args) -> int:
     """Any checkout of the PR's repo (a worktree too); gh reads the PR."""
     from .. import mergeready
     from .merge_check import git_top
-    if (args.test or args.python) and not args.with_:
-        print("brain merge-ready: --test and --python go with --with PR (a set of PRs merged together)",
-              file=sys.stderr)
-        return 2
-    if args.with_:
-        try:
-            return _together(args, Path(git_top(Path(args.repo_dir or ".").resolve())))
-        except AuditError as exc:
-            print(f"brain merge-ready: {exc}", file=sys.stderr)
-            return 2
+    if args.with_ or args.test or args.python:
+        return _set(args)
     try:
         top = Path(git_top(Path(args.repo_dir or ".").resolve()))
         g = mergeready.gate(top, args.pr, args.slug or "", args.remote or "", fetch=not args.no_fetch,
