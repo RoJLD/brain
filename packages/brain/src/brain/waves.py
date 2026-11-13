@@ -808,10 +808,15 @@ def plan_close(plan: Plan, version: str, carry_to: str = "", drop: list[str] | N
         raise WaveError(f"--drop {', '.join(unknown)}: not an open item of {w}")
     rest = [i for i in opened if i not in drop]
     done = sum(1 for i in items if plan.status(i) == "done")
+    created = bool(target) and target not in plan.nodes
     return Closing(w, plan.label(w), target, rest if target else [], drop, [] if target else rest, done,
-                   created=bool(target) and target not in plan.nodes,
-                   shipped_as=version if release_key(version) else plan.label(w),
-                   carry_release=carry_to if target and target not in plan.nodes else "")
+                   created=created, shipped_as=_shipped_as(plan, w, version),
+                   carry_release=carry_to if created else "")
+
+
+def _shipped_as(plan: Plan, w: str, version: str) -> str:
+    """The version a wave closes as: the release given, else its label (closed by its id)."""
+    return version if release_key(version) else plan.label(w)
 
 
 def close(store: Path, version: str, carry_to: str = "", drop: list[str] | None = None, *, write: bool = False,
@@ -853,29 +858,33 @@ def add(store: Path, version: str = "", *, parent: str = "", week: str = "", tit
     """A new wave ``wave-sN`` (its place; its id carries no version: wi-brain-wave-ids-decoupled), part of ``parent``
     (a milestone or an era). Its release is computed (:func:`next_release`); ``version``, when given, must be that
     release, or pins the release of a store's first wave; ``pin`` (brain wave import) pins it whatever it is."""
-    if version and release_key(version) is None:
-        raise WaveError(f"{version}: a release X.Y.Z")
     plan = load(store)
-    if version and plan.resolve(version):
-        raise WaveError(f"{version}: already a wave ({plan.resolve(version)})")
     if parent and (plan.nodes.get(parent) or {}).get("type") != "Milestone":
         raise WaveError(f"--parent {parent}: not a milestone or an era")
-    computed = next_release(plan)
-    if version and computed and version != computed and not pin:
-        raise WaveError(f"{version}: a new wave's release is computed, {computed} (the next patch after the last "
-                        f"wave's); brain wave add without a release, and its version PR closes it as what it ships")
-    if not version and not computed:
-        raise WaveError("a store's first wave names its release: brain wave add X.Y.Z")
     seq = plan.next_seq()
     props: dict = {"kind": WAVE, "seq": seq}
-    if version and (pin or not computed):
-        props["release"] = version
-    if week:
-        props["week"] = week
-    if decided:
-        props["decided"] = decided
+    pinned = _pinned(plan, version, pin)
+    props.update({k: v for k, v in (("release", pinned), ("week", week), ("decided", decided)) if v})
     return graph.add_item(store, f"wave-s{seq}", title or f"Wave s{seq}", node_type="Milestone",
                           status="pending", props=props, milestone=parent, today=today)
+
+
+def _pinned(plan: Plan, version: str, pin: bool) -> str:
+    """The release a new wave pins ('' when it is computed); :class:`WaveError` for a release that is not the
+    computed one (unless ``pin``), already a wave's, or missing for a store's first wave."""
+    computed = next_release(plan)
+    if not version:
+        if not computed:
+            raise WaveError("a store's first wave names its release: brain wave add X.Y.Z")
+        return ""
+    if release_key(version) is None:
+        raise WaveError(f"{version}: a release X.Y.Z")
+    if plan.resolve(version):
+        raise WaveError(f"{version}: already a wave ({plan.resolve(version)})")
+    if computed and version != computed and not pin:
+        raise WaveError(f"{version}: a new wave's release is computed, {computed} (the next patch after the last "
+                        f"wave's); brain wave add without a release, and its version PR closes it as what it ships")
+    return version if pin or not computed else ""
 
 
 # --- brain wave rename ---
@@ -891,6 +900,14 @@ class Renaming:
 
 def _ref_re(wid: str) -> re.Pattern:
     return re.compile(rf"(?<![\w.-]){re.escape(wid)}(?![\w.-])")
+
+
+def _references(store: Path, rx: re.Pattern) -> dict[str, int]:
+    """The hand-written node and edge files of ``store`` that name the wave: store-relative path -> how many times."""
+    hand = [store / "edges.yaml", *sorted((store / "nodes").glob("*.yaml")), *sorted((store / "edges").glob("*.yaml"))]
+    found = {f.relative_to(store).as_posix(): len(rx.findall(f.read_text(encoding="utf-8")))
+             for f in hand if f.is_file() and not f.name.startswith("_generated")}
+    return {k: n for k, n in found.items() if n}
 
 
 def rename(store: Path, ref: str, new: str = "", *, write: bool = False, today: str | None = None) -> Renaming:
@@ -910,13 +927,7 @@ def rename(store: Path, ref: str, new: str = "", *, write: bool = False, today: 
     if new == old or new in plan.nodes:
         raise WaveError(f"{new}: already a node of {store}")
     rx = _ref_re(old)
-    files = {}
-    hand = [store / "edges.yaml", *sorted((store / "nodes").glob("*.yaml")), *sorted((store / "edges").glob("*.yaml"))]
-    for f in hand:
-        if f.is_file() and not f.name.startswith("_generated"):
-            n = len(rx.findall(f.read_text(encoding="utf-8")))
-            if n:
-                files[f.relative_to(store).as_posix()] = n
+    files = _references(store, rx)
     pending = plan.status(old) == "pending"
     after = plan.label(old) if not pending else ""
     if write:
