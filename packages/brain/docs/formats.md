@@ -72,20 +72,17 @@ truncated write, a byte that is not UTF-8) or that its schema refuses is an erro
 `v`, a kind this engine does not know) is skipped and counted. Neither stops `brain sync`: the graph is built from the
 other lines, and a note says how many were left out. Their ids still count as recorded, so no AR is appended twice.
 
-### Where a session ran (SR, config.json)
+### Where a session ran (config.json)
 
-An SR's `provider`, `harness`, `account` and `plan` (wi-brain-session-provenance, `brain.provenance`) are additive
-under SR `v` 1: optional fields, so every SR written before stays valid and reads alike (its `harness` is its `tool`,
-its provider what its model's id says, its account the config.json `usage.accounts` entry in force on its day).
-`tool` stays required and is still written, the same value as `harness`, so an older engine reads a new SR as before:
-the four fields are a warning in read mode, kept by its rewrites (`brain.records.keep_unknown`), and refused only in
-strict mode (CI), as any newer brain's field. config.json `usage.accounts` is additive the same way: an older engine
-notes it in read mode and refuses it in strict mode, so a brain repo whose CI runs an older engine sets it once its CI
-runs the engine that knows it. `account` and `usage.accounts[].alias` never take an `@` nor a UUID (an e-mail address,
+config.json `usage.accounts` (wi-brain-session-provenance, `brain.provenance`) is additive: an optional key, which an
+older engine notes in read mode and refuses in strict mode (CI), so a brain repo whose CI runs an older engine sets it
+once its CI runs the engine that knows it. `usage.accounts[].alias` never takes an `@` nor a UUID (an e-mail address,
 an account id) anywhere in it, nor a trailing newline (the patterns end on `(?![\s\S])`, read alike by ECMA and
 Python), and `usage.accounts[].since` is a UTC day (YYYY-MM-DD). A value that breaks a schema's pattern is never
-printed back, whatever the schema: the error gives its path and length. The token ledger (`usage/sessions.json`) does not change: its rows are read for these fields at report time
-(what the session's snapshot captured first, then config.json and the model).
+printed back, whatever the schema: the error gives its path and length. The SR and the token ledger
+(`usage/sessions.json`) do not change: a session's provider, harness, account and plan are computed when a report is
+built (the row's own fields, what the session's snapshot holds, then config.json and the model). The SR fields come
+with wi-brain-sr-provenance-fields.
 
 ### Milestone kinds (the store)
 

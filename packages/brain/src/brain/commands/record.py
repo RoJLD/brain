@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .. import actions, answers, backfill, decisions, graph, paths, provenance, records, transcript
+from .. import actions, answers, backfill, decisions, graph, paths, records, transcript
 from ._common import _now, _store
 
 ORDER = 10   # its place in brain --help's list of commands (brain.commands)
@@ -44,11 +44,8 @@ def cmd_record_sr(args, root: Path) -> int:
     items = list(args.item or [])
     for r in records.ledger_records("ar", sid):
         items += [i for i in r.get("items", []) if i not in items]
-    model = main_stats.models.most_common(1)[0][0] if main_stats.models else ""
-    prov = provenance.for_session(model, main_stats.first_ts[:10], root, session_id=sid)
     sr = main_stats.record(path, status="closed" if args.closed else "open", summary=args.summary or "",
-                           extra_items=items, actions=ar_ids, ddrs=ddr_ids, subagents=subs, subagent_count=n_subs,
-                           provenance=prov)
+                           extra_items=items, actions=ar_ids, ddrs=ddr_ids, subagents=subs, subagent_count=n_subs)
     if args.dry_run:
         print(records._dump_yaml(records.validate("sr", sr)))
         return 0

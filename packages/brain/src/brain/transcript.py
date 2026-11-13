@@ -292,10 +292,8 @@ class SessionStats:
     def record(self, transcript: str | Path | None = None, status: str = "open", summary: str = "",
                extra_items: list[str] | None = None, actions: list[str] | None = None,
                ddrs: list[str] | None = None, subagents: "SessionStats | None" = None,
-               subagent_count: int = 0, end_reason: str = "", provenance: dict | None = None) -> dict:
-        """The SR for this session (schemas/sr.schema.json), after the secret scan. ``provenance``: where it ran
-        (brain.provenance: provider, harness, account, plan), written after ``tool``; the harness is Claude Code's
-        when it gives none."""
+               subagent_count: int = 0, end_reason: str = "") -> dict:
+        """The SR for this session (schemas/sr.schema.json), after the secret scan."""
         sid = self.session_id or (Path(transcript).stem if transcript else "")
         start = self.first_ts or iso(datetime.now(timezone.utc))
         end = self.last_ts or start
@@ -304,9 +302,9 @@ class SessionStats:
             "v": 1,
             "id": f"sr-{start[:10]}-{sid.replace('-', '')[:8].lower()}",
             "tool": "claude-code",
+            "session_id": sid,
+            "status": status,
         }
-        rec.update({"harness": "claude-code", **{k: v for k, v in (provenance or {}).items() if v}})
-        rec.update(session_id=sid, status=status)
         if self.title:
             rec["title"] = self.title
         rec["summary"] = summary or self.title or ""

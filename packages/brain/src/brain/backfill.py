@@ -24,7 +24,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import actions, paths, projects, provenance, records, transcript
+from . import actions, paths, projects, records, transcript
 
 QUIET_HOURS = 12
 _ITEM_RE = re.compile(r"^(wi|ms|spec)-[a-z0-9-]+$")
@@ -107,23 +107,7 @@ def _merge(old: dict, new: dict) -> dict:
         ids = list(dict.fromkeys((old.get(k) or []) + (new.get(k) or [])))
         if ids:
             new[k] = sorted(ids) if k != "items" else ids
-    for k in provenance.FIELDS:   # where it ran, as recorded (the session's own environment, the owner's hand) wins
-        if old.get(k) and k in new:
-            new[k] = old[k]
-        elif old.get(k):
-            new = _put_after(new, k, old[k])
     return new
-
-
-def _put_after(rec: dict, key: str, value) -> dict:
-    """``rec`` with ``key`` set, placed with the other provenance fields (after ``tool``)."""
-    out: dict = {}
-    for k, v in rec.items():
-        out[k] = v
-        if k == "tool" and key not in rec:
-            out[key] = value
-    out.setdefault(key, value)
-    return out
 
 
 def run(root: Path, since: str = "", until: str = "", quiet_hours: float = QUIET_HOURS, subagents: bool = True,
@@ -217,11 +201,9 @@ def run(root: Path, since: str = "", until: str = "", quiet_hours: float = QUIET
             continue
         ars = by_session.get(sid, [])
         items = [i for a in ars for i in a.get("items", []) if _ITEM_RE.match(i)]
-        model = main.models.most_common(1)[0][0] if main.models else ""
         sr = main.record(path, status="closed", extra_items=items, actions=[a["id"] for a in ars],
                          ddrs=ddrs_by.get(sid), subagents=subs, subagent_count=n_subs,
-                         end_reason=reasons.get(sid, ""),
-                         provenance=provenance.for_session(model, main.first_ts[:10], root, session_id=sid))
+                         end_reason=reasons.get(sid, ""))
         if not old and records.record_path(root, "sr", sr) in refused_files:
             report[month]["sr-refused"] += 1      # a newer brain's SR, or an unreadable one: never replaced
             continue

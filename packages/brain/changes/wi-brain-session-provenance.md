@@ -1,13 +1,11 @@
 section: Added
 
-- **Where a session ran** (`wi-brain-session-provenance`, `brain.provenance`): session records gain `provider` (the
-  model's provider: anthropic, bedrock, vertex, foundry...), `harness` (the tool that ran the session; it takes over
-  `tool`, still written and read as its fallback) and `account` with its `plan`. The Stop hook takes the provider from
-  the session's environment (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`), else the
-  model's id; the account is an alias the owner sets in config.json `usage.accounts` (by `since`, a UTC day, and by harness) or
-  names with `BRAIN_ACCOUNT`, never an e-mail address nor an account id (such a value is never written, and the SR and
-  config.json schemas refuse it). `brain usage` adds a « where » line and `--by provider|harness|account` (`--json`:
-  `sources`); `brain status` shows the same breakdown in its tokens row (`tokens.sources`). Old records and ledger
-  rows read alike, from their `tool`, model and day. The four SR fields and `usage.accounts` are optional keys, which
-  an older engine reads with a note and refuses in strict mode (CI, `BRAIN_STRICT=1`): set `usage.accounts` once
-  every machine and the brain's CI run this engine.
+- **Where a session ran** (`wi-brain-session-provenance`, `brain.provenance`): `brain usage` adds a « where » line and
+  `--by provider|harness|account` (`--json`: `sources`), and `brain status` the same breakdown in its tokens row
+  (`tokens.sources`), computed when the report is built: the model's provider (anthropic, bedrock, vertex,
+  foundry...: the account's, else the model's id), the harness (the session record's `tool`) and the account with its
+  plan, an alias the owner sets in config.json `usage.accounts` (by `since`, a UTC day, and by harness), never an
+  e-mail address nor an account id (config.json's schema refuses one; a ledger row holding one shows as `(masked)`).
+  Old ledger rows read alike, from their model and day. `usage.accounts` is an optional key, which an older engine
+  reads with a note and refuses in strict mode (CI, `BRAIN_STRICT=1`): set it once every machine and the brain's CI run
+  this engine. The session record is unchanged: its provenance fields come with `wi-brain-sr-provenance-fields`.

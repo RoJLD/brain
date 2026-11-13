@@ -322,8 +322,6 @@ def _sr_rules(r: dict) -> tuple[list[str], list[str]]:
         errors.append("sr.id: must start with sr-<start date>")
     if r.get("session_id") and not str(r.get("id", "")).endswith(r["session_id"].replace("-", "")[:8].lower()):
         errors.append("sr.id: must end with the first 8 characters of the session id")
-    if "@" in str(r.get("account") or ""):   # its pattern refuses it too: this says why
-        errors.append("sr.account: an e-mail address is never recorded, only an alias (config.json usage.accounts)")
     return errors, []
 
 

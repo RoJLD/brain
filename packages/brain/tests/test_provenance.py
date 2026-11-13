@@ -1,14 +1,14 @@
-"""wi-brain-session-provenance (spec-brain-multi-agent-connector § 9, MA-5): where a session ran. Session records gain
-provider, harness (tool read as its fallback) and an account alias with its plan, never an e-mail address; additive:
-old records stay valid and read alike; brain usage and brain status break the cost down by provider, harness and
-account (brain.provenance, brain.cost)."""
+"""wi-brain-session-provenance (spec-brain-multi-agent-connector § 9, MA-5): where a session ran, computed when a
+report is built: brain usage and brain status break the cost down by provider, harness (the record's tool) and an
+account alias with its plan (config.json usage.accounts), never an e-mail address nor an account id
+(brain.provenance, brain.cost). The session record is unchanged: its fields come with wi-brain-sr-provenance-fields."""
 
 import io
 import json
 
 import pytest
 
-from brain import backfill, capture, cli, config, cost, projects, provenance, records, schema, status, usage
+from brain import capture, cli, config, cost, projects, provenance, records, schema, status, usage
 
 ADDRESS = "ada" + "@" + "example.org"   # an e-mail-shaped value (never a real one)
 DOTLESS = "ada" + "@" + "corp"           # an address without a dot
@@ -47,14 +47,6 @@ def test_the_provider_a_model_id_implies(model, provider):
     assert provenance.provider_from_model(model) == provider
 
 
-def test_the_provider_claude_codes_environment_switches_to():
-    assert provenance.provider_from_env({}) == "" and provenance.provider_from_env(None) == ""
-    assert provenance.provider_from_env({"CLAUDE_CODE_USE_BEDROCK": "1"}) == "bedrock"
-    assert provenance.provider_from_env({"CLAUDE_CODE_USE_VERTEX": "true"}) == "vertex"
-    assert provenance.provider_from_env({"CLAUDE_CODE_USE_FOUNDRY": "1"}) == "foundry"
-    assert provenance.provider_from_env({"CLAUDE_CODE_USE_BEDROCK": "0", "CLAUDE_CODE_USE_VERTEX": ""}) == ""
-
-
 def test_harness_takes_over_tool_read_as_its_fallback():
     assert provenance.harness_of({"harness": "cursor", "tool": "claude-code"}) == "cursor"
     assert provenance.harness_of({"tool": "claude-code"}) == "claude-code"   # an old record
@@ -86,23 +78,21 @@ def test_the_account_in_force_on_a_day_of_its_harness():
     assert provenance.account_on("2026-11-07", []) == {}
 
 
-def test_resolve_prefers_what_the_session_captured_then_its_environment():
+def test_a_row_reads_its_own_fields_then_its_snapshot_then_the_configuration_and_its_model():
     cfg = {"accounts": ACCOUNTS}
-    assert provenance.resolve("claude-opus-5-5", "2026-11-07", cfg) == {
-        "provider": "anthropic", "harness": "claude-code", "account": "main", "plan": "Max"}
-    env = {"CLAUDE_CODE_USE_VERTEX": "1", "BRAIN_ACCOUNT": "ide"}
-    assert provenance.resolve("claude-opus-5-5", "2026-11-07", cfg, env=env) == {
-        "provider": "vertex", "harness": "claude-code", "account": "ide", "plan": "Team"}
-    got = provenance.resolve("claude-opus-5-5", "2026-11-07", cfg, env={"BRAIN_ACCOUNT": ADDRESS})
-    assert got["account"] == "main" and ADDRESS not in json.dumps(got)   # an e-mail is dropped, never written
-    kept = {"provider": "bedrock", "account": "solo", "plan": "Pro"}
-    assert provenance.resolve("claude-opus-5-5", "2026-11-07", cfg, env=env, captured=kept) == {
-        "provider": "bedrock", "harness": "claude-code", "account": "solo", "plan": "Pro"}
+    row = {"model": "claude-opus-5-5", "start": "2026-11-07T10:00:00Z"}
+    assert provenance.of_row(row, cfg) == {"provider": "anthropic", "harness": "claude-code", "account": "main",
+                                           "plan": "Max"}
+    snap = {"provider": "bedrock", "account": "solo", "plan": "Pro"}
+    assert provenance.of_row(row, cfg, snapshot=snap) == {"provider": "bedrock", "harness": "claude-code",
+                                                          "account": "solo", "plan": "Pro"}
+    assert provenance.of_row({**row, "provider": "vertex"}, cfg, snapshot=snap)["provider"] == "vertex"
+    assert provenance.of_row({**row, "tool": "cursor"}, cfg)["account"] == "ide"   # the harness's entry first
     # no accounts: the plan only from usage.plans the owner set, never the engine's built-in default
-    assert provenance.resolve("claude-opus-5-5", "2026-11-07", None) == {"provider": "anthropic",
-                                                                         "harness": "claude-code"}
+    assert provenance.of_row(row, None) == {"provider": "anthropic", "harness": "claude-code", "account": "(none)",
+                                            "plan": "(none)"}
     plans = {"plans": [{"since": "", "plan": "Pro"}, {"since": "2026-11-05", "plan": "Max"}]}
-    assert provenance.resolve("claude-opus-5-5", "2026-11-07", plans)["plan"] == "Max"
+    assert provenance.of_row(row, plans)["plan"] == "Max"
 
 
 def test_a_configuration_or_a_snapshot_that_is_garbage_costs_nothing(tmp_path, monkeypatch, brain_home):
@@ -112,11 +102,11 @@ def test_a_configuration_or_a_snapshot_that_is_garbage_costs_nothing(tmp_path, m
     (brain_home / "sessions").mkdir(parents=True)
     (brain_home / "sessions" / "s-1.json").write_text("[1, 2", encoding="utf-8")
     assert provenance.captured("s-1") == {} and provenance.captured("../x") == {} and provenance.captured("") == {}
-    assert provenance.for_session("claude-opus-5-5", "2026-11-07", session_id="s-1") == {
-        "provider": "anthropic", "harness": "claude-code"}
     (brain_home / "sessions" / "s-2.json").write_text(json.dumps(
         {"provider": "vertex", "account": ADDRESS, "plan": "Max"}), encoding="utf-8")
     assert provenance.captured("s-2") == {"provider": "vertex", "plan": "Max"}   # the e-mail-shaped account left out
+    (brain_home / "sessions" / "s-3.json").write_text(json.dumps({"v": 1, "tool": "cursor"}), encoding="utf-8")
+    assert provenance.captured("s-3") == {"harness": "cursor"}   # today's snapshot: its tool
 
 
 # --- the session record ---
@@ -136,73 +126,30 @@ def test_an_old_record_stays_valid_and_reads_alike():
     assert provenance.of_row(old, {"accounts": ACCOUNTS})["account"] == "solo"
 
 
-def test_an_older_engine_reads_a_new_record_with_notes_only():
-    """The SR schema before these fields (brain 0.5.0's: the same, without them) reads a new SR in read mode with an
-    unknown field per new key and no error, and keep_unknown carries them through its rewrites."""
-    older = json.loads(json.dumps(schema.load("sr")))
-    for k in ("provider", "harness", "account", "plan"):
-        older["properties"].pop(k)
-    new = {**_old_sr(), "harness": "claude-code", "provider": "anthropic", "account": "main", "plan": "Max"}
-    errors, unknown = [], []
-    schema._validate(new, older, older, "sr", errors, unknown)
-    assert errors == [] and sorted(k for _, k in unknown) == ["account", "harness", "plan", "provider"]
-
-
-def test_the_new_fields_validate_strict_and_an_email_shaped_alias_is_refused():
-    new = {**_old_sr(), "harness": "claude-code", "provider": "anthropic", "account": "main", "plan": "Max 20x"}
-    assert schema.check("sr", new)[0] == []
-    for bad in (ADDRESS, DOTLESS, UUID, "a-" + UUID, "work\n"):
-        errors = schema.check("sr", {**new, "account": bad})[0]
-        assert any(e.startswith("sr.account") for e in errors), bad
-        assert bad.strip() not in " ".join(errors)   # the value is never printed back
-    for field, bad in (("plan", "Max " + ADDRESS), ("plan", UUID), ("plan", "Max\n"), ("provider", "Bedrock!"),
-                       ("harness", "cursor\n")):
-        errors = schema.check("sr", {**new, field: bad})[0]
-        assert errors and bad.strip() not in " ".join(errors), (field, bad)
-    for bad in (ADDRESS, DOTLESS, UUID):
-        with pytest.raises(SystemExit) as exc:
-            records.validate("sr", {**new, "account": bad})
-        assert bad not in str(exc.value)
-
-
-def test_a_record_built_from_a_transcript_carries_where_it_ran(fixture_transcript, ada_config):
-    main, subs, n = __import__("brain").transcript.session_stats(fixture_transcript)
-    prov = provenance.for_session("claude-opus-5-5", "2026-11-07", session_id=main.session_id)
-    sr = main.record(fixture_transcript, provenance=prov)
-    assert list(sr)[:7] == ["v", "id", "tool", "harness", "provider", "account", "plan"]
-    assert (sr["tool"], sr["harness"], sr["provider"], sr["account"], sr["plan"]) == \
-        ("claude-code", "claude-code", "anthropic", "main", "Max")
-    assert schema.check("sr", sr)[0] == []
-    assert main.record(fixture_transcript)["harness"] == "claude-code"   # without a configuration: no account
-
-
-def test_the_stop_hook_records_the_sessions_environment(fixture_transcript, ada_config, brain_home, monkeypatch,
-                                                        tmp_path):
+def test_the_session_record_is_unchanged(fixture_transcript, ada_config, brain_home, monkeypatch, tmp_path):
+    """The SR keeps tool only: no provider, harness, account or plan in what a transcript builds nor in what the Stop
+    hook writes, whatever the session's environment; its schema still refuses them (wi-brain-sr-provenance-fields)."""
+    main, _, _ = __import__("brain").transcript.session_stats(fixture_transcript)
+    sr = main.record(fixture_transcript)
+    assert sr["tool"] == "claude-code" and not set(sr) & set(provenance.FIELDS)
     t = tmp_path / "s.jsonl"
     t.write_bytes(fixture_transcript.read_bytes())
     payload = {"session_id": "aaaabbbb-1111-2222-3333-444455556666", "transcript_path": str(t)}
     monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
-    monkeypatch.setenv("BRAIN_ACCOUNT", "ide")
     assert capture.main(["stop"], stdin=io.StringIO(json.dumps(payload))) == 0
-    sr = json.loads((brain_home / "sessions" / f"{payload['session_id']}.json").read_text(encoding="utf-8"))
-    assert (sr["provider"], sr["harness"], sr["account"], sr["plan"]) == ("bedrock", "claude-code", "ide", "Team")
-    assert schema.check("sr", sr)[0] == []
-    monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK")
-    monkeypatch.setenv("BRAIN_ACCOUNT", ADDRESS)
-    assert capture.main(["stop"], stdin=io.StringIO(json.dumps(payload))) == 0
-    text = (brain_home / "sessions" / f"{payload['session_id']}.json").read_text(encoding="utf-8")
-    sr = json.loads(text)
-    assert ADDRESS not in text and sr["account"] != ADDRESS and sr["provider"] == "anthropic"
-    log = (brain_home / "ledger" / "errors.log").read_text(encoding="utf-8")
-    assert "BRAIN_ACCOUNT is not an alias" in log and ADDRESS not in log
+    snap = json.loads((brain_home / "sessions" / f"{payload['session_id']}.json").read_text(encoding="utf-8"))
+    assert not set(snap) & set(provenance.FIELDS) and schema.check("sr", snap)[0] == []
+    assert schema.check("sr", {**_old_sr(), "account": "main"})[0]
 
 
-def test_a_rebuilt_record_keeps_where_it_ran_as_recorded():
-    old = {**_old_sr(), "provider": "bedrock", "account": "solo"}
-    new = {**_old_sr(), "harness": "claude-code", "provider": "anthropic", "status": "closed"}
-    got = backfill._merge(old, new)
-    assert got["provider"] == "bedrock" and got["account"] == "solo" and got["harness"] == "claude-code"
-    assert list(got).index("account") < list(got).index("session_id")
+def test_a_pattern_error_never_prints_the_value_back():
+    for bad in (ADDRESS, DOTLESS, UUID.upper()):   # none matches the tool's pattern (^[a-z0-9-]+$)
+        errors = schema.check("sr", {**_old_sr(), "tool": bad})[0]
+        assert any(e.startswith("sr.tool") and "does not match" in e for e in errors), bad
+        assert bad not in " ".join(errors)
+        with pytest.raises(SystemExit) as exc:
+            records.validate("sr", {**_old_sr(), "tool": bad})
+        assert bad not in str(exc.value)
 
 
 def test_brain_config_check_refuses_an_email_shaped_alias(tmp_path, monkeypatch):
@@ -267,9 +214,9 @@ def test_usage_breaks_the_cost_down_by_provider_harness_and_account(lab):
     assert ADDRESS not in cost.as_json(rep)
 
 
-def test_usage_reads_what_the_stop_hook_captured_before_the_configuration(lab, brain_home):
-    """BRAIN_ACCOUNT=solo and CLAUDE_CODE_USE_FOUNDRY=1 in the session: its snapshot says foundry, solo, Pro; the
-    ledger row (its model, its day) alone would say anthropic, main, Max."""
+def test_usage_reads_what_the_snapshot_holds_before_the_configuration(lab, brain_home):
+    """A snapshot that carries the session's provenance (wi-brain-sr-provenance-fields will write it: foundry, solo,
+    Pro) wins over what the ledger row (its model, its day) alone would say: anthropic, main, Max."""
     snaps = brain_home / "sessions"
     snaps.mkdir(parents=True)
     (snaps / "s2.json").write_text(json.dumps({"v": 1, "provider": "foundry", "harness": "claude-code",
