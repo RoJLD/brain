@@ -11,7 +11,7 @@ import pytest
 from conftest import GIT_ENV, git_init, run_git
 from test_capture import PLUGIN, _bash
 
-from brain import cli, memory, memorykeys
+from brain import cli, memory, memorykeys, memoryundo
 
 DAY = "2026-11-02"
 SECRET = "token ghp_" + "a1B2c3D4e5" * 4  # a GitHub token's shape, not a token
@@ -609,7 +609,7 @@ def test_undo_restores_only_while_the_note_holds_what_was_imported(world, brain_
     assert (world.mem / "a.md.undo-conflict").read_text(encoding="utf-8") == "a v2 from m2\n"
     assert "changed since the import" in capsys.readouterr().out
     assert not [n for n in memory.local_notes() if "undo-conflict" in n]   # never taken for a note
-    assert cli.main(["memory", "undo", "no-slash"]) == 1
+    assert memoryundo.undo("no-slash", io.StringIO()) == 1
 
 
 def test_two_machines_share_one_remote_without_overwriting_each_other(world, tmp_path, monkeypatch):
