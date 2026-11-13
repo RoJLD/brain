@@ -1,0 +1,276 @@
+{
+  "description": "Refuse, before the call (a command typed into the Terminal panel by run_in_terminal judged as a shell call), edits, git changes and shell writes (redirections, programs and cmdlets that write, sed -i, inline code, nested shells) in production checkouts, what only the owner does (the never-grantable categories of permissions.yaml: visibility, keys, accounts, scheduled tasks and services, arming, install.ps1 -Apply; their deny rules; the desktop app's scheduled-tasks tools; a session's Remote Control and permission mode, security-settings, which the override does not lift), power and cluster actions (shutdown, reboot, sleep, Wake-on-LAN, boot arming, the platform's node verbs (config.json power.node_clis), the /power bot, kubectl, helm and argocd writes outside the brain namespace), locally or over ssh, a third-party kit a session would install or run (a download fed to a shell, claude plugin install or marketplace add outside config.json adapters.claude.sources, npx skills add), AI attribution lines in commit and PR text, secrets and conflict markers in what a commit records, a git push to a public repo without a green brain check --public and a branch named outside config.json branches.allowed in the registry's repos (git checkout -b, git switch -c, git worktree add -b, git branch, gh pr create's head) (guard.sh, PreToolUse; an owner, power or third-party refusal names the brain queue add --guard command that queues it for the owner; override BRAIN_GUARD_ALLOW); before a new session, a subagent or a workflow, ask the owner at the quota's WARN and refuse at CRITICAL, past the parallel sessions, brainstorms or memory caps (committed memory, available RAM), or while the newest quota reading is stale, and remind a master past 80 % of its budget that it starts no new child, never refusing for that (governor.sh, PreToolUse, brain.governor, config.json usage.guard; override brain usage allow in the owner's own terminal or BRAIN_GUARD_ALLOW=usage); when Read, Grep or a shell command that reads targets a registered brain's graph YAML, decision log, journal or generated views, name the brain command that answers (brain item show, brain items, brain adr show, brain journal last), a hint, never a refusal (readhint.sh, PreToolUse, brain.readhint, started by Claude Code only when the call's path or command names one of those files (the hooks' if conditions; Grep's always), then bash builtins until its JSON names one; registered only when config.json hints.read is true, BRAIN_READ_HINT=0 turns it off); when a background Bash or PowerShell call holds an until or while loop with no deadline, no process check and no check that its file is still there, say in one line how to bound it and to stop the session's background tasks before deleting their logs, a hint, never a refusal (waithint.sh, PreToolUse, brain.waithint, started only when a simple command of the call names sleep (Start-Sleep), what a wait loop's body runs; BRAIN_WAIT_HINT=0 turns it off); inject the owner's global rules (config.json rules, else rules/global.md) at the start of each conversation and of each subagent; announce the decisions the owner answered that the project has not integrated yet (announce.sh), then at each prompt the ones answered or newly asked since (midsession.sh, UserPromptSubmit, bash builtins until a DDR changed); report the watched stacks that are down and a silent alerts pass (its last pass older than two cadences, brain.schedule), silent when all is well (health.sh, brain.stacks, ~1.5 s at most); say in one line whether the project's resume pack is written and how old it is, never the pack itself (resume.sh, brain resume); capture session and action metadata at zero token into the local ledger ~/.brain (capture.sh: commits, pushes, tags, PRs, ADRs, questions to the owner and their answers (an answer to a question brain decision batch printed tied to its DDR, for brain decision answer --captured), session snapshots with the session's place in the tree, both ids and the parent at session start (the app's own metadata file, a closed list of keys), each session's end-of-turn report for brain sessions tree, each session's plan for the cockpit's steps n/m); share the memory notes across machines at session end, detached (memory.sh: import what main changed, export what this machine changed to memory/<machine>/<date> and its PR after a secret scan, never main), and say at session start what needs the owner (a refused export, a conflict, a failure); after each tool call, once at 80 % and once at 100 % of the brief's context budget or of the recorded estimate of the items it names, remind the session of the checkpoint, and a master (a session that started others) at 70, 80 and 90 % of its budget (its brief's, else the model's window) of the room left in children, the hand-over with its live children and the drain (budget.sh, PostToolUse, bash builtins until a check is due; never blocks; BRAIN_BUDGET_WATCH=0 turns it off).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/inject-rules.sh\" SessionStart",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/announce.sh\" SessionStart",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/health.sh\" SessionStart",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/resume.sh\" SessionStart",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/memory.sh\" SessionStart",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\" session-start",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/midsession.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/inject-rules.sh\" SubagentStart",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\" shell",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\" edit",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*scheduled[-_]?tasks?__(create|update)_scheduled_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\" tool",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__set_(remote_control|session_permission_mode|setting)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\" tool",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "^(Agent|Task|Workflow)$|^mcp__.+__start_session$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/governor.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*terminal__run_in_terminal",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\" shell",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(*sleep*)",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/waithint.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "PowerShell(*leep*)",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/waithint.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git *)",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\" post-tool-use git",
+            "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "if": "Bash(gh *)",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\" post-tool-use gh",
+            "timeout": 30,
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "PowerShell(git *)",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\" post-tool-use git",
+            "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "if": "PowerShell(gh *)",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\" post-tool-use gh",
+            "timeout": 30,
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\" post-tool-use",
+            "timeout": 30,
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__ccd_turn__update_plan|mcp__ccd_turn__wrap_up|TodoWrite",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\" post-tool-use",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/budget.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\" stop",
+            "timeout": 60,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\" session-end",
+            "timeout": 2
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/memory.sh\" SessionEnd",
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  }
+}
