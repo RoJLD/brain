@@ -8,8 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .. import lots, waves
-from ._common import _project, _store
+from .. import lots, nextrelease, waves
+from ._common import _project, _repos, _store
 
 ORDER = 56   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 56   # its usage lines' place in brain --help's epilog
@@ -22,7 +22,10 @@ USAGE = """\
                  ranked by {owner}'s priority (confirmed before proposed), then {owner}'s order (props.order), then
                  value over effort (WSJF: the value derived from the features delivered, a milestone moved and the
                  items unblocked, or props.value high|medium|low with props.value_reason; the effort from
-                 props.size); --explain: each score's parts and the values {owner} set (brain.ranking)
+                 props.size); --explain: each score's parts and the values {owner} set (brain.ranking); the
+                 release forecast: whether the current wave ships as the patch it is named for or as a minor, the
+                 first PR that tipped it and why (release_check --preview of the engine checkout's origin/main,
+                 brain.nextrelease; advisory)
 """
 
 
@@ -39,10 +42,13 @@ def cmd_next(args, root: Path) -> int:
             wp = lots.plan(store, root, rep["current"]["id"], name)
         except Exception:   # noqa: BLE001 - the lots are a summary: brain next prints the waves whatever they say
             wp = None
+    fc = nextrelease.forecast([r.path for r in _repos(args, root)]) if rep["current"] is not None else None
     if args.json:
-        print(json.dumps(rep | {"lots": wp.as_dict() if wp else None}, indent=2, ensure_ascii=False))
+        print(json.dumps(rep | {"lots": wp.as_dict() if wp else None, "forecast": fc}, indent=2, ensure_ascii=False))
     else:
         out = waves.render_next(rep, explain=args.explain)
+        if rep["current"] is not None:   # under the current wave's head
+            out[1:1] = [f"  {line}" for line in nextrelease.lines(fc, rep["current"]["release"])]
         at = next((k for k, line in enumerate(out) if line.startswith("Next:")), len(out))
         print("\n".join(out[:at] + (lots.summary(wp) if wp else []) + out[at:]))   # the current wave's, before the next
     return 0

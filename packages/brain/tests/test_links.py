@@ -28,7 +28,7 @@ NODES = """\
 """
 
 
-def _tree():
+def _tree(extra: dict | None = None):
     return mem({
         "notes/graph/schema.yaml": SCHEMA, "notes/graph/nodes/work.yaml": NODES,
         "notes/graph/nodes/_generated_links.yaml": "- {id: doc:old, type: Doc, status: active}\n",   # never read
@@ -60,6 +60,7 @@ def _tree():
                                     "          pytest -q\n"
                                     "  pester:\n    steps:\n      - run: Invoke-Pester -CI\n"
                                     "  deploy:\n    steps:\n      - run: ./deploy.sh\n",
+        **(extra or {}),
     }, "demo")
 
 
@@ -182,6 +183,28 @@ def test_audit_measures_doc_and_test_links_where_the_store_takes_them():
     assert {x["check"]: x["owner"] for x in none["repos"][0]["not_measured"]}["doc.links"] == \
         "no store of its own to hold the links, and no CodeRef of the project's store names it"
     assert audit.CHECKS["test.links"].scout == "never" and audit.RULESET >= 2   # 2 brought doc.links and test.links
+
+
+def test_a_repo_s_waive_globs_take_a_test_or_a_doc_of_the_links_checks_and_nothing_else():
+    waive = {"tests/unit/*": "checks data no module stands for, by design",
+             "docs/guide.md": "a template a new brain copies, names no node",
+             "README.md": "never a P0 or another check than the links"}
+    res = audit.measure(projects.Project("demo", Path("/m/demo"), [Path("/m/demo/notes/graph")]),
+                        [projects.Repo("demo", Path("/m/demo"), waive=waive)], {"demo": _tree()})
+    r = res["repos"][0]
+    got = {(f["check"], f["unit"]) for f in r["findings"] if f["check"] in ("doc.links", "test.links")}
+    assert got == {("doc.links", "docs/specs/t.md")}
+    assert {(w["unit"], w["reason"]) for w in r["waived"]} >= {
+        ("tests/unit/x.Tests.ps1", waive["tests/unit/*"]), ("docs/guide.md", waive["docs/guide.md"])}
+    assert r["counts"]["P2"] == sum(1 for f in r["findings"] if f["severity"] == "P2")
+    assert audit.waived_findings([{"check": "readme.present", "unit": "README.md"}], waive) == (
+        [{"check": "readme.present", "unit": "README.md"}], [])
+    tree = _tree({"docs/guide.md": "Nothing the graph knows, but scripts/gone.ps1.\n",   # a dead path, waived doc
+                  "scripts/run.ps1": "x\n"})
+    r = audit.measure(projects.Project("demo", Path("/m/demo"), [Path("/m/demo/notes/graph")]),
+                      [projects.Repo("demo", Path("/m/demo"), waive=waive)], {"demo": tree})["repos"][0]
+    found = {(f["check"], f["unit"]) for f in r["findings"]}
+    assert ("doc.dead-ref", "docs/guide.md#scripts/gone.ps1") in found and ("doc.links", "docs/guide.md") not in found
 
 
 def test_sync_writes_the_links_and_check_warns_when_stale(tmp_path, monkeypatch, make_repo, capsys, request):

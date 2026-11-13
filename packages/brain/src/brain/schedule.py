@@ -17,6 +17,9 @@ A project's ``schedules:`` entry, inline or a YAML file relative to its root, on
   machines  the machines it runs on ($BRAIN_MACHINE, else the host name, lowercase; default every machine)
   timeout   how long a run may last before the scheduler stops it (default 10m)
   enabled   false: removed from this machine (and never installed)
+  visible   true: the task opens a console window (python.exe on Windows); default hidden (pythonw.exe)
+  floor     a collector, whose data cannot be recovered: the slowest cadence its every may take (15m: every 15m or
+            faster); brain check refuses a slower every, and brain schedule set refuses one and a --disable
 
 Schedule names are global, like stack names. Where it goes, per system:
 
@@ -63,7 +66,7 @@ from typing import Callable, Mapping
 
 from . import graph, paths, projects, stateio
 
-KEYS = {"command", "every", "at", "days", "at_logon", "machines", "timeout", "enabled"}
+KEYS = {"command", "every", "at", "days", "at_logon", "machines", "timeout", "enabled", "visible", "floor"}
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")   # in the week's order: the crontab's number is the index + 1
 WIN_DAYS = {"mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday", "fri": "Friday",
             "sat": "Saturday", "sun": "Sunday"}
@@ -94,6 +97,8 @@ class Schedule:
     timeout: float = DEFAULT_TIMEOUT
     enabled: bool = True
     days: list[str] = field(default_factory=list)   # the days at runs on, in the week's order; none: every day
+    visible: bool = False          # a console window (python.exe); default hidden (pythonw.exe)
+    floor: float | None = None     # a collector: the slowest cadence its every may take (seconds)
 
     def here(self, machine: str) -> bool:
         return self.enabled and (not self.machines or machine in self.machines)
@@ -110,6 +115,9 @@ class Schedule:
             return self.every or 86400.0
         at = [DAYS.index(d) for d in self.days]
         return 86400.0 * max((b - a) % 7 or 7 for a, b in zip(at, at[1:] + at[:1]))
+
+    def window(self) -> str:
+        return "visible" if self.visible else "hidden"
 
     def describe(self) -> str:
         return f"{MARK} {self.name} ({self.project}): brain {shlex.join(self.command)}, {self.when()}"
@@ -222,9 +230,25 @@ def _entry(project: str, name: str, conf) -> Schedule:
     machines = [machines] if isinstance(machines, str) else machines
     if not isinstance(machines, list):
         raise ScheduleError(f"{where}: machines is a list of machine names")
+    if not isinstance(conf.get("visible", False), bool):
+        raise ScheduleError(f"{where}: visible is true or false")
     return Schedule(name, project, command, every, at, bool(conf.get("at_logon")), [str(m).lower() for m in machines],
                     _duration(conf, "timeout", where, DEFAULT_TIMEOUT), conf.get("enabled", True) is not False,
-                    _days(conf, at, where))
+                    _days(conf, at, where), conf.get("visible") is True, _floor(conf, every, where))
+
+
+def _floor(conf: dict, every: float | None, where: str) -> float | None:
+    """A collector's floor: its every may not be slower (its data cannot be recovered; wi-brain-schedule-settings)."""
+    floor = _duration(conf, "floor", where, None)
+    if floor is None:
+        return None
+    if not 60 <= floor <= 86400:
+        raise ScheduleError(f"{where}: floor is 1m to 1d")
+    if not every or every > floor:
+        have = f"every {duration_text(every)}" if every else "no every"
+        raise ScheduleError(f"{where}: {have} is slower than its floor {duration_text(floor)} (a collector, whose "
+                            "data cannot be recovered: every at the floor or faster)")
+    return floor
 
 
 def parse(p: projects.Project) -> list[Schedule]:
@@ -318,6 +342,8 @@ def interpreter() -> Path:
 
 
 def _argv(s: Schedule, python: Path) -> list[str]:
+    if s.visible and python.name.lower() == "pythonw.exe":   # visible: the console interpreter beside it
+        python = python.with_name("python.exe")
     return [str(python), "-I", "-m", "brain", *s.command]
 
 
@@ -871,9 +897,17 @@ def hook_line(registry: Mapping[str, projects.Project]) -> str:
     return f"The alerts pass is silent on this machine: {w['line']}" if w and w["silent"] else ""
 
 
-def main(cmd: str, apply: bool, root: Path | None, as_json: bool = False) -> int:
+def main(cmd: str, apply: bool, root: Path | None, as_json: bool = False, args=None) -> int:
     registry = projects.load(root)
-    if cmd == "list":
-        return listing(registry, as_json=as_json)
+    from . import schedview
+    if cmd == "list":   # every task of every project (brain.schedview); listing() stays the declared ones'
+        return schedview.list_main(registry, root=root, as_json=as_json)
+    if cmd == "set":
+        try:
+            changes = schedview.wanted_changes(args.every, args.at, args.days, args.visible, args.enabled)
+        except schedview.SetError as exc:
+            print(f"brain schedule set: {exc}", file=sys.stderr)
+            return 2
+        return schedview.set_main(registry, args.name, changes, apply, root=root, as_json=as_json)
     return install(registry, apply, as_json=as_json)
 

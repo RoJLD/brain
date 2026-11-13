@@ -78,7 +78,8 @@ pytest tests -n auto -m "not docker"
 ```
 
 Run the tests of the modules you touch first (`pytest tests/test_<module>.py`); the whole suite takes several
-minutes. The `packages/brain` suite was first written on Windows: on Linux and macOS a few tests may still fail for
+minutes. `pytest tests -m lite` (half a minute) checks that the core still runs with Docker, gh and the network out of
+reach. The `packages/brain` suite was first written on Windows: on Linux and macOS a few tests may still fail for
 the platform (the `brain-linux` job is advisory for that reason).
 
 Before the owner pushes, a second check runs on their side: `brain check --public --history` refuses a commit

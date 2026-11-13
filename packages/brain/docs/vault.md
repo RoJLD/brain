@@ -84,7 +84,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `handover` | `$BRAIN_HOME/handover` | sealed | truth-local | the hand-over notes and their mirror |
 | `inbox` | `$BRAIN_HOME/inbox` | sealed | log | the owner's messages to sessions |
 | `features` | `$BRAIN_HOME/features` | sealed | derived | the feature stores' indexes |
-| `cache` | `$BRAIN_HOME/cache` | sealed | derived | the app metadata's picked keys, the governor's and the guards' caches |
+| `cache` | `$BRAIN_HOME/cache` | sealed | derived | the app metadata's picked keys, the governor's and the guards' caches, the release forecast per engine checkout |
 | `memory-sync` | `$BRAIN_HOME/memory-sync` | sealed | truth-local | the memory export's state, alerts and backups |
 | `schedules` | `$BRAIN_HOME/schedules` | sealed | truth-local | the scheduled tasks this machine installed |
 | `alerts` | `$BRAIN_HOME/alerts` | sealed | truth-local | the alerts already raised |
@@ -121,6 +121,43 @@ An undeclared store's default is never looser than `sealed` (`secret` for the se
 class. A store meant to be looser (the telemetry outbox, meant to be shared) is declared so by the owner. To declare
 the missing ones, paste what `brain classes --suggest` prints into `classes.stores` (a name the brain already uses
 for another store gets `home-`).
+
+### The read gate: how the engine reads `$BRAIN_HOME`
+
+A reader of a store under `$BRAIN_HOME` asks `brain.classes` first, so a secret store can never be reached, not even
+by mistake, and a store its class keeps from an exit never feeds that exit:
+
+- `classes.home_store(store, exit)` returns the store's path, or refuses (`classes.Refused`):
+  - a store with no machine path;
+  - a `secret` store (`secrets`, `ipc`, or one the brain declares secret), whatever the exit, the engine's own reads
+    included;
+  - with an exit (`local-model`, `offsite`, a dataset...), a store `decide` says `never` for, or `sealed` when the
+    caller does not seal.
+
+  No exit means the read stays in the engine, on this machine.
+- `classes.home_files(exit)` is the only walk of `$BRAIN_HOME`. It yields each file of each store the gate lets that
+  reader read, a store at a time, each top name classed by the deepest store that holds it. It never enters a secret
+  store's folder (one nested in another included), never follows a link or a junction, and refuses an unknown exit.
+  A name no store covers is `sealed` by default.
+- The engine's own secret stores (`secrets`, `ipc`) stay refused whatever the brain declares: a store over all of
+  `$BRAIN_HOME`, or a looser re-declaration, never opens them, and `brain classes --check` notes such a
+  declaration. `home_store` also refuses a path that holds a store the reader may not enter.
+- `classes.home_names()` lists the names at the top of `$BRAIN_HOME` and opens nothing under them. The uninstaller and
+  the check of unknown names use it.
+
+`tests/test_classes_home.py` fails on any other walk of `$BRAIN_HOME` in the engine's code:
+- in Python, a `glob`, `rglob`, `iterdir` or `walk` of `brain_home()` or of a name bound to it in the same function,
+  and `os.walk`, `os.scandir`, `os.listdir`, `glob.glob` or `shutil.copytree` of it;
+- in a hook's shell script, a `find`, `ls`, `du`, `tar` or `cp -r` of `$BRAIN_HOME`.
+
+Reading one store's folder (`brain_home() / "ledger"`) is that store's own reader, not a walk of the home. The scan
+is a floor, not a proof. It does not follow:
+- a home passed to another function as an argument;
+- a wrapper that returns `brain_home()`;
+- an annotated or walrus binding;
+- a shell option written before the path.
+
+The engine's own listings of the home go through `home_names(home)`.
 
 ### What the engine reads and never writes
 
