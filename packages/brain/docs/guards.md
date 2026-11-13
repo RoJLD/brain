@@ -366,7 +366,9 @@ session the app does not know or no app on the machine, a count that takes more 
 sessions are read), a transcript with no whole record in its last 1 MB (that child is not counted), or an error inside
 the gate let the call through, and the hook says why in its context (« Wave quota gate (usage.guard.wave_quota): ...; the start
 goes through unchecked by it. »). The owner's override (below) lifts either check when it is named
-(`brain usage allow --check streams`, `--check wave_quota`); an allow without `--check` leaves the gate on.
+(`brain usage allow --check streams`, `--check wave_quota`); an allow without `--check` leaves the gate on. The
+counts of the streams that fit (below) plan a wave and ignore an allow: `brain usage guard`'s line says when one lifts a
+check of the gate.
 
 The gate is `brain.wavegate`. How many streams fit now, from the same reading (`brain.wavegate.room`): the smaller of the streams left to the
 master (`max_streams` less its live ones) and the streams that keep the forecast at the reset under `ask_over_pct`.

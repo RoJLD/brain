@@ -460,12 +460,15 @@ def line(w: dict) -> str:
     return f"{fit if fit is not None else 'not known'} ({'; '.join(parts)}; usage.guard.wave_quota)"
 
 
-def guard_line(lim: dict, w: dict | None) -> str:
-    """brain usage guard's ``waves`` line."""
+def guard_line(lim: dict, w: dict | None, lifted=()) -> str:
+    """brain usage guard's ``waves`` line; ``lifted``: the checks an override lifts now (brain.governor.lifted_checks),
+    said after the count, which plans a wave and so ignores an allow (a temporary override)."""
     wq = lim.get("wave_quota")
     if not wq:
         return "  waves     off (usage.guard.wave_quota not set)"
     if not w:
         return "  waves     off (the governor off)"
+    gate = [c for c in ("streams", "wave_quota") if c in lifted]
     return (f"  waves     ask over {wq['ask_over_pct']:g} % at the reset, {wq['max_streams']} stream(s) at most a "
-            f"master; fit now {w['line']}")
+            f"master; fit now {w['line']}" + (f" (lifted by the allow in force: {', '.join(gate)}; the count "
+                                             "ignores it)" if gate else ""))

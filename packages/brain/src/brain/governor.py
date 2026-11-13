@@ -48,8 +48,8 @@ The thresholds and caps are config.json's ``usage.guard`` (:data:`DEFAULTS`), ne
 reason and the allow that lifts it (wi-brain-governor-override-scope, RETRO-8): ``brain usage allow [--check NAME]
 [--hours H]`` in the owner's own terminal (the guards refuse it to a session, and any write of its file) lifts checks,
 not the governor: by default the memory and session caps (:data:`DEFAULT_LIFT`), a quota threshold or a check of the
-wave quota gate (streams, wave_quota) only when named (critical lifts warn too), a stale reading never (reading it again is one call); a lifted check lets the next one
-decide. ``BRAIN_GUARD_ALLOW=usage`` in Claude Code's environment lifts every check, ``usage:CHECK`` one. Refusals,
+wave quota gate (streams, wave_quota) only when named (critical lifts warn too), a stale reading never (reading it
+again is one call); a lifted check lets the next one decide. ``BRAIN_GUARD_ALLOW=usage`` in Claude Code's environment lifts every check, ``usage:CHECK`` one. Refusals,
 asks and overrides go to the guards ledger (``guard: usage``, the check that decided, ``by`` the allow or the
 variable), and so does each allow and its end (``check: allow``, ``decision`` allowed or ended: ended or expired);
 an allow adds to the one in force. Any error lets the call through and
@@ -837,7 +837,11 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
     decision, check, reason = v
     _record(payload, check, "denied" if decision == "deny" else "asked", reason)
     if decision == "ask" and s["kind"] == "session":
-        _note_start(payload, s, asked=True)   # the owner may say yes: a parallel start must count it
+        try:   # the owner may say yes: a parallel start must count it; a log it cannot write never drops the ask
+            _note_start(payload, s, asked=True)
+        except OSError as exc:
+            from .capture import _log_error
+            _log_error("governor note_start", exc)
     text = f"{s['plugin']} usage guard: {reason}."
     if decision == "deny":
         text += f" {override_hint(s['owner'], check)}."
@@ -931,7 +935,7 @@ def render(rep: dict) -> list[str]:
     out += _session_lines(s, lim, q)
     out.append(f"  memory    {memory_text(s.get('memory'), s.get('ram_available_gb'), lim)}")
     from . import wavegate
-    out.append(wavegate.guard_line(lim, rep.get("waves")))
+    out.append(wavegate.guard_line(lim, rep.get("waves"), lifted_checks(s.get("override"))))
     ov = s.get("override")
     out.append(f"  override  {', '.join(lifted_checks(ov))} until {ov['until']}"
                + (f" ({ov['reason']})" if ov.get("reason") else "") if ov else "  override  none")

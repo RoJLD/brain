@@ -41,9 +41,9 @@ USAGE = """\
                  week's forecast at its reset under ask_over_pct)
   brain usage allow [--check NAME]... [--hours H] [--reason TEXT]   {owner}'s override of the usage governor for H
                  hours (default 2; 0 ends it), run in their own terminal (the guards refuse it to a session): it lifts
-                 the memory and session caps (memory, sessions, brainstorms), or each --check named
-                 (critical, warn too; the wave quota gate's streams, wave_quota), never a stale quota reading; each allow and its end are written to
-                 the guards ledger
+                 the memory and session caps (memory, sessions, brainstorms), or each --check named (critical, warn
+                 too; the wave quota gate's streams, wave_quota), never a stale quota reading; each allow and its end
+                 are written to the guards ledger
 """
 
 

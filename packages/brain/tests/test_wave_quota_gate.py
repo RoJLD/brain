@@ -446,9 +446,27 @@ def test_brain_usage_guard_says_how_many_fit(ada, wave, tmp_path, capsys, monkey
             "stream 2.0 %; by the streams 2: 1 live of 3 (stream-1); usage.guard.wave_quota)") in out
     assert cli.main(["usage", "guard", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["waves"]["fit"] == 2
+    governor.allow(hours=1, now=NOW, checks=["streams"])   # the line says the allow; the count ignores it
+    assert cli.main(["usage", "guard"]) == 0
+    out = capsys.readouterr().out
+    assert "usage.guard.wave_quota) (lifted by the allow in force: streams; the count ignores it)" in out
+    governor.allow(hours=0, now=NOW)
     ada()
     assert cli.main(["usage", "guard"]) == 0
     assert "  waves     off (usage.guard.wave_quota not set)" in capsys.readouterr().out
+
+
+def test_an_ask_goes_out_when_its_start_cannot_be_noted(ada, wave, monkeypatch):
+    """The starts log unwritable (a sharing violation): the ask still reaches the owner, the failure in errors.log."""
+    forecast(wave, 60, pct_h=0.3)
+
+    def locked(*a, **kw):
+        raise PermissionError("sharing violation")
+
+    monkeypatch.setattr(governor, "_note_start", locked)
+    d, reason = decision(start(ada))
+    assert d == "ask" and "usage.guard.wave_quota.ask_over_pct" in reason
+    assert "governor note_start" in (wave / "ledger" / "errors.log").read_text(encoding="utf-8")
 
 
 def test_brain_wave_plan_sizes_its_rounds_by_the_streams(ada, wave, tmp_path, monkeypatch):
