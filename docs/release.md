@@ -150,7 +150,12 @@ holds the standard steps for the whole release, and a PR's fragment adds only it
 
 ## 2. The version PR
 
-One branch, `chore/release-X.Y.Z`, one PR that moves the version and nothing else:
+One branch, `chore/release-X.Y.Z`, one PR that moves the version and nothing else. Its mechanical part is one
+command, run in that branch's checkout: `brain release prepare X.Y.Z --theme "..."` prints the plan (the version lines
+of the table below, `freeze_store.py vP`, `changelog.py compile`, `FEATURES.md` and `docs/reference/` rendered from the
+planning brain, `release_check.py --store` then `--preview`), and `--write` runs it in that order, stopping at the
+first step that fails. What it leaves to you, it names: the `### Upgrade` steps and their prose, the pilot page's line
+of what each release brought, and the review.
 
 | File | What moves |
 |---|---|
