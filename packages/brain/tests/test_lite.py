@@ -78,16 +78,24 @@ class Listener:
 
 
 def _shims(folder: Path, marks: Path) -> None:
-    """``docker``, ``podman`` and ``gh`` that leave a mark and fail: what calls them is seen."""
+    """``docker``, ``podman`` and ``gh`` that leave a mark (their name and arguments, one line) and fail: what calls
+    them is seen."""
     folder.mkdir(parents=True, exist_ok=True)
     for name in HIDDEN:
         if os.name == "nt":
-            (folder / f"{name}.cmd").write_text(f"@echo off\r\necho {name}>>\"{marks}\"\r\nexit /b 1\r\n",
+            (folder / f"{name}.cmd").write_text(f"@echo off\r\necho {name} %*>>\"{marks}\"\r\nexit /b 1\r\n",
                                                 encoding="utf-8")
         else:
             f = folder / name
-            f.write_text(f"#!/bin/sh\necho {name} >> '{marks}'\nexit 1\n", encoding="utf-8")
+            f.write_text(f"#!/bin/sh\necho {name} \"$*\" >> '{marks}'\nexit 1\n", encoding="utf-8")
             f.chmod(0o755)
+
+
+def uses(marks: Path) -> list[str]:
+    """The calls of the marks file that use a hidden program: a version probe (brain profile's container runtime
+    detection, ``docker version --format ...``) only asks whether it is there, which is no use of it."""
+    lines = [x.strip() for x in (marks.read_text(encoding="utf-8").splitlines() if marks.exists() else [])]
+    return [x for x in lines if x and not (x.split(" ", 1) + [""])[1].strip().startswith(("version", "--version"))]
 
 
 def _system_bin(folder: Path, sources: list[str]) -> None:
@@ -179,8 +187,8 @@ def test_the_core_runs_its_lite_scenario_with_nothing_else(tmp_path):
     # this checkout's engine, not an installed release nor another checkout
     for line in results[0]["out"].split():
         assert Path(line).resolve().is_relative_to(CHECKOUT.resolve()), line
-    # nothing called docker, podman or gh, and nothing went to the network
-    assert not (tmp_path / "marks.txt").exists(), (tmp_path / "marks.txt").read_text(encoding="utf-8")
+    # nothing used docker, podman or gh (a version probe asks only whether one is there), nothing went to the network
+    assert uses(tmp_path / "marks.txt") == []
     assert listener.count == 0
     # the backlog, the logs and the records
     assert "First day" in _read(root, "notes/journal.md")
@@ -208,7 +216,9 @@ def test_the_shims_mark_a_call_and_the_listener_counts_one(tmp_path):
     _shims(tmp_path / "shims", tmp_path / "marks.txt")
     docker = shutil.which("docker", path=str(tmp_path / "shims"))
     assert docker and subprocess.run([docker, "ps"], capture_output=True, timeout=30).returncode == 1
-    assert "docker" in (tmp_path / "marks.txt").read_text(encoding="utf-8")
+    assert uses(tmp_path / "marks.txt") == ["docker ps"]   # a use is told from a version probe
+    subprocess.run([docker, "version", "--format", "x"], capture_output=True, timeout=30)
+    assert uses(tmp_path / "marks.txt") == ["docker ps"]
     listener = Listener()
     try:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": listener.url}))
