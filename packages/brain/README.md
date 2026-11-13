@@ -876,6 +876,16 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   then all merged on the base by `git merge-tree` with the repo's merge driver, the merge order and the PR GitHub
   will see conflicting said, the tests `brain impact` chooses for the set (run by `--test` in a scratch worktree),
   and a stamp per head naming the set.
+- **`brain lot check [SESSION] [--branch B]... [--keep B]... [--repo-dir D]... [--scratch GLOB]... [--lot NAME]
+  [--offline] [--json]`** (brain.lotcheck): whether a finished lot (a session a coordinator started; default: this
+  one) can be archived, read only. From the desktop app's file of the session (its worktree and branch, the branches
+  it wrote, its PRs) and the repos it touched: each worktree on a lot branch clean (a detached one's commits on a
+  remote branch), each branch with no PR open (the PRs of that repo's origin, by gh, else as the app last saw it,
+  `--offline`), no commit neither pushed nor in the default branch, and merged (a PR merged, or the default branch
+  holds its tip) or kept on purpose (`--keep`). A repo's default branch and its main checkout's never count. « ready to archive » (exit 0) lists what to remove (`git worktree remove`, `git branch -d`, the scratch
+  folders `--scratch` names, `{lot}` the lot's name), else what is left (exit 1); 2 when the session is not found.
+  Nothing is removed or archived: the archive stays the app's tool, the coordinator's, under the owner's standing
+  permission once the work is merged and verified, and never for a session that is running.
 - **`brain collisions [--all] [--frontier] [--json]`**: the files each open branch and worktree changes, crossed with
   each startable item's predicted surface (its features' CodeRefs, its module, the files it names): the items that
   can start now, and those that wait on a branch and its session.
