@@ -12,10 +12,12 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
    machine of the fleet before this engine's records reach them: the DDR record gains two optional fields
    (`links.rules`, `links.notes`, written by `brain decision ask --rule ... --note ...`), which an engine at 0.4.0
    reads with a note and refuses in strict mode (CI, `BRAIN_STRICT=1`), so until every machine and the brain's CI
-   run 0.5.0, ask with neither flag. The event and standards schemas changed their descriptions only: a record
-   either engine writes reads the same in both. With `$BRAIN_GRAPH_PYTHON` set, that Python needs this tag's
-   `research_graph` package: brain runs `python -m research_graph` there and no longer falls back to an older copy
-   in a registered project, so a graph command fails until it has it or the variable is unset.
+   run 0.5.0, ask with neither flag. The event schema changed its descriptions only: an event either engine writes
+   reads the same in both. The standards schema did too, but the profiles a standards row or a project's
+   `standards: {profiles: [...]}` may name grew to every id of the typology catalog, which 0.4.0 notes and refuses
+   in strict mode (below, « Optional, read by 0.5.0 only »). With `$BRAIN_GRAPH_PYTHON` set, that Python needs this
+   tag's `research_graph` package: brain runs `python -m research_graph` there and no longer falls back to an older
+   copy in a registered project, so a graph command fails until it has it or the variable is unset.
 2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered and its close-item skill.
    Until then a session's `midsession.sh` keeps its older fast path, so a first prompt that asks for a coordinator is
    not marked as a chain root by itself (`brain handover root` still marks it), and its close-item skill gives the
@@ -24,13 +26,19 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
    --public` there. It now also refuses the names the brain's own registries declare, from the day each is declared:
    the machines (`config.json` `hosts` and their aliases), the people (`identity`, `members.yaml`), the projects and
    their repos (the registry), the specs (`docs/specs`' file names) and the modules (the module registries' names,
-   ids of 4 characters or more), each in every spelling of its separators; and, as its `graph` check, the personal
-   graph's ids (an ADR's or a DDR's id of any store of the registry; a `wi-`, `adr-`, `feat-`, `ddr-`, `spec-` or
-   `les-` id of a project that is not the repo's own) and an ADR's title (its first 8 words). Until a checkout is
+   ids of 4 characters or more); and, as its `graph` check, the personal graph's ids (an ADR's or a DDR's id of any
+   store of the registry; a `wi-`, `adr-`, `feat-`, `ddr-`, `spec-` or `les-` id of a project that is not the repo's
+   own) and an ADR's title (its first 8 words). Every deny term now matches in every spelling of its separators
+   (`acme-lab` also matches `acme_lab`, `Acme Lab` and `acmelab`): the derived names, and also the hand-written
+   `public.deny` lists and the scope tree's terms (`public.deny_from_tree`), which matched only as written at 0.4.0,
+   so a checkout that passed then can get new `denied` findings of a term it already held. Until a checkout is
    clear, the commit and push guards refuse it, `brain boundary`'s readiness fails and step 4 does not stamp it. A
-   name that is public (a third-party tool a project reads, an engine capability a module is named after) goes to
-   `config.json` `public.public_names` with its reason (15 characters or more), by a PR of the brain; `public.derive`
-   narrows the sources (absent: all; `[]`: none); any other finding is said in the repo's own words. A registry the
+   derived name that is public (a third-party tool a project reads, an engine capability a module is named after)
+   goes to `config.json` `public.public_names` with its reason (15 characters or more), by a PR of the brain;
+   `public.derive` narrows the sources (absent: all; `[]`: none). `public.public_names` clears derived names only: a
+   finding of a hand-written or scope-tree term is cleared by saying it in the repo's own words, by narrowing the
+   term in `public.deny` (or the scope tree), or by `public.allow` for a file where the term is expected, never by
+   `public.public_names`; any other finding is said in the repo's own words. A registry the
    terms are derived from that cannot be read (a YAML error or a conflict marker in `projects.yaml`, `members.yaml`
    or a module registry) now makes the public and secret guards refuse every commit and `brain check --public` exit
    2: fix it (`brain check --all` names it) or narrow `public.derive`.
@@ -71,14 +79,18 @@ What this release newly refuses, with nothing to run until it does:
 - **The chain root's hook**: the guard refuses a session that runs the UserPromptSubmit hook's entry by hand
   (`midsession.py`, `-m brain.midsession`, or `python -c` code that calls it); `brain handover root` marks a root.
 
-Optional, read by 0.5.0 only: an engine at 0.4.0 notes each key and refuses it in strict mode (CI), so a brain sets
-one by a PR once every machine and its CI run 0.5.0:
+Optional, read by 0.5.0 only: an engine at 0.4.0 notes each key or value and refuses it in strict mode (CI), so a
+brain sets one by a PR once every machine and its CI run 0.5.0:
 
 - `config.json` `adapters.claude.telemetry` (step 6), `public.public_names` and `public.derive` (step 3), `moved`
   (the table of moves, read by `brain audit`'s `doc.dead-ref`, ruleset 12, and `brain check`) and `typologies` (the
   catalog's labels and the brain's own ids);
 - `projects.yaml`'s `lifecycle` key (`typologies`, `stage`), which `brain project new` writes and `brain item clauses`
   reads; `brain project add` registers a project instead of a hand edit;
+- a standards profile that is a typology catalog id 0.4.0 does not know (`software`, `api-cli`, `ai-ml`, `infra`,
+  `trading`, `hardware-cad`, `hardware`, `creation`, `organisation`, `compliance`), in a row of a brain's own
+  standards catalog or in a project's `standards: {profiles: [...]}`; the profiles 0.4.0 published (`cli`,
+  `service`, `research`...) read the same in both;
 - with no older engine to wait for: a decision pins file, `pins.yaml` beside the decision log (`notes/pins.yaml`
   beside `notes/decisions.md`; docs/pins.md), and `props.gate` on items and milestones (docs/gates.md).
 
