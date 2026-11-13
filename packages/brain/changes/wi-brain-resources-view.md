@@ -10,4 +10,6 @@ section: Added
   85 %, CRITICAL at 95 %. The cockpit's header carries the same sampler's band at its right (CPU, RAM, disk, network,
   tokens today, quota and pace), read by a worker every 3 s without starting a program; a click on it or `9` opens
   the detail until the resources tab comes. psutil joins the `tui` extra for the process rows; without it the
-  machine's totals come from the standard library (`wi-brain-resources-view`).
+  machine's totals come from the standard library. The test suite's `-n auto` keeps one worker per CPU thread with
+  psutil installed (xdist would count physical cores) unless `BRAIN_TEST_WORKERS` or
+  `PYTEST_XDIST_AUTO_NUM_WORKERS` says otherwise (`wi-brain-resources-view`).

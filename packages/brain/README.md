@@ -151,12 +151,13 @@ its cards). Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.
 
-The header's right end is the resources band: the CPU, the committed memory, the fullest of the Brain's drives, the
-network's throughput up and down, the tokens today and the quota with its pace (« CPU 23 % · RAM 81 % · C: 64 % ·
+The header's right end is the resources band: the CPU, the committed memory, the fullest of the Brain's drives
+(BRAIN_HOME's, Temp's and the registered projects', the registry read once), the network's throughput up and down, the tokens today and the quota with its pace (« CPU 23 % · RAM 81 % · C: 64 % ·
 ↑12K ↓1.4M · 1.2M tok · quota 42 % 0.8x »), read by a worker every 3 s from the same sampler as `brain resources`,
 without starting a program; a measure at WARN (85 %) is yellow, at CRITICAL (95 %) red, and the quota takes
 `brain usage quota`'s level. Under 120 columns it keeps the CPU, the memory and the quota. A click on it, or `9`, opens
-the detail; `space` pauses it with the rest.
+the detail (its docker stats bounded to 4 s; closing it or quitting stops its read at the next step); `space`
+pauses the band with the rest.
 
 The settings tab (the comma) shows every setting with its value, the file or variable it comes from and how it changes,
 page by page on its left: Cockpit, Identity, Brain, Permissions and Setup. The cockpit's own settings live in
@@ -1188,12 +1189,17 @@ brain --project lab resources        # that project's sessions and containers
   process would need ETW, not planned until a need shows it.
 - **the sessions**: each Claude Code CLI process with its memory and its process tree's (its MCP servers, the test
   suites it started), tied to its session by its command line (`--session-id`, or `--resume` without
-  `--fork-session`), else by its folder when one live session of the desktop app holds it, else said unknown; its
+  `--fork-session`), else by its folder when one live session of the desktop app holds it, it is the only CLI
+  without a session flag in that folder and no command line already names that session, else said unknown (a hook's
+  `claude -p` beside its session is its own row, outside its parent's tree, and a session's tokens count once); its
   tokens and cost today from the token ledger (as its last scan left it: `brain usage`, `brain status`). A session
   that spent tokens today without a live CLI here is listed too. The median CLI tree is « one more session ».
-- **the brain commands and the suites** running (an xdist worker counted with its run).
+- **the brain commands and the suites** running, each once (a brain command's launcher and the venv's Python under
+  it, a pytest run and its xdist workers: the top process holds the tree).
 - **the containers**: `docker stats --no-stream`, bounded to 8 s, each container tied to the stack that declares it
-  (its `index.container`, a bundle component's `<project>-<service>-N`, a Compose stack's `<project>-...`), else said
+  (its `index.container`; for a stack whose start runs `docker compose ... up`, its Compose project: `-p`, the
+  `name:` of its `-f` files or of its folder's compose file, else its folder's name, then a bundle component's
+  `<project>-<service>-N` and a Compose stack's `<project>-...`), else said
   declared by no stack. Docker absent, down, slow or answering garbage is a state, never an error.
 - **the stores**: each entry of `BRAIN_HOME`, the transcripts and the temporary folder, each walk bounded in time (an
   unfinished one says « at least »).
@@ -1736,7 +1742,8 @@ back. A git repository in a test is a copy of a template made once per worker (`
 apart, on one process (`pytest packages/brain -m docker`).
 
 `BRAIN_TEST_WORKERS=N` sets how many workers `-n auto` (or `-n logical`) starts. Unset, xdist decides: its own
-`PYTEST_XDIST_AUTO_NUM_WORKERS` if set, else one worker per CPU thread (per physical core when psutil is installed).
+`PYTEST_XDIST_AUTO_NUM_WORKERS` if set, else one worker per CPU thread, psutil installed or not (the conftest keeps the
+logical count: with psutil, which the `tui` extra brings, xdist would count physical cores only).
 `BRAIN_TEST_WORKERS` wins over `PYTEST_XDIST_AUTO_NUM_WORKERS` and, unlike it, refuses anything but a whole number
 with `-n auto`; an explicit `-n N` wins over both. More workers than CPU threads rarely help: on Windows the suite is
 bound by process creation (it starts some ten thousand git processes, and an on-access antivirus scans each one),

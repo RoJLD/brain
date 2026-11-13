@@ -310,12 +310,19 @@ class ResourcesScreen(ModalScreen):
         self.run_worker(self._read, thread=True, group="resources", exit_on_error=False)
 
     def _read(self) -> None:
-        from . import resources_view
-        try:
-            lines = resources_view.render(self.sampler.sample())
+        from textual.worker import get_current_worker
+
+        from . import resources, resources_containers, resources_view
+        worker = get_current_worker()
+        try:  # asked between the sample's steps: closing the screen or quitting never waits on the whole read
+            lines = resources_view.render(self.sampler.sample(stop=lambda: worker.is_cancelled,
+                                                              docker_timeout=resources_containers.TUI_DOCKER_TIMEOUT))
+        except resources.Cancelled:
+            return
         except Exception as exc:  # said in the screen, never fatal
             lines = [f"the sample failed: {type(exc).__name__}: {exc}"]
-        self.app.call_from_thread(self._show, lines)
+        if not worker.is_cancelled:
+            self.app.call_from_thread(self._show, lines)
 
     def _show(self, lines: list[str]) -> None:
         self.busy = False
@@ -323,6 +330,7 @@ class ResourcesScreen(ModalScreen):
             self.query_one("#resources-body", Static).update(Text("\n".join(lines)))
 
     def action_close(self) -> None:
+        self.workers.cancel_group(self, "resources")  # the read in flight stops at its next step
         self.dismiss(None)
 
 

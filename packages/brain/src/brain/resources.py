@@ -13,13 +13,17 @@ The Brain's workloads, in the full sample only (``brain resources``, the cockpit
   sessions    each Claude Code CLI process (psutil), its memory and its process tree's (the MCP servers, the test
               suites it started), tied to its session: the ``--session-id`` or ``--resume`` of its command line (a
               ``--fork-session`` resume names the session it forked from, not its own), else its working folder matched
-              to one session of the desktop app (the app's session files, read through the closed list of keys,
-              ``APP_KEYS``); else the session is unknown, said so. The CLI's tokens and cost today come from the token
+              to one live session of the desktop app (the app's session files, read through the closed list of keys,
+              ``APP_KEYS``) when it is the only CLI without a session flag in that folder and no command line already
+              names that session (:func:`tie_all`); else the session is unknown, said so. A nested CLI (a hook's
+              ``claude -p``) is its own row, outside its parent's tree; a session's tokens count once per project. The CLI's tokens and cost today come from the token
               ledger (``<BRAIN_HOME>/usage/sessions.json``, as the last scan left it: brain usage or brain status scan).
-  brain       the brain commands running (``brain tui``, a hook, a suite run by ``brain test``).
+  brain       the brain commands running (``brain tui``, a hook, a suite run by ``brain test``), each once: the
+              launcher and the venv's Python under it are one row, the top one holding the tree.
   suites      the pytest runs (an xdist worker counted with its run).
   containers  ``docker stats --no-stream`` with a bounded timeout, each container tied to the stack that declares it
-              (brain.stacks: its ``index.container``, its Compose project), else said undeclared. Docker absent,
+              (brain.stacks: its ``index.container``; the Compose project of a stack whose start runs ``docker compose``,
+              from ``-p``, its ``-f`` files' ``name:`` or its folder), else said undeclared. Docker absent,
               down, slow or answering garbage is a state, never an error.
   stores      the sizes of BRAIN_HOME's stores, of the transcripts and of the temporary folder, each walk bounded in
               time (an unfinished walk says « at least »).
@@ -34,7 +38,11 @@ Thresholds: WARN at 85 %, CRITICAL at 95 % (CPU, committed memory, each drive's 
 brain.quota's (its WARN, then 100 % before the reset).
 
 The band (:meth:`Sampler.band`) reads no process list, starts no program and walks no folder: the cockpit's worker
-calls it every ``BAND_S`` seconds. psutil (the ``tui`` extra) is used when installed; without it the machine's totals
+calls it every ``BAND_S`` seconds; its drives are BRAIN_HOME's, Temp's and the registered projects' (the registry read
+once per sampler). The band's and the detail's workers share one sampler: the counters are read and swapped under a
+lock, and a counter that went down counts as a wrap only from its modulus' top quarter. The detail's read is asked
+to stop between its steps (:class:`Cancelled`), its docker stats bounded to ``TUI_DOCKER_TIMEOUT``. psutil
+(the ``tui`` extra) is used when installed; without it the machine's totals
 come from the standard library (GetSystemTimes, GetPerformanceInfo, GetIfTable on Windows; /proc on Linux), and the
 process rows are said to need psutil.
 
@@ -44,7 +52,7 @@ share_pct, source}`` or None; empty, the sample says it is pending.
 
 brain.resources_view puts the sample in words: the band's and ``brain resources``' text.
 
-Side effects are module functions the tests replace: ``_psutil``, ``_run``, ``_which``, ``_cpu_times``,
+brain.resources_containers reads docker stats. Side effects are module functions the tests replace: ``_psutil``, ``_cpu_times``,
 ``_net_counters``, ``_memory``, ``_disk_usage``, ``_size``, ``_now``.
 """
 
@@ -55,33 +63,36 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import governor, paths, probe, quota, sessions, usage
+from .resources_containers import DOCKER_TIMEOUT, containers
 
 V = 1
 WARN, CRITICAL = 85.0, 95.0
 BAND_S = 3.0                   # the cockpit's band: read every 3 s (RES-1: 2 to 5 s)
 HISTORY = int(3600 / BAND_S)   # the last hour of band readings, kept in memory for the sparklines of the tab to come
 PRIME_S = 0.5                  # a one-shot sample (the CLI) reads the counters twice, this far apart
-DOCKER_TIMEOUT = 8.0           # docker stats --no-stream takes 1 to 3 s with a handful of containers
+WRAP_TOP = 0.75                # a counter that went down wrapped only when its old value was in its modulus' top quarter
 WALK_BUDGET = {"stores": 2.0, "transcripts": 1.0, "temp": 1.0}   # seconds each walk may take
 APP_KEYS = ("sessionId", "cliSessionId", "cwd", "title", "isArchived", "lastActivityAt")   # a closed list (classes)
 LOOPBACK = re.compile(r"^(lo\d*|loopback.*)$", re.I)
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 STEMS = ("claude", "node", "brain", "python", "python3", "pythonw", "py", "pytest")   # the names worth a look
 DESKTOP_MARKS = ("windowsapps", "anthropicclaude", ".app/contents/macos/claude")
-UNITS = {"b": 1, "kb": 1e3, "mb": 1e6, "gb": 1e9, "tb": 1e12, "kib": 2 ** 10, "mib": 2 ** 20, "gib": 2 ** 30,
-         "tib": 2 ** 40}
-SIZE_RE = re.compile(r"^\s*([0-9]*\.?[0-9]+)\s*([kmgt]?i?b)\s*$", re.I)
 PENDING_OVERHEAD = ("the Brain's own token overhead (rules, hooks, skills, resume packs injected into sessions) waits "
                     "on the rule usage measure (wi-brain-rule-usage)")
 
 OVERHEAD_SOURCES: list = []   # functions () -> {tokens, share_pct, source} | None: the overhead's extension point
+_MEMORY_TOTAL: dict = {}      # macOS without psutil: the total read once (sysctl), never on each band
+
+
+class Cancelled(Exception):
+    """A sample stopped between two steps (the cockpit's detail closed, the cockpit quit)."""
 
 
 # --- side effects, replaced by fakes in the tests -----------------------------------------------------------------
@@ -95,26 +106,12 @@ def _psutil():
     return psutil
 
 
-_which = shutil.which
 _disk_usage = shutil.disk_usage
 _size = probe._size
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _run(argv: list[str], timeout: float) -> tuple[str, int | None, str]:
-    """(state, exit code, output): state ``ok`` (it ran, whatever its code), ``slow`` (killed at ``timeout``) or
-    ``absent`` (it could not start)."""
-    try:
-        p = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
-                           stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except subprocess.TimeoutExpired:
-        return "slow", None, ""
-    except (OSError, subprocess.SubprocessError):
-        return "absent", None, ""
-    return "ok", p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
 def _cpu_times(ps=None) -> tuple[float, float] | None:
@@ -212,25 +209,47 @@ def _win_if_table() -> dict[str, tuple[int, int]] | None:
     return out
 
 
-def _memory() -> dict:
+def _memory(ps=None) -> dict:
     """{committed_pct, commit_total, commit_limit, total, available, nonpaged}: Windows' GetPerformanceInfo (the
-    governor's reader), else /proc/meminfo; a measure not readable is None."""
+    governor's reader), else psutil's virtual_memory, else /proc/meminfo (macOS without psutil: the total read once,
+    never a program per band); a measure not readable is None."""
     perf = governor.performance_info()
     if perf:
         return {"committed_pct": round(100.0 * perf["commit_total"] / perf["commit_limit"], 1)
                 if perf["commit_limit"] else None, "commit_total": perf["commit_total"],
                 "commit_limit": perf["commit_limit"], "total": perf["physical_total"],
                 "available": perf["physical_available"], "nonpaged": perf["kernel_nonpaged"]}
+    none = {"commit_total": None, "commit_limit": None, "nonpaged": None}
+    if ps is not None:
+        vm = ps.virtual_memory()
+        return {"committed_pct": round(float(vm.percent), 1), "total": int(vm.total),
+                "available": int(vm.available), **none}
     info = governor.memory_info()
+    if probe._os() == "darwin":
+        if "total" not in _MEMORY_TOTAL:
+            try:
+                _MEMORY_TOTAL["total"] = probe.probe_memory().get("total_bytes") or None
+            except (OSError, ValueError):
+                _MEMORY_TOTAL["total"] = None
+        return {"committed_pct": info.get("committed"), "total": _MEMORY_TOTAL["total"], "available": None, **none}
     try:
-        m = probe.probe_memory()
+        m = probe.probe_memory()   # /proc/meminfo: a file, no program
     except (OSError, ValueError):
         m = {}
-    return {"committed_pct": info.get("committed"), "commit_total": None, "commit_limit": None,
-            "total": m.get("total_bytes") or None, "available": m.get("free_bytes"), "nonpaged": None}
+    return {"committed_pct": info.get("committed"), "total": m.get("total_bytes") or None,
+            "available": m.get("free_bytes"), **none}
 
 
 # --- small helpers -------------------------------------------------------------------------------------------------
+
+def _delta(old: int, new: int, modulus: int | None) -> int:
+    """A counter's growth between two readings: a fall is a wrap only for a counter with a modulus whose old value
+    was in its top quarter (``WRAP_TOP``); any other fall (an adapter reset, readings out of order) counts 0."""
+    d = new - old
+    if d >= 0:
+        return d
+    return d + modulus if modulus and old >= modulus * WRAP_TOP else 0
+
 
 def level(pct) -> str:
     """``critical`` from CRITICAL %, ``warn`` from WARN %, ``ok`` under, ``unknown`` without a measure."""
@@ -262,24 +281,6 @@ def pct_text(p) -> str:
     return f"{p:.0f} %" if isinstance(p, (int, float)) else "-"
 
 
-def parse_size(text: str) -> int | None:
-    """docker stats' sizes: ``75.63MiB``, ``1.06MB``, ``0B``; None for ``--`` or garbage."""
-    m = SIZE_RE.match(text or "")
-    return int(float(m.group(1)) * UNITS[m.group(2).lower()]) if m else None
-
-
-def _pair(text: str) -> tuple[int | None, int | None]:
-    a, _, b = (text or "").partition("/")
-    return parse_size(a), parse_size(b)
-
-
-def _pct(text: str) -> float | None:
-    try:
-        return round(float((text or "").strip().rstrip("%")), 2)
-    except ValueError:
-        return None
-
-
 # --- the machine ---------------------------------------------------------------------------------------------------
 
 class Sampler:
@@ -295,16 +296,19 @@ class Sampler:
         self._proc: dict[tuple, tuple[float, float]] = {}   # (pid, create_time) -> (wall, cpu seconds)
         self._ledger: tuple | None = None    # (stat, {cli: today's row}, day)
         self._app: dict[str, tuple] = {}     # app session file -> (stat, picked keys)
+        self._drives: list | None = None     # the registered projects' roots, read once (the band's drives)
+        self._lock = threading.Lock()        # the band's worker and the detail's share the counters
         self.history: collections.deque = collections.deque(maxlen=HISTORY)
 
     # the counters: a rate needs two readings
 
     def cpu(self) -> float | None:
-        try:
-            now = _cpu_times(self.ps)
-        except (OSError, ValueError, AttributeError):
-            now = None
-        before, self._cpu = self._cpu, now
+        with self._lock:   # read and swap together: two workers never pair a reading with a later one's
+            try:
+                now = _cpu_times(self.ps)
+            except (OSError, ValueError, AttributeError):
+                now = None
+            before, self._cpu = self._cpu, now
         if not (now and before) or now[1] <= before[1]:
             return None
         busy = 1.0 - (now[0] - before[0]) / (now[1] - before[1])
@@ -317,27 +321,21 @@ class Sampler:
         except (OSError, ValueError, AttributeError):
             got = None
         source = "psutil" if self.ps else "stdlib"
-        if got is None:
-            self._net = None
-            return {"up_bps": None, "down_bps": None, "source": source, "why": "not readable on this system"}
-        counters, modulus = got
-        t = time.monotonic()
-        before, self._net = self._net, (t, counters, modulus)
+        with self._lock:   # read and swap together, as cpu()
+            if got is None:
+                self._net = None
+                return {"up_bps": None, "down_bps": None, "source": source, "why": "not readable on this system"}
+            counters, modulus = got
+            t = time.monotonic()
+            before, self._net = self._net, (t, counters, modulus)
         if not before or t <= before[0]:
             return {"up_bps": None, "down_bps": None, "source": source}
         down = up = 0
         for name, (rx, tx) in counters.items():
             old = before[1].get(name)
-            if not old:
-                continue
-            for i, new in ((0, rx), (1, tx)):
-                d = new - old[i]
-                if d < 0:
-                    d = d + modulus if modulus else 0   # a 32-bit counter wrapped; else an adapter reset
-                if i == 0:
-                    down += d
-                else:
-                    up += d
+            if old:
+                down += _delta(old[0], rx, modulus)
+                up += _delta(old[1], tx, modulus)
         dt = t - before[0]
         return {"up_bps": round(up / dt), "down_bps": round(down / dt), "source": source}
 
@@ -368,12 +366,13 @@ class Sampler:
             return {"day": day, "tokens": None, "usd": None, "sessions": 0, "by_session": {}, "ledger_at": None,
                     "why": "no token ledger yet (brain usage scans the transcripts)"}
         if not self._ledger or self._ledger[0] != sig or self._ledger[2] != day:
-            try:
-                rows = usage.load()
-            except Exception as exc:   # brain.stateio refuses a newer or broken ledger: said, never raised
+            st = usage.ledger()   # read only: a broken file is not set aside from here
+            why = (f"written by a newer brain (v {st.v}, this engine reads v {st.known}): brain update"
+                   if st.status == "newer" else st.why if st.status == "unreadable" else "")
+            if why:
                 return {"day": day, "tokens": None, "usd": None, "sessions": 0, "by_session": {}, "ledger_at": None,
-                        "why": f"token ledger not read: {exc}"}
-            self._ledger = (sig, today_of(rows, day), day)
+                        "why": f"token ledger not read: {why}"}
+            self._ledger = (sig, today_of(st.data.get("rows") or {}, day), day)
         by = self._ledger[1]
         return {"day": day, "tokens": sum(x["tokens"] for x in by.values()),
                 "usd": round(sum(x["usd"] for x in by.values()), 2), "sessions": len(by), "by_session": by,
@@ -408,7 +407,7 @@ class Sampler:
     # the band and the full sample
 
     def machine(self, drives: list[tuple[str, Path]] | None = None) -> dict:
-        mem = _memory()
+        mem = _memory(self.ps)
         disks = self.disks(drives)
         return {"name": probe.machine(), "os": probe._os(), "cores": self.cores, "cpu_pct": self.cpu(),
                 "memory": mem, "disks": disks, "network": self.network(),
@@ -435,10 +434,17 @@ class Sampler:
             out.append(row)
         return out
 
+    def drives(self, projs: list | None = None) -> list[tuple[str, Path]]:
+        """The registered projects' roots on this machine, labelled; read from the registry once per sampler."""
+        if self._drives is None or projs is not None:
+            self._drives = [(f"project:{p.name}", p.root) for p in (_projects(self.root) if projs is None else projs)
+                            if p.root.is_dir()]
+        return self._drives
+
     def band(self) -> dict:
         """The cockpit's band: no process list, no program started, no folder walked. Its cost in ms is in it."""
         t0 = time.perf_counter()
-        m = self.machine()
+        m = self.machine(self.drives())
         tok = self.tokens_today()
         q = self.quota()
         worst = max(m["disks"], key=lambda d: d["used_pct"] or 0.0, default=None)
@@ -452,23 +458,32 @@ class Sampler:
         self.history.append({k: b[k] for k in ("at", "cpu_pct", "mem_pct", "up_bps", "down_bps")})
         return b
 
-    def sample(self, docker: bool = True, walks: bool = True, prime: bool = True) -> dict:
+    def sample(self, docker: bool = True, walks: bool = True, prime: bool = True, stop=None,
+               docker_timeout: float = DOCKER_TIMEOUT) -> dict:
         """The full sample: the machine, the sessions, the brain processes, the suites, the containers, the stores,
         the projects, the tokens and the quota. ``prime``: read the counters twice, ``PRIME_S`` apart, when this
-        sampler has no earlier reading (a one-shot command); ``docker`` and ``walks`` off: what --quick leaves out."""
+        sampler has no earlier reading (a one-shot command); ``docker`` and ``walks`` off: what --quick leaves out;
+        ``stop``: a function asked between the steps, :class:`Cancelled` raised when it says true."""
+        def step():
+            if stop and stop():
+                raise Cancelled()
         t0 = time.perf_counter()
         projs = _projects(self.root)
         if prime:
             self._prime_if_new()
-        m = self.machine([(f"project:{p.name}", p.root) for p in projs if p.root.is_dir()])
+        step()
+        m = self.machine(self.drives(projs))
         tok = self.tokens_today()
         q = self.quota()
         procs = self.processes()
-        place = _placer(projs)
-        sess = self.sessions(procs, tok, place)
+        step()
+        sess = self.sessions(procs, tok, _placer(projs))
+        step()
         skipped = {"state": "skipped", "why": "--quick", "rows": []}
-        cont = containers(_stacks(self.root)) if docker else skipped
-        stores_ = stores() if walks else dict(skipped)
+        cont = containers(_stacks(self.root), docker_timeout) if docker else skipped
+        step()
+        stores_ = stores(stop) if walks else dict(skipped)
+        step()
         doc = {"v": V, "at": _iso(_now()), "machine": m, "processes": {k: procs[k] for k in procs if k != "rows"},
                "sessions": sess, "containers": cont, "stores": stores_,
                "tokens": {k: v for k, v in tok.items() if k != "by_session"}, "quota": q, "overhead": overhead()}
@@ -488,34 +503,37 @@ class Sampler:
             return {"available": False, "why": "the process rows need psutil (pip install brain[tui])", "rows": [],
                     "brain": [], "suites": []}
         table, children = _table(self.ps)
-        found: dict[str, list[dict]] = {"cli": [], "brain": [], "suite": []}
-        for pid, t in table.items():
-            row = self._row(pid, t, table, children)
-            if row:
-                found[row["kind"]].append(row)
+        kinds = {pid: k for pid, t in table.items() if (k := self._kind(t))}
         if prime_only:
             return {}
-        rows, brain_, suites = found["cli"], found["brain"], found["suite"]
-        runs = {s["pid"] for s in suites}
-        suites = [s for s in suites if s["ppid"] not in runs]   # an xdist worker is counted with its run
+        clis = {pid for pid, (kind, _) in kinds.items() if kind == "cli"}
+        found: dict[str, list[dict]] = {"cli": [], "brain": [], "suite": []}
+        for pid, (kind, detail) in kinds.items():
+            found[kind].append(self._row(pid, kind, detail, table, children, clis))
+        rows = found["cli"]
+        brain_, suites = (_tops(found[k]) for k in ("brain", "suite"))
         live = {r["pid"] for r in rows + brain_ + suites}
         self._proc = {k: v for k, v in self._proc.items() if k[0] in live}
         return {"available": True, "why": "", "rows": rows, "brain": brain_, "suites": suites,
                 "counted": len(table)}
 
-    def _row(self, pid: int, t: dict, table: dict, children: dict) -> dict | None:
-        """A process of the Brain's (a CLI with its tree, a brain command, a suite with its workers), else None."""
+    def _kind(self, t: dict) -> tuple[str, dict] | None:
+        """(kind, detail) of a process of the Brain's (a CLI, a brain command, a suite), else None."""
         stem = Path(t["name"]).stem.lower()
         detail = self._detail(t["p"]) if stem in STEMS else None
         kind = kind_of(stem, detail["exe"], detail["cmdline"]) if detail else ""
-        if not kind:
-            return None
+        return (kind, detail) if kind else None
+
+    def _row(self, pid: int, kind: str, detail: dict, table: dict, children: dict, clis: set) -> dict:
+        """A process's row with its tree's memory: a nested CLI (a hook's ``claude -p``) is its own row, never in its
+        parent's tree."""
+        t = table[pid]
         row = {"pid": pid, "ppid": t["ppid"], "kind": kind, **{k: detail[k] for k in ("rss", "private", "cpu_pct")}}
-        if kind == "brain":
-            return {**row, "what": brain_what(detail["cmdline"])}
-        tree = list(_descendants(pid, children))
+        tree = list(_descendants(pid, children, clis))
         row["tree_bytes"] = (detail["rss"] or 0) + sum(self._rss(table[c]["p"]) for c in tree)
-        if kind == "cli":
+        if kind == "brain":
+            row["what"] = brain_what(detail["cmdline"])
+        elif kind == "cli":
             row.update(children=len(tree), cwd=_cwd(t["p"], self.ps), cmd_session=session_flags(detail["cmdline"]))
         return row
 
@@ -578,7 +596,9 @@ class Sampler:
     def sessions(self, procs: dict, tok: dict, place) -> list[dict]:
         """One row per live CLI, then one per session that spent tokens today without a live CLI here."""
         by_cli, by_cwd = app_index(self.app_sessions())
-        rows = [live_row(r, by_cli, by_cwd, tok["by_session"], place) for r in procs.get("rows", [])]
+        clis = procs.get("rows", [])
+        rows = [live_row(r, tied, by_cli, tok["by_session"], place) for r, tied in zip(
+            clis, tie_all(clis, by_cli, by_cwd), strict=True)]
         seen = {r["cli"] for r in rows if r["cli"]}
         rows += [ledger_row(cli, spent, by_cli.get(cli) or {}, place) for cli, spent in tok["by_session"].items()
                  if cli not in seen]
@@ -595,9 +615,9 @@ def app_index(app: list[dict]) -> tuple[dict[str, dict], dict[str, list[dict]]]:
     return by_cli, by_cwd
 
 
-def live_row(r: dict, by_cli: dict, by_cwd: dict, spent_by: dict, place) -> dict:
-    """A live CLI's row: tied to its session (:func:`tie`), its memory and CPU, its tokens today."""
-    cli, how = tie(r.get("cmd_session") or {}, r.get("cwd"), by_cli, by_cwd)
+def live_row(r: dict, tied: tuple[str, str], by_cli: dict, spent_by: dict, place) -> dict:
+    """A live CLI's row: tied to its session (:func:`tie_all`), its memory and CPU, its tokens today."""
+    cli, how = tied
     meta = by_cli.get(cli) or {}
     spent = (spent_by.get(cli) or {}) if cli else {}
     folder = r.get("cwd") or meta.get("cwd") or spent.get("folder") or ""
@@ -651,15 +671,23 @@ def _table(ps) -> tuple[dict[int, dict], dict[int, list[int]]]:
     return table, children
 
 
-def _descendants(pid: int, children: dict[int, list[int]]):
+def _descendants(pid: int, children: dict[int, list[int]], stop: set | None = None):
+    """The processes under ``pid``; one in ``stop`` (a nested CLI) is left out with its own tree."""
     stack, seen = list(children.get(pid, [])), {pid}
     while stack:
         c = stack.pop()
-        if c in seen:
+        if c in seen or (stop and c in stop):
             continue
         seen.add(c)
         yield c
         stack.extend(children.get(c, []))
+
+
+def _tops(rows: list[dict]) -> list[dict]:
+    """The rows whose parent is not a row of the same list: a brain command's launcher and the venv's python under it
+    (Windows), a pytest run and a worker that is pytest too, counted once, the top holding the tree."""
+    pids = {r["pid"] for r in rows}
+    return [r for r in rows if r["ppid"] not in pids]
 
 
 def _cwd(p, ps) -> str:
@@ -728,6 +756,23 @@ def session_flags(cmd: list[str]) -> dict:
     return found
 
 
+def tie_all(rows: list[dict], by_cli: dict, by_cwd: dict) -> list[tuple[str, str]]:
+    """Each live CLI's (session id, how): its command line first; a CLI without one by its folder only when it is the
+    one such CLI in that folder and no command line already names that folder's session; else ('', why not)."""
+    def flags(r):
+        return r.get("cmd_session") or {}
+    taken = {flags(r)["id"] for r in rows if flags(r).get("id")}
+    flagless = collections.Counter(_norm(r["cwd"]) for r in rows if r.get("cwd") and not flags(r).get("id"))
+    out = []
+    for r in rows:
+        n = flagless[_norm(r.get("cwd") or "")] if r.get("cwd") and not flags(r).get("id") else 0
+        cli, how = ("", f"folder held by {n} CLIs") if n > 1 else tie(flags(r), r.get("cwd"), by_cli, by_cwd)
+        if how == "folder" and cli in taken:
+            cli, how = "", "folder's session already tied by another CLI's command line"
+        out.append((cli, how))
+    return out
+
+
 def tie(flags: dict, cwd: str | None, by_cli: dict, by_cwd: dict) -> tuple[str, str]:
     """(the CLI's session id, how it was found): its command line, else its folder when one live app session holds
     it, else ('', why not)."""
@@ -743,97 +788,12 @@ def tie(flags: dict, cwd: str | None, by_cli: dict, by_cwd: dict) -> tuple[str, 
     return "", "unknown" if cwd else "unknown (no folder readable)"
 
 
-# --- the containers ------------------------------------------------------------------------------------------------
-
-def _compose_project(s) -> str:
-    """The Compose project of a stack: its ``-p``, its compose file's ``name:``, else its folder's name."""
-    argv = s.start
-    for i, a in enumerate(argv):
-        if a in ("-p", "--project-name") and i + 1 < len(argv):
-            return argv[i + 1].lower()
-        if a.startswith("--project-name="):
-            return a.split("=", 1)[1].lower()
-    for name in ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"):
-        f = (s.cwd or Path(".")) / name
-        try:
-            m = re.search(r"^name:\s*['\"]?([A-Za-z0-9_.-]+)", f.read_text(encoding="utf-8"), re.M)
-        except OSError:
-            continue
-        if m:
-            return m.group(1).lower()
-    return re.sub(r"[^a-z0-9_-]", "", (s.cwd.name if s.cwd else "").lower())
-
-
-def owner_of(name: str, stacks_: list) -> tuple[str, str]:
-    """(stack, project) that declares the container ``name``: its ``index.container``, a bundle component's
-    ``<project>-<service>-N``, a Compose stack's ``<project>-...``; ('', '') when none does."""
-    low = name.lower()
-    for s in stacks_:
-        if str((s.index or {}).get("container") or "").lower() == low:
-            return s.name, s.project
-    for s in stacks_:
-        p = _compose_project(s)
-        if s.bundle and re.fullmatch(rf"{re.escape(p)}[-_]{re.escape(s.name)}[-_]\d+", low):
-            return s.name, s.project
-    for s in stacks_:
-        p = _compose_project(s)
-        if not s.bundle and p and (low == p or low.startswith((p + "-", p + "_"))):
-            return s.name, s.project
-    return "", ""
-
-
-def parse_stats(text: str, stacks_: list | None = None) -> tuple[list[dict], int]:
-    """docker stats' ``{{json .}}`` lines: (rows, lines that were not a container's)."""
-    rows, bad = [], 0
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            d = json.loads(line)
-        except ValueError:
-            bad += 1
-            continue
-        if not isinstance(d, dict) or not isinstance(d.get("Name"), str) or not d.get("Name"):
-            bad += 1
-            continue
-        mem, limit = _pair(str(d.get("MemUsage") or ""))
-        rx, tx = _pair(str(d.get("NetIO") or ""))
-        rd, wr = _pair(str(d.get("BlockIO") or ""))
-        stack, project = owner_of(d["Name"], stacks_ or [])
-        pids = str(d.get("PIDs") or "")
-        rows.append({"name": d["Name"], "id": str(d.get("ID") or "")[:12], "cpu_pct": _pct(str(d.get("CPUPerc"))),
-                     "mem_bytes": mem, "mem_limit_bytes": limit, "mem_pct": _pct(str(d.get("MemPerc"))),
-                     "net_rx_bytes": rx, "net_tx_bytes": tx, "block_read_bytes": rd, "block_write_bytes": wr,
-                     "pids": int(pids) if pids.isdigit() else None, "stack": stack, "project": project})
-    return rows, bad
-
-
-def containers(stacks_: list | None = None, timeout: float = DOCKER_TIMEOUT) -> dict:
-    """{state, why, rows}: ``ok``; ``absent`` (no docker client); ``down`` (the client answers, the engine does
-    not); ``slow`` (no answer in ``timeout`` s); ``garbage`` (an answer that holds no container). Never raises."""
-    exe = _which("docker")
-    if not exe:
-        return {"state": "absent", "why": "no docker client on the PATH", "rows": []}
-    state, code, out = _run([exe, "stats", "--no-stream", "--format", "{{json .}}"], timeout)
-    if state == "slow":
-        return {"state": "slow", "why": f"docker stats gave no answer in {timeout:g} s", "rows": []}
-    if state == "absent":
-        return {"state": "absent", "why": "the docker client could not start", "rows": []}
-    if code != 0:
-        first = next((ln.strip() for ln in out.splitlines() if ln.strip()), f"exit {code}")
-        return {"state": "down", "why": f"the Docker engine does not answer: {first[:200]}", "rows": []}
-    rows, bad = parse_stats(out, stacks_)
-    if bad and not rows:
-        return {"state": "garbage", "why": f"docker stats answered {bad} line(s) that are no container's", "rows": []}
-    return {"state": "ok", "why": f"{bad} line(s) skipped" if bad else "", "rows": rows}
-
-
 # --- the stores ----------------------------------------------------------------------------------------------------
 
-def stores() -> dict:
+def stores(stop=None) -> dict:
     """{state, rows: [{name, path, bytes, complete}]}: each top-level entry of BRAIN_HOME (a store), the transcripts
-    and the temporary folder, each walk bounded in time (:data:`WALK_BUDGET`)."""
+    and the temporary folder, each walk bounded in time (:data:`WALK_BUDGET`); ``stop`` asked between two walks
+    (:class:`Cancelled`)."""
     home = paths.brain_home()
     rows = []
     end = time.monotonic() + WALK_BUDGET["stores"]
@@ -842,6 +802,8 @@ def stores() -> dict:
     except OSError:
         entries = []
     for e in entries:
+        if stop and stop():
+            raise Cancelled()
         left = end - time.monotonic()
         try:
             if e.is_dir():
@@ -853,6 +815,8 @@ def stores() -> dict:
         rows.append({"name": e.name, "path": str(e), "bytes": n, "complete": done})
     rows.sort(key=lambda r: -r["bytes"])
     for name, root in (("transcripts", paths.projects_dir()), ("temp", Path(tempfile.gettempdir()))):
+        if stop and stop():
+            raise Cancelled()
         if root.is_dir():
             n, done = _size(root, WALK_BUDGET[name])
             rows.append({"name": name, "path": str(root), "bytes": n, "complete": done})
@@ -900,12 +864,16 @@ def by_project(sess: list[dict], cont: dict) -> list[dict]:
         return out.setdefault(name, {"project": name, "sessions_live": 0, "sessions_today": 0, "tree_bytes": 0,
                                      "cpu_pct": 0.0, "tokens_today": 0, "usd_today": 0.0, "containers": 0,
                                      "container_bytes": 0, "container_cpu_pct": 0.0})
+    counted: set[str] = set()   # a session's tokens once, however many rows name it
     for s in sess:
         r = row(s["project"])
         r["sessions_live"] += 1 if s["live"] else 0
-        r["sessions_today"] += 1 if s.get("tokens_today") else 0
         r["tree_bytes"] += s.get("tree_bytes") or 0
         r["cpu_pct"] = round(r["cpu_pct"] + (s.get("cpu_pct") or 0.0), 1)
+        if s.get("cli") and s["cli"] in counted:
+            continue
+        counted.add(s.get("cli") or "")
+        r["sessions_today"] += 1 if s.get("tokens_today") else 0
         r["tokens_today"] += s.get("tokens_today") or 0
         r["usd_today"] = round(r["usd_today"] + (s.get("usd_today") or 0.0), 2)
     for c in cont.get("rows", []):

@@ -5,6 +5,7 @@ band and its detail in test_tui_resources below (Textual only)."""
 import collections
 import contextlib
 import json
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from brain import classes, cli, quota, resources, resources_view, stacks, usage
+from brain import resources_containers as rc
 
 FIXTURES = Path(__file__).parent / "fixtures" / "docker"
 STATS = (FIXTURES / "stats.jsonl").read_text(encoding="utf-8")   # a real docker stats payload, names invented
@@ -36,11 +38,11 @@ def test_the_levels_are_warn_at_85_and_critical_at_95():
 
 
 def test_docker_sizes_and_percents_parse_and_garbage_gives_none():
-    assert resources.parse_size("75.66MiB") == int(75.66 * 2 ** 20)
-    assert resources.parse_size("1.06MB") == 1_060_000 and resources.parse_size("0B") == 0
-    assert resources.parse_size("--") is None and resources.parse_size("12 parsecs") is None
-    assert resources._pair("383kB / 784kB") == (383_000, 784_000)
-    assert resources._pct("1.31%") == 1.31 and resources._pct("--") is None
+    assert rc.parse_size("75.66MiB") == int(75.66 * 2 ** 20)
+    assert rc.parse_size("1.06MB") == 1_060_000 and rc.parse_size("0B") == 0
+    assert rc.parse_size("--") is None and rc.parse_size("12 parsecs") is None
+    assert rc._pair("383kB / 784kB") == (383_000, 784_000)
+    assert rc._pct("1.31%") == 1.31 and rc._pct("--") is None
 
 
 # --- docker stats: the real payload, the stacks that declare each container, and the failures ----------------------
@@ -59,7 +61,7 @@ def _stacks(tmp_path):
 
 
 def test_the_real_payload_parses_and_each_container_finds_its_stack(tmp_path):
-    rows, bad = resources.parse_stats(STATS, _stacks(tmp_path))
+    rows, bad = rc.parse_stats(STATS, _stacks(tmp_path))
     assert bad == 0 and len(rows) == 8
     by = {r["name"]: r for r in rows}
     q = by["brain-sovereign-qdrant-1"]
@@ -75,53 +77,69 @@ def test_the_real_payload_parses_and_each_container_finds_its_stack(tmp_path):
 
 def test_the_compose_project_is_the_p_flag_the_file_name_or_the_folder(tmp_path):
     s = stacks.Stack("x", "lab", ["docker", "compose", "-p", "Mine", "up"], cwd=tmp_path)
-    assert resources._compose_project(s) == "mine"
+    assert rc._compose_project(s) == "mine"
     d = tmp_path / "My Stack"
     d.mkdir()
-    assert resources._compose_project(stacks.Stack("x", "lab", ["docker", "compose", "up"], cwd=d)) == "mystack"
+    assert rc._compose_project(stacks.Stack("x", "lab", ["docker", "compose", "up"], cwd=d)) == "mystack"
+    (d / "ops.yml").write_text("name: shipped\n", encoding="utf-8")
+    (d / "compose.yaml").write_text("name: ignored\n", encoding="utf-8")
+    assert rc._compose_project(stacks.Stack("x", "lab", ["docker", "compose", "-f", "ops.yml", "up"],
+                                                   cwd=d)) == "shipped"   # -f honoured
+    assert rc._compose_project(stacks.Stack("x", "lab", ["docker", "compose", "up"], cwd=None)) == ""
+    assert rc._compose_project(stacks.Stack("x", "lab", ["npm", "start"], cwd=d)) == ""
+
+
+def test_a_stack_that_runs_no_compose_claims_no_container_by_its_folder(tmp_path):
+    d = tmp_path / "codegraph"
+    d.mkdir()
+    app = stacks.Stack("site", "acme", ["npm", "start"], cwd=d)
+    nowhere = stacks.Stack("svc", "acme", ["docker", "compose", "up"], cwd=None)
+    assert rc.owner_of("codegraph-web", [app, nowhere]) == ("", "")
+    assert rc.owner_of("codegraph-web", [stacks.Stack("cg", "acme", ["docker", "compose", "up"], cwd=d)]) == (
+        "cg", "acme")
 
 
 def _docker(monkeypatch, state, code=0, out=""):
-    monkeypatch.setattr(resources, "_which", lambda name: "docker")
+    monkeypatch.setattr(rc, "_which", lambda name: "docker")
     calls = []
 
     def run(argv, timeout):
         calls.append((argv, timeout))
         return state, code, out
-    monkeypatch.setattr(resources, "_run", run)
+    monkeypatch.setattr(rc, "_run", run)
     return calls
 
 
 def test_docker_ok_reads_stats_once_without_streaming(monkeypatch, tmp_path):
     calls = _docker(monkeypatch, "ok", 0, STATS)
-    c = resources.containers(_stacks(tmp_path))
+    c = rc.containers(_stacks(tmp_path))
     assert c["state"] == "ok" and len(c["rows"]) == 8 and c["why"] == ""
-    assert calls == [(["docker", "stats", "--no-stream", "--format", "{{json .}}"], resources.DOCKER_TIMEOUT)]
+    assert calls == [(["docker", "stats", "--no-stream", "--format", "{{json .}}"], rc.DOCKER_TIMEOUT)]
 
 
 def test_docker_absent_down_slow_and_garbage_are_states_never_errors(monkeypatch):
-    monkeypatch.setattr(resources, "_which", lambda name: None)
-    assert resources.containers()["state"] == "absent"
+    monkeypatch.setattr(rc, "_which", lambda name: None)
+    assert rc.containers()["state"] == "absent"
     _docker(monkeypatch, "ok", 1, DOWN)
-    c = resources.containers()
+    c = rc.containers()
     assert c["state"] == "down" and "failed to connect to the docker API" in c["why"] and c["rows"] == []
     _docker(monkeypatch, "slow")
-    assert resources.containers(timeout=0.5) == {"state": "slow", "why": "docker stats gave no answer in 0.5 s",
+    assert rc.containers(timeout=0.5) == {"state": "slow", "why": "docker stats gave no answer in 0.5 s",
                                                  "rows": []}
     _docker(monkeypatch, "absent")
-    assert resources.containers()["state"] == "absent"
+    assert rc.containers()["state"] == "absent"
     _docker(monkeypatch, "ok", 0, "<html>502 Bad Gateway</html>\n{\"no\": \"name\"}\n[1, 2]\n")
-    c = resources.containers()
+    c = rc.containers()
     assert c["state"] == "garbage" and "3 line(s)" in c["why"]
     _docker(monkeypatch, "ok", 0, "WARNING: something\n" + STATS)   # a stray line among real ones: skipped, said
-    c = resources.containers()
+    c = rc.containers()
     assert c["state"] == "ok" and len(c["rows"]) == 8 and c["why"] == "1 line(s) skipped"
 
 
 def test_a_slow_program_is_killed_at_its_timeout_and_said_slow():
-    state, code, _ = resources._run([sys.executable, "-c", "import time; time.sleep(30)"], 0.5)
+    state, code, _ = rc._run([sys.executable, "-c", "import time; time.sleep(30)"], 0.5)
     assert (state, code) == ("slow", None)
-    assert resources._run(["brain-no-such-program-xyz"], 2.0)[0] == "absent"
+    assert rc._run(["brain-no-such-program-xyz"], 2.0)[0] == "absent"
 
 
 # --- the machine without psutil (the standard library's readers, faked) ---------------------------------------------
@@ -130,7 +148,7 @@ def _feed(monkeypatch, cpu, net):
     cpu, net = iter(cpu), iter(net)
     monkeypatch.setattr(resources, "_cpu_times", lambda ps=None: next(cpu))
     monkeypatch.setattr(resources, "_net_counters", lambda ps=None: next(net))
-    monkeypatch.setattr(resources, "_memory", lambda: {"committed_pct": 88.0, "commit_total": 88, "commit_limit": 100,
+    monkeypatch.setattr(resources, "_memory", lambda ps=None: {"committed_pct": 88.0, "commit_total": 88, "commit_limit": 100,
                                                        "total": 64 * 2 ** 30, "available": 20 * 2 ** 30,
                                                        "nonpaged": 2 ** 30})
     Usage = collections.namedtuple("Usage", "total used free")
@@ -140,9 +158,10 @@ def _feed(monkeypatch, cpu, net):
 def test_without_psutil_the_band_reads_the_stdlib_counters_and_says_its_levels(monkeypatch):
     clock = iter([100.0, 102.0, 104.0])
     monkeypatch.setattr(resources.time, "monotonic", lambda: next(clock))
-    # idle and total CPU seconds; a 32-bit counter that wraps between the second and third readings
+    # idle and total CPU seconds; a 32-bit counter near its top that wraps between the second and third readings
+    top = 2 ** 32 - 1000
     _feed(monkeypatch, [(100.0, 200.0), (110.0, 220.0), (111.0, 240.0)],
-          [({"aa": (1000, 500)}, 2 ** 32), ({"aa": (3000, 900)}, 2 ** 32), ({"aa": (100, 1300)}, 2 ** 32)])
+          [({"aa": (top - 2000, 500)}, 2 ** 32), ({"aa": (top, 900)}, 2 ** 32), ({"aa": (100, 1300)}, 2 ** 32)])
     s = resources.Sampler(ps=None)
     first = s.band()
     assert first["cpu_pct"] is None and first["up_bps"] is None and first["source"] == "stdlib"
@@ -151,11 +170,72 @@ def test_without_psutil_the_band_reads_the_stdlib_counters_and_says_its_levels(m
     assert (b["down_bps"], b["up_bps"]) == (1000, 200)
     assert {x["what"]: x["level"] for x in b["levels"]} == {"memory": "warn", "disk": "critical"}
     third = s.band()
-    assert third["cpu_pct"] == 95.0 and third["down_bps"] == (2 ** 32 - 3000 + 100) // 2   # the wrap counted
+    assert third["cpu_pct"] == 95.0 and third["down_bps"] == (1000 + 100) // 2   # the wrap counted
     assert len(s.history) == 3 and set(s.history[-1]) == {"at", "cpu_pct", "mem_pct", "up_bps", "down_bps"}
     assert isinstance(b["cost_ms"], float)
     p = s.processes()
     assert p["available"] is False and "psutil" in p["why"] and p["rows"] == []
+
+
+def test_a_counter_that_falls_wrapped_only_from_its_top_quarter():
+    assert resources._delta(100, 300, 2 ** 32) == 200
+    assert resources._delta(2 ** 32 - 1000, 100, 2 ** 32) == 1100     # a wrap
+    assert resources._delta(3000, 100, 2 ** 32) == 0                  # readings out of order, or a reset: not 4 GB
+    assert resources._delta(3000, 100, None) == 0                     # psutil's 64-bit counters never wrap
+
+
+def test_the_band_reads_the_projects_drives_and_the_registry_once(monkeypatch, tmp_path):
+    _feed(monkeypatch, [(1.0, 2.0)] * 4, [({}, None)] * 4)
+    monkeypatch.setattr(resources, "_disk_usage", shutil.disk_usage)
+    calls = []
+
+    def projs(root):
+        calls.append(root)
+        return [SimpleNamespace(name="lab", root=tmp_path), SimpleNamespace(name="gone", root=tmp_path / "no")]
+    monkeypatch.setattr(resources, "_projects", projs)
+    s = resources.Sampler(ps=None)
+    s.band()
+    s.band()
+    assert len(calls) == 1
+    labels = [x for d in s.machine(s.drives())["disks"] for x in d["for"]]
+    assert "project:lab" in labels and "project:gone" not in labels
+
+
+def test_the_memory_reads_psutil_off_windows_and_no_program_per_band(monkeypatch):
+    monkeypatch.setattr(resources.governor, "performance_info", lambda: None)
+    vm = SimpleNamespace(percent=61.25, total=16 * 2 ** 30, available=6 * 2 ** 30)
+    m = resources._memory(SimpleNamespace(virtual_memory=lambda: vm))
+    assert (m["committed_pct"], m["total"], m["available"], m["nonpaged"]) == (61.2, 16 * 2 ** 30, 6 * 2 ** 30, None)
+    monkeypatch.setattr(resources.probe, "_os", lambda: "darwin")
+    monkeypatch.setattr(resources.governor, "memory_info", lambda: {"committed": None, "available_gb": None})
+    monkeypatch.setattr(resources, "_MEMORY_TOTAL", {})
+    ran = []
+    monkeypatch.setattr(resources.probe, "probe_memory", lambda: ran.append(1) or {"total_bytes": 8 * 2 ** 30})
+    assert [resources._memory()["total"] for _ in range(3)] == [8 * 2 ** 30] * 3 and ran == [1]   # sysctl once
+
+
+def test_the_counters_are_read_and_swapped_under_one_lock(monkeypatch):
+    """Two workers (the band's, the detail's) share a sampler: each reading pairs with the one just before it."""
+    import threading
+    readings = iter([({"aa": (n * 1000, 0)}, 2 ** 32) for n in range(1, 400)])
+    lock = threading.Lock()
+
+    def counters(ps=None):
+        with lock:
+            return next(readings)
+    monkeypatch.setattr(resources, "_net_counters", counters)
+    s = resources.Sampler(ps=None)
+    got = []
+
+    def run():
+        for _ in range(100):
+            got.append(s.network()["down_bps"])
+    workers = [threading.Thread(target=run) for _ in range(3)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    assert all(x is None or 0 <= x < 2 ** 31 for x in got)   # never a fall read as a 4 GB wrap
 
 
 def test_the_band_words_and_the_narrow_band():
@@ -216,11 +296,16 @@ def test_tokens_today_sums_the_utc_day_only_and_reparses_only_a_changed_ledger(m
     assert s.tokens_today()["tokens"] == 1250   # the same file: the cache
 
 
-def test_a_ledger_that_cannot_be_read_is_said(monkeypatch):
-    _ledger({})
-    monkeypatch.setattr(usage, "load", lambda: (_ for _ in ()).throw(ValueError("a newer engine wrote it")))
+@pytest.mark.parametrize("text, why", [("{not json", "is not JSON"),
+                                       ('{"v": 99, "rows": {}}', "written by a newer brain (v 99"),
+                                       ('{"rows": []}', "rows not an object")])
+def test_a_broken_newer_or_misshapen_ledger_is_said_never_read_as_zero(text, why):
+    f = usage.ledger_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(text, encoding="utf-8")
     t = resources.Sampler(ps=None).tokens_today()
-    assert t["tokens"] is None and "a newer engine wrote it" in t["why"]
+    assert t["tokens"] is None and t["sessions"] == 0 and why in t["why"], t
+    assert f.read_text(encoding="utf-8") == text   # read only: nothing set aside from here
 
 
 def test_the_quota_is_the_last_forecast_with_its_pace_and_the_capacity_line():
@@ -308,6 +393,9 @@ class FakePsutil:
         assert pernic is True
         return next(self.net)
 
+    def virtual_memory(self):
+        return SimpleNamespace(percent=50.0, total=1000, available=500)
+
 
 def _app_session(tmp_path, host, cli_id, cwd, title, archived=False):
     d = tmp_path / "appdata" / "Claude-Data" / "x" / "claude-code-sessions" / "a" / "b"
@@ -330,10 +418,15 @@ def _machine(tmp_path):
                  exe=cli_bin, rss=300, private=350, cwd=str(wa), cpu=4.0),                       # tied by its flags
         FakeProc(11, 10, "node.exe", ["node", "mcp-server.js"], rss=50),                          # its MCP server
         FakeProc(12, 10, "python.exe", ["python", "-m", "pytest", "-n", "2"], rss=70),            # its suite...
-        FakeProc(13, 12, "python.exe", ["python", "-m", "pytest", "--worker"], rss=40),           # ...and a worker
+        FakeProc(13, 12, "python.exe", ["python", "-c", "import sys;exec(eval(sys.stdin.readline()))"],
+                 rss=40),                                                                         # ...an xdist worker
+        FakeProc(14, 10, "claude.exe", [cli_bin, "-p", "summarise"], exe=cli_bin, rss=120,
+                 cwd=str(wa)),                                                                    # a hook's claude -p
         FakeProc(20, 1, "claude.exe", [cli_bin, f"--resume={FORKED}", "--fork-session"], exe=cli_bin, rss=200,
                  cwd=str(wb)),                                                                    # tied by its folder
-        FakeProc(30, 0, "brain.exe", [r"C:\x\brain.exe", "tui", "--plain"], rss=60),              # a brain command
+        FakeProc(30, 0, "brain.exe", [r"C:\x\brain.exe", "tui", "--plain"], rss=6),               # a brain command:
+        FakeProc(32, 30, "python.exe", [r"C:\v\python.exe", r"C:\v\brain.exe", "tui", "--plain"], rss=4),   # its venv
+        FakeProc(33, 32, "python.exe", [r"C:\py\python.exe", r"C:\v\brain.exe", "tui", "--plain"], rss=50),  # base
         FakeProc(31, 0, "python.exe", denied=True),                                               # unreadable
         FakeProc(40, 0, "explorer.exe", ["explorer.exe"], rss=5000),                              # not the Brain's
     ]
@@ -362,8 +455,8 @@ def test_with_psutil_the_machine_the_brain_commands_and_the_suites(monkeypatch, 
     assert m["source"] == "psutil" and m["cores"] == 4 and m["cpu_pct"] == 50.0   # guest time not counted twice
     assert (m["network"]["down_bps"] > 0, m["network"]["up_bps"] > 0) == (True, True)
     pr = doc["processes"]
-    assert pr["available"] and pr["counted"] == 10
-    assert [b["what"] for b in pr["brain"]] == ["tui"]
+    assert pr["available"] and pr["counted"] == 13
+    assert [(b["pid"], b["what"], b["tree_bytes"]) for b in pr["brain"]] == [(30, "tui", 60)]   # listed once
     assert [x["pid"] for x in pr["suites"]] == [12] and pr["suites"][0]["tree_bytes"] == 110   # its worker in it
     assert doc["containers"]["state"] == "skipped" and doc["stores"]["state"] == "skipped"
     assert doc["overhead"]["state"] == "pending"
@@ -374,14 +467,22 @@ def test_with_psutil_each_cli_is_tied_to_its_session_and_its_tree_counted(monkey
     by = {x["cli"]: x for x in doc["sessions"]}
     a = by[CLI_A]
     assert a["how"] == "command line" and a["session"].startswith("local_aaaaaaaa") and a["title"] == "Session A"
-    assert a["tree_bytes"] == 300 + 50 + 70 + 40 and a["children"] == 3 and a["private"] == 350
+    assert a["tree_bytes"] == 300 + 50 + 70 + 40 and a["children"] == 3 and a["private"] == 350   # not the hook's
     assert a["tokens_today"] == 5000 and a["live"] and a["cpu_pct"] is not None
     b = by[CLI_B]
     assert b["how"] == "folder" and b["session"].startswith("local_bbbbbbbb") and b["tokens_today"] is None
     gone = by["cccccccc-0000-4000-8000-000000000003"]
     assert gone["live"] is False and gone["how"] == "ledger" and gone["tokens_today"] == 700
-    assert [x["live"] for x in doc["sessions"]] == [True, True, False]   # the live first
-    assert doc["one_more_session_bytes"] in (200, 460)
+    assert [x["live"] for x in doc["sessions"]] == [True, True, True, False]   # the live first
+
+
+def test_with_psutil_a_hooks_cli_is_its_own_row_and_never_takes_its_parents_session(monkeypatch, tmp_path):
+    doc = _sampled(monkeypatch, tmp_path)
+    hook = next(x for x in doc["sessions"] if x["pid"] == 14)
+    assert hook["cli"] == "" and hook["how"] == "folder's session already tied by another CLI's command line"
+    assert hook["tree_bytes"] == 120 and hook["tokens_today"] is None
+    assert doc["one_more_session_bytes"] == 200
+    assert sum(p["tokens_today"] for p in doc["projects"]) == 5000 + 700   # each session's tokens once
 
 
 def test_a_cli_whose_folder_two_sessions_hold_or_whose_flags_only_fork_is_said_unknown():
@@ -394,6 +495,24 @@ def test_a_cli_whose_folder_two_sessions_hold_or_whose_flags_only_fork_is_said_u
     assert resources.session_flags(["claude", "--session-id", CLI_A.upper()]) == {"id": CLI_A}
     assert resources.session_flags(["claude", "-r", CLI_A, "--fork-session"]) == {"forked_from": CLI_A}
     assert resources.session_flags(["claude", "--resume", "not-a-uuid"]) == {}
+
+
+def test_the_folder_ties_one_cli_only_and_never_a_session_twice():
+    app = {"cliSessionId": CLI_A, "cwd": "/w/x"}
+    by_cli, by_cwd = {CLI_A: app}, {resources._norm("/w/x"): [app]}
+
+    def cli(pid, cwd="/w/x", flags=None):
+        return {"pid": pid, "cwd": cwd, "cmd_session": flags or {}}
+    assert resources.tie_all([cli(1)], by_cli, by_cwd) == [(CLI_A, "folder")]
+    assert resources.tie_all([cli(1), cli(2)], by_cli, by_cwd) == [("", "folder held by 2 CLIs")] * 2
+    flagged = resources.tie_all([cli(1, flags={"id": CLI_A}), cli(2)], by_cli, by_cwd)
+    assert flagged == [(CLI_A, "command line"), ("", "folder's session already tied by another CLI's command line")]
+    other = resources.tie_all([cli(1, flags={"id": CLI_B}), cli(2)], by_cli, by_cwd)
+    assert other == [(CLI_B, "command line"), (CLI_A, "folder")]   # a flagged CLI of another session: no clash
+    rows = [{"project": "lab", "cli": CLI_A, "live": True, "tree_bytes": 10, "cpu_pct": 1.0, "tokens_today": 40,
+             "usd_today": 1.0}] * 2
+    lab = resources.by_project(rows, {"rows": []})[0]
+    assert (lab["sessions_live"], lab["tokens_today"], lab["usd_today"], lab["tree_bytes"]) == (2, 40, 1.0, 20)
 
 
 def test_what_a_process_is():
@@ -432,7 +551,7 @@ def test_by_project_sums_each_project_apart_and_project_scope_filters(monkeypatc
 
     _feed(monkeypatch, [(1.0, 2.0)] * 4, [({}, None)] * 4)
     monkeypatch.setattr(resources, "_placer", lambda projs: lambda folder: "lab" if "lab" in folder else "acme")
-    monkeypatch.setattr(resources, "containers", lambda st: {"state": "ok", "why": "", "rows": [
+    monkeypatch.setattr(resources, "containers", lambda st, timeout=None: {"state": "ok", "why": "", "rows": [
         {"name": "x", "project": "acme"}, {"name": "y", "project": "lab"}]})
     _ledger({"a.jsonl": _row(CLI_A, "/w/lab", 10, 0.1), "b.jsonl": _row(CLI_B, "/w/other", 20, 0.2)})
     doc = resources.Sampler(project="lab", ps=None).sample(walks=False, prime=False)
@@ -468,7 +587,7 @@ def _quiet_machine(monkeypatch, tmp_path):
 
 def test_cli_json_keys_by_section_and_text(monkeypatch, capsys, tmp_path):
     _quiet_machine(monkeypatch, tmp_path)
-    monkeypatch.setattr(resources, "_which", lambda name: None)   # no docker here
+    monkeypatch.setattr(rc, "_which", lambda name: None)   # no docker here
     root = str(tmp_path)
     assert cli.main(["--root", root, "resources", "--json"]) == 0
     doc = json.loads(capsys.readouterr().out)
@@ -486,6 +605,24 @@ def test_cli_json_keys_by_section_and_text(monkeypatch, capsys, tmp_path):
     text = capsys.readouterr().out
     assert "WARN     committed memory 88 %" in text and "containers (skipped: --quick)" in text
     assert "the process rows need psutil" in text
+
+
+def test_a_stop_between_two_steps_ends_the_sample(monkeypatch, tmp_path):
+    _quiet_machine(monkeypatch, tmp_path)
+    asked = []
+
+    def stop():
+        asked.append(1)
+        return len(asked) > 2
+    with pytest.raises(resources.Cancelled):
+        resources.Sampler(ps=None).sample(stop=stop, prime=False)
+    with pytest.raises(resources.Cancelled):
+        resources.stores(lambda: True)
+    seen = []
+    monkeypatch.setattr(resources, "containers", lambda st, timeout: seen.append(timeout) or {"state": "ok",
+                                                                                              "why": "", "rows": []})
+    resources.Sampler(ps=None).sample(walks=False, prime=False, docker_timeout=rc.TUI_DOCKER_TIMEOUT)
+    assert seen == [rc.TUI_DOCKER_TIMEOUT]
 
 
 def test_cli_exits_1_when_the_sample_fails(monkeypatch, capsys, tmp_path):
