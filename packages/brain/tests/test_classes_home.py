@@ -334,3 +334,150 @@ def test_no_text_key_reaches_a_store(app, brain_home):
     assert not any(k in blob for k in classes.APP_TEXT_KEYS)
     every = classes.effective([])
     assert all(classes.store_of(every, f"$BRAIN_HOME/{f.relative_to(brain_home).as_posix()}") for f in written)
+
+
+# --- the read gate: a reader of BRAIN_HOME asks brain.classes first (wi-brain-home-read-gate) -----------------------
+
+_WALK_METHODS = {"glob", "rglob", "iterdir", "walk"}
+_WALK_FUNCS = {("os", "walk"), ("os", "scandir"), ("os", "listdir"), ("glob", "glob"), ("glob", "iglob"),
+               ("shutil", "copytree"), ("shutil", "make_archive")}
+_SH_WALK = re.compile(r"""\b(?:find|ls|du|tar|cp\s+-\w*r\w*)\s+["']?\$\{?BRAIN_HOME(?::-[^}]*)?\}?["']?(?:\s|$|;|\|)""")
+
+
+def _is_home_call(node) -> bool:
+    """``brain_home()`` or ``<x>.brain_home()``: BRAIN_HOME itself, not a store under it."""
+    f = getattr(node, "func", None)
+    return (isinstance(node, __import__("ast").Call) and not node.args
+            and ((getattr(f, "id", None) == "brain_home") or (getattr(f, "attr", None) == "brain_home")))
+
+
+def home_walks(files: list[Path] | None = None) -> list[str]:
+    """'file:line' of each walk of BRAIN_HOME itself in the engine's code but brain.classes (the gate): a glob, rglob,
+    iterdir or walk of ``brain_home()`` or of a name bound to it in the same function, os.walk / os.scandir /
+    os.listdir / glob.glob / shutil.copytree of it, and in a hook's shell script a find, ls, du, tar or cp -r of
+    $BRAIN_HOME. A walk of a store under it (``brain_home() / "ledger"``) is the store's reader, not a walk of the home."""
+    import ast
+
+    out = []
+    if files is None:
+        files = [f for f in [*SRC.rglob("*.py"), *SRC.rglob("*.sh")] if f.name != "classes.py" or f.parent != SRC]
+    for f in files:
+        text = f.read_text(encoding="utf-8", errors="replace")
+        rel = f.relative_to(SRC.parent).as_posix() if SRC.parent in f.parents else f.name
+        if f.suffix == ".sh":
+            out += [f"{rel}:{n}" for n, line in enumerate(text.splitlines(), 1)
+                    if not line.lstrip().startswith("#") and _SH_WALK.search(line)]
+            continue
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        scopes = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))] + [tree]
+        for scope in scopes:
+            bound = {t.id for n in ast.walk(scope) if isinstance(n, ast.Assign) and _is_home_call(n.value)
+                     for t in n.targets if isinstance(t, ast.Name)}
+
+            def home(e) -> bool:
+                return _is_home_call(e) or (isinstance(e, ast.Name) and e.id in bound)
+
+            for n in ast.walk(scope):
+                if not isinstance(n, ast.Call):
+                    continue
+                fn = n.func
+                if isinstance(fn, ast.Attribute) and fn.attr in _WALK_METHODS and home(fn.value):
+                    out.append(f"{rel}:{n.lineno}")
+                elif (isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name)
+                      and (fn.value.id, fn.attr) in _WALK_FUNCS and n.args and home(n.args[0])):
+                    out.append(f"{rel}:{n.lineno}")
+    return sorted(set(out))
+
+
+def test_no_walk_of_brain_home_outside_the_read_gate():
+    """The engine walks BRAIN_HOME only through brain.classes (home_names, home_files): a new reader that walks it
+    must ask the gate, so a secret store cannot be reached even by mistake (spec-brain-gnn-rose-grmg 3.4)."""
+    assert home_walks() == [], "walks of BRAIN_HOME outside brain.classes: use classes.home_files or home_store"
+
+
+def test_the_walk_scan_finds_each_way_of_walking_the_home(tmp_path):
+    f = tmp_path / "reader.py"
+    f.write_text("import os, glob\nfrom brain import paths\n"
+                 "def a():\n    return list(paths.brain_home().rglob('*.yaml'))\n"
+                 "def b():\n    home = paths.brain_home()\n    return list(os.walk(home))\n"
+                 "def c():\n    return os.listdir(brain_home())\n"
+                 "def d():\n    return list((paths.brain_home() / 'ledger').glob('*.jsonl'))\n"
+                 "def e():\n    home = paths.brain_home()\n    return sorted(home.iterdir())\n", encoding="utf-8")
+    g = tmp_path / "hook.sh"
+    g.write_text('#!/bin/sh\n# find "$BRAIN_HOME" in a comment\nfind "${BRAIN_HOME:-$HOME/.brain}" -name x\n'
+                 'ls "$BRAIN_HOME/ledger"\n', encoding="utf-8")
+    assert home_walks([f, g]) == ["hook.sh:3", "reader.py:14", "reader.py:4", "reader.py:7", "reader.py:9"]
+
+
+def _home(brain_home: Path) -> None:
+    for rel in ("ledger/events.jsonl", "secrets/stack/db.env", "ipc/token", "usage/quota.json", "stray/x.yaml"):
+        (brain_home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (brain_home / rel).write_text("x\n", encoding="utf-8")
+
+
+def test_home_store_resolves_a_store_or_refuses(brain_home):
+    cfg = config.Config(None, brain_home)
+    assert classes.home_store("ledger", cfg=cfg) == brain_home / "ledger"
+    for store in ("secrets", "ipc"):   # the secret stores: refused whatever the exit, the engine's own reads included
+        for exit_ in (None, "local-model", "backup"):
+            with pytest.raises(classes.Refused, match="secret store"):
+                classes.home_store(store, exit_, cfg=cfg)
+    with pytest.raises(classes.Refused, match="never"):
+        classes.home_store("ledger", "cloud-model", cfg=cfg)
+    with pytest.raises(classes.Refused, match="only sealed"):
+        classes.home_store("ledger", "offsite", cfg=cfg)
+    assert classes.home_store("ledger", "offsite", sealed=True, cfg=cfg) == brain_home / "ledger"
+    with pytest.raises(classes.Refused, match="no store"):
+        classes.home_store("nothing-of-the-kind", cfg=cfg)
+    with pytest.raises(classes.Refused, match="not an exit"):
+        classes.home_store("ledger", "a-dataset", cfg=cfg)
+    declared = config.Config(None, brain_home, {"classes": {"stores": {
+        "notes-cache": {"class": "private", "paths": ["$BRAIN_HOME/notes-cache"]},
+        "usage": {"class": "sealed", "paths": ["$BRAIN_HOME/usage"], "to": ["local-model"]},
+        "ledger": {"class": "secret", "paths": ["$BRAIN_HOME/ledger"]}}}})
+    assert classes.home_store("notes-cache", "cloud-model", cfg=declared) == brain_home / "notes-cache"
+    assert classes.home_store("usage", "local-model", cfg=declared) == brain_home / "usage"   # opted in by its to
+    with pytest.raises(classes.Refused, match="never"):   # sealed to a local model: opt-in, and the engine's is not
+        classes.home_store("usage", "local-model", cfg=cfg)
+    with pytest.raises(classes.Refused):   # the brain's own class wins over the engine's suggestion
+        classes.home_store("ledger", cfg=declared)
+
+
+def test_home_files_never_enters_a_secret_store(brain_home):
+    _home(brain_home)
+    cfg = config.Config(None, brain_home)
+    got = {(s, f.relative_to(brain_home).as_posix()) for s, f in classes.home_files(cfg=cfg)}
+    assert got == {("ledger", "ledger/events.jsonl"), ("usage", "usage/quota.json"), ("stray", "stray/x.yaml")}
+    assert list(classes.home_files("cloud-model", cfg=cfg)) == []   # sealed stores: never to a cloud model
+    assert {s for s, _ in classes.home_files("offsite", sealed=True, cfg=cfg)} == {"ledger", "usage"}
+    declared = config.Config(None, brain_home, {"classes": {"stores": {
+        "quota": {"class": "secret", "paths": ["$BRAIN_HOME/usage/quota.json"]}}}})
+    assert "usage/quota.json" not in {f.relative_to(brain_home).as_posix()   # a secret store nested in another
+                                      for _, f in classes.home_files(cfg=declared)}
+    assert classes.home_names() == ["ipc", "ledger", "secrets", "stray", "usage"]
+
+
+def test_home_files_follows_no_link(brain_home, tmp_path):
+    _home(brain_home)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "private.txt").write_text("x\n", encoding="utf-8")
+    try:
+        (brain_home / "ledger" / "link").symlink_to(outside, target_is_directory=True)
+        (brain_home / "usage" / "to-token").symlink_to(brain_home / "ipc" / "token")
+    except OSError:
+        pytest.skip("no symlinks here (Windows without the privilege)")
+    names = {f.name for _, f in classes.home_files(cfg=config.Config(None, brain_home))}
+    assert "private.txt" not in names and "to-token" not in names and "token" not in names
+
+
+def test_the_probe_measures_the_home_through_the_gate(brain_home):
+    from brain import probe
+
+    _home(brain_home)
+    (brain_home / "secrets" / "stack" / "big.env").write_bytes(b"0" * 10_000)
+    out = probe.probe_disk()["brain_home"]
+    assert out["complete"] and 6 <= out["bytes"] < 10_000   # ledger, usage and stray; the secrets never walked

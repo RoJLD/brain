@@ -414,10 +414,7 @@ def effective(declared: list[Store]) -> list[Store]:
 def home_unknown(declared: list[Store]) -> list[str]:
     """The names at the top of BRAIN_HOME that neither a declared store nor an engine store covers (a store written
     by a newer or another engine, or by hand); a write's leftover (``.tmp``, ``.bak``...) is not counted."""
-    try:
-        names = sorted(p.name for p in paths.brain_home().iterdir())
-    except OSError:
-        return []
+    names = home_names()
     every = effective(declared)
     return [n for n in names if not HOME_TRANSIENT.search(n) and not store_of(every, f"$BRAIN_HOME/{n}")]
 
@@ -613,6 +610,91 @@ def decide(cfg: config.Config, store: str, exit_: str) -> str:
     if h != "clear" and exit_ in s.waive:
         return "clear"
     return h
+
+
+# --- the read gate: every reader of a store under BRAIN_HOME asks here first (wi-brain-home-read-gate) ---------------
+#
+# tests/test_classes_home.py fails on a walk of BRAIN_HOME itself (glob, rglob, iterdir, os.walk, os.scandir,
+# os.listdir of brain_home(), or of a name bound to it in the same function) anywhere in the engine's code but here:
+# a dataset export, a backup or a probe reads the stores through home_store or home_files, so a secret store is
+# never reached even by mistake, and a store the classes keep from an exit never feeds it.
+
+class Refused(ClassError):
+    """A read the classes refuse: the message names the store, the exit and why."""
+
+
+def _home_reader(store: Store, exit_: str | None, sealed: bool, cfg: config.Config) -> str:
+    """Why ``store`` may not be read for ``exit_`` ('' when it may): a secret store never (its values live in a
+    keystore, never read as data); for an exit, what decide() says (sealed only when the caller seals)."""
+    if store.kind == "secret":
+        return f"{store.name} is a secret store: never read as data"
+    if exit_ is None:
+        return ""
+    if exit_ not in EXITS:
+        return f"{exit_} is not an exit ({', '.join(EXITS)})"
+    said = decide(cfg, store.name, exit_)
+    if said == "never" or (said == "sealed" and not sealed):
+        return (f"{store.name} ({store.cls}) may not reach {exit_}: {said}"
+                + (" (only sealed: pass sealed=True and seal it, brain vault seal)" if said == "sealed" else ""))
+    return ""
+
+
+def home_store(store: str, exit_: str | None = None, *, sealed: bool = False,
+               cfg: config.Config | None = None) -> Path:
+    """The read gate: the path of the store ``store`` (an engine store of :data:`ENGINE_STORES`, or one the brain
+    declares with a machine path) for a reader whose output goes to ``exit_`` (None: it stays in the engine, on this
+    machine). Refused (:class:`Refused`): a store with no machine path; a secret store, whatever the exit; with an
+    exit, one :func:`decide` says never for, or sealed when the caller does not seal (``sealed``)."""
+    cfg = cfg or config.load()
+    declared, _ = stores(cfg)
+    s = next((x for x in effective(declared) if x.name == store), None)
+    if s is None or not s.machine:
+        raise Refused(f"{store} is no store with a machine path (brain classes lists them)")
+    why = _home_reader(s, exit_, sealed, cfg)
+    if why:
+        raise Refused(why)
+    return expand(s.machine[0])
+
+
+def home_names(home: Path | None = None) -> list[str]:
+    """The names at the top of BRAIN_HOME (``home``: another one, the uninstaller's), sorted; none when it is absent.
+    Names only: nothing under them is opened."""
+    try:
+        return sorted(p.name for p in (home or paths.brain_home()).iterdir())
+    except OSError:
+        return []
+
+
+def home_files(exit_: str | None = None, *, sealed: bool = False, cfg: config.Config | None = None):
+    """The gated walk of BRAIN_HOME: (the store's name, a file) for every file the gate lets a reader for ``exit_``
+    read, a store at a time; a secret store's subtree (and, for an exit, a refused one's) is never entered. A name
+    no store covers is sealed by default (COMPAT-6)."""
+    cfg = cfg or config.load()
+    declared, _ = stores(cfg)
+    every = effective(declared)
+    home = paths.brain_home()
+    refused: set[Path] = set()   # the roots of the stores under BRAIN_HOME the gate keeps from this reader
+    for s in every:
+        for m in s.machine:
+            if m.startswith("$BRAIN_HOME") and _home_reader(s, exit_, sealed, cfg):
+                refused.add(expand(m))
+    for name in home_names():
+        s = store_of(every, f"$BRAIN_HOME/{name}") or Store(name, FLOOR)
+        top = home / name
+        if top in refused or _home_reader(s, exit_, sealed, cfg):
+            continue
+        stack = [top]
+        while stack:
+            p = stack.pop()
+            try:
+                if p.is_symlink():   # a link may point into a secret store or out of BRAIN_HOME: never followed
+                    continue
+                if p.is_file():
+                    yield s.name, p
+                elif p.is_dir():
+                    stack += sorted((c for c in p.iterdir() if c not in refused), reverse=True)
+            except OSError:
+                continue
 
 
 def engine_line(name: str) -> dict:

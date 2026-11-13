@@ -310,30 +310,25 @@ def _existing(p: Path) -> Path:
     return next((d for d in (p, *p.parents) if d.exists()), Path.cwd())
 
 
-def _size(root: Path, budget: float) -> tuple[int, bool]:
-    """(bytes under ``root``, complete): the walk stops at ``budget`` seconds."""
+def _home_size(budget: float) -> tuple[int, bool]:
+    """(bytes of BRAIN_HOME's stores, complete), through the read gate (brain.classes.home_files: a secret store is
+    never walked, a link never followed); the walk stops at ``budget`` seconds."""
+    from . import classes
+
     end, total = time.monotonic() + budget, 0
-    stack = [root]
-    while stack:
+    for _store, f in classes.home_files():
         if time.monotonic() > end:
             return total, False
         try:
-            with os.scandir(stack.pop()) as it:
-                for e in it:
-                    try:
-                        if e.is_dir(follow_symlinks=False):
-                            stack.append(Path(e.path))
-                        elif e.is_file(follow_symlinks=False):
-                            total += e.stat(follow_symlinks=False).st_size
-                    except OSError:
-                        continue
+            total += f.stat().st_size
         except OSError:
             continue
     return total, True
 
 
 def probe_disk(roots: list[Path] | None = None) -> dict:
-    """Free and total space of the disks that hold BRAIN_HOME and the repo, and BRAIN_HOME's measured size."""
+    """Free and total space of the disks that hold BRAIN_HOME and the repo, and BRAIN_HOME's measured size (its
+    stores but the secret ones, through the read gate)."""
     home = paths.brain_home()
     disks, seen = [], set()
     for label, p in (("brain_home", home), *(("repo", r) for r in roots or [])):
@@ -347,7 +342,7 @@ def probe_disk(roots: list[Path] | None = None) -> dict:
         except OSError:
             continue
         disks.append({"for": label, "path": str(d.resolve()), "free_bytes": u.free, "total_bytes": u.total})
-    size, complete = _size(home, WALK_BUDGET) if home.is_dir() else (0, True)
+    size, complete = _home_size(WALK_BUDGET) if home.is_dir() else (0, True)
     return {"disks": disks, "brain_home": {"path": str(home), "bytes": size, "complete": complete}}
 
 
