@@ -15,12 +15,15 @@ USAGE = """\
   brain usage [--project P | --all] [--since WHEN] [--until WHEN] [--by DIM | --report daily|weekly] [--top N]
                  [--no-scan | --rescan] [--json]   the token ledger at zero token ($BRAIN_HOME/usage/sessions.json,
                  scanned from the transcripts that changed): the sessions' tokens and cost at API prices by project,
-                 item, pr, class, kind, theme, milestone, model, phase, tool, command, skill, session, family (a
-                 session and its sub-sessions), workflow (each workflow run: its agents, phases and launching
-                 session), agent (the subagents' and workflow agents' labels), day or week, with the distribution per
+                 item, pr, class, kind, theme, milestone, model, provider, harness, account (where a session ran:
+                 the model's provider, the tool that ran it and the account's alias, config.json usage.accounts),
+                 phase, tool, command, skill, session, family (a session and its sub-sessions), workflow (each
+                 workflow run: its agents, phases and launching session), agent (the subagents' and workflow agents'
+                 labels), day or week, with the distribution per
                  unit (median, p25-p75, p90), whose the cost is (main threads, subagents, workflows: their
                  transcripts are read with the session that launched them, counted once), and the script candidates
-                 (3-step sequences repeated across sessions); WHEN: Nd, Nw, today, yesterday, last-week, last-month
+                 (3-step sequences repeated across sessions), and a « where » line (each provider, harness and
+                 account's cost; --json: sources); WHEN: Nd, Nw, today, yesterday, last-week, last-month
                  or YYYY-MM-DD (default 7d); --scope REF: the sessions of the projects of a node's subtree in the
                  scope tree (brain scopes: an id, a path of ids, global, . or ..)
   brain usage quota [--observe PCT [--resets TIME] [--at TIME]] [--window week|5h] [--no-scan] [--json]
@@ -129,7 +132,8 @@ def register(sub, ctx) -> None:
     us.add_argument("--by", choices=cost.DIMS, default="summary",
                     help="one breakdown (default: a summary of project, item, class, phase, tool, command, the "
                          "workflow runs when there are any, and the script candidates; workflow: each workflow run; "
-                         "agent: each subagent's or workflow agent's label)")
+                         "agent: each subagent's or workflow agent's label; provider, harness, account: where the "
+                         "sessions ran)")
     us.add_argument("--report", choices=("daily", "weekly"), help="the same as --by day or --by week")
     us.add_argument("--top", type=_whole, default=cost.TOP, help=f"rows per table (default {cost.TOP}; 0: all)")
     us.add_argument("--no-scan", action="store_true", help="read the ledger as it is, without scanning the "

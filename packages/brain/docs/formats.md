@@ -72,6 +72,19 @@ truncated write, a byte that is not UTF-8) or that its schema refuses is an erro
 `v`, a kind this engine does not know) is skipped and counted. Neither stops `brain sync`: the graph is built from the
 other lines, and a note says how many were left out. Their ids still count as recorded, so no AR is appended twice.
 
+### Where a session ran (config.json)
+
+config.json `usage.accounts` (wi-brain-session-provenance, `brain.provenance`) is additive: an optional key, which an
+older engine notes in read mode and refuses in strict mode (CI), so a brain repo whose CI runs an older engine sets it
+once its CI runs the engine that knows it. `usage.accounts[].alias` never takes an `@` nor a UUID (an e-mail address,
+an account id) anywhere in it, nor a trailing newline (the patterns end on `(?![\s\S])`, read alike by ECMA and
+Python), and `usage.accounts[].since` is a UTC day (YYYY-MM-DD). A value that breaks a schema's pattern is never
+printed back, whatever the schema: the error gives its path and length; an enum's or a format's error prints a short
+plain word only (no `@`, no UUID, at most 40 characters), else the length too. The SR and the token ledger
+(`usage/sessions.json`) do not change: a session's provider, harness, account and plan are computed when a report is
+built (the row's own fields, what the session's snapshot holds, then config.json and the model). The SR fields come
+with wi-brain-sr-provenance-fields.
+
 ### Milestone kinds (the store)
 
 A graph store's `schema.yaml` is a registered format (`store` in `SCHEMAS`, with what `brain init` writes once:

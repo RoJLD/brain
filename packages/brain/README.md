@@ -1667,6 +1667,31 @@ the cost of a session-hour, the agents' included, as information: the governor's
 with `usage.guard.session_hour_measured` true (default false), and then when it is above `usage.guard.session_hour_usd`;
 `brain usage guard` shows the measured value and whether it is applied.
 
+**Where a session ran** (`brain.provenance`, wi-brain-session-provenance): `brain usage` and `brain status` say the
+model's `provider` (anthropic, bedrock, vertex, foundry...), the `harness` that ran each session (claude-code,
+cursor...; the session record's `tool`) and the `account` it ran on with its `plan`, computed when the report is built:
+the session record is unchanged (the SR fields come with wi-brain-sr-provenance-fields). The provider is the account's
+`provider`, else what the model's id says (`us.anthropic.claude-...` or an ARN: bedrock; `claude-...@<date>`: vertex;
+`claude-...`: anthropic). The account is an **alias the owner chooses**, set in config.json `usage.accounts` (the one in
+force from each `since` day, an entry that names the session's `harness` first); its plan is the entry's `plan`, else
+`usage.plans`. `since` is a UTC day (YYYY-MM-DD), compared with the UTC day the session started: an account switched
+within a day takes that whole day, the sessions before the switch included. An alias is never an e-mail address nor an
+account id: config.json's schema refuses one, and a ledger row that would carry one (a later scanner's, another
+harness's adapter) shows as `(masked)`. Nothing reads Claude Code's account files or its telemetry.
+
+```json
+"usage": {"accounts": [{"alias": "personal", "plan": "Pro"},
+                       {"alias": "work", "plan": "Max", "since": "2026-11-05"},
+                       {"alias": "ide", "plan": "Team", "harness": "cursor"}]}
+```
+
+`brain usage` adds a « where » line (each provider's, harness's and account's cost and share; `--json`: `sources`),
+and `--by provider`, `--by harness` and `--by account`; `brain status` shows the same breakdown in its tokens row
+(`--json`: `tokens.sources`). A token-ledger row is read at report time (its own fields, what its session's snapshot
+holds, then its model, its day and `usage.accounts`), so the sessions scanned before keep working and an alias set
+later applies to them; an unknown value shows as `(none)`. The reader of another harness's sessions comes with that
+harness's adapter.
+
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture
 hooks run `brain.capture` (`capture.sh <event>` runs `hooks/capture.py`, which calls it with the brain command's
