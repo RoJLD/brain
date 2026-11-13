@@ -279,6 +279,53 @@ class PanelHelp(ModalScreen):
         self.dismiss(None)
 
 
+class ResourcesScreen(ModalScreen):
+    """The resources' detail (``brain resources``, brain.resources' full sample: docker stats and the stores' walks
+    take seconds), read in this screen's worker: r reads it again, Escape or 9 closes it."""
+    BINDINGS = [Binding("escape,9", "close", "Close"), Binding("r", "read", "Read again")]
+    CSS = """
+    ResourcesScreen { align: center middle; }
+    #resources { width: 95%; height: 90%; border: round $accent; padding: 0 1; background: $surface; }
+    #resources-body { width: auto; }
+    """
+
+    def __init__(self, sampler) -> None:
+        super().__init__()
+        self.sampler, self.busy = sampler, False
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="resources"):
+            yield Label(Text("Resources (brain resources)", style="bold"))
+            yield Static(Text("reading: the processes, docker stats and the stores' sizes...", style="italic"),
+                         id="resources-body")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.action_read()
+
+    def action_read(self) -> None:
+        if self.busy:
+            return
+        self.busy = True
+        self.run_worker(self._read, thread=True, group="resources", exit_on_error=False)
+
+    def _read(self) -> None:
+        from . import resources_view
+        try:
+            lines = resources_view.render(self.sampler.sample())
+        except Exception as exc:  # said in the screen, never fatal
+            lines = [f"the sample failed: {type(exc).__name__}: {exc}"]
+        self.app.call_from_thread(self._show, lines)
+
+    def _show(self, lines: list[str]) -> None:
+        self.busy = False
+        if self.is_attached:
+            self.query_one("#resources-body", Static).update(Text("\n".join(lines)))
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class DetailScreen(ModalScreen):
     """A row's detail (brain.detail): o opens a link, a, d and A run its actions after a confirmation; Escape goes
     back."""

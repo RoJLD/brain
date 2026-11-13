@@ -417,32 +417,45 @@ def is_brainstorm(inp: dict, lim: dict) -> bool:
 
 # --- the machine ---------------------------------------------------------------------------------------------------
 
+def performance_info() -> dict | None:
+    """Windows' GetPerformanceInfo in bytes: {commit_total, commit_limit, physical_total, physical_available,
+    kernel_nonpaged, processes}; None elsewhere or when it cannot be read (brain.resources reads it too)."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class Info(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("CommitTotal", ctypes.c_size_t),
+                        ("CommitLimit", ctypes.c_size_t), ("CommitPeak", ctypes.c_size_t),
+                        ("PhysicalTotal", ctypes.c_size_t), ("PhysicalAvailable", ctypes.c_size_t),
+                        ("SystemCache", ctypes.c_size_t), ("KernelTotal", ctypes.c_size_t),
+                        ("KernelPaged", ctypes.c_size_t), ("KernelNonpaged", ctypes.c_size_t),
+                        ("PageSize", ctypes.c_size_t), ("HandleCount", wintypes.DWORD),
+                        ("ProcessCount", wintypes.DWORD), ("ThreadCount", wintypes.DWORD)]
+        info = Info()
+        info.cb = ctypes.sizeof(Info)
+        if not ctypes.windll.psapi.GetPerformanceInfo(ctypes.byref(info), info.cb):
+            return None
+    except (OSError, AttributeError, ValueError):
+        return None
+    page = info.PageSize or 4096   # the counts are in pages
+    return {"commit_total": info.CommitTotal * page, "commit_limit": info.CommitLimit * page,
+            "physical_total": info.PhysicalTotal * page, "physical_available": info.PhysicalAvailable * page,
+            "kernel_nonpaged": info.KernelNonpaged * page, "processes": int(info.ProcessCount)}
+
+
 def memory_info() -> dict:
     """The machine's two memory measures: {committed, available_gb}. ``committed``: Windows' commit charge in % of its
     commit limit (what it promised, RAM plus page file), elsewhere the memory in use in % (/proc/meminfo);
     ``available_gb``: the RAM available now, in GB. A measure that cannot be read is None."""
     if os.name == "nt":
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            class Info(ctypes.Structure):
-                _fields_ = [("cb", wintypes.DWORD), ("CommitTotal", ctypes.c_size_t),
-                            ("CommitLimit", ctypes.c_size_t), ("CommitPeak", ctypes.c_size_t),
-                            ("PhysicalTotal", ctypes.c_size_t), ("PhysicalAvailable", ctypes.c_size_t),
-                            ("SystemCache", ctypes.c_size_t), ("KernelTotal", ctypes.c_size_t),
-                            ("KernelPaged", ctypes.c_size_t), ("KernelNonpaged", ctypes.c_size_t),
-                            ("PageSize", ctypes.c_size_t), ("HandleCount", wintypes.DWORD),
-                            ("ProcessCount", wintypes.DWORD), ("ThreadCount", wintypes.DWORD)]
-            info = Info()
-            info.cb = ctypes.sizeof(Info)
-            if ctypes.windll.psapi.GetPerformanceInfo(ctypes.byref(info), info.cb):
-                page = info.PageSize or 4096   # the counts are in pages
-                return {"committed": round(100.0 * info.CommitTotal / info.CommitLimit, 1) if info.CommitLimit
-                        else None, "available_gb": round(info.PhysicalAvailable * page / 2 ** 30, 1)}
-        except (OSError, AttributeError, ValueError):
-            pass
-        return {"committed": None, "available_gb": None}
+        perf = performance_info()
+        if not perf:
+            return {"committed": None, "available_gb": None}
+        return {"committed": round(100.0 * perf["commit_total"] / perf["commit_limit"], 1) if perf["commit_limit"]
+                else None, "available_gb": round(perf["physical_available"] / 2 ** 30, 1)}
     try:
         text = Path("/proc/meminfo").read_text(encoding="ascii")
     except OSError:

@@ -26,8 +26,10 @@ What it does, every command reading files and git, never a model:
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
   usage and cost ledgers, forecasts;
 - **updates**: `brain update` shows the plan to the latest engine tag and installs it on the owner's yes;
-- **the machine**: its profile (`brain profile`, alias `brain doctor`: Lite, Default, Recommended, Custom), stacks
-  started on demand (`brain up|down|health`), permissions rendered for Claude Code (`brain permissions`);
+- **the machine**: its profile (`brain profile`, alias `brain doctor`: Lite, Default, Recommended, Custom), what runs
+  for the Brain costs (`brain resources`: CPU, memory, disk, network, the sessions' processes, the containers, the
+  stores, the tokens today and the quota), stacks started on demand (`brain up|down|health`), permissions rendered for
+  Claude Code (`brain permissions`);
 - **Claude Code**: the hooks and guards under `src/brain/adapters/claude/hooks/` (rules injection, capture, the
   PreToolUse guards: production checkouts, the owner's own actions, a session's Remote Control and permission mode,
   power, third-party kits, attribution, secrets, conflict markers, public pushes, branch names; the usage governor before a new session, a subagent or a
@@ -139,8 +141,8 @@ comma the settings.
 The overview shows one card per tab, what counts in it in a few lines: the band now, the sessions asking, the nearest
 milestones, what can start, the open alerts. Enter or a click opens its tab, already filtered as the card says, whatever your
 filters and search (a filter that is not saved and goes when you leave the tab); the arrows move between the cards.
-Ideas (`5`), lessons (`6`), features (`7`) and resources (`9`) arrive with their items, and until then their key says
-so. The bar shows what waits in each tab, in digits and signs: « 1 Ada's queue 3 » the band now, « 2
+Ideas (`5`), lessons (`6`) and features (`7`) arrive with their items, and until then their key says so; until the
+resources tab comes, `9` opens the resources' detail (`brain resources`, below). The bar shows what waits in each tab, in digits and signs: « 1 Ada's queue 3 » the band now, « 2
 Sessions 1! » the sessions asking, « 8 Health 2 » the open alerts. A click on it, `ctrl+pageup` and
 `ctrl+pagedown` also change tab, and Escape goes back one step at a time: the search, a full view, then the overview. A tab with several views says so in its toolbar:
 `v` or a click changes it, and the overview's other views are the grid of every panel, where open alerts take a whole
@@ -148,6 +150,13 @@ row, and the digest. `--tab NAME` starts on a tab, and with `--once` or `--plain
 its cards). Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.
+
+The header's right end is the resources band: the CPU, the committed memory, the fullest of the Brain's drives, the
+network's throughput up and down, the tokens today and the quota with its pace (« CPU 23 % · RAM 81 % · C: 64 % ·
+↑12K ↓1.4M · 1.2M tok · quota 42 % 0.8x »), read by a worker every 3 s from the same sampler as `brain resources`,
+without starting a program; a measure at WARN (85 %) is yellow, at CRITICAL (95 %) red, and the quota takes
+`brain usage quota`'s level. Under 120 columns it keeps the CPU, the memory and the quota. A click on it, or `9`, opens
+the detail; `space` pauses it with the rest.
 
 The settings tab (the comma) shows every setting with its value, the file or variable it comes from and how it changes,
 page by page on its left: Cockpit, Identity, Brain, Permissions and Setup. The cockpit's own settings live in
@@ -1159,6 +1168,45 @@ its extras, the three bases) and `brain catalogue validate FILE...` checks any d
 `config.json` `engine.min` (optional, beside `engine.pin`) is the oldest engine that may write the shared formats:
 below it the memory sync exports nothing (it still imports), the DDRs are not written and `brain check` says so; the
 machine still reads.
+
+### What runs costs: brain resources
+
+`brain resources` (`brain.resources`, zero token) says what the Brain's work costs this machine, beside the
+machine's total, so it tells what one more session costs:
+
+```bash
+brain resources                      # the machine, the projects, the sessions, the containers, the stores
+brain resources --by session --json  # one section: machine, project, session, container or store
+brain resources --quick              # no docker stats, no folder walked
+brain --project lab resources        # that project's sessions and containers
+```
+
+- **the machine**: the CPU busy since the last reading; the memory as Windows' commit charge against its commit limit
+  (what the usage governor guards; elsewhere the memory in use), the RAM available and the kernel's non-paged pool;
+  the free space of the Brain's drives (BRAIN_HOME's, the temporary folder's, the registered projects'); the network's
+  throughput up and down. The network is the machine's: psutil gives system-wide counters on Windows, and a rate per
+  process would need ETW, not planned until a need shows it.
+- **the sessions**: each Claude Code CLI process with its memory and its process tree's (its MCP servers, the test
+  suites it started), tied to its session by its command line (`--session-id`, or `--resume` without
+  `--fork-session`), else by its folder when one live session of the desktop app holds it, else said unknown; its
+  tokens and cost today from the token ledger (as its last scan left it: `brain usage`, `brain status`). A session
+  that spent tokens today without a live CLI here is listed too. The median CLI tree is « one more session ».
+- **the brain commands and the suites** running (an xdist worker counted with its run).
+- **the containers**: `docker stats --no-stream`, bounded to 8 s, each container tied to the stack that declares it
+  (its `index.container`, a bundle component's `<project>-<service>-N`, a Compose stack's `<project>-...`), else said
+  declared by no stack. Docker absent, down, slow or answering garbage is a state, never an error.
+- **the stores**: each entry of `BRAIN_HOME`, the transcripts and the temporary folder, each walk bounded in time (an
+  unfinished one says « at least »).
+- **the tokens today** (the UTC day), **the quota** (the last `brain usage quota` forecast: the percent now, the pace
+  as a ratio of the pace that would end the window at exactly 100 %, its level) and **the capacity**: the room left in
+  session-hours, and for 20 sessions in hours.
+- **the levels**: WARN at 85 %, CRITICAL at 95 % (the CPU, the committed memory, each drive), and the quota's own.
+
+The process rows need psutil, in the `tui` extra (`pip install brain[tui]`); without it the machine's totals come from
+the standard library (GetSystemTimes, GetPerformanceInfo and GetIfTable on Windows, `/proc` on Linux) and the rows say
+so. Nothing is stored: the present is in the cockpit, the history in the sovereign stack's Prometheus when it runs.
+The Brain's own token overhead (rules, hooks, skills and resume packs injected into sessions) is pending: it waits on
+the rule usage measure, plugged into `brain.resources.OVERHEAD_SOURCES`. Exit code 1 when the sample fails.
 
 ### Projects the brain only reads, projects that share a root
 
