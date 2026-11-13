@@ -88,18 +88,21 @@ def inputs(q: dict) -> dict:
     status = governor._read_json(paths.brain_home() / "usage" / "quota.json")
     status = status if isinstance(status, dict) else {}
     week, s_resets = q["windows"].get("week"), governor._dt(status.get("resets"))
-    pace = status.get("pace") if isinstance(status.get("pace"), dict) else {}
-    pct_h = pace.get("pct_h")
     same = bool(week and status.get("window") == "week" and s_resets
                 and abs(s_resets - governor._dt(week["resets"])) < timedelta(minutes=5))
-    conv = status.get("conversion") if isinstance(status.get("conversion"), dict) else {}
-    ppu = conv.get("pct_per_usd")
-    live = status.get("live") if isinstance(status.get("live"), dict) else {}
-    med = live.get("median_session_usd")
-    return {"pct_h": float(pct_h) if same and _num(pct_h) and pct_h >= 0 else None,
-            "pct_per_usd": float(ppu) if _num(ppu) and ppu > 0 else
-            (1 / q["usd_per_pct"] if q.get("usd_per_pct") else None),
-            "median_session_usd": float(med) if _num(med) and med > 0 else None}
+    pct_h = _field(status, "pace", "pct_h", 0)
+    ppu = _field(status, "conversion", "pct_per_usd")
+    return {"pct_h": pct_h if same else None,
+            "pct_per_usd": ppu or (1 / q["usd_per_pct"] if q.get("usd_per_pct") else None),
+            "median_session_usd": _field(status, "live", "median_session_usd")}
+
+
+def _field(status: dict, part: str, key: str, floor: float | None = None) -> float | None:
+    """``status[part][key]`` as a float when it is a number above 0 (``floor`` 0: 0 or more), else None."""
+    d = status.get(part) if isinstance(status.get(part), dict) else {}
+    v = d.get(key)
+    ok = _num(v) and (v >= floor if floor is not None else v > 0)
+    return float(v) if ok else None
 
 
 def projection(q: dict, now: datetime, inp: dict | None = None) -> dict | None:
@@ -228,6 +231,23 @@ def _pending(starts: list[dict], kids: list[dict]) -> list[str]:
     return out
 
 
+def _children(idx: dict, host: str) -> list[dict]:
+    """The app's children of ``host``, neither archived nor detached, the newest first."""
+    return sorted((m for m in idx.values() if m.get("parent") == host and not m.get("archived")
+                   and m.get("detached") is not True), key=lambda m: -(m.get("created") or 0))
+
+
+def _running(kids: list[dict], now: datetime, lim: dict, deadline: float) -> list[str] | None:
+    """The names of the children that run or start (:data:`LIVE`); None past ``deadline`` (time.monotonic)."""
+    names, dirs = [], _project_dirs() if kids else []
+    for m in kids:
+        if time.monotonic() > deadline:
+            return None
+        if child_state(m, now, lim, dirs) in LIVE:
+            names.append(str(m.get("name") or m.get("title") or m.get("host_id")))
+    return names
+
+
 def live_streams(master: str, now: datetime, lim: dict, budget_s: float | None = None) -> dict:
     """The live streams of ``master`` (its app id or its transcript's): {n, names, host_id, note}; ``n`` is None, with
     the reason in ``note``, when they cannot be counted (no app on the machine, a session the app does not know, a
@@ -239,14 +259,10 @@ def live_streams(master: str, now: datetime, lim: dict, budget_s: float | None =
     if not host:
         return {"n": None, "names": [], "note": "the desktop app's sessions are not on this machine" if idx is None
                 else "this session is not one of the desktop app's"}
-    kids = sorted((m for m in idx.values() if m.get("parent") == host and not m.get("archived")
-                   and m.get("detached") is not True), key=lambda m: -(m.get("created") or 0))
-    names, dirs = [], _project_dirs() if kids else []
-    for m in kids:
-        if time.monotonic() - t0 > budget_s:
-            return {"n": None, "names": [], "note": f"the live streams were not counted within {budget_s:g} s"}
-        if child_state(m, now, lim, dirs) in LIVE:
-            names.append(str(m.get("name") or m.get("title") or m.get("host_id")))
+    kids = _children(idx, host)
+    names = _running(kids, now, lim, t0 + budget_s)
+    if names is None:
+        return {"n": None, "names": [], "note": f"the live streams were not counted within {budget_s:g} s"}
     names += _pending(_stream_starts(now, str(idx[host].get("session") or master)), kids)
     return {"n": len(names), "names": names, "host_id": host, "note": ""}
 
