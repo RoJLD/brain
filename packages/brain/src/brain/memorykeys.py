@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import paths
 
+WORKTREES = "--claude-worktrees-"   # the key of <root>/.claude/worktrees/<name>, after the root's key
 CONFLICT_RX = re.compile(r"\.conflict-[A-Za-z0-9_-]+\.md$")
 
 
@@ -89,14 +90,15 @@ def registered_keys() -> set[str]:
 
 def recognized_keys(keys: set[str], on_main: set[str], registered: set[str] | None = None) -> set[str]:
     """The keys among ``keys`` the sync may export: a key already on ``main`` (reviewed before), one of
-    ``BRAIN_MEMORY_MAP``'s repo keys, or the folder of a registered project or a folder inside it (a worktree of it).
+    ``BRAIN_MEMORY_MAP``'s repo keys, or the folder of a registered project or one of its worktrees (Claude Code's
+    ``<root>/.claude/worktrees/<name>``; a sibling folder such as ``<root>-old`` is not the project).
     Another key is not exported: before adoption a machine would export every folder it ever opened."""
     registered = registered_keys() if registered is None else registered
     mapped = {v for v in key_map().values() if v}
     out = set()
     for k in keys:
         low = k.lower()
-        if k in on_main or k in mapped or any(low == r or low.startswith(r + "-") for r in registered):
+        if k in on_main or k in mapped or any(low == r or low.startswith(r + WORKTREES) for r in registered):
             out.add(k)
     return out
 
@@ -113,10 +115,7 @@ def snapshot(notes: dict[str, Path]) -> dict[str, list[int]]:
 
 
 def watched(notes: dict[str, Path], state: dict) -> dict[str, Path]:
-    """The notes whose change starts a run: those of the keys the last run recognized (``state['keys']``); every note
-    before a first run. A key left out (a read-only project's, a folder no project claims) starts none."""
-    keys = state.get("keys")
-    if not isinstance(keys, list):
-        return notes
-    keep = set(keys)
-    return {k: f for k, f in notes.items() if k.split("/", 1)[0] in keep}
+    """The notes whose change starts a run: all but those of the keys the last run left out (``state['unmapped']``: a
+    read-only project's, a folder no project claims), so a new key starts one run that classes it."""
+    out = set(state.get("unmapped") or ()) if isinstance(state.get("unmapped"), list) else set()
+    return {k: f for k, f in notes.items() if k.split("/", 1)[0] not in out}

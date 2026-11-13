@@ -151,20 +151,27 @@ def blob_id(data: bytes) -> str:
 
 
 def decide(local: str | None, main: str | None, entry: dict, history: set[str],
-           conflict_open=lambda branch: True) -> tuple[str, str | None]:
-    """(action, base) for one note from blob ids: the local copy, main's, the state entry (base, conflict) and the
-    blobs main ever had at that path. ``conflict_open(branch)``: whether the PR that carried a flagged conflict is
-    still open. Actions: same, import, export, conflict, resolved (a flagged conflict main moved past: import), kept
-    (deleted on main, kept here, not exported again)."""
+           conflict_open=lambda branch: True, conflict_merged=lambda branch: False) -> tuple[str, str | None]:
+    """(action, base) for one note from blob ids: the local copy, main's, the state entry (base, sent, conflict,
+    declined) and the blobs main ever had at that path. ``conflict_open(branch)``: whether the PR that carried a
+    flagged conflict is still open; ``conflict_merged(branch)``: whether it was merged. Actions: same, import, export,
+    conflict, resolved (a flagged conflict main moved past, or whose PR was merged keeping main's: import), kept
+    (deleted on main and kept here, or main's version declined by ``brain memory undo``: not exported, not imported)."""
     base = entry.get("base")
     if local == main:
         return "same", main
+    if main is not None and main == entry.get("declined"):   # the owner put this import back: it stays undone
+        return "kept", base
     if local is None:
         return "import", base
     if main is None:
         return ("kept", base) if base is not None and local == base else ("export", base)
+    if main == entry.get("sent"):   # what this machine exported was merged: main's is the base
+        base = main
     flagged = entry.get("conflict") or {}
-    if flagged.get("local") == local and flagged.get("main") != main and not conflict_open(flagged.get("branch")):
+    branch = flagged.get("branch")
+    if flagged.get("local") == local and not conflict_open(branch) and (
+            flagged.get("main") != main or conflict_merged(branch)):
         return "resolved", base
     if base is None:  # first sync of this note here: a local copy main once had is an old one; another is a conflict
         if local not in history:   # a same-name note written apart: never a replacement of main's
@@ -332,6 +339,17 @@ class Sync:
         except (SyncError, ValueError):
             return True  # unknown: keep the conflict flagged
 
+    def conflict_merged(self, branch: str | None) -> bool:
+        """Whether the PR of ``branch`` was merged (a conflict the owner answered by keeping main's note); unknown:
+        no, the conflict stays flagged."""
+        if not branch:
+            return False
+        try:
+            return bool(json.loads(self.gh("pr", "list", "--state", "merged", "--head", branch, "--json", "number",
+                                           "--limit", "1") or "[]"))
+        except (SyncError, ValueError):
+            return False
+
     # steps
 
     def refs(self) -> dict[str, tuple[str, str]]:
@@ -469,7 +487,7 @@ class Sync:
         if p.returncode == 0:
             return True
         err = p.stderr.decode("utf-8", "replace")
-        if "stale info" in err or "rejected" in err or "already exists" in err:
+        if "stale info" in err:   # the lease lost; a hook's or a protected branch's refusal is a failure, said
             return False
         last = (err.strip().splitlines() or [f"exit code {p.returncode}"])[-1]
         raise SyncError(f"git push: {secretscan.clean_text(secretscan.strip_url_credentials(last))[0]}")
@@ -485,11 +503,11 @@ class Sync:
         or a PR with a review is never edited: the update goes to a comment."""
         prs = self.open_prs()
         bodies = state.setdefault("bodies", {})
-        digest = blob_id(body.encode("utf-8"))
+        digest = _body_digest(body)
         if self.branch in prs:
             pr = prs[self.branch]
             url = pr["url"]
-            current = blob_id(str(pr.get("body") or "").replace("\r\n", "\n").encode("utf-8"))
+            current = _body_digest(str(pr.get("body") or ""))
             if current == digest:
                 pass
             elif bodies.get(self.branch) == current and not pr.get("reviews"):
@@ -516,6 +534,11 @@ class Sync:
             elif report is not None:
                 report.kept_open.append(branch)
         return url
+
+
+def _body_digest(body: str) -> str:
+    """A PR body's digest, its line ends and trailing white space aside (the code host may trim them)."""
+    return blob_id(body.replace("\r\n", "\n").rstrip().encode("utf-8"))
 
 
 def _title(machine_: str, day: str, conflicts: int) -> str:
@@ -550,8 +573,10 @@ def export_held() -> str:
 
 
 def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True, do_export: bool = True,
-         day: str | None = None, gh=None, timeout: float | None = None, state: dict | None = None) -> Report:
-    """One sync, both ways (see the module's docstring). ``state`` is updated in place (saved by the caller)."""
+         day: str | None = None, gh=None, timeout: float | None = None, state: dict | None = None,
+         checkpoint=None) -> Report:
+    """One sync, both ways (see the module's docstring). ``state`` is updated in place (saved by the caller;
+    ``checkpoint(state)`` saves it as soon as a push landed)."""
     held = "" if dry_run or not do_export else export_held()
     do_export = do_export and not held
     state = load_state() if state is None else state
@@ -583,14 +608,13 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
         """A flagged conflict's PR this run does not supersede: a branch someone else pushed to, or reviewed."""
         if not branch or branch == s.branch:
             return False
-        if branch in left:
-            return True
         try:
             pr = s.open_prs().get(branch)
         except (SyncError, ValueError):
             return False
-        return pr is not None and not s.own_head(branch, pr, state)
+        return pr is not None and (branch in left or not s.own_head(branch, pr, state))
 
+    exporting = do_export and not dry_run
     files: dict[str, bytes] = {}
     changes: list[tuple[str, str]] = []
     conflicts: list[tuple[str, str]] = []
@@ -601,7 +625,7 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
         lb = blob_id(local[k]) if k in local else None
         mb = on_main.get(k)
         entry = dict(entries.get(k) or {})
-        action, base = decide(lb, mb, entry, history.get(k, set()), s.conflict_open)
+        action, base = decide(lb, mb, entry, history.get(k, set()), s.conflict_open, s.conflict_merged)
         report.actions[k] = action
         if action in ("export", "conflict"):   # the secret scan, note by note: a hit keeps that note here alone
             hits = secretscan.scan_lines(local[k].decode("utf-8", "replace"))
@@ -620,7 +644,8 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
         elif action == "export":
             files[f"memory/{k}"] = local[k]
             changes.append((f"memory/{k}", "new" if mb is None else "edited"))
-            entries[k] = {"base": base} if base else {}
+            if exporting:   # what was sent: once main holds it, it is the base (decide)
+                entries[k] = {"base": base, "sent": lb} if base else {"sent": lb}
         elif action == "conflict":
             flagged = entry.get("conflict") or {}
             if flagged.get("local") == lb and flagged.get("main") == mb and elsewhere(flagged.get("branch")):
@@ -631,10 +656,11 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
             files[side] = local[k]
             conflicts.append((k, f"`{s.machine}`'s version is `{side}`"))
             report.conflicts.append(k)
-            entries[k] = {"base": base, "conflict": {"local": lb, "main": mb, "branch": s.branch}}
+            if exporting:   # flagged only once a branch carries it: a held export flags nothing
+                entries[k] = {"base": base, "conflict": {"local": lb, "main": mb, "branch": s.branch}}
     report.exported = sorted(files)
 
-    if files and do_export and not dry_run:
+    if files and exporting:
         # the branch already holds these files on this main (the last push, from the state): no git at all
         digest = blob_id(json.dumps(sorted((p, blob_id(d)) for p, d in files.items())).encode("utf-8"))
         tree = ""
@@ -657,6 +683,8 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
                 s.git("update-ref", f"refs/heads/{s.branch}", commit)
                 state.setdefault("pushed", {})[s.branch] = {"commit": commit, "main": main, "files": digest}
                 report.pushed = True
+                if checkpoint:   # the push is recorded even if the PR step fails: never taken for someone else's
+                    checkpoint(state)
                 break
             lease_lost += (s.branch,)   # someone pushed between the fetch and the push: nothing overwritten
             left = report.left = s.pick_branch(state, skip=lease_lost)
@@ -670,7 +698,7 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
         else:
             report.pr = state["prs"][s.branch]
     if not dry_run:
-        state["keys"] = sorted(known)
+        state["unmapped"] = sorted({k.split("/", 1)[0] for k in notes} - known)
         state["snapshot"] = snap
         cutoff = _days_ago(14)
         for k in ("prs", "pushed", "bodies"):  # two weeks of branches
@@ -734,7 +762,9 @@ def _undo_of(note: str) -> tuple[dict, dict, Path, Path | None]:
 def undo(note: str, out=None) -> int:
     """``brain memory undo KEY/NAME.md``: put back the copy the last import of that note replaced, only while the note
     still holds what was imported (its hash is the import's 'after'). Otherwise nothing is overwritten: the backup is
-    written beside it as ``<name>.undo-conflict``, to merge by hand. Exit 1 when it did not restore."""
+    written beside it as ``<name>.undo-conflict``, to merge by hand. Exit 1 when it did not restore. The undo sticks:
+    main's version is recorded as declined, so the next sync neither imports it again nor exports the restored copy
+    over it; a later version of main's is decided as usual."""
     out = out or sys.stdout
     try:
         state, rec, target, saved = _undo_of(note)
@@ -758,6 +788,8 @@ def undo(note: str, out=None) -> int:
     else:
         _write(target, saved.read_bytes())
     del state["imports"][note]
+    entry = state.setdefault("notes", {}).setdefault(note, {})
+    entry["declined"] = rec.get("after")   # main's version stays declined here: not imported again, not exported
     save_state(state)
     print(f"brain: {note} restored to its copy before the import of {rec.get('at', '?')}", file=out)
     return 0
@@ -779,7 +811,7 @@ def alert_lines(report: Report | None, error: str = "") -> list[str]:
         out.append(f"{head} note(s) kept on this machine, secret patterns in {', '.join(report.hits[:5])}. Remove the "
                    "secret from the local note (~/.claude/projects/<key>/memory/), then `brain memory sync`; the other "
                    "notes went on.")
-    if report and report.left:
+    if report and report.left and report.pushed:
         out.append(f"{head} {', '.join(report.left)}: someone else pushed to it, so it was left as it is; this "
                    f"machine's notes went to {report.branch}. Merge or close the first one's PR.")
     if report and report.conflicts:
@@ -861,7 +893,7 @@ def job_main(force: bool = False, out=None, do_import: bool | None = None, **kw)
         try:
             if not error:
                 report = sync(do_import=mode() == "both" if do_import is None else do_import, state=state,
-                              timeout=timeout, **kw)
+                              timeout=timeout, checkpoint=save_state, **kw)
         except SyncError as exc:
             error = str(exc)
         except Exception as exc:  # noqa: BLE001 - the job reports, it never raises

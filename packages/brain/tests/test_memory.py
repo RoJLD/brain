@@ -130,9 +130,21 @@ def world(tmp_path, monkeypatch):
     ("l", "m", {"base": "b"}, set(), "conflict"),
     ("l", "m2", {"base": "b", "conflict": {"local": "l", "main": "m", "branch": "x"}}, set(), "resolved"),
     ("l", "m", {"base": "b", "conflict": {"local": "l", "main": "m", "branch": "x"}}, set(), "conflict"),
+    ("l2", "l1", {"sent": "l1"}, set(), "export"),          # this machine's new note merged, then edited again
+    ("l2", "l1", {"base": "b", "sent": "l1"}, set(), "export"),
+    (None, "m", {"declined": "m"}, set(), "kept"),          # an import put back by brain memory undo stays undone
+    ("l", "m", {"base": "m", "declined": "m"}, set(), "kept"),
+    ("l", "m2", {"base": "m", "declined": "m"}, set(), "conflict"),   # main moved on: decided as usual
 ])
 def test_decide(local, main, entry, history, want):
     assert memory.decide(local, main, entry, history, lambda branch: False)[0] == want
+
+
+def test_a_conflict_merged_keeping_main_s_note_is_resolved():
+    entry = {"base": None, "conflict": {"local": "l", "main": "m", "branch": "memory/m1/2026-11-01"}}
+    closed = lambda branch: False  # noqa: E731
+    assert memory.decide("l", "m", entry, set(), closed, lambda branch: True)[0] == "resolved"
+    assert memory.decide("l", "m", entry, set(), closed, lambda branch: False)[0] == "conflict"   # closed unmerged
 
 
 def test_flagged_conflict_stays_while_its_pr_is_open():
@@ -462,22 +474,28 @@ def test_a_same_name_note_without_base_is_a_conflict_never_a_replacement(world):
 
 
 def test_a_key_no_project_claims_is_not_exported_nor_watched(world, tmp_path, monkeypatch):
-    for key in ("Stray", "Mapped", "E--work-proj", "E--work-proj--claude-worktrees-x"):
+    for key in ("Stray", "Mapped", "E--work-proj", "E--work-proj--claude-worktrees-x", "E--work-proj-old"):
         (tmp_path / "claude" / "projects" / key / "memory").mkdir(parents=True)
         (tmp_path / "claude" / "projects" / key / "memory" / "n.md").write_text(f"{key}\n", encoding="utf-8")
     monkeypatch.setenv("BRAIN_MEMORY_MAP", "Mapped=Mapped")
     monkeypatch.setattr(memorykeys, "registered_keys", lambda: {memorykeys.path_key("E:/work/proj").lower()})
     report = world.sync()
     assert report.actions["Stray/n.md"] == "unmapped" and "Stray" in " ".join(report.lines())
+    assert report.actions["E--work-proj-old/n.md"] == "unmapped"   # a sibling folder is not the project
     assert {"Mapped/n.md", "E--work-proj/n.md", "E--work-proj--claude-worktrees-x/n.md"} <= {
         p[len("memory/"):] for p in report.exported}
     assert world.show(f"memory/m1/{DAY}", "memory/Stray/n.md") is None
     state = memory.load_state()
-    assert "Stray" not in state["keys"] and not memory.needs_run(state)
+    assert "Stray" in state["unmapped"] and not memory.needs_run(state)
     (tmp_path / "claude" / "projects" / "Stray" / "memory" / "n.md").write_text("changed\n", encoding="utf-8")
     assert not memory.needs_run(memory.load_state())   # a key left out starts no run
     (world.mem / "a.md").write_text("a v2\n", encoding="utf-8")
     assert memory.needs_run(memory.load_state())
+    world.sync()
+    new = tmp_path / "claude" / "projects" / "E--work-proj--claude-worktrees-y" / "memory"
+    new.mkdir(parents=True)
+    (new / "n.md").write_text("from a new worktree\n", encoding="utf-8")
+    assert memory.needs_run(memory.load_state())   # a key never seen starts the run that classes it
 
 
 def test_registered_keys_reads_the_personal_brain_s_registry(tmp_path, monkeypatch):
@@ -540,7 +558,8 @@ def test_a_pr_body_someone_edited_or_a_reviewed_pr_gets_a_comment(world):
     report = world.sync()
     assert world.gh.verbs()[-1] == "pr comment" and pr["body"] == "The owner's own notes on this PR.\n"
     assert report.commented == pr["url"]
-    world.gh.open[f"memory/m1/{DAY}"]["reviews"] = [{"state": "COMMENTED"}]
+    pr["body"] = next(d for a, d in world.gh.calls if a[:2] == ["pr", "create"])   # this machine's body, back:
+    pr["reviews"] = [{"state": "COMMENTED"}]
     (world.mem / "d.md").write_text("d\n", encoding="utf-8")
     world.sync()
     assert world.gh.verbs()[-1] == "pr comment" and "pr edit" not in world.gh.verbs()
@@ -575,6 +594,9 @@ def test_undo_restores_only_while_the_note_holds_what_was_imported(world, brain_
     assert (world.mem / "a.md").read_text(encoding="utf-8") == "a v1\n"
     assert "K/a.md" not in memory.load_state().get("imports", {})
     assert cli.main(["memory", "undo", "K/a.md"]) == 1   # nothing recorded any more
+    report = world.sync()   # the undo sticks: main's v2 neither imported again nor reverted by an export
+    assert report.actions["K/a.md"] == "kept" and not report.pushed
+    assert (world.mem / "a.md").read_text(encoding="utf-8") == "a v1\n"
 
     (world.mem / "a.md").write_text("a v2 from m2\n", encoding="utf-8")   # back to main's, then main moves on
     world.sync()
@@ -636,3 +658,44 @@ def test_two_machines_share_one_remote_without_overwriting_each_other(world, tmp
     assert report.actions["K/a.md"] == "import" and (m1 / "a.md").read_text(encoding="utf-8") == "a v2 from m2\n"
     assert list((homes["m1"] / "memory-sync" / "backup").rglob("a.*.md"))
     assert (m2 / "idea.md").read_text(encoding="utf-8") == "idea from m2\n"   # m2 never got m1's copy
+
+
+def test_a_push_is_recorded_even_when_the_pr_step_fails(world, brain_home):
+    class Down(FakeGh):
+        def __call__(self, args, data=None):
+            if args[:2] == ["pr", "create"]:
+                raise memory.SyncError("gh: not logged in")
+            return super().__call__(args, data)
+
+    (world.mem / "b.md").write_text("b\n", encoding="utf-8")
+    assert memory.job_main(force=True, gh=Down(world.origin), day=DAY) == 1
+    assert world.branches() == ["main", f"memory/m1/{DAY}"]
+    report = world.sync()   # the branch is this machine's own push: no -2, the PR opened now
+    assert report.left == [] and report.branch == f"memory/m1/{DAY}" and report.pr
+
+
+def test_a_held_export_flags_no_conflict(world, monkeypatch):
+    world.sync()
+    (world.mem / "a.md").write_text("a by m1\n", encoding="utf-8")
+    world.push_main({"memory/K/a.md": "a by m2\n"})
+    monkeypatch.setattr(memory, "export_held", lambda: "the engine is below engine.min")
+    report = world.sync()
+    assert report.actions["K/a.md"] == "conflict" and not report.pushed
+    assert "conflict" not in memory.load_state()["notes"]["K/a.md"]   # nothing carries it: not flagged
+    world.push_main({"memory/K/a.md": "a by m2, again\n"})
+    assert world.sync().actions["K/a.md"] == "conflict"   # never "resolved" over a copy no PR carried
+    assert (world.mem / "a.md").read_text(encoding="utf-8") == "a by m1\n"
+
+
+def test_a_refused_push_is_a_failure_not_a_lost_lease(world, monkeypatch):
+    real = memory.Runner.__call__
+
+    def refuse(self, argv, data=None, env=None, check=True):
+        if "push" in argv:
+            return subprocess.CompletedProcess(argv, 1, b"", b" ! [remote rejected] x (pre-receive hook declined)\n")
+        return real(self, argv, data, env, check)
+
+    monkeypatch.setattr(memory.Runner, "__call__", refuse)
+    (world.mem / "b.md").write_text("b\n", encoding="utf-8")
+    with pytest.raises(memory.SyncError, match="pre-receive hook declined"):
+        world.sync()
