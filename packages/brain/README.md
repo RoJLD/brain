@@ -500,9 +500,13 @@ Before it, `brain wave close-merged X.Y.Z [--repo NAME]... [--repo-dir D]... [--
 [--json]` closes the items the merged PRs deliver (brain.closemerged, zero token, git only): the PRs merged on each
 repo's default branch since the last release tag before X.Y.Z (up to its own tag once cut), each mapped to its
 items by the changelog fragment it added (`changes/<item>.md`, `<item>-upgrade.md`) or an item id in its title;
-each open one closed done with `--pr "<repo> #N"`, the PR's title as the outcome and its merge's date. It lists
-the items already closed, the PRs that name no item and the wave's open items that no merged PR names. A rebase
-merge leaves no trace of its PR and is not read.
+each open one closed done with `--pr "<repo> #N"` (after the refs its `props.pr` holds), the PR's title as the
+outcome and its merge's date. The fragments are those of `changes/` and `packages/<name>/changes/`, named
+`<item>.md` or `<item>-<section>.md`; a revert PR (`Revert "<title>"`) takes the PR it reverts out. It lists the
+items already closed, the PRs and fragments that name no item, and the wave's open items that no merged PR names;
+`--write` is refused while a repo could not be read (no tag: `--since`, or leave it out with `--repo`). The default
+branch is read as last fetched. A rebase merge leaves no trace of its PR and is not read, and a title that only
+mentions an item closes it too: the fragment is the mapping to trust.
 
 The version PR closes its wave (`docs/release.md`, « 1. Before the version PR »): `brain wave close X.Y.Z --carry-to
 X.Y.Z+1 [--drop ID]... [--write]` carries each open item by name to the later wave (`props.carried_to`; a pending

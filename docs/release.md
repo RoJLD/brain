@@ -109,8 +109,9 @@ holds the standard steps for the whole release, and a PR's fragment adds only it
   the PRs merged since the last release tag (git alone: GitHub's merge or squash commits on the default branch),
   maps each to its items by the changelog fragment it added (`changes/<item>.md`, or a slug that starts with the
   item's id) or an item id in its title, and plans each open item's close (`--pr "<repo> #N"`, the PR's title as
-  the outcome, dated by its merge); `--write` closes them. It lists the items already closed, the PRs that name no
-  item and the wave's open items no merged PR names: those are carried or dropped next.
+  the outcome, dated by its merge; a revert takes its PR out); `--write` closes them, refused while a repo could not
+  be read. It lists the items already closed, the PRs and fragments that name no item and the wave's open items no
+  merged PR names: those are carried or dropped next. Fetch first: the default branch is read as last fetched.
 - **The version PR closes its wave** (the closure rule). Where a store plans the releases as waves (a Milestone of
   kind wave named by its release, `packages/brain/docs/formats.md`, « Milestone kinds »), the wave named by this
   version may hold no open item that is neither carried by name to a later wave nor dropped: in the brain that holds

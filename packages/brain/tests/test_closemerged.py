@@ -100,7 +100,7 @@ def _nodes(root):
 
 def test_the_plan_maps_fragments_and_titles_and_lists_the_rest(root, engine):
     p = closemerged.plan(root / "notes" / "graph", [("engine", engine)], "1.1.0", root=root)
-    assert p.ranges == {"engine": "v1.0.0..HEAD"}   # no origin here: the checkout's HEAD
+    assert p.ranges == {"engine": "v1.0.0 (2030-01-01)..HEAD"}   # no origin here: the HEAD
     assert [x.number for x in p.prs] == [1, 2, 3, 4, 5]   # the direct commit merged no PR; the tag's past is not read
     assert {i: [x.ref for x in v] for i, v in p.to_close.items()} == {
         "wi-start": ["engine #1", "engine #5"], "wi-doing": ["engine #2"], "wi-next": ["engine #3"]}
@@ -136,7 +136,7 @@ def test_write_closes_with_the_prs_the_titles_and_the_merge_date(root, engine, c
 def test_a_tagged_release_reads_up_to_its_tag(root, engine):
     run_git(engine, "tag", "v1.1.0", "HEAD~2")   # PR 5 and the direct commit after the tag
     p = closemerged.plan(root / "notes" / "graph", [("engine", engine)], "1.1.0")
-    assert p.ranges == {"engine": "v1.0.0..v1.1.0"}
+    assert p.ranges == {"engine": "v1.0.0 (2030-01-01)..v1.1.0"}
     assert [x.number for x in p.prs] == [1, 2, 3, 4]
     assert [x.ref for x in p.to_close["wi-start"]] == ["engine #1"]
 
@@ -168,10 +168,45 @@ def test_pr_of(body, want):
     assert closemerged._pr_of(body) == want
 
 
-def test_items_of_a_fragment_a_slug_and_a_title():
-    ids = {"wi-a", "wi-a-b", "wi-c"}
-    pr = closemerged.MergedPR("r", 1, "Fixes wi-c, and wi-zz.", "sha", "2030-01-01",
-                              ["changes/wi-a-b-upgrade.md", "packages/x/changes/wi-a.md", "changes/other.md"])
-    assert closemerged.items_of(pr, ids) == ["wi-a-b", "wi-a", "wi-c"]
-    assert closemerged.is_fragment("changes/wi-a.md") and not closemerged.is_fragment("changes/README.md")
-    assert not closemerged.is_fragment("docs/wi-a.md")
+def test_items_of_a_fragment_a_suffix_and_a_title():
+    ids = {"wi-a", "wi-a-b", "wi-c", "wi-close"}
+    pr = closemerged.MergedPR("r", 1, "Fixes WI-C, and wi-zz.", "sha", "2030-01-01",
+                              ["changes/wi-a-b-upgrade.md", "packages/x/changes/wi-a.md", "changes/other.md",
+                               "changes/wi-close-from-fragments.md"])
+    hits, stray = closemerged.items_of(pr, ids)
+    assert hits == ["wi-a-b", "wi-a", "wi-c"]   # the title's id in any case
+    assert stray == ["changes/other.md", "changes/wi-close-from-fragments.md"]   # no prefix match beyond a suffix
+    assert closemerged.is_fragment("changes/wi-a.md") and closemerged.is_fragment("packages/brain/changes/wi-a.md")
+    assert not closemerged.is_fragment("changes/README.md") and not closemerged.is_fragment("docs/wi-a.md")
+    assert not closemerged.is_fragment("packages/brain/tests/fixtures/changes/wi-a.md")
+    assert not closemerged.is_fragment("changes/sub/wi-a.md")
+    revert = closemerged.MergedPR("r", 2, 'Revert "Fixes WI-C (#1)"', "sha", "2030-01-02", ["changes/wi-a.md"])
+    assert closemerged.items_of(revert, ids) == ([], []) and revert.reverts == "Fixes WI-C"
+
+
+def test_the_wave_by_its_id_a_revert_and_an_earlier_pr_kept(root, engine, capsys):
+    _pr(engine, 9, "Revert \"Fix wi-doing; wi-done's follow-up\"", {"src/d.py": "w = 4\n"}, "2030-01-09")
+    nodes = root / "notes" / "graph" / "nodes" / "work.yaml"
+    text = nodes.read_text(encoding="utf-8")
+    nodes.write_text(text.replace('title: "Start", props: {priority: P1}',
+                                  'title: "Start", props: {priority: P1, pr: "engine #0"}'), encoding="utf-8")
+    p = closemerged.plan(root / "notes" / "graph", [("engine", engine)], "wave-1.1.0")
+    assert p.version == "1.1.0" and "wi-doing" not in p.to_close   # its only PR was reverted
+    assert p.reverted == {"engine #2": "engine #9"} and 9 not in [x.number for x in p.unmapped]
+    assert "wi-doing" in p.waiting
+    assert closemerged.refs(p, "wi-start") == "engine #0, engine #1, engine #5"
+    assert cli.main(["--root", str(root), "wave", "close-merged", "wave-1.1.0", "--repo-dir", str(engine)]) == 0
+    assert "reverted: engine #2 by engine #9" in capsys.readouterr().out
+
+
+def test_write_is_refused_while_a_repo_is_not_read(root, engine, tmp_path, capsys):
+    other = git_init(tmp_path / "untagged")
+    _commit(other, {"x.txt": "x\n"}, "base")
+    base = ["--root", str(root), "wave", "close-merged", "1.1.0", "--repo-dir", str(engine), "--repo-dir", str(other)]
+    assert cli.main(base) == 0   # the plan is said, the repo not read named
+    captured = capsys.readouterr()
+    assert "untagged: no release tag before 1.1.0" in captured.err and "to close: wi-start" in captured.out
+    assert cli.main(base + ["--write"]) == 1
+    assert "nothing written" in capsys.readouterr().err and _nodes(root)["wi-start"]["status"] == "todo"
+    named = ["--root", str(root), "wave", "close-merged", "1.1.0", "--repo-dir", str(engine), "--repo", "core"]
+    assert cli.main(named) == 0 and 'to close: wi-start --pr "core #1, core #5"' in capsys.readouterr().out
