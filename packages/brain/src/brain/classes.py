@@ -735,6 +735,51 @@ def home_files(exit_: str | None = None, *, sealed: bool = False, cfg: config.Co
             yield from ((s.name, f) for f in _store_files(home / name, refused))
 
 
+def home_sizes(until: float | None = None, between=None, *,
+               cfg: config.Config | None = None) -> tuple[dict[str, int], str | None, list[str]]:
+    """BRAIN_HOME's size by top name, walked through the gate for the engine's own reads (no exit): ({top name: bytes},
+    the top name the deadline cut or None, the top names left out after it). A secret store has no key and is never
+    entered, nor a link or a junction followed; an empty folder counts 0. ``until``: a ``time.monotonic()`` deadline
+    tested before each entry the walk takes, so a slow tree cannot overrun it; ``between``: called before each top
+    name (a caller's stop raises from it). One ``lstat`` per entry."""
+    import time
+
+    cfg = cfg or config.load()
+    declared, _ = stores(cfg)
+    every = effective(declared)
+    home = paths.brain_home()
+    refused = _refused_roots(every, None, False)
+
+    def open_(name: str) -> bool:
+        s = _most_specific(every, home / name) or Store(name, FLOOR)
+        return home / name not in refused and not _home_reader(s, None, False)
+
+    names = [n for n in home_names() if open_(n)]
+    sizes: dict[str, int] = {}
+    for i, name in enumerate(names):
+        if between:
+            between()
+        total, stack = 0, [home / name]
+        while stack:
+            if until is not None and time.monotonic() > until:
+                sizes[name] = total
+                return sizes, name, names[i + 1:]
+            p = stack.pop()
+            try:
+                st = os.lstat(p)
+                if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & getattr(
+                        stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+                    continue
+                if stat.S_ISREG(st.st_mode):
+                    total += st.st_size
+                elif stat.S_ISDIR(st.st_mode):
+                    stack += [c for c in p.iterdir() if c not in refused]
+            except OSError:
+                continue
+        sizes[name] = total
+    return sizes, None, []
+
+
 def _is_link(p: Path) -> bool:
     """A symlink, or any reparse point on Windows (a junction needs no privilege to make)."""
     if p.is_symlink():

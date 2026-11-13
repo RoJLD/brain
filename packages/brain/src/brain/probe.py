@@ -334,19 +334,12 @@ def _size(root: Path, budget: float) -> tuple[int, bool]:
 
 
 def _home_size(budget: float) -> tuple[int, bool]:
-    """(bytes of BRAIN_HOME's stores, complete), through the read gate (brain.classes.home_files: a secret store is
+    """(bytes of BRAIN_HOME's stores, complete), through the read gate (brain.classes.home_sizes: a secret store is
     never walked, a link never followed); the walk stops at ``budget`` seconds."""
     from . import classes
 
-    end, total = time.monotonic() + budget, 0
-    for _store, f in classes.home_files():
-        if time.monotonic() > end:
-            return total, False
-        try:
-            total += f.stat().st_size
-        except OSError:
-            continue
-    return total, True
+    sizes, cut, _left = classes.home_sizes(time.monotonic() + budget)
+    return sum(sizes.values()), cut is None
 
 
 def probe_disk(roots: list[Path] | None = None) -> dict:

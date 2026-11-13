@@ -797,38 +797,28 @@ def tie(flags: dict, cwd: str | None, by_cli: dict, by_cwd: dict) -> tuple[str, 
 # --- the stores ----------------------------------------------------------------------------------------------------
 
 def stores(stop=None) -> dict:
-    """{state, rows: [{name, path, bytes, complete}]}: each top-level entry of BRAIN_HOME the read gate lets the engine
-    walk (:func:`brain.classes.home_files`: a secret store is never entered nor a link followed, so it has no row, nor
-    has an empty folder), the transcripts and the temporary folder, each walk bounded in time (:data:`WALK_BUDGET`):
-    when the stores' budget runs out, the entry being walked is said incomplete and the later ones are left out;
-    ``stop`` asked between two entries (:class:`Cancelled`)."""
+    """{state, rows: [{name, path, bytes, complete}], left_out: [name]}: each top-level entry of BRAIN_HOME the read
+    gate lets the engine walk (:func:`brain.classes.home_sizes`: a secret store is never entered nor a link followed,
+    so it has no row), the transcripts and the temporary folder, each walk bounded in time (:data:`WALK_BUDGET`): when
+    the stores' budget runs out, the entry being walked is said incomplete and the later ones are named in
+    ``left_out``; ``stop`` asked between two entries (:class:`Cancelled`)."""
     home = paths.brain_home()
-    by: dict[str, dict] = {}
-    end = time.monotonic() + WALK_BUDGET["stores"]
-    if stop and stop():
-        raise Cancelled()
-    for _store, f in (classes.home_files() if home.is_dir() else ()):
-        try:
-            top = f.relative_to(home).parts[0]
-            n = f.stat().st_size
-        except (OSError, ValueError, IndexError):
-            continue
-        if top not in by:
-            if stop and stop():
-                raise Cancelled()
-            by[top] = {"name": top, "path": str(home / top), "bytes": 0, "complete": True}
-        by[top]["bytes"] += n
-        if time.monotonic() > end:
-            by[top]["complete"] = False
-            break
-    rows = sorted(by.values(), key=lambda r: -r["bytes"])
+
+    def between():
+        if stop and stop():
+            raise Cancelled()
+    between()
+    sizes, cut, left = (classes.home_sizes(time.monotonic() + WALK_BUDGET["stores"], between) if home.is_dir()
+                        else ({}, None, []))
+    rows = sorted(({"name": n, "path": str(home / n), "bytes": b, "complete": n != cut} for n, b in sizes.items()),
+                  key=lambda r: -r["bytes"])
     for name, root in (("transcripts", paths.projects_dir()), ("temp", Path(tempfile.gettempdir()))):
         if stop and stop():
             raise Cancelled()
         if root.is_dir():
             n, done = _size(root, WALK_BUDGET[name])
             rows.append({"name": name, "path": str(root), "bytes": n, "complete": done})
-    return {"state": "ok", "home": str(home), "rows": rows}
+    return {"state": "ok", "home": str(home), "rows": rows, "left_out": left}
 
 
 # --- the projects, the overhead, the levels ------------------------------------------------------------------------
