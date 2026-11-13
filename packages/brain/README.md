@@ -843,9 +843,10 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
 - **`brain lot check [SESSION] [--branch B]... [--keep B]... [--repo-dir D]... [--scratch GLOB]... [--lot NAME]
   [--offline] [--json]`** (brain.lotcheck): whether a finished lot (a session a coordinator started; default: this
   one) can be archived, read only. From the desktop app's file of the session (its worktree and branch, the branches
-  it wrote, its PRs) and the repos it touched: each worktree on a lot branch clean, each branch merged (its PR by gh,
-  else as the app last saw it, `--offline`; or the default branch holds its tip) or kept on purpose (`--keep`), and
-  pushed. « ready to archive » (exit 0) lists what to remove (`git worktree remove`, `git branch -d`, the scratch
+  it wrote, its PRs) and the repos it touched: each worktree on a lot branch clean (a detached one's commits on a
+  remote branch), each branch with no PR open (the PRs of that repo's origin, by gh, else as the app last saw it,
+  `--offline`), no commit neither pushed nor in the default branch, and merged (a PR merged, or the default branch
+  holds its tip) or kept on purpose (`--keep`). A repo's default branch and its main checkout's never count. « ready to archive » (exit 0) lists what to remove (`git worktree remove`, `git branch -d`, the scratch
   folders `--scratch` names, `{lot}` the lot's name), else what is left (exit 1); 2 when the session is not found.
   Nothing is removed or archived: the archive stays the app's tool, the coordinator's, under the owner's standing
   permission once the work is merged and verified, and never for a session that is running.

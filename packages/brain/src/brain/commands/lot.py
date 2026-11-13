@@ -51,7 +51,8 @@ def register(sub, ctx) -> None:
                                                "$CLAUDE_CODE_HOST_SESSION_ID)")
     ck.add_argument("--branch", action="append", help="a branch of the lot the app did not record (repeatable, or "
                                                       "comma-separated)")
-    ck.add_argument("--keep", action="append", help="a branch kept on purpose, unmerged (repeatable)")
+    ck.add_argument("--keep", action="append", help="a branch kept on purpose, unmerged (repeatable, or "
+                                                    "comma-separated)")
     ck.add_argument("--repo-dir", action="append", help="a repo to read besides those the session touched")
     ck.add_argument("--scratch", action="append", metavar="GLOB",
                     help="scratch folders to list for removal ({lot}: the lot's name; repeatable)")
