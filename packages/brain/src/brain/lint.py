@@ -380,10 +380,12 @@ def _map_rules(us: list[Unit], hard: dict[str, dict]) -> None:
 
 # --- the checks ---
 
-def similarity(a_text: str, a_words: frozenset, b_text: str, b_words: frozenset) -> tuple[str, float, float] | None:
-    """How close two rule texts are: ("exact", J, C) for the same words, ("near", J, C) for a Jaccard index J of their
-    content words of at least NEAR or a containment C of at least CONTAIN (the shorter one of MIN_WORDS or more);
-    None otherwise. The one measure of brain lint rules and brain rules diff (brain.rulesdiff)."""
+def similarity(a_text: str, a_words: frozenset, b_text: str, b_words: frozenset,
+               min_exact: int = 3) -> tuple[str, float, float] | None:
+    """How close two rule texts are: ("exact", J, C) for the same words (``min_exact`` content words or more: a
+    shorter text the same elsewhere is near), ("near", J, C) for a Jaccard index J of their content words of at least
+    NEAR or a containment C of at least CONTAIN (the shorter one of MIN_WORDS or more); None otherwise. The one
+    measure of brain lint rules and brain rules diff (brain.rulesdiff, which calls any same text exact)."""
     if not a_words or not b_words:
         return None
     inter = len(a_words & b_words)
@@ -392,7 +394,7 @@ def similarity(a_text: str, a_words: frozenset, b_text: str, b_words: frozenset)
     jac = inter / len(a_words | b_words)
     small = min(len(a_words), len(b_words))
     cont = inter / small
-    if _normal(a_text) == _normal(b_text) and len(a_words) >= 3:
+    if _normal(a_text) == _normal(b_text) and len(a_words) >= min_exact:
         return "exact", jac, cont
     if jac >= NEAR or (cont >= CONTAIN and small >= MIN_WORDS):
         return "near", jac, cont

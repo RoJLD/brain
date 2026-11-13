@@ -14,7 +14,7 @@ A unit is a rule of a Markdown file as ``brain lint rules`` cuts it (a bullet wi
 sub-bullets, a numbered list with its lead, a paragraph: :func:`brain.lint.units`), or one whole feedback note. Each
 unit is put in classes:
 
-- **identical**: a unit of another file has the same words (normalised text);
+- **identical**: a unit of another file has the same words (normalised text), however short;
 - **near**: a unit of another file is close by content words (``brain lint rules``' measure, :func:`brain.lint.
   similarity`: a Jaccard index of 0.5, or a containment of 0.75);
 - **one side**: no unit of another file is identical or near to it;
@@ -36,20 +36,28 @@ computed; the report says so. Its format (``docs`` and the tests hold an invente
         topic: {en: ['\\bcommit', '\\bmerge'], fr: ['\\bcommit', '\\bmerge']}
         values:                    # a closed set; each value's patterns, by language
           ask: {en: [['\\bnever\\b', '\\bcommit']], fr: [['\\bjamais\\b', '\\bcommit']]}
-          automerge: {en: [['\\bmerge\\b', 'yourself']], fr: [['\\bmerge', 'toi-meme']]}
+          automerge:
+            en: [['\\bmerge\\b', 'yourself']]
+            fr: [['\\bmerge', 'toi-meme']]
+            not: ['\\b(?:never|not|jamais|ne)\\b']   # a negation: « never merge your PRs yourself » is no claim
 
 A pattern is a regular expression searched in a sentence (lower case, accents dropped from both, so ``toi-même`` and
-``toi-meme`` match alike), or a list of them that must all match. A unit is cut into sentences; each sentence that
-matches exactly one value of a subject is a claim ``(subject, value, scope)``, deterministic, no model.
+``toi-meme`` match alike), or a list of them that must all match; a value's ``not`` patterns cancel it in a sentence
+they match. A unit is cut into sentences (not after « e.g. », « i.e. » and the like); each sentence that matches
+exactly one value of a subject is a claim ``(subject, value, scope)``, deterministic, no model. Its scope is the one
+the sentence names, else the one named before it in the unit, else its heading's, else ``any``.
 
 **Restricted notes.** A project whose notes must never be copied (config.json ``rules_diff.restricted``: memory folder
-keys, or project folders turned into their key the way Claude Code names the folder) is read by one function only,
-:func:`restricted_feedback_subjects`: it returns each feedback note's name and the ids of the subjects it touches,
-nothing of its text; it catches every exception and logs only the exception's class and the note's name to
-``ledger/errors.log``; and it refuses to run in an agent session (``CLAUDECODE``, ``CLAUDE_CODE_ENTRYPOINT`` or
-``BRAIN_AGENT_SESSION`` set: :func:`brain.vault.agent_session`).
+keys, or project folders turned into their key the way Claude Code names the folder; and each ``--restricted-notes``
+folder, added to them) is read by one function only, :func:`restricted_feedback_subjects`: it returns each feedback
+note's name and the ids of the subjects it touches, nothing of its text; it catches every exception and logs only the
+exception's class and the note's name to ``ledger/errors.log``; and it refuses to run in an agent session
+(``CLAUDECODE``, ``CLAUDE_CODE_ENTRYPOINT`` or ``BRAIN_AGENT_SESSION`` set: :func:`brain.vault.agent_session`). A
+memory folder whose key is a restricted key, or starts with one and a '-' (the project's worktrees), is never read as
+ordinary notes, even when ``--notes`` names it; an entry that matches no folder is reported, never dropped silently.
 
-The command never writes, but for that error log line.
+The command writes nothing of its own but that error log line; like every brain command, it also leaves the engine's
+own timing event of the run (brain.selftime: the command, its duration and exit code, never a note's text).
 """
 
 from __future__ import annotations
@@ -69,7 +77,10 @@ KINDS = ("guardrail", "preference")
 CLASSES = ("identical", "near", "contradictory", "one_side", "to_check")
 ANY = "any"
 CONFIG_KEY = "rules_diff"
+NOT = "not"  # a value's patterns that cancel it (a negation)
 _SENTENCE = re.compile(r"(?<=[.;!?])\s+")
+# a piece that ends with one of these is not a sentence's end: « never commit, e.g. in this repo »
+_ABBREV = re.compile(r"(?:^|[\s(])(?:e\.g|i\.e|cf|vs|n\.b|p|p\. ?ex|ex|resp|approx)\.$")
 _MARKUP = re.compile(r"[`*_]+")
 
 
@@ -89,7 +100,7 @@ class Subject:
     kind: str
     title: str
     topic: list
-    values: dict  # value -> [pattern]: a compiled regex, or a tuple of them that must all match
+    values: dict  # value -> ([pattern], [not pattern]): a compiled regex, or a tuple of them that must all match
 
 
 @dataclass
@@ -116,9 +127,10 @@ def _regex(p: str):
 
 
 def _items(raw, where: str) -> list:
-    """A value's, a topic's or a scope's patterns as one list: a list, a string, or a mapping of language -> list."""
+    """A value's, a topic's or a scope's patterns as one list: a list, a string, or a mapping of language -> list (a
+    value's ``not`` key aside: :func:`_value`)."""
     if isinstance(raw, dict):
-        return [p for lang in raw.values() for p in (lang if isinstance(lang, list) else [lang])]
+        return [p for lang, ps in raw.items() if lang != NOT for p in (ps if isinstance(ps, list) else [ps])]
     if isinstance(raw, (list, str)):
         return raw if isinstance(raw, list) else [raw]
     raise RulesDiffError(f"{where}: patterns are a list or a mapping of language -> list")
@@ -131,13 +143,20 @@ def _pattern(p, where: str):
             return _regex(p)
         if isinstance(p, list) and p and all(isinstance(x, str) and x for x in p):
             return tuple(_regex(x) for x in p)
-    except re.error as exc:
-        raise RulesDiffError(f"{where}: pattern {p!r}: {exc}") from None
+    except (re.error, OverflowError, RecursionError) as exc:   # a repeat count past the engine's limit, say
+        raise RulesDiffError(f"{where}: pattern {p!r}: {exc.__class__.__name__}: {exc}") from None
     raise RulesDiffError(f"{where}: a pattern is a regular expression or a list of them, got {p!r}")
 
 
 def _compile(raw, where: str) -> list:
     return [_pattern(p, where) for p in _items(raw, where)]
+
+
+def _value(raw, where: str) -> tuple[list, list]:
+    """A value's patterns and its ``not`` patterns: a sentence that matches one of these is not that value (« never
+    merge your PRs yourself » is no claim of merging them yourself)."""
+    nots = raw.get(NOT) if isinstance(raw, dict) else None
+    return _compile(raw, where), (_compile(nots, f"{where}.{NOT}") if nots else [])
 
 
 def _subject(s, where: str, seen: set) -> Subject:
@@ -154,7 +173,7 @@ def _subject(s, where: str, seen: set) -> Subject:
         raise RulesDiffError(f"{where}: values is a mapping of value -> patterns")
     return Subject(s["id"], kind, str(s.get("title") or ""),
                    _compile(s["topic"], f"{where}.topic") if s.get("topic") else [],
-                   {str(v): _compile(p, f"{where}.values.{v}") for v, p in values.items()})
+                   {str(v): _value(p, f"{where}.values.{v}") for v, p in values.items()})
 
 
 def parse_subjects(data, file: str = "") -> Subjects:
@@ -190,18 +209,32 @@ def _any(patterns: list, text: str) -> bool:
 def sentences(text: str) -> list[str]:
     """A unit's sentences, its lines joined first (a wrapped line is not a sentence), bullets and numbers dropped."""
     joined = " ".join(re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", ln) for ln in text.splitlines())
-    return [s for s in _SENTENCE.split(fold(joined)) if s]
+    out: list[str] = []
+    for piece in _SENTENCE.split(fold(joined)):
+        if out and _ABBREV.search(out[-1]):   # « e.g. », « i.e. »: the sentence goes on
+            out[-1] = f"{out[-1]} {piece}"
+        elif piece:
+            out.append(piece)
+    return out
 
 
-def classify(text: str, subjects: Subjects) -> tuple[list[dict], dict[str, str]]:
-    """The claims of a text, [{subject, value, scope}] (one per sentence and subject that match exactly one value),
-    and the subjects it touches with no value read: {subject: why}."""
+def scope_of(text: str, subjects: Subjects) -> str:
+    """The first scope of the list that a text names ('' for none)."""
+    folded = fold(text)
+    return next((k for k, pats in subjects.scopes.items() if _any(pats, folded)), "")
+
+
+def classify(text: str, subjects: Subjects, heading: str = "") -> tuple[list[dict], dict[str, str]]:
+    """The claims of a text, [{subject, value, scope}] (one per sentence and subject that match exactly one value, a
+    value's ``not`` patterns aside), and the subjects it touches with no value read: {subject: why}. A sentence that
+    names no scope keeps the scope named before it in the unit, else its heading's, else ``any``."""
     claims: list[dict] = []
     touched: dict[str, str] = {}
+    scope = scope_of(heading, subjects) or ANY
     for sent in sentences(text):
-        scope = next((k for k, pats in subjects.scopes.items() if _any(pats, sent)), ANY)
+        scope = scope_of(sent, subjects) or scope
         for s in subjects.subjects:
-            hits = [v for v, pats in s.values.items() if _any(pats, sent)]
+            hits = [v for v, (pats, nots) in s.values.items() if _any(pats, sent) and not _any(nots, sent)]
             if len(hits) == 1:
                 claim = {"subject": s.id, "value": hits[0], "scope": scope}
                 if claim not in claims:
@@ -225,6 +258,7 @@ class Unit:
     words: frozenset = field(default_factory=frozenset)
     claims: list = field(default_factory=list)
     touched: dict = field(default_factory=dict)
+    section: str = ""  # its nearest heading: a scope it names applies to the unit
 
     @property
     def side(self) -> tuple[str, str]:
@@ -248,12 +282,26 @@ class Unit:
 
 
 def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace").replace("\r", "")
+    """A text file, a UTF-8 BOM dropped (Windows PowerShell 5.1 writes one), its line ends as LF."""
+    return path.read_text(encoding="utf-8-sig", errors="replace").replace("\r", "")
+
+
+def _without_front_matter(text: str) -> str:
+    """A rules file's YAML front matter blanked, its lines kept (the units' line numbers stay the file's)."""
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---", 3)
+    if end < 0:
+        return text
+    close = text.find("\n", end + 4)
+    head = text if close < 0 else text[:close]
+    return "\n" * head.count("\n") + text[len(head):]
 
 
 def markdown_units(text: str, source: str, file: str) -> list[Unit]:
-    """The rule units of a Markdown text (:func:`brain.lint.units`), headings left out."""
-    return [Unit(source, file, u.line, u.text, u.words) for u in lint.units(text, source, file)]
+    """The rule units of a Markdown text (:func:`brain.lint.units`), headings and a YAML front matter left out."""
+    return [Unit(source, file, u.line, u.text, u.words, section=u.section)
+            for u in lint.units(_without_front_matter(text), source, file)]
 
 
 def front_matter(text: str) -> tuple[dict, str, int]:
@@ -300,13 +348,24 @@ def memory_key(entry: str) -> str:
     return entry
 
 
-def memory_folders(exclude: list[Path]) -> list[Path]:
-    """Every project's memory folder on this machine, ``<projects>/*/memory``, but the excluded ones."""
-    root = paths.projects_dir()
-    if not root.is_dir():
-        return []
-    skip = {_same(p) for p in exclude}
-    return [m for m in sorted(root.glob("*/memory")) if m.is_dir() and _same(m) not in skip]
+def folder_key(folder: Path) -> str:
+    """A memory folder's key: the name of the project folder that holds it (``<key>/memory``), else its own name."""
+    return folder.parent.name if folder.name == "memory" else folder.name
+
+
+def is_restricted(folder: Path, keys: set[str], locked: list[Path]) -> bool:
+    """A memory folder of a restricted project: one of ``locked``, or its key is a restricted key, or starts with one
+    and a '-' (the project's worktrees: Claude Code names their folder after the worktree's path, the main checkout's
+    first). Case is ignored. It fails closed: another project whose key starts so is left out too."""
+    if _same(folder) in {_same(p) for p in locked}:
+        return True
+    key = folder_key(folder).casefold()
+    return any(key == k or key.startswith(k + "-") for k in keys)
+
+
+def memory_folders(keys: set[str], locked: list[Path]) -> list[Path]:
+    """Every project's memory folder on this machine, ``<projects>/*/memory``, the restricted ones left out."""
+    return [m for m in _all_memory_folders() if not is_restricted(m, keys, locked)]
 
 
 def _same(p: Path) -> str:
@@ -319,7 +378,7 @@ def _same(p: Path) -> str:
 def notes_units(folders: list[Path]) -> list[Unit]:
     out = []
     for folder in folders:
-        key = folder.parent.name if folder.name == "memory" else folder.name
+        key = folder_key(folder)
         for f in sorted(folder.glob("*.md")):
             if f.name == "MEMORY.md" or not f.is_file():
                 continue
@@ -386,12 +445,20 @@ def _brain_roots(cfg: config.Config) -> list[Path]:
     return roots or [cfg.root]
 
 
+def _shown(path: Path, root: Path) -> str:
+    """A path relative to ``root``, or whole when it is outside it (an absolute config.json rules entry)."""
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def global_sources(cfg: config.Config) -> list[Source]:
     """config.json rules (each one, relative to the brain's root), else the core plugin's copy brain lint rules
     reads, at the first of the brain's roots that holds it."""
     named = config.rules_files(cfg)
     if named:
-        return [Source("global", p.relative_to(cfg.root).as_posix(), p, True) for p in named]
+        return [Source("global", _shown(p, cfg.root), p, True) for p in named]
     rel = lint.global_rules(cfg)
     for root in _brain_roots(cfg):
         if (root / rel).is_file():
@@ -414,17 +481,33 @@ def subjects_path(cfg: config.Config) -> Path | None:
     return cfg.root / rel if isinstance(rel, str) and rel else None
 
 
-def restricted_folders(cfg: config.Config) -> list[Path]:
-    """The memory folders of config.json rules_diff.restricted on this machine (those that exist)."""
+@dataclass
+class Restriction:
+    keys: set[str]  # restricted memory keys, case folded
+    folders: list[Path]  # the restricted memory folders found (each key's, its worktrees', each --restricted-notes)
+    unmatched: list[str]  # config.json entries no memory folder of this machine matches (reported, never dropped)
+
+
+def restriction(cfg: config.Config, extra: list[Path]) -> Restriction:
+    """config.json rules_diff.restricted and every --restricted-notes folder, together: their keys, the memory folders
+    of this machine they match (:func:`is_restricted`: a key's worktrees too), and the entries none matches."""
+    entries = _restricted_entries(cfg)
+    keys = {memory_key(e).casefold() for e in entries} | {folder_key(d).casefold() for d in extra}
+    found = [m for m in _all_memory_folders() if is_restricted(m, keys, [])]
+    unmatched = [e for e in entries if not any(is_restricted(m, {memory_key(e).casefold()}, []) for m in found)]
+    given = {_same(d) for d in extra}
+    return Restriction(keys, list(extra) + [m for m in found if _same(m) not in given], unmatched)
+
+
+def _restricted_entries(cfg: config.Config) -> list[str]:
     block = cfg.data.get(CONFIG_KEY) if cfg.file else None
     entries = block.get("restricted") if isinstance(block, dict) else None
-    out = []
-    for e in entries if isinstance(entries, list) else []:
-        if isinstance(e, str) and e:
-            d = paths.projects_dir() / memory_key(e) / "memory"
-            if d.is_dir():
-                out.append(d)
-    return out
+    return [e for e in entries if isinstance(e, str) and e] if isinstance(entries, list) else []
+
+
+def _all_memory_folders() -> list[Path]:
+    root = paths.projects_dir()
+    return [m for m in sorted(root.glob("*/memory")) if m.is_dir()] if root.is_dir() else []
 
 
 def _explicit(path: Path, what: str) -> Path:
@@ -484,6 +567,16 @@ def _read_sources(srcs: list[Source]) -> tuple[list[Unit], list[dict], list[dict
     return units, shown, skipped
 
 
+def _note_folders(notes: list[Path] | None, lock: Restriction) -> tuple[list[Path], list[Path]]:
+    """(the memory folders read as ordinary notes, the --notes folders held back as restricted): a restricted folder
+    is never read as ordinary notes, named by --notes or not, in an agent session or not."""
+    if not notes:
+        return memory_folders(lock.keys, lock.folders), []
+    named = [_explicit_dir(d, "--notes") for d in notes]
+    return ([d for d in named if not is_restricted(d, lock.keys, lock.folders)],
+            [d for d in named if is_restricted(d, lock.keys, lock.folders)])
+
+
 def build(cfg: config.Config, project_dir: Path, *, machine: Path | None = None, global_rules: list[Path] | None = None,
           project_rules: list[Path] | None = None, notes: list[Path] | None = None, subjects: Path | None = None,
           restricted: list[Path] | None = None) -> dict:
@@ -493,15 +586,16 @@ def build(cfg: config.Config, project_dir: Path, *, machine: Path | None = None,
     srcs = _sources(cfg, project_dir, machine, global_rules, project_rules)
     sub_file = _subjects_file(cfg, subjects)
     subs = load_subjects(sub_file) if sub_file is not None else None
-    locked = [_explicit_dir(d, "--restricted-notes") for d in restricted] if restricted else restricted_folders(cfg)
-    folders = [_explicit_dir(d, "--notes") for d in notes] if notes else memory_folders(locked)
+    lock = restriction(cfg, [_explicit_dir(d, "--restricted-notes") for d in restricted or []])
+    folders, held = _note_folders(notes, lock)
     units, shown, skipped = _read_sources(srcs)
+    skipped += [{"source": "notes", "file": d.as_posix(), "why": "restricted"} for d in held]
     got = notes_units(folders)
     units += got
     shown.append({"source": "notes", "file": f"{len(folders)} memory folder(s), feedback notes", "units": len(got)})
     refused, found = "", []
     try:
-        found = restricted_feedback_subjects(locked, subs) if locked else []
+        found = restricted_feedback_subjects(lock.folders, subs) if lock.folders else []
     except Refused as exc:
         refused = str(exc)
     return {"sources": shown, "skipped": skipped,
@@ -509,7 +603,8 @@ def build(cfg: config.Config, project_dir: Path, *, machine: Path | None = None,
             "contradictions": "computed" if subs else (f"not computed: no subject list (config.json {CONFIG_KEY}"
                                                        ".subjects or --subjects FILE)"),
             "classes": diff(units, subs),
-            "restricted": {"folders": len(locked), "refused": refused, "notes": found}}
+            "restricted": {"folders": len(lock.folders), "refused": refused, "notes": found,
+                           "unmatched": lock.unmatched}}
 
 
 # --- the diff ---
@@ -526,15 +621,15 @@ def diff(units: list[Unit], subjects: Subjects | None) -> dict:
     """The classes of the units: pairs (identical, near, contradictory) and units alone (one side, to check)."""
     if subjects is not None:
         for u in units:
-            u.claims, u.touched = classify(u.text, subjects)
+            u.claims, u.touched = classify(u.text, subjects, u.section)
     kinds = {s.id: s.kind for s in subjects.subjects} if subjects else {}
     identical, near, contra = [], [], []
     matched: set[int] = set()
     for i, a in enumerate(units):
         for j in range(i + 1, len(units)):
             b = units[j]
-            if a.side != b.side:
-                found = lint.similarity(a.text, a.words, b.text, b.words)
+            if a.side != b.side:   # identical: the same normalised text, however short (« Use bash. » twice)
+                found = lint.similarity(a.text, a.words, b.text, b.words, min_exact=1)
                 if found:
                     kind, jac, cont = found
                     pair = {"a": a, "b": b, "jaccard": round(jac, 2), "containment": round(cont, 2)}
@@ -560,7 +655,8 @@ def to_json(report: dict) -> dict:
         return out
 
     classes = report["classes"]
-    return {"sources": report["sources"], "subjects": report["subjects"], "contradictions": report["contradictions"],
+    return {"sources": report["sources"], "skipped": report["skipped"], "subjects": report["subjects"],
+            "contradictions": report["contradictions"],
             "counts": counts(report),
             "identical": [pair("identical", p) for p in classes["identical"]],
             "near": [pair("near", p) for p in classes["near"]],
@@ -584,7 +680,8 @@ def render(report: dict) -> list[str]:
     for s in report["sources"]:
         lines.append(f"  {s['source']:<8} {s['file']}  {s['units']} unit(s)")
     for s in report["skipped"]:
-        lines.append(f"  {s['source']:<8} {s['file']}  not found, skipped")
+        why = "restricted, not read as notes" if s.get("why") == "restricted" else "not found"
+        lines.append(f"  {s['source']:<8} {s['file']}  {why}, skipped")
     lines.append(f"subjects: {report['subjects']['file']} ({report['subjects']['count']} subject(s))"
                  if report["subjects"] else f"subjects: {report['contradictions']}")
     lines.append("")
@@ -604,10 +701,16 @@ def render(report: dict) -> list[str]:
     lines += [f"  {u.ref}  {u.excerpt(70)}" for u in c["one_side"]]
     lines.append(f"to check ({n['to_check']})")
     lines += [f"  {s} ({why}): {u.ref}  {u.excerpt(60)}" for u, s, why in c["to_check"]]
-    r = report["restricted"]
+    return lines + _render_restricted(report["restricted"])
+
+
+def _render_restricted(r: dict) -> list[str]:
+    """The restricted notes by name and subjects, or why they were not read, and the entries no folder matches."""
+    lines = []
     if r["refused"]:
         lines.append(f"restricted notes: not read in an agent session ({r['refused']} is set)")
     elif r["folders"]:
         lines.append(f"restricted notes ({len(r['notes'])}): names and subjects only")
         lines += [f"  {x['name']}: {', '.join(x['subjects']) or '(no subject)'}" for x in r["notes"]]
-    return lines
+    return lines + [f"restricted entry {e}: no memory folder of this machine matches it (a key, or a project folder)"
+                    for e in r["unmatched"]]

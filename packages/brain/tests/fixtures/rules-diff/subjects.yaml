@@ -1,6 +1,7 @@
 # An invented subject list, the shape brain rules diff reads (config.json rules_diff.subjects, or --subjects FILE).
 # An owner's real list is private: it stays in their own brain. Patterns are regular expressions searched in each
-# sentence of a rule, case and accents ignored; a list of patterns must all match.
+# sentence of a rule, case and accents ignored; a list of patterns must all match. A value's `not` patterns are its
+# negations: a sentence they match is not that value.
 v: 1
 scopes:
   this-repo:
@@ -18,14 +19,15 @@ subjects:
       fr: ['\bqui (?:commite|merge)\b', '\bpermission de (?:commiter|merger)\b']
     values:
       ask:
-        en: [['\bnever\b', '\bcommit'], ['\bcommit', '\bonly when\b', '\b(?:asked|asks|told)\b']]
-        fr: [['\bjamais\b', '\bcommit'], ['\bcommit', '\bseulement\b', '\bdemande']]
+        en: [['\bnever\b', '\bcommit'], ['\bcommit', '\b(?:only when|unless)\b', '\b(?:asked|asks|told)\b']]
+        fr: [['\bjamais\b', '\bcommit'], ['\bcommit', '\b(?:seulement|sauf)\b', '\bdemande']]
       pr:
         en: ['\bthe owner merges\b']
         fr: ['\ble proprietaire merge\b']
       automerge:
         en: [['\bmerge\b', '\byourself\b']]
         fr: [['\bmerge', '\btoi-meme\b']]
+        not: ['\b(?:never|not|don''t|jamais|ne|pas)\b']
   - id: commit-language
     kind: preference
     title: the language of commits and pull requests

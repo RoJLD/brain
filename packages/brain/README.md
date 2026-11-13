@@ -979,7 +979,8 @@ What each finished item teaches is a node of the graph, so it can be found, coun
 ## The rules across their sources
 
 The same rule is often written in several places, and the copies drift apart. **`brain rules diff`** compares them,
-read only, at zero token (`brain.rulesdiff`):
+at zero token (`brain.rulesdiff`). It changes no file: it writes only, like every brain command, the engine's timing
+event of the run (`brain.selftime`), and a restricted note's error line in `ledger/errors.log` (below).
 
 - **The sources.** This machine's `~/.claude/CLAUDE.md`; the brain's global rules (`config.json` `rules`, else the core
   plugin's copy that `brain lint rules` reads); the project's `CLAUDE.md` files (`--project`, else the repo of the
@@ -988,8 +989,8 @@ read only, at zero token (`brain.rulesdiff`):
   be named by a flag instead: `--machine-rules FILE`, `--global FILE`, `--project-rules FILE`, `--notes DIR`. A file
   or folder named by a flag that cannot be read exits 2; a default place that holds nothing is listed as skipped.
 - **The units.** A rule as `brain lint rules` cuts it: a bullet with its wrapped lines and sub-bullets, a numbered
-  list with its lead, a paragraph. One feedback note is one unit.
-- **The classes.** *Identical*: the same words in another file. *Near*: close by content words, with `brain lint
+  list with its lead, a paragraph (headings and a YAML front matter left out). One feedback note is one unit.
+- **The classes.** *Identical*: the same words in another file, however short. *Near*: close by content words, with `brain lint
   rules`' measure (a Jaccard index of 0.5, or a containment of 0.75). *One side*: in one file only. *Contradictory*:
   two units give different values to the same subject in the same scope. *To check*: a unit touches a subject, but
   no single value of it could be read.
@@ -1002,9 +1003,11 @@ exits 0.
 brain, never in this engine: `config.json` `rules_diff.subjects` names it, relative to the brain's root, or
 `--subjects FILE`. Without one, the report says that no contradiction was computed. Each subject has an id, a kind
 (`guardrail` or `preference`), an optional topic and a closed set of values; each value has its patterns, in French
-and in English. A pattern is a regular expression, or a list of them that must all match, searched in each sentence
-of a unit (case and accents ignored). A sentence that matches exactly one value of a subject is a claim: (subject,
-value, scope), its scope one of the list's `scopes` that the sentence names, else `any`. An invented example
+and in English, and may have `not` patterns: a negation that cancels it in a sentence they match. A pattern is a
+regular expression, or a list of them that must all match, searched in each sentence of a unit (case and accents
+ignored; a sentence does not end after « e.g. », « i.e. » and the like). A sentence that matches exactly one value of
+a subject is a claim: (subject, value, scope). Its scope is one of the list's `scopes` that the sentence names, else
+the one an earlier sentence of the unit named, else its heading's, else `any`. An invented example
 (`tests/fixtures/rules-diff/subjects.yaml` has the whole file):
 
 ```yaml
@@ -1017,18 +1020,25 @@ subjects:
     topic: {en: ['\bwho (?:commits|merges)\b'], fr: ['\bqui (?:commite|merge)\b']}
     values:
       ask: {en: [['\bnever\b', '\bcommit']], fr: [['\bjamais\b', '\bcommit']]}
-      automerge: {en: [['\bmerge\b', '\byourself\b']], fr: [['\bmerge', '\btoi-meme\b']]}
+      automerge:
+        en: [['\bmerge\b', '\byourself\b']]
+        fr: [['\bmerge', '\btoi-meme\b']]
+        not: ['\b(?:never|not|jamais|ne)\b']
 ```
 
 With it, « Never commit without being asked » and « Crée et merge tes PR toi-même » are one subject with two
-values: a contradiction, though one is English and the other French.
+values: a contradiction, though one is English and the other French. « Never merge your PRs yourself » is no claim
+of `automerge`.
 
 **Restricted notes.** A project whose notes must never be copied is listed in `config.json` `rules_diff.restricted`
-(memory folder keys, or project folders, turned into their key the way Claude Code names the folder), or named by
-`--restricted-notes DIR`. Its folder is left out of the ordinary notes, and one function reads it: for each feedback
-note, its file name and the ids of the subjects it touches, nothing of its text. It catches every exception and logs
-only the exception's class and the note's name to `ledger/errors.log`, and it refuses to run in an agent session
-(`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` or `BRAIN_AGENT_SESSION` set): the report then says the notes were not read.
+(memory folder keys, or project folders, turned into their key the way Claude Code names the folder); each
+`--restricted-notes DIR` is added to them. A memory folder whose key is a restricted key, or starts with one and a
+`-` (the project's worktrees), is never read as ordinary notes, even when `--notes` names it (the report lists it as
+skipped); an entry that matches no folder of the machine is reported. One function reads these folders: for each
+feedback note, its file name and the ids of the subjects it touches, nothing of its text. It catches every exception
+and logs only the exception's class and the note's name to `ledger/errors.log`, and it refuses to run in an agent
+session (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` or `BRAIN_AGENT_SESSION` set): the report then says the notes were
+not read, and they stay out of the ordinary notes.
 
 ## Schedules and the alerts pass
 

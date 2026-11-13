@@ -74,6 +74,12 @@ def _flags(ada, *more):
             "--project-rules", str(ada["project"]), "--notes", str(ada["tmp"] / "notes"), *more]
 
 
+def _units_of(data: dict) -> list[dict]:
+    """Every unit of a --json report, whatever its class."""
+    return ([u for c in ("identical", "near", "contradictory") for p in data[c] for u in (p["a"], p["b"])]
+            + data["one_side"] + data["to_check"])
+
+
 def _run(capsys, argv):
     code = cli.main(argv)
     out = capsys.readouterr()
@@ -130,7 +136,7 @@ def test_scopes_split_a_rule_and_a_subject_with_no_value_is_to_check():
                       {"subject": "git-authority", "value": "ask", "scope": "other-repos"}]
     assert rulesdiff.classify("Ask who merges the pull requests.", subs) == ([], {"git-authority": "no value"})
     assert rulesdiff.classify("Commits are signed.", subs) == ([], {})
-    assert rulesdiff.classify("Never commit, merge yourself", subs) == (
+    assert rulesdiff.classify("Commit only when asked, merge yourself", subs) == (
         [], {"git-authority": "several values: ask, automerge"})
     assert rulesdiff.classify("The shell of the CI.", subs) == ([], {"shell": "no value"})
 
@@ -141,9 +147,71 @@ def test_a_malformed_subject_list_is_refused(tmp_path):
                       ({"subjects": [{"id": "x", "values": {"a": ["("]}}]}, "pattern"),
                       ({"subjects": [{"id": "x", "values": {"a": ["x"]}}, {"id": "x", "values": {"a": ["y"]}}]},
                        "twice"),
+                      ({"subjects": [{"id": "x", "values": {"a": ["a{99999999999}"]}}]}, "pattern"),
                       ({"nothing": 1}, "a list under 'subjects'")]:
         with pytest.raises(rulesdiff.RulesDiffError, match=why):
             rulesdiff.parse_subjects(data, "s.yaml")
+
+
+def test_a_pattern_past_the_engines_limits_exits_2(ada, capsys, tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("subjects:\n  - id: x\n    values: {a: ['a{99999999999}']}\n", encoding="utf-8")
+    code, out, err = _run(capsys, _flags(ada, "--subjects", str(bad)))
+    assert code == 2 and out == "" and "pattern" in err and "Traceback" not in err
+
+
+def test_a_values_not_patterns_are_its_negations():
+    subs = rulesdiff.load_subjects(SUBJECTS)
+    assert rulesdiff.classify("Never merge your PRs yourself.", subs) == ([], {})
+    assert rulesdiff.classify("Ne merge jamais tes PR toi-même.", subs) == ([], {})
+    claims, _ = rulesdiff.classify("Don't ever commit unless asked.", subs)
+    assert [(c["subject"], c["value"]) for c in claims] == [("git-authority", "ask")]
+    us = (rulesdiff.markdown_units("- Never commit without being asked.\n", "global", "g.md")
+          + rulesdiff.markdown_units("- Never merge your PRs yourself.\n", "project", "CLAUDE.md"))
+    assert rulesdiff.diff(us, subs)["contradictory"] == []
+
+
+def test_a_scope_carries_to_the_next_sentences_and_from_the_heading():
+    subs = rulesdiff.load_subjects(SUBJECTS)
+    claims, _ = rulesdiff.classify("In this repo, the rules differ. Merge your PRs yourself.", subs)
+    assert claims == [{"subject": "git-authority", "value": "automerge", "scope": "this-repo"}]
+    claims, _ = rulesdiff.classify("Never commit, e.g. in this repo.", subs)
+    assert claims == [{"subject": "git-authority", "value": "ask", "scope": "this-repo"}]
+    assert rulesdiff.sentences("Never commit, e.g. in this repo. Then push, i.e. publish.") == [
+        "never commit, e.g. in this repo.", "then push, i.e. publish."]
+    us = rulesdiff.markdown_units("## In any other repo\n\n- Merge your PRs yourself.\n", "global", "g.md")
+    rulesdiff.diff(us, subs)
+    assert us[0].claims == [{"subject": "git-authority", "value": "automerge", "scope": "other-repos"}]
+
+
+def test_a_front_matter_and_a_bom_are_not_rules(tmp_path):
+    f = tmp_path / "rules.md"
+    f.write_text("---\ntitle: Ada's rules\nscope: global\n---\n\n# Rules\n\n- Use bash.\n", encoding="utf-8-sig")
+    us = rulesdiff.markdown_units(rulesdiff._read(f), "global", "rules.md")
+    assert [(u.line, u.text) for u in us] == [(8, "- Use bash.")]
+    _note(tmp_path / "mem", "feedback_bom", "Write commits in English.")
+    note = tmp_path / "mem" / "feedback_bom.md"
+    note.write_text(note.read_text(encoding="utf-8"), encoding="utf-8-sig")   # a BOM before its front matter
+    assert [u.file for u in rulesdiff.notes_units([tmp_path / "mem"])] == ["mem/feedback_bom.md"]
+
+
+def test_the_same_short_text_is_identical_not_near():
+    us = (rulesdiff.markdown_units("- Use bash.\n", "global", "g.md")
+          + rulesdiff.markdown_units("- Use bash.\n", "machine", "m.md"))
+    rep = rulesdiff.diff(us, None)
+    assert len(rep["identical"]) == 1 and rep["near"] == []
+
+
+def test_a_config_rules_file_outside_the_brains_root_is_shown_whole(tmp_path, monkeypatch):
+    outside = tmp_path / "elsewhere" / "global.md"
+    outside.parent.mkdir()
+    outside.write_text(GLOBAL, encoding="utf-8")
+    brain = tmp_path / "brain"
+    brain.mkdir()
+    (brain / "config.json").write_text(json.dumps({"v": 1, "rules": [outside.as_posix()]}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(brain / "config.json"))
+    srcs = rulesdiff.global_sources(config.load())
+    assert [(s.file, s.path) for s in srcs] == [(outside.as_posix(), outside)]
 
 
 # --- the classes ---
@@ -225,15 +293,22 @@ def test_the_subject_list_comes_from_config_json(ada, capsys, tmp_path):
 
 
 def test_project_after_the_subcommand_reads_that_projects_claude_md(ada, capsys, monkeypatch):
+    """Run from another repo with a CLAUDE.md of its own: --project lab reads lab's, not the current folder's."""
     reg = ada["brain"] / "projects.yaml"
     reg.write_text(f"lab: {{root: {ada['lab'].as_posix()}}}\n", encoding="utf-8")
     monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    here = ada["tmp"] / "elsewhere"
+    (here / ".git").mkdir(parents=True)
+    (here / "CLAUDE.md").write_text("- A rule only the current folder's repo has.\n", encoding="utf-8")
+    monkeypatch.chdir(here)
     argv = ["rules", "diff", "--machine-rules", str(ada["machine"]), "--global", str(ada["global"]),
-            "--notes", str(ada["tmp"] / "notes"), "--json", "--project", "lab"]
-    code, out, _ = _run(capsys, argv)
-    assert code == 0
-    sources = {(s["source"], s["file"]) for s in json.loads(out)["sources"]}
-    assert ("project", "CLAUDE.md") in sources
+            "--notes", str(ada["tmp"] / "notes"), "--json"]
+    for tail, want, not_want in ((["--project", "lab"], "toi-même", "only the current folder"),
+                                 ([], "only the current folder", "toi-même")):
+        code, out, _ = _run(capsys, argv + tail)
+        assert code == 0
+        texts = " ".join(u["excerpt"] for u in _units_of(json.loads(out)))
+        assert want in texts and not_want not in texts, tail
 
 
 def test_a_missing_explicit_file_exits_non_zero(ada, capsys):
@@ -288,7 +363,57 @@ def test_the_restricted_reader_refuses_an_agent_session(ada, monkeypatch, capsys
             with pytest.raises(rulesdiff.Refused, match=var):
                 rulesdiff.restricted_feedback_subjects([mem], None)
             code, out, _ = _run(capsys, _flags(ada, "--restricted-notes", str(mem), "--json"))
-            assert code == 0 and json.loads(out)["restricted"] == {"folders": 1, "refused": var, "notes": []}
+            data = json.loads(out)
+            assert code == 0 and data["restricted"] == {"folders": 1, "refused": var, "notes": [], "unmatched": []}
+            assert CANARY not in out and not any(u["file"].startswith("secret-key/") for u in _units_of(data))
+
+
+def test_restricted_notes_stay_out_of_the_ordinary_notes_while_the_reader_is_refused(ada, monkeypatch, capsys):
+    """In an agent session the reader is refused, and the restricted folder still stays out of the machine's notes
+    (config.json's entry), and out of --notes when a flag names it (finding: a --notes folder was read as notes)."""
+    mem = _restricted(ada["claude"])
+    open_mem = ada["claude"] / "projects" / "open-key" / "memory"
+    _note(open_mem, "feedback_open", "Write commits in English.")
+    (ada["brain"] / "config.json").write_text(json.dumps({
+        "v": 1, "identity": {"owner": "Ada", "kind": "person"},
+        "rules_diff": {"restricted": ["secret-key"]}}), encoding="utf-8")
+    monkeypatch.setenv("CLAUDECODE", "1")
+    base = ["rules", "diff", "--machine-rules", str(ada["machine"]), "--global", str(ada["global"]),
+            "--project-rules", str(ada["project"]), "--json"]
+    for extra in ([], ["--notes", str(mem), "--notes", str(open_mem)]):
+        code, out, _ = _run(capsys, base + extra)
+        data = json.loads(out)
+        assert code == 0 and data["restricted"]["refused"] == "CLAUDECODE" and CANARY not in out, extra
+        files = {u["file"] for u in _units_of(data)}
+        assert "open-key/feedback_open.md" in files and not any(f.startswith("secret-key/") for f in files), extra
+    assert {"source": "notes", "file": mem.as_posix(), "why": "restricted"} in data["skipped"]
+
+
+def test_restricted_notes_flag_adds_to_the_config_and_a_key_covers_its_worktrees(ada, capsys):
+    """--restricted-notes adds to config.json's rules_diff.restricted (both stay out of the ordinary notes, both are
+    read for names and subjects); a key's worktree folders (key-...) are restricted too; an entry that matches no
+    folder is reported."""
+    _restricted(ada["claude"])
+    wt = ada["claude"] / "projects" / "secret-key--claude-worktrees-x" / "memory"
+    _note(wt, "feedback_wt", f"Write commits in English. {CANARY}")
+    other = ada["tmp"] / "other-restricted"
+    _note(other, "feedback_other", f"Prefer bash, always. {CANARY}")
+    (ada["brain"] / "config.json").write_text(json.dumps({
+        "v": 1, "identity": {"owner": "Ada", "kind": "person"},
+        "rules_diff": {"restricted": ["secret-key", "no-such-key"]}}), encoding="utf-8")
+    flags = ["rules", "diff", "--machine-rules", str(ada["machine"]), "--global", str(ada["global"]),
+             "--project-rules", str(ada["project"])]
+    code, out, _ = _run(capsys, flags + ["--subjects", str(SUBJECTS), "--restricted-notes", str(other), "--json"])
+    assert code == 0 and CANARY not in out
+    data = json.loads(out)
+    assert not any(u["source"] == "notes" for u in _units_of(data))
+    assert {n["name"] for n in data["restricted"]["notes"]} == {"feedback_one", "feedback_two", "feedback_wt",
+                                                                "feedback_other"}
+    assert data["restricted"]["unmatched"] == ["no-such-key"]
+    code, out, _ = _run(capsys, flags)
+    assert code == 0 and "restricted entry no-such-key: no memory folder" in out and CANARY not in out
+    assert rulesdiff.is_restricted(wt, {"secret-key"}, [])
+    assert not rulesdiff.is_restricted(ada["claude"] / "projects" / "secret-keyring" / "memory", {"secret-key"}, [])
 
 
 def test_canary_a_restricted_note_reaches_no_log_alert_record_or_output(ada, capsys, tmp_path):
@@ -311,7 +436,7 @@ def test_canary_a_restricted_note_reaches_no_log_alert_record_or_output(ada, cap
     data = json.loads(outputs[1].strip())
     assert data["restricted"]["notes"] == [{"name": "feedback_one", "subjects": ["git-authority"]},
                                            {"name": "feedback_two", "subjects": ["git-authority"]}]
-    assert not any(u["source"] == "notes" for u in data["one_side"])   # not read as an ordinary note
+    assert not any(u["source"] == "notes" for u in _units_of(data))   # in no class: not read as an ordinary note
     log = Path(str(ada["tmp"] / "brain-home")) / "ledger" / "errors.log"
     assert log.is_file()
     text = log.read_text(encoding="utf-8")
