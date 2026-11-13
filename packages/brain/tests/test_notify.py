@@ -225,6 +225,17 @@ def test_notify_file_relative_to_the_root(tmp_path, monkeypatch, fake):
         notify.config(projects.get("demo"))
 
 
+def test_a_notification_leaves_scrubbed(tmp_path, monkeypatch, fake):
+    """wi-brain-privacy-scrub: the free text of what leaves is scrubbed; the sending host's own field is kept."""
+    cfg = _cfg(tmp_path, monkeypatch, LEVELS)
+    monkeypatch.setenv("BRAIN_MACHINE", "orchard-01")
+    res = notify.send(cfg, _msg(body="disk full on orchard-01 at " + "/home/" + "bob/data", title="for ada" + "@corp.io"), now=NOW)
+    assert res.status == "delivered"
+    payload = fake.posts[0][1]
+    assert payload["title"] == "[demo error] for <email>"
+    assert payload["message"].startswith("disk full on <host> at ~/data") and payload["message"].endswith("— pc")
+
+
 def test_blocking_decision_is_sent_and_never_fails_the_ask(tmp_path, monkeypatch, fake):
     cfg = _cfg(tmp_path, monkeypatch, LEVELS)
     ddr = {"id": "ddr-2026-01-02-which-server", "title": "Which server", "question": "Which ntfy server?",

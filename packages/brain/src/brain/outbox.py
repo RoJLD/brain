@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Mapping
 
-from . import net, paths, stateio
+from . import net, paths, scrub, stateio
 
 FILE = "queue.json"
 BASE_S = 300.0                  # the first wait: the next pass or so
@@ -72,6 +72,8 @@ def put(kind: str, key: str, payload: dict, why: str = "", *, now: datetime | No
     state = stateio.load(path())
     if key in state.data:
         return ""
+    # kept to leave later: its free text scrubbed as it would leave now (brain.scrub); what routes it as it is
+    payload, why = scrub.record(payload), scrub.text(why)
     state.data[key] = {"kind": kind, "payload": payload, "at": _iso(now), "tries": 0,
                        "next": _iso(now + timedelta(seconds=wait(1))), "why": why[:200]}
     try:
