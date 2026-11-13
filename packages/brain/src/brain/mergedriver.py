@@ -86,6 +86,9 @@ CHANGELOG.md merge=brain
 # their marker. Not in ATTRIBUTES: what brain init writes once is a registered format (release_check SCHEMAS « store »),
 # so brain merge-driver install suggests it where docs/reference/ exists instead.
 REFERENCE_ATTRIBUTE = "docs/reference/**/*.md merge=brain"
+# Who renders a reference page again: a brain's own render by brain refresh (brain sync), a public render (a code
+# repo's) only by brain reference --public ... --write, run from the brain that tracks it.
+REFERENCE_AGAIN = "brain refresh (a brain's own render) or brain reference --write (a public render)"
 
 
 class DriverError(RuntimeError):
@@ -649,8 +652,11 @@ def _merge_key(key: str, b: dict, o: dict, t: dict, nested: tuple, winner: str):
         return _kept(o, key)
     if ov == bv:
         return _kept(t, key)
-    if winner and (key == "status" or not nested):   # the status, or a prop (one level down), both changed
-        return _kept(o if winner == "ours" else t, key)
+    win, lose = (o, t) if winner == "ours" else (t, o)
+    # the status, or a prop (one level down) both changed: the later side's value, whole; never its deletion of a
+    # prop the other side changed (that edit would be lost unseen: a conflict)
+    if winner and (key == "status" or not nested) and (key in win or key not in lose):
+        return _kept(win, key)
     raise _Clash(key)
 
 
@@ -758,7 +764,8 @@ def resolve(path: str, base: bytes, ours: bytes, theirs: bytes, size: int = 7, c
     if kind == "view":
         data, side = view(path, ours, theirs, cwd)
         mark(path, cwd)
-        return data, Result(_decode(data), 0, f"kept {side}; brain refresh regenerates it"), kind
+        again = REFERENCE_AGAIN if path.replace("\\", "/").startswith("docs/reference/") else "brain refresh"
+        return data, Result(_decode(data), 0, f"kept {side}; {again} regenerates it"), kind
     try:
         if kind == "log":
             res = log(o, a, b, size, style)
@@ -891,7 +898,7 @@ def install(repo: Path, apply: bool = False, launcher: str | None = None, as_jso
                       file=sys.stderr)
                 return 1
         changed = True
-    missing = missing_attributes(Path(p.repo), p.attributes) if p.attributes else []
+    missing = missing_attributes(Path(p.repo), p.attributes)
     if as_json:
         print(json.dumps({"repo": p.repo, "driver": p.driver, "current": p.current, "set": p.done or changed,
                           "changed": changed, "attributes": p.attributes, "missing": missing}, indent=2))
@@ -917,10 +924,12 @@ def _say_attributes(p: Plan, missing: list[str]) -> None:
 
 
 def missing_attributes(repo: Path, attributes: list[str]) -> list[str]:
-    """The lines of :data:`ATTRIBUTES` a repo's .gitattributes lacks, and :data:`REFERENCE_ATTRIBUTE` where the repo
-    holds a ``docs/reference/`` folder (a release that names one more view, a brain that renders its reference)."""
+    """The lines of :data:`ATTRIBUTES` a brain's .gitattributes lacks (a repo that holds ``notes/graph``: a code repo
+    gets none of a brain's paths), and :data:`REFERENCE_ATTRIBUTE` where the repo holds a ``docs/reference/`` folder
+    (a release that names one more view, a brain or a code repo that renders its reference)."""
     have = {" ".join(x.split()) for x in attributes}
-    want = [x for x in ATTRIBUTES.splitlines() if x and not x.startswith("#")]
+    brain = (Path(repo) / "notes" / "graph").is_dir()
+    want = [x for x in ATTRIBUTES.splitlines() if x and not x.startswith("#")] if brain else []
     if (Path(repo) / "docs" / "reference").is_dir():
         want.append(REFERENCE_ATTRIBUTE)
     return [x for x in want if " ".join(x.split()) not in have]

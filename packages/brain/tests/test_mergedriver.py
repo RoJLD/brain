@@ -601,3 +601,54 @@ def test_install_lists_the_attribute_lines_a_repo_lacks(repo, capsys):
     (repo / ".gitattributes").write_text(md.ATTRIBUTES + md.REFERENCE_ATTRIBUTE + "\n", encoding="utf-8")
     md.install(repo, apply=False, launcher="brain", as_json=True)
     assert json.loads(capsys.readouterr().out)["missing"] == []
+
+
+def test_the_later_side_never_silently_drops_a_prop_the_other_side_changed():
+    base = '- {id: wi-x, type: WorkItem, status: todo, title: "X", props: {note: x, keep: k}}\n'
+    ours = base.replace("status: todo", "status: doing").replace("note: x", "note: started")
+    theirs = base.replace("status: todo", "status: done").replace("note: x, ", "")   # the close deleted the note
+    _, res, _ = merge("notes/graph/nodes/work.yaml", base, ours, theirs)
+    assert res.conflicts == 1
+    # the other way round: the earlier side deleted a prop the later side changed, so the later value stays
+    ours = base.replace("status: todo", "status: doing").replace("keep: k", "")
+    ours = ours.replace("note: x, ", "note: x")
+    theirs = base.replace("status: todo", "status: done").replace("keep: k", "keep: kept")
+    text, res, _ = merge("notes/graph/nodes/work.yaml", base, ours, theirs)
+    assert res.conflicts == 0 and _node(text, "wi-x")["props"] == {"note": "x", "keep": "kept"}, text
+
+
+def test_a_mapping_prop_both_changed_takes_the_later_side_s_whole():
+    base = '- {id: wi-x, type: WorkItem, status: todo, title: "X", props: {links: {a: 1, b: 1}}}\n'
+    ours = base.replace("status: todo", "status: doing").replace("a: 1", "a: 2")
+    theirs = base.replace("status: todo", "status: done").replace("b: 1", "b: 3")
+    text, res, _ = merge("notes/graph/nodes/work.yaml", base, ours, theirs)
+    assert res.conflicts == 0 and _node(text, "wi-x")["props"]["links"] == {"a": 1, "b": 3}
+
+
+def test_status_winner_ranks_and_chains():
+    assert md.status_winner({"status": "todo"}, {"status": "doing"}, {"status": "blocked"}) == ""   # one rank
+    assert md.status_winner({"status": "todo"}, {"status": "blocked"}, {"status": "done"}) == "theirs"
+    assert md.status_winner({"status": "doing"}, {"status": "todo"}, {"status": "blocked"}) == "theirs"
+    assert md.status_winner({"status": "todo"}, {"status": "done"}, {"status": "reached"}) == ""   # no common chain
+    assert md.status_winner({"status": "todo"}, {"status": 1}, {"status": "done"}) == ""
+
+
+def test_a_reference_page_s_note_names_who_renders_it_again():
+    page = REFERENCE.format("x")
+    _, res, kind = merge("docs/reference/README.md", page, page + "o\n", page + "t\n")
+    assert kind == "view" and md.REFERENCE_AGAIN in res.note
+    _, res, _ = merge("notes/kanban_graph.md", KANBAN.format("b"), KANBAN.format("o"), KANBAN.format("t"))
+    assert res.note.endswith("brain refresh regenerates it")
+
+
+def test_install_s_missing_lines_on_a_code_repo_and_with_no_line_at_all(repo, capsys):
+    import json
+    (repo / ".gitattributes").write_text("* text=auto\n", encoding="utf-8")
+    md.install(repo, apply=False, launcher="brain", as_json=True)
+    assert len(json.loads(capsys.readouterr().out)["missing"]) == len(
+        [x for x in md.ATTRIBUTES.splitlines() if x and not x.startswith("#")])   # none names it: all missing
+    shutil.rmtree(repo / "notes" / "graph")   # a code repo: no brain view is suggested
+    (repo / "docs" / "reference").mkdir(parents=True)
+    (repo / ".gitattributes").write_text("CHANGELOG.md merge=brain\n", encoding="utf-8")
+    md.install(repo, apply=False, launcher="brain", as_json=True)
+    assert json.loads(capsys.readouterr().out)["missing"] == [md.REFERENCE_ATTRIBUTE]

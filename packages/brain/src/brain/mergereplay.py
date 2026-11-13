@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .mergedriver import ATTRIBUTES, NAME, NO_MARK, DriverError, _decode, _git
 
+
 def _merge_tree(repo: Path, ours: str, theirs: str, driver: str, attrs: Path, env: dict) -> tuple[str, list[str]]:
     """(the merged tree, the conflicted paths) of ``git merge-tree`` with that driver for merge=brain. Git runs from
     the scratch folder ``attrs`` sits in, the repo named by GIT_DIR: the driver's temporary files land there, never in
