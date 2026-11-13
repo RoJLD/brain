@@ -1699,6 +1699,12 @@ back. A git repository in a test is a copy of a template made once per worker (`
 `make_repo` fixtures), not a `git init`. The test that calls the real docker client is marked `docker`: the CI runs it
 apart, on one process (`pytest packages/brain -m docker`).
 
+The lite suite (`pytest packages/brain -m lite`, `tests/test_lite.py`) runs the stranger test's Lite scenario on the
+checkout's engine with Docker, gh, the network and the other engines hidden (a stranger's PATH and home, the
+proxies pointed at a closed port, no `BRAIN_GRAPH_PYTHON`, `brain refresh --offline`), then an ADR, the records'
+check, a sync, the capture hook and the generated views: what a Lite install keeps. The whole suite runs it too;
+it needs the `brain` launcher beside the Python (`pip install -e packages/brain`), else it is skipped.
+
 `BRAIN_TEST_WORKERS=N` sets how many workers `-n auto` (or `-n logical`) starts. Unset, xdist decides: its own
 `PYTEST_XDIST_AUTO_NUM_WORKERS` if set, else one worker per CPU thread (per physical core when psutil is installed).
 `BRAIN_TEST_WORKERS` wins over `PYTEST_XDIST_AUTO_NUM_WORKERS` and, unlike it, refuses anything but a whole number
