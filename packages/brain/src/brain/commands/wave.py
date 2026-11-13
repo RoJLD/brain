@@ -10,8 +10,9 @@ import json
 import sys
 from pathlib import Path
 
-from .. import config, graph, lots, waves
+from .. import closemerged, config, graph, lots, nextrelease, projects, waves
 from ._common import _project, _store
+from ._common import _repos as _project_repos
 
 ORDER = 55   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 55   # its usage lines' place in brain --help's epilog
@@ -21,8 +22,16 @@ USAGE = """\
   brain wave close X.Y.Z [--carry-to X.Y.Z] [--drop ID]... [--write]   the version PR closes its wave: each open item
                  carried by name to a later wave (props.carried_to) or dropped, then the wave reached; without --write,
                  the plan; refused while an open item is neither
+  brain wave close-merged X.Y.Z [--repo NAME]... [--repo-dir D]... [--since REF] [--until REF] [--write] [--json]
+                 the items the PRs merged since the last release tag deliver (each by the changelog fragment it added,
+                 changes/<item>.md, or an item id in its title), closed done with --pr "<repo> #N" and their titles as
+                 the outcome; without --write, the plan; the wave's open items no merged PR names listed; a revert
+                 takes its PR out; --write refused while a repo is not read (zero token, git only, as last fetched)
   brain wave check X.Y.Z   the closure rule alone (release_check.py --store runs it on a version PR): exit 1 while the
-                 wave holds an open item neither carried nor dropped, or is not reached yet
+                 wave holds an open item neither carried nor dropped, or is not reached yet; then the release
+                 forecast of a wave planned as the next patch or minor: a patch or a minor, the first PR that tipped
+                 it and why (release_check --preview of the engine checkout's origin/main; advisory, the exit is the
+                 closure rule's)
   brain wave import [--from X.Y.Z] [--write]   the items' free-text props.wave: a wave proposed per release it names
                  (X.Y.Z; --from: the first one, the earlier ones already tagged are listed and left out), the other
                  values listed to place by {owner}; --write creates the waves and their items' part_of edges
@@ -104,6 +113,71 @@ def _plan(args, root: Path, store: Path) -> int:
     return 0
 
 
+def _check(args, root: Path, store: Path) -> int:
+    """The closure rule (its exit), then the release forecast of that wave (advisory, brain.nextrelease)."""
+    plan = waves.load(store, root)
+    found = waves.closure_problems(plan, args.version)
+    for line in found:
+        print(f"error: {line}")
+    if not found:
+        print(f"wave {args.version}: closed, or no wave of that release (its version PR may go)")
+    wid = plan.resolve(args.version)
+    release = plan.label(wid) if wid else args.version
+    if waves.release_key(release):
+        for line in nextrelease.lines(nextrelease.forecast([r.path for r in _project_repos(args, root)]), release):
+            print(line)
+    return 1 if found else 0
+
+
+def _repos(args, root: Path) -> list[tuple[str, Path]]:
+    """The (name, checkout) pairs close-merged reads: --repo-dir's, else the project's repos (--repo's alone when
+    given). The --repo-dirs are named by --repo, one name each in the same order, else as the registry names their
+    main checkout (a worktree's main checkout counts), else by that main checkout's folder."""
+    try:
+        declared = [(r.name, r.path) for r in projects.repos_of(_project(args, root))]
+    except (projects.RepoError, SystemExit):
+        declared = []
+    if args.repo_dir:
+        if args.repo and len(args.repo) == len(args.repo_dir):
+            return [(n.lower(), Path(d).resolve()) for n, d in zip(args.repo, args.repo_dir, strict=True)]
+        names = {projects._repo_folder(Path(p)).lower(): n for n, p in declared}
+        out = []
+        for d in args.repo_dir:
+            folder = projects._repo_folder(Path(d).resolve()).lower()
+            out.append((names.get(folder, folder), Path(d).resolve()))
+        return out
+    wanted = {n.lower() for n in args.repo or []}
+    return [(n, p) for n, p in declared if not wanted or n in wanted]
+
+
+def _close_merged(args, root: Path, store: Path) -> int:
+    repos = _repos(args, root)
+    if not repos:
+        print("brain wave close-merged: no repo to read (--repo-dir D, or the project's repos)", file=sys.stderr)
+        return 1
+    try:
+        p = closemerged.plan(store, repos, args.version, args.since or "", args.until or "", root)
+    except closemerged.CloseError as exc:
+        print(f"brain wave close-merged: {exc}", file=sys.stderr)
+        return 1
+    if p.skipped:   # a repo not read: its items would read « no merged PR » and be carried or dropped next
+        for name, why in p.skipped.items():
+            print(f"brain wave close-merged: {name}: {why}"
+                  + ("; nothing written (--repo leaves it out)" if args.write else ""), file=sys.stderr)
+        if args.write or not p.ranges:
+            return 1
+    done: list[str] = []
+    if args.write:
+        try:
+            closemerged.write(store, p, done)
+        except graph.GraphError as exc:
+            print(f"brain wave close-merged: {exc}; closed before it: {', '.join(done) or 'none'}", file=sys.stderr)
+            return 1
+    print(json.dumps(p.as_dict(), indent=2, ensure_ascii=False) if args.json
+          else "\n".join(closemerged.render(p, args.write)))
+    return 0
+
+
 def cmd_wave(args, root: Path) -> int:
     store = _store(args, root)
     try:
@@ -117,13 +191,10 @@ def cmd_wave(args, root: Path) -> int:
             return _close(args, root, store)
         if args.wave_cmd == "plan":
             return _plan(args, root, store)
+        if args.wave_cmd == "close-merged":
+            return _close_merged(args, root, store)
         if args.wave_cmd == "check":
-            found = waves.closure_problems(waves.load(store, root), args.version)
-            for line in found:
-                print(f"error: {line}")
-            if not found:
-                print(f"wave {args.version}: closed, or no wave of that release (its version PR may go)")
-            return 1 if found else 0
+            return _check(args, root, store)
         return _import(args, store)
     except graph.GraphError as exc:
         print(f"brain: {exc}", file=sys.stderr)
@@ -144,6 +215,19 @@ def register(sub, ctx) -> None:
     wc.add_argument("--carry-to", help="the later wave the open items go to (its release or id)")
     wc.add_argument("--drop", action="append", help="an open item dropped instead (repeatable, or comma-separated)")
     wc.add_argument("--write", action="store_true", help="write it (without: the plan)")
+    wm = wv.add_parser("close-merged", help="close the items the PRs merged since the last release tag deliver (by "
+                                            "their changelog fragment or an item id in their title): the plan, or "
+                                            "--write")
+    wm.add_argument("version", help="the wave's release (or its id)")
+    wm.add_argument("--repo", action="append", help="only this repo of the project (repeatable); with as many "
+                                                     "--repo-dir, their names, in order")
+    wm.add_argument("--repo-dir", action="append", help="a checkout to read instead of the project's repos "
+                                                         "(repeatable)")
+    wm.add_argument("--since", help="the ref to read from (default: the last release tag before X.Y.Z)")
+    wm.add_argument("--until", help="the ref to read to (default: vX.Y.Z when tagged, else origin's default branch "
+                                       "as last fetched, else HEAD)")
+    wm.add_argument("--write", action="store_true", help="close them (without: the plan)")
+    wm.add_argument("--json", action="store_true", help="the plan, as JSON")
     wk = wv.add_parser("check", help="the closure rule: exit 1 while the wave holds an open item not carried or "
                                      "dropped, or is not reached yet")
     wk.add_argument("version", help="the wave's release (or its id)")

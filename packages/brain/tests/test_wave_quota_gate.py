@@ -352,6 +352,29 @@ def test_the_owners_override_lifts_it(ada, wave, tmp_path, monkeypatch):
     assert start(ada) is None and ledger(wave)[-1]["decision"] == "overridden"
 
 
+def test_an_allow_lifts_the_gate_s_checks_only_when_named(ada, wave, tmp_path, monkeypatch):
+    """The gate's checks follow the governor's override scope (RETRO-8): an allow without --check (the machine's caps)
+    leaves both on and the refusal names the allow that lifts it; --check streams lets the next check (wave_quota)
+    decide; naming both lets the start through; BRAIN_GUARD_ALLOW=usage:CHECK lifts one."""
+    forecast(wave, 60, pct_h=0.3)   # wave_quota holds too, behind streams
+    for n in (1, 2, 3):
+        child(ada, tmp_path, n)
+    governor.allow(hours=1, now=NOW)
+    d, reason = decision(start(ada))
+    assert d == "deny" and "brain usage allow --check streams" in reason
+    governor.allow(hours=1, now=NOW, checks=["streams"])
+    d, reason = decision(start(ada))
+    assert d == "ask" and "over 90 % (usage.guard.wave_quota.ask_over_pct)" in reason
+    assert [(r["check"], r["decision"], r.get("by")) for r in ledger(wave)[-2:]] == [
+        ("streams", "overridden", "allow"), ("wave_quota", "asked", None)]
+    governor.allow(hours=1, now=NOW, checks=["wave_quota"])
+    assert start(ada) is None
+    governor.allow(hours=0, now=NOW)
+    monkeypatch.setenv("BRAIN_GUARD_ALLOW", "usage:streams")
+    d, _ = decision(start(ada))
+    assert d == "ask" and ledger(wave)[-2]["by"] == "BRAIN_GUARD_ALLOW"
+
+
 def test_the_threshold_on_a_real_forecast(ada, brain_home):
     """A real ``usage/quota.json`` (brain usage quota's, the host renamed) and its reading: 78 % read at 12:24:41,
     2.157 %/h over the last 24 h, the reset Monday 12:00 UTC: at 12:30, 78.19 + 2.157 x 71.5 h = 232.4 % at the

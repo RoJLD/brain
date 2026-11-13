@@ -356,22 +356,29 @@ def for_start(kind: str, lim: dict, inp: dict, master: str, now: datetime, q: di
 
 
 def verdict(w: dict | None) -> tuple[str, str, str] | None:
-    """The gate's answer: deny a stream past max_streams, ask past ask_over_pct at the reset; None to let it through
-    (and when the gate is off or could not read what it needs)."""
+    """The gate's answer: the first of :func:`verdicts`; None to let it through (and when the gate is off or could not
+    read what it needs)."""
+    return next(verdicts(w), None)
+
+
+def verdicts(w: dict | None):
+    """Each of the gate's checks that holds, as (decision, check, reason), in order: deny a stream past max_streams,
+    then ask past ask_over_pct at the reset. The governor asks for them one at a time (brain.governor._session_caps),
+    so an override that lifts ``streams`` lets ``wave_quota`` decide."""
     if not w:
-        return None
+        return
     ss = w["streams"]
     if w["max_streams"] and ss.get("n") is not None and ss["n"] >= w["max_streams"]:
         names = ", ".join(ss["names"][:4])
-        return ("deny", "streams", f"a new stream refused: this session already has {ss['n']} live stream(s) "
-                f"({names or 'not named'}), the cap is {w['max_streams']} (usage.guard.wave_quota.max_streams: "
-                "the streams of one master, their reviews included); wait until one has reported and is archived")
+        yield ("deny", "streams", f"a new stream refused: this session already has {ss['n']} live stream(s) "
+               f"({names or 'not named'}), the cap is {w['max_streams']} (usage.guard.wave_quota.max_streams: "
+               "the streams of one master, their reviews included); wait until one has reported and is archived")
     p, pct = w["projection"], w["item_pct"]
     if not w["ask_over_pct"] or p is None or p["at_reset"] + (pct or 0.0) <= w["ask_over_pct"]:
-        return None
+        return
     cost = (f" plus this stream's {pct:.1f} % (${w['usd']:.2f}, {w['usd_basis']})" if pct is not None
             else f" ({w['usd_basis']} for this stream)")
-    return ("ask", "wave_quota", f"a new stream: the week's forecast at its reset "
+    yield ("ask", "wave_quota", f"a new stream: the week's forecast at its reset "
             f"{p['resets'][:16].replace('T', ' ')} UTC is {p['at_reset']:.0f} % ({p['read_pct']:.0f} % at "
             f"{p['at'][11:16]} UTC + {p['pct_h']:.2f} %/h x {p['hours']:.1f} h){cost}: "
             f"{p['at_reset'] + (pct or 0.0):.0f} %, over "
