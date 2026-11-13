@@ -304,7 +304,7 @@ session the app does not know or no app on the machine, a count that takes more 
 let the call through, and the hook says why in its context (« Wave quota gate (usage.guard.wave_quota): ...; the start
 goes through unchecked by it. »). The owner's override (below) lifts it as it lifts the other checks.
 
-How many streams fit now, from the same reading (`brain.governor.wave_room`): the smaller of the streams left to the
+The gate is `brain.wavegate`. How many streams fit now, from the same reading (`brain.wavegate.room`): the smaller of the streams left to the
 master (`max_streams` less its live ones) and the streams that keep the forecast at the reset under `ask_over_pct`.
 `brain brief` says it on its « Streams that fit now » line (for its coordinator, each stream at the item's estimate),
 `brain wave plan` and `brain next` on theirs (a round holds at most `max_streams` lots, the first round's lots at the sum

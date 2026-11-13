@@ -36,22 +36,10 @@ The checks, in order; the first that holds decides:
   through is noted in ``usage/starts.jsonl``, so the next start counts it before its first turn ends (a log rotated
   monthly, two months kept, brain.stateio: the hook reads the live file and the newest monthly one, so a start just
   before the month turned still counts; the quota readings likewise).
-- ``streams`` and ``wave_quota`` (wi-brain-wave-quota-gate; RETRO-5 of the waves retro, 2026-11-03: by the quota,
-  three streams at most with their reviews), only with config.json ``usage.guard.wave_quota`` (absent: off) and only
-  for a start_session call that starts a session now (``initiation`` user_asked or none, or a ``proposal_id``; a
-  proposal card starts nothing). ``streams``: deny when the calling session (the master) already has
-  ``max_streams`` live children: the desktop app's children of that session (``spawnedFrom``), neither archived nor
-  detached, that are *running* (their transcript written in the last ``live_minutes`` and its last turn not ended)
-  or *starting* (created in the last 10 minutes, no transcript yet), plus the stream starts this hook let through that
-  the app does not show yet (``usage/starts.jsonl``). ``wave_quota``: ask the owner when the week's forecast at its
-  reset (the week's percent now, as below, plus the last forecast's pace, ``usage/quota.json``'s ``pace.pct_h``, times
-  the hours to the reset) plus this stream's cost in percent of the week goes over ``ask_over_pct``. The stream's
-  cost is the brief's estimate (the ``usd=`` of its Cost estimate line, brain brief, brain cost estimate), else the
-  median session's (the forecast's ``live.median_session_usd``), converted by the forecast's ``pct_per_usd``. Either
-  check fails open: a forecast that cannot be read, a session the app does not know, a count that takes more than
-  :data:`STREAM_BUDGET_S` let the call through with a note in the hook's context. ``0`` turns either check off.
-  :func:`wave_room` gives the same answer as a count of the streams that fit now (brain brief, brain wave plan, brain
-  usage guard).
+- ``streams`` and ``wave_quota``, the wave quota gate (brain.wavegate, wi-brain-wave-quota-gate), only with config.json
+  ``usage.guard.wave_quota`` (absent: off) and for a start_session call that starts a session now: deny a stream when
+  its master already has ``max_streams`` live ones, ask when the week's forecast at its reset plus the stream's
+  estimate goes over ``ask_over_pct``; what it cannot read lets the call through with a note in the hook's context.
 - ``warn``: a window at ``warn`` % or more: ask the owner, for every tool.
 
 The thresholds and caps are config.json's ``usage.guard`` (:data:`DEFAULTS`), never rule text. A refusal names the
@@ -71,7 +59,6 @@ import math
 import os
 import re
 import sys
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -82,11 +69,6 @@ DEFAULTS = {"enabled": True, "warn": 80.0, "critical": 95.0, "sessions": 8, "bra
             "memory_available_gb": 0.0, "wave_hours": 4.0, "session_hour_usd": 14.0, "session_hour_measured": False,
             "fresh_minutes": 60, "live_minutes": 30,
             "brainstorm_hours": 12, "brainstorm_title": r"^\W*brainstorm\b", "wave_quota": None}
-# usage.guard.wave_quota's fields when it is given (wi-brain-wave-quota-gate; RETRO-5): absent, the gate is off
-WAVE_DEFAULTS = {"ask_over_pct": 90.0, "max_streams": 3}
-STREAM_BUDGET_S = 2.0   # the live streams' count gives up past this (the call goes through, with a note)
-STREAM_STATES = ("running", "starting")   # what counts as a live stream (asking, idle, quiet do not)
-_USD_RE = re.compile(r"\busd=\$?(\d+(?:\.\d+)?)")
 LOWER_ONLY = ("sessions", "brainstorms")   # what a project's usage: may lower for itself, never raise
 SESSION_TOOL = re.compile(r"^mcp__.+__start_session$")
 AGENT_TOOLS = ("Agent", "Task")
@@ -149,8 +131,9 @@ def limits_of(data: dict | None) -> tuple[dict, list[str]]:
         if key not in DEFAULTS:
             errors.append(f"usage.guard.{key}: unknown (known: {', '.join(DEFAULTS)})")
             continue
-        if key == "wave_quota":
-            out[key], errs = wave_quota_of(value)
+        if key == "wave_quota":   # the wave quota gate's mapping (brain.wavegate)
+            from . import wavegate
+            out[key], errs = wavegate.config_of(value)
             errors += errs
             continue
         want = type(DEFAULTS[key])
@@ -165,28 +148,6 @@ def limits_of(data: dict | None) -> tuple[dict, list[str]]:
     except re.error as exc:
         errors.append(f"usage.guard.brainstorm_title: not a regular expression ({exc})")
         out["brainstorm_title"] = DEFAULTS["brainstorm_title"]
-    return out, errors
-
-
-def wave_quota_of(value) -> tuple[dict | None, list[str]]:
-    """usage.guard.wave_quota over :data:`WAVE_DEFAULTS` (None: the gate is off), and what is wrong in it (a field of
-    the wrong type is left at its default)."""
-    if value is None:
-        return None, []
-    if not isinstance(value, dict):
-        return None, [f"usage.guard.wave_quota: a mapping of {', '.join(WAVE_DEFAULTS)} (the gate stays off)"]
-    out, errors = dict(WAVE_DEFAULTS), []
-    for key, v in value.items():
-        number = isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
-        if key == "ask_over_pct" and number and v <= 100:
-            out[key] = float(v)
-        elif key == "max_streams" and number and isinstance(v, int):
-            out[key] = v
-        elif key in WAVE_DEFAULTS:
-            errors.append(f"usage.guard.wave_quota.{key}: " + ("a number from 0 to 100" if key == "ask_over_pct"
-                                                               else "a whole number of 0 or more"))
-        else:
-            errors.append(f"usage.guard.wave_quota.{key}: unknown (known: {', '.join(WAVE_DEFAULTS)})")
     return out, errors
 
 
@@ -337,20 +298,6 @@ def quota_now(now: datetime, lim: dict) -> dict:
             how += f" + {pace:.2f} %/h x {hours:.1f} h"
         out["windows"][w] = {"pct": round(min(pct, 100.0), 1), "at": _iso(at), "how": how,
                              "resets": r["resets"]}
-    # what the wave quota gate projects with (wi-brain-wave-quota-gate): the last forecast's pace, only while that
-    # forecast is of the week in force (its reset the reading's), its conversion and the median session's cost
-    week, s_resets = out["windows"].get("week"), _dt(status.get("resets"))
-    pace = status.get("pace") if isinstance(status.get("pace"), dict) else {}
-    pct_h = pace.get("pct_h")
-    out["pace_pct_h"] = float(pct_h) if (week and status.get("window") == "week" and s_resets and isinstance(
-        pct_h, (int, float)) and not isinstance(pct_h, bool) and pct_h >= 0
-        and abs(s_resets - _dt(week["resets"])) < timedelta(minutes=5)) else None
-    ppu = conv.get("pct_per_usd")
-    out["pct_per_usd"] = float(ppu) if isinstance(ppu, (int, float)) and not isinstance(ppu, bool) and ppu > 0 else \
-        (1 / out["usd_per_pct"] if out["usd_per_pct"] else None)
-    live = status.get("live") if isinstance(status.get("live"), dict) else {}
-    med = live.get("median_session_usd")
-    out["median_session_usd"] = float(med) if isinstance(med, (int, float)) and med > 0 else None
     return out
 
 
@@ -476,244 +423,6 @@ def is_brainstorm(inp: dict, lim: dict) -> bool:
     title = str(inp.get("title") or "")
     return bool(BRAINSTORM_BRIEF.search(brief) or BRAINSTORM_BRIEF.search(title)
                 or re.search(lim["brainstorm_title"], title, re.I))
-
-
-# --- the wave quota gate (wi-brain-wave-quota-gate) ----------------------------------------------------------------
-
-def starts_now(inp: dict) -> bool:
-    """Whether a start_session call starts a session now: the owner asked for it (``initiation`` user_asked, or none)
-    or it starts a proposal (``proposal_id``); a proposal card (``offer``, ``own_initiative``) starts nothing
-    (brain.budget counts a master's children the same way)."""
-    return bool(inp.get("proposal_id")) or inp.get("initiation") in ("user_asked", None)
-
-
-def estimate_usd(text: str) -> float | None:
-    """The ``usd=N`` of a cost estimate's line (brain cost estimate, brain brief's « Cost estimate »), else None."""
-    m = _USD_RE.search(str(text or ""))
-    return float(m.group(1)) if m else None
-
-
-def stream_usd(inp: dict, q: dict) -> tuple[float | None, str]:
-    """(the cost of the stream a start_session call starts, where it comes from): the brief's estimate (its
-    ``usd=``), else the median session's of the last forecast, else (None, 'no estimate')."""
-    usd = estimate_usd("\n".join(str(inp.get(k) or "") for k in ("prompt", "background", "title")))
-    if usd is not None:
-        return usd, "the brief's estimate"
-    if q.get("median_session_usd"):
-        return q["median_session_usd"], "the median session's cost, the brief giving no estimate"
-    return None, "no estimate"
-
-
-def projection(q: dict, now: datetime) -> dict | None:
-    """The week's forecast at its reset: its percent now (:func:`quota_now`) plus the last forecast's pace times the
-    hours left; None when a part is missing (no week reading in force, no pace of this week, no conversion)."""
-    week = q["windows"].get("week")
-    if not week or q.get("pace_pct_h") is None or not q.get("pct_per_usd"):
-        return None
-    resets = _dt(week["resets"])
-    hours = max(0.0, (resets - now).total_seconds() / 3600) if resets else 0.0
-    return {"now_pct": week["pct"], "pct_h": q["pace_pct_h"], "hours_left": round(hours, 1),
-            "at_reset": round(week["pct"] + q["pace_pct_h"] * hours, 1), "resets": week["resets"],
-            "pct_per_usd": q["pct_per_usd"]}
-
-
-def _turn(records: list[dict]) -> str:
-    """Where a transcript's turn is from its last records: ``asking``, ``idle`` or ``active``; brain.cockpit.turn's
-    reading (a stop hook's summary ends a turn), kept here because the cockpit's import costs a second in a hook."""
-    for r in reversed(records):
-        kind_ = r.get("type")
-        if kind_ == "system":
-            if r.get("subtype") == "stop_hook_summary":
-                return "idle"
-            continue
-        if kind_ == "assistant":
-            msg = r.get("message") if isinstance(r.get("message"), dict) else {}
-            content = msg.get("content") if isinstance(msg.get("content"), list) else []
-            uses = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
-            if any(b.get("name") == "AskUserQuestion" for b in uses):
-                return "asking"
-            if not uses and msg.get("stop_reason") == "end_turn":
-                return "idle"
-            return "active"
-        if kind_ == "user":
-            return "active"
-    return "active"
-
-
-def _project_dirs() -> list[str]:
-    """Claude Code's transcript folders, listed once per count (paths.find_transcript globs them for each child)."""
-    try:
-        return [d.path for d in os.scandir(paths.projects_dir()) if d.is_dir()]
-    except OSError:
-        return []
-
-
-def _transcript_of(sid: str, dirs: list[str]) -> Path | None:
-    """The newest main transcript of ``sid`` in ``dirs``, or None."""
-    hits = [p for p in (Path(d) / f"{sid}.jsonl" for d in dirs) if p.is_file()]
-    return max(hits, key=lambda p: _stat(p) or [0], default=None)
-
-
-def child_state(node: dict, now: datetime, lim: dict, dirs: list[str] | None = None) -> str:
-    """A child's state for the streams cap: ``starting`` (created in the last :data:`PENDING`, no transcript yet),
-    ``running`` (its transcript written in the last ``live_minutes`` and its turn not ended), else ``asking``,
-    ``idle``, ``quiet`` (no write for ``live_minutes``) or ``unknown`` (no transcript, not new)."""
-    created = node.get("created")
-    young = isinstance(created, (int, float)) and not isinstance(created, bool) and \
-        created >= _ms(now - PENDING)
-    sid = str(node.get("session") or "")
-    f = _transcript_of(sid, _project_dirs() if dirs is None else dirs) if sid else None
-    if f is None:
-        return "starting" if young else "unknown"
-    try:
-        age = now.timestamp() - f.stat().st_mtime
-    except OSError:
-        return "starting" if young else "unknown"
-    if age > lim["live_minutes"] * 60:
-        return "quiet"
-    records = []
-    for line in _tail_lines(f, 65536):
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(rec, dict):
-            records.append(rec)
-    t = _turn(records)
-    return "running" if t == "active" else t
-
-
-def _stream_starts(now: datetime, by: str) -> list[dict]:
-    """The stream starts this hook let through for session ``by`` in the last :data:`PENDING`."""
-    out = []
-    for line in _tail_log(paths.brain_home() / "usage" / "starts.jsonl", 16384):
-        try:
-            r = json.loads(line)
-        except ValueError:
-            continue
-        at = _dt(r.get("at")) if isinstance(r, dict) else None
-        if at and now - PENDING <= at <= now + timedelta(minutes=1) and r.get("stream") and r.get("by") == by:
-            out.append(r)
-    return out
-
-
-def live_streams(master: str, now: datetime, lim: dict, budget_s: float | None = None) -> dict:
-    """The live streams of ``master`` (its app id or its transcript's): {n, names, host_id, note}; ``n`` is None, with
-    the reason in ``note``, when they cannot be counted (no app on the machine, a session the app does not know, a
-    count past ``budget_s``)."""
-    from . import sessions  # ~35 ms, only for a start the gate checks
-    t0 = time.monotonic()
-    budget_s = STREAM_BUDGET_S if budget_s is None else budget_s
-    idx = sessions.app_index()
-    if idx is None:
-        return {"n": None, "names": [], "note": "the desktop app's sessions are not on this machine"}
-    host = master if master in idx else next((h for h, m in idx.items() if master and m.get("session") == master), "")
-    if not host:
-        return {"n": None, "names": [], "note": "this session is not one of the desktop app's"}
-    kids = sorted((m for m in idx.values() if m.get("parent") == host and not m.get("archived")
-                   and m.get("detached") is not True), key=lambda m: -(m.get("created") or 0))
-    names, shown, dirs = [], [], _project_dirs() if kids else []
-    for m in kids:
-        if time.monotonic() - t0 > budget_s:
-            return {"n": None, "names": [], "note": f"the live streams were not counted within {budget_s:g} s"}
-        if child_state(m, now, lim, dirs) in STREAM_STATES:
-            names.append(str(m.get("name") or m.get("title") or m.get("host_id")))
-        shown.append(m)
-    by = str((idx.get(host) or {}).get("session") or master)
-    pending = []
-    for r in _stream_starts(now, by):   # a start the app does not show yet: no child of the title since
-        at = _ms(_dt(r["at"])) - 60_000
-        hit = next((m for m in shown if isinstance(m.get("created"), (int, float)) and m["created"] >= at
-                    and (not r.get("title") or m.get("title") == r.get("title"))), None)
-        if hit is not None:
-            shown.remove(hit)
-        else:
-            pending.append(str(r.get("title") or "a proposal started"))
-    return {"n": len(names) + len(pending), "names": names + pending, "host_id": host, "note": ""}
-
-
-def _fit(at_reset: float | None, pcts: list[float | None], ask: float) -> int | None:
-    """How many of the streams costing ``pcts`` (% of the week, in order) fit before the forecast at the reset goes
-    over ``ask``; None when the forecast or the first cost is unknown."""
-    if at_reset is None or not pcts or pcts[0] is None:
-        return None
-    n, total = 0, at_reset
-    for p in pcts:
-        if p is None or total + p > ask:
-            break
-        total += p
-        n += 1
-    return n
-
-
-def wave_state(wq: dict, inp: dict, master: str, now: datetime, lim: dict, q: dict) -> dict:
-    """What the gate sees for one start: the forecast at the reset, this stream's cost, the master's live streams and
-    the notes of what could not be read (it fails open)."""
-    out: dict = {**wq, "projection": None, "usd": None, "usd_basis": "", "item_pct": None, "streams": {"n": None},
-                 "notes": []}
-    try:
-        if wq["ask_over_pct"]:
-            p = out["projection"] = projection(q, now)
-            out["usd"], out["usd_basis"] = stream_usd(inp, q)
-            if p is None:
-                out["notes"].append("the week's forecast cannot be read (no week reading in force, or no pace of this "
-                                    "week or conversion in usage/quota.json: brain usage quota)")
-            elif out["usd"] is not None:
-                out["item_pct"] = round(out["usd"] * p["pct_per_usd"], 2)
-        if wq["max_streams"]:
-            out["streams"] = live_streams(master, now, lim)
-            if out["streams"]["n"] is None:
-                out["notes"].append(f"the live streams are not counted: {out['streams']['note']}")
-    except Exception as exc:   # noqa: BLE001 - the gate fails open, said in the note
-        out["notes"].append(f"the gate failed ({type(exc).__name__}: {str(exc)[:80]})")
-    return out
-
-
-def wave_room(cwd: str, master: str, usds: list[float | None], now: datetime | None = None) -> dict | None:
-    """How many streams fit now (brain brief, brain wave plan, brain usage guard): the streams left to ``master``
-    (max_streams less its live ones) and those whose costs ``usds`` (in order; None: the median session's) fit under
-    ask_over_pct at the reset; ``fit`` the smaller of the two known ones. None while usage.guard.wave_quota is off."""
-    now = now or _now()
-    st = settings(cwd)
-    lim = st["limits"]
-    wq = lim.get("wave_quota")
-    if not lim["enabled"] or not wq:
-        return None
-    q = quota_now(now, lim)
-    w = wave_state(wq, {}, master, now, lim, q)
-    p = w["projection"]
-    costs = [u if u is not None else q.get("median_session_usd") for u in usds]
-    pcts = [None if p is None or c is None else round(c * p["pct_per_usd"], 2) for c in costs]   # as item_pct
-    by_quota = _fit(p and p["at_reset"], pcts, wq["ask_over_pct"]) if wq["ask_over_pct"] else None
-    n = w["streams"].get("n")
-    by_streams = max(0, wq["max_streams"] - n) if wq["max_streams"] and n is not None else None
-    known = [x for x in (by_quota, by_streams) if x is not None]
-    w.update(by_quota=by_quota, by_streams=by_streams, fit=min(known) if known else None, pcts=pcts)
-    w["line"] = wave_line(w)
-    return w
-
-
-def wave_line(w: dict) -> str:
-    """One line of :func:`wave_room`: the streams that fit now and why."""
-    p, s = w["projection"], w["streams"]
-    parts = []
-    if w["ask_over_pct"]:
-        if p is None:
-            parts.append("by the quota: not known (brain usage quota)")
-        else:
-            cost = next((x for x in w.get("pcts") or [] if x is not None), None)
-            parts.append(f"by the quota {w['by_quota'] if w['by_quota'] is not None else '?'}: the week "
-                         f"{p['now_pct']:.0f} % now, {p['at_reset']:.0f} % at its reset "
-                         f"{p['resets'][:16].replace('T', ' ')} UTC at the last forecast's pace, asked over "
-                         f"{w['ask_over_pct']:g} %" + (f", a stream {cost:.1f} %" if cost is not None else ""))
-    if w["max_streams"]:
-        if s.get("n") is None:
-            parts.append(f"by the streams: not known ({s.get('note') or 'no master session'})")
-        else:
-            parts.append(f"by the streams {w['by_streams']}: {s['n']} live of {w['max_streams']}"
-                         + (f" ({', '.join(s['names'][:4])})" if s.get("names") else ""))
-    fit = w.get("fit")
-    return f"{fit if fit is not None else 'not known'} ({'; '.join(parts)}; usage.guard.wave_quota)"
 
 
 # --- the machine ---------------------------------------------------------------------------------------------------
@@ -852,8 +561,9 @@ def state(payload: dict, now: datetime | None = None) -> dict:
         room = (100 - week["pct"]) * q["usd_per_pct"]
         out["quota_cap"] = max(0, math.floor(room / max(1e-9, lim["wave_hours"] * out["session_hour_usd"])) - 1)
     out["override"] = override_until(now)
-    if k == "session" and lim["enabled"] and lim.get("wave_quota") and starts_now(inp):
-        out["wave"] = wave_state(lim["wave_quota"], inp, str(payload.get("session_id") or ""), now, lim, q)
+    if lim.get("wave_quota"):   # the wave quota gate (brain.wavegate): a start_session that starts a stream now
+        from . import wavegate
+        out["wave"] = wavegate.for_start(k, lim, inp, str(payload.get("session_id") or ""), now, q)
     return out
 
 
@@ -904,34 +614,14 @@ def verdict(s: dict) -> tuple[str, str, str] | None:
             return ("deny", "brainstorms", f"a new brainstorm refused: {ss['brainstorms']} brainstorm(s) open on this "
                     f"machine ({names or 'not named'}), the cap is {lim['brainstorms']:g}"
                     + (f" for {s['project']}" if s["project"] else "") + "; finish or archive one first")
-        v = wave_verdict(s.get("wave"))
-        if v:
-            return v
+        if s.get("wave"):
+            from . import wavegate
+            v = wavegate.verdict(s["wave"])
+            if v:
+                return v
     if top and top[1]["pct"] >= lim["warn"]:
         return ("ask", "warn", f"{what}: the {top[0]} quota is at {top[1]['pct']:.0f} % (WARN from "
                 f"{lim['warn']:g} %, CRITICAL from {lim['critical']:g} %); start it anyway?")
-    return None
-
-
-def wave_verdict(w: dict | None) -> tuple[str, str, str] | None:
-    """The wave quota gate's answer (:func:`wave_state`): deny a stream past max_streams, ask past ask_over_pct at the
-    reset; None to let it through (and when the gate is off or could not read what it needs)."""
-    if not w:
-        return None
-    ss = w["streams"]
-    if w["max_streams"] and ss.get("n") is not None and ss["n"] >= w["max_streams"]:
-        names = ", ".join(ss["names"][:4])
-        return ("deny", "streams", f"a new stream refused: this session already has {ss['n']} live stream(s) "
-                f"({names or 'not named'}), the cap is {w['max_streams']} (usage.guard.wave_quota.max_streams: "
-                "the streams of one master, their reviews included); wait until one has reported and is archived")
-    p, pct = w["projection"], w["item_pct"]
-    if w["ask_over_pct"] and p is not None and p["at_reset"] + (pct or 0.0) > w["ask_over_pct"]:
-        cost = (f" plus this stream's {pct:.1f} % (${w['usd']:.2f}, {w['usd_basis']})" if pct is not None
-                else f" ({w['usd_basis']} for this stream)")
-        return ("ask", "wave_quota", f"a new stream: the week's forecast at its reset "
-                f"{p['resets'][:16].replace('T', ' ')} UTC is {p['at_reset']:.0f} % ({p['now_pct']:.0f} % now + "
-                f"{p['pct_h']:.2f} %/h x {p['hours_left']:.1f} h){cost}: {p['at_reset'] + (pct or 0.0):.0f} %, over "
-                f"{w['ask_over_pct']:g} % (usage.guard.wave_quota.ask_over_pct); start it anyway?")
     return None
 
 
@@ -995,15 +685,7 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
         from . import budget
         budget.expire(str(payload.get("session_id") or ""))   # the budget watch checks at the next call: a master
     if v is None:
-        if s["kind"] == "session":
-            _note_start(payload, s)
-            notes = [f"Wave quota gate (usage.guard.wave_quota): {n}; the start goes through unchecked by it."
-                     for n in (s.get("wave") or {}).get("notes") or []]
-            note = master_note(str(payload.get("session_id") or ""))
-            notes += [note] if note else []   # ST-4: a reminder with the call, never a refusal
-            if notes:
-                return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "\n".join(notes)}}
-        return None
+        return _let_through(payload, s) if s["kind"] == "session" else None
     decision, check, reason = v
     _record(payload, check, "denied" if decision == "deny" else "asked", reason)
     text = f"{s['plugin']} usage guard: {reason}."
@@ -1011,6 +693,21 @@ def decide(payload: dict, now: datetime | None = None) -> dict | None:
         text += f" {override_hint(s['owner'])}."
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                    "permissionDecisionReason": text}}
+
+
+def _let_through(payload: dict, s: dict) -> dict | None:
+    """A start_session let through: the start noted, and the hook's context when there is something to say (what the
+    wave quota gate could not read; the master's watch, ST-4: a reminder with the call, never a refusal)."""
+    _note_start(payload, s)
+    notes = []
+    if s.get("wave"):
+        from . import wavegate
+        notes = wavegate.notes(s["wave"])
+    note = master_note(str(payload.get("session_id") or ""))
+    notes += [note] if note else []
+    if not notes:
+        return None
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "\n".join(notes)}}
 
 
 def main(stdin=None, stdout=None) -> int:
@@ -1044,8 +741,11 @@ def report(cwd: str, now: datetime | None = None) -> dict:
         name = "brainstorm" if inp.get("title") == "Brainstorm" else kind(tool)
         out[name] = {"decision": v[0] if v else "allow", "check": v[1] if v else "", "reason": v[2] if v else ""}
         out.setdefault("state", s)
+    out["waves"] = None
     wq = out["state"]["caps"].get("wave_quota")
-    out["waves"] = wave_room(cwd, master, [None] * (int(wq["max_streams"]) or 10), now) if wq else None
+    if wq:   # how many streams fit now, each at the median session's cost (brain.wavegate)
+        from . import wavegate
+        out["waves"] = wavegate.room(cwd, master, [None] * (int(wq["max_streams"]) or 10), now)
     return out
 
 
@@ -1080,10 +780,8 @@ def render(rep: dict) -> list[str]:
     out.append(f"  newest    {q['newest'] or 'none'}" + ("" if q["opted_in"] else " (not checked: no reading in 7 d)"))
     out += _session_lines(s, lim, q)
     out.append(f"  memory    {memory_text(s.get('memory'), s.get('ram_available_gb'), lim)}")
-    wq, w = lim.get("wave_quota"), rep.get("waves")
-    out.append(f"  waves     ask over {wq['ask_over_pct']:g} % at the reset, {wq['max_streams']} stream(s) at most a "
-               f"master; fit now {w['line']}" if wq and w else
-               "  waves     off (usage.guard.wave_quota not set)" if not wq else "  waves     off (the governor off)")
+    from . import wavegate
+    out.append(wavegate.guard_line(lim, rep.get("waves")))
     ov = s.get("override")
     out.append(f"  override  until {ov['until']}" + (f" ({ov['reason']})" if ov.get("reason") else "") if ov
                else "  override  none")

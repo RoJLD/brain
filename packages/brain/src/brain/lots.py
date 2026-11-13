@@ -23,7 +23,7 @@ full suite of each running locally; ``--at-once N``). The plan also says what th
 memory guard's two measures (brain.governor) and the last quota forecast's advice (brain.quota's ``quota.json``,
 read through its reader: this module never opens the quota readings itself). While config.json
 ``usage.guard.wave_quota`` is set (wi-brain-wave-quota-gate; RETRO-5), a round holds at most its ``max_streams`` lots,
-and the plan says how many streams fit now (brain.governor.wave_room): this session's live streams under
+and the plan says how many streams fit now (brain.wavegate.room): this session's live streams under
 ``max_streams``, and the first round's lots, each at the sum of its items' recorded estimates (props.cost_estimate;
 none recorded: the median session's), that keep the week's forecast at its reset under ``ask_over_pct``. It prints
 and refuses nothing; ``brain next`` shows the current wave's plan in short.
@@ -39,7 +39,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import collisions, governor, quota, resume, waves
+from . import collisions, governor, quota, resume, wavegate, waves
 
 HOT = ("README.md", "CHANGELOG.md", "FEATURES.md", "formats.md", "config.schema.json", "changes/")
 AT_ONCE = 3   # the PRs one machine verifies at once: each runs the whole suite locally, ~10 minutes on all cores
@@ -139,7 +139,7 @@ def _unit(plan: waves.Plan, st: resume.Store, nid: str, extra_hot: tuple[str, ..
     props = node.get("props") or {}
     priority = str(props.get("priority") or "")
     return Unit(nid, str(node.get("title") or ""), plan.status(nid), priority, [e for e in entries if e not in hot],
-                hot, usd=governor.estimate_usd(str(props.get("cost_estimate") or "")))
+                hot, usd=wavegate.estimate_usd(str(props.get("cost_estimate") or "")))
 
 
 def units_of(plan: waves.Plan, st: resume.Store, wid: str, extra_hot: tuple[str, ...] = ()) -> dict[str, Unit]:
@@ -320,12 +320,12 @@ def lot_usd(lot: Lot, units: dict[str, Unit]) -> float | None:
 
 
 def streams_now(root: Path | None, caps: dict, first: list[Lot], units: dict[str, Unit]) -> None:
-    """While the wave quota gate is on, ``caps["streams"]`` (brain.governor.wave_room for this session, the first
+    """While the wave quota gate is on, ``caps["streams"]`` (brain.wavegate.room for this session, the first
     round's lots at their cost) and ``now`` lowered to the streams that fit."""
     try:
         from . import sessions
         me = sessions.here()
-        room = governor.wave_room(str(root or ""), me["host_id"] or me["session"],
+        room = wavegate.room(str(root or ""), me["host_id"] or me["session"],
                                   [lot_usd(lot, units) for lot in first] or [None])
     except Exception as exc:   # noqa: BLE001 - a hint: a plan always prints
         caps["streams"] = {"fit": None, "line": f"not known ({type(exc).__name__})"}

@@ -12,7 +12,7 @@ import shutil
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from brain import cli, cockpit, config, governor, lots
+from brain import cli, cockpit, config, governor, lots, wavegate
 from conftest import FIXTURES
 from test_governor import NOW, START, ada, forecast, iso, ledger, ms, reading  # noqa: F401 - ada is a fixture
 
@@ -170,10 +170,10 @@ def test_what_counts_as_a_live_stream(ada, wave, tmp_path):
     transcript(tmp_path, "c-8", *WORKING, at=NOW - timedelta(minutes=45))     # quiet for 45 min
     app_file(ada, "local_cccccccc-0000-4000-8000-00000000000c", "other-cli", "Other's", parent="local_other")
     lim = governor.caps(governor.settings(str(ada.lab)), "lab")
-    s = governor.live_streams(M_CLI, NOW, lim)
+    s = wavegate.live_streams(M_CLI, NOW, lim)
     assert s["n"] == 2 and s["names"] == ["stream-2", "stream-1"] and s["host_id"] == MASTER
-    assert governor.live_streams(MASTER, NOW, lim)["n"] == 2   # the app's id names the master too
-    assert governor.child_state({"session": "c-8", "host_id": host8}, NOW, lim) == "quiet"
+    assert wavegate.live_streams(MASTER, NOW, lim)["n"] == 2   # the app's id names the master too
+    assert wavegate.child_state({"session": "c-8", "host_id": host8}, NOW, lim) == "quiet"
     child(ada, tmp_path, 9)
     assert decision(start(ada))[0] == "deny" and ledger(wave)[-1]["check"] == "streams"
     for card in ({"initiation": "offer", "prompt": ""}, {"initiation": "own_initiative"}):
@@ -192,8 +192,8 @@ def test_a_start_counts_before_the_app_shows_it(ada, wave, tmp_path):
     app_file(ada, "local_bbbbbbbb-0000-4000-8000-0000000000e2", "c-two", "Stream two", parent=MASTER,
              created=NOW + timedelta(seconds=5))
     lim = governor.caps(governor.settings(str(ada.lab)), "lab")
-    assert governor.live_streams(M_CLI, NOW + timedelta(minutes=3), lim)["n"] == 3
-    assert governor.live_streams(M_CLI, NOW + timedelta(minutes=13), lim)["n"] == 1   # the unseen start is forgotten
+    assert wavegate.live_streams(M_CLI, NOW + timedelta(minutes=3), lim)["n"] == 3
+    assert wavegate.live_streams(M_CLI, NOW + timedelta(minutes=13), lim)["n"] == 1   # the unseen start is forgotten
 
 
 def test_an_unreadable_forecast_lets_the_start_through_with_a_note(ada, wave, tmp_path):
@@ -226,7 +226,7 @@ def test_a_missing_ledger_or_app_and_a_slow_count_let_it_through_with_a_note(ada
     assert "the week's forecast cannot be read" in text and "this session is not one of the desktop app's" in text
     master(ada)
     child(ada, tmp_path, 1)
-    monkeypatch.setattr(governor, "STREAM_BUDGET_S", -1.0)   # a count that times out
+    monkeypatch.setattr(wavegate, "BUDGET_S", -1.0)   # a count that times out
     assert "the live streams were not counted within -1 s" in decision(start(ada))[1]
     monkeypatch.delenv("LOCALAPPDATA")
     assert "the desktop app's sessions are not on this machine" in decision(start(ada))[1]
@@ -238,7 +238,7 @@ def test_a_failure_inside_the_gate_lets_it_through_with_a_note(ada, wave, monkey
     def boom(*a, **k):
         raise OSError("disk gone")
 
-    monkeypatch.setattr(governor, "live_streams", boom)
+    monkeypatch.setattr(wavegate, "live_streams", boom)
     out = start(ada)
     assert "permissionDecision" not in out["hookSpecificOutput"]
     assert "the gate failed (OSError: disk gone)" in decision(out)[1]
@@ -263,15 +263,17 @@ def test_the_threshold_on_a_real_forecast(ada, brain_home):
     shutil.copy(QUOTA / "quota.jsonl", brain_home / "usage" / "quota.jsonl")
     lim = governor.caps(governor.settings(str(ada.lab)), "lab")
     q = governor.quota_now(REAL_NOW, lim)
-    p = governor.projection(q, REAL_NOW)
-    assert q["pct_per_usd"] == 0.058719 and q["median_session_usd"] == 26.4
+    p = wavegate.projection(q, REAL_NOW)
+    got = wavegate.inputs(q)
+    assert got == {"pct_h": 2.157, "pct_per_usd": 0.058719, "median_session_usd": 26.4}
     assert p["now_pct"] == 78.2 and p["hours_left"] == 71.5 and p["at_reset"] == 232.4
     d, reason = decision(start(ada, now=REAL_NOW))
-    assert d == "ask" and "is 232 % (78 % now + 2.16 %/h x 71.5 h) plus this stream's 0.7 % ($11.00, the brief's estimate): 233 %" in reason
+    assert d == "ask" and ("is 232 % (78 % now + 2.16 %/h x 71.5 h) plus this stream's 0.7 % ($11.00, the brief's "
+                           "estimate): 233 %") in reason
     data = json.loads((QUOTA / "quota.json").read_text(encoding="utf-8"))
     data["pace"]["pct_h"] = 0.05
     (brain_home / "usage" / "quota.json").write_text(json.dumps(data), encoding="utf-8")
-    p = governor.projection(governor.quota_now(REAL_NOW, lim), REAL_NOW)
+    p = wavegate.projection(governor.quota_now(REAL_NOW, lim), REAL_NOW)
     assert p["now_pct"] == 78.0 and round(p["at_reset"]) == 82
     assert decision(start(ada, now=REAL_NOW))[0] is None   # a note (the master is not in the app), no question
     d, reason = decision(start(ada, now=REAL_NOW, prompt=BRIEF.replace("usd=11.00", "usd=200.00")))
@@ -286,7 +288,7 @@ def test_the_config_key_is_validated(ada, brain_home):
                       "usage.guard.wave_quota.streams: unknown (known: ask_over_pct, max_streams)"]
     assert governor.limits_of({"wave_quota": True}) == (dict(governor.DEFAULTS), [
         "usage.guard.wave_quota: a mapping of ask_over_pct, max_streams (the gate stays off)"])
-    assert governor.limits_of({"wave_quota": {}})[0]["wave_quota"] == governor.WAVE_DEFAULTS
+    assert governor.limits_of({"wave_quota": {}})[0]["wave_quota"] == wavegate.DEFAULTS
     ada({"wave_quota": WAVE})
     assert config.check() == []   # the schema knows the key
     ada({"wave_quota": {"max_streams": -1}})
@@ -301,7 +303,7 @@ def test_the_turn_reads_as_the_cockpit_reads_it():
         sets.append([json.loads(x) for x in f.read_text(encoding="utf-8").splitlines() if x.strip()])
     for recs in sets:
         for i in range(len(recs) + 1):
-            assert (governor._turn(recs[:i]) == "active") == (cockpit.turn(recs[:i]) == "active"), (recs[:i])
+            assert (wavegate.turn(recs[:i]) == "active") == (cockpit.turn(recs[:i]) == "active"), (recs[:i])
 
 
 def test_brain_usage_guard_says_how_many_fit(ada, wave, tmp_path, capsys, monkeypatch):

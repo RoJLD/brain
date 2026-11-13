@@ -11,7 +11,7 @@ The brief holds, in this order:
 - the cost estimate of brain cost (wi-brain-brief-estimate) when the token ledger has a basis;
 - while config.json ``usage.guard.wave_quota`` is set (wi-brain-wave-quota-gate), how many streams fit now: the
   coordinator's live streams under ``max_streams``, and the streams at this item's estimate that keep the week's
-  forecast at its reset under ``ask_over_pct`` (brain.governor.wave_room, what the governor checks at the start);
+  forecast at its reset under ``ask_over_pct`` (brain.wavegate.room, what the governor checks at the start);
 - the coordinator's app session id (``--coordinator``, else ``$CLAUDE_CODE_HOST_SESSION_ID``: the session that runs
   ``brain brief``) and the shared notes folder (``--notes``, else the desktop app's folder for that session when it
   exists);
@@ -252,14 +252,14 @@ def _estimate(p: projects.Project, nid: str, task_class: str) -> str:
 
 
 def _streams(p: projects.Project, coordinator: str, estimate: str) -> str:
-    """The streams that fit now (brain.governor.wave_room) for ``coordinator``, each at this item's estimate; '' while
+    """The streams that fit now (brain.wavegate.room) for ``coordinator``, each at this item's estimate; '' while
     the wave quota gate is off."""
     try:
-        from . import governor
+        from . import governor, wavegate
         wq = governor.settings(str(p.root))["limits"].get("wave_quota")
         if not wq:
             return ""
-        room = governor.wave_room(str(p.root), coordinator, [governor.estimate_usd(estimate)]
+        room = wavegate.room(str(p.root), coordinator, [wavegate.estimate_usd(estimate)]
                                   * (int(wq["max_streams"]) or 10))
         return room["line"] if room else ""
     except Exception as exc:  # noqa: BLE001 - a hint: its absence never stops a brief
