@@ -313,12 +313,24 @@ Every refusal, ask and override is a line of the guards ledger with `"guard": "u
 ### Overriding it (the owner only)
 
 ```bash
-brain usage allow --hours 2 --reason "finish the demo"   # in your own terminal
+brain usage allow --hours 2 --reason "finish the demo"   # in your own terminal: the memory and session caps
+brain usage allow --check critical --hours 1             # the critical quota (and warn with it)
 brain usage allow --hours 0                              # end it now
 ```
 
+An allow lifts checks, not the governor (RETRO-8): by default the memory and session caps (`memory`, `sessions`,
+`brainstorms`); `--check NAME`, repeatable, aims one or more of `critical` (which lifts `warn` too), `warn`, `memory`,
+`sessions`, `brainstorms`. A stale quota reading is never lifted: reading it again is one `get_usage` call. A lifted
+check lets the next one decide (memory lifted, the sessions cap still refuses), and each refusal names the allow that
+lifts it (`brain usage allow --check critical --hours 2`), or says that none does. Each allow, and its end (`ended`
+by `--hours 0`, `replaced` by a new allow, `expired` when its time passes: the first hook that sees it removes the
+file), is a line of the guards ledger (`"guard": "usage"`, `"check": "allow"`, its checks, since, until and reason),
+and each call it lets through one more (`"decision": "overridden"`, `"by": "allow"`). An `allow.json` written by
+0.5.0 (no `checks`) lifts every check but `stale` until it ends.
+
 The guards refuse `brain usage allow` to a session, and any write of its file (`<BRAIN_HOME>/usage/allow.json`).
-`BRAIN_GUARD_ALLOW=usage` in Claude Code's environment lifts it too, for every session started with it.
+`BRAIN_GUARD_ALLOW=usage` in Claude Code's environment lifts every check, for every session started with it;
+`BRAIN_GUARD_ALLOW=usage:CHECK` that one only.
 
 ### Not applied here
 

@@ -1424,8 +1424,10 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (an opt-in floor, 0 by default; both
   shown by `brain usage guard` and `brain status`, the refusal naming the one), or while the newest quota reading is older than
   `fresh_minutes`. The thresholds are config.json `usage.guard`; `brain usage guard` shows what each tool would get
-  now. A refusal names its reason and the owner's override: `brain usage allow [--hours H]` in their own terminal
-  (the guards refuse it to a session), or `BRAIN_GUARD_ALLOW=usage`. Its decision takes under 50 ms.
+  now. A refusal names its reason and the allow that lifts it: `brain usage allow [--check NAME] [--hours H]` in the
+  owner's own terminal (the guards refuse it to a session), which lifts the memory and session caps by default, a
+  quota threshold only by `--check`, a stale reading never; each allow and its end go to the guards ledger; or
+  `BRAIN_GUARD_ALLOW=usage` (`usage:CHECK` for one). Its decision takes under 50 ms.
 
 The quota conversion (`brain usage quota`) is per plan: only the readings of the plan in force (config.json
 `usage.plans`) count, and until the plan has 3 converted readings it says "uncalibrated", does not convert the week and
