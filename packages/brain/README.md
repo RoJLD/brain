@@ -34,7 +34,7 @@ What it does, every command reading files and git, never a model:
   workflow; a command a session types into the owner's Terminal panel, `run_in_terminal`, meets the same shell
   guards), which `brain render --target claude` copies into the owner's own plugin;
 - **publishing**: `brain check --public` refuses anything private (the owner's denied terms, secrets, personal data
-  shapes, data files) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
+  shapes, data files, the personal graph's decision ids and titles and the other projects' ids) before a push to a public repo, and its guard holds the push until the check is green under the same engine version,
   deny rules and gitleaks as now. After an upgrade, `brain update` and the installer's `-Apply` re-check the
   registry's public checkouts with the new engine (`brain check --public --refresh`), so each one's HEAD is stamped
   again; a checkout with uncommitted work is skipped and named, and another local branch still asks its own check.
@@ -686,6 +686,34 @@ the standards' stage, the template) and writes nothing: an existing registry cha
 offers it as « A new project » (without `--owner`, the owner of this machine's personal brain). The languages and tools, the data classes and the pack, procedures and permissions it
 will propose are its later slices.
 
+`brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
+CLASS] [--title TEXT] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`), a plan
+then `--apply`, instead of a hand edit of the file:
+- `--read`: a project the brain reads and never writes (its entry: `title`, `access: read`, `parent`, `classes`);
+- `--existing DIR`: an instance that has its own brain, registered without a copy: its `root` and `stores` when
+  `--store` names another than `notes/graph`; a folder without that store, or the root of a registered project, is
+  refused;
+- `--template T --dir DIR`: a new project's brain written first by `brain init DIR --template T --name NAME` (its own
+  plan in the plan; with `--apply` a logged step), then registered as `--existing` would; refused on a machine without
+  its pointer, which `brain init` would point at the new project.
+
+A root is written relative to the registry's main checkout (the registry outlives the worktree it is edited in) and
+checked to read back to the folder from the worktree too; it is written absolute when no relative path does, and a
+folder inside the worktree is refused.
+
+`--parent` places it in the scope tree (a container of `scopes.yaml` or a project), `--floor` writes `classes: {floor:
+CLASS}`, and the plan says what `public.deny.repos` gains when `public.deny_from_tree` is on. Before writing, the
+registry as it would be is checked by `brain check`'s own registry and tree checks: an error the entry would add (an
+unknown parent, a type that does not accept it) refuses the write, one already there is left to `brain check`. The
+name is an id of the tree, kebab-case from a letter and new among the projects and containers. The entry is appended
+at the end of the file, its comments, order and line endings kept (a file whose end does not take a block entry, a
+flow mapping or a document end marker, is refused), and the write is logged as the owner's step in
+`<BRAIN_HOME>/ledger/setup-<month>.jsonl`, as `brain init`'s steps are. The registry is the one at `--root`, else
+`$BRAIN_PROJECTS`, else the nearest `projects.yaml` above the current folder, never the pointer's brain from another
+folder; its config.json and scopes.yaml are read beside it, whatever `$CLAUDE_BRAIN_DIR`, `$BRAIN_PERSONAL` or
+`$BRAIN_CONFIG` name. `--project` is refused: a brain's registry changes by a branch and a PR of that brain, so run it
+in a worktree of it, then `brain sync` and `brain check`.
+
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
 A team uses `--kind team` (and `--tenant ID` for a hosted brain). The step-by-step guide from an empty machine is
@@ -1219,6 +1247,35 @@ out. A term, by hand or derived, matches in every spelling of its separators: `a
 by: rerun `brain check --public --history` before the next push. A registry that cannot be read (a YAML error, a
 conflict marker in `projects.yaml`, `members.yaml` or a module registry) never yields a shorter list: the public and
 secrets guards refuse, as for a configuration they cannot trust, and `brain check --public` stops (exit code 2).
+
+**The personal graph's ids** (`wi-brain-public-private-ids`, brain.privateids). When `config.json` names a public
+repo, `brain check --public` and the public commit guard also refuse, as the `graph` check, what the registry's stores
+hold of the owner's graph: an ADR's or a DDR's id (the owner's decisions and answers) whatever its project; any other
+id of the shapes `wi-`, `adr-`, `feat-`, `ddr-`, `spec-` and `les-` of a project that is not the public repo's own (the
+projects with a repo named as the public repo, whose items, features, specs and lessons the engine cites on purpose:
+its CHANGELOG, its docstrings, FEATURES.md); and an ADR's title of 4 words or more, matched on its first 8 words
+whatever the case and the punctuation (a title quoted whole, or cut where a view truncates it). An id no store holds
+passes (a test's invented `adr-2026-01-01-x`), as does a file under `public.allow`. A store that does not load is said
+in the check's notes, its ids unchecked. The ids are not part of the stamp's key: a new item every few minutes would
+void every stamp, and a line checked before an id existed cannot hold it.
+
+**The secret scan, hardened** (`wi-brain-secretscan-hardening`, brain.secretscan), before the first machine snapshot.
+A PEM private key matches as a whole block, from its `BEGIN` line to its `END` line (to the text's end when it has
+none): a ledger's line drop takes the key's body too. The fleet's token formats are known: ntfy (`tk_`), Tailscale
+(`tskey-`), GitLab (`glpat-`), PyPI (`pypi-`) and npm (`npm_`). A unit (a note, a rules file, a snapshot's unit) is
+refused whole on a match (`secretscan.clean_unit`), never sent with its matching lines dropped. `gitleaks:allow` waives
+nothing under `machines/` and `memory/`, the folders committed in clear: the commit guard reads them with the built-in
+scan even when gitleaks (which honours the mark) is on the PATH, and `brain check --public` refuses there too. A
+blocking decision about the owner's rules or notes (`brain decision ask --rule FILE#SECTION --note PATH`, stored as
+`links.rules` and `links.notes`) is notified as a pointer only, « A blocking decision waits for you »: never its
+question, options, a rule's text, its id, its project or the host.
+
+**The private text before a tag.** `brain check --public --private-text` also compares the tracked files with the
+personal brain's own text, its rules (`config.json` `rules`) and its notes (the Markdown under `memory`), by windows of
+8 words, lowercased, so case, punctuation and line breaks hide nothing: a sentence copied from a rule or a note is a
+`text` finding (the file, its line, the source), even when it names no denied term. A file under `public.allow` is not
+read. It runs before each tag (docs/release.md, « 3. The tag »), never stamps, and its findings are not part of the
+push guard's stamp.
 
 ### Edges between stores
 

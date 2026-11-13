@@ -34,11 +34,15 @@ USAGE = """\
   brain check --public [--repo DIR] [--remote NAME] [--history] [--engine] [--json]   before a push to a public repo
                         (config.json public.repos), at zero token: no denied term (public.deny, and the names derived
                         from the brain's registries: public.derive, brain.denylist), secret, e-mail or home
-                        folder, data or sealed file, nor a domain's patterns (public.patterns, public.refuse) in the
+                        folder, data or sealed file, nor a domain's patterns (public.patterns, public.refuse), nor the
+                        personal graph's decision ids and titles or another project's ids (brain.privateids) in the
                         tracked files, and with --history in the commits not on the remote yet (gitleaks too when on
                         the PATH); green with --history, it stamps HEAD for the public guard on git push, keyed by
                         the engine version, the rules' hash and gitleaks (a change of any: rerun it); --engine:
                         the files brain boundary sends to the engine, in this checkout (a dry run)
+  brain check --public --private-text   the same, and the tracked files against the personal brain's rules and
+                        notes by windows of 8 words (a sentence copied from a rule or a note): before each tag; it
+                        never stamps
   brain check --public --refresh   the same with --history in every local checkout of a public repo (the
                         registry's repos whose remote is in public.repos), by this engine: what the installer's -Apply
                         and brain update run after an install, so that no stamp is left of the old engine; a HEAD
@@ -91,6 +95,9 @@ def register(sub, ctx) -> None:
     ck.add_argument("--engine", action="store_true", help="--public: the engine side of this checkout "
                                                           "(boundary.yaml), the extraction's dry run")
     ck.add_argument("--json", action="store_true", help="--public: stable keys")
+    ck.add_argument("--private-text", action="store_true",
+                    help="--public: also the tracked files against the personal brain's rules and notes, by windows "
+                         "of 8 words (brain.privatetext), before a tag; never stamps")
     ck.add_argument("--refresh", action="store_true", help="--public: --history in every local checkout of a public "
                                                            "repo (the registry's), by this engine; a checkout with "
                                                            "uncommitted work is skipped and named")
@@ -104,7 +111,8 @@ def early(args) -> int | None:
     if args.public:  # a public repo has no graph store: before find_root
         root = root_of(args)
         return public.main(Path(args.repo).resolve() if args.repo else root or Path.cwd(), history=args.history,
-                           remote=args.remote or "", engine=args.engine, as_json=args.json)
+                           remote=args.remote or "", engine=args.engine, as_json=args.json,
+                           text=args.private_text)
     return None
 
 

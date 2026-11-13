@@ -34,7 +34,7 @@ so), ``dry-run`` turns every send into a dry run. Exit code 0 when a channel del
 held back by the throttle, off, dry run); 1 when every channel of the route failed or is not set up; 2 for a
 configuration error. The transports use the standard library only (urllib, smtplib), imported when they send.
 
-The watchdog's interface (a project's ``wi-ops-watchdog-alerts``, then ``wi-brain-project-alerts``) is ``brain notify
+The watchdog's interface (a project's own watchdog item, then ``wi-brain-project-alerts``) is ``brain notify
 send --project P --level L --source watchdog --key ALERT-ID``, or ``notify()`` from Python: the key holds back a
 repeat of an open alert, and the threshold (2 missed passes for a 15-minute task) stays the watchdog's.
 """
@@ -51,7 +51,7 @@ from pathlib import Path
 from typing import Mapping
 
 from . import graph, net, outbox, paths, projects, quiet, secretscan, stateio, timing
-from .config import owner_of   # brain.config's: this module's own config() reads the notify configuration
+from .config import owner_of  # brain.config's: this module's own config() reads the notify configuration
 
 LEVELS = ("info", "warn", "error", "critical")
 MODES = ("first", "all")
@@ -135,7 +135,7 @@ class Message:
 
     def heading(self) -> str:
         title = self.title or (self.body.strip().splitlines() or [""])[0]
-        return _cut(f"[{self.project} {self.level}] {title}", 200)
+        return _cut(f"[{' '.join(x for x in (self.project, self.level) if x)}] {title}", 200)
 
     def text(self) -> str:
         tail = " · ".join(x for x in (self.host, self.source) if x)
@@ -371,7 +371,7 @@ def _value(ch: Channel, key: str, env: Mapping[str, str]) -> str:
 
 def _ntfy(ch: Channel, msg: Message, env: Mapping[str, str]) -> str:
     payload = {"topic": _value(ch, "topic", env), "title": msg.heading(), "message": msg.text(),
-               "priority": PRIORITY[msg.level], "tags": [TAG[msg.level], msg.project]}
+               "priority": PRIORITY[msg.level], "tags": [t for t in (TAG[msg.level], msg.project) if t]}
     if msg.link:
         payload["click"] = msg.link
     token = env.get(ch.get("token_env") or "")
@@ -641,8 +641,22 @@ def notify(project: str | projects.Project, level: str, body: str, *, title: str
     return send(cfg, Message(p.name, level, body, title, source, key, link), only=only, dry_run=dry_run, force=force)
 
 
+POINTER = ("Decision waiting", "A blocking decision waits for you: answer it at the terminal (brain decision batch).")
+
+
+def private_subject(ddr: dict) -> bool:
+    """Whether a DDR is about the owner's rules or notes (``links.rules`` or ``links.notes``): its notification is a
+    pointer only (wi-brain-secretscan-hardening, spec-brain-one-brain §6)."""
+    links = ddr.get("links") if isinstance(ddr.get("links"), dict) else {}
+    return bool(links.get("rules") or links.get("notes"))
+
+
 def decision_message(project: str, ddr: dict) -> tuple[str, str]:
-    """The title and text of a blocking DDR's notification: the question, the options, the command that answers."""
+    """The title and text of a blocking DDR's notification: the question, the options, the command that answers. A
+    DDR about a rule or a note (:func:`private_subject`) sends :data:`POINTER` alone: never its question, its options,
+    a rule's text, its id, its project nor the host."""
+    if private_subject(ddr):
+        return POINTER
     lines = [_cut(" ".join(str(ddr.get("question", "")).split()), 400), ""]
     for i, o in enumerate(ddr.get("options") or [], 1):
         lines.append(f"{i}. {o.get('label', '')}" + (" (recommended)" if i == 1 else ""))
@@ -658,7 +672,10 @@ def decision(project: projects.Project, ddr: dict, *, dry_run: bool = False,
     try:
         cfg = config(project, registry)
         title, body = decision_message(project.name, ddr)
-        msg = Message(project.name, cfg.decisions, body, title, "decision", str(ddr.get("id", "")))
+        if private_subject(ddr):   # the pointer alone: no project, source nor host goes with it
+            msg = Message("", cfg.decisions, body, title, "", str(ddr.get("id", "")), host="")
+        else:
+            msg = Message(project.name, cfg.decisions, body, title, "decision", str(ddr.get("id", "")))
         return send(cfg, msg, dry_run=dry_run, env=env).lines()
     except NotifyError as exc:
         return [f"notify: not sent: {exc}"]
