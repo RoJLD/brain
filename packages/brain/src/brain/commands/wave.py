@@ -10,8 +10,8 @@ import json
 import sys
 from pathlib import Path
 
-from .. import config, graph, lots, waves
-from ._common import _project, _store
+from .. import config, graph, lots, nextrelease, waves
+from ._common import _project, _repos, _store
 
 ORDER = 55   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 55   # its usage lines' place in brain --help's epilog
@@ -22,7 +22,10 @@ USAGE = """\
                  carried by name to a later wave (props.carried_to) or dropped, then the wave reached; without --write,
                  the plan; refused while an open item is neither
   brain wave check X.Y.Z   the closure rule alone (release_check.py --store runs it on a version PR): exit 1 while the
-                 wave holds an open item neither carried nor dropped, or is not reached yet
+                 wave holds an open item neither carried nor dropped, or is not reached yet; then the release
+                 forecast of a wave planned as the next patch or minor: a patch or a minor, the first PR that tipped
+                 it and why (release_check --preview of the engine checkout's origin/main; advisory, the exit is the
+                 closure rule's)
   brain wave import [--from X.Y.Z] [--write]   the items' free-text props.wave: a wave proposed per release it names
                  (X.Y.Z; --from: the first one, the earlier ones already tagged are listed and left out), the other
                  values listed to place by {owner}; --write creates the waves and their items' part_of edges
@@ -117,11 +120,17 @@ def cmd_wave(args, root: Path) -> int:
         if args.wave_cmd == "plan":
             return _plan(args, root, store)
         if args.wave_cmd == "check":
-            found = waves.closure_problems(waves.load(store, root), args.version)
+            plan = waves.load(store, root)
+            found = waves.closure_problems(plan, args.version)
             for line in found:
                 print(f"error: {line}")
             if not found:
                 print(f"wave {args.version}: closed, or no wave of that release (its version PR may go)")
+            wid = plan.resolve(args.version)
+            release = plan.label(wid) if wid else args.version
+            if waves.release_key(release):   # advisory: the exit stays the closure rule's
+                for line in nextrelease.lines(nextrelease.forecast([r.path for r in _repos(args, root)]), release):
+                    print(line)
             return 1 if found else 0
         return _import(args, store)
     except graph.GraphError as exc:
