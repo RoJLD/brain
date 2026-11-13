@@ -30,7 +30,7 @@ The kind of a path, from its name and its first lines:
 - **text**: anything else: git's three-way merge (``git merge-file``).
 
 Whatever goes wrong falls back to ``git merge-file``, so the driver never leaves a file without its conflict markers.
-:func:`replay` replays a repo's past merges with and without the driver (``git merge-tree``, nothing checked out).
+brain.mergereplay replays a repo's past merges with and without the driver (``git merge-tree``, nothing checked out).
 """
 
 from __future__ import annotations
@@ -621,27 +621,39 @@ def _merge_keys(b: dict, o: dict, t: dict, nested: tuple = ("props",), winner: s
         winner = status_winner(b, o, t)
     out: dict = {}
     for key in [*o, *(k for k in t if k not in o)]:
-        bv, ov, tv = b.get(key), o.get(key), t.get(key)
-        if key in nested and isinstance(ov, dict) and isinstance(tv, dict) and isinstance(bv or {}, dict) \
-                and ov != tv and ov != bv and tv != bv:
-            sub = _merge_keys(bv or {}, ov, tv, (), winner)
-            if sub is None:
-                return None
-            out[key] = sub
-            continue
-        if ov == tv or tv == bv:
-            if key in o:
-                out[key] = ov
-        elif ov == bv:
-            if key in t:
-                out[key] = tv
-        elif winner and (key == "status" or not nested):   # the status, or a prop (one level down), both changed
-            side = o if winner == "ours" else t
-            if key in side:
-                out[key] = side[key]
-        else:
+        try:
+            value = _merge_key(key, b, o, t, nested, winner)
+        except _Clash:
             return None
-    return out   # a key one side deleted and the other left as it was is gone: neither branch above keeps it
+        if value is not _GONE:
+            out[key] = value
+    return out
+
+
+class _Clash(Exception):
+    """A key changed both ways, with no order to decide it."""
+
+
+_GONE = object()   # a key one side deleted and the other left as it was
+
+
+def _merge_key(key: str, b: dict, o: dict, t: dict, nested: tuple, winner: str):
+    """One key of :func:`_merge_keys`: its merged value, ``_GONE``, or :class:`_Clash`."""
+    bv, ov, tv = b.get(key), o.get(key), t.get(key)
+    if key in nested and isinstance(ov, dict) and isinstance(tv, dict) and isinstance(bv or {}, dict) \
+            and ov != tv and ov != bv and tv != bv:
+        sub = _merge_keys(bv or {}, ov, tv, (), winner)
+        if sub is None:
+            raise _Clash(key)
+        return sub
+    if ov == tv or tv == bv:
+        return ov if key in o else _GONE
+    if ov == bv:
+        return tv if key in t else _GONE
+    if winner and (key == "status" or not nested):   # the status, or a prop (one level down), both changed
+        side = o if winner == "ours" else t
+        return side[key] if key in side else _GONE
+    raise _Clash(key)
 
 
 def merge_node(bt: str, ot: str, tt: str) -> str | None:
@@ -880,15 +892,20 @@ def install(repo: Path, apply: bool = False, launcher: str | None = None, as_jso
                                           ("to set (--apply)" if not p.current else f"to change from {p.current!r}"
                                                                                     " (--apply)"))
     print(f"merge    {p.repo}: merge.{NAME}.driver = {p.driver} ({state})")
+    _say_attributes(p, missing)
+    return 0
+
+
+def _say_attributes(p: Plan, missing: list[str]) -> None:
+    """install's lines on the repo's .gitattributes: none names the driver, or how many do and the lines missing."""
     if not p.attributes:
         print(f"merge    {p.repo}/.gitattributes names no path merge={NAME}: add brain init's lines:")
         print("\n".join("           " + x for x in ATTRIBUTES.splitlines()))
-    else:
-        print(f"merge    {len(p.attributes)} path pattern(s) use it in .gitattributes")
-        if missing:
-            print(f"merge    {len(missing)} line(s) the driver would use, not in .gitattributes yet (add them):"
-                  + "".join(f"\n           {x}" for x in missing))
-    return 0
+        return
+    print(f"merge    {len(p.attributes)} path pattern(s) use it in .gitattributes")
+    if missing:
+        print(f"merge    {len(missing)} line(s) the driver would use, not in .gitattributes yet (add them):"
+              + "".join(f"\n           {x}" for x in missing))
 
 
 def missing_attributes(repo: Path, attributes: list[str]) -> list[str]:
@@ -910,115 +927,6 @@ def status(cwd=None, as_json: bool = False) -> int:
         return 0
     print(f"driver   {cur or 'not defined here (brain merge-driver install --apply)'}")
     print(f"views    {len(views)} kept from one side, waiting for brain refresh" + "".join(f"\n  {v}" for v in views))
-    return 0
-
-
-# --- replay ----------------------------------------------------------------------------------------------------
-
-def _merge_tree(repo: Path, ours: str, theirs: str, driver: str, attrs: Path, env: dict) -> tuple[str, list[str]]:
-    """(the merged tree, the conflicted paths) of ``git merge-tree`` with that driver for merge=brain. Git runs from
-    the scratch folder ``attrs`` sits in, the repo named by GIT_DIR: the driver's temporary files land there, never in
-    a checkout (a production one included), and only ``attrs`` gives the attributes."""
-    r = subprocess.run(["git", "-c", f"core.attributesFile={attrs.as_posix()}", "-c", f"merge.{NAME}.driver={driver}",
-                        "merge-tree", "--write-tree", "--name-only", "--no-messages", ours, theirs],
-                       cwd=attrs.parent, capture_output=True, timeout=600, env={**env, "GIT_DIR": _git_dir(repo)},
-                       stdin=subprocess.DEVNULL)
-    if r.returncode not in (0, 1):
-        raise DriverError(f"git merge-tree {ours} {theirs}: {_decode(r.stderr).strip() or r.returncode}")
-    lines = [x for x in _decode(r.stdout).splitlines() if x]
-    return (lines[0] if lines else ""), lines[1:]
-
-
-def _git_dir(repo: Path) -> str:
-    r = _git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)
-    if r.returncode:
-        raise DriverError(f"{repo}: not a git repository")
-    return _decode(r.stdout).strip()
-
-
-def _rev(repo: Path, spec: str) -> str:
-    r = _git("rev-parse", "--verify", "--quiet", spec, cwd=repo)
-    return _decode(r.stdout).strip() if r.returncode == 0 else ""
-
-
-def merges(repo: Path, since: str = "", rev: str = "HEAD") -> list[tuple[str, str, str]]:
-    """(merge, first parent, second parent) of the two-parent merges reachable from ``rev`` (since a date)."""
-    args = ["log", "--merges", "--format=%H %P", rev] + ([f"--since={since}"] if since else [])
-    out = []
-    for line in _decode(_git(*args, cwd=repo).stdout).splitlines():
-        parts = line.split()
-        if len(parts) == 3:
-            out.append((parts[0], parts[1], parts[2]))
-    return out
-
-
-def replay(repo: Path, pairs: list[tuple[str, str, str]], attributes: str = ATTRIBUTES,
-           driver: str | None = None) -> list[dict]:
-    """Each (merge, ours, theirs) merged again by ``git merge-tree``, as text then with the driver: the conflicted
-    paths of each, and for each path the driver resolved, whether its result is the merge's own (``same``) or not
-    (``differs``: a view the merge regenerated, an order, a resolution by hand)."""
-    driver = driver or f'"{Path(sys.executable).as_posix()}" -m brain.mergedriver %O %A %B %P %L'
-    env = dict(os.environ, **{NO_MARK: "1"})
-    out = []
-    with tempfile.TemporaryDirectory(prefix="brain-replay-") as d:
-        attrs = Path(d) / "attributes"
-        attrs.write_text(attributes, encoding="utf-8")
-        for merge, ours, theirs in pairs:
-            _, before = _merge_tree(repo, ours, theirs, "git merge-file --marker-size=%L %A %O %B", attrs, env)
-            tree, after = _merge_tree(repo, ours, theirs, driver, attrs, env)
-            resolved = {}
-            for path in before:
-                if path in after:
-                    continue
-                mine = _rev(repo, f"{tree}:{path}")
-                theirs_ = _rev(repo, f"{merge}:{path}") if merge else ""
-                resolved[path] = "same" if mine and mine == theirs_ else "differs"
-            out.append({"merge": merge, "ours": ours, "theirs": theirs, "before": before, "after": after,
-                        "resolved": resolved})
-    return out
-
-
-def summary(results: list[dict]) -> list[str]:
-    """The replay in a few lines: merges conflicted before and after, per path."""
-    before = sum(1 for r in results if r["before"])
-    after = sum(1 for r in results if r["after"])
-    files_b = Counter(p for r in results for p in r["before"])
-    files_a = Counter(p for r in results for p in r["after"])
-    same = Counter(p for r in results for p, v in r["resolved"].items() if v == "same")
-    lines = [f"{len(results)} merge(s) replayed: {before} conflicted as text, {after} with the driver",
-             f"{sum(files_b.values())} conflicted file(s) as text, {sum(files_a.values())} with the driver"]
-    for path, n in files_b.most_common():
-        lines.append(f"  {path}: {n} -> {files_a.get(path, 0)}"
-                     + (f" ({same[path]} identical to the merge's own result)" if same.get(path) else ""))
-    for path, n in files_a.most_common():
-        if path not in files_b:
-            lines.append(f"  {path}: 0 -> {n} (the driver conflicted where text merged)")
-    return lines
-
-
-def main_replay(repo: Path, since: str, specs: list[str], as_json: bool, rev: str = "HEAD") -> int:
-    pairs: list[tuple[str, str, str]] = []
-    for spec in specs:
-        if ".." in spec:   # OURS..THEIRS: two heads merged as they are today (two PRs against each other)
-            a, _, b = spec.partition("..")
-            pairs.append(("", _rev(repo, a), _rev(repo, b)))
-        else:
-            sha = _rev(repo, spec)
-            parents = _decode(_git("rev-list", "--parents", "-n", "1", sha, cwd=repo).stdout).split()
-            if len(parents) != 3:
-                print(f"brain merge-driver replay: {spec} is not a two-parent merge", file=sys.stderr)
-                return 1
-            pairs.append(tuple(parents))   # type: ignore[arg-type]
-    if since or not specs:
-        pairs += merges(repo, since, rev)
-    if any(not x for p in pairs for x in p[1:]):
-        print("brain merge-driver replay: a revision does not resolve", file=sys.stderr)
-        return 1
-    results = replay(repo, pairs)
-    if as_json:
-        print(json.dumps(results, indent=2))
-    else:
-        print("\n".join(summary(results)))
     return 0
 
 

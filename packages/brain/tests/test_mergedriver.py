@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from conftest import GIT_ENV, git_init, run_git
 
-from brain import cli, mergedriver as md
+from brain import cli, mergedriver as md, mergereplay
 
 pytestmark = pytest.mark.skipif(not shutil.which("git"), reason="git not available")
 
@@ -334,7 +334,7 @@ def test_replay_counts_before_and_after(repo, capsys):
     change(repo, "feature", "ada", new=True)
     change(repo, "main", "bob")
     ours, theirs = run_git(repo, "rev-parse", "feature").strip(), run_git(repo, "rev-parse", "main").strip()
-    results = md.replay(repo, [("", ours, theirs)])
+    results = mergereplay.replay(repo, [("", ours, theirs)])
     assert set(results[0]["before"]) == {"notes/journal.md", "notes/kanban_graph.md", "notes/graph/nodes/work.yaml",
                                          "notes/graph/edges/work.yaml"}
     assert results[0]["after"] == []

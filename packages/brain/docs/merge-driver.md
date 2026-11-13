@@ -58,7 +58,7 @@ branch into a branch, in each worktree; the PR GitHub merges is then clean.
 
 ### What it does, by kind of file
 
-The module is `brain.mergedriver` (its subcommands in `brain.commands.merge_driver`): `resolve` picks the kind of a
+The module is `brain.mergedriver` (its subcommands in `brain.commands.merge_driver`, the replay in `brain.mergereplay`): `resolve` picks the kind of a
 path, `log`, `union` and `yaml_by_id` merge it, `run` is git's entry and `command` the line `install` writes.
 
 | Kind | Which files | The merge |
