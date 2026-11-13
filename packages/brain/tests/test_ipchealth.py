@@ -81,6 +81,9 @@ def test_the_mcp_server_refusing_without_the_token_is_ok(tmp_path):
 
 class _Answer(BaseHTTPRequestHandler):
     def do_POST(self):
+        # the request's body read before the answer: a server that closes with it unread resets the connection on
+        # Windows, which the probe reads as « not the MCP server » (the test flaked on the Windows CI)
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
         self.send_response(200)
         self.send_header("Content-Length", "0")
         self.end_headers()
