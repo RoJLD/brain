@@ -8,6 +8,7 @@ the attribute keys and the value kinds are Claude Code's (its 2.1 export). They 
 account's ids, invented: the reader must drop them."""
 
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -134,11 +135,41 @@ def test_records_keep_the_exports_names_sessions_days_and_value_kinds():
     assert mcp == {("docs", "search")}   # from the tool's parameters, which are dropped
 
 
-def test_records_since_skip_older_records_and_older_backups():
+def test_records_since_skip_older_records_and_older_backups(tmp_path):
+    """A backup last written before ``since`` (git gives the fixtures a fresh time: os.utime sets theirs): a logs one
+    is not opened, a metrics one only skimmed for its cumulative series."""
+    d = _copy(tmp_path)
+    for f in d.glob("*-2026-01-05T18-00-00.000.jsonl"):
+        os.utime(f, (DAY1 + 18 * 3600, DAY1 + 18 * 3600))
     stats = otel.Stats()
-    recs = list(otel.records(FIXTURES, since=DAY2, stats=stats))
-    assert recs and {r.day for r in recs} == {"2026-01-06"}
-    assert stats.records == len(recs)
+    recs = list(otel.records(d, since=DAY2, stats=stats))
+    assert recs
+    assert {r.day for r in recs} == {"2026-01-06"}
+    assert (stats.files, stats.seeded, stats.records) == (2, 1, len(recs))   # the current files; the metrics backup
+    stats = otel.Stats()
+    assert len(list(otel.records(d, stats=stats))) > len(recs)
+    assert (stats.files, stats.seeded) == (4, 0)
+
+
+def _cumulative_line(v: float, at: float) -> str:
+    dp = {"attributes": [{"key": "session.id", "value": {"stringValue": "s1"}},
+                         {"key": "type", "value": {"stringValue": "input"}}],
+          "startTimeUnixNano": "1", "timeUnixNano": str(int(at * 1e9)), "asDouble": v}
+    return json.dumps({"resourceMetrics": [{"scopeMetrics": [{"metrics": [
+        {"name": "claude_code.token.usage", "sum": {"aggregationTemporality": 2, "isMonotonic": True,
+                                                    "dataPoints": [dp]}}]}]}]})
+
+
+def test_a_cumulative_series_is_seeded_from_a_backup_older_than_since(tmp_path):
+    """--days: a cumulative series' value before ``since`` comes from a backup that is not otherwise read, so the
+    first record after it is its increment, not the whole count."""
+    backup, current = tmp_path / "metrics-2026-01-05T00-00-00.000.jsonl", tmp_path / "metrics.jsonl"
+    backup.write_text(_cumulative_line(10, DAY1 + 3600) + "\n", encoding="utf-8")
+    os.utime(backup, (DAY1 + 3600, DAY1 + 3600))
+    current.write_text(_cumulative_line(25, DAY2 + 3600) + "\n", encoding="utf-8")
+    stats = otel.Stats()
+    assert [r.value for r in otel.records(tmp_path, since=DAY2, stats=stats)] == [15]
+    assert (stats.files, stats.seeded) == (1, 1)
 
 
 def test_a_missing_folder_an_empty_one_garbage_and_a_truncated_last_line(tmp_path):
@@ -159,12 +190,7 @@ def test_a_missing_folder_an_empty_one_garbage_and_a_truncated_last_line(tmp_pat
 
 def test_a_cumulative_sum_is_read_as_increments_and_a_reset_starts_over():
     def line(v: float) -> str:
-        dp = {"attributes": [{"key": "session.id", "value": {"stringValue": "s1"}},
-                             {"key": "type", "value": {"stringValue": "input"}}],
-              "startTimeUnixNano": "1", "timeUnixNano": str(int(DAY2 * 1e9)), "asDouble": v}
-        return json.dumps({"resourceMetrics": [{"scopeMetrics": [{"metrics": [
-            {"name": "claude_code.token.usage", "sum": {"aggregationTemporality": 2, "isMonotonic": True,
-                                                        "dataPoints": [dp]}}]}]}]})
+        return _cumulative_line(v, DAY2)
     last: dict = {}
     assert [otel.parse(line(v), last)[0].value for v in (10, 25, 5)] == [10, 15, 5]
     delta = json.loads(line(10).replace('"aggregationTemporality": 2', '"aggregationTemporality": 1'))
@@ -245,6 +271,37 @@ def test_the_summary_of_one_session_and_the_api_errors_and_retries(tmp_path):
     assert (m["api_requests"], m["api_errors"], m["retries"]) == (1, 1, 2)
 
 
+def test_every_attribute_key_of_the_fixtures_is_reviewed():
+    """PRIVATE is a denylist: a key Claude Code adds would pass it. Every key of the real payloads is either in
+    KNOWN_KEYS (reviewed: kept) or in PRIVATE (dropped); a fixture refreshed from a newer version fails here on a
+    new key until it is reviewed."""
+    keys = {k for _, _, attrs, _ in _raw_records(FIXTURES) for k in attrs}
+    for f in FIXTURES.glob("*.jsonl"):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            doc = json.loads(line)
+            for res in doc.get("resourceLogs", []) + doc.get("resourceMetrics", []):
+                keys |= {a["key"] for a in res["resource"]["attributes"]}
+    assert sorted(keys - otel.KNOWN_KEYS - otel.PRIVATE) == []
+    assert otel.KNOWN_KEYS.isdisjoint(otel.PRIVATE)
+
+
+def test_the_summary_names_an_attribute_key_not_reviewed(tmp_path):
+    (tmp_path / "logs.jsonl").write_text(_event_line("tool_result", {"session.id": "s1", "tool_name": "Bash",
+                                                                     "brand_new_key": "x"}) + "\n", encoding="utf-8")
+    doc = otel.summary(otel.records(tmp_path), tmp_path).as_dict()
+    assert doc["unreviewed_keys"] == ["brand_new_key"]
+    assert "brand_new_key" in otel.render(doc)[1]
+    assert otel.summary(otel.records(FIXTURES), FIXTURES).as_dict()["unreviewed_keys"] == []
+
+
+def test_a_session_prefix_that_matches_nothing_is_said(capsys):
+    assert cli.main(["telemetry", "summary", "--dir", str(FIXTURES), "--days", "0", "--session", "ffff"]) == 0
+    out = capsys.readouterr().out
+    assert "0 record(s) summarized of 68 read" in out
+    assert "no record for a session whose id starts with 'ffff'" in out
+    assert "per day" not in out
+
+
 def test_render_says_no_record_and_the_lines_not_read(tmp_path):
     (tmp_path / "logs.jsonl").write_text("garbage\n", encoding="utf-8")
     stats = otel.Stats()
@@ -306,7 +363,7 @@ def health():
 
 
 def _settings(on: bool, signals=("metrics", "logs")) -> Path:
-    f = Path(__import__("os").environ["CLAUDE_CONFIG_DIR"]) / "settings.json"
+    f = Path(os.environ["CLAUDE_CONFIG_DIR"]) / "settings.json"
     f.parent.mkdir(parents=True, exist_ok=True)
     env = {"CLAUDE_CODE_ENABLE_TELEMETRY": "1" if on else "0", "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
            **{f"OTEL_{s.upper()}_EXPORTER": "otlp" for s in signals}}
@@ -327,19 +384,72 @@ def test_status_ok_when_the_export_is_on_the_collector_answers_and_the_records_a
     assert res["signals"]["logs"]["last"].startswith("2026-01-06") and res["signals"]["metrics"]["files"] == 2
 
 
-def test_status_fails_a_collector_with_no_source_and_warns_when_nothing_feeds_it(health):
+def _transcript(at: float, sub: bool = False) -> Path:
+    """A transcript Claude Code wrote at ``at`` (its modification time), under $CLAUDE_CONFIG_DIR/projects."""
+    folder = Path(os.environ["CLAUDE_CONFIG_DIR"]) / "projects" / "C--work-lab"
+    f = folder / "sess" / "subagents" / "agent-1.jsonl" if sub else folder / f"sess-{int(at)}.jsonl"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("{}\n", encoding="utf-8")
+    os.utime(f, (at, at))
+    return f
+
+
+def test_status_fails_a_collector_that_receives_nothing_while_claude_code_is_active(health):
+    """The last records are of 2026-01-06 09:09; 40 h later, a transcript written 30 h after them: Claude Code
+    worked and nothing came in."""
     _, url = health
     _settings(True)
+    _transcript(DAY2 + 39 * 3600, sub=True)   # a subagent's transcript counts (three levels deep)
     res = otel.status(config.load(), FIXTURES, url=url, now=DAY2 + 40 * 3600)
-    assert res["exit"] == 1 and _states(res).count("FAIL") == 2   # metrics and logs: nothing for 24 h
-    assert "receives nothing" in res["lines"][2]["line"]
-    _settings(False)
-    res = otel.status(config.load(), FIXTURES, url=url, now=DAY2 + 40 * 3600)
-    assert res["exit"] == 0 and _states(res) == ["OFF", "OK", "warning", "warning"]
-    assert "no source" in res["lines"][2]["line"]
+    assert res["exit"] == 1
+    assert _states(res).count("FAIL") == 2   # metrics and logs
+    assert "Claude Code was active" in res["lines"][2]["line"]
+    assert res["activity"]["last"].startswith("2026-01-07T15")
     _settings(True, signals=("metrics",))   # logs not exported: their age fails nothing
     res = otel.status(config.load(), FIXTURES, url=url, now=DAY2 + 40 * 3600)
     assert _states(res) == ["OK", "OK", "FAIL", "OK"]
+
+
+def test_status_warns_on_a_quiet_spell_with_no_transcript_after_the_last_record(health):
+    """Claude Code exports only while a session runs: 40 h without a record and without a transcript after it (or
+    one written within the window after it) is no activity, a warning, exit 0."""
+    _, url = health
+    _settings(True)
+    res = otel.status(config.load(), FIXTURES, url=url, now=DAY2 + 40 * 3600)
+    assert (res["exit"], _states(res)) == (0, ["OK", "OK", "warning", "warning"])
+    assert "no activity" in res["lines"][2]["line"]
+    _transcript(DAY2 + 12 * 3600)   # 3 h after the last record: inside the 24 h window
+    res = otel.status(config.load(), FIXTURES, url=url, now=DAY2 + 40 * 3600)
+    assert (res["exit"], _states(res)) == (0, ["OK", "OK", "warning", "warning"])
+    _settings(False)
+    res = otel.status(config.load(), FIXTURES, url=url, now=DAY2 + 40 * 3600)
+    assert (res["exit"], _states(res)) == (0, ["OFF", "OK", "warning", "warning"])
+    assert "no source" in res["lines"][2]["line"]
+
+
+def test_status_without_any_record_fails_only_when_claude_code_was_active_lately(health, tmp_path):
+    _, url = health
+    _settings(True)
+    (tmp_path / "empty").mkdir()
+    _transcript(DAY1)
+    res = otel.status(config.load(), tmp_path / "empty", url=url, now=DAY2 + 40 * 3600)
+    assert (res["exit"], _states(res)[2:]) == (0, ["warning", "warning"])
+    _transcript(DAY2 + 39 * 3600)
+    res = otel.status(config.load(), tmp_path / "empty", url=url, now=DAY2 + 40 * 3600)
+    assert (res["exit"], _states(res)[2:]) == (1, ["FAIL", "FAIL"])
+
+
+def test_the_walk_of_the_transcripts_is_bounded(tmp_path):
+    for i in range(30):
+        f = tmp_path / f"p{i}" / f"s{i}.jsonl"
+        f.parent.mkdir()
+        f.write_text("{}", encoding="utf-8")
+        os.utime(f, (DAY1 + i, DAY1 + i))
+    assert otel.last_activity(tmp_path) == (DAY1 + 29, True)
+    newest, whole = otel.last_activity(tmp_path, limit=10)
+    assert not whole
+    assert newest <= DAY1 + 29
+    assert otel.last_activity(tmp_path / "none") == (0.0, True)
 
 
 def test_status_fails_when_the_export_is_on_and_the_collector_is_down_or_answers_garbage(health, tmp_path):
@@ -347,7 +457,7 @@ def test_status_fails_when_the_export_is_on_and_the_collector_is_down_or_answers
     _settings(True)
     handler.body = b"<html>not the collector</html>"
     res = otel.status(config.load(), FIXTURES, url=url, now=DAY2)
-    assert res["collector"]["state"] == "garbage" and res["exit"] == 1
+    assert (res["collector"]["state"], res["exit"]) == ("garbage", 1)
     handler.body, handler.code = b'{"status":"Server not available"}', 503
     assert otel.status(config.load(), FIXTURES, url=url, now=DAY2)["collector"]["state"] == "unavailable"
     with socket.socket() as s:   # a port nothing listens on any more
@@ -355,8 +465,10 @@ def test_status_fails_when_the_export_is_on_and_the_collector_is_down_or_answers
         free = s.getsockname()[1]
     t0 = time.monotonic()
     res = otel.status(config.load(), tmp_path / "none", url=f"http://127.0.0.1:{free}/", timeout=0.5, now=DAY2)
-    assert time.monotonic() - t0 < 5 and res["collector"]["state"] in ("down", "slow") and res["exit"] == 1
-    assert _states(res) == ["OK", "FAIL", "OFF"]
+    assert time.monotonic() - t0 < 1.5   # the probe's whole deadline, Windows' retried connect included
+    assert res["collector"]["state"] in ("down", "slow")   # refused at once, or retried past 0.5 s (Windows)
+    assert "stopped" in res["collector"]["seen"]
+    assert (res["exit"], _states(res)) == (1, ["OK", "FAIL", "OFF"])
 
 
 def test_the_health_probe_ends_on_a_collector_that_never_answers():
@@ -365,7 +477,62 @@ def test_the_health_probe_ends_on_a_collector_that_never_answers():
         s.listen(1)
         t0 = time.monotonic()
         state, seen = otel.probe(f"http://127.0.0.1:{s.getsockname()[1]}/", timeout=0.3)
-    assert state == "slow" and "0.3 s" in seen and time.monotonic() - t0 < 3
+    assert (state, "0.3 s" in seen) == ("slow", True)
+    assert time.monotonic() - t0 < 1.0
+
+
+def test_the_health_probe_ends_on_an_answer_that_trickles():
+    """One header byte every 0.2 s: each read is within the socket's timeout, the whole is not."""
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    stop = threading.Event()
+
+    def trickle():
+        conn, _ = srv.accept()
+        with conn:
+            for b in b"HTTP/1.1 200 OK\r\nX-Slow: " + b"a" * 200:
+                if stop.is_set():
+                    return
+                conn.sendall(bytes([b]))
+                time.sleep(0.2)   # the server under test is slow on purpose
+
+    threading.Thread(target=trickle, daemon=True).start()
+    t0 = time.monotonic()
+    state, _ = otel.probe(f"http://127.0.0.1:{srv.getsockname()[1]}/", timeout=0.5)
+    elapsed = time.monotonic() - t0
+    stop.set()
+    srv.close()
+    assert state == "slow"
+    assert elapsed < 1.5
+
+
+def test_the_health_probe_follows_no_redirect(health):
+    """A 302 to another loopback server is not followed: garbage, and the target never asked."""
+    handler, url = health
+    hit = []
+
+    class Target(_Health):
+        def do_GET(self):
+            hit.append(self.path)
+            super().do_GET()
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+    threading.Thread(target=target.serve_forever, daemon=True).start()
+
+    def redirect(self):
+        self.send_response(302)
+        self.send_header("Location", f"http://127.0.0.1:{target.server_address[1]}/elsewhere")
+        self.end_headers()
+
+    handler.do_GET = redirect
+    try:
+        state, seen = otel.probe(url, timeout=1.0)
+    finally:
+        target.shutdown()
+        target.server_close()
+    assert (state, seen) == ("garbage", "HTTP 302: a redirect, not followed")
+    assert hit == []
 
 
 def test_status_warns_when_config_asks_for_the_export_and_the_settings_do_not_have_it(health, tmp_path, monkeypatch):
@@ -388,7 +555,8 @@ def test_brain_telemetry_status_command(health, capsys):
     assert cli.main(["telemetry", "status", "--url", url, "--dir", str(FIXTURES), "--stale-hours", "1e9"]) == 0
     out = capsys.readouterr().out
     assert "telemetry OK the collector answers" in out
-    assert cli.main(["telemetry", "status", "--url", url, "--dir", str(FIXTURES), "--json"]) == 1   # 2026-01: stale
+    _transcript(time.time())   # Claude Code active now, the fixtures' records of 2026-01
+    assert cli.main(["telemetry", "status", "--url", url, "--dir", str(FIXTURES), "--json"]) == 1
     assert json.loads(capsys.readouterr().out)["exit"] == 1
     assert cli.main(["telemetry", "status", "--url", "http://example.org:13133/"]) == 2
     assert "not a loopback" in capsys.readouterr().err

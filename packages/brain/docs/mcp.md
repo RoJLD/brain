@@ -268,11 +268,18 @@ The collector reads its configuration when it starts: after `brain bundle apply 
 attributes until its rotation drops the file (31 days, `max_days`), and so do Loki and Prometheus within their
 retention; `brain telemetry` drops them when it reads (README, « Claude Code's telemetry »).
 
+The processors are a denylist, so a key a newer Claude Code adds is kept until someone looks at it:
+`brain.otel.KNOWN_KEYS` lists the keys reviewed, `brain telemetry summary` names any other it meets, and
+`tests/test_otel.py` fails on one in its fixtures, which are refreshed from the real files.
+
 `brain telemetry status` says whether the export is on (config.json `adapters.claude.telemetry` and Claude Code's user
-settings), whether the collector's health endpoint answers (`http://127.0.0.1:13133/`, within `--timeout`, 1 s by
-default) and how old each exported signal's last record is: on, answering, and nothing for `--stale-hours` (24) is a
-FAIL, the collector receiving nothing (its endpoint or its token: `brain health ipc`); answering while the export is
-off, a warning. `brain telemetry summary` reads the files.
+settings), whether the collector's health endpoint answers (`http://127.0.0.1:13133/`, the whole answer within
+`--timeout`, 1 s by default, no redirect followed; on Windows a refused loopback connection is retried for about 2 s,
+so a stopped collector reads « stopped, or slow ») and how old each exported signal's last record is. On, answering,
+nothing for `--stale-hours` (24) and a transcript under `$CLAUDE_CONFIG_DIR/projects` written more than that after
+the last record (a bounded walk) is a FAIL: the collector receives nothing (its endpoint or its token:
+`brain health ipc`). Without such a transcript it is a warning, no activity: Claude Code exports only while a
+session runs. Answering while the export is off is a warning too. `brain telemetry summary` reads the files.
 
 ## The container
 

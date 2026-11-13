@@ -1340,15 +1340,20 @@ the account's uuid and id, the system's user name): an MCP or a skill call keeps
 at zero token, and drops the same attributes from files written before the processors did:
 
 ```bash
-brain telemetry summary              # the last 7 days: per UTC day, model and session, tokens by type, cost,
+brain telemetry summary              # the last 7 x 24 hours: per UTC day, model and session, tokens by type, cost,
                                      # API requests, errors and retries; tool decisions; tool failures; hook p50/p90
 brain telemetry summary --days 1 --session 1a2b --json
 brain telemetry status               # the export on or off, the collector answering, each signal's last record
 ```
 
-`brain telemetry status` exits 1 when the export is on and the collector does not answer (a bounded probe of its
-health endpoint, 127.0.0.1:13133), or answers while a signal has had no record for 24 hours (`--stale-hours`): a
-collector with no source looks healthy and records nothing. The transcripts stay the first source of the ledgers
+`--days N` is a rolling window (the last N x 24 hours), so the first UTC day of the table is partial.
+`brain telemetry status` exits 1 when the export is on and the collector does not answer (a probe of its health
+endpoint, 127.0.0.1:13133, bounded as a whole, no redirect followed), or answers while a signal has had no record for
+24 hours (`--stale-hours`) although Claude Code wrote a transcript more than that after its last record: a collector
+with no source looks healthy and records nothing. Claude Code exports only while a session runs, so a quiet spell is
+a warning (no activity), not a failure. The summary names any attribute key outside the reviewed list
+(`brain.otel.KNOWN_KEYS`), so that a key a new Claude Code version adds is reviewed before it is kept. The
+transcripts stay the first source of the ledgers
 (`brain usage`); the export adds Claude Code's own durations, permission decisions with their source and the API's
 retries. Other readers iterate `brain.otel.records()` (one normalized record per data point or event). DuckDB is not
 needed; where it is installed, it reads the same files directly, for instance

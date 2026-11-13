@@ -4,6 +4,7 @@ section: Added
   export as the sovereign collector stored it, read at zero token with the standard library (`brain.otel`, rotated
   files included). The summary gives, per UTC day, model and session, the tokens by type, the cost, the API requests,
   errors and retries, then the tool decisions by decision and source, the tools' failures and error classes and the
-  hooks' p50 and p90 (`--days`, `--session`, `--top`, `--json`). The status says whether the export is on, whether the
-  collector's health endpoint answers (bounded) and how old each signal's last record is: exit 1 when the export is
-  on and the collector is down or receives nothing.
+  hooks' p50 and p90 (`--days`, a rolling window, `--session`, `--top`, `--json`), and names any attribute key not
+  reviewed yet. The status says whether the export is on, whether the collector's health endpoint answers (bounded,
+  no redirect followed) and how old each signal's last record is: exit 1 when the export is on and the collector is
+  down, or receives nothing while Claude Code writes transcripts; a quiet spell is a warning.

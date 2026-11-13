@@ -20,15 +20,21 @@ skipped. It is the reusable part: the summary below and other readers (the rule 
 source; the tool results, their failures and error classes; the hooks' durations (``hook_execution_complete``,
 p50 and p90 per hook). :func:`status` says whether the export is on (config.json ``adapters.claude.telemetry``,
 Claude Code's user settings), whether the collector's health endpoint answers (bounded: it never hangs) and how old
-each signal's last record is: a collector that runs with no source is the failure it exists to catch.
+each signal's last record is, against when Claude Code last wrote a transcript: a collector that receives nothing
+while Claude Code works is the failure it exists to catch; a quiet spell, when Claude Code exports nothing, is not.
+
+PRIVATE is a denylist: :data:`KNOWN_KEYS` lists the keys reviewed, and the summary names any other it meets.
 """
 
 from __future__ import annotations
 
 import gzip
+import http.client
 import json
+import os
 import re
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -52,6 +58,28 @@ PREFIX = "claude_code."
 # prompt, a response, a tool's parameters or an error (ST-7: a failure's class only). The collector drops them too.
 PRIVATE = frozenset({"user.email", "user.account_uuid", "user.account_id", "process.owner", "prompt", "prompt_text",
                      "response", "tool_parameters", "error"})
+# The attribute keys reviewed (Claude Code 2.1.321's export, 2026-11-13): each is a name, a count, a duration, an id
+# or a class, never free text. PRIVATE is a denylist, so a key Claude Code adds later passes it: the summary lists
+# every key outside these (``unreviewed_keys``), and tests/test_otel.py fails on one in its fixtures, so that a new
+# key is reviewed (kept here, or added to PRIVATE and to the collector's processors) before it is relied on.
+KNOWN_KEYS = frozenset("""
+additional_context_chars agent.name agent.source agent_id agent_path_count agent_type anthropic.custom_base_url
+anthropic.plan anthropic.provider artifacts_deleted attempt cache_creation_1h_tokens cache_creation_5m_tokens
+cache_creation_tokens cache_read_tokens classifier_verdict claude.deployment_mode client_request_id command_path_count
+cost_usd cost_usd_micros decision duration_ms effort enabled_via error_code error_count error_type event.name
+event.sequence event.timestamp files_past_cutoff files_retained_fresh final_model has_hooks has_mcp
+history_entries_pruned hook_event hook_name hook_source hook_type host.arch host_owned_mcp initial_user_message_chars
+input_tokens is_async is_built_in is_plugin language managed_only managed_settings.helper.applied
+managed_settings.helper.state managed_settings.source_behavior managed_settings.sources managed_settings.trigger
+marketplace.name mcp_server.name mcp_server_scope mcp_tool.name message.uuid model model_swapped num_blocking
+num_cancelled num_hooks num_non_blocking_error num_outputs_persisted num_success organization.id os.type os.version
+output_tokens period_days permission_mode plugin.name plugin.scope plugin_id_hash prompt.id prompt_length
+query_source request_id response_length result safe_mode server_scope service.name service.version session.id
+session_files_deleted skill.name skill_path_count source speed start_type status status_code stdout_chars success
+system_message_chars terminal.type tool_input_size_bytes tool_name tool_result_size_bytes tool_source tool_use_id
+total_duration_ms total_tokens total_tool_uses transcripts_deleted transcripts_exempted_desktop transport_type ttft_ms
+type used_default user.id
+""".split())
 TOKEN_TYPES = ("input", "output", "cacheRead", "cacheCreation")
 _NAME = re.compile(r"^[\w.:/-]{1,120}$")
 _CUMULATIVE = 2   # OTLP AggregationTemporality
@@ -130,6 +158,8 @@ class Stats:
     skipped: int = 0
     first: float = 0.0
     last: float = 0.0
+    seeded: int = 0   # metrics backups older than ``since`` skimmed for their cumulative series only
+
 
     def count(self, r: Record) -> None:
         self.records += 1
@@ -316,8 +346,10 @@ def _lines(f: Path) -> Iterator[str]:
 def records(where: Path | None = None, since: float | None = None, signals: Iterable[str] = SIGNALS,
             stats: Stats | None = None) -> Iterator[Record]:
     """Every record of the collector's files in ``where`` (default :func:`folder`), oldest file first; with
-    ``since`` (UTC seconds), only those at or after it (a backup last written before it is not opened). A missing
-    folder yields nothing; :func:`status` says why."""
+    ``since`` (UTC seconds), only those at or after it. A logs backup last written before ``since`` is not opened; a
+    metrics one is skimmed for its cumulative series only (a line with no cumulative sum is not parsed), so that a
+    cumulative series is counted from its last value before ``since``, not whole. A missing folder yields nothing;
+    :func:`status` says why."""
     where = where or folder()
     st = stats if stats is not None else Stats()
     for signal in signals:
@@ -325,6 +357,19 @@ def records(where: Path | None = None, since: float | None = None, signals: Iter
         for f in files(where, signal):
             if since is None or f.name == f"{signal}.jsonl" or _mtime(f) >= since:
                 yield from _file_records(f, since, cumulative, st)
+            elif signal == "metrics":
+                _seed(f, cumulative, st)
+
+
+_CUMULATIVE_LINE = re.compile(r'"aggregationTemporality"\s*:\s*2\b')
+
+
+def _seed(f: Path, cumulative: dict, st: Stats) -> None:
+    """A metrics backup older than ``since``: only its cumulative series' last values, nothing yielded."""
+    st.seeded += 1
+    for line in _lines(f):
+        if _CUMULATIVE_LINE.search(line):
+            parse(line, cumulative)
 
 
 def _file_records(f: Path, since: float | None, cumulative: dict, st: Stats) -> Iterator[Record]:
@@ -382,10 +427,12 @@ class Summary:
                                                                       "ms": []}))
     api_status: Counter = field(default_factory=Counter)       # an api_error's status_code -> count
     names: Counter = field(default_factory=Counter)            # every metric and event name -> records
+    unreviewed: Counter = field(default_factory=Counter)       # an attribute key outside KNOWN_KEYS -> records
 
     def add(self, r: Record) -> None:
         """One record: its name counted, its day's, session's and model's rows, then what ADDS says."""
         self.names[r.name] += 1
+        self.unreviewed.update(r.attrs.keys() - KNOWN_KEYS)
         sid, model = r.session, r.text("model")
         groups = [self.by_day[r.day or "?"], self.by_session[sid or "?"]] + ([self.by_model[model]] if model else [])
         for g in groups if sid else ():
@@ -418,6 +465,7 @@ class Summary:
             totals["sessions"] |= r["sessions"]
         return {
             "folder": self.folder, "since": self.since, "session": self.session,
+            "matched": sum(self.names.values()),   # the records of Claude Code (and of --session) summarized
             "read": {**asdict(self.stats), "first": _when(self.stats.first), "last": _when(self.stats.last)},
             "totals": {"tokens": totals["tokens"], "tokens_total": sum(totals["tokens"].values()),
                        "cost_usd": round(totals["cost_usd"], 4), "api_requests": totals["api_requests"],
@@ -436,6 +484,7 @@ class Summary:
             "hooks": [{"hook": k, "runs": v["runs"], "blocking": v["blocking"], "errors": v["errors"], **_ms(v["ms"])}
                       for k, v in (hooks[:top] if top else hooks)],
             "names": dict(sorted(self.names.items())),
+            "unreviewed_keys": sorted(self.unreviewed)[:50],
         }
 
 
@@ -577,13 +626,19 @@ def render(doc: dict) -> list[str]:
     """The summary as text lines."""
     rd, tot = doc["read"], doc["totals"]
     head = (f"Claude Code's telemetry ({doc['folder']}): {rd['first'] or '-'} to {rd['last'] or '-'}, "
-            f"{tot['sessions']} session(s), {rd['records']} record(s) from {rd['files']} file(s)")
+            f"{tot['sessions']} session(s), {doc['matched']} record(s) summarized of {rd['records']} read from "
+            f"{rd['files']} file(s)")
     lines = [head + (f", session {doc['session']}" if doc["session"] else "")]
     if rd["bad"]:
         lines.append(f"  {rd['bad']} line(s) not read (not JSON: a truncated last line, garbage)")
+    if doc["unreviewed_keys"]:
+        lines.append(f"  attribute keys not reviewed yet (brain.otel.KNOWN_KEYS): {', '.join(doc['unreviewed_keys'])}")
+    since = f" since {doc['since']}" if doc["since"] else ""
     if not rd["records"]:
-        since = f" since {doc['since']}" if doc["since"] else ""
         return lines + [f"  no record{since}: brain telemetry status says whether the export and the collector run"]
+    if not doc["matched"]:
+        return lines + [f"  no record{since} for a session whose id starts with {doc['session']!r} (without "
+                        "--session, by_session lists them)" if doc["session"] else f"  no record of Claude Code{since}"]
     lines += _table("per day (UTC)", doc["by_day"], "day") + _table("per model", doc["by_model"], "model")
     lines += _table("per session (by cost)", doc["by_session"], "session")
     if doc["api_error_status"]:
@@ -631,30 +686,89 @@ def signal_state(where: Path, signal: str) -> dict:
     return {"files": len(fs), "bytes": size, "last": last}
 
 
-def probe(url: str = HEALTH_URL, timeout: float = HEALTH_TIMEOUT) -> tuple[str, str]:
-    """The collector's health endpoint: (up | down | slow | garbage | unavailable, what was seen). Bounded by
-    ``timeout``, no proxy (the URL is loopback)."""
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is not followed (the probe stays on the loopback URL it was given): urllib raises its 3xx."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _fetch(url: str, timeout: float, out: dict) -> None:
+    """The health endpoint's first 4 KB in ``out["body"]``, or the exception in ``out["error"]`` (a thread's)."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
     try:
         with opener.open(url, timeout=timeout) as resp:
-            body = resp.read(4096)
-    except urllib.error.HTTPError as exc:
+            out["body"] = resp.read(4096)
+    except Exception as exc:   # handed back to probe, which classes it
+        out["error"] = exc
+
+
+def _failure(exc: Exception, timeout: float) -> tuple[str, str]:
+    if isinstance(exc, urllib.error.HTTPError):
+        if 300 <= exc.code < 400:
+            return "garbage", f"HTTP {exc.code}: a redirect, not followed"
         return "unavailable", f"HTTP {exc.code}"
-    except (socket.timeout, TimeoutError):
-        return "slow", f"no answer within {timeout:g} s"
-    except urllib.error.URLError as exc:
-        if isinstance(exc.reason, (socket.timeout, TimeoutError)):
-            return "slow", f"no answer within {timeout:g} s"
-        return "down", str(exc.reason)
-    except (OSError, ValueError) as exc:
-        return "down", str(exc)
+    reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    if isinstance(reason, (socket.timeout, TimeoutError)):
+        return "slow", f"no answer within {timeout:g} s (stopped, or slow)"
+    if isinstance(reason, http.client.HTTPException):
+        return "garbage", f"not HTTP ({type(reason).__name__})"
+    return "down", f"nothing listens (stopped): {reason}"
+
+
+def probe(url: str = HEALTH_URL, timeout: float = HEALTH_TIMEOUT) -> tuple[str, str]:
+    """The collector's health endpoint: (up | down | slow | garbage | unavailable, what was seen). Bounded by
+    ``timeout`` as a whole (a server that trickles its answer included: the request runs in a thread joined with
+    it), no proxy, no redirect followed (a 3xx is garbage). On Windows a refused loopback connection is retried for
+    about 2 s, so a stopped collector may read as slow: the line says « stopped, or slow »."""
+    out: dict = {}
+    worker = threading.Thread(target=_fetch, args=(url, timeout, out), daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        return "slow", f"no answer within {timeout:g} s (stopped, or slow)"
+    if "error" in out:
+        return _failure(out["error"], timeout)
     try:
-        doc = json.loads(body.decode("utf-8", errors="replace"))
+        doc = json.loads(out.get("body", b"").decode("utf-8", errors="replace"))
     except ValueError:
         doc = None
     if not isinstance(doc, dict) or not isinstance(doc.get("status"), str):
         return "garbage", "an answer that is not the health_check extension's JSON"
     return "up", doc["status"][:80]
+
+
+ACTIVITY_LIMIT = 20000   # the entries the walk of the transcripts looks at, at most
+ACTIVITY_BUDGET = 2.0    # and the seconds it takes, at most
+
+
+def last_activity(root: Path | None = None, limit: int = ACTIVITY_LIMIT,
+                  budget: float = ACTIVITY_BUDGET) -> tuple[float, bool]:
+    """When Claude Code last wrote a transcript: the newest modification time of a ``.jsonl`` under ``root``
+    (default ``$CLAUDE_CONFIG_DIR/projects``: ``<folder>/<session>.jsonl`` and its subagents', three levels deep),
+    and whether the walk was whole. Bounded by ``limit`` entries and ``budget`` seconds; 0.0 when none."""
+    root = root or paths.projects_dir()
+    newest, seen, start = 0.0, 0, time.monotonic()
+    stack = [(root, 0)]
+    while stack:
+        d, depth = stack.pop()
+        try:
+            entries = list(os.scandir(d))
+        except OSError:
+            continue
+        for e in entries:
+            seen += 1
+            if seen > limit or time.monotonic() - start > budget:
+                return newest, False
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    if depth < 3:
+                        stack.append((Path(e.path), depth + 1))
+                elif e.name.endswith(".jsonl"):
+                    newest = max(newest, e.stat().st_mtime)
+            except OSError:
+                continue
+    return newest, True
 
 
 def export_state(cfg, settings_file: Path | None = None) -> dict:
@@ -678,26 +792,34 @@ def export_state(cfg, settings_file: Path | None = None) -> dict:
 
 
 def status(cfg, where: Path | None = None, url: str = HEALTH_URL, timeout: float = HEALTH_TIMEOUT,
-           stale_hours: float = STALE_HOURS, now: float | None = None, settings_file: Path | None = None) -> dict:
+           stale_hours: float = STALE_HOURS, now: float | None = None, settings_file: Path | None = None,
+           projects: Path | None = None) -> dict:
     """The export, the collector and its files, each as lines (OK, OFF, warning, FAIL); ``exit`` 1 on a FAIL.
 
-    FAIL: the export is on and the collector does not answer; or it answers, a signal is exported and its last
-    record is older than ``stale_hours`` (or there is none): the collector runs with no source. A warning: the
-    collector runs while the export is off (nothing feeds it), the settings do not have what config.json asks for
-    yet, or the folder is missing while the collector answers (its data in a Docker volume, not under BRAIN_HOME)."""
+    FAIL: the export is on and the collector does not answer; or it answers, a signal is exported, its last record
+    is older than ``stale_hours`` and Claude Code was active after it (:func:`last_activity`: a transcript written
+    more than ``stale_hours`` after that record, or within ``stale_hours`` when there is no record): the collector
+    receives nothing. Claude Code exports only while a session runs, so a quiet spell is a warning (no activity),
+    never a FAIL. A warning too: the collector runs while the export is off (nothing feeds it), the settings do not
+    have what config.json asks for yet, or the folder is missing while the collector answers (its data in a Docker
+    volume, not under BRAIN_HOME)."""
     where = where or folder()
     now = time.time() if now is None else now
     exp = export_state(cfg, settings_file)
     state, seen = probe(url, timeout)
     sig = {s: signal_state(where, s) for s in SIGNALS}
     on, up = bool(exp["settings"]), state == "up"
+    stale = [s for s in exp["signals"] if now - sig[s]["last"] > stale_hours * 3600]
+    activity, whole = last_activity(projects) if up and on and stale else (0.0, True)   # walked only when needed
     lines = _export_lines(exp) + [_collector_line(url, state, seen, on)]
     if not where.is_dir():
         lines.append(("warning", f"no collector files in {where} (its placement data is not home: the files stay in "
                                  "its Docker volume)") if up else ("OFF", f"no collector files in {where}"))
     else:
-        lines += [_signal_line(s, sig[s], up, on, s in exp["signals"], now, stale_hours) for s in SIGNALS]
+        ctx = {"up": up, "on": on, "now": now, "stale_hours": stale_hours, "activity": activity}
+        lines += [_signal_line(s, sig[s], s in exp["signals"], ctx) for s in SIGNALS]
     return {"export": exp, "collector": {"url": url, "state": state, "seen": seen}, "folder": str(where),
+            "activity": {"last": _when(activity), "whole": whole},
             "signals": {s: {**v, "last": _when(v["last"])} for s, v in sig.items()},
             "lines": [{"state": st, "line": ln} for st, ln in lines],
             "exit": 1 if any(st == "FAIL" for st, _ in lines) else 0}
@@ -724,18 +846,30 @@ def _collector_line(url: str, state: str, seen: str, on: bool) -> tuple[str, str
     return ("OFF", f"the collector does not answer at {url}: {state}, {seen}")
 
 
-def _signal_line(signal: str, info: dict, up: bool, on: bool, wanted: bool, now: float,
-                 stale_hours: float) -> tuple[str, str]:
-    """A signal's line: FAIL when the collector answers, the export is on and sends it, and it has no record for
-    ``stale_hours``; a warning when the collector answers with the export off and nothing recent."""
-    age = (now - info["last"]) / 3600 if info["last"] else None
+def _active_after(last: float, activity: float, now: float, window: float) -> bool:
+    """Claude Code was active after the last record, by more than the window (no record: within the window)."""
+    if not activity:
+        return False
+    return activity - last > window if last else now - activity < window
+
+
+def _signal_line(signal: str, info: dict, wanted: bool, ctx: dict) -> tuple[str, str]:
+    """A signal's line: FAIL when the collector answers, the export is on and sends it, it has no record for
+    ``stale_hours`` and Claude Code was active after its last one; a warning when it was not (no activity), or when
+    the collector answers with the export off and nothing recent."""
+    hours, window = ctx["stale_hours"], ctx["stale_hours"] * 3600
+    age = (ctx["now"] - info["last"]) / 3600 if info["last"] else None
     what = (f"{signal}: {info['files']} file(s), {info['bytes'] / 1e6:.1f} MB, last record "
             + (f"{_when(info['last'])} ({_age(age)} ago)" if age is not None else "none"))
-    stale = age is None or age > stale_hours
-    if up and on and wanted and stale:
-        return ("FAIL", f"{what}: nothing for more than {stale_hours:g} h while the export is on, the collector "
-                        "receives nothing (its endpoint, its token: brain health ipc)")
-    if up and not on and stale:
+    stale = age is None or age > hours
+    if ctx["up"] and ctx["on"] and wanted and stale:
+        if _active_after(info["last"], ctx["activity"], ctx["now"], window):
+            return ("FAIL", f"{what}: nothing for more than {hours:g} h while the export is on and Claude Code was "
+                            f"active (a transcript at {_when(ctx['activity'])}): the collector receives nothing (its "
+                            "endpoint, its token: brain health ipc)")
+        return ("warning", f"{what}: no activity to export, Claude Code wrote no transcript more than {hours:g} h "
+                           "after it" + (f" (its last at {_when(ctx['activity'])})" if ctx["activity"] else ""))
+    if ctx["up"] and not ctx["on"] and stale:
         return ("warning", f"{what}: the collector runs with no source (Claude Code's export is off)")
     return ("OK" if info["last"] else "OFF", what)
 
