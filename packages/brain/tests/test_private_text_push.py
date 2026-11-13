@@ -116,3 +116,61 @@ def test_many_passages_are_counted_past_the_ones_named(ada, make_repo):
     stamp(ada)
     text = push(ada)[1]
     assert "this push sends 7 passage(s)" in text and "; and 2 more." in text
+
+
+# --- found by the review of the PR -----------------------------------------------------------------------------------
+
+def test_a_push_that_adds_no_line_builds_no_index(ada, make_repo, monkeypatch):
+    stamp(ada)   # HEAD is what the remote has: nothing new
+    monkeypatch.setattr(privatetext, "hashed_index", lambda cfg: 1 / 0)
+    assert push(ada) is None
+
+
+def test_the_index_is_cached_as_hashes(ada, make_repo, brain_home, monkeypatch):
+    make_repo.commit(ada, {"docs/new.md": RULE + "\n"})
+    stamp(ada)
+    assert push(ada)[0] == "advice"
+    cache = (brain_home / "cache" / "private-text.json").read_text(encoding="utf-8")
+    assert "shared branch" not in cache and "orchard" not in cache   # hashes and source paths only
+    monkeypatch.setattr(privatetext, "index", lambda cfg: 1 / 0)       # the cache answers
+    assert push(ada)[0] == "advice"
+
+
+def test_two_hunks_never_join_into_one_passage(ada, make_repo):
+    lines = [f"filler {i}" for i in range(20)]
+    make_repo.commit(ada, {"docs/split.md": "\n".join(lines) + "\n"})
+    run_git(ada, "update-ref", "refs/remotes/origin/main", "HEAD")   # the remote has the filler
+    lines[2], lines[15] = "Never push to the shared branch", "on a Friday after six"   # two hunks, 6 and 5 words
+    make_repo.commit(ada, {"docs/split.md": "\n".join(lines) + "\n"})
+    stamp(ada)
+    assert push(ada) is None
+    lines[3] = "on a Friday after six"   # adjacent: one run, one passage
+    make_repo.commit(ada, {"docs/split.md": "\n".join(lines) + "\n"})
+    stamp(ada)
+    assert "docs/split.md:3 (from rules/global.md)" in push(ada)[1]
+
+
+def test_a_url_remote_excludes_only_what_that_repo_has(ada, make_repo):
+    run_git(ada, "update-ref", "refs/remotes/mirror/main", "HEAD")
+    run_git(ada, "remote", "add", "mirror", "https://code.example/ada/mirror.git")
+    make_repo.commit(ada, {"docs/new.md": RULE + "\n"})
+    run_git(ada, "update-ref", "refs/remotes/mirror/main", "HEAD")   # the private mirror has it, the public repo not
+    stamp(ada)
+    assert push(ada, "git push https://github.com/acme/engine.git main")[0] == "advice"
+
+
+def test_the_owner_turns_the_advice_off(ada, make_repo, monkeypatch):
+    make_repo.commit(ada, {"docs/new.md": RULE + "\n"})
+    stamp(ada)
+    monkeypatch.setenv(guards.ALLOW_ENV, "public:private-text")
+    assert push(ada) is None
+
+
+def test_a_git_failure_is_logged_never_read_as_nothing(ada, make_repo, brain_home, monkeypatch):
+    make_repo.commit(ada, {"docs/new.md": RULE + "\n"})
+    stamp(ada)
+    real = guards._git_out
+    monkeypatch.setattr(guards, "_git_out", lambda repo, *a, strict=False: (
+        (_ for _ in ()).throw(guards.GuardError("git log: timeout")) if "log" in a else real(repo, *a, strict=strict)))
+    assert push(ada) is None
+    assert "GuardError" in (brain_home / "ledger" / "errors.log").read_text(encoding="utf-8")

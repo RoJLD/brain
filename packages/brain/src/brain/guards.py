@@ -3320,12 +3320,13 @@ PRIVATE_TEXT_SHOWN = 5   # the passages a note names; it counts the rest
 
 def private_text_note(payload: dict) -> str | None:
     """Advice, never a refusal, for a git push to a public repo: the passages of 8 words or more that what it sends
-    (the added lines of its commits that the remote has not) shares with the owner's rules and notes on this machine
-    (brain.privatetext, the check ``brain check --public --private-text`` runs before a tag), so that a sentence
-    copied from them is reworded in its PR, not at the release. A file under public.allow is not read. None when the
-    push sends none, goes elsewhere, or the brain has no rules or notes here."""
+    (the added lines of its commits that the remote has not, :data:`PRIVATE_TEXT_COMMITS` commits at most) shares
+    with the owner's rules and notes on this machine (brain.privatetext's hashed index, cached), so that a sentence
+    copied from them is reworded in its PR, not at the release. A file under public.allow is not read; tag messages
+    and git notes are not either. None when the push adds no line, goes elsewhere, the brain has no rules or notes
+    here, or BRAIN_GUARD_ALLOW holds public:private-text (the owner's way to turn the advice off)."""
     command, cwd, powershell = _shell_call(payload)
-    if "push" not in command:
+    if "push" not in command or "public:private-text" in allowed():
         return None
     found, cfg, idx = [], None, None
     for _, d, args in _pushes(calls(command, cwd, powershell)):
@@ -3333,14 +3334,16 @@ def private_text_note(payload: dict) -> str | None:
         target = _public_push(d, args, cfg) if public.public_repos(cfg) else None
         if target is None:
             continue
+        slug, remote, refspecs, flags = target
+        added = _pushed_lines(d, remote, [sha for _, sha in _push_commits(d, refspecs, flags)], cfg)
+        if not added:
+            continue
         from . import privatetext
-        idx = privatetext.index(cfg) if idx is None else idx
+        idx = privatetext.hashed_index(cfg) if idx is None else idx
         if not idx:
             return None
-        slug, remote, refspecs, flags = target
-        found += _pushed_text(d, remote, [sha for _, sha in _push_commits(d, refspecs, flags)], idx,
-                              public.rules(cfg, slug))
-    return _private_text_message(found) if found else None
+        found += [(path, line, src) for path, rows in added.items() for line, src in _scan_runs(rows, idx)]
+    return _private_text_message(list(dict.fromkeys(found))) if found else None
 
 
 def _shell_call(payload: dict) -> tuple[str, str, bool]:
@@ -3363,20 +3366,54 @@ def _private_text_message(found: list[tuple[str, int, str]]) -> str:
             "PR, before the tag's check refuses them (brain check --public --private-text lists them all).")
 
 
-def _pushed_text(repo: str, remote: str, shas: list[str], idx: dict, allow) -> list[tuple[str, int, str]]:
-    """(path, line, source) of each copied passage in the lines the commits ``shas`` add that ``remote`` has not."""
+PRIVATE_TEXT_COMMITS = 500   # the most commits one push's advice reads (a first push of a long history)
+
+
+def _excluded(repo: str, remote: str) -> list[str]:
+    """git log's --not side: the remote-tracking refs of ``remote``, or, for a URL, of the remotes whose push URL names
+    the same repo (none: nothing excluded, the scan bounded by PRIVATE_TEXT_COMMITS)."""
+    if not re.search(r"[:/]", remote):
+        return [f"--remotes={remote}"]
+    slug = public.repo_slug(remote)
+    return [f"--remotes={name}" for name in _git_out(repo, "remote").split()
+            if public.repo_slug(_git_out(repo, "remote", "get-url", "--push", name).strip()) == slug]
+
+
+def _pushed_lines(repo: str, remote: str, shas: list[str], cfg) -> dict[str, list[tuple[int, str]]]:
+    """path -> (line, text) of the lines the commits ``shas`` add that ``remote`` has not, the files under
+    public.allow left out; git's own diff options neutralised (brain.diffs.argv), the log strict (an error or a
+    timeout is logged by the caller, never read as nothing to say)."""
     if not shas:
-        return []
-    remotes = f"--remotes={remote}" if not re.search(r"[:/]", remote) else "--remotes"
-    diff = _git_out(repo, "log", "-p", "--no-color", "--no-ext-diff", "--format=", "-U0", *shas, "--not", remotes)
+        return {}
+    allow = [boundary_glob(g) for g in config.allowed(cfg)]
+    exclude = _excluded(repo, remote)
+    diff = _git_out(repo, *diffs.argv("log", "-p", "--format=", "-U0", f"--max-count={PRIVATE_TEXT_COMMITS}",
+                                      *shas, *(["--not", *exclude] if exclude else [])), strict=True)
+    return {path: rows for path, rows in diffs.added_lines(diff).items() if not any(rx.match(path) for rx in allow)}
+
+
+def boundary_glob(glob: str):
+    from . import boundary   # here: the guard hook imports it only for a push to a public repo
+    return boundary.glob_regex(glob)
+
+
+def _scan_runs(rows: list[tuple[int, str]], idx: dict) -> list[tuple[int, str]]:
+    """(line, source) of each copied passage in ``rows``, scanned run by run of consecutive line numbers: two hunks
+    never join into one sentence. ``rows`` come from git log, newest commit first: a line number keeps its newest
+    text, and lines added by several commits are read in their order in the file."""
     from . import privatetext
-    out = []
-    for path, rows in diffs.added_lines(diff).items():
-        if allow.allowed(path):
-            continue
-        for line, src in privatetext.scan("\n".join(text for _, text in rows), idx):
-            out.append((path, rows[line - 1][0] if 0 < line <= len(rows) else line, src))
-    return list(dict.fromkeys(out))
+    newest: dict[int, str] = {}
+    for line, text in rows:
+        newest.setdefault(line, text)
+    out, run = [], []
+    for row in sorted(newest.items()) + [(None, "")]:
+        if run and (row[0] is None or row[0] != run[-1][0] + 1):
+            out += [(run[line - 1][0] if 0 < line <= len(run) else run[0][0], src)
+                    for line, src in privatetext.scan("\n".join(t for _, t in run), idx)]
+            run = []
+        if row[0] is not None:
+            run.append(row)
+    return out
 
 
 # --- what a commit to a public repo records (the lesson les-brain-owner-name-in-fixtures) ------------------------

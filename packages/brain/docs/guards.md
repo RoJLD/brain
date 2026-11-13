@@ -184,6 +184,12 @@ Three guards the lessons registry asked for (`brain lessons --follow`), and an a
   `brain check --public --private-text` before a tag). Each passage is named in the session's context by its file,
   line and source, never its text, and the ledger records the advice (`warned`); a file under `public.allow` is not
   read, and a scan that fails lets the push go (`errors.log`). The PR rewords them; the tag's check still refuses.
+  A push that adds no line costs one `git log`; the windows are hashed and cached in
+  `<BRAIN_HOME>/cache/private-text.json` (hashes and source paths, never the words) while the rules and notes keep
+  their mtime and size; one push reads 500 commits at most (a first push of a long history), each hunk on its own,
+  and a remote given as a URL excludes what the remotes naming the same repo have. Tag messages and git notes are not
+  read. `BRAIN_GUARD_ALLOW=public` lifts the push's refusal, not the advice; `BRAIN_GUARD_ALLOW=public:private-text`
+  turns the advice off.
 
 - **The public check at the commit** (`public:commit`): in a checkout whose branch pushes to a repo of config.json's
   `public.repos` (its pushRemote, else its remote, else origin: a private fork's public upstream is not checked), a `git commit` whose added lines hold a denied term outside `public.allow` (the owner's name, a
