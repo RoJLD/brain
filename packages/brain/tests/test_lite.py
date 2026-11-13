@@ -145,24 +145,33 @@ def _read(root: Path, rel: str) -> str:
     return (root / rel).read_text(encoding="utf-8")
 
 
-def test_the_core_runs_its_lite_scenario_with_nothing_else(tmp_path):
-    st = _load("stranger_test_lite")
+def _launcher() -> Path:
+    """The scripts folder holding ``brain``; the test skipped without it on a machine, failed in the CI."""
     scripts = _scripts()
     if scripts == Path():
         if os.environ.get("CI"):
             pytest.fail("no brain launcher beside this Python: the CI must run the lite suite (pip install -e)")
         pytest.skip("no brain launcher beside this Python (pip install -e packages/brain)")
-    listener = Listener()
+    return scripts
+
+
+def _scenario(st, tmp_path: Path, scripts: Path, listener: Listener) -> tuple[list[dict], Path, dict]:
+    """(each step's result, the brain's root, the environment): the engine probe, the Lite steps, the more ones."""
+    env = lite_env(st, tmp_path, scripts, listener.url)
+    root = tmp_path / "ada-brain"
+    root.mkdir()
+    hooks = {**st.hook_env_of(env, root, scripts), "BRAIN_PYTHON": sys.executable}
+    probe = [("engine", [sys.executable, "-c", "import brain, research_graph; print(brain.__file__); "
+                         "print(research_graph.__file__)"], None, None)]
+    steps = [(n, c[:2] + ["--offline", *c[2:]] if n == "refresh" else c, i, ok, *rest)
+             for n, c, i, ok, *rest in st.lite_steps(root, scripts, dev=True)]
+    return st.run_steps(probe + steps + more_steps(st, root, scripts), env, root, hooks), root, env
+
+
+def test_the_core_runs_its_lite_scenario_with_nothing_else(tmp_path):
+    st, scripts, listener = _load("stranger_test_lite"), _launcher(), Listener()
     try:
-        env = lite_env(st, tmp_path, scripts, listener.url)
-        root = tmp_path / "ada-brain"
-        root.mkdir()
-        hooks = {**st.hook_env_of(env, root, scripts), "BRAIN_PYTHON": sys.executable}
-        probe = [("engine", [sys.executable, "-c", "import brain, research_graph; print(brain.__file__); "
-                             "print(research_graph.__file__)"], None, None)]
-        steps = [(n, c[:2] + ["--offline", *c[2:]] if n == "refresh" else c, i, ok, *rest)
-                 for n, c, i, ok, *rest in st.lite_steps(root, scripts, dev=True)]
-        results = st.run_steps(probe + steps + more_steps(st, root, scripts), env, root, hooks)
+        results, root, env = _scenario(st, tmp_path, scripts, listener)
     finally:
         listener.close()
     assert [r["step"] for r in results if not r["ok"]] == [], _failed(results)
