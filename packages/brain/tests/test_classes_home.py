@@ -3,6 +3,7 @@ telemetry §3.7, §9.4; spec-brain-data-compat N1 and COMPAT-6): every name the 
 has a class, an undeclared one takes its default and is only noted, and the desktop app's session metadata is read
 through a closed list of keys, its text keys never reaching a store."""
 
+import ast
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -347,8 +348,43 @@ _SH_WALK = re.compile(r"""\b(?:find|ls|du|tar|cp\s+-\w*r\w*)\s+["']?\$\{?BRAIN_H
 def _is_home_call(node) -> bool:
     """``brain_home()`` or ``<x>.brain_home()``: BRAIN_HOME itself, not a store under it."""
     f = getattr(node, "func", None)
-    return (isinstance(node, __import__("ast").Call) and not node.args
+    return (isinstance(node, ast.Call) and not node.args
             and ((getattr(f, "id", None) == "brain_home") or (getattr(f, "attr", None) == "brain_home")))
+
+
+def _walks_home(n: ast.Call, home) -> bool:
+    """A call that walks what ``home(expr)`` says is BRAIN_HOME: a walk method on it, or a walking function of it."""
+    fn = n.func
+    if not isinstance(fn, ast.Attribute):
+        return False
+    if fn.attr in _WALK_METHODS and home(fn.value):
+        return True
+    return (isinstance(fn.value, ast.Name) and (fn.value.id, fn.attr) in _WALK_FUNCS and bool(n.args)
+            and home(n.args[0]))
+
+
+def _scope_walks(scope) -> list[int]:
+    """The lines of the walks of BRAIN_HOME in one function (or the module): of ``brain_home()`` or a name bound to
+    it there."""
+    bound = {t.id for n in ast.walk(scope) if isinstance(n, ast.Assign) and _is_home_call(n.value)
+             for t in n.targets if isinstance(t, ast.Name)}
+
+    def home(e) -> bool:
+        return _is_home_call(e) or (isinstance(e, ast.Name) and e.id in bound)
+
+    return [n.lineno for n in ast.walk(scope) if isinstance(n, ast.Call) and _walks_home(n, home)]
+
+
+def _file_walks(text: str, shell: bool) -> list[int]:
+    if shell:
+        return [n for n, line in enumerate(text.splitlines(), 1)
+                if not line.lstrip().startswith("#") and _SH_WALK.search(line)]
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    scopes = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))] + [tree]
+    return [line for scope in scopes for line in _scope_walks(scope)]
 
 
 def home_walks(files: list[Path] | None = None) -> list[str]:
@@ -356,40 +392,14 @@ def home_walks(files: list[Path] | None = None) -> list[str]:
     iterdir or walk of ``brain_home()`` or of a name bound to it in the same function, os.walk / os.scandir /
     os.listdir / glob.glob / shutil.copytree of it, and in a hook's shell script a find, ls, du, tar or cp -r of
     $BRAIN_HOME. A walk of a store under it (``brain_home() / "ledger"``) is the store's reader, not a walk of the home."""
-    import ast
-
-    out = []
     if files is None:
         files = [f for f in [*SRC.rglob("*.py"), *SRC.rglob("*.sh")] if f.name != "classes.py" or f.parent != SRC]
+    out = set()
     for f in files:
-        text = f.read_text(encoding="utf-8", errors="replace")
         rel = f.relative_to(SRC.parent).as_posix() if SRC.parent in f.parents else f.name
-        if f.suffix == ".sh":
-            out += [f"{rel}:{n}" for n, line in enumerate(text.splitlines(), 1)
-                    if not line.lstrip().startswith("#") and _SH_WALK.search(line)]
-            continue
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
-            continue
-        scopes = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))] + [tree]
-        for scope in scopes:
-            bound = {t.id for n in ast.walk(scope) if isinstance(n, ast.Assign) and _is_home_call(n.value)
-                     for t in n.targets if isinstance(t, ast.Name)}
-
-            def home(e) -> bool:
-                return _is_home_call(e) or (isinstance(e, ast.Name) and e.id in bound)
-
-            for n in ast.walk(scope):
-                if not isinstance(n, ast.Call):
-                    continue
-                fn = n.func
-                if isinstance(fn, ast.Attribute) and fn.attr in _WALK_METHODS and home(fn.value):
-                    out.append(f"{rel}:{n.lineno}")
-                elif (isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name)
-                      and (fn.value.id, fn.attr) in _WALK_FUNCS and n.args and home(n.args[0])):
-                    out.append(f"{rel}:{n.lineno}")
-    return sorted(set(out))
+        text = f.read_text(encoding="utf-8", errors="replace")
+        out |= {f"{rel}:{line}" for line in _file_walks(text, f.suffix == ".sh")}
+    return sorted(out)
 
 
 def test_no_walk_of_brain_home_outside_the_read_gate():

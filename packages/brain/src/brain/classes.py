@@ -673,28 +673,29 @@ def home_files(exit_: str | None = None, *, sealed: bool = False, cfg: config.Co
     declared, _ = stores(cfg)
     every = effective(declared)
     home = paths.brain_home()
-    refused: set[Path] = set()   # the roots of the stores under BRAIN_HOME the gate keeps from this reader
-    for s in every:
-        for m in s.machine:
-            if m.startswith("$BRAIN_HOME") and _home_reader(s, exit_, sealed, cfg):
-                refused.add(expand(m))
+    refused = {expand(m) for s in every for m in s.machine   # the roots under BRAIN_HOME kept from this reader
+               if m.startswith("$BRAIN_HOME") and _home_reader(s, exit_, sealed, cfg)}
     for name in home_names():
         s = store_of(every, f"$BRAIN_HOME/{name}") or Store(name, FLOOR)
-        top = home / name
-        if top in refused or _home_reader(s, exit_, sealed, cfg):
-            continue
-        stack = [top]
-        while stack:
-            p = stack.pop()
-            try:
-                if p.is_symlink():   # a link may point into a secret store or out of BRAIN_HOME: never followed
-                    continue
-                if p.is_file():
-                    yield s.name, p
-                elif p.is_dir():
-                    stack += sorted((c for c in p.iterdir() if c not in refused), reverse=True)
-            except OSError:
+        if home / name not in refused and not _home_reader(s, exit_, sealed, cfg):
+            yield from ((s.name, f) for f in _store_files(home / name, refused))
+
+
+def _store_files(top: Path, refused: set[Path]):
+    """The files under ``top`` in order, a refused root's subtree never entered and a link never followed (it may
+    point into a secret store or out of BRAIN_HOME)."""
+    stack = [top]
+    while stack:
+        p = stack.pop()
+        try:
+            if p.is_symlink():
                 continue
+            if p.is_file():
+                yield p
+            elif p.is_dir():
+                stack += sorted((c for c in p.iterdir() if c not in refused), reverse=True)
+        except OSError:
+            continue
 
 
 def engine_line(name: str) -> dict:
