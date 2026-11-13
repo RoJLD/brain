@@ -1491,6 +1491,35 @@ never typed by hand: config.json `adapters.claude.telemetry` says them, `brain i
 `install.ps1` adds them to the user settings (additions only), `otelHeadersHelper` included once the collector
 requires the token (docs/mcp.md, « Claude Code's export settings »).
 
+### Claude Code's telemetry: `brain telemetry`
+
+The sovereign stack's collector stores what Claude Code exports (its OTLP metrics and events) as JSON lines under
+`<BRAIN_HOME>/stacks/sovereign/data/otel-collector/` (`metrics.jsonl`, `logs.jsonl` and their rotated backups). Its
+processors keep no prompt, response, tool parameter or error text, and nothing that names the account (`user.email`,
+the account's uuid and id, the system's user name): an MCP or a skill call keeps only its names
+([`docs/mcp.md`](docs/mcp.md), « What the collector keeps »). `brain.otel` reads those files with the standard library,
+at zero token, and drops the same attributes from files written before the processors did:
+
+```bash
+brain telemetry summary              # the last 7 x 24 hours: per UTC day, model and session, tokens by type, cost,
+                                     # API requests, errors and retries; tool decisions; tool failures; hook p50/p90
+brain telemetry summary --days 1 --session 1a2b --json
+brain telemetry status               # the export on or off, the collector answering, each signal's last record
+```
+
+`--days N` is a rolling window (the last N x 24 hours), so the first UTC day of the table is partial.
+`brain telemetry status` exits 1 when the export is on and the collector does not answer (a probe of its health
+endpoint, 127.0.0.1:13133, bounded as a whole, no redirect followed), or answers while a signal has had no record for
+24 hours (`--stale-hours`) although Claude Code wrote a transcript more than that after its last record: a collector
+with no source looks healthy and records nothing. Claude Code exports only while a session runs, so a quiet spell is
+a warning (no activity), not a failure. The summary names any attribute key outside the reviewed list
+(`brain.otel.KNOWN_KEYS`), so that a key a new Claude Code version adds is reviewed before it is kept. The
+transcripts stay the first source of the ledgers
+(`brain usage`); the export adds Claude Code's own durations, permission decisions with their source and the API's
+retries. Other readers iterate `brain.otel.records()` (one normalized record per data point or event). DuckDB is not
+needed; where it is installed, it reads the same files directly, for instance
+`SELECT count(*) FROM read_json_auto('<folder>/logs*.jsonl')`.
+
 ## The Claude Code hooks
 
 `src/brain/adapters/claude/hooks/` is package data: `hooks.json` and a `.sh` launcher per hook, each running its `.py`
