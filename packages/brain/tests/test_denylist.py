@@ -189,3 +189,27 @@ def test_many_terms_are_one_regex_first(brain):
     r = public.rules(brain())
     assert r.any_term is not None and r.any_term.search("night_runner") and not r.any_term.search("nothing here")
     assert public.scan_lines("a.md", [(1, "nothing private")], r) == []
+
+
+def test_the_brains_own_root_gives_no_name_from_a_worktree_either(brain, tmp_path, monkeypatch):
+    """The registry read from the main checkout and config.json from a worktree (or the other way round) are one
+    brain: a project rooted in its repo is not derived by name (a brain named as its engine)."""
+    from conftest import git_init
+    git_init(brain.root)
+    run_git(brain.root, "add", "-A")
+    run_git(brain.root, "commit", "-qm", "init")
+    wt = tmp_path / "ada-wt"
+    run_git(brain.root, "worktree", "add", "-q", "-b", "side", str(wt))
+    (brain.root / "inner").mkdir()
+    with (brain.root / "projects.yaml").open("a", encoding="utf-8") as fh:
+        fh.write(f"inner-proj: {{root: {(brain.root / 'inner').as_posix()}}}\n"
+                 f"main-twin: {{root: {brain.root.as_posix()}}}\n")
+    brain()
+    import shutil
+    shutil.copy(brain.root / config.FILE, wt / config.FILE)
+    monkeypatch.setenv("BRAIN_CONFIG", str(wt / config.FILE))   # the registry stays the main checkout's
+    cfg = config.load()
+    assert cfg.root == wt.resolve()
+    names = {t for s, t in denylist.declared(cfg) if s == "projects"}
+    assert "main-twin" not in names and "moonshot" in names
+    assert "inner-proj" in names   # a subfolder of the brain's repo is another project: its name is derived

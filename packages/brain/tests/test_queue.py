@@ -67,7 +67,7 @@ def test_owner_only_categories(text, category):
 def test_the_rules_lists_are_read_and_covered(tmp_path):
     data = queue.rules()
     assert data["files"] and data["uncovered"] == []
-    assert {"repository visibility", "keys", "accounts", "anything touching money"} <= set(data["terms"])
+    assert {"a repo's visibility", "keys", "accounts", "anything with money"} <= set(data["terms"])
     text = ("- **Ada's alone**: secrets (never in git, never typed by Claude), arming the fund and live orders,\n"
             "  repository visibility, new scheduled tasks.\n- Ada decides: the logo's colour.\n")
     assert queue._list_terms(text) == ["secrets", "arming the fund", "live orders", "repository visibility",

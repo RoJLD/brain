@@ -2,8 +2,8 @@
 
 ## Git and PRs
 
-- Work in a git worktree, merge by PR.
-- Ada decides: repository visibility, new scheduled tasks or services, anything touching money, keys or accounts.
+- Use a git worktree and merge through a PR.
+- Ada decides: a repo's visibility, new scheduled tasks or services, anything with money, keys or accounts.
 
 ## Secrets
 

@@ -800,8 +800,8 @@ graph and the kanban show it answered) or `brain decision defaulted --apply` rec
 answer, `by: default`, `via: default`, at the deadline, and the hooks announce it with « by
 default »; a DDR whose answer the question tool captured on this machine before the deadline stays pending for
 `brain decision answer --captured`. The mark is refused, at the ask and by `brain check`, on a decision whose text
-(the recommendation's why and the linked ids included) names money, keys, visibility, publication, accounts, arming,
-rules or scheduled tasks (`brain.defaults.REFUSED`, by words, inside `-`/`_` compounds too, and amounts such as `40€`
+(the recommendation's why and the linked ids included) names keys, money, accounts, visibility, publication, rules,
+arming or scheduled tasks (`brain.defaults.REFUSED`, by words, inside `-`/`_` compounds too, and amounts such as `40€`
 or `$50`: a false alarm only keeps the decision with the owner; `brain check` applies it to pending DDRs, never to one already answered). A stamp without a zone is read as UTC. `brain
 decision defaulted` is the owner's review list (the defaults to review, the provisional ones, the reversed ones:
 answered otherwise than the default after the deadline; `--seen` marks them read, from the owner's terminal only,
@@ -1240,7 +1240,7 @@ names nothing). Each joins its category after the hand list. `config.json` `publ
 absent, all of them; `[]`, none); `public.public_names` (`{name: reason}`) keeps a public name of a registry out (a
 third-party tool a project reads, an engine capability a module is named after); the engine's own names (`brain`,
 `research-graph`), the names of `public.repos`'s owners and repos, and a name shorter than 3 characters are never
-derived, in any spelling; a project rooted at the brain's own root gives its repos, not its name. `brain check --all` (and a brain's own
+derived, in any spelling; a project rooted at the brain's own folder (or at the top of a worktree or the main checkout of the same repo) gives its repos, not its name; one in a subfolder keeps its name derived. `brain check --all` (and a brain's own
 root) warns about each declared name no deny list holds in every spelling, when `public.derive` leaves its source
 out. A term, by hand or derived, matches in every spelling of its separators: `acme-lab` also refuses `acme_lab`,
 `Acme Lab`, `acme - lab` and `acmelab` (a Python module named after a hyphenated repo). A new spec, machine or module changes the rules the stamps are keyed

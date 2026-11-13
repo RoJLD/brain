@@ -18,7 +18,7 @@ RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from th
 USAGE = """\
   brain decision ask --title T --question Q --option "A: consequences"... --why W [--multi] [--blocking] ...
                  [--low-stakes]: applied at once, provisionally, final by default 24 h later without an answer;
-                 refused on money, keys, visibility, publication, accounts, arming, rules and scheduled tasks
+                 refused on keys, money, accounts, visibility, publication, rules, arming and scheduled tasks
   brain decision pending [--all] [--json]     what waits on {owner}: the queue, items' props.open, spec questions
   brain decision answer ID CHOICE... [--other TEXT]   {owner}'s choice (label, number or start of the label)
   brain decision answer --batch @FILE|-|JSON [--via ask-tool --by {owner}]   a morning session's answers in one call:
@@ -349,8 +349,8 @@ def register(sub, ctx) -> None:
                                                              "notification channels (brain notify)")
     da.add_argument("--low-stakes", action="store_true",
                     help="applied at once, provisionally; final by default 24 h later without an answer (brain "
-                         "decision defaulted); refused on money, keys, visibility, publication, accounts, arming, "
-                         "rules and scheduled tasks")
+                         "decision defaulted); refused on keys, money, accounts, visibility, publication, rules, "
+                         "arming and scheduled tasks")
     dp = de.add_parser("pending", help=f"what waits on {who}: the queue's DDRs, items' props.open, unanswered spec "
                                        f"questions, items blocked on {who}, specs still proposed")
     dp.add_argument("--all", action="store_true", help="every registered project, then the total")

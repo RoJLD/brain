@@ -9,7 +9,8 @@ The sources (``public.derive`` picks them, a list of these names; absent, all of
 - ``people``: config.json ``identity.owner`` and ``identity.display_name``, and members.yaml's people (``name``,
   ``person_id``);
 - ``projects``: the projects registry's names (read-only ones too) and each project's repos, by name and by its main
-  checkout's folder (brain.projects.repos_of); a project rooted at the brain's own root gives its repos, not its name
+  checkout's folder (brain.projects.repos_of); a project rooted at the brain's own folder (or at the top of a
+  worktree or the main checkout of the same repo) gives its repos, not its name
   (a brain is often named as its engine: ``brain``);
 - ``specs``: the file names, without ``.md``, under the brain's ``docs/specs`` (a spec's path is its name);
 - ``modules``: the module registries of the brain's own stores (brain.modules), each entry's ``name``, and its ``id``
@@ -126,6 +127,30 @@ def _people(cfg: config.Config) -> list[str]:
     return out
 
 
+def _top(d: Path) -> Path | None:
+    """The top folder of the git checkout ``d`` is in, or None (not a repo, git missing)."""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", str(d), "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                             timeout=5, stdin=subprocess.DEVNULL).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return Path(out).resolve() if out else None
+
+
+def _own_root(root: Path, cfg: config.Config) -> bool:
+    """Whether a project's ``root`` is the brain's own: the folder of its config.json, or the top of another checkout of
+    the same git repo (a worktree of the brain and its main checkout are one brain: a registry read from one and a
+    config.json from the other still agree). A subfolder of the repo is not: a project there keeps its name derived."""
+    from . import paths
+    if root.resolve() == cfg.root.resolve():
+        return True
+    mine = paths.main_checkout(cfg.root)
+    if mine is None or not root.is_dir() or _top(root) != root.resolve():
+        return False
+    return paths.main_checkout(root) == mine
+
+
 def _projects(cfg: config.Config) -> list[str]:
     from . import projects
     reg = projects.registry_file(cfg.root)
@@ -135,7 +160,7 @@ def _projects(cfg: config.Config) -> list[str]:
             raise DeriveError(f"{reg.name} is a {type(data).__name__}, not a mapping")
     try:
         loaded = projects.load(cfg.root)
-        names = [n for n, p in loaded.items() if p.root.resolve() != cfg.root.resolve()]
+        names = [n for n, p in loaded.items() if not _own_root(p.root, cfg)]
         names += list(projects.readonly(cfg.root))
     except Exception as exc:   # noqa: BLE001 - any failure to read the registry is a reason to refuse
         raise DeriveError(f"the projects registry cannot be read ({type(exc).__name__}: {exc})") from exc

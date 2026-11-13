@@ -1018,7 +1018,7 @@ rows:
   - id: sw-config-as-data
     domain: release
     title: Configuration as data, plan then apply
-    statement: Installs and configuration are data applied by one idempotent command (a plan, then an apply), never a hidden manual change.
+    statement: Installs and configuration are data that a single idempotent command plans and then applies; nothing is changed by hand on the side.
     profiles: [cli, local-client, service, data-pipeline]
     stage: mvp
     enforcement: review-lens

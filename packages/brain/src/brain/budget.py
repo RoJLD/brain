@@ -1,5 +1,5 @@
 """The budget watch: ``hooks/budget.sh`` at ``PostToolUse`` (wi-brain-budget-watch; spec-brain-cost §3.1;
-COST-1, 2026-11-02: warn once at 80 % and once at 100 % of the brief's context budget or the item's estimate; the
+COST-1, 2026-11-02: warn at 80 % and again at 100 % of the brief's context budget or the item's estimate; the
 session decides, nothing stops it or blocks it on a question). Standard library only, never fails.
 
 The owner's sub-session rule gives every delegated task a context budget in its brief and a checkpoint at about 80 % of
@@ -445,10 +445,10 @@ def text(what: str, step: int, m: dict, state: dict) -> str:
     if step < 100:
         from . import config  # here: the hook's quiet calls never need it
         act = (f"{config.owner_of()}'s sub-session rule: checkpoint now: commit your work on your branch, write a "
-               "hand-over note (done, left, how to resume) in the shared notes folder, and report. The next notice "
-               "comes at 100 %.")
+               "hand-over note in the shared notes folder (what is done, what is left, how to resume), and report. The next "
+               "notice comes at 100 %.")
     else:
-        act = ("Past the budget: if the task is unfinished, checkpoint and report so that it is expanded to the next "
+        act = ("Past the budget: if the task is unfinished, checkpoint and report so that its budget grows one "
                "step (400k, 600k, 800k, 1M): this session goes on when its context still helps, else a fresh one "
                "resumes from the hand-over note. Last notice for this budget.")
     return f"{head} {act} You decide; nothing stops or blocks the session."
