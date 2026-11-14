@@ -98,6 +98,30 @@ def brain_command(command: str) -> list[str]:
     return [f"brain {c} {s}".rstrip() for c, s in brain_words(command)]
 
 
+_UNITS: list = []   # the CLI registry's units, read once per process (brain.tooling.registry_units)
+
+
+def brain_units(command: str) -> list[str]:
+    """The brain commands a shell line runs, as the registry's units (``brain <command> [<sub>]``): a word after the
+    command that is not a registry subcommand is an argument and is never kept; without the registry, the command
+    alone."""
+    if not _UNITS:
+        try:
+            from . import tooling
+            _UNITS.append(tooling.registry_units()[:2])
+        except Exception:  # noqa: BLE001 - no registry (a broken install): the command alone, never an argument
+            _UNITS.append(({}, {}))
+    known, alias = _UNITS[0]
+    out = []
+    for c, s in brain_words(command):
+        if not known:
+            out.append(f"brain {c}")
+            continue
+        unit = alias.get(f"brain {c} {s}".rstrip(), f"brain {c} {s}".rstrip())
+        out.append(unit if unit in known else alias.get(f"brain {c}", f"brain {c}"))
+    return out
+
+
 # --- skills ---
 
 def _plugin_of(parts: list[str]) -> str:

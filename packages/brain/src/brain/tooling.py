@@ -174,6 +174,21 @@ def guard_records(folder: Path | None = None) -> dict[str, list[dict]]:
     return out
 
 
+def _matched(tuid: str, guard: str, seen: dict[str, str], blind: Counter, misses: Counter) -> bool:
+    """Whether the transcript's refusal ``tuid`` is one the ledger counted: by its tool use id, else a ledger line of
+    the same guard that has none (``blind``, used up as it matches)."""
+    if tuid in seen:
+        misses["matched"] += 1
+        if seen[tuid] != guard:
+            misses["words_wrong"] += 1
+        return True
+    if blind[guard]:
+        blind[guard] -= 1
+        misses["matched_by_guard"] += 1
+        return True
+    return False
+
+
 def guard_counts(r: dict, ledger: list[dict], misses: Counter) -> Counter:
     """A session's refusals by guard: the ledger's and the transcript's joined by tool use id (each counted once,
     the ledger's guard first); ``misses`` counts how the two sources differ (the replay)."""
@@ -187,17 +202,9 @@ def guard_counts(r: dict, ledger: list[dict], misses: Counter) -> Counter:
     refused = r.get("refused") or {}
     blind = Counter(str(rec.get("guard") or "guard") for rec in ledger if not rec.get("tool_use_id"))
     for tuid, guard in refused.items():
-        if tuid in seen:
-            misses["matched"] += 1
-            if seen[tuid] != guard:
-                misses["words_wrong"] += 1
-            continue
-        if blind[guard]:   # the ledger's line without a tool use id: the same refusal, already counted
-            blind[guard] -= 1
-            misses["matched_by_guard"] += 1
-            continue
-        out[guard] += 1
-        misses["transcript_only"] += 1
+        if not _matched(tuid, guard, seen, blind, misses):
+            out[guard] += 1
+            misses["transcript_only"] += 1
     if isinstance(r.get("tooling"), dict):   # a row scanned before ``refused`` has none to join
         misses["ledger_only"] += sum(1 for t in seen if t not in refused) + sum(blind.values())
     return out

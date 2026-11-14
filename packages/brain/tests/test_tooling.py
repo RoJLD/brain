@@ -390,7 +390,7 @@ def test_a_tool_the_export_alone_saw_is_used_not_marked():
 
 
 def test_a_brain_command_keeps_its_registry_unit_never_an_argument():
-    assert usage._brain_units("brain capture acme-merger && brain item show wi-x") == ["brain capture",
+    assert toolids.brain_units("brain capture acme-merger && brain item show wi-x") == ["brain capture",
                                                                                        "brain item show"]
 
 
