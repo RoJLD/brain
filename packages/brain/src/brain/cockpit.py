@@ -497,7 +497,7 @@ def review_summary() -> dict:
     """The review error score (brain.review.score): the totals, the trend per wave and the lightening rule's verdict;
     {} when it cannot be read."""
     try:
-        sc = review.score()
+        sc = review.score(labels=review.labels_now())   # a stamp counted in its wave's release now
     except Exception:  # noqa: BLE001 - a stamp no engine wrote never takes the health probe down
         return {}
     return {"total": sc["total"], "waves": sc["waves"][-3:], "lighten": sc["lighten"]}

@@ -32,7 +32,8 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q -p no:cacheprovider"
 # the brain package's markers, for a run from the root over packages/brain/tests (packages/brain/pyproject.toml)
-markers = ["docker: calls the real docker client", "harness: reruns the stranger test with an injected fault (slow)"]
+markers = ["docker: calls the real docker client", "harness: reruns the stranger test with an injected fault (slow)",
+           "lite: the core's Lite scenario with Docker, gh and the network hidden"]
 
 [tool.ruff]
 line-length = 120

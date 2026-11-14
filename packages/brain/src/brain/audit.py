@@ -25,6 +25,7 @@ and a finding at that severity or above, or a refused write; 2 a registry or usa
 from __future__ import annotations
 
 import ast
+import fnmatch
 import json
 import os
 import posixpath
@@ -970,6 +971,7 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
     if unregistered:
         pending.append({"check": "coderef.dangling", "owner": f"CodeRefs of repos not measured here (another "
                                                               f"project's, or not cloned): {', '.join(unregistered)}"})
+    found, waived = waived_findings(found, getattr(c, "waive", None))
     found.sort(key=lambda f: (f["severity"] if f["severity"] != "info" else "P9", f["check"], f["unit"]))
     counts = {s: sum(1 for f in found if f["severity"] == s) for s in SEVERITIES + ("info",)}
     classes = {k: sum(1 for u in rf.units if u.cls == k) for k in ("entry", "prod", "other")}
@@ -977,8 +979,26 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
     return {"name": name, "path": str(c.path), "production": c.production or c.entry is not None,
             "commit": t.label, "date": t.date, "counts": counts, "classes": classes,
             "no_entry": rf.no_entry, "missing_entries": missing, "findings": found,
-            "not_measured": pending, "waived": [{"unit": u, "reason": r} for u, r in rf.waived],
+            "not_measured": pending, "waived": [{"unit": u, "reason": r} for u, r in [*rf.waived, *waived]],
             "exempt": rf.exempt, **({"feature_coverage": cov} if cov else {})}
+
+
+# The checks on a test module or a doc, which a repo's waive globs also take (a module or a script is waived where
+# the units are read, brain.inventory): a test that checks data no module stands for, a template a new brain copies.
+WAIVABLE = ("doc.links", "test.links")
+
+
+def waived_findings(found: list[dict], waive: dict[str, str] | None) -> tuple[list[dict], list[tuple[str, str]]]:
+    """(the findings kept, (unit, reason) of those a waive glob takes): only :data:`WAIVABLE` checks, once per unit."""
+    keep, out = [], []
+    for f in found:
+        why = next((r for g, r in (waive or {}).items() if fnmatch.fnmatchcase(f["unit"], g)), "") \
+            if f["check"] in WAIVABLE else ""
+        if not why:
+            keep.append(f)
+        elif f["unit"] not in {u for u, _ in out}:
+            out.append((f["unit"], why))
+    return keep, out
 
 
 def _parallel(fn, items: list) -> list:

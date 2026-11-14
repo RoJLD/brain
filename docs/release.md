@@ -98,6 +98,17 @@ this PR », or how many of them), naming each with « (this PR) », in the job's
 whatever it says (2 when it cannot tell: no tag), and a minor version stays the owner's decision at the version PR.
 Run it from a branch before pushing, committed or not. Making it a required check is a branch-protection setting.
 
+`--ref REF` previews a commit instead of the working tree (read with git, the checkout left as it is), and `--json`
+prints the preview as data: the release it would be (`kind`, `release`, `patch`, `minor`), each reason with the first
+commit since the tag that brought it, and `tipped_by`, the first of them (with the merged PR's number when its subject
+names one). The brain reads it (wi-brain-wave-version-forecast): `brain next` under the current wave's head and
+`brain wave check X.Y.Z` after the closure rule say whether the wave named for the next patch ships as that patch or
+as a minor, the PR that first tipped it and why, so that the version and the wave's name are decided before the
+version PR. They run the preview of the engine checkout's remote default branch as git last fetched it
+(`origin/HEAD`, else `origin/main`), with that commit's own two scripts (read with `git show` into a temporary
+folder), bounded to a minute; a project with no engine checkout gets no forecast, and one that cannot be read is said
+in one line. Advisory: neither command's exit changes.
+
 `release-check` itself refuses, on every PR, a standard step that the pending Upgrade fragments ask twice: one fragment
 holds the standard steps for the whole release, and a PR's fragment adds only its own step, never a copy of them
 (les-brain-upgrade-fragment-copies-standard).
@@ -105,16 +116,29 @@ holds the standard steps for the whole release, and a PR's fragment adds only it
 ## 1. Before the version PR
 
 - The items named for this release are merged, each reviewed, CI green on Windows (the `brain` job) included.
+- **The merged PRs close their items first**: `brain wave close-merged X.Y.Z` reads, in each repo of the project,
+  the PRs merged since the last release tag (git alone: GitHub's merge or squash commits on the default branch),
+  maps each to its items by the changelog fragment it added (`changes/<item>.md`, or a slug that starts with the
+  item's id) or an item id in its title, and plans each open item's close (`--pr "<repo> #N"`, the PR's title as
+  the outcome, dated by its merge; a revert takes its PR out); `--write` closes them, refused while a repo could not
+  be read. It lists the items already closed, the PRs and fragments that name no item and the wave's open items no
+  merged PR names: those are carried or dropped next. Fetch first: the default branch is read as last fetched.
 - **The version PR closes its wave** (the closure rule). Where a store plans the releases as waves (a Milestone of
-  kind wave named by its release, `packages/brain/docs/formats.md`, « Milestone kinds »), the wave named by this
-  version may hold no open item that is neither carried by name to a later wave nor dropped: in the brain that holds
+  kind wave whose release is a label, `packages/brain/docs/formats.md`, « Milestone kinds »), the wave of this
+  version (its label, or the current wave when the release jumped to the next minor or major: the release forecast
+  of `brain next` says it from the first PR that tips it) may hold no open item that is neither carried by name to a later wave nor dropped: in the brain that holds
   that store, `brain wave close X.Y.Z --carry-to X.Y.Z+1 [--drop ID]... --write` writes each open item's
-  `props.carried_to` (or drops it), reaches the wave with what it did, then `brain sync` (a PR there, like any
+  `props.carried_to` (or drops it), reaches the wave with what it did and `props.shipped_as` X.Y.Z (the later
+  waves' releases are computed from it), then `brain sync` (a PR there, like any
   backlog change). `--carry-to` names a pending wave, created beside the closed one when its release has none yet: a
-  reached or dropped one is refused, since no live wave would show the item. `release_check.py --store <that store>` refuses the version PR until then (an open item left, or
-  the wave not reached yet), naming the items, and `brain wave check X.Y.Z` says the same from the brain; CI holds
-  no owner's store and does not run it, so the maintainer runs it by hand before opening the version PR. A store
-  with no wave of this version passes. `brain next` then shows the next wave, the carried items first.
+  reached or dropped one is refused, since no live wave would show the item; `--carry-to` is read as the plan stands
+  once the wave is closed (after a jump to X.Y.0, `--carry-to X.Y.1` is the wave that follows). `release_check.py
+  --store <that store>` refuses the version PR until then (an open item left, the wave not reached yet, or another
+  pending wave left below the version), naming the items, and `brain wave check X.Y.Z` says the same from the brain;
+  its line names the engine that read the store. CI holds no owner's store and does not run it, so the maintainer
+  runs it by hand before opening the version PR. A version that names two waves (a later wave pinned to the current
+  wave's jump) is refused as ambiguous. A store with no wave of this version passes when no pending wave is below
+  it. `brain next` then shows the next wave, the carried items first.
 - `compat-prev` is green on main's latest PR: the upgrade test goes from the last tag to HEAD and back
   ([`packages/brain/docs/formats.md`](../packages/brain/docs/formats.md), « The upgrade test »).
 - **Read what changed**: `git log vP..origin/main` and `git diff --stat vP origin/main`. Look for what a brain that
@@ -132,7 +156,12 @@ holds the standard steps for the whole release, and a PR's fragment adds only it
 
 ## 2. The version PR
 
-One branch, `chore/release-X.Y.Z`, one PR that moves the version and nothing else:
+One branch, `chore/release-X.Y.Z`, one PR that moves the version and nothing else. Its mechanical part is one
+command, run in that branch's checkout: `brain release prepare X.Y.Z --theme "..."` prints the plan (the version lines
+of the table below, `freeze_store.py vP`, `changelog.py compile`, `FEATURES.md` and `docs/reference/` rendered from the
+planning brain, `release_check.py --store` then `--preview`), and `--write` runs it in that order, stopping at the
+first step that fails. What it leaves to you, it names: the `### Upgrade` steps and their prose, the pilot page's line
+of what each release brought, and the review.
 
 | File | What moves |
 |---|---|

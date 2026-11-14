@@ -11,7 +11,13 @@ being its other views; a card opens its tab already filtered, by a filter never 
 
 Keys (the footer shows those of the focused panel, ? lists them all):
   0-9, ,   go to a tab: 0 overview, 1 queue, 2 sessions, 3 frontier, 4 milestones, 8 health (the number in a panel's
-           title), the comma settings; 5 ideas, 6 lessons, 7 features and 9 resources wait for their items
+           title), the comma settings; 5 ideas, 6 lessons and 7 features wait for their items; 9 opens the resources'
+           detail (brain resources: the machine, the projects, the sessions' processes, the containers, the stores)
+           until its tab comes
+  The band at the top right (wi-brain-resources-view, RES-1): CPU, committed memory, the fullest Brain drive, the
+           network's throughput up and down, the tokens today and the quota with its pace (brain.resources), read by a
+           worker every 3 s, no program started; a measure at WARN (85 %) in yellow, at CRITICAL (95 %) in red; under
+           120 columns CPU, RAM and the quota only; a click on it opens the detail, as 9 does
   Settings its pages on the left (Cockpit, Identity, Brain, Permissions, Setup; brain.settings), each setting on the
            right with its value, where it comes from and how it changes; Enter on a Cockpit setting edits it (tui.json:
            theme, timezone, language, refresh and probe intervals, a panel's free title), on a brain setting says the
@@ -76,10 +82,19 @@ from textual.content import Content
 from textual.markup import escape
 from textual.widgets import DataTable, Footer, Header, Input, Label, Select, Static, Tab, Tabs
 
-from . import cockpit, detail, handover, paths, update
+from . import cockpit, detail, handover, paths, resources, resources_view, update
 from . import settings as settings_
 from .tui_palette import PaletteAndColumns, same_cell, styled
-from .tui_screens import AnswerScreen, ConfirmScreen, DetailScreen, LinkScreen, PanelHelp, ResultScreen, ViewScreen
+from .tui_screens import (
+    AnswerScreen,
+    ConfirmScreen,
+    DetailScreen,
+    LinkScreen,
+    PanelHelp,
+    ResourcesScreen,
+    ResultScreen,
+    ViewScreen,
+)
 from .tui_settings import SETTING_ACTIONS, SettingsFrame, SettingsTab
 from .tui_side import DetailBeside, DetailPane
 
@@ -124,6 +139,27 @@ class Card(Static, can_focus=True):
         self.app.open_card(self.tab_name)
 
 
+class Band(Static):
+    """The resources band at the header's right (RES-1): a click opens the detail."""
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.app.action_resources()
+
+
+class BandHeader(Header):
+    """Textual's header with the resources band docked at its right."""
+
+    def compose(self) -> ComposeResult:
+        yield from super().compose()
+        band = Band(id="band")
+        band.tooltip = "the machine's resources (brain resources): a click or 9 opens the detail"
+        yield band
+
+
+LEVEL_STYLES = {"warn": "bold yellow", "critical": "bold red", "unknown": "dim"}
+
+
 class SearchInput(Input):
     BINDINGS = [Binding("escape", "app.clear_search", "Clear")]
 
@@ -132,6 +168,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
     TITLE = update.title(None)  # the installed version; the newer one once the background check answers
     ESCAPE_TO_MINIMIZE = False  # Escape's steps are action_back's: the search before a full view
     CSS = """
+    #band { dock: right; width: auto; padding: 0 1; }
     #bar { height: 1; }
     #bar Label { width: auto; padding: 0 1; color: $text-muted; }
     #scope { width: 34; }
@@ -198,9 +235,12 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
     def __init__(self, cp, refresh: float = cockpit.REFRESH_S, probe: float = cockpit.PROBE_S,
                  views: dict[str, dict] | None = None, search: str = "", settings: dict | None = None,
                  tab: str | None = None, tabs: dict[str, dict] | None = None,
-                 columns: dict[str, dict] | None = None) -> None:
+                 columns: dict[str, dict] | None = None, sampler=None) -> None:
         super().__init__()
         self.cockpit, self.refresh_s, self.probe_s = cp, refresh, probe
+        self.sampler = sampler  # brain.resources' sampler, made at mount when none is given (the band's worker)
+        self.band_busy = False
+        self.band: dict | None = None  # the band's last reading
         self.views = {n: cockpit.view_of(n, (views or {}).get(n)) for n in cockpit.SORTS}
         self.search, self.scope = search, cp.scope
         self.settings = {"tz": "local", **(settings or {})}
@@ -228,7 +268,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
         self._settings_init()
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield BandHeader()
         with Horizontal(id="bar"):
             yield Label("Project")
             yield Select(self._scopes(), value=self.scope, allow_blank=False, compact=True, id="scope",
@@ -289,6 +329,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
         self.tick(probe=False)
         self._focus_body()
         self.call_after_refresh(self._check_update)  # after the first paint, never before it (UPD-1)
+        self.set_interval(resources.BAND_S, self._band_tick)
+        self.call_after_refresh(self._band_tick)
         for text in cockpit.PLUG_NOTES:  # what a plugin's declaration left out or tolerated
             self.notify(text, title="plugin", severity="warning", timeout=10)
 
@@ -424,13 +466,16 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
     def _resized(self) -> None:
         before = self.laid_out
         self._layout()
+        self._draw_band()  # under 120 columns the band keeps CPU, RAM and the quota
         if self.laid_out != before or (not self.beside and self._base().focused is self._q("#side-body")):
             self._focus_body()  # the grid or the pane gone, on a narrower terminal: their focus with them
         elif isinstance(self.focused, Card):  # the cards rearranged: the focused one still in sight
             self.call_after_refresh(self.focused.scroll_visible, animate=False)
 
     def action_tab(self, name: str) -> None:
-        if not cockpit.TABS[name]["views"]:
+        if name == "resources" and not cockpit.TABS[name]["views"]:
+            self.action_resources()  # until its tab comes (wi-brain-task-manager), 9 opens the detail
+        elif not cockpit.TABS[name]["views"]:
             self.notify(cockpit.not_built(name), title=cockpit.tab_title(name), timeout=6)
         elif name == self.tab:  # its key again: the focus back on its body
             self._focus_body()
@@ -458,6 +503,47 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
     def action_next_view(self) -> None:
         views = cockpit.tab_views(self.tab, self._narrow())
         self.action_set_view(views[(views.index(self._view()) + 1) % len(views)])
+
+    # --- the resources band: brain.resources' sampler in a worker every BAND_S (RES-1) ---
+
+    def _sampler(self):
+        if self.sampler is None:
+            self.sampler = resources.Sampler(getattr(self.cockpit, "root", None))
+        return self.sampler
+
+    def _band_tick(self) -> None:
+        if self.band_busy or (self.paused and self.band is not None):
+            return
+        self.band_busy = True
+        self.run_worker(self._band_thread, thread=True, group="band", exit_on_error=False)
+
+    def _band_thread(self) -> None:
+        try:
+            band = self._sampler().band()
+        except Exception as exc:  # shown in the band, never fatal: the next tick reads again
+            band = {"error": f"{type(exc).__name__}: {exc}"}
+        self.call_from_thread(self._band_done, band)
+
+    def _band_done(self, band: dict) -> None:
+        self.band_busy = False
+        self.band = band
+        self._draw_band()
+
+    def _draw_band(self) -> None:
+        if self.band is None or not self.screen_stack:
+            return
+        parts = resources_view.band_parts(self.band, self.size.width < cockpit.NARROW_COLUMNS)
+        text = Text()
+        for i, (word, lv) in enumerate(parts):
+            if i:
+                text.append(" · ", style="dim")
+            text.append(word, style=LEVEL_STYLES.get(lv, ""))
+        for band in self.screen_stack[0].query("#band"):
+            band.update(text)
+
+    def action_resources(self) -> None:
+        """The resources' detail (brain resources' full sample), read in the screen's worker."""
+        self.push_screen(ResourcesScreen(self._sampler()))
 
     # --- the engine's version: a background check, then u ---
 

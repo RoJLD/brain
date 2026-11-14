@@ -98,6 +98,16 @@ def test_the_owner_s_brain_gestures_are_refused_whatever_the_tool(tmp_path, ran,
     assert failed and text.startswith("refused by the owner guard") and "the owner's alone" in text and ran == []
 
 
+def test_every_gesture_of_the_engine_s_list_is_refused_whatever_the_tool():
+    """brain.gestures' one list (wi-brain-owner-only-registry), each gesture strict here: a client is trusted less."""
+    from brain import gestures
+    for g in (g for g in gestures.GESTURES if g.program == "brain"):
+        argv = [*g.words, *g.flags[:1]]
+        assert mcpguards.owner_gesture(argv).startswith("brain "), g.name
+        assert mcpguards.owner_gesture(["--project", "lab", *argv]), g.name
+    assert mcpguards.owner_gesture(["handover", "check"]) == "" and mcpguards.owner_gesture(["usage", "guard"]) == ""
+
+
 def test_a_write_tool_that_declares_no_effect_is_refused(tmp_path, ran):
     hook_only = mcpserver.Tool("h", "h", "", {}, kind="write", func=lambda s, a: (ran.append(1), ("x", False))[1])
     failed, text = client_with(tmp_path, hook_only).tool("h")

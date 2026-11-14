@@ -114,3 +114,31 @@ def test_status_line(tmp_path, monkeypatch):
 
 def _iso_in(h):
     return (datetime.now(timezone.utc) + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --- the command (brain quiet: --for, the state, --off, a bad duration, no registry) ---
+
+def test_the_command_starts_says_and_ends_the_quiet(monkeypatch, capsys):
+    from brain import cli
+    monkeypatch.setattr(projects, "load", lambda *a, **k: {})   # no project: nothing to sum up through
+    assert cli.main(["quiet", "--for", "2h"]) == 0
+    assert "notifications below critical are held" in capsys.readouterr().out
+    assert cli.main(["quiet"]) == 0
+    assert "quiet until" in capsys.readouterr().out
+    assert cli.main(["quiet", "--off", "--dry-run"]) == 0   # the quiet ends; only the sum-up is not sent
+    assert "quiet ended" in capsys.readouterr().out
+    assert cli.main(["quiet", "--off"]) == 0
+    assert "no manual quiet was running" in capsys.readouterr().out
+    assert cli.main(["quiet"]) == 0
+    assert "not quiet" in capsys.readouterr().out
+
+
+def test_the_command_refuses_a_bad_duration_and_survives_no_registry(monkeypatch, capsys):
+    from brain import cli
+
+    def broken(*a, **k):
+        raise OSError("no registry here")
+    monkeypatch.setattr(projects, "load", broken)
+    assert cli.main(["quiet", "--for", "9d"]) == 2
+    assert capsys.readouterr().err.startswith("brain: ")
+    assert cli.main(["quiet", "--off"]) == 0   # no registry: nothing to send the sum-up through, no failure

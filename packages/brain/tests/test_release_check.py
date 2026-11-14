@@ -821,6 +821,7 @@ def test_a_version_pr_whose_wave_holds_an_open_item_fails_with_store(repo, tmp_p
     text = "".join(capsys.readouterr())
     assert rc == 0, text
     assert "the wave 0.2.6 in" in text and "closed or none" in text
+    assert "(read by brain " in text   # which engine read the store: a wave's label depends on it
     assert release_check.main(["--repo", str(repo), "--store", str(tmp_path / "nowhere")]) == 2
 
 

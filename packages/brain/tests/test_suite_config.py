@@ -47,11 +47,16 @@ def test_the_hook_runs_before_xdist_turns_no_dist_into_load(pytestconfig):
 
 
 def test_brain_test_workers_sets_what_n_auto_means(monkeypatch):
-    """BRAIN_TEST_WORKERS: the count -n auto starts; unset or blank: xdist's own (None); anything but a whole number
-    is a usage error, not a silent default."""
+    """BRAIN_TEST_WORKERS: the count -n auto starts; unset or blank: one per CPU thread, psutil installed or not
+    (xdist would count physical cores with it), unless xdist's own variable is set (None: xdist answers); anything
+    but a whole number is a usage error, not a silent default."""
     monkeypatch.delenv("BRAIN_TEST_WORKERS", raising=False)
+    monkeypatch.delenv("PYTEST_XDIST_AUTO_NUM_WORKERS", raising=False)
+    assert conftest.pytest_xdist_auto_num_workers(None) == os.cpu_count()
+    monkeypatch.setenv("PYTEST_XDIST_AUTO_NUM_WORKERS", "5")
     assert conftest.pytest_xdist_auto_num_workers(None) is None
-    for raw, workers in (("24", 24), (" 8 ", 8), ("0", 0), ("", None), ("  ", None)):
+    monkeypatch.delenv("PYTEST_XDIST_AUTO_NUM_WORKERS")
+    for raw, workers in (("24", 24), (" 8 ", 8), ("0", 0), ("", os.cpu_count()), ("  ", os.cpu_count())):
         monkeypatch.setenv("BRAIN_TEST_WORKERS", raw)
         assert conftest.pytest_xdist_auto_num_workers(None) == workers
     for raw in ("many", "-2", "1.5"):

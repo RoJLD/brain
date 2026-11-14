@@ -1,0 +1,89 @@
+{
+ "advice": "open no new wave, finish the live ones",
+ "conversion": {
+  "n": 38,
+  "pct_per_usd": 0.058719,
+  "plan": "Pro",
+  "quota_usd": 1703.014814,
+  "readings": [
+   {
+    "at": "2026-11-13T10:01:04Z",
+    "host": "ada-pc",
+    "pct": 70.0,
+    "pct_per_usd": 0.026752,
+    "resets": "2026-11-16T12:00:00Z",
+    "usd": 2616.66
+   },
+   {
+    "at": "2026-11-13T11:15:29Z",
+    "host": "ada-pc",
+    "pct": 73.0,
+    "pct_per_usd": 0.027655,
+    "resets": "2026-11-16T12:00:00Z",
+    "usd": 2639.66
+   },
+   {
+    "at": "2026-11-13T12:24:41Z",
+    "host": "ada-pc",
+    "pct": 78.0,
+    "pct_per_usd": 0.029438,
+    "resets": "2026-11-16T12:00:00Z",
+    "usd": 2649.66
+   }
+  ],
+  "usd_per_pct": 17.030148
+ },
+ "estimated": false,
+ "hours_left": 71.6,
+ "level": "none",
+ "line": "week 78 % now (read 78 % at 12:24 UTC); at the last 24 h's pace 100 % on Fri 2026-11-13 22:36, before the reset Mon 2026-11-16 12:00 UTC: open no new wave, finish the live ones (brain usage quota)",
+ "live": {
+  "items": [],
+  "last_hour_usd": 8.2,
+  "left_pct": 0.0,
+  "left_usd": 0.0,
+  "median_session_usd": 26.4,
+  "sessions": 1
+ },
+ "now": "2026-11-13T12:24:41Z",
+ "pace": {
+  "at_reset": 232.4,
+  "full_at": "2026-11-13T22:36:38Z",
+  "hours": 24,
+  "pct_h": 2.157,
+  "usd": 881.79,
+  "usd_h": 36.74
+ },
+ "pct_now": 78.0,
+ "plan": "Pro",
+ "queue": {
+  "first": [
+   "wi-lab-one",
+   "wi-lab-two",
+   "wi-lab-three",
+   "wi-lab-four",
+   "wi-lab-five"
+  ],
+  "fit": 23,
+  "fit_usd": 218.78,
+  "items": 23,
+  "room_pct": 22.0,
+  "usd": 218.78
+ },
+ "reading": {
+  "at": "2026-11-13T12:24:41Z",
+  "pct": 78.0,
+  "since_usd": 0.0
+ },
+ "readings": 39,
+ "resets": "2026-11-16T12:00:00Z",
+ "session_hour": {
+  "days": 7,
+  "hours": 289,
+  "total_usd": 2828.7,
+  "usd": 9.79
+ },
+ "uncalibrated": null,
+ "v": 1,
+ "window": "week"
+}

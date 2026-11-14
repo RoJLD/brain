@@ -62,7 +62,8 @@ command in the brain's root; `memory_propose` is a Write of its note's path. In 
 2. **The owner's gestures.** The `brain` commands only the owner runs are refused whatever the tool: `decision
    answer`, `queue done`, `schedule install`, `ipc` (`token`, `otel-headers`), `vault`, `identity`, `update`,
    `init`, `up`, `down`, `bundle apply`, `permissions grant`, `session-archive`, and any `--arm` (or a prefix argparse
-   expands to it). A
+   expands to it); plus every gesture of the engine's one list, `brain.gestures` (`usage allow`, `handover root`,
+   `uninstall --apply`, `queue apply`...: [guards.md](guards.md#the-owners-gestures-declared-once)), strict ones too. A
    command behind an option that is not `--root`, `--project` or `--store` spelled in full (`--proj=P`, which
    argparse would expand) is refused: it could not be read.
 3. **The secret scan of a write's arguments.** A string argument of a write tool that matches a secret pattern is
@@ -242,6 +243,44 @@ accepts a group bit or an ACL entry, and refuses a token readable by every user.
 Exit 1 on a FAIL. A required token that is missing is a FAIL. Under `--all`, a machine that never made the token and
 requires none gets no line: nothing is probed and Docker is not asked, so `--all` says what it said before. Its
 containers are then not inspected either: `brain health ipc`, named, always inspects them.
+
+### What the collector keeps (`wi-brain-otel-telemetry`)
+
+Claude Code's export puts the account on every record: `user.email` in clear, `user.account_uuid` and
+`user.account_id`, and `process.owner` (the system's user name) on the resource. A tool's parameters
+(`tool_parameters`: an MCP call's server and tool, a shell command with `OTEL_LOG_TOOL_DETAILS`) and a failure's
+`error` are text that can quote a command's output. The collector's processors (`compose/sovereign/otelcol.yaml`), in
+every pipeline and before any exporter (Prometheus, Loki, the JSONL files):
+
+| Processor | Pipelines | What it does |
+|---|---|---|
+| `transform/tool-names` | logs | copies the names a call's parameters carry to `mcp_server.name`, `mcp_tool.name` and `skill.name` |
+| `attributes/private` | metrics, logs | deletes `prompt`, `prompt_text`, `response`, `tool_parameters`, `error`, `user.email`, `user.account_uuid`, `user.account_id` and `process.owner` from a data point's or an event's attributes |
+| `resource/private` | metrics, logs | deletes the same keys from the resource |
+
+A failure keeps its class (`error_type`), never its text (the owner's decisions ST-7 and ST-8).
+`OTEL_LOG_USER_PROMPTS` and `OTEL_LOG_TOOL_DETAILS` stay off in Claude Code's settings; the processors hold even when
+one is turned on. `session.id` (the transcript's id) and the pseudonymous `user.id` and `organization.id` are kept:
+the first joins a record to the session tree. `tests/test_otel.py` checks every pipeline of the shipped file; where
+the collector's pinned image is on the machine, it also sends the fixtures through it and reads what comes out.
+
+The collector reads its configuration when it starts: after `brain bundle apply sovereign` writes a new one,
+`brain down otel-collector` then `brain up otel-collector` restarts it on that file. What it wrote before keeps those
+attributes until its rotation drops the file (31 days, `max_days`), and so do Loki and Prometheus within their
+retention; `brain telemetry` drops them when it reads (README, « Claude Code's telemetry »).
+
+The processors are a denylist, so a key a newer Claude Code adds is kept until someone looks at it:
+`brain.otel.KNOWN_KEYS` lists the keys reviewed, `brain telemetry summary` names any other it meets, and
+`tests/test_otel.py` fails on one in its fixtures, which are refreshed from the real files.
+
+`brain telemetry status` says whether the export is on (config.json `adapters.claude.telemetry` and Claude Code's user
+settings), whether the collector's health endpoint answers (`http://127.0.0.1:13133/`, the whole answer within
+`--timeout`, 1 s by default, no redirect followed; on Windows a refused loopback connection is retried for about 2 s,
+so a stopped collector reads « stopped, or slow ») and how old each exported signal's last record is. On, answering,
+nothing for `--stale-hours` (24) and a transcript under `$CLAUDE_CONFIG_DIR/projects` written more than that after
+the last record (a bounded walk) is a FAIL: the collector receives nothing (its endpoint or its token:
+`brain health ipc`). Without such a transcript it is a warning, no activity: Claude Code exports only while a
+session runs. Answering while the export is off is a warning too. `brain telemetry summary` reads the files.
 
 ## The container
 

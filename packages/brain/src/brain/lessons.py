@@ -611,7 +611,23 @@ def wave_retro(led, wave: str, store: Path | None = None) -> dict:
     from . import review   # the error score of the wave and its trend (wi-brain-review-error-score)
     return {"wave": wave, "items": sorted(items, key=lambda r: -r["friction"]), "totals": dict(tot),
             "learned": _learned(led, ids, store), "notes": _notes(led, ids),
-            "open": sorted(ids - {r["item"] for r in items}), "reviews": review.score()}
+            "open": sorted(ids - {r["item"] for r in items}), "reviews": review.score(labels=review.labels_now()),
+            "label": _label_of(wave, store)}
+
+
+def _label_of(wave: str, store: Path | None) -> str:
+    """The release ``wave`` (an id or a release) has now in ``store``'s plan, else its name without ``wave-``: the
+    error score's waves are releases."""
+    from . import waves
+    try:
+        if store and waves.applies(store):
+            plan = waves.load(store)
+            wid = plan.resolve(str(wave))
+            if wid:
+                return plan.label(wid)
+    except Exception:  # noqa: BLE001 - a plan that cannot be read: the name as given
+        pass
+    return str(wave).removeprefix("wave-")
 
 
 def _learned(led, ids: set[str], store: Path | None) -> list[dict]:
@@ -644,7 +660,7 @@ def render_wave(w: dict) -> list[str]:
         lines += [f"  {i}: {n}" for i, n in w["notes"].items()]
     if w.get("reviews"):
         from . import review
-        lines += review.score_lines(w["reviews"], str(w["wave"]).removeprefix("wave-"))
+        lines += review.score_lines(w["reviews"], w.get("label") or str(w["wave"]).removeprefix("wave-"))
     lines.append(f"lessons learned from the wave's items: {len(w['learned'])}")
     lines += [f"  {x['id']} [{x['status']}] seen {x['seen']}: {x['title']}" for x in w["learned"]]
     lines.append("the coordinator answers: what slowed the wave most, what the next wave's briefs change, which "

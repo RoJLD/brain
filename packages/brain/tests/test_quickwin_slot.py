@@ -90,7 +90,7 @@ def test_following_the_move_leaves_each_item_in_one_wave(make):
     assert waves.quickwin_slot(pl, "wave-1.1.0")["filled"] == ["wi-later", "wi-loose"]
     carried = waves.load(store)
     carried.nodes["wi-loose"]["props"]["carried_to"] = "1.2.0"
-    assert waves.move_command(carried, "wi-loose", "wave-1.1.0") == "brain item set wi-loose carried_to=1.1.0"
+    assert waves.move_command(carried, "wi-loose", "wave-1.1.0") ==         "brain item set wi-loose props.carried_to=wave-1.1.0"   # the id: a label may move
 
 
 def test_a_closed_wave_has_no_free_place_and_the_next_wave_no_candidate_twice(make):

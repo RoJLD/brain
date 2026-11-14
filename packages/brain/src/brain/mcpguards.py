@@ -8,7 +8,7 @@ path. :func:`judge` runs, in order:
 
 1. **the tool's own declaration**: a write tool with no effect is refused (a guard that exists only as a Claude hook
    is ported, or its tool is refused);
-2. **the owner's gestures** (:data:`OWNER_GESTURES`): the ``brain`` commands only the owner runs (answering a
+2. **the owner's gestures** (:data:`OWNER_GESTURES`, and brain.gestures' list, every one strict here): the ``brain`` commands only the owner runs (answering a
    decision, closing their queue's actions, a schedule installed, the machine's token or vault keys made, the engine
    updated or installed, stacks started, a bundle applied, an arming flag) are refused whatever the tool;
 3. **the secret scan of a write's arguments**: a string argument of a write tool that matches a secret pattern is
@@ -37,9 +37,10 @@ from __future__ import annotations
 import shlex
 from typing import NamedTuple
 
-from . import guards, paths, secretscan
+from . import gestures, guards, paths, secretscan
 
-# brain's own commands only the owner runs, as their leading words (after the global options); "--arm" anywhere
+# brain's own commands only the owner runs, as their leading words (after the global options); "--arm" anywhere; and
+# every gesture of brain.gestures.GESTURES, the engine's one list (this one is wider: a client is trusted less)
 OWNER_GESTURES: tuple[tuple[str, ...], ...] = (
     ("decision", "answer"), ("queue", "done"), ("schedule", "install"), ("ipc",), ("vault",),
     ("identity",), ("update",), ("init",), ("up",), ("down",), ("bundle", "apply"), ("permissions", "grant"),
@@ -88,7 +89,8 @@ def owner_gesture(argv: list[str]) -> str:
     for gesture in OWNER_GESTURES:
         if tuple(ws[:len(gesture)]) == gesture:
             return "brain " + " ".join(gesture)
-    return ""
+    g = gestures.match(["brain", *ws])   # the engine's one list (wi-brain-owner-only-registry), strict or not
+    return g.name if g else ""
 
 
 def bash_payload(root, argv: list[str]) -> dict:

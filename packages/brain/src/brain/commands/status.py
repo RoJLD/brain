@@ -14,7 +14,8 @@ USAGE_ORDER = 210   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain status [--all | --scope REF] [--quick] [--json]   each project's indicators at zero token: items by status
                  and priority, the frontier, decisions waiting on {owner}, milestones, audit debt, stacks, code index,
-                 its open alerts (brain alerts), journals, records and ledgers; --all adds the totals and the ids
+                 its open alerts (brain alerts), journals, records and ledgers (the token ledger's last 7 days by
+                 provider, harness and account too); --all adds the totals and the ids
                  shared across stores; --scope: the projects of a node's subtree in the scope tree (brain scopes: an
                  id, a path pro/acme, global = --all, . the project here, .. its parent), with the totals when it
                  holds several; --quick reads the files only (no audit, stack, code index or scheduler probe)

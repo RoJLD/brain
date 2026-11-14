@@ -545,7 +545,7 @@ def frozen_store(path: str) -> bool:
 
 def is_test(path: str) -> bool:
     base = path.rsplit("/", 1)[-1]
-    if skipped(path) or base in ("conftest.py", "__init__.py"):
+    if skipped(path) or base in ("conftest.py", "__init__.py") or frozen_store(path):   # a frozen store's hook: data
         return False
     if base.endswith(".py"):
         return base.startswith("test_") or base.endswith("_test.py")
