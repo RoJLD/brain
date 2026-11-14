@@ -36,11 +36,14 @@ selftime_bash() {
 
 # brain_python CANDIDATE...: sets brain_py to the first candidate that is a Python, without a fork (was $(command -v),
 # ~55 ms on Windows): a path is tested with -x, a bare name looked up in PATH by hash; the Windows Store stubs
-# (WindowsApps) are skipped. Returns 1 when none is.
+# (WindowsApps) are skipped, and so is a candidate whose file name holds no python (nor is py or pypy*): a
+# BRAIN_PYTHON set to true.exe would make every guard pass (wi-brain-unadopted-floor). Returns 1 when none is.
 brain_python() {
-  local py
+  local py base
   for py in "$@"; do
     [ -n "$py" ] || continue
+    base=${py##*/}; base=${base##*\\}
+    case $base in *[Pp][Yy][Tt][Hh][Oo][Nn]*|[Pp][Yy]|[Pp][Yy].[Ee][Xx][Ee]|[Pp][Yy][Pp][Yy]*) ;; *) continue ;; esac
     if [[ $py == */* || $py == *'\'* ]]; then
       [ -x "$py" ] || continue
     else

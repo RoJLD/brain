@@ -126,15 +126,21 @@ def git_config(listing: str, overrides: list[str] = ()) -> dict[str, list[str]]:
     return out
 
 
-def _last(conf: dict[str, list[str]], key: str) -> str:
+def last(conf: dict[str, list[str]], key: str) -> str:
+    """The value git reads for a single-valued ``key`` of git_config's dict: its last, else ''."""
     return (conf.get(key) or [""])[-1].strip()
+
+
+def truthy(value: str) -> bool:
+    """git's boolean: true, yes, on, 1 (a key given with no value is true too, git_config reads it 'true')."""
+    return value.strip().lower() in ("true", "yes", "on", "1")
 
 
 def default_remote(conf: dict[str, list[str]], current: str) -> str:
     """The remote a push that names none goes to: the current branch's pushRemote, remote.pushDefault, the branch's
     remote, else origin."""
-    return (_last(conf, f"branch.{current}.pushremote") or _last(conf, "remote.pushdefault")
-            or _last(conf, f"branch.{current}.remote") or "origin")
+    return (last(conf, f"branch.{current}.pushremote") or last(conf, "remote.pushdefault")
+            or last(conf, f"branch.{current}.remote") or "origin")
 
 
 def default_refspecs(conf: dict[str, list[str]], remote: str, current: str) -> list[str]:
@@ -144,7 +150,7 @@ def default_refspecs(conf: dict[str, list[str]], remote: str, current: str) -> l
     the current branch to its own name. No branch checked out sends nothing (git refuses the push)."""
     if conf.get(f"remote.{remote}.push"):
         return list(conf[f"remote.{remote}.push"])
-    mode = _last(conf, "push.default").lower() or "simple"
+    mode = last(conf, "push.default").lower() or "simple"
     if mode == "nothing":
         return []
     if mode == "matching":
@@ -152,7 +158,7 @@ def default_refspecs(conf: dict[str, list[str]], remote: str, current: str) -> l
     if not current or current == "HEAD":
         return []
     if mode in ("upstream", "tracking"):
-        return [f"{current}:{_last(conf, f'branch.{current}.merge') or current}"]
+        return [f"{current}:{last(conf, f'branch.{current}.merge') or current}"]
     return [current]
 
 
