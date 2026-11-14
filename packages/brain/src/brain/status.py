@@ -16,7 +16,8 @@ Per project, from what the Brain already reads:
   records     the journals' last day, the records (DDR, SR, AR), the ledgers the registry names (size and last
               write), and the latest digest when brain.digest is there (wi-brain-digest);
   tokens      the last 7 days of its sessions in the token ledger (brain.usage, brain.cost): their cost at API
-              prices, its distribution, the costliest items and phases (``--quick``: the ledger as it is, no scan);
+              prices, its distribution, the costliest items and phases, and where they ran (``sources``: by
+              provider, harness and account, brain.provenance) (``--quick``: the ledger as it is, no scan);
   forecast    the nearest dated milestone's p10-p90 and the backlog's verdict (brain.forecast, 300 futures, saved;
               ``--quick``: the last forecast saved, invalidated once the open items moved by more than 20 %).
 

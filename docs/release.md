@@ -124,15 +124,21 @@ holds the standard steps for the whole release, and a PR's fragment adds only it
   be read. It lists the items already closed, the PRs and fragments that name no item and the wave's open items no
   merged PR names: those are carried or dropped next. Fetch first: the default branch is read as last fetched.
 - **The version PR closes its wave** (the closure rule). Where a store plans the releases as waves (a Milestone of
-  kind wave named by its release, `packages/brain/docs/formats.md`, « Milestone kinds »), the wave named by this
-  version may hold no open item that is neither carried by name to a later wave nor dropped: in the brain that holds
+  kind wave whose release is a label, `packages/brain/docs/formats.md`, « Milestone kinds »), the wave of this
+  version (its label, or the current wave when the release jumped to the next minor or major: the release forecast
+  of `brain next` says it from the first PR that tips it) may hold no open item that is neither carried by name to a later wave nor dropped: in the brain that holds
   that store, `brain wave close X.Y.Z --carry-to X.Y.Z+1 [--drop ID]... --write` writes each open item's
-  `props.carried_to` (or drops it), reaches the wave with what it did, then `brain sync` (a PR there, like any
+  `props.carried_to` (or drops it), reaches the wave with what it did and `props.shipped_as` X.Y.Z (the later
+  waves' releases are computed from it), then `brain sync` (a PR there, like any
   backlog change). `--carry-to` names a pending wave, created beside the closed one when its release has none yet: a
-  reached or dropped one is refused, since no live wave would show the item. `release_check.py --store <that store>` refuses the version PR until then (an open item left, or
-  the wave not reached yet), naming the items, and `brain wave check X.Y.Z` says the same from the brain; CI holds
-  no owner's store and does not run it, so the maintainer runs it by hand before opening the version PR. A store
-  with no wave of this version passes. `brain next` then shows the next wave, the carried items first.
+  reached or dropped one is refused, since no live wave would show the item; `--carry-to` is read as the plan stands
+  once the wave is closed (after a jump to X.Y.0, `--carry-to X.Y.1` is the wave that follows). `release_check.py
+  --store <that store>` refuses the version PR until then (an open item left, the wave not reached yet, or another
+  pending wave left below the version), naming the items, and `brain wave check X.Y.Z` says the same from the brain;
+  its line names the engine that read the store. CI holds no owner's store and does not run it, so the maintainer
+  runs it by hand before opening the version PR. A version that names two waves (a later wave pinned to the current
+  wave's jump) is refused as ambiguous. A store with no wave of this version passes when no pending wave is below
+  it. `brain next` then shows the next wave, the carried items first.
 - `compat-prev` is green on main's latest PR: the upgrade test goes from the last tag to HEAD and back
   ([`packages/brain/docs/formats.md`](../packages/brain/docs/formats.md), « The upgrade test »).
 - **Read what changed**: `git log vP..origin/main` and `git diff --stat vP origin/main`. Look for what a brain that

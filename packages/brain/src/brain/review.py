@@ -44,7 +44,9 @@ VOCABULARY = {"severity": SEVERITIES, "outcome": ("fixed", "contested", "open", 
 # points, C the environment, D the child-coordinator blind spots, E unsafe write defaults, F hand-typed facts.
 CAUSE = re.compile(r"A(\.[a-e])?|[B-F]", re.I)
 ROW = {"severity": "", "lens": "", "cause": "", "outcome": "", "when": "before", "covered": ""}   # a row's fields
-PLACES = ("pr", "item", "stream", "wave", "repo_slug")   # where a stamp is placed for the score
+# where a stamp is placed for the score: wave is the release label when stamped, wave_id the wave's stable id in the
+# registered project ``project`` (a label moves when an earlier wave ships as a higher version: a wave id is a store's)
+PLACES = ("pr", "item", "stream", "wave", "wave_id", "project", "repo_slug")
 FALLS = 2   # the reviews lighten once the findings per PR fall over this many waves in a row
 
 # The lenses, each chosen by the surfaces a diff touches: (name, what it asks, path patterns).
@@ -216,7 +218,7 @@ def stamp_file(head: str) -> Path:
 def stamp(head: str, findings: int, fixed: int, contested: int = 0, note: str = "", repo: Path | None = None,
           **where: str) -> Path:
     """Record that the review of ``head`` ran, with its counts; a full sha only (a short one could name two).
-    ``where`` (pr, item, stream, wave, repo_slug) places it for the error score; the note's finding lines
+    ``where`` (pr, item, stream, wave, wave_id, project, repo_slug) places it for the error score; the note's finding lines
     (:func:`parse_note`) are kept as its rows."""
     if not re.fullmatch(r"[0-9a-f]{40}", head):
         if repo is None:
@@ -428,15 +430,37 @@ def _wave_order(wave: str) -> tuple:
     return (0, tuple(int(x) for x in nums), wave) if nums else (1, (), wave)
 
 
-def score(recs: list[dict] | None = None) -> dict:
+def labels_now(root: Path | None = None) -> dict[tuple[str, str], str]:
+    """(a registered project, a wave id of its stores) -> the wave's release now (brain.waves), for :func:`score`; a
+    store or a registry that cannot be read is left out."""
+    from . import projects, waves
+    out: dict[tuple[str, str], str] = {}
+    try:
+        projs = projects.load(root)
+    except Exception:  # noqa: BLE001 - no registry: the stamps keep the labels they were stamped with
+        return out
+    for name, proj in projs.items():
+        for store in proj.stores:
+            try:
+                if waves.applies(store):
+                    plan = waves.load(store)
+                    out.update({(name, w): plan.label(w) for w in plan.waves})
+            except Exception:  # noqa: BLE001 - a plan that cannot be read leaves its stamps as stamped
+                continue
+    return out
+
+
+def score(recs: list[dict] | None = None, labels: dict[tuple[str, str], str] | None = None) -> dict:
     """The error score (wi-brain-review-error-score): each PR's latest stamp, the totals and, per wave in order, the
     PRs, confirmed findings, findings per PR and the rows' severity, lens, root-cause family, found after the merge
     and covered by a script; then the owner's rule: the reviews lighten only once the findings per PR fall over two
-    waves in a row."""
+    waves in a row. ``labels`` (:func:`labels_now`: a project and a wave id -> its release now): a stamp that names
+    its project and wave_id counts in that wave's current release, not the label it was stamped with."""
     prs = per_pr(stamps() if recs is None else [x for x in map(_normal, recs) if x])
     waves: dict[str, list[dict]] = {}
     for r in prs:
-        waves.setdefault(r.get("wave") or "", []).append(r)
+        now = (labels or {}).get((r.get("project") or "", r.get("wave_id") or ""))
+        waves.setdefault(now or r.get("wave") or "", []).append(r)
     trend = [{"wave": w, **_tally(waves[w])} for w in sorted((w for w in waves if w), key=_wave_order)]
     return {"total": _tally(prs), "waves": trend, "unplaced": len(waves.get("", [])), "lighten": lighten(trend)}
 
