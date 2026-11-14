@@ -86,6 +86,26 @@ The third line of the floor, no secret in a commit, is the secrets guard's alrea
 `floor:main`, `floor:force`, `floor:config`) lifts them, the owner's. git is asked only what a push needs: the branch
 checked out for `HEAD`, `@` or no refspec, the configuration for no refspec; config.json is read once per call.
 
+What else the floor holds (review round 2): an alias is read as what it runs (`alias.*` of git's configuration and
+of `git -c`; a shell alias that names push or send-pack is refused), `remote.<name>.mirror` as a forced push, a
+branch that is a symbolic ref as the branch it points at; `git config` or `git -c` setting `alias.*`,
+`remote.*.mirror`, `remote.*.push` or `push.default` is refused (check `config`), and so are a write of git's
+configuration files, `git symbolic-ref` of a branch, `git send-pack` and a `gh api` write of main's ref (`git/refs`,
+`merges`). The checkout that holds config.json is not rewritten (`checkout`, `restore`, `stash`, `reset`, `switch`,
+`rm`, `mv`, `merge`... there; `rm -rf` or `mv` of its folder); `git pull` still updates it. What stops the guards for
+later sessions is refused too: `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `USERPROFILE`, `HOME` (set, not read) and
+Claude Code's `disableAllHooks`, whatever spells the path (an NTFS stream's name, a junction or a link are resolved
+first); `guard.sh` runs no `BRAIN_PYTHON` whose file name holds no python. While the floor is on, or config.json
+cannot be read, a guard that fails refuses the call. Under `guards.owner_strict` the owner guard refuses
+`BRAIN_PYTHON`, `PYTEST_CURRENT_TEST` and `disableAllHooks` on every machine.
+
+**Limits** (a guard of the command line cannot be complete; the code host's branch protection on main is the
+backstop): code the guard does not read (a script, a program, a renamed Python wrapper as `BRAIN_PYTHON`); git
+configuration given by `GIT_CONFIG_COUNT`/`GIT_CONFIG_PARAMETERS` in a command's environment, or by an include file;
+the code host's other writers (the contents API, GraphQL `createCommitOnBranch`, `gh repo sync`); `git pull` of
+another branch into the checkout that holds config.json; a symbolic branch made before the floor was on and pushed
+by a refspec with a colon.
+
 **Floor only** (config.json `floor.only: true`): the machine gets the floor and nothing else, until it is adopted:
 `inject-rules.sh` injects the locked lines alone, after one line that says why (`brain.floor.ONLY_LINE`, the same
 words in both); the guard runs the floor's refusals, the secrets and configuration checks, the override protection

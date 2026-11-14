@@ -3990,20 +3990,34 @@ def _floor_shell(cmds, sub: str, command: str, files: list[str]) -> str | None:
     """What a shell call would lift the floor by (check_floor_files), else None: a write of a floor file, of a folder
     that holds one (rm -rf, mv) or of git's configuration; a git command that rewrites the files of the checkout
     that holds config.json (REVERTERS); a variable of FLOOR_ENV set for later sessions."""
+    what = _floor_writes(cmds, sub, files) or _floor_reverter(cmds, files)
+    if what:
+        return what
+    what = _override(command, cmds, sub, env=FLOOR_ENV)
+    return f"{what} refused: it moves or stops the floor" if what else None
+
+
+def _floor_writes(cmds, sub: str, files: list[str]) -> str | None:
+    """A shell write of a floor file, of a folder that holds one (rm -rf, mv), or of git's configuration."""
     for what, target in shell_writes(cmds, sub):
         real = _resolved(target)
         if real and (real in files or any(f.startswith(real.rstrip("\\/") + os.sep) for f in files)):
             return f"{what} into {target} refused: it sets the floor"
         if real and GIT_CONFIG_FILES.search(real):
             return f"{what} into {target} refused: it is git's configuration"
+    return None
+
+
+def _floor_reverter(cmds, files: list[str]) -> str | None:
+    """A git command that rewrites the files of the checkout that holds config.json (REVERTERS; git stash list and
+    show read)."""
     roots = {r for r in (_repo_of(os.path.dirname(f)) for f in files) if r}
     for words, d in cmds:
         parts = git_parts(words, d) if _prog(words[0]) == "git" else None
         if parts and parts[1] in REVERTERS and not (parts[1] == "stash" and parts[2][:1] in (["list"], ["show"])) \
                 and _repo_of(parts[0]) in roots:
             return f"git {parts[1]} in {parts[0]} refused: it rewrites the checkout that holds the floor's config.json"
-    what = _override(command, cmds, sub, env=FLOOR_ENV)
-    return f"{what} refused: it moves or stops the floor" if what else None
+    return None
 
 
 def _git_c(words: list[str]) -> list[str]:
@@ -4064,19 +4078,29 @@ def _floor_push(words: list[str], d: str, args: list[str]) -> tuple[str, str] | 
     remote, refspecs, flags = _push_target(args)
     current = _git_out(d, "rev-parse", "--abbrev-ref", "HEAD").strip() if floor.needs_current(refspecs, flags) else ""
     if not refspecs and floor.needs_current(refspecs, flags):
-        conf = floor.git_config(_git_out(d, "config", "-z", "--list"), _git_c(words))
-        remote = remote or floor.default_remote(conf, current)
-        if floor.truthy(floor.last(conf, f"remote.{remote}.mirror")):
-            return "force", f"git push refused: a mirror push (remote.{remote}.mirror)"
-        refspecs = floor.default_refspecs(conf, remote, current)
-        if not refspecs:
-            return None   # nothing sent (push.default nothing, no branch checked out)
-    bare = [r for r in refspecs if ":" not in r and r.lstrip("+") not in floor.HEAD and "*" not in r]
-    if bare:
-        syms = _symrefs(d)
-        refspecs = [f"{r}:{syms[r.lstrip('+')]}" if r.lstrip("+") in syms else r for r in refspecs]
-    hit = floor.push_refusal(refspecs, flags, current)
+        refspecs = _floor_defaults(words, d, remote, current)
+        if isinstance(refspecs, tuple) or not refspecs:
+            return refspecs or None   # a mirror push; or nothing sent (push.default nothing, no branch checked out)
+    hit = floor.push_refusal(_unsymref(d, refspecs), flags, current)
     return (hit[0], f"git push refused: {hit[1]}") if hit else None
+
+
+def _floor_defaults(words: list[str], d: str, remote: str, current: str):
+    """What a push that names no refspec sends (floor.default_refspecs), or (check, what) for a mirror push."""
+    conf = floor.git_config(_git_out(d, "config", "-z", "--list"), _git_c(words))
+    remote = remote or floor.default_remote(conf, current)
+    if floor.truthy(floor.last(conf, f"remote.{remote}.mirror")):
+        return "force", f"git push refused: a mirror push (remote.{remote}.mirror)"
+    return floor.default_refspecs(conf, remote, current)
+
+
+def _unsymref(d: str, refspecs: list[str]) -> list[str]:
+    """``refspecs`` with each bare branch that is a symbolic ref written to the branch it points at (git asked only
+    when a bare branch is pushed)."""
+    if not any(":" not in r and r.lstrip("+") not in floor.HEAD and "*" not in r for r in refspecs):
+        return refspecs
+    syms = _symrefs(d)
+    return [f"{r}:{syms[r.lstrip('+')]}" if ":" not in r and r.lstrip("+") in syms else r for r in refspecs]
 
 
 def _symrefs(d: str) -> dict[str, str]:
