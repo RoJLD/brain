@@ -3237,6 +3237,12 @@ def check_markers(cmds: list[tuple[list[str], str]]) -> str | None:
 PUSH_VALUE_OPTS = {"--repo", "-o", "--push-option", "--receive-pack", "--exec"}
 
 
+def _takes_value(arg: str, name: str) -> bool:
+    """Whether git push's option ``arg`` (``name``: its long option spelled out) takes the next argument as its
+    value: one of PUSH_VALUE_OPTS, or a group of short options that ends on its first ``o`` (``-uo VALUE``)."""
+    return name in PUSH_VALUE_OPTS or (not arg.startswith("--") and len(arg) > 2 and arg.find("o") == len(arg) - 1)
+
+
 def _push_target(args: list[str]) -> tuple[str, list[str], set[str]]:
     """(remote or URL, refspecs, flags) of git push's arguments; '' when no remote is named."""
     pos, flags, repo, i = [], set(), "", 0
@@ -3251,9 +3257,7 @@ def _push_target(args: list[str]) -> tuple[str, list[str], set[str]]:
             name = floor.long_option(name)   # git takes an unambiguous prefix of a long option (--rep x)
             if name == "--repo":
                 repo = val if eq else (args[i + 1] if i + 1 < len(args) else "")
-            group_o = not a.startswith("--") and len(a) > 2 and a.find("o") == len(a) - 1   # -uo VALUE
-            if (name in PUSH_VALUE_OPTS or group_o) and not eq:
-                i += 1
+            i += _takes_value(a, name) and not eq
         else:
             pos.append(a)
         i += 1
@@ -3879,30 +3883,36 @@ def check_floor_files(tool: str, inp: dict, cmds, cwd: str, fl: dict, cfg_file, 
     next: an edit or a shell write of the config.json the guard reads or of the pointer that finds it, or one of the
     variables that choose it (FLOOR_ENV) set in the user's environment, Claude Code's settings or a shell profile. A
     worktree's own config.json is another file: a pull request still changes it."""
-    if not (fl["refuse"] or fl["only"]):
+    if not (fl["refuse"] or fl["only"]) or not (tool in EDIT_TOOLS or cmds):
         return None
     files = _floor_files(cfg_file)
-    why = (f"the locked floor (config.json floor) is {config.owner_of()}'s to change, in their own terminal "
-           "(BRAIN_GUARD_ALLOW=floor lifts it)")
-    if tool in EDIT_TOOLS:
-        raw = str(inp.get(EDIT_TOOLS[tool]) or "")
-        target = _path(raw, cwd) if raw else ""
-        if target and _real(target) in files:
-            return f"{tool} refused: {target} sets the floor; {why}"
-        text = "\n".join(str(t) for t in [inp.get("content"), inp.get("new_string"), inp.get("new_source"),
-                                          *[e.get("new_string") for e in inp.get("edits") or []]] if t)
-        hit = re.search(FLOOR_ENV, text, re.I)
-        if target and OVERRIDE_FILES.search(target) and hit:
-            return f"{tool} refused: it writes {hit.group(0).upper()} into {target}, which moves the floor's file; {why}"
+    what = _floor_edit(tool, inp, cwd, files) if tool in EDIT_TOOLS else \
+        _floor_shell(cmds, "ps" if tool == "PowerShell" else "bash", command, files)
+    return (f"{what}; the locked floor (config.json floor) is {config.owner_of()}'s to change, in their own terminal "
+            "(BRAIN_GUARD_ALLOW=floor lifts it)") if what else None
+
+
+def _floor_edit(tool: str, inp: dict, cwd: str, files: list[str]) -> str | None:
+    """What a tool edit would lift the floor by (check_floor_files), else None."""
+    raw = str(inp.get(EDIT_TOOLS[tool]) or "")
+    target = _path(raw, cwd) if raw else ""
+    if not target:
         return None
-    if not cmds:
-        return None
-    sub = "ps" if tool == "PowerShell" else "bash"
+    if _real(target) in files:
+        return f"{tool} refused: {target} sets the floor"
+    text = "\n".join(str(t) for t in [inp.get("content"), inp.get("new_string"), inp.get("new_source"),
+                                      *[e.get("new_string") for e in inp.get("edits") or []]] if t)
+    hit = re.search(FLOOR_ENV, text, re.I) if OVERRIDE_FILES.search(target) else None
+    return f"{tool} refused: it writes {hit.group(0).upper()} into {target}, which moves the floor's file" if hit else None
+
+
+def _floor_shell(cmds, sub: str, command: str, files: list[str]) -> str | None:
+    """What a shell call would lift the floor by (check_floor_files), else None."""
     for what, target in shell_writes(cmds, sub):
         if not isinstance(target, Unresolved) and _real(target) in files:
-            return f"{what} into {target} refused: it sets the floor; {why}"
+            return f"{what} into {target} refused: it sets the floor"
     what = _override(command, cmds, sub, env=FLOOR_ENV)
-    return f"{what} refused: it moves the floor's file; {why}" if what else None
+    return f"{what} refused: it moves the floor's file" if what else None
 
 
 def _git_c(words: list[str]) -> list[str]:
