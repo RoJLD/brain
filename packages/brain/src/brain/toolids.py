@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import PurePosixPath
+from functools import lru_cache
+from pathlib import Path
 
 KINDS = ("skill", "rule", "command", "script", "mcp", "tool", "hook", "guard", "plugin", "scheduled")
 
@@ -176,9 +177,23 @@ def _memory_file(p: str) -> str:
     return m.group(1).replace("\\", "/") if m else ""
 
 
+@lru_cache(maxsize=256)
+def project_root(cwd: str) -> str:
+    """The root an instruction file's id is relative to: the nearest folder at or above ``cwd`` that holds ``.git``
+    (a file in a worktree), else ``cwd``; '' for none."""
+    if not cwd:
+        return ""
+    here = Path(cwd)
+    for d in (here, *here.parents):
+        if (d / ".git").exists():
+            return str(d)
+    return cwd
+
+
 def rule_file(path: str, cwd: str = "") -> str:
-    """An instruction file's id: relative to the session's folder (``CLAUDE.md``, ``.claude/rules/x.md``,
-    ``../CLAUDE.md``), ``memory/<file>`` for the auto-memory, ``~/.claude/<path>`` for the user's; else its name."""
+    """An instruction file's id: relative to ``cwd``, the project's root (``CLAUDE.md``, ``.claude/rules/x.md``),
+    ``memory/<file>`` for the auto-memory, ``~/.claude/<path>`` for the user's, ``~/<path>`` for another file under
+    the home folder, else its full path: never its bare name, so another project's CLAUDE.md is never this one's."""
     raw = str(path or "")
     mem = _memory_file(raw)
     if mem:
@@ -191,9 +206,17 @@ def rule_file(path: str, cwd: str = "") -> str:
             rel = os.path.relpath(raw, cwd)
         except ValueError:   # another drive
             rel = ""
-        if rel and not rel.startswith(".." + os.sep + ".." + os.sep):
+        if rel and not rel.startswith(".."):
             return rel.replace("\\", "/")
-    return PurePosixPath(raw.replace("\\", "/")).name
+    if os.path.isabs(raw):
+        try:
+            under = os.path.relpath(raw, os.path.expanduser("~"))
+        except ValueError:   # another drive
+            under = ""
+        if under and not under.startswith(".."):
+            return "~/" + under.replace("\\", "/")
+        return raw.replace("\\", "/")
+    return raw.replace("\\", "/")
 
 
 # --- hooks, MCP tools, guards ---

@@ -57,6 +57,30 @@ from pathlib import Path
 
 from . import paths, secretscan, stateio, toolids, transcript
 
+
+_UNITS: list = []   # the CLI registry's units, read once per process (brain.tooling.registry_units)
+
+
+def _brain_units(command: str) -> list[str]:
+    """The brain commands a shell line runs, as the registry's units (``brain <command> [<sub>]``): a word after the
+    command that is not a registry subcommand is an argument and is never kept; without the registry, the command
+    alone."""
+    if not _UNITS:
+        try:
+            from . import tooling
+            _UNITS.append(tooling.registry_units()[:2])
+        except Exception:  # noqa: BLE001 - no registry (a broken install): the command alone, never an argument
+            _UNITS.append(({}, {}))
+    known, alias = _UNITS[0]
+    out = []
+    for c, s in toolids.brain_words(command):
+        if not known:
+            out.append(f"brain {c}")
+            continue
+        unit = alias.get(f"brain {c} {s}".rstrip(), f"brain {c} {s}".rstrip())
+        out.append(unit if unit in known else alias.get(f"brain {c}", f"brain {c}"))
+    return out
+
 SCAN_V = 4  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
 #            subagents and workflow runs apart, ``agents``; 4: the usage counters by tool id, ``tooling``, ``refused``)
 START_MESSAGES = 10
@@ -493,11 +517,12 @@ class Scan:
             path = str(inp.get("file_path") or "")
             if toolids.skill_of_path(path):
                 return [("skill", toolids.skill_of_path(path), "read")]
-            return [("rule", toolids.rule_file(path, self.cwd), "read")] if toolids.is_rule_file(path) else []
+            return ([("rule", toolids.rule_file(path, toolids.project_root(self.cwd)), "read")]
+                    if toolids.is_rule_file(path) else [])
         if name in ("Agent", "Task"):
             return [("skill", sid, "agent") for sid in toolids.skills_in(inp.get("prompt"))]
         if name in SHELL_TOOLS:
-            return [("command", w, "") for w in toolids.brain_command(str(inp.get("command") or ""))]
+            return [("command", w, "") for w in _brain_units(str(inp.get("command") or ""))]
         return []
 
     def _tooling_of(self, name: str, inp: dict, share: float) -> list[tuple[str, str]]:
@@ -528,7 +553,8 @@ class Scan:
         self.last_hook[hid.split(":", 1)[0]] = hid
 
     def _where(self, rec: dict) -> None:
-        """The session's folder, which an instruction file's id is relative to."""
+        """The session's folder; an instruction file's id is relative to its project's root
+        (:func:`brain.toolids.project_root`), so a cd within the project keeps the ids."""
         self.cwd = str(rec.get("cwd") or self.cwd)
 
     def _meta(self, rec: dict, ts: str) -> None:
@@ -543,7 +569,8 @@ class Scan:
             self._hook_attachment(a, kind, ts)
         elif kind in ("instructions", "nested_memory"):
             for path, text in _loaded(a):
-                self._count("rule", toolids.rule_file(path, self.cwd), loaded=1, chars=len(text))
+                self._count("rule", toolids.rule_file(path, toolids.project_root(self.cwd)), loaded=1,
+                            chars=len(text))
 
     def _system(self, rec: dict, ts: str) -> None:
         if rec.get("subtype") == "compact_boundary":
@@ -873,7 +900,8 @@ def update(prices: dict | None = None, rescan: bool = False) -> tuple[dict, int]
         except OSError:
             continue
         old = rows.get(key)
-        if old and not rescan and old.get("sig") == sig and old.get("v") == SCAN_V:
+        if old and not rescan and old.get("sig") == sig and isinstance(old.get("v"), int) \
+                and old["v"] >= SCAN_V:   # a newer scanner's row is kept as it is (its counters too)
             continue
         try:
             rows[key] = scan(f, prices)

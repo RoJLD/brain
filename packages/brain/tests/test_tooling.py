@@ -81,12 +81,19 @@ def test_a_refusal_names_its_guard(text, want):
     assert toolids.refusal_guard(text) == want
 
 
-def test_rule_files_are_relative_to_the_session_folder(tmp_path, monkeypatch):
+def test_rule_files_are_relative_to_the_project_root(tmp_path, monkeypatch):
+    """A session started in a subfolder, or that cd's into one, names the root's CLAUDE.md as the inventory does;
+    another project's CLAUDE.md is never this one's (never its bare name)."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cc"))
     lab = tmp_path / "lab"
-    assert toolids.rule_file(str(lab / "CLAUDE.md"), str(lab)) == "CLAUDE.md"
+    (lab / ".git").mkdir(parents=True)
+    (lab / "sub").mkdir()
+    toolids.project_root.cache_clear()
+    assert toolids.project_root(str(lab / "sub")) == str(lab) and toolids.project_root("") == ""
+    assert toolids.rule_file(str(lab / "CLAUDE.md"), toolids.project_root(str(lab / "sub"))) == "CLAUDE.md"
     assert toolids.rule_file(str(lab / ".claude" / "rules" / "x.md"), str(lab)) == ".claude/rules/x.md"
-    assert toolids.rule_file(str(tmp_path / "CLAUDE.md"), str(lab)) == "../CLAUDE.md"
+    other = toolids.rule_file(str(tmp_path / "other" / "CLAUDE.md"), str(lab))
+    assert other != "CLAUDE.md" and other.endswith("other/CLAUDE.md") and "\\" not in other
     assert toolids.rule_file(str(tmp_path / "cc" / "CLAUDE.md"), str(lab)) == "~/.claude/CLAUDE.md"
     assert toolids.rule_file(r"D:\cc\.claude\projects\-work-lab\memory\MEMORY.md") == "memory/MEMORY.md"
     assert toolids.is_rule_file("/w/AGENTS.md") and toolids.is_rule_file("/w/.claude/rules/a.md")
@@ -350,3 +357,44 @@ def test_cli_usage_kind_json_and_text(world, units, capsys, monkeypatch):
 def test_counted_kinds_and_their_titles_agree():
     assert set(tooling.TITLES) == set(toolids.KINDS) and set(tooling.MARKED) <= set(toolids.KINDS)
     assert Counter(toolids.KINDS).most_common(1)[0][1] == 1
+
+
+# --- the review of #236 ---
+
+def test_an_older_row_that_ran_python_m_brain_alone_reads(world, units):
+    """« python -m brain » with no command (--version, an option first) is a key of an older row's commands: no
+    command, and no crash."""
+    lab, other, pdir = world
+    r = _row(pdir, LAB_SID)
+    for k in ("tooling", "refused"):
+        r.pop(k)
+    r["commands"] = {"python -m brain": {"calls": 1}, "brain item show": {"calls": 2}}
+    rep = _report(world, units, projs=[lab], led=_ledger(world, [r]))
+    assert _by(rep, "command")["brain item show"]["calls"] == 2
+
+
+def test_a_ledger_refusal_without_a_tool_use_id_counts_once():
+    misses = Counter()
+    got = tooling.guard_counts({"refused": {"toolu_1": "public"}, "tooling": {}},
+                               [{"guard": "public", "session_id": "s", "decision": "denied"}], misses)
+    assert got == Counter({"public": 1}) and misses == Counter({"matched_by_guard": 1})
+
+
+def test_a_tool_the_export_alone_saw_is_used_not_marked():
+    from collections import defaultdict
+    accs = defaultdict(tooling.Acc)
+    row = {"session_id": "s", "project": "lab", "start": "2026-01-05T09:00:00Z", "tools": {}}
+    got = {"s": {"hooks": {}, "tools": {("mcp", "mcp__srv__q"): [12.0]}, "rejects": {}, "results": {}}}
+    tooling._add_otel(accs, got, {"s": row}, ("mcp",), Counter())
+    assert accs[("mcp", "mcp__srv__q")].last == "2026-01-05"
+
+
+def test_a_brain_command_keeps_its_registry_unit_never_an_argument():
+    assert usage._brain_units("brain capture acme-merger && brain item show wi-x") == ["brain capture",
+                                                                                       "brain item show"]
+
+
+def test_a_rule_id_is_not_counted_without_the_scope_s_rule_nodes():
+    r = {"tooling": {"rule": {"rule-usage": {"calls": 1}, "CLAUDE.md": {"loaded": 1}}}}
+    got = {tid for kind, tid, _ in tooling.row_tools(r, rules=None) if kind == "rule"}
+    assert got == {"CLAUDE.md"}   # a branch name such as feat/rule-usage cites no rule

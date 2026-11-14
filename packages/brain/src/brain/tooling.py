@@ -132,7 +132,7 @@ def _counted(t: dict, known: dict, alias: dict, rules: set[str] | None) -> list[
         for tid, v in (t.get(kind) or {}).items():
             if kind == "command":
                 tid = _brain_unit(tid, known, alias)
-            elif kind == "rule" and tid.startswith("rule-") and rules is not None and tid not in rules:
+            elif kind == "rule" and tid.startswith("rule-") and (rules is None or tid not in rules):
                 continue
             if tid:
                 out.append((kind, tid, {k: v[k] for k in COUNTERS if k in v}))
@@ -145,8 +145,8 @@ def _older(r: dict, known: dict, alias: dict) -> list[tuple[str, str, dict]]:
     out = [("skill", sid, {"calls": v.get("calls") or 0, "cost": v.get("cost") or 0.0})
            for name, v in (r.get("skills") or {}).items() if (sid := toolids.slash_skill(name)) and v.get("calls")]
     for name, v in (r.get("commands") or {}).items():
-        unit = _brain_unit("brain " + name.split("brain ", 1)[1], known, alias) if _is_brain(name) and " " in name \
-            else ""
+        words = toolids.brain_command(name) if _is_brain(name) else []   # « python -m brain »: no command
+        unit = _brain_unit(words[0], known, alias) if words else ""
         if unit:
             out.append(("command", unit, _calls(v)))
     return out
@@ -184,17 +184,21 @@ def guard_counts(r: dict, ledger: list[dict], misses: Counter) -> Counter:
         if tuid:
             seen[tuid] = str(rec.get("guard") or "")
     refused = r.get("refused") or {}
+    blind = Counter(str(rec.get("guard") or "guard") for rec in ledger if not rec.get("tool_use_id"))
     for tuid, guard in refused.items():
         if tuid in seen:
             misses["matched"] += 1
             if seen[tuid] != guard:
                 misses["words_wrong"] += 1
             continue
+        if blind[guard]:   # the ledger's line without a tool use id: the same refusal, already counted
+            blind[guard] -= 1
+            misses["matched_by_guard"] += 1
+            continue
         out[guard] += 1
         misses["transcript_only"] += 1
     if isinstance(r.get("tooling"), dict):   # a row scanned before ``refused`` has none to join
-        misses["ledger_only"] += sum(1 for t in seen if t not in refused) + sum(1 for rec in ledger
-                                                                                  if not rec.get("tool_use_id"))
+        misses["ledger_only"] += sum(1 for t in seen if t not in refused) + sum(blind.values())
     return out
 
 
@@ -229,14 +233,17 @@ def otel_by_session(records: Iterable, sessions: set[str]) -> dict[str, dict]:
     return out
 
 
-def _otel(where: Path | None, since: str, sessions: set[str]) -> tuple[dict, dict]:
+def _otel(where: Path | None, since: str, sessions: set[str], until: str = "") -> tuple[dict, dict]:
     from . import otel
     folder = where or otel.folder()
     if not folder.is_dir():
         return {}, {"read": False, "folder": str(folder)}
     stats = otel.Stats()
     t0 = datetime.fromisoformat(since).replace(tzinfo=timezone.utc).timestamp() if since else None
-    got = otel_by_session(otel.records(folder, since=t0, signals=("logs",), stats=stats), sessions)
+    t1 = datetime.fromisoformat(until).replace(tzinfo=timezone.utc).timestamp() if until else None
+    recs = (x for x in otel.records(folder, since=t0, signals=("logs",), stats=stats)
+            if t1 is None or not x.at or x.at < t1)   # --until cuts the export as it cuts the rows
+    got = otel_by_session(recs, sessions)
     return got, {"read": True, "records": stats.records, "bad_lines": stats.bad, "sessions": len(got)}
 
 
@@ -365,7 +372,7 @@ def report(led, projs: list[projects.Project], since: str, until: str = "", kind
     accs = _from_rows(led.rows, kinds, set(window), (known, alias, rule_ids_of(projs) or None), gl, misses)
     otel_info: dict = {"read": False}
     if {"hook", "tool", "mcp"} & set(kinds):
-        got, otel_info = _otel(otel_dir, since, set(window))
+        got, otel_info = _otel(otel_dir, since, set(window), until)
         _add_otel(accs, got, window, kinds, misses)
     inv = _with_commands(inv if inv is not None else inventory(projs, registry), known if "command" in kinds else {},
                          projs)
@@ -451,9 +458,11 @@ def _add_otel(accs: dict, got: dict, by_sid: dict, kinds, misses: Counter) -> No
             misses["hook_runs_otel_only"] += extra
         for key, mss in s["tools"].items():
             if key[0] in kinds:
+                _add(accs[key], row, {"calls": 0})   # its last use: a tool the export alone saw is used
                 accs[key].otel_ms += mss
         for key, src in s["rejects"].items():
             if key[0] in kinds:
+                _add(accs[key], row, {"calls": 0})
                 accs[key].rejects.update(src)
         for key, n in s["results"].items():
             had = ((row.get("tools") or {}).get(key[1]) or {}).get("calls") or 0
