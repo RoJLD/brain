@@ -110,7 +110,7 @@ def test_a_session_cannot_lift_its_own_floor(repo, tmp_path, monkeypatch, sectio
     assert "moves the floor's file" in bash(repo, "setx BRAIN_CONFIG C:/elsewhere/config.json")
     assert "moves the floor's file" in edit(repo, settings, '{"env": {"BRAIN_CONFIG": "x.json"}}')
     assert edit(repo, repo / "config.json", '{"v": 1}') is None                           # a worktree's own copy
-    assert bash(repo, 'brain --project x check > "$BRAIN_HOME/out.txt"') is None           # the Brain's own commands
+    assert bash(repo, 'brain --project x check > "$BRAIN_HOME/src/out.txt"') is None       # the Brain's own commands
 
 
 def test_a_floor_only_machine_keeps_the_override_protection_alone(repo, tmp_path, monkeypatch):

@@ -1709,7 +1709,7 @@ def _override(command: str, cmds, shell: str, env: str = ALLOW_ENV) -> str | Non
 
 # An unresolved target that may be a profile or Claude Code's settings ($PROFILE, $HOME/.claude/...): the floor's
 # variables (FLOOR_ENV) are common in the Brain's own commands, so only such a write counts for them.
-OVERRIDE_UNRESOLVED = re.compile(r"(?i)profile|settings|\.claude|rc\b")
+OVERRIDE_UNRESOLVED = re.compile(r"(?i)profile|settings|\.claude|\.\w*rc\b")
 
 
 def session_setting(tool: str, inp: dict) -> bool:
