@@ -9,3 +9,13 @@ section: Added
   locked rules are injected, only the floor's refusals, the secrets and the configuration checks and the owner
   guard's override category run (no session lifts its own floor), and the memory notes are not synced either way.
   `BRAIN_GUARD_ALLOW=floor` lifts the refusals, the owner's.
+- While the floor is on (`brain.floorguard`, docs/guards.md): git configuration from the command line or the
+  environment, aliases that cannot be read, a write of git's configuration and any git command but reads in the
+  checkout that holds config.json are refused; so are what stops the guards for later sessions (`BRAIN_PYTHON`,
+  `CLAUDE_CONFIG_DIR`, `disableAllHooks`, the core plugin turned off, `HOME`, `USERPROFILE` or `PATH` set, the venv
+  removed), whatever spells the name or the path; a guard error refuses the call, and `guard.sh` refuses every call
+  it cannot judge rather than run PATH's Python.
+- The owner guard reads the override's name as the shell and JSON read it (quotes, carets, escapes) and resolves
+  a path before comparing it (an NTFS stream's name, a junction); under `guards.owner_strict` it also refuses
+  `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `CLAUDE_CONFIG_DIR` and `disableAllHooks` set for later sessions.
+  `guard.sh` runs no `BRAIN_PYTHON` whose file name holds no python.
