@@ -47,7 +47,7 @@ def test_the_scan_buckets_cost_by_utc_hour(projects_dir):
         _asst("2026-11-02T10:59:30Z", "m1", [_tool("t1", "Read", file_path="a")], out=1000),
         _asst("2026-11-02T11:00:10Z", "m2", [_tool("t2", "Read", file_path="b")], out=2000)])
     r = usage.scan(t)
-    assert r["v"] == usage.SCAN_V == 3
+    assert r["v"] == usage.SCAN_V == 4
     assert set(r["hours"]) == {"2026-11-02T10", "2026-11-02T11"}
     assert r["hours"]["2026-11-02T11"]["cost"] == pytest.approx(2 * r["hours"]["2026-11-02T10"]["cost"], rel=0.01)
     assert sum(h["cost"] for h in r["hours"].values()) == pytest.approx(r["cost"], abs=1e-3)  # 4 decimals each

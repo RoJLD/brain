@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import statistics
 import sys
@@ -56,11 +55,13 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import paths, secretscan, stateio, transcript
+from . import paths, secretscan, stateio, toolids, transcript
 
-SCAN_V = 3  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
-#            subagents and workflow runs apart, ``agents``)
+SCAN_V = 4  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
+#            subagents and workflow runs apart, ``agents``; 4: the usage counters by tool id, ``tooling``, ``refused``)
 START_MESSAGES = 10
+REFUSED_KEEP = 200  # a session's refused tool calls kept by tool use id, for the guards ledger's join
+HOOK_FAILS = ("hook_cancelled", "hook_blocking_error", "hook_non_blocking_error", "hook_error_during_execution")
 RELOAD_MIN = 20_000  # a context below this is not a reload
 NGRAM = 3
 NGRAM_KEEP = 60  # per session
@@ -332,6 +333,12 @@ class Scan:
         self.streak = 0
         self.max_streak = 0
         self.wait_s = 0.0
+        self.tooling: dict[str, dict[str, dict]] = {}   # {kind: {tool id: counters}} (wi-brain-rule-usage)
+        self.fired: dict[str, set] = {}   # {hook id: the runs (tool use or turn ids) it fired on}
+        self.last_hook: dict[str, str] = {}   # {hook event: the hook id that fired last}
+        self.refused: dict[str, str] = {}   # {tool use id: the guard that refused it}
+        self.tool_skill = ""
+        self.cwd = ""
 
     # --- records ---
     def feed_file(self, path: str | Path) -> None:
@@ -344,13 +351,14 @@ class Scan:
         if t == "assistant" and self.skip and (rec.get("message") or {}).get("id") in self.skip:
             return  # a subagent's message copied into its parent's transcript: counted once, as the subagent's
         self.st.feed(rec)
+        self._where(rec)
         if t == "assistant":
             self._assistant(rec, ts)
         elif t == "user":
             self._flush()
             self._user(rec, ts)
-        elif t == "system" and rec.get("subtype") == "compact_boundary":
-            self._flush()
+        elif t in ("system", "attachment"):
+            self._meta(rec, ts)
         if ts and t in ("user", "assistant", "attachment", "system"):
             if self.last_ts:
                 gap = _secs(self.last_ts, ts)
@@ -375,6 +383,13 @@ class Scan:
                     usd = 0.0
                 self.msg.update(cost=usd, part=part)
         self.msg["uses"] += [b for b in msg.get("content") or [] if isinstance(b, dict) and b.get("type") == "tool_use"]
+        self._cited(msg.get("content"))
+
+    def _cited(self, content) -> None:
+        """The Rule nodes the model's text cites."""
+        for b in content if isinstance(content, list) else []:
+            for rid in toolids.rule_ids(b.get("text")) if isinstance(b, dict) and b.get("type") == "text" else []:
+                self._count("rule", rid, cited=1)
 
     def _flush(self) -> None:
         m, self.msg = self.msg, None
@@ -412,6 +427,8 @@ class Scan:
                 self.start["tool_calls"] += len(uses)
             if self.skill_turn:
                 _add_to(self.skills, self.skill_turn, cost=usd)
+            if self.tool_skill:
+                self._count("skill", self.tool_skill, calls=0, cost=usd)
         if phase == "review" and self.prev_phase != "review":
             self.sig["review_rounds"] += 1
         self.prev_phase = self.phase = phase
@@ -426,6 +443,7 @@ class Scan:
         _add_to(self.tools, name, calls=1, cost=share)
         self.sig["tool_calls"] += 1
         keys: list[str] = []
+        counted = self._tooling_of(name, inp, share)
         if name in SHELL_TOOLS:
             cmd = str(inp.get("command") or "")
             keys = commands(cmd)
@@ -446,6 +464,7 @@ class Scan:
         elif name == "Skill" and inp.get("skill"):
             self.skill_turn = str(inp["skill"])
             _add_to(self.skills, self.skill_turn, calls=1)
+            self.tool_skill = toolids.slash_skill(self.skill_turn)
         elif name in ("mcp__ccd_turn__update_plan",) and isinstance(inp.get("items"), list):
             self.plan_steps.append(len(inp["items"]))
         elif name == "mcp__ccd_session__start_session" and inp.get("prompt"):
@@ -458,7 +477,97 @@ class Scan:
         for s in steps:
             self._step(s, share / max(len(steps), 1))
         if u.get("id"):
-            self.uses[u["id"]] = (name, keys, ts)
+            self.uses[u["id"]] = (name, keys, ts, counted)
+
+    # --- the usage counters by tool id (wi-brain-rule-usage) ---
+    def _count(self, kind: str, tid: str, **vals) -> None:
+        if tid:
+            _add_to(self.tooling.setdefault(kind, {}), tid, **({"calls": 1} | vals))
+
+    def _uses_of(self, name: str, inp: dict) -> list[tuple[str, str, str]]:
+        """(kind, tool id, form) of the tools a call uses besides itself (its own name is in ``tools``): a skill (a
+        Skill call, a Read of its SKILL.md, an Agent's prompt naming it), an instruction file read, a brain command."""
+        if name == "Skill" and inp.get("skill"):
+            return [("skill", toolids.slash_skill(str(inp["skill"])), "call")]
+        if name == "Read":
+            path = str(inp.get("file_path") or "")
+            if toolids.skill_of_path(path):
+                return [("skill", toolids.skill_of_path(path), "read")]
+            return ([("rule", toolids.rule_file(path, toolids.project_root(self.cwd)), "read")]
+                    if toolids.is_rule_file(path) else [])
+        if name in ("Agent", "Task"):
+            return [("skill", sid, "agent") for sid in toolids.skills_in(inp.get("prompt"))]
+        if name in SHELL_TOOLS:
+            return [("command", w, "") for w in toolids.brain_units(str(inp.get("command") or ""))]
+        return []
+
+    def _tooling_of(self, name: str, inp: dict, share: float) -> list[tuple[str, str]]:
+        """Count the tools a call uses (:meth:`_uses_of`), each with its share of the call's cost, and the rules it
+        cites; their (kind, id), for its result."""
+        out = [o for o in self._uses_of(name, inp) if o[1]]
+        for kind, tid, via in out:
+            self._count(kind, tid, cost=share / len(out), **({via: 1} if via else {}))
+        cited = str(inp.get("command") or "") if name in SHELL_TOOLS else json.dumps(inp, ensure_ascii=False)
+        for rid in toolids.rule_ids(cited):
+            self._count("rule", rid, cited=1)
+        return [(k, t) for k, t, _ in out]
+
+    def _result_tooling(self, counted: list[tuple[str, str]], text: str, b: dict) -> None:
+        """A result's size and failure to the tools its call used; a guard's refusal to its guard."""
+        for kind, tid in counted:
+            _add_to(self.tooling[kind], tid, chars=len(text), fails=1 if b.get("is_error") else 0)
+        guard = toolids.refusal_guard(text) if b.get("is_error") else ""
+        if guard:
+            self.refused[str(b.get("tool_use_id") or f"?{len(self.refused)}")] = guard
+            self._count("guard", guard)
+
+    def _hook(self, hid: str, run: str, **vals) -> None:
+        if not hid:
+            return
+        self.fired.setdefault(hid, set()).add(run)
+        _add_to(self.tooling.setdefault("hook", {}), hid, **vals)
+        self.last_hook[hid.split(":", 1)[0]] = hid
+
+    def _where(self, rec: dict) -> None:
+        """The session's folder; an instruction file's id is relative to its project's root
+        (:func:`brain.toolids.project_root`), so a cd within the project keeps the ids."""
+        self.cwd = str(rec.get("cwd") or self.cwd)
+
+    def _meta(self, rec: dict, ts: str) -> None:
+        """A system record (a compaction, the Stop hooks' summary) or an attachment (a hook's run, an instruction
+        file loaded)."""
+        if rec.get("type") == "system":
+            self._system(rec, ts)
+            return
+        a = rec.get("attachment")
+        kind = str(a.get("type") or "") if isinstance(a, dict) else ""
+        if kind.startswith("hook_"):
+            self._hook_attachment(a, kind, ts)
+        elif kind in ("instructions", "nested_memory"):
+            for path, text in _loaded(a):
+                self._count("rule", toolids.rule_file(path, toolids.project_root(self.cwd)), loaded=1,
+                            chars=len(text))
+
+    def _system(self, rec: dict, ts: str) -> None:
+        if rec.get("subtype") == "compact_boundary":
+            self._flush()
+        elif rec.get("subtype") == "stop_hook_summary":
+            self._hook("Stop", str(rec.get("toolUseID") or ts), runs=int(rec.get("hookCount") or 0),
+                       fails=1 if rec.get("hookErrors") else 0)
+
+    def _hook_attachment(self, a: dict, kind: str, ts: str) -> None:
+        """A hook's run (its output, its cancellation, its error) or the context a hook injects (counted to the hook
+        of its event that ran last when it names only the event)."""
+        if kind == "hook_additional_context":
+            name = str(a.get("hookName") or "")
+            hid = toolids.hook_id(name) if ":" in name else self.last_hook.get(name) or toolids.hook_id(name)
+            chars = sum(len(c) for c in a.get("content") or [] if isinstance(c, str))
+            if hid:
+                _add_to(self.tooling.setdefault("hook", {}), hid, chars=chars)
+        elif a.get("hookName"):
+            failed = kind in HOOK_FAILS or a.get("exitCode") not in (0, None)
+            self._hook(toolids.hook_id(str(a["hookName"])), str(a.get("toolUseID") or ts), runs=1,
+                       ms=_ms(a.get("durationMs")), fails=int(failed), timeouts=int(bool(a.get("timedOut"))))
 
     def _step(self, step: str, usd: float) -> None:
         self.window = (self.window + [(step, usd)])[-NGRAM:]
@@ -487,17 +596,21 @@ class Scan:
             self.wait_s += max(0.0, _secs(self.last_ts, ts))
         m = _CMD_RE.search(text)
         self.skill_turn = m.group(1) if m else ""
+        self.tool_skill = toolids.slash_skill(self.skill_turn)
         if self.skill_turn:
             _add_to(self.skills, self.skill_turn, calls=1)
+        if self.tool_skill:
+            self._count("skill", self.tool_skill, slash=1)
         if not self.first_prompt:
             self.first_prompt = text
 
     def _result(self, b: dict, ts: str) -> None:
-        name, keys, at = self.uses.pop(b.get("tool_use_id") or "", ("?", [], ""))
+        name, keys, at, counted = self.uses.pop(b.get("tool_use_id") or "", ("?", [], "", []))
         c = b.get("content")
         text = c if isinstance(c, str) else "\n".join(x.get("text", "") for x in c if isinstance(x, dict)) \
             if isinstance(c, list) else ""
         _add_to(self.tools, name, result_chars=len(text))
+        self._result_tooling(counted, text, b)
         if name in _WAIT_TOOLS and at:
             self.sig["ask_wait_s"] += int(max(0.0, _secs(at, ts)))
         if name not in SHELL_TOOLS:
@@ -532,6 +645,12 @@ class Scan:
         for k in ("reloads", "reload_tokens", "review_rounds", "merges", "rebases", "conflicts", "thrash",
                   "tool_calls"):
             self.sig[k] += sub.sig[k]
+        for kind, tools in sub.tooling.items():
+            for k, vals in tools.items():
+                _add_to(self.tooling.setdefault(kind, {}), k, **vals)
+        for k, runs in sub.fired.items():
+            self.fired.setdefault(k, set()).update(runs)
+        self.refused.update(sub.refused)
         self.edited |= sub.edited
         self.max_streak = max(self.max_streak, sub.max_streak)
 
@@ -575,6 +694,8 @@ class Scan:
             "by_model": _rounded(self.by_model), "days": _rounded(self.days), "hours": _rounded(self.hours),
             "phases": _rounded(self.phases),
             "tools": _rounded(self.tools), "commands": _rounded(self.cmds), "skills": _rounded(self.skills),
+            "tooling": tooling_rounded(self.tooling, self.fired),
+            "refused": dict(list(self.refused.items())[:REFUSED_KEEP]),
             "ngrams": {k: [n, round(c, 4)] for k, (n, c) in top},
             "context": {"peak": st.ctx_peak, "compactions": st.compactions},
             "start_cost": {k: round(v, 4) if isinstance(v, float) else v for k, v in self.start.items()},
@@ -582,6 +703,33 @@ class Scan:
         }
         cleaned, _ = secretscan.clean(row)
         return cleaned
+
+
+def _ms(v) -> float:
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+
+
+def _loaded(a: dict) -> list[tuple[str, str]]:
+    """(path, text) of the instruction files an ``instructions`` or ``nested_memory`` attachment loads."""
+    if a.get("type") == "nested_memory":
+        c = a.get("content")
+        text = c.get("content") if isinstance(c, dict) else c
+        return [(str(a["path"]), str(text or ""))] if a.get("path") else []
+    return [(str(f["path"]), str(f.get("content") or "")) for f in a.get("files") or []
+            if isinstance(f, dict) and f.get("path")]
+
+
+def tooling_rounded(t: dict, fired: dict) -> dict:
+    """The usage counters of a row: a hook's ``calls`` are the runs it fired on (the commands of one matcher that
+    answer one tool call are one call: the export's unit)."""
+    out = {}
+    for kind, tools in t.items():
+        rows = _rounded(tools)
+        if kind == "hook":
+            for k, v in rows.items():
+                v["calls"] = len(fired.get(k) or ())
+        out[kind] = rows
+    return out
 
 
 def _rounded(d: dict) -> dict:
@@ -728,7 +876,8 @@ def update(prices: dict | None = None, rescan: bool = False) -> tuple[dict, int]
         except OSError:
             continue
         old = rows.get(key)
-        if old and not rescan and old.get("sig") == sig and old.get("v") == SCAN_V:
+        if old and not rescan and old.get("sig") == sig and isinstance(old.get("v"), int) \
+                and old["v"] >= SCAN_V:   # a newer scanner's row is kept as it is (its counters too)
             continue
         try:
             rows[key] = scan(f, prices)

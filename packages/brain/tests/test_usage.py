@@ -223,7 +223,7 @@ def test_scan_reads_subagents_and_workflow_agents_apart(projects_dir):
     # the quota and the governor read the hours: the agents' cost is in them
     assert sum(h["cost"] for h in row["hours"].values()) == pytest.approx(row["cost"], abs=1e-3)
     assert row["hours"]["2026-11-10T00"]["cost"] == pytest.approx(one(500), abs=1e-4)
-    assert row["v"] == usage.SCAN_V == 3
+    assert row["v"] == usage.SCAN_V == 4
 
 
 def test_a_new_workflow_agent_rescans_its_session(projects_dir):
