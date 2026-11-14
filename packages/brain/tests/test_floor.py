@@ -6,7 +6,7 @@ import io
 import json
 
 import pytest
-from brain import floor, guards, memory
+from brain import floor, floorguard, guards, memory
 from conftest import run_git
 from test_guards import bash, decide, payload, pwsh
 from test_inject_rules import _run
@@ -248,8 +248,8 @@ def test_one_config_read_and_no_rev_parse_for_explicit_refspecs(repo, tmp_path, 
     loads.clear()
     fl = floor.settings({"floor": {"refuse": True}})
     cmds = guards.calls("git push -f origin feat/x", str(repo), False)
-    assert guards.check_floor(cmds, fl)[0] == "force" and not loads              # the floor reads none of its own
-    assert guards.check_floor_files("Bash", {}, cmds, str(repo), fl, None, "git push -f origin feat/x") is None
+    assert floorguard.check_floor(cmds, fl)[0] == "force" and not loads              # the floor reads none of its own
+    assert floorguard.check_files("Bash", {}, cmds, str(repo), fl, None, "git push -f origin feat/x") is None
 
 
 # --- review round 2: what stops the guards, how a path is spelled, what else pushes ----------------------------------
@@ -363,7 +363,7 @@ def test_aliases_mirrors_and_symbolic_branches_are_read(repo, tmp_path, monkeypa
     run_git(repo, "config", "alias.ship", "push")
     assert "a push of main" in bash(repo, "git ship origin main") and bash(repo, "git ship origin feat/x") is None
     run_git(repo, "config", "alias.sp", "!git push origin main")
-    assert "shell alias" in bash(repo, "git sp")
+    assert "cannot read" in bash(repo, "git sp")
     run_git(repo, "symbolic-ref", "refs/heads/alias", "refs/heads/main")
     assert "a push of main" in bash(repo, "git push origin alias")
     run_git(repo, "config", "remote.origin.mirror", "true")
@@ -383,8 +383,157 @@ def test_the_checkout_that_holds_config_json_is_not_rewritten(repo, tmp_path, mo
         assert "floor" in (bash(repo, command) or ""), command
     assert "git's configuration" in edit(repo, repo / ".git" / "config", "[alias]\n  ship = push\n")
     assert "git's configuration" in bash(repo, "echo '[alias]' >> .git/config")
-    for command in ("git stash list", "git status", "git pull --ff-only", "git log -1"):
+    for command in ("git status", "git pull --ff-only", "git log -1"):
         assert bash(repo, command) is None, command
+
+
+# --- review round 3: classes, not spellings ------------------------------------------------------------------------
+
+def _floor_in(repo, monkeypatch, **section):
+    """config.json inside the git checkout ``repo``, the floor set by ``section``."""
+    f = repo / "config.json"
+    f.write_text(json.dumps({"v": 1, "rules": [], "floor": section}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(f))
+    monkeypatch.delenv(guards.ALLOW_ENV, raising=False)
+    return f
+
+
+@pytest.mark.parametrize("command", [
+    "P=push git --config-env=alias.p=P p origin feat/x:main", "M=true git --config-env=remote.origin.mirror=M push origin",
+    "git --config-env alias.p=P p origin x", "git -c core.quotepath=off push origin feat/x",
+    "GIT_DIR=x/.git GIT_WORK_TREE=x git checkout HEAD~1 -- config.json", "export GIT_DIR=x/.git; git status",
+    "GIT_CONFIG_COUNT=1 git push", "git config include.path /tmp/inc.cfg", "git config --global includeIf.x.path y",
+    "git config remote.origin.url https://code.example/x", "git remote add --mirror=push m https://code.example/m",
+])
+def test_git_configuration_from_the_command_line_or_the_environment_is_refused(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, refuse=True)
+    assert "floor:config" in (bash(repo, command) or ""), command
+
+
+def test_alias_chains_and_shell_aliases(repo, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch, refuse=True)
+    run_git(repo, "switch", "-q", "-c", "feat/x")
+    run_git(repo, "config", "alias.a1", "a2")
+    run_git(repo, "config", "alias.a2", "push")
+    assert "a push of main" in bash(repo, "git a1 origin feat/x:main") and bash(repo, "git a1 origin feat/x") is None
+    run_git(repo, "config", "alias.sp", "!git pu''sh origin feat/x:main")
+    assert "cannot read" in bash(repo, "git sp")
+    run_git(repo, "config", "alias.lg", "!git log")
+    assert "cannot read" in bash(repo, "git lg")                                         # any shell alias
+    run_git(repo, "config", "alias.loop", "loop")
+    assert "cannot read" in bash(repo, "git loop")
+
+
+@pytest.mark.parametrize("command", [
+    "git sparse-checkout set --no-cone /nothing", "git bisect start", "git stash list",
+    "git filter-branch --tree-filter 'rm -f config.json' HEAD", "git commit -m x", "git pull origin feat/x",
+])
+def test_only_reads_run_in_the_checkout_that_holds_config_json(repo, monkeypatch, command):
+    _floor_in(repo, monkeypatch, refuse=True)
+    assert "only reads change nothing" in (bash(repo, command) or ""), command
+
+
+def test_robocopy_mir_onto_the_checkout_is_a_removal(repo, tmp_path, monkeypatch):
+    _floor_in(repo, monkeypatch, refuse=True)
+    empty = tmp_path / "empty"
+    assert "removes or moves" in bash(tmp_path, f"robocopy '{empty.as_posix()}' '{repo.as_posix()}' /MIR")
+    assert bash(tmp_path, f"robocopy '{repo.as_posix()}' '{empty.as_posix()}' /E") is None   # a copy from it
+
+
+@pytest.mark.parametrize("command", [
+    "setx BRAIN_GUARD''_ALLOW floor", 'setx BRAIN_GUARD"_"ALLOW floor', "cmd //c setx BRAIN_GUARD^_ALLOW floor",
+])
+def test_a_name_spelled_otherwise_is_the_name(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch)                                                       # the owner guard, floor off
+    assert "BRAIN_GUARD_ALLOW" in (bash(repo, command) or ""), command
+
+
+def test_a_name_spelled_otherwise_in_powershell_and_json(repo, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch)
+    assert pwsh(repo, "[Environment]::SetEnvironmentVariable('BRAIN_GUARD'+'_ALLOW','floor','User')")
+    assert edit(repo, repo / ".claude" / "settings.json", '{"env": {"BRAIN_GUARD\\u005fALLOW": "floor"}}')
+    config(tmp_path, monkeypatch, only=True)
+    for command in ("[Environment]::SetEnvironmentVariable('BRAIN_'+'PYTHON','x','User')",
+                    "Set-ItemProperty HKCU:/Environment -Name ('BRAIN_'+'PYTHON') -Value x",
+                    "[Environment]::SetEnvironmentVariable($n, 'x', 'User')"):
+        assert pwsh(repo, command), command
+    for content in ('{"env": {"BRAIN\\u005fPYTHON": "x"}}', '{"env": {"BRAIN\\u005fCONFIG": "x"}}',
+                    '{"disable\\u0041llHooks": true}', '{"enabledPlugins": {"brain-core@brain": false}}',
+                    '{"env": {"CLAUDE_CONFIG_DIR": "C:/tmp/cc"}}', '{"env": {"PATH": "C:/tmp/fake"}}'):
+        assert edit(repo, repo / ".claude" / "settings.json", content), content
+    assert edit(repo, repo / ".claude" / "settings.json", '{"enabledPlugins": {"other@m": false}}') is None
+    for command in ("setx CLAUDE_CONFIG_DIR C:/tmp/cc", "setx PATH C:/tmp/fake", "setx $n x"):
+        assert bash(repo, command), command
+    assert pwsh(repo, "[Environment]::SetEnvironmentVariable('Path', 'C:/tmp/fake', 'User')")
+
+
+def test_the_interpreter_is_kept_and_a_removal_is_not_a_write(repo, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch, only=True)
+    assert "removes or moves" in bash(repo, 'rm -rf "$BRAIN_HOME/venv"')
+    assert "removes or moves" in bash(repo, 'mv "$BRAIN_HOME/venv" /tmp/v')
+    assert "removes or moves" in bash(repo, 'rm -rf "$BRAIN_HOME"')
+    assert "guard's interpreter" in bash(repo, 'cp x "$BRAIN_HOME/venv/Scripts/python.exe"')
+    for command in ('cp notes.txt "$BRAIN_HOME/"', "tar -xzf x.tgz -C ~", "chmod 600 ~", "cp notes.txt ~/",
+                    "find ~ -name '*.tmp' -delete", "unzip x.zip -d ~"):
+        assert bash(repo, command) is None, command
+    assert pwsh(repo, "Copy-Item notes.txt ~") is None
+
+
+@pytest.mark.parametrize("command, refused", [
+    ("echo 'export PATH=${HOME}/bin:$PATH' >> ~/.bashrc", False), ("echo 'cd $USERPROFILE/work' >> ~/.bashrc", False),
+    ("echo 'export HOME=/x' >> ~/.bashrc", True),
+])
+def test_home_is_watched_where_it_is_set_only(repo, tmp_path, monkeypatch, command, refused):
+    config(tmp_path, monkeypatch, only=True)
+    assert bool(bash(repo, command)) is refused
+    assert pwsh(repo, "Add-Content $PROFILE 'Set-Location $env:HOME'") is None
+
+
+def test_pointing_head_is_no_symbolic_branch(repo, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch, refuse=True)
+    assert bash(repo, "git symbolic-ref HEAD refs/heads/feat/x") is None
+
+
+@pytest.mark.parametrize("command", [
+    "gh api -XPATCH repos/o/r/git/refs/heads/main -fsha=abc -Fforce=true",
+    "gh api graphql -f query='mutation{updateRef(input:{refId:\"x\",oid:\"y\",force:true}){clientMutationId}}'",
+])
+def test_the_code_hosts_ref_writes_by_other_spellings(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, refuse=True)
+    assert "floor:main" in (bash(repo, command) or "")
+
+
+def _guard_sh(tmp_path, command, floor_section, python=True):
+    import os
+    import shutil
+    import subprocess
+    sh = shutil.which("bash")
+    if not sh:
+        pytest.skip("no bash")
+    cfg = tmp_path / "cfg" / "config.json"
+    cfg.parent.mkdir(exist_ok=True)
+    cfg.write_text(json.dumps({"v": 1, "floor": floor_section}), encoding="utf-8")
+    bin_ = tmp_path / "bin"
+    bin_.mkdir(exist_ok=True)
+    if python:   # PATH's python3 that judges nothing (prints nothing, exits 0)
+        fake = bin_ / "python3"
+        fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k not in ("BRAIN_PYTHON", "CLAUDE_BRAIN_DIR", "BRAIN_PERSONAL")}
+    env.update(BRAIN_HOME=str(tmp_path / "home"), BRAIN_SELFTIME="0", BRAIN_CONFIG=str(cfg),
+               PATH=os.pathsep.join([str(bin_), os.path.dirname(sh)]))
+    from test_guards import PLUGIN
+    return subprocess.run([sh, str(PLUGIN / "hooks" / "guard.sh"), "shell"],
+                          input=json.dumps(payload("Bash", tmp_path, command=command)), capture_output=True,
+                          text=True, env=env, timeout=60).stdout
+
+
+@pytest.mark.parametrize("python", [True, False], ids=["path-python", "no-python"])
+def test_guard_sh_fails_closed_while_the_floor_is_on(tmp_path, python):
+    out = _guard_sh(tmp_path, "setx BRAIN_GUARD_ALLOW floor", {"only": True}, python)
+    assert "the locked floor is on" in out and "deny" in out
+    assert "the locked floor is on" in _guard_sh(tmp_path, "git send-pack origin HEAD:main", {"refuse": True}, python)
+    assert "the locked floor" not in _guard_sh(tmp_path, "setx X y", {}, python)       # the floor off: as before
 
 
 def test_a_floor_only_machine_syncs_no_memory(tmp_path, monkeypatch):

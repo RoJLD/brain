@@ -86,25 +86,42 @@ The third line of the floor, no secret in a commit, is the secrets guard's alrea
 `floor:main`, `floor:force`, `floor:config`) lifts them, the owner's. git is asked only what a push needs: the branch
 checked out for `HEAD`, `@` or no refspec, the configuration for no refspec; config.json is read once per call.
 
-What else the floor holds (review round 2): an alias is read as what it runs (`alias.*` of git's configuration and
-of `git -c`; a shell alias that names push or send-pack is refused), `remote.<name>.mirror` as a forced push, a
-branch that is a symbolic ref as the branch it points at; `git config` or `git -c` setting `alias.*`,
-`remote.*.mirror`, `remote.*.push` or `push.default` is refused (check `config`), and so are a write of git's
-configuration files, `git symbolic-ref` of a branch, `git send-pack` and a `gh api` write of main's ref (`git/refs`,
-`merges`). The checkout that holds config.json is not rewritten (`checkout`, `restore`, `stash`, `reset`, `switch`,
-`rm`, `mv`, `merge`... there; `rm -rf` or `mv` of its folder); `git pull` still updates it. What stops the guards for
-later sessions is refused too: `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `USERPROFILE`, `HOME` (set, not read) and
-Claude Code's `disableAllHooks`, whatever spells the path (an NTFS stream's name, a junction or a link are resolved
-first); `guard.sh` runs no `BRAIN_PYTHON` whose file name holds no python. While the floor is on, or config.json
-cannot be read, a guard that fails refuses the call. Under `guards.owner_strict` the owner guard refuses
-`BRAIN_PYTHON`, `PYTEST_CURRENT_TEST` and `disableAllHooks` on every machine.
+What else the floor holds (`brain.floorguard`; reviews 2 and 3 closed classes, not spellings):
+
+- **git configuration**: any git command given configuration by its command line (`-c`, `--config-env`) or by the
+  environment (`GIT_CONFIG*`, `GIT_DIR`, `GIT_WORK_TREE`...) is refused (check `config`), and so is `git config`
+  setting `alias.*`, `include.path`, `includeIf.*.path`, `remote.*`, `push.*` or `url.*`, `git remote add --mirror`,
+  and a write of git's configuration files. An alias is read as what it runs, an alias of an alias too (ten levels);
+  a shell alias (`!`), or one that starts with an option, is refused.
+- **What git pushes**: `remote.<name>.mirror` is a forced push, a symbolic branch is the branch it points at;
+  `git symbolic-ref` making a branch symbolic (`refs/heads/...`; pointing `HEAD` passes), `git send-pack`, and the
+  code host's API writes of main's ref (`gh api` on `git/refs` or `merges`, short options glued or not; a GraphQL
+  `updateRef`, `createRef`, `deleteRef`, `createCommitOnBranch` or `mergeBranch`) are refused.
+- **The checkout that holds config.json**: only `brain.floor.CHECKOUT_SAFE` runs there (reads, `fetch`, `git pull
+  --ff-only`, and `push`, `config`, `remote`, `worktree`, `branch`, `tag`, which leave its files alone or are judged
+  on their own). A removal or a move of it, or of a folder that holds it or the guard's interpreter (`rm`, `mv`,
+  `Remove-Item`, `Move-Item`, `Rename-Item`, `robocopy /MIR` or `/PURGE` onto it), is refused; a write into such a
+  folder (`cp x ~/`, `tar -C ~`) is no removal and passes.
+- **What stops the guards**: `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `CLAUDE_CONFIG_DIR`, `BRAIN_CONFIG`,
+  `CLAUDE_BRAIN_DIR`, `BRAIN_PERSONAL`, `BRAIN_HOME`, and `HOME`, `USERPROFILE` and `PATH` where they are set (never
+  where they are read: `$HOME`, `${HOME}`), set for later sessions; Claude Code's `disableAllHooks` and an
+  `enabledPlugins` entry that turns the core plugin off; a write into `<BRAIN_HOME>/venv`. Names are read as the shell
+  and JSON read them (`brain.floor.unspelled`: quotes, carets, a concatenation and JSON's unicode escapes taken out),
+  and `setx`, a registry `Environment` value or `SetEnvironmentVariable` whose name is not a plain word is refused.
+  Paths are resolved first (an NTFS stream's name, a junction, a link).
+- **Failing closed**: while the floor is on, or config.json cannot be read, a guard that fails refuses the call.
+  `guard.sh` finds config.json as `inject-rules.sh` does (`common.sh`'s `brain_config` and `floor_setting`); when
+  Python cannot judge the call (no `<BRAIN_HOME>/venv`, an import error, an exit other than 0) it refuses every call
+  it would have sent to Python, and it never runs PATH's Python while the floor is on, nor a `BRAIN_PYTHON` whose
+  file name holds no python.
+- Under `guards.owner_strict` the owner guard refuses `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `CLAUDE_CONFIG_DIR` and
+  `disableAllHooks` on every machine; the override's own name is read the same way (quotes, carets, escapes) always.
 
 **Limits** (a guard of the command line cannot be complete; the code host's branch protection on main is the
-backstop): code the guard does not read (a script, a program, a renamed Python wrapper as `BRAIN_PYTHON`); git
-configuration given by `GIT_CONFIG_COUNT`/`GIT_CONFIG_PARAMETERS` in a command's environment, or by an include file;
-the code host's other writers (the contents API, GraphQL `createCommitOnBranch`, `gh repo sync`); `git pull` of
-another branch into the checkout that holds config.json; a symbolic branch made before the floor was on and pushed
-by a refspec with a colon.
+backstop): code the guard does not read (a script, a program, a compiled tool, a Python wrapper named like a Python);
+the code host's other writers (the contents API, other GraphQL mutations, `gh repo sync`, a raw HTTP call); git's
+transports beyond `git push` and `git send-pack`; a symbolic branch made before the floor was on and pushed by a
+refspec with a colon; a guard the hook never reaches (the core plugin removed from outside a session).
 
 **Floor only** (config.json `floor.only: true`): the machine gets the floor and nothing else, until it is adopted:
 `inject-rules.sh` injects the locked lines alone, after one line that says why (`brain.floor.ONLY_LINE`, the same

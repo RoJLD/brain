@@ -18,7 +18,7 @@
 # config.json's power.node_clis come from <BRAIN_HOME>/cache/node-clis.txt, which brain/guards.py (node_tools) keeps
 # as an alternation, since this hook cannot find config.json (the plugin runs from a cached copy): none until the
 # first Python run writes it.
-{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python
+{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; brain_config() { :; }; floor_setting() { :; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python, brain_config, floor_setting
 
 needs_python() {
   [ "$1" = "shell" ] || return 0
@@ -84,18 +84,47 @@ refuse_cannot_run() {
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the guards cannot run (%s), so the public and secrets checks refuse git commit and git push: run brain update (or the installer, install.ps1 -Apply), then retry. The SessionStart health says the same."}}\n' "$why"
 }
 
+# refuse_floor WHY: while the locked floor is on, every call the guards cannot judge is refused (fail closed).
+refuse_floor() {
+  local why=${1//\\/\\\\}
+  why=${why//\"/\\\"}
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the locked floor is on (config.json floor) and the guards cannot run (%s), so they refuse every call they would judge: run brain update (or the installer, install.ps1 -Apply), then retry."}}\n' "$why"
+}
+
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0
 root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
 IFS= read -r -d '' input  # the hook's JSON, without $(cat)'s fork
 needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }
 
 home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"
-brain_py=
-brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
+# floor_on: whether config.json's locked floor is on (floor.refuse or floor.only, brain/floor.py), read only when the
+# guard cannot judge the call or would run PATH's Python: then it fails closed (wi-brain-unadopted-floor).
+floor=
+floor_on() {
+  if [ -z "$floor" ]; then
+    local c
+    c=$(brain_config "$root")
+    floor=0
+    [ -n "$(floor_setting "$c" refuse)$(floor_setting "$c" only)" ] && floor=1
+  fi
+  [ "$floor" = 1 ]
+}
+brain_py= path_py=
+brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python || :
+case $brain_py in
+  "" | "$home/venv/"*) ;;
+  *) [ -n "${BRAIN_PYTHON:-}" ] && [ "$brain_py" = "$BRAIN_PYTHON" ] || path_py=1 ;;
+esac
+# PATH's Python is not run while the floor is on: a session could have put another python3 first on PATH.
+if [ -n "$brain_py" ] && { [ -z "$path_py" ] || ! floor_on; }; then
+  BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
+fi
 # here no Python was found, or the one found failed: guard.py's main never fails, so it could not import brain
 why="no Python 3 found (BRAIN_PYTHON, <BRAIN_HOME>/venv, python3, python)"
 [ -n "$brain_py" ] && why="$brain_py cannot import brain"
+[ -n "$path_py" ] && floor_on && why="only PATH's $brain_py was found, not <BRAIN_HOME>/venv's"
 [ -n "$brain_py" ] && [ "$brain_py" = "${BRAIN_PYTHON:-}" ] && why="$why; BRAIN_PYTHON chose it: fix or unset BRAIN_PYTHON"
 selftime_bash "hook guard ${1:-} [cannot run]" 1
+if floor_on; then refuse_floor "$why"; exit 0; fi
 commits_or_pushes "${1:-}" "$input" && refuse_cannot_run "$why"
 exit 0

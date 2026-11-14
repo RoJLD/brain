@@ -112,9 +112,9 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   current branch). A name the command does not resolve ($b) passes. The refusal names the allowed list.
 
 - ``floor`` (wi-brain-unadopted-floor, R21, brain.floor): under config.json floor.refuse (off by default) or
-  floor.only, a git push to main or master (check main), a forced push (check force), and what would lift the floor
-  (check config: a write of the config.json the guard reads or of its pointer, a variable that chooses it set for
-  later sessions). On a floor-only machine (floor.only) a shell call runs only the floor's checks, the configuration
+  floor.only, a git push to main or master (check main), a forced push (check force), and what would lift or stop
+  the floor (check config): brain.floorguard holds these checks. While the floor is on, a check that fails refuses
+  the call (strict). On a floor-only machine (floor.only) a shell call runs only the floor's checks, the configuration
   and secrets checks and the owner guard's override category (check_override), and a tool edit only the override
   category and the floor's config check: no session lifts its own floor.
 
@@ -1433,7 +1433,7 @@ AUTOSTART_HOME = re.compile(r"(?i)^/(?:\.config/(?:systemd/user|autostart)|libra
 OVERRIDE_FILES = re.compile(r"(?i)(?:^|[\\/])(?:\.claude[\\/]settings(?:\.local)?\.json|managed-settings\.json|"
                             r"\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zprofile|zshenv)|"
                             r"(?:microsoft\.[\w.]+_)?profile\.ps1)$")
-PERSIST_ENV = re.compile(r"(?i)SetEnvironmentVariable|\\Environment\b")   # .NET's call, the registry's key
+PERSIST_ENV = re.compile(r"(?i)SetEnvironmentVariable|[\\/:]Environment\b")   # .NET's call, the registry's key
 OVERRIDE_HINT = re.compile(r"(?i)settings(?:\.local)?\.json|\.(?:bashrc|bash_profile|profile|zshrc|zprofile)\b|"
                            r"profile\.ps1")   # what inline code names when it writes one of OVERRIDE_FILES
 INSTALL_APPLY = re.compile(r"(?i)^[-–—]a(?:p(?:p(?:l(?:y)?)?)?)?(?::\$?(?:true|1))?$")   # PowerShell takes – and —
@@ -1684,19 +1684,19 @@ def _override(command: str, cmds, shell: str, env: str = ALLOW_ENV) -> str | Non
     Code's settings or a shell profile, or a write whose target the guard cannot resolve ($PROFILE, a path the code
     computes), with BRAIN_GUARD_ALLOW in the command (``env``: the variables looked for, a regular expression; the
     floor adds those that choose the config.json the guard reads, FLOOR_ENV)."""
-    found = re.search(env, command, re.I)
+    found = re.search(env, floor.unspelled(command), re.I)
     if not found:
         return None
-    name = found.group(0).upper()
+    name = re.findall(r"\w+", found.group(0))[-1].upper()
     for words, d, _, _ in actions(cmds, shell, command=command):
-        prog, text = _prog(words[0]), _text(words)
+        prog, text = _prog(words[0]), floor.unspelled(_text(words))
         if (prog == "setx" and re.search(env, text, re.I)) or PERSIST_ENV.search(words[0]) or \
                 (prog in ("set-itemproperty", "new-itemproperty", "sp", "reg") and PERSIST_ENV.search(text)
                  and re.search(env, text, re.I)):
             return f"setting {name} in the user's environment"
         lang = "python" if re.fullmatch(r"python[\d.]*w?|py", prog) else prog
         code = _inline(words[1:], *INLINE[lang][:2]) if lang in INLINE else []
-        if code and re.search(env, code[0], re.I) and OVERRIDE_HINT.search(code[0]) and \
+        if code and re.search(env, floor.unspelled(code[0]), re.I) and OVERRIDE_HINT.search(code[0]) and \
                 _code_targets(lang, code, d):   # it writes, and names a settings file or a profile
             return f"inline code writing {name} into Claude Code's settings or a shell profile"
     for _, target in shell_writes(cmds, shell):
@@ -1710,10 +1710,7 @@ def _override(command: str, cmds, shell: str, env: str = ALLOW_ENV) -> str | Non
 # An unresolved target that may be a profile or Claude Code's settings ($PROFILE, $HOME/.claude/...): the floor's
 # variables (FLOOR_ENV) are common in the Brain's own commands, so only such a write counts for them.
 OVERRIDE_UNRESOLVED = re.compile(r"(?i)profile|settings|\.claude|\.\w*rc\b")
-# What turns every guard off for later sessions, set in the environment or in Claude Code's settings: the interpreter
-# guard.sh runs (BRAIN_PYTHON), the test marker that stops brain.paths.brain_home (PYTEST_CURRENT_TEST), and the
-# settings key that disables every hook. Refused under guards.owner_strict and while the floor is on.
-GUARD_OFF = r"BRAIN_PYTHON|PYTEST_CURRENT_TEST|disableAllHooks"
+GUARD_OFF = floor.GUARD_OFF   # what turns every guard off for later sessions (refused under owner_strict, the floor)
 STREAM = re.compile(r"(?<=[^\\/:]):[^\\/]*$")   # an NTFS stream's name (file::$DATA), whatever the system
 
 
@@ -2113,7 +2110,7 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     shell = "powershell" if powershell else "bash"
     if tool in EDIT_TOOLS:
         target = _edit_target(inp, tool, cwd)
-        text = _edit_text(inp)
+        text = floor.unspelled(_edit_text(inp))   # JSON's \u escapes decoded: a settings key as Claude Code reads it
         override_file = bool(target) and _override_file(target)
         if override_file and re.search(ALLOW_ENV, text, re.I):
             return ("override", f"{tool} refused: it writes {ALLOW_ENV} into {target}; the override is "
@@ -3825,6 +3822,7 @@ def refusals(payload: dict, strict: bool = False):
     if TERMINAL_TOOL.match(tool):
         tool = terminal_shell()
         cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
+    from . import floorguard   # here: it imports this module
     try:
         cfg = config.load()   # read once per call: the floor's settings and the file that sets them
         fl = floor.settings(cfg.data)
@@ -3842,7 +3840,7 @@ def refusals(payload: dict, strict: bool = False):
         hit = check_owner(tool, inp, [], cwd)
         if hit and (not only or hit[0] == "override"):
             yield "owner", *hit
-        reason = check_floor_files(tool, inp, [], cwd, fl, cfg.file)
+        reason = floorguard.check_files(tool, inp, [], cwd, fl, cfg.file)
         if reason:
             yield "floor", "config", reason, None
         return
@@ -3856,8 +3854,8 @@ def refusals(payload: dict, strict: bool = False):
         return
     powershell = tool == "PowerShell"
     cmds = calls(command, cwd, powershell)
-    floor_checks = (("floor", "config", lambda: check_floor_files(tool, inp, cmds, cwd, fl, cfg.file, command)),
-                    ("floor", None, lambda: check_floor(cmds, fl)))
+    floor_checks = (("floor", "config", lambda: floorguard.check_files(tool, inp, cmds, cwd, fl, cfg.file, command)),
+                    ("floor", None, lambda: floorguard.check_floor(cmds, fl, command)))
     checks = ((("owner", "override", lambda: check_override(cmds, powershell, command)),
                ("public", "config", lambda: check_config(cmds)), ("secrets", "secrets", lambda: check_secrets(cmds)))
               if only else
@@ -3915,261 +3913,6 @@ def check_override(cmds, powershell: bool = False, command: str = ""):
         return ("override", f"{what} refused: it marks a coordinators' chain root, which lets a session switch "
                             f"Remote Control; that mark is {config.owner_of()}'s, in their own terminal", None)
     return None
-
-
-# The variables that choose the config.json the guard reads (brain.config.config_file, brain.paths.bases, the home
-# brain_home falls back to: USERPROFILE, HOME) or turn the guards off (GUARD_OFF): set for later sessions, they would
-# point the guard at a file without the floor, or stop it.
-FLOOR_ENV = (r"BRAIN_CONFIG|CLAUDE_BRAIN_DIR|BRAIN_PERSONAL|BRAIN_HOME|USERPROFILE|(?-i:(?<![\w$])HOME\b(?!/))|"
-             + GUARD_OFF)
-# git's own configuration files: an alias, a mirror or a push refspec written there changes what a push does.
-GIT_CONFIG_FILES = re.compile(r"(?i)(?:^|[\\/])(?:\.gitconfig|\.git[\\/]config(?:\.worktree)?|git[\\/]config)$")
-# The configuration keys that change what a push sends (refused set under the floor: git config, git -c).
-PUSH_KEYS = re.compile(r"(?i)^(?:alias\..+|remote\..+\.(?:mirror|push)|push\.default)$")
-# What rewrites a checkout's files from git: refused in the repo that holds the floor's config.json.
-REVERTERS = {"checkout", "restore", "stash", "reset", "clean", "switch", "rm", "mv", "read-tree", "checkout-index",
-             "rebase", "cherry-pick", "revert", "am", "apply", "merge"}
-# git's subcommands the floor never reads as an alias (a word not here is looked up in alias.*).
-GIT_BUILTIN = {"push", "status", "log", "diff", "show", "add", "commit", "fetch", "pull", "branch", "tag", "remote",
-               "config", "rev-parse", "ls-files", "ls-remote", "worktree", "init", "clone", "grep", "blame",
-               "describe", "for-each-ref", "show-ref", "rev-list", "merge-base", "cat-file", "help", "version",
-               "send-pack", "symbolic-ref", "update-ref", "notes", "submodule", *REVERTERS}
-FLOOR_TAIL = ("; that breaks the locked floor (no push to main or master, no force-push: merge by a pull request; the "
-              "owner's own terminal for the rest)")
-
-
-def _floor_files(cfg_file) -> list[str]:
-    """The files that set the floor: the config.json the guard reads and the pointer that finds it
-    (<BRAIN_HOME>/personal.json), as the file system resolves them."""
-    return [_real(f) for f in (cfg_file, paths.brain_home() / paths.PERSONAL) if f]
-
-
-def check_floor_files(tool: str, inp: dict, cmds, cwd: str, fl: dict, cfg_file, command: str = "") -> str | None:
-    """While the floor is on (config.json floor.refuse or floor.only), what would lift it for this session or the
-    next: an edit or a shell write of the config.json the guard reads or of the pointer that finds it, or one of the
-    variables that choose it (FLOOR_ENV) set in the user's environment, Claude Code's settings or a shell profile. A
-    worktree's own config.json is another file: a pull request still changes it."""
-    if not (fl["refuse"] or fl["only"]) or not (tool in EDIT_TOOLS or cmds):
-        return None
-    files = _floor_files(cfg_file)
-    what = _floor_edit(tool, inp, cwd, files) if tool in EDIT_TOOLS else \
-        _floor_shell(cmds, "ps" if tool == "PowerShell" else "bash", command, files)
-    return (f"{what}; the locked floor (config.json floor) is {config.owner_of()}'s to change, in their own terminal "
-            "(BRAIN_GUARD_ALLOW=floor lifts it)") if what else None
-
-
-def _floor_edit(tool: str, inp: dict, cwd: str, files: list[str]) -> str | None:
-    """What a tool edit would lift the floor by (check_floor_files), else None: the floor's files (as the file system
-    resolves the path: a stream's name, a junction), git's configuration files, or a variable of FLOOR_ENV (or
-    disableAllHooks) written into Claude Code's settings or a profile."""
-    target = _edit_target(inp, tool, cwd)
-    if not target:
-        return None
-    real = _resolved(target)
-    if real in files:
-        return f"{tool} refused: {target} sets the floor"
-    if GIT_CONFIG_FILES.search(real) or GIT_CONFIG_FILES.search(target):
-        return f"{tool} refused: {target} is git's configuration (an alias or a mirror there changes what a push does)"
-    hit = re.search(FLOOR_ENV, _edit_text(inp), re.I) if _override_file(target) else None
-    return f"{tool} refused: it writes {hit.group(0)} into {target}, which moves or stops the floor" if hit else None
-
-
-def _repo_of(folder: str) -> str:
-    """The git checkout that holds ``folder`` (the first parent with a .git), as _real gives it; '' for none."""
-    p = _real(folder)
-    while True:
-        if os.path.exists(os.path.join(p, ".git")):
-            return p
-        parent = os.path.dirname(p)
-        if parent == p:
-            return ""
-        p = parent
-
-
-def _floor_shell(cmds, sub: str, command: str, files: list[str]) -> str | None:
-    """What a shell call would lift the floor by (check_floor_files), else None: a write of a floor file, of a folder
-    that holds one (rm -rf, mv) or of git's configuration; a git command that rewrites the files of the checkout
-    that holds config.json (REVERTERS); a variable of FLOOR_ENV set for later sessions."""
-    what = _floor_writes(cmds, sub, files) or _floor_reverter(cmds, files)
-    if what:
-        return what
-    what = _override(command, cmds, sub, env=FLOOR_ENV)
-    return f"{what} refused: it moves or stops the floor" if what else None
-
-
-def _floor_writes(cmds, sub: str, files: list[str]) -> str | None:
-    """A shell write of a floor file, of a folder that holds one (rm -rf, mv), or of git's configuration."""
-    for what, target in shell_writes(cmds, sub):
-        real = _resolved(target)
-        if real and (real in files or any(f.startswith(real.rstrip("\\/") + os.sep) for f in files)):
-            return f"{what} into {target} refused: it sets the floor"
-        if real and GIT_CONFIG_FILES.search(real):
-            return f"{what} into {target} refused: it is git's configuration"
-    return None
-
-
-def _floor_reverter(cmds, files: list[str]) -> str | None:
-    """A git command that rewrites the files of the checkout that holds config.json (REVERTERS; git stash list and
-    show read)."""
-    roots = {r for r in (_repo_of(os.path.dirname(f)) for f in files) if r}
-    for words, d in cmds:
-        parts = git_parts(words, d) if _prog(words[0]) == "git" else None
-        if parts and parts[1] in REVERTERS and not (parts[1] == "stash" and parts[2][:1] in (["list"], ["show"])) \
-                and _repo_of(parts[0]) in roots:
-            return f"git {parts[1]} in {parts[0]} refused: it rewrites the checkout that holds the floor's config.json"
-    return None
-
-
-def _git_c(words: list[str]) -> list[str]:
-    """The ``-c key=value`` of a git command's global options, in order (git reads them last)."""
-    out, i = [], 1
-    while i < len(words) and words[i].startswith("-"):
-        name, eq, val = words[i].partition("=")
-        if name in GIT_VALUE_OPTS and not eq:
-            i += 1
-            val = words[i] if i < len(words) else ""
-        if name == "-c":
-            out.append(val)
-        i += 1
-    return out
-
-
-def check_floor(cmds, fl: dict) -> tuple[str, str, None] | None:
-    """(check, reason, None) for a git push that breaks the locked floor (brain.floor: main, force), under config.json
-    floor.refuse or floor.only (``fl``: floor.settings); None otherwise. A push that names no refspec is read as git
-    sends it: the remote's push refspecs, else push.default (from git's configuration and the command's own -c).
-    git is asked only when the push needs it: the current branch for HEAD, @ or no refspec, the configuration for no
-    refspec."""
-    if not (fl["refuse"] or fl["only"]):
-        return None
-    for words, _ in cmds:
-        what = _gh_ref_write(words)
-        if what:
-            return "main", f"gh api {what} refused: a write of main's ref through the code host's API{FLOOR_TAIL}", None
-    for words, d, sub, args in _floor_git(cmds):
-        hit = _floor_git_refusal(words, d, sub, args)
-        if hit:
-            return hit[0], hit[1] + FLOOR_TAIL, None
-    return None
-
-
-def _floor_git_refusal(words: list[str], d: str, sub: str, args: list[str]) -> tuple[str, str] | None:
-    """(check, what) for one git command (an alias resolved) that breaks the floor, else None."""
-    key = next((c.partition("=")[0] for c in _git_c(words) if PUSH_KEYS.match(c.partition("=")[0])), "") or \
-        (_config_write(args) if sub == "config" else "")
-    if key:
-        return "config", f"git setting {key} refused: it changes what a push sends"
-    if sub == "!":
-        return "main", f"the git alias {words[1]!r} refused: a shell alias that pushes is out of the floor's reading"
-    if sub == "send-pack":
-        return "main", "git send-pack refused: it writes the remote's refs directly"
-    if sub == "symbolic-ref" and len([a for a in args if not a.startswith("-")]) >= 2 and \
-            any(a.startswith("refs/heads/") for a in args):
-        return "main", "git symbolic-ref of a branch refused: a push of it writes the branch it points at"
-    return _floor_push(words, d, args) if sub == "push" else None
-
-
-def _floor_push(words: list[str], d: str, args: list[str]) -> tuple[str, str] | None:
-    """(check, what) for a git push that breaks the floor. A push that names no refspec is read as git sends it: the
-    remote's mirror flag and push refspecs, else push.default (git's configuration and the command's own -c). A
-    branch that is a symbolic ref is read as the branch it points at. git is asked only what the push needs."""
-    if "-h" in args or "--help" in args:
-        return None
-    remote, refspecs, flags = _push_target(args)
-    current = _git_out(d, "rev-parse", "--abbrev-ref", "HEAD").strip() if floor.needs_current(refspecs, flags) else ""
-    if not refspecs and floor.needs_current(refspecs, flags):
-        refspecs = _floor_defaults(words, d, remote, current)
-        if isinstance(refspecs, tuple) or not refspecs:
-            return refspecs or None   # a mirror push; or nothing sent (push.default nothing, no branch checked out)
-    hit = floor.push_refusal(_unsymref(d, refspecs), flags, current)
-    return (hit[0], f"git push refused: {hit[1]}") if hit else None
-
-
-def _floor_defaults(words: list[str], d: str, remote: str, current: str):
-    """What a push that names no refspec sends (floor.default_refspecs), or (check, what) for a mirror push."""
-    conf = floor.git_config(_git_out(d, "config", "-z", "--list"), _git_c(words))
-    remote = remote or floor.default_remote(conf, current)
-    if floor.truthy(floor.last(conf, f"remote.{remote}.mirror")):
-        return "force", f"git push refused: a mirror push (remote.{remote}.mirror)"
-    return floor.default_refspecs(conf, remote, current)
-
-
-def _unsymref(d: str, refspecs: list[str]) -> list[str]:
-    """``refspecs`` with each bare branch that is a symbolic ref written to the branch it points at (git asked only
-    when a bare branch is pushed)."""
-    if not any(":" not in r and r.lstrip("+") not in floor.HEAD and "*" not in r for r in refspecs):
-        return refspecs
-    syms = _symrefs(d)
-    return [f"{r}:{syms[r.lstrip('+')]}" if ":" not in r and r.lstrip("+") in syms else r for r in refspecs]
-
-
-def _symrefs(d: str) -> dict[str, str]:
-    """The branches of ``d`` that are symbolic refs: {short name: the branch it points at}."""
-    out = {}
-    for line in _git_out(d, "for-each-ref", "--format=%(refname:short)%00%(symref)", "refs/heads").splitlines():
-        name, _, target = line.partition("\0")
-        if target:
-            out[name] = floor.HEADS.sub("", target)
-    return out
-
-
-def _config_write(args: list[str]) -> str:
-    """The key ``git config ARGS`` sets when it is one of PUSH_KEYS ('' for a read, an unset or another key):
-    ``KEY VALUE``, ``set KEY VALUE``, ``--add``/``--replace-all KEY VALUE``."""
-    pos, i = [], 0
-    while i < len(args):
-        a = args[i]
-        if a in ("--file", "-f", "--blob", "--type", "--default", "--comment"):
-            i += 2
-            continue
-        if a.startswith("--unset") or a in ("--get", "--get-all", "--get-regexp", "--list", "-l", "--remove-section",
-                                            "--rename-section", "-e", "--edit"):
-            return ""
-        if not a.startswith("-"):
-            pos.append(a)
-        i += 1
-    if pos[:1] == ["set"]:
-        pos = pos[1:]
-    elif pos[:1] in (["get"], ["list"], ["unset"]):
-        return ""
-    return pos[0] if len(pos) >= 2 and PUSH_KEYS.match(pos[0]) else ""
-
-
-def _floor_git(cmds):
-    """(words, folder, subcommand, arguments) of each git command of ``cmds``, an alias resolved to what it runs
-    (alias.<name> from git's configuration and the command's own -c; a shell alias that names push or send-pack is
-    subcommand '!')."""
-    for words, d in cmds:
-        parts = git_parts(words, d) if _prog(words[0]) == "git" else None
-        if not parts:
-            continue
-        folder, sub, args = parts
-        if sub not in GIT_BUILTIN:
-            conf = floor.git_config(_git_out(folder, "config", "-z", "--list"), _git_c(words))
-            alias = floor.last(conf, f"alias.{sub.lower()}")
-            if alias.startswith("!"):
-                if re.search(r"\b(?:push|send-pack)\b", alias):
-                    yield [words[0], sub], folder, "!", args
-                continue
-            if alias:
-                try:
-                    run = shlex.split(alias)
-                except ValueError:
-                    run = alias.split()
-                sub, args = (run[0], run[1:] + args) if run else (sub, args)
-        yield words, folder, sub, args
-
-
-def _gh_ref_write(words: list[str]) -> str:
-    """The endpoint a ``gh api`` call writes main's or master's ref through (git/refs, merges), else ''."""
-    if _prog(words[0]) != "gh" or words[1:2] != ["api"]:
-        return ""
-    text = " ".join(words[2:])
-    write = re.search(r"(?i)(?:^|\s)(?:-X|--method)(?:\s+|=)(?:POST|PATCH|PUT|DELETE)\b|"
-                      r"(?:^|\s)(?:-f|-F|--field|--raw-field|--input)\b", text)
-    if write and re.search(r"git/refs|/merges\b", text) and re.search(r"\b(?:main|master)\b", text):
-        return next((w for w in words[2:] if "/" in w and not w.startswith("-")), text)[:120]
-    return ""
 
 
 def _floor_state() -> str:

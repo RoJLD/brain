@@ -57,3 +57,41 @@ brain_python() {
   done
   return 1
 }
+
+# brain_config PLUGIN_ROOT: prints the config.json the engine reads, found as inject-rules.sh finds it: $BRAIN_CONFIG,
+# else the first found in $CLAUDE_BRAIN_DIR, $BRAIN_PERSONAL, the repo that holds the plugin and the personal brain
+# the pointer <BRAIN_HOME>/personal.json names; nothing when there is none.
+brain_config() {
+  if [ -n "${BRAIN_CONFIG:-}" ]; then printf '%s\n' "$BRAIN_CONFIG"; return 0; fi
+  local pointer="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}/personal.json" personal= json key base
+  if [ -f "$pointer" ]; then
+    json=$(tr -d '\r\n' < "$pointer")
+    key='"root"[[:space:]]*:[[:space:]]*"([^"]+)"'
+    [[ $json =~ $key ]] && personal=${BASH_REMATCH[1]//\\\\//}
+  fi
+  for base in "${CLAUDE_BRAIN_DIR:-}" "${BRAIN_PERSONAL:-}" "$1/../.." "$personal"; do
+    if [ -n "$base" ] && [ -f "$base/config.json" ]; then printf '%s\n' "$base/config.json"; return 0; fi
+  done
+}
+
+# floor_setting CONFIG KEY: prints 1 when config.json's top-level "floor" object holds "KEY": true (brain/floor.py's
+# settings: a "floor" nested in another object is not the setting, the last of two keys of one name wins). awk walks
+# the JSON's strings and depth.
+floor_setting() {
+  [ -f "$1" ] || return 0
+  LC_ALL=C awk -v want="$2" 'BEGIN { RS = "\001" } {
+    s = $0; n = length(s); d = 0; str = 0; esc = 0; tok = ""; key = ""; fd = 0; on = 0
+    for (i = 1; i <= n; i++) {
+      c = substr(s, i, 1)
+      if (str) { if (esc) esc = 0; else if (c == "\\") esc = 1; else if (c == "\"") str = 0; else tok = tok c; continue }
+      if (c == "\"") { str = 1; tok = ""; continue }
+      if (c == ":") {
+        key = tok
+        if (d == 1 && key == "floor") on = 0
+        if (fd && d == 2 && key == want) { v = substr(s, i + 1); sub(/^[ \t\r\n]+/, "", v); on = (v ~ /^true([^A-Za-z0-9_]|$)/) }
+      } else if (c == "{" || c == "[") { fd = fd || (d == 1 && c == "{" && key == "floor"); d++; key = "" }
+      else if (c == "}" || c == "]") { d--; if (d <= 1) fd = 0; key = "" }
+      else if (c == ",") key = ""
+    }
+    if (on) print 1 }' "$1" 2>/dev/null || :
+}

@@ -48,6 +48,48 @@ ONLY_LINE = ("Floor only (config.json floor.only): this machine gets the locked 
              "the guard applies only the floor's refusals, the secrets and configuration checks, the override "
              "protection and the session-settings and scheduled-task checks, and the memory notes are not synced.")
 
+# --- what the guard watches while the floor is on (brain.floorguard; reviews of wi-brain-unadopted-floor) ---------
+# What turns every guard off for later sessions, set in the environment or Claude Code's settings: the interpreter
+# guard.sh runs, the test marker that stops brain.paths.brain_home, another settings folder for Claude Code, and the
+# settings key that disables every hook. Refused under guards.owner_strict and while the floor is on.
+GUARD_OFF = r"BRAIN_PYTHON|PYTEST_CURRENT_TEST|CLAUDE_CONFIG_DIR|disableAllHooks"
+# GUARD_OFF and what chooses the config.json the guard reads or the Python guard.sh finds: a name of the Brain's
+# own, and HOME, USERPROFILE and PATH only where they are set (an assignment, a JSON key, setx, a registry name, the
+# first argument of SetEnvironmentVariable), never where they are read ($HOME, ${HOME}, %USERPROFILE%). Matched on
+# unspelled() text, case aside.
+FLOOR_ENV = (r"BRAIN_CONFIG|CLAUDE_BRAIN_DIR|BRAIN_PERSONAL|BRAIN_HOME|" + GUARD_OFF +
+             r"|(?-i:(?<![\w$%])(?<!\$\{)(?:HOME|USERPROFILE)\s*[=:,])|(?<![\w$%])(?<!\$\{)PATH\s*[:,]"
+             r"|(?:\bsetx\s+|-name\s+|/v\s+)(?:HOME|USERPROFILE|PATH)\b")
+# git's own configuration files: an alias, an include or a mirror written there changes what a push does.
+GIT_CONFIG_FILES = re.compile(r"(?i)(?:^|[\\/])(?:\.gitconfig|\.git[\\/]config(?:\.worktree)?|git[\\/]config)$")
+# The configuration keys a session does not set while the floor is on (git config): aliases, includes, remotes,
+# push's own keys, URL rewrites.
+PUSH_KEYS = re.compile(r"(?i)^(?:alias\..+|include(?:if\..+)?\.path|remote\..+|push\..+|url\..+)$")
+# git configuration or repository given by the environment (refused while the floor is on): GIT_CONFIG*, GIT_DIR...
+GIT_ENV = re.compile(r"(?<![\w$])(?:GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_NAMESPACE|"
+                     r"GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES)\s*=")
+# What git may run in the checkout that holds config.json while the floor is on: reads, fetch, git pull --ff-only,
+# and the commands the floor judges on their own (push, config, remote) or that leave its files alone (worktree,
+# branch, tag).
+CHECKOUT_SAFE = {"status", "log", "diff", "show", "fetch", "rev-parse", "ls-files", "ls-tree", "ls-remote",
+                 "cat-file", "blame", "grep", "describe", "for-each-ref", "show-ref", "rev-list", "merge-base",
+                 "shortlog", "name-rev", "check-ignore", "count-objects", "var", "help", "version", "push", "config",
+                 "remote", "worktree", "branch", "tag"}
+# git's subcommands the floor never reads as an alias (a word not here is looked up in alias.*).
+GIT_BUILTIN = {*CHECKOUT_SAFE, "add", "commit", "pull", "init", "clone", "send-pack", "symbolic-ref", "update-ref",
+               "notes", "submodule", "checkout", "restore", "stash", "reset", "clean", "switch", "rm", "mv",
+               "read-tree", "checkout-index", "rebase", "cherry-pick", "revert", "am", "apply", "merge", "bisect",
+               "sparse-checkout", "filter-branch", "gc", "prune", "reflog", "maintenance"}
+
+
+def unspelled(text: str) -> str:
+    """``text`` with what only spells a name differently taken out: JSON's ``\\uXXXX`` escapes decoded, a string
+    concatenation ('A'+'B') joined, and the quotes, carets and backticks a shell or cmd drops (BRAIN_GUARD''_ALLOW,
+    BRAIN_GUARD^_ALLOW)."""
+    text = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), text)
+    text = re.sub(r"['\"]\s*\+\s*['\"]", "", text)
+    return re.sub(r"['\"^`]", "", text)
+
 
 def locked(text: str) -> list[str]:
     """The lines of ``text`` that carry the lock marker, every marker taken out, in their order (lines split on LF, a
