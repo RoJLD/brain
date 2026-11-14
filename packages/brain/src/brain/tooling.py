@@ -14,11 +14,12 @@ OpenTelemetry export (brain.otel, when the collector runs) and the guards ledger
              the turns it drove; inventory: the skills a session in the project gets (brain.lint.sources: the owner's
              marketplace's enabled plugins, the user's and the project's);
   rule       a Rule node a session cites (``cited``: its id in the model's text or a tool call's input), an instruction
-             file it loads (``loaded``: CLAUDE.md, the memory index, a rules file, with its size) or reads (``read``);
-             a ``rule-...`` id no Rule node of the scope's graphs has is not counted; inventory: the active Rule nodes
+             file it loads (``loaded``: CLAUDE.md, the memory index, a rules file, with its size) or reads (``read``),
+             named relative to its project's root (brain.toolids.project_root); a ``rule-...`` id no Rule node of the
+             scope's graphs has is not counted, nor any without Rule nodes in scope (a branch name is no citation); inventory: the active Rule nodes
              and the project's instruction files;
-  command    a brain command (``brain <command> [<subcommand>]``, never its arguments) a session ran in a shell, mapped
-             to the CLI registry's units (brain.adoption); the share of its message's cost; inventory: the registry;
+  command    a brain command (``brain <command> [<subcommand>]``, the registry's unit: an argument is never kept) a
+             session ran in a shell, mapped to the CLI registry's units (brain.adoption); the share of its message's cost; inventory: the registry;
              a unit a hook, another command or a schedule runs (its module's ``RUNS_VIA``), or that the engine's exec
              ledger saw run in the last ``UNUSED_DAYS`` days on this machine, is not marked;
   script     any other program and subcommand of a shell call (``git push``, ``python -m pytest``), never marked;

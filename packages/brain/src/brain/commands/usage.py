@@ -31,7 +31,7 @@ USAGE = """\
                  [--since WHEN] [--until WHEN] [--top N] [--no-scan] [--json]   the usage counters by tool id
                  (brain.tooling, default window 30d): per skill (a Skill call, a slash command, a Read of its SKILL.md,
                  an Agent's prompt naming it), rule (a Rule node cited, an instruction file loaded or read), brain
-                 command (program and subcommand, never its arguments), script, MCP tool, Claude Code tool, hook,
+                 command (program and the registry's subcommand, never an argument), script, MCP tool, Claude Code tool, hook,
                  guard refusal (the guards ledger joined to the transcripts), plugin and scheduled task: its calls,
                  sessions and projects, the token cost that can be attributed, its last use; the OpenTelemetry export
                  adds hook and tool durations and rejected calls when the collector runs; a skill, rule, brain

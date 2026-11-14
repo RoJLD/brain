@@ -1769,8 +1769,9 @@ id (`brain.toolids`), so that what serves daily and what never does can be told 
 sessions and projects that used it, the token cost that can be attributed (the share of its messages' cost, the
 turns a skill drove, the size of what it read or injected, at four characters a token) and its last use. The kinds:
 `skill` (a Skill call, a slash command, a Read of its SKILL.md or an Agent's prompt naming it: one id,
-`plugin:name`, whatever the form), `rule` (a Rule node a session cites, an instruction file it loads or reads),
-`command` (a brain command, program and subcommand, never its arguments), `script` (any other program), `mcp`,
+`plugin:name`, whatever the form), `rule` (a Rule node of the scope a session cites, an instruction file it loads or
+reads, named relative to its project's root), `command` (a brain command, program and the registry's subcommand, never
+an argument), `script` (any other program), `mcp`,
 `tool` (Claude Code's own), `hook` (`<event>:<matcher>`), `guard` (the refusals by guard), `plugin` (its skills and
 its servers' MCP tools) and `scheduled` (the schedules of this machine and their runs in the engine's exec ledger).
 The session transcripts are the first source (the token ledger's rows, rescanned once by its scanner 4); the
@@ -1778,7 +1779,9 @@ OpenTelemetry export (`brain telemetry`), when the collector runs, adds every ho
 durations and the calls a hook or a rule rejected; the guards ledger names the guard of each refusal, joined to the
 transcript by tool use id so a refusal is counted once. A skill, rule, brain command, MCP tool, hook, plugin or
 schedule unused for 30 days is marked « retire or merge » (a brain command a hook, another command or a schedule runs,
-`RUNS_VIA`, or that the machine's exec ledger saw run, is not); programs and guards are never marked. A session
+`RUNS_VIA`, or that the machine's exec ledger saw run, is not); programs and guards are never marked. Skills, rules,
+brain commands and schedules are marked against an inventory of what is there; MCP tools, hooks and plugins have
+none yet, so only those seen before in the ledger and silent since are marked. A session
 counts for its project, and the inventory is the projects' in scope: `--project` never shows another project's
 counts. `--json` adds `misses`, the replay of the sources against each other (refusals the ledger and the transcript
 hold alike, hook runs only the export saw, tool calls the transcript and the export count differently).
