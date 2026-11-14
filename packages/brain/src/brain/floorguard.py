@@ -123,21 +123,24 @@ def _removals(cmds, kept: list[str]) -> str | None:
     into such a folder (cp, tar -C, Expand-Archive) is no removal."""
     for words, d in cmds:
         prog = g._prog(words[0])
-        if prog not in REMOVERS | MOVERS | {"robocopy"}:
-            continue
-        opts = {w.split(":")[0].upper() for w in words[1:] if ROBOCOPY_OPT.fullmatch(w)} if prog == "robocopy" else set()
-        pos = [w for w in words[1:] if not w.startswith("-") and not (prog == "robocopy" and ROBOCOPY_OPT.fullmatch(w))]
-        if prog in REMOVERS:
-            targets = pos
-        elif prog in MOVERS:
-            targets = pos[:-1] if len(pos) > 1 else pos   # the sources; the last is where they go
-        else:   # robocopy SRC DST: /MIR and /PURGE remove from DST, /MOVE and /MOV from SRC
-            targets = (pos[1:2] if opts & {"/MIR", "/PURGE"} else []) + (pos[:1] if opts & {"/MOVE", "/MOV"} else [])
-        for t in targets:
+        for t in _removed(prog, words):
             real = g._real(g._path(t, d))
             if any(_under(k, real) for k in kept):
                 return f"{prog} of {t} refused: it removes or moves what sets the floor or runs the guard"
     return None
+
+
+def _removed(prog: str, words: list[str]) -> list[str]:
+    """The paths a removal or a move takes away: every path of a remover, a mover's sources (its last path is where
+    they go), robocopy's DST under /MIR or /PURGE and its SRC under /MOVE or /MOV; [] for any other program."""
+    if prog == "robocopy":
+        opts = {w.split(":")[0].upper() for w in words[1:] if ROBOCOPY_OPT.fullmatch(w)}
+        pos = [w for w in words[1:] if not ROBOCOPY_OPT.fullmatch(w)]
+        return (pos[1:2] if opts & {"/MIR", "/PURGE"} else []) + (pos[:1] if opts & {"/MOVE", "/MOV"} else [])
+    pos = [w for w in words[1:] if not w.startswith("-")]
+    if prog in REMOVERS:
+        return pos
+    return (pos[:-1] if len(pos) > 1 else pos) if prog in MOVERS else []
 
 
 def _repo_of(folder: str) -> str:
@@ -226,12 +229,9 @@ def check_floor(cmds, fl: dict, command: str = "") -> tuple[str, str, None] | No
 
 def _git_refusal(words: list[str], d: str, sub: str, args: list[str]) -> tuple[str, str] | None:
     """(check, what) for one git command (an alias resolved) that breaks the floor, else None."""
-    given = git_c(words)
-    if given:
-        return "config", f"git -c {given[0].partition('=')[0]} refused: configuration from the command line"
-    key = _config_write(args) if sub == "config" else ""
-    if key or (sub == "remote" and any(a.startswith("--mirror") for a in args)):
-        return "config", f"git setting {key or 'a mirror remote'} refused: it changes what a push sends"
+    hit = _config_refusal(words, sub, args)
+    if hit:
+        return "config", hit
     if sub == "!":
         return "main", f"the git alias {args[0][:60]!r} refused: an alias the floor cannot read"
     if sub == "send-pack":
@@ -240,6 +240,18 @@ def _git_refusal(words: list[str], d: str, sub: str, args: list[str]) -> tuple[s
     if sub == "symbolic-ref" and len(pos) >= 2 and pos[0].startswith("refs/heads/"):
         return "main", "git symbolic-ref of a branch refused: a push of it writes the branch it points at"
     return _push(d, args) if sub == "push" else None
+
+
+def _config_refusal(words: list[str], sub: str, args: list[str]) -> str:
+    """What a git command sets of git's configuration while the floor is on: anything by -c or --config-env, a key
+    of floor.PUSH_KEYS by git config, a mirror remote by git remote add; '' else."""
+    given = git_c(words)
+    if given:
+        return f"git -c {given[0].partition('=')[0]} refused: configuration from the command line"
+    key = _config_write(args) if sub == "config" else ""
+    if key or (sub == "remote" and any(a.startswith("--mirror") for a in args)):
+        return f"git setting {key or 'a mirror remote'} refused: it changes what a push sends"
+    return ""
 
 
 def _push(d: str, args: list[str]) -> tuple[str, str] | None:
