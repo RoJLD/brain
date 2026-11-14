@@ -65,18 +65,33 @@ text() {
     tr -d '\r' < "${rules[$i]}" | tr '\t' ' '
   done
 }
-# A floor-only machine (config.json "floor": {"only": true}, brain/floor.py) gets the locked rules alone: the lines
-# that carry <!-- lock --> or <!-- lock: ID -->, the marker taken out, and one line that says why.
+# A floor-only machine (config.json "floor": {"only": true} at its top level, brain/floor.py) gets the locked rules
+# alone: the lines that carry <!-- lock --> or <!-- lock: ID -->, the marker taken out, after brain.floor.ONLY_LINE
+# (the same words: tests/test_floor.py compares them). awk walks the JSON (strings, depth) as Python's json reads it:
+# a "floor" nested in another object is not the setting, and the last of two keys of one name wins. The locked lines
+# are read in the C locale, so [[:space:]] and [A-Za-z] mean what brain.floor.LOCK means.
 floor_only=
 if [ -f "$config" ]; then
-  json=$(tr -d '\r\n' < "$config")
-  only='"floor"[[:space:]]*:[[:space:]]*\{[^}]*"only"[[:space:]]*:[[:space:]]*true'
-  [[ $json =~ $only ]] && floor_only=1
+  floor_only=$(LC_ALL=C awk 'BEGIN { RS = "\001" } {
+    s = $0; n = length(s); d = 0; str = 0; esc = 0; tok = ""; key = ""; fd = 0; on = 0
+    for (i = 1; i <= n; i++) {
+      c = substr(s, i, 1)
+      if (str) { if (esc) esc = 0; else if (c == "\\") esc = 1; else if (c == "\"") str = 0; else tok = tok c; continue }
+      if (c == "\"") { str = 1; tok = ""; continue }
+      if (c == ":") {
+        key = tok
+        if (d == 1 && key == "floor") on = 0
+        if (fd && d == 2 && key == "only") { v = substr(s, i + 1); sub(/^[ \t\r\n]+/, "", v); on = (v ~ /^true([^A-Za-z0-9_]|$)/) }
+      } else if (c == "{" || c == "[") { fd = fd || (d == 1 && c == "{" && key == "floor"); d++; key = "" }
+      else if (c == "}" || c == "]") { d--; if (d <= 1) fd = 0; key = "" }
+      else if (c == ",") key = ""
+    }
+    if (on) print 1 }' "$config" 2>/dev/null || :)
 fi
 locked() {
-  printf '%s\n' "Floor only (config.json floor.only): this machine gets the locked rules alone, until it is adopted; the guard applies only the floor's refusals, and the memory notes are not synced."
-  text | grep -E '<!--[[:space:]]*lock(:[[:space:]]*[A-Za-z0-9_.-]+)?[[:space:]]*-->' \
-    | sed -E 's/[[:space:]]*<!--[[:space:]]*lock(:[[:space:]]*[A-Za-z0-9_.-]+)?[[:space:]]*-->//; s/[[:space:]]+$//' || :
+  printf '%s\n' "Floor only (config.json floor.only): this machine gets the locked rules alone, until it is adopted; the guard applies only the floor's refusals, the secrets and configuration checks, the override protection and the session-settings and scheduled-task checks, and the memory notes are not synced."
+  text | LC_ALL=C grep -E '<!--[[:space:]]*lock(:[[:space:]]*[A-Za-z0-9_.-]+)?[[:space:]]*-->' \
+    | LC_ALL=C sed -E 's/[[:space:]]*<!--[[:space:]]*lock(:[[:space:]]*[A-Za-z0-9_.-]+)?[[:space:]]*-->//g; s/[[:space:]]+$//' || :
 }
 if [ -n "$floor_only" ]; then
   context=$(locked | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{printf "%s\\n", $0}')

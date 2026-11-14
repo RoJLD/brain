@@ -63,24 +63,40 @@ otel-headers`), now however brain is run, and each command keeps its own check.
 
 The few rules no level overrides (`brain.floor`, the owner's R21): a line of the owner's rules (config.json `rules`)
 that carries `<!-- lock -->` or `<!-- lock: ID -->` (the decision that locked it) is locked; Markdown shows nothing of
-the marker. The guard holds them with two refusals, guard `floor`:
+the marker (the lock's ID is ASCII letters, digits, `_`, `.` and `-`). The guard holds them with three refusals,
+guard `floor`:
 
-- `main`: a `git push` to `main` or `master`: a refspec's destination (`HEAD:main`, `x:refs/heads/master`), the
-  branch checked out when no refspec names one (`git push`, `git push origin HEAD`), `--all`, a deletion (`:main`,
-  `--delete main`); `--tags` alone sends no branch;
-- `force`: a forced push: `--force`, `-f` in a group of short options, `--force-with-lease`, `--force-if-includes`,
-  `--mirror`, a refspec starting with `+`.
+- `main`: a `git push` that writes `main` or `master`, read as git reads it: a refspec's destination (`HEAD:main`,
+  `x:refs/heads/master`, `x:heads/main`), `HEAD` or `@` as the branch checked out, a deletion (`:main`, `--delete
+  main`), every branch (`--all`, `--branches`, or a prefix git accepts: `--al`), a matching push (`:`), a refspec with
+  `*` whose pattern takes main (`*`, `refs/heads/*:refs/heads/*`; not `refs/tags/*`); with no refspec, what git sends
+  then: the remote's `remote.<name>.push`, else `push.default` (`matching` every branch, `upstream` the current branch
+  to its `branch.<name>.merge`, `nothing` nothing, else the current branch), read from git's configuration and the
+  command's own `git -c`; `--tags` alone and a negative refspec (`^x`) send no branch;
+- `force`: a forced push: `--force`, `--force-with-lease`, `--force-if-includes`, `--mirror` or any prefix git takes
+  of them (`--force-w`, `--mirr`), `f` in a group of short options (`-uf`, `-4f`; not after `o`, whose value is
+  attached: `-oforce` is a push option), a refspec starting with `+`;
+- `config`: what would lift the floor: an edit or a shell write of the config.json the guard reads, or of the pointer
+  that finds it (`<BRAIN_HOME>/personal.json`), and a variable that chooses that file (`BRAIN_CONFIG`,
+  `CLAUDE_BRAIN_DIR`, `BRAIN_PERSONAL`, `BRAIN_HOME`) set for later sessions (`setx`, the registry, Claude Code's
+  settings, a shell profile). A worktree's own config.json is another file: a pull request still changes it.
 
 The third line of the floor, no secret in a commit, is the secrets guard's already. They run under config.json
 `floor.refuse: true` (off by default: refusals 0.5.1 adds) or `floor.only: true`; `BRAIN_GUARD_ALLOW=floor` (or
-`floor:main`, `floor:force`) lifts them, the owner's.
+`floor:main`, `floor:force`, `floor:config`) lifts them, the owner's. git is asked only what a push needs: the branch
+checked out for `HEAD`, `@` or no refspec, the configuration for no refspec; config.json is read once per call.
 
 **Floor only** (config.json `floor.only: true`): the machine gets the floor and nothing else, until it is adopted:
-`inject-rules.sh` injects the locked lines alone, after one line that says why; the guard runs only the floor's
-refusals, the secrets check and the configuration check (no production, owner, power or third-party guard: a project
-whose own work they would refuse); the memory notes are not synced, either way, whatever `BRAIN_MEMORY_SYNC` says.
-The owner sets it; how a machine with no anchor in the owner's brain, or a project until its merge phase, enters it
-on its own is a decision still open.
+`inject-rules.sh` injects the locked lines alone, after one line that says why (`brain.floor.ONLY_LINE`, the same
+words in both); the guard runs the floor's refusals, the secrets and configuration checks, the override protection
+(`check_override`: the owner guard's override category, so that no session lifts its own floor: the guards' override
+set for later sessions, `brain usage allow`, `brain handover root`, a write of the usage allow file or the chain
+roots) and the session-settings and scheduled-task tool checks; no production, power or third-party guard, nor the
+owner guard's other categories (a project whose own work they would refuse). The memory notes are not synced, either
+way, whatever `BRAIN_MEMORY_SYNC` says. `floor` is read at config.json's top level alone, by the guard and by
+`inject-rules.sh` alike (a `floor` key inside another object is not the setting). The owner sets it; how a machine
+with no anchor in the owner's brain, or a project until its merge phase, enters it on its own is a decision still
+open.
 
 ## The Terminal panel
 

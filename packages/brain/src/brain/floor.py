@@ -50,9 +50,9 @@ ONLY_LINE = ("Floor only (config.json floor.only): this machine gets the locked 
 
 
 def locked(text: str) -> list[str]:
-    """The lines of ``text`` that carry the lock marker, the marker taken out, in their order (lines split on LF, a
-    CR dropped, as inject-rules.sh reads them)."""
-    return [LOCK.sub("", line).rstrip(" \t\n\r\f\v") for line in text.replace("\r", "").split("\n")
+    """The lines of ``text`` that carry the lock marker, every marker taken out, in their order (lines split on LF, a
+    CR dropped, a tab made a space, as inject-rules.sh reads them)."""
+    return [LOCK.sub("", line).rstrip(" \t\n\r\f\v") for line in text.replace("\r", "").replace("\t", " ").split("\n")
             if LOCK.search(line)]
 
 
@@ -111,17 +111,75 @@ def _destination(refspec: str, current: str) -> str:
     return HEADS.sub("", dst)
 
 
+def git_config(listing: str, overrides: list[str] = ()) -> dict[str, list[str]]:
+    """git's configuration as ``git config -z --list`` prints it (``key\\nvalue\\0`` entries), then the ``-c
+    key=value`` of the push's own command (``overrides``, read last as git reads them): {key: [values, in order]}, the
+    section and the variable lowercased, a subsection (a remote's or a branch's name) kept as it is."""
+    out: dict[str, list[str]] = {}
+    entries = [e.partition("\n") for e in listing.split("\0") if e]
+    entries += [(o.partition("=")[0], "", o.partition("=")[2] if "=" in o else "true") for o in overrides]
+    for key, _, value in entries:
+        section, dot, rest = key.partition(".")
+        sub, _, var = rest.rpartition(".")
+        if dot and var:
+            out.setdefault(".".join(p for p in (section.lower(), sub, var.lower()) if p), []).append(value)
+    return out
+
+
+def _last(conf: dict[str, list[str]], key: str) -> str:
+    return (conf.get(key) or [""])[-1].strip()
+
+
+def default_remote(conf: dict[str, list[str]], current: str) -> str:
+    """The remote a push that names none goes to: the current branch's pushRemote, remote.pushDefault, the branch's
+    remote, else origin."""
+    return (_last(conf, f"branch.{current}.pushremote") or _last(conf, "remote.pushdefault")
+            or _last(conf, f"branch.{current}.remote") or "origin")
+
+
+def default_refspecs(conf: dict[str, list[str]], remote: str, current: str) -> list[str]:
+    """What a push that names no refspec sends to ``remote``: its ``remote.<name>.push`` refspecs, else by
+    ``push.default``: ``matching`` every branch both sides have (``:``), ``upstream`` (or ``tracking``) the current
+    branch to its upstream (``branch.<name>.merge``), ``nothing`` nothing, ``current`` and ``simple`` (git's default)
+    the current branch to its own name. No branch checked out sends nothing (git refuses the push)."""
+    if conf.get(f"remote.{remote}.push"):
+        return list(conf[f"remote.{remote}.push"])
+    mode = _last(conf, "push.default").lower() or "simple"
+    if mode == "nothing":
+        return []
+    if mode == "matching":
+        return [":"]
+    if not current or current == "HEAD":
+        return []
+    if mode in ("upstream", "tracking"):
+        return [f"{current}:{_last(conf, f'branch.{current}.merge') or current}"]
+    return [current]
+
+
+def _wildcard(refspec: str) -> bool:
+    """Whether a refspec with ``*`` writes main or master: its destination pattern (its source's when it has no
+    destination), refs/heads/ or heads/ dropped, matches one of them."""
+    src, colon, dst = refspec.lstrip("+").partition(":")
+    pattern = HEADS.sub("", dst if colon else src)
+    if not HEADS.match(dst if colon else src) and "/" in pattern and not pattern.startswith("*"):
+        return False   # refs/tags/*, refs/remotes/*: not a branch
+    rx = re.compile("^" + ".*".join(re.escape(p) for p in pattern.split("*")) + "$")
+    return any(rx.match(b) for b in BRANCHES)
+
+
 def push_refusal(refspecs: list[str], flags: set[str], current: str = "") -> tuple[str, str] | None:
     """(check, what) when a push breaks the floor: ``force`` (a forced push), else ``main`` (a push to main or
-    master); ``refspecs`` are what the push sends (the guard gives the default's when the command names none),
-    ``current`` the branch checked out (needs_current), the one HEAD, @ or no refspec sends."""
+    master); ``refspecs`` are what the push sends (the guard gives the default's when the command names none,
+    default_refspecs), ``current`` the branch checked out (needs_current), the one HEAD, @ or no refspec sends. A
+    negative refspec (``^x``) sends nothing."""
     flags = {long_option(f) for f in flags}
+    refspecs = [r for r in refspecs if not r.startswith("^")]
     force = forced(refspecs, flags)
     if force:
         return "force", f"a forced push ({force})"
     if flags & set(EVERY_BRANCH):
         return "main", "a push of every branch, main included"
-    every = next((r for r in refspecs if r.lstrip("+") == ":" or "*" in r), "")
+    every = next((r for r in refspecs if r.lstrip("+") == ":" or ("*" in r and _wildcard(r))), "")
     if every:
         return "main", f"a push of every matching branch ({every}), main included"
     for spec, target in _targets(refspecs, flags, current):

@@ -1571,8 +1571,9 @@ when a session's plugin copy and the engine differ, or when two `.brain` folders
 
 **The locked floor** (`brain.floor`, [docs/guards.md](docs/guards.md#the-locked-floor)): the rules marked
 `<!-- lock -->` and the guard's refusals of a push to main or master and of a forced push (config.json
-`floor.refuse`); a floor-only machine (`floor.only`) gets the locked rules alone, the floor's refusals and the
-secrets check alone, and no memory sync, until it is adopted.
+`floor.refuse`), and of what would lift it (the config.json the guard reads, its pointer, a variable that chooses
+it); a floor-only machine (`floor.only`) gets the locked rules alone, the floor's refusals, the secrets check and the
+override protection alone, and no memory sync, until it is adopted.
 
 A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
 Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that
