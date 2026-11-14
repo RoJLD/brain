@@ -86,22 +86,41 @@ The third line of the floor, no secret in a commit, is the secrets guard's alrea
 `floor:main`, `floor:force`, `floor:config`) lifts them, the owner's. git is asked only what a push needs: the branch
 checked out for `HEAD`, `@` or no refspec, the configuration for no refspec; config.json is read once per call.
 
-What else the floor holds (`brain.floorguard`; reviews 2 and 3 closed classes, not spellings):
+What else the floor holds (`brain.floorguard`; reviews 2 to 4 closed classes, not spellings). Every check reads each
+command a call runs, past a wrapper, a launcher or a nested shell (`timeout`, `env`, `nohup`, `bash -c`, `cmd /c`,
+`pwsh -Command`, `eval`: `brain.guards.actions`); a payload the floor cannot read is refused (`eval` or `-c` of a
+variable, `Start-Process -ArgumentList`, `xargs` running git or what writes files).
 
-- **git configuration**: any git command given configuration by its command line (`-c`, `--config-env`) or by the
-  environment (`GIT_CONFIG*`, `GIT_DIR`, `GIT_WORK_TREE`...) is refused (check `config`), and so is `git config`
+- **git configuration**: any git command given configuration by its command line (`-c`, `--config-env`) is refused
+  (check `config`), so is a global option outside `brain.floor.GIT_GLOBAL_OK` (`--git-dir`, `--work-tree`,
+  `--attr-source`...) and a subcommand that is neither git's, a `git-<name>` on PATH nor an alias; `git config`
   setting `alias.*`, `include.path`, `includeIf.*.path`, `remote.*`, `push.*` or `url.*`, `git remote add --mirror`,
   and a write of git's configuration files. An alias is read as what it runs, an alias of an alias too (ten levels);
   a shell alias (`!`), or one that starts with an option, is refused.
+- **The environment**: a variable of `brain.floor.WATCHED_VARS` (`GIT_*`, `HOME`, `XDG_CONFIG_HOME`, `BASH_ENV`,
+  `ENV`, `SHELLOPTS`, `BASHOPTS`, `PATH`, `BRAIN_*`, `CLAUDE_*`) assigned in any form (`NAME=`, `export`, `declare`,
+  `printf -v`, `read`, `env`, `$env:`, `${env:}`, `Set-Item env:`, `SetEnvironmentVariable`), and any assignment whose
+  name the guard cannot read, are refused; quoted prose (an `echo`'s words, a commit message) is not read as one. Any
+  write of the registry's `Environment` key is refused, whatever the value's name (`Set-ItemProperty`,
+  `New-ItemProperty`, .NET's `Registry`, `reg add` or `import`). `hooks.json` runs `guard.sh` under `bash -p`, which
+  reads no `BASH_ENV` nor `SHELLOPTS`.
+- **Copies and archives**: a copy is judged on the path it writes (the destination, or the destination plus the
+  source's name: `cp`, `rsync`, `robocopy` with files, `Copy-Item`, `xcopy`); a recursive copy into a kept file's
+  folder (the checkout, BRAIN_HOME) or onto a folder above a kept path, and an archive extracted into a kept file's
+  folder (`tar -x -C`, `unzip -d`, `Expand-Archive`, `7z x`), are refused.
+- **The plugin that runs the guard**: a write, a removal or a move under `~/.claude/plugins` or
+  `$CLAUDE_PLUGIN_ROOT`, and `claude plugin disable`, `uninstall` or `marketplace remove` of the core plugin, are
+  refused.
 - **What git pushes**: `remote.<name>.mirror` is a forced push, a symbolic branch is the branch it points at;
   `git symbolic-ref` making a branch symbolic (`refs/heads/...`; pointing `HEAD` passes), `git send-pack`, and the
   code host's API writes of main's ref (`gh api` on `git/refs` or `merges`, short options glued or not; a GraphQL
   `updateRef`, `createRef`, `deleteRef`, `createCommitOnBranch` or `mergeBranch`) are refused.
-- **The checkout that holds config.json**: only `brain.floor.CHECKOUT_SAFE` runs there (reads, `fetch`, `git pull
-  --ff-only`, and `push`, `config`, `remote`, `worktree`, `branch`, `tag`, which leave its files alone or are judged
-  on their own). A removal or a move of it, or of a folder that holds it or the guard's interpreter (`rm`, `mv`,
-  `Remove-Item`, `Move-Item`, `Rename-Item`, `robocopy /MIR` or `/PURGE` onto it), is refused; a write into such a
-  folder (`cp x ~/`, `tar -C ~`) is no removal and passes.
+- **The checkout that holds config.json**: only reads run there (`brain.floor.CHECKOUT_SAFE`: reads, `fetch`,
+  `push` judged on its own, `worktree`, `branch`, `tag`; `git config` and `git remote` that only read; `git pull
+  --ff-only` with no remote nor refspec). A removal or a move of it, or of a folder that holds it or the guard's
+  interpreter (`rm`, `mv`, `Remove-Item`, `Move-Item`, `Rename-Item`, `robocopy /MIR` or `/PURGE` onto it), is
+  refused; a mover's target (`-t`, `-Destination`) is no source, and a write into such a folder (`cp x ~/`,
+  `tar -C ~`) is no removal and passes.
 - **What stops the guards**: `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `CLAUDE_CONFIG_DIR`, `BRAIN_CONFIG`,
   `CLAUDE_BRAIN_DIR`, `BRAIN_PERSONAL`, `BRAIN_HOME`, and `HOME`, `USERPROFILE` and `PATH` where they are set (never
   where they are read: `$HOME`, `${HOME}`), set for later sessions; Claude Code's `disableAllHooks` and an
@@ -121,7 +140,10 @@ What else the floor holds (`brain.floorguard`; reviews 2 and 3 closed classes, n
 backstop): code the guard does not read (a script, a program, a compiled tool, a Python wrapper named like a Python);
 the code host's other writers (the contents API, other GraphQL mutations, `gh repo sync`, a raw HTTP call); git's
 transports beyond `git push` and `git send-pack`; a symbolic branch made before the floor was on and pushed by a
-refspec with a colon; a guard the hook never reaches (the core plugin removed from outside a session).
+refspec with a colon; an archive extracted into a folder above a kept one (its members are not read); a guard the
+hook never reaches (the core plugin removed from outside a session). Since 2026-11-14 the engine repo's main has the
+code host's branch protection (no force-push, no deletion, a pull request and the required checks, for admins too):
+the push-to-main and force classes have a server backstop there, the floor-lift and guard-lift classes do not.
 
 **Floor only** (config.json `floor.only: true`): the machine gets the floor and nothing else, until it is adopted:
 `inject-rules.sh` injects the locked lines alone, after one line that says why (`brain.floor.ONLY_LINE`, the same

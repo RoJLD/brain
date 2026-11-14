@@ -156,16 +156,19 @@ def _opaque(cmds, acts) -> str | None:
     for words, _ in cmds:
         if g._prog(words[0]) == "xargs" and any(g._prog(a) in OPAQUE_XARGS for a in words[1:] if not a.startswith("-")):
             return "xargs refused: the floor cannot read the arguments it gives"
-    for words, _ in acts:
-        prog, args = g._prog(words[0]), words[1:]
-        if prog == "eval" and any(c in " ".join(args) for c in "$`"):
-            return "eval of a variable refused: the floor cannot read what it runs"
-        k = next((i for i, a in enumerate(args) if a.lower() in ("-c", "/c", "-command")), -1)
-        if prog in SHELLS and 0 <= k < len(args) - 1 and re.match(r"\s*[$`]", args[k + 1]):
-            return f"{prog} -c of a variable refused: the floor cannot read what it runs"
-        if prog in ("start-process", "saps", "start") and any(re.match(r"(?i)^-(?:a(?:r(?:g\w*)?)?)$", a) for a in args):
-            return f"{prog} -ArgumentList refused: the floor cannot read what it runs"
-    return None
+    return next((what for words, _ in acts if (what := _unread(g._prog(words[0]), words[1:]))), None)
+
+
+def _unread(prog: str, args: list[str]) -> str:
+    """Why one command's payload is out of the floor's reading, else ''."""
+    if prog == "eval" and any(c in " ".join(args) for c in "$`"):
+        return "eval of a variable refused: the floor cannot read what it runs"
+    k = next((i for i, a in enumerate(args) if a.lower() in ("-c", "/c", "-command")), -1)
+    if prog in SHELLS and 0 <= k < len(args) - 1 and re.match(r"\s*[$`]", args[k + 1]):
+        return f"{prog} -c of a variable refused: the floor cannot read what it runs"
+    if prog in ("start-process", "saps", "start") and any(re.match(r"(?i)^-(?:a(?:r(?:g\w*)?)?)$", a) for a in args):
+        return f"{prog} -ArgumentList refused: the floor cannot read what it runs"
+    return ""
 
 
 def _env(plain: str) -> str | None:
@@ -265,11 +268,7 @@ def _copies(acts, kept: Kept) -> str | None:
 def _copied(prog: str, words: list[str], d: str) -> list[tuple[str, bool]]:
     """(the path a copy writes, whether a whole folder lands there) for each source of a copy."""
     if prog == "robocopy":
-        pos = [w for w in words[1:] if not ROBOCOPY_OPT.fullmatch(w)]
-        if len(pos) < 2:
-            return []
-        dst = g._real(g._path(pos[1], d))
-        return [(os.path.join(dst, f), False) for f in pos[2:]] or [(dst, True)]
+        return _robocopied(words, d)
     pos, target = _positional(words)
     dest, sources = (target, pos) if target else (pos[-1] if pos else "", pos[:-1])
     if not dest:
@@ -277,14 +276,25 @@ def _copied(prog: str, words: list[str], d: str) -> list[tuple[str, bool]]:
     dst = g._real(g._path(dest, d))
     into = bool(target) or len(sources) > 1 or os.path.isdir(dst) or dest.endswith(("/", "\\"))
     whole = _recursive(prog, words)
-    out = []
-    for src in sources:
-        name = os.path.basename(src.rstrip("/\\"))
-        if name in (".", "..", "") or any(c in name for c in "*?[$"):
-            out.append((dst, True))   # the folder's contents, or names the guard cannot know
-        else:
-            out.append((os.path.join(dst, name) if into else dst, whole))
-    return out
+    return [_lands(src, dst, into, whole) for src in sources]
+
+
+def _lands(src: str, dst: str, into: bool, whole: bool) -> tuple[str, bool]:
+    """(the path one source of a copy writes, whether a whole folder lands there): the folder's contents or names
+    the guard cannot know (., *, $x) land as a whole in ``dst``."""
+    name = os.path.basename(src.rstrip("/\\"))
+    if name in (".", "..", "") or any(c in name for c in "*?[$"):
+        return dst, True
+    return (os.path.join(dst, name) if into else dst), whole
+
+
+def _robocopied(words: list[str], d: str) -> list[tuple[str, bool]]:
+    """robocopy SRC DST [FILE...]: each FILE written into DST, else SRC's files land in DST as a whole."""
+    pos = [w for w in words[1:] if not ROBOCOPY_OPT.fullmatch(w)]
+    if len(pos) < 2:
+        return []
+    dst = g._real(g._path(pos[1], d))
+    return [(os.path.join(dst, f), False) for f in pos[2:]] or [(dst, True)]
 
 
 def _extractions(acts, kept: Kept) -> str | None:
@@ -301,27 +311,46 @@ def _extractions(acts, kept: Kept) -> str | None:
     return None
 
 
-def _extract_target(prog: str, words: list[str]) -> str | None:
-    """Where an extraction writes ('' for the current folder), or None when the command extracts nothing."""
-    args = words[1:]
-    if prog in ("tar", "bsdtar"):
-        cluster = re.compile(r"-?[A-Za-z]*x[A-Za-z]*")   # x, xzf, -xf: a group of short options holding x
-        if not (args and cluster.fullmatch(args[0]) or any(a.startswith("-") and not a.startswith("--") and
-                                                             cluster.fullmatch(a) for a in args)
-                or "--extract" in args or "--get" in args):
-            return None
-        return _value(args, ("-C", "--directory"))
-    if prog == "unzip":
-        return None if any(a in ("-l", "-v", "-t", "-Z") for a in args) else _value(args, ("-d",))
-    if prog in ("7z", "7za"):
-        if not args or args[0] not in ("x", "e"):
-            return None
-        return next((a[2:] for a in args if a.startswith("-o")), "")
-    # Expand-Archive: -DestinationPath or any prefix of it PowerShell takes (-D), else its second positional argument
+TAR_X = re.compile(r"-?[A-Za-z]*x[A-Za-z]*")   # x, xzf, -xf: a group of tar's short options holding x
+
+
+def _tar_target(args: list[str]) -> str | None:
+    """Where tar extracts (-C, --directory; '' for the current folder), None when it does not extract."""
+    short = [a for a in args if a.startswith("-") and not a.startswith("--")]
+    if not ((args and TAR_X.fullmatch(args[0])) or any(TAR_X.fullmatch(a) for a in short)
+            or "--extract" in args or "--get" in args):
+        return None
+    return _value(args, ("-C", "--directory"))
+
+
+def _unzip_target(args: list[str]) -> str | None:
+    """Where unzip extracts (-d), None for a listing or a test."""
+    return None if any(a in ("-l", "-v", "-t", "-Z") for a in args) else _value(args, ("-d",))
+
+
+def _7z_target(args: list[str]) -> str | None:
+    """Where 7z x or e extracts (-o<dir>), None for another command."""
+    if not args or args[0] not in ("x", "e"):
+        return None
+    return next((a[2:] for a in args if a.startswith("-o")), "")
+
+
+def _expand_target(args: list[str]) -> str:
+    """Where Expand-Archive extracts: -DestinationPath or a prefix of it PowerShell takes, else its second
+    positional argument."""
     v = next((args[i + 1] for i, a in enumerate(args[:-1])
               if len(a) > 1 and "-destinationpath".startswith(a.lower())), "")
     pos = [a for a in args if not a.startswith("-")]
     return v or (pos[1] if len(pos) > 1 else "")
+
+
+EXTRACT = {"tar": _tar_target, "bsdtar": _tar_target, "unzip": _unzip_target, "7z": _7z_target, "7za": _7z_target,
+           "expand-archive": _expand_target}
+
+
+def _extract_target(prog: str, words: list[str]) -> str | None:
+    """Where an extraction writes ('' for the current folder), or None when the command extracts nothing."""
+    return EXTRACT[prog](words[1:]) if prog in EXTRACT else None
 
 
 def _value(args: list[str], names: tuple[str, ...]) -> str:

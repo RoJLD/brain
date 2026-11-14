@@ -14,7 +14,11 @@ section: Added
   checkout that holds config.json are refused; so are what stops the guards for later sessions (`BRAIN_PYTHON`,
   `CLAUDE_CONFIG_DIR`, `disableAllHooks`, the core plugin turned off, `HOME`, `USERPROFILE` or `PATH` set, the venv
   removed), whatever spells the name or the path; a guard error refuses the call, and `guard.sh` refuses every call
-  it cannot judge rather than run PATH's Python.
+  it cannot judge rather than run PATH's Python. Each check reads what a wrapper or a nested shell runs; git's
+  global options are an allowlist; every assignment form of git's, the shell's, the Brain's and Claude Code's
+  variables, a copy or an extraction onto what the floor keeps, a write of the registry's Environment key and the
+  plugin that runs the guard are refused; an edit is judged on the file it leaves. `hooks.json` runs `guard.sh`
+  under `bash -p`.
 - The owner guard reads the override's name as the shell and JSON read it (quotes, carets, escapes) and resolves
   a path before comparing it (an NTFS stream's name, a junction); under `guards.owner_strict` it also refuses
   `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `CLAUDE_CONFIG_DIR` and `disableAllHooks` set for later sessions.
