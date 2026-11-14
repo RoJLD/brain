@@ -109,16 +109,17 @@ floor_on() {
   fi
   [ "$floor" = 1 ]
 }
-brain_py= path_py=
-brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python || :
-case $brain_py in
-  "" | "$home/venv/"*) ;;
-  *) [ -n "${BRAIN_PYTHON:-}" ] && [ "$brain_py" = "$BRAIN_PYTHON" ] || path_py=1 ;;
-esac
-# PATH's Python is not run while the floor is on: a session could have put another python3 first on PATH.
-if [ -n "$brain_py" ] && { [ -z "$path_py" ] || ! floor_on; }; then
-  BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
-fi
+# may_run: whether the Python brain_python chose may judge the call: <BRAIN_HOME>/venv's or BRAIN_PYTHON's always,
+# PATH's only while the floor is off (a session could have put another python3 first on PATH).
+path_py=
+may_run() {
+  case $brain_py in "$home/venv/"*) return 0 ;; esac
+  [ -n "${BRAIN_PYTHON:-}" ] && [ "$brain_py" = "$BRAIN_PYTHON" ] && return 0
+  path_py=1
+  ! floor_on
+}
+brain_py=
+brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && may_run && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
 # here no Python was found, or the one found failed: guard.py's main never fails, so it could not import brain
 why="no Python 3 found (BRAIN_PYTHON, <BRAIN_HOME>/venv, python3, python)"
 [ -n "$brain_py" ] && why="$brain_py cannot import brain"

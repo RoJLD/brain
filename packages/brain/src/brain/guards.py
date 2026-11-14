@@ -160,7 +160,8 @@ CHANGING = {"commit", "checkout", "switch", "restore", "reset", "merge", "rebase
 GIT_READS = frozenset(("status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "blame", "describe",
                        "shortlog", "rev-list", "merge-base", "cat-file", "name-rev", "grep", "check-ignore",
                        "count-objects", "var", "version", "whatchanged", "show-ref", "for-each-ref"))
-GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"}
+GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env",
+                  "--attr-source"}
 CD = {"cd", "chdir", "pushd", "set-location", "sl", "push-location"}
 POP = {"popd", "pop-location"}
 DECLARE = {"export", "declare", "typeset", "local", "readonly"}
@@ -1727,6 +1728,42 @@ def _edit_text(inp: dict) -> str:
                      if t)
 
 
+def _edit_result(inp: dict, tool: str, target: str) -> tuple[str, str]:
+    """(the file's text before, the text the edit leaves): Write's content; Edit's and MultiEdit's replacements
+    applied in turn to the current text (an old string the file does not hold: the new one appended, as the most a
+    failed edit could add); NotebookEdit's new source appended. A file over 1 MB or unreadable reads as ''."""
+    try:
+        before = Path(target).read_text(encoding="utf-8", errors="replace") if os.path.getsize(target) < 1 << 20 else ""
+    except OSError:
+        before = ""
+    if tool == "Write":
+        return before, str(inp.get("content") or "")
+    after = before
+    edits = inp.get("edits") if tool == "MultiEdit" else [inp]
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        old, new = str(e.get("old_string") or ""), str(e.get("new_string") or e.get("new_source") or "")
+        if old and old in after:
+            after = after.replace(old, new) if e.get("replace_all") else after.replace(old, new, 1)
+        else:
+            after += "\n" + new
+    return before, after
+
+
+def _introduced(pattern: str, before: str, after: str) -> str:
+    """The first match of ``pattern`` (case aside) the edit adds: one more in the text it leaves than in the text
+    before, both read as the shell and JSON read them (floor.unspelled); '' when it adds none."""
+    def count(text: str) -> dict:
+        out: dict = {}
+        for m in re.finditer(pattern, floor.unspelled(text), re.I):
+            key = m.group(0).upper()
+            out[key] = out.get(key, 0) + 1
+        return out
+    was = count(before)
+    return next((k for k, n in count(after).items() if n > was.get(k, 0)), "")
+
+
 def _resolved(target) -> str:
     """A write's target as the file system resolves it (_real: its stream's name dropped, links and junctions
     followed); an unresolved one whose only variable is a stream's name (file::$DATA) read as that file; '' else."""
@@ -2112,12 +2149,14 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
         target = _edit_target(inp, tool, cwd)
         text = floor.unspelled(_edit_text(inp))   # JSON's \u escapes decoded: a settings key as Claude Code reads it
         override_file = bool(target) and _override_file(target)
-        if override_file and re.search(ALLOW_ENV, text, re.I):
+        before, after = _edit_result(inp, tool, target) if override_file else ("", "")   # the file the edit leaves
+        if override_file and (re.search(ALLOW_ENV, text, re.I) or _introduced(ALLOW_ENV, before, after)):
             return ("override", f"{tool} refused: it writes {ALLOW_ENV} into {target}; the override is "
                                 f"{config.owner_of()}'s", None)
-        off = re.search(GUARD_OFF, text, re.I) if override_file else None
+        off = (re.search(GUARD_OFF, text, re.I) and re.search(GUARD_OFF, text, re.I).group(0)
+               or _introduced(GUARD_OFF, before, after)) if override_file else ""
         if off and gestures.strict():
-            return ("override", f"{tool} refused: it writes {off.group(0)} into {target}, which turns the guards "
+            return ("override", f"{tool} refused: it writes {off} into {target}, which turns the guards "
                                 f"off for later sessions; that is {config.owner_of()}'s", None)
         if target and _is_usage_allow(target):
             return ("override", f"{tool} refused: {target} lifts the usage guard; brain usage allow is "
@@ -3822,7 +3861,6 @@ def refusals(payload: dict, strict: bool = False):
     if TERMINAL_TOOL.match(tool):
         tool = terminal_shell()
         cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
-    from . import floorguard   # here: it imports this module
     try:
         cfg = config.load()   # read once per call: the floor's settings and the file that sets them
         fl = floor.settings(cfg.data)
@@ -3833,6 +3871,10 @@ def refusals(payload: dict, strict: bool = False):
         return
     strict = strict or fl["refuse"] or fl["only"]   # the floor on: a check that cannot judge the call refuses it
     only = fl["only"]     # floor only: the floor's refusals, the secrets check and the override protection
+    if strict and (fl["refuse"] or fl["only"]):
+        from . import floorguard   # here, the floor on only: it imports this module, and the floor off never pays it
+    else:
+        floorguard = None
     if tool in EDIT_TOOLS:
         reason = None if only else check_production(tool, inp, [], cwd)
         if reason:
@@ -3840,7 +3882,7 @@ def refusals(payload: dict, strict: bool = False):
         hit = check_owner(tool, inp, [], cwd)
         if hit and (not only or hit[0] == "override"):
             yield "owner", *hit
-        reason = floorguard.check_files(tool, inp, [], cwd, fl, cfg.file)
+        reason = floorguard.check_files(tool, inp, [], cwd, fl, cfg.file) if floorguard else None
         if reason:
             yield "floor", "config", reason, None
         return
@@ -3854,8 +3896,9 @@ def refusals(payload: dict, strict: bool = False):
         return
     powershell = tool == "PowerShell"
     cmds = calls(command, cwd, powershell)
+    shell = "ps" if powershell else "bash"
     floor_checks = (("floor", "config", lambda: floorguard.check_files(tool, inp, cmds, cwd, fl, cfg.file, command)),
-                    ("floor", None, lambda: floorguard.check_floor(cmds, fl, command)))
+                    ("floor", None, lambda: floorguard.check_floor(cmds, fl, command, shell))) if floorguard else ()
     checks = ((("owner", "override", lambda: check_override(cmds, powershell, command)),
                ("public", "config", lambda: check_config(cmds)), ("secrets", "secrets", lambda: check_secrets(cmds)))
               if only else

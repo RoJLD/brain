@@ -57,26 +57,44 @@ GUARD_OFF = r"BRAIN_PYTHON|PYTEST_CURRENT_TEST|CLAUDE_CONFIG_DIR|disableAllHooks
 # own, and HOME, USERPROFILE and PATH only where they are set (an assignment, a JSON key, setx, a registry name, the
 # first argument of SetEnvironmentVariable), never where they are read ($HOME, ${HOME}, %USERPROFILE%). Matched on
 # unspelled() text, case aside.
-FLOOR_ENV = (r"BRAIN_CONFIG|CLAUDE_BRAIN_DIR|BRAIN_PERSONAL|BRAIN_HOME|" + GUARD_OFF +
-             r"|(?-i:(?<![\w$%])(?<!\$\{)(?:HOME|USERPROFILE)\s*[=:,])|(?<![\w$%])(?<!\$\{)PATH\s*[:,]"
-             r"|(?:\bsetx\s+|-name\s+|/v\s+)(?:HOME|USERPROFILE|PATH)\b")
+FLOOR_ENV = (r"BRAIN_CONFIG|CLAUDE_BRAIN_DIR|BRAIN_PERSONAL|BRAIN_HOME|CLAUDE_PLUGIN_ROOT|BASH_ENV|SHELLOPTS|"
+             r"BASHOPTS|XDG_CONFIG_HOME|GIT_CONFIG\w*|" + GUARD_OFF +
+             r"|(?-i:(?<![\w$%])(?<!\$\{)(?:HOME|USERPROFILE|ENV)\s*[=:,])|(?<![\w$%])(?<!\$\{)PATH\s*[:,]"
+             r"|(?:\bsetx\s+|-name\s+|/v\s+)(?:HOME|USERPROFILE|PATH|ENV)\b")
+# The variables no command sets while the floor is on, in any form (a prefix NAME=, export, declare, printf -v, read,
+# env, PowerShell's $env: and Set-Item env:, SetEnvironmentVariable): git's own (its configuration, repository and
+# programs), what chooses git's global configuration (HOME, XDG_CONFIG_HOME), what bash reads before a script (BASH_ENV,
+# ENV, SHELLOPTS, BASHOPTS), PATH, and the Brain's and Claude Code's own.
+WATCHED_VARS = r"GIT_\w+|HOME|USERPROFILE|XDG_CONFIG_HOME|BASH_ENV|ENV|SHELLOPTS|BASHOPTS|PATH|BRAIN_\w+|CLAUDE_\w+"
+_START = r"(?:^|(?<=[\s;&|(]))"
+ENV_ASSIGN = re.compile(
+    rf"{_START}(?:{WATCHED_VARS})\+?=|"                                                   # NAME=, NAME+= (bash, cmd's set)
+    rf"\b(?:export|declare|typeset|readonly|read)\b[^;&|\n]*?(?<![\w${{])(?:{WATCHED_VARS})\b|"
+    rf"\bprintf\s+-v\s*(?:{WATCHED_VARS})\b|"
+    rf"(?i:\$\{{?env:(?:{WATCHED_VARS})\}}?\s*[+-]?=)|"                                  # $env:X = , ${env:X} =
+    rf"(?i:\b(?:set-item|new-item|set-content|remove-item|si|ni|sc|ri)\b[^;|\n]*\benv:(?:{WATCHED_VARS})\b)|"
+    rf"(?i:SetEnvironmentVariable\s*\(\s*(?:{WATCHED_VARS})\s*,)")
+# An assignment whose name the guard cannot read (a variable, a call): refused while the floor is on.
+ENV_DYNAMIC = re.compile(r"\b(?:export|declare|typeset|printf\s+-v)\s+(?:-\w+\s+)*[^\s;=]*[$(`]|"
+                         r"(?i:\benv:[^\s;=]*[$(]|\$\{env:[^}]*[$(])")
+# git's global options a command may give while the floor is on (-c and --config-env are refused on their own).
+GIT_GLOBAL_OK = {"-C", "--no-pager", "-P", "--paginate", "-p", "--no-optional-locks", "--literal-pathspecs",
+                 "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-advice", "-c", "--config-env"}
 # git's own configuration files: an alias, an include or a mirror written there changes what a push does.
 GIT_CONFIG_FILES = re.compile(r"(?i)(?:^|[\\/])(?:\.gitconfig|\.git[\\/]config(?:\.worktree)?|git[\\/]config)$")
 # The configuration keys a session does not set while the floor is on (git config): aliases, includes, remotes,
 # push's own keys, URL rewrites.
 PUSH_KEYS = re.compile(r"(?i)^(?:alias\..+|include(?:if\..+)?\.path|remote\..+|push\..+|url\..+)$")
-# git configuration or repository given by the environment (refused while the floor is on): GIT_CONFIG*, GIT_DIR...
-GIT_ENV = re.compile(r"(?<![\w$])(?:GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_NAMESPACE|"
-                     r"GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES)\s*=")
-# What git may run in the checkout that holds config.json while the floor is on: reads, fetch, git pull --ff-only,
-# and the commands the floor judges on their own (push, config, remote) or that leave its files alone (worktree,
-# branch, tag).
+# What git may run in the checkout that holds config.json while the floor is on: reads, fetch, push (judged on its
+# own), worktree, branch and tag (they leave its files alone); git config and git remote only to read, git pull only
+# as `git pull --ff-only` with no remote nor refspec (brain.floorguard._checkout).
 CHECKOUT_SAFE = {"status", "log", "diff", "show", "fetch", "rev-parse", "ls-files", "ls-tree", "ls-remote",
                  "cat-file", "blame", "grep", "describe", "for-each-ref", "show-ref", "rev-list", "merge-base",
-                 "shortlog", "name-rev", "check-ignore", "count-objects", "var", "help", "version", "push", "config",
-                 "remote", "worktree", "branch", "tag"}
+                 "shortlog", "name-rev", "check-ignore", "count-objects", "var", "help", "version", "push",
+                 "worktree", "branch", "tag"}
 # git's subcommands the floor never reads as an alias (a word not here is looked up in alias.*).
-GIT_BUILTIN = {*CHECKOUT_SAFE, "add", "commit", "pull", "init", "clone", "send-pack", "symbolic-ref", "update-ref",
+GIT_BUILTIN = {*CHECKOUT_SAFE, "config", "remote", "add", "commit", "pull", "init", "clone", "send-pack",
+               "symbolic-ref", "update-ref",
                "notes", "submodule", "checkout", "restore", "stash", "reset", "clean", "switch", "rm", "mv",
                "read-tree", "checkout-index", "rebase", "cherry-pick", "revert", "am", "apply", "merge", "bisect",
                "sparse-checkout", "filter-branch", "gc", "prune", "reflog", "maintenance"}
