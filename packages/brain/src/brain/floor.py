@@ -358,20 +358,19 @@ def resolve(path: str) -> str:
 def git() -> str:
     """The git the guard runs (round 8 #8): the one the lock file names (an administrator's, checked by brain floor
     lock), else the PATH's, never the working directory's (NoDefaultCurrentDirectoryInExePath)."""
-    import shutil
     lock = read_lock()
     if lock and not lock.get("error") and isinstance(lock.get("git"), str) and os.path.isabs(lock["git"]):
         return lock["git"]
-    was = os.environ.get("NoDefaultCurrentDirectoryInExePath")
-    os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"   # for this lookup only: shutil.which skips the cwd then
-    try:
-        found = shutil.which("git")
-    finally:
-        if was is None:
-            os.environ.pop("NoDefaultCurrentDirectoryInExePath", None)
-        else:
-            os.environ["NoDefaultCurrentDirectoryInExePath"] = was
-    return os.path.abspath(found) if found else "git"
+    # PATH's absolute folders only, in order: shutil.which searches the working directory first on Windows (Python
+    # before 3.12 whatever NoDefaultCurrentDirectoryInExePath says), and a relative entry is the working directory too.
+    exts = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e] if os.name == "nt" else [""]
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if folder and os.path.isabs(folder):
+            for ext in exts:
+                p = os.path.join(folder, "git" + ext)
+                if os.path.isfile(p) and os.access(p, os.X_OK):
+                    return p
+    return "git"
 
 
 def _same(a, b) -> bool:
