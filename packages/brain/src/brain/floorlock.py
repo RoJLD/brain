@@ -36,7 +36,7 @@ from . import config, floor, paths
 ADMINS, SYSTEM, USERS = "*S-1-5-32-544", "*S-1-5-18", "*S-1-5-32-545"   # Administrators, SYSTEM, Users (SIDs)
 TREE_GRANTS = (f"{ADMINS}:(OI)(CI)F", f"{SYSTEM}:(OI)(CI)F", f"{USERS}:(OI)(CI)RX")
 FILE_GRANTS = (f"{ADMINS}:F", f"{SYSTEM}:F", f"{USERS}:RX")
-ELEVATED_HINT = {"nt": "an elevated PowerShell (Run as administrator)", "posix": "sudo"}
+ELEVATED_HINT = {"nt": "an elevated PowerShell (Run as administrator)", "posix": "an elevated shell (sudo)"}
 
 
 class LockError(Exception):
