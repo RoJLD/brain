@@ -363,7 +363,7 @@ def test_a_real_lock_of_a_scratch_folder(tmp_path):
         assert subprocess.run(["icacls", str(scratch), "/save", str(saved), "/T", "/C", "/Q"], capture_output=True,
                               timeout=60).returncode == 0
         sddl = saved.read_bytes().decode("utf-16-le").lstrip("\ufeff").splitlines()
-        lines = dict(zip(sddl[0::2], sddl[1::2]))   # a name relative to the folder above, then its DACL
+        lines = dict(zip(sddl[0::2], sddl[1::2], strict=False))   # a name relative to the folder above, then its DACL
         root_acl, child_acl = lines["scratch"], lines["scratch\\sub\\f.txt"]
         assert "D:PAI" in root_acl and "(A;OICI;0x1200a9;;;BU)" in root_acl     # inheritance cut, Users read and run
         assert "(A;OICI;FA;;;BA)" in root_acl and "(A;OICI;FA;;;SY)" in root_acl
