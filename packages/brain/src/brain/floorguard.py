@@ -43,8 +43,11 @@ DEST_OPTS = ("-t", "--target-directory", "-destination", "-dest", "-des")   # a 
 REGISTRY_ENV = re.compile(
     r"(?i)(?:\b(?:set-itemproperty|new-itemproperty|remove-itemproperty|rename-itemproperty|clear-itemproperty|sp|rp|"
     r"set-item|new-item)\b[^;|\n]*(?:HKCU|HKEY_CURRENT_USER|HKLM|HKEY_LOCAL_MACHINE)[:\\/]+(?:[^;|\n]*[\\/])?"
-    r"Environment\b|\breg(?:\.exe)?\s+(?:add|delete|import|copy|restore|load)\b|(?:Registry|RegistryKey)\]?::"
-    r"[^;\n]*Environment|\bCurrentUser\b[^;\n]*OpenSubKey\s*\([^)]*Environment|SetValue\s*\([^)]*Environment)")
+    r"Environment\b|\breg(?:\.exe)?\s+(?:add|delete|copy)\b[^;|\n]*Environment\b|"
+    r"\breg(?:\.exe)?\s+(?:import|restore|load)\b|(?:Registry|RegistryKey)\]?::"
+    r"[^;\n]*Environment|\bCurrentUser\b[^;\n]*OpenSubKey\s*\([^)]*Environment|SetValue\s*\([^)]*Environment|"
+    r"Win32_Environment|\bwmic\b[^;|\n]*\benvironment\b)")   # the environment through WMI or CIM too
+ACLS = {"icacls", "cacls", "takeown", "attrib", "set-acl", "chattr"}
 _LIST_CMDS: dict[str, set[str]] = {}
 
 
@@ -57,23 +60,59 @@ def _under(path: str, folder: str) -> bool:
     return bool(path) and bool(folder) and (path == folder or path.startswith(folder.rstrip("\\/") + os.sep))
 
 
+# Claude Code's settings files: the floor refuses any change of them but a Write or an Edit (judged on what it leaves).
+SETTINGS = re.compile(r"(?i)(?:^|[\\/])(?:\.claude[\\/]settings(?:\.local)?\.json|managed-settings\.json)$")
+# The files Python runs at its start from any folder on its path: kept wherever they are written.
+STARTUP = re.compile(r"(?i)(?:^|[\\/])(?:sitecustomize|usercustomize)\.py$|\.pth$")
+
+
+def _interpreters(home: Path) -> list[str]:
+    """The folders of the interpreter that runs the guard, as the file system resolves them: <BRAIN_HOME>/venv, the
+    base installation it redirects to (pyvenv.cfg's home, this process's sys.base_prefix), and the user site."""
+    import site
+    import sys
+    out = [home / "venv", sys.base_prefix, sys.prefix]
+    try:
+        cfg = (home / "venv" / "pyvenv.cfg").read_text(encoding="utf-8")
+        m = re.search(r"(?m)^\s*home\s*=\s*(.+?)\s*$", cfg)
+        if m:
+            base = Path(m.group(1))
+            out.append(base.parent if base.name.lower() in ("bin", "scripts") else base)
+    except OSError:
+        pass
+    try:
+        out.append(site.getusersitepackages())
+    except (AttributeError, OSError):
+        pass
+    return sorted({g._real(p) for p in out if p})
+
+
 class Kept:
     """What the floor keeps (as the file system resolves it): the files that set it (the config.json the guard reads,
-    the pointer <BRAIN_HOME>/personal.json), the guard's interpreter (<BRAIN_HOME>/venv), the plugin that runs the
-    guard (~/.claude/plugins, $CLAUDE_PLUGIN_ROOT), and the folders of the files (the checkout, BRAIN_HOME)."""
+    the pointer <BRAIN_HOME>/personal.json, the cache of the committed floor), the interpreter that runs the guard
+    (<BRAIN_HOME>/venv, its base installation, the user site, any sitecustomize, usercustomize or .pth), the plugin
+    that runs the guard (~/.claude/plugins, $CLAUDE_PLUGIN_ROOT), and the folders of the files (the checkout,
+    BRAIN_HOME)."""
 
     def __init__(self, cfg_file):
         home = paths.brain_home()
-        self.files = [g._real(f) for f in (cfg_file, home / paths.PERSONAL) if f]
+        self.files = [g._real(f) for f in (cfg_file, home / paths.PERSONAL, home / "cache" / g.FLOOR_CACHE) if f]
+        self.runtimes = _interpreters(home)
         self.venv = g._real(home / "venv")
         self.plugins = [g._real(p) for p in (Path.home() / ".claude" / "plugins", os.environ.get("CLAUDE_PLUGIN_ROOT"))
                         if p]
-        self.folders = sorted({os.path.dirname(f) for f in self.files})
-        self.paths = [*self.files, self.venv, *self.plugins]
+        self.folders = sorted({os.path.dirname(f) for f in self.files[:2]})
+        self.paths = [*self.files, *self.runtimes, *self.plugins]
 
     def inside(self, real: str) -> bool:
-        """Whether ``real`` is a kept file, or in the interpreter's or the plugin's folder."""
-        return real in self.files or any(_under(real, k) for k in (self.venv, *self.plugins))
+        """Whether ``real`` is a kept file, a Python startup file, or in the interpreter's or the plugin's folder."""
+        return bool(real) and (real in self.files or bool(STARTUP.search(real))
+                               or any(_under(real, k) for k in (*self.runtimes, *self.plugins)))
+
+    @staticmethod
+    def settings(real: str) -> bool:
+        """Whether ``real`` is one of Claude Code's settings files (a change other than Write or Edit is refused)."""
+        return bool(real) and bool(SETTINGS.search(real))
 
     def holds(self, real: str) -> bool:
         """Whether ``real`` is a kept path or a folder above one (its removal or its replacement takes it)."""
@@ -127,47 +166,79 @@ def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
     """What a shell call would lift or stop the floor by (check_files), else None."""
     acts = [(words, d) for words, d, _, _ in g.actions(cmds, sub, command=command)]
     plain = floor.unspelled(_code(command))
-    what = (_opaque(cmds, acts) or _env(plain) or _registry(plain) or _removals(acts, kept) or _writes(cmds, sub, kept)
-            or _copies(acts, kept) or _extractions(acts, kept) or _checkout(acts, kept) or _named(acts, command)
-            or _plugin_cmd(acts))
+    what = (_opaque(cmds, acts, command) or _env(plain) or _registry(plain) or _removals(acts, kept)
+            or _acl(acts, kept) or _writes(cmds, sub, kept) or _copies(acts, kept) or _extractions(acts, kept)
+            or _checkout(acts, kept) or _named(acts, command) or _plugin_cmd(acts))
     if what:
         return what
     what = g._override(command, cmds, sub, env=floor.FLOOR_ENV + "|enabledPlugins")
     return f"{what} refused: it moves or stops the floor" if what else None
 
 
-PAYLOAD = re.compile(r"(?i)(?:(?:^|\s)(?:-c|/c|-command|-argumentlist|eval|iex|invoke-expression)\s+)$")
+# The commands whose quoted arguments are prose (an echo's words, a commit message, a PR body), and the options that
+# take prose: only there is a quoted string holding a space taken out before the environment is read (_code).
+PROSE_CMDS = {"echo", "printf", "write-output", "write-host", "write", "say"}
+PROSE_OPTS = re.compile(r"(?:^|\s)(?:-m|--message|--body|--title|-b|-t|--notes|--subject)\s*=?\s*$")
 
 
 def _code(command: str) -> str:
-    """``command`` without the prose it quotes: a quoted string holding a space is taken out (an echo's words, a
-    commit message, a line written to a profile), but a shell's or eval's payload (-c, -Command, eval, iex), which
-    runs; a quoted word stays (GIT_""CONFIG_COUNT, "NAME=value")."""
+    """``command`` without the prose it quotes: a quoted string holding a space is taken out when it is an argument of
+    echo or printf (not printf -v) or the value of -m, --message, --body or --title; any other stays, so an assignment
+    quoted whole (export "GIT_CONFIG_PARAMETERS=..."), a shell's payload and a quoted word are read."""
     def keep(m: re.Match) -> str:
         s, before = m.group(0), command[:m.start()]
-        prose = re.search(r"\s", s) and not re.search(r"[\w=]$", before) and not PAYLOAD.search(before)
+        seg = re.split(r"[;&|\n(]", before)[-1].split()
+        first = g._prog(seg[0]) if seg else ""
+        prose = re.search(r"\s", s) and (PROSE_OPTS.search(before) or
+                                         (first in PROSE_CMDS and "-v" not in seg[1:2]))
         return " Q " if prose else s
     return re.sub(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"", keep, command)   # quotes paired left to right
 
 
-def _opaque(cmds, acts) -> str | None:
+# eval of these programs' own output (eval "$(ssh-agent -s)") prints only assignments the floor reads the shape of.
+EVAL_OK = re.compile(r"^\$\((?:ssh-agent|dircolors|brew\s+shellenv|pyenv\s+init|direnv\s+hook|starship\s+init)\b")
+# What Start-Process may run while the floor is on with arguments it cannot read: not git, a shell nor what writes the
+# environment or the registry.
+START_RISKY = {"git", "claude", "reg", "setx", "wmic", "robocopy", *SHELLS}
+FUNCTION = re.compile(r"(?:^|[;&|\s])(?:function\s+[\w.-]+|[\w.-]+\s*\(\s*\))\s*\{")
+
+
+def _opaque(cmds, acts, command: str = "") -> str | None:
     """A wrapper whose payload the floor cannot read: eval or a shell's -c given a variable or a substitution,
-    Start-Process with -ArgumentList, xargs running git or what writes files (read before it is unwrapped)."""
+    Start-Process of git or a shell with -ArgumentList, xargs running git or what writes files (read before it is
+    unwrapped), a shell function the call defines (its body runs with arguments the floor does not follow)."""
+    if FUNCTION.search(command):
+        return "a shell function refused: the floor does not follow what it runs with its arguments"
     for words, _ in cmds:
-        if g._prog(words[0]) == "xargs" and any(g._prog(a) in OPAQUE_XARGS for a in words[1:] if not a.startswith("-")):
+        if g._prog(words[0]) == "xargs" and _xargs_writes(words):
             return "xargs refused: the floor cannot read the arguments it gives"
     return next((what for words, _ in acts if (what := _unread(g._prog(words[0]), words[1:]))), None)
 
 
+def _xargs_writes(words: list[str]) -> bool:
+    """Whether xargs runs git (but a read or git add) or a program that writes files, the registry or the
+    environment."""
+    rest = [a for a in words[1:] if not a.startswith("-")]
+    if not rest or g._prog(rest[0]) not in OPAQUE_XARGS:
+        return False
+    return g._prog(rest[0]) != "git" or (rest[1] if len(rest) > 1 else "") not in XARGS_GIT_OK
+
+
+XARGS_GIT_OK = {"add", "log", "show", "diff", "status", "grep", "blame", "ls-files", "cat-file", "rev-parse"}
+
+
 def _unread(prog: str, args: list[str]) -> str:
     """Why one command's payload is out of the floor's reading, else ''."""
-    if prog == "eval" and any(c in " ".join(args) for c in "$`"):
+    text = " ".join(args)
+    if prog == "eval" and any(c in text for c in "$`") and not EVAL_OK.match(text.strip()):
         return "eval of a variable refused: the floor cannot read what it runs"
     k = next((i for i, a in enumerate(args) if a.lower() in ("-c", "/c", "-command")), -1)
     if prog in SHELLS and 0 <= k < len(args) - 1 and re.match(r"\s*[$`]", args[k + 1]):
         return f"{prog} -c of a variable refused: the floor cannot read what it runs"
     if prog in ("start-process", "saps", "start") and any(re.match(r"(?i)^-(?:a(?:r(?:g\w*)?)?)$", a) for a in args):
-        return f"{prog} -ArgumentList refused: the floor cannot read what it runs"
+        program = next((a for a in args if not a.startswith("-")), "")
+        if program.startswith("$") or g._prog(program) in START_RISKY:
+            return f"{prog} {program} -ArgumentList refused: the floor cannot read what it runs"
     return ""
 
 
@@ -236,6 +307,22 @@ def _writes(cmds, sub: str, kept: Kept) -> str | None:
             return f"{what} into {target} refused: it sets the floor or runs the guard"
         if real and floor.GIT_CONFIG_FILES.search(real):
             return f"{what} into {target} refused: it is git's configuration"
+        if kept.settings(real) or isinstance(target, g.Unresolved) and kept.settings(target.what):
+            return f"{what} into {target} refused: Claude Code's settings change by Write or Edit only"
+    return None
+
+
+def _acl(acts, kept: Kept) -> str | None:
+    """An ACL, ownership or attribute change of a kept path (icacls, cacls, takeown, attrib, Set-Acl, chattr): an
+    unreadable config.json reads as the floor on, but the guard's interpreter or plugin must stay readable."""
+    for words, d in acts:
+        prog = g._prog(words[0])
+        if prog not in ACLS:
+            continue
+        for t in (w for w in words[1:] if not w.startswith(("-", "/", "+"))):
+            real = g._real(g._path(t, d))
+            if kept.inside(real) or real in kept.folders:
+                return f"{prog} of {t} refused: it changes who reads what sets the floor or runs the guard"
     return None
 
 
@@ -257,25 +344,32 @@ def _copies(acts, kept: Kept) -> str | None:
     above a kept path; robocopy's FILE arguments are written into DST."""
     for words, d in acts:
         prog = g._prog(words[0])
-        if prog not in COPIERS:
+        if prog not in COPIERS | MOVERS | {"patch"}:
             continue
         for real, whole in _copied(prog, words, d):
             if kept.inside(real) or (whole and (real in kept.folders or kept.holds(real))):
                 return f"{prog} into {real} refused: it writes what sets the floor or runs the guard"
+            if kept.settings(real) or whole and os.path.basename(real).lower() == ".claude":
+                return f"{prog} into {real} refused: Claude Code's settings change by Write or Edit only"
     return None
 
 
 def _copied(prog: str, words: list[str], d: str) -> list[tuple[str, bool]]:
-    """(the path a copy writes, whether a whole folder lands there) for each source of a copy."""
+    """(the path a copy, a move or a patch writes, whether a whole folder lands there) for each source: a move lands
+    as a copy does (folder plus the source's name); patch writes its first file (or -o's)."""
     if prog == "robocopy":
         return _robocopied(words, d)
+    if prog == "patch":
+        out = next((words[i + 1] for i, w in enumerate(words[:-1]) if w in ("-o", "--output")), "")
+        first = next((w for w in words[1:] if not w.startswith("-")), "")
+        return [(g._real(g._path(out or first, d)), False)] if (out or first) else []
     pos, target = _positional(words)
     dest, sources = (target, pos) if target else (pos[-1] if pos else "", pos[:-1])
     if not dest:
         return []
     dst = g._real(g._path(dest, d))
     into = bool(target) or len(sources) > 1 or os.path.isdir(dst) or dest.endswith(("/", "\\"))
-    whole = _recursive(prog, words)
+    whole = prog in MOVERS or _recursive(prog, words)   # a move takes a folder whole
     return [_lands(src, dst, into, whole) for src in sources]
 
 
@@ -479,7 +573,7 @@ def check_floor(cmds, fl: dict, command: str = "", shell: str = "bash") -> tuple
 
 def _git_refusal(words: list[str], d: str, sub: str, args: list[str]) -> tuple[str, str] | None:
     """(check, what) for one git command (an alias resolved) that breaks the floor, else None."""
-    hit = _config_refusal(words, sub, args)
+    hit = _config_refusal(words, sub, args) or _runs(sub, args) or _ref_write(sub, args)
     if hit:
         return "config", hit
     if sub == "!":
@@ -508,12 +602,49 @@ def _config_refusal(words: list[str], sub: str, args: list[str]) -> str:
     return ""
 
 
+# floor.GIT_RUNNING_OPTS and the prefixes git takes of them (--out, --upl, --rece; --text alone is git's own option).
+RUNNING_LONG = re.compile(r"^--(?:out\w*(?:-\w+)*|open-f[\w-]*|upl[\w-]*|rece[\w-]*|exec|ext-[\w-]*|textc\w*|extc\w*|"
+                          r"unsafe-p\w*)$")
+
+
+def _runs(sub: str, args: list[str]) -> str:
+    """A git option or subcommand that writes a file or runs a program (floor.GIT_RUNNING_OPTS anywhere, the short
+    ones of floor.GIT_RUNNING_SHORT for their subcommand, bisect run, submodule foreach, filter-branch...); ''
+    else."""
+    for a in args:
+        name = a.partition("=")[0]
+        if RUNNING_LONG.match(name):
+            return f"git {sub} {name} refused: it writes a file or runs a program"
+        short = floor.GIT_RUNNING_SHORT.get(sub, ())
+        if any(a == s or (a.startswith(s) and len(a) > len(s)) for s in short):
+            return f"git {sub} {a[:2]} refused: it writes a file or runs a program"
+    if sub in floor.GIT_RUNNERS and (not floor.GIT_RUNNERS[sub] or floor.GIT_RUNNERS[sub] in args):
+        return f"git {sub} {floor.GIT_RUNNERS[sub]} refused: it runs what it is given or writes refs".replace("  ", " ")
+    return ""
+
+
+def _ref_write(sub: str, args: list[str]) -> str:
+    """A git command that writes main's or master's ref locally (branch -f, -m, -M, -c, -C onto it; fetch into it or
+    into a remote-tracking ref by a refspec): brain.floor.effective reads the floor from HEAD and origin/main."""
+    pos = [a for a in args if not a.startswith("-")]
+    if sub == "branch" and set(args) & {"-f", "--force", "-m", "-M", "-c", "-C", "--move", "--copy"} and \
+            any(floor.HEADS.sub("", p) in floor.BRANCHES for p in pos):
+        return f"git branch {' '.join(args)[:60]} refused: it rewrites main's ref"
+    if sub == "fetch" and any(":" in p and (p.split(":", 1)[1].startswith(("refs/remotes/", "refs/heads/")) or
+                                            floor.HEADS.sub("", p.split(":", 1)[1]) in floor.BRANCHES) for p in pos):
+        return "git fetch into a local ref refused: it rewrites what HEAD or origin/main names"
+    return ""
+
+
 def _push(d: str, args: list[str]) -> tuple[str, str] | None:
     """(check, what) for a git push that breaks the floor. A push that names no refspec is read as git sends it: the
     remote's mirror flag and push refspecs, else push.default. A branch that is a symbolic ref is read as the branch
     it points at. git is asked only what the push needs."""
     if "-h" in args or "--help" in args:
         return None
+    unread = next((a for a in args if re.search(r"\$\(|`|\$\{|\$\w", a)), "")
+    if unread:
+        return "main", f"git push {unread[:40]} refused: a remote or refspec the floor cannot read"
     remote, refspecs, flags = g._push_target(args)
     current = g._git_out(d, "rev-parse", "--abbrev-ref", "HEAD").strip() if floor.needs_current(refspecs, flags) \
         else ""
@@ -551,10 +682,14 @@ def _config_write(args: list[str]) -> str:
     """The key ``git config ARGS`` sets when it is one of floor.PUSH_KEYS ('' for a read, an unset or another key):
     ``KEY VALUE``, ``set KEY VALUE``, ``--add``/``--replace-all KEY VALUE``, and ``--rename-section`` to a section of
     those keys."""
-    pos, i = [], 0
+    pos, i, file = [], 0, ""
     while i < len(args):
         a = args[i]
-        if a in ("--file", "-f", "--blob", "--type", "--default", "--comment"):
+        if a in ("--file", "-f") or a.startswith("--file="):
+            file = a.partition("=")[2] or (args[i + 1] if i + 1 < len(args) else "")
+            i += 1 if "=" in a else 2
+            continue
+        if a in ("--blob", "--type", "--default", "--comment"):
             i += 2
             continue
         if a == "--rename-section" and i + 2 < len(args):
@@ -569,6 +704,8 @@ def _config_write(args: list[str]) -> str:
         pos = pos[1:]
     elif pos[:1] in (["get"], ["list"], ["unset"]):
         return ""
+    if len(pos) >= 2 and file and not re.search(r"(?:^|[\\/])\.git[\\/]config$", file):
+        return f"{pos[0]} into {file}"   # a write of another file than a repo's own configuration
     return pos[0] if len(pos) >= 2 and floor.PUSH_KEYS.match(pos[0]) else ""
 
 

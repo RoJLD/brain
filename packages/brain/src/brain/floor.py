@@ -28,6 +28,7 @@ Standard library only: the guard hook reads it.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 SPACE = r"[ \t\n\r\f\v]"   # bash's [[:space:]] in the C locale, which inject-rules.sh reads the marker in
 LOCK = re.compile(rf"{SPACE}*<!--{SPACE}*lock(?::{SPACE}*([A-Za-z0-9_.-]+))?{SPACE}*-->")
@@ -62,29 +63,54 @@ FLOOR_ENV = (r"BRAIN_CONFIG|CLAUDE_BRAIN_DIR|BRAIN_PERSONAL|BRAIN_HOME|CLAUDE_PL
              r"|(?-i:(?<![\w$%])(?<!\$\{)(?:HOME|USERPROFILE|ENV)\s*[=:,])|(?<![\w$%])(?<!\$\{)PATH\s*[:,]"
              r"|(?:\bsetx\s+|-name\s+|/v\s+)(?:HOME|USERPROFILE|PATH|ENV)\b")
 # The variables no command sets while the floor is on, in any form (a prefix NAME=, export, declare, printf -v, read,
-# env, PowerShell's $env: and Set-Item env:, SetEnvironmentVariable): git's own (its configuration, repository and
-# programs), what chooses git's global configuration (HOME, XDG_CONFIG_HOME), what bash reads before a script (BASH_ENV,
-# ENV, SHELLOPTS, BASHOPTS), PATH, and the Brain's and Claude Code's own.
-WATCHED_VARS = r"GIT_\w+|HOME|USERPROFILE|XDG_CONFIG_HOME|BASH_ENV|ENV|SHELLOPTS|BASHOPTS|PATH|BRAIN_\w+|CLAUDE_\w+"
+# env, ${NAME:=}, (( NAME = )), PowerShell's $env:, ${env:} and its env: provider, SetEnvironmentVariable): git's that
+# change its configuration, repository or the programs it runs (GIT_EDITOR, GIT_SEQUENCE_EDITOR and GIT_PAGER pass
+# as true, : or cat), what chooses git's global configuration (HOME, XDG_CONFIG_HOME), what bash reads before a
+# script (BASH_ENV, SHELLOPTS, BASHOPTS), PATH, the Brain's own, and Claude Code's that choose its settings or plugin.
+GIT_VARS = (r"GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_NAMESPACE|GIT_\w*_DIRECTORY|"
+            r"GIT_\w*_DIRECTORIES|GIT_EXEC_PATH|GIT_SSH\w*|GIT_ASKPASS|GIT_EXTERNAL_DIFF|GIT_TEMPLATE_DIR|"
+            r"GIT_PROXY_COMMAND|GIT_(?:SEQUENCE_)?EDITOR(?!=(?:true|:|cat)\b)|GIT_PAGER(?!=(?:true|:|cat|less)\b)")
+WATCHED_VARS = (GIT_VARS + r"|HOME|USERPROFILE|XDG_CONFIG_HOME|BASH_ENV|SHELLOPTS|BASHOPTS|PATH|BRAIN_\w+|"
+                r"CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_BRAIN_DIR|CLAUDE_PROJECT_DIR")
 _START = r"(?:^|(?<=[\s;&|(]))"
 ENV_ASSIGN = re.compile(
     rf"{_START}(?:{WATCHED_VARS})\+?=|"                                                   # NAME=, NAME+= (bash, cmd's set)
     rf"\b(?:export|declare|typeset|readonly|read)\b[^;&|\n]*?(?<![\w${{])(?:{WATCHED_VARS})\b|"
     rf"\bprintf\s+-v\s*(?:{WATCHED_VARS})\b|"
-    rf"(?i:\$\{{?env:(?:{WATCHED_VARS})\}}?\s*[+-]?=)|"                                  # $env:X = , ${env:X} =
-    rf"(?i:\b(?:set-item|new-item|set-content|remove-item|si|ni|sc|ri)\b[^;|\n]*\benv:(?:{WATCHED_VARS})\b)|"
+    rf"\$\{{(?:{WATCHED_VARS}):?=|\(\(\s*(?:{WATCHED_VARS})\s*[-+*/]?=|"                 # ${NAME:=x}, (( NAME = 1 ))
+    rf"\bset\s+(?:-[A-Za-z]*a[A-Za-z]*|-o\s+allexport)\b|"                              # set -a: every later NAME= exported
+    rf"(?i:\$\{{?env:(?:{WATCHED_VARS})\}}?\s*(?:[+-]?=|,))|"                            # $env:X = , ${env:X} =, $env:X, $y =
+    rf"(?i:(?<![$\{{\w])env:\\?(?:{WATCHED_VARS})\b)|"                                   # the env: provider: Env:\GIT_DIR, 'env:X'
+    rf"(?i:\b(?:rename-item|copy-item|move-item|rni|ren|cpi|copy|mi|move)\b[^;|\n]*\benv:)|"
+    rf"(?i:\benv:\\?[^;|\n]*-name\s+(?:{WATCHED_VARS})\b)|"
     rf"(?i:SetEnvironmentVariable\s*\(\s*(?:{WATCHED_VARS})\s*,)")
 # An assignment whose name the guard cannot read (a variable, a call): refused while the floor is on.
 ENV_DYNAMIC = re.compile(r"\b(?:export|declare|typeset|printf\s+-v)\s+(?:-\w+\s+)*[^\s;=]*[$(`]|"
-                         r"(?i:\benv:[^\s;=]*[$(]|\$\{env:[^}]*[$(])")
+                         r"(?i:\benv:[^\s;=]*[$(]|\$\{env:[^}]*[$(]|\b(?:set-item|new-item|si|ni)\s+\$)")
 # git's global options a command may give while the floor is on (-c and --config-env are refused on their own).
 GIT_GLOBAL_OK = {"-C", "--no-pager", "-P", "--paginate", "-p", "--no-optional-locks", "--literal-pathspecs",
                  "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-advice", "-c", "--config-env"}
-# git's own configuration files: an alias, an include or a mirror written there changes what a push does.
-GIT_CONFIG_FILES = re.compile(r"(?i)(?:^|[\\/])(?:\.gitconfig|\.git[\\/]config(?:\.worktree)?|git[\\/]config)$")
+# git's own configuration and ref files: an alias, an include or a mirror written there changes what a push does, a
+# ref written there what HEAD or origin/main names (brain.floor.effective reads the floor from both).
+GIT_CONFIG_FILES = re.compile(r"(?i)(?:^|[\\/])(?:\.gitconfig|\.git[\\/]config(?:\.worktree)?|git[\\/]config|"
+                              r"\.git[\\/](?:.*[\\/])?(?:refs[\\/].*|packed-refs|HEAD))$")
 # The configuration keys a session does not set while the floor is on (git config): aliases, includes, remotes,
-# push's own keys, URL rewrites.
-PUSH_KEYS = re.compile(r"(?i)^(?:alias\..+|include(?:if\..+)?\.path|remote\..+|push\..+|url\..+)$")
+# push's own keys, URL rewrites, and what makes git write elsewhere or run a program (core.*, filters, diff and merge
+# drivers, credential helpers, editors, pagers, gpg, upload-pack and receive-pack).
+PUSH_KEYS = re.compile(r"(?i)^(?:alias\..+|include(?:if\..+)?\.path|remote\..+|push\..+|url\..+|core\..+|filter\..+|"
+                       r"diff\..+|merge\..+\.driver|credential.*|sequence\.editor|gpg\..+|uploadpack\..+|"
+                       r"receivepack\..+|difftool\..+|mergetool\..+|pager\..+|branch\..+)$")
+# git options that write a file or run a program, refused under the floor whatever the subcommand: an output file,
+# a pager, an upload-pack or receive-pack program, a command to run, an external diff or textconv.
+GIT_RUNNING_OPTS = ("--output", "--open-files-in-pager", "--upload-pack", "--receive-pack", "--exec", "--ext-diff",
+                    "--textconv", "--extcmd", "--unsafe-paths")
+# Per subcommand, the short options that do the same: grep -O (a pager), rebase -x (a command), ls-remote and clone
+# -u (an upload-pack), difftool -x and -t (a tool), format-patch -o (a folder of files).
+GIT_RUNNING_SHORT = {"grep": ("-O",), "rebase": ("-x",), "ls-remote": ("-u",), "clone": ("-u",),
+                     "difftool": ("-x", "-t"), "format-patch": ("-o",)}
+# git subcommands that run what they are given: bisect run, submodule foreach, filter-branch, mergetool.
+GIT_RUNNERS = {"bisect": "run", "submodule": "foreach", "filter-branch": "", "filter-repo": "", "mergetool": "",
+               "update-ref": ""}
 # What git may run in the checkout that holds config.json while the floor is on: reads, fetch, push (judged on its
 # own), worktree, branch and tag (they leave its files alone); git config and git remote only to read, git pull only
 # as `git pull --ff-only` with no remote nor refspec (brain.floorguard._checkout).
@@ -121,6 +147,130 @@ def settings(data: dict | None) -> dict:
     section = data.get("floor") if isinstance(data, dict) else None
     section = section if isinstance(section, dict) else {}
     return {"refuse": section.get("refuse") is True, "only": section.get("only") is True}
+
+
+# --- where the floor is read: the working tree, and the commits it cannot fake (review round 5) --------------------
+ON = {"refuse": True, "only": False}   # what an unreadable or unparsable source says: the floor on (fail closed)
+
+
+def _union(*states: dict) -> dict:
+    return {"refuse": any(s["refuse"] for s in states), "only": any(s["only"] for s in states)}
+
+
+def _parsed(text: bytes | str | None) -> dict:
+    """floor.settings of a config.json's text; ON when it does not parse as a JSON object."""
+    import json
+    try:
+        data = json.loads(text.decode("utf-8-sig") if isinstance(text, bytes) else text)
+    except (ValueError, UnicodeDecodeError, AttributeError):
+        return dict(ON)
+    return settings(data) if isinstance(data, dict) else dict(ON)
+
+
+def effective(cfg, cache: Path | None = None, fallback: Path | None = None) -> dict:
+    """The floor as the guard holds it: on (refuse or only) when ANY of these says so: the config.json it reads in the
+    working tree, that file as committed at the checkout's HEAD, and as committed at origin/main (the last fetch; no
+    network). A working-tree file that exists but cannot be read or parsed says ON. Lifting the floor so takes a
+    change merged on the personal brain's main, which no local write fakes (cp, mv, patch, an ACL on the file).
+    ``cfg``: a brain.config.Config; ``cache``: where the committed verdict is kept per (HEAD, origin/main) commit, so
+    that git runs only when one of them moves; ``fallback``: the personal brain's root (the pointer's) whose
+    committed config.json is read when no working-tree file is found (a removed or moved one)."""
+    local = settings(cfg.data) if not cfg.error else dict(ON)
+    if local["refuse"] and local["only"]:
+        return local
+    if cfg.file is not None:
+        root, path = _checkout(Path(cfg.file).parent), Path(cfg.file).resolve()
+    else:
+        root, path = (_checkout(fallback), Path(fallback).resolve() / "config.json") if fallback else (None, None)
+    if not root:
+        return local
+    return _union(local, _committed(root, path.relative_to(root).as_posix(), cache))
+
+
+def _checkout(folder: Path) -> Path | None:
+    """The git checkout that holds ``folder`` (a parent with .git), else None."""
+    folder = folder.resolve()
+    for p in (folder, *folder.parents):
+        if (p / ".git").exists():
+            return p
+    return None
+
+
+def _gitdirs(root: Path) -> tuple[Path, Path]:
+    """(this checkout's git dir, the common git dir): .git, or the folder a worktree's .git file names."""
+    git = root / ".git"
+    if git.is_file():
+        m = re.match(r"gitdir:\s*(.+)", git.read_text(encoding="utf-8").strip())
+        git = (root / m.group(1)).resolve() if m else git
+    common = git / "commondir"
+    return git, ((git / common.read_text(encoding="utf-8").strip()).resolve() if common.is_file() else git)
+
+
+def _ref(gitdir: Path, common: Path, name: str, depth: int = 0) -> str:
+    """The commit a ref names, read from its file or packed-refs (a symbolic ref followed); '' when none."""
+    for d in (gitdir, common):
+        f = d / name
+        if f.is_file():
+            text = f.read_text(encoding="utf-8").strip()
+            if text.startswith("ref:") and depth < 5:
+                return _ref(gitdir, common, text[4:].strip(), depth + 1)
+            return text if re.fullmatch(r"[0-9a-f]{40,64}", text) else ""
+    packed = common / "packed-refs"
+    if packed.is_file():
+        for line in packed.read_text(encoding="utf-8").splitlines():
+            sha, _, ref = line.partition(" ")
+            if ref.strip() == name:
+                return sha
+    return ""
+
+
+def _committed(root: Path, rel: str, cache: Path | None) -> dict:
+    """The floor as config.json is committed at HEAD and at origin/main (their union; ON when a ref cannot be read
+    or a blob does not parse; a ref or a file that does not exist says nothing), cached per pair of commits."""
+    import json
+    try:
+        gitdir, common = _gitdirs(root)
+        key = f"{root}|{rel}|{_ref(gitdir, common, 'HEAD')}|{_ref(gitdir, common, 'refs/remotes/origin/main')}"
+    except OSError:
+        return dict(ON)
+    try:
+        hit = json.loads(cache.read_text(encoding="utf-8")).get(key) if cache and cache.is_file() else None
+    except (OSError, ValueError, AttributeError):
+        hit = None
+    if isinstance(hit, dict) and set(hit) == {"refuse", "only"}:
+        return {"refuse": hit["refuse"] is True, "only": hit["only"] is True}
+    state = _read_commits(root, rel)
+    if cache and state is not None:
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps({key: state}), encoding="utf-8")
+        except OSError:
+            pass
+    return state if state is not None else dict(ON)
+
+
+def _read_commits(root: Path, rel: str) -> dict | None:
+    """The union of config.json's floor at HEAD and at origin/main, read by one git cat-file --batch; None when git
+    cannot run."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "cat-file", "--batch"], input=f"HEAD:{rel}\norigin/main:{rel}\n".encode(),
+                           capture_output=True, cwd=str(root), timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode:
+        return None
+    out, states = r.stdout, []
+    for _ in range(2):
+        head, _, out = out.partition(b"\n")
+        parts = head.split()
+        if len(parts) == 3 and parts[1] == b"blob":
+            size = int(parts[2])
+            states.append(_parsed(out[:size]))
+            out = out[size + 1:]
+        elif not head.endswith(b"missing"):
+            states.append(dict(ON))
+    return _union({"refuse": False, "only": False}, *states)
 
 
 def long_option(name: str) -> str:

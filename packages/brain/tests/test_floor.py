@@ -682,6 +682,157 @@ def test_a_movers_target_is_no_source(repo, tmp_path, monkeypatch):
     assert bash(repo, f"mv '{os.environ['BRAIN_HOME']}' /tmp/x")
 
 
+# --- review round 5: the floor read from the commits, writes judged by the path they reach -------------------------
+
+def _committed_floor(repo, monkeypatch, committed, local, origin=None):
+    """config.json in ``repo`` committed with floor ``committed`` (and origin/main at that commit, or ``origin``),
+    then the working-tree file set to floor ``local``."""
+    f = repo / "config.json"
+    f.write_text(json.dumps({"v": 1, "rules": [], "floor": committed}), encoding="utf-8")
+    run_git(repo, "add", "config.json")
+    run_git(repo, "commit", "-q", "-m", "config")
+    run_git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    if origin is not None:
+        f.write_text(json.dumps({"v": 1, "rules": [], "floor": origin}), encoding="utf-8")
+        run_git(repo, "commit", "-q", "-am", "origin's config")
+        run_git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        run_git(repo, "reset", "-q", "--hard", "HEAD~1")
+    f.write_text(json.dumps({"v": 1, "rules": [], "floor": local}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(f))
+    monkeypatch.delenv(guards.ALLOW_ENV, raising=False)
+    return f
+
+
+def test_the_floor_committed_at_head_holds_whatever_the_working_tree_says(repo, monkeypatch):
+    _committed_floor(repo, monkeypatch, {"refuse": True}, {})
+    assert "breaks the locked floor" in (bash(repo, "git push origin main") or "")
+    assert guards.floor_settings(guards.config.load()) == {"refuse": True, "only": False}
+
+
+def test_the_floor_at_origin_main_holds_too(repo, monkeypatch):
+    _committed_floor(repo, monkeypatch, {}, {}, origin={"only": True})
+    assert guards.floor_settings(guards.config.load()) == {"refuse": False, "only": True}
+
+
+def test_the_floor_off_everywhere_is_off_and_cached(repo, monkeypatch):
+    import subprocess
+    _committed_floor(repo, monkeypatch, {}, {})
+    assert guards.floor_settings(guards.config.load()) == {"refuse": False, "only": False}
+    runs = []
+    real = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: runs.append(a) or real(*a, **k))
+    assert guards.floor_settings(guards.config.load()) == {"refuse": False, "only": False} and not runs
+
+
+def test_an_unreadable_working_tree_file_reads_as_the_floor_on(repo, monkeypatch):
+    f = _committed_floor(repo, monkeypatch, {}, {})
+    f.write_text("{oops", encoding="utf-8")
+    assert guards.floor_settings(guards.config.load())["refuse"] is True
+    assert floor.effective(type("C", (), {"data": {}, "error": "", "file": None})(), None, repo) == \
+        {"refuse": False, "only": False}                                              # a removed file: the commits
+
+
+@pytest.mark.parametrize("command", [
+    "cp {evil}/config.json '{p}'", "mv {evil}/config.json '{p}/'", "patch '{p}/config.json' x.diff",
+    "git -C '{p}' log -1 --format=x --output=config.json", "icacls '{p}/config.json' /deny x:(R)",
+])
+def test_a_local_write_of_config_json_does_not_lift_a_committed_floor(repo, tmp_path, monkeypatch, command):
+    _committed_floor(repo, monkeypatch, {"refuse": True}, {"refuse": True})
+    assert "floor" in (bash(tmp_path, command.format(evil=(tmp_path / "evil").as_posix(), p=repo.as_posix())) or "")
+    (repo / "config.json").write_text('{"v": 1, "floor": {}}', encoding="utf-8")   # had it run: still on
+    assert "breaks the locked floor" in (bash(repo, "git push origin main") or "")
+
+
+@pytest.mark.parametrize("command", [
+    "cp {evil}/s.json '{p}/.claude/settings.json'", "cat {evil}/s.json > '{p}/.claude/settings.local.json'",
+    "mv {evil}/s.json '{p}/.claude/settings.json'", "cp -r {evil}/. '{p}/.claude'",
+])
+def test_a_settings_file_changes_by_write_or_edit_only(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, refuse=True)
+    (repo / ".claude").mkdir()
+    assert "floor" in (bash(tmp_path, command.format(evil=(tmp_path / "evil").as_posix(), p=repo.as_posix())) or "")
+    assert edit(repo, repo / ".claude" / "settings.json", '{"permissions": {}}') is None
+
+
+def test_the_interpreter_and_python_startup_files_are_kept(repo, tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+    config(tmp_path, monkeypatch, only=True)
+    site = Path(sys.base_prefix) / "Lib" / "sitecustomize.py"
+    assert "runs the guard" in (edit(repo, site, "import os; os._exit(0)\n") or "")
+    assert "runs the guard" in (bash(repo, f"cp x.py '{site.as_posix()}'") or "")
+    assert edit(repo, tmp_path / "pkgs" / "evil.pth", "import os\n")
+    assert pwsh(repo, "New-CimInstance -ClassName Win32_Environment -Property @{Name='BRAIN_PYTHON'}")
+    assert bash(repo, 'wmic environment create name="BRAIN_PYTHON",variablevalue="x",username="pc\\\\me"')
+
+
+@pytest.mark.parametrize("command", [
+    "if true; then git push origin main; fi", "for b in main; do git push origin feat/x:$b; done",
+    "! git push origin main", "while true; do git push origin main; break; done",
+    "f() { git push \"$@\"; }; f origin main", "git push origin feat/x:$(echo main)", "git push origin `echo main`",
+])
+def test_control_flow_and_unread_refspecs(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, refuse=True)
+    assert "floor" in (bash(repo, command) or ""), command
+
+
+@pytest.mark.parametrize("command", [
+    "git log -1 --output=x.txt", "git diff --output=x.txt", "git grep -Ocp x", "git fetch --upload-pack=x origin",
+    "git rebase -x 'cp a b' HEAD~1", "git bisect run sh -c x", "git submodule foreach x", "git difftool -x x",
+    "git config core.fsmonitor x", "git config core.worktree x", "git config -f ~/.claude/settings.json a.b c",
+    "git update-ref refs/heads/main HEAD", "git branch -f main HEAD", "git fetch origin main:refs/remotes/origin/main",
+    "git apply --unsafe-paths x.diff", "git config credential.helper x", "git config filter.x.clean y",
+])
+def test_git_options_that_write_or_run(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, refuse=True)
+    assert "floor:config" in (bash(repo, command) or ""), command
+
+
+@pytest.mark.parametrize("command", [
+    "git log -1", "git diff --text", "git clean -fdx", "git push -u origin feat/x", "git config user.name x",
+    "git config -f .git/config user.name x", "git commit -m \"export GIT_DIR=x is documented\"",
+    "GIT_EDITOR=true git rebase --continue", "export GIT_EDITOR=true", "GIT_TRACE=1 git status", "ENV=prod make",
+    "export CLAUDE_CODE_MAX_OUTPUT_TOKENS=1", "ls | xargs git add", "eval \"$(ssh-agent -s)\"",
+    "reg add HKCU\\Software\\MyApp /v x /d 1 /f",
+])
+def test_ordinary_work_passes_under_the_floor(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, refuse=True)
+    run_git(repo, "switch", "-q", "-c", "feat/x")
+    assert bash(repo, command) is None, command
+
+
+def test_start_process_of_a_program_that_is_not_git_passes(repo, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch, refuse=True)
+    assert pwsh(repo, "Start-Process python -ArgumentList '-m','http.server'") is None
+
+
+@pytest.mark.parametrize("command", [
+    "export \"GIT_CONFIG_PARAMETERS='core.fsmonitor=cp a b; false'\"; git status",
+    "env \"GIT_CONFIG_PARAMETERS='remote.origin.mirror=true' 'user.x=y z'\" git push origin",
+    "set -a; : ${GIT_DIR:=x}; git status", "(( GIT_CONFIG_COUNT = 1 ))", "set -o allexport; git status",
+])
+def test_assignments_quoted_whole_or_by_expansion(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, only=True)
+    assert "floor:config" in (bash(repo, command) or ""), command
+
+
+@pytest.mark.parametrize("command", [
+    "New-Item -Path Env:\\GIT_DIR -Value x", "$e='env:GIT_DIR'; Set-Item $e x", "Rename-Item env:FOO GIT_DIR",
+    "$env:GIT_CONFIG_PARAMETERS, $x = 'a', 1", "Copy-Item env:FOO env:GIT_DIR",
+])
+def test_the_powershell_env_provider(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, only=True)
+    assert "floor:config" in (pwsh(repo, command) or ""), command
+
+
+def test_a_move_lands_like_a_copy(repo, tmp_path, monkeypatch):
+    _floor_in(repo, monkeypatch, refuse=True)
+    p, evil = repo.as_posix(), (tmp_path / "evil").as_posix()
+    for command in (f"mv -t '{p}' {evil}/config.json", f'mv {evil}/personal.json "$BRAIN_HOME/"'):
+        assert "floor" in (bash(tmp_path, command) or ""), command
+    assert "floor" in (pwsh(tmp_path, f"Move-Item {evil}/config.json '{p}' -Force") or "")
+
+
 def test_a_floor_only_machine_syncs_no_memory(tmp_path, monkeypatch):
     config(tmp_path, monkeypatch, only=True)
     monkeypatch.setenv("BRAIN_MEMORY_SYNC", "1")

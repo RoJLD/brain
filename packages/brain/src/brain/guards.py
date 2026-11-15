@@ -653,7 +653,9 @@ SHELLS = {"bash": "bash", "sh": "bash", "zsh": "bash", "dash": "bash", "ksh": "b
 # Wrappers before the program they run, with their short options that take a value.
 WRAPPERS = {"env": "uCS", "nohup": "", "nice": "n", "time": "", "command": "", "exec": "a", "builtin": "",
             "sudo": "ugCDhpr", "timeout": "sk", "stdbuf": "ioe", "xargs": "IiadEeLlnPs", "gsudo": "udn", "doas": "uC",
-            "pkexec": ""}
+            "pkexec": "", "setsid": "", "unbuffer": "", "ionice": "cnpt"}
+# The shell's reserved words that open a command: what follows them runs (bash: if true; then git push...; fi).
+RESERVED = {"if", "then", "elif", "else", "while", "until", "do", "!", "{", "(", "time"}
 WRAPPER_LONGS = {"sudo": ("user", "group", "host", "prompt", "close-from", "chdir", "role", "type", "other-user",
                           "command-timeout"),
                  "env": ("unset", "chdir"), "nice": ("adjustment",), "timeout": ("signal", "kill-after"),
@@ -745,7 +747,11 @@ def _unwrap(words: list[str]) -> list[str]:
     """``words`` from the program a wrapper runs (env X=1, nohup, nice -n 5, timeout 10, xargs), with a "." for the
     arguments xargs adds from its input, which are relative to the folder."""
     stdin = False
-    while words and (w := _prog(words[0])) in WRAPPERS:
+    while words and (words[0] in RESERVED or _prog(words[0]) in WRAPPERS):
+        if words[0] in RESERVED:   # if, then, do, !, {: the command that follows runs (review of the floor, round 5)
+            words = words[1:]
+            continue
+        w = _prog(words[0])
         i = 1
         while i < len(words) and (words[i].startswith("-") or (w == "env" and ASSIGN.match(words[i]))):
             a = words[i]
@@ -3863,7 +3869,7 @@ def refusals(payload: dict, strict: bool = False):
         cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
     try:
         cfg = config.load()   # read once per call: the floor's settings and the file that sets them
-        fl = floor.settings(cfg.data)
+        fl = floor_settings(cfg)   # the working tree, HEAD and origin/main: any says on
     except Exception as exc:   # the floor cannot be known (brain_home refused, say): the guard fails closed
         _log("floor", exc)
         yield ("floor", "error", f"the guard could not read config.json, which says whether the locked floor is on "
@@ -3958,11 +3964,20 @@ def check_override(cmds, powershell: bool = False, command: str = ""):
     return None
 
 
+FLOOR_CACHE = "floor-commits.json"   # <BRAIN_HOME>/cache/: the committed floor per (HEAD, origin/main) commit
+
+
+def floor_settings(cfg) -> dict:
+    """The floor the guard holds (brain.floor.effective): config.json in the working tree, and as committed at its
+    checkout's HEAD and origin/main, the committed verdict cached in <BRAIN_HOME>/cache (a path the floor keeps)."""
+    return floor.effective(cfg, paths.brain_home() / "cache" / FLOOR_CACHE, paths.pointer_root())
+
+
 def _floor_state() -> str:
     """'on' (config.json floor.refuse or floor.only), 'off', or 'unknown' when config.json cannot be read: the
     guard's errors fail closed unless it is 'off'."""
     try:
-        fl = floor.settings(config.load().data)
+        fl = floor_settings(config.load())
     except Exception:
         return "unknown"
     return "on" if fl["refuse"] or fl["only"] else "off"
