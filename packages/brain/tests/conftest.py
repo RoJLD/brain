@@ -184,6 +184,8 @@ def brain_home(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_CONFIG", str(BRAIN))
     from brain import floor  # nor the machine's floor lock (brain floor lock): an empty folder of its own
     monkeypatch.setattr(floor, "LOCK_DIR", tmp_path / "floor-lock")
+    monkeypatch.setattr(floor, "GUARD_DIR", tmp_path / "floor-guard")     # never Program Files
+    monkeypatch.setattr(floor, "MANAGED_DIR", tmp_path / "managed")       # never Claude Code's managed settings
     from brain import update  # no test reads the engine's tags or its CHANGELOG on GitHub: offline unless it fakes them
 
     def offline(*args, **kwargs):

@@ -39,7 +39,7 @@ needs_python() {
   for discard in '/dev/null' ' /dev/null' '$null' ' $null'; do redirect=${redirect//">$discard"/}; done
   case "$redirect" in *'>'*) return 0 ;; esac
   local before='(^|[^A-Za-z0-9_.-]|\\[nrt])'
-  local writers="$before"'(rm|rmdir|unlink|shred|tee|touch|mkdir|truncate|mv|cp|ln|install|rsync|scp|chmod|chown|chgrp|sort|curl|perl|ruby|awk|gawk|dd|tar|bsdtar|unzip|patch|wget|find|xargs|py|node|bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|iex|invoke-expression|set-content|add-content|clear-content|out-file|tee-object|export-csv|export-clixml|new-item|remove-item|rename-item|copy-item|move-item|start-transcript|expand-archive|compress-archive|invoke-webrequest|invoke-restmethod|sc|ac|clc|epcsv|ni|md|ri|rd|del|erase|rni|ren|cpi|copy|mi|move|iwr|irm|rename|mklink|xcopy|robocopy|setenvironmentvariable)([^A-Za-z0-9_-]|$)|python|\[(system\.)?io\.|'"$before"'sed[^|;&]*[[:space:]]-(-in-place|[A-Za-z]*i)'
+  local writers="$before"'(rm|rmdir|unlink|shred|tee|touch|mkdir|truncate|mv|cp|ln|install|rsync|scp|chmod|chown|chgrp|sort|curl|perl|ruby|awk|gawk|dd|tar|bsdtar|unzip|patch|wget|find|xargs|py|node|bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|iex|invoke-expression|set-content|add-content|clear-content|out-file|tee-object|export-csv|export-clixml|new-item|remove-item|rename-item|copy-item|move-item|start-transcript|expand-archive|compress-archive|invoke-webrequest|invoke-restmethod|sc|ac|clc|epcsv|ni|md|ri|rd|del|erase|rni|ren|cpi|copy|mi|move|iwr|irm|rename|mklink|xcopy|robocopy|setenvironmentvariable)([^A-Za-z0-9_-]|$)|python|\[(system\.)?io\.|\.(moveto|copyto|replace|delete|setaccesscontrol|setvalue|createsubkey|opensubkey|environment)[[:space:]]*\(|wscript\.shell|'"$before"'sed[^|;&]*[[:space:]]-(-in-place|[A-Za-z]*i)'
   # (.NET's [Environment]::SetEnvironmentVariable is a writer: it may set a variable the floor reads, FLOOR_ENV.)
   # The owner and power guards' programs (brain/guards.py: _owner_command, _power_command and their tables), the
   # --arm flag, the owner's gestures (brain/gestures.py: usage allow, schedule install, vault open|drill|device|reseal,
@@ -92,6 +92,14 @@ refuse_floor() {
 }
 
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0
+# A locked machine (brain floor lock) runs the guard's system copy from Claude Code's managed settings; this copy,
+# which runs from the user's profile, leaves the call to it. Fixed paths, not the environment's: a session cannot
+# create a file under Program Files or /etc, so it cannot make this guard step aside on a machine with no lock.
+for managed in "C:/Program Files/ClaudeCode/managed-settings.d/brain-floor.json" \
+    /etc/claude-code/managed-settings.d/brain-floor.json \
+    "/Library/Application Support/ClaudeCode/managed-settings.d/brain-floor.json"; do
+  [ -f "$managed" ] && exit 0
+done
 root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
 IFS= read -r -d '' input  # the hook's JSON, without $(cat)'s fork
 needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }

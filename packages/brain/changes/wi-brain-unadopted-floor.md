@@ -19,16 +19,19 @@ section: Added
   variables, a copy or an extraction onto what the floor keeps, a write of the registry's Environment key and the
   plugin that runs the guard are refused; an edit is judged on the file it leaves. `hooks.json` runs `guard.sh`
   under `bash -p`.
-- `brain floor lock` holds the floor by the operating system (`brain.floorlock`): its plan prints what it gives to
-  the administrators (config.json's checkout and its .git, the pointer, the guard's venv and code, the plugin folder
-  that carries `guard.sh`; owner Administrators or root, the users read and run only, inheritance cut) and the
-  commands; `--apply` runs them in an elevated terminal only and writes the machine's lock file last
-  (`<ProgramData>/Brain/floor-lock.json`, `/etc/brain/floor-lock.json`); `--refresh` fast-forwards the locked checkout
-  to origin/main first; `brain floor unlock` gives them back; `brain floor status` says whether a session can change
-  them. The guard reads the floor from config.json and the lock file (`brain.floor.effective`; an unreadable file
-  holds it); under `floor.only`, or wherever a lock exists, it refuses every call while a path the lock holds is
-  within the session token's reach (`brain.floor.unlocked`: the token's effective access, not the read-only
-  attribute). While the floor is on, a settings file changes by Write or Edit only (git, an archive or a link that
+- `brain floor lock` holds the floor by the operating system (`brain.floorlock`, `brain.floorhook`): its plan prints
+  the floor it locks and the elevated command (`powershell -NoProfile`, an absolute interpreter, `-I`); `--apply`
+  (elevated only; `--lower` to lower a locked floor) installs the guard as a system component in
+  `<Program Files>/Brain/guard` (an interpreter, its code, a manifest of hashes), declares its hooks in Claude Code's
+  managed settings (`managed-settings.d/brain-floor.json`, which no user or project `disableAllHooks` turns off),
+  checks every file, then writes the lock file (`<ProgramData>/Brain/floor-lock.json`, `/etc/brain`), whose copy of
+  the floor is the authority (config.json is only compared to it). Nothing in the user's profile is locked: the
+  personal brain's worktrees keep working. Under a lock the guard ignores `BRAIN_GUARD_ALLOW`'s floor names and the
+  environment's `BRAIN_HOME`, `BRAIN_PYTHON`, `CLAUDE_PLUGIN_ROOT`; `brain floor unlock --apply` removes all three;
+  `brain floor status` walks every file. Under `floor.only`, or wherever a lock exists, the guard refuses every call
+  while the lock does not hold (`brain.floor.unlocked`: the session token's effective access, the manifest's hash,
+  config.json's floor). While the floor is on, a path piped into a cmdlet that writes and a .NET method that writes
+  (`.MoveTo(`, `.CopyTo(`, `.Replace(`, `.Delete(`) are read, and a settings file changes by Write or Edit only (git, an archive or a link that
   would write one is refused), the interpreter's base installation and Python's startup files are kept, git options
   and configuration keys that write or run are refused (an ordinary repo's keys pass), functions of any body, aliases
   and every assignment form are read, and the shell's reserved words are read through (`time -p`, `coproc`).

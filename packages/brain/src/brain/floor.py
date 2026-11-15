@@ -85,9 +85,9 @@ ENV_ASSIGN = re.compile(
     rf"\bgetopts\s+\S+\s+(?:{WATCHED_VARS})\b|"
     rf"\b(?:mapfile|readarray)\b[^;&|\n]*?(?<![\w$-])(?:{WATCHED_VARS})\b|"
     rf"(?i:\$\{{?env:(?:{WATCHED_VARS})\}}?\s*(?:[+-]?=|,))|"                            # $env:X = , ${env:X} =, $env:X, $y =
-    rf"(?i:(?<![$\{{\w])env:\\?(?:{WATCHED_VARS})\b)|"                                   # the env: provider: Env:\GIT_DIR, 'env:X'
+    rf"(?i:(?<![$\{{\w])env:[\\/]?(?:{WATCHED_VARS})\b)|"                                # the env: provider: Env:\X, Env:/X, 'env:X'
     rf"(?i:\b(?:rename-item|copy-item|move-item|rni|ren|cpi|copy|mi|move)\b[^;|\n]*\benv:)|"
-    rf"(?i:\benv:\\?[^;|\n]*-name\s+(?:{WATCHED_VARS})\b)|"
+    rf"(?i:\benv:[\\/]?[^;|\n]*-name\s+(?:{WATCHED_VARS})\b)|"
     rf"(?i:\benv:[^;\n]*\|\s*(?:rename-item|rni|ren|copy-item|cpi|copy|move-item|mi|move|set-item|si|new-item|ni)\b)|"
     rf"(?i:\b(?:new-item|ni|set-item|si|rename-item|rni|ren)\b[^;|\n]*-(?:new)?name\s+(?:{WATCHED_VARS})\b)|"
     rf"(?i:\.Environment(?:Variables)?\s*(?:\[|\.(?:Add|Item|set_Item)\s*\()\s*(?:{WATCHED_VARS})\b)|"
@@ -111,13 +111,16 @@ PUSH_KEYS = re.compile(r"(?i)^(?:alias\..+|include(?:if\..+)?\.path|remote\..+|p
                        r"diff\..+|merge\..+\.driver|credential.*|sequence\.editor|gpg\..+|uploadpack\..+|"
                        r"receivepack\..+|difftool\..+|mergetool\..+|pager\..+|branch\..+|protocol\..+|"
                        r"submodule\..+|interactive\..+|browser\..+|web\..+|man\..+|instaweb\..+|sendemail\..+|"
-                       r"init\..+|ssh\..+|trailer\..+|hook\..+)$")
+                       r"init\..+|ssh\..+|trailer\..+|hook\..+|imap\..+)$")
 # The keys of PUSH_KEYS an ordinary repo sets that neither run a program nor redirect a write (round 6, #12): line
 # endings, long paths, the file mode, case, quoting, the diff and merge tool's name, a branch's description; and
-# credential.helper given one of the usual helpers (CREDENTIAL_HELPERS: its first word).
+# credential.helper given one of the usual helpers, whole (CREDENTIAL_HELPERS; round 7: git runs a helper's value
+# through the shell, so "store ;cp ..." ran cp).
 SAFE_KEYS = re.compile(r"(?i)^(?:core\.(?:autocrlf|longpaths|filemode|ignorecase|eol|quotepath|safecrlf|precomposeunicode)|"
                        r"diff\.tool|merge\.tool|diff\.guitool|merge\.guitool|branch\..+\.description)$")
 CREDENTIAL_HELPERS = {"manager", "manager-core", "store", "cache", "wincred", "osxkeychain", "libsecret", ""}
+CREDENTIAL_VALUE = re.compile(r"(?i)^\s*(?:" + "|".join(sorted(h for h in CREDENTIAL_HELPERS if h)) +
+                              r")?(?:\s+--[\w-]+(?:=[\w./:~-]*)?)*\s*$")   # its options alone: nothing for a shell
 # git options that write a file or run a program, refused under the floor whatever the subcommand: an output file,
 # a pager, an upload-pack or receive-pack program, a command to run, an external diff or textconv.
 GIT_RUNNING_OPTS = ("--output", "--open-files-in-pager", "--upload-pack", "--receive-pack", "--exec", "--ext-diff",
@@ -168,19 +171,24 @@ def settings(data: dict | None) -> dict:
     return {"refuse": section.get("refuse") is True, "only": section.get("only") is True}
 
 
-# --- where the floor is read, and the lock that holds it (review round 6: the operating system's lock) ------------
+# --- where the floor is read, and the lock that holds it (review rounds 6-7: the operating system's lock) ----------
 # A guard that parses the shell cannot stop a session running as the same user: the session can rewrite whatever the
-# guard reads (a ref, a cache, .git, the working file). The floor's authority so moves out of its reach: brain floor
-# lock (brain.floorlock, an elevated step of the owner's) gives the files the floor rests on to the administrators
-# (owner Administrators or root, the users read only, inheritance cut) and writes the machine's lock file, in a folder
-# only an administrator writes. The guard reads the floor from config.json and from that lock file (their union), and
-# under floor.only, or wherever a lock exists, it trusts them only while every path the lock holds is out of this
-# session's reach (unlocked); otherwise it refuses every call.
+# guard reads or runs from, and any folder in the user's profile can be renamed through its parent. So on a locked
+# machine the floor and the guard live outside the profile, in folders whose parents only an administrator writes:
+# brain floor lock (brain.floorlock, an elevated step of the owner's) writes the machine's lock file (lock_dir(): the
+# floor's copy, which is the authority), installs the guard as a system component (guard_dir(): an interpreter, the
+# guard's code, its manifest of hashes) and declares its hooks in Claude Code's managed settings (managed_file()).
+# config.json is then only compared to the locked floor: a difference refuses every call until the owner locks again.
 ON = {"refuse": True, "only": False}   # what an unreadable or unparsable config.json says: the floor on (fail closed)
 ONLY = {"refuse": True, "only": True}  # what an unreadable lock file says
-LOCK_FILE = "floor-lock.json"          # in lock_dir(): {"format", "floor", "config", "roots", "checks", "plugins"}
-LOCK_FORMAT = "brain.floor-lock/v1"
-LOCK_DIR: Path | None = None   # the tests' scratch folder; never an environment variable (a session sets those)
+LOCK_FILE = "floor-lock.json"          # in lock_dir(): {"format", "floor", "config", "brain_home", "checks", ...}
+LOCK_FORMAT = "brain.floor-lock/v2"
+MANIFEST = "manifest.json"             # in guard_dir(): {relative path: sha256} of every file of the guard
+MANAGED_NAME = "brain-floor.json"      # in managed_dir()/managed-settings.d: the guard's hooks
+# The tests' scratch folders; never environment variables (a session sets those).
+LOCK_DIR: Path | None = None
+GUARD_DIR: Path | None = None
+MANAGED_DIR: Path | None = None
 # What a session must not hold on a locked path: write or append data, write extended attributes, delete a folder's
 # entries, delete it, change its ACL or its owner (FILE_WRITE_DATA, FILE_APPEND_DATA, FILE_WRITE_EA,
 # FILE_DELETE_CHILD, DELETE, WRITE_DAC, WRITE_OWNER; a folder's add-file and add-folder are the first two).
@@ -196,18 +204,45 @@ def lock_dir() -> Path:
     ProgramData), /etc/brain elsewhere; only an administrator writes there once brain floor lock has run."""
     if LOCK_DIR is not None:
         return Path(LOCK_DIR)
-    return Path(_program_data()) / "Brain" if os.name == "nt" else Path("/etc/brain")
+    return Path(_hklm_folder("ProgramData")) / "Brain" if os.name == "nt" else Path("/etc/brain")
 
 
-def _program_data() -> str:
-    """ProgramData's folder as the machine's registry names it (HKLM ProfileList's ProgramData, its %SystemDrive%
-    read from HKLM's SystemRoot: values only an administrator writes, read in well under a millisecond), else
-    C:\\ProgramData; never the environment, which a session sets."""
+def guard_dir() -> Path:
+    """Where brain floor lock installs the guard: <Program Files>/Brain/guard (the folder HKLM names), /opt/brain/guard
+    elsewhere."""
+    if GUARD_DIR is not None:
+        return Path(GUARD_DIR)
+    return Path(_hklm_folder("ProgramFilesDir")) / "Brain" / "guard" if os.name == "nt" else Path("/opt/brain/guard")
+
+
+def managed_dir() -> Path:
+    """Claude Code's managed settings folder, as its documentation names it (Deploy managed settings): C:\\Program
+    Files\\ClaudeCode on Windows (a fixed path, not the environment's), /Library/Application Support/ClaudeCode on
+    macOS, /etc/claude-code elsewhere."""
+    if MANAGED_DIR is not None:
+        return Path(MANAGED_DIR)
+    if os.name == "nt":
+        return Path("C:\\Program Files\\ClaudeCode")
+    import sys
+    return Path("/Library/Application Support/ClaudeCode" if sys.platform == "darwin" else "/etc/claude-code")
+
+
+def managed_file() -> Path:
+    """The managed settings drop-in that declares the guard's hooks."""
+    return managed_dir() / "managed-settings.d" / MANAGED_NAME
+
+
+def _hklm_folder(name: str) -> str:
+    """A system folder as the machine's registry names it (``ProgramData``: HKLM ProfileList; ``ProgramFilesDir``:
+    HKLM CurrentVersion), %SystemDrive% read from HKLM's SystemRoot: values only an administrator writes, read in well
+    under a millisecond; else its default on C:. Never the environment, which a session sets."""
+    default = {"ProgramData": "C:\\ProgramData", "ProgramFilesDir": "C:\\Program Files"}[name]
     try:
         import winreg
         nt = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, nt + r"\ProfileList") as k:
-            value = str(winreg.QueryValueEx(k, "ProgramData")[0])
+        key = nt + r"\ProfileList" if name == "ProgramData" else r"SOFTWARE\Microsoft\Windows\CurrentVersion"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+            value = str(winreg.QueryValueEx(k, name)[0])
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, nt) as k:
             drive = os.path.splitdrive(str(winreg.QueryValueEx(k, "SystemRoot")[0]))[0] or "C:"
         path = re.sub(r"(?i)%SystemDrive%", lambda m: drive, value)
@@ -215,7 +250,7 @@ def _program_data() -> str:
             return path
     except (OSError, ImportError, ValueError):
         pass
-    return "C:\\ProgramData"
+    return default
 
 
 def read_lock() -> dict | None:
@@ -230,13 +265,14 @@ def read_lock() -> dict | None:
     except (OSError, ValueError, UnicodeDecodeError) as exc:
         return {"error": f"{f}: {type(exc).__name__}"}
     if not isinstance(data, dict) or data.get("format") != LOCK_FORMAT:
-        return {"error": f"{f}: not a {LOCK_FORMAT} file"}
+        return {"error": f"{f}: not a {LOCK_FORMAT} file (brain floor lock --apply writes one)"}
     return data
 
 
 def effective(cfg, lock: dict | None = None) -> dict:
-    """The floor as the guard holds it: on (refuse or only) when config.json says so (a file that exists but cannot be
-    read or parsed says ON) or the machine's lock file does (``lock``: read_lock()'s; an unreadable one says ONLY)."""
+    """The floor as the guard holds it: the lock file's copy wherever a lock exists (an unreadable one says ONLY;
+    config.json's, when it says more, makes unlocked() refuse every call), else config.json's (a file that exists but
+    cannot be read or parsed says ON)."""
     local = settings(cfg.data) if not cfg.error else dict(ON)
     if lock is None:
         return local
@@ -244,10 +280,10 @@ def effective(cfg, lock: dict | None = None) -> dict:
 
 
 def unlocked(cfg, fl: dict, lock: dict | None, writable=None) -> str:
-    """Why the floor's authority is within this session's reach, '' when it is not or need not be: asked under
-    floor.only and wherever a lock file exists. The lock must exist and be readable, its folder and file out of reach,
-    config.json the one it holds, every path it checks present and out of reach (``writable``: :func:`writable`), and
-    the plugin the guard runs from ($CLAUDE_PLUGIN_ROOT, when set) one it holds."""
+    """Why the floor is not held, '' when it is or need not be: asked under floor.only and wherever a lock file
+    exists. The lock must exist and be readable; its folder, its file, the guard's folder and manifest and the managed
+    settings file it names present and out of this session's reach (``writable``: :func:`writable`); the manifest the
+    one it hashed; and config.json the one it holds, with the floor it holds."""
     if not (fl["only"] or lock is not None):
         return ""
     if lock is None:
@@ -255,8 +291,37 @@ def unlocked(cfg, fl: dict, lock: dict | None, writable=None) -> str:
     if lock.get("error"):
         return f"the lock file cannot be read ({lock['error']})"
     writable = writable or globals()["writable"]
-    return _reachable([lock_dir(), lock_dir() / LOCK_FILE], writable) or _held_config(cfg, lock) or \
-        _reachable(lock.get("checks") or [], writable, missing=True) or _held_plugin(lock)
+    held = [str(lock_dir()), str(lock_dir() / LOCK_FILE), *(lock.get("checks") or [])]
+    return _reachable(held, writable, missing=True) or _manifest_changed(lock) or _held_config(cfg, lock)
+
+
+def _manifest_changed(lock: dict) -> str:
+    """'' when the guard's manifest is the one the lock hashed."""
+    f = Path(str(lock.get("guard") or "")) / MANIFEST
+    try:
+        if file_hash(f) == lock.get("manifest"):
+            return ""
+    except OSError:
+        pass
+    return f"the guard's manifest {f} is not the one the lock hashed"
+
+
+def file_hash(path) -> str:
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _held_config(cfg, lock: dict) -> str:
+    """'' when the config.json the guard reads is the one the lock holds and gives the floor it holds."""
+    held = str(lock.get("config") or "")
+    if cfg.file is None or not held or not _same(cfg.file, held):
+        return f"the guard reads {cfg.file or 'no config.json'}, the lock holds {held or 'none'}"
+    local = settings(cfg.data) if not cfg.error else dict(ON)
+    locked = settings({"floor": lock.get("floor")})
+    if local != locked:
+        return (f"config.json's floor (refuse={local['refuse']}, only={local['only']}) is not the locked one "
+                f"(refuse={locked['refuse']}, only={locked['only']}): the owner locks it again")
+    return ""
 
 
 def _reachable(paths: list, writable, missing: bool = False) -> str:
@@ -266,22 +331,6 @@ def _reachable(paths: list, writable, missing: bool = False) -> str:
             return f"{p} is missing"
         if writable(p):
             return f"{p} is writable by this session"
-    return ""
-
-
-def _held_config(cfg, lock: dict) -> str:
-    """'' when the config.json the guard reads is the one the lock holds."""
-    held = str(lock.get("config") or "")
-    if cfg.file is None or not held or not _same(cfg.file, held):
-        return f"the guard reads {cfg.file or 'no config.json'}, the lock holds {held or 'none'}"
-    return ""
-
-
-def _held_plugin(lock: dict) -> str:
-    """'' when the guard runs from a plugin folder the lock holds (or $CLAUDE_PLUGIN_ROOT is not set)."""
-    plugin = os.environ.get("CLAUDE_PLUGIN_ROOT")
-    if plugin and not any(isinstance(r, str) and _within(plugin, r) for r in lock.get("plugins") or []):
-        return f"the guard runs from {plugin}, a plugin folder the lock does not hold"
     return ""
 
 

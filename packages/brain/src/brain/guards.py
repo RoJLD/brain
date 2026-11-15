@@ -3886,8 +3886,8 @@ def refusals(payload: dict, strict: bool = False):
         return
     if unlocked:   # floor only, or a lock that no longer holds: the session could rewrite what the guard reads
         yield ("floor", "lock", f"the floor is not locked: {unlocked}; every call is refused until "
-                                f"{config.owner_of()} runs brain floor lock (its plan, then --apply in an elevated "
-                                "terminal)", None)
+                                f"{config.owner_of()} runs brain floor lock (its plan prints the elevated command)",
+               None)
         return
     strict = strict or fl["refuse"] or fl["only"]   # the floor on: a check that cannot judge the call refuses it
     only = fl["only"]     # floor only: the floor's refusals, the secrets check and the override protection
@@ -4008,10 +4008,14 @@ def _log(guard: str, exc: Exception) -> None:
 
 def allowed() -> set[str]:
     """The guards the override lifts: names (production, owner...), guard:check pairs (owner:installer, power:cluster),
-    or all."""
+    or all. Wherever a lock file exists the floor's are dropped: brain floor unlock, elevated, alone lifts a locked
+    floor (the environment is the session's)."""
     raw = os.environ.get(ALLOW_ENV, "")
     names = {w.strip().lower() for w in raw.split(",") if w.strip()}
-    return set(GUARDS) | names if "all" in names else names
+    names = set(GUARDS) | names if "all" in names else names
+    if names and floor.read_lock() is not None:
+        names = {n for n in names if n != "floor" and not n.startswith("floor:")}
+    return names
 
 
 def _record(payload: dict, guard: str, check: str, decision: str, reason: str, request: dict | None = None,
