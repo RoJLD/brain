@@ -200,27 +200,20 @@ def lock_dir() -> Path:
 
 
 def _program_data() -> str:
-    """ProgramData's folder as Windows knows it (SHGetKnownFolderPath, a machine setting), C:\\ProgramData else."""
+    """ProgramData's folder as the machine's registry names it (HKLM ProfileList's ProgramData, its %SystemDrive%
+    read from HKLM's SystemRoot: values only an administrator writes, read in well under a millisecond), else
+    C:\\ProgramData; never the environment, which a session sets."""
     try:
-        import ctypes
-        import uuid
-        from ctypes import wintypes
-
-        class GUID(ctypes.Structure):
-            _fields_ = [("data", ctypes.c_ubyte * 16)]
-
-        guid = GUID()
-        ctypes.memmove(ctypes.byref(guid), uuid.UUID("62AB5D82-FDC1-4DC3-A9DD-070D1D495D97").bytes_le, 16)
-        out = ctypes.c_wchar_p()
-        shell32, ole32 = ctypes.WinDLL("shell32"), ctypes.WinDLL("ole32")
-        shell32.SHGetKnownFolderPath.argtypes = [ctypes.POINTER(GUID), wintypes.DWORD, wintypes.HANDLE,
-                                                 ctypes.POINTER(ctypes.c_wchar_p)]
-        if shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(out)) == 0:
-            path = out.value
-            ole32.CoTaskMemFree(ctypes.cast(out, ctypes.c_void_p))
-            if path:
-                return path
-    except (OSError, AttributeError, ValueError):
+        import winreg
+        nt = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, nt + r"\ProfileList") as k:
+            value = str(winreg.QueryValueEx(k, "ProgramData")[0])
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, nt) as k:
+            drive = os.path.splitdrive(str(winreg.QueryValueEx(k, "SystemRoot")[0]))[0] or "C:"
+        path = re.sub(r"(?i)%SystemDrive%", lambda m: drive, value)
+        if path and "%" not in path:
+            return path
+    except (OSError, ImportError, ValueError):
         pass
     return "C:\\ProgramData"
 

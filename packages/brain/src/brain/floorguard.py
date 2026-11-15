@@ -516,21 +516,40 @@ def _git_settings(acts) -> str | None:
 
 
 def _brings_settings(d: str, sub: str, args: list[str]) -> str:
-    """The settings file a work-tree writer would change, '' when none: the index against the work tree, each commit
-    it names (or reads by default: HEAD for reset, the last stash, the upstream for pull) against the work tree, and
-    each patch file of apply or am read as text."""
+    """The settings file a work-tree writer would change, '' when none: for what restores the index or HEAD over the
+    work tree (restore, checkout-index, reset, stash, read-tree, checkout with a pathspec), the work tree against them;
+    each commit it names or reads by default (the last stash, the upstream for pull) against HEAD, so a local edit
+    the command carries over is no change; each patch file of apply or am read as text."""
     if sub in ("apply", "am"):
         return _patched_settings(d, args)
-    changed = g._git_out(d, "diff", "--name-only", "--", *SETTINGS_SPEC).split()
-    if changed:
-        return changed[0]
+    if sub in INDEX_RESTORERS or (sub == "checkout" and ("--" in args or "." in args)):
+        changed = g._git_out(d, "diff", "--name-only", "HEAD", "--", *SETTINGS_SPEC).split() or \
+            g._git_out(d, "diff", "--name-only", "--", *SETTINGS_SPEC).split()
+        if changed:
+            return changed[0]
     for rev in _revs(sub, args):
         if not g._git_out(d, "rev-parse", "--verify", "-q", f"{rev}^{{commit}}").strip():
             continue
-        changed = g._git_out(d, "diff", "--name-only", rev, "--", *SETTINGS_SPEC).split()
+        changed = g._git_out(d, "diff", "--name-only", "--diff-filter=d", *_span(sub, rev), "--",
+                             *SETTINGS_SPEC).split()
         if changed:
             return f"{changed[0]} (from {rev})"
     return ""
+
+
+INDEX_RESTORERS = {"restore", "checkout-index", "reset", "stash", "read-tree"}
+MERGERS = {"merge", "cherry-pick", "rebase", "pull"}   # they bring what a commit changed since the fork point
+
+
+def _span(sub: str, rev: str) -> list[str]:
+    """What git diff compares for a commit a command brings (a removed settings file is no lift): since the fork
+    point for a merge, a pick, a rebase or a pull; the commit's own change undone for a revert; HEAD to it else (the
+    work tree becomes its tree)."""
+    if sub in MERGERS:
+        return [f"HEAD...{rev}"]
+    if sub == "revert":
+        return [rev, f"{rev}^"]
+    return ["HEAD", rev]
 
 
 def _revs(sub: str, args: list[str]) -> list[str]:

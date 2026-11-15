@@ -876,6 +876,14 @@ def test_git_work_that_brings_no_settings_file_passes(repo, tmp_path, monkeypatc
     for command in ("git merge feat/ok", "git checkout feat/ok", "git switch -c feat/new", "git reset --hard HEAD",
                     "git cherry-pick feat/ok", "git stash", "git restore a.txt"):
         assert bash(repo, command) is None, command
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text('{"permissions": {}}', encoding="utf-8")
+    run_git(repo, "add", ".claude/settings.json")
+    run_git(repo, "commit", "-q", "-m", "settings")
+    (repo / ".claude" / "settings.json").write_text('{"permissions": {"allow": []}}', encoding="utf-8")   # an Edit
+    for command in ("git merge feat/ok", "git checkout -b feat/other", "git switch feat/ok"):   # carried over
+        assert bash(repo, command) is None, command
+    assert "Claude Code's settings" in (bash(repo, "git reset --hard") or "")   # it would overwrite the Edit
 
 
 def test_an_archive_holding_a_settings_file_is_refused(repo, tmp_path, monkeypatch):
