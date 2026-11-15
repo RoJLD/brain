@@ -163,7 +163,9 @@ def test_verify_names_a_user_s_folder_and_its_writers(tmp_path):
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "f.txt").write_text("x", encoding="utf-8")
     wrong = floorlock.verify(tmp_path)
-    assert any("sub" in w and "f.txt" in w for w in wrong) and any("owned by" in w for w in wrong)
+    assert any("sub" in w and "f.txt" in w for w in wrong)
+    if not floorlock.elevated():   # an elevated administrator's files are owned by Administrators (CI's runner)
+        assert any("owned by" in w for w in wrong)
     if os.name == "nt":
         assert any("writable by S-1-" in w for w in wrong)   # the user's own entry (or OWNER RIGHTS)
         system = os.environ.get("SystemRoot", "C:\\Windows")
