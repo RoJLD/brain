@@ -101,6 +101,15 @@ def test_a_lock_holds_the_floor_whatever_config_json_says(repo, tmp_path, monkey
     assert "breaks the locked floor" in (bash(repo, "git push origin main") or "")
 
 
+def test_owner_reads_the_owner_s_id(tmp_path):
+    import os
+    mine = tmp_path / "mine.txt"
+    mine.write_text("x", encoding="utf-8")
+    who = floor.owner(mine)
+    assert who and (who.startswith("S-1-") if os.name == "nt" else who == str(os.getuid()))
+    assert floor.owner(tmp_path / "missing") == ""
+
+
 def test_writable_reads_the_token_access_not_the_read_only_attribute(tmp_path):
     import os
     import sys
@@ -238,10 +247,16 @@ def test_a_real_lock_of_a_scratch_folder(tmp_path):
     for cmd in floorlock.lock_commands(root):
         assert subprocess.run(cmd, capture_output=True, timeout=300).returncode == 0, cmd
     try:
-        acl = subprocess.run(["icacls", str(scratch / "sub" / "f.txt")], capture_output=True, text=True, timeout=60).stdout
-        owner = subprocess.run(["powershell", "-NoProfile", "-Command", f"(Get-Acl '{scratch}').Owner"],
-                               capture_output=True, text=True, timeout=60).stdout
-        assert "BUILTIN\\Users:(I)(RX)" in acl and "Administrators" in owner
+        saved = tmp_path / "acl.txt"   # the DACLs as SDDL, whatever the system's language
+        assert subprocess.run(["icacls", str(scratch), "/save", str(saved), "/T", "/C", "/Q"], capture_output=True,
+                              timeout=60).returncode == 0
+        sddl = saved.read_bytes().decode("utf-16-le").lstrip("\ufeff").splitlines()
+        lines = dict(zip(sddl[0::2], sddl[1::2]))   # a name relative to the folder above, then its DACL
+        root_acl, child_acl = lines["scratch"], lines["scratch\\sub\\f.txt"]
+        assert "D:PAI" in root_acl and "(A;OICI;0x1200a9;;;BU)" in root_acl     # inheritance cut, Users read and run
+        assert "(A;OICI;FA;;;BA)" in root_acl and "(A;OICI;FA;;;SY)" in root_acl
+        assert "(A;ID;0x1200a9;;;BU)" in child_acl and "S-1-5-21" not in child_acl   # the user's own entries gone
+        assert floor.owner(scratch) == floor.owner(scratch / "sub" / "f.txt") == "S-1-5-32-544"   # Administrators
     finally:
         for cmd in floorlock.unlock_commands(root, floorlock._owner()):
             subprocess.run(cmd, capture_output=True, timeout=300)

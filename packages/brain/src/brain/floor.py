@@ -308,6 +308,35 @@ def writable(path) -> bool:
         return True
 
 
+def owner(path) -> str:
+    """Who owns ``path``: its owner's SID on Windows (S-1-5-32-544 for Administrators), its uid elsewhere; '' when
+    it cannot be read."""
+    try:
+        if os.name != "nt":
+            return str(os.lstat(path).st_uid)
+        import ctypes
+        from ctypes import wintypes
+        adv = ctypes.WinDLL("advapi32", use_last_error=True)
+        adv.GetFileSecurityW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                         ctypes.POINTER(wintypes.DWORD)]
+        adv.GetSecurityDescriptorOwner.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+                                                   ctypes.POINTER(wintypes.BOOL)]
+        adv.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+        need = wintypes.DWORD(0)
+        adv.GetFileSecurityW(str(path), 0x1, None, 0, ctypes.byref(need))   # OWNER_SECURITY_INFORMATION
+        sd = ctypes.create_string_buffer(need.value or 1)
+        sid, defaulted, text = ctypes.c_void_p(), wintypes.BOOL(), wintypes.LPWSTR()
+        if not (need.value and adv.GetFileSecurityW(str(path), 0x1, sd, need, ctypes.byref(need))
+                and adv.GetSecurityDescriptorOwner(sd, ctypes.byref(sid), ctypes.byref(defaulted)) and sid.value
+                and adv.ConvertSidToStringSidW(sid, ctypes.byref(text))):
+            return ""
+        out = text.value or ""
+        ctypes.WinDLL("kernel32").LocalFree(ctypes.cast(text, ctypes.c_void_p))
+        return out
+    except (OSError, AttributeError, ValueError):
+        return ""
+
+
 def _writable_posix(path: str) -> bool:
     st = os.lstat(path)
     return st.st_uid != 0 or os.access(path, os.W_OK, follow_symlinks=False)
