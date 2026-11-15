@@ -262,17 +262,30 @@ def unlocked(cfg, fl: dict, lock: dict | None, writable=None) -> str:
     if lock.get("error"):
         return f"the lock file cannot be read ({lock['error']})"
     writable = writable or globals()["writable"]
-    for p in (lock_dir(), lock_dir() / LOCK_FILE):
-        if writable(p):
-            return f"{p} is writable by this session"
-    held = str(lock.get("config") or "")
-    if cfg.file is None or not held or not _same(cfg.file, held):
-        return f"the guard reads {cfg.file or 'no config.json'}, the lock holds {held or 'none'}"
-    for p in lock.get("checks") or []:
-        if not isinstance(p, str) or not os.path.lexists(p):
+    return _reachable([lock_dir(), lock_dir() / LOCK_FILE], writable) or _held_config(cfg, lock) or \
+        _reachable(lock.get("checks") or [], writable, missing=True) or _held_plugin(lock)
+
+
+def _reachable(paths: list, writable, missing: bool = False) -> str:
+    """The first of ``paths`` this session can change (or, ``missing``, that is gone), said; '' when none."""
+    for p in paths:
+        if missing and (not isinstance(p, str) or not os.path.lexists(p)):
             return f"{p} is missing"
         if writable(p):
             return f"{p} is writable by this session"
+    return ""
+
+
+def _held_config(cfg, lock: dict) -> str:
+    """'' when the config.json the guard reads is the one the lock holds."""
+    held = str(lock.get("config") or "")
+    if cfg.file is None or not held or not _same(cfg.file, held):
+        return f"the guard reads {cfg.file or 'no config.json'}, the lock holds {held or 'none'}"
+    return ""
+
+
+def _held_plugin(lock: dict) -> str:
+    """'' when the guard runs from a plugin folder the lock holds (or $CLAUDE_PLUGIN_ROOT is not set)."""
     plugin = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if plugin and not any(isinstance(r, str) and _within(plugin, r) for r in lock.get("plugins") or []):
         return f"the guard runs from {plugin}, a plugin folder the lock does not hold"
@@ -298,7 +311,7 @@ def writable(path) -> bool:
     reads only the read-only attribute); POSIX: not owned by root, or writable. True when it cannot be told."""
     try:
         return _writable_nt(str(path)) if os.name == "nt" else _writable_posix(str(path))
-    except Exception:   # noqa: BLE001 (any failure reads as reachable: the guard fails closed)
+    except Exception:   # any failure reads as reachable: the guard fails closed
         return True
 
 

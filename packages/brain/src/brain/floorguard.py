@@ -166,11 +166,12 @@ def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
     """What a shell call would lift or stop the floor by (check_files), else None."""
     acts = [(words, d) for words, d, _, _ in g.actions(cmds, sub, command=command)]
     plain = floor.unspelled(_code(command))
-    what = (_opaque(cmds, acts, command) or _env(plain) or _registry(plain) or _removals(acts, kept)
-            or _acl(acts, kept) or _writes(cmds, sub, kept) or _copies(acts, kept) or _extractions(acts, kept)
-            or _archived_settings(acts) or _links(acts, kept) or _git_settings(acts) or _checkout(acts, kept)
-            or _named(acts, command)
-            or _plugin_cmd(acts))
+    checks = (lambda: _opaque(cmds, acts, command), lambda: _env(plain), lambda: _registry(plain),
+              lambda: _removals(acts, kept), lambda: _acl(acts, kept), lambda: _writes(cmds, sub, kept),
+              lambda: _copies(acts, kept), lambda: _extractions(acts, kept), lambda: _archived_settings(acts),
+              lambda: _links(acts, kept), lambda: _git_settings(acts), lambda: _checkout(acts, kept),
+              lambda: _named(acts, command), lambda: _plugin_cmd(acts))
+    what = next((w for check in checks if (w := check())), None)
     if what:
         return what
     what = g._override(command, cmds, sub, env=floor.FLOOR_ENV + "|enabledPlugins")
@@ -519,24 +520,12 @@ def _brings_settings(d: str, sub: str, args: list[str]) -> str:
     it names (or reads by default: HEAD for reset, the last stash, the upstream for pull) against the work tree, and
     each patch file of apply or am read as text."""
     if sub in ("apply", "am"):
-        for a in (a for a in args if not a.startswith("-")):
-            try:
-                text = Path(g._path(a, d)).read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            m = re.search(r"(?m)^(?:\+\+\+|---|diff --git)\s.*?(\S*\.claude/settings(?:\.local)?\.json)", text)
-            if m:
-                return m.group(1)
-        return ""
+        return _patched_settings(d, args)
     changed = g._git_out(d, "diff", "--name-only", "--", *SETTINGS_SPEC).split()
     if changed:
         return changed[0]
-    revs = [a for a in args if not a.startswith("-")]
-    revs += [a.partition("=")[2] for a in args if a.partition("=")[0] in REV_OPTS and "=" in a]
-    revs += [args[i + 1] for i, a in enumerate(args[:-1]) if a in REV_OPTS]
-    revs += {"reset": ["HEAD"], "stash": ["stash@{0}"], "pull": ["@{u}"]}.get(sub, [])
-    for rev in dict.fromkeys(revs):
-        if rev in ("--", ".") or not g._git_out(d, "rev-parse", "--verify", "-q", f"{rev}^{{commit}}").strip():
+    for rev in _revs(sub, args):
+        if not g._git_out(d, "rev-parse", "--verify", "-q", f"{rev}^{{commit}}").strip():
             continue
         changed = g._git_out(d, "diff", "--name-only", rev, "--", *SETTINGS_SPEC).split()
         if changed:
@@ -544,25 +533,56 @@ def _brings_settings(d: str, sub: str, args: list[str]) -> str:
     return ""
 
 
+def _revs(sub: str, args: list[str]) -> list[str]:
+    """What a work-tree writer may read commits from: its positional arguments, the value of --source, -s or --onto,
+    and its default (HEAD for reset, the last stash, the upstream for pull); git says which are commits."""
+    revs = [a for a in args if not a.startswith("-") and a not in ("--", ".")]
+    revs += [a.partition("=")[2] for a in args if a.partition("=")[0] in REV_OPTS and "=" in a]
+    revs += [args[i + 1] for i, a in enumerate(args[:-1]) if a in REV_OPTS]
+    revs += {"reset": ["HEAD"], "stash": ["stash@{0}"], "pull": ["@{u}"]}.get(sub, [])
+    return list(dict.fromkeys(revs))
+
+
+def _patched_settings(d: str, args: list[str]) -> str:
+    """The settings file a patch of git apply or am writes, '' when none."""
+    for a in (a for a in args if not a.startswith("-")):
+        try:
+            text = Path(g._path(a, d)).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        m = re.search(r"(?m)^(?:\+\+\+|---|diff --git)\s.*?(\S*\.claude/settings(?:\.local)?\.json)", text)
+        if m:
+            return m.group(1)
+    return ""
+
+
+LINK_TYPE = re.compile(r"(?i)^(?:symboliclink|hardlink|junction)$")
+
+
 def _links(acts, kept: Kept) -> str | None:
     """A link made onto one of Claude Code's settings files or a kept path, in any shell's payload (cmd's mklink LINK
     TARGET, ln's last argument or -t; New-Item -ItemType SymbolicLink, HardLink or Junction -Path)."""
     for words, d in acts:
-        prog, args = g._prog(words[0]), words[1:]
-        if prog == "mklink":
-            link = next((a for a in args if not a.startswith("/")), "")
-        elif prog == "ln":
-            pos, target = _positional(words)
-            link = target or (pos[-1] if len(pos) > 1 else "")
-        elif prog in ("new-item", "ni") and any(re.match(r"(?i)^(?:symboliclink|hardlink|junction)$", a) for a in args):
-            link = next((args[i + 1] for i, a in enumerate(args[:-1]) if re.match(r"(?i)^-(?:path|p)$", a)),
-                        next((a for a in args if not a.startswith("-")), ""))
-        else:
-            continue
+        prog = g._prog(words[0])
+        link = _link_of(prog, words)
         real = g._real(g._path(link, d)) if link else ""
         if real and (kept.settings(real) or kept.inside(real)):
             return f"{prog} onto {link} refused: Claude Code's settings and what sets the floor change by Write or Edit only"
     return None
+
+
+def _link_of(prog: str, words: list[str]) -> str:
+    """The path a link command makes, '' for another command."""
+    args = words[1:]
+    if prog == "mklink":
+        return next((a for a in args if not a.startswith("/")), "")
+    if prog == "ln":
+        pos, target = _positional(words)
+        return target or (pos[-1] if len(pos) > 1 else "")
+    if prog in ("new-item", "ni") and any(LINK_TYPE.match(a) for a in args):
+        named = next((args[i + 1] for i, a in enumerate(args[:-1]) if re.match(r"(?i)^-(?:path|p)$", a)), "")
+        return named or next((a for a in args if not a.startswith("-")), "")
+    return ""
 
 
 def _archived_settings(acts) -> str | None:
@@ -586,20 +606,34 @@ def _archive_of(prog: str, args: list[str]) -> str:
     """The archive an extraction reads: tar's -f (in a group of short options too, or old style: xzf FILE), unzip's
     first argument, Expand-Archive's -Path or first argument, 7z's after x; '-' for tar's input."""
     if prog in ("tar", "bsdtar"):
-        for i, a in enumerate(args):
-            if a.startswith("--file="):
-                return a[7:]
-            if a == "--file" or (a.startswith("-") and not a.startswith("--") and "f" in a) or \
-                    (i == 0 and re.fullmatch(r"[A-Za-z]+", a) and "f" in a):
-                rest = a[a.index("f") + 1:] if a != "--file" else ""
-                return rest or (args[i + 1] if i + 1 < len(args) else "")
-        return "-"
+        return _tar_archive(args)
     if prog == "expand-archive":
-        v = next((args[i + 1] for i, a in enumerate(args[:-1]) if len(a) > 2 and "-literalpath".startswith(a.lower())
-                  or len(a) > 1 and "-path".startswith(a.lower())), "")
-        return v or next((a for a in args if not a.startswith("-")), "")
+        return _expand_archive(args)
     pos = [a for a in args if not a.startswith("-")]
     return pos[1] if prog in ("7z", "7za") and len(pos) > 1 else (pos[0] if pos else "")
+
+
+def _tar_archive(args: list[str]) -> str:
+    """tar's archive: --file=X, --file X, a group of short options holding f (its value attached or next), the old
+    style's first word (xzf X); '-' (its input) when none."""
+    for i, a in enumerate(args):
+        if a.startswith("--file="):
+            return a[7:]
+        short = a.startswith("-") and not a.startswith("--") and "f" in a
+        old_style = i == 0 and re.fullmatch(r"[A-Za-z]+", a) is not None and "f" in a
+        if a == "--file" or short or old_style:
+            rest = "" if a == "--file" else a[a.index("f") + 1:]
+            return rest or (args[i + 1] if i + 1 < len(args) else "")
+    return "-"
+
+
+def _expand_archive(args: list[str]) -> str:
+    """Expand-Archive's archive: -Path or -LiteralPath (a prefix PowerShell takes), else its first argument."""
+    for i, a in enumerate(args[:-1]):
+        low = a.lower()
+        if (len(a) > 2 and "-literalpath".startswith(low)) or (len(a) > 1 and "-path".startswith(low)):
+            return args[i + 1]
+    return next((a for a in args if not a.startswith("-")), "")
 
 
 def _members(path: str) -> list[str] | None:

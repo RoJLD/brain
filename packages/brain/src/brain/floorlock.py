@@ -109,32 +109,8 @@ def _base_interpreter(venv: Path) -> Path | None:
 def roots(cfg, home: Path | None = None, writable=None) -> list[Root]:
     """What the lock holds on this machine (module docstring), the lock folder left out (apply writes it last).
     LockError when config.json cannot be held (none found, or a worktree's)."""
-    writable = writable or floor.writable
     home = home or paths.brain_home()
-    if cfg.file is None or not Path(cfg.file).is_file():
-        raise LockError("no config.json found: the lock holds the one the guard reads (brain config shows it)")
-    cfg_file = Path(cfg.file).resolve()
-    out: list[Root] = []
-    checkout = _checkout(cfg_file.parent)
-    if checkout is not None and (checkout / ".git").is_file():
-        raise LockError(f"{cfg_file} is in a worktree ({checkout}): point <BRAIN_HOME>/personal.json at the personal "
-                        "brain's main checkout, then lock")
-    if checkout is not None:
-        out.append(Root(checkout, "tree", "the personal brain's checkout (config.json and its .git)",
-                        [checkout, checkout / ".git", cfg_file]))
-    else:
-        out.append(Root(cfg_file, "file", "config.json (in no git checkout)", [cfg_file]))
-    pointer = home / paths.PERSONAL
-    if pointer.is_file():
-        out.append(Root(pointer, "file", "the pointer to the personal brain", [pointer]))
-    venv = home / "venv"
-    if venv.is_dir():
-        py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        out.append(Root(venv, "tree", "the guard's interpreter", [venv, *(p for p in (py, venv / "pyvenv.cfg")
-                                                                          if p.exists())]))
-        base = _base_interpreter(venv)
-        if base is not None and base.is_dir() and writable(base):
-            out.append(Root(base, "tree", "the base Python the venv runs (a session can write it)", [base]))
+    out = [_config_root(cfg), *_home_roots(home, writable or floor.writable)]
     code = Path(floor.__file__).resolve().parent.parent   # the folder on sys.path that holds the brain package
     if not any(_inside(code, r.path) for r in out):
         out.append(Root(code, "tree", "the guard's own code (an install from a checkout)", [code]))
@@ -142,6 +118,40 @@ def roots(cfg, home: Path | None = None, writable=None) -> list[Root]:
         hooks = plugin / "hooks"
         out.append(Root(plugin, "tree", "the plugin that carries guard.sh",
                         [plugin, *(p for p in (hooks / "guard.sh", hooks / "hooks.json") if p.exists())]))
+    return out
+
+
+def _config_root(cfg) -> Root:
+    """The checkout that holds config.json (config.json alone when it is in none); LockError for none or a
+    worktree's."""
+    if cfg.file is None or not Path(cfg.file).is_file():
+        raise LockError("no config.json found: the lock holds the one the guard reads (brain config shows it)")
+    cfg_file = Path(cfg.file).resolve()
+    checkout = _checkout(cfg_file.parent)
+    if checkout is None:
+        return Root(cfg_file, "file", "config.json (in no git checkout)", [cfg_file])
+    if (checkout / ".git").is_file():
+        raise LockError(f"{cfg_file} is in a worktree ({checkout}): point <BRAIN_HOME>/personal.json at the personal "
+                        "brain's main checkout, then lock")
+    return Root(checkout, "tree", "the personal brain's checkout (config.json and its .git)",
+                [checkout, checkout / ".git", cfg_file])
+
+
+def _home_roots(home: Path, writable) -> list[Root]:
+    """<BRAIN_HOME>'s: the pointer, the venv, and the base Python it runs when a session can write it."""
+    out: list[Root] = []
+    pointer = home / paths.PERSONAL
+    if pointer.is_file():
+        out.append(Root(pointer, "file", "the pointer to the personal brain", [pointer]))
+    venv = home / "venv"
+    if not venv.is_dir():
+        return out
+    py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    out.append(Root(venv, "tree", "the guard's interpreter", [venv, *(p for p in (py, venv / "pyvenv.cfg")
+                                                                      if p.exists())]))
+    base = _base_interpreter(venv)
+    if base is not None and base.is_dir() and writable(base):
+        out.append(Root(base, "tree", "the base Python the venv runs (a session can write it)", [base]))
     return out
 
 
@@ -263,37 +273,52 @@ def _run(cmd: list[str], run) -> str:
     return ""
 
 
-def apply(cfg, refresh: bool = False, run=subprocess.run, is_elevated=None) -> list[str]:
-    """Lock this machine (module docstring); the lines to print. LockError without elevation, or when a command
-    fails (what ran is kept: a second apply finishes it)."""
+def _need_elevation(what: str, is_elevated=None) -> None:
+    """LockError unless this process runs elevated: a session never elevates."""
     if not (is_elevated or elevated)():
         how = ELEVATED_HINT["nt" if os.name == "nt" else "posix"]
-        raise LockError(f"brain floor lock --apply changes who owns the floor's files: run it in {how}; a session "
-                        "never elevates (brain floor lock prints the plan)")
-    if refresh:
-        checkout = _checkout(Path(cfg.file).resolve().parent) if cfg.file else None
-        if checkout is None:
-            raise LockError("--refresh needs config.json in a git checkout")
-        for cmd in (["git", "-C", str(checkout), "fetch", "origin"],
-                    ["git", "-C", str(checkout), "merge", "--ff-only", "origin/main"]):
-            why = _run(cmd, run)
-            if why:
-                raise LockError(f"refresh failed: {why}")
-        cfg = config.load()   # the fast-forwarded config.json's floor goes into the lock file
-    p = plan(cfg)
-    lockdir = p["lock"].path
-    if lockdir.exists() and floor._real(lockdir) != os.path.normcase(os.path.abspath(lockdir)):
-        raise LockError(f"{lockdir} is a link or a junction: remove it, then lock")
+        raise LockError(f"{what} changes who owns the floor's files: run it in {how}; a session never elevates "
+                        "(brain floor lock prints the plan)")
+
+
+def _refresh(cfg, run):
+    """Fetch the locked checkout and fast-forward it to origin/main; config.json as it then reads."""
+    checkout = _checkout(Path(cfg.file).resolve().parent) if cfg.file else None
+    if checkout is None:
+        raise LockError("--refresh needs config.json in a git checkout")
+    for cmd in (["git", "-C", str(checkout), "fetch", "origin"],
+                ["git", "-C", str(checkout), "merge", "--ff-only", "origin/main"]):
+        why = _run(cmd, run)
+        if why:
+            raise LockError(f"refresh failed: {why}")
+    return config.load()   # the fast-forwarded config.json's floor goes into the lock file
+
+
+def _run_all(cmds: list[list[str]], run) -> list[str]:
+    """Run each command (a safe.directory already listed is not added again); what failed."""
     failed = []
-    for cmd in p["commands"][:-len(lock_commands(p["lock"]))]:
+    for cmd in cmds:
         if cmd[:4] == ["git", "config", "--system", "--add"] and _has_safe(cmd[-1], run):
             continue   # idempotent: the checkout is a safe.directory already
         why = _run(cmd, run)
         if why:
             failed.append(why)
+    return failed
+
+
+def apply(cfg, refresh: bool = False, run=subprocess.run, is_elevated=None) -> list[str]:
+    """Lock this machine (module docstring); the lines to print. LockError without elevation, or when a command
+    fails (what ran is kept: a second apply finishes it)."""
+    _need_elevation("brain floor lock --apply", is_elevated)
+    p = plan(_refresh(cfg, run) if refresh else cfg)
+    lockdir = p["lock"].path
+    if lockdir.exists() and floor._real(lockdir) != os.path.normcase(os.path.abspath(lockdir)):
+        raise LockError(f"{lockdir} is a link or a junction: remove it, then lock")
+    last = lock_commands(p["lock"])
+    failed = _run_all(p["commands"][:-len(last)], run)
     lockdir.mkdir(parents=True, exist_ok=True)
     (lockdir / floor.LOCK_FILE).write_text(json.dumps(lock_data(p), indent=2) + "\n", encoding="utf-8")
-    failed += [why for cmd in lock_commands(p["lock"]) if (why := _run(cmd, run))]
+    failed += _run_all(last, run)
     if failed:
         raise LockError("the lock is not complete (run the apply again): " + "; ".join(failed))
     return [f"locked: {len(p['roots'])} paths and {lockdir / floor.LOCK_FILE}; in a normal terminal, brain floor "
@@ -310,31 +335,33 @@ def _has_safe(value: str, run) -> bool:
     return value in (r.stdout or "").splitlines()
 
 
+def _held_roots(lock: dict) -> list[Root]:
+    """The roots a lock file names, then its own folder."""
+    rs = [Root(Path(r["path"]), r.get("kind", "tree"), "") for r in lock.get("roots") or []
+          if isinstance(r, dict) and isinstance(r.get("path"), str)]
+    return [*rs, Root(floor.lock_dir(), "tree", "")]
+
+
 def unlock(run=subprocess.run, is_elevated=None, owner: str | None = None) -> list[str]:
     """Give the paths the lock file names back to the user and remove the lock file (elevated); the lines to print."""
-    if not (is_elevated or elevated)():
-        how = ELEVATED_HINT["nt" if os.name == "nt" else "posix"]
-        raise LockError(f"brain floor unlock changes who owns the floor's files: run it in {how}")
+    _need_elevation("brain floor unlock --apply", is_elevated)
     lock = floor.read_lock()
     if lock is None:
         return ["no lock on this machine: nothing to unlock"]
     if lock.get("error"):
         raise LockError(f"the lock file cannot be read ({lock['error']}): remove {floor.lock_dir()} by hand")
     owner = owner or _owner()
-    rs = [Root(Path(r["path"]), r.get("kind", "tree"), "") for r in lock.get("roots") or []
-          if isinstance(r, dict) and isinstance(r.get("path"), str)]
-    lockdir = floor.lock_dir()
-    failed = [why for r in [*rs, Root(lockdir, "tree", "")] for cmd in unlock_commands(r, owner)
-              if Path(r.path).exists() and (why := _run(cmd, run))]
+    rs = _held_roots(lock)
+    failed = _run_all([cmd for r in rs if r.path.exists() for cmd in unlock_commands(r, owner)], run)
     if failed:
         raise LockError("the unlock is not complete (run it again): " + "; ".join(failed))
-    (lockdir / floor.LOCK_FILE).unlink(missing_ok=True)
+    (floor.lock_dir() / floor.LOCK_FILE).unlink(missing_ok=True)
     try:
-        lockdir.rmdir()
+        floor.lock_dir().rmdir()
     except OSError:
         pass
-    return [f"unlocked: {len(rs)} paths given back to {owner}; the lock file removed (git's safe.directory entry is "
-            "left: it only lets git read the checkout)"]
+    return [f"unlocked: {len(rs) - 1} paths given back to {owner}; the lock file removed (git's safe.directory entry "
+            "is left: it only lets git read the checkout)"]
 
 
 def status(cfg) -> list[str]:
