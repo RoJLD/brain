@@ -235,10 +235,17 @@ def _unread(prog: str, args: list[str]) -> str:
     k = next((i for i, a in enumerate(args) if a.lower() in ("-c", "/c", "-command")), -1)
     if prog in SHELLS and 0 <= k < len(args) - 1 and re.match(r"\s*[$`]", args[k + 1]):
         return f"{prog} -c of a variable refused: the floor cannot read what it runs"
-    if prog in ("start-process", "saps", "start") and any(re.match(r"(?i)^-(?:a(?:r(?:g\w*)?)?)$", a) for a in args):
-        program = next((a for a in args if not a.startswith("-")), "")
-        if program.startswith("$") or g._prog(program) in START_RISKY:
-            return f"{prog} {program} -ArgumentList refused: the floor cannot read what it runs"
+    return _start_unread(prog, args) if prog in ("start-process", "saps", "start") else ""
+
+
+def _start_unread(prog: str, args: list[str]) -> str:
+    """Start-Process of git, a shell or what writes the environment (or a program named by a variable) with
+    -ArgumentList, which the floor cannot read; '' else."""
+    if not any(re.match(r"(?i)^-(?:a(?:r(?:g\w*)?)?)$", a) for a in args):
+        return ""
+    program = next((a for a in args if not a.startswith("-")), "")
+    if program.startswith("$") or g._prog(program) in START_RISKY:
+        return f"{prog} {program} -ArgumentList refused: the floor cannot read what it runs"
     return ""
 
 
@@ -360,9 +367,7 @@ def _copied(prog: str, words: list[str], d: str) -> list[tuple[str, bool]]:
     if prog == "robocopy":
         return _robocopied(words, d)
     if prog == "patch":
-        out = next((words[i + 1] for i, w in enumerate(words[:-1]) if w in ("-o", "--output")), "")
-        first = next((w for w in words[1:] if not w.startswith("-")), "")
-        return [(g._real(g._path(out or first, d)), False)] if (out or first) else []
+        return _patched(words, d)
     pos, target = _positional(words)
     dest, sources = (target, pos) if target else (pos[-1] if pos else "", pos[:-1])
     if not dest:
@@ -371,6 +376,13 @@ def _copied(prog: str, words: list[str], d: str) -> list[tuple[str, bool]]:
     into = bool(target) or len(sources) > 1 or os.path.isdir(dst) or dest.endswith(("/", "\\"))
     whole = prog in MOVERS or _recursive(prog, words)   # a move takes a folder whole
     return [_lands(src, dst, into, whole) for src in sources]
+
+
+def _patched(words: list[str], d: str) -> list[tuple[str, bool]]:
+    """The file patch writes: -o's, else its first file argument."""
+    out = next((words[i + 1] for i, w in enumerate(words[:-1]) if w in ("-o", "--output")), "")
+    first = next((w for w in words[1:] if not w.startswith("-")), "")
+    return [(g._real(g._path(out or first, d)), False)] if (out or first) else []
 
 
 def _lands(src: str, dst: str, into: bool, whole: bool) -> tuple[str, bool]:
@@ -681,7 +693,25 @@ def _unsymref(d: str, refspecs: list[str]) -> list[str]:
 def _config_write(args: list[str]) -> str:
     """The key ``git config ARGS`` sets when it is one of floor.PUSH_KEYS ('' for a read, an unset or another key):
     ``KEY VALUE``, ``set KEY VALUE``, ``--add``/``--replace-all KEY VALUE``, and ``--rename-section`` to a section of
-    those keys."""
+    those keys; a write into another file than a repo's own configuration (-f)."""
+    pos, file, verdict = _config_args(args)
+    if verdict is not None:
+        return verdict
+    if pos[:1] == ["set"]:
+        pos = pos[1:]
+    elif pos[:1] in (["get"], ["list"], ["unset"]):
+        return ""
+    if len(pos) >= 2 and file and not re.search(r"(?:^|[\\/])\.git[\\/]config$", file):
+        return f"{pos[0]} into {file}"   # a write of another file than a repo's own configuration
+    return pos[0] if len(pos) >= 2 and floor.PUSH_KEYS.match(pos[0]) else ""
+
+
+CONFIG_READS = ("--get", "--get-all", "--get-regexp", "--list", "-l", "--remove-section", "-e", "--edit")
+
+
+def _config_args(args: list[str]) -> tuple[list[str], str, str | None]:
+    """(git config's positional arguments, its -f file, a verdict already reached: '' for a read or an unset, the new
+    section of a --rename-section into floor.PUSH_KEYS; None to go on)."""
     pos, i, file = [], 0, ""
     while i < len(args):
         a = args[i]
@@ -693,20 +723,13 @@ def _config_write(args: list[str]) -> str:
             i += 2
             continue
         if a == "--rename-section" and i + 2 < len(args):
-            return args[i + 2] if floor.PUSH_KEYS.match(args[i + 2] + ".x") else ""
-        if a.startswith("--unset") or a in ("--get", "--get-all", "--get-regexp", "--list", "-l", "--remove-section",
-                                            "-e", "--edit"):
-            return ""
+            return pos, file, (args[i + 2] if floor.PUSH_KEYS.match(args[i + 2] + ".x") else "")
+        if a.startswith("--unset") or a in CONFIG_READS:
+            return pos, file, ""
         if not a.startswith("-"):
             pos.append(a)
         i += 1
-    if pos[:1] == ["set"]:
-        pos = pos[1:]
-    elif pos[:1] in (["get"], ["list"], ["unset"]):
-        return ""
-    if len(pos) >= 2 and file and not re.search(r"(?:^|[\\/])\.git[\\/]config$", file):
-        return f"{pos[0]} into {file}"   # a write of another file than a repo's own configuration
-    return pos[0] if len(pos) >= 2 and floor.PUSH_KEYS.match(pos[0]) else ""
+    return pos, file, None
 
 
 def _known(folder: str) -> set[str]:

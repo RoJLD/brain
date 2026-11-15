@@ -19,6 +19,11 @@ section: Added
   variables, a copy or an extraction onto what the floor keeps, a write of the registry's Environment key and the
   plugin that runs the guard are refused; an edit is judged on the file it leaves. `hooks.json` runs `guard.sh`
   under `bash -p`.
+- The floor is read from config.json in the working tree and as committed at its checkout's `HEAD` and at
+  `origin/main` (`brain.floor.effective`; any on, or an unreadable file, holds it), so a local write of config.json
+  no longer lifts it. While it is on, a settings file changes by Write or Edit only, the interpreter's base
+  installation and Python's startup files are kept, git options that write or run are refused, and the shell's
+  reserved words are read through.
 - The owner guard reads the override's name as the shell and JSON read it (quotes, carets, escapes) and resolves
   a path before comparing it (an NTFS stream's name, a junction); under `guards.owner_strict` it also refuses
   `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `CLAUDE_CONFIG_DIR` and `disableAllHooks` set for later sessions.

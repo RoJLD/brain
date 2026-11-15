@@ -86,10 +86,29 @@ The third line of the floor, no secret in a commit, is the secrets guard's alrea
 `floor:main`, `floor:force`, `floor:config`) lifts them, the owner's. git is asked only what a push needs: the branch
 checked out for `HEAD`, `@` or no refspec, the configuration for no refspec; config.json is read once per call.
 
-What else the floor holds (`brain.floorguard`; reviews 2 to 4 closed classes, not spellings). Every check reads each
-command a call runs, past a wrapper, a launcher or a nested shell (`timeout`, `env`, `nohup`, `bash -c`, `cmd /c`,
-`pwsh -Command`, `eval`: `brain.guards.actions`); a payload the floor cannot read is refused (`eval` or `-c` of a
-variable, `Start-Process -ArgumentList`, `xargs` running git or what writes files).
+**Where the floor is read** (`brain.floor.effective`, review round 5): the floor is on when ANY of these says so:
+config.json in the working tree, the same file as committed at its checkout's `HEAD`, and as committed at
+`origin/main` (the last fetch; no network), or a working-tree file that exists but cannot be read or parsed. A local
+write of config.json (a copy, a move, a patch, an ACL that hides it, `git log --output`) so no longer lifts the
+floor: that takes a change merged on the personal brain's main. The two refs are read from their files and the
+committed verdict is cached per pair of commits in `<BRAIN_HOME>/cache/floor-commits.json` (a path the floor keeps),
+so git runs only when one of them moves; git commands that rewrite main's ref locally (`update-ref`, `branch -f`
+onto main, a fetch refspec into a local ref) and writes of a repo's ref files are refused.
+
+What else the floor holds (`brain.floorguard`; reviews 2 to 5 closed classes, not spellings). Every check reads each
+command a call runs, past a wrapper, a launcher, a nested shell or the shell's reserved words (`timeout`, `env`,
+`nohup`, `bash -c`, `cmd /c`, `pwsh -Command`, `eval`, `if ...; then`, `do`, `!`: `brain.guards.actions`); a payload
+the floor cannot read is refused (`eval` or `-c` of a variable, `Start-Process` of git or a shell with
+`-ArgumentList`, `xargs` running git but a read or what writes files, a shell function the call defines, a push
+whose remote or refspec holds `$(`, a backtick or a variable). git options and subcommands that write a file or run a
+program are refused (`--output`, `-O`, `--upload-pack`, `--receive-pack`, `--exec`, `--ext-diff`, `--textconv`,
+`rebase -x`, `bisect run`, `submodule foreach`, `difftool -x`, `filter-branch`, `apply --unsafe-paths`), and so is
+`git config` of `core.*`, `filter.*`, `diff.*`, `credential.*`, `gpg.*`, editors and pagers, or into another file
+than a repo's own (`-f`). A settings file of Claude Code changes by Write or Edit only (any copy, move, redirect or
+patch onto it is refused); the interpreter that runs the guard is kept with its base installation (pyvenv.cfg's
+`home`, `sys.base_prefix`), the user site and any `sitecustomize.py`, `usercustomize.py` or `.pth`; an environment
+write through WMI or CIM (`Win32_Environment`, `wmic environment`) and an ACL change of a kept path (`icacls`,
+`takeown`, `attrib`, `Set-Acl`) are refused.
 
 - **git configuration**: any git command given configuration by its command line (`-c`, `--config-env`) is refused
   (check `config`), so is a global option outside `brain.floor.GIT_GLOBAL_OK` (`--git-dir`, `--work-tree`,
@@ -97,10 +116,13 @@ variable, `Start-Process -ArgumentList`, `xargs` running git or what writes file
   setting `alias.*`, `include.path`, `includeIf.*.path`, `remote.*`, `push.*` or `url.*`, `git remote add --mirror`,
   and a write of git's configuration files. An alias is read as what it runs, an alias of an alias too (ten levels);
   a shell alias (`!`), or one that starts with an option, is refused.
-- **The environment**: a variable of `brain.floor.WATCHED_VARS` (`GIT_*`, `HOME`, `XDG_CONFIG_HOME`, `BASH_ENV`,
-  `ENV`, `SHELLOPTS`, `BASHOPTS`, `PATH`, `BRAIN_*`, `CLAUDE_*`) assigned in any form (`NAME=`, `export`, `declare`,
-  `printf -v`, `read`, `env`, `$env:`, `${env:}`, `Set-Item env:`, `SetEnvironmentVariable`), and any assignment whose
-  name the guard cannot read, are refused; quoted prose (an `echo`'s words, a commit message) is not read as one. Any
+- **The environment**: a variable of `brain.floor.WATCHED_VARS` (git's that change its configuration, repository or
+  programs, `HOME`, `XDG_CONFIG_HOME`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `PATH`, `BRAIN_*`, and Claude Code's that
+  choose its settings or plugin) assigned in any form (`NAME=`, `export`, `declare`, `printf -v`, `read`, `env`,
+  `${NAME:=}`, `(( NAME = ))`, `set -a`, `$env:`, `${env:}`, the `env:` provider, `SetEnvironmentVariable`), and any
+  assignment whose name the guard cannot read, are refused; only an `echo`'s or `printf`'s quoted words and the value
+  of `-m`, `--message`, `--body` or `--title` are prose, never an `export` or `env` argument. `GIT_EDITOR=true`,
+  `GIT_TRACE`, `ENV=` and `CLAUDE_CODE_*` pass. Any
   write of the registry's `Environment` key is refused, whatever the value's name (`Set-ItemProperty`,
   `New-ItemProperty`, .NET's `Registry`, `reg add` or `import`). `hooks.json` runs `guard.sh` under `bash -p`, which
   reads no `BASH_ENV` nor `SHELLOPTS`.
@@ -141,7 +163,12 @@ backstop): code the guard does not read (a script, a program, a compiled tool, a
 the code host's other writers (the contents API, other GraphQL mutations, `gh repo sync`, a raw HTTP call); git's
 transports beyond `git push` and `git send-pack`; a symbolic branch made before the floor was on and pushed by a
 refspec with a colon; an archive extracted into a folder above a kept one (its members are not read); a guard the
-hook never reaches (the core plugin removed from outside a session). Since 2026-11-14 the engine repo's main has the
+hook never reaches (the core plugin removed from outside a session); a launcher the guard does not unwrap
+(`flock`, `chrt`, `script -c`, `watch`, `parallel`, `find -exec`, `busybox`, a program named by a variable,
+PowerShell's `[scriptblock]::Create`): pushes through them have the server's backstop (review round 5, #11); both
+refs that hold the committed floor forged at once (HEAD's branch and origin/main) by a write the guard does not read;
+the pointer `<BRAIN_HOME>/personal.json` naming another personal brain whose own history has no floor. Since
+2026-11-14 the engine repo's main has the
 code host's branch protection (no force-push, no deletion, a pull request and the required checks, for admins too):
 the push-to-main and force classes have a server backstop there, the floor-lift and guard-lift classes do not.
 
