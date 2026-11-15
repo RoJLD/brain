@@ -326,7 +326,7 @@ def _acl(acts, kept: Kept) -> str | None:
         prog = g._prog(words[0])
         if prog not in ACLS:
             continue
-        for t in (w for w in words[1:] if not w.startswith(("-", "/", "+"))):
+        for t in (w for w in words[1:] if not w.startswith(("-", "+")) and not ROBOCOPY_OPT.fullmatch(w)):
             real = g._real(g._path(t, d))
             if kept.inside(real) or real in kept.folders:
                 return f"{prog} of {t} refused: it changes who reads what sets the floor or runs the guard"
