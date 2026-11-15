@@ -37,6 +37,7 @@ PASSTHROUGH = {
     "COMPUTERNAME": "the machine's name (brain.machine): the tests pass their own where they compare it",
     "HOSTNAME": "the same in bash (the hooks)",
     "PROGRAMFILES": "where the stranger test finds Git for Windows' bash",
+    "PROGRAMDATA": "where guard.sh's fallback looks for the machine's floor lock: a lock found only adds refusals",
     "SYSTEMROOT": "Windows' own folder, for a child process (brain.depprobes, the stranger test)",
     "GITHUB_STEP_SUMMARY": "the CI's step summary (release_check): the tests pass --summary",
     "CI": "the read mode's default: BRAIN_STRICT, pinned, wins over it; the tests about it set it themselves",

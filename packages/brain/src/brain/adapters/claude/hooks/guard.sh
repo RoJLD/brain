@@ -97,15 +97,19 @@ IFS= read -r -d '' input  # the hook's JSON, without $(cat)'s fork
 needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }
 
 home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"
-# floor_on: whether config.json's locked floor is on (floor.refuse or floor.only, brain/floor.py), read only when the
+# floor_on: whether config.json's locked floor is on (floor.refuse or floor.only, brain/floor.py), or the machine has
+# a lock file (brain floor lock: <ProgramData>/Brain or /etc/brain, which a session cannot remove), read only when the
 # guard cannot judge the call or would run PATH's Python: then it fails closed (wi-brain-unadopted-floor).
 floor=
 floor_on() {
   if [ -z "$floor" ]; then
-    local c
+    local c d
     c=$(brain_config "$root")
     floor=0
     [ -n "$(floor_setting "$c" refuse)$(floor_setting "$c" only)" ] && floor=1
+    for d in "${PROGRAMDATA:-C:/ProgramData}/Brain" C:/ProgramData/Brain /etc/brain; do
+      [ -e "$d/floor-lock.json" ] && floor=1
+    done
   fi
   [ "$floor" = 1 ]
 }

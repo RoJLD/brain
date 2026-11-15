@@ -27,6 +27,7 @@ Standard library only: the guard hook reads it.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -149,128 +150,191 @@ def settings(data: dict | None) -> dict:
     return {"refuse": section.get("refuse") is True, "only": section.get("only") is True}
 
 
-# --- where the floor is read: the working tree, and the commits it cannot fake (review round 5) --------------------
-ON = {"refuse": True, "only": False}   # what an unreadable or unparsable source says: the floor on (fail closed)
+# --- where the floor is read, and the lock that holds it (review round 6: the operating system's lock) ------------
+# A guard that parses the shell cannot stop a session running as the same user: the session can rewrite whatever the
+# guard reads (a ref, a cache, .git, the working file). The floor's authority so moves out of its reach: brain floor
+# lock (brain.floorlock, an elevated step of the owner's) gives the files the floor rests on to the administrators
+# (owner Administrators or root, the users read only, inheritance cut) and writes the machine's lock file, in a folder
+# only an administrator writes. The guard reads the floor from config.json and from that lock file (their union), and
+# under floor.only, or wherever a lock exists, it trusts them only while every path the lock holds is out of this
+# session's reach (unlocked); otherwise it refuses every call.
+ON = {"refuse": True, "only": False}   # what an unreadable or unparsable config.json says: the floor on (fail closed)
+ONLY = {"refuse": True, "only": True}  # what an unreadable lock file says
+LOCK_FILE = "floor-lock.json"          # in lock_dir(): {"format", "floor", "config", "roots", "checks", "plugins"}
+LOCK_FORMAT = "brain.floor-lock/v1"
+LOCK_DIR: Path | None = None   # the tests' scratch folder; never an environment variable (a session sets those)
+# What a session must not hold on a locked path: write or append data, write extended attributes, delete a folder's
+# entries, delete it, change its ACL or its owner (FILE_WRITE_DATA, FILE_APPEND_DATA, FILE_WRITE_EA,
+# FILE_DELETE_CHILD, DELETE, WRITE_DAC, WRITE_OWNER; a folder's add-file and add-folder are the first two).
+WRITE_RIGHTS = 0x2 | 0x4 | 0x10 | 0x40 | 0x10000 | 0x40000 | 0x80000
 
 
 def _union(*states: dict) -> dict:
     return {"refuse": any(s["refuse"] for s in states), "only": any(s["only"] for s in states)}
 
 
-def _parsed(text: bytes | str | None) -> dict:
-    """floor.settings of a config.json's text; ON when it does not parse as a JSON object."""
-    import json
+def lock_dir() -> Path:
+    """The machine's lock folder: <ProgramData>/Brain on Windows (the folder the system names, not the environment's
+    ProgramData), /etc/brain elsewhere; only an administrator writes there once brain floor lock has run."""
+    if LOCK_DIR is not None:
+        return Path(LOCK_DIR)
+    return Path(_program_data()) / "Brain" if os.name == "nt" else Path("/etc/brain")
+
+
+def _program_data() -> str:
+    """ProgramData's folder as Windows knows it (SHGetKnownFolderPath, a machine setting), C:\\ProgramData else."""
     try:
-        data = json.loads(text.decode("utf-8-sig") if isinstance(text, bytes) else text)
-    except (ValueError, UnicodeDecodeError, AttributeError):
-        return dict(ON)
-    return settings(data) if isinstance(data, dict) else dict(ON)
+        import ctypes
+        import uuid
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("data", ctypes.c_ubyte * 16)]
+
+        guid = GUID()
+        ctypes.memmove(ctypes.byref(guid), uuid.UUID("62AB5D82-FDC1-4DC3-A9DD-070D1D495D97").bytes_le, 16)
+        out = ctypes.c_wchar_p()
+        shell32, ole32 = ctypes.WinDLL("shell32"), ctypes.WinDLL("ole32")
+        shell32.SHGetKnownFolderPath.argtypes = [ctypes.POINTER(GUID), wintypes.DWORD, wintypes.HANDLE,
+                                                 ctypes.POINTER(ctypes.c_wchar_p)]
+        if shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(out)) == 0:
+            path = out.value
+            ole32.CoTaskMemFree(ctypes.cast(out, ctypes.c_void_p))
+            if path:
+                return path
+    except (OSError, AttributeError, ValueError):
+        pass
+    return "C:\\ProgramData"
 
 
-def effective(cfg, cache: Path | None = None, fallback: Path | None = None) -> dict:
-    """The floor as the guard holds it: on (refuse or only) when ANY of these says so: the config.json it reads in the
-    working tree, that file as committed at the checkout's HEAD, and as committed at origin/main (the last fetch; no
-    network). A working-tree file that exists but cannot be read or parsed says ON. Lifting the floor so takes a
-    change merged on the personal brain's main, which no local write fakes (cp, mv, patch, an ACL on the file).
-    ``cfg``: a brain.config.Config; ``cache``: where the committed verdict is kept per (HEAD, origin/main) commit, so
-    that git runs only when one of them moves; ``fallback``: the personal brain's root (the pointer's) whose
-    committed config.json is read when no working-tree file is found (a removed or moved one)."""
+def read_lock() -> dict | None:
+    """The machine's lock file (brain floor lock): None when there is none, {"error": why} when it cannot be read or
+    is not one (the floor then reads ONLY and the lock as broken)."""
+    import json
+    f = lock_dir() / LOCK_FILE
+    try:
+        if not f.exists():
+            return None
+        data = json.loads(f.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        return {"error": f"{f}: {type(exc).__name__}"}
+    if not isinstance(data, dict) or data.get("format") != LOCK_FORMAT:
+        return {"error": f"{f}: not a {LOCK_FORMAT} file"}
+    return data
+
+
+def effective(cfg, lock: dict | None = None) -> dict:
+    """The floor as the guard holds it: on (refuse or only) when config.json says so (a file that exists but cannot be
+    read or parsed says ON) or the machine's lock file does (``lock``: read_lock()'s; an unreadable one says ONLY)."""
     local = settings(cfg.data) if not cfg.error else dict(ON)
-    if local["refuse"] and local["only"]:
+    if lock is None:
         return local
-    if cfg.file is not None:
-        root, path = _checkout(Path(cfg.file).parent), Path(cfg.file).resolve()
-    else:
-        root, path = (_checkout(fallback), Path(fallback).resolve() / "config.json") if fallback else (None, None)
-    if not root:
-        return local
-    return _union(local, _committed(root, path.relative_to(root).as_posix(), cache))
+    return _union(local, dict(ONLY) if lock.get("error") else settings({"floor": lock.get("floor")}))
 
 
-def _checkout(folder: Path) -> Path | None:
-    """The git checkout that holds ``folder`` (a parent with .git), else None."""
-    folder = folder.resolve()
-    for p in (folder, *folder.parents):
-        if (p / ".git").exists():
-            return p
-    return None
-
-
-def _gitdirs(root: Path) -> tuple[Path, Path]:
-    """(this checkout's git dir, the common git dir): .git, or the folder a worktree's .git file names."""
-    git = root / ".git"
-    if git.is_file():
-        m = re.match(r"gitdir:\s*(.+)", git.read_text(encoding="utf-8").strip())
-        git = (root / m.group(1)).resolve() if m else git
-    common = git / "commondir"
-    return git, ((git / common.read_text(encoding="utf-8").strip()).resolve() if common.is_file() else git)
-
-
-def _ref(gitdir: Path, common: Path, name: str, depth: int = 0) -> str:
-    """The commit a ref names, read from its file or packed-refs (a symbolic ref followed); '' when none."""
-    for d in (gitdir, common):
-        f = d / name
-        if f.is_file():
-            text = f.read_text(encoding="utf-8").strip()
-            if text.startswith("ref:") and depth < 5:
-                return _ref(gitdir, common, text[4:].strip(), depth + 1)
-            return text if re.fullmatch(r"[0-9a-f]{40,64}", text) else ""
-    packed = common / "packed-refs"
-    if packed.is_file():
-        for line in packed.read_text(encoding="utf-8").splitlines():
-            sha, _, ref = line.partition(" ")
-            if ref.strip() == name:
-                return sha
+def unlocked(cfg, fl: dict, lock: dict | None, writable=None) -> str:
+    """Why the floor's authority is within this session's reach, '' when it is not or need not be: asked under
+    floor.only and wherever a lock file exists. The lock must exist and be readable, its folder and file out of reach,
+    config.json the one it holds, every path it checks present and out of reach (``writable``: :func:`writable`), and
+    the plugin the guard runs from ($CLAUDE_PLUGIN_ROOT, when set) one it holds."""
+    if not (fl["only"] or lock is not None):
+        return ""
+    if lock is None:
+        return "this machine has no lock (brain floor lock has not been applied)"
+    if lock.get("error"):
+        return f"the lock file cannot be read ({lock['error']})"
+    writable = writable or globals()["writable"]
+    for p in (lock_dir(), lock_dir() / LOCK_FILE):
+        if writable(p):
+            return f"{p} is writable by this session"
+    held = str(lock.get("config") or "")
+    if cfg.file is None or not held or not _same(cfg.file, held):
+        return f"the guard reads {cfg.file or 'no config.json'}, the lock holds {held or 'none'}"
+    for p in lock.get("checks") or []:
+        if not isinstance(p, str) or not os.path.lexists(p):
+            return f"{p} is missing"
+        if writable(p):
+            return f"{p} is writable by this session"
+    plugin = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if plugin and not any(isinstance(r, str) and _within(plugin, r) for r in lock.get("plugins") or []):
+        return f"the guard runs from {plugin}, a plugin folder the lock does not hold"
     return ""
 
 
-def _committed(root: Path, rel: str, cache: Path | None) -> dict:
-    """The floor as config.json is committed at HEAD and at origin/main (their union; ON when a ref cannot be read
-    or a blob does not parse; a ref or a file that does not exist says nothing), cached per pair of commits."""
-    import json
+def _real(path) -> str:
+    return os.path.normcase(os.path.realpath(str(path)))
+
+
+def _same(a, b) -> bool:
+    return _real(a) == _real(b)
+
+
+def _within(path, folder) -> bool:
+    p, f = _real(path), _real(folder)
+    return p == f or p.startswith(f.rstrip("\\/") + os.sep)
+
+
+def writable(path) -> bool:
+    """Whether this process's token may change ``path``: write or append to it, delete it, change its ACL or owner,
+    add or delete a folder's entries (:data:`WRITE_RIGHTS`, read from its security descriptor: on Windows os.access
+    reads only the read-only attribute); POSIX: not owned by root, or writable. True when it cannot be told."""
     try:
-        gitdir, common = _gitdirs(root)
-        key = f"{root}|{rel}|{_ref(gitdir, common, 'HEAD')}|{_ref(gitdir, common, 'refs/remotes/origin/main')}"
-    except OSError:
-        return dict(ON)
+        return _writable_nt(str(path)) if os.name == "nt" else _writable_posix(str(path))
+    except Exception:   # noqa: BLE001 (any failure reads as reachable: the guard fails closed)
+        return True
+
+
+def _writable_posix(path: str) -> bool:
+    st = os.lstat(path)
+    return st.st_uid != 0 or os.access(path, os.W_OK, follow_symlinks=False)
+
+
+def _writable_nt(path: str) -> bool:
+    """AccessCheck of the path's security descriptor against this process's token (impersonated), MAXIMUM_ALLOWED,
+    the file object's generic mapping: whether any of WRITE_RIGHTS is granted."""
+    import ctypes
+    from ctypes import wintypes
+
+    class MAPPING(ctypes.Structure):
+        _fields_ = [("read", wintypes.DWORD), ("write", wintypes.DWORD), ("execute", wintypes.DWORD),
+                    ("all", wintypes.DWORD)]
+
+    adv, k32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
+    adv.GetFileSecurityW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                     ctypes.POINTER(wintypes.DWORD)]
+    adv.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    adv.DuplicateToken.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.POINTER(wintypes.HANDLE)]
+    adv.AccessCheck.argtypes = [ctypes.c_void_p, wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(MAPPING),
+                                ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
+                                ctypes.POINTER(wintypes.BOOL)]
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    info = 0x1 | 0x2 | 0x4   # OWNER, GROUP and DACL_SECURITY_INFORMATION
+    need = wintypes.DWORD(0)
+    adv.GetFileSecurityW(path, info, None, 0, ctypes.byref(need))
+    if not need.value:
+        return True
+    sd = ctypes.create_string_buffer(need.value)
+    if not adv.GetFileSecurityW(path, info, sd, need, ctypes.byref(need)):
+        return True
+    token, imp = wintypes.HANDLE(), wintypes.HANDLE()
+    if not adv.OpenProcessToken(k32.GetCurrentProcess(), 0x0002 | 0x0008, ctypes.byref(token)):   # DUPLICATE, QUERY
+        return True
     try:
-        hit = json.loads(cache.read_text(encoding="utf-8")).get(key) if cache and cache.is_file() else None
-    except (OSError, ValueError, AttributeError):
-        hit = None
-    if isinstance(hit, dict) and set(hit) == {"refuse", "only"}:
-        return {"refuse": hit["refuse"] is True, "only": hit["only"] is True}
-    state = _read_commits(root, rel)
-    if cache and state is not None:
+        if not adv.DuplicateToken(token, 2, ctypes.byref(imp)):   # SecurityImpersonation
+            return True
         try:
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_text(json.dumps({key: state}), encoding="utf-8")
-        except OSError:
-            pass
-    return state if state is not None else dict(ON)
-
-
-def _read_commits(root: Path, rel: str) -> dict | None:
-    """The union of config.json's floor at HEAD and at origin/main, read by one git cat-file --batch; None when git
-    cannot run."""
-    import subprocess
-    try:
-        r = subprocess.run(["git", "cat-file", "--batch"], input=f"HEAD:{rel}\norigin/main:{rel}\n".encode(),
-                           capture_output=True, cwd=str(root), timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if r.returncode:
-        return None
-    out, states = r.stdout, []
-    for _ in range(2):
-        head, _, out = out.partition(b"\n")
-        parts = head.split()
-        if len(parts) == 3 and parts[1] == b"blob":
-            size = int(parts[2])
-            states.append(_parsed(out[:size]))
-            out = out[size + 1:]
-        elif not head.endswith(b"missing"):
-            states.append(dict(ON))
-    return _union({"refuse": False, "only": False}, *states)
+            mapping = MAPPING(0x120089, 0x120116, 0x1200A0, 0x1F01FF)   # FILE_GENERIC_READ, _WRITE, _EXECUTE, ALL
+            privs, plen = ctypes.create_string_buffer(1024), wintypes.DWORD(1024)
+            granted, status = wintypes.DWORD(0), wintypes.BOOL(0)
+            if not adv.AccessCheck(sd, imp, 0x02000000, ctypes.byref(mapping), privs, ctypes.byref(plen),
+                                   ctypes.byref(granted), ctypes.byref(status)):   # MAXIMUM_ALLOWED
+                return True
+            return bool(granted.value & WRITE_RIGHTS)
+        finally:
+            k32.CloseHandle(imp)
+    finally:
+        k32.CloseHandle(token)
 
 
 def long_option(name: str) -> str:

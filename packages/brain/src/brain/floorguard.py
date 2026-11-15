@@ -89,14 +89,14 @@ def _interpreters(home: Path) -> list[str]:
 
 class Kept:
     """What the floor keeps (as the file system resolves it): the files that set it (the config.json the guard reads,
-    the pointer <BRAIN_HOME>/personal.json, the cache of the committed floor), the interpreter that runs the guard
+    the pointer <BRAIN_HOME>/personal.json), the interpreter that runs the guard
     (<BRAIN_HOME>/venv, its base installation, the user site, any sitecustomize, usercustomize or .pth), the plugin
     that runs the guard (~/.claude/plugins, $CLAUDE_PLUGIN_ROOT), and the folders of the files (the checkout,
     BRAIN_HOME)."""
 
     def __init__(self, cfg_file):
         home = paths.brain_home()
-        self.files = [g._real(f) for f in (cfg_file, home / paths.PERSONAL, home / "cache" / g.FLOOR_CACHE) if f]
+        self.files = [g._real(f) for f in (cfg_file, home / paths.PERSONAL) if f]
         self.runtimes = _interpreters(home)
         self.venv = g._real(home / "venv")
         self.plugins = [g._real(p) for p in (Path.home() / ".claude" / "plugins", os.environ.get("CLAUDE_PLUGIN_ROOT"))

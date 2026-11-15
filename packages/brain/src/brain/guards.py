@@ -3869,11 +3869,18 @@ def refusals(payload: dict, strict: bool = False):
         cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
     try:
         cfg = config.load()   # read once per call: the floor's settings and the file that sets them
-        fl = floor_settings(cfg)   # the working tree, HEAD and origin/main: any says on
+        lock = floor.read_lock()   # the machine's lock (brain floor lock), out of a session's reach once applied
+        fl = floor.effective(cfg, lock)   # config.json's floor and the lock file's: either says on
+        unlocked = floor.unlocked(cfg, fl, lock)   # the paths the lock holds checked once per call
     except Exception as exc:   # the floor cannot be known (brain_home refused, say): the guard fails closed
         _log("floor", exc)
         yield ("floor", "error", f"the guard could not read config.json, which says whether the locked floor is on "
                                  f"({type(exc).__name__}), so it refuses", None)
+        return
+    if unlocked:   # floor only, or a lock that no longer holds: the session could rewrite what the guard reads
+        yield ("floor", "lock", f"the floor is not locked: {unlocked}; every call is refused until "
+                                f"{config.owner_of()} runs brain floor lock (its plan, then --apply in an elevated "
+                                "terminal)", None)
         return
     strict = strict or fl["refuse"] or fl["only"]   # the floor on: a check that cannot judge the call refuses it
     only = fl["only"]     # floor only: the floor's refusals, the secrets check and the override protection
@@ -3964,13 +3971,9 @@ def check_override(cmds, powershell: bool = False, command: str = ""):
     return None
 
 
-FLOOR_CACHE = "floor-commits.json"   # <BRAIN_HOME>/cache/: the committed floor per (HEAD, origin/main) commit
-
-
 def floor_settings(cfg) -> dict:
-    """The floor the guard holds (brain.floor.effective): config.json in the working tree, and as committed at its
-    checkout's HEAD and origin/main, the committed verdict cached in <BRAIN_HOME>/cache (a path the floor keeps)."""
-    return floor.effective(cfg, paths.brain_home() / "cache" / FLOOR_CACHE, paths.pointer_root())
+    """The floor the guard holds (brain.floor.effective): config.json's and the machine's lock file's."""
+    return floor.effective(cfg, floor.read_lock())
 
 
 def _floor_state() -> str:
