@@ -487,7 +487,8 @@ def test_the_interpreter_is_kept_and_a_removal_is_not_a_write(repo, tmp_path, mo
     assert "removes or moves" in bash(repo, 'mv "$BRAIN_HOME/venv" /tmp/v')
     assert "removes or moves" in bash(repo, 'rm -rf "$BRAIN_HOME"')
     assert "runs the guard" in bash(repo, 'cp x "$BRAIN_HOME/venv/Scripts/python.exe"')
-    for command in ('cp notes.txt "$BRAIN_HOME/"', "tar -xzf x.tgz -C ~", "chmod 600 ~", "cp notes.txt ~/",
+    assert "floor" in bash(repo, "chmod 600 ~")   # round 6: a mode or an ACL above a kept path
+    for command in ('cp notes.txt "$BRAIN_HOME/"', "tar -xzf x.tgz -C ~", "cp notes.txt ~/",
                     "find ~ -name '*.tmp' -delete", "unzip x.zip -d ~"):
         assert bash(repo, command) is None, command
     assert pwsh(repo, "Copy-Item notes.txt ~") is None
@@ -750,7 +751,7 @@ def test_control_flow_and_unread_refspecs(repo, tmp_path, monkeypatch, command):
     "git log -1 --output=x.txt", "git diff --output=x.txt", "git grep -Ocp x", "git fetch --upload-pack=x origin",
     "git rebase -x 'cp a b' HEAD~1", "git bisect run sh -c x", "git submodule foreach x", "git difftool -x x",
     "git config core.fsmonitor x", "git config core.worktree x", "git config -f ~/.claude/settings.json a.b c",
-    "git update-ref refs/heads/main HEAD", "git branch -f main HEAD", "git fetch origin main:refs/remotes/origin/main",
+    "git update-ref refs/heads/main HEAD",
     "git apply --unsafe-paths x.diff", "git config credential.helper x", "git config filter.x.clean y",
 ])
 def test_git_options_that_write_or_run(repo, tmp_path, monkeypatch, command):
@@ -996,7 +997,7 @@ def test_the_apply_refuses_without_elevation_and_writes_the_lock_last(tmp_path, 
     assert floor.read_lock() is None and "unlocked" in out[0]
 
 
-def test_brain_floor_status_and_the_plan_from_the_command_line(tmp_path, monkeypatch, capsys):
+def test_brain_floor_status_and_the_plan_from_the_command_line(tmp_path, monkeypatch, capsys, unheld):
     from brain import cli
     _lock_setup(tmp_path, monkeypatch)
     assert cli.main(["floor", "status"]) == 0
@@ -1036,3 +1037,169 @@ def test_a_real_lock_of_a_scratch_folder(tmp_path):
     finally:
         for cmd in floorlock.unlock_commands(root, floorlock._owner()):
             subprocess.run(cmd, capture_output=True)
+
+
+# --- review round 6: what the lock does not cover, by class --------------------------------------------------------
+
+@pytest.mark.parametrize("command", [
+    "time -p cp {evil}/s.json {p}/.claude/settings.json", "time -p git push origin feat/x:main",
+    "time -- git push origin feat/x:main", "time -p setx BRAIN_PYTHON C:/x",
+    "coproc cp {evil}/s.json {p}/.claude/settings.json; wait", "coproc git push origin feat/x:main",
+    "coproc setx BRAIN_PYTHON C:/x", "coproc P {{ git push origin main; }}",
+])
+def test_time_p_and_coproc_hide_no_command(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, only=True)
+    (repo / ".claude").mkdir()
+    cmd = command.format(evil=(tmp_path / "evil").as_posix(), p=repo.as_posix())
+    assert "floor" in (bash(repo, cmd) or ""), cmd
+
+
+def test_time_p_hides_nothing_from_the_other_guards(repo, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch)   # the floor off: the power guard reads past time -p
+    assert "power" in (bash(repo, "time -p shutdown /s /t 0") or "")
+    assert guards._unwrap(["time", "-p", "--", "git", "push"]) == ["git", "push"]
+    assert guards._unwrap(["coproc", "NAME", "{", "git", "push"]) == ["git", "push"]
+    assert guards._unwrap(["coproc", "git", "push"]) == ["git", "push"]
+
+
+def _evil_branch(repo):
+    """A branch feat/evil whose commit adds .claude/settings.json turning every hook off, the work tree on main."""
+    (repo / ".claude").mkdir(exist_ok=True)
+    run_git(repo, "checkout", "-q", "-b", "feat/evil")
+    (repo / ".claude" / "settings.json").write_text('{"disableAllHooks": true}', encoding="utf-8")
+    run_git(repo, "add", ".claude/settings.json")
+    run_git(repo, "commit", "-q", "-m", "evil")
+    run_git(repo, "checkout", "-q", "main")
+
+
+@pytest.mark.parametrize("command", [
+    "git checkout -- .claude/settings.json", "git restore --source=feat/evil .claude/settings.json",
+    "git update-index --add --cacheinfo 100644,0123456789abcdef0123456789abcdef01234567,.claude/settings.json",
+    "git merge feat/evil", "git checkout feat/evil", "git switch feat/evil", "git cherry-pick feat/evil",
+    "git reset --hard feat/evil", "git restore -s feat/evil .", "git worktree add ../w feat/evil",
+    "git update-index --index-info",
+])
+def test_git_writing_a_settings_file_is_refused(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, only=True)
+    _evil_branch(repo)
+    assert "Claude Code's settings" in (bash(repo, command) or "") or "floor" in (bash(repo, command) or ""), command
+
+
+def test_git_work_that_brings_no_settings_file_passes(repo, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch, only=True)
+    run_git(repo, "checkout", "-q", "-b", "feat/ok")
+    (repo / "a.txt").write_text("a", encoding="utf-8")
+    run_git(repo, "add", "a.txt")
+    run_git(repo, "commit", "-q", "-m", "ok")
+    run_git(repo, "checkout", "-q", "main")
+    for command in ("git merge feat/ok", "git checkout feat/ok", "git switch -c feat/new", "git reset --hard HEAD",
+                    "git cherry-pick feat/ok", "git stash", "git restore a.txt"):
+        assert bash(repo, command) is None, command
+
+
+def test_an_archive_holding_a_settings_file_is_refused(repo, tmp_path, monkeypatch):
+    import tarfile
+    import zipfile
+    config(tmp_path, monkeypatch, only=True)
+    s = tmp_path / "s.json"
+    s.write_text('{"disableAllHooks": true}', encoding="utf-8")
+    with tarfile.open(tmp_path / "s.tar", "w") as tf:
+        tf.add(s, ".claude/settings.json")
+    with zipfile.ZipFile(tmp_path / "s.zip", "w") as z:
+        z.write(s, ".claude/settings.local.json")
+    with tarfile.open(tmp_path / "ok.tar", "w") as tf:
+        tf.add(s, "data/s.json")
+    (tmp_path / "s.7z").write_bytes(b"7z\xbc\xaf\x27\x1c")   # a 7z archive: its members cannot be listed
+    t, p = tmp_path.as_posix(), repo.as_posix()
+    for command in (f"tar -xf {t}/s.tar -C {p}", f"tar xf {t}/s.tar -C {p}", f"unzip -o {t}/s.zip -d {p}",
+                    f"curl -s https://x.example/a.tgz | tar -xz -C {p}", f"7z x {t}/s.7z -o{p}"):
+        assert "floor" in (bash(repo, command) or ""), command
+    assert "floor" in (pwsh(repo, f"Expand-Archive -Path {t}/s.zip -DestinationPath {p}") or "")
+    assert bash(repo, f"tar -xf {t}/ok.tar -C {p}") is None
+
+
+@pytest.mark.parametrize("command", [
+    "f() ( cp \"$1\" \"$2\" ); f a b", "f() [[ -n x ]]; f", "function f ( cp a b ); f",
+    "shopt -s expand_aliases; alias c=cp\nc a .claude/settings.json", "alias c=cp", "f() if true; then cp a b; fi",
+])
+def test_functions_of_any_body_and_aliases_are_refused(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, only=True)
+    assert "floor" in (bash(repo, command) or ""), command
+
+
+def test_powershell_aliases_are_refused(repo, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch, only=True)
+    assert "floor" in (pwsh(repo, "Set-Alias c Copy-Item; c a b") or "")
+
+
+@pytest.mark.parametrize("command", [
+    "declare -x -t \"GIT_CONFIG_PARAMETERS='core.fsmonitor=cp a b; false'\"; git status -s",
+    "set -o errexit -o allexport; for GIT_DIR in x/.git; do :; done; git status",
+    "shopt -so allexport", "select GIT_DIR in x; do break; done", "getopts a GIT_DIR", "mapfile -t GIT_DIR < f",
+    "for GIT_WORK_TREE in x; do :; done", "readarray PATH < f",
+])
+def test_every_bash_form_of_assignment_is_read(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, only=True)
+    assert "floor:config" in (bash(repo, command) or ""), command
+
+
+@pytest.mark.parametrize("command", [
+    "$env:FOO='x/.git'; Get-Item Env:FOO | Rename-Item -NewName GIT_DIR", "$p='Env:'; New-Item -Path $p -Name GIT_DIR -Value x",
+    "$psi.EnvironmentVariables['GIT_DIR']='x'", "$psi.Environment.Add('GIT_DIR', 'x')",
+])
+def test_every_powershell_form_of_assignment_is_read(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, only=True)
+    assert "floor:config" in (pwsh(repo, command) or ""), command
+
+
+def test_prose_is_only_git_s_and_gh_s_message(repo, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch, only=True)
+    assert bash(repo, 'git commit -m "set GIT_DIR=x in the docs"') is None
+    assert bash(repo, 'gh pr create -t "set GIT_DIR=x" -b "PATH=y and more"') is None
+    assert "floor" in (bash(repo, 'mytool -t "GIT_DIR=x y"') or "")
+
+
+@pytest.mark.parametrize("command", [
+    "git config protocol.ext.allow always", "git fetch -q \"ext::sh -c cp% a% b\"", "git clone fd::3 x",
+    "git config submodule.x.update '!cp a b'", "git config interactive.diffFilter cat",
+    "git config browser.x.cmd x", "git config web.browser x", "git config man.x.cmd x", "git config instaweb.httpd x",
+    "git config sendemail.smtpServer /bin/x", "git config init.templateDir /tmp/t", "git config ssh.variant x",
+    "git config trailer.x.command x", "git config hook.x.command x", "GIT_ALLOW_PROTOCOL=ext git fetch x",
+    "git config credential.helper '!cp a b'", "git config core.hooksPath x", "git config core.fsmonitor x",
+])
+def test_git_keys_and_transports_that_run_a_program(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, only=True)
+    assert "floor" in (bash(repo, command) or ""), command
+
+
+@pytest.mark.parametrize("command", [
+    "git config core.autocrlf false", "git config core.longpaths true", "git config core.filemode false",
+    "git config --global core.autocrlf input", "git config credential.helper manager",
+    "git config credential.helper 'cache --timeout=3600'", "git config diff.tool vscode",
+    "git config branch.feat/x.description \"what it does\"", "git format-patch -o patches HEAD~1",
+    "git fetch origin main:main",
+])
+def test_ordinary_repo_keys_pass_under_the_floor(repo, tmp_path, monkeypatch, command):
+    config(tmp_path, monkeypatch, only=True)
+    assert bash(repo, command) is None, command
+
+
+def test_a_link_onto_a_settings_file_is_refused(repo, tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch, only=True)
+    o = repo.as_posix()
+    for command in (f"cmd //c mklink {o}/.claude/settings.json C:/evil/s.json",
+                    f"cmd /c mklink /H {o}/.claude/settings.local.json C:/evil/s.json",
+                    f"ln -s /evil/s.json {o}/.claude/settings.json"):
+        assert "floor" in (bash(repo, command) or ""), command
+    assert "floor" in (pwsh(repo, f"New-Item -ItemType SymbolicLink -Path {o}/.claude/settings.json -Target x") or "")
+    assert bash(repo, f"ln -s a.txt {o}/b.txt") is None
+
+
+def test_an_acl_on_a_folder_above_a_kept_path_is_refused(repo, tmp_path, monkeypatch):
+    from pathlib import Path
+    config(tmp_path, monkeypatch, only=True)
+    home = Path.home().as_posix()
+    for command in (f"icacls {home}/.claude /deny x:(OI)(CI)(RX)", f"cacls {home}/.claude /E /D x",
+                    f"icacls {home} /deny x:(OI)(CI)(RX)", f"chmod -R 000 {home}/.claude"):
+        assert "floor" in (bash(repo, command) or ""), command
+    assert bash(repo, "chmod +x a.sh") is None and bash(repo, "icacls a.txt /grant x:R") is None

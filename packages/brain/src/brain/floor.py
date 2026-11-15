@@ -70,7 +70,7 @@ FLOOR_ENV = (r"BRAIN_CONFIG|CLAUDE_BRAIN_DIR|BRAIN_PERSONAL|BRAIN_HOME|CLAUDE_PL
 # script (BASH_ENV, SHELLOPTS, BASHOPTS), PATH, the Brain's own, and Claude Code's that choose its settings or plugin.
 GIT_VARS = (r"GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_NAMESPACE|GIT_\w*_DIRECTORY|"
             r"GIT_\w*_DIRECTORIES|GIT_EXEC_PATH|GIT_SSH\w*|GIT_ASKPASS|GIT_EXTERNAL_DIFF|GIT_TEMPLATE_DIR|"
-            r"GIT_PROXY_COMMAND|GIT_(?:SEQUENCE_)?EDITOR(?!=(?:true|:|cat)\b)|GIT_PAGER(?!=(?:true|:|cat|less)\b)")
+            r"GIT_PROXY_COMMAND|GIT_ALLOW_PROTOCOL|GIT_(?:SEQUENCE_)?EDITOR(?!=(?:true|:|cat)\b)|GIT_PAGER(?!=(?:true|:|cat|less)\b)")
 WATCHED_VARS = (GIT_VARS + r"|HOME|USERPROFILE|XDG_CONFIG_HOME|BASH_ENV|SHELLOPTS|BASHOPTS|PATH|BRAIN_\w+|"
                 r"CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_BRAIN_DIR|CLAUDE_PROJECT_DIR")
 _START = r"(?:^|(?<=[\s;&|(]))"
@@ -79,11 +79,18 @@ ENV_ASSIGN = re.compile(
     rf"\b(?:export|declare|typeset|readonly|read)\b[^;&|\n]*?(?<![\w${{])(?:{WATCHED_VARS})\b|"
     rf"\bprintf\s+-v\s*(?:{WATCHED_VARS})\b|"
     rf"\$\{{(?:{WATCHED_VARS}):?=|\(\(\s*(?:{WATCHED_VARS})\s*[-+*/]?=|"                 # ${NAME:=x}, (( NAME = 1 ))
-    rf"\bset\s+(?:-[A-Za-z]*a[A-Za-z]*|-o\s+allexport)\b|"                              # set -a: every later NAME= exported
+    rf"(?<![\w-])set\s(?:[^;&|\n]*\s)?(?:-[A-Za-z]*a[A-Za-z]*|allexport)(?![\w-])|"     # set -a, set -e -o allexport
+    rf"\bshopt\b[^;&|\n]*\ballexport\b|"                                                  # shopt -so allexport
+    rf"\b(?:for|select)\s+(?:{WATCHED_VARS})\b(?=\s*(?:in\b|;|\n|do\b|$))|"                # for NAME in, select NAME in
+    rf"\bgetopts\s+\S+\s+(?:{WATCHED_VARS})\b|"
+    rf"\b(?:mapfile|readarray)\b[^;&|\n]*?(?<![\w$-])(?:{WATCHED_VARS})\b|"
     rf"(?i:\$\{{?env:(?:{WATCHED_VARS})\}}?\s*(?:[+-]?=|,))|"                            # $env:X = , ${env:X} =, $env:X, $y =
     rf"(?i:(?<![$\{{\w])env:\\?(?:{WATCHED_VARS})\b)|"                                   # the env: provider: Env:\GIT_DIR, 'env:X'
     rf"(?i:\b(?:rename-item|copy-item|move-item|rni|ren|cpi|copy|mi|move)\b[^;|\n]*\benv:)|"
     rf"(?i:\benv:\\?[^;|\n]*-name\s+(?:{WATCHED_VARS})\b)|"
+    rf"(?i:\benv:[^;\n]*\|\s*(?:rename-item|rni|ren|copy-item|cpi|copy|move-item|mi|move|set-item|si|new-item|ni)\b)|"
+    rf"(?i:\b(?:new-item|ni|set-item|si|rename-item|rni|ren)\b[^;|\n]*-(?:new)?name\s+(?:{WATCHED_VARS})\b)|"
+    rf"(?i:\.Environment(?:Variables)?\s*(?:\[|\.(?:Add|Item|set_Item)\s*\()\s*(?:{WATCHED_VARS})\b)|"
     rf"(?i:SetEnvironmentVariable\s*\(\s*(?:{WATCHED_VARS})\s*,)")
 # An assignment whose name the guard cannot read (a variable, a call): refused while the floor is on.
 ENV_DYNAMIC = re.compile(r"\b(?:export|declare|typeset|printf\s+-v)\s+(?:-\w+\s+)*[^\s;=]*[$(`]|"
@@ -97,18 +104,29 @@ GIT_CONFIG_FILES = re.compile(r"(?i)(?:^|[\\/])(?:\.gitconfig|\.git[\\/]config(?
                               r"\.git[\\/](?:.*[\\/])?(?:refs[\\/].*|packed-refs|HEAD))$")
 # The configuration keys a session does not set while the floor is on (git config): aliases, includes, remotes,
 # push's own keys, URL rewrites, and what makes git write elsewhere or run a program (core.*, filters, diff and merge
-# drivers, credential helpers, editors, pagers, gpg, upload-pack and receive-pack).
+# drivers, credential helpers, editors, pagers, gpg, upload-pack and receive-pack; round 6: the transports a protocol
+# allows (ext::), submodules' update commands, browsers, interactive filters, man viewers, instaweb, send-email, init's
+# templates, ssh's variant, trailer commands and configured hooks).
 PUSH_KEYS = re.compile(r"(?i)^(?:alias\..+|include(?:if\..+)?\.path|remote\..+|push\..+|url\..+|core\..+|filter\..+|"
                        r"diff\..+|merge\..+\.driver|credential.*|sequence\.editor|gpg\..+|uploadpack\..+|"
-                       r"receivepack\..+|difftool\..+|mergetool\..+|pager\..+|branch\..+)$")
+                       r"receivepack\..+|difftool\..+|mergetool\..+|pager\..+|branch\..+|protocol\..+|"
+                       r"submodule\..+|interactive\..+|browser\..+|web\..+|man\..+|instaweb\..+|sendemail\..+|"
+                       r"init\..+|ssh\..+|trailer\..+|hook\..+)$")
+# The keys of PUSH_KEYS an ordinary repo sets that neither run a program nor redirect a write (round 6, #12): line
+# endings, long paths, the file mode, case, quoting, the diff and merge tool's name, a branch's description; and
+# credential.helper given one of the usual helpers (CREDENTIAL_HELPERS: its first word).
+SAFE_KEYS = re.compile(r"(?i)^(?:core\.(?:autocrlf|longpaths|filemode|ignorecase|eol|quotepath|safecrlf|precomposeunicode)|"
+                       r"diff\.tool|merge\.tool|diff\.guitool|merge\.guitool|branch\..+\.description)$")
+CREDENTIAL_HELPERS = {"manager", "manager-core", "store", "cache", "wincred", "osxkeychain", "libsecret", ""}
 # git options that write a file or run a program, refused under the floor whatever the subcommand: an output file,
 # a pager, an upload-pack or receive-pack program, a command to run, an external diff or textconv.
 GIT_RUNNING_OPTS = ("--output", "--open-files-in-pager", "--upload-pack", "--receive-pack", "--exec", "--ext-diff",
                     "--textconv", "--extcmd", "--unsafe-paths")
 # Per subcommand, the short options that do the same: grep -O (a pager), rebase -x (a command), ls-remote and clone
-# -u (an upload-pack), difftool -x and -t (a tool), format-patch -o (a folder of files).
+# -u (an upload-pack), difftool -x and -t (a tool). format-patch -o passes (round 6, #12): it writes NNNN-*.patch
+# files, never a settings file.
 GIT_RUNNING_SHORT = {"grep": ("-O",), "rebase": ("-x",), "ls-remote": ("-u",), "clone": ("-u",),
-                     "difftool": ("-x", "-t"), "format-patch": ("-o",)}
+                     "difftool": ("-x", "-t")}
 # git subcommands that run what they are given: bisect run, submodule foreach, filter-branch, mergetool.
 GIT_RUNNERS = {"bisect": "run", "submodule": "foreach", "filter-branch": "", "filter-repo": "", "mergetool": "",
                "update-ref": ""}

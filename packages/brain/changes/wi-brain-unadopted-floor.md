@@ -19,11 +19,19 @@ section: Added
   variables, a copy or an extraction onto what the floor keeps, a write of the registry's Environment key and the
   plugin that runs the guard are refused; an edit is judged on the file it leaves. `hooks.json` runs `guard.sh`
   under `bash -p`.
-- The floor is read from config.json in the working tree and as committed at its checkout's `HEAD` and at
-  `origin/main` (`brain.floor.effective`; any on, or an unreadable file, holds it), so a local write of config.json
-  no longer lifts it. While it is on, a settings file changes by Write or Edit only, the interpreter's base
-  installation and Python's startup files are kept, git options that write or run are refused, and the shell's
-  reserved words are read through.
+- `brain floor lock` holds the floor by the operating system (`brain.floorlock`): its plan prints what it gives to
+  the administrators (config.json's checkout and its .git, the pointer, the guard's venv and code, the plugin folder
+  that carries `guard.sh`; owner Administrators or root, the users read and run only, inheritance cut) and the
+  commands; `--apply` runs them in an elevated terminal only and writes the machine's lock file last
+  (`<ProgramData>/Brain/floor-lock.json`, `/etc/brain/floor-lock.json`); `--refresh` fast-forwards the locked checkout
+  to origin/main first; `brain floor unlock` gives them back; `brain floor status` says whether a session can change
+  them. The guard reads the floor from config.json and the lock file (`brain.floor.effective`; an unreadable file
+  holds it); under `floor.only`, or wherever a lock exists, it refuses every call while a path the lock holds is
+  within the session token's reach (`brain.floor.unlocked`: the token's effective access, not the read-only
+  attribute). While the floor is on, a settings file changes by Write or Edit only (git, an archive or a link that
+  would write one is refused), the interpreter's base installation and Python's startup files are kept, git options
+  and configuration keys that write or run are refused (an ordinary repo's keys pass), functions of any body, aliases
+  and every assignment form are read, and the shell's reserved words are read through (`time -p`, `coproc`).
 - The owner guard reads the override's name as the shell and JSON read it (quotes, carets, escapes) and resolves
   a path before comparing it (an NTFS stream's name, a junction); under `guards.owner_strict` it also refuses
   `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `CLAUDE_CONFIG_DIR` and `disableAllHooks` set for later sessions.

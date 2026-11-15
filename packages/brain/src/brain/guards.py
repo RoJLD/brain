@@ -655,7 +655,9 @@ WRAPPERS = {"env": "uCS", "nohup": "", "nice": "n", "time": "", "command": "", "
             "sudo": "ugCDhpr", "timeout": "sk", "stdbuf": "ioe", "xargs": "IiadEeLlnPs", "gsudo": "udn", "doas": "uC",
             "pkexec": "", "setsid": "", "unbuffer": "", "ionice": "cnpt"}
 # The shell's reserved words that open a command: what follows them runs (bash: if true; then git push...; fi).
-RESERVED = {"if", "then", "elif", "else", "while", "until", "do", "!", "{", "(", "time"}
+RESERVED = {"if", "then", "elif", "else", "while", "until", "do", "!", "{", "(", "time", "coproc"}
+# What follows a reserved word before the command it runs: time's -p and --; coproc's NAME before a compound command.
+COMPOUND = {"{", "(", "((", "[[", "if", "for", "while", "until", "case", "select"}
 WRAPPER_LONGS = {"sudo": ("user", "group", "host", "prompt", "close-from", "chdir", "role", "type", "other-user",
                           "command-timeout"),
                  "env": ("unset", "chdir"), "nice": ("adjustment",), "timeout": ("signal", "kill-after"),
@@ -749,7 +751,12 @@ def _unwrap(words: list[str]) -> list[str]:
     stdin = False
     while words and (words[0] in RESERVED or _prog(words[0]) in WRAPPERS):
         if words[0] in RESERVED:   # if, then, do, !, {: the command that follows runs (review of the floor, round 5)
-            words = words[1:]
+            word, words = words[0], words[1:]
+            if word == "time":   # time -p CMD, time -- CMD (round 6: -p was read as the program)
+                while words and words[0] in ("-p", "--"):
+                    words = words[1:]
+            elif word == "coproc" and len(words) > 1 and words[1] in COMPOUND and re.fullmatch(r"\w+", words[0]):
+                words = words[1:]   # coproc NAME { ...; }: the name is no command
             continue
         w = _prog(words[0])
         i = 1
