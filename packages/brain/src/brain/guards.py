@@ -2071,7 +2071,7 @@ NTFS_STREAM = re.compile(r"(?<=[^\\/:]):[^\\/]*$")   # file.json::$DATA, file.js
 def _real(target) -> str:
     """A path as the file system resolves it: its NTFS stream suffix dropped, links followed, case folded."""
     text = NTFS_STREAM.sub("", str(target)) if os.name == "nt" else str(target)
-    return os.path.normcase(os.path.realpath(os.path.abspath(text)))
+    return os.path.normcase(floor.resolve(text))   # a network path as written (round 8 #2)
 
 
 def _is_roots(target) -> bool:
@@ -3007,6 +3007,8 @@ def check_attribution(command: str, cmds: list[tuple[list[str], str]]) -> str | 
 
 def _run(args: list[str], cwd: str, timeout: float = 10, env: dict[str, str] | None = None) \
         -> subprocess.CompletedProcess:
+    if args and args[0] == "git":   # by its path, never one in the hook's working directory (round 8 #8)
+        args = [floor.git(), *args[1:]]
     return subprocess.run(args, cwd=cwd, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
 
 
@@ -4095,6 +4097,9 @@ def main(stdin=None, stdout=None) -> int:
             cfg = config.load()
             reason = f"{config.claude(cfg)['plugin']} guard: {reason}. " + (
                 f"No override: {check} is {config.owner(cfg)}'s alone, in the app." if check in UNLIFTED else
+                f"No override: the floor is locked; {config.owner(cfg)} lowers it with brain floor lock --lower or "
+                "removes it with brain floor unlock (both elevated, their plans print the command)."
+                if guard == "floor" and floor.read_lock() is not None else
                 f"Override ({config.owner(cfg)} only): {ALLOW_ENV}={guard} (or {guard}:{check}) in Claude Code's "
                 "environment.")
             (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {

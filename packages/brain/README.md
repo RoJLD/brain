@@ -1574,10 +1574,13 @@ when a session's plugin copy and the engine differ, or when two `.brain` folders
 `floor.refuse`), and of what would lift it (the config.json the guard reads, its pointer, a variable that chooses
 it); a floor-only machine (`floor.only`) gets the locked rules alone, the floor's refusals, the secrets check and the
 override protection alone, and no memory sync, until it is adopted. A machine with the floor on is locked by the
-owner's elevated `brain floor lock --apply` (its plan prints the command, with no profile): the floor's copy goes to
-`<ProgramData>/Brain`, the guard to `<Program Files>/Brain/guard` and its hooks to Claude Code's managed settings,
-out of a session's reach; on a floor-only machine the guard refuses every call until then (`brain floor status` says
-whether a session can change them).
+owner's elevated `brain floor lock --apply` (its plan prints one command line to run from Win+R with
+Ctrl+Shift+Enter, no shell): the floor's copy goes to `<ProgramData>/Brain`, a compiled copy of the guard to
+`<Program Files>/Brain/guard`, and Claude Code's managed settings get `allowManagedHooksOnly` with the plugin's hooks
+declared from that copy (exec form; the judging ones block when they fail, Claude Code v2.1.295 or later), out of a
+session's reach; on a floor-only machine the guard refuses every call until then. `brain floor status` says whether a
+session can change them and whether the managed hooks are in force (Claude Code's managed sources are first-wins:
+server-managed settings or an HKLM policy skip the files).
 
 A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
 Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that

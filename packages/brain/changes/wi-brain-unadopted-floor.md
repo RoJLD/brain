@@ -20,11 +20,15 @@ section: Added
   plugin that runs the guard are refused; an edit is judged on the file it leaves. `hooks.json` runs `guard.sh`
   under `bash -p`.
 - `brain floor lock` holds the floor by the operating system (`brain.floorlock`, `brain.floorhook`): its plan prints
-  the floor it locks and the elevated command (`powershell -NoProfile`, an absolute interpreter, `-I`); `--apply`
-  (elevated only; `--lower` to lower a locked floor) installs the guard as a system component in
-  `<Program Files>/Brain/guard` (an interpreter, its code, a manifest of hashes), declares its hooks in Claude Code's
-  managed settings (`managed-settings.d/brain-floor.json`, which no user or project `disableAllHooks` turns off),
-  checks every file, then writes the lock file (`<ProgramData>/Brain/floor-lock.json`, `/etc/brain`), whose copy of
+  the floor it locks and one command line to run from Win+R with Ctrl+Shift+Enter (no shell: an absolute
+  interpreter, `-I`, `--wait`; `brain floor unlock` prints its own); `--apply` (elevated only; `--lower` to lower a
+  locked floor) installs a new copy of the guard as a system component under `<Program Files>/Brain/guard` (an
+  interpreter compiled in place, its code, the plugin's hook scripts, a manifest of hashes with the bytecode), never
+  removing the copy its own interpreter runs from, writes Claude Code's managed settings
+  (`managed-settings.d/brain-floor.json`: `allowManagedHooksOnly`, so no user, project or plugin hook rewrites a call
+  after the guard; the plugin's hooks declared from the copy in exec form, the guard and the governor with
+  `onFailure: block`, Claude Code v2.1.295 or later, and a deadline that refuses), checks every file, puts the managed
+  file and the lock file back together when a step fails, then writes the lock file (`<ProgramData>/Brain/floor-lock.json`, `/etc/brain`), whose copy of
   the floor is the authority (config.json is only compared to it). Nothing in the user's profile is locked: the
   personal brain's worktrees keep working. Under a lock the guard ignores `BRAIN_GUARD_ALLOW`'s floor names and the
   environment's `BRAIN_HOME`, `BRAIN_PYTHON`, `CLAUDE_PLUGIN_ROOT`; `brain floor unlock --apply` removes all three;
@@ -34,7 +38,15 @@ section: Added
   (`.MoveTo(`, `.CopyTo(`, `.Replace(`, `.Delete(`) are read, and a settings file changes by Write or Edit only (git, an archive or a link that
   would write one is refused), the interpreter's base installation and Python's startup files are kept, git options
   and configuration keys that write or run are refused (an ordinary repo's keys pass), functions of any body, aliases
-  and every assignment form are read, and the shell's reserved words are read through (`time -p`, `coproc`).
+  and every assignment form are read, and the shell's reserved words are read through (`time -p`, `coproc`). An
+  edit that adds a settings file's PreToolUse or PermissionRequest hook, or an env key that picks a shell or git
+  (`CLAUDE_CODE_GIT_BASH_PATH`, `CLAUDE_CODE_SHELL*`, `SHELL`, `GIT_EXEC_PATH`, `ComSpec`, `PATHEXT`...), is refused;
+  a static member called through a .NET type held in a variable (`$t = [type]'IO.File'; $t::...`) and `Set-Content`
+  on the `function:` and `alias:` drives are refused; a network path is judged as written, never resolved; the guard
+  runs git by the path the lock names, never from the working directory.
+- Under a lock, the guard's refusal names the elevated `brain floor lock --lower` and `brain floor unlock` instead of
+  `BRAIN_GUARD_ALLOW`, and `guard.sh` no longer steps aside for the managed file (it judges where the managed
+  settings are not in force: Claude Code's managed sources are first-wins).
 - The owner guard reads the override's name as the shell and JSON read it (quotes, carets, escapes) and resolves
   a path before comparing it (an NTFS stream's name, a junction); under `guards.owner_strict` it also refuses
   `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `CLAUDE_CONFIG_DIR` and `disableAllHooks` set for later sessions.

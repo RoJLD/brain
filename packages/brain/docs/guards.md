@@ -95,38 +95,58 @@ round 7 showed any folder of the user's profile can be renamed through its paren
 
 ### The lock: `brain floor lock` (the owner's, elevated)
 
-`brain floor lock` prints the plan: the floor it locks and the one locked now, what it writes, and the command the
+`brain floor lock` prints the plan: the floor it locks and the one locked now, what it writes, and the command line the
 owner runs. `brain floor lock --apply` refuses to run without elevation (a session never elevates), with config.json's
 floor off (a lock of no floor holds nothing), or lowering a locked floor without `--lower`. It writes three things,
 each in a folder whose parents only an administrator writes:
 
-- **the guard as a system component**, `<Program Files>/Brain/guard` (the folder HKLM names; `/opt/brain/guard`): a
-  copy of the interpreter (Windows; on POSIX the system's own Python, which root must own), of the guard's code and
-  its dependencies, two launchers (`guard.py` for the hooks, `floor.py` for the owner's next elevated step) and
-  `manifest.json`, the hash of every file;
-- **its hooks in Claude Code's managed settings**, `C:\Program Files\ClaudeCode\managed-settings.d\brain-floor.json`
-  (`/etc/claude-code`, `/Library/Application Support/ClaudeCode`): the plugin's `guard.sh` matchers, each command the
-  copy's interpreter on `guard.py` by absolute path, `-X utf8 -I`. Claude Code reads managed settings from that fixed
-  folder, above every other level, and "`disableAllHooks` set in user, project, or local settings can't disable those
-  managed hooks" (Claude Code's hooks reference, "Disable or remove hooks"; Deploy managed settings, "File-based");
+- **the guard as a system component**, a new copy per lock under `<Program Files>/Brain/guard` (the folder HKLM names;
+  `/opt/brain/guard`), named by its time (`g20261116-120000`): a copy of the interpreter (Windows; on POSIX the
+  system's own Python, which root must own), of the guard's code and its dependencies with their metadata, the
+  plugin's hook scripts, two launchers (`hook.py` for the hooks, `floor.py` for the owner's next elevated step), the
+  bytecode of all of it (compiled by the copy's own interpreter during the apply: the hooks run as the user and cannot
+  write `__pycache__` there; a guarded call takes about 0.5 s with it, about 2 s without) and `manifest.json`, the hash
+  of every file, bytecode included;
+- **Claude Code's managed settings**, `C:\Program Files\ClaudeCode\managed-settings.d\brain-floor.json`
+  (`/etc/claude-code`, `/Library/Application Support/ClaudeCode`): `allowManagedHooksOnly: true`, so that no user,
+  project, local or plugin hook runs ("Your user, project, local, and plugin hooks are blocked", hooks reference): a
+  hook running beside the guard could otherwise return an `updatedInput` that replaces the call the guard judged. The
+  plugin's own hooks are declared again from the copy, in exec form (`command` an absolute program, `args` its
+  arguments: no shell, no PATH lookup). The PreToolUse ones (the guard, the governor, the read and wait hints) run the
+  copy's interpreter on `hook.py` with `-X utf8 -I`; the judging ones, the guard and the governor, carry `"onFailure":
+  "block"` (a hook that fails or times out then blocks the call; Claude Code v2.1.295 or later) and a deadline at 60 %
+  of their timeout past which they refuse the call themselves. A hint never judges: a failing one lets the call
+  through. The other events' hooks (the rules, the announcements, health, resume, memory, capture, budget) run the
+  copy's scripts with the administrators' bash (Git for Windows under Program Files, `/bin/bash`), and those scripts
+  still run the user's engine; with no such bash they are left out, and the apply says so. "`disableAllHooks` set in
+  user, project, or local settings can't disable those managed hooks" (hooks reference, "Disable or remove hooks");
 - last, **the lock file**, `<ProgramData>/Brain/floor-lock.json` (the folder Windows names, not the environment's
-  `ProgramData`; `/etc/brain`): the floor's copy, the config.json and `<BRAIN_HOME>` the guard reads, the paths it
-  checks on each call, the manifest's hash.
+  `ProgramData`; `/etc/brain`): the floor's copy, the config.json and `<BRAIN_HOME>` the guard reads, the copy in use,
+  the paths it checks on each call, the manifest's hash, and the administrators' git (and bash) the guard runs.
 
 Each folder is given to Administrators (root): its own ACL reset, its inheritance cut with Administrators and SYSTEM
 full and the users read and run (from here no child gains the user's rights), the owner set on the whole tree, then
 every child's ACL reset to what it inherits (an entry a session added before the cut goes); POSIX `chown -R 0:0`,
 `chmod -R u=rwX,go=rX`. A session may create a folder in ProgramData: the apply empties `Brain` after the cut. It then
 checks every file it wrote (owner Administrators, SYSTEM or TrustedInstaller, no allow entry that grants a write right
-to anyone else, no link or junction) and writes the lock file only when all hold; otherwise it removes it and fails,
-and every call stays refused until an apply completes.
+to anyone else, no link or junction) and keeps the lock file only when all hold. A step that fails puts the managed
+file and the lock file back as they were, together (the previous lock and its untouched copy; or no lock, and a
+floor-only machine then refuses every call until an apply completes), and removes the new copy. Once the new copy
+holds, the older ones are removed, except the one the apply's own interpreter runs from (the next lock removes it).
 
-The locked guard takes nothing from the environment a session sets: `guard.py` puts the copy's own folders first
-(`python -I`), takes `BRAIN_CONFIG` and `BRAIN_HOME` from the lock file and drops `BRAIN_PYTHON`,
-`CLAUDE_PLUGIN_ROOT`, `CLAUDE_BRAIN_DIR` and `BRAIN_PERSONAL` (`brain.floorhook`); wherever a lock file exists,
-`BRAIN_GUARD_ALLOW` lifts none of the floor's checks (`floor`, `floor:*`, `all`): `brain floor unlock --apply`, elevated,
-alone lifts a locked floor. The plugin's `guard.sh` steps aside when the managed file exists (a fixed path a session
-cannot create), so the guard judges each call once.
+The locked guard takes nothing from the environment a session sets: `hook.py` puts the copy's own folders first
+(`python -I`), takes `BRAIN_CONFIG` and `BRAIN_HOME` from the lock file, drops `BRAIN_PYTHON`, `CLAUDE_PLUGIN_ROOT`,
+`CLAUDE_BRAIN_DIR` and `BRAIN_PERSONAL`, sets `NoDefaultCurrentDirectoryInExePath` and runs the git the lock names (a
+`git.exe` in the hook's working directory never runs; `brain.floorhook`, `brain.floor.git`). A network path
+(`\\host\share`, `//host/share`) is judged as written, never resolved (an unreachable host took 21 s). Wherever a lock
+file exists, `BRAIN_GUARD_ALLOW` lifts none of the floor's checks (`floor`, `floor:*`, `all`), and the refusal says so:
+`brain floor lock --lower` and `brain floor unlock`, elevated, alone change a locked floor.
+
+Claude Code reads its managed sources first-wins: server-managed settings, then (Windows) an HKLM policy, then the
+managed files; when one of the first two holds a policy the files are skipped, and the lock's hooks with them. `brain
+floor status` says whether the managed hooks are in force (an HKLM `SOFTWARE\Policies\ClaudeCode` key on this machine:
+not in force). Where they are not, the plugin's own `guard.sh` still judges each call with the user's engine (it no
+longer steps aside for the managed file; where they are, `allowManagedHooksOnly` keeps it from running).
 
 What the guard checks on each call (`brain.floor.unlocked`), under `floor.only` and wherever a lock file exists: the
 lock file exists and reads; its folder and file, the guard's folder, manifest, launchers and interpreter, and the
@@ -138,16 +158,22 @@ root and not writable. Anything else, and a floor-only machine with no lock, ref
 also walks every file of the lock and compares the guard's files to the manifest; run it in a normal terminal (an
 elevated one reaches everything).
 
-- **The owner's elevated step** runs nothing a session can write: the plan prints `powershell -NoProfile -Command
-  "& '<interpreter>' -I ..."` (no profile, no PATH lookup, no user site). Once the guard is installed, that is the
-  copy's own interpreter on its `floor.py`. The first lock runs the engine in `<BRAIN_HOME>/venv`, which a session
+- **The owner's elevated step** starts no shell: the plan prints one command line to paste in Win+R (Start > Run) and
+  run with Ctrl+Shift+Enter (as administrator): the interpreter by absolute path with `-I`, then, once the guard is
+  installed, the copy's `floor.py lock --apply --wait` (`--wait` keeps the window on its result until Enter). Not from
+  an elevated PowerShell window: the window loads the user's profile and modules (`PSReadLine` from
+  `Documents\WindowsPowerShell\Modules`), which a session can write, before any `-NoProfile` command runs. The first
+  lock runs the engine in `<BRAIN_HOME>/venv` (`python.exe -I -m brain floor lock --apply --wait`), which a session
   can write: update it from your own terminal first, and close every Claude Code session before any apply (a process
-  keeps what it opened before the lock). git is no longer run elevated (no checkout is locked, nothing to fetch).
-- **Changing a locked machine**: a change of config.json's floor refuses every call until `brain floor lock --apply`
-  (from the copy) locks it again; an engine update changes nothing the locked guard runs until the owner locks again
-  with the new engine (from its venv, sessions closed). The personal brain's checkout and its worktrees stay the
-  user's: nothing there is locked.
-- `brain floor unlock --apply` (elevated) removes the managed file, the guard's copy and the lock file; the plugin's
+  keeps what it opened before the lock). POSIX: `/usr/bin/sudo` and the interpreter's absolute path.
+- **Changing a locked machine**: a change of config.json's floor refuses every call until the owner locks again from
+  the copy (`brain floor lock` prints its command line); an engine update changes nothing the locked guard runs until
+  the owner locks again with the new engine, from its venv (the first lock's command line, the venv updated from the
+  owner's own terminal, sessions closed). The personal brain's checkout and its worktrees stay the user's: nothing
+  there is locked.
+- `brain floor unlock` prints its own command line (the copy's `floor.py unlock --apply --wait`). `--apply` (elevated)
+  removes the lock file and the managed file together (both put back if either fails), then the guard's copies, except
+  the one its own interpreter runs from (removed by hand once the window is closed, or by the next lock); the plugin's
   guard then judges again.
 
 What else the floor holds (`brain.floorguard`; reviews 2 to 5 closed classes, not spellings). Every check reads each
@@ -271,8 +297,14 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   raw HTTP call), git's transports beyond `git push` and `git send-pack`, a symbolic branch made before the floor was
   on and pushed by a refspec with a colon.
 - **Guard-lift** (a session stops the guard for itself or later sessions, without touching the floor's files): on a
-  locked machine the managed hooks hold (no `disableAllHooks` of the user's or a project's turns them off, and the
-  plugin folder is not what runs them). Elsewhere it is the parser's alone, with no backstop, open through code the
+  locked machine the managed hooks hold while Claude Code reads the managed files (no server-managed settings or HKLM
+  policy first): `allowManagedHooksOnly` blocks every other hook, no `disableAllHooks` of the user's or a project's
+  turns them off, a hook that fails or times out blocks the call (Claude Code v2.1.295 or later; an older one lets it
+  through), and the plugin folder is not what runs them. The managed hooks of other events than PreToolUse run the
+  user's engine: they cannot change a call, but they run code a session may have written, outside the guard's
+  reading. Elsewhere it is the parser's alone, with no backstop (an edit that adds a settings file's PreToolUse or
+  PermissionRequest hook, or an env key that picks a shell or git, is refused; such a write through code the guard does
+  not read is not), open through code the
   guard does not read (a script, a program, a compiled tool, a Python wrapper named like a Python) and through a
   launcher it does not unwrap: `flock`, `chrt`, `script -c`, `watch`, `parallel`, `find -exec`, `busybox`, a program
   named by a variable, PowerShell's `[scriptblock]::Create`, bash's `. <(...)`, `Invoke-CimMethod` or

@@ -63,6 +63,12 @@ FLOOR_ENV = (r"BRAIN_CONFIG|CLAUDE_BRAIN_DIR|BRAIN_PERSONAL|BRAIN_HOME|CLAUDE_PL
              r"BASHOPTS|XDG_CONFIG_HOME|GIT_CONFIG\w*|" + GUARD_OFF +
              r"|(?-i:(?<![\w$%])(?<!\$\{)(?:HOME|USERPROFILE|ENV)\s*[=:,])|(?<![\w$%])(?<!\$\{)PATH\s*[:,]"
              r"|(?:\bsetx\s+|-name\s+|/v\s+)(?:HOME|USERPROFILE|PATH|ENV)\b")
+# Round 8 #1: what an edit of a settings file adds (brain.floorguard._edit, on unspelled() text) that changes a call
+# after the guard judged it or the programs every command runs: a PreToolUse or PermissionRequest hook (its
+# updatedInput replaces the input the guard saw; a locked machine's managed allowManagedHooksOnly blocks it as well), and
+# the env keys that pick a shell or git.
+SETTINGS_KEYS = (r"(?<![\w$%])(?:PreToolUse|PermissionRequest|CLAUDE_CODE_GIT_BASH_PATH|CLAUDE_CODE_SHELL\w*|SHELL|"
+                 r"GIT_EXEC_PATH|ComSpec|PATHEXT|SystemRoot|NoDefaultCurrentDirectoryInExePath|PS4)\s*:")
 # The variables no command sets while the floor is on, in any form (a prefix NAME=, export, declare, printf -v, read,
 # env, ${NAME:=}, (( NAME = )), PowerShell's $env:, ${env:} and its env: provider, SetEnvironmentVariable): git's that
 # change its configuration, repository or the programs it runs (GIT_EDITOR, GIT_SEQUENCE_EDITOR and GIT_PAGER pass
@@ -335,7 +341,29 @@ def _reachable(paths: list, writable, missing: bool = False) -> str:
 
 
 def _real(path) -> str:
-    return os.path.normcase(os.path.realpath(str(path)))
+    return os.path.normcase(resolve(str(path)))
+
+
+# Round 8 #2: a network path (\\host\share, //host/share, \\?\UNC\host\share) whose resolution can take tens of seconds
+# (an unreachable host), which a call could use to run the guard past its hook's timeout. \\?\C:\ and \\.\C:\ are local.
+UNC = re.compile(r"^[\\/]{2}(?![?.][\\/])|^[\\/]{2}[?.][\\/]UNC[\\/]", re.I)
+
+
+def resolve(path: str) -> str:
+    """os.path.realpath, but a network path is judged as written (normalised, never resolved: round 8 #2)."""
+    absolute = os.path.abspath(path)
+    return os.path.normpath(absolute) if UNC.match(path) or UNC.match(absolute) else os.path.realpath(absolute)
+
+
+def git() -> str:
+    """The git the guard runs (round 8 #8): the one the lock file names (an administrator's, checked by brain floor
+    lock), else the PATH's, never the working directory's (NoDefaultCurrentDirectoryInExePath)."""
+    import shutil
+    os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+    lock = read_lock()
+    if lock and not lock.get("error") and isinstance(lock.get("git"), str) and os.path.isabs(lock["git"]):
+        return lock["git"]
+    return shutil.which("git") or "git"
 
 
 def _same(a, b) -> bool:

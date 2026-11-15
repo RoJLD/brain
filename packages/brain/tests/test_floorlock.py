@@ -1,4 +1,4 @@
-"""The locked floor held by the operating system (brain floor lock, brain.floorlock, brain.floorhook; review rounds 6-7
+"""The locked floor held by the operating system (brain floor lock, brain.floorlock, brain.floorhook; review rounds 6-8
 of wi-brain-unadopted-floor): the lock file's floor is the authority and config.json is only compared to it, a
 floor-only machine without its lock refuses every call, the override does not lift a locked floor, the guard runs as a
 system component (its copy, its manifest, its managed hooks), and the plan, the apply (elevated only) and the unlock.
@@ -6,6 +6,7 @@ Owner Ada; the lock, guard and managed folders are the tests' own (conftest)."""
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 from brain import floor, floorhook, floorlock, guards
@@ -40,6 +41,7 @@ def _lock(cfg_file, floor_section=None, checks=(), brain_home=""):
     d.mkdir(parents=True, exist_ok=True)
     data = {"format": floor.LOCK_FORMAT, "floor": floor_section or {"refuse": True, "only": True},
             "config": str(cfg_file), "brain_home": brain_home, "guard": str(guard),
+            "interpreter": str(guard / "python" / "python.exe"),
             "manifest": floor.file_hash(guard / floor.MANIFEST), "checks": [str(c) for c in checks]}
     (d / floor.LOCK_FILE).write_text(json.dumps(data), encoding="utf-8")
     return d / floor.LOCK_FILE
@@ -129,11 +131,12 @@ def test_the_locked_hook_takes_its_selectors_from_the_lock(tmp_path, monkeypatch
     env = {"BRAIN_CONFIG": "evil.json", "BRAIN_PYTHON": "x", "CLAUDE_PLUGIN_ROOT": "y", "BRAIN_PERSONAL": "z",
            "CLAUDE_BRAIN_DIR": "w", "BRAIN_HOME": "v", "PATH": "p"}
     floorhook.pin(env)
-    assert env == {"BRAIN_CONFIG": str(f), "BRAIN_HOME": str(tmp_path / "home"), "PATH": "p"}
+    assert env == {"BRAIN_CONFIG": str(f), "BRAIN_HOME": str(tmp_path / "home"), "PATH": "p",
+                   "NoDefaultCurrentDirectoryInExePath": "1"}   # round 8 #8: no program from the working directory
     (floor.lock_dir() / floor.LOCK_FILE).unlink()
     env = {"BRAIN_CONFIG": "evil.json"}
     floorhook.pin(env)
-    assert env == {}   # no lock: no config.json chosen by the session (the guard refuses every call)
+    assert env == {"NoDefaultCurrentDirectoryInExePath": "1"}   # no lock: no config.json chosen by the session (the guard refuses every call)
 
 
 # --- the session token's reach ------------------------------------------------------------------------------------
@@ -197,10 +200,12 @@ def test_the_plan_prints_what_it_writes_and_an_absolute_command_with_no_profile(
     assert p["floor"] == {"refuse": False, "only": True} and p["held"] is None and not p["installed"]
     text = "\n".join(floorlock.render_plan(p))
     for part in (str(floor.guard_dir()), str(floor.managed_file()), floor.LOCK_FILE, "close every Claude Code session",
-                 "a session never elevates", " -I ", "floor lock --apply"):
+                 "a session never elevates", " -I ", "floor lock --apply", "allowManagedHooksOnly",
+                 f"v{floorlock.MIN_CLAUDE_CODE}"):
         assert part in text, part
-    if os.name == "nt":
-        assert "powershell -NoProfile" in text
+    if os.name == "nt":   # round 8 #3: Win+R, no interactive shell, the window waits
+        assert "Win+R" in text and "Ctrl+Shift+Enter" in text and "powershell" not in floorlock.run_command(p)
+        assert floorlock.run_command(p).endswith("--wait")
     _lock(cfg, {"refuse": True, "only": True})
     cfg.write_text(json.dumps({"v": 1, "floor": {"refuse": True}}), encoding="utf-8")
     p = floorlock.plan(guards.config.load())
@@ -222,41 +227,91 @@ def test_lock_commands_cut_before_the_owner_and_reset_the_children():
 
 def test_install_guard_copies_the_interpreter_the_code_and_hashes_them(tmp_path):
     base = tmp_path / "base"
-    for rel in ("python.exe", "Lib/os.py", "Lib/site-packages/evil.pth", "Lib/test/t.py", "DLLs/x.pyd"):
+    for rel in ("python.exe", "Lib/os.py", "Lib/__pycache__/os.cpython-312.pyc", "Lib/site-packages/evil.pth",
+                "Lib/test/t.py", "DLLs/x.pyd"):
         (base / rel).parent.mkdir(parents=True, exist_ok=True)
         (base / rel).write_text("x", encoding="utf-8")
     pkg = tmp_path / "src" / "brain"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("", encoding="utf-8")
-    gdir = floor.guard_dir()
-    gdir.mkdir()
-    (gdir / "stale.txt").write_text("old", encoding="utf-8")
-    interp = floorlock.install_guard(gdir, base=base, packages=[pkg], nt=True)
-    assert interp == gdir / "python" / "python.exe" and not (gdir / "stale.txt").exists()
+    gdir = floor.guard_dir() / "g1"
+    ran = []
+
+    class Done:
+        returncode, stdout, stderr = 0, "", ""
+
+    def run(cmd, **kw):   # the copy's own interpreter compiles it (round 8 #5)
+        ran.append(cmd)
+        (gdir / "site" / "brain" / "__pycache__").mkdir()
+        (gdir / "site" / "brain" / "__pycache__" / "__init__.cpython-312.pyc").write_text("pyc", encoding="utf-8")
+        return Done()
+
+    interp = floorlock.install_guard(gdir, base=base, packages=[pkg], nt=True, run=run)
+    assert interp == gdir / "python" / "python.exe"
+    assert ran == [[str(interp), "-I", "-m", "compileall", "-q", "-j", "0", str(gdir)]]
     assert (gdir / "python" / "Lib" / "os.py").exists() and (gdir / "python" / "DLLs" / "x.pyd").exists()
+    assert (gdir / "python" / "Lib" / "__pycache__").exists()   # the standard library's bytecode kept
     assert not (gdir / "python" / "Lib" / "site-packages").exists() and not (gdir / "python" / "Lib" / "test").exists()
-    assert (gdir / "site" / "brain" / "__init__.py").exists()
-    assert "floorhook.hook(" in (gdir / "guard.py").read_text(encoding="utf-8")
+    assert (gdir / "site" / "brain" / "__init__.py").exists() and (gdir / "plugin" / "hooks" / "budget.sh").exists()
+    assert "floorhook.hook(" in (gdir / "hook.py").read_text(encoding="utf-8")
     assert "floorhook.cli(" in (gdir / "floor.py").read_text(encoding="utf-8")
     listed = json.loads((gdir / floor.MANIFEST).read_text(encoding="utf-8"))
-    assert listed == floorlock.manifest(gdir) and "guard.py" in listed and "python/python.exe" in listed
-    hooks = floorlock.hooks_settings(interp, gdir)["hooks"]["PreToolUse"]
-    commands = [h["command"] for group in hooks for h in group["hooks"]]
-    assert commands and all(c.startswith(f'"{interp.as_posix()}" -X utf8 -I "{(gdir / "guard.py").as_posix()}" ')
-                            for c in commands)
-    assert {c.rsplit(" ", 1)[-1] for c in commands} == {"shell", "edit", "tool"}
-    assert any(g["matcher"] == "Edit|Write|MultiEdit|NotebookEdit" for g in hooks)
+    assert listed == floorlock.manifest(gdir) and "hook.py" in listed and "python/python.exe" in listed
+    assert "site/brain/__pycache__/__init__.cpython-312.pyc" in listed   # bytecode in the manifest
+    with pytest.raises(floorlock.LockError, match="exists"):   # a copy goes into a new folder, never over one
+        floorlock.install_guard(gdir, base=base, packages=[pkg], nt=True, compile=False)
+
+
+def test_the_managed_settings_block_other_hooks_and_declare_the_plugin_s_in_exec_form(tmp_path):
+    """Round 8 #1, #2: allowManagedHooksOnly; every plugin hook declared from the copy, exec form (no shell, no PATH);
+    the judging ones with onFailure block and a deadline under their timeout; the others with the administrators'
+    bash, or left out without one; the opt-in read hint only when config.json turns it on."""
+    gdir, interp = tmp_path / "g1", tmp_path / "g1" / "python" / "python.exe"
+    s = floorlock.hooks_settings(interp, gdir)
+    assert s["allowManagedHooksOnly"] is True and set(s["hooks"]) == {"PreToolUse"}   # no bash: other events left out
+    hooks = [h for g in s["hooks"]["PreToolUse"] for h in g["hooks"]]
+    assert {h["command"] for h in hooks} == {str(interp)} and not [h for h in hooks if "shell" in h]
+    assert {tuple(h["args"][:4]) for h in hooks} == {("-X", "utf8", "-I", str(gdir / "hook.py"))}
+    judged = {" ".join(h["args"][4:]): h.get("onFailure") for h in hooks}   # what runs: whether its failure blocks
+    assert judged["--deadline=18 guard shell"] == judged["--deadline=6 guard edit"] == "block"
+    assert judged["--deadline=6 governor"] == "block"
+    assert judged["waithint"] is None                                       # a hint never judges
+    assert not [k for k in judged if "readhint" in k]                       # opt-in, off
+
+
+def test_the_managed_settings_run_other_events_with_the_administrators_bash(tmp_path):
+    """Round 8 #1: the rules, announcements, capture... run the copy's scripts with an absolute bash, exec form."""
+    gdir, interp = tmp_path / "g1", tmp_path / "g1" / "python" / "python.exe"
+    s = floorlock.hooks_settings(interp, gdir, bash="C:/Program Files/Git/bin/bash.exe", data={"hints": {"read": True}})
+    assert any("readhint" in h["args"] for g in s["hooks"]["PreToolUse"] for h in g["hooks"])
+    start = [h for g in s["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert start[0] == {"type": "command", "timeout": 10, "command": "C:/Program Files/Git/bin/bash.exe",
+                        "args": [(gdir / "plugin" / "hooks" / "inject-rules.sh").as_posix(), "SessionStart"]}
+    assert {"Stop", "SessionEnd", "PostToolUse", "UserPromptSubmit", "SubagentStart"} <= set(s["hooks"])
+
+
+def test_the_locked_hook_refuses_past_its_deadline_and_an_unknown_name(capsys, monkeypatch):
+    """Round 8 #2: a guard that has not decided within its deadline refuses (exit 2, Claude Code blocks the call)."""
+    import threading
+    exited = threading.Event()
+    codes = []
+    timer = floorhook.refuse_after(0.05, "guard", exit=lambda code: (codes.append(code), exited.set()))
+    assert exited.wait(5) and codes == [2]
+    timer.cancel()
+    assert "did not decide within 0.05 s" in capsys.readouterr().err
+    monkeypatch.setattr(floorhook, "pin", lambda: None)
+    assert floorhook.hook(["--deadline=5", "nothing"]) == 2 and "unknown" in capsys.readouterr().err
 
 
 def test_the_locked_launcher_runs_the_copy_s_guard(tmp_path, monkeypatch):
-    """guard.py of the copy, run as the managed hook runs it: -I, its own site folder, a refusal on stdout."""
+    """hook.py of the copy, run as the managed hook runs it: -I, its own site folder, a refusal on stdout."""
+    import shutil
     import subprocess
     import sys
     f = config(tmp_path, monkeypatch, refuse=True)
-    import shutil
     gdir = floor.guard_dir()
     (gdir / "site").mkdir(parents=True)
-    (gdir / "guard.py").write_text(floorlock.LAUNCHER.format(entry="hook"), encoding="utf-8")
+    (gdir / "hook.py").write_text(floorlock.LAUNCHER.format(entry="hook"), encoding="utf-8")
     shutil.copytree(os.path.dirname(floor.__file__), gdir / "site" / "brain",
                     ignore=shutil.ignore_patterns("__pycache__"))
     _lock(f, {"refuse": True})
@@ -268,11 +323,32 @@ def test_the_locked_launcher_runs_the_copy_s_guard(tmp_path, monkeypatch):
                     "runpy.run_path(sys.argv[0], run_name='__main__')\n", encoding="utf-8")
     hook = {"tool_name": "Bash", "tool_input": {"command": "git push origin feat/x:main"}, "cwd": str(tmp_path)}
     env = {**os.environ, "BRAIN_GUARD_ALLOW": "floor", "BRAIN_CONFIG": "elsewhere.json"}
-    r = subprocess.run([sys.executable, "-X", "utf8", "-I", str(shim), (gdir / "guard.py").as_posix(), "shell"],
-                       input=json.dumps(hook).encode(), capture_output=True, timeout=120, env=env)
+    r = subprocess.run([sys.executable, "-X", "utf8", "-I", str(shim), (gdir / "hook.py").as_posix(), "--deadline=20",
+                        "guard", "shell"], input=json.dumps(hook).encode(), capture_output=True, timeout=120, env=env)
     out = r.stdout.decode("utf-8")
     # the scratch lock does not hold (a user's folders): refused, and the environment's override lifted nothing
     assert "deny" in out and "the floor is not locked" in out, (out, r.stderr.decode("utf-8", "replace")[-800:])
+
+
+class _Done:
+    returncode, stdout, stderr = 0, "", ""
+
+
+def _install(gdir):
+    gdir.mkdir(parents=True)
+    (gdir / floor.MANIFEST).write_text("{}", encoding="utf-8")
+    return gdir / "python" / "python.exe"
+
+
+def _applier(ran: list):
+    def run(cmd, **kw):
+        ran.append((cmd, (floor.lock_dir() / floor.LOCK_FILE).exists()))
+        return _Done()
+
+    def apply(**kw):
+        return floorlock.apply(guards.config.load(), run=run, is_elevated=lambda: True, install=_install,
+                               tools=lambda check: {"git": "C:/Program Files/Git/cmd/git.exe"}, **kw)
+    return apply
 
 
 def test_the_apply_needs_elevation_checks_every_file_and_writes_the_lock_last(tmp_path, monkeypatch):
@@ -281,47 +357,70 @@ def test_the_apply_needs_elevation_checks_every_file_and_writes_the_lock_last(tm
         floorlock.apply(guards.config.load(), is_elevated=lambda: False)
     assert floor.read_lock() is None
     ran = []
-
-    class Done:
-        returncode, stdout, stderr = 0, "", ""
-
-    def run(cmd, **kw):
-        ran.append((cmd, (floor.lock_dir() / floor.LOCK_FILE).exists()))
-        return Done()
-
-    def install(gdir):
-        gdir.mkdir(parents=True, exist_ok=True)
-        (gdir / floor.MANIFEST).write_text("{}", encoding="utf-8")
-        return gdir / "python" / "python.exe"
-
+    apply = _applier(ran)
     floor.lock_dir().mkdir(parents=True)
     (floor.lock_dir() / "planted.txt").write_text("x", encoding="utf-8")   # a session's file before the lock
-    out = floorlock.apply(guards.config.load(), run=run, is_elevated=lambda: True, install=install,
-                          check=lambda p: [])
+    out = apply(check=lambda p: [])
     lock = floor.read_lock()
-    assert lock["format"] == floor.LOCK_FORMAT and lock["floor"] == {"refuse": False, "only": True}
-    assert lock["config"] == str(cfg.resolve()) and lock["manifest"] == floor.file_hash(floor.guard_dir() / "manifest.json")
-    assert str(floor.managed_file()) in lock["checks"] and "locked" in out[0]
-    assert not (floor.lock_dir() / "planted.txt").exists()
+    copy = Path(lock["guard"])
+    assert copy.parent == floor.guard_dir() and lock["format"] == floor.LOCK_FORMAT
+    assert lock["floor"] == {"refuse": False, "only": True} and lock["git"] == "C:/Program Files/Git/cmd/git.exe"
+    assert lock["config"] == str(cfg.resolve()) and lock["manifest"] == floor.file_hash(copy / "manifest.json")
+    assert str(floor.managed_file()) in lock["checks"] and str(floor.guard_dir()) in lock["checks"]
+    assert "locked" in out[0] and not (floor.lock_dir() / "planted.txt").exists()
     managed = json.loads(floor.managed_file().read_text(encoding="utf-8"))
-    assert managed["hooks"]["PreToolUse"]
+    assert managed["allowManagedHooksOnly"] is True and managed["hooks"]["PreToolUse"]
     cuts = [written for cmd, written in ran if str(floor.lock_dir()) == cmd[1] and "/inheritance:r" in cmd]
     if os.name == "nt":
         assert cuts == [False]   # the lock folder cut before the lock file is written
-    with pytest.raises(floorlock.LockError, match="not complete"):
-        floorlock.apply(guards.config.load(), run=run, is_elevated=lambda: True, install=install,
-                        check=lambda p: [f"{p}: writable by S-1-5-21-x"])
-    assert floor.read_lock() is None   # a lock that does not hold is no lock: every call refused until it does
+
+
+def test_a_failed_apply_restores_the_previous_lock_then_lower_and_unlock(tmp_path, monkeypatch):
+    """Round 8 #4: a step that fails leaves the previous state whole; a new lock replaces the copy; unlock removes all."""
+    cfg = _setup(tmp_path, monkeypatch, only=True)
+    apply = _applier([])
+    apply(check=lambda p: [])
+    copy = Path(floor.read_lock()["guard"])
+    held_lock, held_managed = (floor.lock_dir() / floor.LOCK_FILE).read_bytes(), floor.managed_file().read_bytes()
+    with pytest.raises(floorlock.LockError, match="back as they were"):   # round 8 #4: the previous state whole
+        apply(check=lambda p: [f"{p}: writable by S-1-5-21-x"] if p == floor.lock_dir() else [])
+    assert (floor.lock_dir() / floor.LOCK_FILE).read_bytes() == held_lock
+    assert floor.managed_file().read_bytes() == held_managed and [p for p in floor.guard_dir().iterdir()] == [copy]
     cfg.write_text(json.dumps({"v": 1, "floor": {"refuse": True}}), encoding="utf-8")
-    _lock(cfg, {"only": True})
     with pytest.raises(floorlock.LockError, match="--lower"):
-        floorlock.apply(guards.config.load(), run=run, is_elevated=lambda: True, install=install, check=lambda p: [])
-    floorlock.apply(guards.config.load(), lower=True, run=run, is_elevated=lambda: True, install=install,
-                    check=lambda p: [])
+        apply(check=lambda p: [])
+    apply(lower=True, check=lambda p: [])
     assert floor.read_lock()["floor"] == {"refuse": True, "only": False}
+    assert [p.name for p in floor.guard_dir().iterdir()] == [Path(floor.read_lock()["guard"]).name] != [copy.name]
     out = floorlock.unlock(is_elevated=lambda: True)
     assert floor.read_lock() is None and not floor.guard_dir().exists() and not floor.managed_file().exists()
     assert "unlocked" in out[0]
+
+
+def test_a_failed_first_apply_leaves_no_lock_and_the_running_copy_is_never_removed(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch, only=True)
+    with pytest.raises(floorlock.LockError, match="no lock"):
+        floorlock.apply(guards.config.load(), run=lambda c, **k: _Done(), is_elevated=lambda: True, install=_install,
+                        tools=lambda check: {}, check=lambda p: ["x: owned by S-1-5-21-x"])
+    assert floor.read_lock() is None and not floor.managed_file().exists()
+    assert not any(floor.guard_dir().iterdir())   # the new copy removed
+    running = floor.guard_dir() / "g-old"
+    (running / "python").mkdir(parents=True)
+    monkeypatch.setattr(floorlock.sys, "executable", str(running / "python" / "python.exe"))
+    assert floorlock._prune(floor.guard_dir(), keep=None) == [str(running)] and running.exists()
+
+
+def test_the_guard_runs_the_git_the_lock_names(tmp_path, monkeypatch):
+    """Round 8 #8: never a git.exe in the hook's working directory."""
+    monkeypatch.setenv("NoDefaultCurrentDirectoryInExePath", "")
+    f = config(tmp_path, monkeypatch, refuse=True)
+    _lock(f, {"refuse": True})
+    lock = json.loads((floor.lock_dir() / floor.LOCK_FILE).read_text(encoding="utf-8"))
+    lock["git"] = str(tmp_path / "Git" / "cmd" / "git.exe")
+    (floor.lock_dir() / floor.LOCK_FILE).write_text(json.dumps(lock), encoding="utf-8")
+    assert floor.git() == lock["git"] and os.environ["NoDefaultCurrentDirectoryInExePath"] == "1"
+    (floor.lock_dir() / floor.LOCK_FILE).unlink()
+    assert floor.git() != lock["git"]
 
 
 def test_brain_floor_status_and_the_plan_from_the_command_line(tmp_path, monkeypatch, capsys, unheld):

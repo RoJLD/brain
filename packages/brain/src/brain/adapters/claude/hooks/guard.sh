@@ -92,14 +92,9 @@ refuse_floor() {
 }
 
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0
-# A locked machine (brain floor lock) runs the guard's system copy from Claude Code's managed settings; this copy,
-# which runs from the user's profile, leaves the call to it. Fixed paths, not the environment's: a session cannot
-# create a file under Program Files or /etc, so it cannot make this guard step aside on a machine with no lock.
-for managed in "C:/Program Files/ClaudeCode/managed-settings.d/brain-floor.json" \
-    /etc/claude-code/managed-settings.d/brain-floor.json \
-    "/Library/Application Support/ClaudeCode/managed-settings.d/brain-floor.json"; do
-  [ -f "$managed" ] && exit 0
-done
+# A locked machine (brain floor lock) runs the guard's system copy from Claude Code's managed settings, whose
+# allowManagedHooksOnly keeps this plugin hook from running at all; where they are not in force (an HKLM policy or
+# server-managed settings come first: Claude Code's managed sources are first-wins), this copy still judges (round 8).
 root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
 IFS= read -r -d '' input  # the hook's JSON, without $(cat)'s fork
 needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }

@@ -31,6 +31,11 @@ PIPE_SOURCES = {"get-item", "gi", "get-childitem", "gci", "ls", "dir", "resolve-
 WORD = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"|[^\s|;]+")
 # Round 7: .NET's file and folder methods that write, move, remove or re-ACL the object they are called on.
 NET_WRITERS = re.compile(r"(?i)\.(?:MoveTo|CopyTo|Replace|Delete|SetAccessControl|Encrypt|Decrypt)\s*\(")
+# Round 8 #6: a .NET type held in a variable ($t = [type]'IO.File', $t = [IO.File], $t = 'IO.File' -as [type],
+# $t = [Type]::GetType(...)), then a static member called through it ($t::WriteAllText(...)), which the parser cannot
+# tie to a type: refused under the floor whatever the member.
+TYPE_VAR = re.compile(r"(?i)\$(?:\{)?(\w+)\}?\s*=\s*(?:\[type\]|\[[\w.]+\]\s*(?=$|[;|\n)}])|\S+\s+-as\s+\[type\]|"
+                      r"\[(?:system\.)?type\]::gettype\s*\()")
 HOME_VARS = re.compile(r"(?i)^(?:\$env:(?:USERPROFILE|HOME)|\$\{env:(?:USERPROFILE|HOME)\}|\$HOME|~)(?=$|[\\/])")
 
 
@@ -62,6 +67,15 @@ def piped(command: str, acts, kept) -> str | None:
             if hit:
                 return (f"{_unq(rw[0])} of {hit} through a pipeline refused: it changes what sets the floor or runs "
                         "the guard")
+    return None
+
+
+def typed(plain: str) -> str | None:
+    """A static member called through a variable that holds a .NET type (TYPE_VAR)."""
+    for name in {m.group(1) for m in TYPE_VAR.finditer(plain)}:
+        if re.search(r"(?i)\$(?:\{" + re.escape(name) + r"\}|" + re.escape(name) + r"\b)\s*::", plain):
+            return (f"${name}:: refused: a .NET type held in a variable, whose static members the floor cannot read "
+                    "(name the type: [IO.File]::...)")
     return None
 
 

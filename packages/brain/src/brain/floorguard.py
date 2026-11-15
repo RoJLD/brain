@@ -148,7 +148,7 @@ def _edit(tool: str, inp: dict, cwd: str, kept: Kept) -> str | None:
     if not g._override_file(target):
         return None
     before, after = g._edit_result(inp, tool, target)
-    added = g._introduced(floor.FLOOR_ENV, before, after)
+    added = g._introduced(floor.FLOOR_ENV, before, after) or g._introduced(floor.SETTINGS_KEYS, before, after)
     if added:
         return f"{tool} refused: it leaves {added} in {target}, which moves or stops the floor"
     if _plugin_off(floor.unspelled(after)) and not _plugin_off(floor.unspelled(before)):
@@ -171,7 +171,7 @@ def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
               lambda: _copies(acts, kept), lambda: _extractions(acts, kept), lambda: _archived_settings(acts),
               lambda: _links(acts, kept), lambda: _git_settings(acts), lambda: _checkout(acts, kept),
               lambda: _named(acts, command), lambda: _plugin_cmd(acts), lambda: floorpwsh.piped(command, acts, kept),
-              lambda: floorpwsh.methods(command, acts, kept))
+              lambda: floorpwsh.methods(command, acts, kept), lambda: floorpwsh.typed(plain))
     what = next((w for check in checks if (w := check())), None)
     if what:
         return what
@@ -213,13 +213,13 @@ START_RISKY = {"git", "claude", "reg", "setx", "wmic", "robocopy", *SHELLS}
 FUNCTION = re.compile(r"(?:^|[;&|\s])(?:function\s+[\w.-]+|[\w.-]+\s*\(\s*\)\s*(?:\{|\(|\[\[|"
                       r"(?:if|for|while|until|case|select)\b))|"
                       # round 7: PowerShell's ${function:f} = {...}, and the function: drive (Set-Item, New-Item)
-                      r"(?i:\$\{function:|\b(?:set-item|si|new-item|ni)\s+(?:-path\s+)?['\"]?function:)")
+                      r"(?i:\$\{function:|\b(?:set-item|si|new-item|ni|set-content|sc|add-content|ac)\s+(?:-path\s+)?['\"]?function:)")
 # An alias the call defines or turns on (round 6: alias c=cp, then c, was read as a program c): bash's alias and
 # shopt -s expand_aliases, PowerShell's Set-Alias and New-Alias; round 7: BASH_ALIASES[...]=, set -o posix (POSIX mode
 # expands aliases), the alias: drive (Set-Item, New-Item).
 ALIAS = re.compile(r"(?:^|[;&|\s(])(?:alias\s+[^\s=;&|]+=|shopt\s+(?:-\w+\s+)*expand_aliases\b|"
                    r"(?i:(?:set-alias|new-alias|sal|nal)\s))|\bBASH_ALIASES\s*\[|\bset\s+(?:-\w+\s+)*-o\s+posix\b|"
-                   r"(?i:\b(?:set-item|si|new-item|ni)\s+(?:-path\s+)?['\"]?alias:)")
+                   r"(?i:\b(?:set-item|si|new-item|ni|set-content|sc|add-content|ac)\s+(?:-path\s+)?['\"]?alias:)")
 
 
 def _opaque(cmds, acts, command: str = "") -> str | None:

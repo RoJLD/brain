@@ -1,10 +1,14 @@
-"""The floor's round-7 parser classes (wi-brain-unadopted-floor; brain.floorpwsh, brain.floorguard): PowerShell's
-pipelines and .NET's writers onto what the floor keeps, the environment through COM and .NET, and the new spellings
-of settings and git keys. Owner Ada, on a machine whose lock holds (test_floor's ``held``)."""
+"""The floor's round-7 and round-8 parser classes (wi-brain-unadopted-floor; brain.floorpwsh, brain.floorguard):
+PowerShell's pipelines and .NET's writers onto what the floor keeps, a .NET type held in a variable, the environment
+through COM and .NET, the new spellings of settings and git keys, a settings file's hooks and shell keys, network paths.
+Owner Ada, on a machine whose lock holds (test_floor's ``held``)."""
+
+import json
+import time
 
 import pytest
 from brain import floor
-from test_floor import config
+from test_floor import config, edit
 from test_guards import bash, pwsh
 
 
@@ -71,3 +75,42 @@ def test_round_7_spellings_of_settings_and_git_are_refused(repo, tmp_path, monke
                     "git config credential.helper 'store ;cp a b #'", "git config credential.helper '!cp a b'"):
         assert "floor" in (bash(repo, command) or ""), command
     assert bash(repo, "git config credential.helper 'store --file=~/.git-credentials'") is None
+
+
+def test_a_type_held_in_a_variable_and_the_function_drive_through_set_content_are_refused(repo, tmp_path, monkeypatch):
+    """Review round 8 #6, #7: $t = [type]'IO.File' then $t::WriteAllText(...) was not read as [IO.File]; Set-Content
+    and Add-Content define a function or an alias through the function: and alias: drives."""
+    config(tmp_path, monkeypatch, refuse=True)
+    home, o, cfg = _r7(repo, tmp_path)
+    for command in (f"$t=[type]'IO.File'; $t::WriteAllText('{cfg}','{{}}')", f"$t = [IO.File]; $t::Move('{cfg}', 'x')",
+                    f"$t = 'IO.File' -as [type]; $t::Delete('{cfg}')",
+                    f"${{t}} = [Type]::GetType('System.IO.File'); ${{t}}::Copy('a', '{o}/.claude/settings.json')",
+                    "Set-Content -Path function:f -Value { Copy-Item $args[0] $args[1] }; f a b",
+                    "Add-Content function:f { cp a b }", "sc alias:c Copy-Item; c a b"):
+        assert "floor" in (pwsh(repo, command) or ""), command
+    for command in ("$t = [IO.File]::ReadAllText('a.txt')", "$n = [int]'4'; $n + 1", "[IO.Path]::GetTempPath()"):
+        assert pwsh(repo, command) is None, command
+
+
+def test_a_settings_file_s_hook_or_shell_key_is_refused_under_the_floor(repo, tmp_path, monkeypatch):
+    """Review round 8 #1: a settings PreToolUse hook runs beside the guard and its updatedInput replaces the call the
+    guard judged; env keys pick the shell or git every command runs."""
+    config(tmp_path, monkeypatch, refuse=True)
+    hook = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "node x.js"}]}]}}
+    for path in (repo / ".claude" / "settings.json", repo / ".claude" / "settings.local.json"):
+        assert "PRETOOLUSE" in (edit(repo, path, json.dumps(hook)) or ""), path
+    for key in ("CLAUDE_CODE_GIT_BASH_PATH", "GIT_EXEC_PATH", "SHELL", "ComSpec", "PATHEXT",
+                "NoDefaultCurrentDirectoryInExePath", "CLAUDE_CODE_SHELL_PREFIX"):
+        reason = edit(repo, repo / ".claude" / "settings.json", json.dumps({"env": {key: "C:/x/evil.exe"}})) or ""
+        assert "moves or stops the floor" in reason, key
+    allow = {"permissions": {"allow": ["Bash(npm test)"]}, "env": {"FOO": "1"}}
+    assert edit(repo, repo / ".claude" / "settings.local.json", json.dumps(allow)) is None
+
+
+def test_a_network_path_is_judged_as_written_never_resolved():
+    """Review round 8 #2: realpath of an unreachable host took 21 s, which a call used to outrun the hook."""
+    start = time.monotonic()
+    for path in ("//10.255.255.3/s/a", r"\\10.255.255.4\s\b", r"\\?\UNC\10.255.255.5\s\c"):
+        assert "10.255.255." in floor.resolve(path)
+    assert time.monotonic() - start < 2
+    assert floor.UNC.match("//host/share") and not floor.UNC.match(r"\\?\C:\x") and not floor.UNC.match("C:/x")
