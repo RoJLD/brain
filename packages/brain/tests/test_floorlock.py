@@ -418,9 +418,14 @@ def test_the_guard_runs_the_git_the_lock_names(tmp_path, monkeypatch):
     lock = json.loads((floor.lock_dir() / floor.LOCK_FILE).read_text(encoding="utf-8"))
     lock["git"] = str(tmp_path / "Git" / "cmd" / "git.exe")
     (floor.lock_dir() / floor.LOCK_FILE).write_text(json.dumps(lock), encoding="utf-8")
-    assert floor.git() == lock["git"] and os.environ["NoDefaultCurrentDirectoryInExePath"] == "1"
+    assert floor.git() == lock["git"]
     (floor.lock_dir() / floor.LOCK_FILE).unlink()
-    assert floor.git() != lock["git"]
+    (tmp_path / "git.exe").write_text("planted", encoding="utf-8")   # a git in the working directory
+    (tmp_path / "git").write_text("planted", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    found = floor.git()
+    assert found != lock["git"] and os.path.dirname(os.path.abspath(found)) != str(tmp_path)
+    assert os.environ["NoDefaultCurrentDirectoryInExePath"] == ""   # the lookup's setting does not stay
 
 
 def test_brain_floor_status_and_the_plan_from_the_command_line(tmp_path, monkeypatch, capsys, unheld):

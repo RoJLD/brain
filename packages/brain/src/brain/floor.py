@@ -359,11 +359,19 @@ def git() -> str:
     """The git the guard runs (round 8 #8): the one the lock file names (an administrator's, checked by brain floor
     lock), else the PATH's, never the working directory's (NoDefaultCurrentDirectoryInExePath)."""
     import shutil
-    os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
     lock = read_lock()
     if lock and not lock.get("error") and isinstance(lock.get("git"), str) and os.path.isabs(lock["git"]):
         return lock["git"]
-    return shutil.which("git") or "git"
+    was = os.environ.get("NoDefaultCurrentDirectoryInExePath")
+    os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"   # for this lookup only: shutil.which skips the cwd then
+    try:
+        found = shutil.which("git")
+    finally:
+        if was is None:
+            os.environ.pop("NoDefaultCurrentDirectoryInExePath", None)
+        else:
+            os.environ["NoDefaultCurrentDirectoryInExePath"] = was
+    return os.path.abspath(found) if found else "git"
 
 
 def _same(a, b) -> bool:
