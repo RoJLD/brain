@@ -203,3 +203,22 @@ def test_brain_test_changed_lists_runs_and_records(make_repo, tmp_path, capsys, 
         encoding="utf-8").splitlines()]
     assert [x["mode"] for x in led] == ["shadow", "shadow", "strict"]
     assert led[1]["complete"] is False and led[2]["ran"] == 4
+
+
+def test_a_test_that_scans_the_sources_runs_with_any_python_change(make_repo):
+    """wi-brain-coverage-map-refresh: a contract test that reads every module as text (a store declared, a variable
+    read) has no coverage context for the module it reads: a Python change selects it, a new module included."""
+    scan = ("from pathlib import Path\n\nSRC = Path(__file__).parents[1] / 'src'\n\n\n"
+            "def test_every_module():\n    assert all(f.read_text() is not None for f in SRC.rglob(\"*.py\"))\n")
+    marked = "# brain: scans-sources (it reads the installer's scripts)\n\n\ndef test_m():\n    pass\n"
+    repo = make_repo("lab", {**FILES, "tests/test_scan.py": scan, "tests/test_marked.py": marked})
+    summary = _map(_head(repo))
+    summary["test_modules"] += ["tests/test_scan.py", "tests/test_marked.py"]
+    make_repo.write(repo, {"src/p/fresh.py": "STORE = 'fresh'\n"})   # a new module: never measured by the map
+    sel = _select(repo, summary)
+    assert sel.tests["tests/test_scan.py"] == "scans the package's sources"
+    assert sel.tests["tests/test_marked.py"] == "scans the package's sources"
+    make_repo.write(repo, {"src/p/fresh.py": None, "docs/guide.md": "# Guide 2\n"})
+    sel = _select(repo, summary)
+    assert "tests/test_scan.py" not in sel.tests and "tests/test_marked.py" not in sel.tests   # no Python change
+    assert not targeted.SCANS.search("p.glob('*.json')") and targeted.SCANS.search("os.walk(root)")

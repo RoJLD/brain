@@ -175,6 +175,9 @@ def _map_revs(top: Path, summary: dict | None, sel: Selection) -> list[str]:
 
 
 SPAWNS = re.compile(r"sys\.executable|[\"']-m[\"'],\s*[\"']brain[\"']|brain\.exe")
+# A contract test that reads the package's sources as text (every module scanned for a store, a variable, a walk): no
+# coverage context links it to the module it reads, a new module included (test_classes_home missed a new store)
+SCANS = re.compile(r"\.r?glob\(\s*[\"'](?:\*\*/)?\*\.(?:py|sh|ps1)[\"']\s*\)|\bos\.walk\(|#\s*brain:\s*scans-sources\b")
 
 
 class _Selector:
@@ -274,8 +277,9 @@ class _Selector:
     def finish(self) -> None:
         """What runs a changed module without the map knowing: its importers, transitively (a call at import time
         carries no test context), the conftests that import one of them (a fixture's lines count for one test
-        only), the test modules that start Python processes (a child's lines carry no test context), and those the
-        map never saw."""
+        only), the test modules that start Python processes (a child's lines carry no test context), those that
+        read the package's sources as text (:data:`SCANS`: a glob of ``*.py``, an ``os.walk``, or a ``# brain:
+        scans-sources`` line), and those the map never saw."""
         if self.measured:
             self.reach()
         if not self.touched_py:
@@ -283,10 +287,13 @@ class _Selector:
         if self.no_roots:
             self.sel.widen.append("the repo's package roots are unknown: no importer can be read")
         for t in self.sel.suite:
+            text = self.tree.text(t) or ""
             if self.mapped and t not in self.mapped:
                 self.sel.add(t, "not in the map")
-            elif SPAWNS.search(self.tree.text(t) or ""):
+            elif SPAWNS.search(text):
                 self.sel.add(t, "starts a Python process")
+            elif SCANS.search(text):
+                self.sel.add(t, "scans the package's sources")
 
 
 def select(top: Path, repo: str, base: str, base_rev: str, summary: dict | None, roots: list[str] | None = None,

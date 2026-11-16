@@ -14,10 +14,14 @@ from ._common import _repos, _root_repo, _store
 ORDER = 530   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 190   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain coverage [--repo R] [--run [-n N] | --from DATA [--cwd DIR]] [--python PY] [--write [--force]] [--json]
+  brain coverage [--repo R] [--run [-n N] | --from DATA [--cwd DIR] | --from-ci [--cwd DIR]] [--python PY]
+                 [--write [--force]] [--json]
                         a repo's line coverage: --run runs its pytest suites (from each suite's pytest configuration)
                         under pytest-cov with test contexts, --from reads a coverage data file made elsewhere (the
-                        CI's .coverage, run with --cov-context=test); the summary (totals; per file its statements,
+                        CI's .coverage, run with --cov-context=test), against the checkout that holds --cwd (a
+                        worktree's paths are its own); --from-ci downloads the data file of the CI's successful run of
+                        this checkout's HEAD (gh, the artifact coverage-data): the map's refresh after each merge, in
+                        a checkout at the merged commit; the summary (totals; per file its statements,
                         covered lines and the test modules that ran each function) printed, and with --write kept in
                         the store as coverage/<repo>.json: brain sync links a CodeRef's symbol to the tests that ran
                         it, brain audit measures test.coverage, FEATURES.md shows each feature's coverage; under
@@ -42,7 +46,8 @@ def cmd_coverage(args, root: Path) -> int:
         raise SystemExit(f"brain coverage: no repo {want or '?'} in the project (repos: "
                          f"{', '.join(x.name for x in cfgs) or 'none'})")
     try:
-        summary, rc = testcov.measure(c, args.run, args.from_data, args.cwd, args.python, args.workers)
+        summary, rc = testcov.measure(c, args.run, args.from_data, args.cwd, args.python, args.workers,
+                                      ci=args.from_ci)
     except (testcov.CoverageError, AuditError) as exc:
         raise SystemExit(f"brain coverage: {exc}") from None
     print(testcov.render(summary) if args.json else "\n".join(testcov.lines(summary)), end="" if args.json else "\n")
@@ -65,7 +70,10 @@ def register(sub, ctx) -> None:
     cv.add_argument("--python", default="", help="the Python that runs the tests (default: this one)")
     cv.add_argument("--from", dest="from_data", default="", help="a coverage data file (.coverage, run with "
                                                                   "--cov-context=test) instead of a run")
-    cv.add_argument("--cwd", default="", help="with --from: the folder pytest ran in (default: the repo's root)")
+    cv.add_argument("--from-ci", action="store_true", help="the data file of the CI's successful run of this "
+                                                            "checkout's HEAD (gh, the artifact coverage-data)")
+    cv.add_argument("--cwd", default="", help="with --from or --from-ci: the folder pytest ran in (default: the "
+                                              "repo's root)")
     cv.add_argument("--write", action="store_true", help="keep the summary in the store: coverage/<repo>.json")
     cv.add_argument("--force", action="store_true", help="--write even when the running engine is not config.json "
                                                          "engine.pin (refused under views.strict)")

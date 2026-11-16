@@ -4,6 +4,7 @@ fail_under is not the report's, sync and audit read the summary alike, the trend
 imports count."""
 
 import json
+import re
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -175,3 +176,74 @@ def test_the_ci_keeps_a_coverage_data_file_brain_coverage_reads():
     assert "--cov-context=test" in run["run"] and "--cov-fail-under=0" in run["run"]
     assert steps["Coverage data"]["with"]["path"] == "packages/brain/coverage.data"
     assert "relative_files = true" in (root / "packages" / "brain" / "pyproject.toml").read_text(encoding="utf-8")
+
+
+# --- wi-brain-coverage-map-refresh: the map read in a worktree, and from the CI after a merge ---
+
+def test_a_data_file_is_read_against_the_checkout_that_holds_its_cwd(make_repo, tmp_path):
+    repo = make_repo("lab", {"src/p/__init__.py": "", "tests/test_a.py": "def test_a():\n    pass\n"})
+    wt = tmp_path / "wt-lab"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "--detach", str(wt)], check=True,
+                   capture_output=True)
+    assert testcov.checkout_of(wt / "src", repo).resolve() == wt.resolve()       # a worktree of the repo: its own
+    assert testcov.checkout_of(repo / "src", repo).resolve() == repo.resolve()
+    other = make_repo("other", {"x.py": ""})
+    assert testcov.checkout_of(other, repo) == repo                               # another repo: the registered one
+    assert testcov.checkout_of(tmp_path / "nowhere", repo) == repo
+
+
+class _Gh:
+    """A fake gh: each call's answer in turn (a CompletedProcess, or an exception to raise); the calls kept."""
+
+    def __init__(self, *answers, files=None):
+        self.answers, self.calls, self.files = list(answers), [], files or {}
+
+    def __call__(self, argv, **kw):
+        self.calls.append(argv)
+        a = self.answers.pop(0)
+        if isinstance(a, BaseException):
+            raise a
+        if argv[1:3] == ["run", "download"]:
+            for rel, text in self.files.items():
+                f = Path(argv[argv.index("-D") + 1]) / rel
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text(text, encoding="utf-8")
+        return a
+
+
+def _ok(out=""):
+    return subprocess.CompletedProcess(["gh"], 0, out, "")
+
+
+def test_from_ci_reads_the_data_file_of_heads_green_run_and_says_why_it_cannot(make_repo, monkeypatch):
+    repo = make_repo("lab", {"src/p/__init__.py": ""})
+    head = testcov._git(repo, "rev-parse", "HEAD")
+    runs = json.dumps([{"databaseId": 7, "headSha": "0" * 40, "workflowName": "ci"},
+                       {"databaseId": 42, "headSha": head, "workflowName": "ci"}])
+    seen = {}
+    monkeypatch.setattr(testcov, "from_data", lambda data, cwd, root, name, python="": seen.update(
+        data=data.name, cwd=cwd, root=root, text=data.read_text(encoding="utf-8")) or {"repo": name})
+    gh = _Gh(_ok(runs), _ok(), files={"coverage.data": "sqlite"})
+    assert testcov.from_ci(repo, repo / "src", "lab", runner=gh) == {"repo": "lab"}
+    assert gh.calls[0][:5] == ["gh", "run", "list", "--commit", head]
+    assert gh.calls[1][:6] == ["gh", "run", "download", "42", "-n", "coverage-data"]   # HEAD's run, not another's
+    assert seen["data"] == "coverage.data" and seen["text"] == "sqlite" and seen["root"] == repo
+    for answers, said in (
+            ([FileNotFoundError("gh")], "gh: FileNotFoundError (the GitHub CLI, installed and signed in?)"),
+            ([subprocess.TimeoutExpired(["gh"], 300)], "gh run list: no answer within 300 s"),
+            ([subprocess.CompletedProcess(["gh"], 1, "", "HTTP 401: Bad credentials")], "HTTP 401"),
+            ([_ok("<html>")], "gh run list: not JSON"),
+            ([_ok("[]")], f"no successful CI run of {head[:12]} yet"),
+            ([_ok(runs), _ok()], "artifact coverage-data holds no coverage data file")):
+        with pytest.raises(testcov.CoverageError, match=re.escape(said)):
+            testcov.from_ci(repo, repo, "lab", runner=_Gh(*answers))
+    (repo / "src" / "p" / "__init__.py").write_text("X = 1\n", encoding="utf-8")
+    with pytest.raises(testcov.CoverageError, match="tracked files are modified"):
+        testcov.from_ci(repo, repo, "lab", runner=_Gh())
+
+
+def test_brain_coverage_from_ci_parses(monkeypatch):
+    from brain import cli as brain_cli
+    args = brain_cli.build_parser().parse_args(["coverage", "--repo", "brain", "--from-ci", "--cwd",
+                                                "packages/brain", "--write"])
+    assert args.from_ci and args.cwd == "packages/brain" and args.write
