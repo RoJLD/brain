@@ -44,10 +44,10 @@ import os
 import re
 import subprocess
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import paths
+from . import faults, paths
 
 FILE = "machine.json"
 FACTS_FILE = "facts.json"
@@ -101,7 +101,7 @@ def _install_id_raw(system: str) -> str:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return faults.now()
 
 
 def _git_show(checkout: str, ref: str, file: str) -> str:

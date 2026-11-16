@@ -70,7 +70,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from . import graph, notify, paths, projects, quiet, stateio, timing
+from . import faults, graph, notify, paths, projects, quiet, stateio, timing
 
 LEVELS = notify.LEVELS
 RANK = {lvl: i for i, lvl in enumerate(LEVELS)}
@@ -154,7 +154,7 @@ class Config:
 # --- time ---
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return faults.now()
 
 
 def _ts(text) -> datetime | None:

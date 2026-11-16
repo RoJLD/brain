@@ -52,10 +52,10 @@ import sys
 import time
 import zlib
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 
-from . import config, paths, secretscan, stateio
+from . import config, faults, paths, secretscan, stateio
 from .memorykeys import CONFLICT_RX, local_dir, local_notes, recognized_keys, snapshot, watched
 
 DEFAULT_TIMEOUT = 300.0
@@ -73,7 +73,7 @@ def sync_dir() -> Path:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return faults.now().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _float_env(name: str, default: float) -> float:

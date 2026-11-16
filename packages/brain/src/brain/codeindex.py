@@ -39,10 +39,9 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
-from . import net, paths, projects, stacks
+from . import faults, net, paths, projects, stacks
 
 CHECK = "code-index"
 NAME = re.compile(r"^[A-Za-z0-9._-]+$")  # GitNexus's REPO_NAME_PATTERN, for the clone's folder
@@ -213,7 +212,7 @@ def _json(raw: bytes) -> object:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return faults.now().isoformat(timespec="seconds")
 
 
 _clock = time.monotonic

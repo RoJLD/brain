@@ -31,7 +31,7 @@ import codecs
 import os
 import sys
 
-from . import __version__, config, gestures, nowindow, paths, plugins, projects, selftime, shutdown
+from . import __version__, config, faults, gestures, nowindow, paths, plugins, projects, selftime, shutdown
 from .commands import _registry as registry
 from .commands._common import root_of
 
@@ -113,6 +113,11 @@ def main(argv: list[str] | None = None) -> int:
     why = gestures.cli_refusal(argv)   # an owner's gesture an agent's session runs past the hook (brain.gestures)
     if why:
         print(f"brain: {why}", file=sys.stderr)
+        return 2
+    try:   # BRAIN_NOW and BRAIN_FAULT (brain.faults): a value not understood never plays another failure
+        faults.check()
+    except faults.FaultError as exc:
+        print(f"brain: {exc}", file=sys.stderr)
         return 2
     try:
         # a signal stops the command once its current write is whole, its locks released (brain.shutdown)

@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, paths, secretscan, spool, stateio, transcript
+from . import config, faults, paths, secretscan, spool, stateio, transcript
 
 STORE = "session-archive"        # its home store (brain.classes.ENGINE_STORES), class sealed
 CHECK = "session-archive"        # brain health session-archive
@@ -138,7 +138,7 @@ class Source:
 
 
 def _now(now: datetime | None) -> datetime:
-    return (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return (now or faults.now()).astimezone(timezone.utc)
 
 
 def _iso(t: datetime) -> str:

@@ -2013,6 +2013,31 @@ each one slows the suite (about 10 % measured with pytest's temporary folders ex
 antivirus: the owner adds that exclusion by hand, if wanted, and the processes the tests start (git, bash, python) are
 still scanned.
 
+### A virtual clock and injected faults
+
+Two variables let a test, or the owner in a terminal, play a date or a failure end to end through the real command
+line, with no mock in the code under test (`brain.faults`, `wi-brain-fault-injection`):
+
+- `BRAIN_NOW` sets the engine's « now » wherever a shared helper reads it: the stamps and log months of
+  `brain.stateio`, the breaker windows of `brain.net`, `brain quiet`, and the `_now` helpers of the modules that keep
+  one (the governor, the alerts, usage, the spool, the vault, the session archive, ...). A point in time freezes it
+  (`2030-01-31`, midnight UTC; `2030-01-31T22:00:00Z`; a time without a zone is UTC); a shift moves the real clock,
+  which keeps running (`+3d`, `-2h`, `+90m`, `+30s`, `+1w`). A call that still reads the system's clock directly is
+  not moved: the shared helpers are the contract.
+- `BRAIN_FAULT=<point>[@<glob>]:<kind>[,...]` injects a failure. `write` (every atomic write of `brain.stateio`):
+  `disk-full` writes half of the temporary file then raises « No space left on device », leaving the file as it was;
+  `killed` ends the process (exit 137) after the temporary file is synced and before it is moved, as a kill would.
+  `read` (the loads of truth-local and foreign files): `corrupt` reads half of the file's bytes and a byte that is
+  not UTF-8, so a truth-local file is set aside (the copy keeps the real bytes: the disk is never changed) and a
+  foreign one refused. `net` (`brain.net`'s calls): `timeout` fails as a timeout without calling (never retried, the
+  breaker opens), `refused` as a refused connection (retried, then the breaker opens). The glob narrows a fault to a
+  file (its name or its whole path, `write@*/quota.json:disk-full`, `read@*/usage/*:corrupt`) or a service
+  (`net@gitnexus:timeout`, `net@http:*:timeout`).
+
+Each injected fault says so on stderr. A value the engine cannot read makes every command refuse to run (exit 2)
+rather than play another failure than the one asked. The hermetic suite clears both, so a test sets them itself:
+`tests/test_faults.py` runs `brain quiet` in a subprocess a month ahead, on a full disk and killed mid-write.
+
 ## Releasing
 
 With research-graph, under the repo's single tag series: see the root README. `CHANGELOG.md` here is the command's.

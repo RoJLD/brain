@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 
-from .. import notify, projects, quiet
+from .. import faults, notify, projects, quiet
 
 ORDER = 485   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 365   # its usage lines' place in brain --help's epilog
@@ -20,7 +20,7 @@ USAGE = """\
 
 def early(args) -> int:
     try:
-        now = datetime.now(timezone.utc)
+        now = faults.now()   # $BRAIN_NOW moves it (brain.faults)
         if args.off:
             ended = quiet.stop()
             print("quiet ended" if ended else "no manual quiet was running")
@@ -36,6 +36,9 @@ def early(args) -> int:
     except (quiet.QuietError, notify.NotifyError) as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 2
+    except OSError as exc:   # the state cannot be written (a full disk): the quiet is left as it was
+        print(f"brain: quiet: {exc}; nothing changed", file=sys.stderr)
+        return 1
 
 
 def _release(dry_run: bool, now: datetime) -> None:

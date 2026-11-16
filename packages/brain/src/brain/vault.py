@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import __version__, classes, config, keystore, paths, stateio
+from . import __version__, classes, config, faults, keystore, paths, stateio
 
 CHECK = "vault"                          # brain health vault
 KINDS = ("device", "recovery", "hardware", "person")
@@ -129,7 +129,7 @@ def vault_dir() -> Path:
 
 
 def _now(now: datetime | None = None) -> datetime:
-    return (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return (now or faults.now()).astimezone(timezone.utc)
 
 
 def _iso(t: datetime) -> str:

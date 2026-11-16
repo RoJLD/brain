@@ -36,7 +36,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import actions, midsession, paths, plan, schema, scrub, secretscan, timing, transcript
+from . import actions, faults, midsession, paths, plan, schema, scrub, secretscan, timing, transcript
 from . import answers as answers_lane
 
 SR_V = 1     # sessions/<id>.json (schemas/sr.schema.json)
@@ -44,7 +44,7 @@ STATS_V = 1  # sessions/<id>.state.json, the transcript's offsets and counts (br
 
 
 def _now() -> str:
-    return transcript.iso(datetime.now(timezone.utc))
+    return transcript.iso(faults.now())
 
 
 def _append(name: str, record: dict) -> None:
