@@ -1,0 +1,3 @@
+section: Added
+
+- `brain migrate --plan` / `--apply`: the engine's migrations of its own formats (the brain's `config.json` and this machine's truth-local files under `$BRAIN_HOME`): a step function per format and version, the plan read-only, the apply a backup of each file first, one atomic write per file, each step appended to `$BRAIN_HOME/migrate/applied.jsonl` (a new engine store, `migrate`, class sealed); a file's own `v` says what is pending, so a second run applies nothing, and the first failure leaves its file as it was. `brain update` prints the migrations pending and applies none. No format has broken yet: the engine ships no step today (docs/formats.md, « Migrations »; `wi-brain-migrate`).
