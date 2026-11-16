@@ -193,14 +193,18 @@ def closures(project: projects.Project, st: resume.Store, w: Window) -> tuple[li
             day, source = git[n["id"]][0], "git"
         if not w.has(day):
             continue
-        props = n.get("props") or {}
-        row = {"id": n["id"], "type": n["type"], "status": n["status"], "day": day, "day_from": source,
-               "title": " ".join(str(n.get("title") or "").split()), "priority": resume._priority(n),
-               "pr": " ".join(str(props.get("pr") or "").split()),
-               "evidence": " ".join(str(props.get("evidence") or "").split()), "proof": graph.proof(props),
-               "outcome": text}
-        (miles if n["type"] == "Milestone" else items).append(row)
+        (miles if n["type"] == "Milestone" else items).append(_closed_row(n, day, source, text))
     return _newest_first(miles), _newest_first(items)
+
+
+def _closed_row(n: dict, day: str, source: str, text: str) -> dict:
+    """A closed node's row: its PR, its evidence and their one-line proof (wi-brain-evidence-views)."""
+    props = n.get("props") or {}
+    return {"id": n["id"], "type": n["type"], "status": n["status"], "day": day, "day_from": source,
+            "title": " ".join(str(n.get("title") or "").split()), "priority": resume._priority(n),
+            "pr": " ".join(str(props.get("pr") or "").split()),
+            "evidence": " ".join(str(props.get("evidence") or "").split()), "proof": graph.proof(props),
+            "outcome": text}
 
 
 def _paragraphs(lines: list[str]) -> list[str]:

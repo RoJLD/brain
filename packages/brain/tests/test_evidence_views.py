@@ -3,11 +3,23 @@ detail, the digest's closed items, the lessons' items, research_graph's closed r
 brain item close prints. Fictitious names only."""
 
 import pytest
-from brain import detail, digest, graph, lessons, status
+from brain import cli, detail, digest, graph, lessons, projects, status
 from research_graph import report
 
-from test_detail import demo  # noqa: F401  (the fixture)
-from test_done_by_typology import _close, brain  # noqa: F401  (the fixture)
+
+@pytest.fixture
+def brain(store, monkeypatch):
+    """The store fixture's root registered as the project demo, a non-code project: it closes with --evidence."""
+    root = store.parents[1]
+    monkeypatch.setenv("BRAIN_PROJECTS", str(root / "projects.yaml"))
+    monkeypatch.delenv("BRAIN_CONFIG", raising=False)
+    (root / "projects.yaml").write_text("demo:\n  root: .\n  lifecycle: {typologies: [strategy]}\n", encoding="utf-8")
+    return root
+
+
+@pytest.fixture
+def demo(store):
+    return projects.Project("demo", store.parents[1], stores=[store]), None
 
 
 def test_proof_names_the_pr_and_the_evidence_on_one_line():
@@ -26,14 +38,14 @@ def test_the_close_line_carries_the_proof_and_the_outcome():
     assert graph.close_line({"id": "wi-3", "status": "done", "props": None}) == "- wi-3 done"
 
 
-def test_brain_item_close_prints_the_journal_line_with_its_evidence(brain, capsys):  # noqa: F811
-    brain("  lifecycle: {typologies: [strategy]}\n")
-    assert _close(brain, "wi-one", "--evidence", "the memo v3", "--outcome", "approved") == 0
+def test_brain_item_close_prints_the_journal_line_with_its_evidence(brain, capsys):
+    assert cli.main(["--root", str(brain), "item", "close", "wi-one", "--evidence", "the memo v3", "--outcome",
+                     "approved"]) == 0
     out = capsys.readouterr().out
     assert "journal line (brain journal add): - wi-one done (evidence the memo v3): approved" in out
 
 
-def test_the_item_detail_shows_the_evidence_beside_the_pr(demo):  # noqa: F811
+def test_the_item_detail_shows_the_evidence_beside_the_pr(demo):
     p, _ = demo
     st = status._store(p)
     st.nodes["wi-one"]["props"]["evidence"] = "the memo v3"
