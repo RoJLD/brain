@@ -249,3 +249,33 @@ def test_prefilter_starts_python_for_the_shell_shapes(machine):
     # a glob that spells neither ipc nor token (ip?/*) starts no Python: a limit docs/guards.md names
     commands = [c.format(tok="~/.brain/ipc/token", home="~/.brain") for c in BASH if "ip?" not in c]
     assert all(_needs_python(commands)), [c for c, s in zip(commands, _needs_python(commands)) if not s]
+
+
+# --- beside the locked floor -----------------------------------------------------------------------------------------
+
+def test_the_floor_neither_turns_it_on_nor_off(machine, tmp_path, monkeypatch):
+    cfg = tmp_path / "floor-config.json"
+    data = {"v": 1, "identity": {"owner": "Ada", "kind": "person"}, "floor": {"refuse": True}}
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    # the floor makes the guard strict for its errors, never the token check on: it stays the key's
+    assert decide(payload("Read", machine, file_path=tok())) is None
+    assert decide(payload("Bash", machine, command=f"cat {tok(True)}", description="run")) is None
+    data["guards"] = {"refuse_token_read": True}
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+    assert _token_refusal(decide(payload("Read", machine, file_path=tok())))
+    assert _token_refusal(decide(payload("Bash", machine, command=f"cat {tok(True)}", description="run")))
+    assert _token_refusal(decide(payload("Write", machine, file_path=tok(), content="x")))
+
+
+def test_a_floor_only_machine_keeps_the_check(machine, tmp_path, monkeypatch):
+    from brain import floor
+    monkeypatch.setattr(floor, "unlocked", lambda *a, **k: "")   # the lock simulated
+    cfg = tmp_path / "only-config.json"
+    cfg.write_text(json.dumps({"v": 1, "identity": {"owner": "Ada", "kind": "person"}, "floor": {"only": True},
+                               "guards": {"refuse_token_read": True}}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    assert _token_refusal(decide(payload("Read", machine, file_path=tok())))
+    assert _token_refusal(decide(payload("Bash", machine, command=f"cat {tok(True)}", description="run")))
+    assert _token_refusal(decide(payload("Edit", machine, file_path=tok(), old_string="a", new_string="b")))
+    assert decide(payload("Bash", machine, command="cat README.md", description="run")) is None

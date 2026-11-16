@@ -18,7 +18,7 @@
 # config.json's power.node_clis come from <BRAIN_HOME>/cache/node-clis.txt, which brain/guards.py (node_tools) keeps
 # as an alternation, since this hook cannot find config.json (the plugin runs from a cached copy): none until the
 # first Python run writes it.
-{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python
+{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; brain_config() { :; }; floor_setting() { :; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python, brain_config, floor_setting
 
 needs_python() {
   [ "$1" = "read" ] && { reads_token "$2"; return; }
@@ -40,7 +40,8 @@ needs_python() {
   for discard in '/dev/null' ' /dev/null' '$null' ' $null'; do redirect=${redirect//">$discard"/}; done
   case "$redirect" in *'>'*) return 0 ;; esac
   local before='(^|[^A-Za-z0-9_.-]|\\[nrt])'
-  local writers="$before"'(rm|rmdir|unlink|shred|tee|touch|mkdir|truncate|mv|cp|ln|install|rsync|scp|chmod|chown|chgrp|sort|curl|perl|ruby|awk|gawk|dd|tar|bsdtar|unzip|patch|wget|find|xargs|py|node|bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|iex|invoke-expression|set-content|add-content|clear-content|out-file|tee-object|export-csv|export-clixml|new-item|remove-item|rename-item|copy-item|move-item|start-transcript|expand-archive|compress-archive|invoke-webrequest|invoke-restmethod|sc|ac|clc|epcsv|ni|md|ri|rd|del|erase|rni|ren|cpi|copy|mi|move|iwr|irm|rename|mklink|xcopy|robocopy)([^A-Za-z0-9_-]|$)|python|\[(system\.)?io\.|'"$before"'sed[^|;&]*[[:space:]]-(-in-place|[A-Za-z]*i)'
+  local writers="$before"'(rm|rmdir|unlink|shred|tee|touch|mkdir|truncate|mv|cp|ln|install|rsync|scp|chmod|chown|chgrp|sort|curl|perl|ruby|awk|gawk|dd|tar|bsdtar|unzip|patch|wget|find|xargs|py|node|bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|iex|invoke-expression|set-content|add-content|clear-content|out-file|tee-object|export-csv|export-clixml|new-item|remove-item|rename-item|copy-item|move-item|start-transcript|expand-archive|compress-archive|invoke-webrequest|invoke-restmethod|sc|ac|clc|epcsv|ni|md|ri|rd|del|erase|rni|ren|cpi|copy|mi|move|iwr|irm|rename|mklink|xcopy|robocopy|setenvironmentvariable)([^A-Za-z0-9_-]|$)|python|\[(system\.)?io\.|\.(moveto|copyto|replace|delete|setaccesscontrol|setvalue|createsubkey|opensubkey|environment)[[:space:]]*\(|wscript\.shell|'"$before"'sed[^|;&]*[[:space:]]-(-in-place|[A-Za-z]*i)'
+  # (.NET's [Environment]::SetEnvironmentVariable is a writer: it may set a variable the floor reads, FLOOR_ENV.)
   # The owner and power guards' programs (brain/guards.py: _owner_command, _power_command and their tables), the
   # --arm flag, the owner's gestures (brain/gestures.py: usage allow, schedule install, vault open|drill|device|reseal,
   # queue apply, brain's update and uninstall; tests/test_gestures.py checks each), brain handover and the chain root
@@ -103,18 +104,56 @@ refuse_cannot_run() {
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the guards cannot run (%s), so the public and secrets checks refuse git commit and git push: run brain update (or the installer, install.ps1 -Apply), then retry. The SessionStart health says the same."}}\n' "$why"
 }
 
+# refuse_floor WHY: while the locked floor is on, every call the guards cannot judge is refused (fail closed).
+refuse_floor() {
+  local why=${1//\\/\\\\}
+  why=${why//\"/\\\"}
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the locked floor is on (config.json floor) and the guards cannot run (%s), so they refuse every call they would judge: run brain update (or the installer, install.ps1 -Apply), then retry."}}\n' "$why"
+}
+
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0
+# A locked machine (brain floor lock) runs the guard's system copy from Claude Code's managed settings, whose
+# allowManagedHooksOnly keeps this plugin hook from running at all; where they are not in force (an HKLM policy or
+# server-managed settings come first: Claude Code's managed sources are first-wins), this copy still judges (round 8).
 root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
 IFS= read -r -d '' input  # the hook's JSON, without $(cat)'s fork
 needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }
 
 home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"
+# floor_on: whether config.json's locked floor is on (floor.refuse or floor.only, brain/floor.py), or the machine has
+# a lock file (brain floor lock: <ProgramData>/Brain or /etc/brain, which a session cannot remove), read only when the
+# guard cannot judge the call or would run PATH's Python: then it fails closed (wi-brain-unadopted-floor).
+floor=
+floor_on() {
+  if [ -z "$floor" ]; then
+    local c d
+    c=$(brain_config "$root")
+    floor=0
+    [ -n "$(floor_setting "$c" refuse)$(floor_setting "$c" only)" ] && floor=1
+    for d in "${PROGRAMDATA:-C:/ProgramData}/Brain" C:/ProgramData/Brain /etc/brain; do
+      [ -e "$d/floor-lock.json" ] && floor=1
+    done
+  fi
+  [ "$floor" = 1 ]
+}
+# may_run: whether the Python brain_python chose may judge the call: <BRAIN_HOME>/venv's or BRAIN_PYTHON's always,
+# PATH's only while the floor is off (a session could have put another python3 first on PATH).
+path_py=
+may_run() {
+  case $brain_py in "$home/venv/"*) return 0 ;; esac
+  [ -n "${BRAIN_PYTHON:-}" ] && [ "$brain_py" = "$BRAIN_PYTHON" ] && return 0
+  path_py=1
+  ! floor_on
+}
 brain_py=
-brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
+brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && may_run && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
 # here no Python was found, or the one found failed: guard.py's main never fails, so it could not import brain
 why="no Python 3 found (BRAIN_PYTHON, <BRAIN_HOME>/venv, python3, python)"
 [ -n "$brain_py" ] && why="$brain_py cannot import brain"
+[ -n "$path_py" ] && floor_on && why="only PATH's $brain_py was found, not <BRAIN_HOME>/venv's"
 [ -n "$brain_py" ] && [ "$brain_py" = "${BRAIN_PYTHON:-}" ] && why="$why; BRAIN_PYTHON chose it: fix or unset BRAIN_PYTHON"
 selftime_bash "hook guard ${1:-} [cannot run]" 1
+# a Read or Grep is judged for the token only (brain/tokenguard.py, off by default): the floor never refuses it
+if [ "${1:-}" != read ] && floor_on; then refuse_floor "$why"; exit 0; fi
 commits_or_pushes "${1:-}" "$input" && refuse_cannot_run "$why"
 exit 0

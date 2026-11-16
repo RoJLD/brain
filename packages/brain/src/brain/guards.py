@@ -113,8 +113,15 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   without -b), git branch NAME or -m|-c [OLD] NEW gives, and gh pr create's head branch (--head, else the folder's
   current branch). A name the command does not resolve ($b) passes. The refusal names the allowed list.
 
+- ``floor`` (wi-brain-unadopted-floor, R21, brain.floor): under config.json floor.refuse (off by default) or
+  floor.only, a git push to main or master (check main), a forced push (check force), and what would lift or stop
+  the floor (check config): brain.floorguard holds these checks. While the floor is on, a check that fails refuses
+  the call (strict). On a floor-only machine (floor.only) a shell call runs only the floor's checks, the configuration
+  and secrets checks and the owner guard's override category (check_override), and a tool edit only the override
+  category and the floor's config check: no session lifts its own floor.
+
 Override, the owner's only: ``BRAIN_GUARD_ALLOW=production,owner,power,third-party,attribution,secrets,markers,
-public,branches``, a
+public,branches,floor``, a
 guard:check pair (owner:installer, power:cluster) or ``all``, in Claude Code's own environment, which a command
 cannot set; the call passes and the ledger records it. Refusals and overrides go to
 ``<BRAIN_HOME>/ledger/guards-<month>.jsonl`` when the ledger exists (a request for the owner creates it), with the
@@ -140,10 +147,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, diffs, gestures, markers, midsession, paths, projects, public, secretscan, timing
+from . import config, diffs, floor, gestures, markers, midsession, paths, projects, public, secretscan, timing
 
 GUARDS = ("production", "attribution", "secrets", "markers", "owner", "power", "third-party", "public", "branches",
-          "merges")
+          "merges", "floor")
 ALLOW_ENV = "BRAIN_GUARD_ALLOW"
 EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 SHELL_TOOLS = ("Bash", "PowerShell")
@@ -155,7 +162,8 @@ CHANGING = {"commit", "checkout", "switch", "restore", "reset", "merge", "rebase
 GIT_READS = frozenset(("status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "blame", "describe",
                        "shortlog", "rev-list", "merge-base", "cat-file", "name-rev", "grep", "check-ignore",
                        "count-objects", "var", "version", "whatchanged", "show-ref", "for-each-ref"))
-GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"}
+GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env",
+                  "--attr-source"}
 CD = {"cd", "chdir", "pushd", "set-location", "sl", "push-location"}
 POP = {"popd", "pop-location"}
 DECLARE = {"export", "declare", "typeset", "local", "readonly"}
@@ -647,7 +655,11 @@ SHELLS = {"bash": "bash", "sh": "bash", "zsh": "bash", "dash": "bash", "ksh": "b
 # Wrappers before the program they run, with their short options that take a value.
 WRAPPERS = {"env": "uCS", "nohup": "", "nice": "n", "time": "", "command": "", "exec": "a", "builtin": "",
             "sudo": "ugCDhpr", "timeout": "sk", "stdbuf": "ioe", "xargs": "IiadEeLlnPs", "gsudo": "udn", "doas": "uC",
-            "pkexec": ""}
+            "pkexec": "", "setsid": "", "unbuffer": "", "ionice": "cnpt"}
+# The shell's reserved words that open a command: what follows them runs (bash: if true; then git push...; fi).
+RESERVED = {"if", "then", "elif", "else", "while", "until", "do", "!", "{", "(", "time", "coproc"}
+# What follows a reserved word before the command it runs: time's -p and --; coproc's NAME before a compound command.
+COMPOUND = {"{", "(", "((", "[[", "if", "for", "while", "until", "case", "select"}
 WRAPPER_LONGS = {"sudo": ("user", "group", "host", "prompt", "close-from", "chdir", "role", "type", "other-user",
                           "command-timeout"),
                  "env": ("unset", "chdir"), "nice": ("adjustment",), "timeout": ("signal", "kill-after"),
@@ -739,7 +751,16 @@ def _unwrap(words: list[str]) -> list[str]:
     """``words`` from the program a wrapper runs (env X=1, nohup, nice -n 5, timeout 10, xargs), with a "." for the
     arguments xargs adds from its input, which are relative to the folder."""
     stdin = False
-    while words and (w := _prog(words[0])) in WRAPPERS:
+    while words and (words[0] in RESERVED or _prog(words[0]) in WRAPPERS):
+        if words[0] in RESERVED:   # if, then, do, !, {: the command that follows runs (review of the floor, round 5)
+            word, words = words[0], words[1:]
+            if word == "time":   # time -p CMD, time -- CMD (round 6: -p was read as the program)
+                while words and words[0] in ("-p", "--"):
+                    words = words[1:]
+            elif word == "coproc" and len(words) > 1 and words[1] in COMPOUND and re.fullmatch(r"\w+", words[0]):
+                words = words[1:]   # coproc NAME { ...; }: the name is no command
+            continue
+        w = _prog(words[0])
         i = 1
         while i < len(words) and (words[i].startswith("-") or (w == "env" and ASSIGN.match(words[i]))):
             a = words[i]
@@ -1035,6 +1056,7 @@ def _nested(prog: str, args: list[str], cwd: str, shell: str):
     elif sub == "cmd":
         k = next((i for i, a in enumerate(args) if a.lower().lstrip("/") in ("c", "k")), None)
         inner = None if k is None else " ".join(args[k + 1:]) or None
+        inner = re.sub(r"\^(.)", r"\1", inner) if inner else inner   # cmd's escape: mk^link is mklink
     elif prog in ("iex", "invoke-expression"):
         inner = " ".join(a for a in args if not a.lower().startswith("-c")) or None
     else:
@@ -1428,7 +1450,7 @@ AUTOSTART_HOME = re.compile(r"(?i)^/(?:\.config/(?:systemd/user|autostart)|libra
 OVERRIDE_FILES = re.compile(r"(?i)(?:^|[\\/])(?:\.claude[\\/]settings(?:\.local)?\.json|managed-settings\.json|"
                             r"\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zprofile|zshenv)|"
                             r"(?:microsoft\.[\w.]+_)?profile\.ps1)$")
-PERSIST_ENV = re.compile(r"(?i)SetEnvironmentVariable|\\Environment\b")   # .NET's call, the registry's key
+PERSIST_ENV = re.compile(r"(?i)SetEnvironmentVariable|[\\/:]Environment\b")   # .NET's call, the registry's key
 OVERRIDE_HINT = re.compile(r"(?i)settings(?:\.local)?\.json|\.(?:bashrc|bash_profile|profile|zshrc|zprofile)\b|"
                            r"profile\.ps1")   # what inline code names when it writes one of OVERRIDE_FILES
 INSTALL_APPLY = re.compile(r"(?i)^[-–—]a(?:p(?:p(?:l(?:y)?)?)?)?(?::\$?(?:true|1))?$")   # PowerShell takes – and —
@@ -1674,28 +1696,105 @@ def _deny_rules(words: list[str], cats: dict[str, dict]) -> tuple[str, str] | No
     return None
 
 
-def _override(command: str, cmds, shell: str) -> str | None:
+def _override(command: str, cmds, shell: str, env: str = ALLOW_ENV) -> str | None:
     """What sets the guards' override for later sessions: setx or a registry Environment key, a write into Claude
     Code's settings or a shell profile, or a write whose target the guard cannot resolve ($PROFILE, a path the code
-    computes), with BRAIN_GUARD_ALLOW in the command."""
-    if not re.search(ALLOW_ENV, command, re.I):
+    computes), with BRAIN_GUARD_ALLOW in the command (``env``: the variables looked for, a regular expression; the
+    floor adds those that choose the config.json the guard reads, FLOOR_ENV)."""
+    found = re.search(env, floor.unspelled(command), re.I)
+    if not found:
         return None
+    name = re.findall(r"\w+", found.group(0))[-1].upper()
     for words, d, _, _ in actions(cmds, shell, command=command):
-        prog, text = _prog(words[0]), _text(words)
-        if (prog == "setx" and re.search(ALLOW_ENV, text, re.I)) or PERSIST_ENV.search(words[0]) or \
+        prog, text = _prog(words[0]), floor.unspelled(_text(words))
+        if (prog == "setx" and re.search(env, text, re.I)) or PERSIST_ENV.search(words[0]) or \
                 (prog in ("set-itemproperty", "new-itemproperty", "sp", "reg") and PERSIST_ENV.search(text)
-                 and re.search(ALLOW_ENV, text, re.I)):
-            return f"setting {ALLOW_ENV} in the user's environment"
+                 and re.search(env, text, re.I)):
+            return f"setting {name} in the user's environment"
         lang = "python" if re.fullmatch(r"python[\d.]*w?|py", prog) else prog
         code = _inline(words[1:], *INLINE[lang][:2]) if lang in INLINE else []
-        if code and re.search(ALLOW_ENV, code[0], re.I) and OVERRIDE_HINT.search(code[0]) and \
+        if code and re.search(env, floor.unspelled(code[0]), re.I) and OVERRIDE_HINT.search(code[0]) and \
                 _code_targets(lang, code, d):   # it writes, and names a settings file or a profile
-            return f"inline code writing {ALLOW_ENV} into Claude Code's settings or a shell profile"
+            return f"inline code writing {name} into Claude Code's settings or a shell profile"
     for _, target in shell_writes(cmds, shell):
-        if OVERRIDE_FILES.search(str(target)) or isinstance(target, Unresolved):
+        unresolved = isinstance(target, Unresolved) and (env == ALLOW_ENV or OVERRIDE_UNRESOLVED.search(target.what))
+        if _override_file(target) or unresolved:
             where = f"{target.what} (read as its folder {target})" if isinstance(target, Unresolved) else target
-            return f"writing {ALLOW_ENV} into {where}"
+            return f"writing {name} into {where}"
     return None
+
+
+# An unresolved target that may be a profile or Claude Code's settings ($PROFILE, $HOME/.claude/...): the floor's
+# variables (FLOOR_ENV) are common in the Brain's own commands, so only such a write counts for them.
+OVERRIDE_UNRESOLVED = re.compile(r"(?i)profile|settings|\.claude|\.\w*rc\b")
+GUARD_OFF = floor.GUARD_OFF   # what turns every guard off for later sessions (refused under owner_strict, the floor)
+STREAM = re.compile(r"(?<=[^\\/:]):[^\\/]*$")   # an NTFS stream's name (file::$DATA), whatever the system
+
+
+def _edit_target(inp: dict, tool: str, cwd: str) -> str:
+    """A tool edit's file as an absolute path: the tool's path is literal (file.json::$DATA holds no variable)."""
+    raw = str(inp.get(EDIT_TOOLS[tool]) or "")
+    return os.path.abspath(os.path.join(cwd, raw)) if raw else ""
+
+
+def _edit_text(inp: dict) -> str:
+    """What a tool edit writes: its content, new string, new source, or each edit's new string."""
+    return "\n".join(str(t) for t in [inp.get("content"), inp.get("new_string"), inp.get("new_source"),
+                                      *[e.get("new_string") for e in inp.get("edits") or [] if isinstance(e, dict)]]
+                     if t)
+
+
+def _edit_result(inp: dict, tool: str, target: str) -> tuple[str, str]:
+    """(the file's text before, the text the edit leaves): Write's content; Edit's and MultiEdit's replacements
+    applied in turn to the current text (an old string the file does not hold: the new one appended, as the most a
+    failed edit could add); NotebookEdit's new source appended. A file over 1 MB or unreadable reads as ''."""
+    try:
+        before = Path(target).read_text(encoding="utf-8", errors="replace") if os.path.getsize(target) < 1 << 20 else ""
+    except OSError:
+        before = ""
+    if tool == "Write":
+        return before, str(inp.get("content") or "")
+    after = before
+    edits = inp.get("edits") if tool == "MultiEdit" else [inp]
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        old, new = str(e.get("old_string") or ""), str(e.get("new_string") or e.get("new_source") or "")
+        if old and old in after:
+            after = after.replace(old, new) if e.get("replace_all") else after.replace(old, new, 1)
+        else:
+            after += "\n" + new
+    return before, after
+
+
+def _introduced(pattern: str, before: str, after: str) -> str:
+    """The first match of ``pattern`` (case aside) the edit adds: one more in the text it leaves than in the text
+    before, both read as the shell and JSON read them (floor.unspelled); '' when it adds none."""
+    def count(text: str) -> dict:
+        out: dict = {}
+        for m in re.finditer(pattern, floor.unspelled(text), re.I):
+            key = m.group(0).upper()
+            out[key] = out.get(key, 0) + 1
+        return out
+    was = count(before)
+    return next((k for k, n in count(after).items() if n > was.get(k, 0)), "")
+
+
+def _resolved(target) -> str:
+    """A write's target as the file system resolves it (_real: its stream's name dropped, links and junctions
+    followed); an unresolved one whose only variable is a stream's name (file::$DATA) read as that file; '' else."""
+    if isinstance(target, Unresolved):
+        what = STREAM.sub("", target.what.strip("'\""))
+        if not what or any(c in what for c in "$`%"):
+            return ""
+        return _real(os.path.join(str(target), os.path.basename(what.replace("\\", "/"))))
+    return _real(STREAM.sub("", str(target))) if target else ""
+
+
+def _override_file(target) -> bool:
+    """Whether a write's target is one of OVERRIDE_FILES, as written or as the file system resolves it (a stream's
+    name, a junction or a link to Claude Code's settings or a profile)."""
+    return bool(OVERRIDE_FILES.search(str(target)) or OVERRIDE_FILES.search(_resolved(target)))
 
 
 def session_setting(tool: str, inp: dict) -> bool:
@@ -1975,7 +2074,7 @@ NTFS_STREAM = re.compile(r"(?<=[^\\/:]):[^\\/]*$")   # file.json::$DATA, file.js
 def _real(target) -> str:
     """A path as the file system resolves it: its NTFS stream suffix dropped, links followed, case folded."""
     text = NTFS_STREAM.sub("", str(target)) if os.name == "nt" else str(target)
-    return os.path.normcase(os.path.realpath(os.path.abspath(text)))
+    return os.path.normcase(floor.resolve(text))   # a network path as written (round 8 #2)
 
 
 def _is_roots(target) -> bool:
@@ -2063,12 +2162,18 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     guards' override set for later sessions (check override). The reasons name the owner (config.owner_of)."""
     shell = "powershell" if powershell else "bash"
     if tool in EDIT_TOOLS:
-        target = _path(inp.get(EDIT_TOOLS[tool]) or "", cwd) if inp.get(EDIT_TOOLS[tool]) else ""
-        text = "\n".join(str(t) for t in [inp.get("content"), inp.get("new_string"), inp.get("new_source"),
-                                          *[e.get("new_string") for e in inp.get("edits") or []]] if t)
-        if target and OVERRIDE_FILES.search(target) and re.search(ALLOW_ENV, text, re.I):
+        target = _edit_target(inp, tool, cwd)
+        text = floor.unspelled(_edit_text(inp))   # JSON's \u escapes decoded: a settings key as Claude Code reads it
+        override_file = bool(target) and _override_file(target)
+        before, after = _edit_result(inp, tool, target) if override_file else ("", "")   # the file the edit leaves
+        if override_file and (re.search(ALLOW_ENV, text, re.I) or _introduced(ALLOW_ENV, before, after)):
             return ("override", f"{tool} refused: it writes {ALLOW_ENV} into {target}; the override is "
                                 f"{config.owner_of()}'s", None)
+        off = (re.search(GUARD_OFF, text, re.I) and re.search(GUARD_OFF, text, re.I).group(0)
+               or _introduced(GUARD_OFF, before, after)) if override_file else ""
+        if off and gestures.strict():
+            return ("override", f"{tool} refused: it writes {off} into {target}, which turns the guards "
+                                f"off for later sessions; that is {config.owner_of()}'s", None)
         if target and _is_usage_allow(target):
             return ("override", f"{tool} refused: {target} lifts the usage guard; brain usage allow is "
                                 f"{config.owner_of()}'s, in their own terminal", None)
@@ -2096,6 +2201,10 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     if what:
         return ("override", f"{what} refused: the guards' override is {config.owner_of()}'s, set in Claude Code's "
                             "environment", None)
+    what = _override(command, cmds, sub, env=GUARD_OFF) if re.search(GUARD_OFF, command, re.I) else None
+    if what and gestures.strict():
+        return ("override", f"{what} refused: it turns the guards off for later sessions; that is "
+                            f"{config.owner_of()}'s", None)
     cats = owner_categories()
     for words, _, sh, top in actions(cmds, sub, command=command):
         g = gestures.match(words)
@@ -2901,6 +3010,8 @@ def check_attribution(command: str, cmds: list[tuple[list[str], str]]) -> str | 
 
 def _run(args: list[str], cwd: str, timeout: float = 10, env: dict[str, str] | None = None) \
         -> subprocess.CompletedProcess:
+    if args and args[0] == "git":   # by its path, never one in the hook's working directory (round 8 #8)
+        args = [floor.git(), *args[1:]]
     return subprocess.run(args, cwd=cwd, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
 
 
@@ -3220,7 +3331,13 @@ def check_markers(cmds: list[tuple[list[str], str]]) -> str | None:
 
 # --- pushes to a public repo -------------------------------------------------------------------------------------
 
-PUSH_VALUE_OPTS = {"--repo", "-o", "--push-option", "--receive-pack", "--exec"}
+PUSH_VALUE_OPTS = {"--repo", "-o", "--push-option", "--receive-pack", "--exec", "--recurse-submodules"}
+
+
+def _takes_value(arg: str, name: str) -> bool:
+    """Whether git push's option ``arg`` (``name``: its long option spelled out) takes the next argument as its
+    value: one of PUSH_VALUE_OPTS, or a group of short options that ends on its first ``o`` (``-uo VALUE``)."""
+    return name in PUSH_VALUE_OPTS or (not arg.startswith("--") and len(arg) > 2 and arg.find("o") == len(arg) - 1)
 
 
 def _push_target(args: list[str]) -> tuple[str, list[str], set[str]]:
@@ -3234,10 +3351,10 @@ def _push_target(args: list[str]) -> tuple[str, list[str], set[str]]:
             break
         if a.startswith("-"):
             flags.add(name)
+            name = floor.long_option(name)   # git takes an unambiguous prefix of a long option (--rep x)
             if name == "--repo":
                 repo = val if eq else (args[i + 1] if i + 1 < len(args) else "")
-            if name in PUSH_VALUE_OPTS and not eq:
-                i += 1
+            i += _takes_value(a, name) and not eq
         else:
             pos.append(a)
         i += 1
@@ -3763,17 +3880,42 @@ def refusals(payload: dict, strict: bool = False):
         tool = terminal_shell()
         cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
     from . import tokenguard   # the machine's IPC token (wi-brain-ipc-token-read-guard); it imports this module
-    if tool in tokenguard.READ_TOOLS:
+    if tool in tokenguard.READ_TOOLS:   # Read and Grep: the token check alone, before the floor (which never sees them)
         yield from _token(lambda: tokenguard.check(tool, inp, cwd, strict=strict), strict)
         return
+    try:
+        cfg = config.load()   # read once per call: the floor's settings and the file that sets them
+        lock = floor.read_lock()   # the machine's lock (brain floor lock), out of a session's reach once applied
+        fl = floor.effective(cfg, lock)   # config.json's floor and the lock file's: either says on
+        unlocked = floor.unlocked(cfg, fl, lock)   # the paths the lock holds checked once per call
+    except Exception as exc:   # the floor cannot be known (brain_home refused, say): the guard fails closed
+        _log("floor", exc)
+        yield ("floor", "error", f"the guard could not read config.json, which says whether the locked floor is on "
+                                 f"({type(exc).__name__}), so it refuses", None)
+        return
+    if unlocked:   # floor only, or a lock that no longer holds: the session could rewrite what the guard reads
+        yield ("floor", "lock", f"the floor is not locked: {unlocked}; every call is refused until "
+                                f"{config.owner_of()} runs brain floor lock (its plan prints the elevated command)",
+               None)
+        return
+    mcp = strict   # the MCP server's own strictness: the token check is on there whatever the key
+    strict = strict or fl["refuse"] or fl["only"]   # the floor on: a check that cannot judge the call refuses it
+    only = fl["only"]     # floor only: the floor's refusals, the secrets check and the override protection
+    if strict and (fl["refuse"] or fl["only"]):
+        from . import floorguard   # here, the floor on only: it imports this module, and the floor off never pays it
+    else:
+        floorguard = None
     if tool in EDIT_TOOLS:
-        reason = check_production(tool, inp, [], cwd)
+        reason = None if only else check_production(tool, inp, [], cwd)
         if reason:
             yield "production", "edit", reason, None
         hit = check_owner(tool, inp, [], cwd)
-        if hit:
+        if hit and (not only or hit[0] == "override"):
             yield "owner", *hit
-        yield from _token(lambda: tokenguard.check(tool, inp, cwd, strict=strict), strict)
+        reason = floorguard.check_files(tool, inp, [], cwd, fl, cfg.file) if floorguard else None
+        if reason:
+            yield "floor", "config", reason, None
+        yield from _token(lambda: tokenguard.check(tool, inp, cwd, strict=mcp), strict)   # whatever the floor
         return
     if SCHEDULED_TOOL.match(tool) or session_setting(tool, inp):
         hit = check_owner(tool, inp, [], cwd)
@@ -3785,21 +3927,29 @@ def refusals(payload: dict, strict: bool = False):
         return
     powershell = tool == "PowerShell"
     cmds = calls(command, cwd, powershell)
-    for guard, check, run in (("production", "git", lambda: check_production(tool, inp, cmds, cwd)),
-                              ("production", "shell-write", lambda: check_shell_writes(cmds, powershell)),
-                              ("owner", None, lambda: check_owner(tool, inp, cmds, cwd, powershell, command)),
-                              ("owner", tokenguard.CHECK, lambda: tokenguard.check(tool, inp, cwd, cmds, command,
-                                                                                    powershell, strict)),
-                              ("power", None, lambda: check_power(cmds, powershell, command)),
-                              ("third-party", None, lambda: check_third_party(cmds, cwd, powershell, command)),
-                              ("attribution", "attribution", lambda: check_attribution(command, cmds)),
-                              ("public", "config", lambda: check_config(cmds)),
-                              ("secrets", "secrets", lambda: check_secrets(cmds)),
-                              ("markers", "markers", lambda: check_markers(cmds)),
-                              ("public", "public", lambda: check_public(cmds)),
-                              ("public", "commit", lambda: check_public_commit(cmds)),
-                              ("branches", "name", lambda: check_branches(cmds)),
-                              ("merges", "stale", lambda: check_merge_stale(cmds))):
+    shell = "ps" if powershell else "bash"
+    floor_checks = (("floor", "config", lambda: floorguard.check_files(tool, inp, cmds, cwd, fl, cfg.file, command)),
+                    ("floor", None, lambda: floorguard.check_floor(cmds, fl, command, shell))) if floorguard else ()
+    checks = ((("owner", "override", lambda: check_override(cmds, powershell, command)),
+               ("owner", tokenguard.CHECK, lambda: tokenguard.check(tool, inp, cwd, cmds, command, powershell, mcp)),
+               ("public", "config", lambda: check_config(cmds)), ("secrets", "secrets", lambda: check_secrets(cmds)))
+              if only else
+              (("production", "git", lambda: check_production(tool, inp, cmds, cwd)),
+               ("production", "shell-write", lambda: check_shell_writes(cmds, powershell)),
+               ("owner", None, lambda: check_owner(tool, inp, cmds, cwd, powershell, command)),
+               ("owner", tokenguard.CHECK, lambda: tokenguard.check(tool, inp, cwd, cmds, command, powershell,
+                                                                     mcp)),
+               ("power", None, lambda: check_power(cmds, powershell, command)),
+               ("third-party", None, lambda: check_third_party(cmds, cwd, powershell, command)),
+               ("attribution", "attribution", lambda: check_attribution(command, cmds)),
+               ("public", "config", lambda: check_config(cmds)),
+               ("secrets", "secrets", lambda: check_secrets(cmds)),
+               ("markers", "markers", lambda: check_markers(cmds)),
+               ("public", "public", lambda: check_public(cmds)),
+               ("public", "commit", lambda: check_public_commit(cmds)),
+               ("branches", "name", lambda: check_branches(cmds)),
+               ("merges", "stale", lambda: check_merge_stale(cmds))))
+    for guard, check, run in (*checks, *floor_checks):
         try:
             out = run()
         except Exception as exc:  # one check's error lets the others run (and goes to ledger/errors.log)
@@ -3828,6 +3978,50 @@ def _token(run, strict: bool):
         yield "owner", tokenguard.CHECK, reason, None
 
 
+def check_override(cmds, powershell: bool = False, command: str = ""):
+    """(category, reason, None) for a shell call that lifts a guard for later sessions: check_owner's override
+    category alone (the guards' override set in the environment, Claude Code's settings or a shell profile; a gesture
+    of category override, brain usage allow or brain handover root; a write into the usage allow file or the chain
+    roots). A floor-only machine runs it so that a session cannot lift its own floor (wi-brain-unadopted-floor)."""
+    if not cmds:
+        return None
+    sub = "ps" if powershell else "bash"
+    what = _override(command, cmds, sub)
+    if what:
+        return ("override", f"{what} refused: the guards' override is {config.owner_of()}'s, set in Claude Code's "
+                            "environment", None)
+    for words, _, sh, _ in actions(cmds, sub, command=command):
+        g = gestures.match(words)
+        if g is not None and g.category == "override" and (g.guard != "strict" or gestures.strict()):
+            remote = " over ssh" if sh == "ssh" else ""
+            return ("override", f"{g.name}{remote} refused: {g.why}; it is {config.owner_of()}'s, in their own "
+                                "terminal (brain.gestures)", None)
+    what = _usage_override(cmds, sub)
+    if what:
+        return ("override", f"{what} refused: it lifts the usage guard (brain.governor), which is "
+                            f"{config.owner_of()}'s to do in their own terminal", None)
+    what = _root_override(cmds, sub)
+    if what:
+        return ("override", f"{what} refused: it marks a coordinators' chain root, which lets a session switch "
+                            f"Remote Control; that mark is {config.owner_of()}'s, in their own terminal", None)
+    return None
+
+
+def floor_settings(cfg) -> dict:
+    """The floor the guard holds (brain.floor.effective): config.json's and the machine's lock file's."""
+    return floor.effective(cfg, floor.read_lock())
+
+
+def _floor_state() -> str:
+    """'on' (config.json floor.refuse or floor.only), 'off', or 'unknown' when config.json cannot be read: the
+    guard's errors fail closed unless it is 'off'."""
+    try:
+        fl = floor_settings(config.load())
+    except Exception:
+        return "unknown"
+    return "on" if fl["refuse"] or fl["only"] else "off"
+
+
 def terminal_shell() -> str:
     """The shell tool a Terminal panel command is judged as: PowerShell on Windows, else Bash."""
     return "PowerShell" if os.name == "nt" else "Bash"
@@ -3843,10 +4037,14 @@ def _log(guard: str, exc: Exception) -> None:
 
 def allowed() -> set[str]:
     """The guards the override lifts: names (production, owner...), guard:check pairs (owner:installer, power:cluster),
-    or all."""
+    or all. Wherever a lock file exists the floor's are dropped: brain floor unlock, elevated, alone lifts a locked
+    floor (the environment is the session's)."""
     raw = os.environ.get(ALLOW_ENV, "")
     names = {w.strip().lower() for w in raw.split(",") if w.strip()}
-    return set(GUARDS) | names if "all" in names else names
+    names = set(GUARDS) | names if "all" in names else names
+    if names and floor.read_lock() is not None:
+        names = {n for n in names if n != "floor" and not n.startswith("floor:")}
+    return names
 
 
 def _record(payload: dict, guard: str, check: str, decision: str, reason: str, request: dict | None = None,
@@ -3926,6 +4124,9 @@ def main(stdin=None, stdout=None) -> int:
             cfg = config.load()
             reason = f"{config.claude(cfg)['plugin']} guard: {reason}. " + (
                 f"No override: {check} is {config.owner(cfg)}'s alone, in the app." if check in UNLIFTED else
+                f"No override: the floor is locked; {config.owner(cfg)} lowers it with brain floor lock --lower or "
+                "removes it with brain floor unlock (both elevated, their plans print the command)."
+                if guard == "floor" and floor.read_lock() is not None else
                 f"Override ({config.owner(cfg)} only): {ALLOW_ENV}={guard} (or {guard}:{check}) in Claude Code's "
                 "environment.")
             (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
@@ -3953,9 +4154,14 @@ def main(stdin=None, stdout=None) -> int:
             _log_error("guard", exc)
         except Exception:
             pass
-        try:   # but a session's security settings fail closed: an error there is a refusal
+        try:   # but a session's security settings, and every call while the floor is on or unknown, fail closed
             p = payload if isinstance(payload, dict) else {}
-            if session_setting(str(p.get("tool_name") or ""), p.get("tool_input") or {}):
+            if _floor_state() != "off":
+                (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                    "permissionDecisionReason": "brain guard: the locked floor is on (or config.json cannot be "
+                                                "read) and the guard failed, so it refuses (ledger/errors.log)"}}) + "\n")
+            elif session_setting(str(p.get("tool_name") or ""), p.get("tool_input") or {}):
                 (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "PreToolUse", "permissionDecision": "deny",
                     "permissionDecisionReason": "brain guard: a session's Remote Control or permission mode is the "
