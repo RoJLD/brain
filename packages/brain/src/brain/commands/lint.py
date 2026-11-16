@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from .. import lessons, lint, resume
+from .. import formatlint, lessons, lint, resume
+from ..inventory import AuditError, git
 from ._common import _now, _queue_changed, _scope, _store
 
 ORDER = 400   # its place in brain --help's list of commands (brain.commands)
@@ -21,6 +23,11 @@ USAGE = """\
   brain lint lessons [--json] [--propose]   the open lessons nothing enforces: a guard candidate when their check
                  is a command (scripts before rules; --propose files its item), else a prose lesson to justify
                  (props.why_not_script)
+  brain lint formats [--repo-dir D] [--backend python|ast-grep | --compare] [--json]   the format lints over a
+                 repo's Python files: a path into the brain's home built outside brain.paths, a file of the home
+                 written around brain.stateio, a test reading the real home; --compare runs the python and the
+                 ast-grep backends and prints what each finds that the other does not, and how long each took
+                 (ast-grep N/A without its pinned binary); whatever config.json's switches (brain.formatlint)
 """
 
 
@@ -55,6 +62,30 @@ def cmd_lint(args, root: Path) -> int:
     if filed and filed["filed"] and not args.dry_run:
         _queue_changed(root, args)
     return 1 if lint.over_cap(report) else 0
+
+
+def early(args) -> int | None:
+    """``brain lint formats`` reads a repo, any repo: no brain root needed (the other subcommands need one)."""
+    return _lint_formats(args) if args.lint_cmd == "formats" else None
+
+
+def _lint_formats(args) -> int:
+    """``brain lint formats``: one backend, or both compared, over the repo of --repo-dir (the current folder)."""
+    try:
+        top = Path(git(Path(args.repo_dir or Path.cwd()).resolve(), "rev-parse", "--show-toplevel").strip())
+    except AuditError as exc:
+        print(f"brain lint formats: {exc}", file=sys.stderr)
+        return 2
+    report = formatlint.run(top, list(formatlint.BACKENDS) if args.compare else [args.backend])
+    diff = formatlint.compare(report)
+    if args.json:
+        rows = {b: {"seconds": r["seconds"], "why": r["why"], "hits": [vars(h) for h in r["hits"]]}
+                for b, r in report.items()}
+        print(json.dumps({"repo": str(top), "backends": rows,
+                          "diff": {k: [vars(h) for h in v] for k, v in diff.items()}}, ensure_ascii=False, indent=1))
+    else:
+        print("\n".join(formatlint.render(report, diff)))
+    return 0
 
 
 def _lint_lessons(args, root: Path) -> int:
@@ -93,6 +124,14 @@ def register(sub, ctx) -> None:
     lr.add_argument("--at", help="time asked (default: now)")
     ll = li.add_parser("lessons", help="the open lessons nothing enforces: guard candidates (their check is a "
                                        "command) and prose lessons to justify (why_not_script)")
+    lf = li.add_parser("formats", help="the format lints over a repo (brain.formatlint): one backend, or the python "
+                                       "and ast-grep ones compared")
+    lf.add_argument("--repo-dir", metavar="D", help="the repo read (default: the current folder's)")
+    how = lf.add_mutually_exclusive_group()
+    how.add_argument("--backend", choices=formatlint.BACKENDS, default="python", help="the backend (default python)")
+    how.add_argument("--compare", action="store_true", help="both backends: what each finds that the other does not, "
+                                                           "and their times")
+    lf.add_argument("--json", action="store_true")
     ll.add_argument("--json", action="store_true")
     ll.add_argument("--propose", action="store_true", help="file the item proposal of each guard candidate no open "
                                                            "item fixes yet")

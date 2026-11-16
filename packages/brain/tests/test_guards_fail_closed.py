@@ -166,7 +166,7 @@ def test_health_sh_judges_the_interpreter_guard_sh_runs(tmp_path):
     """health.sh tries guard.sh's candidates in guard.sh's order: a BRAIN_PYTHON without brain is reported."""
     text = (PLUGIN / "hooks" / "health.sh").read_text(encoding="utf-8")
     guard = (PLUGIN / "hooks" / "guard.sh").read_text(encoding="utf-8")
-    first = [line.split(" &&")[0] for t in (text, guard) for line in t.splitlines() if line.startswith("brain_python ")]
+    first = [line.split(" &&")[0].split(" ||")[0] for t in (text, guard) for line in t.splitlines() if line.startswith("brain_python ")]
     assert first[0] == first[1], first
 
 
