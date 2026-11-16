@@ -200,7 +200,7 @@ def registry_edit(a: Answers, name: str):
         if a.floor:
             text = text.rstrip("\n") + f"\n  classes: {{floor: {a.floor}}}   {MARK}: the data's class floor\n"
         if a.include:
-            text = _include_line(text, a.include)
+            text = _include_line(text, a.include, name)
         _landed(text, name, a)
         return text
     return edit
@@ -228,11 +228,12 @@ def _repo_lines(text: str, name: str, a: Answers) -> str:
     return "".join(lines[:at + 1] + add + lines[at + 1:])
 
 
-def _include_line(text: str, ids: list[str]) -> str:
+def _include_line(text: str, ids: list[str], name: str) -> str:
     """The rows added to the entry's ``standards: include``: under its block, or a ``standards:`` of their own."""
     lines = text.splitlines(keepends=True)
     flow = f"[{', '.join(ids)}]"
-    at = next((i for i in range(len(lines)) if lines[i].split("#")[0].rstrip() == "  standards:"), None)
+    at = next((i for i in range(_entry_start(lines, name), len(lines))
+               if lines[i].split("#")[0].rstrip() == "  standards:"), None)
     if at is None:
         return text.rstrip("\n") + f"\n  standards: {{include: {flow}}}   {MARK}: personal data's rows\n"
     return "".join(lines[:at + 1] + [f"    include: {flow}   {MARK}: personal data's rows\n"] + lines[at + 1:])

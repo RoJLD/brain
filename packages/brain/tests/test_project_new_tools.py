@@ -170,3 +170,11 @@ def test_lines_that_cannot_land_are_refused():
     inc = project_new.answer_data(answers(), None, personal=True)
     with pytest.raises(init.InitError, match="twice"):   # a flow-style standards: cannot take a line
         project_new.registry_edit(inc, "brain")("brain:\n  root: .\n  standards: {profiles: [cli]}\n")
+
+
+def test_the_include_goes_under_the_brains_own_entry_only():
+    inc = project_new.answer_data(answers(), None, personal=True)
+    text = "other:\n  root: x\n  standards:\n    profiles: [cli]\nbrain:\n  root: .\n"
+    data = yaml.safe_load(project_new.registry_edit(inc, "brain")(text))
+    assert "include" not in data["other"]["standards"]
+    assert data["brain"]["standards"]["include"] == list(project_new.PERSONAL_DATA)
