@@ -311,9 +311,9 @@ def plan(args, registry: Path) -> Plan:
 
 
 def notes_home(cfg: config.Config, registry: Path) -> Path | None:
-    """The notes home of the brain whose registry is edited: its own config.json ``knowledge.path``, else its
-    registry's first ``kind: knowledge`` entry; never another brain's (the personal brain's config.json, found through
-    $BRAIN_PERSONAL or the pointer when this brain has none of its own)."""
+    """Where the edited brain keeps its notes: ``knowledge.path`` of the config file beside its registry, else the
+    first registry entry of kind knowledge. A config read from elsewhere ($BRAIN_PERSONAL, the pointer: when this
+    brain holds no config file) is ignored, so a map never lands in another brain's notes."""
     if cfg.file is not None and _same(cfg.file.parent, registry.parent):
         home = knowledge.home(cfg)
     else:
