@@ -289,7 +289,7 @@ def closed_items(g: nx.DiGraph, *, since: str | None = None, events: Iterable[Ev
         if isinstance(outcome, str) and day and source == "props.done":
             outcome = _DATE.sub("", outcome).lstrip(" :-")
         out.append({**item_row(g, n, default_repo), "date": day, "date_source": source, "commit": ref,
-                    "pr": p.get("pr"), "outcome": outcome})
+                    "pr": p.get("pr"), "evidence": p.get("evidence"), "outcome": outcome})
     return sorted(out, key=lambda r: (r["date"] is None, "" if r["date"] is None else _neg(r["date"]), r["id"]))
 
 

@@ -67,6 +67,8 @@ def cmd_item(args, root: Path) -> int:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
     print(f"{args.item_cmd}: {node['id']} [{node['status']}]; then brain sync and brain check")
+    if args.item_cmd == "close":   # the journal's line, its proof a PR or the evidence (wi-brain-evidence-views)
+        print(f"journal line (brain journal add): {graph.close_line(node)}")
     if args.item_cmd == "add" and args.type == "WorkItem":
         _after_add(args, store, node)
     return 0
