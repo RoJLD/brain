@@ -45,6 +45,13 @@ TYPE_CALL = re.compile(r"(?i)(?:\)|\}|\$[\w:]+)\s*::\s*\w|\]\s*\.\s*(?:GetMethod
                        # round 10 #6: a member named by an expression (::("Write"+"AllText")), a method group invoked
                        r"::\s*[(\"'$]|::\s*\w+\s*\.\s*Invoke\s*\(|"
                        r"\)\s*\.\s*Invoke\s*\(")   # round 11 #7: a method group reached through parentheses
+# Round 12 #2: git's rebase and am state, whose queued patches git am --continue and --skip apply, and what a queued
+# patch must not name; round 12 #1: a link made by inline code.
+REBASE_STATE = re.compile(r"(?i)[\\/]\.git[\\/](?:worktrees[\\/][^\\/]+[\\/])?rebase-(?:apply|merge)(?:[\\/]|$)")
+QUEUED = re.compile(r"(?i)\.claude[\\/](?:settings(?:\.local)?\.json|skills|commands|agents)\b|\.mcp\.json|"
+                    r"\.claude\.json")
+INLINE_LINK = re.compile(r"(?i)\bos\.(?:link|symlink)\s*\(|\.(?:hardlink_to|symlink_to|link_to)\s*\(|"
+                         r"\bfs\.(?:link|symlink)(?:Sync)?\s*\(|CreateHardLink|CreateSymbolicLink")
 # Round 11 #3: git apply's and git am's forms that write nothing.
 READ_ONLY = {"apply": {"--check", "--stat", "--numstat", "--summary"},
              "am": {"--continue", "--abort", "--skip", "--quit", "--show-current-patch"}}
@@ -84,7 +91,10 @@ def piped(command: str, acts, kept) -> str | None:
 
 def typed(plain: str) -> str | None:
     """A static member reached through anything but a literal [Type] (TYPE_CALL), or through a variable that holds a
-    .NET type (TYPE_VAR)."""
+    .NET type (TYPE_VAR); a link made by inline code (INLINE_LINK: os.link, Path.hardlink_to, fs.linkSync...)."""
+    m = INLINE_LINK.search(plain)
+    if m:
+        return f"{m.group(0).strip()} refused: a link made by code, whose target the floor cannot read"
     m = TYPE_CALL.search(plain)
     if m:
         return (f"{m.group(0).strip()} refused: a .NET member reached through a type the floor cannot read (name the "
@@ -115,6 +125,8 @@ def customized(tool: str, inp: dict, target: str, real: str) -> str | None:
     to a skill, command or agent (round 9 #2): the refusal; '' for a customization file it lets through; None when
     the target is neither (the settings checks go on)."""
     custom = floor.CUSTOMIZATION.search(real) or floor.CUSTOMIZATION.search(target)
+    if REBASE_STATE.search(real) or REBASE_STATE.search(str(target)):   # round 12 #2: git am's queued patches
+        return f"{tool} refused: {target} is git's rebase or am state, which git am --continue or --skip applies"
     if g.STREAM.search(str(target)) and (custom or g._override_file(target)):
         return f"{tool} refused: {target} names a stream of a settings or customization file"
     if custom:
@@ -122,14 +134,28 @@ def customized(tool: str, inp: dict, target: str, real: str) -> str | None:
     return None
 
 
-def patched_settings(sub: str, args: list[str]) -> str:
+def _queued(d: str) -> str:
+    """A patch git am's state queues (.git/rebase-apply) that names a settings or customization path, said; ''
+    when none does (round 12 #2: --continue and --skip apply the next ones)."""
+    state = g._git_out(d, "rev-parse", "--git-path", "rebase-apply").strip()
+    folder = Path(g._path(state, d)) if state else None
+    for f in sorted(folder.iterdir()) if folder and folder.is_dir() else []:
+        try:
+            if f.is_file() and QUEUED.search(f.read_text(encoding="utf-8", errors="replace")):
+                return f"the queued patch {f.name}, which names a settings or customization file"
+        except OSError:
+            return f"a queued patch it cannot read ({f.name})"
+    return ""
+
+
+def patched_settings(sub: str, args: list[str], d: str = ".") -> str:
     """Why git apply or git am would write under the floor (round 11 #3: a patch names its files in more spellings
     than a reader follows: case, renames, a patch the same command makes), '' for their read-only forms (apply
     --check, --stat, --numstat, --summary without --apply) and am's session options (--continue, --abort, --skip,
     --quit, --show-current-patch)."""
     flags = {a.split("=", 1)[0] for a in args}
     if flags & READ_ONLY.get(sub, set()) and "--apply" not in flags:
-        return ""
+        return _queued(d) if sub == "am" and flags & {"--continue", "--skip"} else ""
     return f"the work tree through a patch (under the floor only {', '.join(sorted(READ_ONLY.get(sub, set())))})"
 
 
@@ -143,9 +169,7 @@ def alias(real: str, kept, cwd: str) -> str:
         return real
     if st.st_nlink < 2:
         return real
-    home, here = Path.home() / ".claude", Path(cwd or os.getcwd())
-    folders = [home, *(p / ".claude" for p in (here, *list(here.parents)[:6]))]
-    for c in [*(f / n for f in folders for n in ("settings.json", "settings.local.json")), *kept.files]:
+    for c in [*(f / n for f in _settings_folders(cwd) for n in ("settings.json", "settings.local.json")), *kept.files]:
         try:
             other = os.stat(c)
         except (OSError, ValueError):
@@ -153,6 +177,26 @@ def alias(real: str, kept, cwd: str) -> str:
         if (other.st_dev, other.st_ino) == (st.st_dev, st.st_ino):
             return os.path.normcase(os.path.abspath(str(c)))
     return real
+
+
+def _settings_folders(cwd: str) -> list[Path]:
+    """The .claude folders whose settings a hard link may be (round 12 #1): the home's, the launch folder's
+    (CLAUDE_PROJECT_DIR), every folder of the working directory's parent chain (no depth cap: the git top-level is one
+    of them), and every permissions.additionalDirectories entry of the home's and those folders' settings."""
+    import json
+    here = Path(cwd or os.getcwd())
+    roots = [Path.home(), *([Path(os.environ["CLAUDE_PROJECT_DIR"])] if os.environ.get("CLAUDE_PROJECT_DIR") else []),
+             here, *here.parents]
+    folders = [r / ".claude" for r in roots]
+    for f in list(folders):
+        for name in ("settings.json", "settings.local.json"):
+            try:
+                extra = json.loads((f / name).read_text(encoding="utf-8")).get("permissions", {}).get(
+                    "additionalDirectories") or []
+            except (OSError, ValueError, AttributeError):
+                continue
+            folders += [Path(str(x)).expanduser() / ".claude" for x in extra if isinstance(x, str)]
+    return folders
 
 
 def link_refusal(prog: str, words: list[str], d: str, kept) -> str:
@@ -166,18 +210,22 @@ def link_refusal(prog: str, words: list[str], d: str, kept) -> str:
 
 
 def _links_files(prog: str, args: list[str]) -> bool:
-    """Whether the command makes a link: mklink, ln, fsutil hardlink, cp -l/--link, New-Item -ItemType *Link."""
-    if prog in ("mklink", "ln"):
+    """Whether the command makes a link: mklink, ln, link, fsutil hardlink, cp -l/--link, New-Item -ItemType *Link (a
+    colon form -ItemType:Junction or -Type: too)."""
+    if prog in ("mklink", "ln", "link"):
         return True
     if prog == "fsutil":
         return "hardlink" in (a.lower() for a in args)
     if prog == "cp":
         return any(a == "--link" or re.match(r"^-[a-zA-Z]*l", a) for a in args)
-    return prog in ("new-item", "ni") and any(re.match(r"(?i)^(?:symboliclink|hardlink|junction)$", a) for a in args)
+    return prog in ("new-item", "ni") and any(
+        re.match(r"(?i)^(?:-(?:itemtype|type|it):)?['\"]?(?:symboliclink|hardlink|junction)['\"]?$", a) for a in args)
 
 
 def _settings_reach(real: str, kept) -> bool:
-    """Whether a link onto ``real`` reaches a settings or kept file: it is one, a folder above a kept path, a .claude
-    folder or a folder holding one."""
-    return kept.settings(real) or kept.inside(real) or kept.holds(real) or os.path.basename(real) == ".claude" \
-        or os.path.isdir(os.path.join(real, ".claude"))
+    """Whether a link onto ``real`` reaches a settings or kept file: it is one, a folder above a kept path, the home or
+    its .claude folder (round 12 #4: a project folder holding .claude passes; a write through it is judged on the
+    file it reaches)."""
+    home = os.path.normcase(os.path.abspath(Path.home()))
+    return kept.settings(real) or kept.inside(real) or kept.holds(real) or \
+        os.path.normcase(real) in (home, os.path.join(home, ".claude"))

@@ -207,7 +207,8 @@ def test_a_write_is_judged_by_the_file_it_reaches_and_links_onto_settings_are_re
     os.link(settings, link)
     assert "moves or stops the floor" in (edit(repo, link, evil) or "")
     assert "settings" in (bash(repo, f"echo '{evil}' > x.txt") or "")
-    s, c = settings.as_posix(), (repo / ".claude").as_posix()
+    from pathlib import Path
+    s, c = settings.as_posix(), (Path.home() / ".claude").as_posix()   # round 12 #4: the home's .claude, not a project's
     for command in (f"ln {s} y.txt", f"cp -l {s} y.txt", f"cmd /c mklink /H y.txt {s}", f"fsutil hardlink create y.txt {s}",
                     f"cmd /c mklink /J k {c}"):
         assert "refused" in (bash(repo, command) or ""), command
@@ -240,3 +241,39 @@ def test_plugin_installs_are_refused_under_the_floor_and_a_paren_method_group(re
     import os
     if os.name == "nt":   # a drive's \\?\ prefix: Windows only
         assert floor.resolve("\\\\?\\" + str(tmp_path / "config.json")) == floor.resolve(str(tmp_path / "config.json"))
+
+
+def test_a_hard_link_from_a_deep_folder_and_every_link_maker_are_read(repo, tmp_path, monkeypatch):
+    """Review round 12 #1, #3, #4: the cwd's whole parent chain and the launch folder; link, the colon forms, inline
+    os.link; a link to an ordinary project folder passes."""
+    import os
+    config(tmp_path, monkeypatch, refuse=True)
+    settings = repo / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text("{}", encoding="utf-8")
+    deep = repo / "a" / "b" / "c" / "d" / "e" / "f" / "g" / "h"
+    deep.mkdir(parents=True)
+    os.link(settings, deep / "x.txt")
+    monkeypatch.chdir(deep)
+    evil = json.dumps({"env": {"BASH_FUNC_git%%": "() { git push origin HEAD:main; }"}})
+    assert "moves or stops the floor" in (edit(deep, deep / "x.txt", evil) or "")
+    s = settings.as_posix()
+    assert "refused" in (bash(repo, f"link {s} y.txt") or "")
+    assert "refused" in (pwsh(repo, f"New-Item -ItemType:HardLink -Path y.txt -Target {s}") or "")
+    assert "refused" in (pwsh(repo, f"ni -Type:Junction -Path k -Target {s}") or "")
+    assert "refused" in (bash(repo, f"python -c \"import os; os.link('{s}', 'y.txt')\"") or "")
+    assert bash(repo, f"cmd /c mklink /J proj {repo.as_posix()}") is None   # a project folder holding .claude
+
+
+def test_git_am_state_is_not_written_and_its_queued_patches_are_read(repo, tmp_path, monkeypatch):
+    """Review round 12 #2: a crafted .git/rebase-apply, then git am --skip, applied a patch naming settings."""
+    config(tmp_path, monkeypatch, refuse=True)
+    state = repo / ".git" / "rebase-apply"
+    assert "refused" in (edit(repo, state / "0002", "diff --git a/x b/x") or "")
+    assert "rebase" in (bash(repo, "echo x > .git/rebase-apply/0002") or "")
+    assert bash(repo, "git am --skip") is None                                    # no state: nothing queued
+    state.mkdir()
+    (state / "0002").write_text("diff --git a/.Claude/Settings.json b/.Claude/Settings.json\n", encoding="utf-8")
+    assert "queued patch" in (bash(repo, "git am --skip") or "")
+    assert "queued patch" in (bash(repo, "git am --continue") or "")
+    assert bash(repo, "git am --abort") is None

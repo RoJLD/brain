@@ -339,8 +339,8 @@ def _writes(cmds, sub: str, kept: Kept) -> str | None:
         real = floorpwsh.alias(real, kept, os.getcwd()) if real else real   # round 11 #1: a hard link's file
         if real and kept.inside(real):
             return f"{what} into {target} refused: it sets the floor or runs the guard"
-        if real and floor.GIT_CONFIG_FILES.search(real):
-            return f"{what} into {target} refused: it is git's configuration"
+        if real and (floor.GIT_CONFIG_FILES.search(real) or floorpwsh.REBASE_STATE.search(real)):
+            return f"{what} into {target} refused: it is git's configuration or its rebase and am state"
         if kept.settings(real) or isinstance(target, g.Unresolved) and kept.settings(target.what):
             return f"{what} into {target} refused: Claude Code's settings change by Write or Edit only"
     return None
@@ -531,7 +531,7 @@ def _brings_settings(d: str, sub: str, args: list[str]) -> str:
     each commit it names or reads by default (the last stash, the upstream for pull) against HEAD, so a local edit
     the command carries over is no change; each patch file of apply or am read as text."""
     if sub in ("apply", "am"):
-        return floorpwsh.patched_settings(sub, args)
+        return floorpwsh.patched_settings(sub, args, d)
     if sub in INDEX_RESTORERS or (sub == "checkout" and ("--" in args or "." in args)):
         changed = g._git_out(d, "diff", "--name-only", "HEAD", "--", *SETTINGS_SPEC).split() or \
             g._git_out(d, "diff", "--name-only", "--", *SETTINGS_SPEC).split()

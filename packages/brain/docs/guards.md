@@ -333,14 +333,19 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   `enabledPlugins` change but turning a plugin off);
   a write is judged by the file it reaches, not by its path: its NTFS stream dropped, links and junctions resolved,
   and a file with more than one name (a hard link) compared by identity (`st_dev`, `st_ino`: the volume serial and
-  file index on Windows) with the home's and the working directory's settings files and the kept files; a write to a
-  stream of a settings or customization file is refused, and a link (`ln`, `cp -l`, `mklink`, `fsutil hardlink`,
-  `New-Item -ItemType`) whose path is a settings or kept file, a `.claude` folder or a folder holding one is refused; a
+  file index on Windows) with the kept files and the settings files of the home, the launch folder
+  (`CLAUDE_PROJECT_DIR`), every folder of the working directory's parent chain and every
+  `permissions.additionalDirectories` entry; a write to a stream of a settings or customization file, or into git's
+  rebase and am state (`.git/rebase-apply`, `.git/rebase-merge`), is refused, and `git am --continue` or `--skip`
+  passes only when no queued patch names a settings or customization path; a link (`ln`, `link`, `cp -l`, `mklink`,
+  `fsutil hardlink`, `New-Item -ItemType` in any spelling, `os.link` and the like in inline code) whose path is a
+  settings or kept file, a folder above a kept path, the home or its `.claude` folder is refused (a link to a project
+  folder passes: a write through it is judged on the file it reaches); a
   write that adds a `hooks` key, at any depth, to a skill's, command's or agent's frontmatter (read as YAML) is
   refused; `git apply` and `git am` write nothing (only `apply --check`, `--stat`, `--numstat`, `--summary` and `am
   --continue`, `--abort`, `--skip`, `--quit`, `--show-current-patch` pass), and `claude plugin install`, `enable`,
   `update` and `marketplace add`/`update` are refused, under `floor.only` too. A hard link made before the floor was
-  on, to a settings file of another folder than the home and the working directory, is not found. On an unlocked machine the
+  on, to the settings file of a project outside those folders, is not found until a session works there. On an unlocked machine the
   MCP servers of `~/.claude.json` and `.mcp.json` are not judged (`claude mcp add` passes), and a shell write into a
   skill, a command or an agent file is not read; such a write through code the guard does not read is not either. Elsewhere it is the parser's alone, with no backstop (an edit that adds
   a settings file's PreToolUse or PermissionRequest hook is refused too), open through code the
