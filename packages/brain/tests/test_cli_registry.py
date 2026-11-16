@@ -62,8 +62,8 @@ def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeyp
 # command needs the project's root (run only)
 EARLY = {capture, memory, timed, perf, init, merge_driver, merge_check, sessions, schedule, update, audit_cmd, impact,
          index, up, down, health, bundle, quiet, review, probes, schema, test_cmd, merge_ready, mcp, ipc,
-         handover, project, uninstall, lot, rules, release_cmd, telemetry, notes}
-BOTH = {decision, resume, check, docgraph, catalogue, profile, lint, floor_cmd}   # lint formats: any repo
+         handover, project, uninstall, lot, rules, release_cmd, telemetry, notes, floor_cmd}
+BOTH = {decision, resume, check, docgraph, catalogue, profile, lint}   # lint formats: any repo
 ALIASES = {"profile": ("doctor",)}
 ROOTED = {code_map, collisions, formats, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
 
