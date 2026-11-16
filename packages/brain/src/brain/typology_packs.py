@@ -274,18 +274,24 @@ def rows(src) -> list[dict]:
     """The typology packs as ``brain typologies packs`` lists them: the engine's (taken when the brain's packs.yaml
     holds it ``from: engine``), then the brain's own packs that name typologies; each with its projects and parts.
     ``src``: the brain's neutral source, or None."""
+    shipped = engine()
+    own = {p.id: p for p in (src.packs if src else []) if _typology_pack(p, shipped)}
+    out = [_row(pid, spec, own.pop(pid, None)) for pid, spec in shipped.items()]
+    return out + [_row(pid, p.spec, p, own=True) for pid, p in own.items()]
+
+
+def _typology_pack(p, shipped: dict) -> bool:
+    """A brain pack the listing shows: it names typologies, takes an engine pack, or bears an engine pack's id."""
+    return bool(_list(p.spec.get("typologies"))) or FROM in (p.given or {}) or p.id in shipped
+
+
+def _row(pid: str, spec: dict, p=None, own: bool = False) -> dict:
+    """One row of :func:`rows`: an engine pack (``p`` the brain's pack of its id, if any) or a brain's own pack."""
     from . import neutral
-    own = {p.id: p for p in (src.packs if src else []) if _list(p.spec.get("typologies")) or FROM in (p.given or {})
-           or p.id in engine()}
-    out = []
-    for pid, spec in engine().items():
-        p = own.pop(pid, None)
-        taken = p is not None and (p.given or {}).get(FROM) == ENGINE
-        origin = ENGINE if p is None or taken else neutral.PACKS   # a brain pack of the same id, not from the engine
-        out.append({"id": pid, "origin": origin, "taken": taken or p is not None,
-                    "projects": p.projects if p else [], **_parts(p.spec if p else spec)})
-    return out + [{"id": pid, "origin": neutral.PACKS, "taken": True, "projects": p.projects, **_parts(p.spec)}
-                  for pid, p in own.items()]
+    taken = own or (p is not None and (p.given or {}).get(FROM) == ENGINE)
+    origin = neutral.PACKS if own or (p is not None and not taken) else ENGINE   # a same-id brain pack: the brain's
+    return {"id": pid, "origin": origin, "taken": taken or p is not None, "projects": p.projects if p else [],
+            **_parts(p.spec if p else spec)}
 
 
 def _parts(spec: dict) -> dict:
