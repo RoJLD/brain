@@ -48,7 +48,7 @@ def test_two_mergers_started_together_one_wins(tmp_path):
 
 def _dead_pid() -> int:
     p = subprocess.Popen([sys.executable, "-c", "pass"])
-    p.wait()
+    p.wait(timeout=60)
     return p.pid
 
 
