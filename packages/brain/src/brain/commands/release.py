@@ -1,4 +1,5 @@
-"""``brain release``: the version PR's mechanical part in one command (brain.release), a plan then --write."""
+"""``brain release``: the version PR's mechanical part (``prepare``) and the planning brain's pin PR (``pin``) in one
+command each (brain.release), a plan then --write."""
 
 from __future__ import annotations
 
@@ -14,13 +15,21 @@ USAGE = """\
                  brain); release_check.py (--store: the planning brain's notes/graph by default), then its --preview;
                  --write runs them in that order and stops at the first that fails; the Upgrade steps' prose, the
                  pilot page's line and the review stay a model's (docs/release.md, « The version PR »)
+  brain release pin vX.Y.Z [--planning ROOT] [--write] [--json]   the planning brain's pin PR (--planning, else
+                 --root, else the personal brain), as a plan: config.json engine.pin, the engine stores its classes:
+                 block leaves at their default (brain classes --suggest; this engine's stores), the adapter plugin's
+                 shim PIN line when it keeps one, the tag's Upgrade steps since the pin that name config.json (by
+                 hand), and its open PRs naming the version (the lot PRs that waited for the tag); --write writes
+                 config.json and the shim, refused on the brain's default branch; --json prints the plan, writes
+                 nothing; then by hand: brain sync with the new engine, the ADR, the journal (docs/release.md, « 4. The
+                 pin and the machines »)
 """
 NO_PROJECT = {"release"}   # its parsers that take no --project after them
 
 
 def register(sub, ctx) -> None:
-    rel = sub.add_parser("release", help="the version PR's mechanical part: a plan, then --write (brain.release)"
-                         ).add_subparsers(dest="release_cmd", required=True)
+    rel = sub.add_parser("release", help="the version PR's mechanical part and the pin PR: a plan, then --write "
+                                         "(brain.release)").add_subparsers(dest="release_cmd", required=True)
     pr = rel.add_parser("prepare", help="versions, the previous store frozen, the changelog compiled, FEATURES.md "
                                         "and the reference rendered, release_check: a plan, then --write")
     pr.add_argument("version", help="the new version, X.Y.Z")
@@ -34,9 +43,15 @@ def register(sub, ctx) -> None:
     pr.add_argument("--no-freeze", dest="freeze", action="store_false",
                     help="skip freeze_store.py (release_check then refuses the version PR)")
     pr.add_argument("--write", action="store_true", help="run the steps, in order, stopping at the first that fails")
+    pin = rel.add_parser("pin", help="the planning brain's pin PR: engine.pin, the missing engine stores, the shim's "
+                                     "PIN, the Upgrade steps naming config.json, the PRs waiting for the tag")
+    pin.add_argument("tag", help="the release tag to pin, vX.Y.Z")
+    pin.add_argument("--planning", help="the brain whose pin moves (default: --root, else the personal brain)")
+    pin.add_argument("--write", action="store_true", help="write config.json and the shim (in a pin branch)")
+    pin.add_argument("--json", action="store_true", help="the plan as JSON; nothing written")
 
 
 def early(args) -> int:
     """No project's root: the engine checkout is the one here (or --repo), the planning brain --planning or --root."""
     from .. import release
-    return release.main_prepare(args)
+    return release.main_pin(args) if args.release_cmd == "pin" else release.main_prepare(args)

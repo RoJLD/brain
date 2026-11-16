@@ -19,10 +19,28 @@
 What stays a model's, said at the end: the ``### Upgrade`` section's numbered steps and their prose, the pilot page's
 line of what each release brought, and the review. Every step runs a program with its arguments as a list, never a
 shell: a theme with quotes, ``$`` or ``%`` reaches the script as typed.
+
+``brain release pin vX.Y.Z`` (wi-brain-release-pin) plans the planning brain's pin PR once the tag is cut, and
+``--write`` writes its files, in a branch of that brain (refused on its default branch):
+
+- **pin**: ``config.json`` ``engine.pin`` moved to the tag (brain.update.rewrite_json: its keys, order, indent, line
+  endings and BOM kept); a tag before the pin is refused (a rollback is the owner's);
+- **stores**: for a brain that declares ``classes:``, the engine stores it leaves at their default
+  (``brain classes --suggest``'s lines), added to ``classes.stores`` in the same write; they are this engine's, so the
+  plan says when it is not the tag's;
+- **shim**: the adapter plugin's transitional ``plugins/<adapters.claude.plugin>/brain/__init__.py``, when the brain
+  keeps one: its ``PIN = "vX.Y.Z"`` line follows the pin;
+- **upgrade**: the tag's CHANGELOG sections after the pin (read from the code host, brain.update.changelog), the
+  ``### Upgrade`` steps that name ``config.json`` listed, to make by hand;
+- **waiting**: the brain's open PRs (``gh pr list``) whose title or body names the version: the lot PRs that waited
+  for the tag.
+
+Then by hand: ``brain sync`` with the new engine, the ADR, the journal, the PR.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -253,3 +271,271 @@ def main_prepare(args) -> int:
         print("plan only: --write runs it, in this order, stopping at the first step that fails")
     print("\n".join(f"by hand  {x}" for x in BY_HAND))
     return code
+
+
+# --- brain release pin (wi-brain-release-pin) ---
+
+TAG = re.compile(r"v\d+\.\d+\.\d+")
+SHIM = "plugins/{plugin}/brain/__init__.py"
+SHIM_PIN = re.compile(r'^(PIN = ")([^"]*)(")', re.M)
+DEFAULT_BRANCHES = {"main", "master"}
+PIN_BY_HAND = ["brain sync with the new engine (a venv at the tag: sync refuses another engine than the pin), in this "
+               "branch, so the hooks it renders go in the same PR",
+               "the Upgrade steps listed above that name config.json, then the ADR of the pin (brain adr new) and the "
+               "journal entry (brain journal add); then the pin PR, merged after its checks (docs/release.md, « 4. "
+               "The pin and the machines »)"]
+
+
+@dataclass
+class PinPlan:
+    root: Path
+    file: Path                                      # the planning brain's config.json
+    prev: str                                       # the pin it holds
+    tag: str
+    stores: dict = field(default_factory=dict)      # the classes.stores lines to add
+    stores_note: str = ""                           # why none is added, when that is not "none missing"
+    shim: Path | None = None                        # the shim whose PIN line moves (None: none, or at the tag)
+    shim_text: str = ""                             # its new text
+    shim_line: str = ""                             # what the plan says of it
+    upgrade: list[str] = field(default_factory=list)   # the Upgrade steps that name config.json
+    upgrade_note: str = ""                          # why the changelog could not be read ('' when it was)
+    waiting: list[dict] = field(default_factory=list)  # the open PRs naming the version
+    waiting_note: str = ""                          # why they could not be listed
+    engine: str = ""                                # the version of the engine that plans (its stores are these)
+
+    def writes(self) -> bool:
+        return self.prev != self.tag or bool(self.stores) or self.shim is not None
+
+
+def pin_plan(root: Path, tag: str, *, opener=None, runner: Runner = subprocess.run) -> PinPlan:
+    """The planning brain's pin PR as a plan; ReleaseError on a tag that is not a release or goes back."""
+    from . import __version__, update
+    if not TAG.fullmatch(tag):
+        raise ReleaseError(f"{tag!r}: a release tag vX.Y.Z")
+    cfg = _config_of(root)
+    eng = cfg.data.get("engine")
+    prev = eng.get("pin") if isinstance(eng, dict) else None
+    if not isinstance(prev, str) or not update.version_of(prev):
+        raise ReleaseError(f"{cfg.file}: engine.pin is {prev!r}, not a release tag vX.Y.Z (set it by hand first)")
+    if update.version_of(tag) < update.version_of(prev):
+        raise ReleaseError(f"{tag} is before the pin {prev}: a rollback is the owner's, by hand (docs/release.md)")
+    p = PinPlan(root=cfg.root, file=cfg.file, prev=prev, tag=tag, engine=__version__)
+    p.stores, p.stores_note = _missing_stores(cfg)
+    _shim(p, cfg)
+    repo = eng.get("repo") if isinstance(eng.get("repo"), str) else update.ENGINE_REPO
+    lines = update.changelog(repo, tag, prev, opener=opener) if update.version_of(tag) > update.version_of(prev) else []
+    if lines is None:
+        p.upgrade_note = f"the CHANGELOG at {tag} could not be read: read its Upgrade section by hand"
+    else:
+        p.upgrade = config_steps(lines)
+    p.waiting, p.waiting_note = waiting_prs(cfg.root, tag, runner)
+    return p
+
+
+def _config_of(root: Path):
+    """The planning brain's own config.json (not $BRAIN_CONFIG's: the pin moves in the brain named)."""
+    from . import config
+    f = root / config.FILE
+    try:
+        data = json.loads(f.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        raise ReleaseError(f"{root}: no {config.FILE} to pin: --planning names the brain") from None
+    except (OSError, ValueError) as exc:
+        raise ReleaseError(f"{f}: not readable JSON ({exc})") from None
+    if not isinstance(data, dict):
+        raise ReleaseError(f"{f}: an object, got {type(data).__name__}")
+    return config.Config(f, f.parent.resolve(), data)
+
+
+def _missing_stores(cfg) -> tuple[dict, str]:
+    """The engine stores a brain that declares classes leaves at their default (brain classes --suggest's lines)."""
+    from . import classes
+    if not isinstance(cfg.data.get("classes"), dict):
+        return {}, "the brain declares no classes: block (brain classes --suggest prints one to edit)"
+    _, errors = classes.stores(cfg)
+    if errors:
+        return {}, f"its classes: block has errors ({errors[0]}): brain classes, then again"
+    return classes.suggest(cfg)["stores"], ""
+
+
+def _shim(p: PinPlan, cfg) -> None:
+    """The adapter plugin's transitional shim, when the brain keeps one: its PIN line follows engine.pin."""
+    adapters = cfg.data.get("adapters")
+    claude = adapters.get("claude") if isinstance(adapters, dict) else None
+    plugin = claude.get("plugin") if isinstance(claude, dict) else None
+    f = cfg.root / SHIM.format(plugin=plugin) if isinstance(plugin, str) and plugin else None
+    if f is None or not f.is_file():
+        p.shim_line = "skip     shim: none (no adapters.claude.plugin, or no brain/__init__.py in it)"
+        return
+    with f.open(encoding="utf-8", newline="") as fh:
+        text = fh.read()
+    m = SHIM_PIN.search(text)
+    rel = f.relative_to(cfg.root).as_posix()
+    if not m:
+        p.shim_line = f"skip     shim: {rel} has no PIN line"
+    elif m.group(2) == p.tag:
+        p.shim_line = f"same     shim: {rel} PIN is {p.tag}"
+    else:
+        p.shim, p.shim_text = f, text[:m.start(2)] + p.tag + text[m.end(2):]
+        p.shim_line = f"edit     shim: {rel} PIN {m.group(2)} -> {p.tag}"
+
+
+STEP = re.compile(r"^(\d+)\. (.*)")
+
+
+def config_steps(lines: list[str]) -> list[str]:
+    """The Upgrade steps of the CHANGELOG's sections (update.changelog's lines) that name config.json, one line each:
+    the version, the step's number and its bold title (else its first words)."""
+    out, version, upgrade, step = [], "", False, None
+
+    def close():
+        if step and "config.json" in step[2]:
+            title = re.match(r"\*\*(.+?)\*\*", step[2])
+            out.append(f"{step[0]} step {step[1]}: {title.group(1) if title else step[2][:80]}")
+
+    for line in lines:
+        head = re.match(r"^## (\d+\.\d+\.\d+)", line)
+        if head or line.startswith("### "):
+            close()
+            step = None
+            version = head.group(1) if head else version
+            upgrade = line.strip() == "### Upgrade"
+            continue
+        m = STEP.match(line) if upgrade else None
+        if m:
+            close()
+            step = [version, m.group(1), m.group(2)]
+        elif step and line.startswith(" "):
+            step[2] += " " + line.strip()
+        elif step and line.strip():
+            close()
+            step = None
+    close()
+    return out
+
+
+def waiting_prs(root: Path, tag: str, runner: Runner = subprocess.run) -> tuple[list[dict], str]:
+    """The planning brain's open PRs whose title or body names the version (vX.Y.Z or X.Y.Z, wave-X.Y.Z): the lot
+    PRs that waited for the tag; ([], why) when gh cannot list them."""
+    try:
+        r = runner(["gh", "pr", "list", "--state", "open", "--limit", "200", "--json", "number,title,body"],
+                   cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [], f"gh could not run ({exc})"
+    if r.returncode != 0:
+        return [], "gh pr list failed: " + ((r.stderr or r.stdout or "").strip().splitlines() or ["no output"])[-1]
+    try:
+        prs = json.loads(r.stdout or "[]")
+    except ValueError:
+        return [], "gh pr list gave no JSON"
+    named = re.compile(rf"(?<![\d.])v?{re.escape(tag[1:])}(?![\d]|\.\d)")
+    return [{"number": x.get("number"), "title": x.get("title") or ""} for x in prs if isinstance(x, dict)
+            and named.search(f"{x.get('title') or ''}\n{x.get('body') or ''}")], ""
+
+
+def pin_branch(root: Path, runner: Runner = subprocess.run) -> str:
+    """The planning brain's branch, when the pin may be written there; ReleaseError on its default branch, a detached
+    HEAD or no git repo."""
+    try:
+        r = runner(["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True,
+                   timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ReleaseError(f"{root}: git could not run ({exc})") from None
+    branch = (r.stdout or "").strip() if r.returncode == 0 else ""
+    if not branch or branch == "HEAD":
+        raise ReleaseError(f"{root} is on no branch (not a git repo, or a detached HEAD): git switch -c chore/pin-<tag>")
+    try:
+        d = runner(["git", "-C", str(root), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+                   capture_output=True, text=True, timeout=30)
+        default = (d.stdout or "").strip().split("/", 1)[-1] if d.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        default = ""
+    if branch in DEFAULT_BRANCHES | ({default} if default else set()):
+        raise ReleaseError(f"{root} is on its default branch {branch}: the pin goes by a PR (git switch -c "
+                           "chore/pin-<tag>, then again)")
+    return branch
+
+
+def pin_write(p: PinPlan) -> list[str]:
+    """config.json (engine.pin and the stores, one write) and the shim's PIN line written; what was done, line by
+    line. A config.json moved since the plan is refused (ValueError), nothing written."""
+    from . import update
+    done = []
+    if p.prev != p.tag or p.stores:
+        def move(data: dict) -> None:
+            eng = data.get("engine") if isinstance(data, dict) else None
+            if not isinstance(eng, dict) or eng.get("pin") != p.prev:
+                raise ValueError(f"{p.file.name} engine.pin is no longer {p.prev}: nothing written (plan again)")
+            eng["pin"] = p.tag
+            if p.stores:
+                block = data["classes"].setdefault("stores", {})
+                for name, line in p.stores.items():
+                    block.setdefault(name, line)
+        update.rewrite_json(p.file, move)
+        done.append(f"written  {p.file.name}: engine.pin {p.tag}" + (f", classes.stores + {', '.join(p.stores)}"
+                                                                      if p.stores else ""))
+    if p.shim is not None:
+        with p.shim.open("w", encoding="utf-8", newline="") as fh:   # its line endings kept
+            fh.write(p.shim_text)
+        done.append(f"written  shim: {p.shim.relative_to(p.root).as_posix()}")
+    return done
+
+
+def pin_lines(p: PinPlan) -> list[str]:
+    out = [f"pin      {p.root}: {p.prev} -> {p.tag}" if p.prev != p.tag else f"same     pin: {p.file.name} engine.pin "
+           f"is {p.tag}"]
+    if p.stores:
+        out.append(f"edit     stores: classes.stores + {', '.join(p.stores)} (the stores engine {p.engine} declares "
+                   "that the brain leaves at their default)")
+    else:
+        out.append(f"same     stores: {p.stores_note or 'none missing (brain classes --suggest)'}")
+    if p.engine != p.tag[1:]:
+        out.append(f"note     this engine is {p.engine}, not {p.tag}: the stores are its own (run brain release pin "
+                   "with the tag's engine for the tag's)")
+    out.append(p.shim_line)
+    if p.upgrade_note:
+        out.append(f"upgrade  {p.upgrade_note}")
+    else:
+        out.append("upgrade  " + (f"{len(p.upgrade)} step(s) name config.json, by hand:" if p.upgrade
+                                  else f"no Upgrade step after {p.prev} names config.json"))
+        out += [f"  {s}" for s in p.upgrade]
+    if p.waiting_note:
+        out.append(f"waiting  {p.waiting_note}")
+    else:
+        out.append(f"waiting  {len(p.waiting)} open PR(s) name {p.tag[1:]}" + (":" if p.waiting else ""))
+        out += [f"  #{w['number']} {w['title']}" for w in p.waiting]
+    return out
+
+
+def _pin_data(p: PinPlan) -> dict:
+    return {"root": str(p.root), "pin": p.prev, "tag": p.tag, "stores": p.stores, "stores_note": p.stores_note,
+            "shim": p.shim_line, "upgrade": p.upgrade, "upgrade_note": p.upgrade_note, "waiting": p.waiting,
+            "waiting_note": p.waiting_note, "engine": p.engine}
+
+
+def main_pin(args) -> int:
+    from . import paths
+    root = Path(args.planning).resolve() if args.planning else (
+        Path(args.root).resolve() if getattr(args, "root", None) else paths.personal_root())
+    try:
+        if root is None:
+            raise ReleaseError("no planning brain: --planning names it (or --root, or a personal brain)")
+        p = pin_plan(root, args.tag)
+        if args.json:   # the plan as data: nothing written
+            print(json.dumps(_pin_data(p), indent=2))
+            return 0
+        branch = pin_branch(p.root) if args.write and p.writes() else ""
+    except (ReleaseError, OSError) as exc:
+        print(f"brain release pin: {exc}", file=sys.stderr)
+        return 2
+    print("\n".join(pin_lines(p)))
+    if args.write and p.writes():
+        try:
+            print("\n".join(pin_write(p)) + f"\nbranch   {branch}: commit them with the rest of the pin PR")
+        except (ValueError, OSError) as exc:
+            print(f"brain release pin: {exc}", file=sys.stderr)
+            return 1
+    elif not args.write:
+        print("plan only: --write writes config.json and the shim, in a pin branch of the planning brain")
+    print("\n".join(f"by hand  {x}" for x in PIN_BY_HAND))
+    return 0
