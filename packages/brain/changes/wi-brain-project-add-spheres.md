@@ -1,0 +1,3 @@
+section: Added
+
+- `brain init --examples` writes, for a person, `scopes.yaml` with the default spheres `pro`, `personal` and `academic` (the scope tree's first level, SCOPE-1) and its view; a team gets none. `brain project add` asks the qualification's five questions (spec-brain-product-lifecycle 3.10) by its plan, by options (`--profile`, `--kind`, `--stage`, `--floor`, `--team` with `--template`) or in the terminal (`--interactive`), and writes the answers to the entry's `lifecycle` (`profile`, `typologies`, `stage`, `since`); `brain check` reads `lifecycle.stage`, `shape` and `profile` against their catalogs, an unknown value a note, an error in strict mode (`wi-brain-project-add-spheres`).

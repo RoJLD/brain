@@ -5,7 +5,7 @@ or a new one from a template, placed in the scope tree, a plan then --apply."""
 
 from __future__ import annotations
 
-from .. import init, project_add, project_new
+from .. import init, project_add, project_new, projects
 
 ORDER = 201   # its place in brain --help's list of commands (brain.commands), after brain init
 USAGE_ORDER = 231   # its usage lines' place in brain --help's epilog
@@ -18,15 +18,18 @@ USAGE = """\
                  lifecycle: {typologies, stage}; in a folder that holds its brain already, the plan shows what the
                  answers change there (written by a PR of that brain, never here)
   brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE]
-                 [--floor CLASS] [--title TEXT] [--no-notes] [--apply]   a project registered in this brain's
-                 projects.yaml
+                 [--floor CLASS] [--title TEXT] [--profile P] [--kind K]... [--stage S] [--team] [--interactive]
+                 [--no-notes] [--apply]   a project registered in this brain's projects.yaml
                  (--root, else $BRAIN_PROJECTS, else the nearest above): read only (title, access: read), an existing
                  instance (its root, relative to the registry's checkout) or a new one written by brain init from a
                  template; --parent places it in the scope tree, --floor marks its class floor (public.deny_from_tree
                  then denies its names); the plan shows the entry and what the deny list gains; --apply checks the
                  registry as it would be (brain check's errors it would add refuse it), appends the entry, comments
                  kept, and logs the step in <BRAIN_HOME>/ledger/setup-<month>.jsonl; with a notes home, its map
-                 maps/NAME.md there too (scope: NAME), never over a file (--no-notes: none)
+                 maps/NAME.md there too (scope: NAME), never over a file (--no-notes: none). The qualification's
+                 five questions (purpose --profile, what it produces --kind, stage --stage, criticity --floor, a
+                 team --team with --template), each unanswered one named in the plan, --interactive asks them: the
+                 answers go to the entry's lifecycle: {profile, typologies, stage, since}
 """
 
 
@@ -60,6 +63,17 @@ def register(sub, ctx) -> None:
     add.add_argument("--title", help="its one line for the views")
     add.add_argument("--no-notes", action="store_true", help="no map in the notes home (default: maps/NAME.md "
                                                              "there, when the brain has one)")
+    add.add_argument("--profile", choices=projects.LIFECYCLE_PROFILES,
+                     help="qualification 1, its purpose and audience: lifecycle.profile")
+    add.add_argument("--kind", dest="kinds", action="append", metavar="K",
+                     help="qualification 2, what it produces: an id of the typology catalog (repeatable; brain "
+                          "typologies): lifecycle.typologies")
+    add.add_argument("--stage", help="qualification 3, its stage: a lifecycle stage (explore, build...) or a "
+                                     "standards stage read as one (mvp: build): lifecycle.stage")
+    add.add_argument("--team", action="store_true",
+                     help="qualification 5, with --template: the new brain is a team's (brain init --kind team)")
+    add.add_argument("--interactive", "-i", action="store_true",
+                     help="the qualification's questions the options leave unanswered, asked in the terminal")
     add.add_argument("--apply", action="store_true", help="write it (default: the plan)")
 
 
