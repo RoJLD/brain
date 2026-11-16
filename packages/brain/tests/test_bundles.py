@@ -274,3 +274,45 @@ def test_a_bundle_component_is_a_service_and_its_bundle_one_the_engine_ships(tmp
         "stack qdrant (brain): bundle 'sovreign' is not one the engine ships (shipped: sovereign)",
         "bundle sovereign: service qdrant has no component: declare the stack qdrant with bundle: sovereign in "
         "projects.yaml"]
+
+
+def test_a_changed_mounted_file_changes_its_service_and_only_its_own(tmp_path, monkeypatch, brain_home):
+    """wi-brain-bundle-config-restart: compose recreates a container only when its service's definition changed, so
+    the rendering labels each service with the hash of the bundle files it mounts; a new otelcol.yaml changes the
+    collector's label alone, and the plan says it is recreated for it."""
+    import yaml
+    reg = _registry(tmp_path, monkeypatch)
+    Docker(monkeypatch, up=COMPONENTS)
+    src = tmp_path / "compose"
+    shutil.copytree(bundles.ROOT, src)
+    monkeypatch.setattr(bundles, "ROOT", src)
+    assert bundles.apply(reg, "sovereign", out=io.StringIO()) == 0
+    where = brain_home / "stacks" / "sovereign"
+    before = yaml.safe_load((where / "compose.yaml").read_text(encoding="utf-8"))["services"]
+    labels = {n: (s.get("labels") or {}).get(bundles.CONFIG_LABEL) for n, s in before.items()}
+    assert all(labels[n] for n in ("otel-collector", "prometheus", "loki", "grafana")) and labels["qdrant"] is None
+    assert len(set(labels.values()) - {None}) == 4   # each service its own files
+    p = bundles.plan(reg, "sovereign")
+    assert all(not r["action"].startswith("recreated: its mounted") for r in p.rows)   # nothing changed yet
+    conf = src / "sovereign" / "otelcol.yaml"
+    conf.write_bytes(conf.read_bytes() + b"\n# a processor added\n")
+    p = bundles.plan(reg, "sovereign")
+    rows = {r["component"]: r for r in p.rows}
+    assert rows["otel-collector"]["action"] == "recreated: its mounted configuration changed (otelcol.yaml)"
+    assert rows["loki"]["action"].startswith("up;")
+    assert bundles.apply(reg, "sovereign", out=io.StringIO()) == 0
+    after = yaml.safe_load((where / "compose.yaml").read_text(encoding="utf-8"))["services"]
+    assert after["otel-collector"]["labels"][bundles.CONFIG_LABEL] != labels["otel-collector"]
+    assert {n: (s.get("labels") or {}).get(bundles.CONFIG_LABEL) for n, s in after.items() if n != "otel-collector"} \
+        == {n: v for n, v in labels.items() if n != "otel-collector"}
+
+
+def test_the_config_hash_reads_bind_mounts_only():
+    files = {"a.yaml": b"one", "b.yaml": b"two"}
+    svc = {"volumes": ["./a.yaml:/etc/a.yaml:ro", "data:/var/lib", "./data/x:/x", {"type": "bind",
+                                                                                  "source": "./b.yaml"}]}
+    assert bundles.mounted(svc, files) == ["a.yaml", "b.yaml"]
+    h = bundles.config_hash(svc, files)
+    assert len(h) == 16 and h == bundles.config_hash(svc, dict(files))
+    assert bundles.config_hash(svc, {**files, "b.yaml": b"three"}) != h
+    assert bundles.config_hash({"volumes": ["data:/var/lib"]}, files) == ""

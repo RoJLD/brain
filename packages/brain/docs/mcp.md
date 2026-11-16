@@ -264,10 +264,23 @@ one is turned on. `session.id` (the transcript's id) and the pseudonymous `user.
 the first joins a record to the session tree. `tests/test_otel.py` checks every pipeline of the shipped file; where
 the collector's pinned image is on the machine, it also sends the fixtures through it and reads what comes out.
 
-The collector reads its configuration when it starts: after `brain bundle apply sovereign` writes a new one,
-`brain down otel-collector` then `brain up otel-collector` restarts it on that file. What it wrote before keeps those
-attributes until its rotation drops the file (31 days, `max_days`), and so do Loki and Prometheus within their
-retention; `brain telemetry` drops them when it reads (README, « Claude Code's telemetry »).
+The collector reads its configuration when it starts. `brain bundle apply sovereign` labels each service with the
+hash of the files it mounts (`brain.config-hash`, wi-brain-bundle-config-restart), so a new `otelcol.yaml` changes the
+collector's service and the apply's `docker compose up -d` recreates it on the file; the plan says so (« recreated:
+its mounted configuration changed (otelcol.yaml) »). The first apply of an engine that adds the label recreates every
+service that mounts a file, once (the collector, Prometheus, Loki, Grafana).
+
+**What was written before** keeps the attributes the processors now delete (`user.email` among them) until it is
+dropped: the collector's files until their rotation (31 days, `max_days`), Loki and Prometheus until their retention
+(744 h and 30 days); `brain telemetry` drops them when it reads (README, « Claude Code's telemetry »). The owner chooses
+between waiting for that and a purge now, in their own terminal (a session never stops a service or deletes data):
+
+1. `brain bundle apply sovereign` (the collector recreated on the new file; check with `brain telemetry status`);
+2. the collector's files: `brain down otel-collector`, then move away the files of
+   `<BRAIN_HOME>/stacks/sovereign/data/otel-collector/` older than step 1 (placement data home; a named volume:
+   `docker volume rm brain-sovereign_otel-collector`), then `brain up otel-collector`;
+3. Loki's and Prometheus' history, all of it: `brain down loki prometheus`, `docker volume rm brain-sovereign_loki
+   brain-sovereign_prometheus`, then `brain bundle apply sovereign` (empty stores, the dashboards' history gone).
 
 The processors are a denylist, so a key a newer Claude Code adds is kept until someone looks at it:
 `brain.otel.KNOWN_KEYS` lists the keys reviewed, `brain telemetry summary` names any other it meets, and
