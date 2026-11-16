@@ -20,7 +20,8 @@ store (``/data/gitnexus/repos/<name>``, where its URL clones go) is reset to it,
 clone (``POST /api/analyze``, force and embeddings, as the fork's reindex.ps1 does) and waits for the job. The
 indexed commit, the time it took, GitNexus's counts (per node label and edge type, by Cypher through its MCP tool,
 which also checks that MCP answers) and the size of the index are recorded in ``<BRAIN_HOME>/code-index.json``. ``--stale`` keeps only the repos that are not indexed at
-their branch head. ``brain index`` alone prints each repo's state and changes nothing.
+their branch head. ``brain index`` alone prints each repo's state and changes nothing (with codebase-memory-mcp,
+it sets its settings off first).
 
 ``brain health code-index`` (and ``brain health --all``) reports STALE when a repo's branch moved past its indexed
 commit, it was never indexed, or GitNexus no longer lists it; exit code 1 then. No hook and no schedule (the owner,

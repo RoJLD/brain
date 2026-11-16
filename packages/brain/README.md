@@ -444,8 +444,9 @@ codebase-memory-mcp first on a worktree, [`docs/code-index.md`](docs/code-index.
 that name them, the nodes relying on those, then a checklist: the features whose status may change, the docs to
 update, the ADRs and specs to re-read, the tests to run (one `pytest` line) and the CI jobs that run them, the open
 items that deliver those features and the decisions pending on them. Without a code index it works at the file level,
-a Python symbol looked up by the AST, and says so on its second line. `--backend gitnexus|cbm` names the code index. `brain code-map` resolves
-each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
+a Python symbol looked up by the AST, and says so on its second line. `--backend gitnexus|cbm` names the code index.
+`brain code-map` resolves each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a
+CodeRef.
 `brain impact --markdown` prints the checklist as a PR body's section (tasks ticked by hand, every text escaped);
 the cockpit's Health tab shows the impact of the branch it runs from (its Impact view); a project's `overlays:` (another
 repo's store read with its own, read-only) are walked too.

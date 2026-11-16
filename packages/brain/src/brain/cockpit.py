@@ -1577,8 +1577,9 @@ def branch_impact(here: Path, root: Path | None = None) -> dict:
     import argparse
 
     from . import impact
+    # GitNexus only: the probe runs every few seconds, and codebase-memory-mcp would index the checkout each time
     args = argparse.Namespace(diff="", repo_dir=str(here), depth=None, json=False, markdown=False, project=None,
-                              root=None)
+                              root=None, backend="gitnexus")
     notes: list[str] = []
     try:
         rep = impact.run(args, root, warn=notes.append)

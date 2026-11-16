@@ -23,6 +23,7 @@ one-way door (the typology packs' spec, its door 11).
 from __future__ import annotations
 
 import hashlib
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,8 @@ from pathlib import Path
 from . import cbm, codeindex, faults
 
 PURPOSES = ("index", "code-map", "impact", "health")
+CONTAINERS = ("File", "Module", "Folder", "Package", "Project", "Section")   # CBM's nodes that hold symbols
+TEMP = re.compile(r"-wt-[0-9a-f]{8}$")   # a temporary project of brain impact (temp_name)
 
 
 @dataclass(frozen=True)
@@ -168,8 +171,9 @@ def cbm_health(repos: dict[str, codeindex.Repo], every: bool) -> tuple[int, str]
     bad = [(r.name, *cbm_state(r, rec.get(r.name))) for r in checked]
     bad = [b for b in bad if b[1] != "OK"]
     if bad:
-        return 1, (f"{codeindex.CHECK} cbm STALE: " + ", ".join(f"{n} ({s.lower() if s != 'STALE' else w})"
-                                                                 for n, s, w in bad)
+        word = "ERROR" if any(b[1] == "ERROR" for b in bad) else "STALE"
+        return 1, (f"{codeindex.CHECK} cbm {word}: " + ", ".join(
+            f"{n} ({'not indexed' if s == 'NOT INDEXED' else w})" for n, s, w in bad)
                    + "; brain index --backend cbm --stale reindexes " + ("it" if len(bad) == 1 else "them"))
     return 0, f"{codeindex.CHECK} cbm OK (settings off, {len(checked)} repo(s) at their checkout's HEAD)"
 
@@ -182,14 +186,27 @@ def temp_name(folder: str, top: Path) -> str:
     return f"{folder}-wt-{digest}"
 
 
+def sweep(s: cbm.Session) -> list[str]:
+    """Delete the temporary projects (``<repo>-wt-<digest>``) whose checkout is gone: one a run could not delete (it
+    was killed, the server ended). The names deleted."""
+    gone = [str(x.get("name")) for x in cbm.projects(s)
+            if TEMP.search(str(x.get("name") or "")) and not Path(str(x.get("root_path") or "")).is_dir()]
+    for name in gone:
+        cbm.delete(s, name)
+    return gone
+
+
 def cbm_changes(top: Path, folder: str, base: str, depth: int) -> tuple[str, dict, str]:
     """(the temporary project's name, ``detect_changes``'s answer, '') for the checkout ``top`` against ``base``,
-    else (.., {}, why not). The checkout is indexed in place (CBM's fast mode) and its index deleted after."""
+    else (.., {}, why not). The checkout is indexed in place (CBM's fast mode) and its index deleted after, the
+    index failing or not, while the server answers; a temporary project left by an earlier run whose checkout is gone
+    is deleted first (:func:`sweep`)."""
     name = temp_name(folder, top)
     try:
         with cbm.Session() as s:
-            cbm.index(s, top, name, mode="fast")
+            sweep(s)
             try:
+                name = str(cbm.index(s, top, name, mode="fast").get("project") or name)   # CBM's own name for it
                 return name, cbm.changes(s, name, base, depth), ""
             finally:
                 try:
@@ -205,8 +222,10 @@ def _short(qn: str) -> str:
 
 
 def symbols_of(answer: dict) -> tuple[list[dict], list[dict]]:
-    """(the touched symbols, their callers) in brain impact's rows, from ``detect_changes``'s seeds and impacted."""
-    seeds = [x for x in answer.get("seeds") or [] if isinstance(x, dict) and x.get("qn")]
+    """(the touched symbols, their callers) in brain impact's rows, from ``detect_changes``'s seeds and impacted; a
+    file, module or folder node is not a symbol."""
+    seeds = [x for x in answer.get("seeds") or [] if isinstance(x, dict) and x.get("qn")
+             and str(x.get("label") or "") not in CONTAINERS]
     symbols = [{"id": str(x["qn"]), "name": _short(str(x["qn"])), "label": str(x.get("label") or ""),
                 "path": str(x.get("file") or ""), "lines": [x.get("start"), x.get("end")]} for x in seeds]
     calls = [x for x in answer.get("impacted") or [] if isinstance(x, dict) and x.get("qn")]

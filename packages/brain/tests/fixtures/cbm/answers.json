@@ -722,5 +722,126 @@
     "openWorldHint": false
    }
   }
- ]
+ ],
+ "detect_changes_method": {
+  "arguments": {
+   "project": "brain-wt-0f3c9a21",
+   "base_branch": "origin/main",
+   "format": "json",
+   "seeds": "list",
+   "depth": 1,
+   "via": true
+  },
+  "result": {
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"base\":\"origin/main\",\"merge_base\":\"ac6f6e38c9d5fe83934b169d78322d0d28da3d19\",\"direction\":\"inbound\",\"edge_types\":[\"CALLS\"],\"fixpoint\":false,\"changed_total\":1,\"changed_returned\":1,\"changed_has_more\":false,\"changed_files\":[\"packages/brain/src/brain/codeindex.py\"],\"seed_symbols\":2,\"seed_total\":2,\"seed_returned\":2,\"seed_has_more\":false,\"seeds\":[{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer\",\"label\":\"Class\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"start\":72,\"end\":82,\"seed_reason\":\"hunk\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target\",\"label\":\"Method\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"start\":80,\"end\":82,\"seed_reason\":\"hunk\"}],\"impacted_total\":6,\"impacted_total_relation\":\"eq\",\"impacted_shown\":6,\"impacted\":[{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex._entry\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target\",\"via_edge\":\"CALLS\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex._indexer\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer\",\"via_edge\":\"CALLS\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.analyze\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target\",\"via_edge\":\"CALLS\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.index_one\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target\",\"via_edge\":\"CALLS\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.measure\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target\",\"via_edge\":\"CALLS\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.tests.test_project_views.test_status_probes_audit_stacks_and_the_code_index\",\"label\":\"Function\",\"file\":\"packages/brain/tests/test_project_views.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer\",\"via_edge\":\"CALLS\"}],\"impacted_has_more\":false,\"module_total\":1,\"module_total_relation\":\"eq\",\"module_returned\":1,\"module_has_more\":false,\"impacted_modules\":[{\"module\":\"packages/brain\",\"count\":6}],\"truncated\":false}"
+    }
+   ],
+   "structuredContent": {
+    "base": "origin/main",
+    "merge_base": "ac6f6e38c9d5fe83934b169d78322d0d28da3d19",
+    "direction": "inbound",
+    "edge_types": [
+     "CALLS"
+    ],
+    "fixpoint": false,
+    "changed_total": 1,
+    "changed_returned": 1,
+    "changed_has_more": false,
+    "changed_files": [
+     "packages/brain/src/brain/codeindex.py"
+    ],
+    "seed_symbols": 2,
+    "seed_total": 2,
+    "seed_returned": 2,
+    "seed_has_more": false,
+    "seeds": [
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer",
+      "label": "Class",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "start": 72,
+      "end": 82,
+      "seed_reason": "hunk"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target",
+      "label": "Method",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "start": 80,
+      "end": 82,
+      "seed_reason": "hunk"
+     }
+    ],
+    "impacted_total": 6,
+    "impacted_total_relation": "eq",
+    "impacted_shown": 6,
+    "impacted": [
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex._entry",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target",
+      "via_edge": "CALLS"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex._indexer",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer",
+      "via_edge": "CALLS"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.analyze",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target",
+      "via_edge": "CALLS"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.index_one",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target",
+      "via_edge": "CALLS"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.measure",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target",
+      "via_edge": "CALLS"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.tests.test_project_views.test_status_probes_audit_stacks_and_the_code_index",
+      "label": "Function",
+      "file": "packages/brain/tests/test_project_views.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer",
+      "via_edge": "CALLS"
+     }
+    ],
+    "impacted_has_more": false,
+    "module_total": 1,
+    "module_total_relation": "eq",
+    "module_returned": 1,
+    "module_has_more": false,
+    "impacted_modules": [
+     {
+      "module": "packages/brain",
+      "count": 6
+     }
+    ],
+    "truncated": false
+   },
+   "isError": false
+  }
+ }
 }

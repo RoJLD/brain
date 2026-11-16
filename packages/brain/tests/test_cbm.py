@@ -86,7 +86,7 @@ def test_not_installed_is_said_and_never_runs(tmp_path, monkeypatch):
         cbm.Session()
 
 
-@pytest.mark.parametrize("mode, message", [("slow", "tools/call: no answer in 2 s"),
+@pytest.mark.parametrize("mode, message", [("slow", "index_status: no answer in 2 s"),
                                            ("garbage", "an answer that is not JSON: Segmentation fault"),
                                            ("crash", "the server ended"),
                                            ("error:index_status", "index_status: project not found or not indexed")])
@@ -251,9 +251,11 @@ def test_impact_on_a_worktree_asks_cbm_first_and_places_the_coderefs(lab, make_r
         ("code:lab:lab/cli.py::main", "caller"), ("code:lab:lab/core.py::Engine.run", "caller"),
         ("code:lab:lab/core.py::go", "symbol")]   # the same CodeRefs GitNexus's index places (test_impact)
     name = codebackends.temp_name("lab", wt)
-    assert fake.calls() == ["index_repository", "detect_changes", "delete_project"]   # the temporary index deleted
-    assert [a.get("project") or a.get("name") for _, a in fake.state["calls"]] == [name] * 3
-    assert fake.state["calls"][1][1]["base_branch"] == d["base"]
+    # the recorded list names a temporary project whose checkout is gone: swept first; then this one, deleted after
+    assert fake.calls() == ["list_projects", "delete_project", "index_repository", "detect_changes", "delete_project"]
+    assert fake.state["calls"][1][1] == {"project": P}
+    assert [a.get("project") or a.get("name") for _, a in fake.state["calls"][2:]] == [name] * 3
+    assert fake.state["calls"][3][1]["base_branch"] == d["base"]
     assert not gn.queries                       # GitNexus was not asked
     assert "feat-cli" in [f["id"] for f in d["features"]]   # reached through its caller
     cli.main(["impact", "--repo-dir", str(wt)])
@@ -282,3 +284,77 @@ def test_impact_of_a_commit_range_is_not_asked_of_cbm(lab, make_repo, monkeypatc
     assert (rc, d["mode"]) == (0, "files")
     assert d["why_files"] == "codebase-memory-mcp reads a checkout's working tree, not a commit range"
     assert fake.calls() == []
+
+
+# --- after the review: a dead session, health --all, an index failing in impact, a method's real name ---
+
+def test_a_call_after_a_timeout_fails_in_one_line_never_a_traceback(tmp_path, monkeypatch):
+    FakeCbm(tmp_path, monkeypatch, settings=OFF, mode="slow")
+    s = cbm.Session()
+    with pytest.raises(cbm.CbmError, match="no answer in 1 s"):
+        s.call("index_status", {"project": P}, timeout=1)
+    with pytest.raises(cbm.CbmError, match="index_status gave no answer in 1 s: the server was ended"):
+        s.call("delete_project", {"project": P}, timeout=1)
+    s.close()
+
+
+def test_a_server_that_ended_is_said_to_every_later_call(tmp_path, monkeypatch):
+    FakeCbm(tmp_path, monkeypatch, settings=OFF, mode="crash")
+    s = cbm.Session()
+    for _ in range(2):   # the end is seen again, at once, not after a second deadline
+        with pytest.raises(cbm.CbmError, match="the server ended"):
+            s.call("index_status", {"project": P}, timeout=5)
+    s.close()
+
+
+def test_not_installed_is_one_line_and_creates_nothing(tmp_path, monkeypatch, capsys, make_repo):
+    repo = make_repo("alpha", {"a.py": "x = 1\n"})
+    _registry(tmp_path, monkeypatch, ["."], root=repo, stack=True)
+    assert cli.main(["index", "--backend", "cbm"]) == 1
+    assert "codebase-memory-mcp: not installed" in capsys.readouterr().out
+    assert not cbm.store().exists()
+
+
+def test_health_all_says_cbm_only_when_it_is_not_ok(tmp_path, monkeypatch, capsys):
+    from brain import stacks
+    monkeypatch.setattr(stacks, "_probe_url", lambda url, timeout: "")
+    _registry(tmp_path, monkeypatch, [])
+    fake = FakeCbm(tmp_path, monkeypatch, settings=OFF)
+    assert codeindex.health(named=False) == 0
+    assert capsys.readouterr().out == ""                      # brain health --all: silent when it is OK
+    fake.set(settings={})
+    assert codeindex.health(named=False) == 1
+    assert "code-index cbm UNSAFE" in capsys.readouterr().out
+
+
+def test_impact_deletes_the_temporary_index_when_indexing_fails(lab, make_repo, monkeypatch, capsys, tmp_path):
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))}, [], up=False)
+    fake = FakeCbm(tmp_path, monkeypatch, settings=OFF, mode="error:index_repository")
+    wt = _worktree(lab, make_repo, tmp_path)
+    rc, d = _impact(capsys, wt)
+    assert (rc, d["mode"]) == (0, "files")
+    assert d["why_files"].startswith("codebase-memory-mcp: index_repository: project not found or not indexed; ")
+    assert fake.calls()[-2:] == ["index_repository", "delete_project"]
+
+
+def test_impact_notes_why_gitnexus_could_not_answer_when_cbm_did(lab, make_repo, monkeypatch, capsys, tmp_path):
+    FakeGitNexus(monkeypatch, {"lab": (lab, _sha(lab))}, [], up=False)
+    FakeCbm(tmp_path, monkeypatch, settings=OFF)
+    _impact_answers(tmp_path, monkeypatch)
+    make_repo.write(lab, {"src/lab/core.py": GO2})
+    rc, d = _impact(capsys, lab)              # the main checkout: GitNexus first, down, then CBM
+    assert (rc, d["mode"], d["index"]) == (0, "cbm", "")
+    assert d["note"].startswith("gitnexus does not answer at http://127.0.0.1:4747")
+
+
+def test_a_methods_real_qualified_name_places_its_coderef():
+    """CBM's real answer to a change inside a method (Indexer.target): seeds the class and the method; the class,
+    a container of the method here, is a symbol too; files and modules are not."""
+    answer = ANSWERS["detect_changes_method"]["result"]["structuredContent"]
+    symbols, callers = codebackends.symbols_of(answer)
+    ids = {x["id"] for x in symbols}
+    path = "packages/brain/src/brain/codeindex.py"
+    assert codebackends.qualified(P, path, "Indexer.target") in ids
+    assert codebackends.qualified(P, path, "Indexer") in ids
+    assert any(c["callee"] == codebackends.qualified(P, path, "Indexer.target") for c in callers)
+    assert codebackends.symbols_of({"seeds": [{"qn": f"{P}.x", "label": "File"}]})[0] == []

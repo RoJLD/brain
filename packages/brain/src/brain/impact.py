@@ -595,8 +595,10 @@ def _coderefs(rep: Report, root: Path | None, p: projects.Project, registered: b
                          else _by_cbm(rep, p, folder, top, changes, depth))
             if not why:
                 rep.mode = b
+                if whys:   # an earlier backend failed: said, so its fix is known
+                    rep.note = "; ".join([*whys, rep.note] if rep.note else whys)
                 break
-            rep.symbols, rep.callers, rep.note, refs = [], [], "", []
+            rep.symbols, rep.callers, rep.note, rep.index, refs = [], [], "", "", []
             whys.append(why)
         whys = whys or [codebackends.why_not("gitnexus", root)]
     if rep.mode == "files":

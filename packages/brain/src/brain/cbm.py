@@ -21,12 +21,15 @@ What the engine records of CBM's indexes, the repo, its path and the commit inde
 
 from __future__ import annotations
 
+import collections
 import json
 import os
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 from pathlib import Path
 
 from . import paths, stacks
@@ -73,7 +76,10 @@ def _env() -> dict:
 # --- its settings, through its CLI (no server started) ---
 
 def _cli(args: list[str], timeout: float = CONFIG_TIMEOUT) -> str:
-    """The output of ``codebase-memory-mcp ARGS``; CbmError when it cannot run, fails or does not end in time."""
+    """The output of ``codebase-memory-mcp ARGS``; CbmError when it is not installed, cannot run, fails or does not
+    end in time."""
+    if not installed():
+        raise CbmError(f"not installed: no {binary().as_posix()} (docs/code-index.md)")
     store().mkdir(parents=True, exist_ok=True)
     try:
         p = subprocess.run([*_argv(), *args], capture_output=True, timeout=timeout, env=_env(),
@@ -81,7 +87,7 @@ def _cli(args: list[str], timeout: float = CONFIG_TIMEOUT) -> str:
     except subprocess.TimeoutExpired as exc:
         raise CbmError(f"{' '.join(args[:2])}: no answer in {timeout:g} s") from exc
     except OSError as exc:
-        raise CbmError(f"{binary().as_posix()} cannot run: {exc}") from exc
+        raise CbmError(f"{binary().as_posix()} cannot run: {type(exc).__name__}") from exc
     out = (p.stdout + p.stderr).decode("utf-8", "replace")
     if p.returncode:
         raise CbmError(f"{' '.join(args[:2])} exited {p.returncode}: {stacks.useful_line(out)}")
@@ -117,20 +123,22 @@ def ensure_off() -> list[str]:
 # --- a stdio MCP session ---
 
 class Session:
-    """One stdio server for the time of a command: ``with Session() as s: s.call(tool, args)``."""
+    """One stdio server for the time of a command: ``with Session() as s: s.call(tool, args)``. A call past its
+    deadline ends the server (its process tree); every later call then fails at once, said in one line."""
 
     def __init__(self, start_timeout: float = START_TIMEOUT):
-        if not installed():
-            raise CbmError(f"not installed: no {binary().as_posix()} (docs/code-index.md)")
-        ensure_off()
+        ensure_off()   # not installed: CbmError before anything runs
         self._id = 0
+        self._closed = ""
         self._lines: queue.Queue = queue.Queue()
+        self._err: collections.deque = collections.deque(maxlen=20)   # the server's last stderr lines, for a reason
         try:
             self._p = subprocess.Popen(_argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                       stderr=subprocess.DEVNULL, env=_env(), creationflags=stacks._no_window())
+                                       stderr=subprocess.PIPE, env=_env(), creationflags=stacks._no_window())
         except OSError as exc:
-            raise CbmError(f"{binary().as_posix()} cannot run: {exc}") from exc
+            raise CbmError(f"{binary().as_posix()} cannot run: {type(exc).__name__}") from exc
         threading.Thread(target=self._read, daemon=True).start()
+        threading.Thread(target=self._drain, daemon=True).start()
         try:
             self._rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                                      "clientInfo": {"name": "brain", "version": "1"}}, start_timeout)
@@ -150,44 +158,64 @@ class Session:
             self._lines.put(line)
         self._lines.put(None)
 
+    def _drain(self) -> None:
+        for line in self._p.stderr:
+            text = line.decode("utf-8", "replace").strip()
+            if text:
+                self._err.append(text)
+
+    def _why_ended(self) -> str:
+        try:
+            code = self._p.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            code = None
+        last = stacks.useful_line("\n".join(self._err)) if self._err else ""
+        return f"the server ended (exit {code})" + (f": {last[:160]}" if last else "")
+
     def _send(self, msg: dict) -> None:
+        if self._closed:
+            raise CbmError(self._closed)
         try:
             self._p.stdin.write((json.dumps(msg) + "\n").encode("utf-8"))
             self._p.stdin.flush()
-        except OSError as exc:
-            raise CbmError(f"the server's input is closed: {exc}") from exc
+        except (OSError, ValueError) as exc:   # ValueError: a pipe already closed
+            raise CbmError(f"the server's input is closed: {type(exc).__name__}") from exc
 
-    def _rpc(self, method: str, params: dict, timeout: float) -> dict:
+    def _rpc(self, method: str, params: dict, timeout: float, label: str = "") -> dict:
         self._id += 1
+        what = label or method   # a tool call is said by its tool's name
         self._send({"jsonrpc": "2.0", "id": self._id, "method": method, "params": params})
+        deadline = time.monotonic() + timeout   # one deadline for the call, whatever the server sends meanwhile
         while True:
             try:
-                line = self._lines.get(timeout=timeout)
+                line = self._lines.get(timeout=max(deadline - time.monotonic(), 0))
             except queue.Empty:
-                self.close()
-                raise CbmError(f"{method}: no answer in {timeout:g} s") from None
+                self.close(f"{what} gave no answer in {timeout:g} s: the server was ended")
+                raise CbmError(f"{what}: no answer in {timeout:g} s") from None
             if line is None:
-                raise CbmError(f"{method}: the server ended (exit {self._p.poll()})")
+                self._lines.put(None)   # the end stays seen by every later read
+                self._closed = self._closed or self._why_ended()
+                raise CbmError(f"{what}: {self._closed}")
             try:
                 msg = json.loads(line)
             except ValueError:
-                raise CbmError(f"{method}: an answer that is not JSON: "
+                raise CbmError(f"{what}: an answer that is not JSON: "
                                f"{stacks.useful_line(line.decode('utf-8', 'replace'))[:120]}") from None
             if not isinstance(msg, dict):
-                raise CbmError(f"{method}: an answer that is not a JSON-RPC message")
+                raise CbmError(f"{what}: an answer that is not a JSON-RPC message")
             if msg.get("id") != self._id:
                 continue   # a notification, or an answer to a call given up
             if msg.get("error"):
                 err = msg["error"]
-                raise CbmError(f"{method}: {err.get('message') if isinstance(err, dict) else err}")
+                raise CbmError(f"{what}: {err.get('message') if isinstance(err, dict) else err}")
             res = msg.get("result")
             if not isinstance(res, dict):
-                raise CbmError(f"{method}: an answer without a result")
+                raise CbmError(f"{what}: an answer without a result")
             return res
 
     def call(self, tool: str, arguments: dict, timeout: float = CALL_TIMEOUT) -> dict:
         """The structured answer of ``tool`` (its JSON text when it gives no structuredContent)."""
-        res = self._rpc("tools/call", {"name": tool, "arguments": arguments}, timeout)
+        res = self._rpc("tools/call", {"name": tool, "arguments": arguments}, timeout, tool)
         data = res.get("structuredContent")
         if not isinstance(data, dict):
             text = "".join(c.get("text", "") for c in res.get("content") or [] if isinstance(c, dict))
@@ -201,19 +229,33 @@ class Session:
             raise CbmError(f"{tool}: {stacks.useful_line(str(data.get('error') or 'failed'))}")
         return data
 
-    def close(self) -> None:
+    def close(self, why: str = "the session is closed") -> None:
+        """End the server: its input closed (it ends with its daemon and workers), else its process tree killed."""
+        self._closed = self._closed or why
         p = getattr(self, "_p", None)
         if p is None or p.poll() is not None:
             return
         try:
             p.stdin.close()
+        except (OSError, ValueError):
+            pass
+        try:
             p.wait(timeout=10)
-        except (OSError, subprocess.TimeoutExpired):
-            p.kill()
-            try:
-                p.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                print(f"brain: codebase-memory-mcp (pid {p.pid}) did not end", file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            _kill_tree(p)
+
+
+def _kill_tree(p: subprocess.Popen) -> None:
+    """Kill ``p`` and its children (CBM's daemon and index workers): taskkill /T on Windows, else the process."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True, timeout=30,
+                       creationflags=stacks._no_window())
+    else:
+        p.kill()
+    try:
+        p.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        print(f"brain: codebase-memory-mcp (pid {p.pid}) did not end", file=sys.stderr)
 
 
 # --- the tools the engine uses (v0.12.1's names) ---
@@ -266,6 +308,7 @@ def save(name: str, entry: dict) -> None:
     data = read_record()
     data[name] = entry
     f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(dir=f.parent, prefix=".record-", suffix=".tmp")   # one per writer
+    with os.fdopen(fd, "w", encoding="utf-8") as out:
+        out.write(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
     os.replace(tmp, f)

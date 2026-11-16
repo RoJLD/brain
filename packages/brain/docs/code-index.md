@@ -54,13 +54,15 @@ v0.12.1 starts its HTTP UI (`127.0.0.1:9749`) and a file watcher with any stdio 
 and can index on its own. Before every session the engine sets `ui_enabled`, `auto_watch`, `watcher_enabled` and
 `auto_index` to false (`codebase-memory-mcp config set`, kept in its store) and refuses to go on when one stays on;
 `brain health code-index` reads them back (`config list`) and says `UNSAFE` when one is on (a missing one counts as
-on: CBM's default). A session ends its process when the command ends; its daemon and index workers end with it.
+on: CBM's default). A session ends when the command ends: its input closed, the server ends with its daemon and
+index workers; a call past its deadline kills its process tree (`taskkill /T` on Windows), and every later call of
+that session fails at once, in one line. The server's last error lines are kept for that line.
 
 ### Its store
 
 `CBM_CACHE_DIR` is always `$BRAIN_HOME/code-index/cbm/cache` (the engine sets it for every call): CBM refuses a
-second, empty store, so a user has one. It is part of the `code-index` store (sealed, derived: rebuilt by
-reindexing). Its daemon keeps lock files under `%LOCALAPPDATA%\cbm-daemon-<hash>`: CBM's, outside BRAIN_HOME.
+second, empty store, so a user has one. It is part of the `code-index` store (sealed, derived: the index is rebuilt by
+reindexing, the binary by the install steps above). Its daemon keeps lock files under `%LOCALAPPDATA%\cbm-daemon-<hash>`: CBM's, outside BRAIN_HOME.
 
 ### brain index
 
@@ -72,9 +74,11 @@ whose HEAD moved; `brain health code-index` says `STALE` for those (for every de
 ### brain impact on a worktree
 
 The checkout is indexed in place under a temporary project (`<repo>-wt-<digest of its path>`, CBM's fast mode,
-about 10 s for the engine), `detect_changes` against the base gives the changed symbols (its seeds) and their callers
-(CALLS, `--depth` levels up, each with the symbol it reaches), and the temporary project is deleted, whatever the
-answer. A CodeRef is placed by its qualified name: the project, the file's folders and stem, the symbol, joined by
+about 10 s for the engine), `detect_changes` against the base gives the changed symbols (its seeds; a file or module
+node is not one) and their callers (CALLS, `--depth` levels up, each with the symbol it reaches), and the temporary
+project is deleted, the index failing or not, while the server answers. One a run could not delete (killed, the
+server ended) is deleted by the next run once its checkout is gone. The cockpit's impact frame, read at every probe,
+asks GitNexus only: CBM would index the checkout each time. A CodeRef is placed by its qualified name: the project, the file's folders and stem, the symbol, joined by
 dots (`code:lab:lab/core.py::Engine.run` is `<project>.src.lab.core.Engine.run` when the file is `src/lab/core.py`).
 A CodeRef of a changed file that is neither a seed nor a caller is checked by the AST, as at the file level. The
 branch needs no push: what kept `brain impact` on the host's diff with GitNexus does not apply.
@@ -83,4 +87,10 @@ branch needs no push: what kept `brain impact` on the host's diff with GitNexus 
 
 Not installed, a binary that does not start, no answer within the deadline (the process is killed), an answer that
 is not JSON-RPC, or a tool's error: one line, CBM's own `error` when it gives one; `brain index` exits 1, `brain
-impact` falls back (GitNexus, else the file level) and says why on its second line.
+impact` falls back (GitNexus, else the file level) and says why on its second line. When CBM answers after GitNexus
+failed, the impact's note says why GitNexus could not.
+
+### Not yet
+
+`brain status`'s code index rows read GitNexus's record only: a machine whose code index is CBM shows none there;
+`brain health code-index` is the check.
