@@ -668,7 +668,7 @@ the digest's and the forecast's history and the changed-items reader all read gi
 |---|---|---|
 | `critical`: a window in force at `critical` % or more | all | deny |
 | `stale`: the newest reading older than `fresh_minutes`, on a machine with a reading in the last 7 days | session, workflow | deny, with the commands that note both windows |
-| `memory`: committed memory at `memory` % or more, or available RAM under `memory_available_gb` GB (default 0: no floor) | session, workflow | deny, naming both measures and the one that refused |
+| `memory`: committed memory at `memory` % or more (with `memory_free_gb` set: under that many GB of commit left, the percent not read), or available RAM under `memory_available_gb` GB (default 0: no floor) | session, workflow | deny, naming the measures and the one that refused |
 | `sessions`: the sessions running reach the cap | session | deny |
 | `brainstorms`: the open brainstorms reach the cap, for a brainstorm | session | deny |
 | `streams`: the calling session already has `max_streams` live streams (`usage.guard.wave_quota`, off by default) | a session started now | deny |
@@ -754,6 +754,11 @@ fresh master and drains its own. It is never a refusal: no guard blocks start_se
                      "memory_available_gb": 4, "wave_hours": 4, "session_hour_usd": 14, "session_hour_measured": false,
                      "fresh_minutes": 60, "live_minutes": 30, "brainstorm_hours": 12}}}
 ```
+
+`memory_free_gb` (default 0: the percent) reads the committed memory in GB of commit left instead (Windows: the commit
+limit minus the commit charge; elsewhere MemAvailable plus SwapFree): a page file of a fixed size keeps the percent at
+91-94 % with 25 GB of RAM free, where 6 GB of commit left is a session's worth and a margin (`"memory_free_gb": 6`);
+`brain usage guard` and `brain status` show it beside the percent.
 
 Every key is optional (the defaults above, except `brainstorms`: 2, and `memory_available_gb`: 0, no floor; 4 is the
 opt-in shown). `"enabled": false` turns the governor off. A

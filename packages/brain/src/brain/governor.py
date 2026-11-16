@@ -23,7 +23,11 @@ The checks, in order; the first that holds decides:
 - ``memory``: a new session or a workflow while the machine's committed memory (Windows: what it promised, RAM plus
   page file, in % of its commit limit; elsewhere the memory in use) is at ``memory`` % or more, or its available RAM
   (what is free now) is under ``memory_available_gb`` GB (default 0: no floor; the owner opts in): deny, naming both measures and the one that refused
-  (wi-brain-memory-guard-two-measures: committed memory alone sat at 93-96 % with 24 GB of RAM free).
+  (wi-brain-memory-guard-two-measures: committed memory alone sat at 93-96 % with 24 GB of RAM free). With
+  ``memory_free_gb`` set (default 0: the percent), the committed measure is read in GB of commit left instead
+  (wi-brain-governor-memory-headroom: Windows' commit limit minus its commit charge; elsewhere MemAvailable plus
+  SwapFree): a start is refused under that many GB, whatever the percent (a fixed page file sat at 91-94 % with 25 GB
+  of RAM free, 6 GB of commit left being a session's worth and a margin).
 - ``sessions``: a new session while the sessions running in parallel (the app's sessions not archived and active in
   the last ``live_minutes``; without the app, the session records written in that time) reach the cap: the smaller of
   ``sessions`` and what the week's room pays for, ``(100 - pct) x $ per % / (wave_hours x session_hour_usd)`` minus
@@ -73,7 +77,7 @@ from . import faults, midsession, paths, stateio, timing
 
 GUARD = "usage"
 DEFAULTS = {"enabled": True, "warn": 80.0, "critical": 95.0, "sessions": 8, "brainstorms": 2, "memory": 97.0,
-            "memory_available_gb": 0.0, "wave_hours": 4.0, "session_hour_usd": 14.0, "session_hour_measured": False,
+            "memory_available_gb": 0.0, "memory_free_gb": 0.0, "wave_hours": 4.0, "session_hour_usd": 14.0, "session_hour_measured": False,
             "fresh_minutes": 60, "live_minutes": 30,
             "brainstorm_hours": 12, "brainstorm_title": r"^\W*brainstorm\b", "wave_quota": None}
 LOWER_ONLY = ("sessions", "brainstorms")   # what a project's usage: may lower for itself, never raise
@@ -471,28 +475,40 @@ def performance_info() -> dict | None:
 
 
 def memory_info() -> dict:
-    """The machine's two memory measures: {committed, available_gb}. ``committed``: Windows' commit charge in % of its
-    commit limit (what it promised, RAM plus page file), elsewhere the memory in use in % (/proc/meminfo);
-    ``available_gb``: the RAM available now, in GB. A measure that cannot be read is None."""
+    """The machine's memory measures: {committed, available_gb, commit_free_gb}. ``committed``: Windows' commit charge
+    in % of its commit limit (what it promised, RAM plus page file), elsewhere the memory in use in % (/proc/meminfo);
+    ``available_gb``: the RAM available now, in GB; ``commit_free_gb``: what can still be promised, in GB (Windows: the
+    commit limit minus the commit charge; elsewhere MemAvailable plus SwapFree). A measure that cannot be read is
+    None."""
     if os.name == "nt":
-        perf = performance_info()
-        if not perf:
-            return {"committed": None, "available_gb": None}
-        return {"committed": round(100.0 * perf["commit_total"] / perf["commit_limit"], 1) if perf["commit_limit"]
-                else None, "available_gb": round(perf["physical_available"] / 2 ** 30, 1)}
+        return performance_memory(performance_info())
     try:
         text = Path("/proc/meminfo").read_text(encoding="ascii")
     except OSError:
-        return {"committed": None, "available_gb": None}
+        return {"committed": None, "available_gb": None, "commit_free_gb": None}
     return meminfo(text)
 
 
+def performance_memory(perf: dict | None) -> dict:
+    """The three measures from GetPerformanceInfo's numbers (:func:`performance_info`, in bytes)."""
+    if not perf:
+        return {"committed": None, "available_gb": None, "commit_free_gb": None}
+    limit, total = perf.get("commit_limit"), perf.get("commit_total")
+    ok = isinstance(limit, int) and isinstance(total, int) and limit > 0 and total >= 0
+    return {"committed": round(100.0 * total / limit, 1) if ok else None,
+            "available_gb": round(perf["physical_available"] / 2 ** 30, 1)
+            if isinstance(perf.get("physical_available"), int) else None,
+            "commit_free_gb": round(max(0, limit - total) / 2 ** 30, 1) if ok else None}
+
+
 def meminfo(text: str) -> dict:
-    """The two measures from /proc/meminfo's text (kB): the memory in use in %, MemAvailable in GB."""
+    """The three measures from /proc/meminfo's text (kB): the memory in use in %, MemAvailable in GB, MemAvailable
+    plus SwapFree in GB (what can still be given without the kernel's overcommit)."""
     kb = {m.group(1): int(m.group(2)) for m in re.finditer(r"^(\w+):\s+(\d+)", text, re.M)}
     avail = kb.get("MemAvailable")
     return {"committed": round(100.0 * (1 - avail / kb["MemTotal"]), 1) if kb.get("MemTotal") and avail is not None
-            else None, "available_gb": round(avail / 2 ** 20, 1) if avail is not None else None}
+            else None, "available_gb": round(avail / 2 ** 20, 1) if avail is not None else None,
+            "commit_free_gb": round((avail + kb.get("SwapFree", 0)) / 2 ** 20, 1) if avail is not None else None}
 
 
 def memory_pct() -> float | None:
@@ -500,17 +516,29 @@ def memory_pct() -> float | None:
     return memory_info().get("committed")
 
 
-def memory_text(committed: float | None, available_gb: float | None, lim: dict) -> str:
-    """Both measures and their thresholds, in words: brain usage guard, a refusal, brain status."""
+def memory_text(committed: float | None, available_gb: float | None, lim: dict,
+                free_gb: float | None = None) -> str:
+    """The measures and their thresholds, in words: brain usage guard, a refusal, brain status. With
+    ``memory_free_gb`` set, the committed measure's threshold is the GB of commit left (``free_gb``)."""
     c = f"{committed:.1f} % committed" if committed is not None else "committed unknown"
     a = f"{available_gb:.1f} GB of RAM available" if available_gb is not None else "available RAM unknown"
-    floor = lim["memory_available_gb"]
-    return f"{c} (refused from {lim['memory']:g} %), {a}" + (f" (refused under {floor:g} GB)" if floor else " (no floor)")
+    floor, headroom = lim["memory_available_gb"], lim.get("memory_free_gb") or 0
+    if headroom:
+        f = f"{free_gb:.1f} GB of commit left" if free_gb is not None else "commit left unknown"
+        c = f"{c}, {f} (refused under {headroom:g} GB)"
+    else:
+        c = f"{c} (refused from {lim['memory']:g} %)"
+    return f"{c}, {a}" + (f" (refused under {floor:g} GB)" if floor else " (no floor)")
 
 
-def memory_refusal(committed: float | None, available_gb: float | None, lim: dict) -> str:
-    """'' when both measures let a start through, else the one that refuses, or 'both'."""
-    over = committed is not None and committed >= lim["memory"]
+def memory_refusal(committed: float | None, available_gb: float | None, lim: dict,
+                   free_gb: float | None = None) -> str:
+    """'' when the measures let a start through, else the one that refuses ('committed', 'available'), or 'both'.
+    The committed measure is its percent, or with ``memory_free_gb`` set its GB of commit left (``free_gb``): the
+    percent is then not read."""
+    headroom = lim.get("memory_free_gb") or 0
+    over = (free_gb is not None and free_gb < headroom) if headroom else \
+        (committed is not None and committed >= lim["memory"])
     low = available_gb is not None and available_gb < lim["memory_available_gb"]
     return "both" if over and low else "committed" if over else "available" if low else ""
 
@@ -684,6 +712,7 @@ def state(payload: dict, now: datetime | None = None) -> dict:
     if k in ("session", "workflow"):
         mem = memory_info()
         out["memory"], out["ram_available_gb"] = mem.get("committed"), mem.get("available_gb")
+        out["commit_free_gb"] = mem.get("commit_free_gb")
     q = out["quota"]
     week = q["windows"].get("week")
     out["session_hour_usd"], out["session_hour_applied"] = _session_hour(lim, q)
@@ -722,12 +751,12 @@ def _verdicts(s: dict, lim: dict, q: dict, k: str):
                 f"{top[1]['resets'][:16].replace('T', ' ')} UTC): finish the live work, start nothing new")
     if k in ("session", "workflow") and q["opted_in"] and lim["fresh_minutes"]:
         yield from _stale(s, lim, q, what)
-    mem, ram = s.get("memory"), s.get("ram_available_gb")
-    which = memory_refusal(mem, ram, lim)
+    mem, ram, free = s.get("memory"), s.get("ram_available_gb"), s.get("commit_free_gb")
+    which = memory_refusal(mem, ram, lim, free)
     if which:
         by = {"both": "both memory measures", "committed": "the committed memory",
               "available": "the available RAM"}[which]
-        yield ("deny", "memory", f"{what} refused by {by}: the machine is at {memory_text(mem, ram, lim)}; close "
+        yield ("deny", "memory", f"{what} refused by {by}: the machine is at {memory_text(mem, ram, lim, free)}; close "
                 "or archive a session first")
     if k == "session":
         yield from _session_caps(s, lim, q, what)
@@ -929,8 +958,9 @@ def render(rep: dict) -> list[str]:
     s = rep["state"]
     lim, q = s["caps"], s["quota"]
     out = [f"usage guard ({'on' if lim['enabled'] else 'off'}; project {s['project'] or '-'}): warn {lim['warn']:g} %, "
-           f"critical {lim['critical']:g} %, sessions {lim['sessions']:g}, brainstorms {lim['brainstorms']:g}, "
-           f"memory {lim['memory']:g} % committed" + (f" or under {lim['memory_available_gb']:g} GB of RAM"
+           f"critical {lim['critical']:g} %, sessions {lim['sessions']:g}, brainstorms {lim['brainstorms']:g}, " +
+           (f"memory under {lim['memory_free_gb']:g} GB of commit left" if lim.get("memory_free_gb") else
+            f"memory {lim['memory']:g} % committed") + (f" or under {lim['memory_available_gb']:g} GB of RAM"
                                               if lim["memory_available_gb"] else "") + f", fresh {lim['fresh_minutes']:g} min"]
     for w, v in q["windows"].items():
         out.append(f"  {w:<9} {v['pct']:.0f} % ({v['how']} at {v['at'][11:16]} UTC, resets "
@@ -939,7 +969,7 @@ def render(rep: dict) -> list[str]:
         out.append(f"  quota     no reading in force; {_how_to_note()}")
     out.append(f"  newest    {q['newest'] or 'none'}" + ("" if q["opted_in"] else " (not checked: no reading in 7 d)"))
     out += _session_lines(s, lim, q)
-    out.append(f"  memory    {memory_text(s.get('memory'), s.get('ram_available_gb'), lim)}")
+    out.append(f"  memory    {memory_text(s.get('memory'), s.get('ram_available_gb'), lim, s.get('commit_free_gb'))}")
     from . import wavegate
     out.append(wavegate.guard_line(lim, rep.get("waves"), lifted_checks(s.get("override"))))
     ov = s.get("override")

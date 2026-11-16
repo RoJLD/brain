@@ -368,7 +368,7 @@ def run(projs: list[projects.Project], *, every: bool = False, quick: bool = Fal
 
 def memory_of(root: Path | None) -> dict:
     """The machine's two memory measures and the usage guard's thresholds (brain.governor): {committed,
-    available_gb, refused, line}; refused names the measure that would refuse a new session ('' none, 'both')."""
+    available_gb, commit_free_gb, refused, line}; refused names the measure that would refuse a new session ('' none, 'both')."""
     from . import governor
 
     try:
@@ -376,10 +376,10 @@ def memory_of(root: Path | None) -> dict:
     except Exception:   # a config that does not load: the defaults
         lim = dict(governor.DEFAULTS)
     mem = governor.memory_info()
-    c, a = mem.get("committed"), mem.get("available_gb")
-    refused = governor.memory_refusal(c, a, lim)
-    line = governor.memory_text(c, a, lim) + (f": a new session or workflow is refused ({refused})" if refused else "")
-    return {"committed": c, "available_gb": a, "refused": refused, "line": line}
+    c, a, f = mem.get("committed"), mem.get("available_gb"), mem.get("commit_free_gb")
+    refused = governor.memory_refusal(c, a, lim, f)
+    line = governor.memory_text(c, a, lim, f) + (f": a new session or workflow is refused ({refused})" if refused else "")
+    return {"committed": c, "available_gb": a, "commit_free_gb": f, "refused": refused, "line": line}
 
 
 # --- text ---
