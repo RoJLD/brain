@@ -87,8 +87,8 @@ an account id) anywhere in it, nor a trailing newline (the patterns end on `(?![
 Python), and `usage.accounts[].since` is a UTC day (YYYY-MM-DD). A value that breaks a schema's pattern is never
 printed back, whatever the schema: the error gives its path and length; an enum's or a format's error prints a short
 plain word only (no `@`, no UUID, at most 40 characters), else the length too. The token ledger
-(`usage/sessions.json`) does not change: its rows are read for these fields at report time (what the session's
-snapshot captured first, then config.json and the model).
+(`usage/sessions.json`) does not change: its rows are read for these fields at report time (the row's own fields
+first, then what the session's snapshot captured, then config.json and the model).
 
 ### Milestone kinds (the store)
 

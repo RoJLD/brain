@@ -1781,12 +1781,15 @@ else from the model's id (`us.anthropic.claude-...` or an ARN: bedrock; `claude-
 anthropic). The account is an **alias the owner chooses**, set in config.json `usage.accounts` (the one in force from
 each `since` day, an entry that names the session's `harness` first), or named by `BRAIN_ACCOUNT` in the session's
 environment (an owner running two accounts on one machine, or switching within a day); its plan is the entry's
-`plan`, else `usage.plans`. `since` is a UTC day (YYYY-MM-DD), compared with the UTC day the session started. An alias
-is never an e-mail address nor an account id: such a value is never written (the hook leaves it out and says so in
-`errors.log`, without the value), an SR or a config.json that holds one is refused by its schema, and a ledger row
-that would carry one (a later scanner's, another harness's adapter) shows as `(masked)`. Nothing reads Claude Code's
-account files or its telemetry. `brain record sr` and `brain record backfill` keep what the session's snapshot
-captured, and a rebuilt record keeps the values it had.
+`plan`, else `usage.plans`. `since` is a UTC day (YYYY-MM-DD), compared with the UTC day the session started: without
+`BRAIN_ACCOUNT`, an account switched within a day takes that whole day, the sessions before the switch included. An
+alias is never an e-mail address nor an account id: such a value is never written (the hook ignores it, takes
+config.json's account and says so in `errors.log`, without the value), an SR or a config.json that holds one is
+refused by its schema, and a ledger row that would carry one (a later scanner's, another harness's adapter) shows as
+`(masked)`. Nothing reads Claude Code's account files or its telemetry. `brain record sr` and `brain record backfill`
+take what the session's snapshot captured (the Stop hook's, from the session's environment), and a record backfill
+rebuilds keeps the values it had. A report reads a ledger row's own fields first, then the snapshot's, then
+config.json and the model.
 
 ```json
 "usage": {"accounts": [{"alias": "personal", "plan": "Pro"},

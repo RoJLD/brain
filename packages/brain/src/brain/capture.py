@@ -467,7 +467,7 @@ def _provenance(stats: transcript.SessionStats) -> dict:
         return {}
     if os.environ.get(provenance.ACCOUNT_ENV) and not provenance.safe_alias(os.environ[provenance.ACCOUNT_ENV]):
         _log_line("stop", f"{provenance.ACCOUNT_ENV} is not an alias (letters, digits, '.', '-', '_'; never an e-mail "
-                          "address or an account id): left out of the session record")
+                          "address or an account id): ignored, the session record takes config.json's account")
     return prov
 
 

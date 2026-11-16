@@ -159,7 +159,7 @@ def _fill(given: Mapping, model: str, day: str, cfg_usage, accts: list[dict], en
     return {"provider": _name(given.get("provider")) or provider_from_env(env) or acct.get("provider")
             or provider_from_model(model),
             "harness": h, "account": acct.get("alias") or "",
-            "plan": _plan(given.get("plan")) or acct.get("plan") or _plan_on(day, cfg_usage)}
+            "plan": _plan(given.get("plan")) or _plan(acct.get("plan")) or _plan(_plan_on(day, cfg_usage))}
 
 
 def resolve(model: str, day: str, cfg_usage=None, env: Mapping | None = None, captured: Mapping | None = None,
@@ -185,7 +185,7 @@ def captured(session_id: str) -> dict:
         return {}
     if not isinstance(data, dict):
         return {}
-    out = {"provider": _name(data.get("provider")), "harness": _name(data.get("harness")),
+    out = {"provider": _name(data.get("provider")), "harness": _name(data.get("harness")) or _name(data.get("tool")),
            "account": safe_alias(data.get("account")), "plan": _plan(data.get("plan"))}
     return {k: v for k, v in out.items() if v}
 

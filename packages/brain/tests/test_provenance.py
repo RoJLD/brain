@@ -127,6 +127,29 @@ def test_an_old_record_stays_valid_and_reads_alike():
     assert provenance.of_row(old) == {"provider": "anthropic", "harness": "claude-code", "account": "(none)",
                                       "plan": "(none)"}
     assert provenance.of_row(old, {"accounts": ACCOUNTS})["account"] == "solo"
+    cursor = {**old, "tool": "cursor", "start": "2026-11-07T10:00:00Z"}   # another harness's record
+    assert provenance.of_row(cursor, {"accounts": ACCOUNTS})["account"] == "ide"
+
+
+def test_a_snapshot_with_tool_only_gives_its_harness_and_a_plan_label_is_cut_or_dropped(brain_home):
+    (brain_home / "sessions").mkdir(parents=True)
+    (brain_home / "sessions" / "s-3.json").write_text(json.dumps({"tool": "cursor"}), encoding="utf-8")
+    assert provenance.captured("s-3") == {"harness": "cursor"}
+    long_plan = {"plans": [{"plan": "x" * 41, "since": "2026-11-01"}]}
+    got = provenance.resolve("claude-opus-5-5", "2026-11-07", long_plan)
+    assert got["plan"] == "x" * 40 and schema.check("sr", {**_old_sr(), "plan": got["plan"]})[0] == []   # cut, valid
+    addressed = {"plans": [{"plan": f"Max for {ADDRESS}", "since": "2026-11-01"}]}
+    assert "plan" not in provenance.resolve("claude-opus-5-5", "2026-11-07", addressed)
+
+
+def test_record_sr_and_backfill_take_the_snapshots_provider_and_account(brain_home, ada_config):
+    """brain record sr and backfill run without the session's environment: what its Stop hook captured wins."""
+    (brain_home / "sessions").mkdir(parents=True, exist_ok=True)
+    (brain_home / "sessions" / "s-4.json").write_text(json.dumps(
+        {"tool": "claude-code", "harness": "claude-code", "provider": "bedrock", "account": "ide", "plan": "Team"}),
+        encoding="utf-8")
+    got = provenance.for_session("claude-opus-5-5", "2026-11-07", session_id="s-4")
+    assert (got["provider"], got["account"], got["plan"]) == ("bedrock", "ide", "Team")
 
 
 def test_an_older_engine_reads_a_new_record_with_notes_only():
