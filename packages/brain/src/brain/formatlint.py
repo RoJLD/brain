@@ -137,20 +137,27 @@ def _from_home(e: ast.AST | None, m: norms.Module, q: str, seen: set[str] | None
     return False
 
 
-def _direct_write(n: ast.AST, m: norms.Module, q: str) -> bool:
-    if not isinstance(n, ast.Call):
-        return False
+def _mode(n: ast.Call, pos: int) -> str:
+    """An open() call's literal mode: its argument at ``pos``, else its mode= ('' when not a literal)."""
+    kw = norms._kw(n, "mode")
+    return (_str(n.args[pos]) if len(n.args) > pos else _str(kw.value if kw else None)) or ""
+
+
+def _write_target(n: ast.Call) -> ast.AST | None:
+    """The path a call writes: ``p.write_text()``, ``p.write_bytes()``, ``p.open("w")``, ``open(p, "w")``; None
+    for any other call (a read included)."""
     f = n.func
     if isinstance(f, ast.Attribute) and f.attr in ("write_text", "write_bytes"):
-        return _from_home(f.value, m, q)
-    if isinstance(f, ast.Attribute) and f.attr == "open":   # Path.open("w")
-        mode = _str(n.args[0]) if n.args else _str(norms._kw(n, "mode").value if norms._kw(n, "mode") else None)
-        return bool(_WRITE_MODE.search(mode or "")) and _from_home(f.value, m, q)
+        return f.value
+    if isinstance(f, ast.Attribute) and f.attr == "open":
+        return f.value if _WRITE_MODE.search(_mode(n, 0)) else None
     if isinstance(f, ast.Name) and f.id == "open" and n.args:
-        kw = norms._kw(n, "mode")
-        mode = _str(n.args[1]) if len(n.args) > 1 else _str(kw.value if kw else None)
-        return bool(_WRITE_MODE.search(mode or "")) and _from_home(n.args[0], m, q)
-    return False
+        return n.args[0] if _WRITE_MODE.search(_mode(n, 1)) else None
+    return None
+
+
+def _direct_write(n: ast.AST, m: norms.Module, q: str) -> bool:
+    return isinstance(n, ast.Call) and _from_home(_write_target(n), m, q)
 
 
 def _real_home(n: ast.AST, m: norms.Module) -> bool:
@@ -265,23 +272,30 @@ def signals(repo: str, rows: list[tuple[str, str, str]], base: inventory.Tree, n
         was, why_was = hits(before, b) if not why else ([], "")
         if why or why_was:
             na[f"format lints ({b})"] = why or why_was
-            continue
-        seen = Counter((h.check, h.path, h.sig) for h in was)
-        old: dict[tuple[str, str], list[int]] = {}
-        for h in now:
-            k = (h.check, h.path, h.sig)
-            if seen[k] > 0:
-                seen[k] -= 1
-                old.setdefault((h.path, h.check), []).append(h.line)
-                continue
-            unit = f"{h.path}::{h.scope}" if h.scope else h.path
-            key = f"{repo}:{h.check}:{h.path}:{h.line}:{b}"
-            out.append(_finding(key, h.check, unit, f"line {h.line} ({b}): {h.sig}", "info"))
-        for (path, check), lines in sorted(old.items()):
-            shown = ", ".join(map(str, lines[:8])) + (", ..." if len(lines) > 8 else "")
-            out.append(_finding(f"{repo}:{check}:{path}:{b}", check, path, f"{len(lines)} already in the file ({b}; "
-                                f"line {shown}): {FIX[check]}, by batches", "DEFER"))
+        else:
+            out += _lines(repo, b, now, was)
     return _one_per_occurrence(out), na
+
+
+def _lines(repo: str, b: str, now: list[Hit], was: list[Hit]) -> list[dict]:
+    """One backend's lines: an info line per occurrence ``now`` adds to ``was``, one DEFER line per file and rule for
+    those it had."""
+    seen = Counter((h.check, h.path, h.sig) for h in was)
+    out, old = [], {}
+    for h in now:
+        k = (h.check, h.path, h.sig)
+        if seen[k] > 0:
+            seen[k] -= 1
+            old.setdefault((h.path, h.check), []).append(h.line)
+            continue
+        unit = f"{h.path}::{h.scope}" if h.scope else h.path
+        out.append(_finding(f"{repo}:{h.check}:{h.path}:{h.line}:{b}", h.check, unit, f"line {h.line} ({b}): {h.sig}",
+                            "info"))
+    for (path, check), lines in sorted(old.items()):
+        shown = ", ".join(map(str, lines[:8])) + (", ..." if len(lines) > 8 else "")
+        out.append(_finding(f"{repo}:{check}:{path}:{b}", check, path, f"{len(lines)} already in the file ({b}; "
+                            f"line {shown}): {FIX[check]}, by batches", "DEFER"))
+    return out
 
 
 def _one_per_occurrence(rows: list[dict]) -> list[dict]:
