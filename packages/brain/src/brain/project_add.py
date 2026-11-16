@@ -9,6 +9,11 @@
 - ``--template T --dir DIR``: a new project's brain written by ``brain init DIR --template T --name NAME`` (its own
   step, run and logged), then registered like ``--existing``.
 
+When the brain has a notes home (``config.json`` ``knowledge``, or a ``kind: knowledge`` entry: brain.knowledge),
+the plan also writes the project's map there, ``maps/<name>.md`` (``scope: [name]``), never over a file
+(wi-brain-project-add-notes); ``--no-notes`` leaves it out. An optional step: when it cannot be written, the entry
+stays and the line says why.
+
 ``--parent NODE`` places it in the scope tree (a container of ``scopes.yaml`` or a project), ``--floor CLASS`` marks it
 with ``classes: {floor: CLASS}`` (a private project's names join ``public.deny.repos`` when ``public.deny_from_tree``
 is on), ``--title`` gives its one line.
@@ -38,7 +43,7 @@ from pathlib import Path
 
 import yaml
 
-from . import config, graph, paths, projects, scopes
+from . import config, graph, knowledge, paths, projects, scopes
 
 NAME = re.compile(r"[a-z][a-z0-9-]*\Z")   # an id of the tree: kebab-case from a letter (never read as a number)
 STORE = projects.DEFAULTS["stores"][0]
@@ -56,6 +61,9 @@ class Plan:
     entry: dict
     init: list[str] | None = None     # brain init's step, with --template
     new_terms: list[str] | None = None   # what public.deny.repos gains, when public.deny_from_tree is on
+    notes_home: Path | None = None    # the notes home the project's map goes to (brain.knowledge)
+    notes: knowledge.Step | None = None   # its map there: write, or keep when there
+    notes_why: str = ""               # why no map is planned
 
     def text(self) -> str:
         return block(self.name, self.entry)
@@ -298,7 +306,20 @@ def plan(args, registry: Path) -> Plan:
         terms = _template_terms(registry, args.name, entry, cfg)
     else:
         terms = checked(registry, args.name, entry, cfg)
-    return Plan(args.name, registry, entry, init, terms)
+    home, step, why = notes_step(args, cfg)
+    return Plan(args.name, registry, entry, init, terms, home, step, why)
+
+
+def notes_step(args, cfg: config.Config) -> tuple[Path | None, knowledge.Step | None, str]:
+    """The notes home, the project's map there (:func:`brain.knowledge.project_map`) and why there is none."""
+    if getattr(args, "no_notes", False):
+        return None, None, "--no-notes"
+    home = knowledge.home(cfg)
+    if home is None:
+        return None, None, "this brain has no notes home (config.json knowledge, or a kind: knowledge entry)"
+    if not home.is_dir():
+        return home, None, f"the notes home {home} is no folder on this machine (brain notes init lays it out)"
+    return home, knowledge.project_map(home, args.name, args.title or ""), ""
 
 
 def _template_terms(registry: Path, name: str, entry: dict, cfg: config.Config) -> list[str]:
@@ -324,7 +345,27 @@ def render(p: Plan, apply: bool) -> list[str]:
                                                           if "classes" in p.entry else ""))
     if p.new_terms:
         lines.append(f"  public.deny.repos gains (public.deny_from_tree): {', '.join(p.new_terms)}")
+    lines.append(notes_line(p))
     return lines
+
+
+def notes_line(p: Plan) -> str:
+    if p.notes is None:
+        return f"  in the notes home: no map ({p.notes_why})"
+    verb = "kept as it is (there already)" if p.notes.action == "keep" else "written, never over a file"
+    return f"  in the notes home {p.notes_home}: {p.notes.path}, the project's map (scope: {p.name}), {verb}"
+
+
+def write_notes(p: Plan) -> str:
+    """The project's map written in the notes home after the entry; the line that says what was done, or why not
+    (an optional step: a failure never undoes the entry)."""
+    if p.notes is None or p.notes.action != "write" or p.notes_home is None:
+        return ""
+    try:
+        done = knowledge.apply(p.notes_home, [p.notes])
+    except OSError as exc:
+        return f"the notes home: {p.notes.path} not written ({exc}); the entry is registered: write it by hand"
+    return f"the notes home: {done[0].strip()} in {p.notes_home}: commit it in the notes repo"
 
 
 def write(p: Plan) -> None:
@@ -347,7 +388,8 @@ def words_of(args) -> list[str]:
                         ("--title", args.title)):
         if value:
             w += [flag, str(value)]
-    return w + (["--read"] if args.read else []) + ["--apply"]
+    return (w + (["--read"] if args.read else []) + (["--no-notes"] if getattr(args, "no_notes", False) else [])
+            + ["--apply"])
 
 
 def main(args) -> int:
@@ -379,8 +421,11 @@ def main(args) -> int:
         except AddError as exc:
             print(f"brain project add: {exc}")
             return 2
-        f = log(p.registry, words_of(args), 0, time.monotonic() - t0, p.text())
+        noted = write_notes(p)
+        f = log(p.registry, words_of(args), 0, time.monotonic() - t0, p.text() + (noted + "\n" if noted else ""))
     print(f"wrote {p.name} in {p.registry}; logged in {f}; then brain sync and brain check (a PR of this brain)")
+    if noted:
+        print(noted)
     return 0
 
 
