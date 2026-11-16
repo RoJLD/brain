@@ -13,10 +13,12 @@ For each repo of the project (its ``repos:``, root and production checkouts, eac
   HEAD moved or committed in the last RECENT_HOURS. A stale worktree is removed by ``git worktree remove`` (never
   --force), after the junctions and links to folders it holds that git does not track (one into a production checkout
   is named): git's recursive removal never follows them;
-- a local branch merged into the default branch, other than it, main or master, is removed by ``git branch -d``
-  (never -D), unless a worktree that stays has it checked out;
+- a local branch merged into the default branch, other than it, main or master, is removed by compare-and-delete
+  (``git update-ref -d refs/heads/<b> <sha>`` once origin/<default> or the local <default> holds ``<sha>``), never -D,
+  unless a worktree that stays has it checked out. ``git branch -d`` judged against the clone's own HEAD or the
+  branch's upstream, so in a clone whose main lags it refused every branch merged since (wi-brain-tidy-branch-delete);
 - a worktree whose folder is gone is pruned (``git worktree prune``) outside production checkouts, which tidy touches
-  with ``git worktree remove`` and ``git branch -d`` only (it is listed there);
+  with ``git worktree remove`` and the branch's compare-and-delete only (it is listed there);
 - with --remote, origin's branches (``git ls-remote --heads``, read only) whose commit origin/<default> holds, other
   than the default, main, master and the head of an open PR (gh, when it answers). Deleting them (``git push origin
   --delete``) is the owner's: ``--remote --apply`` runs it only outside a Claude Code session's shell (CLAUDECODE
@@ -457,6 +459,22 @@ def _run(repo, *args: str) -> tuple[bool, str]:
     return r.returncode == 0, text[-1] if text else ""
 
 
+def delete_merged(repo, branch: str, holders: list[str]) -> tuple[bool, str]:
+    """Delete the local ``branch`` only while one of ``holders`` (origin/<default>, the local <default>) holds its tip:
+    the tip is read, checked, then removed by ``git update-ref -d`` with that value, so a branch moved in between is
+    left alone. Never -D."""
+    sha = _out(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").strip()
+    if not sha:
+        return False, "no such branch"
+    try:
+        held_by = any(_git(repo, "merge-base", "--is-ancestor", sha, h).returncode == 0 for h in holders)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    if not held_by:
+        return False, f"not merged into {' or '.join(holders) or 'a default branch'}"
+    return _run(repo, "update-ref", "-d", f"refs/heads/{branch}", sha)
+
+
 def apply_repo(rp: RepoPlan, *, remote: bool = False, env: dict | None = None) -> list[str]:
     """Remove what the plan marks, in order: stale worktrees (their folder links first), the pruned ones, the merged
     branches, then (--remote, outside a Claude Code session's shell) origin's merged branches. One line each."""
@@ -480,12 +498,13 @@ def apply_repo(rp: RepoPlan, *, remote: bool = False, env: dict | None = None) -
     if rp.of("prune", True) and not rp.production:
         ok, msg = _run(rp.path, "worktree", "prune")
         lines.append("pruned the worktrees whose folder is gone" if ok else f"failed: git worktree prune: {msg}")
+    holders = default_branch(rp.path)[1] if rp.of("branch", True) else []
     for s in rp.of("branch", True):
         if s.after and s.after not in gone:
             lines.append(f"kept {s.target}: its worktree stays")
             continue
-        ok, msg = _run(rp.path, "branch", "-d", s.target)
-        lines.append(f"deleted branch {s.target}" if ok else f"failed: git branch -d {s.target}: {msg}")
+        ok, msg = delete_merged(rp.path, s.target, holders)
+        lines.append(f"deleted branch {s.target}" if ok else f"failed: delete {s.target}: {msg}")
     if remote and rp.remote:
         lines += apply_remote(rp, env)
     return lines

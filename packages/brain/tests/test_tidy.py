@@ -116,6 +116,25 @@ def test_a_branch_merged_into_origin_only_counts(repo):
     assert [s.target for s in one().of("branch", True)] == ["feat/a"]
 
 
+def test_a_branch_merged_into_origin_while_the_local_main_lags_is_deleted(repo, capsys):
+    """No upstream and a local main behind origin/main: git branch -d refused it; the compare-and-delete does not."""
+    merged(repo, "feat/a", push=True)
+    run_git(repo, "reset", "-q", "--hard", "HEAD~1")   # the local main lags behind origin/main
+    assert tidy.main([demo()], apply=True) == 0
+    assert "deleted branch feat/a" in capsys.readouterr().out
+    assert "feat/a" not in branches(repo)
+
+
+def test_a_branch_that_moved_after_the_plan_is_kept(repo):
+    merged(repo, "feat/a")
+    rp = one()
+    run_git(repo, "checkout", "-q", "feat/a")
+    run_git(repo, "commit", "-q", "--allow-empty", "-m", "moved")
+    run_git(repo, "checkout", "-q", "main")
+    ok, why = tidy.delete_merged(rp.path, "feat/a", tidy.default_branch(rp.path)[1])
+    assert not ok and "not merged" in why and "feat/a" in branches(repo)
+
+
 # --- worktrees ---------------------------------------------------------------------------------------------------
 
 def add_worktree(main, tmp_path, name, branch=None, base="main"):
